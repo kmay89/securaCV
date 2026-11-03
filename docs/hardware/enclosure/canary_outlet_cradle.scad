@@ -94,8 +94,9 @@ ih = wart_h + 2*tol_slide;
 // exports its spread as a function of its host/preset, derived from the same
 // inner_y / inner_l its pockets are cut from), so a case whose cavity or
 // kh_inset moves moves this cradle's studs with it. Nothing here retypes a
-// millimeter. At the 2026-09-26 sources: Sense 29.8, Vision 46.2 (xiao) /
-// 48.0 (devkit), WAP 62.2 (custom) / 80.5 (battery presets); the WAP's
+// millimeter. At the 2026-11-03 sources: Sense 29.8, Vision 46.2 (xiao) /
+// 48.0 (devkit), WAP 64.11 (custom — the v0.9.2 card shift grew it from
+// 62.2) / 80.5 (battery presets); the WAP's
 // compact preset reads 0 (one centered pocket — asserted below).
 function target_gap() =
       target == "sense"         ? sense_kh_spread()

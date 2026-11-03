@@ -197,6 +197,19 @@
 //  small and rode the rim instead of bonding to the floor. The seat is
 //  vent_pad_d + 2 x tol_slide (Ø12.4), as the disc seat takes; the weather
 //  front moves, its envelope does not (the indoor fronts cut no vent).
+//  v0.7 follow-up (2026-11-03): THE O-RINGED PLATE SCREWS GET A LAND
+//  (canary_core_lib pl_seat_cut). The weather back's six seats cut a Ø4.3 x
+//  0.75 gland into the floor of a Ø4.6 head bore, and the M2 pan head is
+//  Ø4.0: pushed 0.05-0.74 past the gland's mouth it met nothing in the
+//  committed back (0.44 mm³ only at 0.8, past the floor) — torque set the
+//  squeeze. Each seat takes a DIN 9021 washer (2.2 x 7.0 x 0.8, billed) in a
+//  Ø7.6 pocket whose floor is its land, over a Ø4.673 x 0.769 gland (16.4 /
+//  23.1 / 28.8 % squeeze across the ring's ±0.08 section; the largest ring
+//  90 % of the gland). The recess is 1.031 (was 1.85), the 0.4 web stays,
+//  and the plate screws grow M2 pan x 8 -> x 10 (the washer is under the
+//  head: engagement 6.65 -> 7.83, the weather front's six pilots 7.65 ->
+//  8.83). The pocket leaves 2.70 to the plate's edge (was 4.20). The weather
+//  back and front move; their envelopes and the indoor builds do not.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, tearbore_x, soft_edge_plate,
@@ -440,7 +453,7 @@ mark_h      = 16.0;  // bird height; the lib floors it at mark_min_h(mark_rib)
 mark_rib    = 0.7;   // mark stroke width
 
 /* [Quality] */
-bridge_layer = 0.2;  // your slicer's layer height: the front's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
+bridge_layer = 0.2;  // your slicer's layer height: the front's disc-seat counterbore and the sealed back's washer pockets get bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 // curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
 // exploding tiny holes into thousands of facets like a large $fn would
 $fa = 3; $fs = 0.4;
@@ -741,6 +754,7 @@ hw_echo(str("Vision ", host), [
     hw_item(4, str("M2 pan x ", cam_scr_len, " self-tap (OV5647 to the front posts)")),
     screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
     e_gland      ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_gland      ? hw_item(len(post_xy()), hw_washer(screw_size)) : "",
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     e_vent       ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
     e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
@@ -933,9 +947,9 @@ module back() {
                     cylinder(d = 2.0, h = vm_standoff + 0.01);
             }
         }
-        // the screws: seats through the plate, pan heads over their glands in seal mode
+        // the screws: seats through the plate, pan heads on their washers over the glands in seal mode
         for (p = post_xy())
-            pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
+            pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland, bridge_layer);
         // the key notch in the plate's edge (the rib is on the shell's bore wall):
         // core_key_d() + 0.3 into the plate from the bore wall — never through the
         // ledge band (v0.7: the old ledge_w + 0.4 cut ran ledge_w + 1.4 in from the

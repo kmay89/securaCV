@@ -131,6 +131,30 @@ function brd_xiao_sense_cam_dx() = -6.95;  // module center along the length, fr
 function brd_xiao_sense_cam_dy() = -0.64;  // module center across the width, from the board center, + = the long edge on the LEFT with the USB toward you and the parts up (see above)
 function brd_xiao_sense_cam_fp() = 8.0;    // module footprint, square side (the lens barrel's envelope)
 
+// XIAO ESP32-S3 SENSE microSD card — the card the WAP's BOM makes required
+// (SD1; the firmware keeps its witness records on it), SEATED in the Sense
+// expansion board's socket, read off the same Seeed GLB, "drawing" rung
+// (2026-11-03). Its mesh 'MicroSD v2' spans x 0.33..15.39 against the PCB's
+// USB end at 12.28 and the USB-C shell's mouth at 13.81; its contact pads
+// lie inside the 10067099 socket (x 0.11..5.61), so the model draws the card
+// home, not half in. So the seated card stands 3.11 past the PCB's USB end
+// (1.58 past the USB-C shell — further than anything else on the board),
+// cantilevered from a socket that ends 6.67 inboard of that end. It is 15.06
+// long and 11.18 across, centered 0.82 across the width toward the same long
+// edge as the camera (z -12.52..-1.34 against the PCB's -15.00..2.78; the
+// same sign as brd_xiao_sense_cam_dy(), and the same caveat: the model's
+// handedness is not stated, so a case clears the card mirrored too). Its
+// underside is 5.6 over the PCB top face (the receptacle tops out at 3.21)
+// and its grip end — the end past the board — stands 7.25 (the body is 0.75
+// thick, the last 2.2 rises to 1.65). Before this row the catalog carried
+// no card at all, and the WAP's camera shells stood 0.61 into its tip.
+function brd_xiao_sense_sd_over() = 3.11;   // seated card tip past the PCB's USB end, along the length
+function brd_xiao_sense_sd_l()    = 15.06;  // card length, along the board's length
+function brd_xiao_sense_sd_w()    = 11.18;  // card width, across the board
+function brd_xiao_sense_sd_dy()   = -0.82;  // card center across the width, from the board center (cam_dy's convention and caveat)
+function brd_xiao_sense_sd_z0()   = 5.6;    // card underside over the PCB top face
+function brd_xiao_sense_sd_z1()   = 7.25;   // card top over the PCB top face (its grip end)
+
 // XIAO ESP32-S3 — the two tactile switches (B and R) that flank the USB-C
 // on the component face, read off the vendor GLB (canary-local/boards/
 // seeed_xiao_esp32s3.glb: the board 21.14 x 17.78 x 1.2, the switch bodies
@@ -220,6 +244,14 @@ module board_selfcheck() {
            "board: the OV5647's lens holder or hole grid runs off its carrier");
     assert(brd_ov5647_lens_dy() < 0 && brd_ov5647_grid_dy() > 0,
            "board: the OV5647's lens is BELOW the carrier's center and its hole grid ABOVE — the case bug v0.6 fixed");
+    // the Sense's seated microSD card is the part that stands furthest past
+    // the board's USB end — further than the USB-C shell a case already
+    // clears — and it rides over the receptacle, not beside it (2026-11-03)
+    assert(brd_xiao_sense_sd_over() > brd_xiao_usb_overhang(),
+           "board: the Sense's seated microSD card stands further past the USB end than the USB-C shell — a case that clears only the shell meets the card");
+    assert(brd_xiao_sense_sd_z0() > 3.2 && brd_xiao_sense_sd_z1() > brd_xiao_sense_sd_z0()
+           && brd_xiao_sense_sd_w()/2 + abs(brd_xiao_sense_sd_dy()) < brd_xiao_w_measured()/2,
+           "board: the Sense's microSD card sits over the USB-C receptacle and within the board's width");
     // the round display's socket and active area both sit inside its disc
     assert(brd_round_disp_socket_x() + brd_l("xiao")/2 < brd_l("round_disp")/2
            && brd_round_disp_active_d() < brd_l("round_disp"),

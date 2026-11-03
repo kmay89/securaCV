@@ -289,6 +289,33 @@
 //  default) takes the slide tolerance, vent_pad_d + 2 x tol_slide: cut at
 //  exactly the Ø12 the echo bills, the patch had no room in its own seat (the
 //  Vision's and the WAP's, the same day). No default mesh moves for that one.
+//  v0.9 follow-up (2026-11-03): THE O-RINGED PLATE SCREWS GET A LAND
+//  (canary_core_lib pl_seat_cut). The body's twelve seats cut a Ø4.3 x 0.75
+//  gland into the floor of a Ø4.6 head bore, and the M2 pan head is Ø4.0:
+//  pushed 0.05-0.74 past the gland's mouth it met nothing in the committed
+//  body (0.44 mm³ only at 0.8, past the floor) — torque set the squeeze, and
+//  a snug screw crushed the ring. Each seat takes a DIN 9021 washer (2.2 x
+//  7.0 x 0.8, billed) in a Ø7.6 pocket whose floor is its land, over a
+//  Ø4.673 x 0.769 gland (16.4 / 23.1 / 28.8 % squeeze across the ring's
+//  ±0.08 section; the largest ring 90 % of the gland). Three things here
+//  follow it:
+//    * head_floor is measured under the LAND the washer bears on: 2.0 of
+//      plate from the land to the inner face (the recess 0.25 -> 0.2, the
+//      gland's floor keeps 1.23). The old formula, left alone, would have
+//      read the washer as part of the recess and left 1.97 / 1.2; measured
+//      from the gland's floor as before it needs a 5.57 plate.
+//    * the +X twin of the bay's lower end stop stood 8.34 off the +X
+//      service plunger's axis: the Ø10.1 plunger seat and the Ø7.6 pocket
+//      would have overlapped by 0.51 against this file's 0.8 assert (the
+//      washer's land is not optional, a plunger cannot move off its switch,
+//      and no narrower standard washer lands). That post steps up its wall,
+//      2.5 -> 8.0 (_svc_step: the least that keeps 0.85), the plunger seat
+//      0.85 from the pocket (was 0.99 from the old bore); the +X spans are
+//      27.8 / 31.1, under 40. Its -X twin, the cell's end stop, stays.
+//    * svc_scr_seat_d and the lug-pocket assert read the seat's real width
+//      (pl_seat_d), not a copy of the old arithmetic or the head's Ø.
+//  The plate screws stay M2 x 10 (engagement 7.05 -> 7.0, the face's pilots
+//  8.05 -> 8.0). The body and the face move; envelopes do not.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
@@ -414,7 +441,7 @@ grille_pattern = "sunflower";   // ["sunflower","rings"]  sunflower = a Fermat s
    lift the body off its wall plate and press, no plate screw comes out. The switch positions are the
    board registry's (brd_xiao_btn_*, the vendor GLB); which one is R is NOT in the model. */
 opt_svc     = true;   // the plungers, their seats, flex recesses, bores and guide bosses; off = a plain plate there
-svc_head_d  = 9.6;    // the plunger's head Ø: a flat disc in a seat on the back face (the +X one sits 1 mm off a screw seat)
+svc_head_d  = 9.6;    // the plunger's head Ø: a flat disc in a seat on the back face (the +X one keeps 0.8 off a screw seat)
 svc_rim_t   = 0.8;    // the head's RIM, the ring that sits on the seat's floor round the flex recess (four 0.2 layers)
 svc_web_t   = 0.6;    // the head's WEB inside the rim, the membrane that flexes when you press (three 0.2 layers — never a 0.3 layer)
 svc_flex_d  = 7.0;    // the flex recess under the web: the web spans it, and its floor is the overtravel stop
@@ -538,8 +565,8 @@ screw_head   = "pan"; // ["pan","flat"] pan = flat-floored seat (the BOM's black
 screw_d      = 1.6;   // (m2)
 screw_head_d = 4.0;   // (m2 pan)
 screw_head_h = 2.0;   // (m2 pan) head height; the seat recesses it flush in the plate's back face
-head_floor   = 2.0;   // solid plastic under every recessed head — the plate screws' web past their gland and the
-                      // wall plate's counterbore floors (the first print's 1.15 and 1.0 would pull through)
+head_floor   = 2.0;   // solid plastic under every recessed head: under a plate screw's bearing (its washer's land when sealed) and the wall plate's counterbores
+                      // (the first print's 1.15 and 1.0 would pull through)
 
 /* [Weather sealing] */
 gasket_w      = 1.6;  // gasket groove width in the shell's ledge (the printed gasket is 0.5 narrower)
@@ -618,7 +645,7 @@ csi_len     = 7.6;   // the module's CSI (camera ribbon) connector reaches this 
                      // full width — read off the print's photo (the vendor CAD puts its body at 1-7)
 
 /* [Quality] */
-bridge_layer = 0.2;  // your slicer's layer height: the button's bezel counterbore gets bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
+bridge_layer = 0.2;  // your slicer's layer height: the button's bezel counterbore and the body's washer pockets get bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 // curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
 // exploding tiny holes into thousands of facets like a large $fn would
 $fa = 3; $fs = 0.4;
@@ -742,6 +769,15 @@ vm_cx   = -inner_x/2 + hx_m + (inner_x - hx_p - hx_m)/2;   // the module's cente
 mid_px_p =  inner_x/2 - pd/2 - (opt_ant ? ant_post_gap : -0.2);   // the +X mid posts' axis
 mid_px_m = -(inner_x/2 - pd/2 + 0.2);                             // the -X mid posts' axis (0.2 into the wall)
 fence_x   = -inner_x/2 + bay_wall_gap + batt_t + batt_clear;      // the bay fence's -X face (the cell side)
+// the service plungers' axis and seat (their story is with the rest of them,
+// below) — read here because the screw posts step off them (2026-11-03)
+xiao_usb_end_y = vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang;   // the XIAO's board end (the USB-C shell stands past it)
+svc_cy         = xiao_usb_end_y + xiao_btn_dy + svc_dy;         // the plunger axis along Y
+svc_seat_d     = svc_head_d + 2*svc_tol;                        // the head's seat on the back face
+// a plate screw's seat on the back face: the head's bore, or on a sealed seat
+// the washer's pocket (canary_core_lib pl_seat_d — Ø7.6 for M2 since the
+// head seal got its land, 2026-11-03)
+scr_seat_d     = pl_seat_d(screw_size, screw_head, tol_hole, e_gland);
 // the cavity's depth: the stack and its headroom, the button's body with its
 // wire room, the cell standing on edge, the antenna centered between the coves
 cav_d   = max(vm_standoff + pcb_t + vm_front_h + cav_extra,
@@ -771,13 +807,20 @@ cav_r  = core_cav_r(rr, wall_eff);          // the cavity's corner radius
 // standard length that engages hw_engage() in the post end past the relief
 plate_t  = pl_thick(floor_t, lug_extra, screw_size, screw_head, e_gland);
 mount_extra = plate_t - floor_t;                   // the plate below z = 0 (the pocket slab, or the head's floor)
-// the head's recess: as deep as leaves head_floor of SOLID plate past the
-// gland (pl_recess's own floor is the gland web, 0.4 — the first print's
-// heads bore on 1.15 mm of plastic); a shallower recess means a longer screw,
-// which pl_len picks from the standard lengths
-pl_r     = max(0, plate_t - pl_hh(screw_size, screw_head) - pl_gland_raw(screw_size, e_gland) - head_floor);
+// the head's recess: as deep as leaves head_floor of SOLID plate under what
+// the head bears on (the first print's heads bore on 1.15 mm of plastic); a
+// shallower recess means a longer screw, which pl_len picks from the standard
+// lengths. 2026-11-03: on a sealed seat the head bears on its washer and the
+// washer on the land round the gland, so head_floor is measured under the
+// LAND — 2.0 of plate from the land to the inner face, over a Ø7.0 bearing
+// (the clamp's plastic is that ring now; the gland's floor carries only the
+// ring's squeeze, and keeps 2.0 - 0.769 = 1.23, over pl_recess's 0.4 web).
+// Measured from the gland's floor as before, the washer and the deeper gland
+// would have needed a 5.57 plate (the envelope) for the same 2.0; left as it
+// was, the formula silently left 1.97 under the land and 1.2 under the gland
+pl_r     = max(0, plate_t - pl_hh(screw_size, screw_head) - pl_wh(screw_size, e_gland) - head_floor);
 assert(pl_r <= pl_recess(plate_t, screw_size, screw_head, e_gland) + 1e-9, "head_floor is thinner than the plate's own gland web");
-assert(plate_t - pl_r - pl_hh(screw_size, screw_head) - pl_gland_raw(screw_size, e_gland) >= head_floor - 1e-9,
+assert(plate_t - pl_r - pl_hh(screw_size, screw_head) - pl_wh(screw_size, e_gland) >= head_floor - 1e-9,
        str("the plate leaves under ", head_floor, " mm of solid web under a recessed screw head — raise lug_extra"));
 pl_L     = pl_len(plate_t, pl_r, screw_size, screw_head);
 pl_eng   = pl_engage(plate_t, pl_r, screw_size, screw_head);
@@ -829,7 +872,20 @@ function post_xy() = concat([
     [-inner_x/2 + pd/2 + 1.0,  post_y_top],
     [ inner_x/2 - pd/2 - 1.0,  post_y_bot],
     [-inner_x/2 + pd/2 + 1.0,  post_y_bot],
-], [for (y = mid_ys, s = [1, -1]) [s > 0 ? mid_px_p : mid_px_m, y]]);
+], [for (y = mid_ys, s = [1, -1]) let (x = s > 0 ? mid_px_p : mid_px_m) [x, _svc_step(x, y)]]);
+// 2026-11-03: a mid post steps UP its wall, off a service plunger's seat, by
+// the least that keeps the two seats 0.85 apart (the assert below holds 0.8),
+// rounded up to 0.1. The sealed seat became the washer's Ø7.6 pocket, and the
+// +X twin of the bay's lower end stop stood 8.34 off the +X plunger's axis:
+// its Ø10.1 seat and the pocket would have overlapped by 0.51. That post
+// moves 2.5 -> 8.0 (its -X twin is the cell's end stop and stays); the +X
+// spans become 27.8 and 31.1, under the 40 the clamp rule allows (asserted
+// below, after the step). No other post is within reach of a plunger.
+function _svc_step(x, y) =
+    let (need = svc_seat_d/2 + scr_seat_d/2 + 0.85,
+         dys  = [for (q = svc_xy()) if (norm([q[0] - x, q[1] - y]) < need && abs(q[0] - x) < need)
+                     q[1] + sqrt(need*need - pow(q[0] - x, 2)) - y])
+    len(dys) == 0 ? y : y + ceil(max(dys)*10)/10;
 function _is_corner(p) = abs(p[1]) > inner_y/2 - 10;
 function _is_free(p)   = opt_ant && !_is_corner(p) && p[0] > 0;   // a +X mid post: no wall gusset, the antenna passes behind it
 
@@ -934,7 +990,7 @@ assert(len([for (c = lug_ys) let (r = mount_dt_pocket_y(c, clear = dt_clear))
             if (r[0] < -plate_y/2 + 2.0 || r[1] > plate_y/2 - 2.0) 1]) == 0,
        "a lug pocket runs within 2 mm of the plate's edge — move lug_y");
 assert(len([for (c = lug_ys, p = post_xy()) let (r = mount_dt_pocket_y(c, clear = dt_clear))
-            if (abs(p[0]) - head_d/2 - 2.0 < mount_dt_window_w(dt_clear)/2 && p[1] > r[0] - head_d && p[1] < r[1] + head_d) 1]) == 0,
+            if (abs(p[0]) - scr_seat_d/2 - 2.0 < mount_dt_window_w(dt_clear)/2 && p[1] > r[0] - scr_seat_d && p[1] < r[1] + scr_seat_d) 1]) == 0,
        "a lug pocket runs into a plate-screw seat")
 assert(abs(exit_cx) + usb_exit_w/2 <= inner_x/2 - 1, "cable exit too wide/offset for the cavity");
 // the LUGS (on the wall plate) must also clear its cable SLOT, which runs the
@@ -977,11 +1033,8 @@ xiao_face_hi_z = z_vm_top - pcb_t - stack_sock_h;               // the component
 xiao_face_lo_z = xiao_face_hi_z - brd_t("xiao");                // ...or to the socket face: the component face a PCB nearer the plate
 svc_cap_lo_z   = xiao_face_lo_z - xiao_btn_h;                   // the cap's top at the nearest the stack can sit
 svc_cap_hi_z   = xiao_face_hi_z - xiao_btn_h;
-xiao_usb_end_y = vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang;   // the XIAO's board end (the USB-C shell stands past it)
-svc_cy         = xiao_usb_end_y + xiao_btn_dy + svc_dy;         // the plunger axis along Y
 function svc_xy() = opt_svc ? [for (sx = [1, -1]) [vm_cx + sx*xiao_btn_dx, svc_cy]] : [];
 svc_bore_d     = svc_stem_d + 2*svc_tol;                        // the stem slides
-svc_seat_d     = svc_head_d + 2*svc_tol;                        // the head's seat on the back face
 svc_seat_depth = svc_rim_t - svc_proud;                         // the rim's floor: the head stands svc_proud of the back face (the slab caps it, the film under the rim seals it)
 svc_rim_id     = svc_flex_d + 1.0;                              // the rim overlaps the recess's edge by 0.5 a side
 svc_web_span   = (svc_flex_d - svc_stem_d)/2 - svc_root_r;      // the web's free width, recess edge to the stem's fillet
@@ -1034,8 +1087,7 @@ assert(!opt_svc || len([for (q = svc_xy(), c = lug_ys) let (r = mount_dt_pocket_
                         if (q[1] + svc_seat_d/2 > r[0] - 1.0 && q[1] - svc_seat_d/2 < r[1] + 1.0
                             && abs(q[0]) - svc_seat_d/2 < mount_dt_window_w(dt_clear)/2 + 1.0) 1]) == 0,
        "a service plunger's seat meets a dovetail lug pocket");
-svc_scr_seat_d = max(pl_hd(screw_size, screw_head) + 2*tol_hole,                        // a plate screw's seat on the back face: its head's bore...
-                     e_gland ? oring_gland_d(scr_oring_id(screw_size), scr_oring_cs(screw_size)) : 0);   // ...or its O-ring gland, whichever is wider
+svc_scr_seat_d = scr_seat_d;   // a plate screw's seat on the back face (it was a copy of the head-bore-or-gland arithmetic; the washer's pocket outgrew both)
 assert(!opt_svc || len([for (q = svc_xy(), p = post_xy()) if (norm([q[0] - p[0], q[1] - p[1]]) < svc_seat_d/2 + svc_scr_seat_d/2 + 0.8) 1]) == 0,
        "a service plunger's seat runs within 0.8 mm of a screw seat on the back face");
 if (opt_svc)
@@ -1114,6 +1166,7 @@ hw_echo("Vision doorbell", [
                    screw_insert ? "machine thread (into the boss insert)" : "self-tap", " (wall plate collar into the shell's boss)")),
     screw_insert ? hw_item(len(post_xy()) + 1, str(str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h), " — the +1 seats in the security boss")) : "",
     e_gland      ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_gland      ? hw_item(len(post_xy()), hw_washer(screw_size)) : "",
     hw_item(1, str("Ø", btn_d, " illuminated momentary button + panel nut (", btn_nut_ac, " AC)")),
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     e_vent       ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
@@ -1409,9 +1462,9 @@ module body() {
         // under each and the channel above it (canary_mount_lib): offer the body
         // mount_dt_travel() high, windows over the lugs, and let it drop
         for (c = lug_ys) mount_dovelug_pocket(c, -mount_extra, clear = dt_clear);
-        // the screws: seats through the plate, pan heads over their glands in seal mode
+        // the screws: seats through the plate, pan heads on their washers over the glands in seal mode
         for (p = post_xy())
-            pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
+            pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland, bridge_layer);
         // the key notch in the plate's +Y edge (the rib is on the shell's bore wall):
         // core_key_d() + 0.3 into the plate from the bore wall — never through the
         // ledge band, so the gasket stays backed (asserted in seal mode; the v0.9
