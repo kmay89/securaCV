@@ -46536,7 +46536,7 @@
    "version": null,
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "34845376",
+   "src": "bf69a90e",
    "geom": {
     "triangles": 2392,
     "volume_mm3": 435.818,
@@ -46730,7 +46730,7 @@
    "version": null,
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "ec636207",
+   "src": "685b1fc0",
    "geom": {
     "triangles": 300,
     "volume_mm3": 36.764,
@@ -46823,7 +46823,7 @@
    "version": null,
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "e520117e",
+   "src": "45af67dd",
    "geom": {
     "triangles": 1986,
     "volume_mm3": 443.941,
@@ -48634,7 +48634,7 @@
    "version": null,
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "ff2d7766",
+   "src": "8f8ef750",
    "geom": {
     "triangles": 772,
     "volume_mm3": 13.469,
@@ -49010,7 +49010,7 @@
    "version": null,
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "e67dc018",
+   "src": "758cacbf",
    "geom": {
     "triangles": 5868,
     "volume_mm3": 315.059,
