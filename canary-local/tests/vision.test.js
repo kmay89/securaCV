@@ -23,9 +23,11 @@ const data = JSON.parse(read(join(ROOT, "devices/vision.json")));
 const registry = JSON.parse(read(join(ROOT, "devices/registry.json")));
 const boards = JSON.parse(read(join(ROOT, "devices/boards.json")));
 
-const configH = read(join(FW, "include/canary/config.h"));
+// Repo-relative, as a refusal names them.
+const CONFIG_H = "firmware/projects/canary-vision/include/canary/config.h";
+const DETECT_CONFIG_H = "firmware/projects/canary-vision/include/canary/detect_config.h";
+const configH = read(join(REPO, CONFIG_H));
 const versionH = read(join(FW, "include/canary/version.h"));
-const detectCfgH = read(join(FW, "include/canary/detect_config.h"));
 const topicsH = read(join(FW, "include/canary/topics.h"));
 const mainCpp = read(join(FW, "src/main.cpp"));
 const visionMgrCpp = read(join(FW, "src/vision/vision_mgr.cpp"));
@@ -44,11 +46,16 @@ async function firmwareCore() {
   return createVisionFirmwareCore(visionFactory);
 }
 
-const num = (src, name) => {
-  const m = src.match(new RegExp(name + "\\s*=\\s*(\\d+)"));
-  assert.ok(m, name + " not found in firmware");
-  return +m[1];
-};
+// A firmware constant, read by the rule gen_vision.py wrote vision.json with
+// (_tooling.read_const; c_const.js is its JavaScript twin): comments are not
+// code, a name is a whole word defined once, the value a plain decimal
+// literal, and anything else throws by name. This was `NAME\s*=\s*(\d+)`,
+// gen_vision.py's own pattern, so the two agreed on the wrong number: a
+// commented-out definition, kNAME, a string, the 3 of `3 * 500` (sweep F369).
+// `text` is the file as committed unless a test hands it an edited one.
+const { readConst } = require("./c_const.js");
+const constCases = JSON.parse(read(join(ROOT, "tools/tests/c_const_cases.json")));
+const num = (rel, name, text = read(join(REPO, rel))) => readConst(text, name, rel);
 
 // ── 1. shape + sanity floors ───────────────────────────────────────────────
 test("vision.json has every section the page requires", () => {
@@ -87,29 +94,73 @@ test("firmware version + identity match the headers and the registry train", () 
 
 // ── 3. detection semantics are the firmware's constants ────────────────────
 test("detect block mirrors config.h seeds and detect_config.h bounds", () => {
-  assert.strictEqual(data.detect.person_target, num(configH, "PERSON_TARGET"));
-  assert.strictEqual(data.detect.score_min, num(configH, "SCORE_MIN"));
-  assert.strictEqual(data.detect.lost_timeout_ms, num(configH, "LOST_TIMEOUT_MS"));
-  assert.strictEqual(data.detect.dwell_start_ms, num(configH, "DWELL_START_MS"));
-  assert.strictEqual(data.detect.voxel.cols, num(configH, "VOXEL_COLS"));
-  assert.strictEqual(data.detect.voxel.rows, num(configH, "VOXEL_ROWS"));
-  assert.strictEqual(data.detect.frame.w, num(configH, "FRAME_W"));
-  assert.strictEqual(data.detect.frame.h, num(configH, "FRAME_H"));
-  assert.strictEqual(data.detect.invoke_period_ms, num(configH, "INVOKE_PERIOD_MS"));
+  assert.strictEqual(data.detect.person_target, num(CONFIG_H, "PERSON_TARGET"));
+  assert.strictEqual(data.detect.score_min, num(CONFIG_H, "SCORE_MIN"));
+  assert.strictEqual(data.detect.lost_timeout_ms, num(CONFIG_H, "LOST_TIMEOUT_MS"));
+  assert.strictEqual(data.detect.dwell_start_ms, num(CONFIG_H, "DWELL_START_MS"));
+  assert.strictEqual(data.detect.voxel.cols, num(CONFIG_H, "VOXEL_COLS"));
+  assert.strictEqual(data.detect.voxel.rows, num(CONFIG_H, "VOXEL_ROWS"));
+  assert.strictEqual(data.detect.frame.w, num(CONFIG_H, "FRAME_W"));
+  assert.strictEqual(data.detect.frame.h, num(CONFIG_H, "FRAME_H"));
+  assert.strictEqual(data.detect.invoke_period_ms, num(CONFIG_H, "INVOKE_PERIOD_MS"));
   assert.deepStrictEqual(data.detect.bounds.score,
-    [num(detectCfgH, "DETECT_SCORE_MIN_LO"), num(detectCfgH, "DETECT_SCORE_MIN_HI")]);
+    [num(DETECT_CONFIG_H, "DETECT_SCORE_MIN_LO"), num(DETECT_CONFIG_H, "DETECT_SCORE_MIN_HI")]);
   assert.deepStrictEqual(data.detect.bounds.lost_ms,
-    [num(detectCfgH, "DETECT_LOST_MS_LO"), num(detectCfgH, "DETECT_LOST_MS_HI")]);
+    [num(DETECT_CONFIG_H, "DETECT_LOST_MS_LO"), num(DETECT_CONFIG_H, "DETECT_LOST_MS_HI")]);
   assert.deepStrictEqual(data.detect.bounds.dwell_ms,
-    [num(detectCfgH, "DETECT_DWELL_MS_LO"), num(detectCfgH, "DETECT_DWELL_MS_HI")]);
+    [num(DETECT_CONFIG_H, "DETECT_DWELL_MS_LO"), num(DETECT_CONFIG_H, "DETECT_DWELL_MS_HI")]);
 });
 
 test("aim block mirrors the firmware's cadence constants + payload keys", () => {
-  assert.strictEqual(data.aim.publish_ms, num(configH, "AIM_PUBLISH_MS"));
-  assert.strictEqual(data.aim.idle_publish_ms, num(configH, "AIM_IDLE_PUBLISH_MS"));
-  assert.strictEqual(data.aim.auto_off_ms, num(configH, "AIM_AUTO_OFF_MS"));
+  assert.strictEqual(data.aim.publish_ms, num(CONFIG_H, "AIM_PUBLISH_MS"));
+  assert.strictEqual(data.aim.idle_publish_ms, num(CONFIG_H, "AIM_IDLE_PUBLISH_MS"));
+  assert.strictEqual(data.aim.auto_off_ms, num(CONFIG_H, "AIM_AUTO_OFF_MS"));
   for (const k of data.aim.payload_keys)
     assert.ok(mainCpp.includes('\\"' + k + '\\"'), "aim payload key drifted: " + k);
+});
+
+// Sweep F369: num() reads by gen_vision.py's rule, row for row. The table is
+// tools/tests/c_const_cases.json, which test_flash_read_const.py runs through
+// _tooling.read_const too, so the two readers give each row the same value or
+// throw the same words.
+test("num() gives every shared case read_const's verdict, refusal for refusal", () => {
+  const { where, cases } = constCases;
+  assert.ok(cases.length >= 40, "the shared table parsed thin");
+  for (const row of cases) {
+    if ("value" in row) {
+      assert.strictEqual(num(where, row.name, row.text), row.value, row.why);
+    } else {
+      assert.throws(() => num(where, row.name, row.text),
+        (e) => e.message === row.refused.replaceAll("{where}", where), row.why);
+    }
+  }
+});
+
+// The same edits test_flash_read_const.py makes to config.h before it runs
+// gen_vision.py and gen_flash.py's Vision defaults: a definition prepended
+// above everything, or a seed respelled. The old num() read 99 for every
+// prepend row but SCORE_MIN_X's, 3 for `3 * 500` and 70 for 070, and
+// vision.json, written by the same pattern, agreed.
+function respelled(text, name, value) {
+  const found = [...text.matchAll(new RegExp(
+    `(?<![A-Za-z0-9_])constexpr[ \\t]+[A-Za-z0-9_]+[ \\t]+${name}[ \\t]*=[ \\t]*(?<value>[^;]*);`, "gd"))];
+  assert.strictEqual(found.length, 1, `${name} is not one constexpr in the text`);
+  const [from, to] = found[0].indices.groups.value;
+  return text.slice(0, from) + value + text.slice(to);
+}
+
+test("a definition planted in config.h is refused or reads what the file as committed reads", () => {
+  assert.strictEqual(constCases.planted_in, CONFIG_H);
+  assert.ok(constCases.planted.length >= 6, "the planted rows parsed thin");
+  for (const row of constCases.planted) {
+    const text = "prepend" in row ? row.prepend + configH : respelled(configH, row.name, row.respell);
+    if ("refused" in row) {
+      assert.throws(() => num(CONFIG_H, row.name, text),
+        (e) => e.message.startsWith(row.refused.replaceAll("{where}", CONFIG_H)), row.why);
+    } else {
+      assert.strictEqual(num(CONFIG_H, row.name, text), num(CONFIG_H, row.name), row.why);
+    }
+  }
 });
 
 test("event vocabulary is exactly the FSM's emit set", () => {

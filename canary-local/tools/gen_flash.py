@@ -50,7 +50,7 @@ import sys
 from pathlib import Path
 
 from _devices import by_flasher_product, load_manifests
-from _tooling import die, repo_root
+from _tooling import die, read_const, repo_root
 
 REPO = repo_root()
 CANARY_LOCAL = REPO / "canary-local"
@@ -1375,55 +1375,10 @@ LESSONS = [
 # the firmware tree (config.h / detect_config.h / registry.json / the lab's
 # own drift-gated vision.json), never typed here and hoped true.
 
-# A C/C++ comment, or a string or character literal, which can hold `//` or
-# `/*` without opening a comment (the Vision's project config.h carries an
-# OTA URL). Scanned left to right, so whichever opens first wins.
-C_COMMENT_OR_LITERAL = re.compile(
-    r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|/\*.*?\*/|//[^\n]*', re.S)
-
-
-def strip_c_comments(text: str) -> str:
-    """`text` with every comment blanked and every literal kept. A block
-    comment keeps its newlines, so a line number still names its line."""
-    def blank(m: re.Match) -> str:
-        token = m.group(0)
-        if token[0] in "\"'":
-            return token
-        return "\n" * token.count("\n") or " "
-    return C_COMMENT_OR_LITERAL.sub(blank, text)
-
-
-def read_const(path: Path, name: str) -> int:
-    """Read `#define NAME value` or `constexpr T NAME = value;` as an int.
-
-    Comments are not code, so a commented-out definition is not read. The
-    name must be defined exactly once: two definitions (an `#if`/`#else`
-    pair, an `#undef` and a redefinition) leave the preprocessor to pick
-    one, which a regex cannot do. The value must be a plain decimal literal
-    (a U/L suffix allowed, no leading zero, which C reads as octal) that
-    ends the #define's line or the constexpr's statement. Anything else is
-    refused rather than read: the first number of an expression such as
-    `30u * 1000u`, or `070` read as 70 when it compiles as 56, would put a
-    wrong default in the catalog with --check green."""
-    text = strip_c_comments(read(path))
-    rel = path.relative_to(REPO)
-    found = list(re.finditer(rf"#define[ \t]+{name}[ \t]+(?P<define>[^\n]*)"
-                             rf"|constexpr\s+\w+\s+{name}\s*=\s*(?P<constexpr>[^;]*);", text))
-    if not found:
-        die(f"constant {name} not found in {rel}")
-    if len(found) > 1:
-        lines = ", ".join(str(text.count("\n", 0, m.start()) + 1) for m in found)
-        die(f"constant {name} is defined {len(found)} times in {rel} (lines {lines}); which "
-            "one compiles is the preprocessor's call, so refusing to pick one")
-    m = found[0]
-    raw = m.group("define") if m.group("define") is not None else m.group("constexpr")
-    value = raw.strip()
-    literal = re.fullmatch(r"(0|[1-9][0-9]*)[uUlL]*", value)
-    if not literal:
-        octal = " (a leading 0 is octal in C and C++)" if re.fullmatch(r"0[0-9]+[uUlL]*", value) else ""
-        die(f"constant {name} in {rel} is `{value}`, not a plain integer literal{octal}; "
-            "refusing to read a number out of it")
-    return int(literal.group(1))
+# The Vision's and the Sense's dials below are read with _tooling.read_const:
+# comments are not code, a name defined once, a plain decimal literal, and a
+# refusal otherwise (sweep F313; moved there so gen_vision.py and
+# vision.test.js read the same constants by the same rule, F369).
 
 
 def product_role(pid: str) -> str:
@@ -1456,19 +1411,19 @@ def vision_detect_block() -> dict:
     (NVS namespace "securacv": det_target u8, det_score u8, det_lost u32,
     det_dwell u32 — detect_config.cpp)."""
     defaults = {
-        "target": read_const(VISION_CONFIG_H, "PERSON_TARGET"),
-        "score": read_const(VISION_CONFIG_H, "SCORE_MIN"),
-        "lost_ms": read_const(VISION_CONFIG_H, "LOST_TIMEOUT_MS"),
-        "dwell_ms": read_const(VISION_CONFIG_H, "DWELL_START_MS"),
+        "target": read_const(VISION_CONFIG_H, "PERSON_TARGET", read),
+        "score": read_const(VISION_CONFIG_H, "SCORE_MIN", read),
+        "lost_ms": read_const(VISION_CONFIG_H, "LOST_TIMEOUT_MS", read),
+        "dwell_ms": read_const(VISION_CONFIG_H, "DWELL_START_MS", read),
     }
     bounds = {
-        "score": [read_const(VISION_BOUNDS, "DETECT_SCORE_MIN_LO"),
-                  read_const(VISION_BOUNDS, "DETECT_SCORE_MIN_HI")],
+        "score": [read_const(VISION_BOUNDS, "DETECT_SCORE_MIN_LO", read),
+                  read_const(VISION_BOUNDS, "DETECT_SCORE_MIN_HI", read)],
         "target": [0, 255],
-        "lost_ms": [read_const(VISION_BOUNDS, "DETECT_LOST_MS_LO"),
-                    read_const(VISION_BOUNDS, "DETECT_LOST_MS_HI")],
-        "dwell_ms": [read_const(VISION_BOUNDS, "DETECT_DWELL_MS_LO"),
-                     read_const(VISION_BOUNDS, "DETECT_DWELL_MS_HI")],
+        "lost_ms": [read_const(VISION_BOUNDS, "DETECT_LOST_MS_LO", read),
+                    read_const(VISION_BOUNDS, "DETECT_LOST_MS_HI", read)],
+        "dwell_ms": [read_const(VISION_BOUNDS, "DETECT_DWELL_MS_LO", read),
+                     read_const(VISION_BOUNDS, "DETECT_DWELL_MS_HI", read)],
     }
     lab = json.loads(read(VISION_LAB))
     presets = [{
@@ -1650,11 +1605,11 @@ def sense_reflexes_block(flavor: str) -> dict:
             continue
         knobs.append({
             "id": kid, "macro": macro, "unit": unit,
-            "value": read_const(cfg, macro),
+            "value": read_const(cfg, macro, read),
             "nvs": nvs_key,
             "console": console,
-            "bounds": [read_const(SENSE_CONFIG_H, bstem + "_LO"),
-                       read_const(SENSE_CONFIG_H, bstem + "_HI")],
+            "bounds": [read_const(SENSE_CONFIG_H, bstem + "_LO", read),
+                       read_const(SENSE_CONFIG_H, bstem + "_HI", read)],
         })
     by_id = {k["id"]: k for k in knobs}
     presets = [{
