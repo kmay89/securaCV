@@ -28,7 +28,12 @@ which keeps a trailing `//` comment only on a line that holds ONE knob — so
 `a = 1;  b = 2;  // help` reaches neither knob (and the Lab's own parser,
 gen_enclosures.py, drops the whole line). 125 knobs had lost their help that
 way (audit 2026-09, C1). A line holding two or more knobs AND a trailing
-comment now fails: split it, one knob per line, each with its own help.
+comment now fails: split it, one knob per line, each with its own help. So
+does a knob beside a computed assignment and a trailing comment (C32): the
+parser reads only literals, so it gives that help to the knob although it
+may be the neighbor's (the 1.69's skirt_wall wore skirt_dep's). Every
+assignment on a knob's line counts, a string's text and a comparison's `=`
+excepted.
 HELP_LINE_DEBT held the few lines the first sweep deliberately left (the 7"
 case's four); the second (C10) split them, so the ledger is empty and can
 only stay that way: a new shared-help line fails, and so would a listed one
@@ -352,22 +357,72 @@ def knob_lines(path):
     return by_line
 
 
+# What lint_help_lines counts on a knob's line. A string's text is not code
+# (`label = "a = b"` is one assignment), and a comparison's `=` is not an
+# assignment: an `=` counts unless `=`, `<`, `>` or `!` stands before it or
+# `=` after it. The name in front of it, when there is one, is what the
+# message names; a let() binding, a named argument or a function's default
+# counts too, since a help after it is just as much its.
+SCAD_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+ASSIGNED = re.compile(r"(?:([$A-Za-z_][A-Za-z0-9_]*)\s*)?(?<![=<>!])=(?!=)")
+
+
+def assigned_names(line):
+    """The names a line's code assigns, in order ('?' where none stands in
+    front of the `=`). The code is the text before the first `//` once
+    strings are stripped, with block comments taken out the way
+    gen_builder_manifest.parse_scad takes them out."""
+    code = SCAD_STRING.sub('""', line)
+    if "*/" in code and ("/*" not in code or code.index("*/") < code.index("/*")):
+        code = code.split("*/", 1)[1]          # the end of a block opened above
+    code = re.sub(r"/\*.*?\*/", " ", code)
+    code = code.split("/*", 1)[0].split("//", 1)[0]
+    return [m.group(1) or "?" for m in ASSIGNED.finditer(code)]
+
+
 def lint_help_lines(path, debt=frozenset()):
-    """Third rule: no line holds two or more knobs AND a trailing help.
+    """Third rule: a line that holds a knob AND a trailing help holds nothing
+    else that assigns — no second knob, and no computed neighbor.
+
+    gen_builder_manifest.parse_scad keeps the help only on a line where it
+    reads ONE literal assignment, so two knobs lose it (C1). It reads only
+    literals, so beside a computed assignment (`a = 1;  b = a / 2;  // help`)
+    it gives the knob a help that may be the neighbor's: the 1.69's
+    skirt_wall carried skirt_dep's "must not exceed back_stack" that way
+    (C10c-2), and the rule passed it because it counted knobs only (C32).
+    Every assignment on the line counts now (assigned_names).
 
     Returns (problems, debt entries seen) — main() fails an entry never seen.
     """
     problems, seen = [], set()
     lines = path.read_text().splitlines()
     for lineno, names in sorted(knob_lines(path).items()):
-        if len(names) < 2:
+        line = lines[lineno - 1]
+        assigned = assigned_names(line)
+        computed = [n for n in assigned if n not in names]
+        if len(names) + len(computed) < 2:
             continue
         # the same split parse_scad makes: everything after the first `//`
-        comment = (lines[lineno - 1].split("//", 1) + [""])[1]
+        comment = (line.split("//", 1) + [""])[1]
         if not comment.strip():
             continue
         if (path.name, names[0]) in debt:
             seen.add((path.name, names[0]))
+        elif computed and len(names) == 1:
+            problems.append(
+                f"{path.name}:{lineno}: the knob {names[0]} shares the line and its trailing "
+                f"help with the computed {', '.join(computed)} — the builder's parser reads "
+                f"only literal assignments, so it hands that help to {names[0]} although it "
+                f"may say {computed[0]}'s fact (the 1.69's skirt_wall carried skirt_dep's help "
+                f"that way). Move {computed[0]} to a line of its own, so the knob's line holds "
+                "the knob and its own help only")
+        elif computed:
+            problems.append(
+                f"{path.name}:{lineno}: the knobs {', '.join(names)} share the line and its "
+                f"trailing help with the computed {', '.join(computed)} — the builder's parser "
+                "keeps help only on a one-knob line, so none of the knobs gets it. Split the "
+                f"line: one knob per line, each with its own help, and {computed[0]} on a line "
+                "of its own")
         else:
             problems.append(
                 f"{path.name}:{lineno}: {len(names)} knobs ({', '.join(names)}) share one "

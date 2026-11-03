@@ -64,10 +64,72 @@ class HelpLines(_Case):
                       'module m() { }\nc = 1;  d = 2;   // after the first module\n')
         self.assertEqual(L.lint_help_lines(p)[0], [])
 
-    def test_computed_neighbor_does_not_count(self):
-        # `vm_w = brd_w(...)` is not a literal knob, so one knob keeps its help
+    def test_computed_neighbor_fails(self):
+        # `vm_w = brd_w(...)` is not a literal, so the builder's parser reads
+        # one knob on the line and hands it the whole help — which may be the
+        # computed neighbor's fact (C32: this test used to keep that a pass)
         p = self.scad('/* [B] */\nvm_l = 40.0;  vm_w = brd_w("grove_v2");   // Grove Vision AI V2\n')
+        problems, _ = L.lint_help_lines(p)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("canary_probe.scad:2: the knob vm_l shares the line and its trailing "
+                      "help with the computed vm_w", problems[0])
+        self.assertIn("Move vm_w to a line of its own", problems[0])
+
+    def test_the_planted_half_fails_by_name(self):
+        # the shape the review planted: a knob, a value computed from it, one help
+        p = self.scad('/* [Shell] */\nknob = 1;  half = knob / 2;  // help\n')
+        problems, _ = L.lint_help_lines(p)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("the computed half", problems[0])
+        self.assertIn("hands that help to knob although it may say half's fact", problems[0])
+        # and the parser it judges did hand it over: this is what the rule saves
+        groups = L.gen_builder_manifest.parse_scad(p)
+        self.assertEqual([(q["name"], q.get("desc")) for g in groups for q in g["params"]],
+                         [("knob", "help")])
+
+    def test_two_knobs_and_a_computed_neighbor_name_all_three(self):
+        # two literals: the parser keeps the help for neither, so nothing is
+        # handed to `a` — the message says what does happen
+        p = self.scad('/* [B] */\na = 1;  b = 2;  c = a + b;  // help\n')
+        problems, _ = L.lint_help_lines(p)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("the knobs a, b share the line and its trailing help with the computed c",
+                      problems[0])
+        self.assertIn("none of the knobs gets it", problems[0])
+        self.assertNotIn("hands that help", problems[0])
+        self.assertEqual([q.get("desc") for g in L.gen_builder_manifest.parse_scad(p) for q in g["params"]],
+                         [None, None])
+
+    def test_a_ternary_or_a_let_neighbor_counts(self):
+        # a ternary's value and a let() binding are assignments the help may describe
+        p = self.scad('/* [B] */\nopt_x = true;  w = opt_x ? 1 : 0;  // the x opening\n'
+                      'k = 2.0;  y = let(m = 3) k * m;  // the y scale\n')
+        problems, _ = L.lint_help_lines(p)
+        self.assertEqual(len(problems), 2)
+        self.assertIn("canary_probe.scad:2: the knob opt_x", problems[0])
+        self.assertIn("the computed w —", problems[0])
+        self.assertIn("canary_probe.scad:3: the knob k", problems[1])
+        self.assertIn("the computed y, m —", problems[1])
+
+    def test_a_computed_neighbor_without_help_passes(self):
+        # nothing is handed over when there is no help to hand
+        p = self.scad('/* [B] */\nknob = 1;  half = knob / 2;\n')
         self.assertEqual(L.lint_help_lines(p)[0], [])
+
+    def test_a_strings_text_and_a_comparison_are_not_assignments(self):
+        # the font name's `style=Bold` is text; `>=`, `<=`, `!=` and `==` compare;
+        # a block comment is not code: each line holds its one knob
+        p = self.scad('/* [B] */\n'
+                      'label_font = "Liberation Sans:style=Bold";  // the label font\n'
+                      'gap = 1.0;  assert(gap >= 0 && gap <= 2 && gap != 3 && gap == gap);  // gap\n'
+                      'lip = 2.0;  /* lip_h = 3; */  // the lip\n')
+        self.assertEqual(L.lint_help_lines(p)[0], [])
+        self.assertEqual(L.assigned_names('label_font = "a=b";  // x = y'), ["label_font"])
+        self.assertEqual(L.assigned_names('g = 1;  assert(g >= 0 && g <= 2 && g != 3 && g == g);'),
+                         ["g"])
+        self.assertEqual(L.assigned_names('a = 1;  /* b = 2; */  c = 3;  // d = 4'), ["a", "c"])
+        self.assertEqual(L.assigned_names('   done */  e = 5;'), ["e"])
+        self.assertEqual(L.assigned_names('f = 6;  /* g = 7; opens a block'), ["f"])
 
     def test_the_169_skirt_wall_keeps_its_own_help(self):
         # `skirt_wall = 1.6; skirt_dep = back_stack;   // must not exceed
