@@ -33,31 +33,26 @@ and without a second "drift-gated" hint line, `sys.exit(str)` vs
       fails here with a clear message, not three functions later with a
       "missing source" error that names the wrong path.
 
-  strip_c_comments(text)
-      `text` with every C/C++ comment blanked and every string and character
-      literal kept, since a literal can hold `//` or `/*` without opening a
-      comment (the Vision's project config.h carries an OTA URL). A block
-      comment keeps its newlines, so a line number still names its line.
-
   read_const(path, name, read)
       One integer constant out of a firmware header, by one strict rule:
       comments are not code, and a definition spelled inside a string or
-      character literal is not a definition; NAME is a whole word defined
-      exactly once, as `#define NAME value` or `constexpr T NAME = value;`;
-      the value is a plain decimal literal (U/L suffixes allowed, no leading
-      zero, which C reads as octal, at most 2^53 - 1, the largest integer a
-      browser reads exactly out of the JSON the generators write) that ends
-      the #define's line or the constexpr's statement. Anything else is
-      refused by die(), naming the constant, the file and the reason, rather
-      than read as its first number. `read` is the caller's own reader (a
-      path in, its text out), so a generator keeps its cache and its
-      missing-source message and a test can serve a header that is not on
-      disk. gen_flash.py (the flasher catalog's Vision and Sense dials) and
-      gen_vision.py (the Vision page's detection constants) read through it.
-      Its JavaScript twin is canary-local/tests/c_const.js, which
-      vision.test.js reads the same constants with, and
-      canary-local/tools/tests/c_const_cases.json is the table both are held
-      to, verdict for verdict and message for message (sweep F369).
+      character literal (raw strings included) is not a definition; NAME is
+      a whole word defined exactly once, as `#define NAME value` or
+      `constexpr T NAME = value;`; the value is a plain decimal literal (U/L
+      suffixes allowed, no leading zero, which C reads as octal, at most
+      2^53 - 1, the largest integer a browser reads exactly out of the JSON
+      the generators write) that ends the #define's line or the constexpr's
+      statement. Anything else is refused by die(), naming the constant, the
+      file and the reason, rather than read as its first number. `read` is
+      the caller's own reader (a path in, its text out), so a generator
+      keeps its cache and its missing-source message and a test can serve a
+      header that is not on disk. gen_flash.py (the flasher catalog's Vision
+      and Sense dials) and gen_vision.py (the Vision page's detection
+      constants) read through it. Its JavaScript twin is
+      canary-local/tests/c_const.js, which vision.test.js reads the same
+      constants with, and canary-local/tests/c_const_cases.json is the table
+      both are held to, verdict for verdict and message for message (sweep
+      F369).
 
 Importable as `from _tooling import die, warn, repo_root, read_const`
 because the scripts run as `python3 canary-local/tools/<tool>.py`, which puts
@@ -140,11 +135,30 @@ def repo_root(levels: int = 2, start: str | os.PathLike[str] | None = None) -> P
 # canary-local/tests/c_const.js spells the same patterns in JavaScript, so a
 # change here is a change there, and c_const_cases.json holds the two equal.
 
-# A C/C++ comment, or a string or character literal, which can hold `//` or
-# `/*` without opening a comment (the Vision's project config.h carries an
-# OTA URL). Scanned left to right, so whichever opens first wins.
-C_COMMENT_OR_LITERAL = re.compile(
-    r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|/\*.*?\*/|//[^\n]*', re.S)
+# What the scan steps over whole, left to right, so whichever opens first
+# wins: the places a definition is not code, ended where the compiler's lexer
+# ends them, and numbers:
+#   - a raw string literal, `R"d(...)d"` with an optional u8/u/U/L prefix,
+#     whose body runs verbatim (quotes, backslashes and newlines) to its own
+#     `)d"`;
+#   - a string or character literal, which can hold `//` or `/*` without
+#     opening a comment (the Vision's project config.h carries an OTA URL);
+#   - a block comment;
+#   - a line comment;
+#   - a number (a pp-number, so the digit separator in `1'000` does not open
+#     a character literal that runs into the comment after it).
+# A backslash that ends a line (blanks after it allowed, as GCC allows them)
+# splices the next line into the literal or the line comment it sits in, as
+# it does for the compiler.
+_SPLICE = r"\\[ \t]*\r?\n"
+_C_TOKEN = re.compile("|".join((
+    r"(?<![A-Za-z0-9_])(?:u8|[uUL])?R\"([!-'*-\[\]-~]{0,16})\(.*?\)\1\"",
+    rf'"(?:{_SPLICE}|\\.|[^"\\\n])*"',
+    rf"'(?:{_SPLICE}|\\.|[^'\\\n])*'",
+    r"/\*.*?\*/",
+    rf"//(?:{_SPLICE}|[^\n])*",
+    r"(?<![A-Za-z0-9_.])\.?[0-9](?:[eEpP][+-]|'[0-9A-Za-z_]|[0-9A-Za-z_.])*",
+)), re.S)
 # C's own whitespace and identifier characters, spelled out: Python's \s and
 # \w also take Unicode spaces and letters, which neither the compiler nor the
 # JavaScript twin does.
@@ -158,22 +172,21 @@ _JS_SAFE_MAX = 2**53 - 1
 
 
 def _blank_c(text: str, keep_literals: bool) -> str:
+    """`text` with every comment blanked (its newlines kept, so a line number
+    still names its line), every number kept, and every literal kept or,
+    without `keep_literals`, masked."""
     def blank(m: re.Match) -> str:
         token = m.group(0)
-        if token[0] in "\"'":
-            # Masked to quote marks (newlines kept), the literal keeps its
-            # length, so a span found in the masked text is the same span of
-            # the code, and it is not whitespace, so a #define's value still
-            # starts where the literal does.
-            return token if keep_literals else re.sub(r"[^\n]", '"', token)
-        return "\n" * token.count("\n") or " "
-    return C_COMMENT_OR_LITERAL.sub(blank, text)
-
-
-def strip_c_comments(text: str) -> str:
-    """`text` with every comment blanked and every literal kept. A block
-    comment keeps its newlines, so a line number still names its line."""
-    return _blank_c(text, keep_literals=True)
+        if token[0] == "/":
+            return "\n" * token.count("\n") or " "
+        if token[0] in "0123456789.":
+            return token
+        # Masked to quote marks (newlines kept), the literal keeps its
+        # length, so a span found in the masked text is the same span of the
+        # code, and it is not whitespace, so a #define's value still starts
+        # where the literal does.
+        return token if keep_literals else re.sub(r"[^\n]", '"', token)
+    return _C_TOKEN.sub(blank, text)
 
 
 def _where(path: Path) -> str:
@@ -188,19 +201,27 @@ def read_const(path: Path, name: str, read: Callable[[Path], str]) -> int:
     """Read `#define NAME value` or `constexpr T NAME = value;` as an int.
 
     Comments are not code, so a commented-out definition is not read, and a
-    definition spelled inside a string literal is not one either. The name
-    is a whole word and must be defined exactly once: two definitions (an
-    `#if`/`#else` pair, an `#undef` and a redefinition) leave the
-    preprocessor to pick one, which a regex cannot do. The value must be a
-    plain decimal literal (a U/L suffix allowed, no leading zero, which C
-    reads as octal, at most 2^53 - 1) that ends the #define's line or the
-    constexpr's statement. Anything else is refused rather than read: the
-    first number of an expression such as `30u * 1000u`, or `070` read as 70
-    when it compiles as 56, would put a wrong default in the catalog with
-    --check green. `read` is the caller's reader, path to text."""
+    definition spelled inside a string, character or raw string literal is
+    not one either. Where each of those ends is found by the compiler's own
+    lexing rules for the cases a header meets: a backslash ending a line
+    continues a line comment or a literal, a raw string runs to its own
+    delimiter, and a digit separator (`1'000`) does not open a character
+    literal. The preprocessor is not run, and a splice outside a comment or
+    a literal is not undone (a #define continued onto the next line is
+    refused, as below). The name is a whole word and must be defined exactly
+    once: two definitions (an `#if`/`#else` pair, an `#undef` and a
+    redefinition) leave the preprocessor to pick one, which a regex cannot
+    do. The value must be a plain decimal literal (a U/L suffix allowed, no
+    leading zero, which C reads as octal, at most 2^53 - 1) that ends the
+    #define's line or the constexpr's statement. Anything else is refused
+    rather than read: the first number of an expression such as
+    `30u * 1000u`, or `070` read as 70 when it compiles as 56, would put a
+    wrong default in the catalog with --check green. Every refusal names the
+    constant, the file and the reason. `read` is the caller's reader, path
+    to text."""
     where = _where(path)
     if not _C_NAME.fullmatch(name):
-        die(f"constant name `{name}` is not a C identifier")
+        die(f"constant name `{name}` is not a C identifier; refusing to look for it in {where}")
     text = read(path)
     code = _blank_c(text, keep_literals=True)
     # Definitions are found where literals are masked and the value is cut
@@ -225,8 +246,12 @@ def read_const(path: Path, name: str, read: Callable[[Path], str]) -> int:
         octal = " (a leading 0 is octal in C and C++)" if _C_OCTAL.fullmatch(value) else ""
         die(f"constant {name} in {where} is `{value}`, not a plain integer literal{octal}; "
             "refusing to read a number out of it")
-    number = int(literal.group(1))
-    if number > _JS_SAFE_MAX:
+    digits = literal.group(1)
+    # More than 16 digits is past 2^53 - 1 (16 of them) whatever they are.
+    # It is checked first, so int() never meets a literal longer than the
+    # 4300 digits CPython converts, which it would answer with a ValueError
+    # instead of this refusal.
+    if len(digits) > 16 or int(digits) > _JS_SAFE_MAX:
         die(f"constant {name} in {where} is `{value}`, past 2^53 - 1, which a browser cannot "
             "hold exactly; refusing to read it")
-    return number
+    return int(digits)

@@ -54,7 +54,7 @@ async function firmwareCore() {
 // commented-out definition, kNAME, a string, the 3 of `3 * 500` (sweep F369).
 // `text` is the file as committed unless a test hands it an edited one.
 const { readConst } = require("./c_const.js");
-const constCases = JSON.parse(read(join(ROOT, "tools/tests/c_const_cases.json")));
+const constCases = JSON.parse(read(join(__dirname, "c_const_cases.json")));
 const num = (rel, name, text = read(join(REPO, rel))) => readConst(text, name, rel);
 
 // ── 1. shape + sanity floors ───────────────────────────────────────────────
@@ -120,9 +120,9 @@ test("aim block mirrors the firmware's cadence constants + payload keys", () => 
 });
 
 // Sweep F369: num() reads by gen_vision.py's rule, row for row. The table is
-// tools/tests/c_const_cases.json, which test_flash_read_const.py runs through
-// _tooling.read_const too, so the two readers give each row the same value or
-// throw the same words.
+// c_const_cases.json, next to this file, which test_flash_read_const.py runs
+// through _tooling.read_const too, so the two readers give each row the same
+// value or throw the same words.
 test("num() gives every shared case read_const's verdict, refusal for refusal", () => {
   const { where, cases } = constCases;
   assert.ok(cases.length >= 40, "the shared table parsed thin");
@@ -723,7 +723,10 @@ test("firmware wasm: a dweller seen on the frame after dwell_ended opens the nex
   };
   for (let t = 0; t < 2000; t += 100) tick(t, person);
   let t = 2000;
-  while (tick(t, []).event !== "dwell_ended") t += 100;
+  // Bounded, so a score floor retuned above the box's 90 (a visit never
+  // opens) fails here by name instead of spinning until the job times out.
+  for (; tick(t, []).event !== "dwell_ended"; t += 100)
+    assert.ok(t < 12000, `no dwell_ended by ${t} ms (score_min ${data.detect.score_min}, the box scores 90)`);
   t += 100;
   const ended = tick(t, person);
   assert.strictEqual(ended.event, "presence_ended", "the frame after dwell_ended ends the stay, seen or not");

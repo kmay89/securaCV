@@ -11,23 +11,29 @@ as 70 (it compiles as 56), and the first textual match won, so a
 commented-out or `#if`-ed-out definition above the live one was the one read:
 each a wrong default in flash.json with `--check` green. It now reads past
 comments (not past the strings that can hold `//`, and a definition spelled
-inside a string is not one), takes a name defined exactly once, and reads a
-plain decimal literal (U/L suffixes allowed, no leading zero, at most
-2^53 - 1) that ends the #define's line or the constexpr's statement.
-Anything else is refused by name, file and the text it found.
+inside a string is not one; a line splice, a raw string and a digit
+separator end each where the compiler ends it), takes a name defined exactly
+once, and reads a plain decimal literal (U/L suffixes allowed, no leading
+zero, at most 2^53 - 1) that ends the #define's line or the constexpr's
+statement. Anything else is refused by name, file and the text it found.
 
 The rule lived in gen_flash.py (sweep F313). gen_vision.py read the same
 constants with its own `NAME\\s*=\\s*(\\d+)` (no word boundary, no comment
 strip, no single-definition check), and vision.test.js's num() with the same
 pattern, so the page's data and its test agreed with each other on the wrong
-number while only the flash-catalog step went red. It is now
-_tooling.read_const (sweep F369), which both generators import, and
-canary-local/tests/c_const.js is its JavaScript twin. c_const_cases.json, next
-to this file, is the table this file and vision.test.js both run: the Python
-rule and the JavaScript one give every row the same value or the same refusal,
-word for word. Its `planted` rows edit the real Vision config.h, and
-VisionGenerator runs gen_vision.py on each, on a scratch copy of its sources,
-as gen_wap.py's test does.
+number. gen_flash.py's reader caught only some of it: it refused a second
+definition under #if, `3 * 500` and `070`, so the flash-catalog step went red
+there, but for a commented-out definition, `kSCORE_MIN = 99` or a string
+holding `SCORE_MIN = 99` above the live one it read the live value, its
+--check stayed green, vision.json carried 99 and no step named the misread.
+It is now _tooling.read_const (sweep F369), which both generators import, and
+canary-local/tests/c_const.js is its JavaScript twin.
+canary-local/tests/c_const_cases.json, next to c_const.js (under tests/, so the
+site and the Lab app leave it out), is the table this file and vision.test.js
+both run: the Python rule and the JavaScript one give every row the same value
+or the same refusal, word for word. Its `planted` rows edit the real Vision
+config.h, and VisionGenerator runs gen_vision.py on each, on a scratch copy of
+its sources, as gen_wap.py's test does.
 
 The Vision's four detection defaults are read from the project config.h
 (firmware/projects/canary-vision/include/canary/config.h), the first-boot
@@ -63,7 +69,7 @@ import gen_flash as gf  # noqa: E402  (definitions only; main() runs under __mai
 # A header that is never on disk: gen_flash's read() is patched to serve it,
 # and read_const names a file by its path under the repo.
 SYNTHETIC = gf.REPO / "firmware/synthetic/consts.h"
-CASES = json.loads((TOOLS / "tests/c_const_cases.json").read_text(encoding="utf-8"))
+CASES = json.loads((TOOLS.parent / "tests/c_const_cases.json").read_text(encoding="utf-8"))
 # die()'s prefix: the module that called read_const, never _tooling.py.
 THIS = Path(__file__).name
 

@@ -10,9 +10,14 @@
 // the 3 of `3 * 500`, or `070` read as 70 when it compiles as 56 (sweep F369).
 //
 // The rule, spelled the same in both languages:
-//   • comments are blanked and string and character literals kept (a literal
-//     can hold `//` or `/*`), and a definition spelled inside a literal is not
-//     one;
+//   • comments are blanked and string, character and raw string literals
+//     kept (a literal can hold `//` or `/*`), and a definition spelled inside
+//     a literal is not one. Where each ends follows the compiler's lexing for
+//     the cases a header meets: a backslash ending a line continues a line
+//     comment or a literal, a raw string runs to its own delimiter, and a
+//     digit separator (`1'000`) does not open a character literal. The
+//     preprocessor is not run, and a splice outside a comment or a literal
+//     is not undone;
 //   • NAME is a whole word defined exactly once, as `#define NAME value` or
 //     `constexpr T NAME = value;` (two definitions are the preprocessor's
 //     choice, which a regex cannot make);
@@ -20,8 +25,8 @@
 //     zero, at most 2^53 - 1) that ends the #define's line or the
 //     constexpr's statement.
 // Anything else throws, naming the constant, the file and the reason, in the
-// words read_const() dies with. canary-local/tools/tests/c_const_cases.json
-// is the table both are held to, verdict for verdict and message for message
+// words read_const() dies with. c_const_cases.json, next to this file, is
+// the table both are held to, verdict for verdict and message for message
 // (here by vision.test.js, there by test_flash_read_const.py), so a change to
 // one reader that the other does not make fails one of them.
 //
@@ -31,36 +36,51 @@
 
 "use strict";
 
-// Python compiles its pattern with re.S, so its `\\.` crosses a newline too:
-// `\\[\s\S]` here.
-const C_COMMENT_OR_LITERAL =
-  /"(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
+// What the scan steps over whole, left to right, so whichever opens first
+// wins (the places a definition is not code, and numbers): a raw string
+// literal (`R"d(...)d"`, an optional u8/u/U/L prefix, its body verbatim to
+// its own `)d"`), a string or character literal, a block comment, a line
+// comment, and a number (a pp-number, so the digit separator in `1'000`
+// opens no character literal).
+// A backslash that ends a line (blanks after it allowed, as GCC allows them)
+// splices the next line into the literal or the line comment it sits in.
+// Python compiles its pattern with re.S, so its `.` crosses a newline too:
+// `[\s\S]` here.
+const SPLICE = String.raw`\\[ \t]*\r?\n`;
+const C_TOKEN = new RegExp([
+  String.raw`(?<![A-Za-z0-9_])(?:u8|[uUL])?R"([!-'*-\[\]-~]{0,16})\([\s\S]*?\)\1"`,
+  String.raw`"(?:${SPLICE}|\\[\s\S]|[^"\\\n])*"`,
+  String.raw`'(?:${SPLICE}|\\[\s\S]|[^'\\\n])*'`,
+  String.raw`\/\*[\s\S]*?\*\/`,
+  String.raw`\/\/(?:${SPLICE}|[^\n])*`,
+  String.raw`(?<![A-Za-z0-9_.])\.?[0-9](?:[eEpP][+-]|'[0-9A-Za-z_]|[0-9A-Za-z_.])*`,
+].join("|"), "g");
 const SP = "[ \\t\\n\\r\\f\\v]";
 const C_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const C_DECIMAL = /^(0|[1-9][0-9]*)[uUlL]*$/;
 const C_OCTAL = /^0[0-9]+[uUlL]*$/;
 const EDGE_SPACE = /^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g;
 
+// `text` with every comment blanked (its newlines kept, so a line number
+// still names its line), every number kept, and every literal kept or,
+// without `keepLiterals`, masked.
 function blankC(text, keepLiterals) {
-  return text.replace(C_COMMENT_OR_LITERAL, (token) => {
-    if (token[0] === '"' || token[0] === "'")
-      // Masked to quote marks (newlines kept), a literal keeps its length,
-      // so a span found in the masked text is the same span of the code, and
-      // it is not whitespace, so a #define's value still starts where the
-      // literal does.
-      return keepLiterals ? token : token.replace(/[^\n]/g, '"');
-    return "\n".repeat(token.split("\n").length - 1) || " ";
+  return text.replace(C_TOKEN, (token) => {
+    if (token[0] === "/") return "\n".repeat(token.split("\n").length - 1) || " ";
+    if ("0123456789.".includes(token[0])) return token;
+    // Masked to quote marks (newlines kept), a literal keeps its length, so
+    // a span found in the masked text is the same span of the code, and it
+    // is not whitespace, so a #define's value still starts where the
+    // literal does.
+    return keepLiterals ? token : token.replace(/[^\n]/g, '"');
   });
 }
-
-// `text` with every comment blanked and every literal kept; a block comment
-// keeps its newlines, so a line number still names its line.
-const stripCComments = (text) => blankC(text, true);
 
 // The integer NAME is defined as in `text` (the file `where` names), or a
 // thrown Error saying why it is not read.
 function readConst(text, name, where) {
-  if (!C_NAME.test(name)) throw new Error(`constant name \`${name}\` is not a C identifier`);
+  if (!C_NAME.test(name))
+    throw new Error(`constant name \`${name}\` is not a C identifier; refusing to look for it in ${where}`);
   const code = blankC(text, true);
   const shape = blankC(text, false);
   const definition = new RegExp(
@@ -84,11 +104,13 @@ function readConst(text, name, where) {
     throw new Error(`constant ${name} in ${where} is \`${value}\`, ` +
       `not a plain integer literal${octal}; refusing to read a number out of it`);
   }
-  const number = Number(literal[1]);
-  if (number > Number.MAX_SAFE_INTEGER)
+  // More than 16 digits is past 2^53 - 1 (16 of them) whatever they are,
+  // checked first as read_const checks it.
+  const digits = literal[1];
+  if (digits.length > 16 || Number(digits) > Number.MAX_SAFE_INTEGER)
     throw new Error(`constant ${name} in ${where} is \`${value}\`, past 2^53 - 1, ` +
       "which a browser cannot hold exactly; refusing to read it");
-  return number;
+  return Number(digits);
 }
 
-module.exports = { readConst, stripCComments };
+module.exports = { readConst };
