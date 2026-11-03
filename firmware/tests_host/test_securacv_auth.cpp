@@ -37,6 +37,21 @@
  * over stand-ins for the Host, the setup state, the SoftAP test, the tap and
  * the receipt writer.
  *
+ * Sweep F354. The flagship's BOOT tap goes to ONE asker, as the WAP's has
+ * since F342: provisioning_gate_take() reads the request's socket peer,
+ * peeks the stamp, judges it with tap_arbitrate() and takes exactly that
+ * stamp, for the receipt and for a home-LAN page load alike. Before, each
+ * took the tap for the first request from anyone. The step is cut from
+ * securacv_network.cpp with the two handlers and runs on the real gate
+ * State and TapArbiter: two LAN clients around one tap (the owner's page
+ * polling, a host curling the receipt in a loop, swept over where the tap
+ * and the host's loop fall) never get two receipts, and the host never gets
+ * one; while both ask, both hear 409 tap_contended and a page load in that
+ * window is served withheld; a lone asker whose address changes between its
+ * ask and the tap hears the 409, never a second grant; the clock is read
+ * after the stamp; the step allocates nothing; and the 409 body has the
+ * WAP's keys and error, and the WAP's words but its USB-console clause.
+ *
  * Each case drives auth_check() the way auth_gate() does, and
  * auth_bearer_grant() the way bearer_present_and_valid() does, with the
  * token auth_load_or_derive() made, and reads what the library sent.
@@ -68,6 +83,24 @@
 #if !defined(CANARY_FLAGSHIP_DIR)
 #error "build with -DCANARY_FLAGSHIP_DIR (firmware/canary, for the hand-over census)"
 #endif
+#if !defined(CANARY_WAP_INO)
+#error "build with -DCANARY_WAP_INO (canary_wap.ino, whose 409 tap_contended body the flagship's matches)"
+#endif
+
+// Every allocation the binary makes, counted, so a case can show that the
+// BOOT tap's step allocates nothing per request (sweep F354).
+static size_t g_heap_allocs = 0;
+void* operator new(size_t n) {
+  ++g_heap_allocs;
+  void* p = std::malloc(n ? n : 1);
+  if (!p) std::abort();
+  return p;
+}
+void* operator new[](size_t n) { return operator new(n); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, size_t) noexcept { std::free(p); }
+void operator delete[](void* p, size_t) noexcept { std::free(p); }
 
 using BearerResult = canary::net::auth_backoff::BearerResult;
 
@@ -588,19 +621,61 @@ static void log_health(LogLevel, LogCategory, const char*, const char* = nullptr
 static bool g_foreign = false;       // host_is_foreign()'s verdict
 static bool g_setup_active = false;  // setup_is_active()
 static bool g_on_ap = false;         // from_ap_subnet()
-static bool g_tap = false;           // an unspent BOOT tap
 static int g_receipts_sent = 0;
 
 static bool host_is_foreign(httpd_req_t*) { return g_foreign; }
 static bool setup_is_active() { return g_setup_active; }
 static bool setup_is_first_boot() { return false; }
 static bool from_ap_subnet(httpd_req_t*) { return g_on_ap; }
-static bool provisioning_gate_take() {
-  const bool open = g_tap;
-  g_tap = false;
-  return open;
-}
 static uint32_t request_peer_ipv4(httpd_req_t* req) { return req->peer; }
+
+// The BOOT tap (sweep F354): the real provisioning_gate.h State, as main.cpp
+// owns it, reached through the three hooks main.cpp registers
+// (prov_gate_peek_hook, prov_gate_take_exact_hook; the is_open hook only
+// feeds /api/status), and the network lib's own arbiter. The step that
+// judges a tap, provisioning_gate_take(), is cut from securacv_network.cpp
+// with the two handlers, so the two-asker cases below run the firmware's
+// own step on the real State. `g_peek_hook_retaps` stands in for the loop
+// task: it opens a fresh tap one millisecond on, inside the peek, so a step
+// that read the clock before the stamp would see that tap 2^32 ms old.
+typedef bool (*network_gate_fn_t)(void);
+typedef uint32_t (*network_gate_peek_fn_t)(void);
+typedef bool (*network_gate_take_exact_fn_t)(uint32_t seen);
+static canary::net::provisioning_gate::State g_gate = {0};
+static bool g_peek_hook_retaps = false;
+static uint32_t gate_peek_hook() {
+  if (g_peek_hook_retaps) {
+    g_peek_hook_retaps = false;
+    g_host_millis += 1;
+    canary::net::provisioning_gate::open(g_gate, g_host_millis);
+  }
+  return canary::net::provisioning_gate::peek(g_gate);
+}
+static bool gate_take_exact_hook(uint32_t seen) {
+  return canary::net::provisioning_gate::take_exact(g_gate, seen);
+}
+static network_gate_peek_fn_t s_gate_peek = gate_peek_hook;
+static network_gate_take_exact_fn_t s_gate_take_exact = gate_take_exact_hook;
+static canary::net::provisioning_gate::TapArbiter s_tap_arbiter = {};
+
+// The asker as the real request_peer_key() writes it off the socket: `peer`
+// as ::ffff:a.b.c.d, or `peer6` itself; false for a socket that cannot say.
+static bool request_peer_key(httpd_req_t* req,
+                             uint8_t out[canary::net::provisioning_gate::PEER_KEY_LEN]) {
+  using canary::net::provisioning_gate::AddrFamily;
+  if (req->peer_unknown) return false;
+  if (req->peer6_set) {
+    return canary::net::provisioning_gate::peer_key_from_addr(AddrFamily::IPV6, req->peer6, out);
+  }
+  const uint8_t v4[4] = {(uint8_t)(req->peer >> 24), (uint8_t)(req->peer >> 16),
+                         (uint8_t)(req->peer >> 8), (uint8_t)req->peer};
+  return canary::net::provisioning_gate::peer_key_from_addr(AddrFamily::IPV4, v4, out);
+}
+
+// The owner's short press now; whether a tap is still waiting; the gate shut.
+static void press() { canary::net::provisioning_gate::open(g_gate, g_host_millis); }
+static bool tap_waiting() { return canary::net::provisioning_gate::peek(g_gate) != 0; }
+static void unpress() { canary::net::provisioning_gate::close(g_gate); }
 static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
   g_receipts_sent++;
   httpd_resp_set_type(req, "application/json");
@@ -616,7 +691,9 @@ static void net_fresh(uint32_t now_ms) {
   g_foreign = false;
   g_setup_active = false;
   g_on_ap = false;
-  g_tap = false;
+  unpress();
+  s_tap_arbiter = canary::net::provisioning_gate::TapArbiter{};
+  g_peek_hook_retaps = false;
   g_receipts_sent = 0;
 }
 
@@ -657,9 +734,9 @@ static void the_tap_ends_the_backoff() {
   CHECK(held_for(kHostA) == 33, "A's five wrong bearers hold it 32 s (Retry-After 33)");
   strike(kHostB);
   CHECK(held_for(kHostB) == 3, "B's wrong bearer holds B");
-  g_tap = true;
+  press();
   httpd_req_t stale = from(kHostA, wrong_bearer());
-  CHECK(handle_provisioning_receipt(&stale) == ESP_OK && g_receipts_sent == 1 && !g_tap &&
+  CHECK(handle_provisioning_receipt(&stale) == ESP_OK && g_receipts_sent == 1 && !tap_waiting() &&
             stale.status == "200 OK",
         "the tap serves A the receipt, its stale bearer beside it (held, so not compared)");
   CHECK(stale.value_reads == 0, "A's stale bearer was not read: A was held");
@@ -669,16 +746,16 @@ static void the_tap_ends_the_backoff() {
   // The dashboard's wait sends no header; the tap serves it all the same.
   net_fresh(2100000);
   strikes_from(kHostA, 3);
-  g_tap = true;
+  press();
   httpd_req_t bare = from(kHostA, no_header());
-  CHECK(handle_provisioning_receipt(&bare) == ESP_OK && g_receipts_sent == 1 && !g_tap,
+  CHECK(handle_provisioning_receipt(&bare) == ESP_OK && g_receipts_sent == 1 && !tap_waiting(),
         "the tap serves A's header-less receipt fetch");
   CHECK(right_bearer_served(kHostA), "A's right bearer after a header-less tap fetch is served at once");
 
   // A stale bearer outside a backoff: its strike is counted (the grant reads
   // it before the tap), the tap serves, and the hand-over then clears it.
   net_fresh(2200000);
-  g_tap = true;
+  press();
   httpd_req_t fresh_stale = from(kHostA, wrong_bearer());
   CHECK(handle_provisioning_receipt(&fresh_stale) == ESP_OK && g_receipts_sent == 1,
         "the tap serves a stale bearer outside a backoff");
@@ -689,9 +766,9 @@ static void the_tap_ends_the_backoff() {
   net_fresh(2300000);
   strikes_from(kHostA, 4);
   strike(kHostB);
-  g_tap = true;
+  press();
   httpd_req_t page = from(kHostA, no_header());
-  CHECK(page_token_inject(&page) == PageToken::INJECT && !g_tap,
+  CHECK(page_token_inject(&page) == PageToken::INJECT && !tap_waiting(),
         "the tap hands A's page load the token and is spent");
   CHECK(right_bearer_served(kHostA), "the page's first API call with that token is served at once");
   CHECK(held_for(kHostB) == 3, "B is still held after A's page load");
@@ -708,12 +785,12 @@ static void the_tap_clears_only_its_own_slot() {
   for (uint32_t i = 0; i < 8; i++) strike(0x0A000001u + i);
   strike(kHostA);
   CHECK(held_for(kHostA) == 3, "A, untracked, is held through the overflow");
-  g_tap = true;
+  press();
   httpd_req_t bare = from(kHostA, no_header());
   CHECK(handle_provisioning_receipt(&bare) == ESP_OK && g_receipts_sent == 1,
         "the tap serves A while the overflow holds it");
   CHECK(!right_bearer_served(kHostA), "A held only through the overflow stays held after the receipt's tap");
-  g_tap = true;
+  press();
   httpd_req_t page = from(kHostA, no_header());
   CHECK(page_token_inject(&page) == PageToken::INJECT, "a tap hands A's page load the token");
   CHECK(!right_bearer_served(kHostA), "and A stays held after the page load's tap too");
@@ -728,20 +805,300 @@ static void the_tap_clears_only_its_own_slot() {
         "no tap: the receipt's 403");
   CHECK(held_for(kHostA) == 9, "the refusal cleared nothing");
   g_foreign = true;
-  g_tap = true;
+  press();
   httpd_req_t foreign = from(kHostA, no_header());
-  CHECK(handle_provisioning_receipt(&foreign) == ESP_OK && g_receipts_sent == 0 && g_tap &&
+  CHECK(handle_provisioning_receipt(&foreign) == ESP_OK && g_receipts_sent == 0 && tap_waiting() &&
             foreign.body == "{\"error\":\"host\"}",
         "a foreign Host: 403 host, the tap left unspent");
   httpd_req_t foreign_page = from(kHostA, no_header());
-  CHECK(page_token_inject(&foreign_page) == PageToken::FOREIGN_HOST && g_tap,
+  CHECK(page_token_inject(&foreign_page) == PageToken::FOREIGN_HOST && tap_waiting(),
         "a foreign Host's page load: no token, the tap left unspent");
   CHECK(held_for(kHostA) == 9, "neither foreign answer cleared anything");
   g_foreign = false;
-  g_tap = false;
+  unpress();
   httpd_req_t withheld = from(kHostA, no_header());
   CHECK(page_token_inject(&withheld) == PageToken::WITHHOLD, "no tap: the page load is withheld");
   CHECK(held_for(kHostA) == 9, "the withheld page load cleared nothing");
+}
+
+/* ── The BOOT tap's one asker on the flagship (sweep F354) ─────────────── */
+
+static httpd_req_t asker(uint32_t source) { return from(source, no_header()); }
+static httpd_req_t asker6(const uint8_t addr[16]) {
+  httpd_req_t r = no_header();
+  r.peer6_set = true;
+  std::memcpy(r.peer6, addr, 16);
+  return r;
+}
+static bool served(const httpd_req_t& r) {
+  return r.status == "200 OK" && r.body == "{\"token\":\"(the receipt)\"}";
+}
+static bool contended(const httpd_req_t& r) {
+  return r.status == "409 Conflict" && r.type == "application/json" &&
+         r.body.rfind("{\"error\":\"tap_contended\",", 0) == 0 &&
+         r.resp_headers.count("Cache-Control") == 1 && r.resp_headers.at("Cache-Control") == "no-store";
+}
+static bool no_tap(const httpd_req_t& r) {
+  return r.status == "403 Forbidden" &&
+         r.body.find("\"error\":\"physical_confirmation_required\"") != std::string::npos;
+}
+
+static constexpr uint32_t kHostC = 0xC0A80116;  // a third address on the LAN
+
+// One run of the lens's two LAN clients around one tap. A (the owner) loads
+// the dashboard at 500 ms (served withheld: no tap yet) and its banner then
+// polls the receipt every 2 s from 1000 ms; B curls the receipt every 700 ms
+// from `b0` to the end (90 s); the owner presses BOOT at `tap`. Asks at the same
+// millisecond go A first, then B. Every answer is read off the real handler.
+struct TwoAskers {
+  int receipts = 0, a_served = 0, b_served = 0;
+  int a_409 = 0, b_409 = 0, b_403_after_tap = 0;
+  uint32_t a_first_after_tap = 0;   // A's first poll at or after the tap
+  bool closed_by_first_ask = true;  // the first ask after the tap left no tap waiting
+  bool b_in_window = false;         // B asked in [tap - 10 s, A's first poll after it)
+};
+static TwoAskers two_askers(uint32_t tap, uint32_t b0) {
+  const uint32_t base = 3000000;
+  net_fresh(base);
+  TwoAskers o;
+  httpd_req_t page = asker(kHostA);
+  g_host_millis = base + 500;
+  CHECK(page_token_inject(&page) == PageToken::WITHHOLD, "A's first page load, before any tap: withheld");
+  bool tapped = false, first_after = true;
+  for (uint32_t t = 1000; t <= 90000; ++t) {
+    const bool a_now = (t - 1000) % 2000 == 0;
+    const bool b_now = t >= b0 && (t - b0) % 700 == 0;
+    if (!tapped && t >= tap) {
+      g_host_millis = base + t;
+      press();
+      tapped = true;
+    }
+    if (!a_now && !b_now) continue;
+    g_host_millis = base + t;
+    for (int who = 0; who < 2; ++who) {
+      if ((who == 0 && !a_now) || (who == 1 && !b_now)) continue;
+      httpd_req_t r = asker(who == 0 ? kHostA : kHostB);
+      const int before = g_receipts_sent;
+      handle_provisioning_receipt(&r);
+      const bool got = g_receipts_sent != before;
+      o.receipts += got ? 1 : 0;
+      if (who == 0) {
+        o.a_served += got && served(r) ? 1 : 0;
+        o.a_409 += contended(r) ? 1 : 0;
+        if (tapped && !o.a_first_after_tap) o.a_first_after_tap = t;
+      } else {
+        o.b_served += got ? 1 : 0;
+        o.b_409 += contended(r) ? 1 : 0;
+        if (tapped && no_tap(r)) o.b_403_after_tap++;
+      }
+      if (tapped && first_after) {
+        first_after = false;
+        o.closed_by_first_ask = !tap_waiting();
+      }
+    }
+  }
+  const uint32_t a1 = tap <= 1000 ? 1000 : 1000 + ((tap - 1000 + 1999) / 2000) * 2000;
+  for (uint32_t t = b0; t < a1; t += 700) {
+    if (t + 10000 >= tap) o.b_in_window = true;
+  }
+  return o;
+}
+
+/* The lens's two LAN clients (sweep F354), swept over where the tap falls
+ * between A's polls and where B's curl loop starts: before the tap's
+ * lookback, inside it, after the tap and before A's next poll, and after A
+ * was served. In every interleaving at most one receipt goes out and B gets
+ * none. While B is asking in the window (from 10 s before the tap until A's
+ * first poll after it), nothing is handed out, B hears 409 tap_contended and
+ * so does A (the banner says another device asked). Otherwise A's first poll
+ * after the tap is served, once, and every ask of B's after that is the 403:
+ * there is no tap left to take. Before F354 the first request after the tap,
+ * whoever sent it, took the receipt: B, whenever its loop fell first. */
+static void two_lan_clients_around_one_tap() {
+  std::printf("-- two LAN clients around one BOOT tap: one asker or none\n");
+  int runs = 0, contended_runs = 0, served_runs = 0;
+  for (uint32_t tap = 40100; tap < 42100; tap += 100) {
+    for (const int32_t off : {-30000, -15000, -10000, -9999, -3000, -1, 0, 1, 300, 1999, 2100, 5000}) {
+      const uint32_t b0 = (uint32_t)((int32_t)tap + off);
+      const TwoAskers o = two_askers(tap, b0);
+      ++runs;
+      char what[160];
+      std::snprintf(what, sizeof(what), "tap at %u, B from %u (A's first poll after it %u)",
+                    (unsigned)tap, (unsigned)b0, (unsigned)o.a_first_after_tap);
+      if (o.receipts > 1 || o.b_served != 0) {
+        std::printf("FAIL %s: %d receipt(s), %d to B\n", what, o.receipts, o.b_served);
+        CHECK(false, "at most one receipt per tap, and never to B");
+      }
+      if (!o.closed_by_first_ask) {
+        std::printf("FAIL %s: the first ask after the tap left it waiting\n", what);
+        CHECK(false, "the first ask after the tap takes it or closes it");
+      }
+      if (o.b_in_window) {
+        ++contended_runs;
+        if (o.receipts != 0 || o.b_409 == 0 || o.a_409 == 0) {
+          std::printf("FAIL %s: %d receipt(s), B heard %d 409(s), A %d\n", what, o.receipts, o.b_409, o.a_409);
+          CHECK(false, "B asking in the window: nothing handed out, and both hear 409 tap_contended");
+        }
+      } else {
+        ++served_runs;
+        if (o.receipts != 1 || o.a_served != 1 || o.b_409 != 0 || o.b_403_after_tap == 0) {
+          std::printf("FAIL %s: %d receipt(s), A served %d, B heard %d 409(s) and %d 403(s)\n", what,
+                      o.receipts, o.a_served, o.b_409, o.b_403_after_tap);
+          CHECK(false, "B quiet in the window: A's first poll after the tap is served once, and B hears 403");
+        }
+      }
+    }
+  }
+  std::printf("     %d runs: %d with B in the window (none served), %d with A alone (A served once)\n",
+              runs, contended_runs, served_runs);
+  CHECK(runs == 240 && contended_runs > 0 && served_runs > 0,
+        "the sweep reached both outcomes, and no run served two receipts or served B");
+}
+
+/* A page load in the contended window cannot take the token. A's page polls,
+ * B curls, the tap lands: a page load right after it (C's, B's or A's own
+ * reload) is an ask to the same arbiter, so it is CONTENDED and served
+ * withheld, and it is that ask that closes the tap; the receipt asks after
+ * it hear 409. With B quiet, A's reload right after the tap is A's to take,
+ * once: its page is served the token and the tap is spent. */
+static void a_page_load_in_the_window_is_withheld() {
+  std::printf("-- a page load while two addresses ask is withheld\n");
+  for (const uint32_t loader : {kHostC, kHostB, kHostA}) {
+    net_fresh(4000000);
+    httpd_req_t a0 = asker(kHostA);
+    handle_provisioning_receipt(&a0);
+    g_host_millis += 700;
+    httpd_req_t b0 = asker(kHostB);
+    handle_provisioning_receipt(&b0);
+    CHECK(no_tap(a0) && no_tap(b0), "before the tap both asks are the 403");
+    g_host_millis += 600;
+    press();
+    g_host_millis += 50;
+    httpd_req_t page = asker(loader);
+    CHECK(page_token_inject(&page) == PageToken::WITHHOLD && !tap_waiting() && g_receipts_sent == 0,
+          "a page load right after the tap, beside two askers: withheld, and the tap closed");
+    g_host_millis += 400;
+    httpd_req_t b1 = asker(kHostB);
+    handle_provisioning_receipt(&b1);
+    g_host_millis += 1200;
+    httpd_req_t a1 = asker(kHostA);
+    handle_provisioning_receipt(&a1);
+    CHECK(contended(b1) && contended(a1) && g_receipts_sent == 0,
+          "the receipt asks after it: 409 tap_contended for B and for A, nothing handed out");
+    httpd_req_t reload = asker(kHostA);
+    CHECK(page_token_inject(&reload) == PageToken::WITHHOLD, "and A's reload in the window is withheld too");
+  }
+  net_fresh(4100000);
+  httpd_req_t a0 = asker(kHostA);
+  handle_provisioning_receipt(&a0);
+  g_host_millis += 1500;
+  press();
+  g_host_millis += 200;
+  httpd_req_t reload = asker(kHostA);
+  CHECK(page_token_inject(&reload) == PageToken::INJECT && !tap_waiting(),
+        "A alone: its reload after the tap takes it, once");
+  g_host_millis += 500;
+  httpd_req_t again = asker(kHostA);
+  CHECK(page_token_inject(&again) == PageToken::WITHHOLD, "a second reload finds no tap");
+  httpd_req_t kit = asker(kHostA);
+  CHECK(handle_provisioning_receipt(&kit) == ESP_OK && no_tap(kit) && g_receipts_sent == 0,
+        "and a receipt fetch without the token finds none either: one tap, one consumer");
+}
+
+/* A lone asker whose address changes between its ask and the tap (a
+ * browser on an IPv6 temporary address, or a second tab on another
+ * interface) is two addresses to the arbiter: the tap is closed and both
+ * hear the 409 whose hint says to start the request first and keep it
+ * asking, never a silent second grant. The 409 ends once the first address
+ * has been quiet for the lookback (403 again: the closed tap stays closed),
+ * and a press with one address asking then serves that address, once; the
+ * other address after it hears the 403. */
+static void a_lone_asker_on_two_addresses_hears_the_409() {
+  std::printf("-- one owner on two addresses: the 409, never a second grant\n");
+  static const uint8_t kTemp6[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
+                                     0x5c, 0x31, 0x9a, 0x02, 0x7e, 0x11, 0x40, 0x0b};
+  net_fresh(5000000);
+  httpd_req_t v4 = asker(kHostA);
+  handle_provisioning_receipt(&v4);
+  CHECK(no_tap(v4), "the owner asks from its IPv4 address: 403, no tap yet");
+  g_host_millis += 1000;
+  press();
+  g_host_millis += 1000;
+  httpd_req_t v6 = asker6(kTemp6);
+  handle_provisioning_receipt(&v6);
+  CHECK(contended(v6) && !tap_waiting() && g_receipts_sent == 0,
+        "its next ask from an IPv6 temporary address: 409 tap_contended, the tap closed");
+  CHECK(v6.body.find("start your request first and keep it asking, then press BOOT") != std::string::npos,
+        "the 409 says what to do: start the request first and keep it asking, then press BOOT");
+  g_host_millis += 2000;
+  httpd_req_t v4b = asker(kHostA);
+  handle_provisioning_receipt(&v4b);
+  CHECK(contended(v4b) && g_receipts_sent == 0, "the IPv4 address hears the 409 too");
+  g_host_millis += 10001;
+  httpd_req_t v6b = asker6(kTemp6);
+  handle_provisioning_receipt(&v6b);
+  CHECK(no_tap(v6b) && g_receipts_sent == 0,
+        "the IPv4 address quiet for 10 s: the IPv6 one hears 403, and the closed tap stays closed");
+  g_host_millis += 2000;
+  press();
+  g_host_millis += 1000;
+  httpd_req_t v6c = asker6(kTemp6);
+  handle_provisioning_receipt(&v6c);
+  CHECK(served(v6c) && g_receipts_sent == 1, "a press with only the IPv6 address asking: served, once");
+  g_host_millis += 500;
+  httpd_req_t v4c = asker(kHostA);
+  handle_provisioning_receipt(&v4c);
+  CHECK(no_tap(v4c) && g_receipts_sent == 1, "the IPv4 address after it: 403, no second receipt");
+  httpd_req_t page = asker(kHostA);
+  CHECK(page_token_inject(&page) == PageToken::WITHHOLD && g_receipts_sent == 1,
+        "and its page load: withheld, no second grant through the page");
+}
+
+/* The step reads the stamp, then the clock. A tap the loop task stores just
+ * before the peek is judged at a clock read after it, so it is fresh and
+ * served; a step that read the clock first would see that tap 2^32 ms old,
+ * call it expired and burn it. A socket that cannot say who asked is
+ * refused with the tap left for the next asker. And the step allocates
+ * nothing: the arbiter is a static, the peer key a stack array. */
+static void the_tap_step_reads_the_stamp_first_and_allocates_nothing() {
+  std::printf("-- the tap step: stamp before clock, an unnamed peer refused, no heap\n");
+  net_fresh(6000000);
+  httpd_req_t a0 = asker(kHostA);
+  handle_provisioning_receipt(&a0);
+  g_host_millis += 2000;
+  g_peek_hook_retaps = true;
+  httpd_req_t a1 = asker(kHostA);
+  handle_provisioning_receipt(&a1);
+  CHECK(served(a1) && g_receipts_sent == 1,
+        "a tap stored a millisecond before the peek is fresh to the step: served");
+
+  net_fresh(6100000);
+  press();
+  httpd_req_t unknown = asker(kHostA);
+  unknown.peer_unknown = true;
+  handle_provisioning_receipt(&unknown);
+  CHECK(no_tap(unknown) && tap_waiting() && g_receipts_sent == 0,
+        "a socket that cannot say who asked: 403, the tap left waiting");
+  httpd_req_t unknown_page = asker(kHostA);
+  unknown_page.peer_unknown = true;
+  CHECK(page_token_inject(&unknown_page) == PageToken::WITHHOLD && tap_waiting(),
+        "and its page load: withheld, the tap left waiting");
+  httpd_req_t named = asker(kHostA);
+  handle_provisioning_receipt(&named);
+  CHECK(served(named) && !tap_waiting(), "the next asker the socket names takes it");
+
+  net_fresh(6200000);
+  httpd_req_t reqs[3] = {asker(kHostA), asker(kHostB), asker(kHostC)};
+  canary::net::provisioning_gate::TapVerdict v = canary::net::provisioning_gate::TapVerdict::NO_TAP;
+  const size_t before = g_heap_allocs;
+  int takes = 0;
+  for (int i = 0; i < 300; ++i) {
+    if (i % 50 == 0) press();
+    g_host_millis += 37;
+    takes += provisioning_gate_take(&reqs[i % 3], &v) ? 1 : 0;
+  }
+  CHECK(g_heap_allocs == before, "300 asks through the tap step: no allocation");
+  CHECK(takes == 1, "three addresses asking in turn: only the first ask, before any other asked, takes a tap");
 }
 
 /* ── securacv_network.cpp's wiring (text pins) ────────────────────────── */
@@ -942,6 +1299,86 @@ static void the_tap_paths_call_the_hand_over() {
         "securacv_network.cpp calls auth_handed_token()");
 }
 
+// A flat JSON object of string values, as both trees' refusals are: its
+// keys and values in order, unescaped; empty when it is not that shape.
+static std::vector<std::pair<std::string, std::string>> flat_json(const std::string& j) {
+  std::vector<std::pair<std::string, std::string>> out;
+  size_t i = 0;
+  auto str = [&](std::string* v) {
+    if (i >= j.size() || j[i] != '"') return false;
+    for (++i; i < j.size() && j[i] != '"'; ++i) {
+      if (j[i] == '\\' && i + 1 < j.size()) ++i;
+      *v += j[i];
+    }
+    return i++ < j.size();
+  };
+  if (j.empty() || j[i++] != '{') return {};
+  while (i < j.size()) {
+    std::string k, v;
+    if (!str(&k) || i >= j.size() || j[i++] != ':' || !str(&v)) return {};
+    out.emplace_back(k, v);
+    if (i < j.size() && j[i] == ',') { ++i; continue; }
+    if (i + 1 == j.size() && j[i] == '}') return out;
+    return {};
+  }
+  return {};
+}
+
+// The WAP's 409 tap_contended body as its handler writes it: the one C
+// string literal in canary_wap.ino that starts {"error":"tap_contended",
+// unescaped. "" unless there is exactly one.
+static std::string wap_contended_body() {
+  const std::string ino = read_file(CANARY_WAP_INO);
+  const std::string open = "\"{\\\"error\\\":\\\"tap_contended\\\",";
+  const size_t at = ino.find(open);
+  if (at == std::string::npos || ino.find(open, at + 1) != std::string::npos) return "";
+  std::string out;
+  for (size_t i = at + 1; i < ino.size() && ino[i] != '"'; ++i) {
+    if (ino[i] == '\\' && i + 1 < ino.size()) ++i;
+    out += ino[i];
+  }
+  return out;
+}
+
+/* The 409 the flagship sends is the WAP's to its parser (sweep F354): the
+ * same keys in the same order, the same error, and the WAP's hint but its
+ * last clause, which sends the reader to the USB serial console for the
+ * token. The WAP prints it there; the flagship's console prints it
+ * redacted, so on this tree that clause would be false. */
+static void the_409_body_is_the_waps() {
+  std::printf("-- the 409 tap_contended body beside the WAP's\n");
+  const std::string wap = wap_contended_body();
+  CHECK(!wap.empty(), "canary_wap.ino holds one {\"error\":\"tap_contended\" literal");
+  net_fresh(7000000);
+  httpd_req_t a0 = asker(kHostA);
+  handle_provisioning_receipt(&a0);
+  g_host_millis += 500;
+  press();
+  g_host_millis += 500;
+  httpd_req_t b = asker(kHostB);
+  handle_provisioning_receipt(&b);
+  CHECK(contended(b), "B's ask beside A's: the 409");
+  const auto mine = flat_json(b.body);
+  const auto theirs = flat_json(wap);
+  CHECK(mine.size() == 2 && theirs.size() == 2, "both bodies are a flat object of two strings");
+  if (mine.size() == 2 && theirs.size() == 2) {
+    CHECK(mine[0].first == theirs[0].first && mine[1].first == theirs[1].first &&
+              mine[0].first == "error" && mine[1].first == "hint",
+          "the same keys, in the same order: error, hint");
+    CHECK(mine[0].second == "tap_contended" && theirs[0].second == "tap_contended",
+          "the same error: tap_contended");
+    const std::string console = ", or read the token from the USB serial console.";
+    std::string expect = theirs[1].second;
+    const size_t c = expect.rfind(console);
+    CHECK(c != std::string::npos && c + console.size() == expect.size(),
+          "the WAP's hint ends with its USB-console clause");
+    if (c != std::string::npos) expect = expect.substr(0, c) + ".";
+    CHECK(mine[1].second == expect, "the flagship's hint is the WAP's without that clause, byte for byte");
+    CHECK(b.body.find("serial console") == std::string::npos,
+          "and never sends the reader to the console, which prints the token redacted");
+  }
+}
+
 int main() {
   const uint8_t key[32] = {1};
   CHECK(auth_load_or_derive(key) && std::strlen(token()) == 35,
@@ -961,6 +1398,11 @@ int main() {
   handed_token_frees_only_its_source();
   the_tap_ends_the_backoff();
   the_tap_clears_only_its_own_slot();
+  two_lan_clients_around_one_tap();
+  a_page_load_in_the_window_is_withheld();
+  a_lone_asker_on_two_addresses_hears_the_409();
+  the_tap_step_reads_the_stamp_first_and_allocates_nothing();
+  the_409_body_is_the_waps();
   the_network_layer_passes_the_source();
   the_tap_paths_call_the_hand_over();
 

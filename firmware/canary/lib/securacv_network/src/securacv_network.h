@@ -304,15 +304,23 @@ esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_c
 // ════════════════════════════════════════════════════════════════════════════
 // The physical-presence gate (firmware/common/network/provisioning_gate.h)
 // is owned by main.cpp, which owns the BOOT button. The network lib reaches
-// it through this hook pair: `take` consumes the tap — the receipt handler
-// and the page handlers both take it, so one tap is one consumer (one
-// home-LAN page load or one receipt fetch, whichever asks first). `is_open`
-// only peeks and grants nothing; /api/status uses the pair to report that
-// the button is wired. Both read as "closed" until
-// main.cpp registers them, so a build that never wires the button fails
-// closed: the receipt answers 403 and the page token is withheld off-AP.
+// it through these three hooks. `peek` reads the tap's stamp (0 = closed)
+// and consumes nothing; the lib judges that stamp with tap_arbitrate() for
+// the request's socket peer, then `take_exact` consumes exactly the stamp it
+// judged (one compare-and-swap, so a re-tap or the loop task's expiry sweep
+// between the two is never consumed unjudged). The receipt handler and the
+// page handlers ask that one arbiter, so a tap goes to one asking address
+// (its page load or its receipt fetch), and a second address asking in the
+// window closes it (sweep F354). `is_open` only peeks and grants nothing;
+// /api/status uses the hooks to report that the button is wired. All read
+// as "closed" until main.cpp registers them, so a build that never wires the
+// button fails closed: the receipt answers 403 and the page token is
+// withheld off-AP.
 typedef bool (*network_gate_fn_t)(void);
-void network_set_provisioning_gate_hooks(network_gate_fn_t take,
+typedef uint32_t (*network_gate_peek_fn_t)(void);
+typedef bool (*network_gate_take_exact_fn_t)(uint32_t seen);
+void network_set_provisioning_gate_hooks(network_gate_peek_fn_t peek,
+                                         network_gate_take_exact_fn_t take_exact,
                                          network_gate_fn_t is_open);
 
 // ════════════════════════════════════════════════════════════════════════════

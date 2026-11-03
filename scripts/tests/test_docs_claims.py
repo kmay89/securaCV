@@ -3875,20 +3875,22 @@ MUST_PASS_IN = [
      "| `secure` / `secure_ha` | the provisioning kit's Tier 3/4 image: it refuses to store or load the identity key unless NVS is encrypted, which no board is under `framework ="),
     ('firmware/common/network/provisioning_gate.h',
      '// BOOT tap — which the page load then SPENDS (page_token_decide). On the\n'
-     '// flagship, the one tree that serves a page by the tap, the tap is one\n'
-     '// consumer across both paths: one page load or one receipt fetch, whichever\n'
-     "// asks first (the ledger's F354). The WAP serves no page by the tap, and its\n"
-     "// receipt's tap goes to one asker (tap_arbitrate() below). A page that got\n"
-     '// the token already holds the bearer, so its "Save recovery kit" fetch\n'
-     '// needs no second tap.'),
+     '// flagship, the one tree that serves a page by the tap, both paths ask one\n'
+     '// TapArbiter: the tap goes to one asking address, whether its page load or\n'
+     '// its receipt fetch takes it, and a second address asking in the window\n'
+     '// closes it for both (tap_arbitrate() below, sweep F354). The WAP serves no\n'
+     "// page by the tap, and its receipt's tap goes to one asker the same way. A\n"
+     '// page that got the token already holds the bearer, so its "Save recovery\n'
+     '// kit" fetch needs no second tap.'),
     ('firmware/projects/canary-wap/arduino/canary_wap/provisioning_gate.h',
      '// BOOT tap — which the page load then SPENDS (page_token_decide). On the\n'
-     '// flagship, the one tree that serves a page by the tap, the tap is one\n'
-     '// consumer across both paths: one page load or one receipt fetch, whichever\n'
-     "// asks first (the ledger's F354). The WAP serves no page by the tap, and its\n"
-     "// receipt's tap goes to one asker (tap_arbitrate() below). A page that got\n"
-     '// the token already holds the bearer, so its "Save recovery kit" fetch\n'
-     '// needs no second tap.'),
+     '// flagship, the one tree that serves a page by the tap, both paths ask one\n'
+     '// TapArbiter: the tap goes to one asking address, whether its page load or\n'
+     '// its receipt fetch takes it, and a second address asking in the window\n'
+     '// closes it for both (tap_arbitrate() below, sweep F354). The WAP serves no\n'
+     "// page by the tap, and its receipt's tap goes to one asker the same way. A\n"
+     '// page that got the token already holds the bearer, so its "Save recovery\n'
+     '// kit" fetch needs no second tap.'),
     ('canary-vision/spa/app.js',
      "// body's gate_ttl_seconds), so a press anywhere in our 60 s window lands\n"
      '// while this page is the only one asking (a WAP answers 409 tap_contended\n'

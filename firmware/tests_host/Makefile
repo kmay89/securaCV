@@ -192,6 +192,7 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # gate is this header's State.
 PROVGATE_HDR = ../common/network/provisioning_gate.h
 PROVGATE_MAIN = ../canary/src/main.cpp
+PROVGATE_WAP_INO = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
 PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 
 # Improv Wi-Fi over BLE, the pure half (common/network/improv_core.h): the
@@ -576,8 +577,12 @@ CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
 # handle_provisioning_receipt(), with bearer_present_and_valid() and
 # send_host_refusal() they call, are cut verbatim out of securacv_network.cpp
 # by cut_functions.awk (SECAUTH_NET_INC) and driven over stand-ins for the
-# Host, the setup state, the SoftAP test, the tap and the receipt writer, on
-# the real AuthManager and the real provisioning_gate.h decisions.
+# Host, the setup state, the SoftAP test, the socket's peer and the receipt
+# writer, on the real AuthManager and the real provisioning_gate.h decisions.
+# The BOOT tap's step, provisioning_gate_take(), is cut with them and runs on
+# the real gate State and TapArbiter (sweep F354): two askers around one
+# tap, a lone asker whose address changes, and the 409 body, read beside the
+# WAP's handler in canary_wap.ino (SECAUTH_WAP_INO) for its keys and words.
 SECAUTH_SRC   = ../canary/lib/securacv_auth/src/securacv_auth.cpp
 SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
                 ../canary/include/canary_config.h \
@@ -586,10 +591,11 @@ SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
                 ../common/network/provisioning_gate.h \
                 $(wildcard stubs/securacv_auth/*.h)
 SECAUTH_READS = ../canary/lib/securacv_network/src/securacv_network.cpp
+SECAUTH_WAP_INO = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
 SECAUTH_BIN   = $(BUILD_DIR)/test_securacv_auth
 SECAUTH_INCS  = -I stubs/securacv_auth -I ../canary/lib/securacv_auth/src \
                 -I ../canary/include -I ../common
-SECAUTH_NET_SIGS = static void send_host_refusal(httpd_req_t* req) {|static bool bearer_present_and_valid(httpd_req_t* req) {|static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
+SECAUTH_NET_SIGS = static void send_host_refusal(httpd_req_t* req) {|static bool bearer_present_and_valid(httpd_req_t* req) {|static bool provisioning_gate_take(httpd_req_t* req,|static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 SECAUTH_NET_INC  = $(BUILD_DIR)/secauth_network.inc
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
@@ -1127,8 +1133,9 @@ $(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
 $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
 
-$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -DCANARY_MAIN_CPP='"$(abspath $(PROVGATE_MAIN))"' -o $@ test_provisioning_gate.cpp
+$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) $(PROVGATE_WAP_INO) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCANARY_MAIN_CPP='"$(abspath $(PROVGATE_MAIN))"' \
+	    -DCANARY_WAP_INO='"$(abspath $(PROVGATE_WAP_INO))"' -o $@ test_provisioning_gate.cpp
 
 $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_improv_core.cpp
@@ -1265,9 +1272,10 @@ $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUI
 $(SECAUTH_NET_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(SECAUTH_NET_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
 
-$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
+$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_WAP_INO) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) $(SECAUTH_INCS) \
 	    -DCANARY_NETWORK_CPP='"$(abspath $(SECAUTH_READS))"' \
+	    -DCANARY_WAP_INO='"$(abspath $(SECAUTH_WAP_INO))"' \
 	    -DCANARY_FLAGSHIP_DIR='"$(abspath ../canary)"' \
 	    -DSECAUTH_NET_INC='"$(abspath $(SECAUTH_NET_INC))"' \
 	    test_securacv_auth.cpp $(SECAUTH_SRC) -o $@)
