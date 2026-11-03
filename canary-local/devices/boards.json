@@ -247,7 +247,7 @@
      "label": "GNSS UART",
      "pin": "D6 / D7",
      "gpio": "GPIO43 / GPIO44",
-     "use": "L76K TX/RX @ 9600 (FEATURE_GNSS)",
+     "use": "L76K TX/RX @ 9600 (no build flag: the WAP opens this UART at every boot and probes for the module; safe mode skips the probe)",
      "anchors": [
       [
        9.36,
