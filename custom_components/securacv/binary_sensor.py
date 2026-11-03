@@ -81,6 +81,7 @@ from . import (
     valid_device_id,
 )
 from .voice import json_status_online, status_online
+from .mqtt_payload import CreatingEcho, creating_payload
 from .health_metrics import (
     canary_sd_replace_recommended,
     event_id_space_low,
@@ -308,11 +309,15 @@ async def _setup_mqtt_binary_sensors(
         # other consumer) sees the standard device classes rather than a
         # template built by hand in someone's YAML — see
         # docs/integrations/apple-home-homekit-bridge.md.
+        # The events publish that creates them is handed to both (HA44):
+        # they subscribe after it is delivered and events are not retained,
+        # so an event that asserts a signal would otherwise go unseen.
         if topic_type == TOPIC_EVENTS and "presence_sensors" not in entities_added[device_id]:
             entities_added[device_id].add("presence_sensors")
+            initial = creating_payload(msg)
             new_entities.extend([
-                SecuraCVCanaryMotionSensor(prefix, device_id, entry),
-                SecuraCVCanaryOccupancySensor(prefix, device_id, entry),
+                SecuraCVCanaryMotionSensor(prefix, device_id, entry, initial_payload=initial),
+                SecuraCVCanaryOccupancySensor(prefix, device_id, entry, initial_payload=initial),
             ])
 
         # Mesh network connected sensor
@@ -1090,15 +1095,27 @@ class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
     assertion stamps the device's current trust view into the attributes so
     downstream consumers can see "verified: false" instead of a laundered
     signal.
+
+    The events publish that creates the sensor is applied too (HA44): the
+    discovery callback hands it over when it was not a retained copy, and
+    async_added_to_hass applies it once, after the events subscribe, through
+    the same ``_apply_event`` a delivery takes, then drops it. The broker's
+    retained copy of that same publish, if it kept one, is recognized and
+    not applied a second time (mqtt_payload.CreatingEcho), so one event arms
+    the hold window once.
     """
 
     _signal: str = ""
+    # A class default, so an instance built without __init__ reads as
+    # handed nothing.
+    _initial: CreatingEcho | None = None
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry,
-                 key: str) -> None:
+                 key: str, *, initial_payload: dict[str, _Any] | None = None) -> None:
         super().__init__(prefix, device_id, entry, key)
         self._attr_is_on = False
         self._cancel_clear: Callable[[], None] | None = None
+        self._initial = CreatingEcho(initial_payload)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to the events topic; release the subscription on removal."""
@@ -1110,6 +1127,8 @@ class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
                 self._handle_event,
             )
         )
+        if self._initial is not None and (data := self._initial.take()) is not None:
+            self._apply_event(data)
 
     @callback
     def _handle_event(self, msg: mqtt.ReceiveMessage) -> None:
@@ -1117,6 +1136,13 @@ class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
         data = parse_mqtt_json(msg.payload)
         if data is None:
             return
+        if self._initial is not None and self._initial.is_echo(msg, data):
+            return
+        self._apply_event(data)
+
+    @callback
+    def _apply_event(self, data: dict[str, _Any]) -> None:
+        """One events body: the subscription's and the creating publish's."""
         event_type = data.get("event_type", data.get("type", data.get("event", "")))
         if self._signal not in homekit_signals_for_event(str(event_type)):
             return
@@ -1171,8 +1197,9 @@ class SecuraCVCanaryMotionSensor(SecuraCVCanaryProjectedSensorBase):
     _attr_device_class = BinarySensorDeviceClass.MOTION
     _signal = "motion"
 
-    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
-        super().__init__(prefix, device_id, entry, "motion")
+    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry, *,
+                 initial_payload: dict[str, _Any] | None = None) -> None:
+        super().__init__(prefix, device_id, entry, "motion", initial_payload=initial_payload)
 
 
 class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
@@ -1188,8 +1215,9 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
     _signal = "occupancy"
 
-    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
-        super().__init__(prefix, device_id, entry, "occupancy")
+    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry, *,
+                 initial_payload: dict[str, _Any] | None = None) -> None:
+        super().__init__(prefix, device_id, entry, "occupancy", initial_payload=initial_payload)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to events and to the retained state snapshot."""

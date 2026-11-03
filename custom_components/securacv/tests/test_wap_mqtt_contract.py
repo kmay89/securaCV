@@ -96,6 +96,7 @@ from ..const import (  # noqa: E402
     CRITICAL_MEMORY_THRESHOLD_BYTES,
     CONF_MQTT_PREFIX,
     CONF_SETUP_MODE,
+    HOMEKIT_MOTION_HOLD_SECONDS,
     SETUP_MODE_MQTT,
 )
 from ..device_trust import PIN_SOURCE_TOFU, fingerprint_from_pubkey_hex  # noqa: E402
@@ -343,13 +344,20 @@ class _Broker:
 
 
 class _Wap:
-    """The integration, set up in MQTT mode, with a canary-wap's record replayed."""
+    """The integration, set up in MQTT mode, with a canary-wap's record replayed.
 
-    def __init__(self, record: dict[str, Any], monkeypatch) -> None:
+    `retained` seeds the broker before the integration subscribes: what a
+    broker holds when Home Assistant starts after the device published.
+    """
+
+    def __init__(
+        self, record: dict[str, Any], monkeypatch, retained: dict[str, str] | None = None
+    ) -> None:
         self.record = record
         self.hass = _Hass()
         self.hass.data = {}
         self.broker = _Broker(self.hass)
+        self.broker.retained.update(retained or {})
         monkeypatch.setattr(MQTT_STUB, "async_subscribe", self.broker.async_subscribe)
         self.entry = make_entry(
             data={
@@ -376,8 +384,8 @@ class _Wap:
         self.broker.publish(will["topic"], will["payload"], will["retain"])
         return self
 
-    def entity(self, key: str) -> Any:
-        uid = f"securacv_canary_{self.record['device_id']}_{key}"
+    def entity(self, key: str, device_id: str | None = None) -> Any:
+        uid = f"securacv_canary_{device_id or self.record['device_id']}_{key}"
         found = [e for e in self.broker.entities if e.unique_id == uid]
         assert len(found) <= 1, f"two entities with unique id {uid}"
         return found[0] if found else None
@@ -859,6 +867,144 @@ def test_python_yml_runs_this_suite_on_each_file_the_harness_compiles(record):
     )
 
 
+# ─── the publish that creates an entity (HA44) ─────────────────────────
+
+
+class _Deliveries:
+    """What reaches the voice brief and the hold-window timers: every
+    _record_last_event call Last Event makes, and every hold window the
+    projected sensors arm (async_call_later)."""
+
+    def __init__(self, monkeypatch) -> None:
+        sensor = importlib.import_module("..sensor", __package__)
+        binary_sensor = importlib.import_module("..binary_sensor", __package__)
+        self.recorded: list[tuple[str, Any]] = []
+        self.armed: list[float] = []
+        record_last_event = sensor._record_last_event
+
+        def _record(hass, entry, device_id, event_type) -> None:
+            self.recorded.append((device_id, event_type))
+            record_last_event(hass, entry, device_id, event_type)
+
+        def _call_later(hass, delay, action):
+            self.armed.append(delay)
+            return lambda: None
+
+        monkeypatch.setattr(sensor, "_record_last_event", _record)
+        monkeypatch.setattr(binary_sensor, "async_call_later", _call_later)
+
+
+def test_the_first_event_is_shown_by_the_entity_it_creates(record, monkeypatch):
+    """Sweep HA44: the canary-wap's events are not retained, and the first
+    one creates Last Event, which subscribes after that delivery. It is
+    handed the body and shows it through the path every publish takes: the
+    signature verifies, the voice brief records it once, and the replay
+    gate's mark is the creating event's, so the backfilled row (an older
+    event_id) is refused as a replay rather than shown as the latest."""
+    seen = _Deliveries(monkeypatch)
+    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    sent = _one(record, "running", "events")
+    device = record["device_id"]
+    last = wap.entity("last_event")
+    assert last is not None, "the first events publish creates Last Event"
+    assert _value(last, "native_value") == sent["state"]
+    assert _attrs(last)["verified"] is True
+    assert seen.recorded == [(device, sent["state"])]
+
+    backfill = _one(record, "backfill", "events")
+    assert backfill["event_id"] < sent["event_id"], "the backfilled row is older"
+    wap.replay("backfill")
+    assert _value(last, "native_value") == sent["state"]
+    assert _attrs(last)["trust_reason"] == "replay"
+    assert seen.recorded == [(device, sent["state"])]
+
+    # Added again (the core re-adds an entity on a registry change): the
+    # creating body was dropped after use, so nothing is replayed.
+    writes = last.writes
+    run(last.async_added_to_hass())
+    wap.broker.pump()
+    assert seen.recorded == [(device, sent["state"])]
+    assert last.writes == writes
+
+
+# A Canary whose events carry the dictionary's vocabulary: a canary-wap's
+# presence words map to no Apple Home signal (handed up, HA47), so the
+# creating publish that asserts one is this one's.
+_PORCH = "porch01"
+_SIGNALS = {"motion": "BoundaryCrossingObjectLarge", "occupancy": "PresenceInRestrictedZone"}
+
+
+def _porch_event(event_type: str, event_id: int = 41) -> str:
+    return json.dumps(
+        {
+            "event_id": event_id,
+            "event_type": event_type,
+            "timestamp": 3600,
+            "zone": "porch",
+            "confidence": "likely",
+            "signed": False,
+        }
+    )
+
+
+@pytest.mark.parametrize("key", sorted(_SIGNALS))
+@pytest.mark.parametrize("delivery", ["live", "live_and_retained", "retained_at_startup"])
+def test_the_creating_event_is_applied_once(record, monkeypatch, key, delivery):
+    """The event that creates Last Event, Motion and Occupancy moves each of
+    them once, however the broker delivers it:
+
+      * live, not retained (the canary-wap's events): the discovery callback
+        hands the body over and each entity applies it after its subscribe;
+      * live, and retained by the broker too: handed over the same way, and
+        the broker's retained copy to the entities' fresh subscriptions is
+        that same publish, recognized and not applied again (the replay gate
+        passes an equal counter by design, and this body is unsigned, so
+        nothing else would stop it);
+      * retained when Home Assistant starts: the discovery callback sees a
+        retained copy and hands nothing over; the entities' own
+        subscriptions get the broker's copy, once each.
+    """
+    seen = _Deliveries(monkeypatch)
+    topic = f"{record['prefix']}/{_PORCH}/events"
+    body = _porch_event(_SIGNALS[key])
+    if delivery == "retained_at_startup":
+        wap = _Wap(record, monkeypatch, retained={topic: body})
+    else:
+        wap = _Wap(record, monkeypatch)
+        wap.broker.publish(topic, body, delivery == "live_and_retained")
+    other = ({"motion", "occupancy"} - {key}).pop()
+    assert _value(wap.entity(key, _PORCH), "is_on") is True
+    assert _value(wap.entity(other, _PORCH), "is_on") is False
+    assert _attrs(wap.entity(key, _PORCH))["verified"] is False, "an unsigned event says so"
+    assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS], "one event arms one hold window"
+    assert _value(wap.entity("last_event", _PORCH), "native_value") == _SIGNALS[key]
+    assert seen.recorded == [(_PORCH, _SIGNALS[key])]
+
+    # The next event takes the ordinary path, whatever came first.
+    wap.broker.publish(topic, _porch_event(_SIGNALS[key], 42), False)
+    assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS] * 2
+    assert seen.recorded == [(_PORCH, _SIGNALS[key])] * 2
+
+
+@pytest.mark.parametrize("key", sorted(_SIGNALS))
+def test_a_creating_event_is_not_applied_again_when_the_entity_is_added_again(
+    record, monkeypatch, key
+):
+    """The creating body is dropped once applied: a second async_added_to_hass
+    (the core re-adds an entity on a registry change) subscribes again and
+    re-arms nothing, and records nothing."""
+    seen = _Deliveries(monkeypatch)
+    wap = _Wap(record, monkeypatch)
+    wap.broker.publish(f"{record['prefix']}/{_PORCH}/events", _porch_event(_SIGNALS[key]), False)
+    assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS]
+    assert len(seen.recorded) == 1
+    for entity_key in ("last_event", "motion", "occupancy"):
+        run(wap.entity(entity_key, _PORCH).async_added_to_hass())
+    wap.broker.pump()
+    assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS]
+    assert len(seen.recorded) == 1
+
+
 # ─── Memory Critical (HA48) ────────────────────────────────────────────
 
 
@@ -910,21 +1056,6 @@ def test_memory_critical_stays_off_on_a_health_without_a_memory_reading(record, 
 
 
 # ─── what the record shows is wrong today ──────────────────────────────
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="handed up (#1836): the first events publish creates Last Event and is not "
-    "shown by it; events are not retained, and the entity subscribes after the delivery",
-)
-def test_the_first_event_is_shown_by_the_entity_it_creates(record, monkeypatch):
-    wap = _Wap(record, monkeypatch).replay("connect", "running")
-    sent = _one(record, "running", "events")
-    last = wap.entity("last_event")
-    _require(last is not None, "the first events publish creates Last Event")
-    assert _value(last, "native_value") == sent["state"]
-    assert _attrs(last)["verified"] is True
 
 
 @pytest.mark.xfail(
@@ -1016,6 +1147,7 @@ def test_a_wap_presence_event_asserts_motion_and_occupancy(record, monkeypatch, 
         if pub["topic"] == _topic(record, "events")
     ]
     _require(json.loads(sent)["state"] == "active", "the running phase's event is active")
-    # Delivered again now that the entity exists (the first one created it).
+    # Delivered again: the first one created the entity and was applied by it
+    # too (HA44), and a WAP word asserts nothing on either delivery.
     wap.broker.publish(_topic(record, "events"), sent, False)
     assert _value(ent, "is_on") is True

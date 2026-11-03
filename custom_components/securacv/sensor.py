@@ -55,6 +55,7 @@ from . import (
     valid_device_id,
 )
 from .device_trust import TrustVerdict
+from .mqtt_payload import CreatingEcho, creating_payload
 from .voice import record_canary_event
 from .watch_runtime import async_observe_event
 from .health_metrics import (
@@ -450,8 +451,15 @@ async def _setup_mqtt_sensors(
 
         if topic_type == TOPIC_EVENTS and "events" not in entities_added[device_id]:
             entities_added[device_id].add("events")
+            # The publish that creates Last Event is delivered before the
+            # entity subscribes, and the events topic is not retained, so
+            # the entity is handed it to show (HA44, as event.py's tamper
+            # entity is). A retained one is not: the entity's own
+            # subscription is sent the broker's copy.
             new_entities.append(
-                SecuraCVCanaryLastEventSensor(prefix, device_id, entry)
+                SecuraCVCanaryLastEventSensor(
+                    prefix, device_id, entry, initial_payload=creating_payload(msg)
+                )
             )
 
         if topic_type == TOPIC_HEALTH and "health" not in entities_added[device_id]:
@@ -1084,12 +1092,34 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
 
 
 class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
-    """Sensor for last witness event from a Canary device."""
+    """Sensor for last witness event from a Canary device.
 
+    Created by the device's first events publish, which it shows too (HA44):
+    the discovery callback hands it that publish's body (``initial_payload``)
+    when it was not a retained copy, and async_added_to_hass applies it once,
+    after its own subscribe, through the same ``_apply`` every publish takes
+    (verification, the replay gate, the voice brief's record), then drops
+    it. A broker that also retained that publish sends the entity's fresh
+    subscription its copy next: that one delivery, retained and equal to
+    the body just shown, is the same publish and is not applied twice
+    (mqtt_payload.CreatingEcho).
+    """
 
-    def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
+    # A class default, so an instance built without __init__ (as a test
+    # does to drive the callback alone) reads as handed nothing.
+    _initial: CreatingEcho | None = None
+
+    def __init__(
+        self,
+        prefix: str,
+        device_id: str,
+        entry: ConfigEntry,
+        *,
+        initial_payload: dict[str, Any] | None = None,
+    ) -> None:
         """Initialize."""
         super().__init__(prefix, device_id, entry, "last_event")
+        self._initial = CreatingEcho(initial_payload)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
@@ -1101,6 +1131,14 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
                 self._handle_message,
             )
         )
+        if self._initial is not None and (data := self._initial.take()) is not None:
+            try:
+                self._apply(data)
+            except TypeError:
+                # What the MQTT path shows for a body its readers cannot
+                # take: the body itself, bounded.
+                self._attr_native_value = json.dumps(data, default=str)[:255]
+                self.async_write_ha_state()
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
@@ -1112,69 +1150,77 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
                 # degrade to the bounded raw-payload fallback rather than
                 # AttributeError out of the @callback and stall the entity.
                 raise TypeError("Event payload is not a JSON object")
-            previous_value = getattr(self, "_attr_native_value", None)
-            # A summary row reads as its type, not as `unknown` (HA28);
-            # the voice brief below records this same value.
-            self._attr_native_value = _canary_event_name(data)
-            # Three event dialects share the events topic: the CSI canary's
-            # (event_id/state/category/...), the radar witness's canary-sense
-            # shape (event/seq/occupants/range) and canary-sentinel's fused
-            # claim (event/seq/level/confidence/anomaly/occupancy/...).
-            # Dispatch on the payload shape so each verifies against its own
-            # canonical — the wrong verifier would mark a validly signed
-            # payload "unsigned".
-            verdict = _verify_and_record(self.hass, self._entry, self._device_id,
-                                         data, _event_verifier_for(data))
-            if _is_replay(verdict):
-                # An older event re-sent with a valid signature: keep the
-                # newer state we already hold and only annotate the trust view.
-                self._attr_native_value = previous_value
-                self._attr_extra_state_attributes = {
-                    **(getattr(self, "_attr_extra_state_attributes", None) or {}),
-                    **_trust_attrs(self.hass, self._entry, self._device_id),
-                }
-                self.async_write_ha_state()
+            if self._initial is not None and self._initial.is_echo(msg, data):
                 return
-            # Mirror the event for the voice brief AFTER the verifier has
-            # stamped its verdict, so a spoken answer can carry the trust
-            # qualifier a forged/unsigned publish deserves (voice.py).
-            _record_last_event(
-                self.hass, self._entry, self._device_id, self._attr_native_value
-            )
-            attrs: dict[str, Any] = {
-                "timestamp": data.get("timestamp", ""),
-                "zone": data.get("zone", ""),
-                "confidence": data.get("confidence", ""),
-                "signed": data.get("signed", False),
-                **_trust_attrs(self.hass, self._entry, self._device_id),
-            }
-            # Sensing-modality awareness (Phase 3): surface what *kind* of
-            # sensor produced the claim so the timeline can show a glyph.
-            # Derive from the event payload, falling back to the device's
-            # advertised device_type. Only attach attributes when a modality
-            # actually resolves, so pre-Phase-3 events render exactly as before.
-            modality = modality_for(
-                data,
-                _device_type_for(self.hass, self._entry, self._device_id),
-            )
-            if modality != MODALITY_UNKNOWN:
-                attrs["modality"] = modality
-                meta = modality_metadata(modality)
-                if meta:
-                    attrs["modality_label"] = meta["label"]
-            # Attestation provenance (Phase 3): default "device" so device-
-            # signed events are unchanged; Track B payloads that mark
-            # adapter/ha-bridged surface the weaker provenance for an honest
-            # badge. Only emit the attribute when the payload is explicit.
-            if data.get("attestation") is not None:
-                attrs["attestation"] = normalize_attestation(data.get("attestation"))
-            self._attr_extra_state_attributes = attrs
+            self._apply(data)
         except (json.JSONDecodeError, TypeError):
             # Slice BEFORE decoding so an oversized payload never costs a
             # full decode just to keep 255 characters of it.
             raw = msg.payload[:1024]
             payload = raw.decode(errors="ignore") if isinstance(raw, bytes) else str(raw)
             self._attr_native_value = payload[:255]
+            self.async_write_ha_state()
+
+    @callback
+    def _apply(self, data: dict[str, Any]) -> None:
+        """Show one events body: the MQTT callback's and the creating publish's."""
+        previous_value: Any = getattr(self, "_attr_native_value", None)
+        # A summary row reads as its type, not as `unknown` (HA28);
+        # the voice brief below records this same value.
+        self._attr_native_value = _canary_event_name(data)
+        # Three event dialects share the events topic: the CSI canary's
+        # (event_id/state/category/...), the radar witness's canary-sense
+        # shape (event/seq/occupants/range) and canary-sentinel's fused
+        # claim (event/seq/level/confidence/anomaly/occupancy/...).
+        # Dispatch on the payload shape so each verifies against its own
+        # canonical — the wrong verifier would mark a validly signed
+        # payload "unsigned".
+        verdict = _verify_and_record(self.hass, self._entry, self._device_id,
+                                     data, _event_verifier_for(data))
+        if _is_replay(verdict):
+            # An older event re-sent with a valid signature: keep the
+            # newer state we already hold and only annotate the trust view.
+            self._attr_native_value = previous_value
+            self._attr_extra_state_attributes = {
+                **(getattr(self, "_attr_extra_state_attributes", None) or {}),
+                **_trust_attrs(self.hass, self._entry, self._device_id),
+            }
+            self.async_write_ha_state()
+            return
+        # Mirror the event for the voice brief AFTER the verifier has
+        # stamped its verdict, so a spoken answer can carry the trust
+        # qualifier a forged/unsigned publish deserves (voice.py).
+        _record_last_event(
+            self.hass, self._entry, self._device_id, self._attr_native_value
+        )
+        attrs: dict[str, Any] = {
+            "timestamp": data.get("timestamp", ""),
+            "zone": data.get("zone", ""),
+            "confidence": data.get("confidence", ""),
+            "signed": data.get("signed", False),
+            **_trust_attrs(self.hass, self._entry, self._device_id),
+        }
+        # Sensing-modality awareness (Phase 3): surface what *kind* of
+        # sensor produced the claim so the timeline can show a glyph.
+        # Derive from the event payload, falling back to the device's
+        # advertised device_type. Only attach attributes when a modality
+        # actually resolves, so pre-Phase-3 events render exactly as before.
+        modality = modality_for(
+            data,
+            _device_type_for(self.hass, self._entry, self._device_id),
+        )
+        if modality != MODALITY_UNKNOWN:
+            attrs["modality"] = modality
+            meta = modality_metadata(modality)
+            if meta:
+                attrs["modality_label"] = meta["label"]
+        # Attestation provenance (Phase 3): default "device" so device-
+        # signed events are unchanged; Track B payloads that mark
+        # adapter/ha-bridged surface the weaker provenance for an honest
+        # badge. Only emit the attribute when the payload is explicit.
+        if data.get("attestation") is not None:
+            attrs["attestation"] = normalize_attestation(data.get("attestation"))
+        self._attr_extra_state_attributes = attrs
         self.async_write_ha_state()
 
 

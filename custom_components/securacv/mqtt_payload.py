@@ -102,3 +102,52 @@ def mqtt_payload_text(payload: Any) -> str | None:
     if isinstance(payload, str):
         return payload
     return None
+
+
+def creating_payload(msg: Any) -> dict[str, Any] | None:
+    """The body of the publish that creates an entity, to hand to it, or None.
+
+    A discovery callback creates an entity on a device's first publish on a
+    topic, and the entity subscribes only once it is added, after that
+    delivery: on a topic that is not retained (events) it never sees the
+    publish that made it unless it is handed the body (HA44; event.py's
+    tamper entity is handed its own the same way). A delivery flagged
+    retained is not handed over: the entity's own subscription is sent the
+    broker's retained copy anyway.
+    """
+    if getattr(msg, "retain", False):
+        return None
+    return parse_mqtt_json(getattr(msg, "payload", None))
+
+
+class CreatingEcho:
+    """The creating publish's body: applied once, and its one echo recognized.
+
+    ``take()`` hands the body over once (async_added_to_hass applies it after
+    its subscribe) and drops it, so a second add of the same entity replays
+    nothing. A broker that ALSO retained that publish (live, a broker
+    forwards it with the retain flag cleared, so the discovery callback
+    handed it over) sends the entity's fresh subscription its retained copy
+    next. ``is_echo()`` is true for exactly that delivery, the first JSON
+    object the entity reads after ``take()``, flagged retained and equal to
+    the body shown; whatever that first one is, it ends the watch, so a
+    later publish of the same body (a re-send, the retained copy after a
+    reconnect) takes the ordinary path.
+    """
+
+    __slots__ = ("_pending", "_shown")
+
+    def __init__(self, payload: dict[str, Any] | None) -> None:
+        self._pending = payload
+        self._shown: dict[str, Any] | None = None
+
+    def take(self) -> dict[str, Any] | None:
+        """The body to apply now, once; None after the first call."""
+        payload, self._pending = self._pending, None
+        self._shown = payload
+        return payload
+
+    def is_echo(self, msg: Any, data: dict[str, Any]) -> bool:
+        """True for the subscription's retained copy of the body just applied."""
+        shown, self._shown = self._shown, None
+        return shown is not None and bool(getattr(msg, "retain", False)) and data == shown
