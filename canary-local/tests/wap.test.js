@@ -364,6 +364,73 @@ test("every sandbox events row is one a WAP module commits; the WAP has no panic
   assert.ok(!JSON.stringify(data.sandbox).includes("silent_panic"), "a scene publishes an event no WAP emits");
 });
 
+// A108 (sweep HA16): the sandbox's Home Assistant lines are the ids the WAP's
+// discovery configs ask for, and the page says when an install shows them:
+// Home Assistant 2025.10 and later applies def_ent_id when it first registers
+// an entity, an entity registered earlier keeps its id across an upgrade,
+// and an older release, which reads only obj_id, builds the id from the
+// device and entity names. wap.js is a page module (it imports the 3D board
+// lab), so the sentence is read from its source; wap_probe.mjs sees it render.
+const SANDBOX_ID_NOTE =
+  "The entity ids above are the ones the WAP's discovery configs ask for (def_ent_id, " +
+  "Home Assistant's default_entity_id; <id> is the device id as Home Assistant slugs it: " +
+  "letters lowercased, each run of anything else one underscore). Home Assistant 2025.10 " +
+  "and later gives an entity that id when it first registers it, so a WAP first added on " +
+  "2025.10 or later gets them. An entity it registered earlier keeps the id it has, even " +
+  "across an upgrade to 2025.10, and a release before 2025.10 ignores the key and builds " +
+  "the id from the device and entity names (binary_sensor.canary_<id>_smoke_alarm_heard).";
+
+test("the sandbox says its Home Assistant ids are the ones the WAP asks for, and when they hold", () => {
+  const src = read(join(ROOT, "assets/wap.js"));
+  // 1. the sentence, as wap.js builds it: a run of string literals and '+'
+  const decl = src.match(/\nconst SANDBOX_ID_NOTE =\n([\s\S]*?);\n/);
+  assert.ok(decl, "wap.js has no SANDBOX_ID_NOTE (the sandbox's fine print, A108)");
+  const literals = [...decl[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)];
+  assert.strictEqual(decl[1].replace(/"((?:[^"\\]|\\.)*)"/g, "").replace(/[\s+]/g, ""), "",
+    "SANDBOX_ID_NOTE is not a plain run of string literals");
+  assert.strictEqual(literals.map((m) => JSON.parse('"' + m[1] + '"')).join(""), SANDBOX_ID_NOTE);
+  // ... and renderSandbox puts it under the pad and its readout, whenever a
+  // card carries an id
+  const sandbox = src.slice(src.indexOf("function renderSandbox(d, b) {"), src.indexOf("function renderKeepGoing()"));
+  const note = '    if (d.sandbox.some((sc) => sc.ha)) s.append(el("p", "fineprint wap-sand-note", SANDBOX_ID_NOTE));\n';
+  assert.ok(sandbox.includes(note), "renderSandbox does not append the fine print");
+  const padAt = sandbox.indexOf("    s.append(pad, readout);\n");
+  assert.ok(padAt >= 0 && padAt < sandbox.indexOf(note), "the fine print is not under the pad and its readout");
+  assert.ok(sandbox.includes('if (sc.ha) card.append(el("code", "fineprint wap-sand-ha", sc.ha));'));
+  assert.ok(sandbox.includes('(sc.ha ? "  →  " + sc.ha : "")'), "the readout carries the scene's id");
+
+  // 2. every id a card shows is one a config asks for, domain included:
+  // def_ent_id is <component>.<device id slug>_<object_id>
+  const lines = data.sandbox.filter((sc) => sc.ha).map((sc) => sc.ha);
+  assert.deepStrictEqual(lines, ["binary_sensor.<id>_smoke_alarm -> ON", "binary_sensor.<id>_co_alarm -> ON",
+    "switch.<id>_mic_mute -> ON"]);
+  assert.ok(csiMqttCpp.includes('      "\\"def_ent_id\\":\\"%s.%s_%s\\","\n'), "the table's def_ent_id format");
+  assert.ok(csiMqttCpp.includes("    e.component, slug, e.object_id,\n"), "the table's def_ent_id arguments");
+  for (const line of lines) {
+    const m = line.match(/^([a-z_]+)\.<id>_([a-z_]+) -> ON$/);
+    assert.ok(m, line);
+    const [, component, objectId] = m;
+    const table = csiMqttCpp.includes(`{ "${component}", "${objectId}", `);
+    const own = csiMqttCpp.includes(`"\\"def_ent_id\\":\\"${component}.%s_${objectId}\\","`);
+    assert.ok(table || own, `${line}: no discovery config asks for ${component}.<id>_${objectId}`);
+  }
+
+  // 3. what the sentence says of the id and of an older release, held to
+  // the firmware: the slug rule, def_ent_id alone (no obj_id, sweep HA29),
+  // and the fallback the device and entity names give
+  const slugFn = csiMqttCpp.slice(csiMqttCpp.indexOf("void device_id_slug(char* out, size_t cap) {"));
+  assert.ok(slugFn.includes("if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');"), "letters lowercased");
+  assert.ok(slugFn.includes("const bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');"), "digits kept");
+  assert.ok(slugFn.includes("if (gap && n + 1 < cap) out[n++] = '_';"), "a run of anything else is one '_'");
+  assert.ok(!/\\"obj(ect)?_id\\"/.test(csiMqttCpp), "the WAP sends obj_id: an older release would take the id");
+  assert.ok(csiMqttCpp.includes('        "\\"name\\":\\"Canary %s\\","'), "the device name");
+  assert.ok(csiMqttCpp.includes('{ "binary_sensor", "smoke_alarm", "Smoke Alarm Heard", '), "the entity name");
+  const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const fallback = "binary_sensor." + slug("Canary qidq Smoke Alarm Heard").replace("qidq", "<id>");
+  assert.strictEqual(fallback, "binary_sensor.canary_<id>_smoke_alarm_heard");
+  assert.ok(SANDBOX_ID_NOTE.includes("(" + fallback + ")"));
+});
+
 test("the MQTT pane publishes each scene over the topic as it stands, retained by the topic's own flag", async () => {
   const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
   await withFakeDom(async () => {

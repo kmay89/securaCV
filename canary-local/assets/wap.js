@@ -27,6 +27,21 @@ const el = (tag, cls, text) => {
 };
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 
+// The sandbox's fine print (sweep A108, HA16): the Home Assistant ids on its
+// cards and in its readout are the ones the WAP's discovery configs ask for,
+// and whether an install shows them depends on its release and on when it
+// first registered the entity (homeassistant/components/mqtt/entity.py). The
+// WAP sends def_ent_id alone, no obj_id, so a release before 2025.10 has no
+// key it reads. wap.test.js pins this sentence and the facts it states.
+const SANDBOX_ID_NOTE =
+  "The entity ids above are the ones the WAP's discovery configs ask for (def_ent_id, " +
+  "Home Assistant's default_entity_id; <id> is the device id as Home Assistant slugs it: " +
+  "letters lowercased, each run of anything else one underscore). Home Assistant 2025.10 " +
+  "and later gives an entity that id when it first registers it, so a WAP first added on " +
+  "2025.10 or later gets them. An entity it registered earlier keeps the id it has, even " +
+  "across an upgrade to 2025.10, and a release before 2025.10 ignores the key and builds " +
+  "the id from the device and entity names (binary_sensor.canary_<id>_smoke_alarm_heard).";
+
 // Fire-once-per-phase bus. `ap`/`online`/`mqtt` are lifecycle phases that must
 // only fire a single time (so the retained MQTT snapshot / boot table can't
 // double-render); `event`, `power`, `ready`, `connect` are free to repeat.
@@ -202,6 +217,8 @@ async function main() {
       pad.append(card);
     }
     s.append(pad, readout);
+    // what the ids on the cards and in the readout are, and when they hold
+    if (d.sandbox.some((sc) => sc.ha)) s.append(el("p", "fineprint wap-sand-note", SANDBOX_ID_NOTE));
   }
 
   // ── §keep going ──
