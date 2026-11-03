@@ -192,7 +192,10 @@
           }
         },
         "abort": {
-          "no_received_key": "Home Assistant has no new key to confirm: it has not seen your witness kernel serve one since SecuraCV last started (a Home Assistant restart or a reload of the integration). The kernel is checked every five minutes; open this issue again after the next check. If the kernel serves its pinned key again, there is nothing to confirm and you can ignore this issue."
+          "no_received_key": "Home Assistant has no new key to confirm: it has not seen your witness kernel serve one over its API since SecuraCV last started (a Home Assistant restart or a reload of the integration), or the kernel has so far only announced the key. The kernel is checked every five minutes; open this issue again after the next check. If the kernel serves its pinned key again, that check clears this issue."
+        },
+        "error": {
+          "key_changed": "Your witness kernel has served another key since this page opened, so nothing was pinned. Compare the received fingerprint shown now with what the kernel prints, and submit only if they match."
         }
       }
     },

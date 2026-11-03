@@ -621,8 +621,12 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 received_key=received,
             )
             return
-        if self.key_mismatch:
-            repairs.async_clear_tofu_mismatch(self.hass, self.entry)
+        # The served key is the pin: clear the issue whether or not this
+        # coordinator raised it (deleting none is a no-op). One kept over a
+        # restart or a reload, or one an announce raised, says the kernel
+        # serves another key, and the authenticated API just said it does
+        # not; with no key held here the fix flow could only abort.
+        repairs.async_clear_tofu_mismatch(self.hass, self.entry)
         self.received_key = None
         self._set_key_mismatch(False)
 

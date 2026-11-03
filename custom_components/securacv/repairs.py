@@ -327,8 +327,9 @@ class TofuMismatchRepairFlow(ConfirmRepairFlow):
     which held a key, is not trusted for it. The form shows the
     fingerprint of the key it would pin; if the coordinator has seen
     another key by the time the person submits, the form is shown again
-    with that key's fingerprint and nothing is pinned, so the pin only ever
-    moves to a key whose fingerprint the person was shown.
+    with that key's fingerprint and a ``key_changed`` error, and nothing
+    is pinned, so the pin only ever moves to a key whose fingerprint the
+    person was shown.
     """
 
     def __init__(self, entry: ConfigEntry) -> None:
@@ -382,10 +383,16 @@ class TofuMismatchRepairFlow(ConfirmRepairFlow):
             self.hass.config_entries.async_schedule_reload(self._entry.entry_id)
             return self.async_create_entry(data={})
         # No fields: a confirm-only form (the frontend renders just Submit).
-        # Shown first, and again when the key changed since it was shown.
+        # Shown first, and again when the key changed since it was shown,
+        # then with an error that says so: the fingerprint is all that
+        # differs, and a person who already compared the first one must
+        # not submit the second out of habit.
+        changed = user_input is not None and self._shown_key is not None
+        errors = {"base": "key_changed"} if changed else None
         self._shown_key = received
         return self.async_show_form(
             step_id="confirm",
+            errors=errors,
             description_placeholders={
                 DATA_PINNED_FINGERPRINT: pinned_fingerprint,
                 DATA_RECEIVED_FINGERPRINT: kernel_key_fingerprint(received),

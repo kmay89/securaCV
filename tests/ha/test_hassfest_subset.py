@@ -143,6 +143,9 @@ async def test_strings_match_translations_and_every_entity_key_resolves(hass: Ho
     for issue in ("no_kernel_found", "kernel_unreachable", "tofu_mismatch", "storage_replace", "entities_migrated", "mqtt_subscribe_failed"):
         assert f"component.{DOMAIN}.issues.{issue}.title" in issues, issue
     assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.step.confirm.title" in issues
+    # The fix flow's abort and its one error resolve too (repairs.py).
+    assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.abort.no_received_key" in issues
+    assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.error.key_changed" in issues
 
 
 def test_strings_pass_hassfest_s_translation_rules() -> None:

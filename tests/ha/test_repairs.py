@@ -2,13 +2,18 @@
 driven through the repairs HTTP API."""
 from __future__ import annotations
 
+import json
+import time
 from datetime import timedelta
 from http import HTTPStatus
 
 from freezegun.api import FrozenDateTimeFactory
+from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er, issue_registry as ir
+from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator, MqttMockHAClient
@@ -178,6 +183,7 @@ async def test_the_fix_flow_pins_only_the_key_the_coordinator_holds(
     flow = await resp.json()
     assert flow["type"] == "form"
     assert flow["description_placeholders"]["received_fingerprint"] == second.fingerprint
+    assert not flow["errors"], "the first showing is not an error"
 
     # A third key before the person submits: shown, not pinned.
     third = SigningKernel()
@@ -188,6 +194,9 @@ async def test_the_fix_flow_pins_only_the_key_the_coordinator_holds(
     again = await resp.json()
     assert again["type"] == "form" and again["step_id"] == "confirm"
     assert again["description_placeholders"]["received_fingerprint"] == third.fingerprint
+    # Eight characters are all that differ from the form already compared:
+    # the form says the key changed, so Submit is not pressed out of habit.
+    assert again["errors"] == {"base": "key_changed"}
     assert entry.data[CONF_KERNEL_VERIFYING_KEY] == pinned
 
     resp = await client.post(f"/api/repairs/issues/fix/{flow['flow_id']}", json={})
@@ -198,6 +207,69 @@ async def test_the_fix_flow_pins_only_the_key_the_coordinator_holds(
     assert entry.data[CONF_KERNEL_PREVIOUS_KEYS] == [pinned]
     assert stale.verifying_key not in (entry.data[CONF_KERNEL_VERIFYING_KEY], *entry.data[CONF_KERNEL_PREVIOUS_KEYS])
     assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_an_issue_the_kernel_api_contradicts_clears_at_the_next_check(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A key-mismatch issue says the kernel serves another key. One kept
+    over a reload (the reloaded coordinator raised nothing itself), and one
+    only an announce raised (no coordinator holds its key), are each a dead
+    end: the fix flow aborts `no_received_key`. The next check that sees the
+    kernel's API serve the pinned key clears them, and the pin never moves."""
+    assert await async_setup_component(hass, "repairs", {})
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    pinned = kernel.verifying_key
+    original = kernel.kernel
+    issue_id = f"tofu_mismatch_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    client = await hass_client()
+
+    # Kept over a reload: raised, the kernel goes back to its pin while the
+    # entry reloads with the kernel down, then the kernel answers again.
+    second = SigningKernel()
+    kernel.verifying_key = second.verifying_key
+    kernel.kernel = second
+    await backstop(hass, freezer)
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
+    kernel.verifying_key = pinned
+    kernel.kernel = original
+    kernel.connection_down = True
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await settle(hass)
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
+    resp = await client.post("/api/repairs/issues/fix", json={"handler": DOMAIN, "issue_id": issue_id})
+    aborted = await resp.json()
+    assert aborted["type"] == "abort" and aborted["reason"] == "no_received_key"
+    kernel.connection_down = False
+    await backstop(hass, freezer)
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+    # Only an announce raised it: signed by the pin, naming another key.
+    announced = SigningKernel()
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_MQTT},
+        data=MqttServiceInfo(
+            topic=f"witness/{KERNEL_DEVICE_ID}/announce",
+            payload=json.dumps(original.announce(verifying_key=announced.verifying_key)),
+            qos=1, retain=True, subscribed_topic="witness/+/announce", timestamp=time.time(),
+        ),
+    )
+    assert result["type"] is FlowResultType.ABORT and result["reason"] == "announce_key_mismatch"
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
+    resp = await client.post("/api/repairs/issues/fix", json={"handler": DOMAIN, "issue_id": issue_id})
+    aborted = await resp.json()
+    assert aborted["type"] == "abort" and aborted["reason"] == "no_received_key"
+    await backstop(hass, freezer)
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+    assert entry.data[CONF_KERNEL_VERIFYING_KEY] == pinned
+    assert announced.verifying_key not in (entry.data.get(CONF_KERNEL_PREVIOUS_KEYS) or [])
 
 
 async def test_kernel_unreachable_after_fifteen_minutes_and_cleared_on_recovery(

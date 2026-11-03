@@ -597,8 +597,10 @@ async def test_no_issue_in_the_download_or_the_store_holds_a_host_or_a_key(
     """Ledger F399, through every state a key-mismatch issue passes: raised,
     ignored, kept over a restart, raised again for a third key, and one an
     older integration raised for an entry that never sets up again. Each
-    download (issues, `setup_times`, the integration's data, the file name)
-    and what Home Assistant stores in `.storage/repairs.issue_registry`
+    download (its issues, the integration's data, the file name; the core
+    times no setup once it is running, as it is here, so `setup_times` is
+    empty, and the sibling test below fills it, with entry ids and times
+    only) and what Home Assistant stores in `.storage/repairs.issue_registry`
     spells neither the kernel's host nor any key it served or was pinned to,
     in hex, base64 or PEM, and the port appears only in the kernel section's
     projection (scheme and port). A kernel_unreachable issue raised with the

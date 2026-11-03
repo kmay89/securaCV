@@ -938,15 +938,19 @@ the pinned and the received key's eight-character fingerprints and nothing
 else; the key the kernel served is held only in memory, on the
 integration's kernel coordinator, where the fix flow reads it, and an issue
 an older version raised with the kernel's URL and the key in it is
-rewritten to its fingerprints at the next start. The integration's other
-issues that carry a value about the install are not persistent, so Home
-Assistant writes only their ids and times (sweep F399). None of them names
-a Canary. Home Assistant adds a `setup_times` section too, keyed by the id
-of every entry of the integration it set up as it last started, so after a
-restart the section names this entry and the integration's other entries,
-and its own `home_assistant` section, which carries the instance's time
-zone. And it names the file after the entry (`config_entry-securacv-<entry
-id>.json`), so its name ends in the entry id.
+rewritten to its fingerprints at the next start that sets the integration
+up (any enabled entry of it does). Until then Home Assistant keeps that
+issue as written in `.storage/repairs.issue_registry`, which no download
+reaches while none of the integration's entries is loaded. The
+integration's other issues that carry a value about the install are not
+persistent, so Home Assistant writes only their ids and times (sweep F399).
+None of them names a Canary. Home Assistant adds a `setup_times` section
+too, keyed by the id of every entry of the integration it set up as it last
+started, so after a restart the section names this entry and the
+integration's other entries, and its own `home_assistant` section, which
+carries the instance's time zone. And it names the file after the entry
+(`config_entry-securacv-<entry id>.json`), so its name ends in the entry
+id.
 
 **Evidence exports sit behind Home Assistant's authentication.** An export
 is one zip under `<config>/securacv/evidence` (directory `0700`, files

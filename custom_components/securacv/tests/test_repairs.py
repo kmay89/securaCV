@@ -292,11 +292,17 @@ def test_the_flow_pins_only_a_key_whose_fingerprint_it_showed():
     result = run(flow.async_step_init())
     assert result["description_placeholders"]["received_fingerprint"] == kernel_key_fingerprint(NEW_KEY)
 
+    assert result["errors"] == {}, "the first showing is not an error"
+
     kernel.key = THIRD_KEY
     run(coordinator.async_refresh())
     result = run(flow.async_step_confirm({}))
     assert result["type"] == "form" and result["step_id"] == "confirm"
     assert result["description_placeholders"]["received_fingerprint"] == kernel_key_fingerprint(THIRD_KEY)
+    # Only eight characters differ from the form the person already
+    # compared, so the form says the key changed: a habit Submit must not
+    # pin a key nobody compared.
+    assert result["errors"] == {"base": "key_changed"}
     assert entry.data[CONF_KERNEL_VERIFYING_KEY] == OLD_KEY, "a key whose fingerprint was not shown is never pinned"
 
     result = run(flow.async_step_confirm({}))
@@ -317,6 +323,45 @@ def test_the_flow_aborts_when_the_kernel_serves_its_pinned_key_again():
     result = run(flow.async_step_confirm({}))
     assert result["type"] == "abort" and result["reason"] == "no_received_key"
     assert entry.data[CONF_KERNEL_VERIFYING_KEY] == OLD_KEY
+
+
+def test_an_issue_kept_over_a_restart_clears_when_the_kernel_serves_its_pin():
+    """The issue outlives a restart or a reload; the new coordinator starts
+    with no mismatch of its own. When its backstop sees the kernel serve the
+    pinned key, the issue is cleared all the same: it says the kernel serves
+    another key, which the authenticated API has just contradicted, and its
+    fix flow could only abort (no key is held)."""
+    hass = _hass()
+    entry, kernel, coordinator = _kernel_entry(hass, serves=NEW_KEY)
+    run(coordinator.async_refresh())
+    assert (DOMAIN, f"{ISSUE_TOFU_MISMATCH}_e1") in issues(hass)
+
+    kernel.key = OLD_KEY
+    coordinator = _restart(hass, entry, kernel)
+    assert coordinator.key_mismatch is False
+    run(coordinator.async_refresh())
+    assert (DOMAIN, f"{ISSUE_TOFU_MISMATCH}_e1") not in issues(hass)
+    assert coordinator.received_key is None
+    assert entry.data[CONF_KERNEL_VERIFYING_KEY] == OLD_KEY
+
+
+def test_an_issue_only_an_announce_raised_clears_when_the_kernel_serves_its_pin():
+    """An announce naming another key raises the issue without handing the
+    key to the coordinator, so the fix flow has nothing to pin. The next
+    backstop that sees the kernel serve its pinned key clears it; one that
+    sees another key raises it again with that key held."""
+    hass = _hass()
+    entry, kernel, coordinator = _kernel_entry(hass, serves=OLD_KEY)
+    repairs.async_report_tofu_mismatch(hass, entry, pinned_key=OLD_KEY, received_key=NEW_KEY)
+    assert coordinator.key_mismatch is False and coordinator.received_key is None
+
+    run(coordinator.async_refresh())
+    assert (DOMAIN, f"{ISSUE_TOFU_MISMATCH}_e1") not in issues(hass)
+
+    kernel.key = NEW_KEY
+    run(coordinator.async_refresh())
+    _assert_only_fingerprints(issues(hass)[(DOMAIN, f"{ISSUE_TOFU_MISMATCH}_e1")], NEW_KEY)
+    assert coordinator.received_key == NEW_KEY
 
 
 def test_the_fix_flow_refuses_an_entry_with_no_kernel_coordinator():
