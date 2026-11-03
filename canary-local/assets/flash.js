@@ -1029,7 +1029,15 @@ async function openEsptool(port, statusCb) {
 // first, flashing comes second. Any bootloader action (install, health
 // check, backup, rescue) calls ensureSession(), which quietly hands the
 // port back to the bootloader. No chooser, no gestures.
-async function startVoice(consoleEl, onIdentity, onSetupNet) {
+//
+// `product` is the catalog product whose firmware is talking (the board's
+// own on the connect page, the one just written on the done card, or null
+// for a firmware the catalog does not name): the voice asks it for its
+// self-manifest only where that firmware prints one (sweep A97,
+// core.requiresLiveReceipt, failing closed on null), as both monitors'
+// identity asks do. A WAP, a Sense or a display would answer "unknown
+// command" twice into the console the user is reading.
+async function startVoice(consoleEl, onIdentity, onSetupNet, product) {
   // Re-entering the connected phase while a voice is already running (e.g.
   // "not yet" from the confirm card): re-bind the LIVE stream to the fresh
   // console element instead of leaving it talking to a detached node.
@@ -1075,13 +1083,15 @@ async function startVoice(consoleEl, onIdentity, onSetupNet) {
   }
   // Ask for the signed self-manifest once the app settles: health, boots,
   // temperature — the live story, before a byte is written. Twice, in case
-  // the first lands mid-boot.
-  const ask = () => {
-    if (!state.voice || v.identity || !v.writer) return;
-    try { v.writer.write(new TextEncoder().encode("j\n")); } catch { /* quiet build */ }
-  };
-  setTimeout(ask, 900);
-  setTimeout(ask, 2600);
+  // the first lands mid-boot. Only a firmware that prints one is asked.
+  if (core.requiresLiveReceipt(product)) {
+    const ask = () => {
+      if (!state.voice || v.identity || !v.writer) return;
+      try { v.writer.write(new TextEncoder().encode("j\n")); } catch { /* quiet build */ }
+    };
+    setTimeout(ask, 900);
+    setTimeout(ask, 2600);
+  }
   // A board that never prints leaves "listening…" up forever, which reads as
   // a hang. After 5 s of silence, say what silence means here.
   setTimeout(() => {
@@ -1760,7 +1770,7 @@ function phaseConnected() {
           "tamper flag raised"));
       }
       idSlot.append(chips);
-    });
+    }, null, curProd);
   }
 
   // Firmware picker (chip-guarded).
@@ -1983,13 +1993,17 @@ function renderRosterStrip() {
 // serial_receipt says which firmware wires its self-manifest to `j`
 // (gen_flash.py reads that off the firmware sources): the WAP, the Sense and
 // every display print none, so the board is pointed at its boot log instead
-// of being promised a score it never prints. A firmware the catalog does not
-// name is not asked either, as on the desktop (renderPassport): nothing says
-// it answers `j`. The product is boardProduct()'s, display-aware, so a
-// display build whose name carries no flavor is a display here too.
+// of being promised a score it never prints. A readable firmware the catalog
+// does not name is still asked (core.requiresLiveReceipt fails closed on
+// null), as the monitor's identity ask is: every SecuraCV release up to
+// 2.4.17 names the Arduino core (`arduino-lib-builder`), not its product, and
+// the flagship and the Vision among them answer `j`. The desktop's passport
+// (renderPassport) draws the same line from the same rule. The product is
+// boardProduct()'s, display-aware, so a display build whose name carries no
+// flavor is a display here too.
 function renderLiveStoryAsk() {
+  if (!state.current || state.current.unknown) return null;
   const told = boardProduct();
-  if (!told) return null;
   const feel = el("p", "fineprint flash-feel");
   if (core.requiresLiveReceipt(told)) {
     feel.append(document.createTextNode(
@@ -1999,9 +2013,14 @@ function renderLiveStoryAsk() {
     ask.addEventListener("click", () => openMonitor({ proveIdentity: true }));
     feel.append(ask);
   } else {
+    // The same sentence as the desktop's passport (desktop_parity.test.js),
+    // and true in both: neither monitor reboots a board that is already
+    // talking (here the live voice hands its port over as it is), so the
+    // boot log comes from a RESET tap with the monitor open.
     feel.append(document.createTextNode(
       "Those counters were read cold, without booting it. " +
-      "This firmware prints no self-check; open the serial monitor to read its boot log."));
+      "This firmware prints no self-check; open the serial monitor and tap the board’s " +
+      "RESET button to read its boot log."));
   }
   return feel;
 }
@@ -3548,7 +3567,23 @@ function refreshManifestState() {
 // ── pick → confirm → flash ──────────────────────────────────────────────────
 // The verdict for installing `product` at `version` on the board in hand,
 // against the product its descriptor names (boardProduct: display-aware).
+//
+// A board whose partition sector could not be read at all (state.ptRead
+// "failed") is not a board with nothing on it: core.installVerdict maps every
+// {unknown:true} to "First install", which is right for a chip read back
+// blank, but for an unread one "nothing SecuraCV is on this board yet" would
+// be a claim nobody checked, beside a customs card that says "unread", and
+// would hide a downgrade. The desktop draws the same line at its call site
+// (verdictMarkup) in the same words; desktop_parity.test.js holds the two.
 function installVerdictFor(product, version) {
+  if (state.ptRead === "failed") {
+    return {
+      kind: "unknown", icon: "•", label: "Can't tell yet",
+      detail: "This board's current firmware couldn't be read, so there's no telling whether this " +
+              "is an update, a reinstall, or a step backward. The install itself is unaffected, and " +
+              "the automatic safety copy still runs.",
+    };
+  }
   const currentProduct = boardProduct();
   return core.installVerdict({ current: state.current, currentProduct, product, version });
 }
@@ -5046,7 +5081,7 @@ function phaseDone(opts) {
       const vcon = el("pre", "flash-console");
       listen.append(vcon);
       box.append(listen);
-      startVoice(vcon, null, showSetupNet);
+      startVoice(vcon, null, showSetupNet, product);
     }
   }
   box.append(setupNetSlot);

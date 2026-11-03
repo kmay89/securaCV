@@ -4604,14 +4604,21 @@ const deskNode = (tag) => ({
   addEventListener(t, f) { this.listeners[t] = f; }, set innerHTML(_) { this.children = []; },
 });
 
-const SELF_CHECK_NONE = "This firmware prints no self-check; open the serial monitor to read its boot log.";
+// The boot-log pointer, one sentence in both flashers. Neither monitor
+// reboots a board that is already talking (the desktop's Start attaches as a
+// pure observer, the browser's voice hands its port over as it is), so the
+// pointer says to tap RESET rather than promising a boot log on open.
+const SELF_CHECK_NONE = "This firmware prints no self-check; open the serial monitor and tap the board’s " +
+  "RESET button to read its boot log.";
 const MB = 1024 * 1024;
 const productNamed = (name) => (catalog.products.find((p) => p.name === name) || {}).id || null;
 
 // The browser's connected card for one board, from flash.js's own functions.
-// `current` is what readCurrentFirmware leaves in state.current.
-function browserCard(flashJs, core, current, { chip = "ESP32-S3", flashBytes = 8 * MB } = {}) {
-  const state = { catalog, current, chip, flashBytes };
+// `current` is what readCurrentFirmware leaves in state.current, and
+// `ptRead` whether its partition sector came off the chip at all ("failed"
+// for a board whose read threw, "ok" for everything else, a blank included).
+function browserCard(flashJs, core, current, { chip = "ESP32-S3", flashBytes = 8 * MB, ptRead = "ok" } = {}) {
+  const state = { catalog, current, chip, flashBytes, ptRead };
   const src = (...names) => names.map((n) => fnSource(flashJs, n)).join("\n");
   const role = new Function("state", "core", "el", "setPhase", "phaseDisplayBench", "phaseConnected",
     `${src("renderRoleLine")}\nreturn renderRoleLine();`)(state, core, stubEl, () => {}, () => null, () => null);
@@ -4857,22 +4864,102 @@ test("A97: the self-check ask is offered only where the firmware prints one, in 
     assert.ok(!browser.ask && browser.askNone, `the browser asked a ${name} board for a self-check it never prints`);
     assert.ok(!desk.ask && desk.askNone, `the desktop asked a ${name} board for a self-check it never prints`);
   }
-  // A firmware the catalog does not name is not asked, nor pointed anywhere,
-  // on either side; neither is a blank or an unread board.
-  for (const [what, current, answer] of [
-    ["foreign firmware", { version: "1.0", projectName: "esp32-hello" }, { resident: { version: "1.0", projectName: "esp32-hello", slot: "factory" } }],
+  // A readable firmware the catalog does not name is still asked on both
+  // sides, as core.requiresLiveReceipt(null) and both monitors' identity
+  // asks fail closed: every SecuraCV release up to 2.4.17 names the Arduino
+  // core, not its product, and the flagship and the Vision among them answer
+  // `j`. A blank or an unread board has nothing to ask, nor to point at.
+  assert.strictEqual(core.requiresLiveReceipt(null), true, "an unnamed firmware is asked, not exempted");
+  for (const [what, current, answer, asked, ptRead] of [
+    ["foreign firmware", { version: "1.0", projectName: "esp32-hello" }, { resident: { version: "1.0", projectName: "esp32-hello", slot: "factory" } }, true, "ok"],
     ["an Arduino-core descriptor", { version: "esp-idf: v4.4.7", projectName: "arduino-lib-builder" },
-      { resident: { version: "esp-idf: v4.4.7", projectName: "arduino-lib-builder", slot: "ota_0" } }],
-    ["a blank board", { unknown: true }, { blank: true }],
-    ["an unread board", { unknown: true }, new Error("read failed")],
+      { resident: { version: "esp-idf: v4.4.7", projectName: "arduino-lib-builder", slot: "ota_0" } }, true, "ok"],
+    ["a blank board", { unknown: true }, { blank: true }, false, "ok"],
+    ["an unread board", { unknown: true }, new Error("read failed"), false, "failed"],
   ]) {
-    const browser = browserCard(flashJs, core, current);
+    const browser = browserCard(flashJs, core, current, { ptRead });
     const desk = await desktopCard(appJs, answer);
-    assert.ok(!browser.ask && !browser.askNone, `the browser offered ${what} a self-check line`);
-    assert.ok(!desk.ask && !desk.askNone, `the desktop offered ${what} a self-check line`);
+    assert.strictEqual(browser.ask, asked, `the browser's "ask the board itself" for ${what}`);
+    assert.strictEqual(desk.ask, asked, `the desktop's "Ask it for its self-check" for ${what}`);
+    assert.ok(!browser.askNone && !desk.askNone, `${what} was pointed at a boot log as if the catalog said it prints no self-check`);
+    if (asked) assert.deepStrictEqual(browser.askOpens, [{ proveIdentity: true }], `${what}: the browser's ask opens the monitor to ask j`);
   }
   // The browser's card draws it where the cold counters are, from this one function.
   assert.match(fnSource(flashJs, "phaseConnected"), /const feel = renderLiveStoryAsk\(\);\s*if \(feel\) hello\.append\(feel\);/);
+});
+
+test("A97: the browser's live voice asks a board for its self-manifest only where its firmware prints one", async () => {
+  // The connect page's voice (and the done card's first-boot listener) used
+  // to write `j` twice to every board it booted, so a WAP, a Sense console
+  // or a display answered "unknown command" twice into the console the user
+  // was reading. startVoice now takes the product whose firmware is talking
+  // and asks only where core.requiresLiveReceipt says it prints a self-check
+  // (failing closed on an unnamed firmware, as the monitors do). The harness
+  // runs flash.js's own startVoice over a stand-in port and fires its timers.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const voiceWrites = async (product) => {
+    const writes = [];
+    const timers = [];
+    const port = {
+      open: async () => {},
+      close: async () => {},
+      readable: { getReader: () => ({ read: () => new Promise(() => {}), cancel: async () => {}, releaseLock() {} }) },
+      writable: { getWriter: () => ({ write: (b) => { writes.push(new TextDecoder().decode(b)); return Promise.resolve(); },
+                                      releaseLock() {} }) },
+    };
+    const state = { catalog, voice: null,
+      session: { port, esploader: { after: async () => {} }, transport: { disconnect: async () => {} } } };
+    const startVoice = new Function("state", "core", "setTimeout", `async ${fnSource(flashJs, "startVoice")}\nreturn startVoice;`)(
+      state, core, (fn, ms) => { timers.push([ms, fn]); return timers.length; });
+    await startVoice({ textContent: "", scrollTop: 0, scrollHeight: 0 }, null, null, product);
+    assert.ok(state.voice && state.voice.writer, "the stand-in voice opened");
+    for (const [, fn] of timers.sort((a, b) => a[0] - b[0])) fn();
+    return writes;
+  };
+  const asked = { yes: [], no: [] };
+  for (const p of catalog.products) {
+    const writes = await voiceWrites(p);
+    const prints = p.serial_receipt !== false;
+    assert.deepStrictEqual(writes, prints ? ["j\n", "j\n"] : [],
+      `the live voice for ${p.id} (serial_receipt ${p.serial_receipt}) wrote ${JSON.stringify(writes)}`);
+    (prints ? asked.yes : asked.no).push(p.role);
+  }
+  for (const role of ["wap", "sense", "display"]) {
+    assert.ok(asked.no.includes(role) && !asked.yes.includes(role), `the live voice asked a ${role} for a j it does not have`);
+  }
+  for (const role of ["canary", "vision"]) assert.ok(asked.yes.includes(role), `the live voice no longer asks a ${role}`);
+  assert.deepStrictEqual(await voiceWrites(null), ["j\n", "j\n"], "an unnamed firmware is asked, as the monitors ask it");
+  // Both callers hand over the product that is talking: the connect page
+  // the board's own (boardProduct, display-aware), the done card the one
+  // just written.
+  assert.match(fnSource(flashJs, "phaseConnected"), /\n {6}idSlot\.append\(chips\);\n {4}\}, null, curProd\);/,
+    "the connect page's voice no longer names the board's product");
+  assert.match(fnSource(flashJs, "phaseDone"), /startVoice\(vcon, null, showSetupNet, product\);/,
+    "the done card's voice no longer names the product it just wrote");
+  assert.strictEqual([...flashJs.matchAll(/\bstartVoice\(/g)].length, 3, "a startVoice caller this test does not hold");
+});
+
+test("A96/A97: a board whose read failed reads \"Can't tell yet\" in both flashers, in the same words", async () => {
+  // Not a first install: nothing was read. The browser's installVerdictFor
+  // and the desktop's verdictMarkup say the same sentence, and both say a
+  // blank chip (read, and found empty) is a first install.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const product = catalog.products.find((p) => p.id === "securacv-canary");
+  const browserVerdict = (ptRead) => new Function("state", "core",
+    `${fnSource(flashJs, "boardProduct")}\n${fnSource(flashJs, "installVerdictFor")}\nreturn installVerdictFor;`)(
+    { catalog, current: { unknown: true }, ptRead }, core)(product, "2.4.19");
+  const unread = browserVerdict("failed");
+  assert.strictEqual(unread.kind, "unknown");
+  assert.strictEqual(`${unread.icon} ${unread.label}`, "• Can't tell yet");
+  const markup = /if \(r\.unknown\) \{\s*return (`[^;]*);\s*\}/.exec(fnSource(appJs, "verdictMarkup"));
+  assert.ok(markup, "the desktop's verdictMarkup lost its unread branch");
+  const html = new Function(`return ${markup[1]};`)();
+  assert.strictEqual(html, `<span class="p-verdict is-unknown"><span class="p-verdict-label">• Can't tell yet</span>` +
+    `<span class="p-verdict-detail">${unread.detail}</span></span>`, "the two flashers word the unread verdict differently");
+  assert.strictEqual(browserVerdict("ok").kind, "fresh", "a blank chip the browser read is a first install");
 });
 
 test("A96/A97: both flashers show the same board the same way, for every product and every descriptor name", async () => {
@@ -4881,18 +4968,17 @@ test("A96/A97: both flashers show the same board the same way, for every product
   // a flavored display, the legacy underscore spellings and foreign images,
   // what each flasher shows — the product its role line or passport head
   // names, the self-check ask, the smart pick, and the install verdict on
-  // every card for that chip. One documented difference is held as such:
-  // a board whose read FAILED. The browser cannot tell it from a blank chip
-  // (both arrive as {unknown:true}), so its verdict is "First install"; the
-  // desktop's backend can, and says "Can't tell yet" (verdictMarkup), not a
-  // first install it never saw. The rescue pick is the browser's alone (the
+  // every card for that chip. Every row agrees, a board whose read FAILED
+  // included: both flashers tell it from a blank chip (the browser by
+  // state.ptRead, the desktop by its backend's blank flag) and say "Can't
+  // tell yet", never a first install nobody checked. The rescue pick is the browser's alone (the
   // desktop's Rescue restores a backup or erases, and picks no product), so
   // it is held to the same resolution as everything else instead.
   const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
   const flashJs = read(join(CANARY, "assets/flash.js"));
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const rows = [
-    ["an unread board", { unknown: true }, new Error("read failed"), "ESP32-S3", 8],
+    ["an unread board", { unknown: true }, new Error("read failed"), "ESP32-S3", 8, "failed"],
     ["a blank board", { unknown: true }, { blank: true }, "ESP32-S3", 8],
   ];
   const named = (name, chip, mb) => [name, { version: "2.4.10", projectName: name },
@@ -4906,9 +4992,9 @@ test("A96/A97: both flashers show the same board the same way, for every product
   }
   const pickOf = (p) => p && { product: p.product.id, kind: p.kind, why: p.why, shortlist: (p.shortlist || []).map((x) => x.id) };
   let compared = 0;
-  for (const [what, current, answer, chip, mb] of rows) {
+  for (const [what, current, answer, chip, mb, ptRead = "ok"] of rows) {
     const opts = { chip, flashBytes: mb * MB };
-    const browser = browserCard(flashJs, core, current, opts);
+    const browser = browserCard(flashJs, core, current, { ...opts, ptRead });
     const desk = await desktopCard(appJs, answer, opts);
     const label = `${what} (${chip}, ${mb} MB)`;
     assert.strictEqual(browser.role, desk.role, `${label}: the browser's role line names ${browser.role}, the desktop's passport ${desk.role}`);
@@ -4924,11 +5010,11 @@ test("A96/A97: both flashers show the same board the same way, for every product
     for (const product of onChip) {
       const b = browser.verdict(product, "2.4.19");
       const d = desk.verdict(product, "2.4.19");
+      assert.deepStrictEqual(b, d, `${label}: the install verdict on the ${product.id} card`);
       if (answer instanceof Error) {
-        assert.deepStrictEqual(b, { kind: "fresh", label: "First install" }, `${label}: the browser's verdict on ${product.id}`);
-        assert.deepStrictEqual(d, { kind: "unknown", label: "Can't tell yet" }, `${label}: the desktop's verdict on ${product.id}`);
-      } else {
-        assert.deepStrictEqual(b, d, `${label}: the install verdict on the ${product.id} card`);
+        assert.deepStrictEqual(b, { kind: "unknown", label: "Can't tell yet" }, `${label}: the verdict on ${product.id}`);
+      } else if (current.unknown) {
+        assert.deepStrictEqual(b, { kind: "fresh", label: "First install" }, `${label}: the verdict on ${product.id}`);
       }
       compared++;
     }
@@ -6251,9 +6337,13 @@ test("rule 7: the desktop's self-check chips use the browser's verdict, threshol
     assert.ok(flashJs.includes(needle), `browser self-check chips lost ${needle}`);
   }
   assert.match(html, /id="selfcheck-chips"/);
-  // Before a flash, too: a recognized resident firmware is asked twice, at
-  // the browser's moments, by an observer that never resets the board…
-  assert.match(fnSource(appJs, "renderPassport"), /if \(r\.product && !r\.blank && !r\.unknown\) \{[\s\S]*?askSelfCheck/);
+  // Before a flash, too: a readable resident firmware that prints a
+  // self-check (or that the catalog does not name, so nothing says it does
+  // not: requiresLiveReceipt fails closed, as the browser's renderLiveStoryAsk
+  // does — the A97 tests drive both) is asked twice, at the browser's
+  // moments, by an observer that never resets the board…
+  assert.match(fnSource(appJs, "renderPassport"),
+    /if \(!r\.blank && !r\.unknown\) \{\s*if \(requiresLiveReceipt\(r\.product\)\) \{[\s\S]*?askSelfCheck/);
   const ask = fnSource(appJs, "askSelfCheck");
   assert.match(ask, /setTimeout\(ask, 900\);\s*setTimeout\(ask, 2600\);/);
   assert.match(flashJs, /setTimeout\(ask, 900\);\s*setTimeout\(ask, 2600\);/);
@@ -6385,7 +6475,7 @@ test("setup-network key: one parser, both flashers, pinned to the firmware's pri
   const flashJs = read(join(CANARY, "assets/flash.js"));
   const html = read(join(ROOT, "desktop", "src", "index.html"));
   assert.match(flashJs, /core\.parseSetupNetwork\(v\.buf\)/, "the browser voice no longer parses the key off the stream");
-  assert.match(flashJs, /startVoice\(vcon, null, showSetupNet\)/,
+  assert.match(flashJs, /startVoice\(vcon, null, showSetupNet, product\)/,
     "the browser done card no longer listens to the first boot for the key");
   assert.match(flashJs, /maybeSetupNet\(buf\)/, "the browser monitor no longer renders the key line");
   assert.match(src, /feedSetupNetwork\(ev\.payload\)/, "the desktop serial:log listener no longer feeds the parser");
