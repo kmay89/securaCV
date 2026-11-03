@@ -7,7 +7,8 @@ gen_builder_manifest.parse_scad KEEPS — the parser whose output the web
 builder and the Lab catalog carry — so each test writes a tiny case file and
 asks the lint what that parser would have dropped (the third rule), which
 meaning it would have carried (the fourth), which group it would have filed
-a knob under (the fifth) or where a ranged knob's help stops (the sixth).
+a knob under (the fifth), where a ranged knob's help stops (the sixth) or
+which group header heads nothing (the seventh).
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 """
@@ -81,7 +82,8 @@ class HelpLines(_Case):
         problems, _ = L.lint_help_lines(p)
         self.assertEqual(len(problems), 1)
         self.assertIn("the computed half", problems[0])
-        self.assertIn("hands that help to knob although it may say half's fact", problems[0])
+        self.assertIn("hands that help to knob although the help may belong to the computed half",
+                      problems[0])
         # and the parser it judges did hand it over: this is what the rule saves
         groups = L.gen_builder_manifest.parse_scad(p)
         self.assertEqual([(q["name"], q.get("desc")) for g in groups for q in g["params"]],
@@ -101,7 +103,8 @@ class HelpLines(_Case):
                          [None, None])
 
     def test_a_ternary_or_a_let_neighbor_counts(self):
-        # a ternary's value and a let() binding are assignments the help may describe
+        # a ternary's value and a value computed through let() are assignments
+        # the help may describe; the let()'s own binding is part of y, not a third
         p = self.scad('/* [B] */\nopt_x = true;  w = opt_x ? 1 : 0;  // the x opening\n'
                       'k = 2.0;  y = let(m = 3) k * m;  // the y scale\n')
         problems, _ = L.lint_help_lines(p)
@@ -109,7 +112,32 @@ class HelpLines(_Case):
         self.assertIn("canary_probe.scad:2: the knob opt_x", problems[0])
         self.assertIn("the computed w —", problems[0])
         self.assertIn("canary_probe.scad:3: the knob k", problems[1])
-        self.assertIn("the computed y, m —", problems[1])
+        self.assertIn("the computed y —", problems[1])
+
+    def test_a_neighbor_that_is_not_a_value_is_named_for_what_it_is(self):
+        # a function, a call with a named argument and a special variable each
+        # take the help from the knob just the same, and none of them is a
+        # "computed" value or a nameless `?` (review of C32)
+        p = self.scad('/* [B] */\n'
+                      'k1 = 1;  function half() = k1 / 2;  // help\n'
+                      'k2 = 1;  echo(w = k2);  // help\n'
+                      'k3 = 1;  $fn = 48;  // help\n')
+        problems, _ = L.lint_help_lines(p)
+        self.assertEqual(len(problems), 3)
+        self.assertIn("canary_probe.scad:2: the knob k1 shares the line and its trailing help "
+                      "with the function half() —", problems[0])
+        self.assertIn("Move the function half() to a line of its own", problems[0])
+        self.assertIn("canary_probe.scad:3: the knob k2 shares the line and its trailing help "
+                      "with `echo(w = k2)` —", problems[1])
+        self.assertIn("may belong to `echo(w = k2)`", problems[1])
+        self.assertIn("canary_probe.scad:4: the knob k3 shares the line and its trailing help "
+                      "with the special variable $fn —", problems[2])
+        for problem in problems:
+            self.assertNotIn("?", problem)
+            self.assertNotIn("the computed", problem)
+        self.assertEqual(L.assignments('k = 1;  function f(a = 2) = a;  for (i = [0:1]) echo(i);'),
+                         [("k", "the computed k"), (None, "the function f()"),
+                          (None, "`for (i = [0:1]) echo(i)`")])
 
     def test_a_computed_neighbor_without_help_passes(self):
         # nothing is handed over when there is no help to hand
@@ -401,6 +429,92 @@ class RangedHelp(_Case):
         for path in sorted(L.ENC.glob("canary_*.scad")):
             if path.name not in L.SKIP:
                 self.assertEqual(L.lint_ranged_help(path), [], path.name)
+
+
+class EmptyGroups(_Case):
+    """The seventh rule: a group header heads at least one assignment."""
+
+    def test_the_169s_orphaned_header_fails(self):
+        # origin/main's shape (C22): [Side cluster] sat directly over the
+        # next header, so the side knobs below were filed as port datums
+        p = self.scad('/* [Side cluster] */\n'
+                      '/* [Port / button datums] */\n'
+                      'btn_dz = 1.0;   // the button datum\n'
+                      'opt_side = true;   // the side opening\n')
+        problems, _ = L.lint_empty_groups(p)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("canary_probe.scad:1: the group header [Side cluster] heads no assignment "
+                      "before the next header [Port / button datums] (line 2)", problems[0])
+        # what the rule saves: the parser did file opt_side as a port datum
+        self.assertEqual([(g["name"], [q["name"] for q in g["params"]])
+                          for g in L.gen_builder_manifest.parse_scad(p)],
+                         [("Port / button datums", ["btn_dz", "opt_side"])])
+
+    def test_the_moved_header_passes(self):
+        p = self.scad('/* [Port / button datums] */\n'
+                      'btn_dz = 1.0;   // the button datum\n'
+                      '\n'
+                      '/* [Side cluster] */\n'
+                      'opt_side = true;   // the side opening\n')
+        self.assertEqual(L.lint_empty_groups(p)[0], [])
+
+    def test_a_last_header_with_nothing_before_the_first_module_fails(self):
+        p = self.scad('/* [A] */\na = 1;\n/* [Vents] */\n// none, on purpose\n'
+                      'module m() { b = 2; }\n')
+        problems, _ = L.lint_empty_groups(p)
+        self.assertEqual(len(problems), 1)
+        self.assertIn(":3: the group header [Vents] heads no assignment before the first module",
+                      problems[0])
+
+    def test_any_assignment_counts_and_comments_do_not(self):
+        # a [Quality] group holds only $fn, which the parser skips; a computed
+        # value is not a knob either; both are something under the header. A
+        # commented-out knob, in either comment form, is not
+        p = self.scad('/* [Quality] */\n$fn = 48;\n'
+                      '/* [Derived] */\nhalf = 2 / 2;\n'
+                      '/* [Gone] */\n// a = 1;\n/* b = 2;\n   c = 3; */\n'
+                      '/* [Last] */\nd = 4;\n')
+        problems, _ = L.lint_empty_groups(p)
+        self.assertEqual(len(problems), 1)
+        self.assertIn(":5: the group header [Gone] heads no assignment before the next "
+                      "header [Last] (line 9)", problems[0])
+
+    def test_hidden_is_not_judged_but_a_header_over_it_is(self):
+        p = self.scad('/* [A] */\n/* [Hidden] */\nx = 1;\n/* [Hidden] */\n')
+        problems, _ = L.lint_empty_groups(p)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("[A] heads no assignment before the next header [Hidden]", problems[0])
+
+    def test_an_allowed_header_is_reported_seen_not_failed(self):
+        p = self.scad('/* [Cooling] — deliberately no vents */\n// none\n/* [B] */\nb = 1;\n')
+        problems, seen = L.lint_empty_groups(p, {("canary_probe.scad", "Cooling")})
+        self.assertEqual((problems, seen), ([], {("canary_probe.scad", "Cooling")}))
+
+    def test_the_headers_are_the_parsers_headers(self):
+        # the rule reads headers the way parse_scad does: every group the
+        # parser returns is a header the rule saw, in the same order
+        for path in sorted(L.ENC.glob("canary_*.scad")):
+            if path.name in L.SKIP:
+                continue
+            heads = [name for _, name, _ in L.customizer_lines(path)
+                     if name and name.lower() != "hidden"]
+            groups = [g["name"] for g in L.gen_builder_manifest.parse_scad(path)
+                      if g["name"] != "Parameters" or "Parameters" in heads]
+            it = iter(heads)
+            self.assertTrue(all(g in it for g in groups), path.name)
+
+    def test_the_ledger_matches_the_tree(self):
+        problems, seen = [], set()
+        for path in sorted(L.ENC.glob("canary_*.scad")):
+            if path.name not in L.SKIP:
+                found, s = L.lint_empty_groups(path, L.EMPTY_GROUP_OK.keys())
+                problems += found
+                seen |= s
+        self.assertEqual(problems, [])
+        self.assertEqual(seen, set(L.EMPTY_GROUP_OK), "an EMPTY_GROUP_OK entry heads "
+                         "something now or is gone: delete it")
+        for reason in L.EMPTY_GROUP_OK.values():
+            self.assertTrue(reason.strip())
 
 
 if __name__ == "__main__":
