@@ -5579,6 +5579,15 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const data = await api(endpoint, 'POST');
 
       if (!data.ok) {
+        // 409 opera_exists (sweep F322): this Canary already holds an opera
+        // (POST pair/join refuses to run beside it, and pair/start refuses to
+        // found a second one over it). Say what to do, and redraw the card,
+        // so it shows the opera this Canary is in and its Leave button.
+        if (data.error === 'opera_exists') {
+          alert('This Canary is already in an opera. Leave it first, then start or join another.');
+          refreshOpera();
+          return;
+        }
         alert('Failed to start pairing: ' + (data.error || 'Unknown error'));
         return;
       }
@@ -5622,11 +5631,17 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     // Why a pairing failed, in words (GET /api/mesh pairing_fail_reason,
-    // and the confirm's 409 partner_refused).
+    // and the confirm's 409 partner_refused). A timeout or a confirmation
+    // that did not match, with the same code on both screens, is what two
+    // Canaries on different pairing firmware show (sweep F358), so both
+    // say so.
+    const PAIRING_FIRMWARE_HINT = 'If both screens showed the same code, the two Canaries may ' +
+                                  'run different pairing firmware: update both, then pair again.';
     function pairingFailText(reason) {
       switch (reason) {
         case 'timeout':
-          return 'it timed out before both Canaries confirmed the code (5 minutes).';
+          return 'it timed out before both Canaries confirmed the code (5 minutes). ' +
+                 PAIRING_FIRMWARE_HINT;
         case 'canceled':
           return 'it was canceled.';
         case 'partner_refused':
@@ -5635,7 +5650,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                  'The health log names it.';
         case 'bad_confirm':
           return 'the other device\'s confirmation did not match this one. Check that both ' +
-                 'screens show the same code, then try again.';
+                 'screens show the same code, then try again. ' + PAIRING_FIRMWARE_HINT;
         case 'bad_complete':
           return 'the opera key from the other device could not be opened. Try again.';
         case 'crypto':
