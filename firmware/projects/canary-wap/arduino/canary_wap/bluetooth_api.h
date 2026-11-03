@@ -151,13 +151,17 @@ static inline esp_err_t send_error(httpd_req_t* req, const char* error) {
 // kept, and a pairing peer's nothing. ArduinoJson 7.4.1 writes a control
 // byte other than \b \f \n \r \t raw, which JSON.parse refuses, and any
 // other byte as it is. So each goes into its answer as wap_json::shown_text()
-// writes it into a buffer of wap_json::replaced_cap(MAX_DEVICE_NAME_LEN): its
-// control bytes and its ill-formed UTF-8 as U+FFFD, the text a page shows
-// for it, whole and well-formed. No page posts one of these names back
+// writes it into a buffer of wap_json::replaced_cap(MAX_DEVICE_NAME_LEN): the
+// control bytes JSON forbids raw (all below 0x20 but \b \f \n \r \t, which
+// ArduinoJson escapes) and its ill-formed UTF-8 as U+FFFD, the text a page
+// shows for it, whole and well-formed. No page posts one of these names back
 // (pair, trust, block and remove take `address`), so no read-back
 // (wap_json::shows_as(), the F262 review's) is owed.
-// firmware/scripts/check_wap_json_answers.py (rule J10) holds every
-// ArduinoJson value that reads one to that.
+// firmware/scripts/check_wap_json_answers.py (rule J10) holds to that every
+// ArduinoJson value that reads one, and every name handed to a function that
+// writes its argument into one (send_success() and send_error() below, any
+// helper or lambda, copyArray()), in the spellings its docstring lists; the
+// spellings it cannot see are listed there too.
 
 // ════════════════════════════════════════════════════════════════════════════
 // API HANDLERS

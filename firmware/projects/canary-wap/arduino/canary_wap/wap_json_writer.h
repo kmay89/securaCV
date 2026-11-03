@@ -40,8 +40,10 @@
  *    control byte was listed but could not be joined from the list).
  *  - shown_text() writes that shown text itself, for a string no page posts
  *    back (sweep F302: a Bluetooth name the radio supplied): each control
- *    byte and each ill-formed UTF-8 sequence as U+FFFD, so the text is
- *    well-formed UTF-8 that any strict reader takes, not only a browser.
+ *    byte JSON forbids raw (raw_control(): all below 0x20 but \b \f \n \r
+ *    \t, which ArduinoJson escapes) and each ill-formed UTF-8 sequence as
+ *    U+FFFD, so the text is well-formed UTF-8 that any strict reader takes,
+ *    not only a browser.
  *  - Every write is whole or not at all: a write that does not fit before the
  *    reserve sets `overflow` and writes nothing, and every write after it is
  *    refused too, so the text is always a run of whole writes followed by a
