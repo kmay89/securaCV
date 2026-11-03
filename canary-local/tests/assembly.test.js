@@ -117,21 +117,25 @@ const NOT_COMPARED = new Map([
 // The disagreements between a device's counted parts and its BOM, as
 // "dev|…" strings. Pure, so the rule is pinned on synthetic parts below too.
 function bomCoverage(dev, parts, rows, listed) {
-  if (!rows.length) return [];
   const billed = new Set(rows.map((r) => r.ref));
   const compares = (p) => p.qty != null && p.ref != null && billed.has(p.ref);
   const gaps = [];
-  if (!parts.some(compares)) gaps.push(`${dev}|compares no part against its BOM`);
-  for (const p of parts.filter((q) => q.qty != null && !compares(q))) {
-    if (listed.has(`${dev}/${p.id}`)) continue;
-    gaps.push(p.ref == null ? `${dev}|${p.id} states x${p.qty} and names no RefDes`
-      : `${dev}|${p.id} states x${p.qty} under ${p.ref}, which no BOM row bills`);
+  // a device with no BOM is not judged, but its NOT_COMPARED entries still
+  // are: an entry outliving its device's BOM lets nothing off any more
+  if (rows.length) {
+    if (!parts.some(compares)) gaps.push(`${dev}|compares no part against its BOM`);
+    for (const p of parts.filter((q) => q.qty != null && !compares(q))) {
+      if (listed.has(`${dev}/${p.id}`)) continue;
+      gaps.push(p.ref == null ? `${dev}|${p.id} states x${p.qty} and names no RefDes`
+        : `${dev}|${p.id} states x${p.qty} under ${p.ref}, which no BOM row bills`);
+    }
   }
   for (const key of listed.keys()) {
     const [d, id] = key.split("/");
     if (d !== dev) continue;
     const p = parts.find((q) => q.id === id);
     if (!p) gaps.push(`${dev}|NOT_COMPARED lists ${id}, which is gone — delete the entry`);
+    else if (!rows.length) gaps.push(`${dev}|NOT_COMPARED lists ${id}, but ${dev} has no BOM rows — delete the entry`);
     else if (compares(p)) gaps.push(`${dev}|NOT_COMPARED lists ${id}, which compares now — delete the entry`);
   }
   return gaps;
@@ -167,6 +171,11 @@ test("BOM coverage: the rule, pinned on synthetic parts", () => {
   assert.deepStrictEqual(bomCoverage("x", [{ id: "s", qty: 4, ref: "SCR1" }, { id: "t", qty: 2, ref: "U1" }], rows, listed),
     ["x|NOT_COMPARED lists t, which compares now — delete the entry"]);
   assert.deepStrictEqual(bomCoverage("x", [{ id: "s", qty: 4, ref: "SCR1" }], rows, listed),
+    ["x|NOT_COMPARED lists t, which is gone — delete the entry"]);
+  // ...and that holds when the device's BOM is gone too (review of C26)
+  assert.deepStrictEqual(bomCoverage("x", [{ id: "t", qty: 2 }], [], listed),
+    ["x|NOT_COMPARED lists t, but x has no BOM rows — delete the entry"]);
+  assert.deepStrictEqual(bomCoverage("x", [{ id: "shell" }], [], listed),
     ["x|NOT_COMPARED lists t, which is gone — delete the entry"]);
   for (const key of NOT_COMPARED.keys()) assert.ok(asm.devices[key.split("/")[0]], `${key}: names no device the Assemble tab choreographs`);
 });
