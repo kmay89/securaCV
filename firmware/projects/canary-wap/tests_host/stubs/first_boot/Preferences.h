@@ -15,6 +15,10 @@
  * beside this file answers IDF's nvs_open() and nvs_get_blob() from the same
  * store, and logs nothing. The String Arduino.h comes from stubs/nvs_store.
  *
+ * rw_begins and puts count every read-write begin() and every put, refused
+ * or not, so a suite can hold a refused read to writing nothing (the API
+ * token's, test_wap_hmac_fail.cpp, sweep F365).
+ *
  * The key read's faults (sweep F360), each in force until clear():
  *   prefs_begin_fails  Preferences' begin() refuses every open and IDF's
  *                      nvs_open() does not: the session after a probe that
@@ -68,6 +72,8 @@ struct HostFirstBootNvs {
   esp_err_t length_fault = ESP_OK;     // IDF's blob lookup fails with this
   Read read = Read::Ok;                // what a blob read does once its lookup succeeded
   int blob_reads = 0;                  // getBytes() calls
+  int rw_begins = 0;                   // read-write begin() calls, opened or refused
+  int puts = 0;                        // put*() calls, stored or refused
   uint32_t last_handle = 0;            // nvs.h's handles, each naming its namespace
   std::map<uint32_t, std::string> handle_ns;   // open, not yet closed
 
@@ -89,6 +95,7 @@ class Preferences {
  public:
   bool begin(const char* name, bool readOnly = false, const char* = nullptr) {
     host_nvs().begins++;
+    if (!readOnly) host_nvs().rw_begins++;
     if (started_ || name == nullptr) return false;
     if (host_nvs().fail_begin || host_nvs().prefs_begin_fails ||
         (readOnly && !host_nvs().has_namespace(name))) {
@@ -186,6 +193,7 @@ class Preferences {
     return it == host_nvs().rows.end() ? nullptr : &it->second;
   }
   size_t put(const char* key, char type, const void* v, size_t len) {
+    host_nvs().puts++;
     if (!started_ || read_only_ || key == nullptr) return 0;
     HostFirstBootNvs::Row& r = host_nvs().rows[path(key)];
     r.type = type;

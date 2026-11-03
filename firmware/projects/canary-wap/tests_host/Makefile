@@ -2044,14 +2044,20 @@ clean: clean-mqtt-identity
 # for everything it calls but the two mints, so a refused mint is run against
 # the chain state it leaves. It also reads every source in the sketch
 # directory (the path is passed in), so it re-runs on every `make`: each call
-# of the three uses its result.
+# of the three uses its result. And the stored API token (sweep F365): the
+# NVS_KEY_API_TKN line, the one-line KeyLoad enum, nvs_store_token(),
+# stored_token_length(), api_token_well_formed() and nvs_load_token() are cut
+# verbatim too and run under provision_device() over the first-boot suite's
+# fake NVS (stubs/first_boot, Arduino.h from stubs/nvs_store) and the real
+# nvs_store.h: only IDF's ESP_ERR_NVS_NOT_FOUND may lead to a stored token.
 HMACFAIL_BIN     = test_wap_hmac_fail
 HMACFAIL_SRC     = test_wap_hmac_fail.cpp
 HMACFAIL_KEY     = test_wap_hmac_fail_key.inc
 HMACFAIL_RESOLVE = test_wap_hmac_fail_resolve.inc
 HMACFAIL_DM      = test_wap_hmac_fail_datamgmt.inc
 HMACFAIL_PROV    = test_wap_hmac_fail_prov.inc
-HMACFAIL_INCS    = $(HMACFAIL_KEY) $(HMACFAIL_RESOLVE) $(HMACFAIL_DM) $(HMACFAIL_PROV)
+HMACFAIL_TOKEN   = test_wap_hmac_fail_token.inc
+HMACFAIL_INCS    = $(HMACFAIL_KEY) $(HMACFAIL_RESOLVE) $(HMACFAIL_DM) $(HMACFAIL_PROV) $(HMACFAIL_TOKEN)
 HMACFAIL_CUT     = ../../../tests_host/cut_functions.awk
 HMACFAIL_MD      = ../../../tests_host/stubs/mbedtls_md
 CUT_INCS        += $(HMACFAIL_INCS)
@@ -2073,6 +2079,16 @@ $(HMACFAIL_PROV): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 	awk -v 'sigs=static bool provision_device() {' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
+$(HMACFAIL_TOKEN): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	@test "$$(grep -cE '^static const char\* NVS_KEY_API_TKN +=' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
+	  echo "canary_wap.ino: no single NVS_KEY_API_TKN line for nvs_load_token()" >&2; exit 1; }
+	@test "$$(grep -cE '^enum class KeyLoad : uint8_t \{ Loaded, Absent, Refused \};$$' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
+	  echo "canary_wap.ino: no single one-line KeyLoad enum for nvs_load_token()" >&2; exit 1; }
+	@grep -nE '^static const char\* NVS_KEY_API_TKN +=|^enum class KeyLoad : uint8_t \{' $(SRC_DIR)/canary_wap.ino | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
+	awk -v 'sigs=static bool nvs_store_token(|static esp_err_t stored_token_length(|static bool api_token_well_formed(|static KeyLoad nvs_load_token(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
 $(HMACFAIL_DM): $(SRC_DIR)/data_mgmt_api.h $(HMACFAIL_CUT) Makefile
 	awk '/^static const (uint32_t|size_t) +BACKUP_(MAGIC|VERSION|PAYLOAD|SIZE) +=/ { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
 	  END { if (n != 4) { print "data_mgmt_api.h: " n + 0 " BACKUP_ constant line(s), expected 4" > "/dev/stderr"; exit 1 } }' \
@@ -2081,13 +2097,17 @@ $(HMACFAIL_DM): $(SRC_DIR)/data_mgmt_api.h $(HMACFAIL_CUT) Makefile
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/data_mgmt_api.h >> $@.tmp && mv $@.tmp $@
 
 $(HMACFAIL_BIN): $(HMACFAIL_SRC) $(HMACFAIL_INCS) arduino_globals.h $(SRC_DIR)/log_level.h \
-                 $(SRC_DIR)/chain_state.h $(wildcard $(HMACFAIL_MD)/mbedtls/*.h stubs/sd_fake/*.h)
+                 $(SRC_DIR)/chain_state.h $(SRC_DIR)/nvs_store.h \
+                 $(wildcard $(HMACFAIL_MD)/mbedtls/*.h stubs/sd_fake/*.h stubs/first_boot/*.h) \
+                 stubs/nvs_store/Arduino.h $(wildcard $(NVSLOCK_FREERTOS)/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations \
+	  -I stubs/first_boot -I stubs/nvs_store -I $(NVSLOCK_FREERTOS) \
 	  -I stubs/sd_fake -I $(HMACFAIL_MD) -I $(SRC_DIR) -I . \
 	  -DWAP_HMAC_KEY_INC='"$(HMACFAIL_KEY)"' \
 	  -DWAP_HMAC_RESOLVE_INC='"$(HMACFAIL_RESOLVE)"' \
 	  -DWAP_HMAC_DATAMGMT_INC='"$(HMACFAIL_DM)"' \
 	  -DWAP_HMAC_PROV_INC='"$(HMACFAIL_PROV)"' \
+	  -DWAP_HMAC_TOKEN_INC='"$(HMACFAIL_TOKEN)"' \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(HMACFAIL_SRC) -lcrypto
 
 .PHONY: run-wap-hmac-fail clean-wap-hmac-fail
@@ -2098,6 +2118,67 @@ clean-wap-hmac-fail:
 
 run: run-wap-hmac-fail
 clean: clean-wap-hmac-fail
+
+# The sketch's SHA-256 fails closed (sweep F364, the .ino's slice):
+# sha256_raw() and sha256_domain() answer whether every mbedTLS step ran and
+# zero their output when one did not, and each of the five callers refuses
+# what the hash was for. The six [[nodiscard]] declarations (the awk below
+# takes each, a two-line one whole), secure_zero(), hex_to_str(), the two
+# helpers, compute_fingerprint(), the certificate's fingerprint and its
+# refusal, compute_chain_hash(), update_chain(), the chain persist, the hash
+# latch line and witness_hash_failed(), create_witness_record(), the SD-tail
+# recovery, verify_record_signature() and chain_tail_intact() are cut
+# verbatim out of canary_wap.ino; tls_after_setup() on its own,
+# init_tls_cert() on its own (the suite includes it twice, with and without
+# the certificate generator) and provision_device() on its own (firmware/
+# tests_host/cut_functions.awk). Under them: a stand-in for mbedTLS's
+# streaming SHA-256, defined in the suite over OpenSSL, that fails the step
+# and the hash the test names, and the fake SD card (stubs/sd_fake). It also
+# reads canary_wap.ino (the sketch directory's path is passed in), so it
+# re-runs on every `make`: each call of the six uses its result.
+SHAFAIL_BIN   = test_wap_sha_fail
+SHAFAIL_SRC   = test_wap_sha_fail.cpp
+SHAFAIL_CORE  = test_wap_sha_fail_core.inc
+SHAFAIL_TLS   = test_wap_sha_fail_tls.inc
+SHAFAIL_AFTER = test_wap_sha_fail_after.inc
+SHAFAIL_PROV  = test_wap_sha_fail_prov.inc
+SHAFAIL_INCS  = $(SHAFAIL_CORE) $(SHAFAIL_TLS) $(SHAFAIL_AFTER) $(SHAFAIL_PROV)
+CUT_INCS     += $(SHAFAIL_INCS)
+
+$(SHAFAIL_CORE): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk '/^\[\[nodiscard\]\] static bool / { n++; on = 1; printf "#line %d \"%s\"\n", FNR, FILENAME } \
+	  on { print; if ($$0 ~ /;/) on = 0 } \
+	  /^static bool g_witness_hash_warned = false;$$/ { w++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
+	  END { if (n != 6 || w != 1) { print "canary_wap.ino: " n + 0 " [[nodiscard]] static bool declaration(s), expected 6, and " w + 0 " hash latch line(s), expected 1" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/canary_wap.ino > $@.tmp
+	awk -v 'sigs=static void secure_zero(|static void hex_to_str(|static bool sha256_raw(|static bool sha256_domain(|static bool compute_fingerprint(|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool compute_chain_hash(|static bool update_chain(|static bool persist_chain_blob() {|static void persist_chain_state() {|static void witness_recover_from_sd() {|static void witness_hash_failed(|static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {|static bool verify_record_signature(|static bool chain_tail_intact() {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
+$(SHAFAIL_TLS): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool init_tls_cert() {' -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SHAFAIL_AFTER): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static inline bool tls_after_setup() {' -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SHAFAIL_PROV): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool provision_device() {' -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SHAFAIL_BIN): $(SHAFAIL_SRC) $(SHAFAIL_INCS) arduino_globals.h $(SRC_DIR)/log_level.h \
+                $(SRC_DIR)/chain_state.h $(SRC_DIR)/chain_persist.h $(SRC_DIR)/witness_page.h \
+                $(SRC_DIR)/witness_store.h $(wildcard stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations -I stubs/sd_fake -I $(SRC_DIR) -I . \
+	  -DWAP_SHA_INC='"$(SHAFAIL_CORE)"' -DWAP_SHA_TLS_INC='"$(SHAFAIL_TLS)"' \
+	  -DWAP_SHA_TLS_AFTER_INC='"$(SHAFAIL_AFTER)"' -DWAP_SHA_PROV_INC='"$(SHAFAIL_PROV)"' \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(SHAFAIL_SRC) -lcrypto
+
+.PHONY: run-wap-sha-fail clean-wap-sha-fail
+run-wap-sha-fail: $(SHAFAIL_BIN)
+	$(call run_marked,$(SHAFAIL_BIN))
+clean-wap-sha-fail:
+	rm -f $(SHAFAIL_BIN) $(SHAFAIL_INCS)
+
+run: run-wap-sha-fail
+clean: clean-wap-sha-fail
 
 # GET /api/fleet/qr reads its query whole or refuses it (sweep F304): the
 # REAL fleet_qr_query.h and handle_fleet_qr(), cut verbatim out of
