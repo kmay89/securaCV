@@ -28,7 +28,13 @@
 //     decoded, a key with no '=');
 //   - no 'pass' is an open network; no query, no name, an empty name, a name
 //     past 32 bytes, a password past 64, a zero byte in either and a query
-//     past the buffer each answer their own 400, naming the field.
+//     past the buffer each answer their own 400, naming the field;
+//   - the home network as GET /api/wifi shows it (U+FFFD for each control
+//     byte and each byte that is not UTF-8), whose text can pass 32 bytes
+//     up to 96 though its own name does not, is drawn with its own bytes,
+//     sent as the page sends it and every byte escaped beside the longest
+//     password (a 491-byte query); the 32-byte rule runs after the
+//     read-back (the F304 review), so any other name past 32 is refused.
 // Host-tested; not run on a device.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-fleet-qr-query
@@ -214,7 +220,10 @@ static void every_length_is_whole_or_refused() {
         }
       }
     }
-    for (size_t n = 1; n <= 36; n++) {
+    // Past 32 bytes every name is refused as too long: by the handler up to
+    // the 96 bytes the read takes (the longest shown form of a 32-byte
+    // name), and by the read past them, sent plain or cut by the reader.
+    for (size_t n = 1; n <= 100; n++) {
       const std::string ssid(n, k.c);
       const std::string what = std::string("a name of ") + std::to_string(n) + " " + k.what;
       for (const std::string& enc : {form_encode(ssid), all_escaped(ssid)}) {
@@ -271,8 +280,24 @@ static void hand_made_values() {
 }
 
 // The Fleet sheet fills the name in from GET /api/wifi, which shows the home
-// network's control bytes as U+FFFD (F262): the code carries the network's
-// own bytes, whole.
+// network's control bytes, and its bytes that are not UTF-8, as U+FFFD
+// (F262): the code carries the network's own bytes, whole. The shown form of
+// a name of 32 bytes or fewer can pass 32 bytes (up to 96, every byte three)
+// and is still the home network: the read takes it and the 32-byte rule
+// runs after the read-back (the F304 review; before, such a name was
+// refused as too long, and on main as "ssid is required").
+static std::string shown_as(const std::string& raw) {
+  std::string out;
+  for (unsigned char c : raw) {
+    if (c < 0x20 || c >= 0x80) {
+      out += "\xEF\xBF\xBD";  // a control byte, or a lone byte that is not UTF-8
+    } else {
+      out += (char)c;
+    }
+  }
+  return out;
+}
+
 static void the_home_network_is_put_back() {
   std::memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
   std::strcpy(g_wifi_creds.ssid, "Home\x01Net");
@@ -280,6 +305,39 @@ static void the_home_network_is_put_back() {
   const std::string shown = "Home\xEF\xBF\xBDNet";  // U+FFFD for the control byte
   drawn_whole("the home network as GET /api/wifi showed it", "ssid=" + form_encode(shown) + "&pass=pw",
               "Home\x01Net", "pw");
+
+  struct Home {
+    const char* what;
+    std::string raw;
+  };
+  const std::string pw64(64, '!');
+  for (const Home& h : {Home{"30 letters and 2 control bytes", std::string(30, 'H') + "\x01\x02"},
+                        Home{"28 letters and 4 control bytes", std::string(28, 'H') + "\x01\x02\x03\x04"},
+                        Home{"26 letters and 3 control bytes", std::string(26, 'H') + "\x1f\x1e\x1d"},
+                        Home{"32 control bytes", std::string(32, '\x01')},
+                        Home{"32 bytes that are not UTF-8", std::string(32, '\xFF')}}) {
+    std::memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
+    std::memcpy(g_wifi_creds.ssid, h.raw.data(), h.raw.size());
+    g_wifi_creds.configured = true;
+    const std::string sh = shown_as(h.raw);
+    CHECK_MSG(h.raw.size() <= 32 && sh.size() > 32, std::string(h.what) + ": the fixture");
+    const std::string what = std::string("the home network (") + h.what + ", shown as " +
+                             std::to_string(sh.size()) + " bytes)";
+    drawn_whole(what + ", sent as the page sends it", "ssid=" + form_encode(sh) + "&pass=pw", h.raw, "pw");
+    // Every byte escaped, with the longest password escaped too: up to
+    // "ssid=" + 288 + "&pass=" + 192 = 491 bytes, the longest query the page
+    // sends.
+    drawn_whole(what + ", every byte escaped, the longest password",
+                "ssid=" + all_escaped(sh) + "&pass=" + all_escaped(pw64), h.raw, pw64);
+    // The same text with one U+FFFD written as a letter is not the home
+    // network, and too long for any other.
+    std::string other = sh;
+    other.replace(other.find("\xEF\xBF\xBD"), 3, "X");
+    if (other.size() > 32) {
+      refused(what + " with one U+FFFD as a letter", "ssid=" + form_encode(other) + "&pass=pw",
+              "Network name is too long");
+    }
+  }
   std::memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
 }
 

@@ -8274,9 +8274,10 @@ static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
 static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   g_health.http_requests++;
 
-  // The query and both values read whole, decoded, and held to 32 and 64
-  // bytes, or a 400 naming the field (fleet_qr_query.h, sweep F304): a cut
-  // password is never drawn into the code. No 'pass' is an open network.
+  // The query and both values read whole and decoded, the password held to
+  // 64 bytes and the name to the 96 its shown form can take, or a 400 naming
+  // the field (fleet_qr_query.h, sweep F304): a cut password is never drawn
+  // into the code. No 'pass' is an open network.
   fleet_qr::Credentials cred;
   const fleet_qr::Read read = fleet_qr::read_request(req, &cred);
   if (read != fleet_qr::Read::Ok) {
@@ -8292,6 +8293,13 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   if (wap_json::shows_as(g_wifi_creds.ssid, cred.ssid)) {
     strncpy(cred.ssid, g_wifi_creds.ssid, sizeof(cred.ssid) - 1);
     cred.ssid[sizeof(cred.ssid) - 1] = '\0';
+  }
+  // Only then is the name held to 32 bytes (F304's review): the home
+  // network's shown form can pass 32 though its own name does not.
+  if (!fleet_qr::name_fits(cred)) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, fleet_qr::refusal(fleet_qr::Read::SsidTooLong), -1);
   }
   const char* ssid = cred.ssid;
   const char* pass = cred.pass;

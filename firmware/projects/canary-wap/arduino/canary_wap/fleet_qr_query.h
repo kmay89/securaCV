@@ -16,12 +16,17 @@
 //     was answered "Missing query parameters".
 // Now the query and both values are read into buffers sized for the encoded
 // forms, every answer is checked, and a value is refused, naming its field,
-// when it is cut, when it decodes past its limit (32 bytes for a network
-// name, 64 for a password: a 63-character passphrase or a 64-digit hex key)
-// or when it decodes to a zero byte (%00), which would end the C string the
-// QR is drawn from. No 'pass' is an open network (""). Every refusal is a
+// when it is cut, when it decodes past what it may hold, or when it decodes
+// to a zero byte (%00), which would end the C string the QR is drawn from.
+// A password may hold 64 bytes (a 63-character passphrase or a 64-digit hex
+// key). A name is read at up to 96 bytes, the longest text the Fleet sheet
+// can be shown a 32-byte name as (GET /api/wifi shows each control byte, and
+// each byte that is not UTF-8, as U+FFFD's three, F262), so the handler can
+// put the home network's own bytes back first and then hold the name to 32
+// bytes (name_fits()). No 'pass' is an open network (""). Every refusal is a
 // 400 whose text is refusal()'s; the handler then runs its own rules (the
-// home network's bytes put back, the ';' refusal) on what this read.
+// home network's bytes put back, the 32-byte name, the ';' refusal) on what
+// this read.
 //
 // Pure apart from the three esp_http_server.h readers it calls, so
 // tests_host/test_fleet_qr_query.cpp runs it over the host stand-in
@@ -40,18 +45,28 @@ namespace fleet_qr {
 
 constexpr size_t kSsidMax = 32;   // bytes: 802.11's longest network name
 constexpr size_t kPassMax = 64;   // bytes: a 63-character passphrase or a 64-digit hex key
+// The longest text a page shows a kSsidMax-byte name as: every byte
+// U+FFFD's three (wap_json_writer.h's shows_as()). Read at that length so
+// the home network's shown form reaches the handler's read-back.
+constexpr size_t kSsidShownMax = 3 * kSsidMax;
 // Each value as the page sends it at its longest, every byte as "%XX", and
-// a NUL: 97 and 193 bytes.
-constexpr size_t kSsidEncCap = 3 * kSsidMax + 1;
+// a NUL: 289 and 193 bytes.
+constexpr size_t kSsidEncCap = 3 * kSsidShownMax + 1;
 constexpr size_t kPassEncCap = 3 * kPassMax + 1;
 // The query buffer. IDF refuses a request line whose URI passes
 // CONFIG_HTTPD_MAX_URI_LEN (512 by default) before any handler runs, so no
 // query that reaches the handler is longer; the longest the page sends is
-// 299 bytes. One that does not fit is refused by length, never read cut.
+// 491 bytes ("ssid=" + 288 + "&pass=" + 192; 505 with "/api/fleet/qr?",
+// inside IDF's 512). One that does not fit is refused by length, never read
+// cut.
 constexpr size_t kQueryCap = 512;
+static_assert(5 + (kSsidEncCap - 1) + 6 + (kPassEncCap - 1) < kQueryCap,
+              "the longest query the page sends must fit the query buffer");
 
+// ssid holds what the page sent, up to kSsidShownMax bytes, until the
+// handler's read-back and name_fits() have run.
 struct Credentials {
-  char ssid[kSsidMax + 1];
+  char ssid[kSsidShownMax + 1];
   char pass[kPassMax + 1];
 };
 
@@ -61,7 +76,8 @@ enum class Read : uint8_t {
   QueryTooLong,     // longer than kQueryCap - 1
   QueryUnreadable,  // the reader answered anything but ESP_OK
   NoSsid,           // no 'ssid', or an empty one
-  SsidTooLong,      // cut by the reader, or more than kSsidMax bytes decoded
+  SsidTooLong,      // cut by the reader, more than kSsidShownMax bytes decoded, or
+                    // more than kSsidMax once read back (name_fits())
   SsidUnreadable,   // the reader answered anything else
   SsidHasNul,       // decodes to a zero byte
   PassTooLong,      // cut by the reader, or more than kPassMax bytes decoded
@@ -144,7 +160,7 @@ inline Read read_query(const char* qs, Credentials* out) {
   char pass_enc[kPassEncCap];
   size_t ssid_n = 0;
   size_t pass_n = 0;
-  switch (read_value(qs, "ssid", ssid_enc, sizeof(ssid_enc), kSsidMax, &ssid_n)) {
+  switch (read_value(qs, "ssid", ssid_enc, sizeof(ssid_enc), kSsidShownMax, &ssid_n)) {
     case Value::Ok: break;
     case Value::Missing: return Read::NoSsid;
     case Value::TooLong: return Read::SsidTooLong;
@@ -173,6 +189,13 @@ inline Read read_request(httpd_req_t* req, Credentials* out) {
   char qs[kQueryCap];
   if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) return Read::QueryUnreadable;
   return read_query(qs, out);
+}
+
+// After the handler's read-back: the name the code will carry is at most
+// kSsidMax bytes. A posted text past that is not the home network's shown
+// form, and no network has such a name.
+inline bool name_fits(const Credentials& c) {
+  return strlen(c.ssid) <= kSsidMax;
 }
 
 }  // namespace fleet_qr
