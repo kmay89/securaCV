@@ -1100,8 +1100,9 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
     after its own subscribe, through the same ``_apply`` every publish takes
     (verification, the replay gate, the voice brief's record), then drops
     it. A broker that also retained that publish sends the entity's fresh
-    subscription its copy next: that one delivery, retained and equal to
-    the body just shown, is the same publish and is not applied twice
+    subscription its copy, after any live event that beats the batched
+    SUBSCRIBE: the first delivery flagged retained, equal to the body just
+    shown, is the same publish and is not applied twice
     (mqtt_payload.CreatingEcho).
     """
 

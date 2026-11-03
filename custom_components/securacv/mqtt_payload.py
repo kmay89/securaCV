@@ -127,12 +127,17 @@ class CreatingEcho:
     its subscribe) and drops it, so a second add of the same entity replays
     nothing. A broker that ALSO retained that publish (live, a broker
     forwards it with the retain flag cleared, so the discovery callback
-    handed it over) sends the entity's fresh subscription its retained copy
-    next. ``is_echo()`` is true for exactly that delivery, the first JSON
-    object the entity reads after ``take()``, flagged retained and equal to
-    the body shown; whatever that first one is, it ends the watch, so a
-    later publish of the same body (a re-send, the retained copy after a
-    reconnect) takes the ordinary path.
+    handed it over) sends the entity's fresh subscription its retained copy.
+    That copy need not come next: Home Assistant batches a new SUBSCRIBE
+    (mqtt/client.py SUBSCRIBE_COOLDOWN), and a live event arriving on the
+    wildcard subscription in that window reaches the entity's local one
+    first. So the watch stays open across live deliveries and closes on the
+    first delivery flagged retained, which is the one retained copy the core
+    hands a subscription per topic until a reconnect (client.py
+    _retained_topics). ``is_echo()`` is true for that delivery when it is
+    equal to the body shown, and only then; whatever it is, it ends the
+    watch, so a later publish of the same body (a re-send, the retained copy
+    after a reconnect) takes the ordinary path.
     """
 
     __slots__ = ("_pending", "_shown")
@@ -148,6 +153,12 @@ class CreatingEcho:
         return payload
 
     def is_echo(self, msg: Any, data: dict[str, Any]) -> bool:
-        """True for the subscription's retained copy of the body just applied."""
+        """True for the subscription's retained copy of the body just applied.
+
+        A live delivery is never the echo and leaves the watch open; the
+        first retained one ends it.
+        """
+        if self._shown is None or not getattr(msg, "retain", False):
+            return False
         shown, self._shown = self._shown, None
-        return shown is not None and bool(getattr(msg, "retain", False)) and data == shown
+        return data == shown

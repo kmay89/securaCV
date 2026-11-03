@@ -119,3 +119,32 @@ async def test_the_creating_event_is_shown_once_by_the_entities_it_creates(
     assert seen.recorded == [(PORCH, SIGNALS[key])] * 2
     assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS] * 2
     assert hass.states.get(entity_id(hass, "binary_sensor", key)).state == "on"
+
+
+async def test_a_live_event_before_the_retained_copy_does_not_reopen_the_creating_event(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The core batches a new SUBSCRIBE (mqtt/client.py SUBSCRIBE_COOLDOWN), so
+    a second event can reach the entities' fresh subscriptions live before the
+    broker's retained copy of the creating publish does. The second is applied
+    as it comes, and the late copy is still the creating publish's echo:
+    nothing records or arms twice, and Last Event keeps the newer event."""
+    seen = Deliveries(monkeypatch)
+    entry = make_mqtt_only_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await settle(hass)
+
+    first, second = event(SIGNALS["motion"], 41), event(SIGNALS["occupancy"], 42)
+    await publish(hass, first, retained=False)
+    await publish(hass, second, retained=False)
+    both = [(PORCH, SIGNALS["motion"]), (PORCH, SIGNALS["occupancy"])]
+    assert seen.recorded == both
+    assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS] * 2
+
+    # The broker kept the first (the second was not retained) and sends it
+    # to the fresh subscriptions now, flagged retained.
+    await publish(hass, first, retained=True)
+    assert seen.recorded == both
+    assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS] * 2, "each event arms one hold window"
+    assert hass.states.get(entity_id(hass, "sensor", "last_event")).state == SIGNALS["occupancy"]

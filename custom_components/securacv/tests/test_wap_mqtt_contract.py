@@ -278,6 +278,13 @@ class _Broker:
     one at a time, from no event loop, as Home Assistant's client runs
     subscription callbacks: so a message reaches only the subscriptions that
     exist when it is delivered.
+
+    With `hold_retained` set, a subscription is live at once but its
+    retained messages wait for `release_retained()`: Home Assistant batches
+    a new SUBSCRIBE (mqtt/client.py SUBSCRIBE_COOLDOWN), so a publish that
+    arrives in that window reaches the new subscription before the broker's
+    retained copy does, and the copy is what the broker holds when the
+    SUBSCRIBE is sent.
     """
 
     def __init__(self, hass: _Hass) -> None:
@@ -287,18 +294,33 @@ class _Broker:
         self.deliveries: deque[tuple[dict[str, Any], str, str, bool]] = deque()
         self.adding: list[Any] = []
         self.entities: list[Any] = []
+        self.hold_retained = False
+        self.held: list[dict[str, Any]] = []
 
     async def async_subscribe(self, hass, topic, msg_callback, qos=0, encoding="utf-8"):
         sub = {"filter": topic, "callback": msg_callback, "active": True}
         self.subscriptions.append(sub)
-        for retained_topic, payload in self.retained.items():
-            if _matches(topic, retained_topic):
-                self.deliveries.append((sub, retained_topic, payload, True))
+        if self.hold_retained:
+            self.held.append(sub)
+        else:
+            self._queue_retained(sub)
 
         def _unsubscribe() -> None:
             sub["active"] = False
 
         return _unsubscribe
+
+    def _queue_retained(self, sub: dict[str, Any]) -> None:
+        for retained_topic, payload in self.retained.items():
+            if _matches(sub["filter"], retained_topic):
+                self.deliveries.append((sub, retained_topic, payload, True))
+
+    def release_retained(self) -> None:
+        """Send the held subscriptions the retained messages held now."""
+        held, self.held = self.held, []
+        for sub in held:
+            self._queue_retained(sub)
+        self.pump()
 
     def add_entities(self, entities, update_before_add: bool = False) -> None:
         self.adding.extend(entities)
@@ -984,6 +1006,38 @@ def test_the_creating_event_is_applied_once(record, monkeypatch, key, delivery):
     wap.broker.publish(topic, _porch_event(_SIGNALS[key], 42), False)
     assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS] * 2
     assert seen.recorded == [(_PORCH, _SIGNALS[key])] * 2
+
+
+def test_a_live_event_before_the_retained_copy_does_not_reopen_the_creating_event(
+    record, monkeypatch
+):
+    """The broker retained the creating publish, and a second event arrives
+    live before the entities' batched SUBSCRIBE gets that retained copy back
+    (the broker kept the first: the second was not retained). The second is
+    applied as it comes, and the late copy is still the creating publish's
+    echo, so nothing records or arms twice and Last Event keeps the newer
+    event rather than going back to the first."""
+    seen = _Deliveries(monkeypatch)
+    wap = _Wap(record, monkeypatch)
+    topic = f"{record['prefix']}/{_PORCH}/events"
+    wap.broker.hold_retained = True
+    wap.broker.publish(topic, _porch_event(_SIGNALS["motion"], 41), True)
+    assert sum(sub["filter"] == topic for sub in wap.broker.held) == 3, (
+        "Last Event, Motion and Occupancy wait for their retained copies"
+    )
+    wap.broker.publish(topic, _porch_event(_SIGNALS["occupancy"], 42), False)
+    assert seen.recorded == [(_PORCH, _SIGNALS["motion"]), (_PORCH, _SIGNALS["occupancy"])]
+    assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS] * 2
+
+    wap.broker.release_retained()
+    assert seen.recorded == [(_PORCH, _SIGNALS["motion"]), (_PORCH, _SIGNALS["occupancy"])]
+    assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS] * 2, "each event arms one hold window"
+    assert _value(wap.entity("last_event", _PORCH), "native_value") == _SIGNALS["occupancy"]
+
+    # The watch closed on that copy: a later live event takes the ordinary path.
+    wap.broker.publish(topic, _porch_event(_SIGNALS["motion"], 43), False)
+    assert seen.recorded[-1] == (_PORCH, _SIGNALS["motion"])
+    assert seen.armed == [HOMEKIT_MOTION_HOLD_SECONDS] * 3
 
 
 @pytest.mark.parametrize("key", sorted(_SIGNALS))
