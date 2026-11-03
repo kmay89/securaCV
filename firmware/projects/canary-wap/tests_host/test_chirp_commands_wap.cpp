@@ -787,6 +787,19 @@ std::vector<uint8_t> confirm_of(const Neighbor& n, const uint8_t nonce[8]) {
   return frame_of(h, p);
 }
 
+// The neighbors in `ns` keep beaconing, once a minute, until the rows their
+// first beacons put in the nearby table are PRESENCE_REQUIRED_MS old, so a
+// confirmation from any of them counts (spec §3.4 rule 4; sweep F311). The
+// wall clock moves with uptime and the loop task runs a pass each minute, as
+// on a device.
+void stay_present(const std::vector<Neighbor>& ns) {
+  for (uint32_t t = 0; t < cc::PRESENCE_REQUIRED_MS; t += 60000) {
+    host_sim::now_ms += 60000;
+    host_sim::wall_now += 60;
+    for (const Neighbor& n : ns) deliver(n, presence_of(n));
+    cc::update();
+  }
+}
 
 // The loop task changes the channel mid-pass: a read shows the last pass it
 // published, whole, until the pass ends and publishes the change. A read of
@@ -964,6 +977,7 @@ void test_a_frame_shows_in_the_tables_after_its_pass() {
   cc::update();
   t = nearby_read();
   CHECK(t.count == 2 && std::string(t.devices[1].emoji) == M.display && t.devices[1].rssi == -71);
+  stay_present({N, M});   // M's confirmation below counts (spec §3.4 rule 4; F311)
 
   const size_t sent_before = host_sim::espnow->sent.size();
   deliver(N, witness_of(N, cc::TPL_EMERG_FIRE_VISIBLE, cc::CHIRP_URG_URGENT,
@@ -1422,6 +1436,40 @@ void test_the_view_sizes() {
               "the live tables they copy from: %zu B and %zu B)\n",
               sizeof(cc::StatusView), sizeof(cc::NearbyTable), sizeof(cc::RecentTable),
               cc::NEARBY_BYTES, cc::RECENT_CHIRPS_BYTES);
+}
+
+// Spec §12.3's memory budget, row by row and its total, on this host's
+// layout. The device's 32-bit layout of these structs is the same: no
+// pointer, size_t or 8-byte member in any, and no member aligned past 4.
+// scripts/tests/test_chirp_spec_tables.py holds each row of the spec's
+// table to the line here that names it, and the total to the sum.
+// The nearby row grew 4 bytes for first_seen_ms (sweep F311); the recent
+// row's TTL byte took the padding before received_ms (F306), so it did not.
+static_assert(sizeof(cc::ChirpSession) == 112, "§12.3 Session identity");
+static_assert(sizeof(cc::ReceivedChirp) == 964 &&
+                  cc::RECENT_CHIRPS_BYTES == cc::MAX_RECENT_CHIRPS * sizeof(cc::ReceivedChirp) &&
+                  cc::RECENT_CHIRPS_BYTES == 16 * 964,
+              "§12.3 Recent chirps");
+static_assert(offsetof(cc::ReceivedChirp, ttl_minutes) == offsetof(cc::ReceivedChirp, hop_count) + 1 &&
+                  offsetof(cc::ReceivedChirp, received_ms) == offsetof(cc::ReceivedChirp, ttl_minutes) + 1,
+              "the TTL takes the byte of padding between hop_count and received_ms");
+static_assert(2 * cc::BLOOM_BYTES == 2 * 4096, "§12.3 Nonce dedup (Bloom filter, two halves)");
+static_assert(sizeof(cc::NearbyDevice) == 52 &&
+                  cc::NEARBY_BYTES == cc::MAX_NEARBY_CACHE * sizeof(cc::NearbyDevice) &&
+                  cc::NEARBY_BYTES == 32 * 52,
+              "§12.3 Nearby (presence) table");
+static_assert(sizeof(cc::PubkeyRateEntry) == 40 && cc::PUBKEY_RATE_BYTES == 32 * 40,
+              "§12.3 Per-key witness rate table");
+static_assert(sizeof(cc::SelfTestSeenEntry) == 40 && cc::SELFTEST_SEEN_BYTES == 32 * 40,
+              "§12.3 Self-test seen table");
+static_assert(sizeof(cc::ViewTables) == 3404, "§12.3 Route views (two copies and a scratch)");
+static_assert(sizeof(cc::ChirpSession) + cc::RECENT_CHIRPS_BYTES + 2 * cc::BLOOM_BYTES + cc::NEARBY_BYTES +
+                      cc::PUBKEY_RATE_BYTES + cc::SELFTEST_SEEN_BYTES + sizeof(cc::ViewTables) ==
+                  31356,
+              "§12.3 Total");
+void test_the_memory_budget_is_the_specs() {
+  std::printf("PASS the_memory_budget_is_the_specs (ReceivedChirp %zu B, NearbyDevice %zu B)\n",
+              sizeof(cc::ReceivedChirp), sizeof(cc::NearbyDevice));
 }
 
 // ── The send cooldown is a timer (sweep F178) ───────────────────────────
@@ -2143,6 +2191,69 @@ void test_a_disable_keeps_the_tiers() {
   std::printf("PASS a_disable_keeps_the_tiers\n");
 }
 
+// The last_chirp_age_min of each presence beacon this device sent since
+// `from`, in order (255: no send).
+std::vector<uint8_t> presence_ages(size_t from) {
+  std::vector<uint8_t> out;
+  const auto& sent = host_sim::espnow->sent;
+  for (size_t i = from; i < sent.size(); ++i) {
+    const cc::ChirpHeader* h = reinterpret_cast<const cc::ChirpHeader*>(sent[i].bytes.data());
+    if (h->msg_type != cc::CHIRP_MSG_PRESENCE) continue;
+    CHECK(sent[i].bytes.size() >= sizeof(cc::ChirpHeader) + sizeof(cc::ChirpPresencePayload));
+    cc::ChirpPresencePayload p;
+    memcpy(&p, sent[i].bytes.data() + sizeof(cc::ChirpHeader), sizeof p);
+    out.push_back(p.last_chirp_age_min);
+  }
+  return out;
+}
+
+// A new session beacons no last send (sweep F363). A presence beacon says
+// how many minutes ago this device chirped, and send_presence() counted that
+// from g_last_chirp_sent_ms, which only a reboot cleared. So after a disable
+// and an enable the new session (a new key, session id and emoji, spec 2.3)
+// beaconed the old session's last-send age: a send, a disable 7 minutes
+// later and an enable, and the new session's first beacon said 7, which
+// links the two sessions for any neighbor that heard the old one chirp
+// (spec 6.4: no chirp history across sessions). Now its beacons say 255
+// until its own first send, and count from that send. The cooldown's timer
+// is the device's and stays (sweep F193): the new session's send is a tier up.
+void test_a_new_session_beacons_no_last_send() {
+  boot();
+  enabled_channel();
+  size_t before = host_sim::espnow->sent.size();
+  host_sim::now_ms += 60000;
+  cc::update();
+  CHECK(presence_ages(before) == std::vector<uint8_t>{255});   // no send yet
+  Rest r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(r.r.ok && r.r.cooldown_tier == 1);
+  const uint32_t first = cc::g_cooldown.last_chirp_ms;
+  host_sim::now_ms = first + 7u * 60000u;
+  before = host_sim::espnow->sent.size();
+  cc::update();
+  CHECK(presence_ages(before) == std::vector<uint8_t>{7});     // the session's own send
+
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_DISABLE)).r.ok);
+  before = host_sim::espnow->sent.size();
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_ENABLE)).r.ok);              // a new session
+  CHECK(presence_ages(before) == std::vector<uint8_t>{255});   // its first beacon: no send
+  for (int m = 0; m < 10; ++m) {                               // nor any until it sends
+    host_sim::now_ms += 60000;
+    before = host_sim::espnow->sent.size();
+    cc::update();
+    CHECK(presence_ages(before) == std::vector<uint8_t>{255});
+  }
+  CHECK(cc::g_cooldown.last_chirp_ms == first);                // the device's timer (F193)
+  r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(r.r.ok && r.r.cooldown_tier == 2);
+  const uint32_t second = cc::g_cooldown.last_chirp_ms;
+  host_sim::now_ms = second + 3u * 60000u;
+  before = host_sim::espnow->sent.size();
+  cc::update();
+  CHECK(presence_ages(before) == std::vector<uint8_t>{3});     // from the new session's send
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_new_session_beacons_no_last_send\n");
+}
+
 // The count stops at 255. Kept across days, it reaches 256 after about 42
 // days of a send every 4 hours, and a uint8_t that wrapped to 0 read tier 0:
 // the next send went out with no cooldown, and the one after it at tier 1.
@@ -2517,6 +2628,7 @@ const Test kTests[] = {
      test_the_tiers_reset_24_quiet_hours_after_the_last_send},
     {"a_send_that_ends_a_quiet_day_counts_from_tier_1", test_a_send_that_ends_a_quiet_day_counts_from_tier_1},
     {"a_disable_keeps_the_tiers", test_a_disable_keeps_the_tiers},
+    {"a_new_session_beacons_no_last_send", test_a_new_session_beacons_no_last_send},
     {"the_tier_count_stops_at_255", test_the_tier_count_stops_at_255},
     {"the_tiers_count_across_the_uptime_wrap", test_the_tiers_count_across_the_uptime_wrap},
     {"a_mute_beside_the_kept_tiers", test_a_mute_beside_the_kept_tiers},
@@ -2543,6 +2655,7 @@ const Test kTests[] = {
     {"every_field_the_routes_show_is_the_live_one", test_every_field_the_routes_show_is_the_live_one},
     {"the_tables_publish_into_their_block", test_the_tables_publish_into_their_block},
     {"the_view_sizes", test_the_view_sizes},
+    {"the_memory_budget_is_the_specs", test_the_memory_budget_is_the_specs},
 };
 
 }  // namespace chirp_commands

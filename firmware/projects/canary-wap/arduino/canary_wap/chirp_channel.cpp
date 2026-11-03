@@ -681,12 +681,25 @@ static bool pubkey_rate_check_and_record(const uint8_t* pubkey) {
   return true;
 }
 
+// Spec §3.4 rule 4: the key's session id holds a nearby row, and that row
+// was put in the table at least PRESENCE_REQUIRED_MS ago. Only a row was
+// asked for, so a key first heard a second before its ACK counted (sweep
+// F311). first_seen_ms is set at the insert alone (handle_presence()), so a
+// refresh does not move it; a row pruned after NEARBY_TIMEOUT_MS of silence,
+// or a new session id (a new key), is a new row with ten minutes of its own.
+// The age is unsigned elapsed time, so uptime's wrap does not shorten it. A
+// row kept fresh without a gap reads as new again for ten minutes every
+// 2^32 ms (49.7 days): that key's ACKs are refused for those minutes, and
+// none ever counts early. has_presence_requirement() reads this device's
+// own session the same way.
+// Presence beacons are unsigned (§3.2; sweep F232), so what this costs a
+// device that wants many confirming keys is ten minutes of beacons per key.
 static bool nearby_has_pubkey_with_presence(const uint8_t* pubkey) {
   uint8_t sid[SESSION_ID_SIZE];
   session_id_from_pubkey(pubkey, sid);
   for (size_t i = 0; i < g_nearby_count; i++) {
     if (memcmp(g_nearby_devices[i].session_id, sid, SESSION_ID_SIZE) == 0) {
-      return true;
+      return millis() - g_nearby_devices[i].first_seen_ms >= PRESENCE_REQUIRED_MS;
     }
   }
   return false;
@@ -807,6 +820,12 @@ static void handle_presence(const uint8_t* data, size_t len, int8_t rssi) {
   if (!device && g_nearby_count < MAX_NEARBY_CACHE) {
     device = &g_nearby_devices[g_nearby_count++];
     new_device = true;
+    // A slot past the count keeps whatever row a prune or a disable left
+    // there, so a new row is cleared whole and its presence starts now
+    // (spec §3.4 rule 4; sweep F311). Only here: a refresh below never
+    // moves first_seen_ms.
+    memset(device, 0, sizeof(*device));
+    device->first_seen_ms = millis();
   }
   if (device) {
     memcpy(device->session_id, hdr->session_id, SESSION_ID_SIZE);
@@ -951,6 +970,8 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   chirp.detail = (ChirpDetailSlot)payload->detail_slot;
   chirp.urgency = (ChirpUrgency)payload->urgency;
   chirp.hop_count = hdr->hop_count;
+  // The signed byte, kept for the relay (relay_chirp(); sweep F306).
+  chirp.ttl_minutes = payload->ttl_minutes;
   chirp.received_ms = millis();
   chirp.timestamp = hdr->timestamp;
   memcpy(chirp.nonce, hdr->nonce, 8);
@@ -1011,7 +1032,11 @@ static void handle_ack(const uint8_t* data, size_t len) {
       chirp = &g_recent_chirps[i]; break;
     }
   }
-  if (!chirp) return;
+  // A row the owner dismissed takes no ACK. It leaves at update()'s next
+  // prune, up to 30 s on, and until then a confirmation found it and could
+  // validate and relay a chirp the owner had just taken off this device
+  // (sweep F305).
+  if (!chirp || chirp->dismissed) return;
 
   uint8_t canonical[128];
   size_t cl = build_ack_canonical(payload->original_nonce, payload->ack_type,
@@ -1058,9 +1083,15 @@ static void handle_ack(const uint8_t* data, size_t len) {
         relay_chirp(chirp);
       }
     }
-  } else if (payload->ack_type == CHIRP_ACK_RESOLVED) {
-    chirp->dismissed = true;
   }
+  // Every other ack_type changes nothing here: "seen" counts for nothing,
+  // and "resolved" is local to its sender (spec §3.4). It set `dismissed`,
+  // and update()'s next prune dropped the row, so one signed ACK from any
+  // key with a nearby row took a chirp off this device, where community
+  // suppression asks more than half the nearby rows, and at least three
+  // (§2.5.6; sweep F305). `dismissed` is this device's owner's alone
+  // (dismiss_chirp()); the sender's dismissal reaches the community only
+  // as its signed suppress vote, which handle_suppress_vote() counts.
 }
 
 static void handle_suppress_vote(const uint8_t* data, size_t len) {
@@ -1158,7 +1189,11 @@ static void relay_chirp(const ReceivedChirp* chirp) {
   payload->template_id = (uint8_t)chirp->template_id;
   payload->detail_slot = (uint8_t)chirp->detail;
   payload->urgency = (uint8_t)chirp->urgency;
-  payload->ttl_minutes = 15;
+  // The originator's TTL, as it signed it: the origin signature below covers
+  // this byte (build_witness_canonical()), and a relay that wrote 15 was
+  // refused one hop on ("bad origin signature") for any chirp sent with
+  // another TTL (sweep F306).
+  payload->ttl_minutes = chirp->ttl_minutes;
   memcpy(payload->session_pubkey, g_session.session_pubkey, SESSION_PUBKEY_SIZE);
 
   // v0.3 (audit C4 closure): include the original signer's pubkey AND
@@ -1437,6 +1472,14 @@ static bool enable() {
   if (g_state != CHIRP_DISABLED) return true;
   set_state(CHIRP_INITIALIZING);
   generate_session_identity();
+  // A new session has sent nothing: its beacons say 255 ("never") until its
+  // own first send. The age counted from the last session's send, so the new
+  // key's first beacons told any neighbor that heard the old one how long ago
+  // it chirped, to the minute, and linked the two sessions on the wire
+  // (spec 2.3: the identity is discarded at a disable; 6.4: no chirp history
+  // across sessions; sweep F363). The cooldown's own timer,
+  // g_cooldown.last_chirp_ms, is the device's and stays (F193, below).
+  g_last_chirp_sent_ms = 0;
   if (esp_now_init() != ESP_OK) { /* may be already initialized by mesh_network */ }
   // The cooldown tiers are this device's, not the session's: they outlive a
   // disable, and only 24 quiet hours reset them (expire_stale_tiers()). An

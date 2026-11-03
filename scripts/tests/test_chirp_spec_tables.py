@@ -27,6 +27,15 @@ were prose with nothing holding them to the code, so this test does:
     across a disable and clear at a reboot (test_chirp_commands_wap.cpp
     holds the code to that).
 
+  * Memory budget (§12.3; sweeps F306, F311). Each row of the table is a
+    `static_assert` in test_chirp_commands_wap.cpp whose message names the
+    row ("§12.3 <row>") and whose last comparison is the row's figure
+    (`== 32 * 52`, or `== 112`), so the compile holds the figure to sizeof
+    and the count; here the spec's row says the same figure, its product is
+    right, the rows sum to the asserted total, and the total reads as that
+    many KB. A nearby row grew 4 bytes for its first-seen time (F311) and
+    the table said 48 until this pin.
+
 The self-tests at the bottom hold the reader to synthetic sources it must
 refuse, so a reader that stops seeing a call fails here, not silently.
 
@@ -246,6 +255,80 @@ class ChirpSpecEmojiField(unittest.TestCase):
         self.assertIsNotNone(m, "§3.2's emoji field no longer reads tstr .size (lo..hi) ... NUL-padded to N bytes")
         self.assertEqual(tuple(map(int, m.groups())), (lo, hi, field))
         self.assertIn("five-emoji", m.group(0))
+
+
+COMMANDS_TEST = REPO / "firmware/projects/canary-wap/tests_host/test_chirp_commands_wap.cpp"
+
+
+def budget_rows(section: str) -> dict[str, tuple[int, ...]]:
+    """§12.3's rows: {label: (figure...)}, where a row reads "N bytes"
+    (N,) or "A * B = C bytes" (A, B, C), and the total "~K KB" (K,)."""
+    rows: dict[str, tuple[int, ...]] = {}
+    lines = [ln for ln in section.splitlines() if ln.startswith("|")]
+    assert lines and lines[0].split("|")[1].strip() == "Component", "§12.3's header row moved"
+    for ln in lines[2:]:
+        cells = [c.strip() for c in ln.strip("|").split("|")]
+        label, value = cells[0].strip("*"), cells[1]
+        num = r"(\d{1,3}(?:,\d{3})*)"
+        m = (re.fullmatch(num + r" \* " + num + " = " + num + " bytes", value)
+             or re.fullmatch(num + " bytes", value)
+             or re.fullmatch("~" + num + " KB", value))
+        assert m, f"§12.3 row {label!r} reads {value!r}, which this reader cannot spell"
+        rows[label] = tuple(int(g.replace(",", "")) for g in m.groups())
+    return rows
+
+
+def budget_asserts(src: str) -> dict[str, tuple[int, ...]]:
+    """{row: figure} from each static_assert whose message is "§12.3 <row>":
+    the figure is its last comparison's right side, `A * B` or `N`."""
+    out: dict[str, tuple[int, ...]] = {}
+    for m in re.finditer(r'static_assert\((.*?),\s*"§12\.3 ([^"]+)"\);', strip_comments(src), re.S):
+        expr, label = " ".join(m.group(1).split()), m.group(2)
+        tail = re.search(r"==\s*(\d+)(?:\s*\*\s*(\d+))?\s*$", expr)
+        assert tail, f"the §12.3 assert for {label!r} does not end in == N or == A * B"
+        out[label] = tuple(int(g) for g in tail.groups() if g is not None)
+    return out
+
+
+class ChirpSpecMemoryBudget(unittest.TestCase):
+    def test_every_row_is_the_harness_figure(self):
+        rows = budget_rows(spec_section(SPEC.read_text(encoding="utf-8"), "12.3 Memory Budget"))
+        asserted = budget_asserts(COMMANDS_TEST.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(rows), sorted(asserted),
+                         "every §12.3 row has a static_assert in test_chirp_commands_wap.cpp, and no other")
+        total = asserted.pop("Total")
+        spec_total = rows.pop("Total")
+        added = 0
+        for label, figure in rows.items():
+            if len(figure) == 3:
+                a, b, c = figure
+                self.assertEqual(a * b, c, f"§12.3 {label}: {a} * {b} is not {c}")
+                self.assertEqual(asserted[label], (a, b), f"§12.3 {label} against its static_assert")
+                added += c
+            else:
+                self.assertEqual(asserted[label], figure, f"§12.3 {label} against its static_assert")
+                added += figure[0]
+        self.assertEqual(added, total[0], "§12.3's rows do not add up to the asserted total")
+        self.assertEqual(round(total[0] / 1024), spec_total[0], "§12.3's total in KB")
+        prose = " ".join(spec_section(SPEC.read_text(encoding="utf-8"), "12.3 Memory Budget").split())
+        self.assertIn(f"The whole is {total[0]:,} bytes", prose)
+
+    def test_the_nearby_and_recent_rows(self):
+        # F311 and F306, as the items left them: a nearby row of 52 bytes, a
+        # recent row still 964.
+        asserted = budget_asserts(COMMANDS_TEST.read_text(encoding="utf-8"))
+        self.assertEqual(asserted["Nearby (presence) table"], (32, 52))
+        self.assertEqual(asserted["Recent chirps"], (16, 964))
+
+    def test_the_reader_refuses_what_it_cannot_spell(self):
+        with self.assertRaises(AssertionError):
+            budget_rows("| Component | Max Size |\n|---|---|\n| X | about 1 KB |\n")
+        with self.assertRaises(AssertionError):
+            budget_asserts('static_assert(sizeof(T) >= 4, "§12.3 X");')
+        self.assertEqual(budget_rows("| Component | Max Size |\n|---|---|\n| X | 2 * 1,024 = 2,048 bytes |\n"
+                                     "| **Total** | ~2 KB |\n"),
+                         {"X": (2, 1024, 2048), "Total": (2,)})
+        self.assertEqual(budget_asserts('static_assert(a == 1 && b == 32 * 52, "§12.3 Y");'), {"Y": (32, 52)})
 
 
 class ReaderSelfTest(unittest.TestCase):

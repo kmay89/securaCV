@@ -309,6 +309,7 @@ void test_canonical_distinguishes_signers() {
   const Neighbor origin = neighbor_of(0x27);
   const Neighbor confirmer = neighbor_of(0x28);
   deliver(confirmer, presence_of(confirmer));
+  stay_present({confirmer});   // ten minutes of presence before its ACK counts (spec §3.4 rule 4)
   const Bytes w = witness_of(origin, 0x36, cc::TPL_EMERG_FIRE_VISIBLE, cc::CHIRP_URG_URGENT);
   cc::ChirpHeader oh;
   cc::ChirpWitnessPayload op;

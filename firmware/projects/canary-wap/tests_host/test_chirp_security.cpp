@@ -34,6 +34,26 @@
 //     renders every session display through the real generate_emoji_string()
 //     into the real field (sweep F231).
 //
+// Added since:
+//   - c13_an_ack_waits_for_ten_minutes_of_presence (sweep F311): spec §3.4
+//     rule 4 counts a confirmer seen in the nearby table for at least
+//     PRESENCE_REQUIRED_MS, and the check asked only for a row, so a key
+//     first heard a second before its ACK counted. Heard 9 minutes, and 10
+//     minutes less 1 ms, it is refused; at 10 minutes it counts.
+//   - c13_presence_counts_from_the_row (F311): the ten minutes start when the
+//     row is put in the table and nothing else moves them. A refresh does
+//     not; a row pruned after NEARBY_TIMEOUT_MS of silence and heard again,
+//     a new session key, and a row put in a slot an older session's row left
+//     behind (a disable and an enable) each start their own; and uptime's
+//     wrap neither shortens nor stalls them.
+//   - c4_a_relay_keeps_the_signed_ttl (sweep F306): relay_chirp() wrote
+//     ttl_minutes 15 over the byte the origin signature covers, so a chirp
+//     sent with any other TTL was refused one hop on ("bad origin
+//     signature"). A chirp sent with 30, 0 or 255 is relayed with that byte
+//     over two hops and stored at each receiver, and lives there as long as
+//     any row does (DEFAULT_DISPLAY_MS): nothing on the receive side reads
+//     the TTL as a display time.
+//
 // Host-tested only: the stubs stand in for the radio and the clock; the
 // Arduino compile is CI's.
 //
@@ -68,6 +88,7 @@ void test_c2_c3_no_self_count() {
   const Neighbor other = neighbor_of(0x11);
   deliver(origin, presence_of(origin));   // the originator holds a row, as a neighbor would
   deliver(other, presence_of(other));
+  stay_present({origin, other});          // ten minutes of presence (spec §3.4 rule 4)
   const std::vector<uint8_t> w =
       witness_of(origin, 0x20, cc::TPL_EMERG_FIRE_VISIBLE, cc::CHIRP_URG_URGENT);
   uint8_t nonce[8];
@@ -99,6 +120,7 @@ void test_c5_ack_dedup_by_pubkey() {
   const Neighbor drive_by = neighbor_of(0x15);   // no presence row
   deliver(a, presence_of(a));
   deliver(b, presence_of(b));
+  stay_present({a, b});
   const std::vector<uint8_t> w = witness_of(origin, 0x21);
   uint8_t nonce[8];
   nonce_of(w, nonce);
@@ -225,11 +247,283 @@ void test_c9_bloom_flood() {
   CHECK(cc::g_recent_chirp_count == 1);
 }
 
+// C13 (sweep F311): an ACK counts from a key whose nearby row is at least
+// PRESENCE_REQUIRED_MS old (spec §3.4 rule 4), and the key beacons once a
+// minute meanwhile, as a canary-wap does. An emergency chirp, which one
+// confirmation validates, so a counted ACK shows as a relay.
+void test_c13_an_ack_waits_for_ten_minutes_of_presence() {
+  boot_enabled();
+  const Neighbor origin = neighbor_of(0x17);
+  const Neighbor a = neighbor_of(0x18);
+  deliver(a, presence_of(a));                  // a's row, first seen now
+  stay_present({a}, 9);
+  const std::vector<uint8_t> w =
+      witness_of(origin, 0x24, cc::TPL_EMERG_FIRE_VISIBLE, cc::CHIRP_URG_URGENT);
+  uint8_t nonce[8];
+  nonce_of(w, nonce);
+  deliver(origin, w);
+  cc::ReceivedChirp* c = row_of(nonce);
+  CHECK(c != nullptr);
+  const size_t mark = host_sim::espnow->sent.size();
+
+  g_health.clear();
+  deliver(a, confirm_of(a, nonce, 0x71));      // heard 9 minutes: refused
+  CHECK(c->confirm_count == 0 && !c->validated && !c->relayed);
+  CHECK(logged("chirp: rejected ACK \xE2\x80\x94 confirmer lacks presence"));
+  host_sim::now_ms += 60000 - 1;               // 10 minutes less 1 ms, a beacon just heard
+  deliver(a, presence_of(a));
+  deliver(a, confirm_of(a, nonce, 0x72));
+  CHECK(c->confirm_count == 0 && !c->validated && !c->relayed);
+  CHECK(relays_since(mark) == 0);
+
+  host_sim::now_ms += 1;                       // 10 minutes: it counts
+  deliver(a, confirm_of(a, nonce, 0x73));
+  CHECK(c->confirm_count == 1 && c->validated && c->relayed);
+  CHECK(relays_since(mark) == 1);
+}
+
+// The nearby row of `n`, or nullptr.
+cc::NearbyDevice* nearby_row_of(const Neighbor& n) {
+  for (size_t i = 0; i < cc::g_nearby_count; ++i) {
+    if (memcmp(cc::g_nearby_devices[i].session_id, n.sid, cc::SESSION_ID_SIZE) == 0) {
+      return &cc::g_nearby_devices[i];
+    }
+  }
+  return nullptr;
+}
+// An infrastructure chirp from `origin` (two confirmations validate one),
+// stored here; its nonce in `nonce`.
+cc::ReceivedChirp* chirp_from(const Neighbor& origin, uint8_t nonce_byte, uint8_t nonce[8]) {
+  const std::vector<uint8_t> w = witness_of(origin, nonce_byte);
+  nonce_of(w, nonce);
+  deliver(origin, w);
+  cc::ReceivedChirp* c = row_of(nonce);
+  CHECK(c != nullptr && c->confirm_count == 0);
+  return c;
+}
+
+// C13 (F311): the ten minutes count from the row's insert, and only that.
+void test_c13_presence_counts_from_the_row() {
+  // A refresh never moves first_seen_ms: nine of them, a minute apart.
+  boot_enabled();
+  const Neighbor a = neighbor_of(0x19);
+  deliver(a, presence_of(a));
+  const uint32_t first = host_sim::now_ms;
+  for (int m = 1; m <= 9; ++m) {
+    stay_present({a}, 1);
+    const cc::NearbyDevice* row = nearby_row_of(a);
+    CHECK(row != nullptr && row->first_seen_ms == first && row->last_seen_ms == host_sim::now_ms);
+  }
+
+  // Pruned and heard again: a new row, ten minutes of its own. a was heard
+  // for 9 minutes, then fell silent until the prune took its row (no beacon
+  // for NEARBY_TIMEOUT_MS, 3 minutes); heard again 12 minutes after it was
+  // first, it is refused, and counts ten minutes after its return.
+  for (int m = 0; m < 4 && nearby_row_of(a) != nullptr; ++m) stay_present({}, 1);
+  CHECK(nearby_row_of(a) == nullptr);
+  deliver(a, presence_of(a));
+  CHECK(nearby_row_of(a) != nullptr && nearby_row_of(a)->first_seen_ms == host_sim::now_ms);
+  CHECK(host_sim::now_ms - first >= cc::PRESENCE_REQUIRED_MS);
+  const Neighbor origin = neighbor_of(0x1A);
+  uint8_t nonce[8];
+  cc::ReceivedChirp* c = chirp_from(origin, 0x25, nonce);
+  deliver(a, confirm_of(a, nonce, 0x71));
+  CHECK(c->confirm_count == 0);
+  stay_present({a}, 9);
+  deliver(a, confirm_of(a, nonce, 0x72));
+  CHECK(c->confirm_count == 0);
+  stay_present({a}, 1);
+  deliver(a, confirm_of(a, nonce, 0x73));
+  CHECK(c->confirm_count == 1);
+
+  // A new session id is a new key with its own ten minutes: a2, a's next
+  // session, beacons from the minute a's row qualified, and its ACK is
+  // refused until its own row is ten minutes old, while a's counts.
+  boot_enabled();
+  const Neighbor b = neighbor_of(0x1B);
+  const Neighbor b2 = neighbor_of(0x1C);
+  deliver(b, presence_of(b));
+  stay_present({b}, 10);
+  deliver(b2, presence_of(b2));
+  c = chirp_from(origin, 0x26, nonce);
+  deliver(b2, confirm_of(b2, nonce, 0x71));
+  CHECK(c->confirm_count == 0);
+  deliver(b, confirm_of(b, nonce, 0x72));
+  CHECK(c->confirm_count == 1 && !c->validated);
+  stay_present({b, b2}, 9);
+  deliver(b2, confirm_of(b2, nonce, 0x73));
+  CHECK(c->confirm_count == 1 && !c->validated);
+  stay_present({b, b2}, 1);
+  deliver(b2, confirm_of(b2, nonce, 0x74));
+  CHECK(c->confirm_count == 2 && c->validated);
+
+  // An older session's row in the slot: this device's disable empties the
+  // table, and the slot keeps the old row's bytes (a first_seen_ms ten
+  // minutes old among them). The next row put there starts now, and its key
+  // is refused; b, heard again after the enable, starts again too.
+  cc::disable();
+  CHECK(cc::g_nearby_count == 0);
+  CHECK(host_sim::now_ms - cc::g_nearby_devices[0].first_seen_ms >= cc::PRESENCE_REQUIRED_MS);
+  CHECK(cc::enable());
+  const Neighbor d = neighbor_of(0x1D);
+  deliver(d, presence_of(d));
+  deliver(b, presence_of(b));
+  CHECK(nearby_row_of(d) == &cc::g_nearby_devices[0]);
+  CHECK(nearby_row_of(d)->first_seen_ms == host_sim::now_ms);
+  CHECK(nearby_row_of(b)->first_seen_ms == host_sim::now_ms);
+  c = chirp_from(origin, 0x27, nonce);
+  deliver(d, confirm_of(d, nonce, 0x71));
+  deliver(b, confirm_of(b, nonce, 0x72));
+  CHECK(c->confirm_count == 0);
+  stay_present({b, d}, 10);
+  deliver(d, confirm_of(d, nonce, 0x73));
+  deliver(b, confirm_of(b, nonce, 0x74));
+  CHECK(c->confirm_count == 2 && c->validated);
+
+  // Across uptime's wrap: first heard 5 minutes before millis() wraps, so
+  // the moment it qualifies (first_seen_ms + 10 minutes) wraps to 5 minutes.
+  // Refused a minute on, before the wrap (a reading of the uptime against
+  // that wrapped moment would count it there); refused 9 minutes on, 4 after
+  // the wrap, and 10 minutes less 1 ms on; counted at 10.
+  host_sim::now_ms = (uint32_t)(0u - 3600000u - 5u * 60000u);   // boot_enabled() adds the hour
+  boot_enabled();
+  CHECK(host_sim::now_ms == (uint32_t)(0u - 5u * 60000u));
+  const Neighbor e = neighbor_of(0x1E);
+  deliver(e, presence_of(e));
+  stay_present({e}, 1);
+  c = chirp_from(origin, 0x28, nonce);
+  deliver(e, confirm_of(e, nonce, 0x71));
+  CHECK(c->confirm_count == 0);
+  stay_present({e}, 8);
+  CHECK(host_sim::now_ms == 4u * 60000u);
+  deliver(e, confirm_of(e, nonce, 0x72));
+  CHECK(c->confirm_count == 0);
+  host_sim::now_ms += 60000 - 1;
+  deliver(e, confirm_of(e, nonce, 0x73));
+  CHECK(c->confirm_count == 0);
+  host_sim::now_ms += 1;
+  deliver(e, confirm_of(e, nonce, 0x74));
+  CHECK(c->confirm_count == 1);
+
+  // And across 2^31 ms (24.9 days), where a signed reading of uptime turns
+  // negative: first heard 15 minutes before it, the key still counts 20
+  // minutes on, 5 minutes past it.
+  host_sim::now_ms = (uint32_t)(0x80000000u - 3600000u - 15u * 60000u);
+  boot_enabled();
+  const Neighbor f = neighbor_of(0x1F);
+  deliver(f, presence_of(f));
+  stay_present({f}, 20);
+  CHECK(host_sim::now_ms == 0x80000000u + 5u * 60000u);
+  c = chirp_from(origin, 0x2D, nonce);
+  deliver(f, confirm_of(f, nonce, 0x71));
+  CHECK(c->confirm_count == 1);
+}
+
+// The relays this device sent since `from`, whole.
+std::vector<std::vector<uint8_t>> relay_frames_since(size_t from) {
+  std::vector<std::vector<uint8_t>> out;
+  for (const std::vector<uint8_t>& f : sent_of_type(from, cc::CHIRP_MSG_WITNESS)) {
+    if (f[offsetof(cc::ChirpHeader, hop_count)] > 0) out.push_back(f);
+  }
+  return out;
+}
+// A relay's hop count, its TTL byte, and whether its signed_origin envelope
+// verifies with the origin's key over the canonical the relay carries.
+struct RelaySeen {
+  uint8_t hop;
+  uint8_t ttl;
+  bool origin_verifies;
+};
+RelaySeen read_relay(const std::vector<uint8_t>& f, const Neighbor& origin) {
+  cc::ChirpHeader h;
+  cc::ChirpWitnessPayload p;
+  CHECK(f.size() == sizeof h + sizeof p);
+  memcpy(&h, f.data(), sizeof h);
+  memcpy(&p, f.data() + sizeof h, sizeof p);
+  CHECK(memcmp(p.signed_origin_pubkey, origin.pub, 32) == 0);
+  uint8_t canonical[256];
+  const size_t cl = cc::build_witness_canonical(&h, &p, origin.pub, canonical, sizeof canonical);
+  CHECK(cl > 0);
+  return {h.hop_count, p.ttl_minutes,
+          Ed25519::verify(p.signed_origin_signature, origin.pub, canonical, cl)};
+}
+
+// C4 (sweep F306): a relay carries the TTL its origin signed. Three
+// receivers, each a device that boots with its channel on: A hears the
+// origin's emergency chirp and a neighbor present ten minutes confirms it,
+// so A relays it (hop 1); B stores A's relay, a neighbor confirms it there,
+// and B relays it on (hop 2); C stores B's relay. 15 is the control, the
+// TTL relay_chirp() wrote whatever the chirp said; with 30, 0 or 255, B
+// refused A's relay ("bad origin signature"). And C keeps the row exactly
+// as long as any row, DEFAULT_DISPLAY_MS, whatever the TTL: a TTL of 0 is
+// not dropped at the next prune, and 255 does not outlive the 30 minutes.
+void test_c4_a_relay_keeps_the_signed_ttl() {
+  for (const uint8_t ttl : {15, 30, 0, 255}) {
+    const Neighbor origin = neighbor_of(0x2A);
+    const Neighbor ca = neighbor_of(0x2B);     // confirms at A
+    const Neighbor cb = neighbor_of(0x2C);     // confirms at B
+
+    boot_enabled();                            // A
+    deliver(ca, presence_of(ca));
+    stay_present({ca});
+    const std::vector<uint8_t> w =
+        witness_of(origin, 0x29, cc::TPL_EMERG_FIRE_VISIBLE, cc::CHIRP_URG_URGENT, ttl);
+    const uint32_t sent_at = (uint32_t)host_sim::wall_now;
+    uint8_t nonce[8];
+    nonce_of(w, nonce);
+    deliver(origin, w);
+    CHECK(row_of(nonce) != nullptr);
+    size_t mark = host_sim::espnow->sent.size();
+    deliver(ca, confirm_of(ca, nonce));
+    std::vector<std::vector<uint8_t>> relays = relay_frames_since(mark);
+    CHECK(relays.size() == 1);
+    const std::vector<uint8_t> r1 = relays[0];
+    RelaySeen seen = read_relay(r1, origin);
+    CHECK(seen.hop == 1);
+    CHECK(seen.origin_verifies);               // the byte the origin signed...
+    CHECK(seen.ttl == ttl);                    // ...is the one the relay carries
+
+    boot_enabled();                            // B: the same minute on its clock
+    deliver(cb, presence_of(cb));
+    stay_present({cb});
+    CHECK((uint32_t)host_sim::wall_now == sent_at);
+    g_health.clear();
+    deliver(ca, r1);                           // A's relay, heard at B
+    CHECK(!logged("chirp: rejected relayed witness \xE2\x80\x94 bad origin signature"));
+    cc::ReceivedChirp* c = row_of(nonce);
+    CHECK(c != nullptr && c->hop_count == 1);
+    CHECK(memcmp(c->sender_pubkey, origin.pub, 32) == 0 && c->has_origin_signature);
+    mark = host_sim::espnow->sent.size();
+    deliver(cb, confirm_of(cb, nonce));
+    relays = relay_frames_since(mark);
+    CHECK(relays.size() == 1);
+    const std::vector<uint8_t> r2 = relays[0];
+    seen = read_relay(r2, origin);
+    CHECK(seen.hop == 2 && seen.origin_verifies && seen.ttl == ttl);   // B kept the byte
+
+    boot_enabled();                            // C
+    host_sim::wall_now = sent_at;
+    deliver(cb, r2);
+    c = row_of(nonce);
+    CHECK(c != nullptr && c->hop_count == 2);
+    const uint32_t stored_at = c->received_ms;
+    host_sim::now_ms = stored_at + cc::DEFAULT_DISPLAY_MS - 1;
+    cc::update();                              // a prune pass (the last ran at the boot)
+    CHECK(row_of(nonce) != nullptr);
+    host_sim::now_ms = stored_at + cc::DEFAULT_DISPLAY_MS + 30001;
+    cc::update();
+    CHECK(row_of(nonce) == nullptr);
+  }
+}
+
 const Test kTests[] = {
     {"c2_c3_no_self_count", test_c2_c3_no_self_count},
     {"c5_ack_dedup_by_pubkey", test_c5_ack_dedup_by_pubkey},
     {"c8_priority_storage_eviction", test_c8_priority_storage_eviction},
     {"c9_bloom_flood", test_c9_bloom_flood},
+    {"c13_an_ack_waits_for_ten_minutes_of_presence", test_c13_an_ack_waits_for_ten_minutes_of_presence},
+    {"c13_presence_counts_from_the_row", test_c13_presence_counts_from_the_row},
+    {"c4_a_relay_keeps_the_signed_ttl", test_c4_a_relay_keeps_the_signed_ttl},
 };
 
 }  // namespace chirp_security
