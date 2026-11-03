@@ -535,6 +535,29 @@ def test_standalone_save_keeps_a_stored_zone_and_slugs_only_a_new_camera(save_en
     ]
 
 
+def test_a_frigate_save_stores_no_zone_id_whatever_the_rows_carry(save_env):
+    """The page's own saves are mode "frigate", and the zone ids its rows
+    carry are not stored: that branch keeps camera slugs only. It also
+    empties the standalone cameras, stored zone ids with them, on main as
+    here; whether a re-run should keep a standalone install standalone is
+    handed up, not decided by this test."""
+    save_env["current"] = {
+        "mode": "standalone",
+        "cameras": [{"name": "\u0130stanbul", "url": "rtsp://a", "zone_id": "zone:i_stanbul"}],
+    }
+    result = _bare_handler()._handle_save({
+        "mode": "frigate", "frigate_detected": True, "digest_enabled": False,
+        "cameras": [{"name": "\u0130stanbul", "zone_id": "zone:_stanbul"},
+                    {"name": "\U0001F3E0", "zone_id": "zone:_"}],
+    })
+    assert result["ok"] is True, result
+    opts = save_env["options"]
+    assert opts["mode"] == "frigate"
+    assert opts["cameras"] == []
+    assert opts["frigate"]["cameras"] == result["cameras"]
+    assert "zone" not in json.dumps(opts["frigate"])
+
+
 # ---------------------------------------------------------------------------
 # _kernel_download (Download my events proxy)
 # ---------------------------------------------------------------------------
@@ -1732,13 +1755,14 @@ def test_the_bashio_stub_answers_list_options_as_bashio_does():
 
 
 def _run_sh_block(start, end, options, *, prelude="", report="", env=None,
-                  swap=None, file_options=True):
+                  swap=None, file_options=True, ascii_file=False):
     """Lift run.sh from the line `start` to the line `end` (each exactly once),
     swap each literal in `swap` (each exactly once in the block) for its
     stand-in, and run it under the bashio stub, with `options` answered by
     bashio AND written to the options file opt_list reads (`file_options=False`
-    leaves that file absent, as on a start with no /data/options.json).
-    Returns the CompletedProcess."""
+    leaves that file absent, as on a start with no /data/options.json;
+    `ascii_file=True` writes it ASCII-only, every non-ASCII character as a
+    \\u escape, as json.dumps does by default). Returns the CompletedProcess."""
     _bashio_stub_ready()
     text = _RUN_SH.read_text(encoding="utf-8")
     assert text.count(start) == 1 and text.count(end) == 1, (
@@ -1751,8 +1775,9 @@ def _run_sh_block(start, end, options, *, prelude="", report="", env=None,
     with tempfile.TemporaryDirectory() as tmp:
         options_json = Path(tmp) / "options.json"
         if file_options:
-            # Raw UTF-8; tests/test_run_lib.sh holds the escaped form too.
-            options_json.write_text(json.dumps(options, ensure_ascii=False), encoding="utf-8")
+            # Raw UTF-8 unless asked for the escaped form (tests/test_run_lib.sh
+            # holds opt_list's bytes for both).
+            options_json.write_text(json.dumps(options, ensure_ascii=ascii_file), encoding="utf-8")
         run_env = {
             **os.environ,
             **(env or {}),
@@ -1767,11 +1792,12 @@ def _run_sh_block(start, end, options, *, prelude="", report="", env=None,
     return out
 
 
-def _run_sh_camera_pick(streams, cameras=(), *, raw=False):
+def _run_sh_camera_pick(streams, cameras=(), *, raw=False, **file_kw):
     """Run run.sh's standalone camera pick on a go2rtc payload (and the
     configured `cameras` option). Returns (exit code, [name, zone, url] of the
     primary camera when it got that far, stderr); with raw=True, the
-    CompletedProcess instead (a name holding a newline spans two lines)."""
+    CompletedProcess instead (a name holding a newline spans two lines).
+    `file_kw` reaches _run_sh_block (file_options, ascii_file)."""
     _bashio_stub_ready()
     text = _RUN_SH.read_text(encoding="utf-8")
     assert text.count(_PICK_START) == 1 and text.count(_PICK_END) == 1, (
@@ -1791,6 +1817,7 @@ def _run_sh_camera_pick(streams, cameras=(), *, raw=False):
         # The discovery script's install path, swapped for this tree's copy.
         swap={_PICK_DISCOVER: 'sh "$TEST_DISCOVER_SH" "$GO2RTC_URL"'},
         env={"GO2RTC_STREAMS_JSON": json.dumps(streams), "TEST_DISCOVER_SH": str(_DISCOVER_SH)},
+        **file_kw,
     )
     if raw:
         return out
@@ -1832,20 +1859,37 @@ def test_run_sh_with_only_a_nameless_stream_says_no_cameras():
     assert "Invalid zone_id" not in err
 
 
-def test_run_sh_takes_two_configured_cameras_and_a_name_with_a_quote_a_newline_and_an_emoji():
+@pytest.mark.parametrize("ascii_file", [False, True], ids=["raw utf-8", "escaped"])
+def test_run_sh_takes_two_configured_cameras_and_a_name_with_a_quote_a_newline_and_an_emoji(ascii_file):
     """Two configured cameras, the first named with a quote, a newline and an
     emoji: the list is one array, the merge and `.[0]` see cameras, and the
-    name reaches the log byte for byte (HA38)."""
+    name reaches the log byte for byte (HA38), whether the options file holds
+    the emoji raw or as a surrogate-pair escape."""
     name = 'say "cheese"\nporch \U0001F3E0'
     configured = [
         {"name": name, "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch"},
         {"name": "zz back", "url": "rtsp://10.0.0.3/b", "zone_id": "zone:back"},
     ]
-    out = _run_sh_camera_pick({}, configured, raw=True)
+    out = _run_sh_camera_pick({}, configured, raw=True, ascii_file=ascii_file)
     assert out.returncode == 0, out.stderr
     assert out.stdout == f"{name}\nzone:porch\nrtsp://10.0.0.2/p\n", out.stdout
     assert "Found 2 manually configured cameras" in out.stderr, out.stderr
     assert "Configuring 2 camera(s)..." in out.stderr, out.stderr
+
+
+def test_run_sh_pick_without_an_options_file_takes_discovery_alone():
+    """No options file opt_list can read: the configured list reads as []
+    (and says so), discovery applies as with no camera configured, and with
+    nothing discovered the start stops on "No cameras configured!"."""
+    streams = {"Front Door": {"producers": [{"url": "rtsp://10.0.0.1/front"}]}}
+    code, primary, err = _run_sh_camera_pick(streams, file_options=False)
+    assert code == 0, err
+    assert primary == ["Front Door", "zone:front_door", "rtsp://10.0.0.1/front"], err
+    assert "opt_list: could not read cameras from" in err, err
+    assert "manually configured" not in err, err
+    code, primary, err = _run_sh_camera_pick({}, file_options=False)
+    assert code == 1 and primary == [], err
+    assert "No cameras configured!" in err, err
 
 
 @pytest.mark.parametrize("cameras", [None, []], ids=["null", "empty"])
@@ -1895,27 +1939,31 @@ def test_run_sh_first_run_gate_without_an_options_file_runs_the_wizard():
     assert out.stdout == "false\n"
 
 
-# run.sh's frigate-mode lists: the camera slugs and the labels, each joined
-# with "," for frigate_bridge's --cameras / --labels. bashio printed each
-# element on its own line, raw, so `jq -r 'join(",")'` met `person` (not
-# JSON), failed, and `set -e` ended the setup there: with the default labels,
-# every frigate-mode start (HA38). Lifted from the comment that opens it to
-# the first log line after it.
-_FRIGATE_LISTS_START = "    # Get cameras and labels as comma-separated strings."
+# run.sh's frigate-mode reads: the confidence floor, and the camera slugs and
+# the labels, each joined with "," for frigate_bridge's --cameras / --labels.
+# bashio printed each element on its own line, raw, so `jq -r 'join(",")'` met
+# `person` (not JSON), failed, and `set -e` ended the setup there: with the
+# default labels, every frigate-mode start (HA38). Lifted from the
+# min_confidence read to the first log line after the lists (the start is a
+# prefix, so the read is found whatever default it names).
+_FRIGATE_LISTS_START = "    MIN_CONFIDENCE=$(bashio::config 'frigate.min_confidence'"
 _FRIGATE_LISTS_END = '    bashio::log.info "MQTT Broker: $MQTT_HOST:$MQTT_PORT"\n'
-_FRIGATE_LISTS_REPORT = 'printf \'%s|%s\\n\' "$FRIGATE_CAMERAS" "$FRIGATE_LABELS"\n'
+_FRIGATE_LISTS_REPORT = 'printf \'%s|%s|%s\\n\' "$MIN_CONFIDENCE" "$FRIGATE_CAMERAS" "$FRIGATE_LABELS"\n'
 
 
 @pytest.mark.parametrize("frigate, joined", [
-    ({"cameras": ["front_door", "driveway"], "labels": ["person", "car", "dog", "cat"]},
-     "front_door,driveway|person,car,dog,cat"),
-    ({"cameras": [], "labels": ["person", "car", "dog", "cat"]}, "|person,car,dog,cat"),
-    ({"cameras": ["front_door"], "labels": []}, "front_door|"),
-    ({"cameras": None, "labels": None}, "|"),
-    (None, "|"),
+    ({"cameras": ["front_door", "driveway"], "labels": ["person", "car", "dog", "cat"],
+      "min_confidence": 0.7},
+     "0.7|front_door,driveway|person,car,dog,cat"),
+    ({"cameras": [], "labels": ["person", "car", "dog", "cat"]}, "0.5||person,car,dog,cat"),
+    ({"cameras": ["front_door"], "labels": []}, "0.5|front_door|"),
+    ({"cameras": None, "labels": None, "min_confidence": None}, "0.5||"),
+    (None, "0.5||"),
 ], ids=["slugs and default labels", "every camera", "default labels in the bridge",
         "lists null", "the frigate block missing"])
 def test_run_sh_frigate_lists_join_whole(frigate, joined):
+    """A missing or null min_confidence reads as 0.5 (config.yaml's and the
+    bridge's default), never the string "null" the bridge cannot parse."""
     options = {"mode": "frigate"}
     if frigate is not None:
         options["frigate"] = frigate
@@ -1924,6 +1972,21 @@ def test_run_sh_frigate_lists_join_whole(frigate, joined):
     assert out.returncode == 0, out.stderr
     assert out.stdout == joined + "\n", out.stderr
     assert "null" not in out.stdout
+
+
+@pytest.mark.parametrize("bad", ["absent", "not json"])
+def test_run_sh_frigate_lists_stop_when_the_options_file_cannot_be_read(bad):
+    """An options file opt_list cannot read leaves the camera list unknown,
+    not empty. Empty means "seal every camera Frigate reports", so the setup
+    stops with a reason rather than start the bridge with no camera filter."""
+    options = {"mode": "frigate", "frigate": {"cameras": ["front_door"], "labels": ["person"]}}
+    prelude = 'printf "cameras: [a\\n" > "$OPTIONS_JSON"\n' if bad == "not json" else ""
+    out = _run_sh_block(_FRIGATE_LISTS_START, _FRIGATE_LISTS_END, options, prelude=prelude,
+                        report=_FRIGATE_LISTS_REPORT, file_options=False)
+    assert out.returncode == 1, (out.stdout, out.stderr)
+    assert out.stdout == "", "the setup never reaches the bridge's arguments"
+    assert "error: Cannot read frigate.cameras and frigate.labels from" in out.stderr, out.stderr
+    assert "an empty camera list would seal every camera Frigate reports" in out.stderr
 
 
 @pytest.mark.parametrize("label", sorted(_GO2RTC_PARITY_PAYLOADS))

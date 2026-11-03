@@ -777,6 +777,12 @@ test("five unreadable polls end from the fresh read: paired is a success, one pa
       return p;
     },
   };
+  // What each exit says when the fresh read decides nothing (its old words).
+  const failMsg = {
+    "code wait, unreachable": "A Canary became unreachable. Check the network and try again.",
+    "code wait, not responding": "A Canary stopped responding. Try again.",
+    "confirm wait, unreachable": "A Canary became unreachable while completing. Try again.",
+  };
   for (const [exit, reach] of Object.entries(exits)) {
     const running = exit.startsWith("confirm") ? piom("PAIRING_CONFIRM", 1, "running") : runJ;
     // Both report it paired.
@@ -787,12 +793,22 @@ test("five unreadable polls end from the fresh read: paired is a success, one pa
     assert.deepStrictEqual(cancels(p), [], `${exit}: nothing is canceled beside a pairing both finished`);
     assert.ok(!p.el("mesh-start-btn").disabled, `${exit}: Start is ready for the next Canary`);
 
-    // One paired, the other still running this pairing.
-    p = await reach(doneI, running);
-    assert.strictEqual(p.el("mesh-error").textContent, STILL_FINISHING, exit);
+    // One paired, the other still running this pairing: either way round.
+    for (const [atI, atJ, which] of [[doneI, running, "existing paired, new running"],
+                                     [runI, doneJ, "existing running, new paired"]]) {
+      p = await reach(atI, atJ);
+      assert.strictEqual(p.el("mesh-error").textContent, STILL_FINISHING, `${exit}, ${which}`);
+      assert.ok(!visible(p, "mesh-done") && visible(p, "mesh-form"), `${exit}, ${which}`);
+      assert.deepStrictEqual(cancels(p), [], `${exit}, ${which}: the running side is completing, not stuck`);
+      assert.ok(!p.el("mesh-start-btn").disabled, `${exit}, ${which}`);
+    }
+
+    // One paired beside one the fresh read cannot reach: the read decides
+    // nothing, so the exit's own words, and still no cancel to the paired side.
+    p = await reach(doneI, THROW);
+    assert.strictEqual(p.el("mesh-error").textContent, failMsg[exit], exit);
     assert.ok(!visible(p, "mesh-done") && visible(p, "mesh-form"), exit);
-    assert.deepStrictEqual(cancels(p), [], `${exit}: the running side is completing, not stuck`);
-    assert.ok(!p.el("mesh-start-btn").disabled, exit);
+    assert.deepStrictEqual(cancels(p), [], `${exit}: nothing is canceled beside a side that reports paired`);
   }
 });
 

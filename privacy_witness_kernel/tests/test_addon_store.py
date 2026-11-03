@@ -13,6 +13,7 @@ PyYAML is a TEST dependency only (the image has none); the pwk-wizard-tests
 job installs it, and the tests are skipped locally without it.
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -84,8 +85,192 @@ def test_options_and_schema_carry_the_new_switches():
     assert schema["verify_interval_hours"] == "int(0,168)?"
     assert opts["retention_days"] == 7
     assert opts["frigate"]["enable_reviews"] is False
-    assert schema["frigate"]["cameras"] == "list(str)?"
+    # A list of strings, in the Supervisor's list syntax (a YAML list holding
+    # the element type). `list(str)?` is a select that takes only "str".
+    assert schema["frigate"]["cameras"] == ["str?"]
+    assert schema["frigate"]["labels"] == ["str?"]
     assert set(opts) == set(schema), "every option has a schema entry and vice versa"
+
+
+# The Supervisor's option check, mirrored for the types this schema uses:
+# supervisor/apps/options.py (AppOptions, home-assistant/supervisor at
+# bde7fb7b), which write_options runs on the stored options before every
+# start (the app does not start when it refuses them) and POST
+# /addons/self/options runs on every save the wizard sends. A YAML list is a
+# list of its one element type; a dict is checked key by key (unknown keys
+# dropped, a missing key refused unless its type ends in "?"); `list(a|b)` is
+# a SELECT: str(value) must be one of a, b. So `list(str)?` refused the
+# defaults' `cameras: []` ("[]" is not "str") and the app never started.
+_SUP_ELEMENT = re.compile(
+    r"^(?:"
+    r"|bool"
+    r"|email"
+    r"|url"
+    r"|port"
+    r"|device(?:\((?P<filter>subsystem=[a-z]+)\))?"
+    r"|str(?:\((?P<s_min>\d+)?,(?P<s_max>\d+)?\))?"
+    r"|password(?:\((?P<p_min>\d+)?,(?P<p_max>\d+)?\))?"
+    r"|int(?:\((?P<i_min>-?\d+)?,(?P<i_max>-?\d+)?\))?"
+    r"|float(?:\((?P<f_min>-?\d*\.?\d+)?,(?P<f_max>-?\d*\.?\d+)?\))?"
+    r"|match\((?P<match>.*)\)"
+    r"|list\((?P<list>.+)\)"
+    r")\??$"
+)
+
+
+class _Refused(Exception):
+    """The Supervisor would raise vol.Invalid here."""
+
+
+def _sup_range(match, low, high, number):
+    lo, hi = match.group(low), match.group(high)
+    if (lo and number < float(lo)) or (hi and number > float(hi)):
+        raise _Refused(f"{number} is outside ({lo}, {hi})")
+
+
+def _supervisor_check(typ, value, key):
+    """Return the value as the Supervisor stores it, or raise _Refused."""
+    if isinstance(typ, list):
+        if not isinstance(value, list):
+            raise _Refused(f"Invalid list for option '{key}'")
+        return [_supervisor_check(typ[0], element, key) for element in value]
+    if isinstance(typ, dict):
+        if not isinstance(value, dict):
+            raise _Refused(f"Invalid dict for option '{key}'")
+        out = {k: _supervisor_check(typ[k], v, k) for k, v in value.items() if k in typ}
+        for missing in set(typ) - set(out):
+            inner = typ[missing][0] if isinstance(typ[missing], list) and typ[missing] else typ[missing]
+            if not (isinstance(inner, str) and inner.endswith("?")):
+                raise _Refused(f"Missing option '{missing}' in {key}")
+        return out
+    if value is None:
+        raise _Refused(f"Missing required option '{key}'")
+    match = _SUP_ELEMENT.match(typ)
+    if not match:
+        raise _Refused(f"Unknown type '{typ}'")
+    if typ.startswith(("str", "password")):
+        if not isinstance(value, str):
+            raise _Refused(f"'{key}' expects a string, got {value!r}")
+        prefix = "s" if typ.startswith("str") else "p"
+        _sup_range(match, f"{prefix}_min", f"{prefix}_max", len(value))
+        return value
+    if typ.startswith("int"):
+        number = int(value)
+        _sup_range(match, "i_min", "i_max", number)
+        return number
+    if typ.startswith("float"):
+        number = float(value)
+        _sup_range(match, "f_min", "f_max", number)
+        return number
+    if typ.startswith("bool"):
+        if isinstance(value, str):
+            if value.lower() not in ("1", "true", "yes", "on", "enable",
+                                     "0", "false", "no", "off", "disable"):
+                raise _Refused(f"'{key}' expects a boolean, got {value!r}")
+            return value.lower() in ("1", "true", "yes", "on", "enable")
+        return bool(value)
+    if typ.startswith("url"):
+        from urllib.parse import urlparse
+        parsed = urlparse(value)
+        if not parsed.scheme or not parsed.netloc:
+            raise _Refused(f"'{key}' expects a URL, got {value!r}")
+        return value
+    if typ.startswith("match"):
+        if not re.match(match.group("match"), str(value)):
+            raise _Refused(f"'{key}' does not match {match.group('match')}")
+        return str(value)
+    if typ.startswith("list"):
+        choices = match.group("list").split("|")
+        if str(value) not in choices:
+            raise _Refused(f"value must be one of {choices} for option '{key}', got {value!r}")
+        return str(value)
+    raise AssertionError(f"type '{typ}' is not mirrored here; mirror it before using it")
+
+
+def test_the_supervisor_check_mirror_refuses_a_select_standing_in_for_a_list():
+    """The mirror is only worth its fidelity: a select takes one of its
+    values, never a list (what 0.9.0's `list(str)?` met in its own defaults),
+    and the list syntax takes the list."""
+    with pytest.raises(_Refused, match=r"one of \['str'\]"):
+        _supervisor_check("list(str)?", [], "cameras")
+    with pytest.raises(_Refused, match=r"one of \['str'\]"):
+        _supervisor_check("list(str)?", ["person", "car"], "labels")
+    assert _supervisor_check("list(standalone|frigate)", "frigate", "mode") == "frigate"
+    assert _supervisor_check(["str?"], ["person", "car"], "labels") == ["person", "car"]
+    assert _supervisor_check({"labels": ["str?"]}, {}, "frigate") == {}
+    with pytest.raises(_Refused, match="Invalid list"):
+        _supervisor_check(["str?"], "person", "labels")
+    with pytest.raises(_Refused, match="Missing option 'name'"):
+        _supervisor_check({"name": "str", "zone_id": "str?"}, {}, "cameras")
+
+
+def _walk_schema(schema, options, path=""):
+    """Yield (dotted path, schema entry, default) for every option leaf."""
+    for key, typ in schema.items():
+        here = f"{path}.{key}" if path else key
+        value = options.get(key) if isinstance(options, dict) else None
+        if isinstance(typ, dict):
+            yield from _walk_schema(typ, value if isinstance(value, dict) else {}, here)
+        else:
+            yield here, typ, value
+
+
+def test_every_list_option_is_declared_as_a_list():
+    """A default that is a list must have the list syntax, so a select can
+    never again stand in for one (0.9.0's frigate.cameras and labels)."""
+    for path, typ, default in _walk_schema(CONFIG["schema"], CONFIG["options"]):
+        if isinstance(default, list):
+            assert isinstance(typ, list), f"{path}: a list default declared as {typ!r}"
+        if isinstance(typ, str) and typ.startswith("list("):
+            assert not isinstance(default, list), f"{path}: {typ!r} is a select"
+
+
+def test_the_default_options_pass_the_supervisor_check():
+    """write_options checks the stored options (config.yaml's defaults under
+    whatever the person saved) before every start; the defaults alone must
+    pass, or the app never starts."""
+    stored = _supervisor_check(CONFIG["schema"], CONFIG["options"], "root")
+    assert stored["frigate"]["cameras"] == []
+    assert stored["frigate"]["labels"] == ["person", "car", "dog", "cat"]
+    assert stored["cameras"] == []
+
+
+def _load_serve_wizard():
+    spec = importlib.util.spec_from_file_location("serve_wizard_store", ADDON / "serve_wizard.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("payload", [
+    {"mode": "frigate", "frigate_detected": True, "digest_enabled": False,
+     "cameras": [{"name": "Front Door"}, {"name": "Driveway"}]},
+    {"mode": "frigate", "frigate_detected": True, "digest_enabled": False, "cameras": []},
+    {"mode": "standalone", "digest_enabled": False,
+     "cameras": [{"name": "Front Door", "url": "rtsp://10.0.0.2/front"},
+                 {"name": "\U0001F3E0", "url": "rtsp://10.0.0.3/home"}]},
+], ids=["frigate, two cameras", "frigate, every camera", "standalone, two cameras"])
+def test_the_wizard_saves_pass_the_supervisor_check(payload, monkeypatch, tmp_path):
+    """What the wizard POSTs to /addons/self/options (over the options the
+    Supervisor answers, here the defaults) must pass the same check, or the
+    save is refused and the setup never completes."""
+    wizard = _load_serve_wizard()
+    sent: dict = {}
+    monkeypatch.setattr(wizard, "DEVICE_KEY_FILE", tmp_path / "device_key")
+    monkeypatch.setattr(wizard, "WIZARD_PREFS_FILE", tmp_path / "wizard_prefs.json")
+    monkeypatch.setattr(wizard, "get_addon_options", lambda: json.loads(json.dumps(CONFIG["options"])))
+    monkeypatch.setattr(wizard, "set_addon_options", lambda options: sent.update(options=options))
+    monkeypatch.setattr(wizard, "restart_addon", lambda: None)
+    handler = wizard.WizardHandler.__new__(wizard.WizardHandler)
+    result = handler._handle_save(payload)
+    assert result["ok"] is True, result
+    stored = _supervisor_check(CONFIG["schema"], {**CONFIG["options"], **sent["options"]}, "root")
+    assert stored["mode"] == payload["mode"]
+    if payload["mode"] == "frigate":
+        assert stored["frigate"]["cameras"] == result["cameras"]
+        assert stored["frigate"]["labels"] == ["person", "car", "dog", "cat"]
+    else:
+        assert [c["zone_id"] for c in stored["cameras"]] == ["zone:front_door", "zone:_"]
 
 
 def test_discovery_services_and_ingress_unchanged():
