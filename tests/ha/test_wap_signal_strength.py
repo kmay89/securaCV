@@ -101,12 +101,14 @@ def loop_status(rssi: int) -> str:
 
 
 def discovery_config(row: dict[str, str]) -> str:
-    """The config publish_one_discovery sends for the row (its abbreviated keys)."""
+    """The config publish_one_discovery sends for the row (its abbreviated keys;
+    def_ent_id is <component>.<device id slug>_<object_id>, and DEVICE is its
+    own slug)."""
     return json.dumps(
         {
             "name": row["name"],
             "uniq_id": f"canary_{DEVICE}_rssi",
-            "def_ent_id": f"sensor.canary_{DEVICE}_signal_strength",
+            "def_ent_id": f"sensor.{DEVICE}_rssi",
             "stat_t": f"{PREFIX}/{DEVICE}/{row['topic']}",
             "val_tpl": row["template"],
             "avty_t": STATUS,
@@ -152,11 +154,14 @@ async def publish(hass: HomeAssistant, body: str, *, retained: bool = False) -> 
     await hass.async_block_till_done()
 
 
-def warnings_from_mqtt(caplog: pytest.LogCaptureFixture) -> list[str]:
+def warnings_from_the_core(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Every warning any Home Assistant logger wrote. Not only the MQTT
+    integration's: a template that reads a key the body lacks is warned
+    about by homeassistant.helpers.template."""
     return [
-        r.getMessage()
+        f"{r.name}: {r.getMessage()}"
         for r in caplog.records
-        if r.levelno >= logging.WARNING and r.name.startswith("homeassistant.components.mqtt")
+        if r.levelno >= logging.WARNING and r.name.startswith("homeassistant")
     ]
 
 
@@ -188,7 +193,7 @@ async def test_signal_strength_keeps_its_reading_across_a_reconnect(
     assert any(f"Ignore empty state from '{STATUS}'" in r.getMessage() for r in caplog.records), (
         "the core ignored the empty rendering by its numeric-sensor rule"
     )
-    assert warnings_from_mqtt(caplog) == []
+    assert warnings_from_the_core(caplog) == []
 
     await publish(hass, loop_status(-61))
     assert hass.states.get(entity).state == "-61"
@@ -202,7 +207,7 @@ async def test_a_core_that_starts_inside_the_window_reads_unknown_not_zero(
     entity = await announce(hass)
     await publish(hass, connect_burst_status(), retained=True)
     assert hass.states.get(entity).state == "unknown"
-    assert warnings_from_mqtt(caplog) == []
+    assert warnings_from_the_core(caplog) == []
 
     await publish(hass, loop_status(-70))
     assert hass.states.get(entity).state == "-70"

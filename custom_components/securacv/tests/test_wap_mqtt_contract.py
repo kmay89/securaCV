@@ -538,7 +538,7 @@ def test_health_pins_the_key_and_the_signed_topics_verify(record, monkeypatch):
     assert wap.hass.data.get("_securacv_test_notifications", []) == []
 
     # The signed event, through the verifier the Last Event sensor runs (the
-    # sensor itself misses the first event: see the xfail below).
+    # sensor shows it too, HA44: test_the_first_event_is_shown_by_the_entity_it_creates).
     event = _one(record, "running", "events")
     verdict = verify_event(wap.store, record["device_id"], event)
     assert verdict.trusted and verdict.reason == "ok", verdict
@@ -546,8 +546,9 @@ def test_health_pins_the_key_and_the_signed_topics_verify(record, monkeypatch):
 
 def test_last_event_reads_the_wap_event_body(record, monkeypatch):
     """Each field of the events body Last Event reads, and the modality it
-    derives from the status's device_type. The event is delivered again once
-    the entity exists: the first one created it (see the xfail below)."""
+    derives from the status's device_type, on a second publish of the same
+    body once the entity exists (the creating publish's own showing is
+    test_the_first_event_is_shown_by_the_entity_it_creates, HA44)."""
     wap = _Wap(record, monkeypatch).replay("connect", "running")
     sent = _one(record, "running", "events")
     status = _one(record, "connect", "status")
