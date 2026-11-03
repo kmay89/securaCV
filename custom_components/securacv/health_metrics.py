@@ -100,11 +100,13 @@ def canary_sd_replace_recommended(health_payload: dict[str, Any] | None) -> bool
     return bool(sd.get("replace_recommended", False))
 
 
-def memory_free_bytes(health_payload: dict[str, Any]) -> int:
-    """Free-memory reading across firmware payload spellings.
+def memory_free_reading(health_payload: dict[str, Any]) -> int | None:
+    """Free-memory reading across firmware payload spellings, or None.
 
     canary-wap publishes `memory_free`; firmware/canary publishes
-    `free_heap`. Read both so either firmware family reports correctly.
+    `free_heap`. The first of the two that holds a number is the reading;
+    None when the health carries neither as a number, so a reader can tell
+    "no reading" from "0 bytes free".
     """
     for key in ("memory_free", "free_heap"):
         value = health_payload.get(key)
@@ -113,7 +115,17 @@ def memory_free_bytes(health_payload: dict[str, Any]) -> int:
                 return int(value)
             except (TypeError, ValueError):
                 continue
-    return 0
+    return None
+
+
+def memory_free_bytes(health_payload: dict[str, Any]) -> int:
+    """Free-memory reading across firmware payload spellings (0 without one).
+
+    Read both spellings (memory_free_reading) so either firmware family
+    reports correctly.
+    """
+    reading = memory_free_reading(health_payload)
+    return 0 if reading is None else reading
 
 
 def battery_percent(health_payload: dict[str, Any]) -> int | None:

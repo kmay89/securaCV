@@ -859,6 +859,56 @@ def test_python_yml_runs_this_suite_on_each_file_the_harness_compiles(record):
     )
 
 
+# ─── Memory Critical (HA48) ────────────────────────────────────────────
+
+
+def test_memory_critical_turns_on_when_the_wap_is_low_on_memory(record, monkeypatch):
+    """Sweep HA48: Memory Critical reads the health's free memory the way the
+    Health sensor does (memory_free, the WAP's spelling, else free_heap)."""
+    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    healthy = _one(record, "running", "health")
+    sent = _one(record, "trouble", "health")
+    assert healthy["memory_free"] >= CRITICAL_MEMORY_THRESHOLD_BYTES, "the healthy unit is not low"
+    assert sent["memory_free"] < CRITICAL_MEMORY_THRESHOLD_BYTES, "the unit in trouble is low"
+    assert "free_heap" not in healthy and "free_heap" not in sent, "the WAP spells it memory_free"
+    memory = wap.entity("tamper_memory_critical")
+    assert _value(memory, "is_on") is False
+    wap.replay("trouble")
+    assert _value(wap.entity("health_status"), "native_value") == "critical"
+    assert _value(memory, "is_on") is True
+    # The unit recovers: the next healthy health turns it off again.
+    wap.replay("running")
+    assert _value(memory, "is_on") is False
+
+
+def test_memory_critical_stays_off_on_a_health_without_a_memory_reading(record, monkeypatch):
+    """A health that carries neither memory_free nor free_heap as a number has
+    no reading, and no reading is not a critical one: Memory Critical reads
+    off, as the old default did (memory_free_bytes reads 0 there, which a
+    plain swap would have shown as critical). A number in either spelling is
+    still read, memory_free first."""
+    wap = _Wap(record, monkeypatch).replay("connect", "running", "trouble")
+    memory = wap.entity("tamper_memory_critical")
+    assert _value(memory, "is_on") is True, "the unit in trouble is low"
+    health = _topic(record, "health")
+    low = _one(record, "trouble", "health")
+    without = {k: v for k, v in low.items() if k not in ("memory_free", "free_heap")}
+    for body, on in (
+        (without, False),
+        (low, True),
+        ({**without, "memory_free": None}, False),
+        ({**without, "memory_free": "junk"}, False),
+        ({**without, "free_heap": "junk"}, False),
+        (low, True),
+        ({**without, "memory_free": "junk", "free_heap": 4096}, True),
+        ({**without, "memory_free": 182000, "free_heap": 4096}, False),
+        ({**without, "free_heap": 4096}, True),
+        ({**without, "free_heap": 182000}, False),
+    ):
+        wap.broker.publish(health, json.dumps(body), True)
+        assert _value(memory, "is_on") is on, body
+
+
 # ─── what the record shows is wrong today ──────────────────────────────
 
 
@@ -907,24 +957,6 @@ def test_tamper_stays_on_while_the_wap_says_the_lid_is_open(record, monkeypatch)
     _require(_one(record, "trouble", "health")["enclosure_open"] is True, "the lid is open")
     _require(_value(wap.entity("tamper_enclosure"), "is_on") is True, "Tamper Enclosure is on")
     assert _value(wap.entity("tamper"), "is_on") is True
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="handed up (#1836): Memory Critical reads the health's free_heap (default "
-    "100000); a canary-wap's health carries memory_free",
-)
-def test_memory_critical_turns_on_when_the_wap_is_low_on_memory(record, monkeypatch):
-    wap = _Wap(record, monkeypatch).replay("connect", "running", "trouble")
-    sent = _one(record, "trouble", "health")
-    _require(sent["memory_free"] < CRITICAL_MEMORY_THRESHOLD_BYTES, "the unit in trouble is low")
-    _require("free_heap" not in sent, "the WAP's health spells it memory_free")
-    _require(
-        _value(wap.entity("health_status"), "native_value") == "critical",
-        "the Health sensor reads it critical",
-    )
-    assert _value(wap.entity("tamper_memory_critical"), "is_on") is True
 
 
 @pytest.mark.parametrize(

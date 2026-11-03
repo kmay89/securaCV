@@ -84,6 +84,7 @@ from .voice import json_status_online, status_online
 from .health_metrics import (
     canary_sd_replace_recommended,
     event_id_space_low,
+    memory_free_reading,
     replacement_recommended,
     storage_status,
 )
@@ -872,8 +873,13 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
             elif self._tamper_type == TAMPER_MOTION:
                 is_triggered = tamper_data.get("motion", False) or data.get("unexpected_motion", False)
             elif self._tamper_type == TAMPER_MEMORY:
-                free_heap = data.get("free_heap", 100000)
-                is_triggered = free_heap < CRITICAL_MEMORY_THRESHOLD_BYTES
+                # The Health sensor's reading (the canary-wap's memory_free,
+                # else firmware/canary's free_heap; sweep HA48: this read
+                # only free_heap, so a WAP low on memory never showed it).
+                # A health that carries neither as a number has no reading,
+                # and no reading is not a critical one: off, as before.
+                free = memory_free_reading(data)
+                is_triggered = free is not None and free < CRITICAL_MEMORY_THRESHOLD_BYTES
             elif self._tamper_type == TAMPER_WATCHDOG:
                 is_triggered = data.get("watchdog_triggered", False)
             elif self._tamper_type == TAMPER_GPIO:

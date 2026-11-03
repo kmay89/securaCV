@@ -19,6 +19,7 @@ from ..health_metrics import (
     kernel_storage,
     kernel_thermal,
     memory_free_bytes,
+    memory_free_reading,
     replacement_recommended,
     round_pct,
     storage_status,
@@ -125,6 +126,17 @@ def test_memory_free_reads_both_firmware_spellings():
     assert memory_free_bytes({"memory_free": 1000, "free_heap": 2000}) == 1000
     assert memory_free_bytes({"memory_free": "junk", "free_heap": 2000}) == 2000
     assert memory_free_bytes({}) == 0
+
+
+def test_memory_free_reading_tells_no_reading_from_zero():
+    """The same reader as memory_free_bytes, but None without a reading, so
+    Memory Critical can leave a health with no memory field off (HA48)."""
+    assert memory_free_reading({"memory_free": 1000, "free_heap": 2000}) == 1000
+    assert memory_free_reading({"memory_free": "junk", "free_heap": 2000}) == 2000
+    assert memory_free_reading({"memory_free": 0}) == 0
+    for body in ({}, {"memory_free": None}, {"free_heap": "junk"}, {"memory_free": [1]}):
+        assert memory_free_reading(body) is None, body
+        assert memory_free_bytes(body) == 0, body
 
 
 def test_battery_percent_reads_both_firmware_spellings():
