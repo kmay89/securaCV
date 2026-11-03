@@ -98,6 +98,15 @@
 // says which of the worker's services it left out, in the health log once
 // and in GET /api/bluetooth.
 //
+// And sweep F302: GET /api/bluetooth/scan/results wrote each device's
+// advertised name raw, and GET /api/bluetooth/paired and GET /api/bluetooth
+// their name fields the same way; ArduinoJson 7.4.1 writes a control byte
+// raw (JSON.parse refuses it) and every other byte as it is (a name the
+// channel cut at 32 bytes mid-character, an overlong form, a lone
+// continuation byte: no strict reader takes those). Each now goes as
+// wap_json::shown_text() writes it: every byte, the sequences UTF-8 turns
+// on, and the widest name, in every answer that carries one.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
@@ -206,6 +215,7 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]);
 
 #include "http_status_line.h"   // the status line a Bluetooth not-run answer sends
 #include "json_strict.h"        // the answers parse as a browser's JSON.parse reads them (F261)
+#include "browser_utf8.h"       // what a browser decodes an answer's bytes to (F302)
 
 // The REST handlers themselves (sweep F235): the REAL bluetooth_api.h, over
 // stand-ins for ArduinoJson (stubs/bt/ArduinoJson.h) and esp_http_server
@@ -4904,6 +4914,142 @@ void test_a_name_holding_a_control_byte_is_refused() {
   std::printf("PASS a_name_holding_a_control_byte_is_refused\n");
 }
 
+// ── A Bluetooth device's name reaches every answer as a page shows it (sweep F302) ──
+
+// The text a page shows for the name `raw`, by the test's own reading: each
+// control byte JSON forbids raw (all below 0x20 but \b \f \n \r \t) as
+// U+FFFD, then the bytes as a browser decodes them (browser_utf8.h, the
+// WHATWG decoder: each ill-formed sequence's maximal subpart as U+FFFD).
+std::string shown_name(const std::string& raw) {
+  std::string pre;
+  for (unsigned char c : raw) {
+    const bool control = c < 0x20 && c != '\b' && c != '\f' && c != '\n' && c != '\r' && c != '\t';
+    if (control) pre += "\xEF\xBF\xBD";
+    else pre += (char)c;
+  }
+  return browser_utf8(pre);
+}
+
+// `body` is text any strict JSON reader takes: no byte below 0x20 (the
+// answers are one line, and ArduinoJson escapes \b \f \n \r \t), well-formed
+// UTF-8 (a browser's decoding changes no byte), and one JSON value.
+bool strict_json(const std::string& body, json_strict::Value* v) {
+  for (unsigned char c : body) {
+    if (c < 0x20) return false;
+  }
+  return browser_utf8(body) == body && json_strict::parse(body, v);
+}
+
+// The string at `path` (keys, or "0" for an array's first item) of `v`.
+const json_strict::Value* at_path(const json_strict::Value& v, const std::vector<const char*>& path) {
+  const json_strict::Value* cur = &v;
+  for (const char* k : path) {
+    if (cur == nullptr) return nullptr;
+    if (cur->kind == json_strict::Value::Array) {
+      cur = cur->items.empty() ? nullptr : &cur->items[0];
+    } else {
+      cur = cur->get(k);
+    }
+  }
+  return cur;
+}
+
+// GET /api/bluetooth/scan/results wrote each device's advertised name raw,
+// and GET /api/bluetooth/paired and GET /api/bluetooth (the link's and the
+// pairing peer's) their name fields the same way: a name holding 0x01 made
+// the answer one JSON.parse refuses, and a name the channel cut at 32 bytes
+// inside a character, or one holding an overlong form or a lone
+// continuation byte, made one that is not UTF-8. Now every byte value
+// between two letters, a name holding 0x01 and a cut sequence, the
+// sequences UTF-8 turns on, a name of exactly 32 bytes that ends inside a
+// character, a 34-byte advertisement the channel cuts there, and 32 bytes
+// of 0x01 (96 bytes of text, the widest), each heard over the air (the scan
+// result's callback) and held in the link's, the bond's and the pairing
+// peer's fields: all four answers are strict JSON, and each carries the
+// text a page shows for the name, whole.
+void test_a_bluetooth_name_reaches_every_answer_as_shown() {
+  boot();
+  bc::Command scan = cmd_of(bc::BT_CMD_SCAN_START);
+  scan.duration_ms = 5000;
+  CHECK(rest(scan).r.ok);
+  // A phone connects and bonds: the link and the paired list.
+  NimBLEConnInfo phone = link(11, 0xD1);
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);
+  host_sim::server->peers = {11};
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
+  CHECK(bc::g_connection.connected && bc::g_paired_count == 1);
+  // A pairing under way, whose peer's name GET /api/bluetooth carries.
+  bc::g_pairing.state = bc::PAIR_INITIATED;
+  bc::g_pairing.started_ms = host_sim::now_ms;
+
+  std::vector<std::string> names;
+  for (unsigned b = 1; b < 256; ++b) names.push_back(std::string("A") + (char)b + "B");
+  names.push_back("Ph\x01ne \xE2\x82");                     // 0x01, and a sequence cut short
+  names.push_back("\xC0\xA2");                              // '"' spelled overlong
+  names.push_back("\xE0\x80\xA2");                          // and in three bytes
+  names.push_back("x\x80y");                                // a lone continuation byte
+  names.push_back("\xED\xA0\x80");                          // a surrogate
+  names.push_back("\xF4\x90\x80\x80");                      // past U+10FFFF
+  names.push_back("\xFE\xFF\xF8");                          // bytes no sequence starts with
+  names.push_back(std::string(30, 'n') + "\xE2\x82");       // 32 bytes, ending inside a character
+  names.push_back(std::string(31, 'n') + "\xE2\x82\xAC");   // 34: the channel keeps 32, mid-character
+  names.push_back(std::string(bc::MAX_DEVICE_NAME_LEN, '\x01'));
+
+  for (const std::string& name : names) {
+    bc::g_scanned_count = 0;                     // the next result is a new entry
+    NimBLEAdvertisedDevice heard;
+    const uint8_t a[6] = {0xC3, 3, 3, 3, 3, 3};
+    heard.address = NimBLEAddress(a, 0);
+    heard.name = name;
+    on_nimble([&] { host_sim::scan.callbacks()->onResult(&heard); });
+    loop_pass();
+    CHECK(bc::g_scanned_count == 1);
+    // What the channel kept: the advertisement's first 32 bytes.
+    const std::string kept = bc::g_scanned_devices[0].name;
+    CHECK(kept == name.substr(0, bc::MAX_DEVICE_NAME_LEN));
+    std::memcpy(bc::g_connection.name, kept.c_str(), kept.size() + 1);
+    std::memcpy(bc::g_paired_devices[0].name, kept.c_str(), kept.size() + 1);
+    std::memcpy(bc::g_pairing.peer_name, kept.c_str(), kept.size() + 1);
+    loop_pass();                                 // published (F138)
+    CHECK(bc::g_connection.connected && bc::g_paired_count == 1 && bc::g_pairing.state == bc::PAIR_INITIATED);
+    const std::string want = shown_name(kept);
+    struct Answer {
+      Handler h;
+      std::vector<const char*> path;
+    };
+    const Answer answers[] = {
+        {bluetooth_api::handle_bluetooth_scan_results, {"devices", "0", "name"}},
+        {bluetooth_api::handle_bluetooth_paired_list, {"devices", "0", "name"}},
+        {bluetooth_api::handle_bluetooth_status, {"connection", "name"}},
+        {bluetooth_api::handle_bluetooth_status, {"pairing", "peer_name"}},
+    };
+    for (const Answer& ans : answers) {
+      const Tap t = tap(ans.h);
+      json_strict::Value v;
+      const bool parses = strict_json(t.body, &v);
+      const json_strict::Value* got = parses ? at_path(v, ans.path) : nullptr;
+      if (!parses || got == nullptr || got->kind != json_strict::Value::String || got->text != want) {
+        std::string hex;
+        for (unsigned char c : kept) {
+          char h[4];
+          std::snprintf(h, sizeof h, "%02X ", c);
+          hex += h;
+        }
+        std::fprintf(stderr, "name [%s]: %s\n", hex.c_str(), t.body.c_str());
+      }
+      CHECK(parses);
+      CHECK(got != nullptr && got->kind == json_strict::Value::String && got->text == want);
+    }
+  }
+  // The widest: 32 bytes of 0x01 are 96 bytes of text (U+FFFD's three each),
+  // and the answers above carried all of them.
+  CHECK(shown_name(std::string(bc::MAX_DEVICE_NAME_LEN, '\x01')).size() == 3 * bc::MAX_DEVICE_NAME_LEN);
+  std::printf("PASS a_bluetooth_name_reaches_every_answer_as_shown\n");
+}
+
 // A name saved before the rule (F261) holding a control byte is not loaded:
 // the loop task's first pass keeps the default name, init() hands the stack
 // the default to advertise, both answers parse with it, and the health log
@@ -6216,6 +6362,7 @@ const Test kTests[] = {
     {"a_bond_the_stack_kept_is_asked_again_each_minute", test_a_bond_the_stack_kept_is_asked_again_each_minute},
     {"a_listed_phone_that_pairs_again_by_just_works_leaves_the_list",
      test_a_listed_phone_that_pairs_again_by_just_works_leaves_the_list},
+    {"a_bluetooth_name_reaches_every_answer_as_shown", test_a_bluetooth_name_reaches_every_answer_as_shown},
 };
 
 }  // namespace bt_commands

@@ -38,6 +38,10 @@
  *    all, and the device joins the listed network that text names by the
  *    network's own bytes (the F262 review: a network whose name held a
  *    control byte was listed but could not be joined from the list).
+ *  - shown_text() writes that shown text itself, for a string no page posts
+ *    back (sweep F302: a Bluetooth name the radio supplied): each control
+ *    byte and each ill-formed UTF-8 sequence as U+FFFD, so the text is
+ *    well-formed UTF-8 that any strict reader takes, not only a browser.
  *  - Every write is whole or not at all: a write that does not fit before the
  *    reserve sets `overflow` and writes nothing, and every write after it is
  *    refused too, so the text is always a run of whole writes followed by a
@@ -189,6 +193,45 @@ inline size_t shown_piece(const unsigned char* p, const unsigned char** text, si
   *span = n;
   *text = whole ? p : (const unsigned char*)kReplacement;
   return whole ? n : kReplacementLen;
+}
+
+/* Copies `s` (NULL as "") into out[cap] as the text a page shows for it, the
+ * bytes shown_piece() reads off it: each raw_control() byte and each
+ * ill-formed UTF-8 sequence's maximal subpart (a lone continuation byte, a
+ * lead byte the string ends or breaks before its continuation bytes, an
+ * overlong form, a surrogate, a byte no sequence starts with) as U+FFFD, and
+ * every well-formed character as its own bytes. So the text is well-formed
+ * UTF-8 with no control byte JSON forbids raw, which every strict reader
+ * takes (sweep F302: a Bluetooth name the radio supplied, which ArduinoJson
+ * wrote raw into GET /api/bluetooth's answers). Only for a string no page
+ * posts back: this text no longer holds the string's own bytes where a page
+ * shows U+FFFD, while replaced_text() keeps them, so that shows_as() can read
+ * a post of what a page showed back to the string it named (the F262
+ * review's SSIDs).
+ *
+ * `out` is always terminated (cap > 0) and never written past `cap`;
+ * replaced_cap(n) holds the text of a string of n bytes whole (a piece
+ * spends its own bytes, or U+FFFD's three for one byte or more). The text is
+ * whole, or cut before the first piece that does not fit whole. Returns
+ * true when all of `s` fit; false when it cut (or `out` is NULL or `cap` 0,
+ * which write nothing). */
+inline bool shown_text(char* out, size_t cap, const char* s) {
+  if (out == nullptr || cap == 0) return false;
+  size_t len = 0;
+  for (const unsigned char* p = (const unsigned char*)(s ? s : ""); *p;) {
+    const unsigned char* text;
+    size_t span;
+    const size_t need = shown_piece(p, &text, &span);
+    if (need > cap - 1 - len) {
+      out[len] = '\0';
+      return false;
+    }
+    memcpy(out + len, text, need);
+    len += need;
+    p += span;
+  }
+  out[len] = '\0';
+  return true;
 }
 
 /* True when a page that read replaced_text()'s whole text of `raw` posts

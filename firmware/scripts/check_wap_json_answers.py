@@ -3,8 +3,9 @@
 the fleet scan's cache keeps the adverts that fit (F211), the answers spelled
 with snprintf() are measured and escaped (F212), every other JSON text spelled
 with printf is held or recorded (F227), the device name holds no byte
-ArduinoJson would write raw (F226), and neither does any SSID a JSON text
-carries (F262).
+ArduinoJson would write raw (F226), neither does any SSID a JSON text
+carries (F262), and no Bluetooth device's name reaches an ArduinoJson value
+as it is (F302).
 
 ArduinoJson's `serializeJson(doc, char_array)` and its sized form
 `serializeJson(doc, buf, n)` write at most the buffer's size and add the
@@ -201,6 +202,48 @@ J9. No SSID reaches a JSON text with a raw control byte (F262): an SSID is
     `wap_json::listed_by_shown()` over its list. A stale record fails.
     Host-tested in test_wap_json_writer.cpp, test_ble_provision.cpp and
     test_fleet_qr_query.cpp.
+J10. No Bluetooth device's name reaches an ArduinoJson value as it is
+    (F302). A scanned device's name is up to MAX_DEVICE_NAME_LEN bytes its
+    advertisement chose, cut by a byte count (inside a character too), and
+    ArduinoJson 7.4.1 writes a control byte other than \b \f \n \r \t
+    raw and every other byte as it is, so GET /api/bluetooth/scan/results
+    answered text JSON.parse refuses, or that is not UTF-8. The names are
+    bluetooth_channel.h's: every char array of its structs sized by
+    MAX_DEVICE_NAME_LEN or called `name` or `..._name`, but `device_name`
+    (the Canary's own, F261's), derived, never typed (`name`, `peer_name`);
+    a struct that keeps one, or keeps such a struct or a pointer to one, holds
+    a name, and so does a function of the namespace whose signature names
+    one (read_scan(), read_status(), read_paired()). In every function of
+    the sketch that names such a struct or function (qualified, through a
+    namespace alias, or inside the namespace or a file that opens it) and
+    touches an ArduinoJson value, or that calls one of those functions that
+    hands back a name it reads (a getter), no ArduinoJson value (`x[k] = v`
+    whatever `k` is, `F("...")` too; `x.set(v)`, `.template set<T>(v)`;
+    `x.add(v)`; a Json* local assigned) reads a name: a member of one
+    (`.name`, `->peer_name`), a getter's answer, or a place that holds one
+    (to a fixpoint: a local or a member path assigned one, `+=` too; one
+    built from one, `String n(...)`; any argument of a call that takes one,
+    a copy, an append, a printf, `replaced_text()` among them; the object of
+    a method handed one, `s.concat(...)`). What a value takes instead is
+    `wap_json::shown_text(x, sizeof(x), name)`'s buffer, `char
+    x[wap_json::replaced_cap(bluetooth_channel::MAX_DEVICE_NAME_LEN)]` (the
+    one call that does not make its buffer hold the name): each control
+    byte and each ill-formed UTF-8 sequence as U+FFFD, so any strict reader
+    takes it, whole. And no read-back is owed (shows_as(), J9's): no page
+    posts one of these names back, since pair, trust, block and remove take
+    `address`. That is held too: every string bluetooth_api.h reads from a
+    post (`x["k"].as<const char*>()`, `x["k"] | "..."`,
+    `httpd_query_key_value()`) is recorded in BT_POSTED_TEXT by function and
+    key, with what it is, and a stale record fails. What J10 cannot see: a
+    name reached by byte offsets into a copy of its whole struct (`memcpy(buf,
+    &devices[i], ...)` and then `buf + 6`), a name field that is neither
+    sized by MAX_DEVICE_NAME_LEN nor called `..name`, a function that holds
+    a name without naming any of those structs or functions (a template's
+    `T&`, an `auto` from a helper outside the sketch), and a name that
+    reaches a JSON text some other way than an ArduinoJson value: a printf's
+    %s is J7's (a char array it cannot read fails there), but a hand-built
+    `String` (`json += ...`) is neither's. Host-tested in
+    test_bluetooth_commands_wap.cpp and test_wap_json_writer.cpp.
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
@@ -2944,6 +2987,269 @@ def check_ssid_posts(files: dict[str, str], idx: Index) -> list[str]:
     return errors
 
 
+# J10: a Bluetooth device's name reaches no ArduinoJson value raw (F302).
+BT_NS = "bluetooth_channel"
+BT_API = f"{SKETCH}/bluetooth_api.h"
+# The Canary's own name, which bluetooth_channel.h keeps beside the others: device_name_rule holds
+# its bytes (F261), and a page posts it (POST /api/bluetooth/name and /settings), so it is not one
+# a device it heard chose.
+BT_OWN_NAME = "device_name"
+# A value written into a JSON document: `x[...] = v` (any key, a literal, `F("...")`, a variable),
+# `x.set(v)` (`.template set<T>(v)` too), `x.add(v)`.
+BT_SUBSCRIPT_WRITE = re.compile(r"\]\s*=(?!=)")
+BT_SET_ADD = re.compile(r"\.\s*(?:template\s+)?(?:set|add)\s*(?:<[^<>;()]*>)?\s*\(")
+# The calls a name passed to them does not taint a buffer of: the shown text itself, and the bound.
+BT_NOT_A_COPY = {"sizeof", "shown_text"}
+# Each string bluetooth_api.h reads from a posted body, by function and key, with what it is: a page
+# that posted back a name GET /api/bluetooth/scan/results, /paired or /api/bluetooth showed it would
+# post shown_text()'s U+FFFD, which no device advertises, and would need the read-back
+# wap_json::shows_as() gives an SSID (the F262 review). None does, so shown_text() alone suffices;
+# a new posted string fails here until it is recorded.
+BT_POSTED_TEXT: dict[tuple[str, str], str] = {
+    ("handle_bluetooth_paired_remove", "address"): "the bond's address, read by parse_address()",
+    ("handle_bluetooth_paired_trust", "address"): "the bond's address, read by parse_address()",
+    ("handle_bluetooth_paired_block", "address"): "the bond's address, read by parse_address()",
+    ("handle_bluetooth_settings_set", "device_name"): "the Canary's own name (device_name_rule, F261)",
+    ("handle_bluetooth_name_set", "name"): "the Canary's own name (device_name_rule, F261)",
+}
+BT_POSTED = re.compile(r'\[\s*"(\w*)"\s*\]\s*(?:\.\s*as\s*<\s*(?:const\s+char\s*\*|String|JsonString|std\s*::\s*string)'
+                       r'\s*>|\|\s*")|\bhttpd_query_key_value\s*\(\s*\w+\s*,\s*"(\w*)"')
+
+
+def bt_name_shape(idx: Index) -> tuple[list[str], set[str], set[str]]:
+    """(fields, holders, readers): the char-array members bluetooth_channel's structs keep a device's
+    name in (one sized by MAX_DEVICE_NAME_LEN, or one called `name` or `..._name`, the Canary's own
+    `device_name` aside), derived from bluetooth_channel.h, never typed; the structs that hold one,
+    directly or through a member or a pointer (ScanView's devices, BluetoothStatus's connection); and
+    the functions of the namespace whose signature names such a struct (read_scan(), read_status(),
+    ...)."""
+    structs = {st.name: st for sts in idx.structs.values() for st in sts if BT_NS in st.ns}
+    fields: set[str] = set()
+    holders: set[str] = set()
+    for st in structs.values():
+        for f, (t, dims) in st.fields.items():
+            if (t == "char" and len(dims) == 1 and f != BT_OWN_NAME
+                    and (re.search(r"\bMAX_DEVICE_NAME_LEN\b", dims[0]) or re.search(r"(?:^|_)name$", f))):
+                fields.add(f)
+                holders.add(st.name)
+    while True:
+        more = {st.name for st in structs.values() if st.name not in holders
+                and any(re.sub(r"\b(?:const|struct|volatile)\b|[*&\s]", "", t).split("::")[-1] in holders
+                        for t, _ in st.fields.values())}
+        if not more:
+            break
+        holders |= more
+    if not holders:
+        return sorted(fields), holders, set()
+    held = re.compile(r"\b(?:" + "|".join(sorted(holders)) + r")\b")
+    readers = {f.name for fs in idx.fns.values() for f in fs if BT_NS in f.ns and held.search(f.ret + " " + f.params)}
+    return sorted(fields), holders, readers
+
+
+def bt_path(expr: str) -> str | None:
+    """`expr` as a place a name can be kept in (`n`, `s.label`, `p->label`, `names[i]` as `names`), its
+    `&` and C casts aside; None for anything else."""
+    e = strip_parens(expr.strip())
+    e = re.sub(r"^\(\s*(?:const\s+)?[\w:]+\s*\**\s*(?:const\s*)?\)\s*", "", e)
+    e = re.sub(r"^&\s*", "", e).strip()
+    m = re.fullmatch(r"([A-Za-z_]\w*)((?:\s*(?:\.|->)\s*[A-Za-z_]\w*)*)((?:\s*\[[^\]\[]*\])*)", e)
+    if not m or m.group(1) in KEYWORDS:
+        return None
+    return m.group(1) if m.group(3) else re.sub(r"\s+", "", m.group(1) + m.group(2))
+
+
+def bt_path_re(path: str) -> str:
+    return r"(?<![\w.>])" + r"\s*(?:\.|->)\s*".join(re.escape(p) for p in re.split(r"\.|->", path)) + r"\b"
+
+
+def check_bt_names(files: dict[str, str], idx: Index) -> list[str]:
+    """J10: every ArduinoJson value that reads a Bluetooth device's name, in any function of the
+    sketch that holds one, reads wap_json::shown_text()'s text of it (F302); and every string
+    bluetooth_api.h reads from a post is recorded in BT_POSTED_TEXT."""
+    errors: list[str] = []
+    fields, holders, readers = bt_name_shape(idx)
+    if not fields:
+        errors.append(f"{SKETCH}/bluetooth_channel.h: no struct of bluetooth_channel keeps a device's name in a "
+                      "char array sized by MAX_DEVICE_NAME_LEN or called `name` or `..._name`: J10 reads no "
+                      "name, so it holds nothing; follow the names' new shape (J10, F302)")
+        return errors
+    member = re.compile(r"(?:\.|->)\s*(?:" + "|".join(fields) + r")\b(?!\s*\()")
+    held = re.compile(r"\b(?:" + "|".join(sorted(holders | readers)) + r")\b")
+
+    # The functions that hold a name: their signature or body names one of the holders or readers,
+    # qualified (`bluetooth_channel::ScanView`, or through a namespace alias of it), or unqualified
+    # inside the namespace or a file that opens it.
+    codes = {name: blank_comments_and_strings(src) for name, src in files.items()}
+    quals: dict[str, tuple[re.Pattern, bool]] = {}
+    for name, code in codes.items():
+        aliased = {m.group(1) for m in re.finditer(r"\bnamespace\s+(\w+)\s*=\s*(?:::)?\s*" + BT_NS + r"\s*;", code)}
+        opened = re.search(r"\busing\s+namespace\s+(?:::)?\s*" + BT_NS + r"\s*;", code) is not None
+        quals[name] = (re.compile(r"\b(?:" + "|".join(sorted({BT_NS} | aliased)) + r")\s*::\s*(?:"
+                                  + "|".join(sorted(holders | readers)) + r")\b"), opened)
+
+    def text_of(fn: Fn) -> str:
+        return fn.ret + " " + fn.params + " " + codes[fn.file][fn.body[0]:fn.body[1]]
+
+    def holds(fn: Fn) -> bool:
+        qual, opened = quals[fn.file]
+        text = text_of(fn)
+        return bool(qual.search(text) or ((BT_NS in fn.ns or opened) and held.search(text)))
+
+    all_fns = [f for fs in idx.fns.values() for f in fs if f.body and f.file in files]
+    scoped = {id(f) for f in all_fns if holds(f)}
+    # A function of those that hands back a name it reads is a name too (`dev["name"] =
+    # name_of(devices[i])`), and so is one that hands back such a function's answer; a function that
+    # calls one holds a name.
+    getters: set[str] = set()
+    for _ in range(4):
+        before = (len(getters), len(scoped))
+        for f in all_fns:
+            body = codes[f.file][f.body[0]:f.body[1]]
+            calls = getters and re.search(r"(?<![\w.>])(?:" + "|".join(sorted(getters)) + r")\s*\(", body)
+            if calls:
+                scoped.add(id(f))
+            if id(f) not in scoped or f.name in getters:
+                continue
+            for r in re.finditer(r"\breturn\b([^;]*);", body):
+                if member.search(r.group(1)) or (getters and re.search(
+                        r"(?<![\w.>])(?:" + "|".join(sorted(getters)) + r")\s*\(", r.group(1))):
+                    getters.add(f.name)
+                    break
+        if (len(getters), len(scoped)) == before:
+            break
+    getter = re.compile(r"(?<![\w.>])(?:" + "|".join(sorted(getters)) + r")\s*\(") if getters else None
+
+    # Of those, the ones that touch an ArduinoJson value (a document, an object, an array or a
+    # variant, in the signature or the body) are the ones that can write a name into one.
+    touch = re.compile(r"\bJson(?:Object|Array|Document|Variant)\w*\b|\bserializeJson\s*\(")
+    for name, src in files.items():
+        code = codes[name]
+        mine = sorted((f for f in all_fns if f.file == name and id(f) in scoped and touch.search(text_of(f))),
+                      key=lambda f: f.body[0])
+        if not mine:
+            continue
+        kept = blank_comments_only(src)
+        lines = [m.start() for m in re.finditer("\n", code)]
+        for fn in mine:
+            lo, hi = fn.body
+            body = code[lo:hi]
+            aliases: set[str] = set()
+
+            def reads(expr: str) -> bool:
+                return bool(member.search(expr) or (getter and getter.search(expr))
+                            or any(re.search(bt_path_re(a), expr) for a in aliases))
+
+            # The places that hold a name, to a fixpoint: assigned one (`=`, `+=`), built from one
+            # (`String n(devices[i].name)`), or handed to a call beside one (a copy, an append, a
+            # printf, any function of the sketch), but shown_text()'s own buffer.
+            for _ in range(8):
+                before = len(aliases)
+                for m in re.finditer(r"(?<![\w.>:])([A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)*(?:\s*\[[^\]\[;]*\])*)"
+                                     r"\s*[+|]?=(?!=)", body):
+                    lhs = m.group(1)
+                    if re.search(r"\[\s*(?:\"\s*\"|F\s*\(\s*\"\s*\"\s*\))\s*\]", lhs):
+                        continue                            # a JSON value, judged below
+                    end = statement_end(body, m.end())
+                    path = bt_path(lhs)
+                    if end > 0 and path and path not in KEYWORDS and reads(body[m.end():end]):
+                        aliases.add(path)
+                for m in re.finditer(r"(?<![\w.>:])(?:[\w:]+\s*::\s*)?([A-Za-z_]\w*)\s*(?:<[^<>;()]*>)?\s*\(", body):
+                    callee = m.group(1)
+                    if callee in KEYWORDS or callee in BT_NOT_A_COPY:
+                        continue
+                    close = matching_paren(body, m.end() - 1)
+                    if close < 0:
+                        continue
+                    args = split_top(body[m.end():close])
+                    tainted = [a for a in args if reads(a)]
+                    if not tainted:
+                        continue
+                    # A declaration with its value in parentheses: `String n(devices[i].name)`.
+                    decl = re.search(r"\b[A-Za-z_][\w:<>]*\s*[*&]*\s+$", body[max(0, m.start() - 80):m.start()])
+                    if decl and not re.search(r"\b(?:return|else|case|new|delete|throw)\s*$", decl.group(0)):
+                        aliases.add(callee)
+                    for a in args:
+                        p = bt_path(a)
+                        if p and a not in tainted:
+                            aliases.add(p)
+                # A method handed a name keeps it in its object: `s.concat(devices[i].name)`, `s += ...`
+                # aside (the assignments above), but a JSON value's `.set()` and `.add()`, judged below.
+                for m in re.finditer(r"(?<![\w.>:])([A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)*)\s*(?:\.|->)\s*"
+                                     r"(?:template\s+)?([A-Za-z_]\w*)\s*(?:<[^<>;()]*>)?\s*\(", body):
+                    if m.group(2) in ("set", "add"):
+                        continue
+                    close = matching_paren(body, m.end() - 1)
+                    path = bt_path(m.group(1))
+                    if close > 0 and path and any(reads(a) for a in split_top(body[m.end():close])):
+                        aliases.add(path)
+                if len(aliases) == before:
+                    break
+
+            def judge(at: int, rhs: str, spelled: str) -> None:
+                if not reads(rhs):
+                    return
+                line = bisect.bisect_left(lines, lo + at) + 1
+                errors.append(f"{name}:{line}: {fn.name}(): {spelled}: a Bluetooth device's name written into a "
+                              "JSON value as it is: ArduinoJson writes its control bytes raw and its ill-formed "
+                              "UTF-8 as it is; write wap_json::shown_text()'s text of it, from a `char "
+                              "x[wap_json::replaced_cap(bluetooth_channel::MAX_DEVICE_NAME_LEN)]` (J10, F302)")
+
+            kbody = kept[lo:hi]
+            for m in BT_SUBSCRIPT_WRITE.finditer(body):
+                end = statement_end(body, m.end())
+                if end > 0:
+                    judge(m.start(), body[m.end():end],
+                          re.sub(r"\s+", " ", kbody[max(0, kbody.rfind("\n", 0, m.start()) + 1):end].strip()))
+            for m in BT_SET_ADD.finditer(body):
+                close = matching_paren(body, m.end() - 1)
+                if close > 0 and body[m.end():close].strip():
+                    judge(m.start(), body[m.end():close],
+                          re.sub(r"\s+", " ", kbody[max(0, kbody.rfind("\n", 0, m.start()) + 1):close + 1].strip()))
+            # A JsonVariant (or JsonObject, JsonArray) local assigned a name.
+            for d in re.finditer(r"\bJson(?:Variant|Object|Array|Document)\w*\s*[&]?\s+(\w+)\b", body):
+                for m in re.finditer(r"(?<![\w.>:])" + re.escape(d.group(1)) + r"\s*=(?!=)", body[d.end():]):
+                    at = d.end() + m.end()
+                    end = statement_end(body, at)
+                    if end > 0:
+                        judge(at, body[at:end], f"{d.group(1)} = {kbody[at:end].strip()}")
+            # Every shown text of a name is whole: its buffer holds MAX_DEVICE_NAME_LEN bytes' text.
+            for m in re.finditer(r"\bwap_json\s*::\s*shown_text\s*\(", body):
+                close = matching_paren(body, m.end() - 1)
+                args = split_top(body[m.end():close]) if close > 0 else []
+                if len(args) == 3 and reads(args[2]):
+                    buf = args[0]
+                    sized = re.search(r"\bchar\s+" + re.escape(buf) + r"\s*\[\s*wap_json\s*::\s*replaced_cap\s*\(\s*"
+                                      r"(?:bluetooth_channel\s*::\s*)?MAX_DEVICE_NAME_LEN\s*\)\s*\]", body[:m.start()])
+                    if not (re.fullmatch(r"\w+", buf) and args[1] == f"sizeof({buf})" and sized):
+                        line = bisect.bisect_left(lines, lo + m.start()) + 1
+                        errors.append(f"{name}:{line}: {fn.name}(): a Bluetooth name's shown text written into "
+                                      f"{buf}, not a `char {buf}[wap_json::replaced_cap(bluetooth_channel::"
+                                      "MAX_DEVICE_NAME_LEN)]` given its own sizeof: a smaller buffer cuts the name "
+                                      "(J10, F302)")
+    # The way back: no page posts back a name these answers showed it.
+    if BT_API in files:
+        code = blank_comments_and_strings(files[BT_API])
+        kept = blank_comments_only(files[BT_API])
+        used: set[tuple[str, str]] = set()
+        for m in BT_POSTED.finditer(kept):
+            if code[m.start()] not in '[h':
+                continue                                    # inside a literal
+            fn = fn_containing(idx, BT_API, m.start())
+            key = (fn.name if fn else "?", m.group(1) if m.group(1) is not None else m.group(2))
+            if key not in BT_POSTED_TEXT:
+                line = kept.count("\n", 0, m.start()) + 1
+                errors.append(f"{BT_API}:{line}: {key[0]}() reads a posted string \"{key[1]}\" BT_POSTED_TEXT does "
+                              "not record: if a page posts back a name it was shown, it posts shown_text()'s "
+                              "U+FFFD, and needs a read-back to the device's own bytes (wap_json::shows_as(), "
+                              "J9's); record what the string is (J10, F302)")
+            used.add(key)
+        for key in BT_POSTED_TEXT:
+            if key not in used:
+                errors.append(f"{BT_API}: BT_POSTED_TEXT records {key[0]}()'s posted \"{key[1]}\", which it no longer "
+                              "reads: drop the record (J10)")
+    return errors
+
+
 def check_unsized_printf(files: dict[str, str]) -> list[str]:
     """J5: no answer file spells text with an unsized sprintf() (or vsprintf()): it writes whatever
     length its arguments come to, past any buffer (F227)."""
@@ -2972,6 +3278,7 @@ def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
     errors += check_device_name(files, idx)
     errors += check_ssid_texts(files, idx)
     errors += check_ssid_posts(files, idx)
+    errors += check_bt_names(files, idx)
     printf_errors, printfs = check_printf_answers(files, idx)
     errors += printf_errors
     errors += check_recorded_json_texts(files, idx, {(pf.file, pf.line) for pf in printfs})
@@ -3011,6 +3318,10 @@ MESH_H = f"{SKETCH}/mesh_network.h"
 HOUSEHOLD = f"{SKETCH}/household_api.h"
 RF = f"{SKETCH}/rf_presence_api.h"
 BEACON = f"{SKETCH}/beacon_api.h"
+# J10's mutations: the scan list's shown name and the line after it.
+BT_SCAN_NAME = ('    char name[wap_json::replaced_cap(bluetooth_channel::MAX_DEVICE_NAME_LEN)];\n'
+                '    wap_json::shown_text(name, sizeof(name), devices[i].name);\n'
+                '    dev["name"] = name;\n    dev["rssi"] = devices[i].rssi;')
 
 def both(first: Mutation, second: Mutation) -> Mutation:
     def mutate(files: dict[str, str]) -> dict[str, str]:
@@ -3587,6 +3898,67 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      add_file(f"{SKETCH}/zz_name_route.h",
               "static void zz_ble_rename(const char* n) {\n"
               "  if (device_name_rule::usable(n)) setup_wizard::set_device_name(n);\n}\n")),
+    # J10: a Bluetooth device's name reaches no ArduinoJson value raw (F302).
+    ("GET /api/bluetooth/scan/results lists each advertised name raw again",
+     raw_in(BT_API, BT_SCAN_NAME, '    dev["name"] = devices[i].name;\n    dev["rssi"] = devices[i].rssi;')),
+    ("GET /api/bluetooth/paired lists each bond's name raw again",
+     raw_in(BT_API, '    wap_json::shown_text(name, sizeof(name), devices[i].name);\n    dev["name"] = name;\n'
+            '    dev["paired_timestamp"]', '    dev["name"] = devices[i].name;\n    dev["paired_timestamp"]')),
+    ("GET /api/bluetooth answers the link's name raw",
+     raw_in(BT_API, '    conn["name"] = conn_name;', '    conn["name"] = status.connection.name;')),
+    ("GET /api/bluetooth answers the pairing peer's name raw",
+     raw_in(BT_API, '    pair["peer_name"] = peer_name;', '    pair["peer_name"] = status.pairing.peer_name;')),
+    ("the scan list keys the name through F()",
+     raw_in(BT_API, BT_SCAN_NAME, '    dev[F("name")] = devices[i].name;\n    dev["rssi"] = devices[i].rssi;')),
+    ("the scan list sets the name through a local pointer",
+     raw_in(BT_API, BT_SCAN_NAME, '    const char* n = devices[i].name;\n    dev["name"].set(n);\n'
+            '    dev["rssi"] = devices[i].rssi;')),
+    ("the scan list writes String(name)",
+     raw_in(BT_API, BT_SCAN_NAME, '    dev["name"] = String(devices[i].name);\n    dev["rssi"] = devices[i].rssi;')),
+    ("the scan list writes a name copied into a second struct's field",
+     raw_in(BT_API, BT_SCAN_NAME, '    struct { char label[33]; } s;\n'
+            '    strncpy(s.label, devices[i].name, sizeof(s.label) - 1);\n    dev["name"] = s.label;\n'
+            '    dev["rssi"] = devices[i].rssi;')),
+    ("the scan list writes the name a String concatenated",
+     raw_in(BT_API, BT_SCAN_NAME, '    String n;\n    n.concat(devices[i].name);\n    dev["name"] = n.c_str();\n'
+            '    dev["rssi"] = devices[i].rssi;')),
+    ("the scan list writes replaced_text(), which keeps ill-formed UTF-8",
+     raw_in(BT_API, '    wap_json::shown_text(name, sizeof(name), devices[i].name);\n    dev["name"] = name;\n'
+            '    dev["rssi"]', '    wap_json::replaced_text(name, sizeof(name), devices[i].name);\n    dev["name"] = name;\n'
+            '    dev["rssi"]')),
+    ("the scan list's shown text is cut short of a whole name",
+     raw_in(BT_API, BT_SCAN_NAME, '    char name[16];\n    wap_json::shown_text(name, sizeof(name), devices[i].name);\n'
+            '    dev["name"] = name;\n    dev["rssi"] = devices[i].rssi;')),
+    ("the scan list's shown text is written over before the answer",
+     raw_in(BT_API, '    wap_json::shown_text(name, sizeof(name), devices[i].name);\n    dev["name"] = name;\n'
+            '    dev["rssi"]', '    wap_json::shown_text(name, sizeof(name), devices[i].name);\n'
+            '    strncpy(name, devices[i].name, sizeof(name) - 1);\n    dev["name"] = name;\n    dev["rssi"]')),
+    ("a JSON array adds a name raw",
+     raw_in(BT_API, BT_SCAN_NAME, '    JsonArray zz = dev["names"].to<JsonArray>();\n    zz.add(devices[i].name);\n'
+            '    dev["rssi"] = devices[i].rssi;')),
+    ("a JsonVariant local takes a name raw",
+     raw_in(BT_API, BT_SCAN_NAME, '    JsonVariant zz = dev["name"];\n    zz = devices[i].name;\n'
+            '    dev["rssi"] = devices[i].rssi;')),
+    ("another file's handler answers a name through a getter and a namespace alias",
+     add_file(f"{SKETCH}/zz_bt_api.h",
+              "namespace zz_bc = bluetooth_channel;\n"
+              "inline const char* zz_name_of(const zz_bc::ScannedDevice& d) { return d.name; }\n"
+              "inline void zz_fill(JsonObject dev, const zz_bc::ScanView& v) { dev[\"name\"] = zz_name_of(v.devices[0]); }\n")),
+    ("a Bluetooth route reads a posted name (it would need a read-back)",
+     raw_in(BT_API, '  bool trusted = input["trusted"].as<bool>();',
+            '  bool trusted = input["trusted"].as<bool>();\n  const char* zz = input["peer_name"] | "";\n  (void)zz;')),
+    ("a scanned device keeps its name in a 33-byte array, and the scan list writes it raw",
+     both(raw_in(f"{SKETCH}/bluetooth_channel.h", "  char name[MAX_DEVICE_NAME_LEN + 1];       // Device name (if available)",
+                 "  char name[33];       // Device name (if available)"),
+          raw_in(BT_API, BT_SCAN_NAME, '    dev["name"] = devices[i].name;\n    dev["rssi"] = devices[i].rssi;'))),
+    ("a scanned device's name is called label, and the scan list writes it raw",
+     both(raw_in(f"{SKETCH}/bluetooth_channel.h", "  char name[MAX_DEVICE_NAME_LEN + 1];       // Device name (if available)",
+                 "  char label[MAX_DEVICE_NAME_LEN + 1];       // Device name (if available)"),
+          raw_in(BT_API, BT_SCAN_NAME, '    dev["name"] = devices[i].label;\n    dev["rssi"] = devices[i].rssi;'))),
+    ("bluetooth_channel.h keeps no name J10 can find",
+     lambda files: {**files, f"{SKETCH}/bluetooth_channel.h": re.sub(
+         r"char\s+(?!device_name)(\w*)name\[MAX_DEVICE_NAME_LEN[^\]]*\]", r"char \1nm[NAME_CAP]",
+         files[f"{SKETCH}/bluetooth_channel.h"])}),
 ]
 
 
@@ -3636,7 +4008,8 @@ def main(argv: list[str]) -> int:
           f"{j7_sites} other JSON texts spelled with printf in {j7_fns} functions, {j7_recorded} of them "
           f"recorded by the values the check cannot read; the device name's setter, loader and routes; "
           f"every SSID a JSON text carries written through replaced_text() ({len(SSID_RAW)} raw uses "
-          f"recorded) "
+          f"recorded); every Bluetooth device's name an answer carries written through shown_text() "
+          f"({len(BT_POSTED_TEXT)} posted strings recorded) "
           + ("(self-test skipped)." if "--no-self-test" in argv
              else f"({len(MUTATIONS)} mutations refused)."))
     return 0
