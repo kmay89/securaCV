@@ -15462,7 +15462,13 @@
        "name": "btn_dz",
        "default": "1.0",
        "comment": "actuator center off that face (side tact switches sit ~1.0) — MEASURE"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Side cluster",
+     "note": "battery / RTC / pin row exit on the RIGHT (+X) edge",
+     "params": [
       {
        "name": "opt_side",
        "default": "true",
