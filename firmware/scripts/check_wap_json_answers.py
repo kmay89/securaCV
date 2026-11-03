@@ -193,10 +193,14 @@ J9. No SSID reaches a JSON text with a raw control byte (F262): an SSID is
     sizeof(buf)) ? buf : posted;` with `posted` never named again (POST
     /api/wifi/connect through `scan_cache_listed_ssid()`, the BLE
     provisioning CREDS write through `listed_ssid()`), or, for GET
-    /api/fleet/qr's prefilled name, `if (wap_json::shows_as(g_wifi_creds.ssid,
-    ssid)) { strncpy(...); ... }` right after it is decoded; each reader
-    goes through `wap_json::listed_by_shown()` over its list. A stale record
-    fails. Host-tested in test_wap_json_writer.cpp and test_ble_provision.cpp.
+    /api/fleet/qr's prefilled name, read whole and decoded by
+    fleet_qr_query.h (F304; its `read_value(q, "ssid", ...)` is a read, and
+    `fleet_qr::read_request(req, &cred)` is the route's), `if
+    (wap_json::shows_as(g_wifi_creds.ssid, cred.ssid)) { strncpy(...); ...
+    }` right after the read's refusal; each reader goes through
+    `wap_json::listed_by_shown()` over its list. A stale record fails.
+    Host-tested in test_wap_json_writer.cpp, test_ble_provision.cpp and
+    test_fleet_qr_query.cpp.
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
@@ -2829,17 +2833,23 @@ def check_ssid_texts(files: dict[str, str], idx: Index) -> list[str]:
 # so every read of a posted SSID goes through a read-back to the listed network's own bytes before
 # anything tests or joins it. Each read, by file and function, with the read-back it must use: a
 # reader called on the post, its answer the SSID from there on, or (the Fleet sheet's QR, which
-# GET /api/wifi's sta_ssid fills in) the home network's own bytes put back in place.
+# GET /api/wifi's sta_ssid fills in) the home network's own bytes put back in place. The QR's
+# query is read whole by fleet_qr_query.h (F304): its read_query() reads the posted name (through
+# read_value(), which the pattern below sees as a read) and hands it out through read_request(),
+# whose every call is the route's read and must be put back right after its refusal.
 BLE_PROV = f"{SKETCH}/ble_provision.cpp"
+FLEET_QR_H = f"{SKETCH}/fleet_qr_query.h"
 SSID_POSTS: dict[tuple[str, str], str] = {
     (INO, "handle_wifi_connect"): "scan_cache_listed_ssid",
     (BLE_PROV, "onWrite"): "listed_ssid",
+    (FLEET_QR_H, "read_query"): "fleet_qr_read_request",
     (INO, "handle_fleet_qr"): "shows_as",
 }
 # Each reader, the list it reads back through wap_json::listed_by_shown().
 SSID_READERS = {"scan_cache_listed_ssid": (INO, "g_scan_cache"), "listed_ssid": (BLE_PROV, "g_listed")}
 POSTED_SSID = re.compile(r'\[\s*"(\w*ssid\w*)"\s*\]\s*(?:\||\.\s*as\s*<|\.\s*as\b)'
-                         r'|\bhttpd_query_key_value\s*\(\s*\w+\s*,\s*"(\w*ssid\w*)"', re.I)
+                         r'|\b(?:httpd_query_key_value|read_value)\s*\(\s*\w+\s*,\s*"(\w*ssid\w*)"'
+                         r'|\bfleet_qr\s*::\s*(read_request)\s*\(', re.I)
 
 
 def check_ssid_posts(files: dict[str, str], idx: Index) -> list[str]:
@@ -2861,7 +2871,7 @@ def check_ssid_posts(files: dict[str, str], idx: Index) -> list[str]:
             key = (name, fn.name) if fn else (name, "?")
             how = SSID_POSTS.get(key)
             if fn is None or how is None:
-                errors.append(f"{where}: reads a posted SSID (\"{m.group(1) or m.group(2)}\") that no read-back "
+                errors.append(f"{where}: reads a posted SSID (\"{m.group(1) or m.group(2) or m.group(3)}\") that no read-back "
                               "names: a page posts back the text a list showed it, U+FFFD and all; read it "
                               "back to the listed network's bytes and name the route in SSID_POSTS (J9, F262)")
                 continue
@@ -2869,27 +2879,29 @@ def check_ssid_posts(files: dict[str, str], idx: Index) -> list[str]:
             body = kept[fn.body[0]:fn.body[1]]
             bcode = code[fn.body[0]:fn.body[1]]
             at = m.start() - fn.body[0]
+            if how == "fleet_qr_read_request":
+                # fleet_qr_query.h's read: the name goes out only through read_request(), whose
+                # every call is a route of its own in SSID_POSTS, read back there (just below).
+                continue
             if how == "shows_as":
-                q = re.match(r'httpd_query_key_value\s*\(\s*\w+\s*,\s*"\w+"\s*,\s*(\w+)\s*,\s*sizeof\s*\(\s*(\w+)\s*\)',
-                             body[at:])
-                var = q.group(1) if q and q.group(1) == q.group(2) else None
+                q = (re.match(r'fleet_qr\s*::\s*read_request\s*\(\s*\w+\s*,\s*&\s*(\w+)\s*\)\s*;', body[at:])
+                     if m.group(3) else None)
+                var = q.group(1) if q else None
+                field = None if var is None else re.escape(var) + r"\s*\.\s*ssid"
                 back = None if var is None else re.search(
-                    r"\burl_decode_inplace\s*\(\s*" + var + r"\s*\)\s*;\s*url_decode_inplace\s*\(\s*\w+\s*\)\s*;\s*"
-                    r"if\s*\(\s*wap_json\s*::\s*shows_as\s*\(\s*g_wifi_creds\s*\.\s*ssid\s*,\s*" + var + r"\s*\)\s*\)\s*\{\s*"
-                    r"strncpy\s*\(\s*" + var + r"\s*,\s*g_wifi_creds\s*\.\s*ssid\s*,\s*sizeof\s*\(\s*" + var
-                    + r"\s*\)\s*-\s*1\s*\)\s*;\s*" + var + r"\s*\[\s*sizeof\s*\(\s*" + var + r"\s*\)\s*-\s*1\s*\]\s*=\s*"
-                    r"'\\0'\s*;\s*\}", body[at:])
-                # Between the read and the read-back the post is only tested for being empty (the
-                # replaced text is empty exactly when the name is).
-                between = "" if back is None else re.sub(
-                    r"\b" + re.escape(var) + r"\s*\[\s*0\s*\]\s*==\s*'\\0'", "",
-                    body[at + q.end():at + back.start()])
+                    r"if\s*\(\s*wap_json\s*::\s*shows_as\s*\(\s*g_wifi_creds\s*\.\s*ssid\s*,\s*" + field
+                    + r"\s*\)\s*\)\s*\{\s*strncpy\s*\(\s*" + field + r"\s*,\s*g_wifi_creds\s*\.\s*ssid\s*,\s*sizeof\s*\(\s*"
+                    + field + r"\s*\)\s*-\s*1\s*\)\s*;\s*" + field + r"\s*\[\s*sizeof\s*\(\s*" + field
+                    + r"\s*\)\s*-\s*1\s*\]\s*=\s*'\\0'\s*;\s*\}", body[at:])
+                # Between the read and the read-back stands only the read's refusal, which sends
+                # its text and returns: nothing names the credentials.
+                between = "" if back is None else body[at + q.end():at + back.start()]
                 if back is None or re.search(r"\b" + re.escape(var) + r"\b", LITERAL.sub('""', between)):
                     errors.append(f"{where}: the posted SSID is not put back to the home network's own bytes "
-                                  "right after it is decoded (`if (wap_json::shows_as(g_wifi_creds.ssid, ssid)) "
-                                  "{ strncpy(...); ... }`): the Fleet sheet fills it in from GET /api/wifi, which "
-                                  "shows a control byte as U+FFFD, and the scanning Canary joins by what the code "
-                                  "says (J9, F262)")
+                                  "right after it is read (`fleet_qr::read_request(req, &cred);`, its refusal, then "
+                                  "`if (wap_json::shows_as(g_wifi_creds.ssid, cred.ssid)) { strncpy(...); ... }`): "
+                                  "the Fleet sheet fills it in from GET /api/wifi, which shows a control byte as "
+                                  "U+FFFD, and the scanning Canary joins by what the code says (J9, F262)")
                 continue
             decl = re.search(r'const\s+char\s*\*\s*(\w+)\s*=\s*\w+\s*$', body[:at])
             stmt_end = body.find(";", at)
@@ -3527,8 +3539,21 @@ MUTATIONS: list[tuple[str, Mutation]] = [
             "    const char* ssid_in = listed_ssid(posted_ssid, listed, sizeof(listed)) ? listed : posted_ssid;",
             "    const char* ssid_in = posted_ssid;")),
     ("the Fleet QR code carries the prefilled SSID as GET /api/wifi showed it",
-     raw_in(INO, "  if (wap_json::shows_as(g_wifi_creds.ssid, ssid)) {\n    strncpy(ssid, g_wifi_creds.ssid, sizeof(ssid) - 1);\n"
-            "    ssid[sizeof(ssid) - 1] = '\\0';\n  }\n", "")),
+     raw_in(INO, "  if (wap_json::shows_as(g_wifi_creds.ssid, cred.ssid)) {\n"
+            "    strncpy(cred.ssid, g_wifi_creds.ssid, sizeof(cred.ssid) - 1);\n"
+            "    cred.ssid[sizeof(cred.ssid) - 1] = '\\0';\n  }\n", "")),
+    ("the Fleet QR handler tests the posted name before it is put back",
+     raw_in(INO, "  const fleet_qr::Read read = fleet_qr::read_request(req, &cred);\n",
+            "  const fleet_qr::Read read = fleet_qr::read_request(req, &cred);\n"
+            "  if (strchr(cred.ssid, ';')) return ESP_OK;\n")),
+    ("a new route reads the posted name through fleet_qr_query.h's value reader, unrecorded",
+     add_file(f"{SKETCH}/zz_qr_api.h",
+              "static void zz_qr(const char* q) {\n  char b[8];\n  size_t n = 0;\n"
+              "  (void)fleet_qr::read_value(q, \"ssid\", b, sizeof(b), 7, &n);\n}\n")),
+    ("a second route reads the Fleet QR's query and joins the name as posted",
+     add_file(f"{SKETCH}/zz_qr_join_api.h",
+              "static void zz_qr_join(httpd_req_t* req) {\n  fleet_qr::Credentials c;\n"
+              "  if (fleet_qr::read_request(req, &c) == fleet_qr::Read::Ok) wifi_join_now(c.ssid);\n}\n")),
     ("the scan cache's read-back matches only a post of the network's own bytes",
      raw_in(INO, "  const int i = wap_json::listed_by_shown(posted, g_scan_cache_count,",
             "  const int i = zz_listed_exactly(posted, g_scan_cache_count,")),

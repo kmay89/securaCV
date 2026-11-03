@@ -170,6 +170,7 @@
 #include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
 #include "wap_json_writer.h"      // pure, host-tested: an SSID's control bytes as U+FFFD (F262)
 #include "receipt_authority.h"   // pure, host-tested: which address the receipt's base_url names (F255)
+#include "fleet_qr_query.h"      // pure, host-tested: GET /api/fleet/qr's query read whole or refused (F304)
 #include "host_guard.h"          // pure, host-tested: does the Host name THIS device (staged copy of firmware/common/network/, check_improv_sync.sh; F344)
 #include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
@@ -7961,31 +7962,6 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
 // FLEET QR — server-side SVG QR code for provisioning new Canaries
 // ════════════════════════════════════════════════════════════════════════════
 
-// ESP-IDF's httpd_query_key_value does not percent-decode values, so a
-// password like "p@ss word" arrives as "p%40ss+word". Decode in place:
-// '+' → space, "%XX" → byte. Safe to run on the same buffer since the
-// decoded form is never longer than the encoded form.
-static void url_decode_inplace(char* s) {
-  char* w = s;
-  for (const char* r = s; *r; ) {
-    if (*r == '%' && isxdigit((unsigned char)r[1]) && isxdigit((unsigned char)r[2])) {
-      auto hex = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        return c - 'A' + 10;
-      };
-      *w++ = (char)((hex(r[1]) << 4) | hex(r[2]));
-      r += 3;
-    } else if (*r == '+') {
-      *w++ = ' ';
-      r++;
-    } else {
-      *w++ = *r++;
-    }
-  }
-  *w = '\0';
-}
-
 // Render a text payload as an SVG QR code response. Shared by the fleet
 // WiFi-credentials QR and the pairing-receipt QR.
 static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
@@ -8048,35 +8024,27 @@ static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
 static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   g_health.http_requests++;
 
-  char qs[256] = {};
-  char ssid[33] = {};
-  char pass[65] = {};
-
-  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) {
+  // The query and both values read whole, decoded, and held to 32 and 64
+  // bytes, or a 400 naming the field (fleet_qr_query.h, sweep F304): a cut
+  // password is never drawn into the code. No 'pass' is an open network.
+  fleet_qr::Credentials cred;
+  const fleet_qr::Read read = fleet_qr::read_request(req, &cred);
+  if (read != fleet_qr::Read::Ok) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "Missing query parameters", -1);
+    return httpd_resp_send(req, fleet_qr::refusal(read), -1);
   }
-
-  if (httpd_query_key_value(qs, "ssid", ssid, sizeof(ssid)) != ESP_OK
-      || ssid[0] == '\0') {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "ssid is required", -1);
-  }
-  httpd_query_key_value(qs, "pass", pass, sizeof(pass));
-
-  url_decode_inplace(ssid);
-  url_decode_inplace(pass);
 
   // The Fleet sheet fills the name in from GET /api/wifi, which shows the
   // home network's control bytes as U+FFFD (F262): that text is the home
   // network, and the scanning Canary joins by what the code says, so it
   // carries the network's own bytes (the F262 review).
-  if (wap_json::shows_as(g_wifi_creds.ssid, ssid)) {
-    strncpy(ssid, g_wifi_creds.ssid, sizeof(ssid) - 1);
-    ssid[sizeof(ssid) - 1] = '\0';
+  if (wap_json::shows_as(g_wifi_creds.ssid, cred.ssid)) {
+    strncpy(cred.ssid, g_wifi_creds.ssid, sizeof(cred.ssid) - 1);
+    cred.ssid[sizeof(cred.ssid) - 1] = '\0';
   }
+  const char* ssid = cred.ssid;
+  const char* pass = cred.pass;
 
   // The SECURACV: payload is ';'-delimited and the scanner's parser has no
   // escape sequence — credentials containing ';' would encode a QR that
@@ -8089,8 +8057,11 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
         -1);
   }
 
-  // Build SECURACV: payload
+  // Build SECURACV: payload. The longest is 112 bytes, so it is never cut.
   char payload[256];
+  static_assert(sizeof("SECURACV:S:;P:;;") - 1 + fleet_qr::kSsidMax + fleet_qr::kPassMax <
+                    sizeof(payload),
+                "the fleet QR payload must hold the longest name and password whole");
   snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
 
   return send_qr_svg(req, payload);

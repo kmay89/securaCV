@@ -2099,6 +2099,36 @@ clean-wap-hmac-fail:
 run: run-wap-hmac-fail
 clean: clean-wap-hmac-fail
 
+# GET /api/fleet/qr reads its query whole or refuses it (sweep F304): the
+# REAL fleet_qr_query.h and handle_fleet_qr(), cut verbatim out of
+# canary_wap.ino (firmware/tests_host/cut_functions.awk), with the real
+# wap_json_writer.h, over the host esp_http_server.h (stubs/receipt_grant,
+# whose query readers answer TRUNC with a cut copy, as IDF's do). Every
+# answer is a 400 naming the field or a QR drawn from the whole name and
+# password. Hooked into `run` and `clean` by prerequisite.
+FLEETQR_BIN  = test_fleet_qr_query
+FLEETQR_SRC  = test_fleet_qr_query.cpp
+FLEETQR_INC  = test_fleet_qr_query_handler.inc
+CUT_INCS    += $(FLEETQR_INC)
+
+$(FLEETQR_INC): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static esp_err_t handle_fleet_qr(httpd_req_t* req) {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(FLEETQR_BIN): $(FLEETQR_SRC) $(FLEETQR_INC) arduino_globals.h $(SRC_DIR)/fleet_qr_query.h \
+                $(SRC_DIR)/wap_json_writer.h stubs/receipt_grant/esp_http_server.h
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/receipt_grant -I $(SRC_DIR) -I . \
+	  -DFLEET_QR_HANDLER_INC='"$(FLEETQR_INC)"' -o $@ $(FLEETQR_SRC)
+
+.PHONY: run-fleet-qr-query clean-fleet-qr-query
+run-fleet-qr-query: $(FLEETQR_BIN)
+	$(call run_marked,$(FLEETQR_BIN))
+clean-fleet-qr-query:
+	rm -f $(FLEETQR_BIN) $(FLEETQR_INC)
+
+run: run-fleet-qr-query
+clean: clean-fleet-qr-query
+
 # Every suite compiles the sketch's code after Arduino.h's names (sweep
 # F229): check_arduino_globals.py asks make for every compile of `run` and
 # of the tsan builds (each command of each recipe line, a compile behind
