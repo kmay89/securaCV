@@ -114,11 +114,11 @@
 // on stock builds (FEATURE_CHIME=0 until fitted). VERIFY free at bench.
 #define BUZZER_PIN              1
 
-// BOOT button (GPIO0, active LOW) — reserved for a future factory-reset
-// long-press; no gesture is wired to it yet. The on-glass path exists
-// today: settings › reset › wifi › forget reopens the join wizard.
-#define BOOT_BUTTON_PIN         0
-#define BOOT_BUTTON_ACTIVE      LOW
+// BOOT button (GPIO0, active LOW), read by main.cpp's BOOT grammar: a press
+// wakes the glass, a hold acknowledges (a double tap is the lantern's, and
+// the watch builds no lantern). A 10 s hold is the fleet factory reset:
+#define BOOT_BUTTON_PIN         0     // common/io/reset_hold.h: Wi-Fi networks + screen settings go, identity stays
+#define BOOT_BUTTON_ACTIVE      LOW   // GPIO0 is a strapping pin, so the restart into setup waits for the release
 
 // ============================================================================
 // BOARD CAPABILITIES
