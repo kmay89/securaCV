@@ -40,6 +40,102 @@ assert_eq "frigate_house/events" "$(resolve_frigate_topic "" "frigate_house")" \
 assert_eq "custom/topic" "$(resolve_frigate_topic "custom/topic" "frigate_house")" \
     "resolve_frigate_topic: legacy full topic wins"
 
+# ---- opt_list (sweep HA38) -------------------------------------------------
+# run.sh reads every list option through opt_list: bashio::config prints an
+# array one element per line, so the list is read whole from the options
+# file instead. Each case holds the exact bytes, so the app's jq 1.6 (CI puts
+# it first on PATH and names it in PWK_REQUIRE_JQ) and a runner's 1.7 are
+# held to the same output, not merely to "some array".
+JQ_VERSION=$(jq --version 2>&1 || true)
+echo "info: opt_list cases run on ${JQ_VERSION}"
+if [ -n "${PWK_REQUIRE_JQ:-}" ]; then
+    assert_eq "$PWK_REQUIRE_JQ" "$JQ_VERSION" \
+        "opt_list: the cases run on the jq CI requires (the app's)"
+elif [ -n "${CI:-}" ]; then
+    echo "FAIL: CI must name the jq these cases run on (PWK_REQUIRE_JQ, e.g. jq-1.6)" >&2
+    FAILURES=$((FAILURES + 1))
+fi
+
+OPTS="$TMPDIR_TEST/options.json"
+# opt_list KEY with OPTIONS_JSON=FILE, stdout only (the note goes to stderr).
+opt_from() {
+    OPTIONS_JSON="$1" opt_list "$2" 2>/dev/null
+}
+
+# A camera name holding a quote, a newline and an emoji (written escaped, as
+# a JSON writer may, and raw), beside the frigate block the wizard writes.
+cat > "$OPTS" <<'JSON'
+{
+  "mode": "standalone",
+  "cameras": [
+    {"name": "say \"cheese\"\nporch 🏠", "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch", "fps": 10},
+    {"name": "🏠 back", "url": "rtsp://10.0.0.3/b"}
+  ],
+  "frigate": {"cameras": ["front_door", "driveway"], "labels": ["person", "car", "dog", "cat"], "min_confidence": 0.5},
+  "go2rtc_url": "http://homeassistant.local:1984"
+}
+JSON
+assert_eq '[{"name":"say \"cheese\"\nporch 🏠","url":"rtsp://10.0.0.2/p","zone_id":"zone:porch","fps":10},{"name":"🏠 back","url":"rtsp://10.0.0.3/b"}]' \
+    "$(opt_from "$OPTS" cameras)" \
+    "opt_list: two cameras come back as ONE array; a quote, a newline and an emoji survive"
+assert_eq "2" "$(opt_from "$OPTS" cameras | jq length)" \
+    "opt_list: jq length counts cameras, not each camera's keys"
+assert_eq "say \"cheese\"
+porch 🏠" "$(opt_from "$OPTS" cameras | jq -r '.[0].name')" \
+    "opt_list: .[0] is the first camera, its name byte for byte"
+assert_eq '["front_door","driveway"]' "$(opt_from "$OPTS" frigate.cameras)" \
+    "opt_list: a dotted key reads the frigate block's list"
+assert_eq "person,car,dog,cat" "$(opt_from "$OPTS" frigate.labels | jq -r 'join(",")')" \
+    "opt_list: the labels join as run.sh joins them"
+assert_eq "[]" "$(opt_from "$OPTS" go2rtc_url)" \
+    "opt_list: a string option is not a list: []"
+assert_eq "[]" "$(opt_from "$OPTS" frigate.min_confidence)" \
+    "opt_list: a number is not a list: []"
+assert_eq "[]" "$(opt_from "$OPTS" frigate)" \
+    "opt_list: an object is not a list: []"
+assert_eq "[]" "$(opt_from "$OPTS" mode.cameras)" \
+    "opt_list: a path through a string reads as [] (jq's error is caught)"
+
+# The frigate block missing entirely, cameras null, cameras empty.
+printf '{"mode":"frigate","cameras":null}\n' > "$OPTS"
+assert_eq "[]" "$(opt_from "$OPTS" cameras)" "opt_list: cameras null reads as []"
+assert_eq "[]" "$(opt_from "$OPTS" frigate.cameras)" \
+    "opt_list: the frigate block missing entirely: frigate.cameras is []"
+assert_eq "" "$(opt_from "$OPTS" frigate.labels | jq -r 'join(",")')" \
+    "opt_list: the frigate block missing entirely: the labels join to nothing"
+printf '{"cameras":[],"frigate":{"cameras":[],"labels":[]}}\n' > "$OPTS"
+assert_eq "[]" "$(opt_from "$OPTS" cameras)" "opt_list: an empty list reads as []"
+assert_eq "0" "$(opt_from "$OPTS" cameras | jq length)" "opt_list: an empty list counts 0"
+assert_eq "" "$(opt_from "$OPTS" frigate.labels | jq -r 'join(",")')" \
+    "opt_list: an empty label list joins to nothing"
+
+# The options file absent (or empty, or not JSON): [] and a note on stderr,
+# never a stop under set -e and never the string "null".
+for bad in "$TMPDIR_TEST/absent.json" "$TMPDIR_TEST/empty.json" "$TMPDIR_TEST/garbage.json"; do
+    case "$bad" in
+        *empty.json) : > "$bad" ;;
+        *garbage.json) printf 'cameras: [a, b]\n' > "$bad" ;;
+    esac
+    label="opt_list: $(basename "$bad" .json) options file"
+    assert_eq "[]" "$(opt_from "$bad" cameras)" "$label reads as []"
+    note=$(OPTIONS_JSON="$bad" opt_list frigate.labels 2>&1 >/dev/null)
+    assert_eq "opt_list: could not read frigate.labels from $bad; reading it as []" "$note" \
+        "$label: the note names the key and the file"
+    out=$(OPTIONS_JSON="$bad" bash -c 'set -euo pipefail; source "$1"
+        configured=false
+        if [ "$(opt_list cameras | jq length)" -gt 0 ]; then configured=true; fi
+        cams=$(opt_list frigate.cameras | jq -r "join(\",\")")
+        labels=$(opt_list frigate.labels | jq -r "join(\",\")")
+        printf "%s|%s|%s|done\n" "$configured" "$cams" "$labels"' _ "$LIB" 2>/dev/null) || out="exited $?"
+    assert_eq "false|||done" "$out" "$label: run.sh's reads go on under set -euo pipefail"
+done
+if OPTIONS_JSON="$TMPDIR_TEST/absent.json" opt_list cameras > /dev/null 2>&1; then
+    echo "ok: opt_list: an absent file returns 0"
+else
+    echo "FAIL: opt_list: an absent file returned non-zero" >&2
+    FAILURES=$((FAILURES + 1))
+fi
+
 # ---- ha_device_id ----------------------------------------------------------
 # The derivation every producer shares: pwk_ + first 8 hex of
 # sha256("securacv:ha-device-id:v1:" + seed). The expected value is computed

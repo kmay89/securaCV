@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import urllib.error
 from pathlib import Path
@@ -459,6 +460,79 @@ def test_save_generates_and_persists_device_key(save_env, monkeypatch, tmp_path)
     assert len(seed) == 64
     assert seed == save_env["options"]["device_key_seed"]
     assert (key_file.stat().st_mode & 0o777) == 0o600
+
+
+# ---------------------------------------------------------------------------
+# The zone rule (sweep HA39): one reference, and the save's fallback uses it
+# ---------------------------------------------------------------------------
+
+# Names the page once spelled apart from the reference (its toLowerCase() ran
+# on UTF-16 code units). tests/test_wizard_setup_flow.test.js holds the
+# page's zoneSlug() to the go2rtc rows for the same kind of names.
+_ZONE_CASES = [
+    ("\U0001F3E0", "_"),                  # an astral emoji: one "_"
+    ("\u0130stanbul", "_stanbul"),        # not "i" + a combining dot
+    ("\u212Aitchen", "_itchen"),          # the Kelvin sign is not A-Z
+    ("a" * 65, "a" * 64),                 # cut to 64
+    ("\U0001F3E0" + "b" * 64, "_" + "b" * 63),
+    ("Front Door", "front_door"),
+    ("Caf\u00e9 \u2014 back-yard_2", "caf____back-yard_2"),
+    ("", ""),
+]
+
+
+@pytest.mark.parametrize("name, slug", _ZONE_CASES)
+def test_zone_slug_is_the_go2rtc_rule(name, slug):
+    assert serve_wizard.zone_slug(name) == slug
+    rows = serve_wizard._go2rtc_streams_to_cameras({name: {"producers": ["rtsp://x/1"]}})
+    assert [r["zone_id"] for r in rows] == ([f"zone:{slug}"] if slug else [])
+
+
+def _standalone_save(save_env, cameras, stored=None):
+    if stored is not None:
+        save_env["current"] = {"mode": "standalone", "cameras": stored}
+    result = _bare_handler()._handle_save({"mode": "standalone", "cameras": cameras})
+    assert result["ok"] is True, result
+    return [(c["name"], c["zone_id"]) for c in save_env["options"]["cameras"]]
+
+
+def test_standalone_save_without_a_zone_id_slugs_the_name(save_env):
+    """The fallback was `zone:<the raw name>`, which run.sh's zone check
+    refuses for any space, capital or non-ASCII letter (the setup exits when
+    the primary camera's fails it). It is the reference rule now."""
+    cases = [(name, slug) for name, slug in _ZONE_CASES if slug]
+    saved = _standalone_save(save_env, [{"name": n, "url": "rtsp://x/1"} for n, _ in cases])
+    assert saved == [(n, f"zone:{slug}") for n, slug in cases]
+    for _, zone in saved:
+        assert re.fullmatch(r"zone:[a-z0-9_-]{1,64}", zone), zone
+
+
+def test_standalone_save_keeps_a_stored_zone_and_slugs_only_a_new_camera(save_env):
+    """An install whose zone ids an older page spelled (zone:i_stanbul, two
+    "_" for an emoji) saves again with no zone_id: each camera of a stored
+    name keeps its stored id (the sealed events and the entities keyed on it
+    stay attached); only a camera the options did not hold gets the rule."""
+    stored = [
+        {"name": "\u0130stanbul", "url": "rtsp://a", "zone_id": "zone:i_stanbul"},
+        {"name": "\U0001F3E0", "url": "rtsp://b", "zone_id": "zone:__"},
+        {"name": "bad", "url": "rtsp://c", "zone_id": "zone:Not Valid"},
+    ]
+    saved = _standalone_save(save_env, [
+        {"name": "\u0130stanbul", "url": "rtsp://a"},
+        {"name": "\U0001F3E0", "url": "rtsp://b", "zone_id": ""},
+        {"name": "bad", "url": "rtsp://c"},
+        {"name": "Krak\u00f3w", "url": "rtsp://d"},
+        {"name": "porch", "url": "rtsp://e", "zone_id": "zone:porch_east"},
+        {"name": "", "url": "rtsp://f"},
+    ], stored=stored)
+    assert saved == [
+        ("\u0130stanbul", "zone:i_stanbul"),
+        ("\U0001F3E0", "zone:__"),
+        ("bad", "zone:bad"),          # a stored id run.sh would refuse is not kept
+        ("Krak\u00f3w", "zone:krak_w"),
+        ("porch", "zone:porch_east"),  # a zone id the save names is stored as named
+        ("", "zone:camera_5"),        # a name that slugs to nothing
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1553,8 +1627,13 @@ def test_go2rtc_shell_transform_matches_the_reference(label):
 # lifted out of run.sh from its first line to the comment that ends it, the
 # discovery script's install path swapped for this tree's copy (run under
 # sh, as its #!/bin/sh would), and bashio stubbed: the log, and the option
-# reads answered as bashio answers them (below).
+# reads answered as bashio answers them (below). The same options are also
+# written where the Supervisor writes them (/data/options.json, here a temp
+# file named in OPTIONS_JSON) and this tree's run_lib.sh is sourced, as
+# run.sh sources its installed copy: the list options are read from that
+# file whole (run_lib.sh opt_list, sweep HA38).
 _RUN_SH = _MODULE_PATH.parent / "run.sh"
+_RUN_LIB = _MODULE_PATH.parent / "run_lib.sh"
 _PICK_START = "    GO2RTC_DISCOVERY=$(bashio::config 'go2rtc_discovery')\n"
 _PICK_END = "    # Build configuration file\n"
 _PICK_DISCOVER = '/usr/local/bin/discover_cameras.sh "$GO2RTC_URL"'
@@ -1652,35 +1731,69 @@ def test_the_bashio_stub_answers_list_options_as_bashio_does():
     ], out.stdout
 
 
-def _run_sh_camera_pick(streams, cameras=()):
+def _run_sh_block(start, end, options, *, prelude="", report="", env=None,
+                  swap=None, file_options=True):
+    """Lift run.sh from the line `start` to the line `end` (each exactly once),
+    swap each literal in `swap` (each exactly once in the block) for its
+    stand-in, and run it under the bashio stub, with `options` answered by
+    bashio AND written to the options file opt_list reads (`file_options=False`
+    leaves that file absent, as on a start with no /data/options.json).
+    Returns the CompletedProcess."""
+    _bashio_stub_ready()
+    text = _RUN_SH.read_text(encoding="utf-8")
+    assert text.count(start) == 1 and text.count(end) == 1, (
+        f"run.sh's block from {start.strip()!r} moved; update this test"
+    )
+    block = text[text.index(start):text.index(end)]
+    for literal, stand_in in (swap or {}).items():
+        assert block.count(literal) == 1, f"run.sh's block no longer holds {literal!r} once"
+        block = block.replace(literal, stand_in)
+    with tempfile.TemporaryDirectory() as tmp:
+        options_json = Path(tmp) / "options.json"
+        if file_options:
+            # Raw UTF-8; tests/test_run_lib.sh holds the escaped form too.
+            options_json.write_text(json.dumps(options, ensure_ascii=False), encoding="utf-8")
+        run_env = {
+            **os.environ,
+            **(env or {}),
+            "TEST_OPTIONS": json.dumps(options),
+            "OPTIONS_JSON": str(options_json),
+            "TEST_RUN_LIB": str(_RUN_LIB),
+        }
+        script = _PICK_STUBS + 'source "$TEST_RUN_LIB"\n' + prelude + block + report
+        out = subprocess.run(
+            ["bash", "-c", script], env=run_env, capture_output=True, text=True, timeout=60,
+        )
+    return out
+
+
+def _run_sh_camera_pick(streams, cameras=(), *, raw=False):
     """Run run.sh's standalone camera pick on a go2rtc payload (and the
     configured `cameras` option). Returns (exit code, [name, zone, url] of the
-    primary camera when it got that far, stderr)."""
+    primary camera when it got that far, stderr); with raw=True, the
+    CompletedProcess instead (a name holding a newline spans two lines)."""
     _bashio_stub_ready()
     text = _RUN_SH.read_text(encoding="utf-8")
     assert text.count(_PICK_START) == 1 and text.count(_PICK_END) == 1, (
         "run.sh's standalone camera block moved; update this test"
     )
     block = text[text.index(_PICK_START):text.index(_PICK_END)]
-    assert block.count(_PICK_DISCOVER) == 1, "run.sh no longer runs discover_cameras.sh once"
     assert block.count('jq -s \'add | unique_by(.name)\'') == 1, "run.sh's merge moved"
-    block = block.replace(_PICK_DISCOVER, 'sh "$TEST_DISCOVER_SH" "$GO2RTC_URL"')
-    env = {
-        **os.environ,
-        "GO2RTC_STREAMS_JSON": json.dumps(streams),
-        # The options as the Supervisor holds them: config.yaml's defaults
-        # with the user's cameras (an empty list when none is configured).
-        "TEST_OPTIONS": json.dumps({
-            "go2rtc_discovery": True,
-            "go2rtc_url": "http://127.0.0.1:9",
-            "cameras": list(cameras),
-        }),
-        "TEST_DISCOVER_SH": str(_DISCOVER_SH),
+    # The options as the Supervisor holds them: config.yaml's defaults with
+    # the user's cameras (an empty list when none is configured).
+    options = {
+        "go2rtc_discovery": True,
+        "go2rtc_url": "http://127.0.0.1:9",
+        "cameras": list(cameras),
     }
-    out = subprocess.run(
-        ["bash", "-c", _PICK_STUBS + block + _PICK_REPORT],
-        env=env, capture_output=True, text=True, timeout=60,
+    out = _run_sh_block(
+        _PICK_START, _PICK_END, options, report=_PICK_REPORT,
+        # The discovery script's install path, swapped for this tree's copy.
+        swap={_PICK_DISCOVER: 'sh "$TEST_DISCOVER_SH" "$GO2RTC_URL"'},
+        env={"GO2RTC_STREAMS_JSON": json.dumps(streams), "TEST_DISCOVER_SH": str(_DISCOVER_SH)},
     )
+    if raw:
+        return out
     primary = out.stdout.splitlines() if out.returncode == 0 else []
     return out.returncode, primary, out.stderr
 
@@ -1696,21 +1809,12 @@ def test_run_sh_never_takes_a_nameless_stream_as_the_primary_camera():
     assert "Invalid zone_id" not in err
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "run.sh reads the cameras option as a JSON array, but bashio prints an "
-        "array option one element per line: with any configured camera "
-        "`.[0]` fails on an object and the app exits at start (handed up from "
-        "the HA34 review, #1802). Remove this marker when run.sh reads the "
-        "option whole."
-    ),
-)
 def test_run_sh_takes_the_configured_camera_beside_a_nameless_stream():
     """Once the nameless stream is skipped, the configured camera is what is
-    left to be primary. This is what run.sh should do; today it never gets
-    that far (the xfail says why), so the case fails, strictly, until it
-    does."""
+    left to be primary. It was a strict xfail (handed up from the HA34
+    review, #1802): bashio prints an array option one element per line, so
+    with any configured camera `.[0]` met a bare object and the app exited at
+    start. run.sh now reads the list whole (run_lib.sh opt_list, HA38)."""
     configured = [{"name": "porch", "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch"}]
     code, primary, err = _run_sh_camera_pick(
         {"": {"producers": ["rtsp://10.0.0.1/empty"]}}, configured
@@ -1726,6 +1830,100 @@ def test_run_sh_with_only_a_nameless_stream_says_no_cameras():
     assert code == 1 and primary == []
     assert "No cameras configured!" in err
     assert "Invalid zone_id" not in err
+
+
+def test_run_sh_takes_two_configured_cameras_and_a_name_with_a_quote_a_newline_and_an_emoji():
+    """Two configured cameras, the first named with a quote, a newline and an
+    emoji: the list is one array, the merge and `.[0]` see cameras, and the
+    name reaches the log byte for byte (HA38)."""
+    name = 'say "cheese"\nporch \U0001F3E0'
+    configured = [
+        {"name": name, "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch"},
+        {"name": "zz back", "url": "rtsp://10.0.0.3/b", "zone_id": "zone:back"},
+    ]
+    out = _run_sh_camera_pick({}, configured, raw=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == f"{name}\nzone:porch\nrtsp://10.0.0.2/p\n", out.stdout
+    assert "Found 2 manually configured cameras" in out.stderr, out.stderr
+    assert "Configuring 2 camera(s)..." in out.stderr, out.stderr
+
+
+@pytest.mark.parametrize("cameras", [None, []], ids=["null", "empty"])
+def test_run_sh_with_no_configured_camera_says_no_cameras(cameras):
+    """cameras null or empty, nothing discovered: the read is [], never the
+    string "null", and run.sh stops on "No cameras configured!" as before."""
+    options = {"go2rtc_discovery": False, "go2rtc_url": "http://127.0.0.1:9", "cameras": cameras}
+    out = _run_sh_block(_PICK_START, _PICK_END, options, report=_PICK_REPORT)
+    assert out.returncode == 1, out.stderr
+    assert "No cameras configured!" in out.stderr
+    assert "manually configured" not in out.stderr, "nothing to count"
+    assert "null" not in out.stderr, out.stderr
+
+
+# run.sh's first-run gate: a configured camera list marks the app configured
+# (the kernel starts), nothing else does in standalone mode without a key.
+# bashio printed two cameras as two objects, `jq length` answered each one's
+# key count on its own line, `[` refused that as an integer, and the app ran
+# the wizard alone (HA38). Lifted from the gate's first line to the test that
+# acts on it; the key option empty and no key file, so only the cameras count.
+_GATE_START = 'CONFIGURED="false"\nif [ -n "$DEVICE_KEY_SEED" ]'
+_GATE_END = 'if [ "$CONFIGURED" != "true" ]; then\n'
+_GATE_PRELUDE = 'DEVICE_KEY_SEED=""\nDEVICE_KEY_FILE="$OPTIONS_JSON.no_key"\nMODE="standalone"\n'
+_GATE_REPORT = 'printf \'%s\\n\' "$CONFIGURED"\n'
+
+
+@pytest.mark.parametrize("cameras, configured", [
+    ([{"name": "a", "url": "rtsp://a"}, {"name": "b", "url": "rtsp://b"}], "true"),
+    ([{"name": "a", "url": "rtsp://a", "zone_id": "zone:a"}], "true"),
+    ([], "false"),
+    (None, "false"),
+], ids=["two cameras", "one camera", "empty", "null"])
+def test_run_sh_first_run_gate_counts_the_configured_cameras(cameras, configured):
+    out = _run_sh_block(_GATE_START, _GATE_END, {"mode": "standalone", "cameras": cameras},
+                        prelude=_GATE_PRELUDE, report=_GATE_REPORT)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == configured + "\n", out.stderr
+    assert "integer expression expected" not in out.stderr, out.stderr
+
+
+def test_run_sh_first_run_gate_without_an_options_file_runs_the_wizard():
+    """No /data/options.json at all: the gate reads no cameras (and says why
+    on stderr), so only the wizard runs; it never stops the setup."""
+    out = _run_sh_block(_GATE_START, _GATE_END, {}, prelude=_GATE_PRELUDE,
+                        report=_GATE_REPORT, file_options=False)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == "false\n"
+
+
+# run.sh's frigate-mode lists: the camera slugs and the labels, each joined
+# with "," for frigate_bridge's --cameras / --labels. bashio printed each
+# element on its own line, raw, so `jq -r 'join(",")'` met `person` (not
+# JSON), failed, and `set -e` ended the setup there: with the default labels,
+# every frigate-mode start (HA38). Lifted from the comment that opens it to
+# the first log line after it.
+_FRIGATE_LISTS_START = "    # Get cameras and labels as comma-separated strings."
+_FRIGATE_LISTS_END = '    bashio::log.info "MQTT Broker: $MQTT_HOST:$MQTT_PORT"\n'
+_FRIGATE_LISTS_REPORT = 'printf \'%s|%s\\n\' "$FRIGATE_CAMERAS" "$FRIGATE_LABELS"\n'
+
+
+@pytest.mark.parametrize("frigate, joined", [
+    ({"cameras": ["front_door", "driveway"], "labels": ["person", "car", "dog", "cat"]},
+     "front_door,driveway|person,car,dog,cat"),
+    ({"cameras": [], "labels": ["person", "car", "dog", "cat"]}, "|person,car,dog,cat"),
+    ({"cameras": ["front_door"], "labels": []}, "front_door|"),
+    ({"cameras": None, "labels": None}, "|"),
+    (None, "|"),
+], ids=["slugs and default labels", "every camera", "default labels in the bridge",
+        "lists null", "the frigate block missing"])
+def test_run_sh_frigate_lists_join_whole(frigate, joined):
+    options = {"mode": "frigate"}
+    if frigate is not None:
+        options["frigate"] = frigate
+    out = _run_sh_block(_FRIGATE_LISTS_START, _FRIGATE_LISTS_END, options,
+                        report=_FRIGATE_LISTS_REPORT)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == joined + "\n", out.stderr
+    assert "null" not in out.stdout
 
 
 @pytest.mark.parametrize("label", sorted(_GO2RTC_PARITY_PAYLOADS))

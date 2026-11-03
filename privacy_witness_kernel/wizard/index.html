@@ -703,6 +703,19 @@ function summaryRows(form, plan) {
   ];
 }
 
+// A camera's zone id after `zone:`, by the one zone rule: the reference is
+// serve_wizard.zone_slug (go2rtc's rows, discover_cameras.sh and the
+// server's own save fallback use it too). Per code point, as Python counts
+// them (Array.from: an emoji is one "_", not two halves); A-Z lowercased and
+// nothing else, since toLowerCase() turns "İ" into "i" and a combining dot;
+// every other code point outside [a-z0-9_-] becomes "_"; then cut to 64.
+// May be empty (sweep HA39).
+function zoneSlug(name) {
+  return Array.from(String(name), (ch) =>
+    ch >= "A" && ch <= "Z" ? ch.toLowerCase() : (/^[a-z0-9_-]$/.test(ch) ? ch : "_"),
+  ).slice(0, 64).join("");
+}
+
 // The /api/save body. A re-run (the app is already configured) sends NO
 // device key: the page never holds the current seed (/api/status masks it),
 // and the server keeps the existing identity when none is sent — a fresh
@@ -717,7 +730,7 @@ function savePayload(form, plan, state) {
       : form.cameras.map(c => ({
           name: c.name.trim(),
           url: c.url.trim(),
-          zone_id: c.zone_id || `zone:${c.name.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+          zone_id: c.zone_id || "zone:" + zoneSlug(c.name.trim()),
         })),
     retention_days: form.retentionDays,
     enable_reviews: form.seal === "reviews",
@@ -946,7 +959,8 @@ function updateCamera(id, key, val) {
   if (!cam) return;
   cam[key] = val;
   if (key === "name") {
-    cam.zone_id = "zone:" + val.toLowerCase().replace(/[^a-z0-9_-]/g, "_").slice(0, 64);
+    // The name as savePayload sends it (trimmed), by the one zone rule.
+    cam.zone_id = "zone:" + zoneSlug(val.trim());
   }
 }
 
@@ -1413,14 +1427,15 @@ async function meshCancelLeftRunning(a) {
   return meshGone(a) ? "gone" : "ended";
 }
 
-// What a wait that gave up says (sweep F215 and its review): it ends from
-// the fresh read meshCancelLeftRunning takes, which can find what the last
-// poll could not. A pairing both Canaries report finished is a success. One
-// side finished beside the other still running is completing, not failed: a
-// PlatformIO initiator reports paired once it sends the opera key and
-// re-sends it until the joiner has it (F134), and a retry made after it
-// lands is refused (F136: the new Canary is in the opera by then), so the
-// owner is told to check rather than to retry. Anything else is `failMsg`.
+// What a wait that gave up says (sweep F215 and its review), at its timeout
+// or after five unreadable polls (F321): it ends from the fresh read
+// meshCancelLeftRunning takes, which can find what the last poll could not.
+// A pairing both Canaries report finished is a success. One side finished
+// beside the other still running is completing, not failed: a PlatformIO
+// initiator reports paired once it sends the opera key and re-sends it
+// until the joiner has it (F134), and a retry made after it lands is refused
+// (F136: the new Canary is in the opera by then), so the owner is told to
+// check rather than to retry. Anything else is `failMsg`.
 async function meshEndAtTimeout(a, failMsg) {
   const left = await meshCancelLeftRunning(a);
   if (left === "gone") return;
@@ -1617,9 +1632,12 @@ async function meshPollForCodes() {
     } catch (e) {
       if (meshGone(a)) return;
       if (++fails >= 5) {
+        // Ends from a fresh read of both, as the timeout does: a pairing
+        // they report finished is a success, one finished beside one still
+        // running is still finishing, and only otherwise is it a retry
+        // (F321). Nothing is canceled beside a side that reports it paired.
         meshPolling = false;
-        if (await meshCancelLeftRunning(a) === "gone") return;
-        meshPollFailed("A Canary became unreachable. Check the network and try again.");
+        await meshEndAtTimeout(a, "A Canary became unreachable. Check the network and try again.");
         return;
       }
       continue;
@@ -1628,8 +1646,7 @@ async function meshPollForCodes() {
     if (!si.ok || !sj.ok) {
       if (++fails >= 5) {
         meshPolling = false;
-        if (await meshCancelLeftRunning(a) === "gone") return;
-        meshPollFailed("A Canary stopped responding. Try again.");
+        await meshEndAtTimeout(a, "A Canary stopped responding. Try again.");
         return;
       }
       continue;
@@ -1744,9 +1761,9 @@ async function meshConfirm() {
     } catch (e) {
       if (meshGone(a)) return;
       if (++fails >= 5) {
+        // As the code wait's (F321): the fresh read decides what is said.
         meshPolling = false;
-        if (await meshCancelLeftRunning(a) === "gone") return;
-        meshPollFailed("A Canary became unreachable while completing. Try again.");
+        await meshEndAtTimeout(a, "A Canary became unreachable while completing. Try again.");
         return;
       }
       continue;

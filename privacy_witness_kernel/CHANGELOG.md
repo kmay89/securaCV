@@ -1,4 +1,26 @@
 <!-- The Supervisor shows this file on the app's page after an update. Newest first. -->
+## Unreleased
+
+- **List options are read whole at start.** The setup step read `cameras`,
+  `frigate.cameras` and `frigate.labels` through bashio, which prints a list
+  one item per line, never as a list. In Frigate mode a label list (the
+  default one included) stopped the setup before the kernel's services could
+  start; in standalone mode a configured camera stopped it, and with no device
+  key yet two cameras left the app running only the wizard. Each list is now
+  read from the options file the Supervisor writes (`/data/options.json`).
+  Host-tested against a copy of bashio's option code, on the app's jq 1.6 and
+  on 1.7; not run in the app image.
+- **Zone ids follow one rule.** The wizard page spells a camera's zone id as
+  the server and go2rtc discovery do: an emoji is one `_`, `İstanbul` is
+  `zone:_stanbul`, and the id is cut to 64 characters. A standalone save that
+  names no zone id keeps the id already stored for a camera of that name, and
+  only a new camera gets the rule (it used to get its raw name, which the
+  setup refuses).
+- **Pairing another Canary:** when five status reads fail in a row, the wizard
+  now reads both Canaries once more and says what it finds, as it does at a
+  timeout. A pairing both report finished shows as done, and one still
+  finishing says so, instead of asking for a retry the Canary would refuse.
+
 ## 0.9.0
 
 The app is now "SecuraCV" in the App Store (the slug `privacy_witness_kernel`
