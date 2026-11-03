@@ -21,10 +21,10 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { spawnSync } = require("node:child_process");
-const { join, relative } = require("node:path");
+const { dirname, join, relative, resolve, sep } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const vm = require("node:vm");
 
@@ -5509,11 +5509,14 @@ test("wave 5: the Vision-module proof is patient, and says the burn survived, on
 // The SSCMA library's ID() returns the Grove Vision AI module's id, which this
 // design treats as a per-unit identifier, so no Vision source calls it. The
 // deny used to read vision_mgr.cpp alone; a call moved into a header or
-// another .cpp passed. It now walks every C/C++ source under the project and
-// reads code only: comments and string literals are blanked first (newlines
-// kept, so a hit names its line), because a comment that explains why ID()
-// is not called, as vision_mgr.cpp's does, is not a call.
-const VISION_FW = join(ROOT, "firmware/projects/canary-vision");
+// another .cpp passed. It now reads the sources the Vision firmware builds
+// from, as its PlatformIO config names them (visionSources), and reads code
+// only: comments and string literals are blanked first (newlines kept, so a
+// hit names its line), because a comment that explains why ID() is not
+// called, as vision_mgr.cpp's does, is not a call.
+const FIRMWARE = join(ROOT, "firmware");
+const VISION_FW = join(FIRMWARE, "projects/canary-vision");
+const VISION_INI = "envs/platformio/canary-vision.ini";
 const C_SOURCE = /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|ino)$/;
 
 function cSourcesUnder(root) {
@@ -5530,8 +5533,37 @@ function cSourcesUnder(root) {
   return out;
 }
 
+// The C/C++ sources the Vision firmware builds from, read off
+// canary-vision.ini rather than typed, so a new env or a new shared TU joins
+// the scan by itself: every source under firmware/projects/canary-vision
+// (src/, include/, secrets/), every include directory an env adds outside
+// firmware/common (its Vision-only config, each env's board pins), and each
+// firmware/common translation unit a build_src_filter compiles. What the
+// scan does NOT read: the headers under firmware/common, which every product
+// shares and which those TUs and the Vision sources include.
+function visionSources(firmwareRoot) {
+  const project = join(firmwareRoot, "projects/canary-vision");
+  const common = join(firmwareRoot, "common");
+  const ini = read(join(firmwareRoot, VISION_INI));
+  const files = new Set(cSourcesUnder(project));
+  for (const m of ini.matchAll(/-I\$\{PROJECT_DIR\}\/(\S+)/g)) {
+    const dir = resolve(project, m[1]);
+    if (dir === common || dir.startsWith(common + sep)) continue;
+    if (existsSync(dir)) for (const f of cSourcesUnder(dir)) files.add(f);
+  }
+  for (const m of ini.matchAll(/^\s*\+<(\.\.\/[^>*]+)>/gm)) {
+    const f = resolve(project, "src", m[1]);
+    if (C_SOURCE.test(f)) files.add(f);
+  }
+  return [...files].sort();
+}
+
 // C/C++ with its comments and string and character literals (raw strings
-// included) turned to spaces, every newline kept.
+// included) turned to spaces, every newline kept. A number is read whole, as
+// the preprocessor reads one, so a C++14 digit separator (1'000, 0xFF'FF)
+// opens no character literal; an identifier is read whole, so u8'a' is a
+// prefix and a character literal. A // comment runs on past a line that
+// ends in a backslash, as it does for the compiler.
 function cCodeOnly(src) {
   const blank = (t) => t.replace(/[^\n]/g, " ");
   let out = "";
@@ -5539,8 +5571,14 @@ function cCodeOnly(src) {
   while (i < src.length) {
     const c = src[i], d = src[i + 1];
     if (c === "/" && d === "/") {
-      const e = src.indexOf("\n", i);
-      const end = e < 0 ? src.length : e;
+      let end = i;
+      for (;;) {
+        const e = src.indexOf("\n", end);
+        if (e < 0) { end = src.length; break; }
+        end = e;
+        if (!/\\\r?$/.test(src.slice(i, e))) break;
+        end = e + 1; // a backslash-newline: the comment goes on
+      }
       out += blank(src.slice(i, end)); i = end; continue;
     }
     if (c === "/" && d === "*") {
@@ -5555,6 +5593,14 @@ function cCodeOnly(src) {
       const end = e < 0 ? src.length : e + close.length;
       out += blank(src.slice(i, end)); i = end; continue;
     }
+    if (/[A-Za-z_]/.test(c)) {
+      const word = /^[A-Za-z0-9_]+/.exec(src.slice(i))[0];
+      out += word; i += word.length; continue;
+    }
+    if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(d || ""))) {
+      const num = /^\.?[0-9](?:[eEpP][+-]|'[0-9A-Za-z_]|[0-9A-Za-z_.])*/.exec(src.slice(i))[0];
+      out += num; i += num.length; continue;
+    }
     if (c === '"' || c === "'") {
       let j = i + 1;
       while (j < src.length && src[j] !== c && src[j] !== "\n") j += src[j] === "\\" ? 2 : 1;
@@ -5566,56 +5612,88 @@ function cCodeOnly(src) {
   return out;
 }
 
-// Every call of a method named ID — AI.ID(), ai->ID(), Sscma::ID( — in code,
-// as "<path relative to root>:<line>".
-function sscmaIdCalls(root) {
+// Every call of a method named ID — AI.ID(), ai->ID(), Sscma::ID( — in the
+// Vision's sources, as "<path relative to the firmware root>:<line>".
+function sscmaIdCalls(firmwareRoot) {
   const hits = [];
-  for (const file of cSourcesUnder(root)) {
+  for (const file of visionSources(firmwareRoot)) {
     const code = cCodeOnly(read(file));
     for (const m of code.matchAll(/(?:\.|->|::)\s*ID\s*\(/g)) {
-      hits.push(`${relative(root, file).split("\\").join("/")}:${code.slice(0, m.index).split("\n").length}`);
+      hits.push(`${relative(firmwareRoot, file).split("\\").join("/")}:${code.slice(0, m.index).split("\n").length}`);
     }
   }
   return hits;
 }
 
 test("F384: the module-id deny reaches every Vision source, and reads code, not comments or strings", () => {
-  // Every source the firmware builds from is in the walk, headers included.
-  const files = cSourcesUnder(VISION_FW).map((f) => relative(VISION_FW, f).split("\\").join("/"));
-  for (const want of ["src/vision/vision_mgr.cpp", "src/main.cpp", "include/canary/vision/vision_mgr.h",
-                      "secrets/secrets.example.h"]) {
+  // The walk: the project tree, headers included, the Vision-only include
+  // directories and the shared TUs the build compiles.
+  const sources = visionSources(FIRMWARE);
+  const files = sources.map((f) => relative(FIRMWARE, f).split("\\").join("/"));
+  const ini = read(join(FIRMWARE, VISION_INI));
+  const tus = [...ini.matchAll(/^\s*\+<\.\.\/\.\.\/\.\.\/(common\/[^>]+\.cpp)>/gm)].map((m) => m[1]);
+  assert.ok(tus.length >= 6, `canary-vision.ini names ${tus.length} shared TUs`);
+  for (const want of ["projects/canary-vision/src/vision/vision_mgr.cpp", "projects/canary-vision/src/main.cpp",
+                      "projects/canary-vision/include/canary/vision/vision_mgr.h",
+                      "projects/canary-vision/secrets/secrets.example.h", "configs/canary-vision/default/config.h",
+                      "boards/esp32-c3/pins/pins.h", ...tus]) {
     assert.ok(files.includes(want), `the scan no longer reads ${want}`);
   }
-  assert.ok(files.some((f) => f.startsWith("include/")) && files.filter((f) => f.startsWith("src/")).length > 5,
-    `the scan reads ${files.length} files`);
+  // Every include directory an env adds outside firmware/common exists (a
+  // renamed one would otherwise drop out of the scan in silence), and
+  // nothing under firmware/common is read but the TUs the build compiles.
+  for (const m of ini.matchAll(/-I\$\{PROJECT_DIR\}\/(\S+)/g)) {
+    assert.ok(existsSync(resolve(VISION_FW, m[1])), `canary-vision.ini adds ${m[1]}, which is not there`);
+  }
+  assert.deepStrictEqual(files.filter((f) => f.startsWith("common/")).sort(), [...new Set(tus)].sort(),
+    "the scan reads firmware/common beyond the TUs the Vision compiles");
+  assert.ok(files.filter((f) => f.startsWith("projects/canary-vision/src/")).length > 5, `the scan reads ${files.length} files`);
   // Where the tree names ID( today (vision_mgr.cpp and its header explain
   // why it is never called), it does so in comments: the code has none.
-  for (const f of cSourcesUnder(VISION_FW).filter((p) => /\bID\s*\(/.test(read(p)))) {
-    assert.doesNotMatch(cCodeOnly(read(f)), /\bID\s*\(/, `${relative(VISION_FW, f)} names ID( outside a comment or a string`);
+  for (const f of sources.filter((p) => /\bID\s*\(/.test(read(p)))) {
+    assert.doesNotMatch(cCodeOnly(read(f)), /\bID\s*\(/, `${relative(FIRMWARE, f)} names ID( outside a comment or a string`);
   }
 
-  // The mutation proof: plant calls in a copy of the tree, one per kind of
-  // file and spelling, and each one is found where it was planted; plant the
-  // same words in comments and strings, and none is.
+  // The mutation proof: copy exactly the scanned files and the config that
+  // names them (nothing else — no build output, no developer secrets.h) into
+  // a scratch firmware root, plant calls, one per kind of file and spelling,
+  // and each one is found where it was planted; plant the same words in
+  // comments and strings, and none is.
   const dir = mkdtempSync(join(tmpdir(), "f384-"));
   try {
-    const tree = join(dir, "canary-vision");
-    cpSync(VISION_FW, tree, { recursive: true });
+    const mirror = join(dir, "firmware");
+    for (const rel of [VISION_INI, ...files]) {
+      mkdirSync(dirname(join(mirror, rel)), { recursive: true });
+      writeFileSync(join(mirror, rel), read(join(FIRMWARE, rel)));
+    }
+    assert.deepStrictEqual(visionSources(mirror).map((f) => relative(mirror, f).split("\\").join("/")), files,
+      "the mirror's config names the same sources");
+    assert.ok(!existsSync(join(mirror, "projects/canary-vision/secrets/secrets.h")), "the mirror copied a secrets.h");
     const plant = (rel, text) => {
-      const p = join(tree, rel);
+      const p = join(mirror, rel);
       const before = read(p);
       writeFileSync(p, before + text);
       return `${rel}:${(before + text).split("\n").length - 1}`;
     };
-    assert.deepStrictEqual(sscmaIdCalls(tree), [], "the untouched copy is clean");
-    const header = plant("include/canary/vision/vision_mgr.h", "\ninline int planted_id() { return AI.ID(); }\n");
-    const main = plant("src/main.cpp", "\nstatic int g_planted = vision_ai . ID ( false );\n");
-    const other = files.find((f) => f.startsWith("src/") && f.endsWith(".cpp") && f !== "src/main.cpp" && f !== "src/vision/vision_mgr.cpp");
+    assert.deepStrictEqual(sscmaIdCalls(mirror), [], "the untouched copy is clean");
+    const P = "projects/canary-vision/";
+    const header = plant(`${P}include/canary/vision/vision_mgr.h`, "\ninline int planted_id() { return AI.ID(); }\n");
+    const main = plant(`${P}src/main.cpp`, "\nstatic int g_planted = vision_ai . ID ( false );\n");
+    const other = files.find((f) => f.startsWith(`${P}src/`) && f.endsWith(".cpp") &&
+      f !== `${P}src/main.cpp` && f !== `${P}src/vision/vision_mgr.cpp`);
     const arrow = plant(other, "\nint planted_arrow(SSCMA* ai) { return ai->ID(); }\n");
-    const qualified = plant("src/vision/vision_mgr.cpp", "\nauto planted_qualified = &SSCMA::ID ;\nint q = SSCMA::ID(true);\n");
-    plant("src/main.cpp", "\n// AI.ID() is never called here\n/* nor AI.ID( */\nstatic const char* k_planted = \"AI.ID()\";\n" +
-      "static const char* k_raw = R\"x(AI.ID() and \"quotes\")x\";\nstatic const char k_c = 'I'; // ID(\n");
-    assert.deepStrictEqual(sscmaIdCalls(tree).sort(), [arrow, header, main, qualified].sort(),
+    const qualified = plant(`${P}src/vision/vision_mgr.cpp`, "\nauto planted_qualified = &SSCMA::ID ;\nint q = SSCMA::ID(true);\n");
+    const config = plant("configs/canary-vision/default/config.h", "\n#define PLANTED_ID() (AI.ID())\n");
+    const shared = plant(tus[0], "\nint planted_shared(SSCMA& m) { return m.ID(); }\n");
+    // One digit separator per line: the old scan opened a character literal
+    // at it and blanked the rest of that line, the call after it included.
+    const separator = plant(`${P}src/main.cpp`, "\nstatic int planted_sep = 1'000; static int planted_after = AI.ID();\n");
+    const hexSeparator = plant(`${P}src/main.cpp`, "\nstatic int planted_hex = 0xFF'FF; static int planted_hex_after = AI.ID();\n");
+    const prefix = plant(`${P}src/main.cpp`, "\nstatic auto planted_u8 = u8'a'; static int planted_u8_after = AI.ID();\n");
+    plant(`${P}src/main.cpp`, "\n// AI.ID() is never called here\n/* nor AI.ID( */\nstatic const char* k_planted = \"AI.ID()\";\n" +
+      "static const char* k_raw = R\"x(AI.ID() and \"quotes\")x\";\nstatic const char k_c = 'I'; // ID(\n" +
+      "// a comment that runs on \\\n   AI.ID(); still the comment\n");
+    assert.deepStrictEqual(sscmaIdCalls(mirror).sort(), [arrow, header, main, qualified, config, shared, separator, hexSeparator, prefix].sort(),
       "the scan must find each planted call where it was planted, and nothing in a comment or a string");
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -5652,10 +5730,13 @@ test("Vision module proof: the desktop reads module_ok and the firmware's own bo
     "the boot line's value is the 1-or-0 module verdict, nothing else");
   // ...and never the module's own id, which this design treats as a per-unit
   // identifier: no AI.ID() call in any form, in vision_mgr.cpp or in any
-  // other source of the Vision firmware (src/, include/, secrets/). The next
-  // test plants calls to prove the scan reaches every file and reads only code.
+  // other source the Vision firmware builds from as canary-vision.ini names
+  // them (the project's src/, include/ and secrets/, its config and board
+  // pins, and the firmware/common TUs it compiles; the shared headers under
+  // firmware/common are not read). The F384 test plants calls to prove the
+  // scan reaches each kind of file and reads only code.
   assert.ok(!/\bAI\.ID\s*\(/.test(mgr), "vision_mgr.cpp calls AI.ID() again");
-  assert.deepStrictEqual(sscmaIdCalls(VISION_FW), [],
+  assert.deepStrictEqual(sscmaIdCalls(FIRMWARE), [],
     "the Vision firmware calls the SSCMA module's ID() again — its id is a per-unit identifier this design never reads");
   // The `j` proof record carries module_ok beside the legacy module_id, and
   // module_ok's value is the module verdict, not a constant.
