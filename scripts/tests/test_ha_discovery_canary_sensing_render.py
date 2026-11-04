@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""The canary's Sensing RSSI renders a reading or nothing, never 0 dBm (sweep F411).
+"""The canary's Sensing RSSI renders a reading or nothing, not an unmeasured 0 dBm (sweep F411).
 
 firmware/canary announces Sensing RSSI over MQTT discovery itself
 (lib/securacv_mqtt/src/securacv_mqtt.cpp, mqtt_send_ha_discovery): a sensor
 on the retained sensing topic, dBm, device_class signal_strength. That
 topic's one body is built by src/main.cpp's mqtt_publish_sensing_update().
-Its rssi_dbm is a CSI window's mean, and only sensing_feed_csi() sets it, so
-before the first window, and for good on a build without CSI (FEATURE_CSI
-defaults to 0), the snapshot holds sensing_init()'s zero. The body carried
+Its rssi_dbm is a CSI window's mean. Before the first window, and for good
+on a build without CSI (FEATURE_CSI defaults to 0), the snapshot holds
+sensing_init()'s zero; and a window that heard nothing, or only frames below
+the noise floor, still closes every second with a zero mean. The body carried
 that zero, and the template's `default(0)` would have rendered 0 for a body
 without the key too: either way Home Assistant showed 0 dBm, a
 full-strength reading no radio measured.
 
-The body now carries rssi_dbm only once a window has been seen
-(windows_seen > 0), and the template renders a body without it as nothing,
+The body now carries rssi_dbm only when sensing_rssi_measured() says the last
+window's mean was taken over a frame (firmware/tests_host/
+test_canary_sensing_rssi.cpp runs that predicate on real CSI windows; a
+windows_seen > 0 guard, this fix's first form, still let an empty window's
+zero through), and the template renders a body without it as nothing,
 which Home Assistant's MQTT sensor ignores on a sensor whose state must be
 numeric (a unit makes it one): unknown before the first reading, the last
 reading kept after it. tests/ha/test_canary_sensing_rssi.py drives that on a
@@ -24,9 +28,9 @@ at its jinja2 pin). It holds:
   * the Sensing RSSI row is on the sensing topic, in dBm, signal_strength;
   * its template renders a body's rssi_dbm, and a body without the key as
     nothing, with no template warning either way;
-  * main.cpp writes rssi_dbm in exactly one place, under the windows_seen
-    test (a text pin: main.cpp is not host-compiled, firmware/canary's
-    PlatformIO build is CI's);
+  * main.cpp writes rssi_dbm in exactly one place, under
+    sensing_rssi_measured() (a text pin: main.cpp is not host-compiled,
+    firmware/canary's PlatformIO build is CI's);
   * every other entity announced on the sensing topic renders the same with
     and without rssi_dbm, so the key's absence moves nothing else; the body
     the test renders carries every key main.cpp writes, read from it.
@@ -178,19 +182,23 @@ class SensingRssiRenderTest(unittest.TestCase):
         for reading in (-61, -48, -90, -30):
             body = {**QUIET, "rssi_dbm": reading}
             self.assertEqual(render(template, body), (str(reading), []), reading)
-        # Before the first CSI window, after a reboot until the next one, and
-        # on a build without CSI: the body carries no rssi_dbm.
+        # Before the first CSI window, after a reboot until the next one,
+        # after a window that heard nothing or only frames below the noise
+        # floor, and on a build without CSI: the body carries no rssi_dbm.
         for body in (without_rssi(QUIET), without_rssi(BUSY), {}):
             self.assertEqual(render(template, body), ("", []), body)
 
-    def test_main_cpp_writes_rssi_dbm_only_once_a_window_was_seen(self):
-        """The text pin: the body's one rssi_dbm write sits under the
-        windows_seen test, so no body carries the snapshot's unmeasured zero."""
+    def test_main_cpp_writes_rssi_dbm_only_for_a_measured_window(self):
+        """The text pin: the body's one rssi_dbm write sits under
+        sensing_rssi_measured(), which firmware/tests_host/
+        test_canary_sensing_rssi.cpp holds false before the first window and
+        for a window that heard nothing or only frames below the noise floor,
+        so no body carries the snapshot's unmeasured zero."""
         body = function_body(MAIN_CPP.read_text(encoding="utf-8"), "static void mqtt_publish_sensing_update()")
         writes = [line.strip() for line in body.splitlines() if '"rssi_dbm"' in line]
         self.assertEqual(
-            writes, ['if (s.windows_seen > 0) doc["rssi_dbm"] = (int)s.rssi_dbm;'],
-            "main.cpp writes rssi_dbm other than once, under the windows_seen test",
+            writes, ['if (sensing_rssi_measured(&s)) doc["rssi_dbm"] = (int)s.rssi_dbm;'],
+            "main.cpp writes rssi_dbm other than once, under sensing_rssi_measured()",
         )
 
     def test_the_bodies_here_carry_every_key_main_cpp_writes(self):

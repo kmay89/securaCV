@@ -225,13 +225,20 @@
   keep what it had, and prove what the receiver does with the real one, not
   a stub. The canary's own Sensing RSSI did the same with a zero no radio
   measured: its sensing body carried `rssi_dbm: 0` until the first CSI
-  window, and for good on a build without CSI. The body now leaves the key
-  out until a window has been seen, and the row renders `default('')` (F411).
+  window, and for good on a build without CSI. The row now renders
+  `default('')`, and the body leaves the key out unless the last window's
+  mean was taken over a frame (F411). The first guard, "a window has been
+  seen", was not that: the CSI HAL closes a window every second whether or
+  not it heard anything, so a quiet window, or one whose frames were all
+  below the noise floor, is counted with a zero mean. Ask the layer that
+  took the mean how many samples it took, not whether it ran.
 - **Regression check:** `scripts/tests/test_ha_discovery_wap_render.py` (the
   expected failure is now a plain test) and the real-core
   `tests/ha/test_wap_signal_strength.py`, which shows Home Assistant 2026.5.0
   and 2026.10.1 keeping the reading and fails on any core warning. For the
-  canary, `scripts/tests/test_ha_discovery_canary_sensing_render.py` and the
+  canary, `firmware/tests_host/test_canary_sensing_rssi.cpp` (the predicate
+  on real CSI windows, quiet and below-floor ones included),
+  `scripts/tests/test_ha_discovery_canary_sensing_render.py` and the
   real-core `tests/ha/test_canary_sensing_rssi.py`.
 - **Date learned:** 2026-11
 

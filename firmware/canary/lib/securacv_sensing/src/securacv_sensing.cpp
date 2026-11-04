@@ -43,12 +43,6 @@ namespace {
     return (uint8_t)(((uint32_t)prev * 6 + (uint32_t)next * 4) / 10);
   }
 
-  uint8_t clip_u8(int32_t v) {
-    if (v < 0)   return 0;
-    if (v > 255) return 255;
-    return (uint8_t)v;
-  }
-
   /* Fold the 8 amplitude-variance bands into a 0..100 motion score.
    * Empty room ≈ 0–10; person walking ≈ 40–70; rapid motion saturates 100. */
   uint8_t derive_motion(const int8_t v[CSI_FEATURE_DIM]) {
@@ -272,6 +266,10 @@ void sensing_feed_csi(const csi_features_t* features) {
   /* RSSI / frame health from the named slots. */
   s_state.rssi_dbm         = features->v[20];                          /* mean */
   s_state.rssi_std         = features->v[21];
+  /* v[24] counts the frames the feature layer took the RSSI mean over
+   * (csi_features.cpp counts a frame only once its RSSI is in the sum),
+   * where frames_in_window is the HAL's count of frames handed to it. */
+  s_state.rssi_frames      = (uint8_t)(features->v[24] > 0 ? features->v[24] : 0);
   s_state.frames_in_window = features->frames_in_window;
   s_state.dropped_estimate = (uint16_t)((uint8_t)features->v[25]);
   s_state.channel          = (uint8_t)features->v[26];
