@@ -374,7 +374,8 @@ jobs:
         # code had never been built; minimal is the only env with SD, Wi-Fi AP
         # and HTTP off, the posture that once hid a years-old compile error
         # (firmware/LESSONS_LEARNED.md, "A feature flag no *built* env sets to
-        # 0 is an untested branch"); dev_ha is dev plus the MQTT client.
+        # 0 is an untested branch"); dev_ha is dev plus the MQTT client, built -Os
+        # so it fits partitions_ota.csv's slot (platformio.ini says why).
         # A compile gate only, like the secure step above: none is in
         # flavors.json, so no size guard, release, flasher catalog, SBOM row
         # or OTA manifest touches them. All three build on the [env] platform,
