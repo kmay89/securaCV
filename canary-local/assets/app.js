@@ -17,7 +17,7 @@ import { buildBuildIt } from "./build-it.js";
 import { buildBoardLab } from "./board-lab.js";
 import { buildAssemblyLab } from "./assembly-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
-import { BenchPower, romBanner, benchRibbon } from "../emulator/web/bench.js";
+import { BenchPower, romBanner, benchRibbon, bootPressOffered } from "../emulator/web/bench.js";
 import { DEMO, beatsBetween } from "./mode-sim.js";
 import { buildOnboardPhone } from "./onboard-phone.js";
 import {
@@ -545,6 +545,7 @@ async function buildDisplaySheet(ctx, side, stage) {
       },
       onNvsWrite: (ns, key, hexVal) => ctx.nvsImage.set(`${ns}/${key}`, hexVal),
       onReboot: async () => {
+        ctx.bench?.releaseBoot(); // a held press goes with the app (sweep A99)
         ctx.emu.retire();
         if (ctx.bench?.bootHeld) {
           // Even a software reset re-samples the straps — BOOT held low
@@ -595,6 +596,7 @@ async function buildDisplaySheet(ctx, side, stage) {
     for (const w of ctx.fleet) await ctx.emu.addWitness(w);
     ctx.emu.startFleetHeartbeat(15000);
     ctx.bootAt = performance.now();
+    ctx.benchSync?.(); // the bench view's controls follow the twin now, not on its next tick
   };
 
   const note = (t) => { noteLine.textContent = t || ""; };
@@ -631,6 +633,7 @@ async function buildDisplaySheet(ctx, side, stage) {
         onPower: async (up, cause) => {
           if (!up) {
             killPower(cause);
+            ctx.benchSync?.();
             return;
           }
           if (ctx.bench.mode === "download") {
@@ -643,6 +646,9 @@ async function buildDisplaySheet(ctx, side, stage) {
         },
         onReset: async (kind) => {
           ctx.emu?.retire();
+          // a flow's stage resets the bench too: its view follows at once, so
+          // the press control is never shown live on a twin that is gone
+          ctx.benchSync?.();
           if (kind === "download") {
             enterDownload();
             return;
@@ -655,6 +661,8 @@ async function buildDisplaySheet(ctx, side, stage) {
   if (ctx.bench) {
     const benchTick = setInterval(() => ctx.bench.tick(400), 400);
     ctx.dispose.push(() => clearInterval(benchTick));
+    // A sheet closed with BOOT pressed lets go of it (sweep A99).
+    ctx.dispose.push(() => ctx.bench.releaseBoot());
   }
 
   serialAppend(romBanner("poweron", rom));
@@ -672,6 +680,7 @@ async function buildDisplaySheet(ctx, side, stage) {
       }
       note("rebooting for a first meeting — the bird will introduce itself, then raise its setup network (the phone in Try it walks it)");
       serialAppend("\n\n※ ── power cycle (first meeting) ── ※\n\n" + romBanner("poweron", rom));
+      ctx.bench?.releaseBoot(); // a held press goes with the app (sweep A99)
       ctx.emu.retire();
       await boot({ preserve: true, firstMeeting: true });
     },
@@ -1034,10 +1043,63 @@ function benchView(ctx, guideCtx, noteLine) {
   const sw = chip(profile.power?.switch?.label || "ON/OFF", profile.power?.switch?.note,
     () => bench.setSwitch(!bench.switchOn));
   sw.b.classList.add("bench-switch");
-  const bootBtn = chip(
-    (profile.buttons || []).find((b) => b.id === "boot")?.label || "BOOT",
-    (profile.buttons || []).find((b) => b.id === "boot")?.note,
-    () => bench.setBootHeld(!bench.bootHeld));
+  const bootSpec = (profile.buttons || []).find((b) => b.id === "boot");
+  const bootBtn = chip(bootSpec?.label || "BOOT", bootSpec?.note, () => bench.setBootHeld(!bench.bootHeld));
+  // ── BOOT pressed for the running firmware (sweep A99) ──
+  // The toggle above holds the strap, sampled at reset. Where the board's
+  // firmware also reads the pin while it runs (bootPressOffered: its bench
+  // block's read_while_running), this momentary control presses the twin's
+  // button input (emu_button) for as long as a hand holds it, on the RESET
+  // chip's pattern: down on a primary-button pointer (or Space/Enter), up on
+  // release, leave, cancel, blur, the page hidden or the view gone. BenchPower
+  // owns the press (pressBoot/releaseBoot), so a reset, the rail or the
+  // firmware's own restart lets go of it too, and it is live only while the
+  // app runs on a twin whose dist exports the button. The strap stays the
+  // toggle's: a reset into download mode is unchanged.
+  let press = null;
+  let mine = null; // the press this view made, the only one its hand lets go of
+  if (bootPressOffered(profile)) {
+    const b = el("button", "bench-chip bench-momentary bench-press");
+    const does = (bootSpec?.note || "").split("while running: ")[1];
+    b.title = "A momentary press on the twin's BOOT button, held for as long as you hold this; the toggle beside it is " +
+      `the strap. ${does ? `The running firmware: ${does}. ` : ""}Its reset hold runs too: held 3 s it warns on the ` +
+      "serial, held 10 s it erases the saved networks and screen settings (the identity stays).";
+    const st = el("span", "bench-chip-state");
+    b.append(el("strong", null, `${bootSpec?.label || "BOOT"} press`), st);
+    const down = (ev) => {
+      if (ev.type === "pointerdown" ? ev.button !== 0 : ev.repeat || (ev.key !== " " && ev.key !== "Enter")) return;
+      ev.preventDefault();
+      if (bench.pressBoot(ctx.emu)) mine = bench.bootPress;
+      sync();
+    };
+    b.addEventListener("pointerdown", down);
+    b.addEventListener("keydown", down);
+    for (const t of ["pointerup", "pointerleave", "pointercancel", "lostpointercapture", "keyup", "blur"]) b.addEventListener(t, letGo);
+    b.addEventListener("contextmenu", (ev) => ev.preventDefault()); // a long touch is a hold, not a menu
+    press = { b, st };
+  }
+  // A hand that leaves the window (another tab, another app) lets go too.
+  // Only of this view's own press: a view left behind (its tab closed) must
+  // not release a press made since on its successor.
+  function letGo() {
+    const own = mine;
+    mine = null;
+    if (own && bench.releaseBoot(own)) sync();
+  }
+  const hidden = () => {
+    if (document.hidden) letGo();
+  };
+  const unhook = () => {
+    letGo();
+    window.removeEventListener("blur", letGo);
+    document.removeEventListener("visibilitychange", hidden);
+    if (ctx.benchSync === sync) ctx.benchSync = null;
+  };
+  if (press) {
+    window.addEventListener("blur", letGo);
+    document.addEventListener("visibilitychange", hidden);
+    ctx.dispose.push(unhook);
+  }
   const resetBtn = el("button", "bench-chip bench-momentary");
   resetBtn.title = (profile.buttons || []).find((b) => b.id === "reset")?.note || "";
   resetBtn.append(
@@ -1055,7 +1117,7 @@ function benchView(ctx, guideCtx, noteLine) {
     bench.rate = bench.rate === 1 ? 60 : 1;
     sync();
   });
-  controls.append(usb.b, bat.b, sw.b, bootBtn.b, resetBtn, ff);
+  controls.append(usb.b, bat.b, sw.b, bootBtn.b, ...(press ? [press.b] : []), resetBtn, ff);
 
   // ── Live diagnostics ──────────────────────────────────────────────────
   const diag = el("dl", "bench-diag");
@@ -1093,7 +1155,21 @@ function benchView(ctx, guideCtx, noteLine) {
     sw.b.classList.toggle("on", bench.switchOn);
     sw.st.textContent = bench.switchOn ? "ON" : "OFF";
     bootBtn.b.classList.toggle("on", bench.bootHeld);
-    bootBtn.st.textContent = bench.bootHeld ? "held" : "released";
+    bootBtn.st.textContent = bench.bootHeld ? "strap held" : "strap released";
+    if (press) {
+      const held = !!bench.bootPressedOn;
+      const wired = !!ctx.emu?.c?.button;
+      const live = bench.bootPressable() && wired && !ctx.emu.dead;
+      // never disabled while held: the release must stay reachable
+      press.b.disabled = !live && !held;
+      press.b.classList.toggle("pressed", held);
+      press.b.setAttribute("aria-pressed", String(held));
+      press.st.textContent = held ? "pressed"
+        : live ? "hold to press"
+          : bench.mode === "off" ? "no power"
+            : bench.mode === "download" ? "ROM in download mode"
+              : ctx.emu?.c && !wired ? "not in this emulator build" : "app not running";
+    }
     ff.classList.toggle("on", bench.rate !== 1);
     const leds = bench.leds();
     for (const [id, dot] of ledEls) {
@@ -1113,6 +1189,9 @@ function benchView(ctx, guideCtx, noteLine) {
           : "off";
   };
 
+  // the sheet's power plane calls it on a reset, a rail change and a boot,
+  // whoever caused them (a chip here, or a troubleshooting flow's stage)
+  ctx.benchSync = sync;
   const refresh = async () => {
     sync();
     if (bench.mode !== "run" || !ctx.emu?.c) {
@@ -1142,8 +1221,11 @@ function benchView(ctx, guideCtx, noteLine) {
   const timer = setInterval(() => {
     if (!wrap.isConnected) {
       clearInterval(timer);
+      unhook();
       return;
     }
+    // a press held on a twin the bench has since replaced is let go
+    if (bench.bootPressedOn && bench.bootPressedOn !== ctx.emu && bench.releaseBoot()) sync();
     refresh();
   }, 600);
   ctx.dispose.push(() => clearInterval(timer));

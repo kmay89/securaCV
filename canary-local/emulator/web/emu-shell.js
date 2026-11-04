@@ -221,6 +221,11 @@ export class CanaryEmulator {
       // clips it (sweep A61: 50 on the nightlight, 100 where none applies).
       // Absent from a dist built before it, whose HAL set the level as asked.
       backlightCap: M._emu_backlight_cap_pct ? M.cwrap("emu_backlight_cap_pct", "number", []) : null,
+      // The BOOT button the running firmware reads (emu_support.cpp's
+      // emu_button: down drives the pin's active-low level, the level
+      // digitalRead() returns to main.cpp's BOOT grammar). Absent from a dist
+      // built without it: button() says so (sweep A99).
+      button: M._emu_button ? M.cwrap("emu_button", null, ["number"]) : null,
       setWifi: M.cwrap("emu_set_wifi", null, ["number", "number"]),
       setBroker: M.cwrap("emu_set_broker", null, ["number"]),
       setTz: M.cwrap("emu_set_tz", null, ["string"]),
@@ -746,6 +751,20 @@ export class CanaryEmulator {
     };
     cv.addEventListener("pointerup", up);
     cv.addEventListener("pointercancel", up);
+  }
+
+  /**
+   * Press (down) or release the twin's BOOT button: the level its firmware's
+   * digitalRead() returns (sweep A99). A release always reaches the module,
+   * retired or not, so a twin taken off the bench never keeps BOOT held; a
+   * press reaches only a live one.
+   * @returns false where it cannot: a dist without emu_button, no module
+   *   yet, or a press on a retired twin
+   */
+  button(down) {
+    if (!this.c?.button || (down && this.dead)) return false;
+    this.c.button(down ? 1 : 0);
+    return true;
   }
 
   // Synthetic gestures for guided tours ("watch what a long-press does").

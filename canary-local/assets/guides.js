@@ -325,6 +325,20 @@ export const DISPLAY_FIXES = [
   },
 ];
 
+// The screen-dark flow's download-mode guess, staged and told the same way on
+// every card; its words about the serial panel are the chip's own (the two
+// "Second guess" steps in BENCH_FIXES, sweep A101).
+const parkInDownload = async (ctx) => {
+  ctx.bench?.setBootHeld(true);
+  ctx.bench?.pressReset();
+  ctx.bench?.setBootHeld(false);
+  ctx.note?.("check the serial panel — then press RESET on the bench to recover");
+};
+const DARK_SERIAL_SILENT =
+  "Serial silent AND the screen dark at 10:00? Now suspect the " +
+  "display ribbon or the panel supply — the brain and the glass " +
+  "have separate failure modes.";
+
 // ── The bench's debug curriculum ────────────────────────────────────────
 // Symptom-first flows for the PHYSICAL layer — cable, battery, switch,
 // buttons, the hardwired lights. ctx additionally carries `bench` (the
@@ -433,16 +447,29 @@ export const BENCH_FIXES = [
           "board last reset, the ROM sits in download mode: rail up, PWR " +
           "lit, screen dead, serial saying 'waiting for download'. We just " +
           "did exactly that. Press RESET — alone — and it boots normally.",
-        stage: async (ctx) => {
-          ctx.bench?.setBootHeld(true);
-          ctx.bench?.pressReset();
-          ctx.bench?.setBootHeld(false);
-          ctx.note?.("check the serial panel — then press RESET on the bench to recover");
-        },
-        onDevice:
-          "Serial silent AND the screen dark at 10:00? Now suspect the " +
-          "display ribbon or the panel supply — the brain and the glass " +
-          "have separate failure modes.",
+        stage: parkInDownload,
+        onDevice: DARK_SERIAL_SILENT,
+      },
+      {
+        title: "Second guess: the ROM is waiting for a flasher",
+        // The same guess for a board whose chip's ROM voice holds no
+        // download line (the Nightlight's ESP32-C3: no Espressif source the
+        // Lab quotes prints its download banner): offered on a card that
+        // names its chip exactly where the step above is not (benchFixesFor,
+        // sweep A101). It quotes no ROM line; it names the bench's own note,
+        // which romBanner() prints there.
+        romMissing: "download",
+        strap: true, // names the BOOT strap: benchFixesFor() says the board's own
+        body:
+          "If BOOT (GPIO0) was held (or wedged by an enclosure misfit) when " +
+          "the board last reset, the ROM sits in download mode: rail up, " +
+          "screen dead, the app never started. We just did exactly that. " +
+          "The serial panel shows the bench's own note where the ROM's " +
+          "banner would be — the ROM waits for a flasher, and the Lab quotes " +
+          "no download-mode banner for this chip. Press RESET — alone — and " +
+          "it boots normally.",
+        stage: parkInDownload,
+        onDevice: DARK_SERIAL_SILENT,
       },
     ],
   },
@@ -618,12 +645,13 @@ export const BENCH_FIXES = [
           "lists what each press does (hover the BOOT chip). On real " +
           "hardware, a press that does nothing is a press that never " +
           "reaches the pin — a case that misses the button, or a stuck " +
-          "one. This bench's BOOT holds the strap only and is not wired to " +
-          "the twin's button input, so the glass will not answer it. Hold " +
-          "it AND press RESET — download mode.",
+          "one. On this bench the BOOT toggle holds the strap only; the " +
+          "press control beside it presses the twin's button while the app " +
+          "runs, and the twin answers with the same firmware code. Hold the " +
+          "strap AND press RESET — download mode.",
         stage: async (ctx) => {
           ctx.bench?.setBootHeld(true);
-          ctx.note?.("BOOT held — the strap only; the bench does not press the twin's button");
+          ctx.note?.("BOOT strap held — the strap only; the press control beside it presses the twin's button");
         },
       },
       {
@@ -655,15 +683,30 @@ export const BENCH_FIXES = [
 // the voice is the lines the Lab quotes, not all a chip's ROM prints, and for
 // the Nightlight's ESP32-C3 it quotes no restart or download banner (no
 // Espressif source on file quotes a production C3's), so no flow tells that
-// card to look for one. A step marked `boot` is
+// card to look for one. A step marked `romMissing` (a kind) is the other half:
+// offered exactly where the board names its chip and that chip's ROM voice
+// holds no line of that kind, so a card whose chip has no quoted download
+// banner still gets its download-mode guess, told in the bench's own words
+// (sweep A101). A step marked `boot` is
 // offered only where the board's BOOT button says the running firmware
 // reads it ("read") or never does ("ignored"): `read_while_running`, and
 // neither where the bench block does not say (sweep A83).
 const FLOWS_STRAP = "GPIO0";
+// The board's ROM voice holds a line of this kind (a string, not null).
+function romHas(profile, kind) {
+  const voice = ROM_VOICES[profile?.rom?.chip];
+  return !!voice && typeof voice[kind] === "string";
+}
+// A `romMissing` step: the board names its chip (so romBanner() prints the
+// bench's note there) and that chip's voice holds no line of the kind.
+function romLacks(profile, kind) {
+  if (!kind) return true;
+  return !!profile?.rom?.chip && !romHas(profile, kind);
+}
 function romSays(profile, quotes) {
   if (!quotes) return true;
   const voice = ROM_VOICES[profile?.rom?.chip];
-  return !!voice && quotes.every(({ kind, quote }) => typeof voice[kind] === "string" && voice[kind].includes(quote));
+  return !!voice && quotes.every(({ kind, quote }) => romHas(profile, kind) && voice[kind].includes(quote));
 }
 function bootSays(profile, boot) {
   if (!boot) return true;
@@ -680,7 +723,7 @@ export function benchFixesFor(profile) {
       ...f,
       steps: f.steps
         .filter((st) => profile?.power?.battery || !st.battery)
-        .filter((st) => romSays(profile, st.rom) && bootSays(profile, st.boot))
+        .filter((st) => romSays(profile, st.rom) && romLacks(profile, st.romMissing) && bootSays(profile, st.boot))
         .map((st) => (restrap && st.strap ? { ...st, title: pin(st.title), body: pin(st.body), onDevice: pin(st.onDevice) } : st)),
     }))
     .filter((f) => f.steps.length);
