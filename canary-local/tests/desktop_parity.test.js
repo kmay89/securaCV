@@ -31,6 +31,7 @@ const vm = require("node:vm");
 const ROOT = join(__dirname, "..", "..");     // repo root
 const CANARY = join(__dirname, "..");         // canary-local/
 const read = (p) => readFileSync(p, "utf8");
+const { readConst } = require("./c_const.js");
 
 const catalog = JSON.parse(read(join(CANARY, "devices/flash.json")));
 const libRs = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
@@ -4094,11 +4095,15 @@ test("A85: a second flash leaves one set of monitor listeners, and a re-read lea
 // comments and literals blanked, #if depth counted — written again here, so a
 // generator change that loosens it does not loosen this), not an independent
 // one: a blind spot of the method is shared. Every chip must be a command the
-// product's firmware answers with no #if around it, labeled in the
-// firmware's own help-menu words.
+// product's firmware answers, labeled in the firmware's own help-menu words:
+// with no #if around it, or (sweep A93) under exactly one `#if FEATURE_X`
+// that the product's build resolves to 1 (the env's -DFEATURE_X, else the
+// config header's #ifndef default), the same rule gen_flash.py's
+// feature_value() reads, written again.
 const A86_ROLE_FIRMWARE = {
   // role -> how its firmware reads the console
-  canary: { kind: "keys", handler: "firmware/canary/src/main.cpp" },
+  canary: { kind: "keys", handler: "firmware/canary/src/main.cpp", project: "firmware/canary",
+    config: "firmware/canary/include/canary_config.h" },
   wap: { kind: "keys", handler: "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino" },
   vision: { kind: "keys", handler: "firmware/projects/canary-vision/src/main.cpp" },
   sense: { kind: "words", handler: "firmware/common/console/tuning_console.h",
@@ -4125,30 +4130,58 @@ const a86Body = (src, name) => {
   return { raw: src.slice(m.index + m[0].length, i - 1), stripped: stripped.slice(m.index + m[0].length, i - 1) };
 };
 
-// Lines of a body under no #if opened inside it, as [stripped, raw] pairs.
-const a86Unconditional = ({ raw, stripped }) => {
-  const rawLines = raw.split("\n"), out = [];
-  let depth = 0;
+// Every line of a body that is not itself a conditional line, as [stripped,
+// raw, frames]: the conditionals opened inside the body that enclose it,
+// each { opener, branch } (branch: the #else / #elif it sits after, or null).
+// A close or a branch with nothing open marks every later line unbalanced.
+const A86_OPEN = /^\s*#\s*if/, A86_BRANCH = /^\s*#\s*(?:else|elif)/, A86_CLOSE = /^\s*#\s*endif\b/;
+const a86Lines = ({ raw, stripped }) => {
+  const rawLines = raw.split("\n"), out = [], stack = [];
+  let broken = false;
   stripped.split("\n").forEach((line, n) => {
-    if (/^\s*#\s*if/.test(line)) depth++;
-    else if (/^\s*#\s*endif\b/.test(line)) depth--;
-    else if (depth === 0) out.push([line, rawLines[n]]);
+    if (A86_OPEN.test(line)) stack.push({ opener: line.trim(), branch: null });
+    else if (A86_BRANCH.test(line)) { if (stack.length) stack[stack.length - 1].branch = line.trim(); else broken = true; }
+    else if (A86_CLOSE.test(line)) { if (stack.length) stack.pop(); else broken = true; }
+    else out.push([line, rawLines[n], [...(broken ? [{ opener: "(unbalanced)", branch: null }] : []), ...stack.map((f) => ({ ...f }))]]);
   });
   return out;
+};
+// Lines of a body under no #if opened inside it, as [stripped, raw] pairs.
+const a86Unconditional = (body) => a86Lines(body).filter(([, , f]) => !f.length).map(([l, r]) => [l, r]);
+// The one gate a key may sit behind: exactly one enclosing `#if NAME`, in its
+// own branch. Anything else (nested, compound, defined(), #ifdef, #else,
+// #elif) is null: not a gate this oracle reads.
+const a93Gate = (frames) => {
+  if (frames.length !== 1 || frames[0].branch !== null) return null;
+  const m = /^#\s*if[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*$/.exec(frames[0].opener);
+  return m ? m[1] : null;
 };
 const a86Words = (t) => new Set(t.toLowerCase().replace(/-/g, "").split(/[^a-z0-9]+/).filter(Boolean));
 const a86Literals = (t) => [...t.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)].map((m) => m[1]);
 
 // A key console's answers, read from one handler source: the keys
-// handle_serial_commands() takes under no #if opened inside it, and each
-// key's help-line words. { commands: Set, help: Map(key -> Set(words)) }.
+// handle_serial_commands() takes under no #if opened inside it, each key it
+// takes only under one `#if NAME` (with NAME), the keys under any other
+// conditional, and each key's help-line words.
+// { commands: Set, gated: Map(key -> macro), refused: Set, help: Map(key -> Set(words)) }.
 function a86ReadKeys(src) {
-  const commands = new Set(), help = new Map();
+  const commands = new Set(), help = new Map(), gates = new Map(), odd = new Set();
   const body = a86Body(src, "handle_serial_commands");
-  for (const [line, raw] of a86Unconditional(body)) {
+  for (const [line, raw, frames] of a86Lines(body)) {
     for (const m of raw.matchAll(/\bcase\s+'(.)'\s*:|\b\w+\s*==\s*'(.)'/g)) {
-      if (line[m.index] !== " ") commands.add(m[1] || m[2]);
+      if (line[m.index] === " ") continue;
+      const k = m[1] || m[2];
+      const gate = frames.length ? a93Gate(frames) : null;
+      if (!frames.length) commands.add(k);
+      else if (gate) gates.set(k, new Set([...(gates.get(k) || []), gate]));
+      else odd.add(k);
     }
+  }
+  const gated = new Map(), refused = new Set();
+  for (const k of new Set([...gates.keys(), ...odd])) {
+    if (commands.has(k)) continue;
+    if (odd.has(k) || gates.get(k).size > 1) refused.add(k);
+    else gated.set(k, [...gates.get(k)][0]);
   }
   let helpText = body.raw;
   if (/\bprint_help\s*\(/.test(body.stripped)) helpText += a86Body(src, "print_help").raw;
@@ -4156,7 +4189,7 @@ function a86ReadKeys(src) {
     const m = /^[\s│]*(\S)(?:\s*\/\s*\S)?\s+[-:]\s+(.+?)[\s│]*$/.exec(lit);
     if (m) help.set(m[1], new Set([...(help.get(m[1]) || []), ...a86Words(m[2])]));
   }
-  return { commands, help };
+  return { commands, gated, refused, help };
 }
 
 // A word console's answers (the tuning console's execute_()): its words, the
@@ -4180,18 +4213,154 @@ function a86ReadWords(src) {
 // Whether a project's source feeds its USB console to the tuning console.
 const a86FeedsConsole = (src) => /\.feed\s*\(\s*\(char\)\s*Serial\s*\.\s*read\s*\(\s*\)\s*\)/.test(a86Strip(src));
 
-// What one role's firmware answers: { commands: Set, args: Set("word arg"), help: Map(cmd -> Set(words)) }.
+// What one role's firmware answers: { commands: Set, gated: Map(key -> macro),
+// refused: Set, args: Set("word arg"), help: Map(cmd -> Set(words)) }.
 function a86Answered(role) {
   const fw = A86_ROLE_FIRMWARE[role];
   assert.ok(fw, `no firmware known for role ${role}`);
   if (fw.kind === "keys") return { kind: fw.kind, args: new Set(), ...a86ReadKeys(read(join(ROOT, fw.handler))) };
+  const none = { gated: new Map(), refused: new Set() };
   if (fw.kind === "words") {
     // …and the project actually feeds its USB console to it.
     assert.ok(a86FeedsConsole(read(join(ROOT, fw.wiring))),
       "the Sense firmware no longer feeds its serial console to the tuning console");
-    return { kind: fw.kind, ...a86ReadWords(read(join(ROOT, fw.handler))) };
+    return { kind: fw.kind, ...none, ...a86ReadWords(read(join(ROOT, fw.handler))) };
   }
-  return { kind: fw.kind, commands: new Set(), args: new Set(), help: new Map() };
+  return { kind: fw.kind, ...none, commands: new Set(), args: new Set(), help: new Map() };
+}
+
+// ── sweep A93: the value a product's build gives a feature macro ────────────
+// The env a flasher product's image is built from, read off
+// firmware/build_matrix.json (the flasher installs a product's RELEASE image:
+// a product with levels's `release` level, every other product's one build),
+// which scripts/lint_build_matrix.py holds to platformio.ini and the
+// flasher catalog: an input gen_flash.py does not read.
+const BUILD_MATRIX = JSON.parse(read(join(ROOT, "firmware/build_matrix.json")));
+function a93Env(productId) {
+  const p = BUILD_MATRIX.products.find((x) => `${BUILD_MATRIX.flasher.productPrefix}${x.id}` === productId);
+  if (!p) return null;
+  return p.hasLevels ? p.levels.release.env : p.build.env;
+}
+
+// A project's PlatformIO sections, its platformio.ini and the extra_configs
+// it pulls in: name -> body (the first definition wins, as PlatformIO's does).
+function a93Sections(projectDir) {
+  const main = read(join(ROOT, projectDir, "platformio.ini"));
+  const files = [main, ...iniListValues(main, "extra_configs").filter((f) => f.endsWith(".ini"))
+    .map((f) => resolve(ROOT, projectDir, f)).filter((f) => existsSync(f)).map((f) => read(f))];
+  const sections = new Map();
+  for (const text of files) {
+    for (const chunk of text.split(/^\[/m).slice(1)) {
+      const name = chunk.slice(0, chunk.indexOf("]")).trim();
+      if (!sections.has(name)) sections.set(name, chunk.slice(chunk.indexOf("]") + 1));
+    }
+  }
+  return sections;
+}
+// One key's value in a section body (its line and indented continuation
+// lines, comment lines dropped), or null when the section does not set it.
+function a93Value(body, key) {
+  const lines = body.split("\n");
+  const i = lines.findIndex((l) => new RegExp(`^\\s*${key.replace(/[.]/g, "\\.")}\\s*=`).test(l));
+  if (i < 0) return null;
+  const vals = [lines[i].replace(/^[^=]*=/, "")];
+  for (let j = i + 1; j < lines.length; j++) {
+    const t = lines[j].trim();
+    if (!t || /^[;#]/.test(t)) continue;
+    if (!/^[ \t]/.test(lines[j])) break;
+    vals.push(t);
+  }
+  return vals.join("\n");
+}
+// The build flags a section resolves to: its own, each ${other.build_flags}
+// expanded, or its `extends`' when it sets none.
+function a93Flags(sections, name, seen = new Set()) {
+  if (seen.has(name) || !sections.has(name)) return "";
+  seen.add(name);
+  const body = sections.get(name);
+  const own = a93Value(body, "build_flags");
+  if (own === null) {
+    const ext = /^\s*extends\s*=\s*(\S+)/m.exec(body);
+    return ext ? a93Flags(sections, ext[1], seen) : "";
+  }
+  return [own, ...[...own.matchAll(/\$\{([A-Za-z0-9_.:-]+)\.build_flags\}/g)].map((m) => a93Flags(sections, m[1], seen))].join("\n");
+}
+// Every section an env resolves through: itself, what it extends, what it
+// interpolates.
+function a93Chain(sections, name) {
+  const chain = new Set(), todo = [name];
+  while (todo.length) {
+    const cur = todo.pop();
+    if (chain.has(cur)) continue;
+    chain.add(cur);
+    const body = sections.get(cur) || "";
+    todo.push(...(a93Value(body, "extends") || "").split(/[,\s]+/).filter(Boolean));
+    todo.push(...[...body.matchAll(/\$\{([A-Za-z0-9_.:-]+)\.[A-Za-z0-9_]+\}/g)].map((m) => m[1]));
+  }
+  return chain;
+}
+// The value `macro` has when `env` builds `projectDir` with `config` as its
+// defaults header: { value } or { error }. The env's -DMACRO / -DMACRO=<d>
+// first; the macro named in any other spelling or under any other key in the
+// env's sections (or the base [env]) is an error, as gen_flash.py refuses
+// it. Otherwise the header's default, read by c_const.js's rule, which must
+// sit directly in `#ifndef MACRO` (or `#if !defined(MACRO)`) under nothing
+// but an include guard. 1 or 0, nothing else.
+function a93FeatureValue(projectDir, config, env, macro) {
+  const named = new RegExp(`${macro}(?![A-Za-z0-9_])`);
+  const strict = new RegExp(`(?:^|\\s)(-D${macro}(?:=\\d+)?)(?=\\s|$)`, "g");
+  const values = new Set();
+  if (!/^(?:profile|arduino):/.test(env)) {
+    const sections = a93Sections(projectDir);
+    for (const sec of new Set([...a93Chain(sections, `env:${env}`), ...a93Chain(sections, "env")])) {
+      let key = null;
+      for (const line of (sections.get(sec) || "").split("\n")) {
+        if (!line.trim() || /^\s*[;#]/.test(line)) continue;
+        const kv = /^([A-Za-z0-9_.:-]+)\s*=/.exec(line);
+        if (kv) key = kv[1];
+        else if (!/^[ \t]/.test(line)) key = null;
+        if (named.test(line) && (key !== "build_flags" || named.test(line.replace(strict, " ")))) {
+          return { error: `[${sec}] ${key || "(bare line)"} names ${macro} in a spelling this oracle does not read` };
+        }
+      }
+    }
+    for (const m of a93Flags(sections, `env:${env}`).matchAll(strict)) {
+      const [, eq, digits] = /^-D[A-Za-z0-9_]+(=?)(\d*)$/.exec(m[1]);
+      if (eq && digits.length > 1 && digits.startsWith("0")) return { error: `-D${macro}=${digits} is octal` };
+      values.add(eq ? Number(digits) : 1);
+    }
+  }
+  if (values.size > 1) return { error: `env ${env} defines ${macro} as ${[...values].sort()}` };
+  // The header is read whether or not the env sets the macro: a default that
+  // is not the overridable #ifndef kind would win over the env's -D.
+  let fromHeader = null;
+  const text = read(join(ROOT, config));
+  const stripped = a86Strip(text);
+  if (new RegExp(`^[ \\t]*#[ \\t]*define[ \\t]+${macro}(?![A-Za-z0-9_])`, "m").test(stripped)) {
+    try { fromHeader = readConst(text, macro, config); } catch (e) { return { error: e.message }; }
+    const directives = stripped.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("#"));
+    const stack = [];
+    for (const [n, d] of directives.entries()) {
+      if (A86_OPEN.test(d)) stack.push({ n, opener: d, branch: null });
+      else if (A86_BRANCH.test(d) && stack.length) stack[stack.length - 1].branch = d;
+      else if (A86_CLOSE.test(d) && stack.length) stack.pop();
+      else if (new RegExp(`^#[ \\t]*define[ \\t]+${macro}(?![A-Za-z0-9_])`).test(d)) {
+        const top = stack[stack.length - 1];
+        const guarded = top && top.branch === null && new RegExp(
+          `^(?:#[ \\t]*ifndef[ \\t]+${macro}|#[ \\t]*if[ \\t]+![ \\t]*defined[ \\t]*(?:\\([ \\t]*${macro}[ \\t]*\\)|[ \\t]+${macro}))$`).test(top.opener);
+        const outerOk = stack.slice(0, -1).every((f) => {
+          const g = /^#[ \t]*ifndef[ \t]+([A-Za-z_][A-Za-z0-9_]*)$/.exec(f.opener);
+          return g && f.branch === null && new RegExp(`^#[ \\t]*define[ \\t]+${g[1]}$`).test(directives[f.n + 1] || "");
+        });
+        if (!guarded || !outerOk) return { error: `${config}'s ${macro} is not the #ifndef default an env's -D overrides` };
+        break;
+      }
+    }
+  }
+  const value = values.size ? [...values][0] : fromHeader;
+  if (value === null) return { error: `neither env ${env} nor ${config} defines ${macro}` };
+  if (value !== 0 && value !== 1) return { error: `${macro} is ${value} for env ${env}, neither 0 nor 1` };
+  return { value };
 }
 
 // Every reason a product's chips are not its firmware's; [] when they are.
@@ -4201,7 +4370,22 @@ function a86Wrong(product, monitor) {
   if (monitor.kind !== fw.kind) out.push(`${product.id}: kind ${monitor.kind}, its firmware reads ${fw.kind}`);
   for (const [cmd, label] of monitor.cmds) {
     const [word, ...rest] = cmd.split(" ");
-    if (!fw.commands.has(word)) { out.push(`${product.id}: ${JSON.stringify(cmd)} is not a command its firmware answers`); continue; }
+    if (!fw.commands.has(word) && fw.gated.has(word)) {
+      // A93: offered only where the product's build compiles it in.
+      const macro = fw.gated.get(word), env = a93Env(product.id), spec = A86_ROLE_FIRMWARE[product.role];
+      const got = !env ? { error: `no build env known for ${product.id} in firmware/build_matrix.json` }
+        : !spec.config ? { error: `no config header known for role ${product.role}` }
+        : a93FeatureValue(spec.project, spec.config, env, macro);
+      if (got.error) { out.push(`${product.id}: ${JSON.stringify(cmd)} is gated by ${macro} — ${got.error}`); continue; }
+      if (got.value !== 1) {
+        out.push(`${product.id}: ${JSON.stringify(cmd)} is compiled out of its build (${macro}=${got.value} for env ${env})`);
+        continue;
+      }
+    } else if (!fw.commands.has(word)) {
+      const why = fw.refused.has(word) ? " (it sits under a conditional that is not one #if NAME)" : "";
+      out.push(`${product.id}: ${JSON.stringify(cmd)} is not a command its firmware answers${why}`);
+      continue;
+    }
     for (const a of rest) if (!fw.args.has(`${word} ${a}`)) out.push(`${product.id}: ${JSON.stringify(cmd)} — no ${a} after ${word}`);
     const missing = [...a86Words(label)].filter((w) => !(fw.help.get(word) || new Set()).has(w));
     if (missing.length) out.push(`${product.id}: ${JSON.stringify(cmd)} labeled ${JSON.stringify(label)} — not its help line's words (${missing})`);
@@ -4268,8 +4452,68 @@ test("A86: every product's monitor chips are commands its own firmware answers, 
   assert.ok(a86Wrong(wap, { ...wap.monitor, cmds: [["h", "help"], ["j", "self-manifest"]] })
     .some((w) => /"j" is not a command/.test(w)), "a key the WAP does not answer must fail");
   const flagship = catalog.products.find((x) => x.id === "securacv-canary");
-  assert.ok(a86Wrong(flagship, { ...flagship.monitor, cmds: [["h", "help"], ["m", "MQTT"]] })
-    .some((w) => /"m" is not a command/.test(w)), "a key behind #if FEATURE_HA_MQTT must fail");
+  const esp32cam = catalog.products.find((x) => x.id === "securacv-canary-esp32cam");
+  assert.deepStrictEqual(a86Wrong(flagship, { ...flagship.monitor, cmds: [["h", "help"], ["m", "MQTT"]] }), [],
+    "the Canary's build (release_ha) sets -DFEATURE_HA_MQTT=1: its m is a command it answers");
+  assert.ok(a86Wrong(esp32cam, { ...esp32cam.monitor, cmds: [["h", "help"], ["m", "MQTT"]] })
+    .some((w) => /"m" is compiled out of its build \(FEATURE_HA_MQTT=0 for env esp32cam\)/.test(w)),
+    "a key behind #if FEATURE_HA_MQTT must fail on a build that compiles it out");
+  assert.ok(a86Wrong(flagship, { ...flagship.monitor, cmds: [["h", "help"], ["n", "nearby"]] })
+    .some((w) => /"n" is not a command its firmware answers \(it sits under a conditional that is not one #if NAME\)/.test(w)),
+    "a key nested under two conditionals is no chip");
+
+  // A93: the flagship's gated status readouts are on every flagship product
+  // whose build compiles them (all four: canary_config.h defaults them to 1
+  // and no env sets them), and MQTT only on the HA build.
+  const flagshipIds = catalog.products.filter((p) => p.role === "canary").map((p) => p.id).sort();
+  assert.deepStrictEqual(flagshipIds, ["securacv-canary", "securacv-canary-esp32cam", "securacv-canary-freenove-s3", "securacv-canary-wroom"]);
+  const fwCanary = a86Answered("canary");
+  assert.deepStrictEqual(["b", "p", "d", "r", "m"].map((k) => fwCanary.gated.get(k)),
+    ["FEATURE_POWER_MONITOR", "FEATURE_POWER_POLICY", "FEATURE_DIAGNOSTICS", "FEATURE_DATA_MGMT", "FEATURE_HA_MQTT"]);
+  for (const id of flagshipIds) {
+    const env = a93Env(id);
+    for (const k of ["b", "p", "d", "r"]) {
+      assert.deepStrictEqual(a93FeatureValue("firmware/canary", A86_ROLE_FIRMWARE.canary.config, env, fwCanary.gated.get(k)), { value: 1 });
+      assert.ok(keysOf(id).includes(k), `${id} (${env}) compiles ${k} in, and offers no chip for it`);
+    }
+    const mqtt = a93FeatureValue("firmware/canary", A86_ROLE_FIRMWARE.canary.config, env, "FEATURE_HA_MQTT").value;
+    assert.strictEqual(keysOf(id).includes("m"), mqtt === 1, `${id} (${env}): an m chip exactly where FEATURE_HA_MQTT is 1`);
+    assert.strictEqual(mqtt === 1, id === "securacv-canary", `${id}: only release_ha sets -DFEATURE_HA_MQTT=1`);
+  }
+  // The oracle's value reader on the env and header shapes it must refuse
+  // or read as the compiler would: a stand-in project tree under ROOT's
+  // reader would be a second fixture, so the shapes are spelled into a
+  // scratch platformio.ini and header beside the real ones.
+  const a93Dir = mkdtempSync(join(tmpdir(), "a93-"));
+  try {
+    const rel = relative(ROOT, a93Dir);
+    const ini = (flag) => `[env]\nbuild_flags =\n    -DBOARD_HAS_PSRAM\n\n[env:x]\nbuild_flags =\n    \${env.build_flags}\n    ${flag}\n`;
+    const value = (flag, cfg) => {
+      writeFileSync(join(a93Dir, "platformio.ini"), ini(flag));
+      writeFileSync(join(a93Dir, "cfg.h"), cfg);
+      return a93FeatureValue(rel, join(rel, "cfg.h"), "x", "FEATURE_X");
+    };
+    const guarded = (v) => `#ifndef CFG_H\n#define CFG_H\n#ifndef FEATURE_X\n  #define FEATURE_X ${v}  // default\n#endif\n#endif\n`;
+    assert.deepStrictEqual(value("-DFEATURE_X=1", guarded(0)), { value: 1 }, "the env's -D over the #ifndef default");
+    assert.deepStrictEqual(value("-DFEATURE_X=0", guarded(1)), { value: 0 });
+    assert.deepStrictEqual(value("-DFEATURE_X", guarded(0)), { value: 1 }, "a bare -D is 1");
+    assert.deepStrictEqual(value("-DOTHER=1", guarded(1)), { value: 1 }, "no -D: the header's default");
+    assert.deepStrictEqual(value("-DOTHER=1", "#pragma once\n#if !defined(FEATURE_X)\n#define FEATURE_X 0\n#endif\n"), { value: 0 });
+    for (const flag of ["-DFEATURE_X=0x1", "-DFEATURE_X=true", "'-DFEATURE_X=1'", "-D FEATURE_X"]) {
+      assert.match(value(flag, guarded(1)).error || "", /names FEATURE_X in a spelling this oracle does not read/, flag);
+    }
+    assert.match(value("-DFEATURE_X=2", guarded(1)).error || "", /neither 0 nor 1/);
+    assert.match(value("-DFEATURE_X=01", guarded(1)).error || "", /octal/);
+    assert.match(value("-DFEATURE_X=1\n    -DFEATURE_X=0", guarded(1)).error || "", /defines FEATURE_X as 0,1/);
+    assert.match(value("-DOTHER=1", guarded("(1)")).error || "", /not a plain integer literal/);
+    assert.match(value("-DFEATURE_X=1", "#pragma once\n#define FEATURE_X 0\n").error || "", /not the #ifndef default/,
+      "an unguarded #define wins over the env's -D, so the env's reading is refused");
+    assert.match(value("-DOTHER=1", "#pragma once\n#if BIG\n#ifndef FEATURE_X\n#define FEATURE_X 1\n#endif\n#endif\n").error || "",
+      /not the #ifndef default/, "a default under another conditional");
+    assert.match(value("-DOTHER=1", "#pragma once\n").error || "", /neither env x nor .* defines FEATURE_X/);
+  } finally {
+    rmSync(a93Dir, { recursive: true, force: true });
+  }
 
   // Each of the oracle's other checks fails on its own, one wrong thing at a time.
   const only = (product, monitor, re, why) => {
@@ -4302,7 +4546,23 @@ test("A86: every product's monitor chips are commands its own firmware answers, 
     "}",
   ].join("\n"));
   assert.deepStrictEqual([...keys.commands].sort(), ["a", "f"], "commented, quoted and #if-gated keys are not answers");
+  assert.deepStrictEqual([...keys.gated], [["t", "FEATURE_X"]], "a key under one #if NAME is gated by NAME");
   assert.deepStrictEqual([...keys.help.get("a")], ["all"]);
+  // Every gate shape but one #if NAME (a comment after it is not code) is no gate.
+  const shapes = a86ReadKeys([
+    "void handle_serial_commands() {",
+    "#if FEATURE_A && FEATURE_B", "  case 'a': break;", "#endif",
+    "#if defined(FEATURE_X)", "  case 'b': break;", "#endif",
+    "#if FEATURE_X", "#if FEATURE_Y", "  case 'c': break;", "#endif", "#endif",
+    "#if FEATURE_X", "  case 'd': break;", "#else", "  case 'e': break;", "#endif",
+    "#if FEATURE_X", "  case 'f': break;", "#elif FEATURE_Y", "  case 'g': break;", "#endif",
+    "#ifdef FEATURE_X", "  case 'h': break;", "#endif",
+    "#if FEATURE_X // why", "  case 'i': break;", "#endif",
+    "#if FEATURE_X", "  case 'm': break;", "#endif", "#if FEATURE_Y", "  case 'm': break;", "#endif",
+    "}",
+  ].join("\n"));
+  assert.deepStrictEqual(Object.fromEntries(shapes.gated), { d: "FEATURE_X", f: "FEATURE_X", i: "FEATURE_X" });
+  assert.deepStrictEqual([...shapes.refused].sort(), ["a", "b", "c", "e", "g", "h", "m"]);
   const words = a86ReadWords([
     "void execute_() {",
     "  if (ieq_(cmd, \"help\")) {}",

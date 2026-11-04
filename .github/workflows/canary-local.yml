@@ -228,6 +228,15 @@ on:
       # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
       # and the display's are under globs above)
       - "firmware/canary/src/main.cpp"
+      # ...and a flagship chip behind one #if FEATURE_X is offered where the
+      # product's env resolves it to 1 (sweep A93): gen_flash.py and the
+      # desktop_parity oracle read each env's -D flags (platformio.ini and the
+      # extra_configs it pulls in) and the #ifndef defaults, and the oracle
+      # takes each product's env from build_matrix.json
+      - "firmware/canary/platformio.ini"
+      - "firmware/canary/include/canary_config.h"
+      - "firmware/provisioning/platformio_secure.ini"
+      - "firmware/build_matrix.json"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)
@@ -475,6 +484,15 @@ on:
       # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
       # and the display's are under globs above)
       - "firmware/canary/src/main.cpp"
+      # ...and a flagship chip behind one #if FEATURE_X is offered where the
+      # product's env resolves it to 1 (sweep A93): gen_flash.py and the
+      # desktop_parity oracle read each env's -D flags (platformio.ini and the
+      # extra_configs it pulls in) and the #ifndef defaults, and the oracle
+      # takes each product's env from build_matrix.json
+      - "firmware/canary/platformio.ini"
+      - "firmware/canary/include/canary_config.h"
+      - "firmware/provisioning/platformio_secure.ini"
+      - "firmware/build_matrix.json"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)

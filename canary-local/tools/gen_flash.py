@@ -48,6 +48,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from _devices import by_flasher_product, load_manifests
 from _tooling import die, read_const, repo_root
@@ -2400,12 +2401,26 @@ def env_defines(project: str, env: str, macro: str) -> bool:
     exists for — and a generator that cannot spell a value must refuse, not
     pass (CLAUDE.md).
     """
+    return bool(env_define_tokens(
+        project, env, macro, f"{project} env {env}'s broker_tls",
+        "the miss would be a plain-only build the catalog calls TLS-capable"))
+
+
+def env_define_tokens(project: str, env: str, macro: str, what: str, miss: str) -> list[str]:
+    """Every `-DMACRO` / `-DMACRO=<digits>` token in a build env's resolved
+    build_flags, after the refusal env_defines() states: the macro named
+    anywhere in the env's sections (or the base [env]) in a spelling or under
+    a key this reader does not evaluate stops the run, naming `what` cannot be
+    derived and `miss`, what guessing would put in the catalog. env_defines()
+    answers defined-ness from it, env_define_value() the value."""
     if env.startswith(("profile:", "arduino:")):
-        return False
+        return []
     sections = pio_sections(project)
     own = f"env:{env}"
     name = re.escape(macro)
-    strict = re.compile(rf"(?:^|\s)-D{name}(?:=\d+)?(?=\s|$)")
+    # [0-9], not \d: Python's \d also takes other scripts' digits, which
+    # neither the compiler nor desktop_parity.test.js's JavaScript mirror does.
+    strict = re.compile(rf"(?:^|\s)(-D{name}(?:=[0-9]+)?)(?=\s|$)")
     # Any token that ENDS in the macro name: `-DMACRO`, `'-DMACRO=1'`,
     # `-D MACRO`, a bare mention (no leading \b — the D of -D sits flush
     # against the name, so a word boundary there would miss every spelling
@@ -2419,11 +2434,32 @@ def env_defines(project: str, env: str, macro: str) -> bool:
             if named.search(leftover):
                 raise SystemExit(
                     f"gen_flash.py: [{sec}] {key or '(bare line)'} names {macro} in a spelling or under a key "
-                    f"this derivation does not parse, so {project} env {env}'s broker_tls cannot be derived. "
+                    f"this derivation does not parse, so {what} cannot be derived. "
                     f"Accepted: one unquoted -D{macro} or -D{macro}=<digits> token in build_flags. Refused "
-                    f"rather than guessed: the miss would be a plain-only build the catalog calls TLS-capable.")
+                    f"rather than guessed: {miss}.")
     flags = pio_build_flags(sections, own) or pio_build_flags(sections, "env")  # base [env]: the canary pattern
-    return bool(strict.search(flags))
+    return [m.group(1) for m in strict.finditer(flags)]
+
+
+def env_define_value(project: str, env: str, macro: str, what: str, miss: str) -> int | None:
+    """The value a build env's -D gives `macro`, or None when it gives none:
+    `-DMACRO` is 1, as the compiler reads it, and `-DMACRO=<digits>` is the
+    digits, a plain decimal (a leading zero is octal in C, so `010` is
+    refused rather than read as 10). Refuses every spelling env_defines()
+    refuses, and an env that defines the macro twice with different values
+    (which one wins is the order of a command line this reader does not
+    rebuild)."""
+    values = set()
+    for token in env_define_tokens(project, env, macro, what, miss):
+        _, eq, digits = token.partition("=")
+        if eq and len(digits) > 1 and digits.startswith("0"):
+            die(f"{what}: {project} env {env} spells -D{macro}={digits}, a leading-zero (octal) value; "
+                f"refusing to read a number out of it")
+        values.add(int(digits) if eq else 1)
+    if len(values) > 1:
+        die(f"{what}: {project} env {env} defines {macro} as {sorted(values)}; which one the compiler takes "
+            f"is the order of its command line, so refusing to pick one")
+    return values.pop() if values else None
 
 
 def board_for_env(project: str, env: str) -> str:
@@ -2531,9 +2567,13 @@ def supports_serial_receipt(project: str) -> bool:
 #
 # The table chooses WHICH commands get a chip and the short label each shows;
 # it cannot invent one. monitor_block() refuses a chip whose command the
-# firmware's own handler does not answer unconditionally (a key behind an
-# `#if` may be compiled out of the very build being watched), and a label
-# whose words are not the firmware's own help-menu words for that command.
+# firmware's own handler does not answer, and a label whose words are not the
+# firmware's own help-menu words for that command. A key the handler answers
+# only under one `#if FEATURE_X` may be compiled out of the very build being
+# watched, so its chip names the gate, (key, label, "FEATURE_X"), and is
+# offered only on a product whose env resolves FEATURE_X to 1 (sweep A93,
+# feature_value); a key under any other conditional (nested, compound,
+# defined(), #ifdef, an #else or #elif branch) is refused by name.
 # Chips change nothing the board keeps, by choice: the reboot (`x`), the
 # USB-drive mode cycle (`u`), the knob writes (`set`, `reset`) stay in the
 # typed box. Sense's `stream on` / `stream off` are the one pair that change
@@ -2550,12 +2590,22 @@ MONITOR_PLACEHOLDERS = {
     "unknown": "type a command — this board’s firmware wasn’t identified, so no command chips are shown",
 }
 
-MONITOR_VOCAB = {
+MONITOR_VOCAB: dict[str, dict[str, Any]] = {
     "firmware/canary": {
         "kind": "keys",
         "handler": "firmware/canary/src/main.cpp",
+        # Where a gated chip's macro gets its default when the env sets none
+        # (feature_value): the `#ifndef FEATURE_X` / `#define FEATURE_X 1`
+        # pairs main.cpp includes first.
+        "config": "firmware/canary/include/canary_config.h",
         "cmds": [("h", "help"), ("j", "self-manifest"), ("i", "identity"), ("s", "status"),
-                 ("t", "all tests"), ("e", "last boot"), ("f", "provenance"), ("w", "tamper log")],
+                 ("t", "all tests"), ("e", "last boot"), ("f", "provenance"), ("w", "tamper log"),
+                 # Status readouts the handler answers only under their
+                 # feature's #if (sweep A93): offered where the product's
+                 # env compiles them in, absent where it does not.
+                 ("b", "battery", "FEATURE_POWER_MONITOR"), ("p", "power policy", "FEATURE_POWER_POLICY"),
+                 ("d", "diagnostics", "FEATURE_DIAGNOSTICS"), ("r", "data management", "FEATURE_DATA_MGMT"),
+                 ("m", "MQTT", "FEATURE_HA_MQTT")],
     },
     "firmware/projects/canary-wap": {
         "kind": "keys",
@@ -2615,21 +2665,80 @@ def c_function_body(text: str, name: str, where: str) -> tuple[str, int]:
     return text[start:i - 1], start
 
 
+# A preprocessor conditional line, read on comment- and literal-blanked text:
+# an opener (#if, #ifdef, #ifndef), a branch (#else, #elif and its C23
+# spellings) or the close.
+_PP_OPEN = re.compile(r"\s*#\s*if")
+_PP_BRANCH = re.compile(r"\s*#\s*(?:else|elif)")
+_PP_CLOSE = re.compile(r"\s*#\s*endif\b")
+# The one gate a chip may sit behind: `#if NAME`, one macro name and nothing
+# else on the line (a comment after it is blanked before this reads it).
+_PP_GATE = re.compile(r"\s*#\s*if[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*")
+
+
+def gated_lines(body: str) -> list[tuple[str, str, tuple[tuple[str, str | None], ...]]]:
+    """(stripped line, raw line, frames) for every line of `body` that is not
+    itself a conditional line. `frames` are the preprocessor conditionals
+    opened inside `body` that enclose the line, outermost first, each as
+    (opener, branch): the opener as written (`#if FEATURE_X`, comments
+    blanked) and the `#else` / `#elif ...` the line sits after, or None in the
+    opener's own branch. A close or a branch with nothing open (the body ends
+    a conditional it did not open) marks every later line as under an
+    unbalanced conditional, which no reader here takes as an answer."""
+    out = []
+    stack: list[tuple[str, str | None]] = []
+    broken = False
+    for raw, line in zip(body.splitlines(), _c_strip(body).splitlines()):
+        if _PP_OPEN.match(line):
+            stack.append((line.strip(), None))
+        elif _PP_BRANCH.match(line):
+            if stack:
+                stack[-1] = (stack[-1][0], line.strip())
+            else:
+                broken = True
+        elif _PP_CLOSE.match(line):
+            if stack:
+                stack.pop()
+            else:
+                broken = True
+        else:
+            frames = tuple(stack)
+            if broken:
+                frames = (("an unbalanced #else/#endif", None),) + frames
+            out.append((line, raw, frames))
+    return out
+
+
 def unconditional_lines(body: str) -> list[tuple[str, str]]:
     """(stripped line, raw line) pairs of `body` that sit under no preprocessor
     conditional opened inside it. A command answered only under `#if FEATURE_X`
     may be compiled out of the very build on the bench, so it is not one this
-    catalog may offer as a chip."""
-    out = []
-    depth = 0
-    for raw, line in zip(body.splitlines(), _c_strip(body).splitlines()):
-        if re.match(r"\s*#\s*if", line):
-            depth += 1
-        elif re.match(r"\s*#\s*endif\b", line):
-            depth -= 1
-        elif depth == 0:
-            out.append((line, raw))
-    return out
+    catalog may offer as a chip unless MONITOR_VOCAB names the gate and the
+    product's env resolves it (answered_keys, feature_value)."""
+    return [(line, raw) for line, raw, frames in gated_lines(body) if not frames]
+
+
+def gate_of(frames: tuple[tuple[str, str | None], ...]) -> tuple[str | None, str | None]:
+    """(macro, None) when `frames` is exactly one `#if MACRO` and the line is
+    in its own branch; (None, why) otherwise, `why` naming the gate as written
+    and what this reader does not evaluate in it. The compiler would answer
+    every one of the refused shapes; a reader that cannot answer it exactly
+    refuses it by name rather than guess (CLAUDE.md)."""
+    if len(frames) > 1:
+        return None, "nested under " + " and ".join(f"`{o}`" for o, _ in frames)
+    (opener, branch), = frames
+    if branch is not None:
+        return None, f"in the `{branch}` branch of `{opener}`"
+    m = _PP_GATE.fullmatch(opener)
+    if m:
+        return m.group(1), None
+    if re.match(r"#\s*if(?:n?def)\b", opener):
+        hint = "it asks whether a macro is defined, not its value"
+    elif re.search(r"&&|\|\||\bdefined\b", opener):
+        hint = "a compound or defined() condition"
+    else:
+        hint = "not one macro name"
+    return None, f"under `{opener}` ({hint})"
 
 
 def label_words(text: str) -> set[str]:
@@ -2641,11 +2750,20 @@ def string_literals(text: str) -> list[str]:
     return [m.group(1) for m in re.finditer(r'"((?:[^"\\\n]|\\.)*)"', text)]
 
 
-def answered_keys(handler: Path, where: str) -> tuple[set[str], dict[str, set[str]]]:
-    """The single keys handle_serial_commands() answers with no preprocessor
-    condition around them (a `case 'x':` label, or Vision's `command == 'x'`),
-    and each key's help-menu words (its line in the handler's own help text or
-    the print_help() beside it)."""
+def answered_keys(handler: Path, where: str) -> tuple[set[str], dict[str, set[str]], dict[str, str], dict[str, str]]:
+    """What handle_serial_commands() answers, each key read off a `case 'x':`
+    label or Vision's `command == 'x'`: (keys, words, gated, refused).
+
+    keys: the keys answered with no preprocessor condition around them.
+    words: each key's help-menu words (its line in the handler's own help
+        text or the print_help() beside it).
+    gated: each key answered only under exactly one enclosing `#if MACRO`, in
+        that #if's own branch, with MACRO: a chip may offer it where the
+        product's env resolves MACRO to 1 (feature_value).
+    refused: each other conditional key, with why: nested conditionals, a
+        compound or defined() condition, #ifdef / #ifndef, the #else or #elif
+        branch, or more than one gate. MONITOR_VOCAB naming one of these is
+        refused with that reason."""
     text = handler.read_text(encoding="utf-8")
     body, start = c_function_body(text, "handle_serial_commands", where)
     depth_before = 0
@@ -2657,12 +2775,32 @@ def answered_keys(handler: Path, where: str) -> tuple[set[str], dict[str, set[st
     if depth_before:
         die(f"{where}: handle_serial_commands() is defined inside a preprocessor conditional")
     keys: set[str] = set()
-    for line, raw in unconditional_lines(body):
+    gates: dict[str, set[str]] = {}
+    why: dict[str, list[str]] = {}
+    for line, raw, frames in gated_lines(body):
         # The char literal is blanked in `line`, so it is read from `raw` —
         # but only where `line` shows the same code (not inside a comment).
         for m in re.finditer(r"\bcase\s+'(.)'\s*:|\b\w+\s*==\s*'(.)'", raw):
-            if line[m.start()] != " ":
-                keys.add(m.group(1) or m.group(2))
+            if line[m.start()] == " ":
+                continue
+            key = m.group(1) or m.group(2)
+            if not frames:
+                keys.add(key)
+                continue
+            gate, reason = gate_of(frames)
+            if gate:
+                gates.setdefault(key, set()).add(gate)
+            elif reason:
+                why.setdefault(key, []).append(reason)
+    gated: dict[str, str] = {}
+    refused: dict[str, str] = {}
+    for key in (set(gates) | set(why)) - keys:
+        if key in why:
+            refused[key] = "; ".join(why[key])
+        elif len(gates[key]) > 1:
+            refused[key] = "answered under more than one gate (" + ", ".join(f"`#if {g}`" for g in sorted(gates[key])) + ")"
+        else:
+            gated[key] = next(iter(gates[key]))
     help_text = body
     if re.search(r"\bprint_help\s*\(", body):
         help_text += c_function_body(text, "print_help", where)[0]
@@ -2671,7 +2809,7 @@ def answered_keys(handler: Path, where: str) -> tuple[set[str], dict[str, set[st
         m = re.match(r"^[\s│]*(\S)(?:\s*/\s*\S)?\s+[-:]\s+(.+?)[\s│]*$", lit)
         if m:
             words.setdefault(m.group(1), set()).update(label_words(m.group(2)))
-    return keys, words
+    return keys, words, gated, refused
 
 
 def answered_words(handler: Path, where: str) -> tuple[set[str], set[tuple[str, str]], dict[str, set[str]]]:
@@ -2703,27 +2841,117 @@ def answered_words(handler: Path, where: str) -> tuple[set[str], set[tuple[str, 
     return words, args, help_words
 
 
+def header_default(header: Path, macro: str, where: str) -> int | None:
+    """The default `header` gives `macro`, or None when it defines none.
+
+    The definition is read by _tooling.read_const's rule (a whole word
+    defined exactly once, a plain decimal literal, comments and literals not
+    code), and it must be the overridable kind: the `#define` directly inside
+    `#ifndef MACRO` (or `#if !defined(MACRO)`), in that conditional's own
+    branch, under nothing else but the header's include guard. An env's
+    -DMACRO then wins, as feature_value() reads it; a `#define` any other
+    way would be the compiler's value whatever the env says, or one
+    conditional on something this reader does not evaluate, so it is
+    refused."""
+    text = read(header)
+    stripped = _c_strip(text)
+    name = re.escape(macro)
+    if not re.search(rf"^[ \t]*#[ \t]*define[ \t]+{name}(?![A-Za-z0-9_])", stripped, re.M):
+        return None
+    value = read_const(header, macro, read)
+    rel = header.relative_to(REPO).as_posix() if header.is_relative_to(REPO) else header.as_posix()
+    lines = stripped.splitlines()
+    directives = [(i, ln.strip()) for i, ln in enumerate(lines) if re.match(r"\s*#", ln)]
+    stack: list[tuple[int, str, str | None]] = []
+    for n, (i, d) in enumerate(directives):
+        if _PP_OPEN.match(d):
+            stack.append((n, d, None))
+        elif _PP_BRANCH.match(d) and stack:
+            stack[-1] = (stack[-1][0], stack[-1][1], d)
+        elif _PP_CLOSE.match(d) and stack:
+            stack.pop()
+        elif re.fullmatch(rf"#[ \t]*define[ \t]+{name}(?![A-Za-z0-9_]).*", d):
+            guard = re.compile(rf"#[ \t]*ifndef[ \t]+{name}|#[ \t]*if[ \t]+![ \t]*defined[ \t]*"
+                               rf"(?:\([ \t]*{name}[ \t]*\)|[ \t]+{name})")
+            ok = bool(stack) and stack[-1][2] is None and bool(guard.fullmatch(stack[-1][1]))
+            for k, opener, branch in stack[:-1]:
+                g = re.fullmatch(r"#[ \t]*ifndef[ \t]+([A-Za-z_][A-Za-z0-9_]*)", opener)
+                nxt = directives[k + 1][1] if k + 1 < len(directives) else ""
+                if not (g and branch is None and re.fullmatch(rf"#[ \t]*define[ \t]+{g.group(1)}", nxt)):
+                    ok = False
+            if not ok:
+                die(f"{where}: {rel} line {i + 1} defines {macro}, but not as the `#ifndef {macro}` / "
+                    f"`#define {macro} <digits>` default an env's -D{macro} overrides (inside "
+                    + (" and ".join(f"`{o}`" + (f" (its `{br}` branch)" if br else "") for _, o, br in stack)
+                       or "no conditional") +
+                    "); refusing to say which value the compiler takes")
+            return value
+    die(f"{where}: {rel} names {macro}'s #define where this reader cannot place it; refusing to read it")
+
+
+def feature_value(project: str, env: str, macro: str, header: Path, where: str) -> int:
+    """The value `macro` has when `env` compiles `project`, as `#if MACRO`
+    reads it: the env's own -DMACRO / -DMACRO=<digits> when it sets one
+    (env_define_value, which refuses every spelling env_defines refuses),
+    otherwise `header`'s overridable default (header_default). 1 or 0; any
+    other value, or a macro neither defines, is refused rather than read as
+    on or off."""
+    what = f"{where}: {macro} for {project} env {env}"
+    miss = "the guess would offer a chip the build compiles out, or hide one it compiles in"
+    from_env = env_define_value(project, env, macro, what, miss)
+    from_header = header_default(header, macro, where)
+    value = from_env if from_env is not None else from_header
+    if value is None:
+        die(f"{what}: neither the env's build_flags nor {header.relative_to(REPO).as_posix()} defines it; "
+            f"refusing to read it as 0")
+    if value not in (0, 1):
+        die(f"{what} is {value}, neither 0 nor 1; refusing to say whether the chip's command is compiled in")
+    return value
+
+
+def includes_header(handler: Path, header: Path) -> bool:
+    """Whether `handler` includes `header` (by its file name) at its top
+    level, under no preprocessor conditional."""
+    depth = 0
+    for raw, line in zip(read(handler).splitlines(), _c_strip(read(handler)).splitlines()):
+        if _PP_OPEN.match(line):
+            depth += 1
+        elif _PP_CLOSE.match(line):
+            depth -= 1
+        elif depth == 0 and re.match(r"\s*#\s*include\b", line):
+            m = re.match(r'\s*#\s*include\s*[<"]([^>"]+)[>"]', raw)
+            if m and Path(m.group(1)).name == header.name:
+                return True
+    return False
+
+
 @functools.lru_cache(maxsize=None)
-def _monitor_block(project: str) -> str:
-    return json.dumps(_monitor_record(project))
+def _monitor_block(project: str, env: str) -> str:
+    return json.dumps(_monitor_record(project, env))
 
 
-def monitor_block(project: str) -> dict:
-    """The product's monitor vocabulary, held to its firmware (see above) —
-    derived once per firmware project, a fresh copy per product."""
-    return json.loads(_monitor_block(project))
+def monitor_block(project: str, env: str) -> dict:
+    """The product's monitor vocabulary, held to its firmware (see above) and
+    to the build its env compiles (a gated chip is offered only where its
+    macro resolves to 1) — derived once per firmware project and env, a
+    fresh copy per product."""
+    return json.loads(_monitor_block(project, env))
 
 
-def _monitor_record(project: str) -> dict:
+def _monitor_record(project: str, env: str) -> dict:
     spec = MONITOR_VOCAB.get(project)
     if spec is None:
         die(f"{project}: no MONITOR_VOCAB entry — say which commands its firmware answers "
             f"(kind 'none' when it reads no serial commands)")
     kind = spec["kind"]
-    cmds = [list(c) for c in spec["cmds"]]
     where = f"MONITOR_VOCAB[{project!r}]"
+    for c in spec["cmds"]:
+        if len(c) not in (2, 3) or (len(c) == 3 and kind != "keys"):
+            die(f"{where}: chip {c!r} — a chip is (command, label), or (key, label, 'FEATURE_X') "
+                f"for a key console's gated key")
+    offered = []
     if kind == "none":
-        if cmds:
+        if spec["cmds"]:
             die(f"{where}: kind 'none' carries no commands")
         reads = re.search(r"\bSerial\s*\.\s*(?:read|available|peek|readString|readBytes)\s*\(",
                           _c_strip(project_source_text(project)))
@@ -2731,24 +2959,51 @@ def _monitor_record(project: str) -> dict:
             die(f"{where}: kind 'none', but the firmware reads its serial console "
                 f"({reads.group(0)!r}) — give it its vocabulary")
     elif kind == "keys":
-        keys, help_words = answered_keys(REPO / spec["handler"], spec["handler"])
-        if "h" not in keys or "h" not in [c[0] for c in cmds]:
+        handler = REPO / spec["handler"]
+        keys, help_words, gated, refused = answered_keys(handler, spec["handler"])
+        if "h" not in keys or "h" not in [c[0] for c in spec["cmds"]]:
             die(f"{where}: the placeholder promises 'h shows its menu' — the firmware must "
                 f"answer h and the chips must offer it")
-        for key, label in cmds:
-            if len(key) != 1 or key not in keys:
+        for key, label, *gate in spec["cmds"]:
+            if len(key) != 1:
+                die(f"{where}: chip {key!r} ({label}) — a key console's command is one key")
+            if key in refused:
+                die(f"{where}: chip {key!r} ({label}) — {spec['handler']} handle_serial_commands() answers it "
+                    f"only {refused[key]}; this catalog reads exactly one `#if FEATURE_X` and refuses the rest")
+            if gate:
+                if key in keys:
+                    die(f"{where}: chip {key!r} ({label}) names gate {gate[0]}, but {spec['handler']} answers it "
+                        f"with no #if around it — drop the gate")
+                if gated.get(key) != gate[0]:
+                    found = f"under `#if {gated[key]}`" if key in gated else "nowhere"
+                    die(f"{where}: chip {key!r} ({label}) names gate {gate[0]}, but {spec['handler']} "
+                        f"handle_serial_commands() answers it {found}")
+            elif key not in keys:
+                hint = (f" — it is answered only under `#if {gated[key]}`: name the gate, "
+                        f"({key!r}, {label!r}, {gated[key]!r})") if key in gated else ""
                 die(f"{where}: chip {key!r} ({label}) — {spec['handler']} "
-                    f"handle_serial_commands() does not answer it unconditionally")
+                    f"handle_serial_commands() does not answer it unconditionally{hint}")
             missing = label_words(label) - help_words.get(key, set())
             if missing:
                 die(f"{where}: chip {key!r} is labeled {label!r}, but the firmware's own help line "
                     f"for {key!r} does not say {sorted(missing)}")
+            if gate:
+                if "config" not in spec:
+                    die(f"{where}: chip {key!r} names gate {gate[0]} but the entry names no config header "
+                        f"to read its default from")
+                header = REPO / spec["config"]
+                if not includes_header(handler, header):
+                    die(f"{where}: {spec['handler']} does not include {spec['config']} at its top level, so "
+                        f"that header's defaults are not the ones its #if lines read")
+                if feature_value(project, env, gate[0], header, where) != 1:
+                    continue
+            offered.append([key, label])
     elif kind == "words":
         words, args, help_words = answered_words(REPO / spec["handler"], spec["handler"])
         src = _c_strip(project_source_text(project))
         if not re.search(r"\.feed\s*\(\s*\(char\)\s*Serial\s*\.\s*read\s*\(\s*\)\s*\)", src):
             die(f"{where}: the firmware never feeds its serial console to the tuning console")
-        for cmd, label in cmds:
+        for cmd, label in spec["cmds"]:
             word, *rest = cmd.split()
             if word not in words:
                 die(f"{where}: chip {cmd!r} — {spec['handler']} execute_() does not answer {word!r}")
@@ -2759,9 +3014,11 @@ def _monitor_record(project: str) -> dict:
             if missing:
                 die(f"{where}: chip {cmd!r} is labeled {label!r}, but the console's help line "
                     f"for {word!r} does not say {sorted(missing)}")
+            offered.append([cmd, label])
     else:
         die(f"{where}: unknown kind {kind!r}")
-    return {"kind": kind, "cmds": cmds, "placeholder": MONITOR_PLACEHOLDERS[kind]}
+    return {"kind": kind, "cmds": offered, "placeholder": MONITOR_PLACEHOLDERS[kind]}
+
 
 def main() -> None:
     registry = json.loads(read(CANARY_LOCAL / "devices/registry.json"))
@@ -2857,7 +3114,7 @@ def main() -> None:
             # The post-flash monitor's commands, from this product's firmware
             # (monitor_block): its chips and its box's placeholder on all
             # three benches.
-            "monitor": monitor_block(project),
+            "monitor": monitor_block(project, p["env"]),
             "role": role,
             "prove": prove_block(role, p["id"], (manifest.get("lab") or {}).get("card")),
         }
