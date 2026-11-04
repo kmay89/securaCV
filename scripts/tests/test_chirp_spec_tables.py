@@ -36,8 +36,26 @@ were prose with nothing holding them to the code, so this test does:
     many KB. A nearby row grew 4 bytes for its first-seen time (F311) and
     the table said 48 until this pin.
 
-The self-tests at the bottom hold the reader to synthetic sources it must
-refuse, so a reader that stops seeing a call fails here, not silently.
+  * Channel and magic byte (§2.2, §12.1, §13.1; sweep F308). §12.1's
+    `#define CHIRP_CHANNEL` is mesh_network.h's `CHIRP_CHANNEL` (0, the
+    current radio channel, which chirp_channel.cpp registers its broadcast
+    peer at), and §2.2 and §13.1 say the channel is shared; they said
+    channel 6. Every `#define` in §12.1's block names a constant the
+    firmware defines with that value, so `OPERA_MAGIC` (no firmware defines
+    it: an Opera frame starts with its version byte, mesh_wire.h's
+    `OPERA_VERSION`) is refused. The constants come from a strict reader
+    that refuses a definition it cannot spell (an expression, a name, two
+    definitions) rather than guessing.
+
+  * Sybil cost (§2.5.3, §2.5.8, THREAT_MODEL.md; sweep D16). One device
+    makes any number of session keys, so neither the spec nor the threat
+    model's Chirp column prices a Sybil: §2.5.3 gives the threshold as
+    mesh_network.h's CONFIRMATIONS_REQUIRED and CONFIRMATIONS_SAFETY signed
+    ACKs from other keys and the ten minutes (PRESENCE_REQUIRED_MS) as a
+    delay, and the old phrases are gone.
+
+The self-tests at the bottom hold the readers to synthetic sources they
+must refuse, so a reader that stops seeing a call fails here, not silently.
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_chirp_spec_tables.py' -v
 CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests), unfiltered
@@ -331,6 +349,196 @@ class ChirpSpecMemoryBudget(unittest.TestCase):
         self.assertEqual(budget_asserts('static_assert(a == 1 && b == 32 * 52, "§12.3 Y");'), {"Y": (32, 52)})
 
 
+MESH_H = SKETCH / "mesh_network.h"
+THREAT_MODEL = REPO / "docs/security/THREAT_MODEL.md"
+
+
+def namespace_body(src: str, name: str) -> str:
+    """The one `namespace <name> { ... } // namespace <name>` block of `src`
+    (comments stripped), or Unreadable."""
+    code = strip_comments(src)
+    opens = [m.end() for m in re.finditer(r"\bnamespace\s+" + re.escape(name) + r"\s*\{", code)]
+    if len(opens) != 1:
+        raise Unreadable(f"namespace {name} opens {len(opens)} times; this reader reads one block")
+    depth, i = 1, opens[0]
+    while i < len(code) and depth:
+        if code[i] == "{":
+            depth += 1
+        elif code[i] == "}":
+            depth -= 1
+        i += 1
+    if depth:
+        raise Unreadable(f"namespace {name} never closes")
+    return code[opens[0]:i - 1]
+
+
+def constant(src: str, name: str) -> int:
+    """The value of the one `static const <int type> NAME = <literal>;` (or
+    `constexpr`) in `src`. Anything else is refused: no definition, two, or
+    one whose value is not a plain decimal or hex literal (an expression or
+    another name would be a guess)."""
+    code = strip_comments(src)
+    found = re.findall(r"\b(?:static\s+const|static\s+constexpr|constexpr)\s+(?:u?int(?:8|16|32)_t|size_t)\s+"
+                       + re.escape(name) + r"\s*=\s*([^;]*);", code)
+    if len(found) != 1:
+        raise Unreadable(f"{name} is defined {len(found)} times; this reader reads one definition")
+    value = found[0].strip()
+    m = re.fullmatch(r"(0[xX][0-9A-Fa-f]+|[0-9]+)[uU]?", value)
+    if m is None:
+        raise Unreadable(f"{name} = {value}: a value this reader cannot spell")
+    return int(m.group(1), 0)
+
+
+def spec_defines(section: str) -> dict[str, int]:
+    """{name: value} of every `#define NAME VALUE` in the section's code
+    block; a define whose value is not a literal is refused."""
+    block = re.search(r"```c\n(.*?)```", section, re.S)
+    assert block, "the section has no c block"
+    out: dict[str, int] = {}
+    for line in block.group(1).splitlines():
+        code = line.split("//", 1)[0].strip()
+        if not code.startswith("#define"):
+            continue
+        m = re.fullmatch(r"#define\s+(\w+)\s+(0[xX][0-9A-Fa-f]+|[0-9]+)", code)
+        assert m, f"a define this reader cannot spell: {code!r}"
+        assert m.group(1) not in out, f"{m.group(1)} is defined twice"
+        out[m.group(1)] = int(m.group(2), 0)
+    return out
+
+
+def prose(text: str) -> str:
+    return " ".join(text.split())
+
+
+def threat_model_cell(text: str, threat: str, column: str) -> str:
+    """The cell of the "Threats covered by mesh layers" table at row `threat`
+    and column `column`."""
+    lines = [ln for ln in text.splitlines() if ln.startswith("| Threat |")]
+    assert len(lines) == 1, "THREAT_MODEL.md's mesh layers table header moved"
+    header = [c.strip() for c in lines[0].strip().strip("|").split("|")]
+    rows = [ln for ln in text.splitlines() if ln.startswith(f"| {threat} |")]
+    assert len(rows) == 1, f"THREAT_MODEL.md has {len(rows)} {threat!r} rows"
+    cells = [c.strip() for c in rows[0].strip().strip("|").split("|")]
+    assert len(cells) == len(header), f"the {threat!r} row has {len(cells)} cells for {len(header)} columns"
+    return cells[header.index(column)]
+
+
+class ChirpSpecChannel(unittest.TestCase):
+    """Chirp shares the radio's channel with Opera (sweep F308).
+
+    The ESP32 has one radio, so a channel pinned for Chirp (6) retuned it
+    away from the home Wi-Fi to send (docs/network_coexistence.md), and the
+    pins were removed: chirp_channel.cpp registers its broadcast peer at
+    CHIRP_CHANNEL, 0, which ESP-NOW reads as the current channel. The spec
+    kept channel 6 in three places.
+    """
+
+    def setUp(self):
+        self.mesh = MESH_H.read_text(encoding="utf-8")
+        self.chirp = namespace_body(self.mesh, "chirp_channel")
+        self.spec = SPEC.read_text(encoding="utf-8")
+
+    def test_the_spec_defines_the_firmwares_channel(self):
+        channel = constant(self.chirp, "CHIRP_CHANNEL")
+        cpp = strip_comments((SKETCH / "chirp_channel.cpp").read_text(encoding="utf-8"))
+        self.assertEqual(re.findall(r"\bpeer\.channel\s*=\s*([^;]+);", cpp), ["CHIRP_CHANNEL"],
+                         "chirp_channel.cpp registers its broadcast peer at CHIRP_CHANNEL, and only there")
+        defines = spec_defines(spec_section(self.spec, "12.1 ESP-NOW Configuration for Chirp"))
+        self.assertEqual(defines.get("CHIRP_CHANNEL"), channel,
+                         "spec §12.1's CHIRP_CHANNEL is not mesh_network.h's")
+
+    def test_the_spec_says_the_channel_is_shared(self):
+        # A pinned channel (anything but 0) would be a decision against
+        # network_coexistence.md, and the wording below would be false.
+        self.assertEqual(constant(self.chirp, "CHIRP_CHANNEL"), 0)
+        self.assertEqual(constant(namespace_body(self.mesh, "mesh_network"), "ESPNOW_CHANNEL"), 0)
+        fallback = constant((SKETCH / "mesh_channel_policy.h").read_text(encoding="utf-8"),
+                            "MESH_FALLBACK_CHANNEL")
+        transport = prose(spec_section(self.spec, "2.2 Transport"))
+        self.assertIn("**Shared Channel**: Chirp rides the radio's current channel, as Opera does.", transport)
+        self.assertIn("at channel 0, which ESP-NOW reads as the current channel", transport)
+        self.assertIn(f"the STA's when it is connected, else the AP's, else {fallback}.", transport)
+        self.assertIn("docs/network_coexistence.md", transport)
+        self.assertNotIn("Separate Channel", transport)
+        self.assertNotIn("Uses WiFi channel", transport)
+        block = re.search(r"```c\n(.*?)```", spec_section(self.spec, "12.1 ESP-NOW Configuration for Chirp"),
+                          re.S).group(1)
+        self.assertIn("#define CHIRP_CHANNEL 0  // follow the current radio channel", block)
+        self.assertNotIn("different channel", block)
+        independence = prose(spec_section(self.spec, "13.1 Independence"))
+        self.assertIn("- Same radio channel; Chirp frames are told apart by their magic byte (§12.1)",
+                      independence)
+        self.assertNotIn("Different channel", independence)
+
+    def test_every_define_is_a_firmware_constant(self):
+        section = spec_section(self.spec, "12.1 ESP-NOW Configuration for Chirp")
+        defines = spec_defines(section)
+        for name, value in defines.items():
+            with self.subTest(name=name):
+                try:
+                    fw = constant(self.chirp, name)
+                except Unreadable as e:
+                    self.fail(f"spec §12.1 defines {name}, which mesh_network.h's chirp_channel does not ({e})")
+                self.assertEqual(value, fw, f"spec §12.1's {name} is not mesh_network.h's")
+        self.assertEqual(sorted(defines), ["CHIRP_CHANNEL", "CHIRP_MAGIC"])
+
+    def test_an_opera_frame_starts_with_its_version(self):
+        version = constant((SKETCH / "mesh_wire.h").read_text(encoding="utf-8"), "OPERA_VERSION")
+        section = prose(spec_section(self.spec, "12.1 ESP-NOW Configuration for Chirp"))
+        self.assertIn(f"a Chirp frame starts with `CHIRP_MAGIC`, and an Opera frame starts with its "
+                      f"protocol version ({version})", section)
+        self.assertIn("There is no Opera magic byte", section)
+        magic = constant(self.chirp, "CHIRP_MAGIC")
+        self.assertNotEqual(magic, version, "the first byte must tell the two apart")
+        cpp = strip_comments((SKETCH / "chirp_channel.cpp").read_text(encoding="utf-8"))
+        self.assertIn("if (hdr->magic != CHIRP_MAGIC) return;", cpp)
+
+
+class ChirpSpecSybilCost(unittest.TestCase):
+    """One device makes any number of session keys (sweep D16).
+
+    Each confirmation and vote needs its own signed key, but a key is a
+    random seed, so the threshold prices nothing per identity. What a
+    confirming key waits is ten minutes of presence (§3.4 rule 4, F311), and
+    presence beacons are unsigned (F232), so one radio runs those minutes for
+    many keys at once; a suppress vote needs no presence (F234).
+    """
+
+    def setUp(self):
+        self.spec = SPEC.read_text(encoding="utf-8")
+        self.chirp = namespace_body(MESH_H.read_text(encoding="utf-8"), "chirp_channel")
+
+    def test_the_spec_gives_the_threshold_and_the_delay(self):
+        needed = constant(self.chirp, "CONFIRMATIONS_REQUIRED")
+        safety = constant(self.chirp, "CONFIRMATIONS_SAFETY")
+        self.assertEqual(constant(self.chirp, "PRESENCE_REQUIRED_MS"), 10 * 60 * 1000)
+        section = prose(spec_section(self.spec, "2.5.3 Defense: Witness Requirement (Sybil Resistance) — v0.2"))
+        self.assertIn(f"The threshold needs {needed} signed ACKs ({safety} for safety templates) from session "
+                      "keys other than the originator's, and one device can make any number of session keys",
+                      section)
+        self.assertIn("what a Sybil costs is the ten minutes of presence each confirming key must wait", section)
+        self.assertIn("a delay, not a price per identity", section)
+        # F232 and F234 are open: the bullet says so, and calls neither fixed.
+        self.assertIn("(§3.2; sweep F232, open)", section)
+        self.assertIn("(§2.5.6; sweep F234, open)", section)
+
+    def test_no_page_prices_a_sybil(self):
+        for heading in ("2.5.3 Defense: Witness Requirement (Sybil Resistance) — v0.2",
+                        "2.5.8 Summary: Abuse Prevention Stack"):
+            section = prose(spec_section(self.spec, heading))
+            with self.subTest(section=heading):
+                self.assertNotIn("Cost is real", section)
+                self.assertNotIn("3+ devices", section)
+                self.assertNotIn("3+ liars", section)
+                self.assertNotIn("no solo broadcast", section)
+        cell = threat_model_cell(THREAT_MODEL.read_text(encoding="utf-8"), "Sybil flood", "Chirp")
+        self.assertTrue(cell.startswith("partial: "), f"the Chirp Sybil cell reads {cell!r}")
+        self.assertNotIn("per-pubkey rate + unique-pubkey set", cell)
+        self.assertIn("one device makes any number of session keys", cell)
+        for item in ("F232", "F311", "F234"):
+            self.assertIn(item, cell)
+
+
 class ReaderSelfTest(unittest.TestCase):
     """The reader refuses what it cannot read, and reads what it must."""
 
@@ -353,6 +561,54 @@ class ReaderSelfTest(unittest.TestCase):
     def test_refuses_a_call_with_the_wrong_shape(self):
         with self.assertRaises(Unreadable):
             chirp_keys({"a.cpp": 'void f(){ nvs_has_key("a", "b"); }'})
+
+    def test_the_constant_reader_refuses_what_it_cannot_spell(self):
+        self.assertEqual(constant("static const uint8_t A = 0;  // 0 = follow", "A"), 0)
+        self.assertEqual(constant("static const uint8_t A = 0xC4;", "A"), 0xC4)
+        self.assertEqual(constant("constexpr uint8_t A = 1;", "A"), 1)
+        self.assertEqual(constant("static const uint32_t A = 600000u; /* static const uint8_t A = 6; */", "A"),
+                         600000)
+        for src in ("static const uint8_t A = 0 + 6;", "static const uint8_t A = B;",
+                    "static const uint8_t A = 0;\nstatic const uint8_t A = 6;", "#define A 6",
+                    "static const uint8_t AB = 6;"):
+            with self.subTest(src=src), self.assertRaises(Unreadable):
+                constant(src, "A")
+
+    def test_the_namespace_reader_reads_one_block(self):
+        src = "namespace a { int x; namespace b { int y; } }\nnamespace c { static const uint8_t A = 1; }"
+        self.assertEqual(constant(namespace_body(src, "c"), "A"), 1)
+        with self.assertRaises(Unreadable):
+            constant(namespace_body(src, "a"), "A")
+        with self.assertRaises(Unreadable):
+            namespace_body(src + "\nnamespace c { }", "c")
+        with self.assertRaises(Unreadable):
+            namespace_body("namespace c { int x;", "c")
+
+    def test_the_define_reader(self):
+        self.assertEqual(spec_defines("```c\n#define A 0  // x\n// #define B 9\nint c;\n#define D 0xC4\n```\n"),
+                         {"A": 0, "D": 0xC4})
+        with self.assertRaises(AssertionError):
+            spec_defines("```c\n#define A (1 + 2)\n```\n")
+        with self.assertRaises(AssertionError):
+            spec_defines("```c\n#define A 1\n#define A 2\n```\n")
+
+    def test_the_old_spec_fails_the_channel_and_magic_pins(self):
+        old = ("```c\n// Chirp uses different channel from Opera\n#define CHIRP_CHANNEL 6\n"
+               "#define CHIRP_MAGIC 0xC4  // 'Ch' for Chirp\n#define OPERA_MAGIC 0x0A  // 'Op' for Opera\n```\n")
+        chirp = "static const uint8_t CHIRP_MAGIC = 0xC4;\nstatic const uint8_t CHIRP_CHANNEL = 0;"
+        defines = spec_defines(old)
+        self.assertNotEqual(defines["CHIRP_CHANNEL"], constant(chirp, "CHIRP_CHANNEL"))
+        with self.assertRaises(Unreadable):
+            constant(chirp, "OPERA_MAGIC")
+
+    def test_the_table_cell_reader(self):
+        text = ("| Threat | Opera | Chirp | Beacon |\n|---|---|---|---|\n"
+                "| Sybil flood | a | yes (x) | c |\n")
+        self.assertEqual(threat_model_cell(text, "Sybil flood", "Chirp"), "yes (x)")
+        with self.assertRaises(AssertionError):
+            threat_model_cell(text + "| Sybil flood | a | b | c |\n", "Sybil flood", "Chirp")
+        with self.assertRaises(AssertionError):
+            threat_model_cell(text.replace("| c |", "| c | d |"), "Sybil flood", "Chirp")
 
     def test_a_stale_or_missing_row_fails(self):
         rows = spec_nvs_rows("```\nNVS Key | Type | Description\n--------|------|---\n"
