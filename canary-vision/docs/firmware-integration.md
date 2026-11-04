@@ -164,11 +164,10 @@ httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
 httpd_resp_set_hdr(req, "Content-Security-Policy",
     "default-src 'self'; script-src 'self'; style-src 'self'; "
-    "img-src 'self' data:; connect-src 'self' http://*.local http://192.168.* "
-    "http://10.* http://172.16.* ... http://172.31.*");
+    "img-src 'self' data:; connect-src 'self' http://*.local");
 ```
 
-The CSP `connect-src` string is ~300 bytes. Store it as a `const char[]` in flash (PROGMEM/DRAM) rather than constructing it dynamically.
+This is the reference device-api's header, byte for byte (`device-api/middleware/security-headers.js`; `tests/security/security-headers.test.js` holds this snippet to it). Its `connect-src` lets a page the device serves reach the device itself (`'self'`) and peers by their `.local` name on port 80, and no other device by IP: CSP cannot name an IP range (a wildcard may stand only for a host's whole leftmost label), so do not add sources such as `http://192.168.*`, which match nothing (headless Chromium ignores each as an invalid source). A peer the page should reach must answer on its `.local` name; [`security.md`](security.md#security-headers) lists what the header allows and refuses in Chromium. Store the policy as a `const char[]` in flash rather than constructing it dynamically.
 
 ## Host Validation on ESP32
 
