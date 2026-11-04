@@ -46,6 +46,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1645,6 +1646,18 @@ void test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears() {
       reads.fetch_add(1);
     }
   });
+  /* The history is full only on steps 16-39 of each 40-step window, and a
+   * loaded scheduler can let the writer finish all its steps before the
+   * reader runs in one of them (F323: pinned to one core beside busy loops,
+   * runs failed the reads/full assert below at -O1 and at CI's flags). So
+   * at the first full history the writer waits until the reader has read it
+   * full: at least one read provably overlapped a full history, and every
+   * step after it runs beside a live reader. The deadline turns a reader
+   * that never runs into a failure that says so, never a hang. */
+  static_assert(mesh_session::MAX_ALERT_HISTORY < 40,
+                "the history must fill inside one 40-step window");
+  const auto full_wait_limit = std::chrono::seconds(10);
+  long long full_wait_us = -1;
   const int steps = 1200;
   uint32_t w = 0;
   uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
@@ -1660,10 +1673,35 @@ void test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears() {
                                           frame, sizeof(frame));
     inject_from(mac, frame, flen);
     if (g_outs.size() > 64) g_outs.clear();
+    if (step == (int)mesh_session::MAX_ALERT_HISTORY) {
+      /* The history is full now (the main loop's own read says so), so a
+       * wait that runs out can only mean the reader never read it. */
+      mesh_alert::Record probe[mesh_session::MAX_ALERT_HISTORY + 1];
+      assert(mesh_session::read_alerts(probe, mesh_session::MAX_ALERT_HISTORY + 1) ==
+             mesh_session::MAX_ALERT_HISTORY);
+      const auto t0 = std::chrono::steady_clock::now();
+      bool seen = full.load() > 0;
+      while (!seen && std::chrono::steady_clock::now() - t0 < full_wait_limit) {
+        std::this_thread::yield();
+        seen = full.load() > 0;
+      }
+      full_wait_us = (long long)std::chrono::duration_cast<std::chrono::microseconds>(
+                         std::chrono::steady_clock::now() - t0).count();
+      if (!seen) {
+        std::printf("FAIL: the reader did not read the full %zu-record history within "
+                    "%lld s of the writer filling it (%ld reads so far), so the torn-read "
+                    "check would hold no read of a full history\n",
+                    mesh_session::MAX_ALERT_HISTORY, (long long)full_wait_limit.count(),
+                    reads.load());
+        std::fflush(stdout);
+      }
+      assert(seen);
+    }
   }
   done.store(true, std::memory_order_release);
   reader.join();
   assert(mesh_session::alerts_received() == (uint32_t)steps);
+  assert(full_wait_us >= 0);          /* the wait above ran */
   assert(reads.load() > 0 && full.load() > 0);
   /* deinit() wipes the history it holds (the next session starts empty). */
   mesh_alert::Record after[mesh_session::MAX_ALERT_HISTORY];
@@ -1677,7 +1715,8 @@ void test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears() {
   }
   assert(torn.load() == 0);
   std::printf("PASS test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears "
-              "(%ld reads)\n", reads.load());
+              "(%ld reads, %ld of a full history; the writer waited %lld us for the first)\n",
+              reads.load(), full.load(), full_wait_us);
 }
 
 void test_send_tamper_alert() {
