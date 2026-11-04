@@ -4948,7 +4948,10 @@ test("A86: the browser flasher's monitor offers the flashed or the identified bo
 // button (openMonitor()), or "ask the board itself" (openMonitor({
 // proveIdentity: true })). What a case reads back: the chips' commands and
 // labels, the placeholder, both status lines against monitorStatusText(),
-// what a chip and the box send, and how many `j\n` asks were written.
+// what a chip and the box send, how many `j\n` asks were written (by 2 s
+// after connect, and over the whole time before any tap: every timer run,
+// the boot text heard), and whether a signed self-manifest, once it
+// arrives, mounts the product's "first flight" hatch card.
 
 // A top-level `const NAME = ...;` of flash.js, braces and parentheses counted.
 function topConst(src, name) {
@@ -5043,7 +5046,8 @@ async function a95Render(flashJs, core, { projectName, enter }) {
     state, core, document: doc, navigator: { serial }, TextEncoder, TextDecoder,
     setTimeout: timers.setTimeout, clearTimeout: timers.clear, setInterval: timers.setInterval, clearInterval: timers.clear,
     setPhase: (n) => { phases.push(n); }, phaseConnect: () => ({ connectPage: true }), stopVoice: async () => null,
-    confettiBurst: () => { confetti++; }, fact: () => doc.createElement("div"), hatchMomentCard: () => doc.createElement("div"),
+    confettiBurst: () => { confetti++; }, fact: () => doc.createElement("div"),
+    hatchMomentCard: (moment) => { const n = doc.createElement("div"); n.className = "a95-hatch"; n.textContent = moment.title; return n; },
   });
   vm.runInContext([topConst(flashJs, "el"), topConst(flashJs, "sleep"),
     ...["modeBadge", "boardProduct", "monitorProduct", "openMonitor", "openMonitorInner", "phaseMonitor"]
@@ -5077,9 +5081,9 @@ async function a95Render(flashJs, core, { projectName, enter }) {
     placeholder: input.placeholder,
     connected: status.textContent,
   };
+  const asks = () => writes.filter((w) => w === "j\n").length;
   timers.run(2000);                            // the j asks (600 and 2000 ms after connect)
-  seen.asks = writes.filter((w) => w === "j\n").length;
-  seen.otherWrites = writes.filter((w) => w !== "j\n");
+  seen.asksBy2s = asks();
   timers.run(4000);                            // nothing heard yet
   seen.quiet = status.textContent;
   feed("ESP-ROM:esp32s3-20210327\r\nSecuraCV boot: firmware up\r\n");
@@ -5087,6 +5091,17 @@ async function a95Render(flashJs, core, { projectName, enter }) {
   seen.afterBytes = status.textContent;
   seen.confetti = confetti;
   seen.console = box.find((n) => n.tagName === "pre").textContent;
+  timers.run(60000);                           // every timer still due, the boot text heard
+  await a95Settle();
+  seen.asks = asks();                          // everything written before any tap
+  seen.otherWrites = writes.filter((w) => w !== "j\n");
+  // The board answers j with its signed self-manifest: the identity card,
+  // and the first-flight card where the flashed product's hatch waits on it.
+  feed(`${A95_MANIFEST}\r\n`);
+  await a95Settle();
+  seen.identity = status.textContent;
+  const hatch = box.find((n) => n.className === "a95-hatch");
+  seen.hatch = hatch ? hatch.textContent : null;
   const before = writes.length;
   if (chipRow.children.length) chipRow.children[chipRow.children.length - 1].fire("click");
   input.value = "status";
@@ -5101,25 +5116,41 @@ async function a95Render(flashJs, core, { projectName, enter }) {
   return seen;
 }
 
-// The cases, each with the product whose record the monitor must show and
-// whether it must ask for j. A backup or a local file names no product, so
-// it gets no chips; the ask still goes out there (requiresLiveReceipt is
-// true when nothing says the firmware lacks j, and the ask is a read).
+// A signed self-manifest line, as a firmware prints it in answer to `j`.
+const A95_MANIFEST = JSON.stringify({ schema: "securacv.canary.manifest/1", board: "esp32s3", firmware: "2.4.0",
+  pubkey_fp: "a1b2c3d4e5f60718", boots: 3, health: 92 });
+
+// The cases, each with the product whose record the monitor must show,
+// whether it must ask for j, and whose first-flight card the receipt mounts.
+// A backup or a local file names no product, so it gets no chips and no
+// first-flight card; the ask still goes out there (requiresLiveReceipt is
+// true when nothing says the firmware lacks j, and the ask is a read). A
+// display's hatch needs no receipt (serial_receipt false): its card is the
+// done screen's, so the monitor mounts none. `opened` is what proveReal
+// hands openMonitor (a button passes neither key).
+const A95_FLAGSHIP_HATCH = "securacv-canary";
 const A95_CASES = [
   { name: "a flagship flash over a WAP", projectName: "canary_wap",
-    enter: { flash: { product: "securacv-canary" } }, product: "securacv-canary", asks: 2, celebrates: true },
+    enter: { flash: { product: "securacv-canary" } }, product: "securacv-canary", asks: 2, celebrates: true,
+    hatch: A95_FLAGSHIP_HATCH, opened: ["securacv-canary", "securacv-canary"] },
   { name: "a display flash over the flagship", projectName: "canary",
-    enter: { flash: { product: "securacv-canary-display-dash" } }, product: "securacv-canary-display-dash", asks: 0, celebrates: true },
+    enter: { flash: { product: "securacv-canary-display-dash" } }, product: "securacv-canary-display-dash", asks: 0, celebrates: true,
+    hatch: null, opened: ["securacv-canary-display-dash", "securacv-canary-display-dash"] },
   { name: "a backup restored over the flagship", projectName: "canary",
-    enter: { flash: { product: "securacv-canary", isBackup: true } }, product: null, asks: 2, celebrates: true },
+    enter: { flash: { product: "securacv-canary", isBackup: true } }, product: null, asks: 2, celebrates: true,
+    hatch: null, opened: [null, null] },
   { name: "a local file over the flagship", projectName: "canary",
-    enter: { flash: { isLocal: true } }, product: null, asks: 2, celebrates: true },
+    enter: { flash: { isLocal: true } }, product: null, asks: 2, celebrates: true,
+    hatch: null, opened: [null, null] },
   { name: "the Serial monitor button on a WAP", projectName: "canary_wap",
-    enter: { opts: undefined }, product: "securacv-canary-wap", asks: 0, celebrates: false },
+    enter: { opts: undefined }, product: "securacv-canary-wap", asks: 0, celebrates: false,
+    hatch: null, opened: ["(not given)", "(not given)"] },
   { name: "ask the board itself, on a Vision", projectName: "canary_vision",
-    enter: { opts: { proveIdentity: true } }, product: "securacv-canary-vision", asks: 2, celebrates: false },
+    enter: { opts: { proveIdentity: true } }, product: "securacv-canary-vision", asks: 2, celebrates: false,
+    hatch: null, opened: ["(not given)", "(not given)"] },
   { name: "the Serial monitor button on an unidentified board", projectName: "esp32_display_demo",
-    enter: { opts: undefined }, product: null, asks: 0, celebrates: false },
+    enter: { opts: undefined }, product: null, asks: 0, celebrates: false,
+    hatch: null, opened: ["(not given)", "(not given)"] },
 ];
 
 // Every way the rendered monitors differ from what the catalog and
@@ -5140,8 +5171,15 @@ async function a95Wrong(flashJs, core) {
     want("placeholder", seen.placeholder, vocab.placeholder);
     want("connected status", seen.connected, core.monitorStatusText(vocab, "connected", catalog.console_baud));
     want("quiet status", seen.quiet, core.monitorStatusText(vocab, "quiet", catalog.console_baud));
-    want("j asks written", seen.asks, c.asks);
+    want("j asks written by 2 s after connect", seen.asksBy2s, c.asks);
+    want("j asks written before any tap", seen.asks, c.asks);
     want("other writes before any tap", seen.otherWrites, []);
+    const given = (k) => (!seen.opts || !(k in seen.opts) ? "(not given)" : seen.opts[k] ? seen.opts[k].id : null);
+    want("opened with product / hatchProduct", [given("product"), given("hatchProduct")], c.opened);
+    want("status on the signed receipt", seen.identity, "✓ Identity confirmed — it’s running and answering.");
+    const hatchOf = c.hatch && core.hatchMoment(catalog.products.find((p) => p.id === c.hatch));
+    if (c.hatch && !hatchOf) out.push(`${c.name}: ${c.hatch} carries no first-flight card to expect`);
+    want("first-flight card on the receipt", seen.hatch, hatchOf ? hatchOf.title : null);
     want("port opened at", seen.bauds, [catalog.console_baud]);
     const last = vocab.cmds[vocab.cmds.length - 1];
     want("sent by the last chip and the box", seen.sent, [...(last ? [`${last[0]}\n`] : []), "status\n"]);
@@ -5153,23 +5191,6 @@ async function a95Wrong(flashJs, core) {
     want("disconnect listeners left", seen.listenersLeft, 0);
   }
   return out;
-}
-
-// The regex pins phaseMonitor was held by before A95, kept here only to show
-// that each mutant below passes them: they read the source, not the monitor.
-function a95OldPinsPass(flashJs) {
-  const phase = fnSource(flashJs, "phaseMonitor");
-  return [
-    /const flashed = \(opts\.product && !opts\.isBackup && !opts\.isLocal\) \? opts\.product : null;\s*return openMonitor\(\{[^}]*hatchProduct: flashed, product: flashed \}\)/.test(flashJs),
-    /const monProduct = monitorProduct\(opts\);\s*const vocab = core\.monitorVocabulary\(state\.catalog, monProduct\);/.test(phase),
-    /for \(const \[cmd, label\] of vocab\.cmds\)/.test(phase),
-    /send\(cmd \+ "\\n"\)/.test(phase),
-    /input\.placeholder = vocab\.placeholder;/.test(phase),
-    /if \(opts\.proveIdentity && !mon\.askedManifest && core\.requiresLiveReceipt\(monProduct\)\) \{/.test(phase),
-    /setStatus\(core\.monitorStatusText\(vocab, "connected", baud\)\);/.test(phase),
-    /setStatus\(core\.monitorStatusText\(vocab, "quiet", baud\)\);/.test(phase),
-    !/h for its menu/.test(flashJs),
-  ].every(Boolean);
 }
 
 test("A95: the browser monitor, rendered: its chips, box, status lines and j ask per product, backups and local files included", async () => {
@@ -5191,8 +5212,12 @@ test("A95: the browser monitor, rendered: its chips, box, status lines and j ask
   assert.strictEqual(backup.opts.product, null);
   assert.deepStrictEqual(backup.chips, []);
 
-  // The render bites where the old pins did not: each mutant leaves every
-  // pin above passing and draws or sends something wrong.
+  // The render bites where source pins did not: each mutant below draws or
+  // sends something wrong, and every one but one passed all nine regex pins
+  // this test replaced (over phaseMonitor and phaseDone's `hatchProduct:
+  // flashed`; checked over these mutants in sweep wave 22). The one the pins
+  // did hold, a backup's hatch named after the product it restored over, the
+  // render holds now.
   const mutants = [
     ["the wrong product chosen for a backup",
       'return "product" in opts ? opts.product : boardProduct();', "return opts.product || boardProduct();",
@@ -5205,10 +5230,10 @@ test("A95: the browser monitor, rendered: its chips, box, status lines and j ask
       /a display flash over the flagship: connected status/],
     ["j written for a display",
       "      setTimeout(ask, 2000);\n    }\n", "      setTimeout(ask, 2000);\n    } else if (opts.proveIdentity) setTimeout(() => send(\"j\\n\"), 600);\n",
-      /a display flash over the flagship: j asks written 1, expected 0/],
+      /a display flash over the flagship: j asks written by 2 s after connect 1, expected 0/],
     ["the j write skipped",
       "      setTimeout(ask, 600);\n      setTimeout(ask, 2000);\n", "",
-      /a flagship flash over a WAP: j asks written 0, expected 2/],
+      /a flagship flash over a WAP: j asks written before any tap 0, expected 2/],
     ["the WAP's placeholder put back to one firmware's hint",
       "    reconnectBtn.classList.add(\"flash-hidden\");\n    setStatus(core.monitorStatusText(vocab, \"connected\", baud));\n",
       "    reconnectBtn.classList.add(\"flash-hidden\");\n    setStatus(core.monitorStatusText(vocab, \"connected\", baud));\n    input.placeholder = \"type a command — single keys; h shows the menu\";\n",
@@ -5216,15 +5241,30 @@ test("A95: the browser monitor, rendered: its chips, box, status lines and j ask
     ["a chip that carries its label as its command",
       "    b.dataset.cmd = cmd;\n", "    b.dataset.cmd = label;\n",
       /a flagship flash over a WAP: chips/],
+    ["j written late for a display",
+      "\"quiet\", baud));\n    }, 4000);\n    const dec = new TextDecoder();\n",
+      "\"quiet\", baud));\n    }, 4000);\n    if (opts.proveIdentity && !core.requiresLiveReceipt(monitorProduct(opts))) setTimeout(() => send(\"j\\n\"), 3000);\n    const dec = new TextDecoder();\n",
+      /a display flash over the flagship: j asks written before any tap 1, expected 0/],
+    ["j written when the boot text arrives",
+      "          confettiBurst();\n", "          confettiBurst();\n          if (opts.proveIdentity) send(\"j\\n\");\n",
+      /a display flash over the flagship: j asks written before any tap 1, expected 0/],
+    ["a third j ask, after the two",
+      "      setTimeout(ask, 2000);\n    }\n", "      setTimeout(ask, 2000);\n      setTimeout(ask, 3500);\n    }\n",
+      /a flagship flash over a WAP: j asks written before any tap 3, expected 2/],
+    ["a backup's hatch named after the product it restored over",
+      "hatchProduct: flashed, product: flashed });", "hatchProduct: opts.product, product: flashed });",
+      /a backup restored over the flagship: first-flight card on the receipt "Your Canary/],
+    ["the first-flight card falling back to the board's product",
+      "    if (opts.hatchProduct && core.requiresLiveReceipt(opts.hatchProduct)) {\n      const moment = core.hatchMoment(opts.hatchProduct);\n",
+      "    const hp = opts.hatchProduct || boardProduct();\n    if (hp && core.requiresLiveReceipt(opts.hatchProduct)) {\n      const moment = core.hatchMoment(hp);\n",
+      /a local file over the flagship: first-flight card on the receipt "Your Canary/],
   ];
   for (const [what, from, to, caught] of mutants) {
     assert.strictEqual(flashJs.split(from).length, 2, `mutant "${what}": its anchor is not in flash.js exactly once`);
     const mutant = flashJs.replace(from, to);
-    assert.ok(a95OldPinsPass(mutant), `mutant "${what}" fails an old pin; it proves nothing about the render`);
     const wrong = await a95Wrong(mutant, core);
     assert.ok(wrong.some((w) => caught.test(w)), `mutant "${what}" passes the render: ${JSON.stringify(wrong)}`);
   }
-  assert.ok(a95OldPinsPass(flashJs), "the pins hold on flash.js itself");
 });
 
 // ── A96 / A97: one resolution behind every surface, in both flashers ─────────
