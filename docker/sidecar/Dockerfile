@@ -43,7 +43,7 @@ RUN cargo build --release \
     --bin event_mqtt_bridge \
     --bin log_verify
 
-FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
 
 # mosquitto-clients powers the `doctor` subcommand's broker checks;
 # curl powers the HEALTHCHECK below and doctor's kernel probe (same probe
