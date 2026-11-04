@@ -251,15 +251,23 @@ def test_speak_last_event_says_a_daily_summary_in_words():
 
 
 def test_speak_last_event_says_an_unlisted_kernel_type_in_words():
-    kernel = {"ok": True, "latest_event": {"event_type": "held_summary"}}
-    # Beside a Canary event: mid-sentence, so not capitalized.
-    devices = _canary_event("boundary_crossing_object_large")
-    speech = speak_last_event(fleet_brief([_entry(devices, kernel=kernel)], NOW))
-    assert speech.startswith("Person or vehicle, within the last ten minutes, from Canary gate.")
-    assert speech.endswith(" The kernel log's latest event is held summary.")
-    # Alone: it starts the sentence.
+    """The kernel sends an event type as its Rust variant (src/lib.rs's
+    EventType derives Serialize with no rename), so a type newer than this
+    integration arrives CamelCase; it is said in words, as is the same type
+    in snake_case."""
+    for spelled in ("HeldSummary", "held_summary"):
+        kernel = {"ok": True, "latest_event": {"event_type": spelled}}
+        # Beside a Canary event: mid-sentence, so not capitalized.
+        devices = _canary_event("boundary_crossing_object_large")
+        speech = speak_last_event(fleet_brief([_entry(devices, kernel=kernel)], NOW))
+        assert speech.startswith("Person or vehicle, within the last ten minutes, from Canary gate."), spelled
+        assert speech.endswith(" The kernel log's latest event is held summary."), spelled
+        # Alone: it starts the sentence.
+        speech = speak_last_event(fleet_brief([_entry(kernel=kernel)], NOW))
+        assert speech == "Held summary — the latest event in the kernel log.", spelled
+    kernel = {"ok": True, "latest_event": {"event_type": "DailySummary"}}
     speech = speak_last_event(fleet_brief([_entry(kernel=kernel)], NOW))
-    assert speech == "Held summary — the latest event in the kernel log."
+    assert speech == "Daily summary — the latest event in the kernel log."
 
 
 def test_speak_last_event_names_an_unlisted_type_once_when_both_sources_agree():
@@ -277,6 +285,25 @@ def test_speak_last_event_names_an_unlisted_type_once_when_both_sources_agree():
         fleet_brief([_entry(_canary_event("daily_summary"), kernel=other)], NOW)
     )
     assert speech.endswith(" The kernel log's latest event is held summary.")
+
+
+def test_speak_last_event_names_an_unlisted_type_once_in_each_sources_spelling():
+    """In practice the two sources spell one type differently: the Canary
+    snake_case, the kernel its CamelCase variant. Both are read into the
+    same words, so the type is named once; a different type still is not."""
+    kernel = {"ok": True, "latest_event": {"event_type": "HeldSummary"}}
+    speech = speak_last_event(
+        fleet_brief([_entry(_canary_event("held_summary"), kernel=kernel)], NOW)
+    )
+    assert speech == (
+        "Held summary, within the last ten minutes, from Canary gate. The event "
+        "signature is verified against the device's pinned key."
+    )
+    other = {"ok": True, "latest_event": {"event_type": "DailySummary"}}
+    speech = speak_last_event(
+        fleet_brief([_entry(_canary_event("held_summary"), kernel=other)], NOW)
+    )
+    assert speech.endswith(" The kernel log's latest event is daily summary.")
 
 
 def _camel(event_type):
@@ -333,6 +360,13 @@ def test_speak_last_event_never_says_an_underscore():
         ("___", "Unknown"),
         ("überwachung_alarm", "Überwachung alarm"),
         ("GPS_lost", "GPS lost"),
+        ("HeldSummary", "Held summary"),
+        ("Überwachung", "Überwachung"),
+        # The first letter takes its titlecase, which is not always its
+        # uppercase: one capital, not two.
+        ("ßtraße_x", "Sstraße x"),
+        ("ﬁre_alarm", "Fire alarm"),
+        ("ǆungla_x", "ǅungla x"),
     ):
         speech = speak_last_event(fleet_brief([_entry(_canary_event(event_type))], NOW))
         assert speech.startswith(f"{said}, within the last ten minutes,"), event_type
