@@ -668,6 +668,14 @@ if (!nlFixes.length) await fail("the Nightlight's bench offers no troubleshootin
 if (nlFixes.some((t) => /unplugged the cable/.test(t))) await fail("the Nightlight's bench offers the battery ride-through flow");
 if (/rides the battery|ride-through/.test(await page.locator(".bench-trouble").textContent()))
   await fail("a Nightlight troubleshooting step still talks of riding a battery");
+// sweep A128: its bench block lists no light, so nothing the page offers it
+// names one (no label, no power or charge light, no light at all), and the
+// screen-dark flow says its symptom without the PWR light it does not list
+{
+  const named = (await page.locator(".bench-trouble").textContent()).match(/\b(?:PWR|CHG|DONE|USER)\b|\b(?:lights?|LEDs?)\b/gi);
+  if (named) await fail(`the Nightlight's troubleshooter names lights its bench block does not list: ${[...new Set(named)].join(", ")}`);
+  if (!nlFixes.includes("Screen dark")) await fail(`the Nightlight's screen-dark flow is not worded for a board with no PWR light: ${nlFixes.join(" | ")}`);
+}
 // its screen-dark flow keeps a download-mode guess, told in the bench's own
 // words for a chip with no download banner the Lab quotes (sweep A101), and
 // staging it parks the C3's ROM, which RST alone recovers
@@ -790,6 +798,14 @@ await openTab("Bench");
 await page.waitForSelector(".bench-chip", { timeout: 10000 });
 if (await pressCtl().count()) await fail("the dash's bench offers a press of BOOT, on a board whose firmware never reads it");
 if (!(await chip("BOOT").count())) await fail("the dash's bench lost its strap toggle");
+// sweep A128: the dash keeps its PWR flows, and is offered no USER LED (the
+// watch's), which its bench block does not list
+{
+  const fixes = await page.locator(".bench-trouble .fix summary").allTextContents();
+  for (const want of ["The PWR light is always on — can I turn it off?", "Screen dark, but the PWR light is on", "Nothing at all — no PWR light, no glass"])
+    if (!fixes.includes(want)) await fail(`the dash's troubleshooter lost "${want}": ${fixes.join(" | ")}`);
+  if (/\bUSER\b/.test(await page.locator(".bench-trouble").textContent())) await fail("the dash's troubleshooter names a USER LED its bench block does not list");
+}
 
 // ── A dist without emu_button (sweep A99) ───────────────────────────────
 // Served a watch module with no _emu_button, as a dist built before it: the

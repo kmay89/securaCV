@@ -302,10 +302,20 @@ test("a bench with no battery path is offered no step that stages a battery", as
     }
   }
   assert.ok(BENCH_FIXES.some((f) => f.steps.some((st) => st.battery)), "some step stages a battery");
-  // a board with a battery is offered every step that stages one, as written
-  const dashSteps = benchFixesFor(benchProfile("canary-display-dash")).flatMap((f) => f.steps);
+  // a board with a battery is offered every step that stages one, as
+  // written, where it lists the lights the step names (sweep A128: the
+  // watch and the dash each get their own telling), and every such step has
+  // a card that is offered it
+  const ledIds = (dev) => new Set((dev.bench.leds || []).map((l) => l.id));
+  const fitsLights = (dev, st) => (st.lights || []).every((id) => ledIds(dev).has(id)) && !(st.unlit || []).some((id) => ledIds(dev).has(id));
+  const batteryCards = registry().devices.filter((d) => d.bench?.power?.battery);
   for (const f of BENCH_FIXES) {
-    for (const st of f.steps) if (st.battery) assert.ok(dashSteps.includes(st), `a board with a battery is offered ${f.symptom}: ${st.title}`);
+    for (const st of f.steps) {
+      if (!st.battery) continue;
+      const cards = batteryCards.filter((d) => fitsLights(d, st));
+      assert.ok(cards.length, `${f.id} / ${st.title}: no card with a battery lists its lights`);
+      for (const d of cards) assert.ok(benchFixesFor(d.bench).flatMap((g) => g.steps).includes(st), `${d.id}, a board with a battery, is offered ${f.id} / ${st.title}`);
+    }
   }
   for (const id of ["canary-display-nightstand-s3", "canary-nightlight"]) {
     const offered = benchFixesFor(benchProfile(id));
@@ -873,23 +883,23 @@ test("A83: the troubleshooter quotes only the ROM lines the Lab quotes for the b
     const boot = offered.find((f) => f.symptom === "Pressing BOOT does nothing");
     assert.ok(boot && boot.steps.length === 2, `${dev.id}: the BOOT flow is offered, its own story and the release`);
     assert.strictEqual(/never reads it/.test(JSON.stringify(boot.steps.map((st) => st.body))), !reads, `${dev.id}: the BOOT flow says never-read only where it is true`);
-    offeredOn[dev.id] = offered.map((f) => `${f.symptom} (${f.steps.length})`);
+    offeredOn[dev.id] = offered.map((f) => `${f.id} (${f.steps.length})`);
   }
   // the Nightlight's C3: the Lab quotes no download or restart banner for it,
   // so the download flow and both quoting steps are left out; the restore
   // step is not
   const nl = offeredOn["canary-nightlight"];
-  assert.ok(!nl.some((s) => s.startsWith("Serial says 'waiting for download'")), "the C3 card offers no flow for a banner the Lab quotes none of for it");
-  assert.ok(nl.includes("It reboots by itself (2)"), `the C3 card's reboot flow keeps its countdown and its restore: ${nl}`);
+  assert.ok(!nl.some((s) => s.startsWith("download-banner ")), "the C3 card offers no flow for a banner the Lab quotes none of for it");
+  assert.ok(nl.includes("reboots (2)"), `the C3 card's reboot flow keeps its countdown and its restore: ${nl}`);
   // ...and its screen-dark flow keeps a download-mode guess, the one told in
   // the bench's own words, not the banner's (sweep A101)
-  assert.ok(nl.includes("Screen dark, but the power light is on (2)"), `...and its screen-dark flow keeps two guesses: ${nl}`);
+  assert.ok(nl.includes("screen-dark (2)"), `...and its screen-dark flow keeps two guesses: ${nl}`);
   const s3 = offeredOn["canary-display-watch"];
-  assert.ok(s3.includes("Serial says 'waiting for download' (2)") && s3.includes("It reboots by itself (3)") &&
-    s3.includes("Screen dark, but the power light is on (2)"), `the S3 cards keep every ROM step: ${s3}`);
+  assert.ok(s3.includes("download-banner (2)") && s3.includes("reboots (3)") &&
+    s3.includes("screen-dark (2)"), `the S3 cards keep every ROM step: ${s3}`);
   // a block that says nothing of BOOT is offered neither BOOT story
   const bare = { ...benchProfile("canary-display-dash"), buttons: [{ id: "boot", label: "BOOT", note: "GPIO0 strapping pin" }, { id: "reset", label: "RESET" }] };
-  assert.deepStrictEqual(benchFixesFor(bare).find((f) => f.symptom === "Pressing BOOT does nothing").steps.map((st) => st.title),
+  assert.deepStrictEqual(benchFixesFor(bare).find((f) => f.id === "boot-silent").steps.map((st) => st.title),
     ["Release it before the next reset"]);
 });
 
@@ -898,9 +908,11 @@ test("A83: the troubleshooter quotes only the ROM lines the Lab quotes for the b
 // BENCH_FIXES), so a filter that dropped one more step on every card passed
 // the checks above, which hold only what may NOT be offered. Each card's
 // flows are held here in closed form: every flow and step whose own markers
-// fit the board (`battery`, `rom`, `boot`), in BENCH_FIXES' order, each as
-// written (its strap's pin for GPIO0 where it names the strap), and nothing
-// else; and what each card leaves out is pinned by name.
+// fit the board (`battery`, `rom`, `boot`, and since A128 the `lights` it
+// names and the `unlit` it needs), in BENCH_FIXES' order, each as written
+// (its strap's pin for GPIO0 where it names the strap) under the card's own
+// wording of its symptom, and nothing else; and what each card leaves out is
+// pinned by name.
 test("A83: each card is offered every flow and step that fits it, as written, and nothing else", async () => {
   const { BENCH_FIXES, benchFixesFor } = await importGuides();
   const { ROM_VOICES } = await importBench();
@@ -917,57 +929,73 @@ test("A83: each card is offered every flow and step that fits it, as written, an
     // voice holds no line of that kind
     const lacking = (x) => !x.romMissing || typeof (ROM_VOICES[dev.bench.rom.chip] || {})[x.romMissing] !== "string";
     const otherStory = reads ? "ignored" : "read";
+    // sweep A128: the lights a symptom or step names are all lights the card
+    // lists, and its unlit ones none
+    const ids = (dev.bench.leds || []).map((l) => l.id);
+    const lit = (x) => (x.lights || []).every((id) => ids.includes(id)) && !(x.unlit || []).some((id) => ids.includes(id));
     const fits = BENCH_FIXES.filter(quoted)
-      .map((f) => ({ f, steps: f.steps.filter((st) => (battery || !st.battery) && quoted(st) && lacking(st) && st.boot !== otherStory) }))
-      .filter(({ steps }) => steps.length);
+      .map((f) => ({ f, said: [f, ...(f.wordings || [])].find(lit),
+        steps: f.steps.filter((st) => (battery || !st.battery) && quoted(st) && lacking(st) && st.boot !== otherStory && lit(st)) }))
+      .filter(({ said, steps }) => said && steps.length);
     const offered = benchFixesFor(dev.bench);
-    assert.deepStrictEqual(offered.map((f) => [f.symptom, f.steps.map((st) => st.title)]),
-      fits.map(({ f, steps }) => [f.symptom, steps.map((st) => st.title)]), `${dev.id}: every flow and step that fits it, and nothing else`);
+    assert.deepStrictEqual(offered.map((f) => [f.id, f.symptom, f.steps.map((st) => st.title)]),
+      fits.map(({ f, said, steps }) => [f.id, said.symptom, steps.map((st) => st.title)]), `${dev.id}: every flow and step that fits it, and nothing else`);
     const strap = dev.bench.rom.boot_strap;
     offered.forEach((f, i) => {
-      assert.strictEqual(f.symptom, fits[i].f.symptom);
+      assert.strictEqual(f.id, fits[i].f.id);
       f.steps.forEach((st, j) => {
         const src = fits[i].steps[j];
         if (strap === "GPIO0" || !src.strap) {
-          assert.strictEqual(st, src, `${dev.id}: ${f.symptom} / ${st.title} is offered as written`);
+          assert.strictEqual(st, src, `${dev.id}: ${f.id} / ${st.title} is offered as written`);
           return;
         }
         for (const k of ["title", "body", "onDevice"]) {
           assert.strictEqual(st[k], typeof src[k] === "string" ? src[k].split("GPIO0").join(strap) : src[k],
-            `${dev.id}: ${f.symptom} / ${st.title}: its ${k} as written, ${strap} for GPIO0`);
+            `${dev.id}: ${f.id} / ${st.title}: its ${k} as written, ${strap} for GPIO0`);
         }
         assert.strictEqual(st.stage, src.stage, `${dev.id}: ${st.title} stages as written`);
       });
     });
-    const kept = new Set(offered.flatMap((f) => f.steps.map((st) => `${f.symptom} / ${st.title}`)));
-    leftOut[dev.id] = BENCH_FIXES.flatMap((f) => f.steps.map((st) => `${f.symptom} / ${st.title}`)).filter((t) => !kept.has(t));
+    const kept = new Set(offered.flatMap((f) => f.steps.map((st) => `${f.id} / ${st.title}`)));
+    leftOut[dev.id] = BENCH_FIXES.flatMap((f) => f.steps.map((st) => `${f.id} / ${st.title}`)).filter((t) => !kept.has(t));
   }
-  const IGNORED_STORY = "Pressing BOOT does nothing / Correct — and that's a design fact";
-  const READ_STORY = "Pressing BOOT does nothing / This board's firmware does read it";
-  const BATTERY_STEPS = [
-    "A red light is always on — can I turn it off? / What actually turns them off",
-    "The charge light is flickering / Fit the battery and it settles",
-    "It died the moment I unplugged the cable / The switch only gates the battery",
-    "It died the moment I unplugged the cable / …and the ride-through, done right",
-  ];
+  const all = (id) => BENCH_FIXES.find((f) => f.id === id).steps.map((st) => `${id} / ${st.title}`);
+  const IGNORED_STORY = "boot-silent / Correct — and that's a design fact";
+  const READ_STORY = "boot-silent / This board's firmware does read it";
+  const BATTERY_STEPS = BENCH_FIXES.flatMap((f) => f.steps.filter((st) => st.battery).map((st) => `${f.id} / ${st.title}`));
+  assert.deepStrictEqual(BATTERY_STEPS, [
+    "light-on / What actually turns them off",
+    "light-on / What actually turns it off",
+    "charge-flicker / Fit the battery and it settles",
+    "charge-flicker / Fit the battery and it settles, then goes out",
+    "unplug-dies / The switch only gates the battery",
+    "unplug-dies / …and the ride-through, done right",
+  ]);
+  // sweep A128: the dashes' telling (PWR, CHG, DONE) and the watch's (CHG,
+  // and its USER LED); a card that lists no light gets neither
+  const DASH_LIGHTS = ["light-on / Those lights don't answer to software", "light-on / What actually turns them off",
+    "charge-flicker / Fit the battery and it settles", "no-power / No light means no power — full stop"];
+  const WATCH_LIGHTS = ["light-on / That light doesn't answer to software", "light-on / What actually turns it off",
+    "light-on / The one exception", "charge-flicker / Fit the battery and it settles, then goes out"];
+  const NO_RAIL_LIGHT = "no-power / Dead glass and a silent serial: start with power";
+  const NO_LIGHTS = [...all("light-on"), ...all("charge-flicker"), "no-power / No light means no power — full stop"];
   // the download-mode guess told without a banner (sweep A101): only a card
   // whose chip's voice holds no download line is offered it
-  const NO_BANNER_GUESS = "Screen dark, but the power light is on / Second guess: the ROM is waiting for a flasher";
-  const ordered = (titles) => BENCH_FIXES.flatMap((f) => f.steps.map((st) => `${f.symptom} / ${st.title}`)).filter((t) => titles.includes(t));
+  const NO_BANNER_GUESS = "screen-dark / Second guess: the ROM is waiting for a flasher";
+  const ordered = (titles) => BENCH_FIXES.flatMap((f) => f.steps.map((st) => `${f.id} / ${st.title}`)).filter((t) => titles.includes(t));
   assert.deepStrictEqual(leftOut, {
-    "canary-display-watch": ordered([NO_BANNER_GUESS, IGNORED_STORY]),
-    "canary-display-dash": ordered([NO_BANNER_GUESS, READ_STORY]),
-    "canary-display-nightstand-s3": ordered([...BATTERY_STEPS, NO_BANNER_GUESS, IGNORED_STORY]),
-    "canary-display-touch169": ordered([NO_BANNER_GUESS, IGNORED_STORY]),
-    "canary-display-amoled241": ordered([NO_BANNER_GUESS, IGNORED_STORY]),
-    "canary-display-dash7": ordered([NO_BANNER_GUESS, READ_STORY]),
-    // the C3: no battery, no download or restart banner the Lab quotes for it
-    // (its download-mode guess is the one told without a banner)
-    "canary-nightlight": ordered([...BATTERY_STEPS, IGNORED_STORY,
-      "Screen dark, but the power light is on / Second guess: it's in download mode",
-      "Serial says 'waiting for download' / That's the ROM, not a fault",
-      "Serial says 'waiting for download' / Recovery is one button",
-      "It reboots by itself / Tell deliberate reboots from brownouts"]),
+    "canary-display-watch": ordered([...DASH_LIGHTS, NO_BANNER_GUESS, IGNORED_STORY]),
+    "canary-display-dash": ordered([...WATCH_LIGHTS, NO_RAIL_LIGHT, NO_BANNER_GUESS, READ_STORY]),
+    "canary-display-nightstand-s3": ordered([...NO_LIGHTS, ...BATTERY_STEPS, NO_BANNER_GUESS, IGNORED_STORY]),
+    "canary-display-touch169": ordered([...NO_LIGHTS, NO_BANNER_GUESS, IGNORED_STORY]),
+    "canary-display-amoled241": ordered([...NO_LIGHTS, NO_BANNER_GUESS, IGNORED_STORY]),
+    "canary-display-dash7": ordered([...WATCH_LIGHTS, NO_RAIL_LIGHT, NO_BANNER_GUESS, READ_STORY]),
+    // the C3: no battery, no light listed, no download or restart banner the
+    // Lab quotes for it (its download-mode guess is the one told without one)
+    "canary-nightlight": ordered([...NO_LIGHTS, ...BATTERY_STEPS, IGNORED_STORY,
+      "screen-dark / Second guess: it's in download mode",
+      ...all("download-banner"),
+      "reboots / Tell deliberate reboots from brownouts"]),
   }, "what each card leaves out");
 });
 
@@ -1218,10 +1246,10 @@ test("A99: the Lab's bench offers the press beside the strap where the firmware 
 test("A101: every card's screen-dark flow offers exactly one download-mode guess, in its own chip's words", async () => {
   const { BENCH_FIXES, benchFixesFor } = await importGuides();
   const { BenchPower, ROM_VOICES, romBanner } = await importBench();
-  const DARK = "Screen dark, but the power light is on";
+  const DARK = "screen-dark";
   const ctxFor = (bench) => ({ bench, emu: { setWifi() {}, setBroker() {}, setTimeScale() {} }, setHour() {}, note() {} });
   const guesses = async (profile) => {
-    const flow = benchFixesFor(profile).find((f) => f.symptom === DARK);
+    const flow = benchFixesFor(profile).find((f) => f.id === DARK);
     const out = [];
     for (const st of flow?.steps || []) {
       if (!st.stage) continue;
@@ -1255,17 +1283,15 @@ test("A101: every card's screen-dark flow offers exactly one download-mode guess
     } else {
       assert.strictEqual(st.romMissing, "download", `${dev.id}: a chip with no download banner gets the guess told without one`);
     }
-    // review of A101: a guess told without a banner names no light its
-    // board's bench block does not list (the C3's lists none). The banner
-    // guess's "PWR lit", on S3 cards that list no rail light, is older than
-    // A101 and a handup, not held here.
-    if (st.romMissing) {
-      const listed = new Set((dev.bench.leds || []).map((l) => l.label));
-      for (const lab of textOf(st).match(LIGHTS) || [])
-        assert.ok(listed.has(lab), `${dev.id}: its download-mode guess names ${lab}, a light its bench block does not list`);
-      if (!(dev.bench.leds || []).some((l) => l.driver === "rail"))
-        assert.ok(!/power light|power LED/i.test(textOf(st)), `${dev.id}: its download-mode guess names a power light its bench block does not list`);
-    }
+    // review of A101: a guess names no light its board's bench block does
+    // not list (the C3's lists none). The banner guess's "PWR lit", on S3
+    // cards that list no rail light, was older than A101; since A128 neither
+    // guess names a light, and every card's is held here.
+    const listed = new Set((dev.bench.leds || []).map((l) => l.label));
+    for (const lab of textOf(st).match(LIGHTS) || [])
+      assert.ok(listed.has(lab), `${dev.id}: its download-mode guess names ${lab}, a light its bench block does not list`);
+    if (!(dev.bench.leds || []).some((l) => l.driver === "rail"))
+      assert.ok(!/power light|power LED/i.test(textOf(st)), `${dev.id}: its download-mode guess names a power light its bench block does not list`);
   }
   // the Nightlight's, whole: no ROM token at all, GPIO9, the bench's own note,
   // which is the note romBanner() prints for its download mode
@@ -1278,7 +1304,7 @@ test("A101: every card's screen-dark flow offers exactly one download-mode guess
     "the note the guess names is the one the bench prints");
   // the marker is the other half of the banner guess: same stage, same words
   // off the device, and offered on a card exactly where the banner one is not
-  const dark = BENCH_FIXES.find((f) => f.symptom === DARK).steps;
+  const dark = BENCH_FIXES.find((f) => f.id === DARK).steps;
   const banner = dark.find((st) => st.rom?.some((q) => q.kind === "download"));
   const told = dark.filter((st) => st.romMissing);
   assert.strictEqual(told.length, 1);
@@ -1328,6 +1354,126 @@ test("A101 review: the glass in download mode says its chip's own download line,
   const { benchFixesFor } = await importGuides();
   const nl = benchFixesFor(benchProfile("canary-nightlight")).flatMap((f) => f.steps).find((st) => st.romMissing === "download");
   assert.match(nl.body, /the ROM waits for a flasher/, "the C3's guess says what its glass shows");
+});
+
+// Sweep A128: the troubleshooting flows named lights most cards do not list.
+// All seven bench cards were offered steps naming a light their bench block
+// does not list: "PWR lit" and "No light means no power" on the watch, the
+// four cards that list none, and the Nightlight (no `leds` at all), the
+// watch's USER LED on both dashes, the red-light and charge-light flows on
+// cards with neither. Each symptom and step that names a light now says
+// which (`lights`, by registry led id; `unlit` for the other half of a
+// variant), benchFixesFor() offers it only where the card lists them, a
+// symptom gets the card's own wording, and a flow left with nothing to say is
+// not offered. A light is named by its label, or as a power light (a
+// rail-driven one), a charge light (a charger-driven one), or, on a card
+// that lists no light at all, as any light or LED.
+function lightRegistry() {
+  const devs = registry().devices.filter((d) => d.bench);
+  const byId = {};
+  for (const d of devs) {
+    for (const l of d.bench.leds || []) {
+      if (byId[l.id]) assert.deepStrictEqual([l.label, l.driver], [byId[l.id].label, byId[l.id].driver], `${l.id} is one light across the registry`);
+      byId[l.id] = l;
+    }
+  }
+  return { devs, byId, labels: Object.values(byId).map((l) => l.label) };
+}
+const lightTextOf = (st) => [st.title, st.body, st.onDevice].filter(Boolean).join(" ");
+const POWER_LIGHT = /\bpower (?:light|LED)s?\b|\bpower\/charge LEDs\b/i;
+const CHARGE_LIGHT = /\bcharge (?:light|LED)s?\b|\bpower\/charge LEDs\b/i;
+const ANY_LIGHT = /\b(?:lights?|LEDs?)\b/i;
+
+test("A128: no symptom or step offered to any card names a light its bench block does not list", async () => {
+  const { benchFixesFor } = await importGuides();
+  const { devs, labels } = lightRegistry();
+  assert.strictEqual(devs.length, 7, "seven bench cards");
+  assert.deepStrictEqual([...labels].sort(), ["CHG", "DONE", "PWR", "USER"], "the registry's light labels");
+  const wrong = {};
+  for (const dev of devs) {
+    const leds = dev.bench.leds || [];
+    const listed = new Set(leds.map((l) => l.label));
+    const drivers = new Set(leds.map((l) => l.driver));
+    const said = [];
+    for (const f of benchFixesFor(dev.bench)) {
+      said.push([f.symptom, f.symptom]);
+      for (const st of f.steps) said.push([`${f.symptom} / ${st.title}`, lightTextOf(st)]);
+    }
+    const out = [];
+    for (const [where, text] of said) {
+      for (const lab of labels) if (new RegExp(`\\b${lab}\\b`).test(text) && !listed.has(lab)) out.push(`${where}: ${lab}`);
+      if (POWER_LIGHT.test(text) && !drivers.has("rail")) out.push(`${where}: a power light`);
+      if (CHARGE_LIGHT.test(text) && !drivers.has("charger")) out.push(`${where}: a charge light`);
+      if (!leds.length && ANY_LIGHT.test(text)) out.push(`${where}: a light, where it lists none`);
+    }
+    if (out.length) wrong[dev.id] = out;
+  }
+  assert.deepStrictEqual(wrong, {}, "every card is offered only the lights its bench block lists");
+});
+
+test("A128: each symptom and step says which lights it names; the dashes keep their PWR steps, the Nightlight gets none", async () => {
+  const { BENCH_FIXES, benchFixesFor } = await importGuides();
+  const { devs, byId, labels } = lightRegistry();
+  const idOf = Object.fromEntries(Object.values(byId).map((l) => [l.label, l.id]));
+  // the tags are honest: a symptom or step is tagged with exactly the lights
+  // its words name by label, and with a light of each kind it names
+  const ids = new Set();
+  for (const f of BENCH_FIXES) {
+    assert.ok(f.id && !ids.has(f.id), `${f.symptom}: a flow id, once`);
+    ids.add(f.id);
+    const told = [...[f, ...(f.wordings || [])].map((w) => [`${f.id}: "${w.symptom}"`, w, w.symptom]),
+      ...f.steps.map((st) => [`${f.id} / ${st.title}`, st, lightTextOf(st)])];
+    for (const [where, x, text] of told) {
+      const named = labels.filter((lab) => new RegExp(`\\b${lab}\\b`).test(text)).map((lab) => idOf[lab]).sort();
+      assert.deepStrictEqual(named, [...(x.lights || [])].sort(), `${where} names ${named} and is tagged ${x.lights || []}`);
+      if (POWER_LIGHT.test(text)) assert.ok((x.lights || []).some((id) => byId[id].driver === "rail"), `${where} names a power light untagged`);
+      if (CHARGE_LIGHT.test(text)) assert.ok((x.lights || []).some((id) => byId[id].driver === "charger"), `${where} names a charge light untagged`);
+      if (ANY_LIGHT.test(text) && !(x.lights || []).length) assert.ok(false, `${where} names a light and is tagged with none`);
+    }
+    // an unlit id is the other half of a variant: a step beside it names it
+    for (const st of f.steps) {
+      for (const id of st.unlit || []) {
+        assert.ok(byId[id], `${f.id} / ${st.title}: unlit ${id} is a registry light`);
+        assert.ok(f.steps.some((o) => o !== st && (o.lights || []).includes(id)), `${f.id} / ${st.title}: unlit ${id}, and no step beside it names that light`);
+      }
+    }
+  }
+  // the dashes keep every step that names PWR, and say PWR in the symptoms
+  // that name it, as written
+  const pwrSteps = BENCH_FIXES.flatMap((f) => f.steps.filter((st) => (st.lights || []).includes("pwr")).map((st) => [f.id, st]));
+  assert.ok(pwrSteps.length >= 3, "the flows have PWR steps");
+  for (const id of ["canary-display-dash", "canary-display-dash7"]) {
+    const offered = benchFixesFor(benchProfile(id));
+    const steps = offered.flatMap((f) => f.steps);
+    for (const [fid, st] of pwrSteps) assert.ok(steps.includes(st), `${id}: its ${fid} step "${st.title}" names PWR, which it lists`);
+    assert.deepStrictEqual(offered.filter((f) => /\bPWR\b/.test(f.symptom)).map((f) => [f.id, f.symptom]),
+      BENCH_FIXES.filter((f) => (f.lights || []).includes("pwr")).map((f) => [f.id, f.symptom]), `${id}: the PWR symptoms as written`);
+    assert.deepStrictEqual(offered.map((f) => f.id), BENCH_FIXES.map((f) => f.id), `${id}: every flow`);
+  }
+  // a symptom that names a light gets the card's wording: "Screen dark" where
+  // the card lists no PWR, the light's own label where it does
+  for (const dev of devs) {
+    const ledIds = (dev.bench.leds || []).map((l) => l.id);
+    const dark = benchFixesFor(dev.bench).find((f) => f.id === "screen-dark");
+    assert.strictEqual(dark.symptom, ledIds.includes("pwr") ? "Screen dark, but the PWR light is on" : "Screen dark", dev.id);
+    const offered = benchFixesFor(dev.bench);
+    assert.ok(offered.every((f) => f.steps.length && f.symptom), `${dev.id}: no flow is offered with nothing to say`);
+    // a flow all of whose steps name lights the card lacks is not offered
+    if (!ledIds.length) assert.ok(!offered.some((f) => ["light-on", "charge-flicker"].includes(f.id)), `${dev.id}: no light flow, no light listed`);
+  }
+  // the Nightlight: no leds key at all, so no light-named symptom or step,
+  // and no throw; nor for a block with no bench facts
+  const nl = benchProfile("canary-nightlight");
+  assert.ok(!("leds" in nl), "the Nightlight's bench block lists no lights");
+  for (const profile of [nl, undefined, {}, { leds: [] }]) {
+    let offered;
+    assert.doesNotThrow(() => { offered = benchFixesFor(profile); }, JSON.stringify(profile));
+    for (const f of offered) {
+      assert.ok(!(f.lights || []).length && !ANY_LIGHT.test(f.symptom), `${f.id}: "${f.symptom}" names a light`);
+      for (const st of f.steps) assert.ok(!(st.lights || []).length && !ANY_LIGHT.test(lightTextOf(st)), `${f.id} / ${st.title} names a light`);
+    }
+  }
+  assert.deepStrictEqual(benchFixesFor(nl).map((f) => f.id), ["screen-dark", "no-power", "reboots", "boot-silent"], "the Nightlight's flows");
 });
 
 // ── the debug curriculum stages cleanly ─────────────────────────────────
