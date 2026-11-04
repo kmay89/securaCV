@@ -484,6 +484,23 @@ static uint32_t cooldown_left_ms(uint8_t tier, uint32_t last_send_ms, uint32_t c
   return elapsed < cooldown_ms ? cooldown_ms - elapsed : 0;
 }
 
+// What a mute has left at `now`: the time to its deadline, `until` (mute()
+// sets it to the moment it ran plus the duration), and 0 once the deadline
+// has come or when no mute runs. Every reader counts it here: update()
+// (which ends the mute when this is 0), is_muted() (what handle_witness()
+// and the presence beacon's `listening` read), get_status() and
+// read_status(). They compared the deadline as an absolute time (`now <
+// until`), so a deadline past uptime's 49.7-day wrap, which wraps to a
+// small number, read as long past: a mute set within its length of the
+// wrap ended at once, and the chirps it was set to drop came in (sweep
+// F361, #1836's filing). The difference read as signed is exact for a
+// deadline less than 2^31 ms (24.8 days) away, and a mute is at most 120
+// minutes (7.2e6 ms); update() ends one at its first pass at or past the
+// deadline, so no flag is kept to the point where the sign turns.
+static uint32_t mute_left_ms(bool muted, uint32_t until, uint32_t now) {
+  return (muted && (int32_t)(until - now) > 0) ? until - now : 0;
+}
+
 // What a stored state reads as: an active channel whose cooldown runs reads
 // CHIRP_COOLDOWN, as it always did. g_state never holds CHIRP_COOLDOWN, so
 // a mute cannot overwrite the cooldown, and an unmute or the mute's timeout
@@ -1397,7 +1414,7 @@ void read_status(StatusView* out) {
   out->cooldown_remaining_ms = cooldown_left_ms(out->cooldown_tier, out->last_chirp_sent_ms,
                                                 out->cooldown_ms, now);
   out->state = shown_state(out->state, out->cooldown_remaining_ms);
-  out->mute_remaining_ms = (out->muted && now < out->mute_until_ms) ? out->mute_until_ms - now : 0;
+  out->mute_remaining_ms = mute_left_ms(out->muted, out->mute_until_ms, now);   // F361
   out->presence_met = out->session_start_ms != 0 &&
                       (now - out->session_start_ms) >= PRESENCE_REQUIRED_MS;
   out->clock_synced = wall_clock_is_synced();
@@ -1608,7 +1625,8 @@ void update() {
     return;
   }
   uint32_t now = millis();
-  if (g_muted && now >= g_mute_until_ms) {
+  // The mute ends at its deadline, counted across uptime's wrap (F361).
+  if (g_muted && mute_left_ms(g_muted, g_mute_until_ms, now) == 0) {
     g_muted = false;
     if (g_state == CHIRP_MUTED) set_state(CHIRP_ACTIVE);
   }
@@ -1636,8 +1654,7 @@ ChirpStatus get_status() {
   status.state = shown_state(g_state, status.cooldown_remaining_ms);
   status.relay_enabled = g_relay_enabled;
   status.muted = g_muted;
-  status.mute_remaining_ms = (g_muted && millis() < g_mute_until_ms)
-                             ? g_mute_until_ms - millis() : 0;
+  status.mute_remaining_ms = mute_left_ms(g_muted, g_mute_until_ms, millis());   // one read (F361)
   return status;
 }
 
@@ -2038,7 +2055,7 @@ static bool unmute(MuteRefusal* why) {
   return true;
 }
 
-bool is_muted() { return g_muted && millis() < g_mute_until_ms; }
+bool is_muted() { return mute_left_ms(g_muted, g_mute_until_ms, millis()) > 0; }   // F361
 
 static void set_relay_enabled(bool enabled) { g_relay_enabled = enabled; save_settings(); }
 bool is_relay_enabled() { return g_relay_enabled; }
