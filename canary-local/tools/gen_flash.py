@@ -27,8 +27,9 @@ Sources of truth this reads:
   - canary-local/devices/registry.json . the firmware train (fw_train)
   - CAPABILITY_TRAINS (below) ........... the first train whose RELEASE
                                          carries a capability the tree shows
-                                         (broker_tls); a clone's fw-v* tags
-                                         corroborate it when they are present
+                                         (broker_tls, ble_setup); a clone's
+                                         fw-v* tags corroborate it when they
+                                         are present
 
 What the flasher does at runtime with this file:
   - chip guard: only products whose `chip` matches the physically-detected
@@ -678,12 +679,15 @@ PROVISIONING = {
 }
 
 
-def provisioning_note(product_id: str, provisioning: str) -> str:
+def provisioning_note(provisioning: str, door: bool) -> str:
     """The confirm card's one-line promise about first boot. Keyed by the
     provisioning kind, except that the two `ap` families differ in a way an
     owner feels at once: the WAP opens the Bluetooth setup door and the
-    all-rounder Canary does not, so the WAP leads with the iPhone card."""
-    if provisioning == "ap" and product_role(product_id) == "wap":
+    all-rounder Canary does not, so the WAP leads with the iPhone card.
+    `door` is the catalog's setup_door (train_gated_setup_door): the build
+    compiles the door AND the pinned train's images carry it, never the
+    product's role."""
+    if provisioning == "ap" and door:
         return PROVISIONING["ap-door"]
     return PROVISIONING[provisioning]
 
@@ -756,12 +760,13 @@ def arduino_feature_on(text: str, feature: str, who: str) -> bool:
 
 
 def has_setup_door(project: str, env: str) -> bool:
-    """Whether this product's image opens the Bluetooth setup door (Improv
-    Wi-Fi) — the catalog's `setup_door`, read from what the build compiles,
-    never typed. Both flashers gate the "leave the WiFi blank, your iPhone
-    hands it over" note and the first-boot listener on it, so a product
-    that wrongly says True sends an owner to wait for a card that never
-    comes.
+    """Whether this product's build compiles the Bluetooth setup door
+    (Improv Wi-Fi) — the source half of the catalog's `setup_door`, read
+    from what the build compiles, never typed (train_gated_setup_door adds
+    the pinned train's half). Both flashers gate the "leave the WiFi blank,
+    your iPhone hands it over" note and the first-boot listener on it, so a
+    product that wrongly says True sends an owner to wait for a card that
+    never comes.
 
     PlatformIO envs (Sense, Vision): the env's resolved sections compile
     common/network/improv_ble.cpp through build_src_filter. The WAP's
@@ -929,10 +934,23 @@ def honors_broker_tls(project: str, env: str) -> bool:
 # A shallow CI checkout carries no tags, so the row is the authority there;
 # where a clone DOES have the tags, corroborate_capability_trains() reads the
 # evidence at every fw-v<train> tag and refuses a row the tags contradict.
+#
+# A row may name `also`: more files whose presence at a tag is the same
+# evidence, each held to the tags the same way (the WAP's Bluetooth door is
+# its own sketch's ble_improv.h, the Sense's and the Vision's the common
+# improv_ble.h).
 CAPABILITY_TRAINS = {
     "broker_tls": {
         "since": "2.4.16",
         "evidence": "firmware/common/network/mqtt_transport.h",
+    },
+    # The Bluetooth setup door (Improv Wi-Fi), the catalog's setup_door. It
+    # shipped in [2.4.16]; no fw-v2.4.16 tag was cut, and both files are
+    # absent at every tag through fw-v2.4.15 and present from fw-v2.4.17.
+    "ble_setup": {
+        "since": "2.4.16",
+        "evidence": "firmware/common/network/improv_ble.h",
+        "also": ["firmware/projects/canary-wap/arduino/canary_wap/ble_improv.h"],
     },
 }
 
@@ -954,10 +972,10 @@ def train_carries(capability: str, fw_train: str) -> bool:
 def corroborate_capability_trains() -> None:
     """Hold each CAPABILITY_TRAINS row to the release tags this clone has.
 
-    For every local fw-v<digits> tag, the row's evidence file must exist at
-    the tag exactly when the row says that train carries the capability: a
-    `since` set too early (the bug this ledger exists for) or too late both
-    fail here, by tag. No git, no repository, or no tags (a shallow CI
+    For every local fw-v<digits> tag, the row's evidence file (and each of
+    its `also` files) must exist at the tag exactly when the row says that
+    train carries the capability: a `since` set too early (the bug this
+    ledger exists for) or too late both fail here, by tag. No git, no repository, or no tags (a shallow CI
     checkout) means there is nothing to read, and the row stands as written —
     the catalog drift gate still pins what it produced."""
     try:
@@ -970,16 +988,17 @@ def corroborate_capability_trains() -> None:
         return
     tags = [t for t in listed.stdout.split() if re.fullmatch(r"fw-v\d+(?:\.\d+)*", t)]
     for capability, row in CAPABILITY_TRAINS.items():
-        for tag in tags:
-            train = tag[len("fw-v"):]
-            present = subprocess.run(
-                ["git", "-C", str(REPO), "cat-file", "-e", f"{tag}:{row['evidence']}"],
-                capture_output=True, check=False).returncode == 0
-            if present != train_carries(capability, train):
-                die(f"CAPABILITY_TRAINS[{capability!r}] says {capability} arrives with "
-                    f"{row['since']}, but {row['evidence']} is "
-                    f"{'present' if present else 'absent'} at {tag} — set `since` to the "
-                    f"first release train whose tag carries it")
+        for evidence in (row["evidence"], *row.get("also", ())):
+            for tag in tags:
+                train = tag[len("fw-v"):]
+                present = subprocess.run(
+                    ["git", "-C", str(REPO), "cat-file", "-e", f"{tag}:{evidence}"],
+                    capture_output=True, check=False).returncode == 0
+                if present != train_carries(capability, train):
+                    die(f"CAPABILITY_TRAINS[{capability!r}] says {capability} arrives with "
+                        f"{row['since']}, but {evidence} is "
+                        f"{'present' if present else 'absent'} at {tag} — set `since` to the "
+                        f"first release train whose tag carries it")
 
 
 def train_gated_broker_tls(project: str, env: str, fw_train: str) -> tuple[bool, str | None]:
@@ -995,6 +1014,16 @@ def train_gated_broker_tls(project: str, env: str, fw_train: str) -> tuple[bool,
     if train_carries("broker_tls", fw_train):
         return True, None
     return False, CAPABILITY_TRAINS["broker_tls"]["since"]
+
+
+def train_gated_setup_door(project: str, env: str, fw_train: str) -> bool:
+    """The catalog's `setup_door`: has_setup_door() (the build compiles the
+    Bluetooth setup door) AND the pinned train's release images carry it
+    (CAPABILITY_TRAINS["ble_setup"]). Both flashers' "leave the WiFi blank,
+    your iPhone hands it over" note, the confirm card's provisioning_note
+    and the done card's hatch read it, so a train that predates the door
+    never sends an owner to wait for a card its image cannot show."""
+    return has_setup_door(project, env) and train_carries("ble_setup", fw_train)
 
 # Post-flash "hatching" copy. This lives in the generated catalog instead of
 # desktop/web UI branches so every flasher surface can share the same first-use
@@ -1080,10 +1109,14 @@ HATCH_MOMENTS = {
 }
 
 
-def hatch_kind(product_id: str, provisioning: str) -> str:
+def hatch_kind(product_id: str, provisioning: str, door: bool) -> str:
+    """Which HATCH_MOMENTS card this product's done screen shows. An `ap`
+    product leads with the iPhone card ("ap-door") exactly when `door`, the
+    catalog's setup_door (train_gated_setup_door), says the pinned image
+    opens the Bluetooth setup door."""
     if "display" in product_id:
         return "display-modes" if "modes" in product_id else "display"
-    if provisioning == "ap" and product_role(product_id) == "wap":
+    if provisioning == "ap" and door:
         return "ap-door"
     if "sense-wellbeing" in product_id:
         return "sense-wellbeing"
@@ -3188,7 +3221,8 @@ def main() -> None:
         if p.get("family") not in fam_ids:
             die(f"{p['id']}: family '{p.get('family')}' is not in FAMILIES")
         role = product_role(p["id"])
-        hatch = HATCH_MOMENTS[hatch_kind(p["id"], p["provisioning"])]
+        door = train_gated_setup_door(project, p["env"], fw_train)
+        hatch = HATCH_MOMENTS[hatch_kind(p["id"], p["provisioning"], door)]
         broker_tls, broker_tls_from = train_gated_broker_tls(project, p["env"], fw_train)
         entry = {
             "id": p["id"],
@@ -3201,12 +3235,13 @@ def main() -> None:
             "board": p["board"],
             "asset_stem": p["asset_stem"],
             "provisioning": p["provisioning"],
-            "provisioning_note": provisioning_note(p["id"], p["provisioning"]),
-            # Whether this image opens the Bluetooth setup door (Improv
-            # Wi-Fi) — derived from what the build compiles (has_setup_door).
+            "provisioning_note": provisioning_note(p["provisioning"], door),
+            # Whether the PINNED train's image opens the Bluetooth setup door
+            # (Improv Wi-Fi) — what the build compiles (has_setup_door), from
+            # the first train whose release carries it (CAPABILITY_TRAINS).
             # Both flashers gate the "leave the WiFi blank, your iPhone hands
             # it over" note and the first-boot key listener on it.
-            "setup_door": has_setup_door(project, p["env"]),
+            "setup_door": door,
             "wifi_nvs": wifi_scheme(project),
             "broker_nvs": reads_broker(project),
             # Whether a provisioned TLS mode is honored by the PINNED train's

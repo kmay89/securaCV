@@ -7355,6 +7355,47 @@ test("setup-network key: one parser, both flashers, pinned to the firmware's pri
 });
 
 // ── The Bluetooth setup door: "leave the WiFi blank" only where it is true ──
+// a before b, as dotted firmware trains.
+function trainBefore(a, b) {
+  const x = a.split(".").map(Number), y = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] || 0) - (y[i] || 0);
+    if (d) return d < 0;
+  }
+  return false;
+}
+
+// gen_flash.py's CAPABILITY_TRAINS["ble_setup"] row, as written: its first
+// train and its evidence files (`evidence`, then each of `also`).
+function bleSetupRow() {
+  const src = read(join(CANARY, "tools/gen_flash.py"));
+  const m = /\n    "ble_setup": \{\n        "since": "(\d+(?:\.\d+)*)",\n        "evidence": "([^"\n]+)",\n(?:        "also": \[([^\]\n]*)\],\n)?    \},\n/.exec(src);
+  assert.ok(m, "gen_flash.py's CAPABILITY_TRAINS has no ble_setup row in the shape this test reads " +
+    '(`"since"`, `"evidence"`, an optional `"also"` list) — the setup door is not train-gated');
+  return { since: m[1], files: [m[2], ...[...(m[3] || "").matchAll(/"([^"]+)"/g)].map((a) => a[1])] };
+}
+
+test("setup door: where the pinned release is tagged in this clone, it carries the door the catalog claims", (t) => {
+  // The tag half of the A71 gate, as the broker TLS test reads its own: a
+  // shallow CI checkout has no tags, so this skips there (the
+  // CAPABILITY_TRAINS row stands and the catalog drift gate pins what it
+  // produced); a developer clone checks the pinned release itself.
+  const tag = `fw-v${catalog.fw_train}`;
+  const tagged = spawnSync("git", ["-C", ROOT, "rev-parse", "-q", "--verify", `refs/tags/${tag}`]);
+  if (tagged.error || tagged.status !== 0) {
+    t.skip(`no ${tag} tag in this checkout`);
+    return;
+  }
+  const { files } = bleSetupRow();
+  const doors = catalog.products.filter((q) => q.setup_door);
+  for (const f of files) {
+    const present = spawnSync("git", ["-C", ROOT, "cat-file", "-e", `${tag}:${f}`]).status === 0;
+    for (const p of doors) {
+      assert.ok(present, `${p.id}: catalog says setup_door, but ${f} is absent at ${tag} — the pinned images have no door`);
+    }
+  }
+});
+
 test("setup door: catalog-derived, both flashers say it, neither prefills past it", async () => {
   const flashJs = read(join(CANARY, "assets/flash.js"));
   const appJs = read(join(ROOT, "desktop", "src", "app.js"));
@@ -7367,15 +7408,37 @@ test("setup door: catalog-derived, both flashers say it, neither prefills past i
     if (p.provisioning === "ap") {
       const leadsWithCard = /iPhone app/.test(p.hatch.steps[0]);
       assert.equal(leadsWithCard, p.setup_door,
-        `${p.id}: the hatch leads with the iPhone card iff the build compiles the door`);
+        `${p.id}: the hatch leads with the iPhone card iff the catalog says setup_door (the build compiles the door and the pinned train carries it)`);
       assert.match(p.hatch.steps.join(" "), /key it prints on its serial console/,
         `${p.id}: the setup-network step must name the key — "nothing to type" was false`);
       assert.doesNotMatch(p.provisioning_note, /Nothing to type/, `${p.id}: the setup network has a key`);
     }
   }
-  assert.ok(catalog.products.some((p) => p.setup_door), "no product derives a setup door — gen_flash.py's has_setup_door broke");
+  // The pinned-train gate (sweep A71): the catalog describes the
+  // fw-v<fw_train> images, so a build that compiles the door claims it only
+  // from the first train whose release carries it — gen_flash.py's
+  // CAPABILITY_TRAINS["ble_setup"], which names the files whose presence at
+  // a tag is the evidence (corroborate_capability_trains holds them to every
+  // local fw-v tag).
+  const { since: doorSince, files: doorEvidence } = bleSetupRow();
+  for (const f of doorEvidence) {
+    assert.ok(existsSync(join(ROOT, f)), `CAPABILITY_TRAINS["ble_setup"] names ${f} as evidence, and it does not exist`);
+  }
+  for (const p of catalog.products.filter((q) => q.setup_door)) {
+    assert.ok(!trainBefore(catalog.fw_train, doorSince),
+      `${p.id}: catalog says setup_door, but the pinned train ${catalog.fw_train} predates ble_setup's ${doorSince} — ` +
+      "its images open no Bluetooth door. Regenerate with gen_flash.py — never hand-edit devices/flash.json.");
+  }
+  if (!trainBefore(catalog.fw_train, doorSince)) {
+    assert.ok(catalog.products.some((p) => p.setup_door), "no product derives a setup door — gen_flash.py's has_setup_door broke");
+  }
   assert.ok(catalog.products.filter((p) => p.provisioning === "ap").some((p) => !p.setup_door),
     "the all-rounder canary compiles no door and must not be told to wait for a card");
+  // The confirm card's promise follows the same fact as the done card.
+  for (const p of catalog.products.filter((q) => q.provisioning === "ap")) {
+    assert.equal(/iPhone app/.test(p.provisioning_note), p.setup_door,
+      `${p.id}: the provisioning note leads with the iPhone card iff the catalog says setup_door`);
+  }
 
   // Both read the catalog fact — never a role guess.
   assert.match(flashJs, /core\.hasSetupDoor\(product\)/, "browser flasher no longer gates the note on setup_door");
