@@ -640,6 +640,22 @@ jobs:
             ArduinoJson
             NimBLE-Arduino@${{ matrix.core.nimble }}
 
+      - name: Restore the profile's own core + libraries (sketch.yaml-keyed)
+        # A profile build installs the core, tools and libraries sketch.yaml
+        # pins under ~/.arduino15/internal/<id>/ (arduino-cli's profiles.go
+        # puts the platform and its tools there, not in the Boards-Manager
+        # tree), a second >1 GB download the setup action's cache leaves out
+        # on purpose: it is the profile's, not the core key's (RELEASE_LESSONS
+        # 2026-11-04 (b)). So it has its own key — this flavor's profile,
+        # rotated by the sketch.yaml that pins it. One combined cache step is
+        # right here: the profile build is the only writer after it, and what
+        # it writes is exactly what the key names.
+        if: matrix.core.name == '3.x'
+        uses: actions/cache@v6
+        with:
+          path: ~/.arduino15/internal
+          key: arduino-profile-${{ runner.os }}-${{ matrix.flavor.name }}-core3-${{ hashFiles('firmware/projects/canary-display/arduino/canary_display/sketch.yaml') }}
+
       - name: Profile build (arduino-cli --profile, core-3 row)
         # sketch.yaml profiles are what the CLI docs point users at, but
         # nothing compiled through them until this leg — the IDE ignores

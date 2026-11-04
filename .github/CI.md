@@ -64,8 +64,11 @@ other filtered workflow.
   rotation so "latest" can't go stale) and installs libraries fresh
   (small on purpose, so lib changes never fragment the toolchain cache).
   It restores before the install and saves right after it, so each key
-  holds its own core even when one job installs three
-  (RELEASE_LESSONS 2026-11-04 (b)). Every path-filtered workflow that runs
+  holds its own core even when one job installs three, and an exclusive
+  row clears the packager tree before its restore, never after it
+  (RELEASE_LESSONS 2026-11-04 (b)). A profile build's own core lives under
+  `~/.arduino15/internal/`, which that cache leaves out: `firmware.yml`'s
+  display leg caches it under a sketch.yaml-keyed entry of its own. Every path-filtered workflow that runs
   it lists `.github/actions/setup-arduino-esp32/**` in its filters.
   Never hand-roll `arduino-cli core install` in a workflow.
 - **PlatformIO** jobs go through `.github/actions/setup-platformio`

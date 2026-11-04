@@ -16,9 +16,17 @@ does; an entry, once saved, is never replaced; a combined step saves in the
 job's post phase, in reverse step order, unless its restore was an exact hit).
 The stand-in models only what decides a key's contents: `core install` adds a
 platform directory and its tools and a downloaded archive under staging/,
-`core uninstall` removes the newest installed platform and its tools, `core
-list` names the newest. It is not arduino-cli; the real three-core run shows
-only in a release run.
+`core uninstall` removes the newest installed platform and its tools (as the
+CLI does: `core uninstall` refuses a version, internal/cli/core/uninstall.go,
+and the service picks the greatest installed release, package_manager.go
+GetInstalledPlatformRelease — the action no longer runs it, and the model is
+what showed the old warm third row throwing away the core it had restored),
+`core list` names the newest. An exclusive call now clears the packager tree
+before its restore (an `rm -rf` the harness runs for real under the modeled
+HOME). It is not arduino-cli; the real three-core run shows only in a release
+run. The last class reads firmware.yml: the display 3.x legs' profile build
+installs its own core under ~/.arduino15/internal/, which the action's entry
+leaves out, so the leg caches that under a sketch.yaml-keyed entry of its own.
 """
 
 from __future__ import annotations
@@ -285,6 +293,11 @@ class Sim(unittest.TestCase):
         self.assertEqual(len(keys), 1, (suffix, sorted(self.cache)))
         return contents(self.cache[keys[0]])
 
+    def tree(self, j: Job) -> dict[str, list[str]]:
+        """The runner's ~/.arduino15 as the job has it now, in the shape
+        contents() reads an entry."""
+        return contents(j.home)
+
 
 class EachKeyStoresItsOwnCore(Sim):
     def test_a_cold_release_job_saves_each_core_under_its_own_key(self):
@@ -302,6 +315,40 @@ class EachKeyStoresItsOwnCore(Sim):
         j = self.release_job()
         self.assertEqual(j.saves, [])
         self.assertEqual({k: contents(v) for k, v in self.cache.items()}, before)
+
+    def test_a_warm_release_job_neither_warns_nor_downloads(self):
+        # Each exclusive call's restore lands on the tree the previous call
+        # filled. Cleared first, a hit is exactly this call's core: nothing
+        # downloaded (no new archive under staging/), no second platform
+        # beside it, and no "not saving" warning. The old action uninstalled
+        # AFTER the restore, which removed only the newest version: on the
+        # first row (3.3.8, alone on the tree) and the third (3.3.10 over
+        # 2.0.17) the core it had just restored — so those rows downloaded it
+        # again, and the third ended holding [2.0.17, 3.3.10] and warned,
+        # every warm run.
+        self.release_job()
+        j = self.job()
+        for v in ("3.3.8", "2.0.17", "3.3.10"):
+            j.call(self.action, core_version=v, exclusive_core="true")
+            got = self.tree(j)
+            self.assertEqual(got["platforms"], [v], (v, got))
+            self.assertEqual(got["tools"], [f"toolchain-{v}"], (v, got))
+            self.assertEqual(got["staging"], [], (v, got))
+        j.end()
+        self.assertEqual(j.saves, [])
+        self.assertFalse([s for s in j.log if "not saving the cache key" in s], j.log)
+
+    def test_a_cold_exclusive_call_after_another_core_downloads_once_and_saves_its_own(self):
+        # A cold second row: the first row's core is on the tree, this key
+        # misses. The clear removes that core and its tools, the install
+        # downloads this one, and the entry holds it alone.
+        j = self.job()
+        j.call(self.action, core_version="3.3.8", exclusive_core="true")
+        j.call(self.action, core_version="2.0.17", exclusive_core="true")
+        got = self.tree(j)
+        self.assertEqual((got["platforms"], got["tools"]), (["2.0.17"], ["toolchain-2.0.17"]), got)
+        self.assertEqual(self.entry("-core-2.0.17")["platforms"], ["2.0.17"])
+        j.end()
 
     def test_a_single_core_job_after_the_release_job_restores_that_core(self):
         # ram_audit.yml / csi_module_disable_matrix.yml: core 3.3.8, not
@@ -370,6 +417,19 @@ class TheActionIsTwoSteps(unittest.TestCase):
         self.assertEqual(r["with"]["path"], s["with"]["path"])
         self.assertIn("steps.restore.outputs.cache-hit != 'true'", s.get("if", ""))
 
+    def test_an_exclusive_call_clears_before_the_restore_and_nothing_uninstalls_after_it(self):
+        restore = self._index(lambda s: str(s.get("uses", "")).startswith("actions/cache/restore@"))
+        clear = self._index(lambda s: "rm -rf" in str(s.get("run", ""))
+                            and ".arduino15/packages/esp32" in str(s.get("run", "")))
+        self.assertEqual((len(restore), len(clear)), (1, 1))
+        self.assertLess(clear[0], restore[0])
+        self.assertEqual(str(self.steps[clear[0]].get("if", "")).strip(),
+                         "inputs.exclusive-core == 'true'")
+        # After the restore, `core uninstall esp32:esp32` would remove the
+        # newest version, on a warm row the one just restored.
+        for s in self.steps[restore[0]:]:
+            self.assertNotIn("core uninstall", str(s.get("run", "")), s.get("name"))
+
     def test_every_filtered_workflow_that_runs_it_watches_it(self):
         # CI.md R5/R6: an edit to the action alone must run every path-
         # filtered workflow that uses it. The release workflows that call it
@@ -392,6 +452,40 @@ class TheActionIsTwoSteps(unittest.TestCase):
                                   spec["paths"], (name, event))
         self.assertTrue({"firmware.yml", "ram_audit.yml",
                          "csi_module_disable_matrix.yml"} <= set(filtered), filtered)
+
+
+class TheProfileLegCachesItsOwnCore(unittest.TestCase):
+    """firmware.yml's display 3.x legs compile through a sketch.yaml profile.
+    arduino-cli installs the profile's platform, its tools and its libraries
+    under ~/.arduino15/internal/<id>/ (profiles.go: ProfilesCacheDir), not in
+    the Boards-Manager tree, and the setup action keeps internal/ out of its
+    entry on purpose. Without an entry of its own, every 3.x leg downloaded
+    that core again on every run once the action stopped saving at job end."""
+
+    SKETCH = "firmware/projects/canary-display/arduino/canary_display/sketch.yaml"
+
+    def setUp(self):
+        with open(os.path.join(REPO, ".github", "workflows", "firmware.yml"), encoding="utf-8") as f:
+            self.steps = yaml.safe_load(f)["jobs"]["build-arduino-cli-display"]["steps"]
+
+    def test_the_profile_build_restores_internal_under_a_sketch_yaml_key(self):
+        build = [i for i, s in enumerate(self.steps)
+                 if "compile --profile" in str(s.get("run", ""))]
+        self.assertEqual(len(build), 1, [s.get("name") for s in self.steps])
+        cache = [i for i, s in enumerate(self.steps)
+                 if str(s.get("uses", "")).startswith("actions/cache@")
+                 and "~/.arduino15/internal" in str(s.get("with", {}).get("path", ""))]
+        self.assertEqual(len(cache), 1, [s.get("name") for s in self.steps])
+        self.assertLess(cache[0], build[0])
+        c, b = self.steps[cache[0]], self.steps[build[0]]
+        self.assertEqual(c.get("if"), b.get("if"))
+        self.assertEqual(c["with"]["path"].strip(), "~/.arduino15/internal")
+        key = c["with"]["key"]
+        self.assertIn(f"hashFiles('{self.SKETCH}')", key)
+        self.assertIn("matrix.flavor.name", key)
+        self.assertIn("runner.os", key)
+        self.assertTrue(os.path.isfile(os.path.join(REPO, self.SKETCH)))
+        self.assertIn(self.SKETCH.rsplit("/", 1)[0], b["run"])
 
 
 if __name__ == "__main__":

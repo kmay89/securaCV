@@ -151,12 +151,46 @@ any platform.
   fails it, with all three keys holding 3.3.10. The stand-in is not
   arduino-cli: the restore/save path runs for real on any PR that runs
   `firmware.yml`, and the three-core case only in a release run.
+- **Two more, found in review of that fix.** (1) An exclusive call used to
+  `core uninstall esp32:esp32` AFTER its restore. The restore layers the
+  key's entry over the previous call's core, and that uninstall removes only
+  the NEWEST version (the CLI refuses a version on `core uninstall`,
+  `internal/cli/core/uninstall.go`; the service picks the greatest installed
+  release, `package_manager.go` `GetInstalledPlatformRelease`). On a warm
+  row that was the core just restored whenever it was the newest on the
+  tree: the first release row (3.3.8, alone) and the third (3.3.10 over
+  2.0.17) downloaded their core again on every warm run — the original
+  action paid the same, so the exclusive rows never had a warm cache — and
+  the third ended holding both and the save guard warned about a mixed tree,
+  with a hint to pass the `exclusive-core` it already had. Now an exclusive call clears the esp32
+  packager tree (`rm -rf ~/.arduino15/packages/esp32`: its platforms and its
+  tools) BEFORE its restore, and nothing uninstalls after it: a hit is
+  exactly this call's core, a miss downloads it once, and the warning is left
+  for the one case it names, a non-exclusive second call. The test's warm
+  three-core job now asserts no download, one platform after each call and
+  no warning; the first fix fails it on the first row. (2) `firmware.yml`'s
+  display 3.x legs compile through a `sketch.yaml` profile, and arduino-cli
+  installs a profile's platform, tools and libraries under
+  `~/.arduino15/internal/<id>/` (`profiles.go`, `ProfilesCacheDir`). The
+  old post-phase save had stored that under the shared `core-3.3.10` key
+  whenever a display leg saved it first; the split save never does, so each
+  3.x leg downloaded the profile core again every run. The leg now restores
+  `~/.arduino15/internal` under its own key (`arduino-profile-<os>-<flavor>-
+  core3-<hash of sketch.yaml>`) in one combined `actions/cache` step right
+  before the profile build — the one writer after it, writing exactly what
+  the key names. A test reads the step off `firmware.yml`. Neither is
+  proven on a runner yet: the wave PR's `firmware.yml` run shows the profile
+  cache (cold, then warm on the next push), and a release run the warm
+  three-core rows.
 - **Applies to:** any composite action that caches a directory it then
   changes, and any job that calls one twice. Save a key right after the step
   that fills it, and save only the state that key names. A combined
-  `actions/cache` step is right only when nothing after it in the job writes
-  the cached path. And a shared action is an input of every workflow that
-  runs it: list it in their path filters, or its edit runs nothing.
+  `actions/cache` step is right only when the one thing that writes the
+  cached path after it is what the key names. When a step must undo a
+  restore's layering, do it before the restore, not after: a tool's
+  "remove the installed one" picks a version by its own rule. And a shared
+  action is an input of every workflow that runs it: list it in their path
+  filters, or its edit runs nothing.
 
 ## 2026-11-04 — The Home Assistant app declared two lists as a select, which by the Supervisor's own code refuses the app's defaults (0.9.0; found by reading, not yet seen on an install)
 
