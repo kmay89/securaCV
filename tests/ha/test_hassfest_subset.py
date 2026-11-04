@@ -129,6 +129,17 @@ async def test_strings_match_translations_and_every_entity_key_resolves(hass: Ho
     # The event entities' state attribute translations.
     assert translations[f"component.{DOMAIN}.entity.event.witness.state_attributes.event_type.state.boundary_crossing_object_large"] == "Person or vehicle"
     assert translations[f"component.{DOMAIN}.entity.event.verification_events.state_attributes.event_type.state.witness_key_changed"] == "Witness key changed"
+    # The Last event states a summary row sets (sensor.py's _SUMMARY_TYPES,
+    # HA28), in the words the timeline card's SUMMARY_METADATA shows for the
+    # same rows (sweep HA41; the card's own test holds the two together).
+    card = (INTEGRATION / "www" / "securacv-timeline-card.js").read_text(encoding="utf-8")
+    block = re.search(r"const SUMMARY_METADATA = \{(.*?)\n  \};", card, re.S)
+    assert block, "the card's SUMMARY_METADATA moved"
+    card_labels = dict(re.findall(r'(\w+): \{ label: "([^"]+)"', block.group(1)))
+    assert sorted(card_labels) == sorted(sensor._SUMMARY_TYPES)
+    for summary_type in sensor._SUMMARY_TYPES:
+        key = f"component.{DOMAIN}.entity.sensor.last_event.state.{summary_type}"
+        assert translations[key] == card_labels[summary_type], summary_type
 
     for category in ("config", "options", "issues", "exceptions", "services"):
         loaded = await translation.async_get_translations(hass, "en", category, {DOMAIN})

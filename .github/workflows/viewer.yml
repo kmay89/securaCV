@@ -31,6 +31,12 @@ on:
       - 'spec/witness_dictionary.json'
       - 'src/break_glass/breakglass.html'
       - 'src/break_glass/breakglass.test.js'
+      # the HA timeline card's test holds its SUMMARY_METADATA to sensor.py's
+      # _SUMMARY_TYPES and to the Last event states strings.json names (and
+      # translations/en.json, its copy), so an edit to any of them alone runs it
+      - 'custom_components/securacv/sensor.py'
+      - 'custom_components/securacv/strings.json'
+      - 'custom_components/securacv/translations/en.json'
       # the recorded-reads gate on viewer and selftest-ui: its recorder and
       # its checker
       - 'scripts/path_filter_reads/**'
@@ -63,6 +69,12 @@ on:
       - 'spec/witness_dictionary.json'
       - 'src/break_glass/breakglass.html'
       - 'src/break_glass/breakglass.test.js'
+      # the HA timeline card's test holds its SUMMARY_METADATA to sensor.py's
+      # _SUMMARY_TYPES and to the Last event states strings.json names (and
+      # translations/en.json, its copy), so an edit to any of them alone runs it
+      - 'custom_components/securacv/sensor.py'
+      - 'custom_components/securacv/strings.json'
+      - 'custom_components/securacv/translations/en.json'
       # the recorded-reads gate on viewer and selftest-ui: its recorder and
       # its checker
       - 'scripts/path_filter_reads/**'
