@@ -6206,11 +6206,14 @@ function cSourcesUnder(root) {
 //     build_src_filter names, and every source under each lib_extra_dirs
 //     directory. PlatformIO's dependency finder takes every folder in a
 //     lib_extra_dirs directory as a library and compiles a library's sources
-//     when the build includes one of its headers, which is how
-//     firmware/common/boot/boot_banner.cpp reaches the Vision today (its
-//     library.json puts its include directory at firmware/common, and the
-//     Vision includes boot/boot_banner.h). The Vision's lib_extra_dirs is
-//     firmware/common, so the whole of firmware/common is read.
+//     when the build includes one of its headers, which is how at least two
+//     library sources no build_src_filter names reach the Vision today:
+//     firmware/common/boot/boot_banner.cpp (its library.json puts its
+//     include directory at firmware/common, and main.cpp includes
+//     boot/boot_banner.h) and firmware/common/ota/src/securacv_ota.cpp (an
+//     Arduino library; src/net/ota_mgr.cpp includes securacv_ota.h). The
+//     Vision's lib_extra_dirs is firmware/common, so the whole of
+//     firmware/common is read.
 // Nothing else is: firmware/canary and the other projects reach no Vision
 // build (no -I, no build_src_filter entry and no lib_extra_dirs names them).
 const C_HEADER = /\.(?:h|hh|hpp|hxx)$/;
@@ -6347,10 +6350,12 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
   for (const d of libDirs) assert.ok(existsSync(resolve(VISION_FW, d)), `canary-vision.ini's lib_extra_dirs ${d} is not there`);
   // firmware/common is read whole (F414): every header, which -I../../common
   // offers every Vision source, and every source, since it is the Vision's
-  // lib_extra_dirs. The library route is live, not hypothetical:
-  // boot_banner.cpp is in no build_src_filter, and it is compiled for the
-  // Vision because firmware/common/boot is a library whose include
-  // directory is firmware/common and main.cpp includes boot/boot_banner.h.
+  // lib_extra_dirs. The library route is live, not hypothetical, for at
+  // least two sources no build_src_filter names: boot_banner.cpp is compiled
+  // for the Vision because firmware/common/boot is a library whose include
+  // directory is firmware/common and main.cpp includes boot/boot_banner.h,
+  // and securacv_ota.cpp because firmware/common/ota is an Arduino library
+  // (library.properties, src/) and ota_mgr.cpp includes securacv_ota.h.
   const common = cSourcesUnder(join(FIRMWARE, "common")).map((f) => relative(FIRMWARE, f).split("\\").join("/"));
   assert.ok(common.filter((f) => C_HEADER.test(f)).length > 100, `firmware/common holds ${common.length} sources`);
   assert.deepStrictEqual(files.filter((f) => f.startsWith("common/")), [...common].sort(),
@@ -6361,6 +6366,11 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
   assert.match(read(join(VISION_FW, "src/main.cpp")), /^#include "boot\/boot_banner\.h"$/m,
     "the Vision no longer includes boot/boot_banner.h: say how boot_banner.cpp reaches it, or that it does not");
   assert.ok(files.includes("common/boot/boot_banner.cpp"), "the scan no longer reads the library source the Vision links");
+  assert.ok(existsSync(join(FIRMWARE, "common/ota/library.properties")), "firmware/common/ota is no longer an Arduino library");
+  assert.match(read(join(VISION_FW, "src/net/ota_mgr.cpp")), /^#include "securacv_ota\.h"/m,
+    "the Vision no longer includes securacv_ota.h: say how securacv_ota.cpp reaches it, or that it does not");
+  assert.ok(!tus.includes("common/ota/src/securacv_ota.cpp") && files.includes("common/ota/src/securacv_ota.cpp"),
+    "securacv_ota.cpp reaches the Vision as a library source, and the scan reads it");
   // Nothing from another product's tree: no -I, build_src_filter entry or
   // lib_extra_dirs reaches firmware/canary or another project.
   assert.deepStrictEqual(files.filter((f) => !/^(?:projects\/canary-vision|common|configs\/canary-vision|boards)\//.test(f)), [],
@@ -6404,11 +6414,13 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
     const config = plant("configs/canary-vision/default/config.h", "\n#define PLANTED_ID() (AI.ID())\n");
     const shared = plant(tus[0], "\nint planted_shared(SSCMA& m) { return m.ID(); }\n");
     // F414: a header under firmware/common the Vision includes (wifi_mgr.cpp
-    // reads network/wifi_join_policy.h), and the library source the build
-    // links through lib_extra_dirs. Before F414 the scan read neither.
+    // reads network/wifi_join_policy.h), and the two library sources the
+    // build links through lib_extra_dirs. Before F414 the scan read none of
+    // these.
     assert.match(read(join(mirror, `${P}src/net/wifi_mgr.cpp`)), /#include "network\/wifi_join_policy\.h"/);
     const sharedHeader = plant("common/network/wifi_join_policy.h", "\ninline int planted_policy(SSCMA* ai) { return ai->ID(); }\n");
     const library = plant("common/boot/boot_banner.cpp", "\nint planted_banner() { return AI.ID(); }\n");
+    const otaLibrary = plant("common/ota/src/securacv_ota.cpp", "\nint planted_ota() { return AI.ID(); }\n");
     // And a file no Vision build reaches (firmware/canary is the flagship's
     // tree: no -I, build_src_filter entry or lib_extra_dirs names it) is not
     // read, so a call there is not this deny's to find.
@@ -6422,7 +6434,7 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
     plant(`${P}src/main.cpp`, "\n// AI.ID() is never called here\n/* nor AI.ID( */\nstatic const char* k_planted = \"AI.ID()\";\n" +
       "static const char* k_raw = R\"x(AI.ID() and \"quotes\")x\";\nstatic const char k_c = 'I'; // ID(\n" +
       "// a comment that runs on \\\n   AI.ID(); still the comment\n");
-    assert.deepStrictEqual(sscmaIdCalls(mirror).sort(), [arrow, header, main, qualified, config, shared, sharedHeader, library, separator, hexSeparator, prefix].sort(),
+    assert.deepStrictEqual(sscmaIdCalls(mirror).sort(), [arrow, header, main, qualified, config, shared, sharedHeader, library, otaLibrary, separator, hexSeparator, prefix].sort(),
       "the scan must find each planted call where it was planted, and nothing in a comment or a string");
   } finally {
     rmSync(dir, { recursive: true, force: true });
