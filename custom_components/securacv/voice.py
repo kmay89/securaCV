@@ -142,7 +142,7 @@ def _spoken_label(event_type: Any) -> str:
         if _id_words(label):
             return _said_label(event_type)
         label = event_type_metadata(None)["label"]
-    if label[1:2].isupper():
+    if label[:1].isupper() and label[1:2].isupper():
         return label
     return label[:1].lower() + label[1:]
 
