@@ -6744,6 +6744,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }, 15000);
     }
 
+    // A scan row draws what a nearby radio advertised, and a paired row what
+    // a bond carries, as text (sweep F422, the WAP's F407): every field goes
+    // through escapeHtml(), so a name that reads as markup makes no element.
     function renderScanResults(devices) {
       const list = document.getElementById('btScanList');
       document.getElementById('btScanSubtitle').textContent = devices.length + ' device(s) found';
@@ -6767,15 +6770,15 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
         html += '<div>';
         html += '<span style="font-size:1.2rem;margin-right:0.5rem;">' + typeIcon + '</span>';
-        html += '<strong>' + (dev.name || 'Unknown Device') + '</strong>';
+        html += '<strong>' + escapeHtml(dev.name || 'Unknown Device') + '</strong>';
         if (dev.is_securacv) {
           html += ' <span class="badge success" style="font-size:0.65rem;">SecuraCV</span>';
         }
-        html += '<div style="font-size:0.75rem;color:var(--muted);">' + dev.address + '</div>';
+        html += '<div style="font-size:0.75rem;color:var(--muted);">' + escapeHtml(dev.address) + '</div>';
         html += '</div>';
         html += '<div style="text-align:right;">';
-        html += '<div style="color:' + rssiColor + ';font-weight:600;">' + dev.rssi + ' dBm</div>';
-        html += '<div style="font-size:0.7rem;color:var(--muted);">' + dev.type + '</div>';
+        html += '<div style="color:' + rssiColor + ';font-weight:600;">' + escapeHtml(String(dev.rssi)) + ' dBm</div>';
+        html += '<div style="font-size:0.7rem;color:var(--muted);">' + escapeHtml(dev.type) + '</div>';
         html += '</div>';
         html += '</div>';
         html += '</div>';
@@ -6796,12 +6799,20 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('btScanCard').style.display = 'none';
     }
 
+    // The bonds the paired list shows, in its order (F422, the WAP's F407).
+    // A row's Trust and Remove name the row by its index into this list, so
+    // no bond's address is written into an attribute or an onclick string:
+    // escapeHtml() leaves quotes as they are, so it could not make an address
+    // safe there.
+    let btPairedShown = [];
+
     async function loadBtPairedDevices() {
       const data = await api('/api/bluetooth/paired');
       if (!data.devices) return;
 
       const list = document.getElementById('btPairedList');
       document.getElementById('btPairedSubtitle').textContent = data.count + ' paired device(s)';
+      btPairedShown = data.devices;
 
       if (data.devices.length === 0) {
         list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No paired devices</p>';
@@ -6809,20 +6820,21 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
 
       let html = '';
-      data.devices.forEach(dev => {
+      data.devices.forEach((dev, i) => {
         const trustBadge = dev.trusted ? '<span class="badge success" style="font-size:0.6rem;">Trusted</span>' : '';
         const blockBadge = dev.blocked ? '<span class="badge danger" style="font-size:0.6rem;">Blocked</span>' : '';
 
         html += '<div class="log-item" style="padding:0.75rem;">';
         html += '<div style="display:flex;justify-content:space-between;align-items:start;">';
         html += '<div>';
-        html += '<strong>' + (dev.name || 'Unknown') + '</strong> ' + trustBadge + blockBadge;
-        html += '<div style="font-size:0.75rem;color:var(--muted);">' + dev.address + '</div>';
-        html += '<div style="font-size:0.7rem;color:var(--muted);">Security: ' + dev.security + ' | Connections: ' + dev.connection_count + '</div>';
+        html += '<strong>' + escapeHtml(dev.name || 'Unknown') + '</strong> ' + trustBadge + blockBadge;
+        html += '<div style="font-size:0.75rem;color:var(--muted);">' + escapeHtml(dev.address) + '</div>';
+        html += '<div style="font-size:0.7rem;color:var(--muted);">Security: ' + escapeHtml(dev.security) +
+                ' | Connections: ' + escapeHtml(String(dev.connection_count)) + '</div>';
         html += '</div>';
         html += '<div style="display:flex;gap:0.25rem;">';
-        html += '<button class="btn btn-ghost btn-sm" onclick="btToggleTrust(\'' + dev.address + '\', ' + !dev.trusted + ')">' + (dev.trusted ? 'Untrust' : 'Trust') + '</button>';
-        html += '<button class="btn btn-danger btn-sm" onclick="btRemovePaired(\'' + dev.address + '\')">Remove</button>';
+        html += '<button class="btn btn-ghost btn-sm" onclick="btToggleTrust(' + i + ')">' + (dev.trusted ? 'Untrust' : 'Trust') + '</button>';
+        html += '<button class="btn btn-danger btn-sm" onclick="btRemovePaired(' + i + ')">Remove</button>';
         html += '</div>';
         html += '</div>';
         html += '</div>';
@@ -6831,9 +6843,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       list.innerHTML = html;
     }
 
-    async function btRemovePaired(address) {
+    async function btRemovePaired(i) {
+      const bond = btPairedShown[i];
+      if (!bond) return;
       if (!confirm('Remove this paired device?')) return;
-      const data = await api('/api/bluetooth/paired', 'DELETE', { address });
+      const data = await api('/api/bluetooth/paired', 'DELETE', { address: bond.address });
       if (!data.success) {
         alert('Failed: ' + (data.error || 'Unknown error'));
       }
@@ -6849,8 +6863,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       loadBtPairedDevices();
     }
 
-    async function btToggleTrust(address, trusted) {
-      await api('/api/bluetooth/paired/trust', 'POST', { address, trusted });
+    // Trust flips the row's bond: its address and its trust as the list
+    // showed them (F422).
+    async function btToggleTrust(i) {
+      const bond = btPairedShown[i];
+      if (!bond) return;
+      await api('/api/bluetooth/paired/trust', 'POST', { address: bond.address, trusted: !bond.trusted });
       loadBtPairedDevices();
     }
 
