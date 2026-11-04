@@ -621,7 +621,7 @@ export function buildRadarLab(data, bus) {
 
     for (const { ev, signs, vev } of ticks) {
       if (ev.stateChanged) {
-        const s = fsm.state;
+        const s = ev.state;   // the tick's own (the pass may hold two)
         bus.emit("state", { state: s });
         bus.emit("serial", { text: `[presence] -> ${s}${ev.stalled ? " (radar stall)" : ""}`, kind: ev.stalled ? "warn" : "ok" });
       }
