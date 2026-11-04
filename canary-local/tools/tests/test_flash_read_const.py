@@ -20,7 +20,11 @@ A #define whose line runs into a block comment closed on a later line goes
 on there, as it does for the compiler: `#define WAIT_MS 30 /* thirty` over
 ` */ * 1000` read 30 where g++ -E gives `30 * 1000`, and is now refused by
 that reason (sweep F429); the rows whose name is a macro to g++ are held to
-g++ -E itself, here.
+g++ -E itself, here. A #define whose `#` does not begin its line as the
+compiler reads it (code before it, on the same physical line or across such
+a comment: `#define Y 1 /* a` over ` */ #define X 30`) read 30 where g++
+defines no X, and is refused by that reason (the review of F429); those rows
+are held to g++ -E seeing no macro.
 
 The rule lived in gen_flash.py (sweep F313). gen_vision.py read the same
 constants with its own `NAME\\s*=\\s*(\\d+)` (no word boundary, no comment
@@ -113,6 +117,10 @@ def refusal(row: dict, where: str) -> str:
 # F429's refusal, a #define whose line runs into a block comment that closes
 # on a later line with code after it (c_const.js throws the same words).
 RUNS_ON = "runs into a block comment closed on a later line"
+# The review's refusal, a #define whose `#` does not begin its line as the
+# compiler reads it (code before it, on the same physical line or across a
+# block comment closed on a later line): no directive, so no macro.
+NO_DIRECTIVE = "so the compiler reads no directive there"
 
 
 def preprocessed(gxx: str, text: str, name: str) -> str | None:
@@ -271,7 +279,7 @@ class SharedCases(unittest.TestCase):
         said = " ".join(r.get("refused", "") for r in CASES["cases"])
         for reason in ("not found", "is defined 2 times", "not a plain integer literal;",
                        "(a leading 0 is octal", "past 2^53 - 1", "is not a C identifier",
-                       RUNS_ON):
+                       RUNS_ON, NO_DIRECTIVE):
             self.assertIn(reason, said)
         self.assertTrue(any("value" in r for r in CASES["cases"]))
 
@@ -281,18 +289,28 @@ class SharedCases(unittest.TestCase):
         # macro to g++ is held to g++ -E: a row the table reads is the
         # literal the compiler substitutes, and a row refused for running
         # into a block comment quotes code the compiler does take as more of
-        # the value. (Rows refused for other reasons are refusals of what the
-        # compiler reads too, by the reasons above; constexpr rows are no
+        # the value, and a row refused because its `#` does not begin the
+        # line names a macro the compiler does not define. (Rows refused for
+        # other reasons are refusals of what the compiler reads too, by the
+        # reasons above, but for the one known limit the table names, a
+        # block comment closed on a later line between #define and the name,
+        # not found here and defined by the compiler; constexpr rows are no
         # macro to it, and are left to the cases above.)
         gxx = shutil.which("g++")
         if not gxx:
             self.skipTest("no g++ on PATH to preprocess the rows with")
         held = 0
         for row in CASES["cases"]:
-            if "value" not in row and RUNS_ON not in row.get("refused", ""):
+            refused = row.get("refused", "")
+            if "value" not in row and RUNS_ON not in refused and NO_DIRECTIVE not in refused:
                 continue
             with self.subTest(why=row["why"]):
                 got = preprocessed(gxx, row["text"], row["name"])
+                if NO_DIRECTIVE in refused:
+                    held += 1
+                    self.assertIsNone(got, f"g++ -E defines {row['name']} as `{got}`, so the "
+                                           "row's reason (no directive there) is false")
+                    continue
                 if got is None:  # a constexpr, or a #define hidden in a comment or literal
                     continue
                 held += 1

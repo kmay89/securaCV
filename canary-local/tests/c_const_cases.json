@@ -84,6 +84,24 @@
       "value": 30
     },
     {
+      "why": "a block comment closed on a later line before the #define, blanks around it (one space to the compiler, so the #define begins its line)",
+      "name": "WAIT_MS",
+      "text": "/* a\n b */ #define WAIT_MS 30\n",
+      "value": 30
+    },
+    {
+      "why": "blanks before the #define",
+      "name": "WAIT_MS",
+      "text": "\t #define WAIT_MS 30\n",
+      "value": 30
+    },
+    {
+      "why": "a block comment on the #define's own line between #define and the name (one space to the compiler)",
+      "name": "WAIT_MS",
+      "text": "#define /* a */ WAIT_MS 30\n",
+      "value": 30
+    },
+    {
       "why": "CRLF line endings",
       "name": "LOST_MS",
       "text": "static constexpr int SCORE_MIN = 70;\r\n#define LOST_MS 1500\r\n",
@@ -276,6 +294,12 @@
       "refused": "constant SCORE_MIN not found in {where}"
     },
     {
+      "why": "a block comment closed on a later line between #define and the name: the compiler defines WAIT_MS as 30, and this reader's definition pattern does not cross the comment's newline, so it finds no definition \u2014 a safe verdict with a reason that is not the compiler's, a known limit (the same-line form reads)",
+      "name": "WAIT_MS",
+      "text": "#define /* a\n */ WAIT_MS 30\n",
+      "refused": "constant WAIT_MS not found in {where}"
+    },
+    {
       "why": "two definitions under #if/#else",
       "name": "SCORE_MIN",
       "text": "/* two rooms,\n   two scores */\n#if VARIANT\nstatic constexpr int SCORE_MIN = 50;\n#else\nstatic constexpr int SCORE_MIN = 70;\n#endif\n",
@@ -394,6 +418,54 @@
       "name": "WAIT_MS",
       "text": "#define WAIT_MS 30 /* thirty */ * 1000\n",
       "refused": "constant WAIT_MS in {where} is `30   * 1000`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "a #define on the tail of another #define's line, which runs into a block comment closed on a later line (g++ -E defines no WAIT_MS: its `#` does not begin the line; both readers read 30 before the review of F429)",
+      "name": "WAIT_MS",
+      "text": "#define Y 1 /* a\n */ #define WAIT_MS 30\n",
+      "refused": "constant WAIT_MS in {where} has `#define Y 1` before its #define on the line, across a block comment closed on a later line, so the compiler reads no directive there; refusing to read a number out of it"
+    },
+    {
+      "why": "the same over CRLF line endings",
+      "name": "WAIT_MS",
+      "text": "#define Y 1 /* a\r\n */ #define WAIT_MS 30\r\n",
+      "refused": "constant WAIT_MS in {where} has `#define Y 1` before its #define on the line, across a block comment closed on a later line, so the compiler reads no directive there; refusing to read a number out of it"
+    },
+    {
+      "why": "the same across a block comment over three lines",
+      "name": "WAIT_MS",
+      "text": "#define Y 1 /* a\n b\n */ #define WAIT_MS 30\n",
+      "refused": "constant WAIT_MS in {where} has `#define Y 1` before its #define on the line, across a block comment closed on a later line, so the compiler reads no directive there; refusing to read a number out of it"
+    },
+    {
+      "why": "the same across a block comment holding a character past the Basic Multilingual Plane",
+      "name": "WAIT_MS",
+      "text": "#define Y 1 /* \ud83d\udc24\n */ #define WAIT_MS 30\n",
+      "refused": "constant WAIT_MS in {where} has `#define Y 1` before its #define on the line, across a block comment closed on a later line, so the compiler reads no directive there; refusing to read a number out of it"
+    },
+    {
+      "why": "a #define after another's on one line, a block comment closed on that line between them (g++ -E defines no WAIT_MS)",
+      "name": "WAIT_MS",
+      "text": "#define Y 1 /* a */ #define WAIT_MS 30\n",
+      "refused": "constant WAIT_MS in {where} has `#define Y 1` before its #define on the line, so the compiler reads no directive there; refusing to read a number out of it"
+    },
+    {
+      "why": "code before the #define on its line (g++ -E defines no WAIT_MS)",
+      "name": "WAIT_MS",
+      "text": "int a; #define WAIT_MS 30\n",
+      "refused": "constant WAIT_MS in {where} has `int a;` before its #define on the line, so the compiler reads no directive there; refusing to read a number out of it"
+    },
+    {
+      "why": "code, then a block comment closed on a later line, then the #define",
+      "name": "WAIT_MS",
+      "text": "int a; /* x\n */ #define WAIT_MS 30\n",
+      "refused": "constant WAIT_MS in {where} has `int a;` before its #define on the line, across a block comment closed on a later line, so the compiler reads no directive there; refusing to read a number out of it"
+    },
+    {
+      "why": "a string literal before the #define, quoted as the file spells it (the pattern finds the one definition outside it)",
+      "name": "WAIT_MS",
+      "text": "\"#define WAIT_MS 99\" #define WAIT_MS 30\n",
+      "refused": "constant WAIT_MS in {where} has `\"#define WAIT_MS 99\"` before its #define on the line, so the compiler reads no directive there; refusing to read a number out of it"
     },
     {
       "why": "a digit separator",

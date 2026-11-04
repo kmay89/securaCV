@@ -20,7 +20,15 @@
 //     is not undone. A #define's line ends at the first newline outside a
 //     comment, as the compiler ends it: one that runs into a block comment
 //     closed on a later line goes on there, so code after the comment's
-//     close is refused by its own reason (sweep F429);
+//     close is refused by its own reason (sweep F429). A #define is a
+//     directive only where its `#` begins the line as the compiler reads
+//     it, so one with code before it on that line, on the same physical
+//     line or on the tail of a line that runs into such a comment
+//     (`#define Y 1 /* a` over ` */ #define X 30` defines no X), is refused
+//     by that reason; one with such a comment between `#define` and the
+//     name is not found at all (the definition pattern does not cross the
+//     comment's newline; the compiler defines it): a safe verdict whose
+//     reason is not the compiler's, a known limit;
 //   • NAME is a whole word defined exactly once, as `#define NAME value` or
 //     `constexpr T NAME = value;` (two definitions are the preprocessor's
 //     choice, which a regex cannot make);
@@ -113,6 +121,30 @@ function pastComments(code, shape, end, runsOn) {
   return pieces.join(" ");
 }
 
+// What the line `at` sits on says before it, as the compiler reads the line:
+// from the newline that ends a line for real (each newline a block comment
+// left in `shape`, one of `runsOn`'s spans, is stepped back over) or the
+// start of the text, cut from `code` at the same span with its whitespace
+// runs collapsed to one space; and whether such a comment lies between that
+// and `at`. Empty when only blanks and comments come before `at` on its
+// line, which is where a directive may begin.
+function lineBefore(code, shape, at, runsOn) {
+  let start = at;
+  while (start > 0) {
+    const newline = shape.lastIndexOf("\n", start - 1);
+    if (newline < 0) { start = 0; break; }
+    let span;
+    for (const [s, e] of runsOn) if (s <= newline && newline < e) { span = s; break; }
+    if (span === undefined) { start = newline + 1; break; }
+    start = span;
+  }
+  const last = start + shape.slice(start, at).replace(/[ \t\n\r\f\v]+$/, "").length;
+  const before = code.slice(start, last).replace(/[ \t\n\r\f\v]+/g, " ").replace(EDGE_SPACE, "");
+  let crossed = false;
+  for (const s of runsOn.keys()) if (last <= s && s < at) crossed = true;
+  return { before, crossed };
+}
+
 // The integer NAME is defined as in `text` (the file `where` names), or a
 // thrown Error saying why it is not read.
 function readConst(text, name, where) {
@@ -136,6 +168,16 @@ function readConst(text, name, where) {
   const isDefine = m.groups.define !== undefined;
   const [from, to] = isDefine ? m.indices.groups.define : m.indices.groups.constexpr;
   const value = code.slice(from, to).replace(EDGE_SPACE, "");
+  if (isDefine) {
+    // A directive's `#` begins its line as the compiler reads it: after code
+    // on that line, across a block comment closed on a later line or not,
+    // `#define` is tokens of something else and defines nothing.
+    const { before, crossed } = lineBefore(code, shape, m.index, runsOn);
+    if (before)
+      throw new Error(`constant ${name} in ${where} has \`${before}\` before its #define on the ` +
+        `line${crossed ? ", across a block comment closed on a later line" : ""}, ` +
+        "so the compiler reads no directive there; refusing to read a number out of it");
+  }
   // The #define's value stops at a newline in `shape`; one a block comment
   // left there is not the end of its line (a constexpr's runs to its `;`).
   const after = isDefine ? pastComments(code, shape, to, runsOn) : "";
