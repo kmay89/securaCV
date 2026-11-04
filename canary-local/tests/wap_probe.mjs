@@ -169,6 +169,29 @@ try {
     null, { timeout: 4000 }).catch(() => null);
   if (!dl) fail("strap trainer never reached download mode");
 
+  // §sandbox fine print (A108): one note under the pad says what the cards'
+  // Home Assistant ids are and when an install shows them; it stays put while
+  // each id-carrying scene writes its id into the readout.
+  const noteOf = () => page.$$eval("#sandbox .wap-sand-note", (ns) => ns.map((n) => n.textContent));
+  const notes = await noteOf();
+  if (notes.length !== 1) fail("expected one sandbox id note, got " + notes.length);
+  if (!/default_entity_id/.test(notes[0]) || !/2025\.10 and later tries to give an entity that id when it first registers it/.test(notes[0]) ||
+      !/digits kept/.test(notes[0]))
+    fail("sandbox id note does not say what the ids are and when they hold: " + notes[0]);
+  const idCards = await page.$$("#sandbox .wap-sand-card");
+  let withId = 0;
+  for (const c of idCards) {
+    const ha = await c.$eval(".wap-sand-ha", (n) => n.textContent).catch(() => null);
+    if (!ha) continue;
+    withId += 1;
+    await c.click();
+    const read = await page.$eval("#sandbox .wap-sandbox-read", (n) => n.textContent);
+    if (!read.endsWith("→  " + ha)) fail("sandbox readout lost the scene's id: " + read);
+    const after = await noteOf();
+    if (after.length !== 1 || after[0] !== notes[0]) fail("sandbox id note moved with a scene: " + after.join(" | "));
+  }
+  if (withId < 3) fail("expected 3 sandbox cards with a Home Assistant id, got " + withId);
+
   if (errors.length) fail(errors.length + " page/console errors: " + errors.join(" | "));
   console.log(`WAP_PROBE_OK — ${chips} chips, ${ents} entities, ${cards.length} sandbox cards`);
 } finally {

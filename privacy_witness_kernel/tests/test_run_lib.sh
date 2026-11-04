@@ -40,6 +40,129 @@ assert_eq "frigate_house/events" "$(resolve_frigate_topic "" "frigate_house")" \
 assert_eq "custom/topic" "$(resolve_frigate_topic "custom/topic" "frigate_house")" \
     "resolve_frigate_topic: legacy full topic wins"
 
+# ---- opt_list (sweep HA38) -------------------------------------------------
+# run.sh reads every list option through opt_list: bashio::config prints an
+# array one element per line, so the list is read whole from the options
+# file instead. Each case holds the exact bytes, so the app's jq 1.6 (CI puts
+# it first on PATH and names it in PWK_REQUIRE_JQ) and a runner's 1.7 are
+# held to the same output, not merely to "some array".
+JQ_VERSION=$(jq --version 2>&1 || true)
+echo "info: opt_list cases run on ${JQ_VERSION}"
+if [ -n "${PWK_REQUIRE_JQ:-}" ]; then
+    assert_eq "$PWK_REQUIRE_JQ" "$JQ_VERSION" \
+        "opt_list: the cases run on the jq CI requires (the app's)"
+elif [ -n "${CI:-}" ]; then
+    echo "FAIL: CI must name the jq these cases run on (PWK_REQUIRE_JQ, e.g. jq-1.6)" >&2
+    FAILURES=$((FAILURES + 1))
+fi
+
+OPTS="$TMPDIR_TEST/options.json"
+# opt_list KEY with OPTIONS_JSON=FILE, stdout only (the note goes to stderr).
+opt_from() {
+    OPTIONS_JSON="$1" opt_list "$2" 2>/dev/null
+}
+
+# A camera name holding a quote, a newline and an emoji (the quote and the
+# newline escaped, the emoji as raw UTF-8), beside the frigate block the
+# wizard writes. The same options with the emoji escaped too follow below.
+cat > "$OPTS" <<'JSON'
+{
+  "mode": "standalone",
+  "cameras": [
+    {"name": "say \"cheese\"\nporch 🏠", "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch", "fps": 10},
+    {"name": "🏠 back", "url": "rtsp://10.0.0.3/b"}
+  ],
+  "frigate": {"cameras": ["front_door", "driveway"], "labels": ["person", "car", "dog", "cat"], "min_confidence": 0.5},
+  "go2rtc_url": "http://homeassistant.local:1984"
+}
+JSON
+assert_eq '[{"name":"say \"cheese\"\nporch 🏠","url":"rtsp://10.0.0.2/p","zone_id":"zone:porch","fps":10},{"name":"🏠 back","url":"rtsp://10.0.0.3/b"}]' \
+    "$(opt_from "$OPTS" cameras)" \
+    "opt_list: two cameras come back as ONE array; a quote, a newline and an emoji survive"
+assert_eq "2" "$(opt_from "$OPTS" cameras | jq length)" \
+    "opt_list: jq length counts cameras, not each camera's keys"
+assert_eq "say \"cheese\"
+porch 🏠" "$(opt_from "$OPTS" cameras | jq -r '.[0].name')" \
+    "opt_list: .[0] is the first camera, its name byte for byte"
+assert_eq '["front_door","driveway"]' "$(opt_from "$OPTS" frigate.cameras)" \
+    "opt_list: a dotted key reads the frigate block's list"
+assert_eq "person,car,dog,cat" "$(opt_from "$OPTS" frigate.labels | jq -r 'join(",")')" \
+    "opt_list: the labels join as run.sh joins them"
+assert_eq "[]" "$(opt_from "$OPTS" go2rtc_url)" \
+    "opt_list: a string option is not a list: []"
+assert_eq "[]" "$(opt_from "$OPTS" frigate.min_confidence)" \
+    "opt_list: a number is not a list: []"
+assert_eq "[]" "$(opt_from "$OPTS" frigate)" \
+    "opt_list: an object is not a list: []"
+assert_eq "[]" "$(opt_from "$OPTS" mode.cameras)" \
+    "opt_list: a path through a string reads as [] (jq's error is caught)"
+
+# The same cameras as an ASCII-only JSON writer spells them (Python's
+# json.dumps default): the emoji as its UTF-16 surrogate pair. jq decodes the
+# pair, so the bytes out are the raw case's, on 1.6 as on 1.7.
+cat > "$OPTS" <<'JSON'
+{"mode": "standalone", "cameras": [{"name": "say \"cheese\"\nporch \ud83c\udfe0", "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch", "fps": 10}, {"name": "\ud83c\udfe0 back", "url": "rtsp://10.0.0.3/b"}]}
+JSON
+assert_eq '[{"name":"say \"cheese\"\nporch 🏠","url":"rtsp://10.0.0.2/p","zone_id":"zone:porch","fps":10},{"name":"🏠 back","url":"rtsp://10.0.0.3/b"}]' \
+    "$(opt_from "$OPTS" cameras)" \
+    "opt_list: the emoji written as a surrogate pair comes back as the raw bytes"
+assert_eq "say \"cheese\"
+porch 🏠" "$(opt_from "$OPTS" cameras | jq -r '.[0].name')" \
+    "opt_list: the escaped name's .[0] is byte for byte the raw one"
+
+# The frigate block missing entirely, cameras null, cameras empty.
+printf '{"mode":"frigate","cameras":null}\n' > "$OPTS"
+assert_eq "[]" "$(opt_from "$OPTS" cameras)" "opt_list: cameras null reads as []"
+assert_eq "[]" "$(opt_from "$OPTS" frigate.cameras)" \
+    "opt_list: the frigate block missing entirely: frigate.cameras is []"
+assert_eq "" "$(opt_from "$OPTS" frigate.labels | jq -r 'join(",")')" \
+    "opt_list: the frigate block missing entirely: the labels join to nothing"
+printf '{"cameras":[],"frigate":{"cameras":[],"labels":[]}}\n' > "$OPTS"
+assert_eq "[]" "$(opt_from "$OPTS" cameras)" "opt_list: an empty list reads as []"
+assert_eq "0" "$(opt_from "$OPTS" cameras | jq length)" "opt_list: an empty list counts 0"
+assert_eq "" "$(opt_from "$OPTS" frigate.labels | jq -r 'join(",")')" \
+    "opt_list: an empty label list joins to nothing"
+
+# opt_list KEY's return code with OPTIONS_JSON=FILE.
+opt_rc() {
+    local rc=0
+    OPTIONS_JSON="$1" opt_list "$2" > /dev/null 2>&1 || rc=$?
+    echo "$rc"
+}
+
+# A file it can read returns 0 whatever the list: the person has none.
+printf '{"mode":"frigate","cameras":null}\n' > "$OPTS"
+assert_eq "0" "$(opt_rc "$OPTS" cameras)" "opt_list: cameras null returns 0"
+assert_eq "0" "$(opt_rc "$OPTS" frigate.cameras)" "opt_list: a missing block returns 0"
+assert_eq "0" "$(opt_rc "$OPTS" mode)" "opt_list: a value that is not a list returns 0"
+
+# The options file absent, empty, not JSON, or JSON that is not an object:
+# [] and a note on stderr, never the string "null", and a return of 1, since
+# the lists are then unknown, not empty (run.sh's frigate block stops on it;
+# tests/test_serve_wizard.py runs run.sh's own lines on an absent file).
+for bad in absent empty garbage array string; do
+    file="$TMPDIR_TEST/$bad.json"
+    case "$bad" in
+        empty) : > "$file" ;;
+        garbage) printf 'cameras: [a, b]\n' > "$file" ;;
+        array) printf '[{"name":"a","url":"rtsp://a"}]\n' > "$file" ;;
+        string) printf '"cameras"\n' > "$file" ;;
+    esac
+    label="opt_list: an options file that is $bad"
+    assert_eq "[]" "$(opt_from "$file" cameras)" "$label reads as []"
+    note=$(OPTIONS_JSON="$file" opt_list frigate.labels 2>&1 >/dev/null) || true
+    assert_eq "opt_list: could not read frigate.labels from $file; reading it as []" "$note" \
+        "$label: the note names the key and the file"
+    assert_eq "1" "$(opt_rc "$file" cameras)" "$label returns 1"
+    # The first-run gate's own test acts on the count, not the return, so
+    # under set -euo pipefail it counts no camera and goes on.
+    out=$(OPTIONS_JSON="$file" bash -c 'set -euo pipefail; source "$1"
+        configured=false
+        if [ "$(opt_list cameras | jq length)" -gt 0 ]; then configured=true; fi
+        printf "%s|done\n" "$configured"' _ "$LIB" 2>/dev/null) || out="exited $?"
+    assert_eq "false|done" "$out" "$label: the gate's count goes on under set -euo pipefail"
+done
+
 # ---- ha_device_id ----------------------------------------------------------
 # The derivation every producer shares: pwk_ + first 8 hex of
 # sha256("securacv:ha-device-id:v1:" + seed). The expected value is computed

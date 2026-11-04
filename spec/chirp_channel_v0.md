@@ -531,6 +531,13 @@ chirp_presence = {
   the device sends, not what it takes, so a device in its cooldown says it
   is listening (sweep F194: it said it was not, and neighbors listed it as
   deaf for the cooldown's 5 minutes to 4 hours).
+- `last_chirp_age_min` counts from this session's own last send: a new
+  session (§2.3) says 255 until it sends. The canary-wap counted it from
+  the device's last send, which only a reboot forgot, so after a disable and
+  an enable the new session's beacons told any neighbor that heard the old
+  one chirp how many minutes ago that was, and linked the two sessions on
+  the wire (§6.4; sweep F415). The send cooldown (§2.5.4) is the device's
+  and still counts from its last send.
 - The beacon is unsigned, so a receiver never shows its `emoji` field. The
   canary-wap's nearby list shows the display of the header's `session_id`
   (§2.3), derived as a witness's sender emoji is (it is what an honest
@@ -588,6 +595,13 @@ On relay (hop_count > 0):
   preserving the original signer's identity.
 - The relaying device re-signs the canonical under its own session key, placing
   its `session_pubkey` and `signature` in the top-level fields.
+- Every other signed field goes on as the originator sent it, `ttl_minutes`
+  included, since the origin signature covers it. The canary-wap's relay
+  wrote 15 there, so a chirp sent with any other TTL failed its origin
+  signature one hop on (sweep F306); it keeps the byte it received.
+  The canary-wap's `POST /api/chirp` does not hold the TTL to the 5 to 60
+  above, and its receiver does not read it as a display time: it keeps
+  every chirp `DEFAULT_DISPLAY_MS` (30 min), whatever the TTL says.
 - Receivers verify both signatures and that `origin_pubkey != session_pubkey`.
 
 **Categories**:
@@ -629,7 +643,17 @@ Receivers MUST:
 3. Reject if `confirmer_session_pubkey` is already in the local `confirmed_by[]`
    set for this `original_nonce`.
 4. Reject if the confirmer's pubkey has not been seen in `g_nearby_devices` for
-   at least `PRESENCE_REQUIRED_MS` (drive-by ACKs do not count).
+   at least `PRESENCE_REQUIRED_MS` (drive-by ACKs do not count). The
+   canary-wap counts it from the moment the confirmer's row went into the
+   table (`NearbyDevice::first_seen_ms`): a refresh does not move it, and a
+   row pruned after `NEARBY_TIMEOUT_MS` (3 min) without a beacon, or a new
+   session id, starts again (sweep F311: only a row was asked for, so a key
+   first heard a second before its ACK counted). Presence beacons are
+   unsigned (§3.2; sweep F232), so one radio beacons any number of session
+   ids at once and their ten minutes run together, up to the table's free
+   rows: the rule delays a confirming key by ten minutes, it does not put a
+   price on each key. A suppress vote needs no presence row at all (§2.5.6;
+   sweep F234, open).
 5. Otherwise, add the pubkey to `confirmed_by[]`. If the chirp's confirmation
    threshold is now met, mark `validated = true` and (if `relay_enabled`)
    relay the chirp.
@@ -638,8 +662,19 @@ Receivers MUST:
   count as a witness confirmation.
 - `confirmed`: human confirmed they also witness this; counts as a witness
   confirmation if it passes all checks above.
-- `resolved`: user signals the situation is resolved; treated as a local
-  dismissal and may contribute to suppress voting.
+- `resolved`: the sender's user signals the situation is resolved. It is
+  local to the sender: a receiver does not act on it. The sender's dismissal
+  reaches its neighbors only as its signed suppress vote (§2.5.6), which
+  counts toward the threshold there like any other. The canary-wap took a
+  received `resolved` as a dismissal of the chirp, and its next prune
+  dropped the row, so one key with a nearby row took a chirp off a receiver
+  that suppression asks more than half the rows, and at least three, to
+  remove (sweep F305); it now changes nothing, as any `ack_type` other than
+  `confirmed` does. A chirp its owner dismissed takes no confirmation in the
+  seconds before its row leaves, neither a neighbor's ACK nor its own
+  owner's confirm (§8.1: refused `not_found`); that confirm signed and
+  broadcast an ACK for the chirp its owner had just dismissed, and a
+  neighbor counted it like any other.
 
 ### 3.5 CHIRP_MUTE (Leave Me Alone)
 
@@ -936,7 +971,8 @@ A confirmation (`POST /api/chirp/confirm`, or `/api/chirp/ack` with
 `"type":"confirmed"`) that sends nothing says why, in this order:
 `chirp_disabled` (409), `presence_required` (409, ten minutes on),
 `clock_unsynced` (409), `not_found` (404, no chirp with that nonce in the
-recent list), `own_chirp` (409, the originator cannot confirm its own,
+recent list, or one this device's owner dismissed, §3.4), `own_chirp` (409,
+the originator cannot confirm its own,
 §3.4), each with a `message` (sweep F174: every one was `not_found`, and the
 ack's a bare `{"success":false}`). A dismiss (`POST /api/chirp/dismiss`, or
 the ack with `"resolved"`) hides the chirp on this device whatever happens,
@@ -1173,7 +1209,7 @@ are allocated once by `init()`, in PSRAM where the board has it.
 | Session identity | 112 bytes |
 | Recent chirps | 16 * 964 = 15,424 bytes |
 | Nonce dedup (Bloom filter, two halves) | 2 * 4,096 = 8,192 bytes |
-| Nearby (presence) table | 32 * 48 = 1,536 bytes |
+| Nearby (presence) table | 32 * 52 = 1,664 bytes |
 | Per-key witness rate table | 32 * 40 = 1,280 bytes |
 | Self-test seen table | 32 * 40 = 1,280 bytes |
 | Route views (two copies and a scratch) | 3,404 bytes |
@@ -1182,8 +1218,14 @@ are allocated once by `init()`, in PSRAM where the board has it.
 A recent chirp holds its suppress set of 17 keys (§2.5.6); sizing that set to
 the fullest table added 288 bytes to each, 4,608 in all (sweep F233). The
 nonce filter's second half (§5.3) added 4,096 bytes (sweep F270; the total
-was ~27 KB). This table said ~3.5 KB, sized for a 128-byte chirp and a
-100-entry nonce list.
+was ~27 KB). A nearby row's first-seen time (§3.4 rule 4) added 4 bytes to
+each, 128 in all (sweep F311), and a recent chirp's TTL byte, kept for its
+relay (§3.3), took a byte of padding, so that row did not grow (sweep
+F306). The whole is 31,356 bytes; `test_chirp_commands_wap.cpp` holds each
+row and the total to the structs by `static_assert`, and
+`scripts/tests/test_chirp_spec_tables.py` holds this table to those lines.
+This table said ~3.5 KB, sized for a 128-byte chirp and a 100-entry nonce
+list.
 
 ## 13. Relationship to Opera
 

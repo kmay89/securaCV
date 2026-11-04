@@ -123,8 +123,9 @@ every other gate), and the premise the last one stands on:
     flag files name (another product's source, setup_portal.cpp, or a host
     test there is not read). Those files name nothing the check holds under
     ROOTS but INCLUDE_MENTIONS (the NVS keys where canary_config.h defines
-    them and reset_scope_keys.h lists them, ap_password.h's deriver and
-    provisioning_gate.h's two Host-first decisions): no credential's
+    them and reset_scope_keys.h lists them, ap_password.h's deriver, and
+    provisioning_gate.h's two Host-first decisions and the BOOT tap's
+    arbiter, tap_arbitrate()): no credential's
     spelling, no pinned, census, accessor, emitter or comparer name, and no
     census row's spelling (WiFi.softAP, the radio's mode, the driver's
     config, the AP class, the tap's open, another HTTP server), so a
@@ -336,8 +337,8 @@ every other gate), and the premise the last one stands on:
     or census function, a device-side use, an accessor, a mint, an emitter,
     a comparer, a credential's spelling or the private key, or be named for
     a function a pinned body or statement calls (`#define auth_gate(r)
-    (true)`, or `#define take(...) is_open(...)` turning the take hook into
-    a peek, is the preprocessor's shadow of a pinned body); the NVS records'
+    (true)`, or `#define take_exact(...) is_open(...)` turning the take hook
+    into a peek, is the preprocessor's shadow of a pinned body); the NVS records'
     names canary_config.h defines are its only exception. No macro or flag
     is a C++ keyword (`#define false true` would make every `return false;`
     below it a `return true;`). Under ROOTS, a macro named for anything else
@@ -1599,8 +1600,8 @@ ANSWER_STATEMENTS = {
 _PAGE_GRANTS = (
     "SECURITY_MODEL.md's four unlocks, and only them: first-boot setup, a real bearer "
     "(auth_bearer_grant through bearer_present_and_valid), a SoftAP peer (from_ap_subnet) "
-    "and one BOOT tap taken, never peeked, with auth_handed_token only on the tap that "
-    "served (F341). A home-LAN reload without a tap is CONSOLIDATION.md Phase 6's "
+    "and one BOOT tap taken, never peeked, through the one-asker step (provisioning_gate_take, "
+    "F354), with auth_handed_token only on the tap that served (F341). A home-LAN reload without a tap is CONSOLIDATION.md Phase 6's "
     "cv_session port, which must bring canary-wap's any-session class (ANY_SESSION_GATES, "
     "F328) with it: never widen an input here instead")
 GLUE_DEFS = {
@@ -1642,13 +1643,34 @@ GLUE_DEFS = {
         "sockaddr_ip4_host_order(peer_ss), sockaddr_ip4_host_order(local_ss), ap_ip, ap_mask, "
         "sta_ip, sta_mask); }"),
     (_NET, "network_set_provisioning_gate_hooks"): (
-        "the BOOT-tap hooks, stored as main.cpp hands them: the take hook, and the is_open "
-        "hook /api/status reads as a wiring check",
-        "network_set_provisioning_gate_hooks(network_gate_fn_t take, network_gate_fn_t "
-        "is_open) { s_gate_take = take; s_gate_is_open = is_open; }"),
+        "the BOOT-tap hooks, stored as main.cpp hands them: the peek and take_exact hooks the "
+        "tap step judges and takes the stamp through, and the is_open hook /api/status reads "
+        "as a wiring check",
+        "network_set_provisioning_gate_hooks(network_gate_peek_fn_t peek, "
+        "network_gate_take_exact_fn_t take_exact, network_gate_fn_t is_open) { s_gate_peek = "
+        "peek; s_gate_take_exact = take_exact; s_gate_is_open = is_open; }"),
     (_NET, "provisioning_gate_take"): (
-        "the tap: take, never peek; unregistered means closed",
-        "provisioning_gate_take() { return s_gate_take ? s_gate_take() : false; }"),
+        "the tap, for ONE asker (F354, the WAP's F342 step): the socket peer's key, the stamp "
+        "peeked once and judged by tap_arbitrate() at a clock read after the peek, then exactly "
+        "that stamp taken (take_exact) on TAKE, closed on the CONTENDED ask that found it, "
+        "burned when expired; never a bare take, never a peek as a grant; unregistered hooks "
+        "or a peer the socket cannot name refuse with the tap left",
+        "provisioning_gate_take(httpd_req_t* req, canary::net::provisioning_gate::TapVerdict* "
+        "verdict) { namespace pg = canary::net::provisioning_gate; *verdict = "
+        "pg::TapVerdict::NO_TAP; if (!s_gate_peek || !s_gate_take_exact) return false; uint8_t "
+        "key[pg::PEER_KEY_LEN]; if (!request_peer_key(req, key)) return false; const uint32_t "
+        "seen = s_gate_peek(); *verdict = pg::tap_arbitrate(s_tap_arbiter, seen, key, millis(), "
+        "PROVISIONING_GATE_TTL_MS); if (*verdict == pg::TapVerdict::TAKE) { if "
+        "(s_gate_take_exact(seen)) return true; *verdict = pg::TapVerdict::NO_TAP; return false; "
+        "} if (*verdict == pg::TapVerdict::CONTENDED) { if (seen != 0 && seen == "
+        "s_tap_arbiter.contended_tap && s_gate_take_exact(seen)) { char "
+        "a[pg::PEER_KEY_TEXT_CAP]; char b[pg::PEER_KEY_TEXT_CAP]; "
+        "pg::peer_key_text(s_tap_arbiter.recent.key, a, sizeof(a)); "
+        "pg::peer_key_text(s_tap_arbiter.prior.key, b, sizeof(b)); Serial.printf(\"[AUTH] BOOT "
+        "tap closed: two addresses asked for it (%s and %s)\\n\", a, b); "
+        "log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, \"BOOT tap closed: two devices asked "
+        "for it\", nullptr); } return false; } if (seen != 0) s_gate_take_exact(seen); return "
+        "false; }"),
     (_NET, "page_token_inject"): (
         _PAGE_GRANTS,
         "page_token_inject(httpd_req_t* req) { using "
@@ -1656,12 +1678,16 @@ GLUE_DEFS = {
         "canary::net::provisioning_gate::page_token_decide; const bool foreign = "
         "host_is_foreign(req); const bool setup_active = setup_is_active() || "
         "setup_is_first_boot(); const bool bearer_ok = !foreign && "
-        "bearer_present_and_valid(req); const bool on_ap = from_ap_subnet(req); bool tap_spent "
+        "bearer_present_and_valid(req); const bool on_ap = from_ap_subnet(req); "
+        "canary::net::provisioning_gate::TapVerdict tap = "
+        "canary::net::provisioning_gate::TapVerdict::NO_TAP; bool tap_spent "
         "= false; const char* why = nullptr; const PageToken verdict = page_token_decide( "
-        "foreign, setup_active, bearer_ok, on_ap, [&tap_spent]() { tap_spent = "
-        "provisioning_gate_take(); return tap_spent; }, &why); if (verdict != "
-        'PageToken::INJECT) { Serial.printf("[AUTH] page token withheld (%s)\\n", why ? why : '
-        '""); } else if (tap_spent) { auth_handed_token(request_peer_ipv4(req)); '
+        "foreign, setup_active, bearer_ok, on_ap, [req, &tap, &tap_spent]() { tap_spent = "
+        "provisioning_gate_take(req, &tap); return tap_spent; }, &why); if (verdict != "
+        'PageToken::INJECT) { Serial.printf("[AUTH] page token withheld (%s)\\n", tap == '
+        'canary::net::provisioning_gate::TapVerdict::CONTENDED ? "the BOOT tap is closed: '
+        'another address asked for it" : (why ? why : "")); } else if (tap_spent) { '
+        'auth_handed_token(request_peer_ipv4(req)); '
         'Serial.println("[AUTH] page token handed to one page load on a BOOT tap. Gate '
         'closed."); log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Page token unlocked", "BOOT '
         'gate"); } return verdict; }'),
@@ -1699,10 +1725,15 @@ GLUE_DEFS = {
         "prefs.end(); } s_active = false; s_first_boot = false; setup_stop_captive_portal(); "
         'log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Setup timeout", "rebooting to normal '
         'operation"); delay(500); ESP.restart(); } }'),
-    (_MAIN, "prov_gate_take_hook"): (
-        "the take hook: provisioning_gate::take, never is_open",
-        "prov_gate_take_hook() { return canary::net::provisioning_gate::take(g_prov_gate, "
-        "millis(), PROVISIONING_GATE_TTL_MS); }"),
+    (_MAIN, "prov_gate_peek_hook"): (
+        "the peek hook the tap step judges: provisioning_gate::peek, which consumes nothing and "
+        "grants nothing by itself (the step takes only through take_exact)",
+        "prov_gate_peek_hook() { return canary::net::provisioning_gate::peek(g_prov_gate); }"),
+    (_MAIN, "prov_gate_take_exact_hook"): (
+        "the take hook: provisioning_gate::take_exact of the stamp the step judged, one "
+        "compare-and-swap, never take() and never is_open",
+        "prov_gate_take_exact_hook(uint32_t seen) { return "
+        "canary::net::provisioning_gate::take_exact(g_prov_gate, seen); }"),
     (_AUTH, "AuthManager::check"): (
         "the bearer check of every auth_gate route: the lockout read before any compare, no "
         "Authorization header a 401 with no strike, every wrong header one strike, the right "
@@ -1893,6 +1924,23 @@ GLUE_DEFS = {
         "sockaddr_in6* sin6 = (const struct sockaddr_in6*)&ss; return "
         "ipv4_host_order_from_addr(AddrFamily::IPV6, (const uint8_t*)&sin6->sin6_addr); } "
         "#endif return 0; }"),
+    (_NET, "request_peer_key"): (
+        "the BOOT tap's asker (F354): the socket's peer (getpeername) through the host-tested "
+        "peer_key_from_addr, never a header and never getsockname; false when the socket "
+        "cannot say",
+        "request_peer_key(httpd_req_t* req, uint8_t "
+        "out[canary::net::provisioning_gate::PEER_KEY_LEN]) { using "
+        "canary::net::provisioning_gate::AddrFamily; using "
+        "canary::net::provisioning_gate::peer_key_from_addr; const int fd = "
+        "httpd_req_to_sockfd(req); if (fd < 0) return false; struct sockaddr_storage ss; "
+        "socklen_t len = sizeof(ss); memset(&ss, 0, sizeof(ss)); if (getpeername(fd, (struct "
+        "sockaddr*)&ss, &len) != 0) return false; if (ss.ss_family == AF_INET) { const struct "
+        "sockaddr_in* sin = (const struct sockaddr_in*)&ss; return "
+        "peer_key_from_addr(AddrFamily::IPV4, (const uint8_t*)&sin->sin_addr.s_addr, out); } "
+        "#if defined(LWIP_IPV6) && LWIP_IPV6 if (ss.ss_family == AF_INET6) { const struct "
+        "sockaddr_in6* sin6 = (const struct sockaddr_in6*)&ss; return "
+        "peer_key_from_addr(AddrFamily::IPV6, (const uint8_t*)&sin6->sin6_addr, out); } #endif "
+        "return false; }"),
     (_NET, "request_peer_ipv4"): (
         "the lockout's source key: the socket's peer (getpeername), never a header and never "
         "a value that changes per request",
@@ -2105,6 +2153,15 @@ GATE_CALL_SITES = {
     "provisioning_gate_take": {"callers": {(_NET, "page_token_inject"),
                                            (_NET, "handle_provisioning_receipt")},
                                "home": (_NET, "provisioning_gate_take")},
+    # The tap's one asker (F354): the arbiter's record, its judgment and the
+    # peer it is fed are reached only by the tap step (whose body GLUE_DEFS
+    # pins), so no other path can judge a tap, record an ask or skip one.
+    "s_tap_arbiter": {"callers": {(_NET, "provisioning_gate_take")}, "ident": True,
+                      "decl": ("static canary::net::provisioning_gate::TapArbiter s_tap_arbiter "
+                               "= {};",)},
+    "tap_arbitrate": {"callers": {(_NET, "provisioning_gate_take")}, "home": None},
+    "request_peer_key": {"callers": {(_NET, "provisioning_gate_take")},
+                         "home": (_NET, "request_peer_key")},
     "receipt_decide": {"callers": {(_NET, "handle_provisioning_receipt")}, "home": None},
     "page_token_decide": {"callers": {(_NET, "page_token_inject")}, "home": None},
     # The receipt's emitter: sent only from the receipt route, whose
@@ -2138,11 +2195,20 @@ GATE_CALL_SITES = {
     "network_set_provisioning_gate_hooks": {
         "callers": {(_MAIN, "setup")}, "once": True,
         "whole": "[within { > #if FEATURE_WIFI_AP] network_set_provisioning_gate_hooks("
-                 "prov_gate_take_hook, prov_gate_is_open_hook);",
+                 "prov_gate_peek_hook, prov_gate_take_exact_hook, prov_gate_is_open_hook);",
         "home": (_NET, "network_set_provisioning_gate_hooks")},
-    "s_gate_take": {"callers": {(_NET, "network_set_provisioning_gate_hooks"),
+    # The two hooks the tap step judges and takes through: set by the hook
+    # setter, called only by that step, and read by /api/status's wiring
+    # check (their hooks are pinned in main.cpp, GLUE_DEFS).
+    "s_gate_peek": {"callers": {(_NET, "network_set_provisioning_gate_hooks"),
                                 (_NET, "provisioning_gate_take"), (_NET, "handle_status")},
-                    "ident": True, "decl": ("static network_gate_fn_t s_gate_take = nullptr;",)},
+                    "ident": True,
+                    "decl": ("static network_gate_peek_fn_t s_gate_peek = nullptr;",)},
+    "s_gate_take_exact": {"callers": {(_NET, "network_set_provisioning_gate_hooks"),
+                                      (_NET, "provisioning_gate_take"), (_NET, "handle_status")},
+                          "ident": True,
+                          "decl": ("static network_gate_take_exact_fn_t s_gate_take_exact = "
+                                   "nullptr;",)},
     # The peek hook's copy: set by the hook setter, read only by /api/status's
     # wiring check (its hook is pinned in main.cpp, GLUE_DEFS).
     "s_gate_is_open": {"callers": {(_NET, "network_set_provisioning_gate_hooks"),
@@ -2265,8 +2331,8 @@ GATE_CALL_SITES = {
         "pattern": r"\bprovisioning_gate\s*::\s*open\b",
         "callers": {(_MAIN, "handle_boot_button")}, "once": True, "home": None},
     "g_prov_gate": {
-        "callers": {(_MAIN, "prov_gate_take_hook"), (_MAIN, "prov_gate_is_open_hook"),
-                    (_MAIN, "handle_boot_button")},
+        "callers": {(_MAIN, "prov_gate_peek_hook"), (_MAIN, "prov_gate_take_exact_hook"),
+                    (_MAIN, "prov_gate_is_open_hook"), (_MAIN, "handle_boot_button")},
         "file": _MAIN, "ident": True,
         "decl": ("static canary::net::provisioning_gate::State g_prov_gate = {0};",),
         "stmts": {(_MAIN, "handle_boot_button"): _BOOT_GATE_STMTS}},
@@ -2348,9 +2414,11 @@ GATE_CALL_SITES = {
 # plain local, never a call.
 RATE_LIMIT_REFUSAL = re.compile(
     r"if \(!rate_limit_check\(req(?:, (?:true|false|[A-Za-z_]\w*))?\)\) return ESP_OK;")
-# receipt_decide's grants after the Host, folded: the bearer, then the tap.
+# receipt_decide's grants after the Host, folded: the bearer, then the tap for
+# this request's peer (the one-asker step, F354), its verdict handed back for
+# the 409.
 RECEIPT_GRANTS = ("[req]() { return bearer_present_and_valid(req); }",
-                  "[]() { return provisioning_gate_take(); }")
+                  "[req, &tap]() { return provisioning_gate_take(req, &tap); }")
 
 # ── The bearer-only answers: the no-session premise ──────────────────────────
 
@@ -4051,8 +4119,10 @@ INCLUDE_DEFINES = {name: "include/canary_config.h" for name in NVS_LITERAL_KEYS}
 # what the check holds under ROOTS (INCLUDE_MENTIONS), as (file suffix, name):
 # the NVS records' names where canary_config.h defines them and
 # reset_scope_keys.h lists them for the reset, the SoftAP key's deriver where
-# ap_password.h defines it, and the two Host-first decisions where
-# provisioning_gate.h defines them. Code in those files is not read as code (a
+# ap_password.h defines it, and the two Host-first decisions and the BOOT
+# tap's arbiter (tap_arbitrate(), whose one caller under ROOTS is the tap step,
+# F354) where provisioning_gate.h defines them; all three are host-tested
+# (test_provisioning_gate.cpp). Code in those files is not read as code (a
 # function there that read the bearer, opened the tap, started the network or
 # raised the SoftAP, #included or linked and called from under ROOTS, would be
 # followed by no rule), so a file naming anything else the check holds fails:
@@ -4063,7 +4133,7 @@ INCLUDE_MENTIONS = (
     {("include/canary_config.h", n) for n in NVS_LITERAL_KEYS}
     | {("include/reset_scope_keys.h", n) for n in NVS_LITERAL_KEYS}
     | {("network/ap_password.h", "derive_ap_password")}
-    | {("network/provisioning_gate.h", n) for n in HOST_DECISIONS})
+    | {("network/provisioning_gate.h", n) for n in HOST_DECISIONS + ("tap_arbitrate",)})
 # ...but the held names that are ordinary words in the shared code (a BLE
 # server's begin(), an Improv state's s_active, a policy's check()): the
 # spelling of a held name that the shared code also uses for its own.
@@ -4265,8 +4335,8 @@ def _pinned_texts(T: dict) -> list:
 
 def _called_names(T: dict) -> set:
     """Every function a pinned text calls (_pinned_texts): a macro by one of
-    those names (`#define take(s, n, t) is_open(s, n, t)` turns the take hook
-    into a peek) leaves every pinned text intact."""
+    those names (`#define take_exact(s, n) is_open(s, n, 1)` turns the take
+    hook into a peek) leaves every pinned text intact."""
     return {n for x in _pinned_texts(T) for n in _ANY_CALL.findall(x) if n not in _KEYWORDS}
 
 
@@ -5349,6 +5419,199 @@ def check_route_budgets(sources: dict) -> list:
     return failures
 
 
+# ── The BOOT tap's one asker (sweep F354) ────────────────────────────────────
+
+# The tap step the receipt route and the page path share, and the names it
+# reads the gate through (main.cpp's hooks, held in GLUE_DEFS). Before F354
+# the step was one bare take() hook: the first request from any address on
+# the network inside the tap's 30 s took it, a host polling the receipt or
+# GET / among them.
+TAP_STEP = "provisioning_gate_take"
+TAP_PEEK = "s_gate_peek"
+TAP_TAKE = "s_gate_take_exact"
+TAP_JUDGE = "tap_arbitrate"
+# What the step must never do: take a stamp nobody judged, or grant on a peek.
+_TAP_BARE = ((r"(?<!\w)take\s*\(", "a bare take()"),
+             (r"\bis_open\s*\(|\bs_gate_is_open\b", "a peek (is_open) as a grant"))
+_TAP_CONTENDED_IF = re.compile(r"\bif\s*\(\s*([A-Za-z_]\w*)\s*==\s*(?:[\w:]*::)?"
+                               r"TapVerdict::CONTENDED\s*\)\s*\{")
+
+
+def check_tap_one_asker(sources: dict, require_defs: bool = True) -> list:
+    """The BOOT tap goes to ONE asker, on the receipt and the page path alike
+    (sweep F354, the WAP's F342 step): the tap step peeks the stamp once
+    (`const uint32_t <seen> = s_gate_peek();`), judges it with exactly one
+    tap_arbitrate() whose stamp is `<seen>` and whose clock is a `millis()`
+    read in that call, after the peek (a clock read first would age a tap
+    stored in between by 2^32 ms and burn it), and takes only `<seen>`, only
+    after the judgment; it never calls a bare take() and never grants on a
+    peek. Both its callers hand it the request and a TapVerdict local of
+    their own (`provisioning_gate_take(req, &<v>)`), and the receipt answers
+    `<v> == TapVerdict::CONTENDED` with 409 tap_contended. Shapes, not
+    meaning: the arbiter is host-tested in test_provisioning_gate.cpp, and
+    the step and both handlers run in test_securacv_auth.cpp."""
+    failures = []
+
+    def body_of(name):
+        for fname, text in sorted(sources.items()):
+            span = definition_span(text, name)
+            if span:
+                return fname, text[span[0]:span[1]]
+        return None, None
+
+    fname, body = body_of(TAP_STEP)
+    if body is None:
+        if require_defs:
+            failures.append(f"the tap step ({TAP_STEP}) definition not found — parser regression?")
+    else:
+        blanked = blank_string_contents(body)
+        peeks = call_args(body, TAP_PEEK)
+        judges = call_args(body, TAP_JUDGE)
+        takes = call_args(body, TAP_TAKE)
+        bind = re.search(r"\bconst\s+uint32_t\s+([A-Za-z_]\w*)\s*=\s*" + TAP_PEEK +
+                         r"\s*\(\s*\)\s*;", blanked)
+        if len(peeks) != 1 or not bind:
+            failures.append(f"{fname}: the tap step reads the stamp {len(peeks)} time(s) — it "
+                            f"peeks it once, as `const uint32_t <seen> = {TAP_PEEK}();`, and "
+                            f"judges and takes that stamp only")
+        if len(judges) != 1:
+            failures.append(f"{fname}: the tap step calls {TAP_JUDGE}() {len(judges)} time(s) — "
+                            f"the tap goes to one asker only when exactly one judgment of the "
+                            f"stamp comes before every take of it (F354: before, the first "
+                            f"request from any address took the tap)")
+        if not takes:
+            failures.append(f"{fname}: the tap step never takes the stamp it judged "
+                            f"({TAP_TAKE})")
+        if bind and len(peeks) == 1 and len(judges) == 1:
+            seen = bind.group(1)
+            j_off, j_args = judges[0]
+            if peeks[0][0] > j_off:
+                failures.append(f"{fname}: the tap step judges before it peeks")
+            if (len(j_args) != 5 or j_args[1] != seen
+                    or not re.fullmatch(r"millis\s*\(\s*\)", j_args[3])):
+                failures.append(f"{fname}: {TAP_JUDGE}() is handed {j_args!r} — its stamp "
+                                f"must be `{seen}` (the peek) and its clock a `millis()` read "
+                                f"in the call, after the peek (a clock read first ages a tap "
+                                f"stored in between by 2^32 ms, and the step burns it)")
+            for off, args in takes:
+                if off < j_off:
+                    failures.append(f"{fname}: the tap step takes a stamp before "
+                                    f"{TAP_JUDGE}() judged it")
+                if args != [seen]:
+                    failures.append(f"{fname}: the tap step takes {args!r}, not the judged "
+                                    f"stamp `{seen}` (a re-tap or the sweep since the peek "
+                                    f"would be consumed unjudged)")
+        for pat, what in _TAP_BARE:
+            if re.search(pat, blanked):
+                failures.append(f"{fname}: the tap step makes {what} — every grant goes "
+                                f"through {TAP_JUDGE}() and {TAP_TAKE}() of the judged stamp")
+
+    for caller in ("handle_provisioning_receipt", "page_token_inject"):
+        cname, cbody = body_of(caller)
+        if cbody is None:
+            if require_defs:
+                failures.append(f"{caller} definition not found — parser regression?")
+            continue
+        blanked = blank_string_contents(cbody)
+        calls = call_args(cbody, TAP_STEP)
+        good = [a for _, a in calls if len(a) == 2 and a[0] == "req"
+                and re.fullmatch(r"&\s*[A-Za-z_]\w*", a[1])]
+        if len(calls) != 1 or len(good) != 1:
+            failures.append(f"{cname}: {caller} hands the tap step "
+                            f"{[a for _, a in calls]!r} — exactly one call, "
+                            f"`{TAP_STEP}(req, &<verdict>)`: the arbiter judges THIS request's "
+                            f"peer, and the verdict comes back")
+            continue
+        verdict = good[0][1].lstrip("&").strip()
+        if not re.search(r"\bTapVerdict\s+" + re.escape(verdict) + r"\s*=", blanked):
+            failures.append(f"{cname}: {caller}'s `{verdict}` is not a TapVerdict local of its own")
+        if caller != "handle_provisioning_receipt":
+            continue
+        answered = False
+        for m in _TAP_CONTENDED_IF.finditer(blanked):
+            if m.group(1) != verdict:
+                continue
+            close = _bracket_close(blanked, m.end() - 1)
+            block = cbody[m.end():close] if close > 0 else ""
+            answered = answered or ('"409 Conflict"' in block and
+                                    '{\\"error\\":\\"tap_contended\\"' in block)
+        if not answered:
+            failures.append(f"{cname}: the receipt does not answer `{verdict} == "
+                            f"TapVerdict::CONTENDED` with 409 {{\"error\":\"tap_contended\"}} "
+                            f"— a closed tap must say why, or the page and the apps read it as "
+                            f"\"tap BOOT\" and the owner taps into the same contention")
+    return failures
+
+
+def _assert_tap_rule() -> None:
+    """check_tap_one_asker passes the tree's shape and fails each way back
+    to the first asker (run on every pass, like _assert_parser_robust)."""
+    step = (
+        "static bool provisioning_gate_take(httpd_req_t* req, TapVerdict* verdict) {\n"
+        "  *verdict = TapVerdict::NO_TAP;\n"
+        "  if (!s_gate_peek || !s_gate_take_exact) return false;\n"
+        "  uint8_t key[16];\n  if (!request_peer_key(req, key)) return false;\n"
+        "  const uint32_t seen = s_gate_peek();\n"
+        "  *verdict = pg::tap_arbitrate(s_tap_arbiter, seen, key, millis(), TTL);\n"
+        "  if (*verdict == TapVerdict::TAKE) return s_gate_take_exact(seen);\n"
+        "  if (seen != 0) s_gate_take_exact(seen);\n  return false;\n}\n")
+    page = (
+        "static PageToken page_token_inject(httpd_req_t* req) {\n"
+        "  TapVerdict tap = TapVerdict::NO_TAP;\n  bool spent = false;\n"
+        "  return page_token_decide(host_is_foreign(req), false, false, false,\n"
+        "      [req, &tap, &spent]() { spent = provisioning_gate_take(req, &tap); "
+        "return spent; });\n}\n")
+    receipt = (
+        "static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {\n"
+        "  TapVerdict tap = TapVerdict::NO_TAP;\n"
+        "  const ReceiptVerdict verdict = receipt_decide(host_is_foreign(req),\n"
+        "      [req]() { return bearer_present_and_valid(req); },\n"
+        "      [req, &tap]() { return provisioning_gate_take(req, &tap); });\n"
+        "  if (verdict == ReceiptVerdict::REFUSE_NO_TAP) {\n"
+        "    if (tap == TapVerdict::CONTENDED) {\n"
+        "      httpd_resp_set_status(req, \"409 Conflict\");\n"
+        "      return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap_contended\\\"}\");\n"
+        "    }\n    return httpd_resp_sendstr(req, \"{}\");\n  }\n"
+        "  send_host_refusal(req);\n  return ESP_OK;\n}\n")
+    good = {"fx/net.cpp": step + page + receipt}
+    got = check_tap_one_asker(good)
+    assert got == [], f"the tap rule fails the tree's shape: {got}"
+    plants = (
+        ("the old step: a bare take() hook, the first asker's",
+         step, "static bool provisioning_gate_take(httpd_req_t* req, TapVerdict* verdict) {\n"
+         "  *verdict = TapVerdict::NO_TAP;\n  return s_gate_take ? s_gate_take() : false;\n}\n",
+         ("reads the stamp 0 time(s)", "calls tap_arbitrate() 0 time(s)")),
+        ("a take before the judgment", "  const uint32_t seen = s_gate_peek();\n",
+         "  const uint32_t seen = s_gate_peek();\n  if (s_gate_take_exact(seen)) return true;\n",
+         ("takes a stamp before tap_arbitrate() judged it",)),
+        ("the clock read before the peek", "  const uint32_t seen = s_gate_peek();\n"
+         "  *verdict = pg::tap_arbitrate(s_tap_arbiter, seen, key, millis(), TTL);\n",
+         "  const uint32_t now = millis();\n  const uint32_t seen = s_gate_peek();\n"
+         "  *verdict = pg::tap_arbitrate(s_tap_arbiter, seen, key, now, TTL);\n",
+         ("its clock a `millis()` read in the call",)),
+        ("a take of a stamp read again", "return s_gate_take_exact(seen);",
+         "return s_gate_take_exact(s_gate_peek());",
+         ("reads the stamp 2 time(s)",)),
+        ("a bare take beside the judgment", "  if (seen != 0) s_gate_take_exact(seen);\n",
+         "  if (pg::take(gate, millis(), TTL)) return true;\n",
+         ("makes a bare take()",)),
+        ("a peek as a grant", "return s_gate_take_exact(seen);", "return s_gate_is_open();",
+         ("makes a peek (is_open) as a grant",)),
+        ("the page path's old lambda", "spent = provisioning_gate_take(req, &tap);",
+         "spent = provisioning_gate_take();", ("page_token_inject hands the tap step [[]]",)),
+        ("the receipt without its 409", "    if (tap == TapVerdict::CONTENDED) {\n"
+         "      httpd_resp_set_status(req, \"409 Conflict\");\n"
+         "      return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap_contended\\\"}\");\n    }\n",
+         "", ("does not answer `tap == TapVerdict::CONTENDED` with 409",)),
+    )
+    for what, old, new, words in plants:
+        text = good["fx/net.cpp"]
+        assert text.count(old) == 1, f"tap rule plant {what!r}: its text is not in the fixture once"
+        got = check_tap_one_asker({"fx/net.cpp": text.replace(old, new)})
+        missing = [w for w in words if not any(w in p for p in got)]
+        assert not missing, f"the tap rule passed a plant ({what}): expected {missing}, got {got}"
+
+
 def _assert_parser_robust() -> None:
     """Guard the parser on every run, so a silent false pass cannot creep in.
 
@@ -5853,7 +6116,8 @@ _FIX_SETUP_NET = (
     "#if FEATURE_WIFI_AP\n"
     "    const char* ap_ssid = device.ap_ssid;\n"
     "    ScvNetworkManager& net = network_get_instance();\n"
-    "    network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);\n"
+    "    network_set_provisioning_gate_hooks(prov_gate_peek_hook, prov_gate_take_exact_hook,\n"
+    "                                        prov_gate_is_open_hook);\n"
     "    if (net.begin(ap_ssid, g_ap_password, device.device_id)) {\n"
     "      net.startHttpServer();\n    }\n"
     "#endif\n"
@@ -6028,12 +6292,27 @@ _FIX_FILES = {
         "  if (!token || token[0] == '\\0') {\n    return false;\n  }\n"
         "  if (!auth_check(req, token, request_peer_ipv4(req))) {\n    return false;\n  }\n"
         "  return true;\n}\n"
-        "static network_gate_fn_t s_gate_take = nullptr;\n"
+        "static network_gate_peek_fn_t s_gate_peek = nullptr;\n"
+        "static network_gate_take_exact_fn_t s_gate_take_exact = nullptr;\n"
         "static network_gate_fn_t s_gate_is_open = nullptr;\n"
-        "void network_set_provisioning_gate_hooks(network_gate_fn_t take,\n"
+        "void network_set_provisioning_gate_hooks(network_gate_peek_fn_t peek,\n"
+        "                                         network_gate_take_exact_fn_t take_exact,\n"
         "                                         network_gate_fn_t is_open) {\n"
-        "  s_gate_take = take;\n  s_gate_is_open = is_open;\n}\n"
-        "static bool provisioning_gate_take() { return s_gate_take ? s_gate_take() : false; }\n"
+        "  s_gate_peek = peek;\n  s_gate_take_exact = take_exact;\n"
+        "  s_gate_is_open = is_open;\n}\n"
+        "static bool request_peer_key(httpd_req_t* req, uint8_t out[16]) {\n"
+        "  return key_of(req, out);\n}\n"
+        "static canary::net::provisioning_gate::TapArbiter s_tap_arbiter = {};\n"
+        "static bool provisioning_gate_take(httpd_req_t* req, TapVerdict* verdict) {\n"
+        "  *verdict = TapVerdict::NO_TAP;\n"
+        "  if (!s_gate_peek || !s_gate_take_exact) return false;\n"
+        "  uint8_t key[16];\n"
+        "  if (!request_peer_key(req, key)) return false;\n"
+        "  const uint32_t seen = s_gate_peek();\n"
+        "  *verdict = canary::net::provisioning_gate::tap_arbitrate(s_tap_arbiter, seen, key, "
+        "millis(), TTL);\n"
+        "  if (*verdict == TapVerdict::TAKE) return s_gate_take_exact(seen);\n"
+        "  return false;\n}\n"
         "static bool bearer_present_and_valid(httpd_req_t* req) {\n"
         "  const char* token = auth_get_token();\n"
         "  if (!token || token[0] == '\\0') return false;\n"
@@ -6107,10 +6386,11 @@ _FIX_FILES = {
         "  const bool setup_active = setup_is_active() || setup_is_first_boot();\n"
         "  const bool bearer_ok    = !foreign && bearer_present_and_valid(req);\n"
         "  const bool on_ap        = from_ap_subnet(req);\n"
+        "  TapVerdict tap = TapVerdict::NO_TAP;\n"
         "  bool tap_spent = false;\n"
         "  const PageToken verdict = page_token_decide(\n"
         "      foreign, setup_active, bearer_ok, on_ap,\n"
-        "      [&tap_spent]() {\n        tap_spent = provisioning_gate_take();\n"
+        "      [req, &tap, &tap_spent]() {\n        tap_spent = provisioning_gate_take(req, &tap);\n"
         "        return tap_spent;\n      });\n"
         "  if (verdict != PageToken::INJECT) {\n    log_withheld();\n"
         "  } else if (tap_spent) {\n    auth_handed_token(request_peer_ipv4(req));\n  }\n"
@@ -6125,10 +6405,11 @@ _FIX_FILES = {
         "  doc[\"tls_cert_fp\"] = net.getTlsCertFp();\n"
         "  return send_doc(req, doc);\n}\n"
         "static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {\n"
+        "  TapVerdict tap = TapVerdict::NO_TAP;\n"
         "  const ReceiptVerdict verdict = receipt_decide(\n"
         "      host_is_foreign(req),\n"
         "      [req]() { return bearer_present_and_valid(req); },\n"
-        "      []() { return provisioning_gate_take(); });\n"
+        "      [req, &tap]() { return provisioning_gate_take(req, &tap); });\n"
         "  if (verdict == ReceiptVerdict::SERVE_BEARER) {\n"
         "    return send_provisioning_receipt(req);\n  }\n"
         "  if (verdict == ReceiptVerdict::SERVE_TAP) {\n"
@@ -6142,8 +6423,8 @@ _FIX_FILES = {
         "  if (!auth_gate(req)) return ESP_OK;\n"
         "  ScvNetworkManager& net = network_get_instance();\n"
         "  JsonDocument doc;\n"
-        "  doc[\"provisioning_gate\"] = (s_gate_take && s_gate_is_open) ? \"physical_button\" "
-        ": \"unwired\";\n"
+        "  doc[\"provisioning_gate\"] = (s_gate_peek && s_gate_take_exact && s_gate_is_open) ? "
+        "\"physical_button\" : \"unwired\";\n"
         "  doc[\"tls_cert_fp\"] = net.getTlsCertFp();\n"
         "  return send_doc(req, doc);\n}\n"
         "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
@@ -6181,8 +6462,10 @@ _FIX_FILES = {
         "  if (ev == canary::io::HoldEvent::Released && g_reset_hold.released_stage == 2) {\n"
         "    factory_reset(canary::io::ResetScope::CredentialsAndSettings);\n  }\n}\n"
         "static canary::net::provisioning_gate::State g_prov_gate = {0};\n"
-        "static bool prov_gate_take_hook() {\n"
-        "  return canary::net::provisioning_gate::take(g_prov_gate, millis(), TTL);\n}\n"
+        "static uint32_t prov_gate_peek_hook() {\n"
+        "  return canary::net::provisioning_gate::peek(g_prov_gate);\n}\n"
+        "static bool prov_gate_take_exact_hook(uint32_t seen) {\n"
+        "  return canary::net::provisioning_gate::take_exact(g_prov_gate, seen);\n}\n"
         "static bool prov_gate_is_open_hook() {\n"
         "  return canary::net::provisioning_gate::is_open(g_prov_gate, millis(), TTL);\n}\n"
         "void setup() {\n"
@@ -6252,7 +6535,8 @@ _FIX_FILES = {
 _FIX_GLUE = ((_NET, "host_is_foreign"), (_NET, "auth_gate"), (_NET, "bearer_present_and_valid"),
              (_NET, "from_ap_subnet"), (_NET, "network_set_provisioning_gate_hooks"),
              (_NET, "provisioning_gate_take"), (_NET, "page_token_inject"),
-             (_MAIN, "prov_gate_take_hook"), (_AUTH, "AuthManager::check"),
+             (_MAIN, "prov_gate_peek_hook"), (_MAIN, "prov_gate_take_exact_hook"),
+             (_NET, "request_peer_key"), (_AUTH, "AuthManager::check"),
              (_AUTH, "AuthManager::grant"), (_AUTH, "AuthManager::compare"),
              (_AUTH, "AuthManager::handedToken"), (_AUTH, "auth_check"),
              (_AUTH, "auth_bearer_grant"), (_AUTH, "auth_handed_token"),
@@ -6456,9 +6740,10 @@ _FIX_PLANTS = (
      "[req]() { return bearer_present_and_valid(req) || setup_is_active(); },",
      ("hands receipt_decide the grants",)),
     ("M9: the receipt's tap grant passes a SoftAP peer", _FIX_NET,
-     "      []() { return provisioning_gate_take(); });\n  if (verdict == ReceiptVerdict::",
-     "      [req]() { return from_ap_subnet(req) || provisioning_gate_take(); });\n"
+     "      [req, &tap]() { return provisioning_gate_take(req, &tap); });\n"
      "  if (verdict == ReceiptVerdict::",
+     "      [req, &tap]() { return from_ap_subnet(req) || provisioning_gate_take(req, &tap); "
+     "});\n  if (verdict == ReceiptVerdict::",
      ("hands receipt_decide the grants",)),
     ("M10: the bearer grant takes a cv_session cookie", _FIX_NET,
      "  if (!token || token[0] == '\\0') return false;\n  return auth_bearer_grant(",
@@ -6506,19 +6791,26 @@ _FIX_PLANTS = (
      "  if (WiFi.getMode() & WIFI_AP) return true;\n",
      ("from_ap_subnet changed",)),
     ("A4: an unwired tap reads open", _FIX_NET,
-     "s_gate_take ? s_gate_take() : false; }", "s_gate_take ? s_gate_take() : true; }",
+     "  if (!s_gate_peek || !s_gate_take_exact) return false;\n",
+     "  if (!s_gate_peek || !s_gate_take_exact) return true;\n",
      ("provisioning_gate_take changed",)),
-    ("A5: the take peeks", _FIX_NET,
-     "s_gate_take ? s_gate_take() : false; }", "s_gate_is_open ? s_gate_is_open() : false; }",
+    ("A5: the tap step grants on the peek", _FIX_NET,
+     "  if (*verdict == TapVerdict::TAKE) return s_gate_take_exact(seen);\n",
+     "  if (*verdict == TapVerdict::TAKE) return s_gate_is_open();\n",
+     ("provisioning_gate_take changed", "s_gate_is_open called from provisioning_gate_take")),
+    ("A5b: the tap step skips the arbiter (a bare take, the first asker's)", _FIX_NET,
+     "  *verdict = canary::net::provisioning_gate::tap_arbitrate(s_tap_arbiter, seen, key, "
+     "millis(), TTL);\n",
+     "  *verdict = TapVerdict::TAKE;\n",
      ("provisioning_gate_take changed", "names provisioning_gate_take")),
     ("A6: the peek wired as the take hook", _FIX_MAIN,
-     "network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);",
-     "network_set_provisioning_gate_hooks(prov_gate_is_open_hook, prov_gate_is_open_hook);",
+     "network_set_provisioning_gate_hooks(prov_gate_peek_hook, prov_gate_take_exact_hook,",
+     "network_set_provisioning_gate_hooks(prov_gate_peek_hook, prov_gate_is_open_hook,",
      ("calls network_set_provisioning_gate_hooks other than as the whole statement",)),
     ("A7: the take hook peeks", _FIX_MAIN,
-     "  return canary::net::provisioning_gate::take(g_prov_gate",
+     "  return canary::net::provisioning_gate::take_exact(g_prov_gate",
      "  return canary::net::provisioning_gate::is_open(g_prov_gate",
-     ("prov_gate_take_hook changed",)),
+     ("prov_gate_take_exact_hook changed",)),
     ("K1: compare takes a session under Authorization", _FIX_AUTH,
      "  if (strncmp(auth_buf, \"Bearer \", 7) != 0)",
      "  if (session_table_has(auth_buf, strlen(auth_buf))) return Presented::RIGHT;\n"
@@ -6688,14 +6980,29 @@ _FIX_PLANTS = (
      "static bool g_ok = auth_check(nullptr, \"\", 0);\n",
      ("auth_check() called outside every function",)),
     ("the hooks wired twice", _FIX_MAIN,
-     "  network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);\n",
-     "  network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);\n"
-     "  network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);\n",
+     "    network_set_provisioning_gate_hooks(prov_gate_peek_hook, prov_gate_take_exact_hook,\n"
+     "                                        prov_gate_is_open_hook);\n",
+     "    network_set_provisioning_gate_hooks(prov_gate_peek_hook, prov_gate_take_exact_hook,\n"
+     "                                        prov_gate_is_open_hook);\n"
+     "    network_set_provisioning_gate_hooks(prov_gate_peek_hook, prov_gate_take_exact_hook,\n"
+     "                                        prov_gate_is_open_hook);\n",
      ("network_set_provisioning_gate_hooks is called 2 times",)),
     ("the take hook's variable set outside its setter", _FIX_NET,
-     "static network_gate_fn_t s_gate_take = nullptr;\n",
-     "static network_gate_fn_t s_gate_take = prov_gate_is_open_hook;\n",
-     ("s_gate_take named outside every function other than in its declaration",)),
+     "static network_gate_take_exact_fn_t s_gate_take_exact = nullptr;\n",
+     "static network_gate_take_exact_fn_t s_gate_take_exact = prov_gate_is_open_hook;\n",
+     ("s_gate_take_exact named outside every function other than in its declaration",)),
+    ("the arbiter's record set outside the tap step", _FIX_NET,
+     "static canary::net::provisioning_gate::TapArbiter s_tap_arbiter = {};\n",
+     "static canary::net::provisioning_gate::TapArbiter s_tap_arbiter = {};\n"
+     "static void forget_askers() { s_tap_arbiter = {}; }\n",
+     ("s_tap_arbiter called from forget_askers",)),
+    ("a second judge of the tap", _FIX_NET,
+     "static esp_err_t handle_ui(httpd_req_t* req) {\n",
+     "static bool judge_again(const uint8_t* k) {\n"
+     "  return canary::net::provisioning_gate::tap_arbitrate(s_tap_arbiter, s_gate_peek(), k, "
+     "millis(), TTL) == TapVerdict::TAKE;\n}\n"
+     "static esp_err_t handle_ui(httpd_req_t* req) {\n",
+     ("tap_arbitrate called from judge_again",)),
     # Round-1 review: where a mint sits. Each compiles the derivation out
     # (the key stays "", and the SoftAP rises open) with its text intact.
     ("mint: the SoftAP key's mint under #if 0", _FIX_MAIN, _FIX_MINT_SRC,
@@ -6994,8 +7301,8 @@ _FIX_PLANTS = (
      "static auto host_is_foreign(httpd_req_t* req) -> bool { (void)req; return false; }\n",
      ("GLUE_DEFS pins host_is_foreign() in securacv_network.cpp, which ROOTS defines twice",)),
     # Macros: the preprocessor's shadow of a pinned body or a census name.
-    ("a macro ungates every route", _FIX_NET, "static network_gate_fn_t s_gate_take = nullptr;\n",
-     "#define auth_gate(r) (true)\nstatic network_gate_fn_t s_gate_take = nullptr;\n",
+    ("a macro ungates every route", _FIX_NET, "static network_gate_fn_t s_gate_is_open = nullptr;\n",
+     "#define auth_gate(r) (true)\nstatic network_gate_fn_t s_gate_is_open = nullptr;\n",
      ("a macro names 'auth_gate'",)),
     ("a macro on two lines makes the bearer grant true", _FIX_NET,
      "static void announce_setup_network(",
@@ -7116,8 +7423,11 @@ _FIX_PLANTS = (
      ("auth_get_instance changed",)),
     # Round-3 review: a macro of a name the pinned glue calls.
     ("a macro turns the take hook into a peek", _FIX_MAIN, "static char g_ap_password[16];\n",
-     "#define take(s, n, t) is_open(s, n, t)\nstatic char g_ap_password[16];\n",
-     ("a macro names 'take'",)),
+     "#define take_exact(s, n) is_open(s, n, 1)\nstatic char g_ap_password[16];\n",
+     ("a macro names 'take_exact'",)),
+    ("a macro hands the tap step a verdict of its own", _FIX_NET, "",
+     "#define tap_arbitrate(a, s, k, n, t) (TapVerdict::TAKE)\n",
+     ("a macro names 'tap_arbitrate'",)),
     ("a macro makes every LAN peer a SoftAP one", _FIX_NET, "static ScvNetworkManager s_network;\n",
      "#define request_on_softap(p, l, ai, am, si, sm) request_on_softap(ai, ai, ai, am, 0, 0)\n"
      "static ScvNetworkManager s_network;\n", ("a macro names 'request_on_softap'",)),
@@ -7535,8 +7845,8 @@ _FIX_PLANTS = (
      "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
      ("public route handler handle_fleet() answers the bearer token",)),
     ("a #define split after its #", _FIX_MAIN, "static char g_ap_password[16];\n",
-     "#\\\ndefine take(s, n, t) is_open(s, n, t)\nstatic char g_ap_password[16];\n",
-     ("a macro names 'take'",)),
+     "#\\\ndefine take_exact(s, n) is_open(s, n, 1)\nstatic char g_ap_password[16];\n",
+     ("a macro names 'take_exact'",)),
     ("a #define spelled with a digraph", _FIX_NET, "",
      "%:define auth_gate(r) (true)\n", ("a macro names 'auth_gate'",)),
     ("a #define whose name the check cannot read", _FIX_NET, "",
@@ -7764,8 +8074,8 @@ _QUALIFIED_STATUS = "Api::handle_status"
 # /api/status's refusal and the statements after it, in the clean fixture.
 _FIX_STATUS_TAIL = ("  if (!auth_gate(req)) return ESP_OK;\n"
                     "  ScvNetworkManager& net = network_get_instance();\n  JsonDocument doc;\n"
-                    "  doc[\"provisioning_gate\"] = (s_gate_take && s_gate_is_open) ? "
-                    "\"physical_button\" : \"unwired\";\n"
+                    "  doc[\"provisioning_gate\"] = (s_gate_peek && s_gate_take_exact && "
+                    "s_gate_is_open) ? \"physical_button\" : \"unwired\";\n"
                     "  doc[\"tls_cert_fp\"] = net.getTlsCertFp();\n")
 _PIN_HEADER = "  httpd_resp_set_hdr(req, \"X-Pin\", network_get_instance().getTlsCertFp());\n"
 _QUALIFIED_EARLY = ("Api::handle_status() reaches a credential (getTlsCertFp) before its "
@@ -7787,7 +8097,7 @@ def _edited_fixture(edits) -> dict:
 
 def _qualified_fixture():
     """(sources, tables): the clean fixture with /api/status's handler
-    qualified (_FIX_QUALIFIED_NET), the census rows of the two gate hooks it
+    qualified (_FIX_QUALIFIED_NET), the census rows of the three gate hooks it
     reads and its ANSWER_STATEMENTS row naming Api::handle_status."""
     sources = _edited_fixture((old, new, 1) for old, new in _FIX_QUALIFIED_NET)
     tables = _fixture_tables(_fixture_sources())
@@ -7795,7 +8105,7 @@ def _qualified_fixture():
     def requal(row):
         return (row[0], _QUALIFIED_STATUS) if row == (_NET, "handle_status") else row
     census = dict(tables["census"])
-    for name in ("s_gate_take", "s_gate_is_open"):
+    for name in ("s_gate_peek", "s_gate_take_exact", "s_gate_is_open"):
         census[name] = dict(census[name], callers={requal(r) for r in census[name]["callers"]})
     return sources, dict(tables, census=census,
                          answer_stmts={requal(k): v for k, v in tables["answer_stmts"].items()})
@@ -7823,8 +8133,8 @@ _FIX_QUALIFIED_PLANTS = (
      "  ScvNetworkManager& net = network_get_instance();\n  JsonDocument doc;\n"
      "  doc[\"tls_cert_fp\"] = net.getTlsCertFp();\n"
      "  if (!auth_gate(req)) return ESP_OK;\n"
-     "  doc[\"provisioning_gate\"] = (s_gate_take && s_gate_is_open) ? "
-     "\"physical_button\" : \"unwired\";\n", None,
+     "  doc[\"provisioning_gate\"] = (s_gate_peek && s_gate_take_exact && "
+     "s_gate_is_open) ? \"physical_button\" : \"unwired\";\n", None,
      (_QUALIFIED_EARLY,)),
     # A second definition of the bare name, which the qualified registration
     # may not name: the answer rule reads both, and the row keys one.
@@ -8067,7 +8377,7 @@ def _assert_answer_gate_rule() -> None:
     ini = "build_flags =\n    -DFEATURE_WIFI_AP=1\n    -DCORE_DEBUG_LEVEL=0\n"
     assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini}) == []
     for flag in ("-D'auth_gate(r)=true'", '-D"host_is_foreign(r)=false"',
-                 "-Dbearer_present_and_valid(r)=1", "-D'take(s,n,t)=is_open(s,n,t)'",
+                 "-Dbearer_present_and_valid(r)=1", "-D'take_exact(s,n)=is_open(s,n,1)'",
                  "-DSETUP_TIMEOUT_MS=0xFFFFFFFFUL", "-Dfalse=true",
                  # a held name in the flag's value only, never its name:
                  "-DDIAG_VALUE=auth_get_token()", "-D'DIAG_GATE(r)=auth_gate(r)'"):
@@ -8529,19 +8839,19 @@ def _assert_answer_gate_rule() -> None:
         (root / "extra" / "one.ini").write_text(
             "; a comment\n; another\n[env:secure]\nbuild_flags =\n    -D'auth_gate(r)=true'\n")
         (root / "extra" / "two.ini").write_text(
-            "[env:y]\nbuild_flags =\n    -D'take(s,n,t)=is_open(s,n,t)'\n")
+            "[env:y]\nbuild_flags =\n    -D'take_exact(s,n)=is_open(s,n,1)'\n")
         texts, missing = flag_sources((root / "platformio.ini",))
         assert len(texts) == 3 and any("gone.ini" in m and "missing" in m for m in missing), (
             texts, missing)
         got = check_bearer_only_answers(clean, tables, flags=texts)
         assert any("one.ini:5: the build flag" in p and "'auth_gate'" in p for p in got), got
-        assert any("two.ini:3: the build flag" in p and "'take'" in p for p in got), got
+        assert any("two.ini:3: the build flag" in p and "'take_exact'" in p for p in got), got
     # A #define in a header outside ROOTS (#included after the function it
     # names) is held as one under ROOTS is, but the NVS records' names in
     # canary_config.h.
     for name, header in (("bearer_present_and_valid",
                           "#define bearer_present_and_valid(r) (true)\n"),
-                         ("take", "#define take(s, n, t) is_open(s, n, t)\n"),
+                         ("take_exact", "#define take_exact(s, n) is_open(s, n, 1)\n"),
                          ("false", "#define false true\n"),
                          ("getApPassword",
                           "#define AP_KEY network_get_instance().getApPassword()\n"),
@@ -8875,6 +9185,7 @@ def main() -> int:
         return 1
     _assert_parser_robust()
     _assert_answer_gate_rule()
+    _assert_tap_rule()
     sources, failures = tree_sources()
 
     routes = []
@@ -8891,6 +9202,7 @@ def main() -> int:
 
     failures.extend(check_page_token_wiring(sources))
     failures.extend(check_host_first(sources))
+    failures.extend(check_tap_one_asker(sources))
     flags, flag_failures = flag_sources()
     keys, key_failures = nvs_key_values()
     includes, reach_failures = build_reach(sources, flags)

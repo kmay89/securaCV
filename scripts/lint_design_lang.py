@@ -28,7 +28,12 @@ which keeps a trailing `//` comment only on a line that holds ONE knob — so
 `a = 1;  b = 2;  // help` reaches neither knob (and the Lab's own parser,
 gen_enclosures.py, drops the whole line). 125 knobs had lost their help that
 way (audit 2026-09, C1). A line holding two or more knobs AND a trailing
-comment now fails: split it, one knob per line, each with its own help.
+comment now fails: split it, one knob per line, each with its own help. So
+does a knob beside a computed assignment and a trailing comment (C32): the
+parser reads only literals, so it gives that help to the knob although it
+may be the neighbor's (the 1.69's skirt_wall wore skirt_dep's). Every
+assignment on a knob's line counts, a string's text and a comparison's `=`
+excepted.
 HELP_LINE_DEBT held the few lines the first sweep deliberately left (the 7"
 case's four); the second (C10) split them, so the ledger is empty and can
 only stay that way: a new shared-help line fails, and so would a listed one
@@ -71,6 +76,15 @@ preposition (RUN_ON_WORDS), and the continuation starting a new sentence (a
 capital letter or a digit). A knob without a range shows its help the same
 way but is not judged yet: help wrapped that way predates C10 in many
 files, and the rule starts where there is no debt.
+
+Seventh rule: a group header heads at least one assignment before the next
+header. The builder's parser and the Lab's both file a knob under the last
+header above it and drop an empty group without a word, so a header left
+above the wrong line moves its knobs into another group with every gate
+green: the 1.69's [Side cluster] sat directly over [Port / button datums],
+and its three side knobs were filed as port datums (C22). A header that is a
+note on purpose (the 1.47 hallway stick's [Cooling], which says it has no vents)
+is listed in EMPTY_GROUP_OK with its reason, and the list only shrinks.
 
 Run from the repo root:  python3 scripts/lint_design_lang.py
 """
@@ -352,22 +366,115 @@ def knob_lines(path):
     return by_line
 
 
+# What lint_help_lines counts on a knob's line: every statement of its code
+# that assigns. A string's text is not code (`label = "a = b"` is one
+# assignment), and a comparison's `=` is not an assignment: an `=` counts
+# unless `=`, `<`, `>` or `!` stands before it or `=` after it. A statement
+# assigns when any `=` in it does — `y = let(m = 3) k * m` is one statement
+# (the computed y), and so is `echo(w = knob)`, whose help may be just as
+# much its — and the message names each one for what it is.
+SCAD_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+ASSIGNS = re.compile(r"(?<![=<>!])=(?!=)")
+STATEMENT_NAME = re.compile(r"\s*([$A-Za-z_][A-Za-z0-9_]*)\s*(?<![=<>!])=(?!=)")
+FUNCTION_NAME = re.compile(r"\s*function\s+([$A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+def _code(line):
+    """A line's code: the text before the first `//` once strings are
+    stripped, with block comments taken out the way
+    gen_builder_manifest.parse_scad takes them out."""
+    code = SCAD_STRING.sub('""', line)
+    if "*/" in code and ("/*" not in code or code.index("*/") < code.index("/*")):
+        code = code.split("*/", 1)[1]          # the end of a block opened above
+    code = re.sub(r"/\*.*?\*/", " ", code)
+    return code.split("/*", 1)[0].split("//", 1)[0]
+
+
+def assignments(line):
+    """The statements a line's code assigns in, in order, as (name, noun):
+    `name` is what a `name = …` statement assigns (None for any other
+    statement), and `noun` is how a message names the statement — "the
+    computed half", "the special variable $fn", "the function half()", or
+    the statement's own text in backticks (`echo(w = knob)`)."""
+    code, parts, depth, start = _code(line), [], 0, 0
+    for i, ch in enumerate(code):
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        elif ch == ";" and depth == 0:
+            parts.append(code[start:i])
+            start = i + 1
+    parts.append(code[start:])
+    out = []
+    for text in (t.strip() for t in parts):
+        if not ASSIGNS.search(text):
+            continue
+        named, fn = STATEMENT_NAME.match(text), FUNCTION_NAME.match(text)
+        if named:
+            name = named.group(1)
+            noun = (f"the special variable {name}" if name.startswith("$")
+                    else f"the computed {name}")
+            out.append((name, noun))
+        elif fn:
+            out.append((None, f"the function {fn.group(1)}()"))
+        else:
+            out.append((None, f"`{text if len(text) <= 48 else text[:47] + '…'}`"))
+    return out
+
+
+def assigned_names(line):
+    """The names a line's `name = …` statements assign, in order."""
+    return [name for name, _ in assignments(line) if name]
+
+
 def lint_help_lines(path, debt=frozenset()):
-    """Third rule: no line holds two or more knobs AND a trailing help.
+    """Third rule: a line that holds a knob AND a trailing help holds nothing
+    else that assigns — no second knob, and no computed neighbor.
+
+    gen_builder_manifest.parse_scad keeps the help only on a line where it
+    reads ONE literal assignment, so two knobs lose it (C1). It reads only
+    literals, so beside a computed assignment (`a = 1;  b = a / 2;  // help`)
+    it gives the knob a help that may be the neighbor's: the 1.69's
+    skirt_wall carried skirt_dep's "must not exceed back_stack" that way
+    (C10c-2), and the rule passed it because it counted knobs only (C32).
+    Every statement on the line that assigns counts now (assignments).
 
     Returns (problems, debt entries seen) — main() fails an entry never seen.
     """
     problems, seen = [], set()
     lines = path.read_text().splitlines()
     for lineno, names in sorted(knob_lines(path).items()):
-        if len(names) < 2:
+        line = lines[lineno - 1]
+        others = [noun for name, noun in assignments(line) if name not in names]
+        if len(names) + len(others) < 2:
             continue
+        # "the computed a, b" once, then the statements that are not values
+        values = [n.removeprefix("the computed ") for n in others if n.startswith("the computed ")]
+        nouns = ([f"the computed {', '.join(values)}"] if values else []) + \
+            [n for n in others if not n.startswith("the computed ")]
+        neighbors = " and ".join(nouns)
         # the same split parse_scad makes: everything after the first `//`
-        comment = (lines[lineno - 1].split("//", 1) + [""])[1]
+        comment = (line.split("//", 1) + [""])[1]
         if not comment.strip():
             continue
         if (path.name, names[0]) in debt:
             seen.add((path.name, names[0]))
+        elif others and len(names) == 1:
+            problems.append(
+                f"{path.name}:{lineno}: the knob {names[0]} shares the line and its trailing "
+                f"help with {neighbors} — the builder's parser reads only literal assignments, "
+                f"so it hands that help to {names[0]} although the help may belong to "
+                f"{others[0]} (the 1.69's skirt_wall carried skirt_dep's help that way). Move "
+                f"{others[0].removeprefix('the computed ')} to a line of its own, so the knob's "
+                "line holds the knob and its own help only")
+        elif others:
+            problems.append(
+                f"{path.name}:{lineno}: the knobs {', '.join(names)} share the line and its "
+                f"trailing help with {neighbors} — the builder's parser keeps help only on a "
+                "one-knob line, so none of the knobs gets it. Split the line: one knob per "
+                f"line, each with its own help, and {others[0].removeprefix('the computed ')} "
+                "on a line of its own")
         else:
             problems.append(
                 f"{path.name}:{lineno}: {len(names)} knobs ({', '.join(names)}) share one "
@@ -378,9 +485,87 @@ def lint_help_lines(path, debt=frozenset()):
     return problems, seen
 
 
+# The seventh rule's ledger: a group header that heads no assignment on
+# purpose, as (file, group) with the reason. Shrink-only, like HELP_LINE_DEBT:
+# a listed header that heads something now, or is gone, fails until its entry
+# goes.
+EMPTY_GROUP_OK = {
+    ("canary_s3_lcd147.scad", "Cooling"):
+        "a design note where vent knobs would be: the case has no vents on purpose, "
+        "and the header says so",
+}
+
+
+def customizer_lines(path):
+    """(line number, group name or None, code) for each line
+    gen_builder_manifest.parse_scad reads before the first module, with
+    block comments taken out as it takes them out. A header line carries its
+    group's name and no code (the parser reads nothing else on it)."""
+    in_block = False
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if re.match(r"^module\s", raw):
+            return
+        line = raw
+        if in_block:
+            if "*/" not in line:
+                continue
+            line = line.split("*/", 1)[1]
+            in_block = False
+        m = gen_builder_manifest.GROUP_RE.search(line)
+        if m:
+            yield lineno, m.group(1).strip(), ""
+            in_block = "*/" not in line[m.end():]
+            continue
+        if "/*" in line:
+            before, after = line.split("/*", 1)
+            if "*/" in after:
+                line = before + after.split("*/", 1)[1]
+            else:
+                in_block = True
+                line = before
+        yield lineno, None, _code(line)
+
+
+def lint_empty_groups(path, allowed=frozenset()):
+    """Seventh rule: a group header heads at least one assignment.
+
+    Both parsers file each knob under the last header above it and drop a
+    header with nothing under it without a word, so a header left above the
+    wrong line moves its knobs into the group before it, and every gate stays
+    green. The 1.69's [Side cluster] sat directly over [Port / button
+    datums], so opt_side, side_open_h and side_open_dy were filed as port
+    datums (C22). A header that is a note on purpose is listed in
+    EMPTY_GROUP_OK.
+
+    Returns (problems, allowed entries seen) — main() fails an entry never seen.
+    """
+    problems, seen = [], set()
+    rows = list(customizer_lines(path))
+    heads = [(i, row[0], row[1]) for i, row in enumerate(rows) if row[1]]
+    for k, (i, lineno, name) in enumerate(heads):
+        if name.lower() == "hidden":
+            continue
+        stop = heads[k + 1][0] if k + 1 < len(heads) else len(rows)
+        if any(ASSIGNS.search(code) for _, _, code in rows[i + 1:stop]):
+            continue
+        if (path.name, name) in allowed:
+            seen.add((path.name, name))
+            continue
+        until = (f"the next header [{heads[k + 1][2]}] (line {heads[k + 1][1]})"
+                 if k + 1 < len(heads) else "the first module")
+        problems.append(
+            f"{path.name}:{lineno}: the group header [{name}] heads no assignment before "
+            f"{until}. The builder and the Lab drop an empty group and file each knob under "
+            "the last header above it, so the knobs this header was written for sit in "
+            "another group (the 1.69's side-cluster knobs were filed as port datums that "
+            "way, C22). Move the header down to the first knob it heads, or delete it; a "
+            "header kept as a note goes in EMPTY_GROUP_OK with the reason")
+    return problems, seen
+
+
 def main():
     problems = selfcheck()
-    debt_seen = set()
+    debt_seen, empty_seen = set(), set()
     for path in sorted(ENC.glob("canary_*.scad")):
         if path.name in SKIP:
             continue
@@ -391,9 +576,15 @@ def main():
         problems += lint_interface_group(path)
         problems += lint_ranged_help(path)
         debt_seen |= seen
+        found, seen = lint_empty_groups(path, EMPTY_GROUP_OK.keys())
+        problems += found
+        empty_seen |= seen
     for name, knob in sorted(HELP_LINE_DEBT - debt_seen):
         problems.append(f"{name}: HELP_LINE_DEBT lists the shared-help line starting "
                         f"'{knob} =', which is gone — delete the entry (the ledger only shrinks)")
+    for name, group in sorted(EMPTY_GROUP_OK.keys() - empty_seen):
+        problems.append(f"{name}: EMPTY_GROUP_OK lists the header [{group}], which heads an "
+                        "assignment now or is gone — delete the entry (the ledger only shrinks)")
     if debt_seen:
         print(f"INFO: {len(debt_seen)} shared-help knob line(s) left by decision "
               "(HELP_LINE_DEBT)")
@@ -404,8 +595,8 @@ def main():
         return 1
     print("design language OK — every canonical default conforms or explains itself, "
           "every knob's help is on its own line, every ranged knob's help ends there, "
-          "every shared name keeps its meaning, and the stud/keyhole interface keeps its "
-          "one group name")
+          "every shared name keeps its meaning, the stud/keyhole interface keeps its "
+          "one group name, and every group header heads something")
     return 0
 
 

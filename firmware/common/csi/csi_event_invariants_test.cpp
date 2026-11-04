@@ -33,6 +33,13 @@
  *      ble_scout module's manifest only allows hashed identifiers.
  *  15. (PR 6) Per-link RSSI is bucketed to int8 — the feature struct's
  *      static_assert enforces the 32-byte int8 vector size.
+ *  16. (sweep F301) A module's label reaches the ring with no '"', '\' or
+ *      '{' (each becomes '?', as every byte outside printable ASCII does),
+ *      so the SD log line and the MQTT events body written from the row
+ *      parse as JSON and the line loads back; a line a chokepoint before
+ *      F301 wrote from a label holding a quote is refused by parse(), or,
+ *      when the quote is followed by ',' or '}', loads cut at the quote
+ *      with no forged key, and its rewrite and body are JSON.
  *
  * Build:
  *   - Standalone (host x86) for CI: g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -54,6 +61,7 @@
 #include "csi_bundler.h"
 #include "csi_witness_payload.h"
 #include "csi_event_log_line.h"
+#include "csi_event_wire.h"
 #include "csi_event_id_floor.h"
 #include "ble_events_module.h"
 #include "meta_quiet_hours.h"
@@ -65,6 +73,13 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <time.h>
+
+#include <string>
+
+/* A strict JSON reader, JSON.parse()'s rules (the canary-wap host tests'; the
+ * shared log line's own test, firmware/tests_host/test_csi_event_log_line.cpp,
+ * reads it the same way): what the writers spell from a ring row must parse. */
+#include "../../projects/canary-wap/tests_host/json_strict.h"
 
 #ifndef CSI_TEST_HOST_BUILD
 #  if !defined(CSI_TEST_RUN_ON_DEVICE)
@@ -158,6 +173,16 @@ const csi_event_decl_t TEST_EVENTS[] = {
     /* type_name */                "test_p2",
     /* allowed_fields */            CSI_FIELD_STATE_NAME,
     /* privacy */                  CSI_PRIVACY_P2,
+    /* default_ceiling_per_hour */  0,
+  },
+  {
+    /* Every string a ring row's writers spell (sweep F301). */
+    /* type_name */                "test_labels",
+    /* allowed_fields */            CSI_FIELD_STATE_NAME
+                                  | CSI_FIELD_CONFIDENCE
+                                  | CSI_FIELD_DOMINANT_SIGNAL
+                                  | CSI_FIELD_NOTE,
+    /* privacy */                  CSI_PRIVACY_P0,
     /* default_ceiling_per_hour */  0,
   },
 };
@@ -1150,6 +1175,255 @@ void test_inject_roundtrips_the_log_line() {
          "every allowed field survives card -> ring");
 }
 
+/* ── Sweep F301: a label reaches every writer as JSON ─────────────────────
+ *
+ * sanitize_string_field() turned only the bytes outside printable ASCII into
+ * '?', so a module's label could carry a '"', a '\' or a '{' into the ring.
+ * Every writer of a ring row spells its strings with %s, unescaped: the SD
+ * log line (csi_event_log_line::marshal()), the MQTT events body
+ * (csi_event_wire::build_event_body()) and the REST rows. A quote ended the
+ * string early and a backslash began an escape, so the line and the body
+ * were not JSON, and the card's reader refused the row at the next load (a
+ * backslash by name_byte(), a '{' as a second record's start). */
+
+/* The byte the chokepoint keeps for `c`. */
+char kept_byte(unsigned char c) {
+  return (c >= 0x20 && c <= 0x7e && c != '"' && c != '\\' && c != '{') ? (char)c : '?';
+}
+
+/* Every byte of `s` is one the card's reader takes back and no writer has to
+ * escape. */
+bool reader_bytes(const char* s) {
+  for (const char* p = s; *p; ++p) {
+    if (!csi_event_log_line::name_byte((unsigned char)*p) || *p == '"' || *p == '{') return false;
+  }
+  return true;
+}
+
+/* The JSON string `key` of `v`, or nullptr. */
+const std::string* json_string(const json_strict::Value& v, const char* key) {
+  const json_strict::Value* f = v.get(key);
+  return (f != nullptr && f->kind == json_strict::Value::String) ? &f->text : nullptr;
+}
+
+/* `row` as both writers spell it parses as JSON with its strings whole, and
+ * its log line loads back through parse() holding the same strings. `what`
+ * names the case on a failure. */
+void row_writes_json(const csi_event_record_t& row, const char* what) {
+  char line[csi_event_log_line::kLineMax];
+  const size_t n = csi_event_log_line::marshal(&row, line, sizeof(line));
+  bool ok = n > 0 && line[n - 1] == '\n';
+  json_strict::Value lv;
+  const std::string text = ok ? std::string(line, n - 1) : std::string();
+  ok = ok && json_strict::parse(text, &lv);
+  const std::string* st = ok ? json_string(lv, "state") : nullptr;
+  const std::string* cf = ok ? json_string(lv, "conf") : nullptr;
+  const std::string* dm = ok ? json_string(lv, "dom") : nullptr;
+  ok = ok && st && cf && dm && *st == row.values.state_name && *cf == row.values.confidence
+       && *dm == row.values.dominant_signal;
+  if (!ok) {
+    fprintf(stderr, "[FAIL] %s: the log line is not JSON with the row's strings: %s\n",
+            what, n ? text.c_str() : "(not written)");
+    g_failures++;
+    return;
+  }
+  csi_event_record_t back;
+  if (!csi_event_log_line::parse(text.c_str(), &back)
+      || strcmp(back.values.state_name, row.values.state_name) != 0
+      || strcmp(back.values.confidence, row.values.confidence) != 0
+      || strcmp(back.values.dominant_signal, row.values.dominant_signal) != 0
+      || back.event_id != row.event_id) {
+    fprintf(stderr, "[FAIL] %s: the log line does not load back whole: %s\n", what, text.c_str());
+    g_failures++;
+    return;
+  }
+  /* A dismissal rewrites the row it loaded with marshal(): JSON too. */
+  char again[csi_event_log_line::kLineMax];
+  const size_t m = csi_event_log_line::marshal(&back, again, sizeof(again));
+  json_strict::Value av;
+  if (m == 0 || !json_strict::parse(std::string(again, m - 1), &av)) {
+    fprintf(stderr, "[FAIL] %s: the loaded row's rewrite is not JSON\n", what);
+    g_failures++;
+  }
+  char body[768];
+  const csi_event_wire::Signer unsigned_signer = {nullptr, 1, "", ""};
+  const size_t b = csi_event_wire::build_event_body(
+      body, sizeof(body), row.event_id, row.module_id, row.type_name, row.category, row.privacy,
+      &row.values, row.last_seen_ms, row.bundled_count, /*is_replay=*/false, unsigned_signer);
+  json_strict::Value bv;
+  const std::string* bs = nullptr;
+  const std::string* bc = nullptr;
+  if (b > 0 && json_strict::parse(std::string(body, b), &bv)) {
+    bs = json_string(bv, "state");
+    bc = json_string(bv, "confidence");
+  }
+  const std::string want_state = row.values.state_name[0] ? row.values.state_name : "unknown";
+  const std::string want_conf = row.values.confidence[0] ? row.values.confidence : "tentative";
+  if (!bs || !bc || *bs != want_state || *bc != want_conf) {
+    fprintf(stderr, "[FAIL] %s: the events body is not JSON with the row's strings: %s\n",
+            what, b ? body : "(not written)");
+    g_failures++;
+  }
+}
+
+void emit_labels(const char* state, const char* conf, const char* dom, const char* note) {
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category       = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_CONFIDENCE
+                   | CSI_FIELD_DOMINANT_SIGNAL | CSI_FIELD_NOTE;
+  strncpy(v.state_name,      state, sizeof(v.state_name) - 1);
+  strncpy(v.confidence,      conf,  sizeof(v.confidence) - 1);
+  strncpy(v.dominant_signal, dom,   sizeof(v.dominant_signal) - 1);
+  strncpy(v.note,            note,  sizeof(v.note) - 1);
+  EXPECT(csi_event_emit("test.module", "test_labels", &v) != 0, "test_labels emit accepted");
+  csi_event_flush_bundles();
+}
+
+void test_labels_reach_every_writer_as_json() {
+  /* The item's probe: a module label holding a quote and a backslash. */
+  csi_event_test_reset();
+  reset_captures();
+  csi_module_register(&TEST_MODULE);
+  emit_labels("say \"hi\" \\o/", "q\"b\\", "\\\"{", "n\"\\{");
+  csi_event_record_t row;
+  EXPECT(csi_event_recent(&row, 1) == 1, "the labeled row committed");
+  EXPECT(strcmp(row.values.state_name, "say ?hi? ?o/") == 0, "a quote and a backslash reach the ring as '?'");
+  EXPECT(strcmp(row.values.confidence, "q?b?") == 0, "and in the confidence word");
+  EXPECT(strcmp(row.values.dominant_signal, "???") == 0, "and a '{' in the dominant signal");
+  EXPECT(strcmp(row.values.note, "n???") == 0, "and in the note the REST rows and the scout carry");
+  EXPECT(g_captured_count == 1 && strcmp(g_captured[0].values.state_name, "say ?hi? ?o/") == 0,
+         "the commit hook (MQTT, SD, SSE) is handed the cleaned label");
+  row_writes_json(row, "the item's probe");
+
+  /* Every byte, in every string a writer spells, at the start, inside and at
+   * the end: the ring holds the byte when the reader takes it back and no
+   * writer has to escape it, and '?' otherwise; every row writes JSON and its
+   * line loads back. */
+  for (unsigned c = 1; c < 256; ++c) {
+    csi_event_test_reset();
+    reset_captures();
+    csi_module_register(&TEST_MODULE);
+    const char b = (char)c;
+    const char state[] = {'s', b, 's', '\0'};
+    const char conf[]  = {b, 'c', '\0'};
+    const char dom[]   = {'d', b, '\0'};
+    const char note[]  = {b, b, '\0'};
+    emit_labels(state, conf, dom, note);
+    csi_event_record_t got;
+    const bool one = csi_event_recent(&got, 1) == 1;
+    const char k = kept_byte((unsigned char)c);
+    const bool kept = one && got.values.state_name[1] == k && got.values.confidence[0] == k
+                      && got.values.dominant_signal[1] == k && got.values.note[0] == k
+                      && got.values.note[1] == k;
+    const bool clean = one && reader_bytes(got.values.state_name) && reader_bytes(got.values.confidence)
+                       && reader_bytes(got.values.dominant_signal) && reader_bytes(got.values.note);
+    if (!kept || !clean) {
+      fprintf(stderr, "[FAIL] byte 0x%02X: the ring holds '%s' / '%s' / '%s' / '%s'\n", c,
+              one ? got.values.state_name : "", one ? got.values.confidence : "",
+              one ? got.values.dominant_signal : "", one ? got.values.note : "");
+      g_failures++;
+      continue;
+    }
+    char what[32];
+    snprintf(what, sizeof(what), "byte 0x%02X", c);
+    row_writes_json(got, what);
+  }
+
+  /* The card's own chokepoint, inject (a restored row is cleaned as emit
+   * cleans it): the same bytes go. */
+  inject_setup(kB + 100);
+  csi_event_record_t r = make_persisted(kB + 60, "test_labels");
+  strncpy(r.values.state_name, "a\"b\\c{d", sizeof(r.values.state_name) - 1);
+  strncpy(r.values.confidence, "\"", sizeof(r.values.confidence) - 1);
+  EXPECT(csi_event_inject(&r), "restored");
+  csi_event_record_t restored;
+  EXPECT(csi_event_find(kB + 60, &restored) && strcmp(restored.values.state_name, "a?b?c?d") == 0
+         && strcmp(restored.values.confidence, "?") == 0,
+         "inject turns a quote, a backslash and a '{' into '?' too");
+  row_writes_json(restored, "a restored row");
+}
+
+/* A line a chokepoint before F301 wrote (the row built here directly, as that
+ * chokepoint let it through): parse() refuses it, so neither the load nor the
+ * backfill takes it (the load counts it refused, the backfill skips and
+ * counts it, test_csi_event_log_load.cpp and test_csi_event_backfill.cpp),
+ * and record_id() still reads its id, so the tail scans see the card's end
+ * where it is (csi_event_log_line.h). */
+void test_lines_written_before_f301_are_refused_or_cut() {
+  struct Case { const char* state; bool id_read; const char* why; };
+  const Case cases[] = {
+    {"ac\"tive",                 true,  "a quote cuts the field short: the byte after it is no ',' or '}'"},
+    {"x\",\"dismissed\":1,\"y\":\"", true,  "a label that spells a key: the line holds it twice"},
+    {"x\",\"motion\":99,\"y\":\"",   true,  "the same, forging a score"},
+    {"occ\\",                    true,  "a backslash (F264)"},
+    {"a{b",                      false, "a '{' is a second record's start (well_formed())"},
+  };
+  for (const Case& c : cases) {
+    csi_event_record_t r = make_persisted(kB + 70, "test_labels");
+    strncpy(r.values.state_name, c.state, sizeof(r.values.state_name) - 1);
+    char line[csi_event_log_line::kLineMax];
+    const size_t n = csi_event_log_line::marshal(&r, line, sizeof(line));
+    EXPECT(n > 0, "marshalled");
+    line[n - 1] = '\0';
+    csi_event_record_t back;
+    if (csi_event_log_line::parse(line, &back)) {
+      fprintf(stderr, "[FAIL] %s: parse() took %s (state '%s', dismissed %u, motion %u)\n", c.why, line,
+              back.values.state_name, (unsigned)back.values.dismissed, (unsigned)back.values.motion_score);
+      g_failures++;
+    }
+    EXPECT(back.event_id == 0 && back.values.state_name[0] == '\0', "nothing half-read");
+    EXPECT((csi_event_log_line::record_id(line) == kB + 70) == c.id_read,
+           "the tail scans read the id of every refused line but a '{' one");
+  }
+  /* A string that never closes, ending in the record's '}'. */
+  const char unclosed[] = "{\"id\":3221225542,\"cat\":\"event\",\"state\":\"abc}";
+  csi_event_record_t back;
+  EXPECT(!csi_event_log_line::parse(unclosed, &back), "a string that never closes is refused");
+  /* A label whose quote is followed by ',' or '}' (the review of F301):
+   * parse() takes the line, its state cut at the quote, with no key the row
+   * did not have, and the row it loaded writes JSON again (a dismissal's
+   * rewrite, the backfill's body). Pinned, so the comments cannot claim
+   * these are refused. */
+  struct Cut { const char* state; const char* loads_as; };
+  const Cut cuts[] = {
+    {"ac\",x",                 "ac"},
+    {"a\",\"x\":\"b",           "a"},
+    {"ac\"}",                  "ac"},
+    {"ok\",\"zz\":1,\"q\":\"",   "ok"},
+  };
+  for (const Cut& c : cuts) {
+    csi_event_record_t r = make_persisted(kB + 71, "test_labels");
+    strncpy(r.values.state_name, c.state, sizeof(r.values.state_name) - 1);
+    r.values.motion_score = 7;
+    char line[csi_event_log_line::kLineMax];
+    const size_t n = csi_event_log_line::marshal(&r, line, sizeof(line));
+    EXPECT(n > 0, "marshalled");
+    line[n - 1] = '\0';
+    csi_event_record_t cut;
+    if (!csi_event_log_line::parse(line, &cut)) {
+      fprintf(stderr, "[FAIL] a label quote followed by ',' or '}' loads cut: parse() refused %s\n", line);
+      g_failures++;
+      continue;
+    }
+    EXPECT(strcmp(cut.values.state_name, c.loads_as) == 0, "the state is cut at the quote");
+    EXPECT(cut.event_id == kB + 71 && cut.values.dismissed == r.values.dismissed
+           && cut.values.motion_score == 7 && strcmp(cut.values.confidence, r.values.confidence) == 0,
+           "no key the row did not have");
+    row_writes_json(cut, "a row loaded cut at a pre-F301 quote");
+  }
+  /* The row the chokepoint now commits from each of those labels loads. */
+  for (const Case& c : cases) {
+    csi_event_test_reset();
+    reset_captures();
+    csi_module_register(&TEST_MODULE);
+    emit_labels(c.state, "observed", "motion", "");
+    csi_event_record_t row;
+    EXPECT(csi_event_recent(&row, 1) == 1, "committed");
+    row_writes_json(row, c.why);
+  }
+}
+
 }  /* namespace */
 
 extern "C" int csi_event_invariants_run() {
@@ -1184,6 +1458,9 @@ extern "C" int csi_event_invariants_run() {
   test_inject_fails_closed();
   test_inject_cleans_like_emit();
   test_inject_roundtrips_the_log_line();
+  /* Sweep F301: a label reaches every writer as JSON, and loads back. */
+  test_labels_reach_every_writer_as_json();
+  test_lines_written_before_f301_are_refused_or_cut();
 
   if (g_failures == 0) {
     fprintf(stderr, "[OK] csi_event invariants — all tests passed\n");

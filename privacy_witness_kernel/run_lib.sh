@@ -21,6 +21,46 @@ resolve_value() {
     echo "${3:-}"
 }
 
+# opt_list KEY
+# The list option KEY (a dotted path: cameras, frigate.labels) as ONE compact
+# JSON array, read whole from the options file the Supervisor writes before
+# every start ($OPTIONS_JSON, default /data/options.json: the same validated
+# options bashio::config fetches from the Supervisor). bashio::config prints
+# an array option one element per line (`.key[]`), never as an array, so a
+# `jq length`, `join` or `.[0]` on its output reads each element on its own:
+# two cameras answer two numbers, and a list of labels is not JSON at all
+# (sweep HA38). Read whole, the list is right whatever bashio prints.
+# Always prints one array, never "null". A missing key or block, null, or any
+# value that is not an array reads as [] and returns 0: the person has no
+# such list. A file that cannot be read (absent, empty, not JSON, not a JSON
+# object) also prints [], with a note on stderr, but returns 1: the list is
+# then unknown, not empty, and the caller decides. The first-run gate takes
+# the [] (the wizard runs), and so does the standalone camera pick (go2rtc
+# discovery still applies, as with no camera configured); the frigate block
+# stops, because an empty camera list there means every camera Frigate
+# reports. jq does the parsing (no shell word-splitting of names), and the
+# key reaches it as data, never as program text. Pure: no bashio —
+# unit-tested in tests/test_run_lib.sh, on the app's jq 1.6 in CI.
+opt_list() {
+    local key="${1:?opt_list: option key required}"
+    local file="${OPTIONS_JSON:-/data/options.json}"
+    local out=""
+    if [ -r "$file" ]; then
+        out=$(jq -cn --arg key "$key" \
+            'input | if type == "object" then . else error("not an object") end
+             | (try getpath($key | split(".")) catch null)
+             | if type == "array" then . else [] end' "$file" 2>/dev/null) || out=""
+    fi
+    case "$out" in
+        "["*"]") printf '%s\n' "$out" ;;
+        *)
+            echo "opt_list: could not read ${key} from ${file}; reading it as []" >&2
+            printf '[]\n'
+            return 1
+            ;;
+    esac
+}
+
 # resolve_device_key_seed OPTION_VALUE KEY_FILE
 # Resolution order: explicit option (unless empty or the "devkey:mvp"
 # placeholder) → persisted key file (written by the setup wizard) → a

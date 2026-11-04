@@ -32,16 +32,15 @@ client through a unit's life). It holds:
   * each presence device trigger fires on a live row of its state and on
     nothing else, the anomaly trigger on the tamper commit's anomaly row,
     and no trigger fires on the backfilled (replayed) row; every presence
-    state has its trigger.
+    state has its trigger;
+  * Signal Strength renders nothing on a status without rssi (the connect
+    burst's and the last will), so Home Assistant keeps the last reading
+    (sweep F368; it read 0 dBm after every connect before).
 
 The vocabularies are read from the module sources; a reader that cannot find
 one refuses by name. The two bodies the sketch builds (the update state and
 the acoustic snapshot) are the harness's copies in the sketch's shape; their
 keys are held to canary_wap.ino by test_wap_mqtt_contract.py.
-
-What the record shows wrong is an expectedFailure (an unexpected success
-fails the run): Signal Strength reads 0 dBm after every connect, because the
-connect burst's status carries no rssi.
 
 The harness needs make, a GCC C++ compiler and OpenSSL's headers. Without
 them the test skips naming why, except under SECURACV_WAP_HARNESS=require
@@ -365,18 +364,23 @@ class WapDiscoveryRenders(_Record):
         self.assertEqual(render(anomaly["val_tpl"], json.dumps(self.one("tamper", "events")))[0],
                          anomaly["pl"])
 
-    @unittest.expectedFailure
     def test_signal_strength_keeps_its_reading_across_a_connect(self):
-        """Handed up (#1836): the connect burst's status carries no rssi, so
-        Signal Strength renders 0 dBm until the loop's next status (30 s or
-        longer under power gating). A status without rssi must render
-        nothing (Home Assistant then keeps the last reading), or carry it."""
+        """Sweep F368: the connect burst's status carries no rssi (only the
+        loop's publish_status measures it, 30 s or longer under power gating
+        after a connect). A status without rssi renders nothing, which Home
+        Assistant's MQTT sensor ignores on a numeric sensor, keeping the last
+        reading (tests/ha/test_wap_signal_strength.py drives that on a real
+        core); a status with rssi renders it. Before F368 the connect burst's
+        status rendered 0 dBm."""
         _, cfg = self.configs()["rssi"]
+        self.assertEqual((cfg["dev_cla"], cfg["stat_cla"]), ("signal_strength", "measurement"))
+        seen = set()
         for body in self.bodies(self.topic("status")):
             data = json.loads(body)
-            if data["online"] is True:
-                want = str(data["rssi"]) if "rssi" in data else ""
-                self.assertEqual(render(cfg["val_tpl"], body)[0], want, body)
+            want = str(data["rssi"]) if "rssi" in data else ""
+            seen.add(bool(want))
+            self.assertEqual(render(cfg["val_tpl"], body), (want, []), body)
+        self.assertEqual(seen, {True, False}, "the record holds a status with rssi and one without")
 
 
 if __name__ == "__main__":

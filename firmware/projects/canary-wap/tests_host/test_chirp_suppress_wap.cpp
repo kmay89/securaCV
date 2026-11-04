@@ -42,6 +42,14 @@
 // receiver reads it: a timestamp at most 30 s ahead of its wall clock and at
 // most 300 s behind it, in whole seconds.
 //
+// An ACK takes no chirp off this device (sweep F305): a signed RESOLVED ACK
+// from one key with a nearby row set the chirp's `dismissed`, and the next
+// prune dropped it, where suppression asks more than half the rows and at
+// least three. A received ACK of any type but CONFIRMED now changes nothing,
+// and a row the owner dismissed takes no confirmation before its prune.
+// The cases that confirm hold their keys present for ten minutes first
+// (stay_present(); spec §3.4 rule 4, sweep F311).
+//
 // Host-tested only: the stubs stand in for the radio and the clock; the
 // Arduino compile is CI's.
 //
@@ -232,14 +240,15 @@ std::vector<uint8_t> presence_of(const Neighbor& n) {
 }
 std::vector<uint8_t> witness_of(const Neighbor& n, uint8_t nonce_byte,
                                 cc::ChirpTemplate tpl = cc::TPL_INFRA_POWER_OUT,
-                                int32_t ahead_s = 0) {
+                                int32_t ahead_s = 0,
+                                cc::ChirpUrgency urg = cc::CHIRP_URG_CAUTION) {
   cc::ChirpHeader h = header_of(n, cc::CHIRP_MSG_WITNESS, nonce_byte);
   h.timestamp = (uint32_t)((int64_t)h.timestamp + ahead_s);   // the sender's clock, ahead or behind
   cc::ChirpWitnessPayload p;
   memset(&p, 0, sizeof p);
   p.template_id = (uint8_t)tpl;
   p.detail_slot = (uint8_t)cc::DETAIL_NONE;
-  p.urgency = (uint8_t)cc::CHIRP_URG_CAUTION;
+  p.urgency = (uint8_t)urg;
   p.ttl_minutes = 15;
   memcpy(p.session_pubkey, n.pub, sizeof p.session_pubkey);
   uint8_t canonical[256];
@@ -279,6 +288,23 @@ std::vector<uint8_t> confirm_of(const Neighbor& n, const uint8_t nonce[8]) {
   uint8_t canonical[128];
   const size_t cl = cc::build_ack_canonical(nonce, cc::CHIRP_ACK_CONFIRMED, n.pub, canonical,
                                             sizeof canonical);
+  CHECK(cl > 0);
+  Ed25519::sign(p.signature, n.priv, n.pub, canonical, cl);
+  return frame_of(h, p);
+}
+// A signed CHIRP_MSG_ACK of any ack_type (a byte on the wire, so every
+// value, not only the three ChirpAckType names) for the chirp `nonce` names,
+// signed as the spec's canonical says; `frame_byte` varies the header nonce.
+std::vector<uint8_t> ack_of(const Neighbor& n, const uint8_t nonce[8], uint8_t ack_type,
+                            uint8_t frame_byte = 0x73) {
+  const cc::ChirpHeader h = header_of(n, cc::CHIRP_MSG_ACK, frame_byte);
+  cc::ChirpAckPayload p;
+  memset(&p, 0, sizeof p);
+  memcpy(p.original_nonce, nonce, 8);
+  p.ack_type = ack_type;
+  memcpy(p.confirmer_session_pubkey, n.pub, sizeof p.confirmer_session_pubkey);
+  uint8_t canonical[128];
+  const size_t cl = cc::build_ack_canonical(nonce, ack_type, n.pub, canonical, sizeof canonical);
   CHECK(cl > 0);
   Ed25519::sign(p.signature, n.priv, n.pub, canonical, cl);
   return frame_of(h, p);
@@ -342,6 +368,21 @@ std::vector<Neighbor> fill_nearby(size_t rows) {
   }
   CHECK_AT(rows, cc::g_nearby_count == rows);
   return out;
+}
+
+// The neighbors in `ns` keep beaconing, once a minute, until the rows their
+// first beacons put in the nearby table are PRESENCE_REQUIRED_MS old, so a
+// confirmation from any of them counts (spec §3.4 rule 4; sweep F311). The
+// wall clock moves with uptime and the loop task runs a pass each minute, as
+// on a device. Votes need no presence (F234's open decision), so only the
+// cases that confirm call this, before their witness arrives.
+void stay_present(const std::vector<Neighbor>& ns) {
+  for (uint32_t t = 0; t < cc::PRESENCE_REQUIRED_MS; t += 60000) {
+    host_sim::now_ms += 60000;
+    host_sim::wall_now += 60;
+    for (const Neighbor& n : ns) deliver(n, presence_of(n));
+    cc::update();
+  }
 }
 
 // The originator: a neighbor that holds no row, so the table is `rows`
@@ -775,6 +816,7 @@ void test_a_suppressed_chirp_stops_at_once() {
       boot_enabled();
       host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;   // this device may confirm
       const std::vector<Neighbor> nearby = fill_nearby(3);
+      stay_present(nearby);                           // and so may they (F311)
       const std::vector<uint8_t> w = witness_of(kOriginator, 0x50, k.tpl);
       uint8_t nonce[8];
       memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
@@ -839,6 +881,7 @@ void test_a_suppressed_chirp_stops_at_once() {
 void test_a_suppressed_row_leaves_its_neighbors_in_order() {
   boot_enabled();
   const std::vector<Neighbor> nearby = fill_nearby(3);
+  stay_present(nearby);   // their confirmations count below (F311)
   std::vector<std::vector<uint8_t>> nonces;
   for (uint8_t i = 0; i < 5; ++i) {
     const Neighbor o = neighbor_of((uint8_t)(0xD0 + i));
@@ -891,6 +934,100 @@ void test_a_suppressed_row_leaves_its_neighbors_in_order() {
   deliver(late, w);
   CHECK(cc::g_recent_chirp_count == 5);
   CHECK(memcmp(cc::g_recent_chirps[4].nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8) == 0);
+}
+
+// ── An ACK takes no chirp off this device (sweep F305) ──────────────────
+
+// The item's scene: 7 nearby rows (4 votes suppress a chirp there), an
+// urgent emergency chirp, and one signed RESOLVED ACK from a nearby key that
+// passes every check an ACK meets (a row ten minutes old, its session id the
+// hash of its key, not the originator). handle_ack() set `dismissed` on it,
+// and the next prune (update(), every 30 s) dropped the row: one neighbor
+// took off this device a chirp that community suppression asks four of them
+// to vote down. Now the chirp is held, listed and undismissed after the
+// prune, with no suppress vote counted; and so after every other ack_type
+// byte from every one of the seven keys. A CONFIRMED ACK from the same key
+// then validates and relays it, so the keys were heard, and the type is what
+// did nothing.
+void test_a_resolved_ack_dismisses_nothing() {
+  boot_enabled();
+  const std::vector<Neighbor> nearby = fill_nearby(7);
+  stay_present(nearby);
+  const std::vector<uint8_t> w =
+      witness_of(kOriginator, 0x54, cc::TPL_EMERG_FIRE_VISIBLE, 0, cc::CHIRP_URG_URGENT);
+  uint8_t nonce[8];
+  memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
+  deliver(kOriginator, w);
+  CHECK(rows_holding(nonce) == 1);
+  const size_t before = host_sim::espnow->sent.size();
+
+  deliver(nearby[0], ack_of(nearby[0], nonce, cc::CHIRP_ACK_RESOLVED));
+  host_sim::now_ms += 30001;                   // the next prune
+  cc::update();
+  CHECK(rows_holding(nonce) == 1);
+  const cc::ReceivedChirp* c = &cc::g_recent_chirps[0];
+  CHECK(!c->dismissed && !c->suppressed && c->suppress_count == 0);
+  CHECK(c->confirm_count == 0 && !c->validated && !c->relayed);
+  CHECK(recent_route_shows(nonce) == 0);
+
+  for (unsigned type = 0; type < 256; ++type) {
+    if (type == cc::CHIRP_ACK_CONFIRMED) continue;
+    for (const Neighbor& n : nearby) deliver(n, ack_of(n, nonce, (uint8_t)type, (uint8_t)type));
+  }
+  host_sim::now_ms += 30001;
+  cc::update();
+  CHECK(rows_holding(nonce) == 1);
+  c = &cc::g_recent_chirps[0];
+  CHECK(!c->dismissed && !c->suppressed && c->suppress_count == 0);
+  CHECK(c->confirm_count == 0 && !c->validated && !c->relayed);
+  CHECK(recent_route_shows(nonce) == 0);
+  CHECK(sent_of_type(before, cc::CHIRP_MSG_WITNESS) == 0);   // nothing relayed
+
+  deliver(nearby[0], confirm_of(nearby[0], nonce));
+  CHECK(c->confirm_count == 1 && c->validated && c->relayed);
+  CHECK(sent_of_type(before, cc::CHIRP_MSG_WITNESS, /*relays_only=*/true) == 1);
+}
+
+// The owner's dismissal hides a chirp here at once, and the next prune takes
+// its row, up to 30 s on. In that time a neighbor's confirmation found the
+// row and validated and relayed it: a chirp the owner had just dismissed
+// went out from this device (sweep F305, the item's second half). Now a
+// dismissed row takes no confirmation; a chirp the owner did not dismiss,
+// confirmed by the same keys at the same moment, is validated and relayed.
+void test_a_dismissed_chirp_takes_no_confirmation() {
+  boot_enabled();
+  const std::vector<Neighbor> nearby = fill_nearby(3);
+  stay_present(nearby);                        // this device's ten minutes too: it may vote
+  uint8_t dismissed[8], kept[8];
+  const std::vector<uint8_t> wd =
+      witness_of(kOriginator, 0x55, cc::TPL_EMERG_FIRE_VISIBLE, 0, cc::CHIRP_URG_URGENT);
+  const Neighbor other = neighbor_of(0xC9);
+  const std::vector<uint8_t> wk =
+      witness_of(other, 0x56, cc::TPL_EMERG_FIRE_VISIBLE, 0, cc::CHIRP_URG_URGENT);
+  memcpy(dismissed, wd.data() + offsetof(cc::ChirpHeader, nonce), 8);
+  memcpy(kept, wk.data() + offsetof(cc::ChirpHeader, nonce), 8);
+  deliver(kOriginator, wd);
+  deliver(other, wk);
+  CHECK(rows_holding(dismissed) == 1 && rows_holding(kept) == 1);
+
+  bool vote_sent = false;
+  cc::ConfirmRefusal why = cc::CONFIRM_REFUSED_NONE;
+  CHECK(cc::dismiss_chirp(dismissed, &vote_sent, &why) && vote_sent);
+  const size_t before = host_sim::espnow->sent.size();
+  for (const Neighbor& n : nearby) deliver(n, confirm_of(n, dismissed));
+  const cc::ReceivedChirp* d = &cc::g_recent_chirps[0];
+  CHECK(memcmp(d->nonce, dismissed, 8) == 0 && d->dismissed);
+  CHECK(d->confirm_count == 0 && !d->validated && !d->relayed);
+  CHECK(sent_of_type(before, cc::CHIRP_MSG_WITNESS) == 0);
+
+  for (const Neighbor& n : nearby) deliver(n, confirm_of(n, kept));
+  const cc::ReceivedChirp* k = &cc::g_recent_chirps[1];
+  CHECK(memcmp(k->nonce, kept, 8) == 0 && k->validated && k->relayed);
+  CHECK(sent_of_type(before, cc::CHIRP_MSG_WITNESS, /*relays_only=*/true) == 1);
+
+  host_sim::now_ms += 30001;                   // the prune takes the dismissed row
+  cc::update();
+  CHECK(!table_holds(dismissed) && table_holds(kept));
 }
 
 // ── One nonce, one chirp (sweep F270) ────────────────────────────────────
@@ -1169,6 +1306,8 @@ const Test kTests[] = {
     {"a_held_chirp_takes_no_second_row", test_a_held_chirp_takes_no_second_row},
     {"a_suppressed_row_leaves_its_neighbors_in_order",
      test_a_suppressed_row_leaves_its_neighbors_in_order},
+    {"a_resolved_ack_dismisses_nothing", test_a_resolved_ack_dismisses_nothing},
+    {"a_dismissed_chirp_takes_no_confirmation", test_a_dismissed_chirp_takes_no_confirmation},
     {"the_filter_holds_a_nonce_one_half_to_two", test_the_filter_holds_a_nonce_one_half_to_two},
     {"the_filter_turns_on_a_quiet_channel", test_the_filter_turns_on_a_quiet_channel},
     {"the_filter_forgets_under_steady_traffic", test_the_filter_forgets_under_steady_traffic},

@@ -401,12 +401,18 @@ static_assert(sizeof(g_ap_password) >= canary::net::AP_PASSWORD_LEN + 1,
 
 // Physical-presence gate (F20 gap #11). Opened by a short BOOT tap in
 // handle_boot_button(), which also sweeps a stamp past its TTL every pass
-// (expire(), sweep F347); the network lib takes it — from the receipt handler
-// or from a home-LAN page load, whichever asks first — through the hooks
-// registered in setup(). The State is this file's because the BOOT button is.
+// (expire(), sweep F347). The network lib reads the stamp (peek), judges it
+// for the asking address with its TapArbiter, and takes exactly that stamp
+// (take_exact) — from the receipt handler or a home-LAN page load, for the
+// one address asking (sweep F354) — through the hooks registered in setup().
+// The TTL is applied by the lib's judgment (tap_arbitrate()). The State is
+// this file's because the BOOT button is.
 static canary::net::provisioning_gate::State g_prov_gate = {0};
-static bool prov_gate_take_hook() {
-  return canary::net::provisioning_gate::take(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
+static uint32_t prov_gate_peek_hook() {
+  return canary::net::provisioning_gate::peek(g_prov_gate);
+}
+static bool prov_gate_take_exact_hook(uint32_t seen) {
+  return canary::net::provisioning_gate::take_exact(g_prov_gate, seen);
 }
 static bool prov_gate_is_open_hook() {
   return canary::net::provisioning_gate::is_open(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
@@ -1523,7 +1529,8 @@ void setup() {
     ScvNetworkManager& net = network_get_instance();
     // Wire the BOOT-tap gate before any route can be served (unregistered
     // hooks read as closed, so the order is belt-and-braces, not load-bearing).
-    network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);
+    network_set_provisioning_gate_hooks(prov_gate_peek_hook, prov_gate_take_exact_hook,
+                                        prov_gate_is_open_hook);
     // POST /api/reboot is a deliberate restart: the HTTP task only raises a
     // flag, and loop() runs the boot-health gate and restarts (the gate
     // writes a witness record, which is loop-task only).
@@ -3113,7 +3120,8 @@ static void handle_boot_button() {
         // Short tap: open the provisioning gate (F20 gap #11, WAP parity).
         // One tap admits exactly ONE consumer within PROVISIONING_GATE_TTL_MS:
         // one GET /api/provisioning-receipt, or one home-LAN dashboard load
-        // with its credential — whichever asks first (page_token_decide).
+        // with its credential, for the one address asking for it; a second
+        // address asking in the window closes it (tap_arbitrate(), F354).
         canary::net::provisioning_gate::open(g_prov_gate, millis());
         Serial.printf("[AUTH] Provisioning gate OPENED (one receipt fetch or one LAN page load, %lu seconds)\n",
                       (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));

@@ -2,17 +2,22 @@
 carries no identifier the owner did not mean to publish."""
 from __future__ import annotations
 
+import base64
 import json
 import re
+from datetime import timedelta
 
 import pytest
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.registry import SAVE_DELAY_LONG
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_mqtt_message, async_fire_time_changed
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator, MqttMockHAClient, WebSocketGenerator
@@ -21,6 +26,7 @@ from conftest import (
     CLAIM_NONCE,
     KERNEL_DEVICE_ID,
     KERNEL_HOST,
+    KERNEL_PORT,
     KERNEL_URL,
     PAIRED_TOKEN,
     PAIRED_TOKEN_ID,
@@ -28,6 +34,8 @@ from conftest import (
     SigningKernel,
     bridge_event,
     canary_device,
+    fingerprint_of,
+    kernel_entry_data,
     make_kernel_entry,
     settle,
 )
@@ -455,6 +463,25 @@ def test_an_identifier_key_is_replaced_wherever_it_lands() -> None:
         assert value not in text, value
 
 
+def test_a_health_counter_is_replaced_wherever_it_lands() -> None:
+    """The second net behind the health projection on the core's own async_redact_data (device-details
+    P18, ledger F391): a Canary's uptime, boot count, card writes, web
+    requests and frame age, at any depth, come out redacted, numbers as
+    much as strings."""
+    seeded = {
+        "uptime": 864123,
+        "health": {
+            "boot_count": 4127,
+            "storage": {"sd_writes": 918273},
+            "web": [{"http_requests": "55501"}],
+            "camera": {"stats": [{"last_frame_age_ms": 31337}]},
+        },
+    }
+    text = json.dumps(async_redact_data(seeded, TO_REDACT))
+    for value in ("864123", "4127", "918273", "55501", "31337"):
+        assert value not in text, value
+
+
 async def test_the_download_carries_every_issue_the_domain_holds(
     hass: HomeAssistant,
     kernel: KernelMock,
@@ -471,12 +498,7 @@ async def test_the_download_carries_every_issue_the_domain_holds(
     other.add_to_hass(hass)
     for raised_by in (entry, other):
         repairs.async_report_tofu_mismatch(
-            hass,
-            raised_by,
-            pinned_fingerprint=kernel.kernel.fingerprint,
-            received_fingerprint="0badc0de",
-            received_key="cc" * 32,
-            url=KERNEL_URL,
+            hass, raised_by, pinned_key=kernel.verifying_key, received_key="cc" * 32
         )
     ignored = repairs.issue_id(ISSUE_TOFU_MISMATCH, entry)
     ir.async_ignore_issue(hass, DOMAIN, ignored, True)
@@ -490,6 +512,183 @@ async def test_the_download_carries_every_issue_the_domain_holds(
     assert issues[ignored]["dismissed_version"] is not None
     assert repairs.issue_id(ISSUE_TOFU_MISMATCH, other) in issues
     assert all(issue["created"] for issue in issues.values())
+
+
+# Every spelling of the kernel's port the scan below refuses: the digits
+# standing alone, not inside a longer number or a timestamp's fraction.
+_PORT = re.compile(rf"(?<![\d.]){KERNEL_PORT}(?!\d)")
+# The fields Home Assistant writes for an issue that is not persistent.
+_NOT_PERSISTENT_FIELDS = {"created", "dismissed_version", "domain", "is_persistent", "issue_id"}
+
+
+def _key_spellings(key_hex: str) -> list[str]:
+    """A verifying key as hex (either case), base64 (both alphabets) and each
+    base64 line of its PEM."""
+    raw = bytes.fromhex(key_hex)
+    pem = (
+        ed25519.Ed25519PublicKey.from_public_bytes(raw)
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    lines = [line for line in pem.splitlines() if line and not line.startswith("-----")]
+    return [key_hex, key_hex.upper(), base64.b64encode(raw).decode(), base64.urlsafe_b64encode(raw).decode(), *lines]
+
+
+def _assert_no_issue_holds_a_host_or_a_key(
+    issues: list[dict], text: str, keys: list[str], fingerprints: dict[str, dict[str, str]]
+) -> None:
+    """`text` (a whole downloaded file, or what the issue registry stored)
+    spells no host and no key; every key-mismatch issue holds exactly its two
+    fingerprints, and every issue that is not persistent only its id and
+    times. `fingerprints` is the expected pair per key-mismatch issue id."""
+    assert KERNEL_HOST not in text
+    for key in keys:
+        for spelled in _key_spellings(key):
+            assert spelled not in text, spelled
+    assert not _PORT.search(json.dumps(issues))
+    seen = set()
+    for issue in issues:
+        if issue["domain"] != DOMAIN:
+            continue
+        if issue["issue_id"] in fingerprints:
+            seen.add(issue["issue_id"])
+            assert issue["data"] == fingerprints[issue["issue_id"]], issue["issue_id"]
+            assert issue["translation_placeholders"] == fingerprints[issue["issue_id"]], issue["issue_id"]
+            assert issue["learn_more_url"] is None
+        elif not issue["is_persistent"]:
+            assert set(issue) == _NOT_PERSISTENT_FIELDS, issue["issue_id"]
+        # Every eight-character hex run in what an issue holds is one of the
+        # two fingerprints it is allowed.
+        for field in ("data", "translation_placeholders"):
+            held = json.dumps(issue.get(field))
+            allowed = set(fingerprints.get(issue["issue_id"], {}).values())
+            assert set(re.findall(r"(?<![0-9a-fA-F])[0-9a-fA-F]{8}(?![0-9a-fA-F])", held)) <= allowed, held
+    assert seen == set(fingerprints)
+
+
+async def _download(client, entry) -> tuple[dict, str]:
+    """The downloaded file: its body, and the body with its name in front."""
+    response = await client.get(f"/api/diagnostics/config_entry/{entry.entry_id}")
+    assert response.status == 200
+    text = await response.text()
+    return json.loads(text), response.headers["Content-Disposition"] + text
+
+
+async def _restart_the_issue_registry(hass: HomeAssistant, freezer: FrozenDateTimeFactory, hass_storage) -> list[dict]:
+    """Write the issue registry as Home Assistant does (its delayed save,
+    to the mocked `.storage`), then load it back from what was written, as
+    the next start does; returns what was stored."""
+    freezer.tick(timedelta(seconds=SAVE_DELAY_LONG + 1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    stored = hass_storage[ir.STORAGE_KEY]["data"]["issues"]
+    await ir.async_get(hass).async_load()
+    return stored
+
+
+async def test_no_issue_in_the_download_or_the_store_holds_a_host_or_a_key(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    hass_client: ClientSessionGenerator,
+    hass_storage,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Ledger F399, through every state a key-mismatch issue passes: raised,
+    ignored, kept over a restart, raised again for a third key, and one an
+    older integration raised for an entry that never sets up again. Each
+    download (its issues, the integration's data, the file name; the core
+    times no setup once it is running, as it is here, so `setup_times` is
+    empty, and the sibling test below fills it, with entry ids and times
+    only) and what Home Assistant stores in `.storage/repairs.issue_registry`
+    spells neither the kernel's host nor any key it served or was pinned to,
+    in hex, base64 or PEM, and the port appears only in the kernel section's
+    projection (scheme and port). A kernel_unreachable issue raised with the
+    URL is in the file by its id and times only, the core's own rule for an
+    issue that is not persistent."""
+    pinned = kernel.verifying_key
+    # An entry an older integration raised a key-mismatch issue for, with the
+    # URL and the served key in it, stored and loaded back at this start.
+    # The entry is disabled, so nothing raises that issue again.
+    old = SigningKernel()
+    disabled = MockConfigEntry(
+        domain=DOMAIN, title="SecuraCV", data=kernel_entry_data(verifying_key=pinned),
+        unique_id="kernel_pwk_old", version=3, disabled_by=ConfigEntryDisabler.USER,
+    )
+    disabled.add_to_hass(hass)
+    old_issue = repairs.issue_id(ISSUE_TOFU_MISMATCH, disabled)
+    old_fields = {"pinned_fingerprint": fingerprint_of(pinned), "received_fingerprint": old.fingerprint}
+    hass_storage[ir.STORAGE_KEY] = {
+        "version": ir.STORAGE_VERSION_MAJOR, "minor_version": ir.STORAGE_VERSION_MINOR, "key": ir.STORAGE_KEY,
+        "data": {"issues": [{
+            "created": "2026-10-01T12:00:00.000000+00:00", "dismissed_version": None, "domain": DOMAIN,
+            "is_persistent": True, "issue_id": old_issue, "breaks_in_ha_version": None, "is_fixable": True,
+            "issue_domain": None, "learn_more_url": None, "severity": "critical", "translation_key": "tofu_mismatch",
+            "translation_placeholders": {**old_fields, "url": KERNEL_URL},
+            "data": {**old_fields, "received_key": old.verifying_key, "url": KERNEL_URL},
+        }]},
+    }
+    await ir.async_get(hass).async_load()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, old_issue).data["received_key"] == old.verifying_key
+
+    entry = make_kernel_entry(verifying_key=pinned, enable_mqtt=True)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await settle(hass)
+    assert await async_setup_component(hass, "diagnostics", {})
+    client = await hass_client()
+    issue = repairs.issue_id(ISSUE_TOFU_MISMATCH, entry)
+
+    # Raised: the kernel serves another key.
+    second = SigningKernel()
+    kernel.verifying_key = second.verifying_key
+    kernel.kernel = second
+    freezer.tick(timedelta(minutes=5, seconds=1))
+    async_fire_time_changed(hass)
+    await settle(hass)
+    repairs.async_report_kernel_unreachable(hass, entry, KERNEL_URL)
+    keys = [pinned, second.verifying_key, old.verifying_key]
+    expected = {
+        old_issue: old_fields,
+        issue: {"pinned_fingerprint": fingerprint_of(pinned), "received_fingerprint": second.fingerprint},
+    }
+    body, text = await _download(client, entry)
+    _assert_no_issue_holds_a_host_or_a_key(body["issues"], text, keys, expected)
+    unreachable = repairs.issue_id("kernel_unreachable", entry)
+    assert unreachable in {i["issue_id"] for i in body["issues"]}
+    # The port is the kernel section's projection, and nowhere else.
+    assert body["data"]["kernel"]["api"]["port"] == KERNEL_PORT
+    rest = {**body, "data": {**body["data"], "kernel": {**body["data"]["kernel"], "api": None}}}
+    assert not _PORT.search(json.dumps(rest))
+
+    # Ignored: kept, and still only the fingerprints.
+    ir.async_ignore_issue(hass, DOMAIN, issue, True)
+    body, text = await _download(client, entry)
+    assert {i["issue_id"]: i for i in body["issues"]}[issue]["dismissed_version"] is not None
+    _assert_no_issue_holds_a_host_or_a_key(body["issues"], text, keys, expected)
+
+    # A restart: the registry written and loaded back, the entry set up anew.
+    stored = await _restart_the_issue_registry(hass, freezer, hass_storage)
+    _assert_no_issue_holds_a_host_or_a_key(stored, json.dumps(stored), keys, expected)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await settle(hass)
+    body, text = await _download(client, entry)
+    _assert_no_issue_holds_a_host_or_a_key(body["issues"], text, keys, expected)
+    assert {i["issue_id"]: i for i in body["issues"]}[issue]["dismissed_version"] is not None
+
+    # A third key while the issue is open.
+    third = SigningKernel()
+    kernel.verifying_key = third.verifying_key
+    kernel.kernel = third
+    freezer.tick(timedelta(minutes=5, seconds=1))
+    async_fire_time_changed(hass)
+    await settle(hass)
+    keys.append(third.verifying_key)
+    expected[issue] = {"pinned_fingerprint": fingerprint_of(pinned), "received_fingerprint": third.fingerprint}
+    body, text = await _download(client, entry)
+    _assert_no_issue_holds_a_host_or_a_key(body["issues"], text, keys, expected)
+    stored = await _restart_the_issue_registry(hass, freezer, hass_storage)
+    _assert_no_issue_holds_a_host_or_a_key(stored, json.dumps(stored), keys, expected)
 
 
 async def test_the_download_carries_entry_ids_in_its_name_and_setup_times(

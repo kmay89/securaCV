@@ -12,6 +12,42 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-04 — The Home Assistant app declared two lists as a select, which by the Supervisor's own code refuses the app's defaults (0.9.0; found by reading, not yet seen on an install)
+
+- **Symptom:** none seen yet; it was found by reading. 0.9.0's
+  `privacy_witness_kernel/config.yaml` declares `frigate.cameras` and
+  `frigate.labels` as `list(str)?`. By the Supervisor's option code, every
+  0.9.0 install should fail to start with "value must be one of ['str']",
+  and the wizard's save should be refused the same way. No gate in CI ran
+  the Supervisor's rules, so the schema passed all of them. It has not been
+  checked on HA OS (ledger HA49).
+- **Cause:** in the Supervisor's schema language a list of strings is a YAML
+  list holding the element type (`- str?`); `list(a|b)` is a select, one of
+  the values `a` or `b`. In `supervisor/apps/options.py`
+  (home-assistant/supervisor `bde7fb7b`), `_validate_typed` runs
+  `vol.In(match.group("list").split("|"))(str(value))`, so `list(str)?`
+  takes only the word `str`. `write_options` checks the stored options,
+  the app's own defaults (`cameras: []`, `labels: ["person", ...]`)
+  included, before every start, and `POST /addons/self/options` checks the
+  wizard's save by the same rules. To a person the word `list` reads as "a
+  list", and nothing in the repo knew otherwise.
+- **Fix:** both options are declared as lists (`- str?`), with a comment in
+  `config.yaml` saying why. `privacy_witness_kernel/tests/test_addon_store.py`
+  carries a pure-Python copy of the Supervisor's option rules, written from
+  that source, holds every list option to the list form, and checks the
+  defaults and the wizard's saves against the copy. The copy is not the
+  Supervisor: a person checks 0.9.0 and the fix on HA OS before a patch
+  release is decided (HA49). The app's CHANGELOG entry sits under
+  `## Unreleased`, and `scripts/bump_version.sh` does not rename it, so the
+  release renames it by hand.
+- **Applies to:** every Home Assistant app this repo ships
+  (`privacy_witness_kernel` today), and any option type with a parenthesized
+  form: read the Supervisor's own option code for the exact grammar before
+  trusting a schema word, and test the app's defaults against it, since the
+  Supervisor checks them before every start. The same holds for any store
+  that validates a manifest the build never runs: carry its rules into a
+  test, or the first install is the first check.
+
 ## 2026-10-29 (b) — The upload was accepted and CI was green, then an email said the build was invalid: an App Intent string named "iPhone"
 
 - **Symptom:** after `ios-release.yml` uploaded 0.8.0 (build 39.1) and went

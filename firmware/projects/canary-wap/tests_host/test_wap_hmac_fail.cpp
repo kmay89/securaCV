@@ -65,13 +65,44 @@
 //     so a chain restarted at seq 0 from a zero head, which the mints left
 //     when they came ahead of the chain load, re-signed seq numbers the key
 //     had already used;
+//   - the stored API token (sweep F365): provision_device() over the
+//     sketch's own nvs_load_token(), stored_token_length(),
+//     api_token_well_formed() and nvs_store_token(), cut verbatim and run
+//     over the first-boot suite's fake NVS (stubs/first_boot) and the real
+//     nvs_store.h. Only IDF's ESP_ERR_NVS_NOT_FOUND (no namespace, or no
+//     token in it) derives and stores a token, and the next boot loads it; a
+//     flasher-seeded base62 token is loaded as it is. Every other state, each
+//     built by hand (NVS refusing every open; two answers IDF does not give
+//     once the open succeeded, kept to hold the load to failing closed on an
+//     answer it does not know: the lookup failing with ESP_FAIL, and the
+//     fake's ESP_ERR_NVS_TYPE_MISMATCH for an entry stored as a string,
+//     which IDF answers ESP_ERR_NVS_NOT_FOUND, so Absent, on a device;
+//     Preferences' session refused after IDF's probe; a read that fails its
+//     CRC with the buffer as it was, filled with 0xA5, or holding the
+//     stored token or a copy of it one bit flip away, a well-formed token
+//     only the count refuses; a read a byte short; 34-, 36- and 0-byte
+//     entries; a NUL at byte 10; 35 bytes that are not "cv_" and 32 letters
+//     or digits), is Refused: provisioning answers false,
+//     g_device.initialized stays false, no read-write session opens on the
+//     token's NVS and nothing is put there, so the stored bytes stay
+//     exactly as they were (the boot count and, at genesis, the genesis
+//     head are stored before the token is read, as on every boot), no HMAC
+//     runs (no token rebuilt, no SoftAP key),
+//     the token buffer is zeroed, the stored chain is kept and the loader's
+//     line says why. Before, all but the first read as "no token" and a
+//     derived token was stored over the entry, the CRC-failed read IDF had
+//     filled handed 35 bytes of 0xA5 out as the bearer token, and the one
+//     whose copy was a bit flip away handed that token out;
 //   - the sketch's text (every .ino, .h, .cpp and .c in the sketch directory,
 //     comments stripped): every call of hmac_sha256(), derive_api_token() and
 //     derive_ap_password() uses its result (the sketch builds without -Werror,
 //     so the [[nodiscard]] on data_mgmt_api.h's declaration is a warning
 //     there), provision_device() returns false when either mint refuses, and
 //     every return false in it but establish_identity_key()'s comes after
-//     the chain state is loaded.
+//     the chain state is loaded; nvs_store_token() and derive_api_token() are
+//     called once each, in provision_device(), only when the token is
+//     neither Refused nor Loaded, and the token's NVS entry is named by no
+//     other function (no route, loop pass or reset writes it).
 // Host-tested; not run on a device.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-wap-hmac-fail
@@ -101,6 +132,13 @@
 #include "SD.h"           // stubs/sd_fake
 #include "log_level.h"    // the sketch's LogLevel / LogCategory
 #include "mbedtls/md.h"   // firmware/tests_host/stubs/mbedtls_md
+// The token's NVS (sweep F365): the first-boot suite's fake NVS
+// (stubs/first_boot: Preferences and IDF's nvs_open() / nvs_get_blob() over
+// one store that outlives every handle, and the read faults IDF can answer),
+// under the sketch's real nvs_store.h. Serial is stubs/nvs_store's Arduino.h.
+#include "Preferences.h"
+#include "nvs.h"
+#include "nvs_store.h"
 
 #ifndef WAP_HMAC_KEY_INC
 #error "WAP_HMAC_KEY_INC must name the cut of canary_wap.ino (the Makefile passes it)"
@@ -113,6 +151,9 @@
 #endif
 #ifndef WAP_HMAC_PROV_INC
 #error "WAP_HMAC_PROV_INC must name the cut of provision_device() (the Makefile passes it)"
+#endif
+#ifndef WAP_HMAC_TOKEN_INC
+#error "WAP_HMAC_TOKEN_INC must name the cut of the API token's NVS helpers (the Makefile passes it)"
 #endif
 #ifndef WAP_SKETCH_DIR
 #error "WAP_SKETCH_DIR must name the sketch directory (the Makefile passes it)"
@@ -325,6 +366,7 @@ struct DeviceIdentity {
   uint32_t log_seq;
   uint32_t born_day;
   bool born_exact;
+  bool chain_refused;
   bool initialized;
   char device_id[32];
   char ap_ssid[33];
@@ -845,40 +887,34 @@ static void restore_refuses_a_failed_hmac() {
 namespace prov {
 std::map<std::string, std::vector<uint8_t>> blobs;  // nvs_load_bytes()'s entries
 std::map<std::string, uint32_t> words;              // nvs_load_u32()'s entries
-std::string token;                                  // the stored API token ("" = none)
-bool store_token_fails = false;
 bool establish_fails = false;
 int config_loads = 0;
 int persists = 0;
-int token_stores = 0;
-std::string serial;
 
+// The API token is the fake NVS's (stubs/first_boot), read and written by
+// the sketch's own nvs_load_token() and nvs_store_token() (sweep F365).
 void clear() {
   blobs.clear();
   words.clear();
-  token.clear();
-  store_token_fails = establish_fails = false;
-  config_loads = persists = token_stores = 0;
-  serial.clear();
+  host_nvs().clear();
+  establish_fails = false;
+  config_loads = persists = 0;
+}
+const std::string kTokenRow = "securacv/api_tkn";
+// The stored token's bytes, as NVS holds them ("" = no entry).
+std::string token() {
+  auto it = host_nvs().rows.find(kTokenRow);
+  return it == host_nvs().rows.end() ? std::string()
+                                     : std::string(it->second.bytes.begin(), it->second.bytes.end());
+}
+bool token_stored() { return host_nvs().rows.count(kTokenRow) != 0; }
+// A token entry of these bytes, as a flasher or an earlier boot left it.
+void store_token(const std::string& bytes) {
+  HostFirstBootNvs::Row& r = host_nvs().rows[kTokenRow];
+  r.type = 'b';
+  r.bytes.assign(bytes.begin(), bytes.end());
 }
 }  // namespace prov
-
-struct HostSerial {
-  void println(const char* s) {
-    prov::serial += s;
-    prov::serial += '\n';
-  }
-  __attribute__((format(printf, 2, 3))) int printf(const char* fmt, ...) {
-    char line[256];
-    va_list ap;
-    va_start(ap, fmt);
-    const int n = std::vsnprintf(line, sizeof(line), fmt, ap);
-    va_end(ap);
-    prov::serial += line;
-    return n;
-  }
-};
-static HostSerial Serial;
 
 struct HostEsp {
   uint32_t getFreeHeap() { return 123456; }
@@ -913,17 +949,10 @@ static bool nvs_load_bytes(const char* key, uint8_t* out, size_t len) {
   std::memcpy(out, it->second.data(), len);
   return true;
 }
-static bool nvs_load_token(char* token_str, size_t max_len) {
-  if (prov::token.empty() || prov::token.size() >= max_len) return false;
-  std::memcpy(token_str, prov::token.c_str(), prov::token.size() + 1);
-  return std::strlen(token_str) >= 35;
-}
-static bool nvs_store_token(const char* token_str) {
-  if (prov::store_token_fails) return false;
-  ++prov::token_stores;
-  prov::token = token_str;
-  return true;
-}
+// The sketch's NVS_KEY_API_TKN line, the one-line KeyLoad enum,
+// nvs_store_token(), stored_token_length(), api_token_well_formed() and
+// nvs_load_token(), verbatim (sweep F365).
+#include WAP_HMAC_TOKEN_INC
 
 static bool establish_identity_key() {
   if (prov::establish_fails) return false;
@@ -935,7 +964,10 @@ struct Ed25519 {
     for (size_t i = 0; i < 32; i++) pub[i] = (uint8_t)(priv[i] ^ 0x5c);
   }
 };
-static void compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]) { std::memcpy(fp, pub, 8); }
+static bool compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
+  std::memcpy(fp, pub, 8);
+  return true;  // test_wap_sha_fail.cpp fails it
+}
 static void hex_to_str(char* out, const uint8_t* d, size_t n) {
   for (size_t i = 0; i < n; i++) std::snprintf(out + 2 * i, 3, "%02X", d[i]);
 }
@@ -950,8 +982,9 @@ static void generate_mdns_hostname(char* out, size_t cap) {
 }
 static void config_load_runtime() { ++prov::config_loads; }
 
-// The sketch's layout (domain, a zero byte, the data), over OpenSSL.
-static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]) {
+// The sketch's layout (domain, a zero byte, the data), over OpenSSL; it runs
+// here (test_wap_sha_fail.cpp fails the sketch's own at each step).
+static bool sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]) {
   EVP_MD_CTX* c = EVP_MD_CTX_new();
   const uint8_t sep = 0x00;
   unsigned int olen = 0;
@@ -961,6 +994,7 @@ static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uin
   if (data && n > 0) EVP_DigestUpdate(c, data, n);
   EVP_DigestFinal_ex(c, out, &olen);
   EVP_MD_CTX_free(c);
+  return olen == 32;
 }
 
 // The persist's effect: the {seq, head} blob written, seq_persisted moved.
@@ -989,14 +1023,16 @@ static void stored_unit(bool with_chain, bool with_token, uint8_t (&head)[32]) {
     prov::blobs[NVS_KEY_CHAINST] = blob;
   }
   prov::words[NVS_KEY_BOOTS] = kStoredBoots;
-  if (with_token) prov::token = kStoredToken;
+  if (with_token) prov::store_token(kStoredToken);
 }
 
 // One provision_device() as setup() runs it: g_device is a zeroed static.
 static bool provision() {
   std::memset(&g_device, 0, sizeof(g_device));
   std::memset(&g_health, 0, sizeof(g_health));
-  prov::serial.clear();
+  Serial.all.clear();
+  host_nvs().reset_counts();
+  host_nvs().rw_begins = host_nvs().puts = 0;
   return provision_device();
 }
 
@@ -1014,7 +1050,8 @@ static void provision_device_completes() {
             std::string("a working unit: the SoftAP key ") + g_device.ap_password);
   CHECK_MSG(g_device.boot_count == kStoredBoots + 1 && prov::words[NVS_KEY_BOOTS] == kStoredBoots + 1,
             "a working unit: the boot not counted");
-  CHECK_MSG(prov::config_loads == 1 && prov::persists == 0 && prov::token_stores == 0,
+  CHECK_MSG(prov::config_loads == 1 && prov::persists == 0 && host_nvs().puts == 0 &&
+                host_nvs().rw_begins == 0 && prov::token() == kStoredToken,
             "a working unit: config, persist or token store");
 }
 
@@ -1050,7 +1087,9 @@ static void a_refused_mint_keeps_the_stored_chain() {
       const std::string what = c.what + (genesis ? ", a chain at genesis" : ", a stored chain");
       uint8_t head[32];
       stored_unit(/*with_chain=*/!genesis, c.token_stored, head);
-      prov::store_token_fails = c.store_token_fails;
+      // A token store that fails: NVS opens for IDF's probe (which finds
+      // no token) and refuses Preferences' read-write session.
+      host_nvs().prefs_begin_fails = c.store_token_fails;
       std::vector<uint8_t> blob_before;
       if (!genesis) blob_before = prov::blobs[NVS_KEY_CHAINST];
       seam::arm(c.fail, c.pass_first);
@@ -1089,9 +1128,9 @@ static void a_refused_mint_keeps_the_stored_chain() {
         CHECK_MSG(std::string(g_device.api_token_str) == kStoredToken,
                   what + ": not the stored token");
       } else if (c.store_token_fails) {
-        CHECK_MSG(prov::token.empty(), what + ": a token stored");
+        CHECK_MSG(!prov::token_stored(), what + ": a token stored");
       } else {
-        CHECK_MSG(prov::token_stores == 0 && prov::token.empty(), what + ": a refused token stored");
+        CHECK_MSG(host_nvs().puts == 0 && !prov::token_stored(), what + ": a refused token stored");
         CHECK_MSG(all_zero(g_device.api_token_str, sizeof(g_device.api_token_str)),
                   what + ": the token buffer holds " + g_device.api_token_str);
       }
@@ -1112,6 +1151,198 @@ static void a_key_not_established_stops_first() {
   CHECK_MSG(seam::g_lookups == 0 && prov::config_loads == 0 && prov::persists == 0 &&
                 prov::words[NVS_KEY_BOOTS] == kStoredBoots && g_device.device_id[0] == '\0',
             "a key not established: provisioning went on past it");
+}
+
+// ── provision_device() and a stored token it could not use (sweep F365) ────
+// The sketch's own nvs_load_token() and nvs_store_token() over the fake NVS,
+// each state built by hand. Only NVS's ESP_ERR_NVS_NOT_FOUND (no namespace,
+// or no token in it) may lead to a derived token being stored. Every other
+// way the stored token goes unread or unused is Refused: provisioning
+// answers false with g_device.initialized false, opens no read-write session
+// on the token's NVS and writes nothing there (this boot's count and, at
+// genesis, the genesis head go to the suite's own NVS maps before the token
+// is read), so the stored bytes stay exactly as they were, runs no HMAC (no
+// token is derived, no SoftAP key either), leaves the token buffer zeroed
+// (api_auth.h matches no header against an empty token), keeps the stored
+// chain for the records setup() goes on to sign, and logs why. Before,
+// every one of these but the namespace that would not open read as "no
+// token": provisioning derived one and stored it over the stored entry, the
+// read IDF filled before its CRC check refused (Garbles) handed 35 bytes of
+// 0xA5 out as the bearer token, provisioning answering true, and a read whose
+// copy was the stored token one bit flip away (Copies) handed that out.
+static std::string with_byte(std::string s, size_t at, char c) {
+  s[at] = c;
+  return s;
+}
+
+static void a_stored_token_is_never_written_over() {
+  struct Case {
+    std::string what;
+    std::string bytes;   // the stored entry ("" with no_entry: none)
+    bool no_entry;
+    char type;           // the entry's NVS type: 'b' blob, 's' string
+    esp_err_t length_fault;
+    bool fail_begin;
+    bool prefs_begin_fails;
+    HostFirstBootNvs::Read read;
+    const char* log;     // the loader's line
+    uint8_t flip_mask = 0;   // Copies: the copy's byte flip_at, bits flipped by this
+    size_t flip_at = 0;
+  };
+  const std::string tok = kStoredToken;
+  using R = HostFirstBootNvs::Read;
+  const std::vector<Case> cases = {
+      {"NVS refuses every open (the namespace will not open)", tok, false, 'b', ESP_OK, true, false,
+       R::Ok, "[!!] API token not loaded: NVS could not say whether one is stored (ESP_ERR_NVS_NOT_INITIALIZED)\n"},
+      {"IDF's blob lookup fails (ESP_FAIL, an answer IDF does not give once the open succeeded)", tok,
+       false, 'b', ESP_FAIL, false, false, R::Ok,
+       "[!!] API token not loaded: NVS could not say whether one is stored (ESP_FAIL)\n"},
+      {"the fake's ESP_ERR_NVS_TYPE_MISMATCH for a string entry (IDF answers NOT_FOUND: Absent there)",
+       tok, false, 's', ESP_OK, false, false, R::Ok,
+       "[!!] API token not loaded: NVS could not say whether one is stored (ESP_ERR_NVS_TYPE_MISMATCH)\n"},
+      {"Preferences' session will not open after IDF's probe", tok, false, 'b', ESP_OK, false, true,
+       R::Ok, "[!!] API token not loaded: the stored token could not be read (0 of 35 bytes)\n"},
+      {"a 35-byte entry whose read fails its CRC (0 bytes, the buffer as it was)", tok, false, 'b',
+       ESP_OK, false, false, R::Fails,
+       "[!!] API token not loaded: the stored token could not be read (0 of 35 bytes)\n"},
+      {"a 35-byte entry whose read fails its CRC after IDF filled the buffer", tok, false, 'b', ESP_OK,
+       false, false, R::Garbles,
+       "[!!] API token not loaded: the stored token could not be read (0 of 35 bytes)\n"},
+      // IDF copies the data before its CRC check refuses it: the buffer holds
+      // a well-formed token behind a count of 0, and only the count refuses
+      // it (the F365 review). As stored (the CRC itself was hit), and after
+      // a flash bit flip that leaves the byte a letter ('o' to 'm').
+      {"a 35-byte entry whose read fails its CRC after IDF copied the stored token", tok, false, 'b',
+       ESP_OK, false, false, R::Copies,
+       "[!!] API token not loaded: the stored token could not be read (0 of 35 bytes)\n"},
+      {"a 35-byte entry whose read fails its CRC after IDF copied it with a bit flipped", tok, false,
+       'b', ESP_OK, false, false, R::Copies,
+       "[!!] API token not loaded: the stored token could not be read (0 of 35 bytes)\n", 0x02, 10},
+      {"a 35-byte entry read a byte short", tok, false, 'b', ESP_OK, false, false, R::Short,
+       "[!!] API token not loaded: the stored token could not be read (34 of 35 bytes)\n"},
+      {"a 34-byte entry", tok.substr(0, 34), false, 'b', ESP_OK, false, false, R::Ok,
+       "[!!] API token not loaded: the stored token is 34 bytes, not 35\n"},
+      {"a 36-byte entry", tok + "x", false, 'b', ESP_OK, false, false, R::Ok,
+       "[!!] API token not loaded: the stored token is 36 bytes, not 35\n"},
+      {"an empty entry", "", false, 'b', ESP_OK, false, false, R::Ok,
+       "[!!] API token not loaded: the stored token is 0 bytes, not 35\n"},
+      {"a 35-byte entry with a NUL at byte 10", with_byte(tok, 10, '\0'), false, 'b', ESP_OK, false,
+       false, R::Ok,
+       "[!!] API token not loaded: the stored token is not \"cv_\" and 32 letters or digits\n"},
+      {"35 bytes of 0xA5", std::string(35, (char)0xA5), false, 'b', ESP_OK, false, false, R::Ok,
+       "[!!] API token not loaded: the stored token is not \"cv_\" and 32 letters or digits\n"},
+      {"35 bytes without the cv_ prefix", with_byte(tok, 2, '-'), false, 'b', ESP_OK, false, false,
+       R::Ok, "[!!] API token not loaded: the stored token is not \"cv_\" and 32 letters or digits\n"},
+      {"a token with a space in it", with_byte(tok, 20, ' '), false, 'b', ESP_OK, false, false, R::Ok,
+       "[!!] API token not loaded: the stored token is not \"cv_\" and 32 letters or digits\n"},
+  };
+  for (const Case& c : cases) {
+    for (int genesis = 0; genesis < 2; genesis++) {
+      const std::string what = c.what + (genesis ? ", a chain at genesis" : ", a stored chain");
+      uint8_t head[32];
+      stored_unit(/*with_chain=*/!genesis, /*with_token=*/false, head);
+      prov::store_token(c.bytes);
+      host_nvs().rows[prov::kTokenRow].type = c.type;
+      const HostFirstBootNvs::Row before = host_nvs().rows[prov::kTokenRow];
+      host_nvs().length_fault = c.length_fault;
+      host_nvs().fail_begin = c.fail_begin;
+      host_nvs().prefs_begin_fails = c.prefs_begin_fails;
+      host_nvs().read = c.read;
+      host_nvs().copy_flip_mask = c.flip_mask;
+      host_nvs().copy_flip_at = c.flip_at;
+      if (c.read == R::Copies) {
+        // The fixture is what it says: the bytes IDF copies are a token the
+        // shape check alone would take.
+        std::string copied = c.bytes;
+        copied[c.flip_at] = (char)(copied[c.flip_at] ^ c.flip_mask);
+        CHECK_MSG(api_token_well_formed(copied.data(), copied.size()) && (c.flip_mask == 0) == (copied == tok),
+                  what + ": the copied bytes \"" + copied + "\" are not a well-formed token");
+      }
+      std::vector<uint8_t> blob_before;
+      if (!genesis) blob_before = prov::blobs[NVS_KEY_CHAINST];
+      seam::arm(seam::Step::None);
+
+      CHECK_MSG(!provision(), what + ": provisioning answered true");
+      CHECK_MSG(!g_device.initialized, what + ": the identity marked ready");
+      CHECK_MSG(host_nvs().rw_begins == 0 && host_nvs().puts == 0,
+                what + ": " + std::to_string(host_nvs().rw_begins) + " read-write session(s), " +
+                    std::to_string(host_nvs().puts) + " put(s)");
+      const auto after = host_nvs().rows.find(prov::kTokenRow);
+      CHECK_MSG(after != host_nvs().rows.end() && after->second.type == before.type &&
+                    after->second.bytes == before.bytes,
+                what + ": the stored entry changed, now \"" + prov::token() + "\"");
+      CHECK_MSG(seam::g_lookups == 0, what + ": " + std::to_string(seam::g_lookups) +
+                                          " HMAC(s) ran (a token or a SoftAP key derived)");
+      CHECK_MSG(all_zero(g_device.api_token_str, sizeof(g_device.api_token_str)),
+                what + ": the token buffer holds \"" + std::string(g_device.api_token_str) + "\"");
+      CHECK_MSG(g_device.ap_password[0] == '\0', what + ": a SoftAP key " + g_device.ap_password);
+      CHECK_MSG(Serial.all.find(c.log) != std::string::npos,
+                what + ": no line \"" + c.log + "\" in: " + Serial.all);
+      CHECK_MSG(Serial.all.find("[!!] Stored API token not used (see the API token line above); "
+                                "nothing written over it\n") != std::string::npos,
+                what + ": provisioning did not say why it stopped");
+      if (genesis) {
+        CHECK_MSG(g_device.seq == 0 && prov::persists == 1,
+                  what + ": the genesis head not persisted before the token");
+      } else {
+        CHECK_MSG(g_device.seq == kStoredSeq && g_device.seq_persisted == kStoredSeq &&
+                      std::memcmp(g_device.chain_head, head, 32) == 0 && prov::persists == 0 &&
+                      prov::blobs[NVS_KEY_CHAINST] == blob_before,
+                  what + ": not the stored chain");
+      }
+    }
+  }
+}
+
+// Absent is the one answer a token is derived and stored on: no namespace at
+// all (an erased unit's first boot) and a namespace without the entry both
+// derive the known token and store exactly its 35 bytes, and the next boot
+// loads it and writes nothing. A token a flasher seeded, base62 with the
+// characters the WAP's own alphabet leaves out, is loaded as it is.
+static void an_absent_token_is_derived_and_stored_once() {
+  for (int with_namespace = 0; with_namespace < 2; with_namespace++) {
+    const std::string what = with_namespace ? "no token in the namespace" : "no namespace";
+    uint8_t head[32];
+    stored_unit(/*with_chain=*/true, /*with_token=*/false, head);
+    if (with_namespace) {
+      HostFirstBootNvs::Row& other = host_nvs().rows["securacv/privkey"];
+      other.type = 'b';
+      other.bytes.assign(32, 0x11);
+    }
+    seam::arm(seam::Step::None);
+    CHECK_MSG(provision(), what + ": provisioning answered false");
+    CHECK_MSG(g_device.initialized, what + ": not marked ready");
+    const std::string minted = g_device.api_token_str;
+    CHECK_MSG(minted.size() == 35 && minted.compare(0, 3, "cv_") == 0,
+              what + ": the derived token \"" + minted + "\"");
+    CHECK_MSG(prov::token() == minted && host_nvs().rows[prov::kTokenRow].type == 'b' &&
+                  host_nvs().puts == 1,
+              what + ": stored \"" + prov::token() + "\" after " + std::to_string(host_nvs().puts) +
+                  " put(s)");
+    CHECK_MSG(Serial.all.find("[PROV] API token stored in NVS\n") != std::string::npos,
+              what + ": no store line");
+
+    // The next boot: Loaded, the same token, nothing written.
+    std::memset(&g_device, 0, sizeof(g_device));
+    seam::arm(seam::Step::None);
+    CHECK_MSG(provision() && std::string(g_device.api_token_str) == minted,
+              what + ": the next boot did not load the stored token");
+    CHECK_MSG(host_nvs().puts == 0 && host_nvs().rw_begins == 0,
+              what + ": the next boot wrote the token again");
+    CHECK_MSG(Serial.all.find("[PROV] Loaded existing API token from NVS\n") != std::string::npos,
+              what + ": the next boot did not say it loaded");
+  }
+
+  const std::string seeded = "cv_0O1lIoL9zZaA0O1lIoL9zZaA0O1lIoL9";  // base62, 35 bytes
+  uint8_t head[32];
+  stored_unit(/*with_chain=*/true, /*with_token=*/false, head);
+  prov::store_token(seeded);
+  seam::arm(seam::Step::None);
+  CHECK_MSG(seeded.size() == 35, "the seeded fixture is not 35 bytes");
+  CHECK_MSG(provision() && g_device.initialized && std::string(g_device.api_token_str) == seeded,
+            "a flasher-seeded token: not loaded as it is (\"" + std::string(g_device.api_token_str) +
+                "\")");
+  CHECK_MSG(host_nvs().puts == 0 && prov::token() == seeded, "a flasher-seeded token: written over");
 }
 
 // ── the sketch's text ───────────────────────────────────────────────────────
@@ -1230,9 +1461,11 @@ static void sketch_text() {
 
   int hmac_calls = 0, token_calls = 0, ap_calls = 0;
   std::string ino;
+  std::string others;  // every sketch file but the .ino
   for (const std::string& n : names) {
     const std::string text = strip_comments(read_file(dir + "/" + n));
     if (n == "canary_wap.ino") ino = text;
+    else others += text;
     hmac_calls += calls_use_their_result(n, text, "hmac_sha256");
     token_calls += calls_use_their_result(n, text, "derive_api_token");
     ap_calls += calls_use_their_result(n, text, "derive_ap_password");
@@ -1287,6 +1520,51 @@ static void sketch_text() {
                                           " of its body leaves the chain unloaded");
   }
   CHECK_MSG(refusals >= 4, "provision_device(): " + std::to_string(refusals) + " refusal(s)");
+  // The stored token's one writer and one rebuild (sweep F365): the sketch
+  // calls nvs_store_token() and derive_api_token() once each, both in
+  // provision_device(), after its Refused return and inside the branch that
+  // is neither Loaded nor Refused; and the token's NVS entry is named only
+  // by its definition and the three helpers this suite runs, so no route,
+  // loop pass or reset writes it (factory_reset_by_hold() keeps it).
+  auto count_of = [](const std::string& text, const std::string& what) {
+    int n = 0;
+    for (size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) {
+      if (at > 0 && is_ident(text[at - 1])) continue;
+      ++n;
+    }
+    return n;
+  };
+  for (const char* call : {"nvs_store_token(", "derive_api_token("}) {
+    const int in_ino = count_of(ino, call) - count_of(ino, std::string("static bool ") + call);
+    CHECK_MSG(in_ino == 1 && count_of(prov, call) == 1 && count_of(others, call) == 0,
+              std::string(call) + ") is called " + std::to_string(in_ino) + " time(s) in canary_wap.ino, " +
+                  std::to_string(count_of(prov, call)) + " in provision_device(), " +
+                  std::to_string(count_of(others, call)) + " elsewhere");
+  }
+  const std::string load = "const KeyLoad token = nvs_load_token(g_device.api_token_str, "
+                           "sizeof(g_device.api_token_str));";
+  refuses_on(prov, "if (token == KeyLoad::Refused) {", "provision_device()'s refused token");
+  const size_t load_at = prov.find(load);
+  const size_t refused_at = prov.find("if (token == KeyLoad::Refused) {");
+  const size_t loaded_at = prov.find("if (token == KeyLoad::Loaded) {");
+  const size_t else_at = loaded_at == std::string::npos ? std::string::npos : prov.find("} else {", loaded_at);
+  CHECK_MSG(load_at != std::string::npos && load_at < refused_at && refused_at < loaded_at &&
+                loaded_at < else_at && else_at < prov.find("derive_api_token(") &&
+                else_at < prov.find("nvs_store_token("),
+            "provision_device(): the token is derived and stored only when it is neither Refused "
+            "nor Loaded");
+  int named = 0;
+  for (const char* fn : {"static bool nvs_store_token(const char* token_str) {",
+                         "static esp_err_t stored_token_length(size_t* len) {",
+                         "static KeyLoad nvs_load_token(char* token_str, size_t max_len) {"}) {
+    const std::string body = body_of(ino, fn);
+    CHECK_MSG(!body.empty(), std::string("canary_wap.ino: no ") + fn);
+    named += count_of(body, "NVS_KEY_API_TKN");
+  }
+  CHECK_MSG(count_of(others, "NVS_KEY_API_TKN") == 0 && count_of(others, "\"api_tkn\"") == 0 &&
+                count_of(ino, "\"api_tkn\"") == 1 && count_of(ino, "NVS_KEY_API_TKN") == named + 1,
+            "the token's NVS entry is named outside its definition and its three helpers");
+
   // The buffers the mints fill are the sizes this suite gives them.
   CHECK_MSG(ino.find("char     api_token_str[36];") != std::string::npos &&
                 ino.find("char     ap_password[16];") != std::string::npos,
@@ -1294,6 +1572,8 @@ static void sketch_text() {
 }
 
 int main() {
+  (void)NVS_CHIRP_NS;  // nvs_store.h's other namespaces, unused here
+  (void)NVS_MESH_NS;
   hmac_known_answer();
   hmac_refuses_each_step();
   ap_password_known_answers();
@@ -1310,14 +1590,17 @@ int main() {
   provision_device_completes();
   a_refused_mint_keeps_the_stored_chain();
   a_key_not_established_stops_first();
+  a_stored_token_is_never_written_over();
+  an_absent_token_is_derived_and_stored_once();
   sketch_text();
   if (g_failures) {
     std::printf("test_wap_hmac_fail: %d of %d checks FAILED\n", g_failures, g_checks);
     return 1;
   }
   std::printf("test_wap_hmac_fail: ALL %d CHECKS PASSED (hmac_sha256 at every failing step, "
-              "the SoftAP key, the API token, resolve_ap_password in both builds, the chain "
-              "backup and restore, the sketch's call sites)\n",
+              "the SoftAP key, the API token, the stored token never written over, "
+              "resolve_ap_password in both builds, the chain backup and restore, the sketch's "
+              "call sites)\n",
               g_checks);
   return 0;
 }

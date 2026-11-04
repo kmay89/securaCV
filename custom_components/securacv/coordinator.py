@@ -286,6 +286,14 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Whether the last HTTP backstop reached the kernel.
         self.backstop_ok = False
         self.key_mismatch = False
+        # The key the kernel serves while it is not the pin: the one the
+        # tofu_mismatch fix flow pins when the person confirms its
+        # fingerprint. Held here and nowhere else, never in the issue, whose
+        # data a diagnostics download carries (ledger F399). Set by the pin
+        # check that raises the issue and cleared with it; a restart or a
+        # reload starts without it, so the flow has nothing to pin until the
+        # kernel serves the key again.
+        self.received_key: str | None = None
         self._unsubs: list[Callable[[], None]] = []
         self._failing_since: float | None = None
         self._unreachable_reported = False
@@ -588,6 +596,7 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         if self.pinned_key is None:
             self.pinned_key = received
+            self.received_key = None
             self.hass.config_entries.async_update_entry(
                 self.entry,
                 data={
@@ -603,18 +612,22 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._set_key_mismatch(False)
             return
         if received != self.pinned_key:
+            self.received_key = received
             self._set_key_mismatch(True)
             repairs.async_report_tofu_mismatch(
                 self.hass,
                 self.entry,
-                pinned_fingerprint=kernel_key_fingerprint(self.pinned_key),
-                received_fingerprint=kernel_key_fingerprint(received),
+                pinned_key=self.pinned_key,
                 received_key=received,
-                url=self.api.base_url,
             )
             return
-        if self.key_mismatch:
-            repairs.async_clear_tofu_mismatch(self.hass, self.entry)
+        # The served key is the pin: clear the issue whether or not this
+        # coordinator raised it (deleting none is a no-op). One kept over a
+        # restart or a reload, or one an announce raised, says the kernel
+        # serves another key, and the authenticated API just said it does
+        # not; with no key held here the fix flow could only abort.
+        repairs.async_clear_tofu_mismatch(self.hass, self.entry)
+        self.received_key = None
         self._set_key_mismatch(False)
 
     @callback

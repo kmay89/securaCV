@@ -1029,7 +1029,15 @@ async function openEsptool(port, statusCb) {
 // first, flashing comes second. Any bootloader action (install, health
 // check, backup, rescue) calls ensureSession(), which quietly hands the
 // port back to the bootloader. No chooser, no gestures.
-async function startVoice(consoleEl, onIdentity, onSetupNet) {
+//
+// `product` is the catalog product whose firmware is talking (the board's
+// own on the connect page, the one just written on the done card, or null
+// for a firmware the catalog does not name): the voice asks it for its
+// self-manifest only where that firmware prints one (sweep A97,
+// core.requiresLiveReceipt, failing closed on null), as both monitors'
+// identity asks do. A WAP, a Sense or a display would answer "unknown
+// command" twice into the console the user is reading.
+async function startVoice(consoleEl, onIdentity, onSetupNet, product) {
   // Re-entering the connected phase while a voice is already running (e.g.
   // "not yet" from the confirm card): re-bind the LIVE stream to the fresh
   // console element instead of leaving it talking to a detached node.
@@ -1075,13 +1083,15 @@ async function startVoice(consoleEl, onIdentity, onSetupNet) {
   }
   // Ask for the signed self-manifest once the app settles: health, boots,
   // temperature — the live story, before a byte is written. Twice, in case
-  // the first lands mid-boot.
-  const ask = () => {
-    if (!state.voice || v.identity || !v.writer) return;
-    try { v.writer.write(new TextEncoder().encode("j\n")); } catch { /* quiet build */ }
-  };
-  setTimeout(ask, 900);
-  setTimeout(ask, 2600);
+  // the first lands mid-boot. Only a firmware that prints one is asked.
+  if (core.requiresLiveReceipt(product)) {
+    const ask = () => {
+      if (!state.voice || v.identity || !v.writer) return;
+      try { v.writer.write(new TextEncoder().encode("j\n")); } catch { /* quiet build */ }
+    };
+    setTimeout(ask, 900);
+    setTimeout(ask, 2600);
+  }
   // A board that never prints leaves "listening…" up forever, which reads as
   // a hang. After 5 s of silence, say what silence means here.
   setTimeout(() => {
@@ -1453,7 +1463,10 @@ async function readCurrentFirmware() {
     const desc = await readFlashChunked(esploader, app.offset + core.APP_DESC_OFFSET, 256);
     const d = core.parseAppDescriptor(desc);
     if (!d) { state.current = { unknown: true }; return; }
-    const product = core.matchProjectToProduct(state.catalog, d.projectName);
+    // Display-aware (core.productForProject): a display build whose name
+    // carries no flavor is a display, never the flagship its "canary" stem
+    // would match, so the readout names a display.
+    const product = core.productForProject(state.catalog, d.projectName);
     state.current = {
       version: d.version,
       projectName: d.projectName,
@@ -1529,8 +1542,10 @@ async function runIntake(narrate) {
   const shipped = intake.shippedWith({
     projectName,
     // Releases after 2.4.17 name their product in the descriptor
-    // (stamp_app_desc.py); shippedWith counts the exact asset_stem only.
-    product: core.matchProjectToProduct(state.catalog, projectName),
+    // (stamp_app_desc.py); shippedWith counts the exact asset_stem only, so
+    // the display-aware resolution every other surface uses changes no
+    // finding here (desktop_parity.test.js runs every name both ways).
+    product: core.productForProject(state.catalog, projectName),
     // A partition sector we READ and found empty is a blank chip; one we
     // couldn't read at all is unknown. state.ptRead keeps those apart —
     // `!state.pt` alone would call a failed read the cleanest possible result.
@@ -1668,16 +1683,8 @@ function phaseConnected() {
     });
     hello.append(strip);
   }
-  if (state.current && !state.current.unknown) {
-    const feel = el("p", "fineprint flash-feel");
-    feel.append(document.createTextNode(
-      "Those counters were read cold, without booting it. For the live story — " +
-      "its self-check score and how it’s feeling right now — "));
-    const ask = el("button", "ghost small", "🩺 ask the board itself");
-    ask.addEventListener("click", () => openMonitor({ proveIdentity: true }));
-    feel.append(ask);
-    hello.append(feel);
-  }
+  const feel = renderLiveStoryAsk();
+  if (feel) hello.append(feel);
 
   const tools = el("div", "flash-row flash-tools");
   const health = el("button", "ghost", "🩺 Health check");
@@ -1725,7 +1732,7 @@ function phaseConnected() {
     voice.append(vcon);
     // A Sense on the wire gets its bench one click away — the console is its
     // voice, but the radar bench is its senses.
-    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    const curProd = boardProduct();
     const curRole = curProd && core.productRole(curProd.id);
     if (curRole === "sense") {
       const rb = el("button", "ghost small", "👋 open the radar bench — feel it sense");
@@ -1763,7 +1770,7 @@ function phaseConnected() {
           "tamper flag raised"));
       }
       idSlot.append(chips);
-    });
+    }, null, curProd);
   }
 
   // Firmware picker (chip-guarded).
@@ -1979,12 +1986,58 @@ function renderRosterStrip() {
   return sec;
 }
 
+// ── the live story: ask the board itself, where its firmware tells one ──────
+// The passport strip above was read cold; the board's self-check score and
+// how it feels right now come from its own `j` answer, so the ask is offered
+// only where the firmware prints a self-check (sweep A97). The catalog's
+// serial_receipt says which firmware wires its self-manifest to `j`
+// (gen_flash.py reads that off the firmware sources): the WAP, the Sense and
+// every display print none, so the board is pointed at its boot log instead
+// of being promised a score it never prints. A readable firmware the catalog
+// does not name is still asked (core.requiresLiveReceipt fails closed on
+// null), as the monitor's identity ask is: every SecuraCV release up to
+// 2.4.17 names the Arduino core (`arduino-lib-builder`), not its product, and
+// the flagship and the Vision among them answer `j`. The desktop's passport
+// (renderPassport) draws the same line from the same rule. The product is
+// boardProduct()'s, display-aware, so a display build whose name carries no
+// flavor is a display here too.
+function renderLiveStoryAsk() {
+  if (!state.current || state.current.unknown) return null;
+  const told = boardProduct();
+  const feel = el("p", "fineprint flash-feel");
+  if (core.requiresLiveReceipt(told)) {
+    feel.append(document.createTextNode(
+      "Those counters were read cold, without booting it. For the live story — " +
+      "its self-check score and how it’s feeling right now — "));
+    const ask = el("button", "ghost small", "🩺 ask the board itself");
+    ask.addEventListener("click", () => openMonitor({ proveIdentity: true }));
+    feel.append(ask);
+  } else {
+    // The same sentence as the desktop's passport (desktop_parity.test.js),
+    // and true in both: neither monitor reboots a board that is already
+    // talking (here the live voice hands its port over as it is), so the
+    // boot log comes from a RESET tap with the monitor open.
+    feel.append(document.createTextNode(
+      "Those counters were read cold, without booting it. " +
+      "This firmware prints no self-check; open the serial monitor and tap the board’s " +
+      "RESET button to read its boot log."));
+  }
+  return feel;
+}
+
 // ── role: what this board IS, read from what it RUNS ────────────────────────
 function renderRoleLine() {
   const cur = state.current;
   if (!cur || cur.unknown) return null;
+  // The product the descriptor names, display-aware: the same answer the
+  // monitor, the install verdicts and the self-check ask resolve. A firmware
+  // the catalog does not name ("esp32_display_demo", a vendor's own image)
+  // gets no role line, as the desktop's passport names no product for it.
+  const prod = core.productForProject(state.catalog, cur.projectName);
+  if (!prod) return null;
+  const role = prod.role || core.productRole(prod.id);
   // A display build read off the wire: name it and offer the live glass.
-  if (core.looksLikeDisplayProject(cur.projectName)) {
+  if (role === "display") {
     // A release stamps each product's asset_stem into the descriptor, so a
     // stamped board names its own product: the glass is that product's own
     // displays[] entry (its flash_product), or none. displayFor's loose
@@ -2009,9 +2062,6 @@ function renderRoleLine() {
     }
     return p;
   }
-  const prod = core.productForProject(state.catalog, cur.projectName);
-  if (!prod) return null;
-  const role = prod.role || core.productRole(prod.id);
   const verb = {
     vision: "senses people through its camera — on-device, never raw video",
     sense: "senses presence by 60 GHz radar — no camera, no mic",
@@ -3460,7 +3510,7 @@ function refreshManifestState() {
   // The headline answer, before any list: should THIS board be updated?
   // Compares what the board runs against the release for that same product.
   if (state.current && !state.current.unknown) {
-    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    const curProd = boardProduct();
     const entry = curProd && core.manifestEntry(m, curProd, state.chip);
     if (entry && !entry.error) {
       const v = installVerdictFor(curProd, entry.version);
@@ -3515,11 +3565,26 @@ function refreshManifestState() {
 }
 
 // ── pick → confirm → flash ──────────────────────────────────────────────────
-// The verdict for installing `product` at `version` on the board in hand.
+// The verdict for installing `product` at `version` on the board in hand,
+// against the product its descriptor names (boardProduct: display-aware).
+//
+// A board whose partition sector could not be read at all (state.ptRead
+// "failed") is not a board with nothing on it: core.installVerdict maps every
+// {unknown:true} to "First install", which is right for a chip read back
+// blank, but for an unread one "nothing SecuraCV is on this board yet" would
+// be a claim nobody checked, beside a customs card that says "unread", and
+// would hide a downgrade. The desktop draws the same line at its call site
+// (verdictMarkup) in the same words; desktop_parity.test.js holds the two.
 function installVerdictFor(product, version) {
-  const currentProduct = state.current && !state.current.unknown
-    ? core.matchProjectToProduct(state.catalog, state.current.projectName)
-    : null;
+  if (state.ptRead === "failed") {
+    return {
+      kind: "unknown", icon: "•", label: "Can't tell yet",
+      detail: "This board's current firmware couldn't be read, so there's no telling whether this " +
+              "is an update, a reinstall, or a step backward. The install itself is unaffected, and " +
+              "the automatic safety copy still runs.",
+    };
+  }
+  const currentProduct = boardProduct();
   return core.installVerdict({ current: state.current, currentProduct, product, version });
 }
 
@@ -5016,7 +5081,7 @@ function phaseDone(opts) {
       const vcon = el("pre", "flash-console");
       listen.append(vcon);
       box.append(listen);
-      startVoice(vcon, null, showSetupNet);
+      startVoice(vcon, null, showSetupNet, product);
     }
   }
   box.append(setupNetSlot);

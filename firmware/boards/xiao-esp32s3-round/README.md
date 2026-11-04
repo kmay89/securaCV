@@ -34,9 +34,13 @@ backlight/touch-INT lines against your display revision.
   (MISO belongs to the SD card).
 - `BUZZER_PIN` (D0/GPIO1) is a provision for an optional passive piezo —
   unpopulated on stock builds; `FEATURE_CHIME` stays 0 until fitted.
-- BOOT button (GPIO0, active LOW) is reserved for a future factory-reset
-  long-press — no gesture is wired to it yet. To re-run WiFi setup today,
-  use the on-glass path: settings › reset › wifi › forget.
+- BOOT button (GPIO0, active LOW) is read by `main.cpp`'s BOOT grammar: a
+  press wakes the glass and a hold acknowledges (a double tap is the
+  lantern's, and the watch builds no lantern). Held 10 s it is the fleet
+  factory reset (`common/io/reset_hold.h`): the saved Wi-Fi networks and the
+  screen settings go, the device's identity stays, and because GPIO0 is a
+  strapping pin the restart into setup waits for the release. The on-glass
+  path re-runs Wi-Fi setup too: settings › reset › wifi › forget.
 
 ## Used By
 

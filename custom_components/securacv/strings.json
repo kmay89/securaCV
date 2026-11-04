@@ -188,11 +188,14 @@
         "step": {
           "confirm": {
             "title": "Confirm the kernel's new key",
-            "description": "The witness kernel at {url} now serves the key with fingerprint `{received_fingerprint}`; Home Assistant pinned `{pinned_fingerprint}`. This happens after a restore to new hardware or a reinstalled app or sidecar — or when something else answers at that address. Until you confirm the new key, kernel events show a key mismatch and are never shown as verified.\n\nBefore submitting, compare `{received_fingerprint}` with what the kernel itself prints: `docker exec securacv pair`, the app's panel, or `doctor`. Submit only if they match. The previous key stays recorded in the entry so earlier sealed logs remain attributable; the integration reloads and verifies against the new key."
+            "description": "Your witness kernel now serves the key with fingerprint `{received_fingerprint}`; Home Assistant pinned `{pinned_fingerprint}`. This happens after a restore to new hardware or a reinstalled app or sidecar — or when something else answers at its address. Until you confirm the new key, kernel events show a key mismatch and are never shown as verified.\n\nBefore submitting, compare `{received_fingerprint}` with what the kernel itself prints: `docker exec securacv pair`, the app's panel, or `doctor`. Submit only if they match. The previous key stays recorded in the entry so earlier sealed logs remain attributable; the integration reloads and verifies against the new key."
           }
         },
         "abort": {
-          "no_received_key": "This issue carries no key to confirm; it is raised again with the key on the next check."
+          "no_received_key": "Home Assistant has no new key to confirm: it has not seen your witness kernel serve one over its API since SecuraCV last started (a Home Assistant restart or a reload of the integration), or the kernel has so far only announced the key. The kernel is checked every five minutes; open this issue again after the next check. If the kernel serves its pinned key again, that check clears this issue."
+        },
+        "error": {
+          "key_changed": "Your witness kernel has served another key since this page opened, so nothing was pinned. Compare the received fingerprint shown now with what the kernel prints, and submit only if they match."
         }
       }
     },

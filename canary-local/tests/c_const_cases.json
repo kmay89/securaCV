@@ -1,0 +1,437 @@
+{
+  "_about": [
+    "One table, three readers: _tooling.read_const (gen_flash.py, gen_vision.py), and",
+    "canary-local/tests/c_const.js (vision.test.js). test_flash_read_const.py and vision.test.js",
+    "each run every row and require the same verdict: `value` is the integer read, `refused` the",
+    "exact refusal, {where} standing for the file. `planted` rows edit the real Vision config.h",
+    "(`prepend` text above everything, or `respell` the named constexpr's value) and run gen_vision.py,",
+    "gen_flash.py's Vision defaults and vision.test.js on it: no `refused` means each reads what it",
+    "reads on the file as committed; `refused` is the start of the refusal. It sits under",
+    "canary-local/tests/, which the site and the Lab app leave out. Sweep F369."
+  ],
+  "where": "firmware/synthetic/consts.h",
+  "cases": [
+    {
+      "why": "the project config.h's own shape",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int SCORE_MIN     = 70;       // 0\u2013100\n",
+      "value": 70
+    },
+    {
+      "why": "a #define with a trailing comment holding a quote",
+      "name": "CS_PRESENT_DEBOUNCE_MS",
+      "text": "#define CS_PRESENT_DEBOUNCE_MS  300     // sustained target before \"present\"\n",
+      "value": 300
+    },
+    {
+      "why": "tabs, a U suffix and a block comment after the value",
+      "name": "WATCHDOG_MS",
+      "text": "#define\tWATCHDOG_MS\t1500u /* ms */\n",
+      "value": 1500
+    },
+    {
+      "why": "a UL suffix on an inline constexpr",
+      "name": "SENSE_DEBOUNCE_MS_HI",
+      "text": "inline constexpr uint32_t SENSE_DEBOUNCE_MS_HI = 3000UL;\n",
+      "value": 3000
+    },
+    {
+      "why": "zero",
+      "name": "DETECT_SCORE_MIN_LO",
+      "text": "constexpr uint8_t  DETECT_SCORE_MIN_LO   = 0;\n",
+      "value": 0
+    },
+    {
+      "why": "a constexpr split over two lines around a comment",
+      "name": "SPLIT_MS",
+      "text": "static constexpr uint32_t SPLIT_MS =\n    /* seeded */ 2500;\n",
+      "value": 2500
+    },
+    {
+      "why": "a block comment between the value and the semicolon",
+      "name": "HOLD_MS",
+      "text": "static constexpr uint32_t HOLD_MS = 2500 /* first\n   boot */;\n",
+      "value": 2500
+    },
+    {
+      "why": "a #define whose block comment runs onto the next line",
+      "name": "CS_RANGE_NEAR_CM",
+      "text": "#define CS_RANGE_NEAR_CM 120 /* cm,\n   a block comment that runs on */\n",
+      "value": 120
+    },
+    {
+      "why": "CRLF line endings",
+      "name": "LOST_MS",
+      "text": "static constexpr int SCORE_MIN = 70;\r\n#define LOST_MS 1500\r\n",
+      "value": 1500
+    },
+    {
+      "why": "2^53 - 1, the largest integer a browser holds exactly",
+      "name": "BIG_MS",
+      "text": "#define BIG_MS 9007199254740991\n",
+      "value": 9007199254740991
+    },
+    {
+      "why": "the name in a // comment above the live definition (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "text": "// SCORE_MIN = 99\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "the name in a /* */ block over three lines above it (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "text": "/*\nstatic constexpr int SCORE_MIN = 99;\n*/\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a longer name ending in it, defined first (kSCORE_MIN; the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int kSCORE_MIN = 99;\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a longer name starting with it, defined first (the = after the name bounded the old pattern too)",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int SCORE_MIN_X = 99;\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "the name inside a string literal (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* HINT = \"SCORE_MIN = 99\";\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a whole definition inside a string literal is not a definition",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* HINT = \"#define SCORE_MIN 99\";\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a string that splices a line with a backslash still hides a definition",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* HINT = \"a\\\n#define SCORE_MIN 99\";\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "an escaped quote and a // inside a string",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* Q = \"say \\\"SCORE_MIN = 99\\\" // no\";\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "comment markers in strings and a quote in a character literal",
+      "name": "SCORE_MIN",
+      "text": "#define OTA_URL \"https://example.invalid/manifest.json\"\n#define LOG_GLOB \"logs/*\"\nstatic constexpr char QUOTE = '\"';\nstatic constexpr int SCORE_MIN = 70;  // ends */ here\n",
+      "value": 70
+    },
+    {
+      "why": "a string holding a character past the Basic Multilingual Plane",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* NOTE = \"0\u2013100 \ud83d\udc24\";\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a raw string over three lines holding a definition is not one",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* HINT = R\"(\n#define SCORE_MIN 99\n)\";\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a raw string holding one quote hides the definition after it",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* HINT = R\"(a \"quote, then #define SCORE_MIN 99)\";\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a raw string runs to its own delimiter, past a `)\"` inside it",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* HINT = u8R\"x(a)\" #define SCORE_MIN 99 )x\";\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a backslash ending a // comment's line continues the comment",
+      "name": "SCORE_MIN",
+      "text": "// the old floor \\\n#define SCORE_MIN 99\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a backslash before CRLF continues a // comment",
+      "name": "SCORE_MIN",
+      "text": "// the old floor \\\r\n#define SCORE_MIN 99\r\nstatic constexpr int SCORE_MIN = 70;\r\n",
+      "value": 70
+    },
+    {
+      "why": "a backslash before CRLF continues a string",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* HINT = \"a\\\r\n#define SCORE_MIN 99\";\r\nstatic constexpr int SCORE_MIN = 70;\r\n",
+      "value": 70
+    },
+    {
+      "why": "a digit separator opens no character literal that runs into the comment after it",
+      "name": "SCORE_MIN",
+      "text": "static constexpr uint32_t BOOT_MS = 1'000; // it's #define SCORE_MIN 99\nstatic constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "a number with a digit separator, read as the number it is",
+      "name": "BOOT_MS",
+      "text": "static constexpr uint32_t WARM_MS = 0xFF'FF; // it's warm\nstatic constexpr uint32_t BOOT_MS = 1500;\n",
+      "value": 1500
+    },
+    {
+      "why": "a u8 character literal is a literal, not a number's digit separator",
+      "name": "SCORE_MIN",
+      "text": "static constexpr char SLASH = u8'/'; static constexpr int SCORE_MIN = 70;\n",
+      "value": 70
+    },
+    {
+      "why": "only a longer name ending in it",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int kSCORE_MIN = 5;\n",
+      "refused": "constant SCORE_MIN not found in {where}"
+    },
+    {
+      "why": "only longer names starting with it",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int SCORE_MIN_X = 5;\n#define SCORE_MIN_Y 6\n",
+      "refused": "constant SCORE_MIN not found in {where}"
+    },
+    {
+      "why": "only a commented-out definition",
+      "name": "WANTED",
+      "text": "// #define WANTED 5\n/* static constexpr int WANTED = 6; */\n",
+      "refused": "constant WANTED not found in {where}"
+    },
+    {
+      "why": "only a definition inside a raw string over three lines",
+      "name": "SCORE_MIN",
+      "text": "static constexpr const char* HINT = R\"(\nstatic constexpr int SCORE_MIN = 99;\n)\";\n",
+      "refused": "constant SCORE_MIN not found in {where}"
+    },
+    {
+      "why": "only a definition on the line a backslash adds to a // comment",
+      "name": "SCORE_MIN",
+      "text": "// the old floor \\\nstatic constexpr int SCORE_MIN = 99;\n",
+      "refused": "constant SCORE_MIN not found in {where}"
+    },
+    {
+      "why": "only a definition on the line a backslash with blanks after it adds to a // comment (GCC splices it)",
+      "name": "SCORE_MIN",
+      "text": "// the old floor \\  \nstatic constexpr int SCORE_MIN = 99;\n",
+      "refused": "constant SCORE_MIN not found in {where}"
+    },
+    {
+      "why": "only a definition in a // comment after a digit separator and an apostrophe",
+      "name": "SCORE_MIN",
+      "text": "static constexpr uint32_t BOOT_MS = 1'000; // it's #define SCORE_MIN 99\n",
+      "refused": "constant SCORE_MIN not found in {where}"
+    },
+    {
+      "why": "another constant",
+      "name": "WANTED",
+      "text": "#define OTHER 5\n#define WANTED_MS 5\n",
+      "refused": "constant WANTED not found in {where}"
+    },
+    {
+      "why": "a no-break space where C wants whitespace",
+      "name": "SCORE_MIN",
+      "text": "static constexpr\u00a0int SCORE_MIN = 70;\n",
+      "refused": "constant SCORE_MIN not found in {where}"
+    },
+    {
+      "why": "constexpr inside a longer word",
+      "name": "SCORE_MIN",
+      "text": "notconstexpr int SCORE_MIN = 70;\n",
+      "refused": "constant SCORE_MIN not found in {where}"
+    },
+    {
+      "why": "a function-like macro",
+      "name": "SCORE_MIN",
+      "text": "#define SCORE_MIN(x) 70\n",
+      "refused": "constant SCORE_MIN not found in {where}"
+    },
+    {
+      "why": "two definitions under #if/#else",
+      "name": "SCORE_MIN",
+      "text": "/* two rooms,\n   two scores */\n#if VARIANT\nstatic constexpr int SCORE_MIN = 50;\n#else\nstatic constexpr int SCORE_MIN = 70;\n#endif\n",
+      "refused": "constant SCORE_MIN is defined 2 times in {where} (lines 4, 6); which one compiles is the preprocessor's call, so refusing to pick one"
+    },
+    {
+      "why": "an #undef and a redefinition",
+      "name": "CS_CLEAR_TIMEOUT_MS",
+      "text": "#define CS_CLEAR_TIMEOUT_MS 1500\n#undef CS_CLEAR_TIMEOUT_MS\n#define CS_CLEAR_TIMEOUT_MS 2000\n",
+      "refused": "constant CS_CLEAR_TIMEOUT_MS is defined 2 times in {where} (lines 1, 3); which one compiles is the preprocessor's call, so refusing to pick one"
+    },
+    {
+      "why": "a #define and a constexpr of one name",
+      "name": "SCORE_MIN",
+      "text": "#define SCORE_MIN 70\nstatic constexpr int SCORE_MIN = 70;\n",
+      "refused": "constant SCORE_MIN is defined 2 times in {where} (lines 1, 2); which one compiles is the preprocessor's call, so refusing to pick one"
+    },
+    {
+      "why": "hexadecimal",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int SCORE_MIN = 0x10;\n",
+      "refused": "constant SCORE_MIN in {where} is `0x10`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "a leading zero is octal: 010 compiles as 8",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int SCORE_MIN = 010;\n",
+      "refused": "constant SCORE_MIN in {where} is `010`, not a plain integer literal (a leading 0 is octal in C and C++); refusing to read a number out of it"
+    },
+    {
+      "why": "a leading zero with a suffix",
+      "name": "CS_RANGE_NEAR_CM",
+      "text": "#define CS_RANGE_NEAR_CM 0100u\n",
+      "refused": "constant CS_RANGE_NEAR_CM in {where} is `0100u`, not a plain integer literal (a leading 0 is octal in C and C++); refusing to read a number out of it"
+    },
+    {
+      "why": "two zeros",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int SCORE_MIN = 00;\n",
+      "refused": "constant SCORE_MIN in {where} is `00`, not a plain integer literal (a leading 0 is octal in C and C++); refusing to read a number out of it"
+    },
+    {
+      "why": "a floating-point literal",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int SCORE_MIN = 5.0;\n",
+      "refused": "constant SCORE_MIN in {where} is `5.0`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "a negative number (unary minus on a literal)",
+      "name": "SCORE_MIN",
+      "text": "static constexpr int SCORE_MIN = -5;\n",
+      "refused": "constant SCORE_MIN in {where} is `-5`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "an expression (the old pattern read 3)",
+      "name": "LOST_TIMEOUT_MS",
+      "text": "static constexpr uint32_t LOST_TIMEOUT_MS = 3 * 500;\n",
+      "refused": "constant LOST_TIMEOUT_MS in {where} is `3 * 500`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "an expression in a #define",
+      "name": "WINDOW_MS",
+      "text": "#define WINDOW_MS 30u * 1000u\n",
+      "refused": "constant WINDOW_MS in {where} is `30u * 1000u`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "a parenthesized value",
+      "name": "CS_CLEAR_TIMEOUT_MS",
+      "text": "#define CS_CLEAR_TIMEOUT_MS (1500)\n",
+      "refused": "constant CS_CLEAR_TIMEOUT_MS in {where} is `(1500)`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "a #define continued onto the next line",
+      "name": "HELD_MS",
+      "text": "#define HELD_MS 1500 \\\n  + 10\n",
+      "refused": "constant HELD_MS in {where} is `1500 \\`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "a digit separator",
+      "name": "SCORE_MIN",
+      "text": "static constexpr uint32_t SCORE_MIN = 1'500;\n",
+      "refused": "constant SCORE_MIN in {where} is `1'500`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "a #define with no value",
+      "name": "WANTED",
+      "text": "#define WANTED   \n",
+      "refused": "constant WANTED in {where} is ``, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "a string literal, quoted as the file spells it",
+      "name": "OTA_PRODUCT",
+      "text": "#define OTA_PRODUCT \"securacv-canary-vision\"\n",
+      "refused": "constant OTA_PRODUCT in {where} is `\"securacv-canary-vision\"`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "2^53, past what a browser holds exactly",
+      "name": "BIG_MS",
+      "text": "#define BIG_MS 9007199254740992\n",
+      "refused": "constant BIG_MS in {where} is `9007199254740992`, past 2^53 - 1, which a browser cannot hold exactly; refusing to read it"
+    },
+    {
+      "why": "twenty digits",
+      "name": "BIG_MS",
+      "text": "static constexpr uint64_t BIG_MS = 99999999999999999999u;\n",
+      "refused": "constant BIG_MS in {where} is `99999999999999999999u`, past 2^53 - 1, which a browser cannot hold exactly; refusing to read it"
+    },
+    {
+      "why": "4301 digits, past the 4300 CPython converts to an int",
+      "name": "BIG_MS",
+      "text": "#define BIG_MS 11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\n",
+      "refused": "constant BIG_MS in {where} is `11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111`, past 2^53 - 1, which a browser cannot hold exactly; refusing to read it"
+    },
+    {
+      "why": "a dotted name",
+      "name": "SCORE.MIN",
+      "text": "static constexpr int SCORE_MIN = 70;\n",
+      "refused": "constant name `SCORE.MIN` is not a C identifier; refusing to look for it in {where}"
+    },
+    {
+      "why": "a name carrying a regex alternation",
+      "name": "SCORE_MIN|X",
+      "text": "static constexpr int SCORE_MIN = 70;\n",
+      "refused": "constant name `SCORE_MIN|X` is not a C identifier; refusing to look for it in {where}"
+    }
+  ],
+  "planted_in": "firmware/projects/canary-vision/include/canary/config.h",
+  "planted": [
+    {
+      "why": "a // comment naming it above everything (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "prepend": "// SCORE_MIN = 99\n"
+    },
+    {
+      "why": "a /* */ block over three lines naming it (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "prepend": "/*\n  SCORE_MIN = 99\n*/\n"
+    },
+    {
+      "why": "a second definition in another #if branch (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "prepend": "#if VISION_ALT_ROOM\nstatic constexpr int SCORE_MIN = 99;\n#endif\n",
+      "refused": "constant SCORE_MIN is defined 2 times in {where} (lines 2, "
+    },
+    {
+      "why": "kSCORE_MIN defined above it (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "prepend": "static constexpr int kSCORE_MIN = 99;\n"
+    },
+    {
+      "why": "SCORE_MIN_X defined above it (the = after the name bounded the old pattern too)",
+      "name": "SCORE_MIN",
+      "prepend": "static constexpr int SCORE_MIN_X = 99;\n"
+    },
+    {
+      "why": "a string holding `SCORE_MIN = 99` above it (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "prepend": "static constexpr const char* SCORE_HINT = \"SCORE_MIN = 99\";\n"
+    },
+    {
+      "why": "a raw string over three lines holding `SCORE_MIN = 99` above it (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "prepend": "static constexpr const char* SCORE_HINT = R\"(\nstatic constexpr int SCORE_MIN = 99;\n)\";\n"
+    },
+    {
+      "why": "a // comment a backslash continues onto `SCORE_MIN = 99` above it (the old pattern read 99)",
+      "name": "SCORE_MIN",
+      "prepend": "// the old floor, for the record \\\nstatic constexpr int SCORE_MIN = 99;\n"
+    },
+    {
+      "why": "the lost timeout spelled as an expression (the old pattern read 3)",
+      "name": "LOST_TIMEOUT_MS",
+      "respell": "3 * 500",
+      "refused": "constant LOST_TIMEOUT_MS in {where} is `3 * 500`, not a plain integer literal; refusing"
+    },
+    {
+      "why": "the score floor spelled 070, which compiles as 56 (the old pattern read 70)",
+      "name": "SCORE_MIN",
+      "respell": "070",
+      "refused": "constant SCORE_MIN in {where} is `070`, not a plain integer literal (a leading 0 is octal"
+    }
+  ]
+}

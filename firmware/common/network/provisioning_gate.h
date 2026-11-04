@@ -16,12 +16,15 @@
 //     and take_exact() a single compare-and-swap of the stamp its caller
 //     judged, so two tasks racing for the same tap (the httpd receipt handler
 //     and, on the WAP, the BLE OTA break-glass hook) cannot both be admitted;
-//   * on the WAP, the receipt's tap goes to ONE asker: tap_arbitrate() serves
-//     it only to the sole address that asked for the receipt without a
-//     credential from TAP_LOOKBACK_MS before the tap onward, and a second
-//     address in that window closes the tap (the WAP answers 409
-//     tap_contended). The flagship's receipt and page loads still take the
-//     tap for the first asker (the ledger's F354);
+//   * the tap goes to ONE asker, on both trees: tap_arbitrate() serves it
+//     only to the sole address that asked for it without a credential from
+//     TAP_LOOKBACK_MS before the tap onward, and a second address in that
+//     window closes the tap (both answer the receipt 409 tap_contended). On
+//     the WAP the asks are receipt fetches; on the flagship a home-LAN page
+//     load that would take the tap asks the same TapArbiter as its receipt
+//     fetches, so one tap is one asker across the page and the receipt, and
+//     a contended page load is served with the credential withheld (sweep
+//     F354);
 //   * the gate self-closes after ttl_ms even if nobody fetches the receipt;
 //   * a millis() of exactly 0 is stored as 1, because 0 means "closed";
 //   * unsigned subtraction (now - opened) ages a stamp correctly only while
@@ -44,12 +47,13 @@
 // provably arrived over the Canary's own Wi-Fi (request_on_softap below: the
 // device-unique AP password + max 1 client is that boundary), or an unspent
 // BOOT tap — which the page load then SPENDS (page_token_decide). On the
-// flagship, the one tree that serves a page by the tap, the tap is one
-// consumer across both paths: one page load or one receipt fetch, whichever
-// asks first (the ledger's F354). The WAP serves no page by the tap, and its
-// receipt's tap goes to one asker (tap_arbitrate() below). A page that got
-// the token already holds the bearer, so its "Save recovery kit" fetch
-// needs no second tap.
+// flagship, the one tree that serves a page by the tap, both paths ask one
+// TapArbiter: the tap goes to one asking address, whether its page load or
+// its receipt fetch takes it, and a second address asking in the window
+// closes it for both (tap_arbitrate() below, sweep F354). The WAP serves no
+// page by the tap, and its receipt's tap goes to one asker the same way. A
+// page that got the token already holds the bearer, so its "Save recovery
+// kit" fetch needs no second tap.
 //
 // And one question comes before all of that, on both paths: can the Host the
 // request targeted name this device (network/host_guard.h), or did it arrive
@@ -394,13 +398,15 @@ inline size_t peer_key_text(const uint8_t key[PEER_KEY_LEN], char* out, size_t c
   return n;
 }
 
-// ── The BOOT tap's one asker (the WAP's receipt; sweep F342) ───────────────
+// ── The BOOT tap's one asker (sweeps F342, F354) ───────────────────────────
 //
-// A tap identifies nobody: before this, the WAP handed it to whichever
-// request asked first, so any host on the network that polled
-// GET /api/provisioning-receipt won the owner's next tap and was handed the
-// token, the SoftAP password and the TLS pin (and /api/logs, readable by any
-// session, says when the tap lands). The WAP has no screen, so the one
+// A tap identifies nobody: before this, the WAP (sweep F342) and then the
+// flagship (sweep F354) handed it to whichever request asked first, so any
+// host on the network that polled GET /api/provisioning-receipt won the
+// owner's next tap and was handed the token, the SoftAP password and the TLS
+// pin (and the WAP's /api/logs, readable by any session, says when the tap
+// lands). On the flagship a home-LAN page load that would take the tap is an
+// ask too, so a poller that loaded GET / in a loop won it the same way. The WAP has no screen, so the one
 // signal it has is who else asks. tap_arbitrate() remembers the last two
 // DISTINCT addresses that asked for the receipt without a credential (the
 // caller asks it only for a request the bearer and the claim did not
@@ -427,14 +433,18 @@ inline size_t peer_key_text(const uint8_t key[PEER_KEY_LEN], char* out, size_t c
 // So "did any other address ask since lookback_ms before the tap?" is one
 // comparison against `prior`.
 //
-// The dashboard's sign-in and the companion's recovery-kit save poll from
-// before the tap, so the owner's client is on record when the tap lands: a
+// The WAP dashboard's sign-in, the companion's recovery-kit save and the
+// flagship dashboard's unlock banner poll from before the tap, so the
+// owner's client is on record when the tap lands: a
 // host that polls the route, that times the tap from the logs, or that
 // delays the owner's next poll gets CONTENDED, never the receipt. What it
 // cannot see: a tap no client of the owner's was asking for (an accidental
 // tap, a page or curl started after it, a bare re-tap after a 409) still
 // goes to the first asker, a poller included, which is why the WAP's 409
 // says to start the request first and keep it asking, then press BOOT;
+// a page that stopped asking is off the record, and a browser can freeze
+// a phone's page when its screen locks, which is why the flagship's banner
+// keeps asking from a hidden tab and says to keep a phone's screen on;
 // hosts behind one address are one asker; a host that keeps the one web
 // server busy for longer than the lookback before the tap can hide the
 // owner's earlier ask; and a host that asks at least once every
@@ -444,9 +454,11 @@ inline size_t peer_key_text(const uint8_t key[PEER_KEY_LEN], char* out, size_t c
 // The record ages on 32-bit millis() and is never swept: after a silence of
 // 2^32 ms (49.7 days) a stale entry's age wraps and can read as recent, which
 // can only make a tap CONTENDED (it fails closed), never serve one. ONE task
-// touches a TapArbiter (on the WAP, the httpd task's receipt handler), so it
-// takes no atomics; the gate's stamp it judges is read with peek() and then
-// taken with take_exact(), never re-read.
+// touches a TapArbiter (on the WAP, the httpd task's receipt handler; on the
+// flagship, its primary server's httpd task, which runs the receipt handler
+// and every page load that can reach the tap), so it takes no atomics; the
+// gate's stamp it judges is read with peek() and then taken with
+// take_exact(), never re-read.
 inline constexpr uint32_t TAP_LOOKBACK_MS = 10000;   // five of the dashboard's 2 s polls
 
 struct TapAsker {
@@ -558,16 +570,28 @@ inline bool request_on_softap(uint32_t peer, uint32_t local,
 // The 403 body the receipt route answers when neither a bearer nor an open
 // gate admits the caller. Built from the TTL constant so the advertised
 // window and the gate's real window cannot drift apart. Returns false when
-// `cap` cannot hold the whole body — the handler then answers 500 rather
-// than shipping truncated JSON (a future field must never silently break
-// the contract the iOS app parses).
+// `cap` cannot hold the whole body (GATE_REFUSAL_JSON_CAP always can) — the
+// handler then answers 500 rather than shipping truncated JSON (a future
+// field must never silently break the contract the iOS app parses).
+//
+// The words give the order the arbiter protects (tap_arbitrate() above):
+// the client asks first and the press comes second. A tap no client of the
+// owner's is already asking for goes to the first asker, so the old "short
+// tap, then poll within 30 seconds" led a curl user or an app into the one
+// case the arbiter cannot protect (sweep F354; the WAP's own literal changed
+// in sweep F342's second review). The body is the WAP's byte for byte at the
+// same TTL (test_provisioning_gate.cpp reads its handler), so the apps read
+// both trees' 403 with one parser; the fields are the old ones (the
+// dashboards and the Vision SPA read gate_ttl_seconds).
+inline constexpr size_t GATE_REFUSAL_JSON_CAP = 320;
+
 inline bool build_gate_refusal_json(char* out, size_t cap, uint32_t ttl_ms) {
   if (!out || cap == 0) return false;
   const unsigned long ttl_s = (unsigned long)(ttl_ms / 1000u);
   const int n = snprintf(out, cap,
       "{\"error\":\"physical_confirmation_required\","
-      "\"hint\":\"Press the BOOT button on the device to reveal the provisioning receipt.\","
-      "\"button\":\"BOOT (short tap, then poll within %lu seconds)\","
+      "\"hint\":\"Start asking for the receipt first, then short-tap BOOT on the device: the tap goes to the one address asking.\","
+      "\"button\":\"BOOT (ask first, then a short tap; the tap is held %lu seconds)\","
       "\"gate_ttl_seconds\":%lu}",
       ttl_s, ttl_s);
   if (n < 0 || (size_t)n >= cap) {

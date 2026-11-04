@@ -26,8 +26,10 @@
  *     glued line, an over-long line) is refused, and every line parse()
  *     refuses for a string holding a byte no writer puts in a name (a state
  *     of `occ\`, one holding 0x01: sweep F264, which inject's sanitizer
- *     would have let into the ring as `occ\` and `oc?c`); the rest land
- *     newest-first;
+ *     would have let into the ring as `occ\` and `oc?c`), or for a quote a
+ *     chokepoint before sweep F301 let into a label (a state of `ac"tive`,
+ *     which loaded cut to `ac`, and one that spells a second `"motion":`,
+ *     which loaded the forged score); the rest land newest-first;
  *   - a last line without its '\n' still loads when whole;
  *   - the load writes nothing to the card and fires no commit hook;
  *   - it runs once per boot.
@@ -164,6 +166,8 @@ int main() {
   bad.push_back(std::string(700, 'x') + "\n");           // longer than any record
   bad.push_back(line_with_state(B + 101504, "occ\\"));      // a backslash (F264)
   bad.push_back(line_with_state(B + 101505, std::string("oc\x01" "c")));  // a control byte
+  bad.push_back(line_with_state(B + 101506, "ac\"tive"));   // a quote a pre-F301 chokepoint kept
+  bad.push_back(line_with_state(B + 101507, "x\",\"motion\":99,\"y\":\""));  // and a forged key (F301)
   for (const std::string& b : bad) {
     starts.push_back({log.size(), false});
     log += b;
@@ -249,6 +253,8 @@ int main() {
         "a torn line glued to the next is not in the ring");
   CHECK(!csi_event_find(B + 101504, &probe) && !csi_event_find(B + 101505, &probe),
         "a line whose state holds a backslash or a control byte is not in the ring (F264)");
+  CHECK(!csi_event_find(B + 101506, &probe) && !csi_event_find(B + 101507, &probe),
+        "a line whose state a quote cut short, or that holds a key twice, is not in the ring (F301)");
   CHECK(!csi_event_find(B + 100000, &probe), "a line before the tail window is not read");
   CHECK(csi_event_find(B + 100999, &probe) && strcmp(probe.values.state_name, "active") == 0
         && probe.values.motion_score == 50 && probe.first_seen_ms == 0,

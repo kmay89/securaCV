@@ -903,6 +903,20 @@ def camera_slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "_", str(name).translate(_ASCII_DOWNCASE))[:64]
 
 
+_ZONE_ID_RE = re.compile(r"zone:[a-z0-9_-]{1,64}")
+
+
+def zone_slug(name: str) -> str:
+    """The zone rule (the part after `zone:`): A–Z lowercased (ASCII only),
+    then every code point outside [a-z0-9_-] becomes "_", then cut to 64 code
+    points. `İstanbul` → `_stanbul` (one code point, one "_"), an emoji → one
+    "_". The REFERENCE for the go2rtc rows below, for discover_cameras.sh
+    (held to those rows by tests/test_serve_wizard.py) and for the wizard
+    page's zoneSlug() (held to this function by
+    tests/test_wizard_setup_flow.test.js, sweep HA39). May be empty."""
+    return re.sub(r"[^a-z0-9_-]", "_", str(name).translate(_ASCII_DOWNCASE))[:64]
+
+
 def _go2rtc_streams_to_cameras(streams) -> list:
     """Transform a go2rtc /api/streams payload into wizard camera rows.
 
@@ -936,7 +950,7 @@ def _go2rtc_streams_to_cameras(streams) -> list:
                 urls.append(url)
         if not urls:
             continue
-        slug = re.sub(r"[^a-z0-9_-]", "_", str(name).translate(_ASCII_DOWNCASE))[:64]
+        slug = zone_slug(name)
         if not slug:
             continue
         chosen = next((u for u in urls if u.startswith("rtsp://")), urls[0])
@@ -1414,11 +1428,34 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 }
                 options["cameras"] = []
             else:
+                # A camera saved with no zone_id takes the one already stored
+                # for a camera of that name (a stored id is never rewritten:
+                # the sealed log's events and the entities keyed on it stay
+                # attached), else the zone rule of its name (zone_slug, the
+                # page's zoneSlug; before HA39 the raw name, which run.sh
+                # refuses whenever it holds a space or a capital).
+                stored_zones: dict = {}
+                for stored in current.get("cameras") if isinstance(current.get("cameras"), list) else []:
+                    if not isinstance(stored, dict):
+                        continue
+                    zone = stored.get("zone_id")
+                    if (isinstance(zone, str) and _ZONE_ID_RE.fullmatch(zone)
+                            and str(stored.get("name", "")) not in stored_zones):
+                        stored_zones[str(stored.get("name", ""))] = zone
+
+                def _zone_for(i: int, c: dict) -> str:
+                    if c.get("zone_id"):
+                        return c["zone_id"]
+                    name = str(c.get("name", f"camera_{i}"))
+                    if name in stored_zones:
+                        return stored_zones[name]
+                    return f"zone:{zone_slug(name) or zone_slug(f'camera_{i}')}"
+
                 options["cameras"] = [
                     {
                         "name": c.get("name", f"camera_{i}"),
                         "url": c.get("url", ""),
-                        "zone_id": c.get("zone_id", f"zone:{c.get('name', f'camera_{i}')}"),
+                        "zone_id": _zone_for(i, c),
                         "fps": int(c.get("fps", 10)),
                         "width": int(c.get("width", 1280)),
                         "height": int(c.get("height", 720)),

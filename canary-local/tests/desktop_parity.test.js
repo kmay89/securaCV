@@ -21,10 +21,10 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { spawnSync } = require("node:child_process");
-const { join } = require("node:path");
+const { dirname, join, relative, resolve, sep } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const vm = require("node:vm");
 
@@ -4495,6 +4495,12 @@ const A86_DESCRIPTORS = [
   ["canary", "securacv-canary"],
   ["canary-wroom", "securacv-canary-wroom"],
   ["something_else", null],
+  // A name that carries no catalog stem is no SecuraCV build, "display" in it
+  // or not: a vendor's own demo stays unrecognized, as the plain matcher
+  // leaves it, so no surface calls it a SecuraCV display.
+  ["esp32_display_demo", null],
+  ["lilygo-t-display-s3", null],
+  ["display", null],
   ["", null],
 ];
 
@@ -4508,7 +4514,7 @@ test("A86: both flashers resolve a board's descriptor to its product, a flavorle
     assert.strictEqual(got ? got.id : null, want, `flash-core productForProject(${JSON.stringify(name)})`);
     const d = desk(catalog, name);
     assert.strictEqual(d ? d.id : null, want, `the Flasher's productForProject(${JSON.stringify(name)})`);
-    if (core.looksLikeDisplayProject(name)) {
+    if (core.looksLikeDisplayProject(name) && core.matchProjectToProduct(catalog, name)) {
       assert.strictEqual(got.role, "display", `${name} is a display build, so it resolves to a display`);
     }
   }
@@ -4562,6 +4568,460 @@ test("A86: the browser flasher's monitor offers the flashed or the identified bo
   // The identity ask (j) goes only to a firmware that answers it.
   assert.match(phase, /if \(opts\.proveIdentity && !mon\.askedManifest && core\.requiresLiveReceipt\(monProduct\)\) \{/,
     "the browser must not ask a WAP, a Sense or a display for a j it does not have");
+});
+
+// ── A96 / A97: one resolution behind every surface, in both flashers ─────────
+// A86 gave both flashers a display-aware resolver (productForProject), and
+// the role line and the monitor used it, but the readout, the customs read,
+// the voice bench, the update headline, the install verdicts, the rescue
+// pick and the smart pick still asked the plain substring matcher, which
+// answers the flagship's "canary" for a display build whose name carries no
+// flavor ("canary_display"). Each now resolves through productForProject,
+// and the self-check ask is offered only where that product's firmware
+// prints a self-check (its catalog serial_receipt). The harnesses run each
+// flasher's own functions over stand-ins for the DOM, the board and the
+// backend.
+
+// flash.js's el() and document, as stand-ins: a node keeps its tag, class,
+// text, children and click handler.
+const stubEl = (tag, cls, text) => {
+  const n = { tag, cls: cls || "", text: text || "", kids: [], click: null };
+  n.append = (...k) => { n.kids.push(...k); };
+  n.addEventListener = (ev, fn) => { if (ev === "click") n.click = fn; };
+  return n;
+};
+const stubDoc = { createTextNode: (t) => ({ tag: "#text", text: t, kids: [] }) };
+const stubText = (n) => (n == null ? "" : typeof n === "string" ? n :
+  [n.text || "", ...(n.kids || []).map(stubText)].join(""));
+const stubNodes = (n) => (n && typeof n === "object" ? [n, ...(n.kids || []).flatMap(stubNodes)] : []);
+
+// desktop/src/app.js's document, as a stand-in.
+const deskNode = (tag) => ({
+  tagName: tag, className: "", textContent: "", type: "", title: "", children: [], listeners: {},
+  classList: { on: new Set(), add(c) { this.on.add(c); }, remove(c) { this.on.delete(c); },
+               toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); } },
+  appendChild(n) { this.children.push(n); return n; }, append(...k) { this.children.push(...k); },
+  addEventListener(t, f) { this.listeners[t] = f; }, set innerHTML(_) { this.children = []; },
+});
+
+// The boot-log pointer, one sentence in both flashers. Neither monitor
+// reboots a board that is already talking (the desktop's Start attaches as a
+// pure observer, the browser's voice hands its port over as it is), so the
+// pointer says to tap RESET rather than promising a boot log on open.
+const SELF_CHECK_NONE = "This firmware prints no self-check; open the serial monitor and tap the board’s " +
+  "RESET button to read its boot log.";
+const MB = 1024 * 1024;
+const productNamed = (name) => (catalog.products.find((p) => p.name === name) || {}).id || null;
+
+// The browser's connected card for one board, from flash.js's own functions.
+// `current` is what readCurrentFirmware leaves in state.current, and
+// `ptRead` whether its partition sector came off the chip at all ("failed"
+// for a board whose read threw, "ok" for everything else, a blank included).
+function browserCard(flashJs, core, current, { chip = "ESP32-S3", flashBytes = 8 * MB, ptRead = "ok" } = {}) {
+  const state = { catalog, current, chip, flashBytes, ptRead };
+  const src = (...names) => names.map((n) => fnSource(flashJs, n)).join("\n");
+  const role = new Function("state", "core", "el", "setPhase", "phaseDisplayBench", "phaseConnected",
+    `${src("renderRoleLine")}\nreturn renderRoleLine();`)(state, core, stubEl, () => {}, () => null, () => null);
+  const roleText = role ? stubText(role) : "";
+  const shown = /It looks like the (.+?)\./.exec(roleText) || /^🧭 A (.+?) — it /.exec(roleText);
+  const opened = [];
+  const feel = new Function("state", "core", "el", "document", "openMonitor",
+    `${src("boardProduct", "renderLiveStoryAsk")}\nreturn renderLiveStoryAsk();`)(
+    state, core, stubEl, stubDoc, (opts) => opened.push(opts));
+  const ask = stubNodes(feel).find((n) => n.tag === "button") || null;
+  if (ask) ask.click();
+  const verdictFor = new Function("state", "core", `${src("boardProduct", "installVerdictFor")}\nreturn installVerdictFor;`)(
+    state, core);
+  const named = current && !current.unknown ? current.projectName : null;
+  return {
+    role: role ? productNamed(shown && shown[1]) : null,
+    roleText,
+    ask: !!ask,
+    askOpens: opened,
+    askNone: stubText(feel).includes(SELF_CHECK_NONE),
+    verdict: (product, version) => {
+      const v = verdictFor(product, version);
+      return { kind: v.kind, label: v.label };
+    },
+    rescue: core.pickRescueProduct(catalog, chip, current && current.projectName),
+    pick: core.smartPick(catalog, { chip, flashBytes, currentProject: named }),
+  };
+}
+
+// The desktop's passport for one board, from app.js's own functions: what
+// board_passport answered (or threw), then the card, the verdicts and the pick.
+async function desktopCard(appJs, answer, { chip = "ESP32-S3", flashBytes = 8 * MB } = {}) {
+  const src = (...names) => names.map((n) => fnSource(appJs, n)).join("\n");
+  const state = { catalog, port: "/dev/ttyACM0", chip, flashBytes, mac: null, heldBoot: undefined };
+  await new Function("state", "invoke", "renderPassport", "renderProducts", "setTimeout", "clearTimeout",
+    `${src("matchProjectToProduct", "productForProject")}\nasync ${src("readPassport")}\nreturn readPassport;`)(
+    state, async () => { if (answer instanceof Error) throw answer; return answer; },
+    () => {}, () => {}, () => 0, () => {})(state.port);
+  const box = deskNode("div");
+  const askSelfCheck = () => {};
+  new Function("$", "document", "state", "ARDUINO_READBACK_NOTE", "shippedWith", "coldBootVerdict",
+    "requiresLiveReceipt", "askSelfCheck", "bookAll", "passportRows",
+    `${src("renderPassport")}\nreturn renderPassport;`)(
+    (id) => (id === "passport" ? box : null), { createElement: deskNode }, state, "(the Arduino note)",
+    () => null, () => null, (p) => !p || p.serial_receipt !== false, askSelfCheck, () => ({}), () => [])();
+  const head = box.children.find((n) => n.className === "pp-head");
+  const r = state.resident;
+  const who = r && !r.blank && !r.unknown && head
+    ? head.textContent.replace(/^Running /, "").replace(/ \d[\w.-]*( from \S+)?$/, "") : null;
+  const ask = box.children.find((n) => String(n.className).split(" ").includes("pp-ask")) || null;
+  const none = box.children.find((n) => n.className === "pp-noask") || null;
+  const usb = /^const USB_INSTALL_STARTS_OVER =\n((?:  "[^"\n]*"(?: \+|;)\n)+)/m.exec(appJs)[0];
+  const markup = new Function("state", `${usb}\n${src("compareVersions", "installVerdict", "esc", "verdictMarkup")}\nreturn verdictMarkup;`)(state);
+  const normChipLine = /^const normChip = .*$/m.exec(appJs)[0];
+  const smartPick = new Function(`${normChipLine}\n${src("orList", "boardShortlist", "matchProjectToProduct", "productForProject", "smartPick")}\nreturn smartPick;`)();
+  return {
+    resident: r,
+    head: head ? head.textContent : "",
+    role: who ? productNamed(who) : null,
+    ask: !!ask && ask.listeners.click === askSelfCheck,
+    askNone: !!none && none.textContent === SELF_CHECK_NONE,
+    verdict: (product, version) => {
+      const html = markup(product, version);
+      const m = /p-verdict is-([a-z]+)"><span class="p-verdict-label">(.*?)<\/span>/.exec(html);
+      if (!m) return null;
+      // One pass, the exact inverse of app.js's esc(): decoding &amp; first
+      // would turn an escaped "&lt;" (written "&amp;lt;") into "<".
+      const label = m[2].replace(/&(amp|lt|gt|quot);/g, (_, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"' })[e]);
+      return { kind: m[1], label: label.replace(/^\S+ /, "") };
+    },
+    pick: smartPick(catalog, { chip, flashBytes, currentProject: r && !r.unknown && !r.blank ? r.projectName : null }),
+  };
+}
+
+const FLAVORLESS_DISPLAYS = ["canary_display", "canary-display"];
+
+test("A96: every surface resolves a flavorless display build to a display, never the flagship, in both flashers", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const flagship = catalog.products.find((p) => p.id === "securacv-canary");
+  const watch = catalog.products.find((p) => p.id === "securacv-canary-display-watch");
+  const isDisplay = (p, where) => {
+    assert.ok(p, `${where}: resolved no product`);
+    assert.notStrictEqual(p.id, flagship.id, `${where}: resolved the flagship's "canary" stem`);
+    assert.strictEqual(p.role, "display", `${where}: resolved ${p.id}, not a display`);
+  };
+  const manifest = { schema: core.MANIFEST_SCHEMA, fw_train: "2.4.19", products: Object.fromEntries(
+    catalog.products.map((p) => [p.id, { version: "2.4.19", chipFamily: p.chip, factory: "x.bin", sha256: "0".repeat(64), size: 1 }])) };
+  for (const name of FLAVORLESS_DISPLAYS) {
+    // The browser. readCurrentFirmware: the readout's product name.
+    const state = { catalog, session: { esploader: {} } };
+    const readStub = { ...core,
+      parsePartitionTable: () => ({ entries: [{ type: 0, subtype: 0x10, offset: 0x10000, size: 0x100000 }],
+                                    apps: [{ type: 0, subtype: 0x10, offset: 0x10000, size: 0x100000 }] }),
+      isOtaDataPart: () => false, pickBootedAppPartition: (apps) => apps[0],
+      parseAppDescriptor: () => ({ version: "2.4.10", projectName: name, idfVer: "v4.4.7" }) };
+    await new Function("state", "core", "readFlashChunked", `${fnSource(flashJs, "readCurrentFirmware").replace(/^/, "async ")}\nreturn readCurrentFirmware;`)(
+      state, readStub, async (_l, _o, n) => new Uint8Array(n))();
+    assert.strictEqual(state.current.projectName, name);
+    isDisplay(catalog.products.find((p) => p.name === state.current.productName), `the browser readout for ${name}`);
+
+    // runIntake: the product the customs read is handed.
+    let shippedArgs = null;
+    const intakeSpy = { ...intake, shippedWith: (a) => { shippedArgs = a; return intake.shippedWith(a); } };
+    await new Function("state", "core", "intake", "readFlashChunked", `${"async " + fnSource(flashJs, "runIntake")}\nreturn runIntake;`)(
+      { catalog, session: { esploader: { chip: {} } }, current: { version: "2.4.10", projectName: name },
+        mac: null, roster: [], heldBoot: null, ptRead: "ok", pt: { entries: [], apps: [] }, flashBytes: null },
+      core, intakeSpy, async () => new Uint8Array(0))();
+    isDisplay(shippedArgs && shippedArgs.product, `the browser's customs read for ${name}`);
+
+    // The connected card: the update headline names the display's release.
+    const banner = stubEl("div");
+    Object.defineProperty(banner, "innerHTML", { set() { banner.kids = []; } });
+    new Function("$", "el", "state", "core", "document", "activeManifestUrl",
+      `${["boardProduct", "installVerdictFor", "refreshManifestState"].map((n) => fnSource(flashJs, n)).join("\n")}\nreturn refreshManifestState;`)(
+      () => banner, stubEl, { catalog, manifest, chip: "ESP32-S3", current: { version: "2.4.10", projectName: name } },
+      core, { querySelectorAll: () => [] }, () => "")();
+    const headline = stubText(banner);
+    assert.ok(headline.includes(`${watch.name} 2.4.10 → 2.4.19`), `the browser's update headline for ${name}: ${headline}`);
+    assert.ok(!headline.includes(`— ${flagship.name} 2.4.10`), `the browser's update headline for ${name} names the flagship`);
+
+    // The install verdicts, the rescue pick and the smart pick.
+    const card = browserCard(flashJs, core, { version: "2.4.10", projectName: name });
+    assert.deepStrictEqual(card.verdict(watch, "2.4.19"), { kind: "update", label: "Update · 2.4.10 → 2.4.19" },
+      `the browser verdict on the ${watch.name} card for ${name}`);
+    assert.deepStrictEqual(card.verdict(flagship, "2.4.19"), { kind: "switch", label: `Switch from ${watch.name}` },
+      `the browser verdict on the flagship card for ${name}`);
+    isDisplay(card.rescue, `the browser's rescue pick for ${name}`);
+    assert.strictEqual(card.pick.kind, "current", `the browser's smart pick for ${name}`);
+    isDisplay(card.pick.product, `the browser's smart pick for ${name}`);
+    isDisplay(core.pickRescueProduct(catalog, "ESP32-S3", name), `flash-core pickRescueProduct(${name})`);
+    isDisplay(core.smartPick(catalog, { chip: "ESP32-S3", currentProject: name }).product, `flash-core smartPick(${name})`);
+
+    // The desktop: the passport's resident product, its head, its verdicts
+    // and the smart pick.
+    const desk = await desktopCard(appJs, { resident: { version: "2.4.10", projectName: name, slot: "ota_0" } });
+    isDisplay(desk.resident.product, `the desktop passport's resident product for ${name}`);
+    assert.strictEqual(desk.head, `Running ${watch.name} 2.4.10 from ota_0`, `the desktop passport head for ${name}`);
+    assert.deepStrictEqual(desk.verdict(watch, "2.4.19"), { kind: "update", label: "Update · 2.4.10 → 2.4.19" },
+      `the desktop verdict on the ${watch.name} card for ${name}`);
+    assert.deepStrictEqual(desk.verdict(flagship, "2.4.19"), { kind: "switch", label: `Switch from ${watch.name}` },
+      `the desktop verdict on the flagship card for ${name}`);
+    assert.strictEqual(desk.pick.kind, "current", `the desktop's smart pick for ${name}`);
+    isDisplay(desk.pick.product, `the desktop's smart pick for ${name}`);
+  }
+  // The voice card's bench buttons resolve the same way (a Sense gets the
+  // radar bench, a WAP the field bench), and no caller in either flasher
+  // asks the plain matcher for the board's product any more: the browser's
+  // last one is the role line's `exact`, which tells a stamped flavor from
+  // the family guess and is never the answer on its own.
+  assert.match(fnSource(flashJs, "phaseConnected"), /const curProd = boardProduct\(\);\s*const curRole = curProd && core\.productRole\(curProd\.id\);/);
+  assert.deepStrictEqual([...flashJs.matchAll(/core\.matchProjectToProduct\(/g)].length, 1,
+    "flash.js asks the plain matcher outside the role line's flavor test");
+  assert.match(fnSource(flashJs, "renderRoleLine"), /const exact = core\.matchProjectToProduct\(state\.catalog, cur\.projectName\);/);
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const calls = (src) => [...src.matchAll(/(?<!function )\bmatchProjectToProduct\(/g)].length;
+  assert.strictEqual(calls(flashCore), 1, "flash-core.js asks the plain matcher outside productForProject");
+  assert.match(fnSource(flashCore, "productForProject"), /const match = matchProjectToProduct\(catalog, projectName\);/);
+  assert.strictEqual(calls(appJs), 1, "desktop/src/app.js asks the plain matcher outside productForProject");
+  assert.match(fnSource(appJs, "productForProject"), /const match = matchProjectToProduct\(catalog, projectName\);/);
+});
+
+test("A96: productForProject answers what the plain matcher did for every name but a flavorless display build, in both flashers", async () => {
+  // The no-op half, as a generated table rather than a sample: every
+  // descriptor name the catalog implies (each product's stem as a release
+  // stamps it, its underscore and upper-case spellings, a dev suffix, its id,
+  // each displays[] id), the flavorless display names and some foreign
+  // images. For each, both flashers' resolvers agree with each other, and
+  // they move a name off the plain matcher's answer only when that answer is
+  // a non-display product and the name says "display" — which is exactly
+  // the flavorless display build, and it moves to a display. The customs
+  // read counts the exact stem only, so its finding is the same either way.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const desk = new Function([fnSource(appJs, "matchProjectToProduct"), fnSource(appJs, "productForProject")].join("\n") +
+    "\nreturn { matchProjectToProduct, productForProject };")();
+  const names = new Set(["canary_display", "canary-display", "CANARY_DISPLAY", "canary-display-dev",
+    "canary-display-future9", "esp32_display_demo", "lilygo-t-display-s3", "display", "arduino-lib-builder",
+    "my-canary-demo", "micropython", "esp32-hello", "", "canary"]);
+  for (const p of catalog.products) {
+    for (const n of [p.asset_stem, p.asset_stem.replace(/-/g, "_"), p.asset_stem.toUpperCase(), `${p.asset_stem}-dev`, p.id]) names.add(n);
+  }
+  for (const d of core.displaysIn(catalog)) names.add(d.id);
+  const id = (p) => (p ? p.id : null);
+  const moved = [];
+  let kept = 0;
+  for (const name of names) {
+    const match = core.matchProjectToProduct(catalog, name);
+    const resolved = core.productForProject(catalog, name);
+    assert.strictEqual(id(desk.matchProjectToProduct(catalog, name)), id(match), `the plain matchers disagree on ${JSON.stringify(name)}`);
+    assert.strictEqual(id(desk.productForProject(catalog, name)), id(resolved), `the resolvers disagree on ${JSON.stringify(name)}`);
+    const flavorless = !!match && match.role !== "display" && core.looksLikeDisplayProject(name);
+    if (!flavorless) {
+      assert.strictEqual(id(resolved), id(match), `productForProject moved ${JSON.stringify(name)} off ${id(match)}`);
+      kept++;
+    } else {
+      assert.strictEqual(resolved && resolved.role, "display", `${JSON.stringify(name)} says display and must resolve to one`);
+      moved.push(name);
+    }
+    assert.deepStrictEqual(intake.shippedWith({ projectName: name, product: resolved }),
+      intake.shippedWith({ projectName: name, product: match }), `the customs finding moved for ${JSON.stringify(name)}`);
+  }
+  // Every catalog stem kept its own product: no existing pick moved.
+  for (const p of catalog.products) assert.strictEqual(id(core.productForProject(catalog, p.asset_stem)), p.id, p.asset_stem);
+  assert.deepStrictEqual(moved.sort(), ["CANARY_DISPLAY", "canary-display", "canary-display-dev", "canary-display-future9", "canary_display"],
+    "only a display build whose name names no catalog display moves");
+  assert.ok(kept >= catalog.products.length * 5, `${kept} names kept their answer`);
+});
+
+test("A97: the self-check ask is offered only where the firmware prints one, in both flashers", async () => {
+  // serial_receipt is gen_flash.py's reading of each product's firmware:
+  // false where the sources wire no self-manifest to `j`. The WAP, the Sense
+  // and every display print none, so neither flasher promises their score;
+  // the flagship and the Vision answer `j`, so both offer the ask.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const offers = { yes: [], no: [] };
+  for (const p of catalog.products) {
+    const current = { version: "2.4.10", projectName: p.asset_stem };
+    const browser = browserCard(flashJs, core, current, { chip: p.chip, flashBytes: p.flash_mb * MB });
+    const desk = await desktopCard(appJs, { resident: { ...current, slot: "ota_0" } }, { chip: p.chip, flashBytes: p.flash_mb * MB });
+    const prints = p.serial_receipt !== false;
+    assert.strictEqual(browser.ask, prints, `the browser's "ask the board itself" for ${p.id} (serial_receipt ${p.serial_receipt})`);
+    assert.strictEqual(desk.ask, prints, `the desktop's "Ask it for its self-check" for ${p.id} (serial_receipt ${p.serial_receipt})`);
+    assert.strictEqual(browser.askNone, !prints, `the browser's boot-log pointer for ${p.id}`);
+    assert.strictEqual(desk.askNone, !prints, `the desktop's boot-log pointer for ${p.id}`);
+    if (prints) assert.deepStrictEqual(browser.askOpens, [{ proveIdentity: true }], `${p.id}: the browser's ask opens the monitor to ask j`);
+    (prints ? offers.yes : offers.no).push(p.role);
+  }
+  // The roles the item names, on each side of the line.
+  for (const role of ["wap", "sense", "display"]) {
+    assert.ok(offers.no.includes(role) && !offers.yes.includes(role), `a ${role} must offer no self-check ask`);
+  }
+  for (const role of ["canary", "vision"]) {
+    assert.ok(offers.yes.includes(role) && !offers.no.includes(role), `a ${role} must offer the self-check ask`);
+  }
+  // A flavorless display build is a display here too (A96's resolution).
+  for (const name of FLAVORLESS_DISPLAYS) {
+    const browser = browserCard(flashJs, core, { version: "2.4.10", projectName: name });
+    const desk = await desktopCard(appJs, { resident: { version: "2.4.10", projectName: name, slot: "ota_0" } });
+    assert.ok(!browser.ask && browser.askNone, `the browser asked a ${name} board for a self-check it never prints`);
+    assert.ok(!desk.ask && desk.askNone, `the desktop asked a ${name} board for a self-check it never prints`);
+  }
+  // A readable firmware the catalog does not name is still asked on both
+  // sides, as core.requiresLiveReceipt(null) and both monitors' identity
+  // asks fail closed: every SecuraCV release up to 2.4.17 names the Arduino
+  // core, not its product, and the flagship and the Vision among them answer
+  // `j`. A blank or an unread board has nothing to ask, nor to point at.
+  assert.strictEqual(core.requiresLiveReceipt(null), true, "an unnamed firmware is asked, not exempted");
+  for (const [what, current, answer, asked, ptRead] of [
+    ["foreign firmware", { version: "1.0", projectName: "esp32-hello" }, { resident: { version: "1.0", projectName: "esp32-hello", slot: "factory" } }, true, "ok"],
+    ["an Arduino-core descriptor", { version: "esp-idf: v4.4.7", projectName: "arduino-lib-builder" },
+      { resident: { version: "esp-idf: v4.4.7", projectName: "arduino-lib-builder", slot: "ota_0" } }, true, "ok"],
+    ["a blank board", { unknown: true }, { blank: true }, false, "ok"],
+    ["an unread board", { unknown: true }, new Error("read failed"), false, "failed"],
+  ]) {
+    const browser = browserCard(flashJs, core, current, { ptRead });
+    const desk = await desktopCard(appJs, answer);
+    assert.strictEqual(browser.ask, asked, `the browser's "ask the board itself" for ${what}`);
+    assert.strictEqual(desk.ask, asked, `the desktop's "Ask it for its self-check" for ${what}`);
+    assert.ok(!browser.askNone && !desk.askNone, `${what} was pointed at a boot log as if the catalog said it prints no self-check`);
+    if (asked) assert.deepStrictEqual(browser.askOpens, [{ proveIdentity: true }], `${what}: the browser's ask opens the monitor to ask j`);
+  }
+  // The browser's card draws it where the cold counters are, from this one function.
+  assert.match(fnSource(flashJs, "phaseConnected"), /const feel = renderLiveStoryAsk\(\);\s*if \(feel\) hello\.append\(feel\);/);
+});
+
+test("A97: the browser's live voice asks a board for its self-manifest only where its firmware prints one", async () => {
+  // The connect page's voice (and the done card's first-boot listener) used
+  // to write `j` twice to every board it booted, so a WAP, a Sense console
+  // or a display answered "unknown command" twice into the console the user
+  // was reading. startVoice now takes the product whose firmware is talking
+  // and asks only where core.requiresLiveReceipt says it prints a self-check
+  // (failing closed on an unnamed firmware, as the monitors do). The harness
+  // runs flash.js's own startVoice over a stand-in port and fires its timers.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const voiceWrites = async (product) => {
+    const writes = [];
+    const timers = [];
+    const port = {
+      open: async () => {},
+      close: async () => {},
+      readable: { getReader: () => ({ read: () => new Promise(() => {}), cancel: async () => {}, releaseLock() {} }) },
+      writable: { getWriter: () => ({ write: (b) => { writes.push(new TextDecoder().decode(b)); return Promise.resolve(); },
+                                      releaseLock() {} }) },
+    };
+    const state = { catalog, voice: null,
+      session: { port, esploader: { after: async () => {} }, transport: { disconnect: async () => {} } } };
+    const startVoice = new Function("state", "core", "setTimeout", `async ${fnSource(flashJs, "startVoice")}\nreturn startVoice;`)(
+      state, core, (fn, ms) => { timers.push([ms, fn]); return timers.length; });
+    await startVoice({ textContent: "", scrollTop: 0, scrollHeight: 0 }, null, null, product);
+    assert.ok(state.voice && state.voice.writer, "the stand-in voice opened");
+    for (const [, fn] of timers.sort((a, b) => a[0] - b[0])) fn();
+    return writes;
+  };
+  const asked = { yes: [], no: [] };
+  for (const p of catalog.products) {
+    const writes = await voiceWrites(p);
+    const prints = p.serial_receipt !== false;
+    assert.deepStrictEqual(writes, prints ? ["j\n", "j\n"] : [],
+      `the live voice for ${p.id} (serial_receipt ${p.serial_receipt}) wrote ${JSON.stringify(writes)}`);
+    (prints ? asked.yes : asked.no).push(p.role);
+  }
+  for (const role of ["wap", "sense", "display"]) {
+    assert.ok(asked.no.includes(role) && !asked.yes.includes(role), `the live voice asked a ${role} for a j it does not have`);
+  }
+  for (const role of ["canary", "vision"]) assert.ok(asked.yes.includes(role), `the live voice no longer asks a ${role}`);
+  assert.deepStrictEqual(await voiceWrites(null), ["j\n", "j\n"], "an unnamed firmware is asked, as the monitors ask it");
+  // Both callers hand over the product that is talking: the connect page
+  // the board's own (boardProduct, display-aware), the done card the one
+  // just written.
+  assert.match(fnSource(flashJs, "phaseConnected"), /\n {6}idSlot\.append\(chips\);\n {4}\}, null, curProd\);/,
+    "the connect page's voice no longer names the board's product");
+  assert.match(fnSource(flashJs, "phaseDone"), /startVoice\(vcon, null, showSetupNet, product\);/,
+    "the done card's voice no longer names the product it just wrote");
+  assert.strictEqual([...flashJs.matchAll(/\bstartVoice\(/g)].length, 3, "a startVoice caller this test does not hold");
+});
+
+test("A96/A97: a board whose read failed reads \"Can't tell yet\" in both flashers, in the same words", async () => {
+  // Not a first install: nothing was read. The browser's installVerdictFor
+  // and the desktop's verdictMarkup say the same sentence, and both say a
+  // blank chip (read, and found empty) is a first install.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const product = catalog.products.find((p) => p.id === "securacv-canary");
+  const browserVerdict = (ptRead) => new Function("state", "core",
+    `${fnSource(flashJs, "boardProduct")}\n${fnSource(flashJs, "installVerdictFor")}\nreturn installVerdictFor;`)(
+    { catalog, current: { unknown: true }, ptRead }, core)(product, "2.4.19");
+  const unread = browserVerdict("failed");
+  assert.strictEqual(unread.kind, "unknown");
+  assert.strictEqual(`${unread.icon} ${unread.label}`, "• Can't tell yet");
+  const markup = /if \(r\.unknown\) \{\s*return (`[^;]*);\s*\}/.exec(fnSource(appJs, "verdictMarkup"));
+  assert.ok(markup, "the desktop's verdictMarkup lost its unread branch");
+  const html = new Function(`return ${markup[1]};`)();
+  assert.strictEqual(html, `<span class="p-verdict is-unknown"><span class="p-verdict-label">• Can't tell yet</span>` +
+    `<span class="p-verdict-detail">${unread.detail}</span></span>`, "the two flashers word the unread verdict differently");
+  assert.strictEqual(browserVerdict("ok").kind, "fresh", "a blank chip the browser read is a first install");
+});
+
+test("A96/A97: both flashers show the same board the same way, for every product and every descriptor name", async () => {
+  // The parity table: for each product a release stamps (its stem), and for
+  // a board whose read failed, a blank one, the flavorless display names,
+  // a flavored display, the legacy underscore spellings and foreign images,
+  // what each flasher shows — the product its role line or passport head
+  // names, the self-check ask, the smart pick, and the install verdict on
+  // every card for that chip. Every row agrees, a board whose read FAILED
+  // included: both flashers tell it from a blank chip (the browser by
+  // state.ptRead, the desktop by its backend's blank flag) and say "Can't
+  // tell yet", never a first install nobody checked. The rescue pick is the browser's alone (the
+  // desktop's Rescue restores a backup or erases, and picks no product), so
+  // it is held to the same resolution as everything else instead.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const rows = [
+    ["an unread board", { unknown: true }, new Error("read failed"), "ESP32-S3", 8, "failed"],
+    ["a blank board", { unknown: true }, { blank: true }, "ESP32-S3", 8],
+  ];
+  const named = (name, chip, mb) => [name, { version: "2.4.10", projectName: name },
+    { resident: { version: "2.4.10", projectName: name, slot: "ota_0" } }, chip, mb];
+  for (const p of catalog.products) rows.push(named(p.asset_stem, p.chip, p.flash_mb));
+  for (const [name, chip, mb] of [["canary_display", "ESP32-S3", 8], ["canary_display", "ESP32-S3", 16],
+    ["canary-display", "ESP32-S3", 16], ["canary-display", "ESP32-C6", 4], ["canary-display-dash", "ESP32-S3", 16],
+    ["canary_display_dash", "ESP32-S3", 16], ["canary_wap", "ESP32-S3", 8], ["canary_vision", "ESP32-C3", 4],
+    ["canary_sense", "ESP32-C6", 4], ["esp32_display_demo", "ESP32-S3", 16], ["arduino-lib-builder", "ESP32-S3", 8]]) {
+    rows.push(named(name, chip, mb));
+  }
+  const pickOf = (p) => p && { product: p.product.id, kind: p.kind, why: p.why, shortlist: (p.shortlist || []).map((x) => x.id) };
+  let compared = 0;
+  for (const [what, current, answer, chip, mb, ptRead = "ok"] of rows) {
+    const opts = { chip, flashBytes: mb * MB };
+    const browser = browserCard(flashJs, core, current, { ...opts, ptRead });
+    const desk = await desktopCard(appJs, answer, opts);
+    const label = `${what} (${chip}, ${mb} MB)`;
+    assert.strictEqual(browser.role, desk.role, `${label}: the browser's role line names ${browser.role}, the desktop's passport ${desk.role}`);
+    assert.strictEqual(browser.ask, desk.ask, `${label}: the self-check ask`);
+    assert.strictEqual(browser.askNone, desk.askNone, `${label}: the boot-log pointer`);
+    assert.deepStrictEqual(pickOf(browser.pick), pickOf(desk.pick), `${label}: the smart pick`);
+    const resolved = current.unknown ? null : core.productForProject(catalog, current.projectName);
+    const onChip = core.productsForChip(catalog, chip);
+    assert.strictEqual(browser.role, resolved ? resolved.id : null, `${label}: the role line names the resolved product`);
+    if (resolved && onChip.some((p) => p.id === resolved.id)) {
+      assert.strictEqual(browser.rescue && browser.rescue.id, resolved.id, `${label}: the rescue pick is the resolved product`);
+    }
+    for (const product of onChip) {
+      const b = browser.verdict(product, "2.4.19");
+      const d = desk.verdict(product, "2.4.19");
+      assert.deepStrictEqual(b, d, `${label}: the install verdict on the ${product.id} card`);
+      if (answer instanceof Error) {
+        assert.deepStrictEqual(b, { kind: "unknown", label: "Can't tell yet" }, `${label}: the verdict on ${product.id}`);
+      } else if (current.unknown) {
+        assert.deepStrictEqual(b, { kind: "fresh", label: "First install" }, `${label}: the verdict on ${product.id}`);
+      }
+      compared++;
+    }
+  }
+  assert.ok(compared > 100, `${compared} verdicts compared`);
 });
 
 test("A86: the browser monitor's status lines name the firmware's own menu command, or none", async () => {
@@ -5047,6 +5507,201 @@ test("wave 5: the Vision-module proof is patient, and says the burn survived, on
     "desktop we2.rs still returns the fix-less inference error");
 });
 
+// ── F384: no source of the Vision firmware reads the module's own id ────────
+// The SSCMA library's ID() returns the Grove Vision AI module's id, which this
+// design treats as a per-unit identifier, so no Vision source calls it. The
+// deny used to read vision_mgr.cpp alone; a call moved into a header or
+// another .cpp passed. It now reads the sources the Vision firmware builds
+// from, as its PlatformIO config names them (visionSources), and reads code
+// only: comments and string literals are blanked first (newlines kept, so a
+// hit names its line), because a comment that explains why ID() is not
+// called, as vision_mgr.cpp's does, is not a call.
+const FIRMWARE = join(ROOT, "firmware");
+const VISION_FW = join(FIRMWARE, "projects/canary-vision");
+const VISION_INI = "envs/platformio/canary-vision.ini";
+const C_SOURCE = /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|ino)$/;
+
+function cSourcesUnder(root) {
+  const out = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (e.name.startsWith(".")) continue; // .pio and the like: build output, not source
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (C_SOURCE.test(e.name)) out.push(p);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+// The C/C++ sources the Vision firmware builds from, read off
+// canary-vision.ini rather than typed, so a new env or a new shared TU joins
+// the scan by itself: every source under firmware/projects/canary-vision
+// (src/, include/, secrets/), every include directory an env adds outside
+// firmware/common (its Vision-only config, each env's board pins), and each
+// firmware/common translation unit a build_src_filter compiles. What the
+// scan does NOT read: the headers under firmware/common, which every product
+// shares and which those TUs and the Vision sources include.
+function visionSources(firmwareRoot) {
+  const project = join(firmwareRoot, "projects/canary-vision");
+  const common = join(firmwareRoot, "common");
+  const ini = read(join(firmwareRoot, VISION_INI));
+  const files = new Set(cSourcesUnder(project));
+  for (const m of ini.matchAll(/-I\$\{PROJECT_DIR\}\/(\S+)/g)) {
+    const dir = resolve(project, m[1]);
+    if (dir === common || dir.startsWith(common + sep)) continue;
+    if (existsSync(dir)) for (const f of cSourcesUnder(dir)) files.add(f);
+  }
+  for (const m of ini.matchAll(/^\s*\+<(\.\.\/[^>*]+)>/gm)) {
+    const f = resolve(project, "src", m[1]);
+    if (C_SOURCE.test(f)) files.add(f);
+  }
+  return [...files].sort();
+}
+
+// C/C++ with its comments and string and character literals (raw strings
+// included) turned to spaces, every newline kept. A number is read whole, as
+// the preprocessor reads one, so a C++14 digit separator (1'000, 0xFF'FF)
+// opens no character literal; an identifier is read whole, so u8'a' is a
+// prefix and a character literal. A // comment runs on past a line that
+// ends in a backslash, as it does for the compiler.
+function cCodeOnly(src) {
+  const blank = (t) => t.replace(/[^\n]/g, " ");
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i], d = src[i + 1];
+    if (c === "/" && d === "/") {
+      let end = i;
+      for (;;) {
+        const e = src.indexOf("\n", end);
+        if (e < 0) { end = src.length; break; }
+        end = e;
+        if (!/\\\r?$/.test(src.slice(i, e))) break;
+        end = e + 1; // a backslash-newline: the comment goes on
+      }
+      out += blank(src.slice(i, end)); i = end; continue;
+    }
+    if (c === "/" && d === "*") {
+      const e = src.indexOf("*/", i + 2);
+      const end = e < 0 ? src.length : e + 2;
+      out += blank(src.slice(i, end)); i = end; continue;
+    }
+    const raw = /^(?:u8|u|U|L)?R"([^()\\\s]{0,16})\(/.exec(src.slice(i, i + 24));
+    if (raw && !/[A-Za-z0-9_]/.test(src[i - 1] || "")) {
+      const close = ")" + raw[1] + '"';
+      const e = src.indexOf(close, i + raw[0].length);
+      const end = e < 0 ? src.length : e + close.length;
+      out += blank(src.slice(i, end)); i = end; continue;
+    }
+    if (/[A-Za-z_]/.test(c)) {
+      const word = /^[A-Za-z0-9_]+/.exec(src.slice(i))[0];
+      out += word; i += word.length; continue;
+    }
+    if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(d || ""))) {
+      const num = /^\.?[0-9](?:[eEpP][+-]|'[0-9A-Za-z_]|[0-9A-Za-z_.])*/.exec(src.slice(i))[0];
+      out += num; i += num.length; continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && src[j] !== "\n") j += src[j] === "\\" ? 2 : 1;
+      const end = src[j] === c ? j + 1 : j;
+      out += blank(src.slice(i, end)); i = end; continue;
+    }
+    out += c; i++;
+  }
+  return out;
+}
+
+// Every call of a method named ID — AI.ID(), ai->ID(), Sscma::ID( — in the
+// Vision's sources, as "<path relative to the firmware root>:<line>".
+function sscmaIdCalls(firmwareRoot) {
+  const hits = [];
+  for (const file of visionSources(firmwareRoot)) {
+    const code = cCodeOnly(read(file));
+    for (const m of code.matchAll(/(?:\.|->|::)\s*ID\s*\(/g)) {
+      hits.push(`${relative(firmwareRoot, file).split("\\").join("/")}:${code.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  return hits;
+}
+
+test("F384: the module-id deny reaches every Vision source, and reads code, not comments or strings", () => {
+  // The walk: the project tree, headers included, the Vision-only include
+  // directories and the shared TUs the build compiles.
+  const sources = visionSources(FIRMWARE);
+  const files = sources.map((f) => relative(FIRMWARE, f).split("\\").join("/"));
+  const ini = read(join(FIRMWARE, VISION_INI));
+  const tus = [...ini.matchAll(/^\s*\+<\.\.\/\.\.\/\.\.\/(common\/[^>]+\.cpp)>/gm)].map((m) => m[1]);
+  assert.ok(tus.length >= 6, `canary-vision.ini names ${tus.length} shared TUs`);
+  for (const want of ["projects/canary-vision/src/vision/vision_mgr.cpp", "projects/canary-vision/src/main.cpp",
+                      "projects/canary-vision/include/canary/vision/vision_mgr.h",
+                      "projects/canary-vision/secrets/secrets.example.h", "configs/canary-vision/default/config.h",
+                      "boards/esp32-c3/pins/pins.h", ...tus]) {
+    assert.ok(files.includes(want), `the scan no longer reads ${want}`);
+  }
+  // Every include directory an env adds outside firmware/common exists (a
+  // renamed one would otherwise drop out of the scan in silence), and
+  // nothing under firmware/common is read but the TUs the build compiles.
+  for (const m of ini.matchAll(/-I\$\{PROJECT_DIR\}\/(\S+)/g)) {
+    assert.ok(existsSync(resolve(VISION_FW, m[1])), `canary-vision.ini adds ${m[1]}, which is not there`);
+  }
+  assert.deepStrictEqual(files.filter((f) => f.startsWith("common/")).sort(), [...new Set(tus)].sort(),
+    "the scan reads firmware/common beyond the TUs the Vision compiles");
+  assert.ok(files.filter((f) => f.startsWith("projects/canary-vision/src/")).length > 5, `the scan reads ${files.length} files`);
+  // Where the tree names ID( today (vision_mgr.cpp and its header explain
+  // why it is never called), it does so in comments: the code has none.
+  for (const f of sources.filter((p) => /\bID\s*\(/.test(read(p)))) {
+    assert.doesNotMatch(cCodeOnly(read(f)), /\bID\s*\(/, `${relative(FIRMWARE, f)} names ID( outside a comment or a string`);
+  }
+
+  // The mutation proof: copy exactly the scanned files and the config that
+  // names them (nothing else — no build output, no developer secrets.h) into
+  // a scratch firmware root, plant calls, one per kind of file and spelling,
+  // and each one is found where it was planted; plant the same words in
+  // comments and strings, and none is.
+  const dir = mkdtempSync(join(tmpdir(), "f384-"));
+  try {
+    const mirror = join(dir, "firmware");
+    for (const rel of [VISION_INI, ...files]) {
+      mkdirSync(dirname(join(mirror, rel)), { recursive: true });
+      writeFileSync(join(mirror, rel), read(join(FIRMWARE, rel)));
+    }
+    assert.deepStrictEqual(visionSources(mirror).map((f) => relative(mirror, f).split("\\").join("/")), files,
+      "the mirror's config names the same sources");
+    assert.ok(!existsSync(join(mirror, "projects/canary-vision/secrets/secrets.h")), "the mirror copied a secrets.h");
+    const plant = (rel, text) => {
+      const p = join(mirror, rel);
+      const before = read(p);
+      writeFileSync(p, before + text);
+      return `${rel}:${(before + text).split("\n").length - 1}`;
+    };
+    assert.deepStrictEqual(sscmaIdCalls(mirror), [], "the untouched copy is clean");
+    const P = "projects/canary-vision/";
+    const header = plant(`${P}include/canary/vision/vision_mgr.h`, "\ninline int planted_id() { return AI.ID(); }\n");
+    const main = plant(`${P}src/main.cpp`, "\nstatic int g_planted = vision_ai . ID ( false );\n");
+    const other = files.find((f) => f.startsWith(`${P}src/`) && f.endsWith(".cpp") &&
+      f !== `${P}src/main.cpp` && f !== `${P}src/vision/vision_mgr.cpp`);
+    const arrow = plant(other, "\nint planted_arrow(SSCMA* ai) { return ai->ID(); }\n");
+    const qualified = plant(`${P}src/vision/vision_mgr.cpp`, "\nauto planted_qualified = &SSCMA::ID ;\nint q = SSCMA::ID(true);\n");
+    const config = plant("configs/canary-vision/default/config.h", "\n#define PLANTED_ID() (AI.ID())\n");
+    const shared = plant(tus[0], "\nint planted_shared(SSCMA& m) { return m.ID(); }\n");
+    // One digit separator per line: the old scan opened a character literal
+    // at it and blanked the rest of that line, the call after it included.
+    const separator = plant(`${P}src/main.cpp`, "\nstatic int planted_sep = 1'000; static int planted_after = AI.ID();\n");
+    const hexSeparator = plant(`${P}src/main.cpp`, "\nstatic int planted_hex = 0xFF'FF; static int planted_hex_after = AI.ID();\n");
+    const prefix = plant(`${P}src/main.cpp`, "\nstatic auto planted_u8 = u8'a'; static int planted_u8_after = AI.ID();\n");
+    plant(`${P}src/main.cpp`, "\n// AI.ID() is never called here\n/* nor AI.ID( */\nstatic const char* k_planted = \"AI.ID()\";\n" +
+      "static const char* k_raw = R\"x(AI.ID() and \"quotes\")x\";\nstatic const char k_c = 'I'; // ID(\n" +
+      "// a comment that runs on \\\n   AI.ID(); still the comment\n");
+    assert.deepStrictEqual(sscmaIdCalls(mirror).sort(), [arrow, header, main, qualified, config, shared, separator, hexSeparator, prefix].sort(),
+      "the scan must find each planted call where it was planted, and nothing in a comment or a string");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("Vision module proof: the desktop reads module_ok and the firmware's own boot lines (F384)", () => {
   // The Vision host's `Grove Vision AI ID=%d` used to print the address of the
   // SSCMA library's id buffer, non-zero with no module at all, and the desktop's
@@ -5076,8 +5731,15 @@ test("Vision module proof: the desktop reads module_ok and the firmware's own bo
   assert.ok(mgr.includes(`printf("${idLine}%d\\n", g_module_ok ? 1 : 0)`),
     "the boot line's value is the 1-or-0 module verdict, nothing else");
   // ...and never the module's own id, which this design treats as a per-unit
-  // identifier: no AI.ID() call in any form.
+  // identifier: no AI.ID() call in any form, in vision_mgr.cpp or in any
+  // other source the Vision firmware builds from as canary-vision.ini names
+  // them (the project's src/, include/ and secrets/, its config and board
+  // pins, and the firmware/common TUs it compiles; the shared headers under
+  // firmware/common are not read). The F384 test plants calls to prove the
+  // scan reaches each kind of file and reads only code.
   assert.ok(!/\bAI\.ID\s*\(/.test(mgr), "vision_mgr.cpp calls AI.ID() again");
+  assert.deepStrictEqual(sscmaIdCalls(FIRMWARE), [],
+    "the Vision firmware calls the SSCMA module's ID() again — its id is a per-unit identifier this design never reads");
   // The `j` proof record carries module_ok beside the legacy module_id, and
   // module_ok's value is the module verdict, not a constant.
   assert.ok(mainCpp.includes('\\"module_id\\":%d,\\"module_ok\\":%s,'),
@@ -5369,8 +6031,8 @@ test("customs names a board running SecuraCV, and stays honest about the Arduino
   assert.match(intake.shippedWith({ projectName: "arduino-lib-builder" }).detail, /up to 2\.4\.17/);
   assert.match(appJs, /shippedWith\(\{\s*projectName: r\.unknown \? null : r\.projectName,\s*product: r\.product,/,
     "the desktop's customs finding no longer gets the product it matched");
-  assert.match(flashJs, /product: core\.matchProjectToProduct\(state\.catalog, projectName\)/,
-    "the browser's customs finding no longer gets the product it matched");
+  assert.match(flashJs, /product: core\.productForProject\(state\.catalog, projectName\)/,
+    "the browser's customs finding no longer gets the product it resolved");
   // Every stem a release stamps maps back to its own product on the desktop
   // too (flash.test.js holds the browser's copies to the same loop).
   const lookup = new Function([fnSource(appJs, "matchProjectToProduct"), fnSource(appJs, "productForProject")]
@@ -5758,9 +6420,13 @@ test("rule 7: the desktop's self-check chips use the browser's verdict, threshol
     assert.ok(flashJs.includes(needle), `browser self-check chips lost ${needle}`);
   }
   assert.match(html, /id="selfcheck-chips"/);
-  // Before a flash, too: a recognized resident firmware is asked twice, at
-  // the browser's moments, by an observer that never resets the board…
-  assert.match(fnSource(appJs, "renderPassport"), /if \(r\.product && !r\.blank && !r\.unknown\) \{[\s\S]*?askSelfCheck/);
+  // Before a flash, too: a readable resident firmware that prints a
+  // self-check (or that the catalog does not name, so nothing says it does
+  // not: requiresLiveReceipt fails closed, as the browser's renderLiveStoryAsk
+  // does — the A97 tests drive both) is asked twice, at the browser's
+  // moments, by an observer that never resets the board…
+  assert.match(fnSource(appJs, "renderPassport"),
+    /if \(!r\.blank && !r\.unknown\) \{\s*if \(requiresLiveReceipt\(r\.product\)\) \{[\s\S]*?askSelfCheck/);
   const ask = fnSource(appJs, "askSelfCheck");
   assert.match(ask, /setTimeout\(ask, 900\);\s*setTimeout\(ask, 2600\);/);
   assert.match(flashJs, /setTimeout\(ask, 900\);\s*setTimeout\(ask, 2600\);/);
@@ -5892,7 +6558,7 @@ test("setup-network key: one parser, both flashers, pinned to the firmware's pri
   const flashJs = read(join(CANARY, "assets/flash.js"));
   const html = read(join(ROOT, "desktop", "src", "index.html"));
   assert.match(flashJs, /core\.parseSetupNetwork\(v\.buf\)/, "the browser voice no longer parses the key off the stream");
-  assert.match(flashJs, /startVoice\(vcon, null, showSetupNet\)/,
+  assert.match(flashJs, /startVoice\(vcon, null, showSetupNet, product\)/,
     "the browser done card no longer listens to the first boot for the key");
   assert.match(flashJs, /maybeSetupNet\(buf\)/, "the browser monitor no longer renders the key line");
   assert.match(src, /feedSetupNetwork\(ev\.payload\)/, "the desktop serial:log listener no longer feeds the parser");

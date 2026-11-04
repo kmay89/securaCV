@@ -32,6 +32,19 @@
 //     address, an unknown family and a null pointer, and the IPv4 of every
 //     key it writes is the IPv4 ipv4_host_order_from_addr reads off the
 //     socket address itself: the WAP's per-address lockout keys on it;
+//   * the 403 body gives the order the arbiter protects: start asking
+//     first, then short-tap BOOT, never "short tap, then poll" (sweep F354),
+//     and it is the WAP's handler's body byte for byte at the same TTL
+//     (canary_wap.ino, its path passed in as CANARY_WAP_INO), so the apps
+//     read both trees' refusal with one parser; GATE_REFUSAL_JSON_CAP holds
+//     it with room, and a buffer one byte short is refused;
+//   * on the flagship, one tap is one asker across its page and its
+//     receipt (sweep F354): the owner's page load and its banner's receipt
+//     polls, and a host curling the receipt, all asking one arbiter through
+//     page_token_decide and receipt_decide, never get two grants, and the
+//     host never gets one; a page load beside two askers is withheld (the
+//     model of the flagship's two decisions over the step below; its real
+//     step and handlers run in test_securacv_auth.cpp);
 //   * the BOOT tap goes to ONE asker on the WAP (sweep F342): peek() reads
 //     the stamp without consuming it and take_exact() consumes only the
 //     stamp that was judged (a re-tap, a BLE OTA take or a close between the
@@ -75,6 +88,9 @@
 
 #ifndef CANARY_MAIN_CPP
 #error "CANARY_MAIN_CPP must name firmware/canary/src/main.cpp (the Makefile passes it)"
+#endif
+#ifndef CANARY_WAP_INO
+#error "CANARY_WAP_INO must name the canary-wap sketch's canary_wap.ino (the Makefile passes it)"
 #endif
 
 using namespace canary::net::provisioning_gate;
@@ -799,12 +815,31 @@ static void subnet_overlap_math() {
 // ── refusal body ────────────────────────────────────────────────────────────
 
 static void refusal_body_carries_the_ttl_and_refuses_truncation() {
-  char body[256];
-  CHECK(build_gate_refusal_json(body, sizeof(body), kTtl), "256 bytes holds the body");
+  char body[GATE_REFUSAL_JSON_CAP];
+  CHECK(build_gate_refusal_json(body, sizeof(body), kTtl), "GATE_REFUSAL_JSON_CAP holds the body");
   CHECK(std::strstr(body, "\"error\":\"physical_confirmation_required\"") != nullptr,
         "error code present");
   CHECK(std::strstr(body, "\"gate_ttl_seconds\":30}") != nullptr, "ttl derived from the constant: %s", body);
-  CHECK(std::strstr(body, "within 30 seconds") != nullptr, "button hint carries the same ttl");
+  CHECK(std::strstr(body, "the tap is held 30 seconds") != nullptr, "button hint carries the same ttl: %s", body);
+  // Ask first, then press (sweep F354): the tap goes to the one address
+  // asking from 10 s before it onward, so the words put the ask first. The
+  // old button said "short tap, then poll within 30 seconds": a press no
+  // client was asking for yet, the one case the arbiter cannot protect.
+  CHECK(std::strstr(body, "\"hint\":\"Start asking for the receipt first, then short-tap BOOT on the "
+                          "device: the tap goes to the one address asking.\"") != nullptr,
+        "the hint asks first, then the press: %s", body);
+  CHECK(std::strstr(body, "\"button\":\"BOOT (ask first, then a short tap;") != nullptr,
+        "the button asks first, then the press: %s", body);
+  CHECK(std::strstr(body, "then poll") == nullptr && std::strstr(body, "Press the BOOT button") == nullptr,
+        "no press-first words are left: %s", body);
+  const size_t len = std::strlen(body);
+  CHECK(len + 1 + 32 <= GATE_REFUSAL_JSON_CAP, "the cap leaves room: %zu bytes of %zu", len,
+        GATE_REFUSAL_JSON_CAP);
+  char exact[GATE_REFUSAL_JSON_CAP];
+  CHECK(build_gate_refusal_json(exact, len + 1, kTtl) && std::strcmp(exact, body) == 0,
+        "the body's own length plus its NUL is enough");
+  CHECK(!build_gate_refusal_json(exact, len, kTtl) && exact[0] == '\0',
+        "a buffer one byte short is refused and emptied");
 
   char tiny[64];
   CHECK(!build_gate_refusal_json(tiny, sizeof(tiny), kTtl), "a too-small buffer is refused");
@@ -812,6 +847,79 @@ static void refusal_body_carries_the_ttl_and_refuses_truncation() {
   CHECK(!build_gate_refusal_json(nullptr, 10, kTtl), "null out refused");
   CHECK(!build_gate_refusal_json(body, 0, kTtl), "zero cap refused");
 }
+
+// The WAP's 403 body as its handler builds it: the C string literals of the
+// snprintf call that starts with {"error":"physical_confirmation_required",
+// in canary_wap.ino, joined and unescaped, with each %lu (the TTL in
+// seconds, twice) spelled `ttl_s`. Empty unless there is exactly one.
+static std::string wap_refusal_body(const std::string& ino, const std::string& ttl_s) {
+  const std::string open = "\"{\\\"error\\\":\\\"physical_confirmation_required\\\",\"";
+  const size_t at = ino.find(open);
+  if (at == std::string::npos || ino.find(open, at + 1) != std::string::npos) return "";
+  const size_t args = ino.find("ttl_s, ttl_s);", at);
+  if (args == std::string::npos) return "";
+  // The literals end at the last quote before the arguments; only a comma
+  // and blanks may sit between the two.
+  const size_t last = ino.rfind('"', args);
+  if (last == std::string::npos || last < at) return "";
+  for (size_t i = last + 1; i < args; ++i) {
+    const char c = ino[i];
+    if (c != ',' && c != ' ' && c != '\n' && c != '\r' && c != '\t') return "";
+  }
+  const size_t end = last + 1;
+  std::string fmt;
+  bool in = false;
+  for (size_t i = at; i < end; ++i) {
+    const char c = ino[i];
+    if (!in) {
+      if (c == '"') in = true;
+      else if (c != ' ' && c != '\n' && c != '\r' && c != '\t') return "";
+      continue;
+    }
+    if (c == '\\' && i + 1 < end) { fmt += ino[++i]; continue; }
+    if (c == '"') { in = false; continue; }
+    fmt += c;
+  }
+  if (in) return "";
+  std::string out;
+  int spec = 0;
+  for (size_t i = 0; i < fmt.size(); ++i) {
+    if (fmt.compare(i, 3, "%lu") == 0) { out += ttl_s; i += 2; ++spec; continue; }
+    if (fmt[i] == '%') return "";
+    out += fmt[i];
+  }
+  return spec == 2 ? out : "";
+}
+
+// The flagship's 403 (the shared builder) and the WAP's (its handler's own
+// snprintf) are one body at the same TTL, byte for byte (sweep F354): the
+// apps read both trees' refusal with one parser, and since F342 the WAP's
+// says to ask first. Before, the builder's hint said "Press the BOOT
+// button" and its button "short tap, then poll".
+static void the_refusal_body_is_the_waps() {
+  const std::string ino = read_text(CANARY_WAP_INO);
+  CHECK(!ino.empty(), "could not read %s", CANARY_WAP_INO);
+  const std::string wap = wap_refusal_body(ino, "30");
+  CHECK(!wap.empty(), "canary_wap.ino's 403 snprintf (two %%lu, ttl_s, ttl_s) not found once");
+  char body[GATE_REFUSAL_JSON_CAP];
+  CHECK(build_gate_refusal_json(body, sizeof(body), kTtl), "the builder fits its cap");
+  CHECK(wap == body, "the builder's 403 is the WAP's byte for byte:\n  builder %s\n  WAP     %s", body,
+        wap.c_str());
+  CHECK(wap_refusal_body(ino, "45") != body, "the reader spells the TTL it is handed (a 45 s WAP body differs)");
+}
+
+// ── the flagship: one tap, one asker across the page and the receipt ─────
+//
+// The flagship's two credential-less paths ask ONE TapArbiter (sweep F354):
+// a home-LAN page load through page_token_decide, whose take_gate is the
+// tap step, and a receipt fetch through receipt_decide. Modeled here on the
+// Bench below, the WAP's step and the flagship's alike (peek, judge, take
+// the judged stamp); securacv_network.cpp's real step and handlers run the
+// same timelines in test_securacv_auth.cpp. The owner (A) loads the page,
+// then its banner polls the receipt every 2 s; a host (B) curls the receipt
+// every 700 ms; C is a third address that loads the page. Defined after the
+// Bench (it uses it).
+static void the_flagship_page_and_receipt_share_one_asker();
 
 
 // ── the four-grant receipt decision: the claim ticket between the bearer
@@ -1055,7 +1163,7 @@ static void a_polling_owner_stays_on_record_past_the_lookback() {
 // one bucket (auth_request_source() keys on the IPv4 of a mapped key and 0
 // otherwise). No WAP interface runs IPv6 today, so every real asker is a
 // mapped key; this holds the arbiter for the day one does, and for the
-// flagship when it adopts the arbiter (F354). Each pair below is two
+// flagship, which asks it for its receipt and its page loads (F354). Each pair below is two
 // different peers that a narrower compare would merge into one asker, and
 // one asker is served the tap:
 //   - two global addresses that differ only in the prefix (a compare of the
@@ -1421,6 +1529,90 @@ static void a_peer_key_prints_as_ipv4_or_eight_groups() {
   CHECK(peer_key_text(kOwner.key, nullptr, 40) == 0, "a null buffer: 0");
 }
 
+static void the_flagship_page_and_receipt_share_one_asker() {
+  // The receipt's decision, with the Host passed and no bearer, over the
+  // Bench's step for `who` at `now`; and the page's.
+  const auto receipt = [](Bench& b, const Peer& who, uint32_t now, TapVerdict* v) {
+    Hook bearer{false};
+    return receipt_decide(false, std::ref(bearer), [&]() {
+      *v = b.ask(who, now);
+      return *v == TapVerdict::TAKE;
+    });
+  };
+  const auto page = [](Bench& b, const Peer& who, uint32_t now, TapVerdict* v) {
+    return page_token_decide(false, false, false, false, [&]() {
+      *v = b.ask(who, now);
+      return *v == TapVerdict::TAKE;
+    });
+  };
+  const Peer kHostC = v4(192, 168, 1, 22);
+  int runs = 0, both = 0, alone = 0;
+  for (uint32_t T = 40100; T < 42100; T += 100) {
+    for (const int32_t off : {-20000, -10000, -9999, -1, 0, 1, 500, 1999, 2100, 6000}) {
+      Bench b;
+      const uint32_t b0 = (uint32_t)((int32_t)T + off);
+      TapVerdict v = TapVerdict::NO_TAP;
+      CHECK(page(b, kOwner, 500, &v) == PageToken::WITHHOLD, "A's page load before the tap: withheld");
+      int grants = 0, b_grants = 0, b_409 = 0;
+      uint32_t a1 = 0;
+      bool tapped = false;
+      for (uint32_t t = 1000; t <= 90000; ++t) {
+        const bool a_now = (t - 1000) % 2000 == 0;
+        const bool b_now = t >= b0 && (t - b0) % 700 == 0;
+        if (!tapped && t >= T) { open(b.gate, T); tapped = true; }
+        if (a_now) {
+          if (tapped && !a1) a1 = t;
+          grants += receipt(b, kOwner, t, &v) == ReceiptVerdict::SERVE_TAP ? 1 : 0;
+        }
+        if (b_now) {
+          const bool got = receipt(b, kOther, t, &v) == ReceiptVerdict::SERVE_TAP;
+          grants += got ? 1 : 0;
+          b_grants += got ? 1 : 0;
+          b_409 += v == TapVerdict::CONTENDED ? 1 : 0;
+        }
+      }
+      bool b_in_window = false;
+      for (uint32_t t = b0; t < a1; t += 700) b_in_window = b_in_window || t + 10000 >= T;
+      ++runs;
+      CHECK(grants <= 1 && b_grants == 0, "T=%u B from %u: %d grant(s), %d to B", (unsigned)T, (unsigned)b0,
+            grants, b_grants);
+      if (b_in_window) {
+        ++both;
+        CHECK(grants == 0 && b_409 > 0, "T=%u B from %u: B in the window, %d grant(s), B heard %d 409(s)",
+              (unsigned)T, (unsigned)b0, grants, b_409);
+      } else {
+        ++alone;
+        CHECK(grants == 1 && b_409 == 0, "T=%u B from %u: A alone, %d grant(s), B heard %d 409(s)",
+              (unsigned)T, (unsigned)b0, grants, b_409);
+      }
+    }
+  }
+  CHECK(runs == 200 && both > 0 && alone > 0, "the sweep reached both outcomes (%d both, %d alone)", both, alone);
+
+  // A page load beside two askers, right after the tap (C's, B's, or A's own
+  // reload): withheld, and that ask closes the tap for everyone.
+  for (const Peer* loader : {&kHostC, &kOther, &kOwner}) {
+    Bench b;
+    TapVerdict v = TapVerdict::NO_TAP;
+    receipt(b, kOwner, 100000, &v);
+    receipt(b, kOther, 100700, &v);
+    open(b.gate, 101300);
+    CHECK(page(b, *loader, 101350, &v) == PageToken::WITHHOLD && v == TapVerdict::CONTENDED,
+          "a page load beside two askers: withheld (CONTENDED)");
+    CHECK(peek(b.gate) == 0 && b.served == 0 && b.closed_by == 1, "and its ask closed the tap");
+    CHECK(receipt(b, kOther, 101750, &v) == ReceiptVerdict::REFUSE_NO_TAP && v == TapVerdict::CONTENDED,
+          "B's receipt ask after it: 409 (CONTENDED)");
+  }
+  // A alone: its reload after the tap takes it, and nothing else does.
+  Bench b;
+  TapVerdict v = TapVerdict::NO_TAP;
+  receipt(b, kOwner, 100000, &v);
+  open(b.gate, 101500);
+  CHECK(page(b, kOwner, 101700, &v) == PageToken::INJECT && b.served == 1, "A alone: its reload takes the tap");
+  CHECK(receipt(b, kOwner, 102000, &v) == ReceiptVerdict::REFUSE_NO_TAP && v == TapVerdict::NO_TAP,
+        "and its receipt fetch after it finds no tap: one tap, one consumer");
+}
+
 int main() {
   closed_by_default();
   open_then_peek_does_not_consume();
@@ -1455,6 +1647,7 @@ int main() {
   dual_stack_request_reaches_the_ap_test_intact();
   subnet_overlap_math();
   refusal_body_carries_the_ttl_and_refuses_truncation();
+  the_refusal_body_is_the_waps();
   four_grant_foreign_host_calls_nothing();
   four_grant_bearer_before_claim_before_tap();
   four_grant_spent_claim_falls_through_to_the_tap();
@@ -1475,6 +1668,7 @@ int main() {
   a_stamp_that_moved_since_the_peek_is_not_taken();
   a_stale_record_fails_closed_across_the_wrap();
   a_peer_key_prints_as_ipv4_or_eight_groups();
+  the_flagship_page_and_receipt_share_one_asker();
 
   if (g_failures) {
     std::printf("test_provisioning_gate: %d failure(s)\n", g_failures);

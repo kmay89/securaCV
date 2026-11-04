@@ -147,8 +147,16 @@ schema:
     mqtt_username: str?
     mqtt_password: password?
     min_confidence: float(0,1)?
-    cameras: list(str)?
-    labels: list(str)?
+    # A list of strings is a YAML list holding the element type. `list(a|b)`
+    # is the Supervisor's select (one of the values a, b), so `list(str)?`
+    # took only the string "str": by the Supervisor's option code
+    # (supervisor/apps/options.py) it refused these defaults, which it checks
+    # before every start, and every wizard save. tests/test_addon_store.py
+    # holds the defaults and the saves to a copy of those rules.
+    cameras:
+      - str?
+    labels:
+      - str?
   cameras:
     - name: str
       url: str

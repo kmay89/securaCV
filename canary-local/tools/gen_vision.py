@@ -48,7 +48,7 @@ import re
 from pathlib import Path
 
 from _pseudonym import SALT_B, client_id, pseudonym
-from _tooling import die, repo_root
+from _tooling import die, read_const, repo_root
 
 REPO = repo_root()
 FW = REPO / "firmware/projects/canary-vision"
@@ -105,10 +105,6 @@ def grab(path: Path, pattern: str, label: str, flags=0) -> str:
     return m.group(1)
 
 
-def igrab(path: Path, pattern: str, label: str) -> int:
-    return int(grab(path, pattern, label))
-
-
 # --------------------------------------------------------------------------- #
 # 1. identity + firmware constants (config.h / version.h / detect_config.h)
 # --------------------------------------------------------------------------- #
@@ -118,33 +114,37 @@ DEVICE_TYPE = grab(CONFIG_H, r'DEVICE_TYPE\s*=\s*"([^"]+)"', "device type")
 DEVICE_ID = grab(CONFIG_H, r'DEVICE_ID\s*=\s*"([^"]+)"', "device id")
 MODEL = grab(CONFIG_H, r'MODEL\s*=\s*"([^"]+)"', "model string")
 
-PERSON_TARGET = igrab(CONFIG_H, r"PERSON_TARGET\s*=\s*(\d+)", "PERSON_TARGET")
-SCORE_MIN = igrab(CONFIG_H, r"SCORE_MIN\s*=\s*(\d+)", "SCORE_MIN")
-LOST_TIMEOUT_MS = igrab(CONFIG_H, r"LOST_TIMEOUT_MS\s*=\s*(\d+)", "LOST_TIMEOUT_MS")
-DWELL_START_MS = igrab(CONFIG_H, r"DWELL_START_MS\s*=\s*(\d+)", "DWELL_START_MS")
-VOXEL_COLS = igrab(CONFIG_H, r"VOXEL_COLS\s*=\s*(\d+)", "VOXEL_COLS")
-VOXEL_ROWS = igrab(CONFIG_H, r"VOXEL_ROWS\s*=\s*(\d+)", "VOXEL_ROWS")
-FRAME_W = igrab(CONFIG_H, r"FRAME_W\s*=\s*(\d+)", "FRAME_W")
-FRAME_H = igrab(CONFIG_H, r"FRAME_H\s*=\s*(\d+)", "FRAME_H")
-INVOKE_PERIOD_MS = igrab(CONFIG_H, r"INVOKE_PERIOD_MS\s*=\s*(\d+)", "INVOKE_PERIOD_MS")
-INTERACTION_WINDOW_MS = igrab(CONFIG_H, r"INTERACTION_AFTER_LEAVE_WINDOW_MS\s*=\s*(\d+)",
-                              "INTERACTION_AFTER_LEAVE_WINDOW_MS")
-ZONE_INTERACTION_MS = igrab(CONFIG_H, r"ZONE_INTERACTION_MS\s*=\s*(\d+)", "ZONE_INTERACTION_MS")
-HEARTBEAT_MS = igrab(CONFIG_H, r"HEARTBEAT_MS\s*=\s*(\d+)", "HEARTBEAT_MS")
-AIM_PUBLISH_MS = igrab(CONFIG_H, r"AIM_PUBLISH_MS\s*=\s*(\d+)", "AIM_PUBLISH_MS")
-AIM_IDLE_PUBLISH_MS = igrab(CONFIG_H, r"AIM_IDLE_PUBLISH_MS\s*=\s*(\d+)", "AIM_IDLE_PUBLISH_MS")
-AIM_AUTO_OFF_MS = igrab(CONFIG_H, r"AIM_AUTO_OFF_MS\s*=\s*(\d+)", "AIM_AUTO_OFF_MS")
+# Every number here is read by _tooling.read_const, the rule gen_flash.py reads
+# the same constants by (sweep F369): comments are not code, a name is a whole
+# word defined once, the value is a plain decimal literal, and anything else is
+# refused by name rather than read as its first number. vision.test.js reads
+# them back with c_const.js, the same rule in JavaScript.
+PERSON_TARGET = read_const(CONFIG_H, "PERSON_TARGET", read)
+SCORE_MIN = read_const(CONFIG_H, "SCORE_MIN", read)
+LOST_TIMEOUT_MS = read_const(CONFIG_H, "LOST_TIMEOUT_MS", read)
+DWELL_START_MS = read_const(CONFIG_H, "DWELL_START_MS", read)
+VOXEL_COLS = read_const(CONFIG_H, "VOXEL_COLS", read)
+VOXEL_ROWS = read_const(CONFIG_H, "VOXEL_ROWS", read)
+FRAME_W = read_const(CONFIG_H, "FRAME_W", read)
+FRAME_H = read_const(CONFIG_H, "FRAME_H", read)
+INVOKE_PERIOD_MS = read_const(CONFIG_H, "INVOKE_PERIOD_MS", read)
+INTERACTION_WINDOW_MS = read_const(CONFIG_H, "INTERACTION_AFTER_LEAVE_WINDOW_MS", read)
+ZONE_INTERACTION_MS = read_const(CONFIG_H, "ZONE_INTERACTION_MS", read)
+HEARTBEAT_MS = read_const(CONFIG_H, "HEARTBEAT_MS", read)
+AIM_PUBLISH_MS = read_const(CONFIG_H, "AIM_PUBLISH_MS", read)
+AIM_IDLE_PUBLISH_MS = read_const(CONFIG_H, "AIM_IDLE_PUBLISH_MS", read)
+AIM_AUTO_OFF_MS = read_const(CONFIG_H, "AIM_AUTO_OFF_MS", read)
 HA_PREFIX = grab(CONFIG_H, r'HA_DISCOVERY_PREFIX\s*=\s*"([^"]+)"', "HA discovery prefix")
 OTA_PRODUCT = grab(CONFIG_H, r'#define SECURACV_OTA_PRODUCT\s+"([^"]+)"', "OTA product")
 
 BOUNDS = {
-    "score": [igrab(DETECT_CFG_H, r"DETECT_SCORE_MIN_LO\s*=\s*(\d+)", "score lo"),
-              igrab(DETECT_CFG_H, r"DETECT_SCORE_MIN_HI\s*=\s*(\d+)", "score hi")],
+    "score": [read_const(DETECT_CFG_H, "DETECT_SCORE_MIN_LO", read),
+              read_const(DETECT_CFG_H, "DETECT_SCORE_MIN_HI", read)],
     "target": [0, 255],
-    "lost_ms": [igrab(DETECT_CFG_H, r"DETECT_LOST_MS_LO\s*=\s*(\d+)", "lost lo"),
-                igrab(DETECT_CFG_H, r"DETECT_LOST_MS_HI\s*=\s*(\d+)", "lost hi")],
-    "dwell_ms": [igrab(DETECT_CFG_H, r"DETECT_DWELL_MS_LO\s*=\s*(\d+)", "dwell lo"),
-                 igrab(DETECT_CFG_H, r"DETECT_DWELL_MS_HI\s*=\s*(\d+)", "dwell hi")],
+    "lost_ms": [read_const(DETECT_CFG_H, "DETECT_LOST_MS_LO", read),
+                read_const(DETECT_CFG_H, "DETECT_LOST_MS_HI", read)],
+    "dwell_ms": [read_const(DETECT_CFG_H, "DETECT_DWELL_MS_LO", read),
+                 read_const(DETECT_CFG_H, "DETECT_DWELL_MS_HI", read)],
 }
 # the HA number entity for target really is 0..255 in ha_discovery.cpp
 must(HA_DISCOVERY_CPP, '"box", 0, 255, 1', "target number bounds")

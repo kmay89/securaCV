@@ -102,3 +102,63 @@ def mqtt_payload_text(payload: Any) -> str | None:
     if isinstance(payload, str):
         return payload
     return None
+
+
+def creating_payload(msg: Any) -> dict[str, Any] | None:
+    """The body of the publish that creates an entity, to hand to it, or None.
+
+    A discovery callback creates an entity on a device's first publish on a
+    topic, and the entity subscribes only once it is added, after that
+    delivery: on a topic that is not retained (events) it never sees the
+    publish that made it unless it is handed the body (HA44; event.py's
+    tamper entity is handed its own the same way). A delivery flagged
+    retained is not handed over: the entity's own subscription is sent the
+    broker's retained copy anyway.
+    """
+    if getattr(msg, "retain", False):
+        return None
+    return parse_mqtt_json(getattr(msg, "payload", None))
+
+
+class CreatingEcho:
+    """The creating publish's body: applied once, and its one echo recognized.
+
+    ``take()`` hands the body over once (async_added_to_hass applies it after
+    its subscribe) and drops it, so a second add of the same entity replays
+    nothing. A broker that ALSO retained that publish (live, a broker
+    forwards it with the retain flag cleared, so the discovery callback
+    handed it over) sends the entity's fresh subscription its retained copy.
+    That copy need not come next: Home Assistant batches a new SUBSCRIBE
+    (mqtt/client.py SUBSCRIBE_COOLDOWN), and a live event arriving on the
+    wildcard subscription in that window reaches the entity's local one
+    first. So the watch stays open across live deliveries and closes on the
+    first delivery flagged retained, which is the one retained copy the core
+    hands a subscription per topic until a reconnect (client.py
+    _retained_topics). ``is_echo()`` is true for that delivery when it is
+    equal to the body shown, and only then; whatever it is, it ends the
+    watch, so a later publish of the same body (a re-send, the retained copy
+    after a reconnect) takes the ordinary path.
+    """
+
+    __slots__ = ("_pending", "_shown")
+
+    def __init__(self, payload: dict[str, Any] | None) -> None:
+        self._pending = payload
+        self._shown: dict[str, Any] | None = None
+
+    def take(self) -> dict[str, Any] | None:
+        """The body to apply now, once; None after the first call."""
+        payload, self._pending = self._pending, None
+        self._shown = payload
+        return payload
+
+    def is_echo(self, msg: Any, data: dict[str, Any]) -> bool:
+        """True for the subscription's retained copy of the body just applied.
+
+        A live delivery is never the echo and leaves the watch open; the
+        first retained one ends it.
+        """
+        if self._shown is None or not getattr(msg, "retain", False):
+            return False
+        shown, self._shown = self._shown, None
+        return data == shown

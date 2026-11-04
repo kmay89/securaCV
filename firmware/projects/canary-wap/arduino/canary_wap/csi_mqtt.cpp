@@ -1552,8 +1552,16 @@ const DiscoveryEntity ENTITIES[] = {
   { "sensor", "memory_free", "Free Memory", "health",
     "{{ value_json.memory_free | default(0) }}",
     "B", "data_size", "measurement", nullptr },
+  /* The connect burst's status (MQTT_EVENT_CONNECTED above) and the last
+   * will carry no rssi: only the loop's publish_status() measures it, and
+   * the burst does not wait for the loop. So a status without rssi
+   * renders nothing. Home Assistant's MQTT sensor ignores an empty state
+   * on a numeric sensor (this one is, by its state_class) and keeps the
+   * last reading, where default(0) showed 0 dBm after every reconnect
+   * until the next loop status (sweep F368). A Home Assistant that starts
+   * inside that window reads unknown until then, not 0 dBm. */
   { "sensor", "rssi", "Signal Strength", "status",
-    "{{ value_json.rssi | default(0) }}",
+    "{{ value_json.rssi | default('') }}",
     "dBm", "signal_strength", "measurement", nullptr },
 
   /* Mesh coexistence — surfaces the airtime governor + channel policy

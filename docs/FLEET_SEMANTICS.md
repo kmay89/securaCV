@@ -151,9 +151,16 @@ in the code: a relayed frame whose origin signature is zero is
 **soft-accepted** on the relayer's signature alone ("v0.2 limitation",
 `chirp_channel.cpp`), so at hop ≥ 1 the claimed origin key is
 unauthenticated; and the spec's "Sybil resistance" (a presence seen for ten
-minutes before an ACK counts) is not implemented — the ACK check tests only
-that the session id is in the nearby table, and `NearbyDevice` has no
-first-seen field. Beacon's receive path has one more: when the receiver's
+minutes before an ACK counts) is enforced since sweep F311 — an ACK counts
+only from a key whose nearby row went into the table ten minutes before
+(`NearbyDevice::first_seen_ms`, set at the insert and never by a refresh) —
+but presence beacons are unsigned (sweep F232), so one radio beacons any
+number of session ids at once and their ten minutes run together, up to the
+nearby table's free rows: the rule delays a device that wants many
+confirming keys by ten minutes, it does not price each key, and it proves
+nothing. It covers confirmations only: a suppress vote, which takes a chirp
+off a receiver, needs no presence row at all (sweep F234, open). Beacon's
+receive path has one more: when the receiver's
 clock is unsynced the freshness branch is empty ("accept but flag" —
 nothing is flagged), so a captured frame can be re-accepted after the
 32-slot dedup ring rolls or the device reboots — and a reboot also zeroes
@@ -198,7 +205,10 @@ has not been measured.
   Opera.
 - No cross-device ordering, correlation, fusion or consensus; no
   partition-safe election.
-- No relay on Opera or Beacon; no Sybil resistance on Chirp.
+- No relay on Opera or Beacon. No Sybil resistance on Chirp in the sense of
+  a cost per identity: an ACK counts after ten minutes of unsigned beacons
+  from its key (F311, F232), and one radio runs those ten minutes for many
+  keys at once; a suppress vote needs no presence at all (F234, open).
 - No multi-node, partition, split-brain or two-hub test. The fixtures in
   `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json` pin the
   wire shape and parse semantics of one observer; `fleet_peers.rs`'s unit
@@ -217,3 +227,4 @@ has not been measured.
 | Opera per-peer counter, pairing | `securacv_mesh` host tests; WAP mesh tests (source-text pins, not linked code, for the Beacon receive path — `beacon_source_scan.h` says so) |
 | Break-glass quorum counts distinct trustee keys, binds bucket and ruleset, replay ledger durable | `src/break_glass/core.rs` tests, `consumed_break_glass_tokens` tests in `src/lib.rs` |
 | No relay on Opera/Beacon, no election verification | **no test; established by reading the code** (this page's §5–6 cite the lines) |
+| Chirp: an ACK counts from a key present ten minutes, counted from its row's insert; the ten minutes run together for every key one radio beacons | canary-wap `test_chirp_security.cpp` (`c13_*`), on the real `chirp_channel.cpp` |

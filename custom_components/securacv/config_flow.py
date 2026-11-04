@@ -782,13 +782,15 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not verify_announce_signature(announce, pinned):
                 return self.async_abort(reason="announce_signature_invalid")
             if announce.verifying_key != pinned:
+                # The issue holds the two fingerprints only, and the
+                # announced key is not handed to the fix flow: it pins only
+                # a key the coordinator has seen the kernel serve over its
+                # authenticated API (repairs.TofuMismatchRepairFlow).
                 repairs.async_report_tofu_mismatch(
                     self.hass,
                     existing,
-                    pinned_fingerprint=kernel_key_fingerprint(pinned),
-                    received_fingerprint=announce.fingerprint,
+                    pinned_key=pinned,
                     received_key=announce.verifying_key,
-                    url=announce.api_url(None) or str(existing.data.get(CONF_URL, "")),
                 )
                 return self.async_abort(
                     reason="announce_key_mismatch",

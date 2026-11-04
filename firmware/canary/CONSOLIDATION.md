@@ -50,7 +50,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 | 8 | RF presence detection | ❌ | `canary_wap/rf_presence.{h,cpp}` | Medium | Low |
 | 9 | Chirp channel body | ⚠️ header only | `canary_wap/chirp_channel.cpp` (+ now-fixed real RSSI) | Medium | Low |
 | 10 | Hardware state & safe mode | ⚠️ crash-loop counter + serial safe mode (`common/health/boot_guard.h` over the pure `boot_policy.h`, wired in `src/main.cpp`): an NVS count of boots that never reached healthy (a power-on reset does not count), started over by a different image (an OTA install, a rollback, a re-flash; images are told apart by `app_elf_sha256`, so two builds that both leave it zero look like one image), and at 4 such boots a serial safe-mode console (never for an image still pending OTA confirmation: the bootloader's rollback owns that case) that brings up no radio, storage, sensors or witness chain and waits for the owner to clear the count (serial `c` then `y`, or BOOT held 2 s); host-tested (`firmware/tests_host/test_boot_policy.cpp`, `test_boot_guard.cpp`), CI-compiled, no bench pass. Still missing against the canary-wap: per-peripheral state — `hardware_state.h`'s GPS state machine (absent / detected / fix / lost fix) and camera present/standby record in one `HardwareState` — and its degraded safe mode (optional peripherals off while the core witness runs, bounded automatic recovery reboots, `POST /api/safe-mode/retry`). The SD three-state is already here (`securacv_storage`'s mount worker, `storage_sd_state()`) | `canary_wap/hardware_state.h` (+ now-fixed SD flush) | Low | Medium (boot safety) |
-| 11 | Provisioning gate (BOOT button) | ✅ (2026-09, option D — maintainer to confirm: BOOT tap → one consumer, one `GET /api/provisioning-receipt` or one home-LAN page load, whichever asks first (the WAP's receipt hands its tap to the sole address asking since F342, `tap_arbitrate()`; the flagship's adoption is F354); the dashboard's bearer token is injected only for first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer or a spent tap, never for a bare home-LAN load; CI-compiled on #1704, no bench pass; the WAP's session-cookie model is the Phase 6 follow-up) | `canary_wap/*` gate logic → `firmware/common/network/provisioning_gate.h` | Low | High — corrected: the canary never had an unauthenticated receipt route (it had none at all); the real exposure was `GET /` and `GET /setup` putting the bearer token in the HTML for any home-LAN caller |
+| 11 | Provisioning gate (BOOT button) | ✅ (2026-09, option D — maintainer to confirm: BOOT tap → one consumer, one `GET /api/provisioning-receipt` or one home-LAN page load, for the one address asking for it: since F354 (2026-11) the flagship's receipt and page loads ask one `tap_arbitrate()`, as the WAP's receipt has since F342, so a second address asking from 10 s before the tap onward closes it (the receipt answers `409 tap_contended`, a page load is served withheld), and the dashboard's unlock banner asks first, polling the receipt for one minute before the press (host-tested; the PlatformIO compile is CI's; the one-tap-one-receipt and second-asker-409 bench row is U1's); the dashboard's bearer token is injected only for first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer or a spent tap, never for a bare home-LAN load; CI-compiled on #1704, no bench pass; the WAP's session-cookie model is the Phase 6 follow-up) | `canary_wap/*` gate logic → `firmware/common/network/provisioning_gate.h` | Low | High — corrected: the canary never had an unauthenticated receipt route (it had none at all); the real exposure was `GET /` and `GET /setup` putting the bearer token in the HTML for any home-LAN caller |
 | 12 | Audible chirp / buzzer alerts | ❌ | `canary_wap/audible_chirp.h` | Low | Low |
 | 13 | WiFi presence detection | ❌ | `canary_wap/wifi_presence.h` | Medium | Medium (MAC hygiene) |
 | 14 | System monitor (temp / heap / PSRAM) | ❌ | `canary_wap/sys_monitor.h` | Low | Low |
@@ -209,7 +209,7 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   `firmware/tests_host/test_provisioning_gate.cpp`: one tap admits exactly one
   consumer through an atomic exchange, a 30 s TTL, the `millis()==0` sentinel,
   uint32 wraparound). `main.cpp` opens it on a short BOOT tap and hands
-  take/peek hooks to the network lib. `GET /api/provisioning-receipt` answers
+  peek/take_exact/is_open hooks to the network lib (take/peek before F354). `GET /api/provisioning-receipt` answers
   a valid bearer, or consumes one tap; otherwise 403
   `physical_confirmation_required` with the TTL (the WAP's receipt shape, the
   one the iOS app parses). The same header's `page_token_policy` decides per
@@ -218,11 +218,14 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   IPv4-mapped `::ffff:a.b.c.d` the dual-stack httpd socket reports;
   conservative), or an unspent BOOT tap, which the page load then takes —
   one tap is one consumer across both paths, a page load or a receipt
-  fetch, whichever asks first (`page_token_decide`). Since sweep F342 the
-  WAP's receipt hands its tap only to the sole address asking for it (the
-  same header's `tap_arbitrate()`, staged into the WAP); the flagship's
-  receipt and page load still take the tap for the first asker, and
-  adopting the arbiter there is F354. A home-LAN load with
+  fetch (`page_token_decide`), and it goes to one asking address: since
+  sweep F354 both paths ask the same header's `tap_arbitrate()` through one
+  `TapArbiter` (the step is the WAP's, which its receipt has run since sweep
+  F342), so a second address asking from 10 s before the tap onward closes
+  it, the receipt answers `409 tap_contended` and a page load is served
+  withheld. The dashboard's banner asks first: it polls the receipt every
+  2 s for one minute and says to press only once the Canary has answered,
+  and the receipt's token unlocks the page without a reload. A home-LAN load with
   none of those gets the page with an empty token, `X-CV-Token: withheld`,
   and a banner naming the three unlocks. `firmware/canary/scripts/check_route_security.py`
   (in `firmware.yml`) now fails any route that reaches no credential gate and

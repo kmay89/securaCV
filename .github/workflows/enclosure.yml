@@ -416,6 +416,30 @@ jobs:
           must_fail -D 'part="gasket"'                          # gasket without opt_seal
           must_fail -D 'lid_edge=5' -D 'part="lid"'             # chamfer thicker than the lid
           must_fail -D 'wall_t=0' -D 'part="base"'              # zero wall
+          # These name the assert they expect, so a render that exits 1 for
+          # any other reason is not taken for the guard working. The gland
+          # bush's overfill assert compared the bush with the fill it was
+          # cut from, so it held nothing for any cg_fill (audit C34): it now
+          # holds the bush's own squeezed fill to the O-ring rule's 90 %
+          # ceiling, whether cg_fill or a cg_bush_l set by hand moved it.
+          must_refuse() {
+            local scad="$1" want="$2" log
+            shift 2
+            log=$(mktemp)
+            if openscad --export-format binstl -o /tmp/x.stl "$@" "$scad" >"$log" 2>&1; then
+              echo "::error::expected $scad to refuse: $*"; exit 1
+            fi
+            if ! grep -qF "$want" "$log"; then
+              echo "::error::$scad refused $*, but not with: $want"; tail -5 "$log"; exit 1
+            fi
+          }
+          fill="of its cavity, past the O-ring rule's 90 % ceiling"
+          must_refuse canary_inserts.scad "$fill" \
+            -D 'part="gland_bush"' -D 'cg_fill=0.9001'    # just past the ceiling
+          must_refuse canary_inserts.scad "$fill" \
+            -D 'part="gland_bush"' -D 'cg_fill=0.95'      # where the old assert still passed
+          must_refuse canary_inserts.scad "$fill" \
+            -D 'part="gland_bush"' -D 'cg_bush_l=3.85'    # 93 % at the default cg_fill
           echo "all guarded configs failed as expected"
 
   fit:

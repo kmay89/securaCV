@@ -564,7 +564,7 @@ header nonce (above).
 | C1 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (Ed25519::verify against carried `session_pubkey`) | `test_chirp_protocol_invariants::c1_c6_a_witness_must_verify` + `witness_canonical_layout` |
 | C2 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (initial `confirm_count = 0`; ignored on wire) | `test_chirp_security::c2_c3_no_self_count` |
 | C3 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` (different-pubkey check) + `send_chirp` (initial 0) | `test_chirp_security::c2_c3_no_self_count` |
-| C4 | Critical | PR #450 (envelope) + PR #454 (origin signature persistence) | `chirp_channel.cpp::handle_witness` + `relay_chirp` + `ReceivedChirp::origin_signature` | `test_chirp_protocol_invariants::canonical_distinguishes_signers` |
+| C4 | Critical | PR #450 (envelope) + PR #454 (origin signature persistence) | `chirp_channel.cpp::handle_witness` + `relay_chirp` + `ReceivedChirp::origin_signature` (+ `ttl_minutes`, F306) | `test_chirp_protocol_invariants::canonical_distinguishes_signers` + `test_chirp_security::c4_a_relay_keeps_the_signed_ttl` (two hops, TTL 15, 30, 0 and 255) |
 | C5 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` + `pubkey_set_contains` | `test_chirp_security::c5_ack_dedup_by_pubkey` |
 | C6 | Critical (design) | PR #450 | `ChirpWitnessPayload::session_pubkey` + `session_id_from_pubkey` validation | `test_chirp_protocol_invariants::c1_c6_a_witness_must_verify` + `witness_canonical_layout` |
 | C7 | High | PR #450 | `chirp_channel.cpp::handle_suppress_vote` + `CHIRP_MSG_SUPPRESS_VOTE` | `test_chirp_suppress_wap::a_repeated_voter_counts_once` + `a_vote_must_verify` |
@@ -573,7 +573,7 @@ header nonce (above).
 | C10 | High | PR #450 | `chirp_channel.cpp::wall_clock_is_synced` + `MIN_UNIX_TIME` gate | `test_chirp_commands_wap::a_refused_send_names_why` (`clock_unsynced`) |
 | C11 | Medium | PR #450 | `chirp_channel.cpp::generate_emoji_string` (5 emojis) | `test_chirp_commands_wap::every_session_display_is_five_emoji_in_its_field` |
 | C12 | High (latent) | PR #454 | `chirp_api.h::chirp_auth_gated<>` + `canary_wap.ino` registration under `FEATURE_MESH_NETWORK` | manual: cURL with/without Bearer header |
-| C13 | High | PR #450 | `chirp_channel.cpp::confirm_chirp` (presence check) + `nearby_has_pubkey_with_presence` | `test_chirp_security::c5_ack_dedup_by_pubkey` (a key with no nearby row) |
+| C13 | High | PR #450 | `chirp_channel.cpp::confirm_chirp` (presence check) + `nearby_has_pubkey_with_presence` (the row ten minutes old since F311: `NearbyDevice::first_seen_ms`) | `test_chirp_security::c5_ack_dedup_by_pubkey` (a key with no nearby row) + `c13_an_ack_waits_for_ten_minutes_of_presence` + `c13_presence_counts_from_the_row` |
 | C14 | High | PR #450 | `chirp_channel.cpp::pubkey_rate_check_and_record` | manual flood test |
 | C15 | Medium | PR #450 | `chirp_channel.cpp::is_night_mode` (conservative when unsynced) | covered by C10 |
 | C16 | High | PR #450 (partial) + PR #454 (full per-finding suite) | `firmware/projects/canary-wap/tests_host/` | 6 host-test binaries, all green |

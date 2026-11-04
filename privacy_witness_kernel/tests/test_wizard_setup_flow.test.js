@@ -16,8 +16,11 @@ const assert = require("node:assert");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const vm = require("node:vm");
+const { spawnSync } = require("node:child_process");
 
 const PAGE = process.env.WIZARD_PAGE || join(__dirname, "..", "wizard", "index.html");
+// The zone rule's reference (serve_wizard.py), run by python3 below.
+const SERVER = join(__dirname, "..", "serve_wizard.py");
 const src = readFileSync(PAGE, "utf8");
 
 function slice(text, from, to) {
@@ -55,7 +58,10 @@ function flow() {
   };
   vm.createContext(ctx);
   vm.runInContext(SECTION +
-    "\n;globalThis.__t = { wizardPath, preflightView, frigateSummary, summaryRows, savePayload, donePlan, integrationStatusView };\n",
+    "\n;globalThis.__t = { wizardPath, preflightView, frigateSummary, summaryRows, savePayload, donePlan, integrationStatusView,\n" +
+    // typeof: a page without the helper (WIZARD_PAGE pointed at an older one)
+    // fails the zone cases alone, not every case.
+    "  zoneSlug: typeof zoneSlug === \"function\" ? zoneSlug : undefined };\n",
     ctx);
   return ctx.__t;
 }
@@ -196,6 +202,126 @@ test("an RTSP-path save carries the typed cameras with their URLs", () => {
   assert.deepStrictEqual(plain(payload.cameras), [{ name: "Front Door", url: "rtsp://10.0.0.9/s", zone_id: "zone:front_door" }]);
   assert.strictEqual(payload.enable_reviews, true);
   assert.strictEqual(payload.retention_days, 30);
+});
+
+// ---------------------------------------------------------------------------
+// The zone rule (sweep HA39): one page helper, held to the Python reference
+// ---------------------------------------------------------------------------
+
+// Names whose zone id the page used to spell apart from the reference:
+// toLowerCase() on UTF-16 code units made an astral emoji two "_", turned
+// "İ" into "i" + a combining dot (zone:i_stanbul) and the Kelvin sign into
+// "k", and savePayload's fallback had no 64 cut.
+const ZONE_NAMES = [
+  "\u{1F3E0}",                       // an astral emoji: one "_"
+  "\u{1F3E0} Porch",
+  "İstanbul",                  // İstanbul: zone:_stanbul
+  "Kitchen",                   // the Kelvin sign is not A-Z
+  "a".repeat(65),                   // cut to 64
+  "\u{1F3E0}" + "b".repeat(64),     // 65 code points, 66 code units
+  "\u{1F3E0}".repeat(40),           // 40 code points, not 64 halves
+  "Front Door",
+  "Café — back-yard_2",
+  "tab\there\nnew line",
+  "lone \uD800 half",               // a lone surrogate is one code point
+];
+
+// The reference's answers, from serve_wizard.py itself: its go2rtc rows
+// (the rule discover_cameras.sh is held to) for each name.
+function referenceZones(names) {
+  const code = [
+    "import importlib.util, json, sys",
+    "spec = importlib.util.spec_from_file_location('serve_wizard', sys.argv[1])",
+    "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+    "out = []",
+    "for n in json.load(sys.stdin):",
+    "    rows = m._go2rtc_streams_to_cameras({n: {'producers': ['rtsp://x/1']}})",
+    "    out.append(rows[0]['zone_id'] if rows else None)",
+    "print(json.dumps(out))",
+  ].join("\n");
+  const run = spawnSync("python3", ["-c", code, SERVER], { input: JSON.stringify(names), encoding: "utf8" });
+  if (run.error || run.status !== 0) return { error: (run.error && run.error.message) || run.stderr };
+  return { zones: JSON.parse(run.stdout) };
+}
+
+// The reference's zones for ZONE_NAMES, or null once the case is skipped
+// (no python3 outside CI; in CI that is a failure).
+function referenceOrSkip(t) {
+  const ref = referenceZones(ZONE_NAMES);
+  if (!ref.error) return ref.zones;
+  if (process.env.CI) assert.fail(`python3 could not run the reference: ${ref.error}`);
+  t.skip(`python3 could not run the reference: ${ref.error}`);
+  return null;
+}
+
+test("zoneSlug spells every zone id as the Python reference does (HA39)", (t) => {
+  const zones = referenceOrSkip(t);
+  if (!zones) return;
+  const f = flow();
+  ZONE_NAMES.forEach((name, i) => {
+    assert.strictEqual("zone:" + f.zoneSlug(name), zones[i], JSON.stringify(name));
+  });
+  // The three the sweep named, spelled out.
+  assert.strictEqual(f.zoneSlug("\u{1F3E0}"), "_");
+  assert.strictEqual(f.zoneSlug("İstanbul"), "_stanbul");
+  assert.strictEqual(f.zoneSlug("a".repeat(65)), "a".repeat(64));
+});
+
+test("an RTSP save with no zone id takes the reference rule, cut to 64", (t) => {
+  const zones = referenceOrSkip(t);
+  if (!zones) return;
+  const f = flow();
+  const plan = f.wizardPath({ frigate: false });
+  // No name here has whitespace at either end, so trimming changes none.
+  assert.ok(ZONE_NAMES.every((name) => name.trim() === name));
+  const cameras = ZONE_NAMES.map((name, i) => ({ id: i + 1, name, url: "rtsp://10.0.0.9/s", zone_id: "" }));
+  const payload = f.savePayload(Object.assign({}, FORM, { cameras }), plan, { reconfigure: false });
+  const sent = plain(payload.cameras);
+  ZONE_NAMES.forEach((name, i) => {
+    assert.strictEqual(sent[i].zone_id, zones[i], JSON.stringify(name));
+    assert.match(sent[i].zone_id, /^zone:[a-z0-9_-]{1,64}$/, JSON.stringify(name));
+  });
+  assert.strictEqual(sent[2].zone_id, "zone:_stanbul");
+  assert.strictEqual(sent[4].zone_id, "zone:" + "a".repeat(64));
+});
+
+test("a zone id the camera row already holds is sent as it is, never recomputed", () => {
+  // A row filled by go2rtc discovery carries the server's id; one an older
+  // page derived (zone:i_stanbul) is sent unchanged too. Only a row with no
+  // id gets the rule.
+  const f = flow();
+  const plan = f.wizardPath({ frigate: false });
+  const payload = f.savePayload(Object.assign({}, FORM, { cameras: [
+    { id: 1, name: "İstanbul", url: "rtsp://a", zone_id: "zone:i_stanbul" },
+    { id: 2, name: "\u{1F3E0}", url: "rtsp://b", zone_id: "zone:__" },
+    { id: 3, name: "Kraków", url: "rtsp://c", zone_id: "" },
+  ] }), plan, { reconfigure: true });
+  assert.deepStrictEqual(plain(payload.cameras).map((c) => c.zone_id),
+    ["zone:i_stanbul", "zone:__", "zone:krak_w"]);
+  // The Frigate path sends names only: no zone id goes on the wire.
+  const frigate = f.savePayload(FORM, f.wizardPath(FRIGATE_RUNNING), { reconfigure: true });
+  assert.ok(plain(frigate.cameras).every((c) => !("zone_id" in c)));
+});
+
+// updateCamera (outside the setup-flow section: it edits the page's camera
+// list) is lifted on its own and run beside the section's zoneSlug.
+test("typing a camera's name sets its zone id by the same rule", () => {
+  const fn = slice(src, "function updateCamera(id, key, val) {", "\n}\n") + "\n}\n";
+  const ctx = { cameras: [{ id: 7, name: "", url: "", zone_id: "" }] };
+  vm.createContext(ctx);
+  vm.runInContext(SECTION + "\n" + fn + "\n;globalThis.__u = updateCamera;\n", ctx);
+  for (const [typed, zone] of [
+    ["İstanbul", "zone:_stanbul"],
+    ["\u{1F3E0} Porch", "zone:__porch"],
+    ["\u{1F3E0}".repeat(40), "zone:" + "_".repeat(40)],
+    ["Front Door ", "zone:front_door"],
+  ]) {
+    ctx.__u(7, "name", typed);
+    assert.strictEqual(ctx.cameras[0].name, typed);
+    assert.strictEqual(ctx.cameras[0].zone_id, zone, JSON.stringify(typed));
+  }
+  ctx.__u(7, "url", "rtsp://x");
+  assert.strictEqual(ctx.cameras[0].zone_id, "zone:front_door", "a URL edit leaves the zone alone");
 });
 
 test("a re-run sends no device key: the existing identity is kept", () => {

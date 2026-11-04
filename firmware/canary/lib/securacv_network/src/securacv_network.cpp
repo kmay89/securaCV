@@ -1363,16 +1363,19 @@ static bool auth_gate(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 //
 // main.cpp owns the gate State (it owns the BOOT button) and registers these
-// two hooks at boot. Unregistered == closed, so the receipt and the page
+// three hooks at boot. Unregistered == closed, so the receipt and the page
 // token fail closed on a build that never wires the button.
 
-static network_gate_fn_t s_gate_take    = nullptr;
-static network_gate_fn_t s_gate_is_open = nullptr;
+static network_gate_peek_fn_t       s_gate_peek       = nullptr;
+static network_gate_take_exact_fn_t s_gate_take_exact = nullptr;
+static network_gate_fn_t            s_gate_is_open    = nullptr;
 
-void network_set_provisioning_gate_hooks(network_gate_fn_t take,
+void network_set_provisioning_gate_hooks(network_gate_peek_fn_t peek,
+                                         network_gate_take_exact_fn_t take_exact,
                                          network_gate_fn_t is_open) {
-  s_gate_take    = take;
-  s_gate_is_open = is_open;
+  s_gate_peek       = peek;
+  s_gate_take_exact = take_exact;
+  s_gate_is_open    = is_open;
 }
 
 // Restart-request hook (see the header): hands POST /api/reboot to main.cpp's
@@ -1382,10 +1385,6 @@ static network_void_fn_t s_restart_request = nullptr;
 void network_set_restart_request_hook(network_void_fn_t fn) {
   s_restart_request = fn;
 }
-
-// Every grant TAKES the gate (one tap = one consumer). The is_open hook is
-// only a wiring check for /api/status; nothing here grants on a peek.
-static bool provisioning_gate_take()    { return s_gate_take    ? s_gate_take()    : false; }
 
 // Host-order a.b.c.d from an IPAddress (WiFi.softAPIP() and friends).
 static uint32_t ip4_host_order(const IPAddress& ip) {
@@ -1442,6 +1441,94 @@ static uint32_t request_peer_ipv4(httpd_req_t* req) {
   memset(&peer_ss, 0, sizeof(peer_ss));
   if (getpeername(fd, (struct sockaddr*)&peer_ss, &plen) != 0) return 0;
   return sockaddr_ip4_host_order(peer_ss);
+}
+
+// Who asked, for the BOOT tap's arbiter (sweep F354): the socket's PEER
+// address (getpeername; never getsockname, and never a request header), as
+// the 16-byte key provisioning_gate.h's peer_key_from_addr() writes, the
+// WAP's request_peer_key() exactly. On the dual-stack listener an IPv4
+// client reads as ::ffff:a.b.c.d, so it keys the same on either listener; a
+// real IPv6 peer keys by its own 16 bytes, so two of them are two askers.
+// False when the socket cannot say (or names no address): the tap step then
+// refuses with the tap left for the next asker, never skipping the arbiter.
+static bool request_peer_key(httpd_req_t* req,
+                             uint8_t out[canary::net::provisioning_gate::PEER_KEY_LEN]) {
+  using canary::net::provisioning_gate::AddrFamily;
+  using canary::net::provisioning_gate::peer_key_from_addr;
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd < 0) return false;
+  struct sockaddr_storage ss;
+  socklen_t len = sizeof(ss);
+  memset(&ss, 0, sizeof(ss));
+  if (getpeername(fd, (struct sockaddr*)&ss, &len) != 0) return false;
+  if (ss.ss_family == AF_INET) {
+    const struct sockaddr_in* sin = (const struct sockaddr_in*)&ss;
+    return peer_key_from_addr(AddrFamily::IPV4, (const uint8_t*)&sin->sin_addr.s_addr, out);
+  }
+#if defined(LWIP_IPV6) && LWIP_IPV6
+  if (ss.ss_family == AF_INET6) {
+    const struct sockaddr_in6* sin6 = (const struct sockaddr_in6*)&ss;
+    return peer_key_from_addr(AddrFamily::IPV6, (const uint8_t*)&sin6->sin6_addr, out);
+  }
+#endif
+  return false;
+}
+
+// The BOOT tap's one asker (sweep F354, the WAP's F342): provisioning_gate.h's
+// two-entry record of the last two distinct addresses that asked for the tap
+// without a credential. Its one task is the primary server's httpd task (the
+// server registerHttpHandlers() fills): the receipt route and both page
+// routes live there, and the port-80 server beside HTTPS answers a probe with
+// the TLS hint, never page_token_inject(). The one httpd task runs its
+// handlers one at a time, so the record takes no lock. 52 bytes of .bss: no
+// heap, nothing per request.
+static canary::net::provisioning_gate::TapArbiter s_tap_arbiter = {};
+
+// The BOOT-tap step of the receipt and of a home-LAN page load: true when
+// this request takes the tap. Every grant goes through it, and it is the WAP's
+// provisioning_gate_take_for() step for step. The tap goes to ONE asker
+// (provisioning_gate::tap_arbitrate()): served only when the request's peer
+// (request_peer_key(), the socket, never a header) is the sole address that
+// asked from TAP_LOOKBACK_MS before the tap onward. A second address in that
+// window closes the tap, and an asker gets `*verdict` CONTENDED (the
+// receipt's 409 tap_contended, the page's withheld token) while an address
+// other than it asked within TAP_LOOKBACK_MS, up to the end of the closed
+// tap's TTL. The stamp is peeked once, and the clock is read after it (a
+// clock read first would age a tap stored in between by 2^32 ms, and burn
+// it); every swap after that (TAKE, the CONTENDED close, the NO_TAP burn of
+// an expired stamp) is a take_exact() of that one stamp, so a re-tap or the
+// loop task's sweep between the two is never consumed unjudged. Unregistered
+// hooks, or a socket that cannot say who asked, refuse with the tap left.
+static bool provisioning_gate_take(httpd_req_t* req,
+                                   canary::net::provisioning_gate::TapVerdict* verdict) {
+  namespace pg = canary::net::provisioning_gate;
+  *verdict = pg::TapVerdict::NO_TAP;
+  if (!s_gate_peek || !s_gate_take_exact) return false;
+  uint8_t key[pg::PEER_KEY_LEN];
+  if (!request_peer_key(req, key)) return false;
+  const uint32_t seen = s_gate_peek();
+  *verdict = pg::tap_arbitrate(s_tap_arbiter, seen, key, millis(), PROVISIONING_GATE_TTL_MS);
+  if (*verdict == pg::TapVerdict::TAKE) {
+    if (s_gate_take_exact(seen)) return true;
+    *verdict = pg::TapVerdict::NO_TAP;   // another consumer took it since the peek
+    return false;
+  }
+  if (*verdict == pg::TapVerdict::CONTENDED) {
+    // The ask that found the contention closes the tap; only the request
+    // whose swap wins logs, so one closed tap is one line. The health log
+    // names no address; the serial console names both.
+    if (seen != 0 && seen == s_tap_arbiter.contended_tap && s_gate_take_exact(seen)) {
+      char a[pg::PEER_KEY_TEXT_CAP];
+      char b[pg::PEER_KEY_TEXT_CAP];
+      pg::peer_key_text(s_tap_arbiter.recent.key, a, sizeof(a));
+      pg::peer_key_text(s_tap_arbiter.prior.key, b, sizeof(b));
+      Serial.printf("[AUTH] BOOT tap closed: two addresses asked for it (%s and %s)\n", a, b);
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "BOOT tap closed: two devices asked for it", nullptr);
+    }
+    return false;
+  }
+  if (seen != 0) s_gate_take_exact(seen);   // NO_TAP: the stamp is expired
+  return false;
 }
 
 // Address + netmask of one default netif ("WIFI_AP_DEF" / "WIFI_STA_DEF"),
@@ -2408,9 +2495,13 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html,
 // none; a browser sends no Authorization header on a navigation, so a page
 // load never strikes), for a peer inside the live SoftAP subnet, or
 // by SPENDING an unspent BOOT tap — taken, never peeked, so one tap unlocks
-// exactly one home-LAN page load (or, if the app asks first, one receipt
-// fetch; never both). The page that got the token holds the bearer, so its
-// "Save recovery kit" needs no second tap, and the tap that handed it the
+// exactly one home-LAN page load (or one receipt fetch; never both). The
+// load is an ask to the tap's one arbiter (provisioning_gate_take(), sweep
+// F354): the tap goes to it only when its address is the one asking, and a
+// second address asking in the window closes the tap, so that load is
+// served with the credential withheld and the unlock banner's poll hears
+// the 409 that says why. The page that got the token holds the bearer, so
+// its "Save recovery kit" needs no second tap, and the tap that handed it the
 // token ends its address's own backoff (auth_handed_token, sweep F341;
 // never the shared overflow's), so a browser that mistyped the token is not
 // held on its first API call.
@@ -2422,17 +2513,21 @@ static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* 
   const bool setup_active = setup_is_active() || setup_is_first_boot();
   const bool bearer_ok    = !foreign && bearer_present_and_valid(req);
   const bool on_ap        = from_ap_subnet(req);
+  canary::net::provisioning_gate::TapVerdict tap = canary::net::provisioning_gate::TapVerdict::NO_TAP;
   bool tap_spent = false;
   const char* why = nullptr;
   const PageToken verdict = page_token_decide(
       foreign, setup_active, bearer_ok, on_ap,
-      [&tap_spent]() {
-        tap_spent = provisioning_gate_take();
+      [req, &tap, &tap_spent]() {
+        tap_spent = provisioning_gate_take(req, &tap);
         return tap_spent;
       },
       &why);
   if (verdict != PageToken::INJECT) {
-    Serial.printf("[AUTH] page token withheld (%s)\n", why ? why : "");
+    Serial.printf("[AUTH] page token withheld (%s)\n",
+                  tap == canary::net::provisioning_gate::TapVerdict::CONTENDED
+                      ? "the BOOT tap is closed: another address asked for it"
+                      : (why ? why : ""));
   } else if (tap_spent) {
     // The tap hands this address the token, so its backoff ends as a right
     // bearer's would (sweep F341): the page just loaded is not held at 429
@@ -2520,16 +2615,24 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //      on to the tap, never to a 429: the page reads this route's 403 as
   //      "tap BOOT", and the tap is never held. Refused outright while the
   //      credential is unprovisioned;
-  //   3. no valid bearer (none, a wrong one, or a held one): consume the
-  //      physical gate in ONE atomic step (a second poll, or a second
-  //      consumer on another task, reads it closed). A tap that serves
+  //   3. no valid bearer (none, a wrong one, or a held one): the physical
+  //      gate, for ONE asker (provisioning_gate_take(), sweep F354): this
+  //      request's socket peer is recorded, the tap judged
+  //      (tap_arbitrate()) and exactly the judged stamp taken (one
+  //      compare-and-swap: a second poll, or the loop task's sweep, reads it
+  //      closed). A second address that asked from 10 s before the tap
+  //      onward closes it, and an asker hears 409 tap_contended while
+  //      another address keeps asking. Before, the first request from any
+  //      host on the network inside the tap's 30 s took it: a host polling
+  //      this route won the owner's next tap. A tap that serves
   //      also ends the asking address's own backoff (auth_handed_token,
   //      sweep F341; never the shared overflow's, so an address held only
   //      through the overflow stays held): it holds the token now.
+  canary::net::provisioning_gate::TapVerdict tap = canary::net::provisioning_gate::TapVerdict::NO_TAP;
   const ReceiptVerdict verdict = receipt_decide(
       host_is_foreign(req),
       [req]() { return bearer_present_and_valid(req); },
-      []() { return provisioning_gate_take(); });
+      [req, &tap]() { return provisioning_gate_take(req, &tap); });
 
   // Fail closed: the receipt is sent ONLY inside an explicit SERVE_BEARER or
   // SERVE_TAP test. REFUSE_NO_TAP has its own body below; REFUSE_HOST, and
@@ -2552,7 +2655,26 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     return result;
   }
   if (verdict == ReceiptVerdict::REFUSE_NO_TAP) {
-    char body[256];
+    // A second address asked for the tap in the ten seconds before it or
+    // during it: the tap is closed and nothing is handed out. An asker hears
+    // so while an address other than it asked in the last ten seconds (up
+    // to the closed tap's 30 s), so the dashboard's banner can say another
+    // device asked; the first ask that finds no other address asking is
+    // judged afresh (with no new tap, the 403 below). The keys and the error
+    // are the WAP's byte for byte (canary_wap.ino's handler; the apps read
+    // both trees with one parser), and so is the hint but for the WAP's last
+    // clause, "or read the token from the USB serial console": this tree's
+    // console never prints the token (no serial line carries it;
+    // check_route_security.py pins every statement that reads it).
+    // test_securacv_auth.cpp holds the two bodies to that.
+    if (tap == canary::net::provisioning_gate::TapVerdict::CONTENDED) {
+      witness_get_health().http_errors++;
+      httpd_resp_set_status(req, "409 Conflict");
+      httpd_resp_set_type(req, "application/json");
+      httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+      return httpd_resp_sendstr(req, "{\"error\":\"tap_contended\",\"hint\":\"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed and nothing was handed out. When only one device is asking, start your request first and keep it asking, then press BOOT. Or send the recovery kit's token as a bearer.\"}");
+    }
+    char body[canary::net::provisioning_gate::GATE_REFUSAL_JSON_CAP];
     if (!canary::net::provisioning_gate::build_gate_refusal_json(
             body, sizeof(body), PROVISIONING_GATE_TTL_MS)) {
       // Truncation guard: never ship half-JSON to the app.
@@ -2846,7 +2968,8 @@ static esp_err_t handle_status(httpd_req_t* req) {
   // "unwired" means the receipt can only be fetched with the bearer and a
   // home-LAN page load can never be unlocked by a tap (fails closed, and the
   // bench can see it instead of guessing).
-  doc["provisioning_gate"] = (s_gate_take && s_gate_is_open) ? "physical_button" : "unwired";
+  doc["provisioning_gate"] =
+      (s_gate_peek && s_gate_take_exact && s_gate_is_open) ? "physical_button" : "unwired";
 
   // F15: what actually came up, and why — a device that fell back to HTTP
   // says so here instead of leaving the bench to guess (tls_policy::decide).

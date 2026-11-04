@@ -24,9 +24,12 @@ on:
       # Firmware sources a test reads (test_wap_tamper_health.py builds the
       # WAP's MQTT health from them; test_fingerprint_case.py holds its
       # WAP-spelled fixture to the encoder canary_wap.ino spells its MQTT
-      # fp and health key with, mqtt_identity.h), so a firmware-only edit
-      # that stops carrying a tamper level, or changes how the WAP spells
-      # its fingerprint, still runs the test that catches it.
+      # fp and health key with, mqtt_identity.h; the real-core lane's
+      # tests/ha/test_wap_signal_strength.py announces csi_mqtt.cpp's
+      # Signal Strength row and its connect-burst status to a real core),
+      # so a firmware-only edit that stops carrying a tamper level, changes
+      # how the WAP spells its fingerprint or moves that row still runs the
+      # test that catches it.
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
       - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'
@@ -141,9 +144,12 @@ on:
       # Firmware sources a test reads (test_wap_tamper_health.py builds the
       # WAP's MQTT health from them; test_fingerprint_case.py holds its
       # WAP-spelled fixture to the encoder canary_wap.ino spells its MQTT
-      # fp and health key with, mqtt_identity.h), so a firmware-only edit
-      # that stops carrying a tamper level, or changes how the WAP spells
-      # its fingerprint, still runs the test that catches it.
+      # fp and health key with, mqtt_identity.h; the real-core lane's
+      # tests/ha/test_wap_signal_strength.py announces csi_mqtt.cpp's
+      # Signal Strength row and its connect-burst status to a real core),
+      # so a firmware-only edit that stops carrying a tamper level, changes
+      # how the WAP spells its fingerprint or moves that row still runs the
+      # test that catches it.
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
       - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'

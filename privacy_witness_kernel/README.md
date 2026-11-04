@@ -39,7 +39,7 @@ developer's map of the directory.
 | `Dockerfile` | Multi-stage build: Rust kernel (cargo-chef) → pruned integration carry → official HA base runtime (s6-overlay) |
 | `rootfs/etc/services.d/*/{run,finish}` | The s6 services: `panel`, `witness_api`, `witnessd`, `frigate_bridge`, `event_mqtt_bridge`, `discovery` |
 | `run.sh` | The one-time setup step (cont-init): renders the kernel config, the services' argv and `/run/securacv/setup.sh`, installs blueprints, updates the app's own integration copy |
-| `run_lib.sh` | Pure, bashio-free helpers (tested by `tests/test_run_lib.sh`): value resolution, device id, discovery payload (C6), blueprint install |
+| `run_lib.sh` | Pure, bashio-free helpers (tested by `tests/test_run_lib.sh`): value resolution, list options read whole from `/data/options.json` (`opt_list`, which returns 1 when that file cannot be read), device id, discovery payload (C6), blueprint install |
 | `serve_wizard.py` | The ingress panel: setup wizard, status panel, `/api/health` watchdog probe, proxies to the kernel and to Canaries |
 | `integration_carry.py` | Option G: places/updates the carried integration under `/config/custom_components` (marker + sha256 manifest; never HACS/edited copies; no restarts) |
 | `wizard/index.html` | The page; its `setup-flow` section is pure logic the node tests lift |

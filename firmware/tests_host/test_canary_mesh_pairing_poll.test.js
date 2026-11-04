@@ -22,7 +22,14 @@
 //     button again, and the next pairing in the same page starts
 //     unconfirmed; a confirm refused with partner_refused says so once;
 //   - a body without the F133 fields (older firmware) claims neither a
-//     success nor a failure.
+//     success nor a failure;
+//   - a start or join this Canary refuses with 409 opera_exists (it already
+//     holds an opera, F136) says so in words and redraws the Opera card,
+//     never the raw code, and starts no poll (sweep F322); other refusals
+//     keep their "Failed to start pairing: <code>" alert;
+//   - a timeout and a confirmation that did not match also say that two
+//     Canaries showing the same code may run different pairing firmware,
+//     and to update both (sweep F358), beside the words pinned above.
 // The functions are lifted out of the C++ raw string by literal markers and
 // run against a stub DOM, a scripted api(), a captured setInterval and a
 // recording alert(), the way test_canary_mesh_alerts.test.js does it.
@@ -125,6 +132,57 @@ test("a failed pairing is never called complete, and says why", async () => {
       assert.match(p.alerts[0], words);
       assert.doesNotMatch(p.alerts[0], SUCCESS);
     }
+  }
+});
+
+// The sentence a timeout and a mismatched confirmation add (sweep F358).
+const FIRMWARE_HINT = "If both screens showed the same code, the two Canaries may run different " +
+                      "pairing firmware: update both, then pair again.";
+
+test("a timeout and a mismatched confirmation say the firmware may differ", async () => {
+  for (const [reason, words] of [["timeout", /timed out/], ["bad_confirm", /did not match/]]) {
+    const p = page({
+      "/api/mesh/pair/start": () => ({ ok: true, state: "PAIRING_INIT", pairing_seq: 7 }),
+      "/api/mesh": [after(7, "failed", reason)],
+    });
+    await p.t.startPairing("init");
+    await p.poll();
+    assert.strictEqual(p.alerts.length, 1, reason);
+    assert.match(p.alerts[0], words);
+    assert.ok(p.alerts[0].includes(FIRMWARE_HINT), `${reason}: ${p.alerts[0]}`);
+    assert.ok(p.alerts[0].endsWith(FIRMWARE_HINT), `${reason}: the hint is the last sentence`);
+    assert.ok(p.t.pairingFailText(reason).includes(FIRMWARE_HINT), reason);
+  }
+  // The other reasons are not a firmware question.
+  for (const reason of ["canceled", "partner_refused", "bad_complete", "crypto", "something_else"]) {
+    const p = page({});
+    assert.ok(!p.t.pairingFailText(reason).includes("pairing firmware"), reason);
+  }
+});
+
+test("a start or join refused with opera_exists says leave first and redraws the card", async () => {
+  for (const [mode, endpoint] of [["init", "/api/mesh/pair/start"], ["join", "/api/mesh/pair/join"]]) {
+    // http_send_error(req, 409, "opera_exists"), as api() parses it.
+    const p = page({ [endpoint]: () => ({ ok: false, error: "opera_exists" }) });
+    await p.t.startPairing(mode);
+    assert.deepStrictEqual(p.alerts,
+      ["This Canary is already in an opera. Leave it first, then start or join another."], mode);
+    assert.doesNotMatch(p.alerts[0], /opera_exists|Failed to start pairing/);
+    assert.strictEqual(p.refreshed(), 1, `${mode}: refreshOpera() redraws the card`);
+    assert.ok(!p.polling(), `${mode}: no pairing poll starts`);
+    assert.strictEqual(p.t.state().pairingSeq, null);
+    assert.deepStrictEqual(p.calls, [`POST ${endpoint}`]);
+    assert.notStrictEqual(p.el("operaPairing").style.display, "block", "the pairing view is not shown");
+  }
+});
+
+test("other start refusals keep the raw code and redraw nothing", async () => {
+  for (const error of ["no_flash_encryption", "pair_start_failed", undefined]) {
+    const p = page({ "/api/mesh/pair/start": () => ({ ok: false, error }) });
+    await p.t.startPairing("init");
+    assert.deepStrictEqual(p.alerts, ["Failed to start pairing: " + (error || "Unknown error")]);
+    assert.strictEqual(p.refreshed(), 0);
+    assert.ok(!p.polling());
   }
 });
 

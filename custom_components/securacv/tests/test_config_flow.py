@@ -478,10 +478,24 @@ def test_a_signed_announce_with_another_key_raises_the_repairs_issue():
     assert result["type"] == "abort" and result["reason"] == "announce_key_mismatch"
     issue = issues(flow.hass)[(DOMAIN, f"{ISSUE_TOFU_MISMATCH}_entry-1")]
     assert issue["is_fixable"] is True
-    assert issue["translation_placeholders"]["pinned_fingerprint"] == kernel_key_fingerprint(KEY)
-    assert issue["translation_placeholders"]["received_fingerprint"] == kernel_key_fingerprint(OTHER_KEY)
-    assert issue["data"]["received_key"] == OTHER_KEY
+    # The two fingerprints and nothing else: no URL or host, no key (F399).
+    fingerprints = {
+        "pinned_fingerprint": kernel_key_fingerprint(KEY),
+        "received_fingerprint": kernel_key_fingerprint(OTHER_KEY),
+    }
+    assert issue["translation_placeholders"] == fingerprints
+    assert issue["data"] == fingerprints
     assert existing.data[CONF_URL] == "http://old:8799", "nothing moved"
+    # The announced key is not handed to the fix flow: the pin comes only
+    # from what the coordinator sees over the authenticated API, and no
+    # coordinator has seen this one, so there is nothing to confirm yet.
+    from .. import repairs
+
+    fix = run(repairs.async_create_fix_flow(flow.hass, f"{ISSUE_TOFU_MISMATCH}_entry-1", issue["data"]))
+    fix.hass = flow.hass
+    result = run(fix.async_step_init())
+    assert result["type"] == "abort" and result["reason"] == "no_received_key"
+    assert existing.data[CONF_KERNEL_VERIFYING_KEY] == KEY
 
 
 def test_an_unpinned_legacy_entry_takes_nothing_from_an_unverifiable_announce():

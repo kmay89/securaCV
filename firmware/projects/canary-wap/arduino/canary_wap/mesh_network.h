@@ -985,6 +985,11 @@ struct NearbyDevice {
   uint8_t session_id[SESSION_ID_SIZE];
   char emoji[EMOJI_DISPLAY_SIZE];
   uint32_t last_seen_ms;
+  // When this row was put in the table: set by handle_presence() at the
+  // insert and never by a refresh, so a key's ACK counts once its row is
+  // PRESENCE_REQUIRED_MS old (spec §3.4 rule 4; sweep F311). A row pruned
+  // after NEARBY_TIMEOUT_MS of silence, or a new session id, starts again.
+  uint32_t first_seen_ms;
   int8_t rssi;
   bool listening;                               // Is accepting chirps
 };
@@ -1000,6 +1005,13 @@ struct ReceivedChirp {
   ChirpDetailSlot detail;
   ChirpUrgency urgency;
   uint8_t hop_count;
+  // The TTL the originator signed (spec §3.3's canonical covers it), kept so
+  // a relay carries the same byte and its origin signature still verifies;
+  // relay_chirp() wrote 15, and a chirp sent with any other TTL was refused
+  // one hop on (sweep F306). It takes the byte of padding before
+  // received_ms, so the row stays 964 bytes. Nothing here reads it as a
+  // display time: a row lives DEFAULT_DISPLAY_MS whatever it says.
+  uint8_t ttl_minutes;
   uint32_t received_ms;
   uint32_t timestamp;                           // Wall-clock send time (UNIX seconds, v0.2)
   uint8_t nonce[8];

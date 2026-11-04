@@ -9511,7 +9511,7 @@
       {
        "name": "cg_fill",
        "default": "0.90",
-       "comment": "the bush's fill of its cavity once squeezed — 0.90 is the O-ring rule's ceiling, but nothing holds it there (the overfill assert compares the bush with itself); it sets the bush's free length (cg_bush_l), and a fill above about 0.96 is refused only because the squeezed bush would rise out of the nose bore (asserted)"
+       "comment": "the bush's fill of its cavity once squeezed: it sets the bush's free length (cg_bush_l). 0.90 is the O-ring rule's ceiling, and a fill past it is refused (asserted: TPU does not compress, so 10 % is left for tolerance and heat); the squeezed bush must also stay inside the nose bore (asserted, about 0.96 at the defaults)"
       },
       {
        "name": "cg_bush_l",
@@ -15481,7 +15481,13 @@
        "name": "btn_dz",
        "default": "1.0",
        "comment": "actuator center off that face (side tact switches sit ~1.0) — MEASURE"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Side cluster",
+     "note": "battery / RTC / pin row exit on the RIGHT (+X) edge",
+     "params": [
       {
        "name": "opt_side",
        "default": "true",

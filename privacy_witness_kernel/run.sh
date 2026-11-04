@@ -109,6 +109,11 @@ fi
 DEVICE_KEY_SEED=$(bashio::config 'device_key_seed' || echo "")
 MODE=$(bashio::config 'mode')
 
+# The cameras list is read whole (run_lib.sh opt_list): bashio prints an
+# array option one element per line, so two cameras gave `jq length` two
+# numbers, the test failed and the app ran the wizard alone (sweep HA38).
+# An options file opt_list cannot read counts no camera (its non-zero
+# return is not acted on here), so only the wizard runs.
 CONFIGURED="false"
 if [ -n "$DEVICE_KEY_SEED" ] && [ "$DEVICE_KEY_SEED" != "devkey:mvp" ]; then
     CONFIGURED="true"
@@ -116,7 +121,7 @@ elif [ -s "$DEVICE_KEY_FILE" ]; then
     CONFIGURED="true"
 elif [ "$MODE" = "frigate" ]; then
     CONFIGURED="true"
-elif bashio::config.has_value 'cameras' && [ "$(bashio::config 'cameras' | jq length)" -gt 0 ]; then
+elif [ "$(opt_list cameras | jq length)" -gt 0 ]; then
     CONFIGURED="true"
 fi
 
@@ -398,20 +403,29 @@ if [ "$MODE" = "frigate" ]; then
     MQTT_USER=$(resolve_value "$OPT_FRIGATE_USER" "$DISCOVERED_MQTT_USER" "")
     MQTT_PASS=$(resolve_value "$OPT_FRIGATE_PASS" "$DISCOVERED_MQTT_PASS" "")
     MQTT_TOPIC=$(resolve_frigate_topic "$OPT_FRIGATE_TOPIC" "$TOPIC_PREFIX")
-    MIN_CONFIDENCE=$(bashio::config 'frigate.min_confidence')
+    # A frigate block saved without min_confidence (the schema lets it go)
+    # read as the string "null", which frigate_bridge cannot parse; the
+    # default is config.yaml's and the bridge's own, 0.5.
+    MIN_CONFIDENCE=$(bashio::config 'frigate.min_confidence' '0.5')
 
     # Get cameras and labels as comma-separated strings. Cameras are the
     # shared slugs the wizard wrote (contract C8); the bridge slugs both
     # sides before comparing, so a hand-typed name still meets Frigate's.
-    FRIGATE_CAMERAS=""
-    if bashio::config.has_value 'frigate.cameras'; then
-        FRIGATE_CAMERAS=$(bashio::config 'frigate.cameras' | jq -r 'join(",")')
+    # Each list is read whole (run_lib.sh opt_list): bashio prints an array
+    # option one element per line, which `join` cannot parse, so under
+    # `set -e` a label list stopped the setup here (sweep HA38). An empty or
+    # missing list joins to "", and the bridge's own default applies. An
+    # options file opt_list cannot read leaves both lists unknown, not empty,
+    # and an empty camera list would seal every camera Frigate reports, not
+    # the ones the wizard saved: the setup stops here instead.
+    if ! FRIGATE_CAMERAS_JSON=$(opt_list frigate.cameras) \
+        || ! FRIGATE_LABELS_JSON=$(opt_list frigate.labels); then
+        bashio::log.error "Cannot read frigate.cameras and frigate.labels from ${OPTIONS_JSON:-/data/options.json}."
+        bashio::log.error "Not starting the Frigate bridge without them: an empty camera list would seal every camera Frigate reports."
+        exit 1
     fi
-
-    FRIGATE_LABELS=""
-    if bashio::config.has_value 'frigate.labels'; then
-        FRIGATE_LABELS=$(bashio::config 'frigate.labels' | jq -r 'join(",")')
-    fi
+    FRIGATE_CAMERAS=$(printf '%s\n' "$FRIGATE_CAMERAS_JSON" | jq -r 'join(",")')
+    FRIGATE_LABELS=$(printf '%s\n' "$FRIGATE_LABELS_JSON" | jq -r 'join(",")')
 
     bashio::log.info "MQTT Broker: $MQTT_HOST:$MQTT_PORT"
     bashio::log.info "Frigate Topic: $MQTT_TOPIC"
@@ -485,10 +499,18 @@ else
     build_camera_config() {
         local cameras_json="[]"
 
-        # Check if cameras are manually configured
-        if bashio::config.has_value 'cameras'; then
-            cameras_json=$(bashio::config 'cameras')
-            bashio::log.info "Found $(echo "$cameras_json" | jq length) manually configured cameras"
+        # Cameras configured by hand, read whole (run_lib.sh opt_list): bashio
+        # prints an array option one element per line, so the merge and the
+        # `.[0]` below met bare objects, not an array, and the app stopped at
+        # start with any camera configured (sweep HA38). An options file it
+        # cannot read gives [] (opt_list says so on stderr): discovery below
+        # applies as with no camera configured, and with discovery off the
+        # start stops on "No cameras configured!".
+        cameras_json=$(opt_list cameras) || cameras_json="[]"
+        local configured_count
+        configured_count=$(printf '%s\n' "$cameras_json" | jq length)
+        if [ "$configured_count" -gt 0 ]; then
+            bashio::log.info "Found $configured_count manually configured cameras"
         fi
 
         # Try go2rtc discovery if enabled

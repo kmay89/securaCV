@@ -908,6 +908,11 @@ static int test_a_forged_card_id_is_never_sent_or_credited() {
 // stall for the rows behind it. The watermark passes its id only when a row
 // after it is sent; the delivery ceiling is written only for rows sent; the
 // allocator's floor never reads the card.
+//
+// And sweep F301: a line a chokepoint before F301 wrote from a label holding
+// a quote (a state of `ac"tive`) parsed with the state cut at the quote, and
+// went out as `"ac"`; parse() now refuses it (the byte after the quote is no
+// `,` or `}`), and the walk skips and counts it as it does the others.
 static bool edit_state(World& w, uint32_t id, const std::string& state) {
   const std::string head = "{\"id\":" + std::to_string(id) + ",";
   const size_t at = w.log.find(head);
@@ -937,6 +942,7 @@ static int test_a_line_no_writer_could_spell_is_skipped_not_sent() {
   p.card_close();
   CHECK(edit_state(w, 5, "occ\\"));
   CHECK(edit_state(w, 7, std::string("oc\x01" "c")));
+  CHECK(edit_state(w, 8, "ac\"tive"));         // a pre-F301 chokepoint's quote
   const uint32_t floor_before = a.nvs_floor;
   Planner& q = p;
   open_card(w, q, a);
@@ -946,23 +952,23 @@ static int test_a_line_no_writer_could_spell_is_skipped_not_sent() {
   CHECK(h.drain() < 1000);
   CHECK(!q.pending());
   CHECK(w.bodies_not_json == 0);               // every body HA got parses
-  CHECK(times_accepted(w.ha, 5) == 0 && times_accepted(w.ha, 7) == 0);
-  CHECK(each_once(w.ha, 4, 4) && each_once(w.ha, 6, 6) && each_once(w.ha, 8, 9));
+  CHECK(times_accepted(w.ha, 5) == 0 && times_accepted(w.ha, 7) == 0 && times_accepted(w.ha, 8) == 0);
+  CHECK(each_once(w.ha, 4, 4) && each_once(w.ha, 6, 6) && each_once(w.ha, 9, 9));
   CHECK(w.ha.refused.empty() && strictly_rising(w.ha.accepted));
   // Skipped: the three delivered lines the walk passes on its way (it
-  // starts over after the remount) and the two refused ones.
-  if (q.stats().skipped != 5 || q.stats().replayed != 4) {
+  // starts over after the remount) and the three refused ones.
+  if (q.stats().skipped != 6 || q.stats().replayed != 3) {
     std::fprintf(stderr, "skipped %u replayed %u\n", (unsigned)q.stats().skipped,
                  (unsigned)q.stats().replayed);
   }
-  CHECK(q.stats().skipped == 3 + 2 && q.stats().replayed == 4);
+  CHECK(q.stats().skipped == 3 + 3 && q.stats().replayed == 3);
   CHECK(q.stats().untrusted == 0 && q.stats().unsendable == 0);
   CHECK(q.watermark() == 9);                   // past them: rows after them went
   CHECK(a.nvs_floor == floor_before);          // the card moves no floor
   // Never retried: more passes read nothing more and send nothing.
   const size_t accepted = w.ha.accepted.size();
   for (int i = 0; i < 5; ++i) h.tick();
-  CHECK(w.ha.accepted.size() == accepted && q.stats().skipped == 5);
+  CHECK(w.ha.accepted.size() == accepted && q.stats().skipped == 6);
 
   // The refused line is the last on the card: nothing after it moves the
   // walk, so it must step past it itself. The watermark stays below its id
@@ -975,7 +981,7 @@ static int test_a_line_no_writer_could_spell_is_skipped_not_sent() {
   CHECK(h.drain() < 1000);
   CHECK(!q.pending());
   CHECK(each_once(w.ha, 10, 10) && times_accepted(w.ha, 11) == 0);
-  CHECK(q.stats().skipped == 6);
+  CHECK(q.stats().skipped == 7);
   CHECK(q.watermark() == 10);
   const uint32_t live_before = q.stats().live;
   h.tick(1);                                    // 12: live
@@ -991,7 +997,8 @@ static int test_a_line_no_writer_could_spell_is_skipped_not_sent() {
   const size_t before_reboot = w.ha.accepted.size();
   CHECK(h2.drain() < 1000);
   CHECK(w.ha.accepted.size() == before_reboot);
-  CHECK(times_accepted(w.ha, 5) == 0 && times_accepted(w.ha, 7) == 0 && times_accepted(w.ha, 11) == 0);
+  CHECK(times_accepted(w.ha, 5) == 0 && times_accepted(w.ha, 7) == 0 && times_accepted(w.ha, 8) == 0 &&
+        times_accepted(w.ha, 11) == 0);
   return 0;
 }
 

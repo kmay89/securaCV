@@ -555,6 +555,13 @@ def test_the_redaction_set_names_every_identifier_class() -> None:
         "local_address",
         "address",
         "peer_address",
+        # A Canary's health counters, the second net behind the health
+        # projection (P18, ledger F391).
+        "uptime",
+        "boot_count",
+        "sd_writes",
+        "http_requests",
+        "last_frame_age_ms",
     ):
         assert key in TO_REDACT, key
 
@@ -587,4 +594,25 @@ def test_an_identifier_key_is_replaced_wherever_it_lands() -> None:
         "5c:aa:bb:cc:dd:ee",
         "7e:11:22:33:44:55",
     ):
+        assert value not in text, value
+
+
+def test_a_health_counter_is_replaced_wherever_it_lands() -> None:
+    """The second net behind the health projection (device-details
+    P18, ledger F391): a Canary's uptime, boot count, card writes, web
+    requests and frame age, at any depth, come out redacted, numbers as
+    much as strings."""
+    from homeassistant.components.diagnostics import async_redact_data
+
+    seeded = {
+        "uptime": 864123,
+        "health": {
+            "boot_count": 4127,
+            "storage": {"sd_writes": 918273},
+            "web": [{"http_requests": "55501"}],
+            "camera": {"stats": [{"last_frame_age_ms": 31337}]},
+        },
+    }
+    text = repr(async_redact_data(seeded, TO_REDACT))
+    for value in ("864123", "4127", "918273", "55501", "31337"):
         assert value not in text, value

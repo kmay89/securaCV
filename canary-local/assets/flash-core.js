@@ -860,11 +860,13 @@ export function validateBackupFile(byteLength, flashBytes, name) {
 
 // Which product a rescue should offer first: the one the board is already
 // running if we could read it, else the chip's only match, else the caller
-// shows a picker.
+// shows a picker. Display-aware (productForProject): a display build whose
+// name carries no flavor is a display, never the flagship its "canary" stem
+// would match.
 export function pickRescueProduct(catalog, chip, currentProjectName) {
   const matches = productsForChip(catalog, chip);
   if (!matches.length) return null;
-  const current = matchProjectToProduct(catalog, currentProjectName);
+  const current = productForProject(catalog, currentProjectName);
   if (current && matches.some((p) => p.id === current.id)) return current;
   return matches.length === 1 ? matches[0] : null;
 }
@@ -1734,7 +1736,9 @@ export function smartPick(catalog, opts = {}) {
     }
   }
   if (currentProject) {
-    const cur = matchProjectToProduct(catalog, currentProject);
+    // Display-aware, as every surface naming the board's firmware is
+    // (productForProject): a flavorless display build is a display.
+    const cur = productForProject(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
       return { product: cur, kind: "current", shortlist: [cur],
         why: `This board already runs ${cur.name}, so it is preselected. An install starts its ` +
@@ -2818,11 +2822,18 @@ export function displayFor(catalog, projectNameOrId) {
 // first entry, as the role line names it), else the catalog's first display
 // product — never the flagship. Every display firmware reads the same serial
 // console (none), so the monitor's commands are right either way; the exact
-// flavor is the descriptor's to name. Mirrored by desktop/src/app.js
-// productForProject (desktop_parity.test.js runs both over the same names).
+// flavor is the descriptor's to name. A name that carries no catalog stem at
+// all ("esp32_display_demo", a vendor's own image) is no SecuraCV build, and
+// stays unrecognized as the plain matcher leaves it: the answer differs from
+// matchProjectToProduct's only for a name that matched a non-display stem
+// and says "display". Every surface that names the board's firmware (the
+// role line, the monitor, the customs read, the rescue and smart picks, the
+// install verdicts, the self-check ask) resolves it here, in both flashers.
+// Mirrored by desktop/src/app.js productForProject (desktop_parity.test.js
+// runs both over the same names).
 export function productForProject(catalog, projectName) {
   const match = matchProjectToProduct(catalog, projectName);
-  if (!looksLikeDisplayProject(projectName)) return match;
+  if (!match || !looksLikeDisplayProject(projectName)) return match;
   const isDisplay = (p) => (p.role || productRole(p.id)) === "display";
   if (match && isDisplay(match)) return match;
   const list = (catalog && catalog.products) || [];

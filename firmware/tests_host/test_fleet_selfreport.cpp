@@ -235,7 +235,7 @@ static void test_born_day_is_omitted_until_the_device_has_one() {
 static void test_born_day_reports_the_day_and_its_confidence() {
   char buf[512];
   FleetSelfDevice d = sample();
-  d.born_day = 20673;                    // 2026-08-07
+  d.born_day = 20673;                    // 2026-08-08
   d.born_exact = 1;
   fleet_selfreport_build(buf, sizeof buf, &d);
   std::string s(buf);

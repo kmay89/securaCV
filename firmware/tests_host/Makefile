@@ -192,6 +192,7 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # gate is this header's State.
 PROVGATE_HDR = ../common/network/provisioning_gate.h
 PROVGATE_MAIN = ../canary/src/main.cpp
+PROVGATE_WAP_INO = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
 PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 
 # Improv Wi-Fi over BLE, the pure half (common/network/improv_core.h): the
@@ -576,8 +577,12 @@ CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
 # handle_provisioning_receipt(), with bearer_present_and_valid() and
 # send_host_refusal() they call, are cut verbatim out of securacv_network.cpp
 # by cut_functions.awk (SECAUTH_NET_INC) and driven over stand-ins for the
-# Host, the setup state, the SoftAP test, the tap and the receipt writer, on
-# the real AuthManager and the real provisioning_gate.h decisions.
+# Host, the setup state, the SoftAP test, the socket's peer and the receipt
+# writer, on the real AuthManager and the real provisioning_gate.h decisions.
+# The BOOT tap's step, provisioning_gate_take(), is cut with them and runs on
+# the real gate State and TapArbiter (sweep F354): two askers around one
+# tap, a lone asker whose address changes, and the 409 body, read beside the
+# WAP's handler in canary_wap.ino (SECAUTH_WAP_INO) for its keys and words.
 SECAUTH_SRC   = ../canary/lib/securacv_auth/src/securacv_auth.cpp
 SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
                 ../canary/include/canary_config.h \
@@ -586,10 +591,11 @@ SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
                 ../common/network/provisioning_gate.h \
                 $(wildcard stubs/securacv_auth/*.h)
 SECAUTH_READS = ../canary/lib/securacv_network/src/securacv_network.cpp
+SECAUTH_WAP_INO = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
 SECAUTH_BIN   = $(BUILD_DIR)/test_securacv_auth
 SECAUTH_INCS  = -I stubs/securacv_auth -I ../canary/lib/securacv_auth/src \
                 -I ../canary/include -I ../common
-SECAUTH_NET_SIGS = static void send_host_refusal(httpd_req_t* req) {|static bool bearer_present_and_valid(httpd_req_t* req) {|static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
+SECAUTH_NET_SIGS = static void send_host_refusal(httpd_req_t* req) {|static bool bearer_present_and_valid(httpd_req_t* req) {|static bool provisioning_gate_take(httpd_req_t* req,|static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 SECAUTH_NET_INC  = $(BUILD_DIR)/secauth_network.inc
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
@@ -638,6 +644,20 @@ DASHROUTES_JS = test_canary_dashboard_routes.test.js
 # no-camera state and hides the cards that call the other camera routes, and
 # Export saves the bundle POST /api/export answers inline (it named no file).
 DASHGATES_JS = test_canary_dashboard_gates.test.js
+
+# That dashboard's unlock banner and the BOOT tap (repo sweep F354): the
+# banner asks first, polling GET /api/provisioning-receipt from before the
+# press, takes the receipt's token without a reload, says so on a 409,
+# keeps asking from a hidden tab and stops on its window and on pagehide,
+# one timer and one request at a time. Its two-asker cases meet the firmware's own tap
+# step: tap_step_oracle.cpp compiles provisioning_gate_take(), cut from
+# securacv_network.cpp (TAPSTEP_INC, the cut SECAUTH_NET_SIGS also takes),
+# over the real provisioning_gate.h, and the test drives it by
+# TAP_STEP_ORACLE (it builds one itself when run alone).
+BANNER_JS     = test_canary_provisioning_banner.test.js
+TAPSTEP_SIGS  = static bool provisioning_gate_take(httpd_req_t* req,
+TAPSTEP_INC   = $(BUILD_DIR)/tap_step.inc
+TAP_ORACLE    = $(BUILD_DIR)/tap_step_oracle
 
 # POST /api/logs/<seq>/ack on both trees (repo sweep F214). Both registered
 # "/api/logs/*/ack", which esp_http_server's httpd_uri_match_wildcard never
@@ -1127,8 +1147,9 @@ $(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
 $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
 
-$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -DCANARY_MAIN_CPP='"$(abspath $(PROVGATE_MAIN))"' -o $@ test_provisioning_gate.cpp
+$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) $(PROVGATE_WAP_INO) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCANARY_MAIN_CPP='"$(abspath $(PROVGATE_MAIN))"' \
+	    -DCANARY_WAP_INO='"$(abspath $(PROVGATE_WAP_INO))"' -o $@ test_provisioning_gate.cpp
 
 $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_improv_core.cpp
@@ -1262,12 +1283,20 @@ $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUI
 	    -DCANARY_NETWORK_CPP='"$(abspath ../canary/lib/securacv_network/src/securacv_network.cpp)"' \
 	    $(CANDIAG_SRC) -o $@
 
+$(TAPSTEP_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(TAPSTEP_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
+
+$(TAP_ORACLE): tap_step_oracle.cpp $(PROVGATE_HDR) ../canary/include/canary_config.h $(TAPSTEP_INC) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../canary/include -I ../common \
+	    -DTAP_STEP_INC='"$(abspath $(TAPSTEP_INC))"' tap_step_oracle.cpp -o $@
+
 $(SECAUTH_NET_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(SECAUTH_NET_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
 
-$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
+$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_WAP_INO) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) $(SECAUTH_INCS) \
 	    -DCANARY_NETWORK_CPP='"$(abspath $(SECAUTH_READS))"' \
+	    -DCANARY_WAP_INO='"$(abspath $(SECAUTH_WAP_INO))"' \
 	    -DCANARY_FLAGSHIP_DIR='"$(abspath ../canary)"' \
 	    -DSECAUTH_NET_INC='"$(abspath $(SECAUTH_NET_INC))"' \
 	    test_securacv_auth.cpp $(SECAUTH_SRC) -o $@)
@@ -1514,7 +1543,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(VISMGR_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(SENT_LINKS_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(VISMGR_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(SENT_LINKS_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE) $(TAP_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1611,6 +1640,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(CHIRPPANEL_JS)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(DASHROUTES_JS)
 	$(NODE) --test $(DASHGATES_JS)
+	TAP_STEP_ORACLE=$(abspath $(TAP_ORACLE)) $(NODE) --test $(BANNER_JS)
 	./$(LOGACK_BIN)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) LOG_ACK_ROUTE_BIN=$(abspath $(LOGACK_BIN)) $(NODE) --test $(ROUTEMATCH_JS)
 

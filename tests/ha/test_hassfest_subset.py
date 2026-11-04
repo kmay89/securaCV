@@ -17,7 +17,7 @@ from homeassistant.helpers.service import async_get_all_descriptions
 from homeassistant.loader import async_get_integration
 
 from conftest import REPO_ROOT, KernelMock
-from custom_components.securacv import binary_sensor, button, event, sensor
+from custom_components.securacv import binary_sensor, button, event, repairs, sensor
 from custom_components.securacv.const import DOMAIN
 
 INTEGRATION = REPO_ROOT / "custom_components" / "securacv"
@@ -143,6 +143,9 @@ async def test_strings_match_translations_and_every_entity_key_resolves(hass: Ho
     for issue in ("no_kernel_found", "kernel_unreachable", "tofu_mismatch", "storage_replace", "entities_migrated", "mqtt_subscribe_failed"):
         assert f"component.{DOMAIN}.issues.{issue}.title" in issues, issue
     assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.step.confirm.title" in issues
+    # The fix flow's abort and its one error resolve too (repairs.py).
+    assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.abort.no_received_key" in issues
+    assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.error.key_changed" in issues
 
 
 def test_strings_pass_hassfest_s_translation_rules() -> None:
@@ -163,12 +166,18 @@ def test_strings_pass_hassfest_s_translation_rules() -> None:
             "(hassfest's exclusive 'fixable' group)"
         )
     # The one fixable issue is the rotate ceremony, and its confirm step
-    # carries the explanation the issue description used to.
+    # carries the explanation the issue description used to. Its text names
+    # exactly the two fingerprints, the only fields the issue holds (ledger
+    # F399): the core's plain confirm flow, the one an issue whose entry is
+    # gone gets, fills it from the issue's placeholders alone
+    # (repairs/issue_handler.py), so a slot beyond them would render
+    # unfilled there.
     tofu = strings["issues"]["tofu_mismatch"]
     assert set(tofu) == {"title", "fix_flow"}
     confirm = tofu["fix_flow"]["step"]["confirm"]
-    for placeholder in ("{pinned_fingerprint}", "{received_fingerprint}", "{url}"):
-        assert placeholder in confirm["description"], placeholder
+    slots = {field for _, field, _, _ in string_module.Formatter().parse(confirm["description"]) if field}
+    assert slots == {"pinned_fingerprint", "received_fingerprint"}
+    assert slots == set(repairs.TOFU_MISMATCH_FIELDS)
 
     # data_description keys must name a field in data (the same step).
     for section in ("config", "options"):

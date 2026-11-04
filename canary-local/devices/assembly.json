@@ -1327,6 +1327,7 @@
      "step": 4,
      "name": "M2 corner screws — through the plate's recessed seats into the shell's post ends",
      "qty": 4,
+     "ref": "SCR3",
      "pose": "cad",
      "irot": [
       180,
