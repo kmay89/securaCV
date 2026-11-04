@@ -2526,10 +2526,16 @@ document.getElementById('fleetGenBtn').addEventListener('click', async () => {
     const r = await cvFetch(`/api/fleet/qr?${params}`, {cache: 'no-store'});
     if (!r.ok) {
       /* Say WHY, not just "Failed" — the old opaque label hid a session
-       * expiry (401) behind what looked like a broken generator. */
+       * expiry (401) behind what looked like a broken generator. A 400 is
+       * the route naming what it refused (fleet_qr_query.h's refusal(),
+       * the ';' refusal), so its own words are shown, as text: a password
+       * refusal never says to re-check the network name (F401). */
+      const why = r.status === 400 ? (await r.text()).trim() : '';
       const hint = r.status === 401 ? 'Session expired &mdash; reload this page and try again.'
                  : r.status === 429 ? 'Too many attempts &mdash; wait a minute, then retry.'
-                 : 'Could not generate (error ' + r.status + '). Re-check the network name.';
+                 : why ? escapeHTML(why)
+                 : r.status === 400 ? 'Could not generate (error 400). Re-check the network name.'
+                 : 'Could not generate (error ' + r.status + ').';
       img.innerHTML = `<p style="color:#c00;padding:20px">${hint}</p>`;
       wrap.style.display = '';
       return;

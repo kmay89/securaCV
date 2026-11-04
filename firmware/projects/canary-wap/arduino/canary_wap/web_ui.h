@@ -5245,74 +5245,83 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function refreshBleDiscovery() {
       try {
-        const status = await api('/api/ble/status');
-        if (!status) return;
+        try {
+          const status = await api('/api/ble/status');
+          if (!status) return;
 
-        const badge = document.getElementById('bleStateBadge');
-        const text = document.getElementById('bleStateText');
-        if (status.ble_available) {
-          badge.className = 'badge success';
-          text.textContent = 'Active';
-        } else {
-          badge.className = 'badge warning';
-          text.textContent = 'Unavailable';
+          const badge = document.getElementById('bleStateBadge');
+          const text = document.getElementById('bleStateText');
+          if (status.ble_available) {
+            badge.className = 'badge success';
+            text.textContent = 'Active';
+          } else {
+            badge.className = 'badge warning';
+            text.textContent = 'Unavailable';
+          }
+
+          document.getElementById('bleOperaState').textContent = status.opera?.active ? 'Active' : 'Off';
+          document.getElementById('bleChirpSent').textContent = status.chirp?.sent || 0;
+          document.getElementById('bleChirpRecv').textContent = status.chirp?.received || 0;
+          document.getElementById('bleConnections').textContent = status.opera?.connections_total || 0;
+          document.getElementById('bleSubtitle').textContent = status.opera?.device_name || 'BLE discovery';
+        } catch(e) { console.error('Failed to fetch BLE status:', e); }
+
+        try {
+          const nearby = await api('/api/nearby');
+          if (!nearby) return;
+
+          const list = document.getElementById('bleNearbyList');
+          const canaries = nearby.canaries || [];
+          const nonCanary = nearby.non_canary_device_count || 0;
+
+          document.getElementById('bleNearbySubtitle').textContent =
+            canaries.length + ' Canaries, ' + nonCanary + ' other BLE devices';
+
+          if (canaries.length === 0) {
+            list.innerHTML = '<div class="empty-state"><div class="empty-icon">📡</div><p>No nearby Canaries detected</p></div>';
+            return;
+          }
+
+          // Every field of a row is drawn as text (F405): the prefix is four
+          // bytes of another device's advertised name, and `<!--` would
+          // comment out the rest of the list.
+          let html = '';
+          canaries.forEach(c => {
+            const rssi = c.rssi_current;
+            const quality = c.rssi_quality;
+            const barPct = Math.max(0, Math.min(100, (rssi + 100) * 2));
+            const barColor = quality === 'excellent' ? 'var(--success)' :
+                             quality === 'good' ? 'var(--accent)' :
+                             quality === 'fair' ? 'var(--warning)' : 'var(--danger)';
+            html += '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.6rem 0;border-bottom:1px solid var(--border);">';
+            html += '<div style="min-width:60px;font-family:var(--mono);font-weight:600;color:var(--accent);">SCV-' + escapeHtml(c.device_id_prefix) + '</div>';
+            html += '<div style="flex:1;">';
+            html += '<div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden;">';
+            html += '<div style="background:' + barColor + ';width:' + barPct + '%;height:100%;border-radius:4px;transition:width 0.3s;"></div>';
+            html += '</div></div>';
+            html += '<div style="min-width:80px;text-align:right;font-size:0.8rem;">';
+            html += '<span style="color:var(--text);">' + escapeHtml(String(rssi)) + ' dBm</span><br>';
+            html += '<span style="color:var(--muted);">' + escapeHtml(quality) + '</span>';
+            html += '</div>';
+            html += '<div style="min-width:40px;text-align:right;font-size:0.75rem;color:var(--muted);">' + escapeHtml(String(c.last_seen_sec_ago)) + 's</div>';
+            html += '</div>';
+          });
+          list.innerHTML = html;
+        } catch(e) { console.error('Failed to fetch nearby devices:', e); }
+      } finally {
+        // Auto-refresh every 10 seconds while the view is on screen: the
+        // Community panel open and BLE Discovery picked in it (now the first
+        // view where Opera never answers, F276). Every pass schedules the
+        // next one, an empty or refused list included (F296: the early
+        // returns above skipped it, so a Canary that came into range after
+        // an empty list showed only when the view was opened again). Leaving
+        // the panel or the view cancels a refresh already waiting
+        // (switchPanel, selectCommunityTab), and a pass that ends after it
+        // was left schedules nothing.
+        clearTimeout(bleDiscoveryTimer);
+        if (currentPanel === 'community' && currentCommunityTab === 'ble-discovery') {
+          bleDiscoveryTimer = setTimeout(refreshBleDiscovery, 10000);
         }
-
-        document.getElementById('bleOperaState').textContent = status.opera?.active ? 'Active' : 'Off';
-        document.getElementById('bleChirpSent').textContent = status.chirp?.sent || 0;
-        document.getElementById('bleChirpRecv').textContent = status.chirp?.received || 0;
-        document.getElementById('bleConnections').textContent = status.opera?.connections_total || 0;
-        document.getElementById('bleSubtitle').textContent = status.opera?.device_name || 'BLE discovery';
-      } catch(e) { console.error('Failed to fetch BLE status:', e); }
-
-      try {
-        const nearby = await api('/api/nearby');
-        if (!nearby) return;
-
-        const list = document.getElementById('bleNearbyList');
-        const canaries = nearby.canaries || [];
-        const nonCanary = nearby.non_canary_device_count || 0;
-
-        document.getElementById('bleNearbySubtitle').textContent =
-          canaries.length + ' Canaries, ' + nonCanary + ' other BLE devices';
-
-        if (canaries.length === 0) {
-          list.innerHTML = '<div class="empty-state"><div class="empty-icon">📡</div><p>No nearby Canaries detected</p></div>';
-          return;
-        }
-
-        let html = '';
-        canaries.forEach(c => {
-          const rssi = c.rssi_current;
-          const quality = c.rssi_quality;
-          const barPct = Math.max(0, Math.min(100, (rssi + 100) * 2));
-          const barColor = quality === 'excellent' ? 'var(--success)' :
-                           quality === 'good' ? 'var(--accent)' :
-                           quality === 'fair' ? 'var(--warning)' : 'var(--danger)';
-          html += '<div style="display:flex;align-items:center;gap:0.75rem;padding:0.6rem 0;border-bottom:1px solid var(--border);">';
-          html += '<div style="min-width:60px;font-family:var(--mono);font-weight:600;color:var(--accent);">SCV-' + c.device_id_prefix + '</div>';
-          html += '<div style="flex:1;">';
-          html += '<div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden;">';
-          html += '<div style="background:' + barColor + ';width:' + barPct + '%;height:100%;border-radius:4px;transition:width 0.3s;"></div>';
-          html += '</div></div>';
-          html += '<div style="min-width:80px;text-align:right;font-size:0.8rem;">';
-          html += '<span style="color:var(--text);">' + rssi + ' dBm</span><br>';
-          html += '<span style="color:var(--muted);">' + quality + '</span>';
-          html += '</div>';
-          html += '<div style="min-width:40px;text-align:right;font-size:0.75rem;color:var(--muted);">' + c.last_seen_sec_ago + 's</div>';
-          html += '</div>';
-        });
-        list.innerHTML = html;
-      } catch(e) { console.error('Failed to fetch nearby devices:', e); }
-
-      // Auto-refresh every 10 seconds while the view is on screen: the
-      // Community panel open and BLE Discovery picked in it (now the first
-      // view where Opera never answers, F276). Leaving the panel or the
-      // view cancels a refresh already waiting (switchPanel,
-      // selectCommunityTab).
-      clearTimeout(bleDiscoveryTimer);
-      if (currentPanel === 'community' && currentCommunityTab === 'ble-discovery') {
-        bleDiscoveryTimer = setTimeout(refreshBleDiscovery, 10000);
       }
     }
 
@@ -5691,7 +5700,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           '<div class="ble-icon">' + deviceIcon(d) + '</div>' +
           '<div class="ble-meta">' +
             '<div class="ble-name">' + escapeHtml(d.name || 'Unknown device') + securaBadge + '</div>' +
-            '<div class="ble-sub">' + escapeHtml(d.address || '') + ' · ' + (d.rssi || '?') + ' dBm</div>' +
+            '<div class="ble-sub">' + escapeHtml(d.address || '') + ' · ' + escapeHtml(String(d.rssi || '?')) + ' dBm</div>' +
           '</div>' +
           '<div class="' + barsCls + '"><span></span><span></span><span></span><span></span></div>' +
           '<div class="ble-dist">' +
@@ -5711,22 +5720,34 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('btScanSubtitle').textContent = 'Tap Scan to see what’s around';
     }
 
+    // The bonds the paired list shows, in its order (F407). A row's Remove
+    // names the row by its index into this list, so no bond's address is
+    // written into the page's markup, and the name and the address are drawn
+    // as text: escapeHtml() leaves quotes as they are, so it could not make
+    // an address safe inside an onclick string.
+    let btPairedShown = [];
+
     async function loadBtPairedDevices() {
       const data = await api('/api/bluetooth/paired');
       if (!data.devices) return;
       const list = document.getElementById('btPairedList');
       document.getElementById('btPairedSubtitle').textContent = (data.count || 0) + ' paired';
+      btPairedShown = data.devices;
       if (!data.devices.length) {
         list.innerHTML = '<p style="color:var(--muted);text-align:center;padding:1rem;">No paired devices</p>';
         return;
       }
-      list.innerHTML = data.devices.map(d => `<div class="log-item" style="padding:0.75rem;">
-        <div><strong>${d.name || 'Unknown'}</strong><div style="font-size:0.75rem;color:var(--muted);">${d.address}</div></div>
-        <button class="btn btn-danger btn-sm" onclick="btRemovePaired('${d.address}')">Remove</button>
+      list.innerHTML = data.devices.map((d, i) => `<div class="log-item" style="padding:0.75rem;">
+        <div><strong>${escapeHtml(d.name || 'Unknown')}</strong><div style="font-size:0.75rem;color:var(--muted);">${escapeHtml(d.address)}</div></div>
+        <button class="btn btn-danger btn-sm" onclick="btRemovePaired(${i})">Remove</button>
       </div>`).join('');
     }
 
-    async function btRemovePaired(addr) { if (confirm('Remove this paired phone? It will need to pair again before it can connect.')) { await api('/api/bluetooth/paired', 'DELETE', { address: addr }); loadBtPairedDevices(); } }
+    async function btRemovePaired(i) {
+      const bond = btPairedShown[i];
+      if (!bond) return;
+      if (confirm('Remove this paired phone? It will need to pair again before it can connect.')) { await api('/api/bluetooth/paired', 'DELETE', { address: bond.address }); loadBtPairedDevices(); }
+    }
     async function btClearAllPaired() { if (confirm('Remove all paired phones? Each one will need to pair again before it can connect.')) { await api('/api/bluetooth/paired/all', 'DELETE'); loadBtPairedDevices(); } }
 
     // ══════════════════════════════════════════════════════════════════
