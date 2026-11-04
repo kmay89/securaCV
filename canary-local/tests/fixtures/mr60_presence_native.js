@@ -281,7 +281,7 @@ function traces(cfg) {
     restart: [{ reset: 0 }, off(10), ...enter(1000), { t: 1000 + D + S }, off(1000 + D + S + 50),
       off(1000 + D + S + 150), { t: 1000 + D + 2 * S + 150 }, off(1000 + D + 2 * S + 200),
       ...enter(1000 + D + 2 * S + 1000)],
-    // a seeded random walk of the wire (A106's review): visits, one-frame
+    // a seeded random walk of the wire (A106): visits, one-frame
     // dropouts, count-pending flags, strays, silences on every window's edge
     // and Unknown restarts, 10,000 ticks
     fuzz: fuzz(cfg, 0x5e115e, 10000),
@@ -386,7 +386,9 @@ function vitalsTraces(cfg, vcfg) {
       { t: 5400 + X - 1 }, { t: 5400 + X }, { t: 5400 + X + 10 }, ...room(5400 + X + 100, 5400 + X + 100 + D + L + 1500, on)],
     // a reset (reconfigure()) while locked: both FSMs start over
     reset: [{ reset: 0 }, off(10), ...room(1000, 7000, on), { reset: 7050 }, ...room(7100, 13000, on)],
-    // the seeded random walk again, with vitals frames (the review's lens)
+    // the seeded random walk again, with vitals frames (A107): steps on the
+    // lock windows' edges too, BPMs on and past each band's ends, vitals
+    // frames beside two or more targets
     fuzz: fuzz(cfg, 0x71a175, 10000, vcfg),
   };
 }
