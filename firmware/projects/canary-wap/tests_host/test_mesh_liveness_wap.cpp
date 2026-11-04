@@ -40,6 +40,11 @@
 // device's own CONFIRM, sent back to it from its partner's address, passed
 // for the partner's, and an initiator completed with a joiner whose owner
 // never confirmed.
+// And F359: a pairing that reached its 2-minute timeout ended without a
+// word (cancel_pairing() logs nothing), the one end of a pairing the health
+// log did not name, so an owner who confirmed the code on one Canary saw it
+// fall back with no reason; now the timeout logs a WARNING, and a longer one
+// when this side's owner had confirmed.
 // And F164: a boot with no "mesh" namespace (the first after an NVS erase,
 // and any later one before the sketch's five-minute replay save or a reboot
 // through the API first opens the namespace read-write, which creates it
@@ -80,8 +85,14 @@
 #include <vector>
 
 // The sketch provides these on a device (canary_wap.ino, chirp_channel.cpp).
+// Each line is kept twice: alone (g_health), and with the device whose
+// update() or handler logged it (g_health_on, sweep F359).
 std::vector<std::string> g_health;
-void health_log(LogLevel, LogCategory, const char* message) { g_health.push_back(message); }
+std::vector<std::pair<std::string, std::string>> g_health_on;
+void health_log(LogLevel, LogCategory, const char* message) {
+  g_health.push_back(message);
+  g_health_on.emplace_back(mesh_net_sim::g_cur != nullptr ? mesh_net_sim::g_cur->name : "", message);
+}
 void log_health(LogLevel, LogCategory, const char*, const char*) {}
 namespace chirp_channel {
 void dispatch_espnow_message(const uint8_t*, const uint8_t*, int, int8_t) {}
@@ -3101,6 +3112,146 @@ void test_every_read_only_open_of_mesh_is_the_quiet_one() {
   std::printf("PASS every_read_only_open_of_mesh_is_the_quiet_one\n");
 }
 
+// ── F359: a pairing that times out says so ──────────────────────────────
+//
+// update()'s timeout check ended a pairing with cancel_pairing(), which
+// wipes the session, logs nothing and reports only a failed callback (the
+// sketch registers none), while every other end of a pairing logs why:
+// fail_pairing(), a CONFIRM that did not match, an unanswered COMPLETE. An
+// owner who confirmed the code on one Canary, while the other's owner did
+// not (or the other ran pairing firmware from before F75/F94), saw the
+// pairing fall back with no reason. The timeout now reads whether this
+// side's owner confirmed before the wipe and logs one WARNING: the longer
+// line when it did, "opera: pairing timed out" when not. A pairing that
+// completes logs neither.
+
+const char* const kTimedOut = "opera: pairing timed out";
+const char* const kTimedOutConfirmed =
+    "opera: pairing timed out after this side confirmed the code; the other Canary did not "
+    "finish (its owner may not have confirmed, or it runs older pairing firmware: update both)";
+
+// How many times `d` logged exactly `message`.
+size_t lines_on(const Device& d, const char* message) {
+  size_t n = 0;
+  for (const auto& line : g_health_on) n += line.first == d.name && line.second == message ? 1 : 0;
+  return n;
+}
+
+// `devs` past the pairing timeout, each device's update() every 500 ms, no
+// frame moved between them.
+void past_the_pairing_timeout(const std::vector<Device*>& devs) {
+  for (uint32_t t = 0; t <= mn::PAIRING_TIMEOUT_MS + 5000; t += 500) {
+    host_sim::now_ms += 500;
+    for (Device* d : devs) {
+      become(*d);
+      mn::update();
+    }
+  }
+}
+
+// `d` is no longer pairing, and its callback reported the end as a failure.
+bool ended_unpaired(Device& d) {
+  become(d);
+  const PairEvent* ev = last_event_of(d);
+  return !mn::is_pairing() && ev != nullptr && !ev->success && ev->role == mn::PAIR_ROLE_NONE;
+}
+
+void test_an_initiator_whose_owner_confirmed_says_the_other_did_not_finish() {
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  become(A);
+  CHECK(mn::confirm_pairing());                     // A's owner confirms; J's never does
+  deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_CONFIRM));
+  g_health_on.clear();
+  past_the_pairing_timeout({&A, &J});
+  CHECK(lines_on(A, kTimedOutConfirmed) == 1);
+  CHECK(lines_on(A, kTimedOut) == 0);
+  CHECK(lines_on(J, kTimedOut) == 1);               // J's owner never confirmed
+  CHECK(lines_on(J, kTimedOutConfirmed) == 0);
+  CHECK(ended_unpaired(A) && ended_unpaired(J));
+  std::printf("PASS an_initiator_whose_owner_confirmed_says_the_other_did_not_finish\n");
+}
+
+void test_a_joiner_whose_owner_confirmed_says_the_other_did_not_finish() {
+  // The other order: the joiner's owner confirms, its CONFIRM reaches the
+  // initiator (peer_confirmed), and the initiator's owner never confirms,
+  // so no COMPLETE comes. A's own owner did not confirm: the short line.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  become(J);
+  CHECK(mn::confirm_pairing());
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  become(A);
+  CHECK(mn::g_pairing.peer_confirmed && !mn::g_pairing.code_confirmed);
+  g_health_on.clear();
+  past_the_pairing_timeout({&A, &J});
+  CHECK(lines_on(J, kTimedOutConfirmed) == 1);
+  CHECK(lines_on(J, kTimedOut) == 0);
+  CHECK(lines_on(A, kTimedOut) == 1);
+  CHECK(lines_on(A, kTimedOutConfirmed) == 0);
+  CHECK(ended_unpaired(A) && ended_unpaired(J));
+  std::printf("PASS a_joiner_whose_owner_confirmed_says_the_other_did_not_finish\n");
+}
+
+void test_a_pairing_no_owner_confirmed_logs_that_it_timed_out() {
+  // Both codes shown, neither owner confirms: each side logs the short line.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  g_health_on.clear();
+  past_the_pairing_timeout({&A, &J});
+  CHECK(lines_on(A, kTimedOut) == 1 && lines_on(J, kTimedOut) == 1);
+  CHECK(lines_on(A, kTimedOutConfirmed) == 0 && lines_on(J, kTimedOutConfirmed) == 0);
+  CHECK(ended_unpaired(A) && ended_unpaired(J));
+  // And a pairing that never found a partner (no code was ever shown, so
+  // none could be confirmed): an initiator alone, a joiner alone.
+  fresh_device(A);
+  fresh_device(J);
+  g_pair_events.clear();
+  become(A);
+  CHECK(mn::start_pairing_initiator(nullptr));
+  become(J);
+  CHECK(mn::start_pairing_joiner());
+  g_health_on.clear();
+  past_the_pairing_timeout({&A});                  // A hears nobody
+  past_the_pairing_timeout({&J});                  // nor J, whose DISCOVERs go nowhere
+  CHECK(lines_on(A, kTimedOut) == 1 && lines_on(J, kTimedOut) == 1);
+  CHECK(lines_on(A, kTimedOutConfirmed) == 0 && lines_on(J, kTimedOutConfirmed) == 0);
+  CHECK(ended_unpaired(A) && ended_unpaired(J));
+  std::printf("PASS a_pairing_no_owner_confirmed_logs_that_it_timed_out\n");
+}
+
+void test_a_pairing_that_completes_logs_no_timeout() {
+  // Both owners confirm, in either order: the pairing completes before the
+  // timeout, and nothing past it logs either line on either device.
+  for (int order = 0; order < 2; ++order) {
+    fresh_device(A);
+    fresh_device(J);
+    pair_to_codes(A, J);
+    g_health_on.clear();
+    if (order == 0) {
+      confirm_initiator_first(A, J);
+    } else {
+      become(J);
+      CHECK(mn::confirm_pairing());
+      deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+      become(A);
+      CHECK(mn::confirm_pairing());
+      mn::update();                                 // A's loop sends the COMPLETE
+      deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
+    }
+    CHECK(completed(A, J) && completed(J, A));
+    past_the_pairing_timeout({&A, &J});
+    for (const Device* d : {&A, &J}) {
+      CHECK(lines_on(*d, kTimedOut) == 0);
+      CHECK(lines_on(*d, kTimedOutConfirmed) == 0);
+    }
+  }
+  std::printf("PASS a_pairing_that_completes_logs_no_timeout\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -3231,6 +3382,12 @@ const Test kTests[] = {
      test_a_boot_that_finds_the_mesh_namespace_opens_it_as_before},
     {"an_nvs_fault_at_boot_keeps_its_error_lines", test_an_nvs_fault_at_boot_keeps_its_error_lines},
     {"every_read_only_open_of_mesh_is_the_quiet_one", test_every_read_only_open_of_mesh_is_the_quiet_one},
+    {"an_initiator_whose_owner_confirmed_says_the_other_did_not_finish",
+     test_an_initiator_whose_owner_confirmed_says_the_other_did_not_finish},
+    {"a_joiner_whose_owner_confirmed_says_the_other_did_not_finish",
+     test_a_joiner_whose_owner_confirmed_says_the_other_did_not_finish},
+    {"a_pairing_no_owner_confirmed_logs_that_it_timed_out", test_a_pairing_no_owner_confirmed_logs_that_it_timed_out},
+    {"a_pairing_that_completes_logs_no_timeout", test_a_pairing_that_completes_logs_no_timeout},
 };
 
 }  // namespace liveness

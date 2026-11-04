@@ -2409,11 +2409,28 @@ void update() {
   // ACKed or the timeout expires.
   maybe_finalize_rekey();
 
-  // Check pairing timeout
+  // Check pairing timeout. Logged, as every other end of a pairing is (sweep
+  // F359: fail_pairing(), a CONFIRM that did not match, an unanswered
+  // COMPLETE), so the owner learns why the code on the screen led nowhere.
+  // Whether this side's owner confirmed is read first, since cancel_pairing()
+  // wipes the session. Only a session that showed its code can hold a
+  // confirm (confirm_pairing() refuses before). An initiator whose owner and
+  // joiner both confirmed has completed in initiator_step() above, so one
+  // that confirmed and times out never had the joiner's CONFIRM, and a joiner
+  // that confirmed never had the COMPLETE (never sent, or every copy lost on
+  // the air, which the initiator logs as an unanswered COMPLETE): either way
+  // the pairing did not finish with the other Canary.
   if ((g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN ||
        g_mesh_state == MESH_PAIRING_CONFIRM) &&
       now - g_pairing.started_ms > PAIRING_TIMEOUT_MS) {
+    const bool confirmed_here = g_pairing.code_confirmed;
     cancel_pairing();
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               confirmed_here
+                   ? "opera: pairing timed out after this side confirmed the code; the other "
+                     "Canary did not finish (its owner may not have confirmed, or it runs older "
+                     "pairing firmware: update both)"
+                   : "opera: pairing timed out");
   }
 
   // Send periodic heartbeat — while MESH_CONNECTING too (sweep F76). It
