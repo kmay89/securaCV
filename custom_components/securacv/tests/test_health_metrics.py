@@ -10,6 +10,7 @@ import json
 import pytest
 
 from ..health_metrics import (
+    HA_ATTRIBUTE_INT_MAX,
     STORAGE_STATUS_CRITICAL,
     STORAGE_STATUS_DEGRADED,
     STORAGE_STATUS_GOOD,
@@ -226,17 +227,28 @@ _BATTERY_READINGS = [
     ('"50.5"', None),
     ("[50]", None),
     ('{"pct": 50}', None),
-    # A reading. A numeric string reads as its number, a fraction truncates,
-    # and minus zero is zero (it is equal to 0, so it is no negative). Above
-    # 100 is read as sent: no unit sends it, and no threshold sits above.
+    # A string int() reads only through a sign or its digit separator (5
+    # and 50): a unit publishes a number, never a spelling of one.
+    ('"+5"', None),
+    ('"5_0"', None),
+    # A finite number past 64 bits: Home Assistant's JSON writer refuses the
+    # integer in a state attribute, so a reading it cannot carry is none.
+    ("1e300", None),
+    ("18446744073709551616", None),
+    # A reading. A string of digits reads as its number, a fraction
+    # truncates, and minus zero is zero (it is equal to 0, so it is no
+    # negative). Above 100 is read as sent, up to the largest integer Home
+    # Assistant carries: no unit sends it, and no threshold sits above.
     ("0", 0),
     ("-0.0", 0),
     ("0.5", 0),
     ("8", 8),
     ("50.9", 50),
     ('"50"', 50),
+    ('" 50 "', 50),
     ("100", 100),
     ("101", 101),
+    ("18446744073709551615", HA_ATTRIBUTE_INT_MAX),
 ]
 
 

@@ -1151,12 +1151,23 @@ _MEMORY_READINGS = [
     ("-1", '"memory_free": -1', "healthy", None, False),
     ("-0.5", '"memory_free": -0.5', "healthy", None, False),
     ("string -1", '"free_heap": "-1"', "healthy", None, False),
-    # A reading: a number in either key, memory_free first. A numeric string
-    # reads as its number, as the battery's does.
+    # A string int() reads only through its digit separator (50 bytes, which
+    # would read critical): a unit publishes a number, never a spelling.
+    ("string 5_0", '"memory_free": "5_0"', "healthy", None, False),
+    # A finite number past 64 bits: Home Assistant's JSON writer refuses the
+    # integer in a state attribute (TypeError from State.as_dict_json, which
+    # fails the recorder and every websocket subscription on the entity), so
+    # it is no reading rather than one the core cannot carry (sweep HA57; a
+    # row here once pinned 2**64 as a reading).
+    ("2**64", f'"memory_free": {2**64}', "healthy", None, False),
+    ("1e300", '"memory_free": 1e300', "healthy", None, False),
+    # A reading: a number in either key, memory_free first. A string of
+    # digits reads as its number, as the battery's does, and the largest
+    # integer the core carries reads as sent.
     ("1024", '"memory_free": 1024', "healthy", 1024, True),
     ("1023", '"memory_free": 1023', "critical", 1023, True),
     ("0", '"memory_free": 0', "critical", 0, True),
-    ("2**64", f'"memory_free": {2**64}', "healthy", 2**64, False),
+    ("2**64-1", f'"memory_free": {2**64 - 1}', "healthy", 2**64 - 1, False),
     ("string 1024", '"memory_free": "1024"', "healthy", 1024, True),
     ("string 1023", '"memory_free": "1023"', "critical", 1023, True),
     ("free_heap only, low", '"free_heap": 512', "critical", 512, True),
@@ -1214,7 +1225,9 @@ def test_the_health_sensor_reads_only_a_memory_number_as_low_memory(
 # WARNING_BATTERY_THRESHOLD_PERCENT (25); no reading is the no-battery
 # reading, healthy with a battery_percent of 100, as an absent key always was.
 _BATTERY_READINGS = [
-    # No reading: not a state of charge a unit's uint8_t can hold.
+    # No reading: not a state of charge a unit's uint8_t can hold, a string
+    # int() reads only through its digit separator, or a finite number past
+    # 64 bits, which Home Assistant's JSON writer refuses in an attribute.
     ("null", "healthy", 100),
     ("true", "healthy", 100),
     ("false", "healthy", 100),
@@ -1226,7 +1239,11 @@ _BATTERY_READINGS = [
     ("-0.5", "healthy", 100),
     ('"-1"', "healthy", 100),
     ('"junk"', "healthy", 100),
-    # A reading, truncated toward zero; minus zero is zero.
+    ('"5_0"', "healthy", 100),
+    ("1e300", "healthy", 100),
+    ("18446744073709551616", "healthy", 100),
+    # A reading, truncated toward zero; minus zero is zero. Above 100 reads
+    # as sent, up to the largest integer Home Assistant carries.
     ("-0.0", "critical", 0),
     ("0", "critical", 0),
     ("8", "critical", 8),
@@ -1238,6 +1255,7 @@ _BATTERY_READINGS = [
     ('"50"', "healthy", 50),
     ("100", "healthy", 100),
     ("101", "healthy", 101),
+    ("18446744073709551615", "healthy", 18446744073709551615),
 ]
 
 
