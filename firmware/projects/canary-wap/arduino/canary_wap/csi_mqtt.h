@@ -527,12 +527,16 @@ void publish_mesh(uint16_t airtime_pct_x100,
                   uint32_t urgent_sends);
 
 /**
- * Publish the Chirp channel's NFPA-72-style state as a string enum.
+ * Publish the Chirp channel's state word (spec/chirp_channel_v0.md §7.1).
  * Surfaces under topic securacv/<prefix>/<device>/chirp with
  * `state` field consumed by sensor.canary_<id>_chirp_state.
  *
- * state_name: one of "Normal" | "Trouble" | "Alarm" | "Supervisory"
- *             (or the Chirp ChirpState string from chirp_channel::state_name).
+ * state_name: chirp_channel::state_name() of the shown state, the sketch's
+ *             one call: disabled | initializing | active | muted | cooldown
+ *             (listening is in the enum and spelled, though nothing on the
+ *             canary-wap sets it). NULL is sent as "unknown", the word
+ *             state_name() answers for a value outside the enum. Lowercase,
+ *             not the NFPA-72 words publish_beacon_state() sends (F295).
  */
 void publish_chirp_state(const char* state_name);
 

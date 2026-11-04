@@ -1374,9 +1374,15 @@ void publish_status(bool csi_running, bool wifi_connected, int rssi_dbm) {
 }
 
 void publish_chirp_state(const char* state_name) {
-  /* Chirp's NFPA-72-style state surface. State is a string enum produced
-   * by chirp_channel::state_name (or a derived NFPA-72 mapping in the
-   * loop). HA renders it as a single sensor with automation hooks. */
+  /* The Chirp channel's state (spec/chirp_channel_v0.md §7.1), as the
+   * sketch's one caller passes it: chirp_channel::state_name() of the shown
+   * state (get_status().state), a lowercase word (disabled, initializing,
+   * active, muted, cooldown; listening is in the enum and spelled, though
+   * nothing on the canary-wap sets it), and "unknown" for a NULL state,
+   * the word state_name() answers for a value outside the enum too.
+   * Lowercase words, not the NFPA-72 four Beacon sends (sweep F295). Home
+   * Assistant shows the word (the Chirp Channel State sensor) and reads it
+   * as on or off (custom_components/securacv/binary_sensor.py). */
   char topic[192];
   build_topic(topic, sizeof(topic), "chirp");
   char body[128];
@@ -1584,14 +1590,20 @@ const DiscoveryEntity ENTITIES[] = {
     "{% if value_json.locked_to_sta %}ON{% else %}OFF{% endif %}",
     nullptr, nullptr, nullptr, "mdi:wifi-check" },
 
-  /* Chirp + Beacon NFPA-72-style state surfaces. See
-   * spec/beacon_channel_v0.md §7.2 and spec/chirp_channel_v0.md §15.
-   * Reported as a string enum: Normal | Trouble | Alarm | Supervisory.
-   * HA can attach automations on Alarm (treat like a tamper) and
-   * Trouble (treat like a warning, not an alert). */
+  /* The Chirp channel's state (spec/chirp_channel_v0.md §7.1): the word
+   * publish_chirp_state() sends, chirp_channel::state_name() of the shown
+   * state, one of disabled | initializing | active | muted | cooldown
+   * (listening is in the enum and spelled, though nothing on the canary-wap
+   * sets it), or "unknown" for a NULL state. A body without a state shows
+   * "unknown" too, the body's own fallback (sweep F295: this said the four
+   * NFPA-72 words below, which Chirp never sends, and defaulted to one). */
   { "sensor", "chirp_state", "Chirp Channel State", "chirp",
-    "{{ value_json.state | default('Normal') }}",
+    "{{ value_json.state | default('unknown') }}",
     nullptr, nullptr, nullptr, "mdi:bell-ring-outline" },
+  /* Beacon's NFPA-72-style state (spec/beacon_channel_v0.md §7.2), a
+   * string enum: Normal | Trouble | Alarm | Supervisory. HA can attach
+   * automations on Alarm (treat like a tamper) and Trouble (treat like a
+   * warning, not an alert). */
   { "sensor", "beacon_state", "Beacon Channel State", "beacon",
     "{{ value_json.state | default('Normal') }}",
     nullptr, nullptr, nullptr, "mdi:shield-alert-outline" },

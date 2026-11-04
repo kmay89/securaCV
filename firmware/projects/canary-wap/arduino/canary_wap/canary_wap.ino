@@ -15259,10 +15259,13 @@ void loop() {
           s.routine_denied,
           s.urgent_sends);
 
-      // v0.3: also publish the Chirp NFPA-state surface for HA discovery.
-      // The Chirp ChirpState enum is mapped 1:1 to the NFPA-72 four-state
-      // model in the HA dashboard side; we publish the raw chirp state
-      // string here. Beacon publishing follows in its own gate.
+      // v0.3: also publish the Chirp channel's state for HA discovery: the
+      // word chirp_channel::state_name() spells for the shown state (spec
+      // §7.1: disabled, initializing, active, muted, cooldown; listening is
+      // in the enum, though nothing here sets it), lowercase and as it is.
+      // No NFPA-72 mapping is made, here or in Home Assistant, which shows
+      // the word and reads it as on or off (sweep F295). Beacon publishing
+      // follows in its own gate.
       csi_mqtt::publish_chirp_state(
           chirp_channel::state_name(chirp_channel::get_status().state));
     }
