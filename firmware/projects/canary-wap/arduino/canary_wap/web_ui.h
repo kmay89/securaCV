@@ -2794,17 +2794,18 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         return '';
       }
       // What the Bluetooth card says of NimBLE's bond store and of a late
-      // bring-up, from GET /api/bluetooth (sweep F350). bond_store {held,
-      // capacity, unlisted} is sent only once the stack is up and the store
-      // read (F209): `bonds` is '<held> of <capacity> bonds', beside the
-      // paired list, and '' with no store. A full store refuses a new pairing
-      // (F189), and a bond the list does not hold (an older firmware's) is
-      // one only Clear All deletes: `unlisted` says so when such bonds are
-      // there and the store is full. late_bring_up and services_missing
-      // (F260): a stack a tap brought up after the boot bring-up left it down
-      // carries none of the boot worker's services until a reboot, and
-      // `subtitle` names them; a boot bring-up that missed one is not a late
-      // one, and a reboot is not known to fix it, so it says nothing there.
+      // bring-up, from GET /api/bluetooth (#1836's F350; D17 renumbers it).
+      // bond_store {held, capacity, unlisted} is sent only once the stack is
+      // up and the store read (F209): `bonds` is '<held> of <capacity>
+      // bonds', beside the paired list, and '' with no store. A full store
+      // refuses a new pairing (F189), and a bond the list does not hold (an
+      // older firmware's) is one only Clear All deletes: `unlisted` says so
+      // when such bonds are there and the store is full. late_bring_up and
+      // services_missing (F260): a stack a tap brought up after the boot
+      // bring-up left it down carries none of the boot worker's services
+      // until a reboot, and `subtitle` names them; a boot bring-up that
+      // missed one is not a late one, and a reboot is not known to fix it,
+      // so it says nothing there.
       const BT_SERVICE_WORDS = { ble_status: 'Phone status', ble_discovery: 'Opera, Chirp and Nearby' };
       function btStoreLines(data) {
         const out = { bonds: '', unlisted: '', subtitle: '' };
@@ -4531,7 +4532,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         // Each category GET /api/chirp/recent names (chirp_channel.cpp's
         // category_name(); weather, mutual aid and all clear since F307) has
         // its own icon, the flagship dashboard's; only 'unknown' gets the eye
-        // (sweep F418; rule CV13 holds every name to a branch here).
+        // (sweep F418; rule CV13 holds every name to a branch here, and each
+        // branch's icon apart from the eye and from the other categories').
         const catIcon = c.category === 'authority' ? '🚔'
           : c.category === 'infrastructure' ? '⚡'
           : c.category === 'emergency' ? '🚨'
@@ -5452,7 +5454,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function refreshBtStatus() {
       const data = await api('/api/bluetooth');
-      // The bond store's lines on the Paired Devices card (F350), as text:
+      // The bond store's lines on the Paired Devices card (#1836's F350), as text:
       // none for an answer with no store, or no answer at all.
       const lines = WebUiLogic.btStoreLines(data);
       const storeEl = document.getElementById('btBondStore');
@@ -5509,7 +5511,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       // Why the radio is off (init refused or failed), cleared once a bring-up
       // works: Start Advertising or Pair can bring a refused stack up (F235).
-      // A stack a tap brought up late names what is off until a reboot (F350).
+      // A stack a tap brought up late names what is off until a reboot (#1836's F350).
       const subtitle = document.getElementById('btSubtitle');
       if (subtitle && data.init_fail_reason) {
         subtitle.textContent = 'Radio off — ' + data.init_fail_reason;

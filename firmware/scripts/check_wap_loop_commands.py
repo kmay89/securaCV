@@ -378,9 +378,12 @@ CV12. A refused mute or unmute says why (F192). `send_mute_answer()` is
 CV13. Every category the recent route names has its own icon on the Chirp
      list (F418): each name `chirp_channel.cpp`'s `category_name()` answers
      but `"unknown"` has exactly one branch in `loadChirps()`' `catIcon`
-     (`web_ui.h`), and every branch is a name it answers. Weather, mutual aid
-     and all clear, which the route has named since F307, fell back to the
-     eye an unknown category gets.
+     (`web_ui.h`), that branch's icon is a string that is neither the eye the
+     default gives an unknown category nor another category's icon, and every
+     branch is a name it answers. Weather, mutual aid and all clear, which the
+     route has named since F307, fell back to the eye an unknown category
+     gets; a branch that hands a category the eye, or a neighbor's icon, is
+     the same gap by another route.
 
 MQTT network timeout (F112): every loop-task publish runs
 `esp_mqtt_client_publish()`, which writes the socket on the calling task
@@ -469,9 +472,9 @@ BV3. The Bluetooth status routes read only what the loop task published
      the ones it always sent (`BT_GET_KEYS`, the response shapes), and the
      dashboard's Bluetooth panel (`web_ui.h`: `refreshBtStatus`,
      `toggleBtAdvertising`, `loadBtSettings`, `btStartScan`,
-     `renderBtScanList`, `deviceIcon`, `loadBtPairedDevices`, and since F350
-     `btStoreLines`, the bond store's lines and a late bring-up's clause)
-     reads no key its route does not send.
+     `renderBtScanList`, `deviceIcon`, `loadBtPairedDevices`, and since
+     #1836's F350 `btStoreLines`, the bond store's lines and a late bring-up's
+     clause) reads no key its route does not send.
 
 BD1. One set of NimBLE server callbacks, two owners (F171). NimBLE keeps one
      callbacks pointer per server, and on the FULL profile Opera's
@@ -2543,8 +2546,9 @@ CAT_ICON_RE = r"\bconst\s+catIcon\s*=([^;]*);"
 
 def check_chirp_category_icons(cpp_src: str, ui: str, errors: list[str]) -> None:
     """Rule CV13 (F418): every name chirp_channel.cpp's category_name() answers
-    but "unknown" has its own branch in loadChirps()' catIcon, and every branch
-    is a name it answers."""
+    but "unknown" has its own branch in loadChirps()' catIcon, with an icon of
+    its own (a string literal, not the default's eye, not another branch's),
+    and every branch is a name it answers."""
     code = blank_comments_and_strings(cpp_src)
     span = the_body(code, SIG_CATEGORY_NAME, f"{CHIRP_CPP}: category_name()", errors)
     if span is None:
@@ -2559,7 +2563,8 @@ def check_chirp_category_icons(cpp_src: str, ui: str, errors: list[str]) -> None
     if m is None:
         errors.append(f"{WEB_UI}: loadChirps()' `const catIcon = ...;` is not where rule CV13 reads it (F418)")
         return
-    branches = re.findall(r"\bc\.category\s*===\s*'(\w+)'", m.group(1))
+    expr = m.group(1).strip()
+    branches = re.findall(r"\bc\.category\s*===\s*'(\w+)'", expr)
     for name in names:
         if name != "unknown" and branches.count(name) != 1:
             errors.append(f"{WEB_UI}: loadChirps()' catIcon has {branches.count(name)} branches for "
@@ -2568,6 +2573,31 @@ def check_chirp_category_icons(cpp_src: str, ui: str, errors: list[str]) -> None
     for branch in sorted(set(branches) - set(names) - {"unknown"}):
         errors.append(f"{WEB_UI}: loadChirps()' catIcon has a branch for \"{branch}\", which "
                       "category_name() never answers (F418)")
+    # Each branch's icon: the string literal after its `?`, and the default's
+    # after the last `:`. A branch pays its category nothing if its icon is
+    # the eye the default gives, or the icon of another category.
+    icons = re.findall(r"\bc\.category\s*===\s*'(\w+)'\s*\?\s*'([^']*)'", expr)
+    tail = re.search(r":\s*'([^']*)'$", expr)
+    if tail is None:
+        errors.append(f"{WEB_UI}: loadChirps()' catIcon does not end in a string literal for the unknown "
+                      "category's icon, where rule CV13 reads it (F418)")
+        return
+    default = tail.group(1)
+    if len(icons) != len(branches):
+        errors.append(f"{WEB_UI}: loadChirps()' catIcon has a branch whose icon is not a string literal "
+                      f"({len(branches)} branches, {len(icons)} literals); rule CV13 reads the literal (F418)")
+        return
+    by_icon: dict[str, list[str]] = {}
+    for name, icon in icons:
+        by_icon.setdefault(icon, []).append(name)
+        if icon == default or not icon:
+            errors.append(f"{WEB_UI}: loadChirps()' catIcon draws \"{name}\" with "
+                          + ("nothing" if not icon else "the eye an unknown category gets")
+                          + ", so the branch pays it nothing (F418)")
+    for icon, held in by_icon.items():
+        if len(held) > 1 and icon and icon != default:
+            errors.append(f"{WEB_UI}: loadChirps()' catIcon draws {', '.join(sorted(held))} with the same icon, "
+                          "so the list cannot tell them apart (F418)")
 
 
 def check_chirp_confirm_answers(api_src: str, errors: list[str]) -> None:
@@ -2981,7 +3011,7 @@ BT_JS_READS = (
     ("deviceIcon", r"d", ("handle_bluetooth_scan_results", "dev")),
     ("loadBtPairedDevices", r"data", ("handle_bluetooth_paired_list", "doc")),
     ("loadBtPairedDevices", r"d", ("handle_bluetooth_paired_list", "dev")),
-    # F350: the bond store's lines and a late bring-up's clause.
+    # #1836's F350 (D17 renumbers it): the bond store's lines and a late bring-up's clause.
     ("btStoreLines", r"data", ("handle_bluetooth_status", "doc")),
     ("btStoreLines", r"store", ("handle_bluetooth_status", "store")),
 )
@@ -5499,6 +5529,10 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the recent route names a category the Chirp list has no icon for (F418)",
      raw_other(CHIRP_CPP, '    case CHIRP_CAT_ALL_CLEAR:   return "all_clear";',
                '    case CHIRP_CAT_ALL_CLEAR:   return "all_clear";\n    case CHIRP_CAT_LOST_PET:    return "lost_pet";')),
+    ("the Chirp list's weather branch hands a weather chirp the unknown category's eye (F418)",
+     raw_other(WEB_UI, "c.category === 'weather' ? '\u26c8\ufe0f'", "c.category === 'weather' ? '\U0001f441\ufe0f'")),
+    ("the Chirp list's all-clear branch hands an all-clear chirp the emergency siren (F418)",
+     raw_other(WEB_UI, "c.category === 'all_clear' ? '\u2705'", "c.category === 'all_clear' ? '\U0001f6a8'")),
     ("the status route answers the session emoji twice",
      on_other(CHIRP_API, api_handler("handle_chirp_status"), r"(doc\[\"session_emoji\"\]\s*=\s*v\.session_emoji;)",
               r'\1 doc["session_emoji"] = "";')),
@@ -5624,9 +5658,9 @@ BV_MUTATIONS += [
      raw_other(WEB_UI, "if (data.connected && data.mtu) {", "if (data.connected && data.att_mtu) {")),
     ("the dashboard reads a scan key the route does not send",
      raw_other(WEB_UI, "if (d.is_securacv) return", "if (d.securacv) return")),
-    ("the dashboard reads a bond-store key the route does not send (F350)",
+    ("the dashboard reads a bond-store key the route does not send (#1836's F350)",
      raw_other(WEB_UI, "isCount(store.held)", "isCount(store.used)")),
-    ("the dashboard reads a late bring-up key the route does not send (F350)",
+    ("the dashboard reads a late bring-up key the route does not send (#1836's F350)",
      raw_other(WEB_UI, "data.late_bring_up === true", "data.late_bringup === true")),
     ("update() returns early without publishing the views",
      on_other(BT_CPP, SIG_UPDATE, r"\n[ \t]*publish_views\(\);[^\n]*\n(\s*return;)", r"\n\1")),

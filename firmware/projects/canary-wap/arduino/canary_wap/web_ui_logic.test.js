@@ -239,7 +239,7 @@ describe('chirpActionNote', () => {
 });
 
 // What the Bluetooth card says of NimBLE's bond store and of a late bring-up
-// (sweep F350), from the keys GET /api/bluetooth writes
+// (#1836's F350; D17 renumbers it), from the keys GET /api/bluetooth writes
 // (bluetooth_api.h's handle_bluetooth_status(): bond_store {held, capacity,
 // unlisted} only while the store is known, late_bring_up and
 // services_missing always).
@@ -471,7 +471,7 @@ describe('the Bluetooth card after a refused stack comes up', () => {
     await refreshWith(page, { ...base, state: 'idle', advertising: false });
     assert.equal(page.el('btSubtitle').textContent, 'BLE connectivity');
   });
-  // The bond store's lines and a late bring-up's clause (sweep F350).
+  // The bond store's lines and a late bring-up's clause (#1836's F350).
   it('shows the bond store beside the paired list, and the note only when one is owed', async () => {
     const page = bluetoothPage();
     await refreshWith(page, { ...base, state: 'idle', advertising: false,
@@ -770,24 +770,43 @@ describe('the household list draws each label as text, and forget posts its row\
     });
   }
 
-  it('a label that reads as markup makes no element, attribute or comment', async () => {
-    const own = (await rowOf([PLAIN])).elements;
-    const labels = ['x" onclick="alert(1)', 'Phone\\', ...HOSTILE];
-    const devices = labels.map((label, k) => ({ ...PLAIN, slot: k + 1, label }));
-    const f = await rowOf(devices);
+  // Every field the row draws from the answer goes through escapeHtml():
+  // the label, the slot a row with no label is named by, and the role badge
+  // (role_name()'s vocabulary today, so the badge's escape is defense in
+  // depth; a suite that sends hostile text only in the label would not see
+  // it dropped). A role the picker does not offer selects no option, so the
+  // hostile rows' own shape is a row with such a role.
+  it('a label, slot or role that reads as markup makes no element, attribute or comment', async () => {
+    const own = (await rowOf([{ ...PLAIN, role: 'visitor' }])).elements;
+    const hostile = ['x" onclick="alert(1)', 'Phone\\', ...HOSTILE];
+    const devices = hostile.map((text, k) => (k % 2 === 0)
+      ? { ...PLAIN, slot: k + 1, label: text, role: hostile[(k + 1) % hostile.length] }
+      : { ...PLAIN, slot: text, label: '', role: hostile[(k + 1) % hostile.length] });
+    const p = householdPage([devices]);
+    await p.load();
+    const f = p.list();
     assert.deepEqual(f.elements.map(shape), devices.flatMap(() => own.map(shape)),
                      'each row has exactly the row\'s own elements and attributes');
     assert.deepEqual(f.comments, [], 'no comment opened');
     devices.forEach((d, k) => {
       const row = f.elements.slice(k * own.length, (k + 1) * own.length);
+      // The hostile text this row carries (a numeric slot is a digit any
+      // style attribute may hold, so only a string slot is held out).
+      const sent = { label: d.label, role: d.role, slot: typeof d.slot === 'string' ? d.slot : '' };
       row.forEach((e, j) => {
         for (const [n, v] of e.attrs) {
           if (n !== 'onclick' && n !== 'onchange') assert.equal(v, attr(own[j], n), `row ${k}: ${e.tag} ${n}`);
-          assert.ok(!v.includes(d.label), `row ${k}: no label in ${e.tag} ${n}`);
+          for (const [field, text] of Object.entries(sent)) {
+            if (text) assert.ok(!v.includes(text), `row ${k}: no ${field} in ${e.tag} ${n}`);
+          }
         }
       });
-      assert.equal(row[2].text, d.label, `row ${k}: the label reads as sent`);
+      assert.equal(row[2].text, d.label || 'Slot ' + d.slot, `row ${k}: the name reads as sent`);
+      assert.equal(row[4].text, d.role, `row ${k}: the role reads as sent`);
     });
+    // A slot the row is named by goes to the forget route as the list holds it.
+    await p.fire(buttonOf(f)[1], 'onclick');
+    assert.deepEqual(p.forgets(), [JSON.stringify({ slot: devices[1].slot })]);
   });
 
   it('forget posts the slot of the row clicked, and its confirm names the label as sent', async () => {
