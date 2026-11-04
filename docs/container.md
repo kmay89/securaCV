@@ -184,9 +184,10 @@ viewer-token file `witnessd` reads. Two things break that:
 
 **No restart.** `witnessd` re-reads the viewer-token file on every request,
 so a new token works on the first request that carries it. The exception is a container
-started with neither variable: it has no viewer-token file at all,
+started with neither variable and no `WITNESS_CONFIG` whose `[api]` sets
+`token_path` or `viewer_token_path`: it has no viewer-token file at all,
 `witness_api` refuses to mint ("no viewer token file is configured"), and
-the fix is to re-create the container with step 1.
+the fix is to re-create the container with step 1 (or that config file).
 
 **Revoke** with the `token_id` from the receipt (or from the file); the next
 request carrying the token is refused:

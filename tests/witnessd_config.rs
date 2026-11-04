@@ -131,11 +131,11 @@ fn tract_model_env_names_a_model_and_an_empty_one_names_none() {
             .detect
             .tract_model_file_with_default(&default, &pin)
             .expect("the pinned default");
-        assert!(model.pinned_bytes().is_some(), "{value:?}");
+        assert!(model.is_pinned_default(), "{value:?}");
     }
 
-    // Naming the default path itself configures it: loaded as given, by path, and the
-    // startup line says it matches.
+    // Naming the default path itself configures it: loaded as given, from the bytes read, and
+    // the startup line says it matches.
     std::env::set_var("WITNESS_TRACT_MODEL", &default);
     let cfg = WitnessdConfig::load().expect("load config");
     assert_eq!(cfg.detect.tract_model.as_deref(), Some(default.as_path()));
@@ -143,7 +143,8 @@ fn tract_model_env_names_a_model_and_an_empty_one_names_none() {
         .detect
         .tract_model_file_with_default(&default, &pin)
         .expect("configured");
-    assert!(model.pinned_bytes().is_none());
+    assert!(!model.is_pinned_default());
+    assert_eq!(model.bytes(), b"the pinned model");
     assert!(model.matches_pin());
 
     // An explicitly empty detect.tract_model is refused at load, not read as "unset".

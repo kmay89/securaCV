@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
+use tract_onnx::model::ParseResult;
 use tract_onnx::prelude::*;
 
 use crate::config::{TractFormat, TractModelFile};
@@ -63,13 +64,30 @@ impl TractBackend {
             .with_context(|| format!("failed to load ONNX model from {}", model_path.display()))
     }
 
-    /// Parse a model from bytes already in hand. No path is opened: what the reader yields is
-    /// what is parsed (and an ONNX model that keeps its weights in external files cannot load
-    /// this way, as there is no directory to find them in).
-    fn parse_reader(reader: &mut dyn Read) -> Result<InferenceModel> {
-        tract_onnx::onnx()
-            .model_for_read(reader)
-            .context("failed to load ONNX model from the bytes given")
+    /// Parse a model from bytes already in hand: what the reader yields is what is parsed, and
+    /// the path those bytes came from is not opened. `model_dir` is where tract reads weights a
+    /// model keeps in files beside it (ONNX external data), as [`parse_path`](Self::parse_path)
+    /// reads them from the model's own directory; with `None`, such a model is refused rather
+    /// than read. The same `Onnx::parse` as `model_for_path`, on a proto decoded from the reader.
+    fn parse_reader(reader: &mut dyn Read, model_dir: Option<&Path>) -> Result<InferenceModel> {
+        let onnx = tract_onnx::onnx();
+        let proto = onnx
+            .proto_model_for_read(reader)
+            .context("failed to load ONNX model from the bytes given")?;
+        let ParseResult {
+            model,
+            unresolved_inputs,
+            ..
+        } = onnx
+            .parse(&proto, model_dir.and_then(Path::to_str))
+            .context("failed to load ONNX model from the bytes given")?;
+        if !unresolved_inputs.is_empty() {
+            return Err(anyhow!(
+                "failed to load ONNX model from the bytes given: could not resolve inputs at \
+                 top-level: {unresolved_inputs:?}"
+            ));
+        }
+        Ok(model)
     }
 
     fn load_runnable(
@@ -125,9 +143,15 @@ impl TractBackend {
     }
 
     /// [`new`](Self::new) from a reader instead of a path: the model is parsed from exactly the
-    /// bytes `reader` yields.
-    pub fn new_from_reader(reader: &mut dyn Read, width: u32, height: u32) -> Result<Self> {
-        Self::post_nms(Self::parse_reader(reader)?, width, height)
+    /// bytes `reader` yields. `model_dir` is where weights the model keeps in files beside it
+    /// are read from (`None` refuses such a model).
+    pub fn new_from_reader(
+        reader: &mut dyn Read,
+        model_dir: Option<&Path>,
+        width: u32,
+        height: u32,
+    ) -> Result<Self> {
+        Self::post_nms(Self::parse_reader(reader, model_dir)?, width, height)
     }
 
     /// Load the tiny-YOLOv2 (VOC) detector: fixed 416×416 input, raw 0–255 pixel values, and
@@ -139,32 +163,39 @@ impl TractBackend {
     }
 
     /// [`tiny_yolov2`](Self::tiny_yolov2) from a reader instead of a path: the model is parsed
-    /// from exactly the bytes `reader` yields.
-    pub fn tiny_yolov2_from_reader(reader: &mut dyn Read) -> Result<Self> {
-        Self::yolov2(Self::parse_reader(reader)?)
+    /// from exactly the bytes `reader` yields. `model_dir` is where weights the model keeps in
+    /// files beside it are read from (`None` refuses such a model).
+    pub fn tiny_yolov2_from_reader(
+        reader: &mut dyn Read,
+        model_dir: Option<&Path>,
+    ) -> Result<Self> {
+        Self::yolov2(Self::parse_reader(reader, model_dir)?)
     }
 
     /// Build the backend witnessd runs from the model file
     /// [`DetectSettings::tract_model_file`](crate::config::DetectSettings::tract_model_file)
-    /// read. A pinned default is parsed from the bytes that were hashed
-    /// ([`TractModelFile::pinned_bytes`]) and its path is never opened again; a configured model
-    /// loads by path, as given. `input` gives the frame size for `postnms` and is not called for
-    /// `yolov2`, whose input is fixed.
+    /// read: parsed from the bytes that were hashed ([`TractModelFile::bytes`]), whichever kind,
+    /// so the path is never opened again and the sha256 witnessd logs is of the model that runs.
+    /// The pinned default is parsed with no model directory (the pin covers its bytes only, so
+    /// weights in files beside it are refused, not read); a configured model reads any such
+    /// weights from its own directory, as a model loaded by path does. `input` gives the frame
+    /// size for `postnms` and is not called for `yolov2`, whose input is fixed.
     pub fn from_model_file(
         model: &TractModelFile,
         format: TractFormat,
         input: impl FnOnce() -> Result<(u32, u32)>,
     ) -> Result<Self> {
-        match (model.pinned_bytes(), format) {
-            (Some(mut bytes), TractFormat::Yolov2) => Self::tiny_yolov2_from_reader(&mut bytes),
-            (Some(mut bytes), TractFormat::PostNms) => {
+        let model_dir = if model.is_pinned_default() {
+            None
+        } else {
+            model.path().parent()
+        };
+        let mut bytes = model.bytes();
+        match format {
+            TractFormat::Yolov2 => Self::tiny_yolov2_from_reader(&mut bytes, model_dir),
+            TractFormat::PostNms => {
                 let (width, height) = input()?;
-                Self::new_from_reader(&mut bytes, width, height)
-            }
-            (None, TractFormat::Yolov2) => Self::tiny_yolov2(model.path()),
-            (None, TractFormat::PostNms) => {
-                let (width, height) = input()?;
-                Self::new(model.path(), width, height)
+                Self::new_from_reader(&mut bytes, model_dir, width, height)
             }
         }
         .with_context(|| format!("tract model {}", model.path().display()))

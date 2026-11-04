@@ -1619,7 +1619,7 @@ fn register_tract_backend(
         // Neither detect.tract_model nor WITNESS_TRACT_MODEL set: the default
         // vendor/models/tinyyolov2-8.onnx, read once and refused unless it hashes to the pin
         // scripts/fetch_detection_model.sh checks (a missing file is a load error naming that
-        // script). Named: loaded as given, its sha256 logged.
+        // script). Named: loaded as given, read once too, the sha256 of those bytes logged.
         let model = config.detect.tract_model_file()?;
         install_tract_backend(registry, config, &model)?;
         log::info!("{}", model.startup_line());
@@ -1636,9 +1636,10 @@ fn register_tract_backend(
 }
 
 /// Build the tract backend from a model file already read (and, for the default, checked) and
-/// register it. A pinned default is built from the bytes that were hashed, never by reopening
-/// its path. tiny-YOLOv2 has a fixed 416×416 input and resizes frames internally, so it does
-/// not need the ingest dimensions and works with any ingest backend; `postnms` does.
+/// register it. Either kind is built from the bytes that were hashed, never by reopening the
+/// path (`TractBackend::from_model_file`), so the startup line's sha256 is the running model's.
+/// tiny-YOLOv2 has a fixed 416×416 input and resizes frames internally, so it does not need the
+/// ingest dimensions and works with any ingest backend; `postnms` does.
 #[cfg(feature = "backend-tract")]
 fn install_tract_backend(
     registry: &mut BackendRegistry,
@@ -2090,6 +2091,24 @@ mod tests {
                 err.to_string().contains("scripts/fetch_detection_model.sh"),
                 "{err}"
             );
+        }
+
+        #[test]
+        fn a_configured_model_is_installed_from_the_bytes_it_read() {
+            let dir = tempfile::tempdir().unwrap();
+            let custom = dir.path().join("custom.onnx");
+            std::fs::write(&custom, fixture_bytes()).unwrap();
+            let config = tract_config(Some(custom.clone()));
+            let model = config
+                .detect
+                .tract_model_file_with_default(std::path::Path::new("unused"), FIXTURE_SHA256)
+                .expect("a configured model is read");
+            assert_eq!(model.sha256(), FIXTURE_SHA256);
+            // Swapped after the read: the backend runs the bytes the startup line's hash is of.
+            std::fs::write(&custom, flipped_bytes()).unwrap();
+            let mut registry = BackendRegistry::new();
+            install_tract_backend(&mut registry, &config, &model).expect("installed");
+            assert_eq!(persons(&mut registry), 1);
         }
 
         #[test]

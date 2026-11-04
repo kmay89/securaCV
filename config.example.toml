@@ -111,8 +111,8 @@ target_fps = 10
 # local ONNX model. tract_model is optional: unset (and WITNESS_TRACT_MODEL
 # unset), witnessd loads vendor/models/tinyyolov2-8.onnx, the file
 # scripts/fetch_detection_model.sh writes, and refuses to start unless it
-# matches the SHA-256 that script pins. A model named here loads as given and
-# its SHA-256 is logged at startup.
+# matches the SHA-256 that script pins. A model named here, even that same
+# file, loads as given without the pin, and its SHA-256 is logged at startup.
 #
 [detect]
 backend = "auto"
