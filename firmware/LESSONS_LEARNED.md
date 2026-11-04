@@ -2003,6 +2003,33 @@
   those boards need a USB reflash.
 - **Date learned:** 2026-10
 
+### A debug build's optimization level is set by `debug_build_flags`, not by unflagging (canary `dev_ha`)
+- **What happened:** The canary's `dev_ha` env (dev's debug image plus the
+  MQTT client) stood 3,551 bytes under partitions_ota.csv's 1,966,080-byte
+  slot. #1916's dashboard tap banner added about 14.6 KB to every canary
+  env, and `pio run -e dev_ha` failed `checkprogsize`. The first fix,
+  `build_unflags = -Og`, assumed the framework's `-Os` would remain. CI
+  built a 2,247,117-byte image instead, larger than before.
+- **Root cause:** `dev` is `build_type = debug`. For a debug build,
+  PlatformIO 6.1 (`builder/tools/piobuild.py`, then `piomisc.py`
+  `ConfigureDebugTarget`) applies `build_flags`, strips `-Os` and `-O0` to
+  `-O3` (but not `-Og`) from the compile flags, appends `debug_build_flags`
+  (default `-Og -g2 -ggdb2`), and only then applies `build_unflags`.
+  Unflagging `-Og` removed the only `-O` left, which gave a `-O0` image. An
+  `-Os` placed in `build_flags` would have been stripped too.
+- **Fix:** `dev_ha` sets `debug_build_flags = -Os -g2 -ggdb2` and keeps
+  `build_unflags = -Og`. That drops the `-Og` that dev's `build_flags`
+  carry, and it replaces dev's `-Os` unflag, which would strip this `-Os`.
+  Logging, features and the partition table stay dev's.
+- **Rule:** in a `build_type = debug` env, change the optimization level
+  through `debug_build_flags`. Before you push a flag change you cannot
+  compile, read the order in the installed PlatformIO's builder, or run
+  `pio run -t envdump`. Watch the env that sits closest to its slot: the
+  next feature crosses it first.
+- **Regression check:** firmware.yml's compile-only step (`pio run -e
+  dev_ha`) fails `checkprogsize` past the slot.
+- **Date learned:** 2026-11
+
 ---
 
 ## Security Architecture Principles

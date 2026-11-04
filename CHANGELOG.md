@@ -188,6 +188,14 @@
   to apply them at first registration (`_2` on a clash). **Docs and host
   tests**; Home Assistant's handling was read from its source, not seen
   running. Filed: HA50, HA51.
+- **The flagship's `dev_ha` env builds for size.** It is dev's debug image
+  plus the MQTT client, and it stood 3,551 bytes under its 1.9 MB OTA slot
+  before this wave. The tap banner's page text (about 14.6 KB in every canary
+  env) pushed it over. `dev_ha` now sets `debug_build_flags = -Os -g2 -ggdb2`
+  and unflags `-Og`, keeping dev's logging, features and partition table:
+  for a debug build PlatformIO strips `-Os` and adds `-Og` itself, so the
+  level is set there (unflagging `-Og` alone built a `-O0` image). The size
+  is CI's to show (compile-only env; never run on hardware).
 - **The sweep ledger:** 34 items ticked and F364's sketch slice done, W41 and
   C23 found closed, and the second items filed as F365 (the HTTPS port write)
   and F363 (Chirp's beacon age) renumbered F400 and F415. Nineteen more ids
