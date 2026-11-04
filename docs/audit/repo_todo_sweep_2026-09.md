@@ -29154,7 +29154,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   R10; `CIMdNamesEveryRule` in `test_ci_policy_check.py` holds the table to
   the checker's docstring, one row per rule in order, and fails on the old
   table.
-- [ ] **CI24 [human] Dispatch the two build-only release runs so the AppImage
+- [x] **CI24 [human] Dispatch the two build-only release runs so the AppImage
   pin's verify step runs once.** CI21's pin (#1920) is proven end to end only
   by its verify step after a real tauri build, and no such build has run.
   Dispatch `desktop-flasher-release.yml` with `dry_run` true and
@@ -29167,6 +29167,14 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   If verify fails, its message names the cause (the tools dir moved,
   `LDAI_RUNTIME_FILE` not honored, a file replaced). A dispatch, not a code
   change. Found by CI21 (#1920).
+  *Done (#1920), the dispatch:* both ran from the wave branch on its head
+  `a4d41212`: `desktop-flasher-release.yml` with `dry_run` true (run
+  41923542372) and `desktop-release.yml` with publish unchecked (run
+  41923546448), both success. On each `ubuntu-22.04` job "Pin the AppImage
+  bundler's tools (Linux)" ran before the tauri build and "Prove the
+  AppImage used the pinned tools (Linux)" after it, both green; the macOS
+  legs built signed. A run's proof, not a release's: the next real release
+  runs the same verify step again.
 - [ ] **CI25 [decision] The AppImage runtime and plugin now ship from dated
   releases, and `pins.txt` is outside the release watches.** Two calls CI21
   (#1920) left to a maintainer. (1) The brief named three bundler tools; the
