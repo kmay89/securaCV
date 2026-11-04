@@ -109,3 +109,70 @@ describe('SPA device types', () => {
     assert.ok(!raw.includes('cv_b1c2_secret'));
   });
 });
+
+// The canary-wap card must not say this SPA pairs a WAP (sweep F355). The
+// canary-wap firmware does not answer the SPA's pairing: its receipt route
+// sends no Access-Control-Allow-Origin, so a browser hides its 403 and its
+// receipt from this page (recorded in Chromium against a stub that answers
+// the way the sketch does: the capture never saw asked=true and ended
+// onTimeout(false)), it reads `Authorization: Bearer` and never
+// `X-Canary-Token`, and it registers no /api/v1/info or /api/v1/peers. The
+// card is held to those facts, read from the sketch: if a WAP ever answers
+// this SPA's pairing, the premise row fails and names what to revisit.
+const WAP_SKETCH_DIR = path.join(__dirname, '..', '..', '..',
+  'firmware', 'projects', 'canary-wap', 'arduino', 'canary_wap');
+
+// Every card line that says or implies the WAP pairs in this SPA.
+function spaPairingClaims(lines) {
+  return lines.filter((line) => /\b(?:right )?here\b/i.test(line)
+    || /\bover HTTP\b/i.test(line)
+    || /\bBOOT\b/.test(line)
+    || /\bpairs? (?:in|from|with) this app\b/i.test(line));
+}
+
+function functionBody(src, name) {
+  const start = src.indexOf(`static esp_err_t ${name}(`);
+  assert.ok(start >= 0, `canary_wap.ino no longer defines ${name}()`);
+  const end = src.indexOf('\n}\n', start);
+  return src.slice(start, end);
+}
+
+describe('SPA device types: the canary-wap card makes no SPA-pairing claim', () => {
+  let app;
+  before(() => { app = loadApp(); });
+
+  it('premise: the canary-wap firmware does not answer this SPA\'s pairing', () => {
+    const files = fs.readdirSync(WAP_SKETCH_DIR).filter((f) => /\.(?:ino|h|cpp)$/.test(f));
+    const sketch = files.map((f) => fs.readFileSync(path.join(WAP_SKETCH_DIR, f), 'utf8')).join('\n');
+    const ino = fs.readFileSync(path.join(WAP_SKETCH_DIR, 'canary_wap.ino'), 'utf8');
+    const revisit = ' — the WAP may now answer this SPA\'s pairing: revisit '
+      + "DEVICE_TYPES['canary-wap'] and docs/discovery.md §2-§4";
+    assert.ok(!/\.uri\s*=\s*"\/api\/v1\/(?:info|peers)"/.test(sketch),
+      'the sketch registers /api/v1/info or /api/v1/peers' + revisit);
+    assert.ok(!/X-Canary-Token/i.test(sketch), 'the sketch reads X-Canary-Token' + revisit);
+    for (const fn of ['handle_provisioning_receipt', 'send_provisioning_receipt']) {
+      assert.ok(!functionBody(ino, fn).includes('Access-Control-Allow-Origin'),
+        `${fn}() sends Access-Control-Allow-Origin` + revisit);
+    }
+  });
+
+  it('no line of the card says it pairs in this SPA, and one says where it pairs', () => {
+    const info = app.DEVICE_TYPES['canary-wap'];
+    const lines = [info.tagline, ...info.whatsDifferent, info.proof].filter(Boolean);
+    assert.deepEqual(spaPairingClaims(lines), [],
+      'the canary-wap card claims SPA pairing its firmware does not answer');
+    const where = lines.find((l) => /dashboard/i.test(l) && /iPhone app/.test(l) && /Home Assistant/.test(l));
+    assert.ok(where, 'the canary-wap card must say where a WAP pairs (its dashboard, the iPhone app, Home Assistant)');
+    assert.match(where, /not\b.*\bthis app\b/i, 'and that it does not pair in this app');
+  });
+
+  it('the claim check catches the line the card used to carry', () => {
+    assert.equal(spaPairingClaims(['Pairs right here over HTTP with a short tap of its BOOT button']).length, 1);
+    assert.equal(spaPairingClaims(['Pairs right here']).length, 1);
+    assert.equal(spaPairingClaims(['Pairs with this app over HTTP']).length, 1);
+  });
+
+  it('keeps the http wizard branch: the copy changed, not the flow', () => {
+    assert.equal(app.DEVICE_TYPES['canary-wap'].pairing, 'http');
+  });
+});

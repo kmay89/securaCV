@@ -6,6 +6,8 @@ This document describes how to port the Canary Vision reference server (`device-
 
 The Node.js reference server in `device-api/` is a faithful model of the firmware HTTP API. It uses Express middleware to mirror the exact request/response behavior, status codes, and security checks that the ESP32 firmware must implement. The reference server is the source of truth for API behavior, and the test suite validates both.
 
+Status: no Canary firmware in this monorepo serves this API's pairing today (`GET /api/v1/info` with `X-Canary-Token`). The canary-wap shares only the witness page with it (below), takes `Authorization: Bearer`, and is paired from its own dashboard or the SecuraCV iPhone app, not from this SPA ([discovery.md §2](discovery.md#2-peer-list-api)).
+
 | Concern | Reference Server | ESP32 Firmware |
 |---------|-----------------|----------------|
 | HTTP framework | Express 4 | ESP-IDF `httpd` or Arduino `WebServer` |

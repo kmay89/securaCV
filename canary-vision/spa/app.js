@@ -478,9 +478,14 @@ function labelFor(key) {
 // The fleet spans three witness variants. Firmware advertises the
 // canonical type as `dt` in its mDNS TXT record; the HTTP API exposes it
 // as `device_type`. This registry drives type badges, the per-type
-// explanation cards, suggested names, and the wizard branch: WAP-class
-// devices pair over HTTP with a BOOT tap, while vision/sense have no
-// HTTP server and onboard through Home Assistant (MQTT discovery).
+// explanation cards, suggested names, and the wizard branch: `pairing:
+// 'http'` runs the BOOT-tap receipt capture, the reference device-api's
+// HTTP pairing (device-api/), while vision/sense have no HTTP server and
+// onboard through Home Assistant (MQTT discovery). The canary-wap keeps
+// the 'http' branch, but its firmware does not answer it: its receipt
+// carries no Access-Control-Allow-Origin, it takes Authorization: Bearer
+// and not X-Canary-Token, and it serves no /api/v1/info, so its card says
+// where a WAP pairs instead (docs/discovery.md §2, sweep F355).
 
 var DEVICE_TYPES = {
   'canary-wap': {
@@ -491,7 +496,7 @@ var DEVICE_TYPES = {
     whatsDifferent: [
       'Keeps a GPS-timestamped, cryptographically signed event log',
       'Runs its own WiFi hotspot, so it witnesses even with no infrastructure',
-      'Pairs right here over HTTP with a short tap of its BOOT button',
+      'Pairs from its own dashboard or the SecuraCV iPhone app, and joins Home Assistant over MQTT — its firmware does not answer the pairing in this app',
     ],
     icon: [
       { tag: 'circle', attrs: { cx: '12', cy: '15', r: '2', fill: 'currentColor' } },
@@ -2408,8 +2413,9 @@ function renderAddCanaryView() {
   function stepConfirm(device) {
     var selectedRoom = device.room || '';
     var nameTouched = false;
-    // HTTP-paired devices without a device_type are WAP-class by
-    // definition — vision/sense never reach this step.
+    // HTTP-paired devices without a device_type get the canary-wap card,
+    // the type the reference device-api reports — vision/sense never reach
+    // this step.
     var typeInfo = deviceTypeInfo(device.device_type || 'canary-wap');
 
     content.appendChild(el('div', { className: 'card pair-hero' }, [
