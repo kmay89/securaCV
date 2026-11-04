@@ -326,6 +326,49 @@ static void test_a_read_that_is_not_whole_is_refused() {
     release(again);
     check_idle_and_clean();
   }
+
+  // One entry's read refused while the other's is whole: refused all the
+  // same, the whole buffer zeroed beside the refused one. The fault above
+  // hits both reads at once, so a load that checked one count only, or
+  // both together, passed it and handed initTls() a key whose read failed
+  // (three such mutants, found by this suite's review).
+  struct OneSided {
+    const char* entry;
+    HostKeyNvs::Read read;
+    size_t cgot, kgot;
+  };
+  const size_t cl = kCert.size(), kl = kKey.size();
+  const OneSided one_sided[] = {
+      {NVS_KEY_TLS_CERT, HostKeyNvs::Read::Fails, 0, kl},
+      {NVS_KEY_TLS_CERT, HostKeyNvs::Read::Garbles, 0, kl},
+      {NVS_KEY_TLS_CERT, HostKeyNvs::Read::Short, cl - 1, kl},
+      {NVS_KEY_TLS_KEY, HostKeyNvs::Read::Fails, cl, 0},
+      {NVS_KEY_TLS_KEY, HostKeyNvs::Read::Garbles, cl, 0},
+      {NVS_KEY_TLS_KEY, HostKeyNvs::Read::Short, cl, kl - 1},
+  };
+  for (const OneSided& c : one_sided) {
+    fresh_world();
+    store_pair(kCert, kKey);
+    host_key_nvs().read = c.read;
+    host_key_nvs().read_only_key = c.entry;
+    char line[128];
+    std::snprintf(line, sizeof(line),
+                  "[TLS] Certificate not loaded: the stored pair could not be read "
+                  "(%u of %u and %u of %u bytes)",
+                  (unsigned)c.cgot, (unsigned)cl, (unsigned)c.kgot, (unsigned)kl);
+    const HostKeyNvs before = host_key_nvs();
+    LoadResult r = load();
+    check_refused(r, before, line);
+    CHECK(host_key_nvs().reads == 2);
+    CHECK(g_freed_zeroed.size() == 2 && g_freed_dirty.empty());
+
+    host_key_nvs().clear_faults();
+    Serial.lines.clear();
+    LoadResult again = load();
+    CHECK(again.answer == KeyLoad::Loaded);
+    release(again);
+    check_idle_and_clean();
+  }
 }
 
 // One entry stored without the other: refused, not replaced (F404's

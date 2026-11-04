@@ -64,7 +64,10 @@ void secure_zero(void* p, size_t n) {
 // another length, a read that does not return all 32 bytes and a stored key
 // of 32 zero bytes disable signing for this boot and write nothing, the path
 // a failed open already takes: the buffer is scrubbed and the stored entry
-// left as it was, so the next boot that can read it signs with it again.
+// left as it was, so the next boot that can read it signs with it again
+// (one exception: an entry whose data CRC fails is erased by IDF in that
+// same read, so a later boot finds none and draws a new key; the
+// fingerprint alert is put off, not prevented).
 // Before, each of those drew a new key and stored it over the old one, which
 // Home Assistant reads as "Fingerprint changed without rotation" and the
 // owner cannot tell from tampering, and the old identity was gone for good.

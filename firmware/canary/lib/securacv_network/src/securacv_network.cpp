@@ -1855,10 +1855,12 @@ bool ScvNetworkManager::initTls() {
   // The stored certificate first (sweep F421, F404's rule): Loaded serves
   // it; Refused (one is, or may be, stored and was not read whole) leaves
   // HTTPS off this boot and makes and stores nothing over it, since phones
-  // may hold its pin, and the next boot that can read it serves it again;
-  // only Absent goes on to make one. A lone entry is refused on every boot,
-  // as on the canary-wap; whether it should be is F420's open decision, for
-  // both trees.
+  // may hold its pin, and the next boot that can read it serves it again
+  // (an entry whose data CRC fails is the exception: IDF erases it in that
+  // same read, and the next boot finds the other one alone); only Absent
+  // goes on to make one. A lone entry is refused on every boot, as on the
+  // canary-wap; whether it should be is F420's open decision, for both
+  // trees.
   const KeyLoad stored = tls_load_der_from_nvs(&cert, &cert_len, &key, &key_len);
   if (stored == KeyLoad::Loaded) {
     Serial.println("[TLS] Loaded certificate from NVS");
@@ -1890,7 +1892,9 @@ bool ScvNetworkManager::initTls() {
       // boot generates a new one, which changes the pin; if only the
       // certificate did, every later boot refuses it as a lone entry (F420)
       // and stays on HTTP. Logged so a re-pair is not a mystery.
-      Serial.println("[TLS] WARNING: certificate not stored; it changes next boot");
+      Serial.println("[TLS] WARNING: certificate not stored; if neither entry landed the next boot "
+                     "makes a new one (the pin changes); if only the certificate did, every later "
+                     "boot refuses the lone entry and stays on HTTP (F420)");
       log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS cert not persisted", "NVS write failed");
     }
     Serial.printf("[TLS] CN: securacv-%s\n", device_fp);

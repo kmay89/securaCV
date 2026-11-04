@@ -183,9 +183,13 @@ static void check_idle_and_clean() {
 }
 
 // Signing off for the boot: false, no key drawn, nothing opened for
-// writing or put, the store as it was, the buffer zero, and one line naming
-// why that says signing is off.
+// writing or put, the store as it was, the buffer scrubbed, and one line
+// naming why that says signing is off.
 static void check_signing_off(const Project& p, const HostKeyNvs& before, const char* line) {
+  // A dirty buffer first, so the scrub on every refusal is seen, whichever
+  // step refused (fresh_world() zeroes it, which hid the probe-fault,
+  // wrong-length and no-session scrubs from this suite's review).
+  std::memset(p.priv, 0xEE, 32);
   CHECK(!p.load());
   CHECK(g_draws == 0 && g_derives == 0);
   CHECK(host_key_nvs().rw_begins == 0 && host_key_nvs().puts == 0);
@@ -339,12 +343,14 @@ static void test_a_read_that_is_not_whole_is_not_replaced(const Project& p) {
     fresh_world(p);
     store(good_key());
     host_key_nvs().read = c.read;
-    std::memset(p.priv, 0xEE, 32);   // a dirty buffer comes back zero
     const HostKeyNvs before = host_key_nvs();
     check_signing_off(p, before, c.line);
     CHECK(host_key_nvs().reads == 1 && host_key_nvs().ro_begins == 1);
 
     // The entry the fault left is there for the next boot that can read it.
+    // (This fake keeps it. IDF erases an entry whose data CRC failed in that
+    // same read, and the next boot draws a new key then; what the suite holds
+    // is that the load itself wrote nothing.)
     host_key_nvs().clear_faults();
     Serial.lines.clear();
     CHECK(p.load());
