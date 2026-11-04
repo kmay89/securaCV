@@ -847,13 +847,47 @@
   token is the same bug one function down. A load that discards its count
   cannot refuse, however careful its other checks are (`tls_load_from_nvs()`
   discarded both of its counts until sweep F404 made it answer Loaded, Absent
-  or Refused the same way).
+  or Refused the same way, and the Bluetooth store's paired list and saved
+  name dropped theirs until F406).
 - **Regression check:** `projects/canary-wap/tests_host/test_wap_hmac_fail.cpp`
   runs the sketch's own `nvs_load_token()`, `nvs_store_token()` and
   `provision_device()`, cut verbatim, over the first-boot fake NVS, whose
   `Read::Copies` mode copies the stored bytes and answers 0 as IDF does before
   its CRC check refuses, with and without a flipped bit; the count check alone
   must refuse both.
+- **Date learned:** 2026-11
+
+### Zero bytes put is not an empty list saved, and a stand-in for the store must refuse what the store refuses (canary-wap, F406, F408)
+- **What happened:** the canary-wap's `save_paired_devices()` saved an empty
+  paired list as `putBytes(key, p, 0)`. Arduino-ESP32's `Preferences` writes
+  nothing for a length of 0 and answers 0, so after a Clear, or after every
+  entry lost its bond, the old row was still in NVS: each boot loaded it and
+  dropped it again ("entries without a bond dropped"). The host suite's fake
+  NVS took the 0-length put as a write, so no test saw it. Beside it,
+  `load_paired_devices()` and the Beacon set's load copied whatever
+  `getBytes()` returned and never terminated a name, so a row another struct
+  layout wrote, or a corrupted one, left a name with no NUL for
+  `shown_text()` to read past.
+- **Root cause:** the call's signature says "store N bytes", and for N = 0
+  the library stores nothing; the fake modeled the signature, not the
+  library's answer. And F365's count rule had been applied to the token and
+  the key, not to the store one module over.
+- **Fix:** an empty list is saved by `remove()`, and the fake refuses a
+  0-length put as the device does. Each load takes only a row read to its
+  full length, at most the table's entries, and terminates every name; a
+  refused row loads nothing and logs one line short enough for the health
+  log's ring to keep whole (79 bytes), and the paired list is rebuilt from
+  NimBLE's bond store or replaced once by the empty list. The Beacon set
+  keeps only whole entries whose valid byte is 1, so its count and revoke
+  read members.
+- **Rule:** to store nothing, remove the key. A stand-in for a storage
+  library answers what the library answers at the edges first (a length of
+  0, a short read, a read refused on its CRC), or the suite proves the
+  stand-in instead of the firmware.
+- **Regression check:** `projects/canary-wap/tests_host/test_bluetooth_commands_wap.cpp`
+  (`a_cleared_list_stays_cleared_after_a_reboot`, the refused-row and
+  short-read cases; each fails on the old code) and `test_beacon_set_load.cpp`
+  (the set's functions cut verbatim, under ASan).
 - **Date learned:** 2026-11
 
 ### A hash helper that returns void cannot refuse, and a refused hash must stay off every surface that reads it (canary-wap, F364)
@@ -889,8 +923,12 @@
 - **Regression check:** `projects/canary-wap/tests_host/test_wap_sha_fail.cpp`
   runs the helpers and their five callers, cut verbatim from the sketch, over
   an mbedTLS stand-in that fails one named step once, and holds every caller
-  to writing nothing downstream (1280 checks). The module files that hash the
-  same way are F364's next slice (open). F403 put the BLE status service, the
+  to writing nothing downstream (1280 checks). F364's module slice took the
+  vault, the USB update check, the familiar and presence hashes and the mesh
+  helper the same way (`test_wap_sha_fail_modules.cpp`, 408 checks; over the
+  old sources valgrind reported 126 uses of uninitialized values), and the
+  Beacon, Chirp, mesh-network, OTA and pseudonym hashes are its next slices
+  (open). F403 put the BLE status service, the
   witness export's HEAD and the signer behind the same gate as BLE discovery;
   the MQTT bridge's identity, mDNS, the Improv door, the Bluetooth and console
   metadata, the mesh, the hourly chain backup and the HTTP routes still read a
@@ -1564,8 +1602,8 @@
 - **Rule:** size a buffer for the form the bytes arrive in, not the form you
   will keep, and read a truncation answer as a refusal. And before scoping a
   fix's page out, check that the page shows what the route now says: the
-  Fleet sheet shows its own fixed hint for every one of these 400s (F401,
-  open).
+  Fleet sheet showed its own fixed hint for every one of these 400s until
+  F401 had it show the route's text.
 - **Regression check:** `projects/canary-wap/tests_host/test_fleet_qr_query.cpp`
   (1431 checks) runs the shared reader over the tests_host
   `esp_http_server.h` stand-in.
@@ -1594,12 +1632,75 @@
 - **Rule:** a fix to how text is written must also decide what the reader
   does with text an older writer left; F301's reader refuses what an old
   quote could forge and loads the rest cut at the quote, pinned so the
-  comments cannot claim more. Radio-carried text the rule does not reach yet
-  is F405 to F408 (open).
+  comments cannot claim more. The radio-carried text the rule did not reach
+  was F405 to F408; the next entry is what closing them taught.
 - **Regression check:** `firmware/common/csi/csi_event_invariants_test.cpp`,
   the event-log load and backfill tests, the Bluetooth answer test in
   `test_bluetooth_commands_wap.cpp` and `test_wap_json_writer.cpp`; each
   fails on the code before.
+- **Date learned:** 2026-11
+
+### A rule over a format's writers must know every way the answer is built: a `String +=` was neither J7 nor J10 (canary-wap, F405)
+- **What happened:** `ble_nearby.h` copied four bytes of an advertised name
+  (`"SCV-XXXX"`, any four bytes another radio chose) into a nearby row's
+  prefix, and `GET /api/nearby` appended them raw into a hand-built `String`
+  JSON, so a quote, a backslash or a control byte broke the answer.
+  `check_wap_json_answers.py` held ArduinoJson values (J10) and `printf`
+  formats (J7); a `String` concatenation is neither, so no rule saw it.
+- **Root cause:** a guard over a format's writers lists the writers its
+  author knew. The third way to build an answer looked like ordinary string
+  code.
+- **Fix:** the prefix is taken only as four ASCII hex digits
+  (`ble_nearby_prefix.h`), and J11 holds every append onto a `String` in the
+  sketch, in every declaration form, to a literal, a number, a recorded
+  vocabulary answer or a hex-held `char` array, following an array's writers
+  through copies, addresses, casts and dereferences (the review found two
+  declaration forms and the address path the first version missed). Its 230
+  self-test mutations each refuse, and a branch-deletion run shows every
+  refusal condition is held by one.
+- **Rule:** list a guard's sinks from the code, the ones that look like
+  plain string handling included, and prove each refusal condition with a
+  mutation that only it catches.
+- **Regression check:** J11 and its self-test (the "WAP guard self-tests"
+  job), and `test_bluetooth_commands_wap.cpp`'s hostile names through the
+  real scan callback and `GET /api/nearby`.
+- **Date learned:** 2026-11
+
+### JSON-safe is not HTML-safe, and a button names its row, not its text (canary-wap, F407)
+- **What happened:** the Bluetooth page's paired list built `innerHTML` from
+  a bond's name and address, and its Remove button spliced the address into
+  an `onclick`, while the scan list beside it escaped its own. A bond's name
+  is an identity address today, so no radio text reached it, but
+  `shown_text()` makes a name valid JSON, not safe HTML.
+- **Root cause:** each grammar needs its own escaping: text in JSON, text in
+  HTML, and text inside an attribute that holds JavaScript, where a value
+  escaped for HTML can still close the string it sits in.
+- **Fix:** every drawn field goes through `escapeHtml()`, and Remove names
+  its row by index, so no stored text reaches an attribute.
+- **Rule:** draw untrusted text as text, and never splice it into an inline
+  handler: pass an index or a slot and look the value up. The flagship's
+  paired list and the WAP's Presence panel still do the old thing (sweep
+  F422, F423, open).
+- **Regression check:** `web_ui_logic.test.js` and `dashboard_gates.test.js`
+  cut the page's own functions and feed them hostile names, addresses and
+  prefixes; `html_fragment.js` reads what they drew (its readings matched
+  Chromium locally; that cross-check is not in CI).
+- **Date learned:** 2026-11
+
+### A poll that reschedules itself on the happy path stops at the first empty answer (canary-wap, F296)
+- **What happened:** `refreshBleDiscovery()` returned from its empty-list
+  branch before it scheduled its 10 s refresh, so a Canary that came into
+  range afterward did not show until the owner opened the view again; a
+  refused or missing answer stopped it the same way.
+- **Fix:** the reschedule moved into a `finally`, guarded by whether the
+  view is still on screen, so every pass schedules the next and leaving the
+  view leaves no timer.
+- **Rule:** a self-rescheduling poll puts its next tick where every exit
+  reaches it, and stops on the view, not on the answer. On a build without
+  the route that is a 404 every tick while the view is open (sweep F297
+  decides whether to stop there).
+- **Regression check:** `dashboard_gates.test.js` drives the page's own
+  function over an empty, a refused and a missing answer.
 - **Date learned:** 2026-11
 
 ---
@@ -1976,6 +2077,32 @@
   path or glob in prose out of a `/* */` block; a `//` comment cannot be
   closed early.
 - **Date learned:** 2026-09
+
+### A generator that reads firmware source must read what the compiler reads, or refuse (gen_wap.py F400, gen_flash.py A93)
+- **What happened:** `canary_wap.ino` set `ssl_config.httpd.server_port =
+  443`, a field `httpd_ssl_start()` overwrites from `port_secure`, so the
+  write did nothing, and `gen_wap.py` read that dead write as the HTTPS
+  port; its reader also took `port_secure = 8443` under a 443 constant, and
+  counted a write inside a block comment. `gen_flash.py` read a monitor
+  key's `#if` on its physical line, so a directive spliced by a backslash, or
+  one whose block comment closes on a later line, read differently from the
+  compiler (5 mismatches against `g++ -E` before the review).
+- **Root cause:** a text reader over C sees lines. The compiler sees logical
+  lines, after comments are removed and splices joined, and a write to a
+  field the library overwrites is still a line of code.
+- **Fix:** `HTTPS_PORT` is one constant bound as `port_secure`; `gen_wap.py`
+  reads it and the one `port_secure` write, skips code inside `/* */` and
+  `#if 0`, and refuses every other spelling by name. `gen_flash.py` reads
+  each directive on its logical line (`pp_logical_lines`) and refuses by
+  name every gate shape it cannot evaluate.
+- **Rule:** a source reader reads what the compiler reads or refuses; hold
+  its readings to `g++ -E` over the shapes it claims. The shared
+  `read_const` still drops code after a block comment closed on a later
+  line (sweep F429, open).
+- **Regression check:** `canary-local/tools/tests/test_gen_wap_ap_facts.py`
+  and `test_flash_monitor_vocab.py`, whose pinned readings are what `g++ -E`
+  keeps (compared locally: 0 mismatches).
+- **Date learned:** 2026-11
 
 ### A bigger slot reaches only the boards that get a USB flash; the engine must check the slot before it downloads
 - **What happened:** fw-v2.4.16 grew the Vision C3 envs from `default.csv`
@@ -3431,8 +3558,8 @@
 - **Rule:** say what a rule buys. Presence beacons are unsigned (F232), so
   one radio runs the ten minutes for many keys at once: the wait delays a
   Sybil and does not price one, and suppress votes still need no presence
-  (F234). The spec and `docs/FLEET_SEMANTICS.md` now say both, and two
-  documents that still read as a per-identity cost are D16 (open).
+  (F234). The spec and `docs/FLEET_SEMANTICS.md` now say both, and since
+  D16 so do the threat model's Sybil row and the spec's §2.5.3.
 - **Regression check:** `test_chirp_security.cpp`
   (`c4_a_relay_keeps_the_signed_ttl`, the three `c13_` presence cases),
   `test_chirp_suppress_wap.cpp` and `test_chirp_commands_wap.cpp`, on the
@@ -4827,6 +4954,28 @@
   start walks them); `check_wap_loop_commands.py` rules BV4 and BV7.
 - **Date learned:** 2026-10
 
+### A race test bounded by the writer's steps can end before the reader looks (mesh alert history, F323)
+- **What happened:** `test_mesh_session.cpp`'s
+  `test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears`
+  asserted that its reader had read a full history, but the writer's 1200
+  steps could finish before the reader ever ran while the history was full.
+  Under load or at -O1 it failed, the base binary too; the sweep said it
+  passed every run at CI's flags, and pinned to one core beside busy loops it
+  failed 1 run in 10 there as well.
+- **Root cause:** the test asserted an observation its schedule never waited
+  for. A step count bounds the writer, not what the reader sees.
+- **Fix:** at the first full history the writer waits until the reader has
+  read it full, under a 10 s `steady_clock` deadline that fails with a
+  message instead of hanging. 300 of 300 runs pass across -O0, -O1 and -O2
+  beside 3 and 7 busy loops, and under TSan.
+- **Rule:** a concurrency test that asserts the other thread saw a state
+  waits for that observation, under a deadline that fails loudly, and its
+  comment says what a pass proves. Here, on one core a pass can still hold
+  no full read between two live stores (sweep F433, open).
+- **Regression check:** the test itself, in the mesh host tests
+  (`MESH_TESTS`, `firmware.yml`'s host-test step).
+- **Date learned:** 2026-11
+
 ### A guard's proof that it bites belongs beside the guard, not inside the ten-minute regression budget
 - **What happened:** `firmware/scripts/regression_check.sh` ran the two
   canary-wap source guards (`check_wap_loop_commands.py`,
@@ -4842,7 +4991,13 @@
   passes it: the check alone, in seconds. A job of its own in `firmware.yml`
   ("WAP guard self-tests", one matrix leg per guard, twenty minutes) runs
   each guard with its proof on every PR, in parallel with everything else.
-  Each guard's last line says which it ran.
+  Each guard's last line says which it ran. The proof kept growing with the
+  guard: J11 (F405) took `check_wap_json_answers.py`'s to 230 mutations,
+  about 13 minutes of CPU, where a main run had already taken 12m49s at the
+  smaller count, so the job allows thirty minutes now, and running the
+  mutations in parallel is sweep CI22 (open). A budget sized for a proof
+  needs the proof's cost per mutation and its count, read again whenever a
+  rule adds mutations.
 - **Regression check:** `regression_check.sh` finishes inside its job's
   budget (CI's Regression Guards, ten minutes); the self-tests are the two
   legs of "WAP guard self-tests".
