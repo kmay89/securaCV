@@ -17,7 +17,7 @@
 // This runs the REAL functions, cut verbatim out of the sketch
 // (firmware/tests_host/cut_functions.awk): hex_print(), secure_zero(),
 // hex_to_str(), sha256_raw(), sha256_domain(), compute_fingerprint(),
-// tls_compute_cert_fingerprint(), tls_refuse_unpinned_cert(),
+// tls_free_buffers(), tls_compute_cert_fingerprint(), tls_refuse_unpinned_cert(),
 // compute_chain_hash(), update_chain(), persist_chain_blob(),
 // persist_chain_state(), witness_hash_failed() and its latch,
 // create_witness_record(), witness_recover_from_sd(),
@@ -73,6 +73,9 @@
 //     one made and not verified is Unverified and logged;
 //   - a certificate generated this boot whose pin did not compute is not
 //     stored, so no later boot serves a certificate no setup door pinned;
+//   - a stored certificate the load refused (F404; the load itself runs in
+//     test_wap_first_boot_nvs.cpp) is not replaced on either build: nothing
+//     is made, stored, hashed or handed out;
 //   - the sketch's text: every call of the six hashes uses its answer, each
 //     is declared [[nodiscard]], setup() turns HTTPS on only behind
 //     init_tls_cert()'s true, the HTTPS listener needs both buffers, no
@@ -494,7 +497,9 @@ static const std::vector<uint8_t> kCertDer = [] {
   return v;
 }();
 static bool g_cert_in_nvs = false;
+static bool g_cert_refused = false;  // the load answers Refused (F404)
 static int g_cert_stores = 0;
+static int g_cert_generates = 0;
 static void tls_hold(std::vector<uint8_t>* keep_key) {
   g_tls_cert_der = static_cast<uint8_t*>(std::malloc(kCertDer.size()));
   std::memcpy(g_tls_cert_der, kCertDer.data(), kCertDer.size());
@@ -504,10 +509,14 @@ static void tls_hold(std::vector<uint8_t>* keep_key) {
   g_tls_key_der_len = 64;
   (void)keep_key;
 }
-static bool tls_load_from_nvs() {
-  if (!g_cert_in_nvs) return false;
+// The load's three answers (F404; test_wap_first_boot_nvs.cpp runs the real
+// one over a fake NVS): Refused holds nothing, as the real one frees both
+// buffers before it answers.
+static KeyLoad tls_load_from_nvs() {
+  if (g_cert_refused) return KeyLoad::Refused;
+  if (!g_cert_in_nvs) return KeyLoad::Absent;
   tls_hold(nullptr);
-  return true;
+  return KeyLoad::Loaded;
 }
 static bool tls_store_to_nvs() {
   ++g_cert_stores;
@@ -515,6 +524,7 @@ static bool tls_store_to_nvs() {
   return true;
 }
 static bool tls_generate_self_signed_cert() {
+  ++g_cert_generates;
   tls_hold(nullptr);
   return true;
 }
@@ -1109,6 +1119,8 @@ static void tls_reset() {
   g_tls_cert_persisted = false;
   g_tls_enabled = false;
   g_cert_stores = 0;
+  g_cert_generates = 0;
+  g_cert_refused = false;
   Serial.all.clear();
 }
 
@@ -1165,6 +1177,39 @@ static void a_certificate_not_hashed_is_not_used() {
                                 "this boot, no pin handed out\n") != std::string::npos,
                 what + ": no line says why");
     }
+  }
+  tls_reset();
+}
+
+// A refused load (F404) leaves HTTPS off on both builds: no certificate is
+// made or stored, no pin is computed or handed out, and nothing is served.
+static void a_refused_certificate_is_not_replaced() {
+  struct Build {
+    const char* what;
+    bool (*init)();
+  };
+  for (const Build& b : {Build{"a refused certificate", certgen::init_tls_cert},
+                         Build{"a refused certificate, no generator", no_certgen::init_tls_cert}}) {
+    const std::string what = b.what;
+    tls_reset();
+    g_cert_in_nvs = true;
+    g_cert_refused = true;
+    sha::arm(sha::Step::None);
+    CHECK_MSG(!b.init(), what + ": init_tls_cert() answered true");
+    CHECK_MSG(g_cert_generates == 0 && g_cert_stores == 0 && g_cert_in_nvs,
+              what + ": a certificate made or stored over the stored one");
+    CHECK_MSG(sha::g_inits == 0, what + ": a pin hashed");
+    CHECK_MSG(g_tls_cert_der == nullptr && g_tls_key_der == nullptr && !g_tls_cert_persisted &&
+                  g_tls_cert_fp_hex[0] == '\0',
+              what + ": a certificate or pin left for HTTPS");
+    for (int wizard = 0; wizard < 2; wizard++) {
+      setup_wizard::s_active = wizard;
+      CHECK_MSG(!tls_after_setup(), what + ": a pin handed out");
+    }
+    setup_wizard::s_active = false;
+    CHECK_MSG(Serial.all == "[TLS] Stored certificate not used (see the certificate line above) - "
+                            "HTTPS off this boot, nothing stored over it\n",
+              what + ": " + Serial.all);
   }
   tls_reset();
 }
@@ -1366,6 +1411,7 @@ int main() {
   the_tail_is_not_adopted_on_a_failed_hash();
   the_tail_is_not_vouched_for_on_a_failed_hash();
   a_certificate_not_hashed_is_not_used();
+  a_refused_certificate_is_not_replaced();
   sketch_text();
   if (g_failures) {
     std::printf("test_wap_sha_fail: %d of %d checks FAILED\n", g_failures, g_checks);

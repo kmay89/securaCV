@@ -721,12 +721,13 @@ struct WitnessRecord {
   bool        verified;
 };
 
-// What nvs_load_key() found (sweep F360, the canary's rule). Absent is the
-// one answer that may lead to a new key: IDF's NVS says nothing is stored.
-// Refused means a key is, or may be, stored and was not read or not used;
-// no new identity may be made over it. Declared here, among the types and
-// above the sketch's first function, so the prototype the Arduino builder
-// hoists for nvs_load_key() sees it. One line: the host suite cuts it.
+// What nvs_load_key() found (sweep F360, the canary's rule), and, by the same
+// rule, nvs_load_token() (F365) and tls_load_from_nvs() (F404). Absent is the
+// one answer that may lead to a new key: NVS says nothing is stored. Refused
+// means a key is, or may be, stored and was not read or not used; no new
+// identity may be made over it. Declared here, among the types and above the
+// sketch's first function, so the prototypes the Arduino builder hoists for
+// those three see it. One line: the host suites cut it.
 enum class KeyLoad : uint8_t { Loaded, Absent, Refused };
 
 // What a record into g_last_record came to (sweep F364's review;
@@ -2261,33 +2262,79 @@ static KeyLoad nvs_load_token(char* token_str, size_t max_len) {
 // TLS CERTIFICATE GENERATION & MANAGEMENT
 // ════════════════════════════════════════════════════════════════════════════
 
-static bool tls_load_from_nvs() {
+// Both certificate buffers back to nothing (sweep F404): each zeroed over
+// its whole allocation first (the key is secret, and a refused read may
+// have left part of either), freed, its pointer nulled and its length 0, so
+// start_http_server() has no certificate to serve. A length is set the
+// moment its buffer is allocated, so the zeroing covers what was allocated.
+static void tls_free_buffers() {
+  if (g_tls_cert_der) secure_zero(g_tls_cert_der, g_tls_cert_der_len);
+  free(g_tls_cert_der);
+  g_tls_cert_der = nullptr;
+  g_tls_cert_der_len = 0;
+  if (g_tls_key_der) secure_zero(g_tls_key_der, g_tls_key_der_len);
+  free(g_tls_key_der);
+  g_tls_key_der = nullptr;
+  g_tls_key_der_len = 0;
+}
+
+// The stored certificate and its key (sweep F404, nvs_load_key()'s rule):
+// Loaded only when the session opened, both entries are stored and each read
+// answered all its bytes. Absent only when the session opened and neither is
+// stored: the one answer init_tls_cert() makes and stores a new certificate
+// on. Every other way the pair goes unread answers Refused, with both
+// buffers zeroed and freed (tls_free_buffers()) and one line saying why: a
+// session that did not open, one of the two stored without the other, a
+// length malloc cannot hold, and a read that answered fewer bytes than the
+// lookup (IDF copies a blob's data before its CRC check refuses it and
+// answers 0, so the buffer can hold bytes that read refused). Before, both
+// getBytes() answers were dropped, so a refused read handed mbedTLS what the
+// buffer held; and every false meant "no certificate", so a build that can
+// generate one made a new certificate and stored it over the one whose pin
+// the phones hold.
+static KeyLoad tls_load_from_nvs() {
   NvsMainSession nvs(true);
-  if (!nvs.isOpen()) return false;
-
-  size_t cert_len = nvs->getBytesLength(NVS_KEY_TLS_CERT);
-  size_t key_len  = nvs->getBytesLength(NVS_KEY_TLS_KEY);
-
-  if (cert_len == 0 || key_len == 0) return false;
-
-  g_tls_cert_der = (uint8_t*)malloc(cert_len);
-  g_tls_key_der  = (uint8_t*)malloc(key_len);
-  if (!g_tls_cert_der || !g_tls_key_der) {
-    free(g_tls_cert_der); g_tls_cert_der = nullptr;
-    free(g_tls_key_der);  g_tls_key_der = nullptr;
-    return false;
+  if (!nvs.isOpen()) {
+    Serial.println("[TLS] Certificate not loaded: the NVS session did not open");
+    return KeyLoad::Refused;
   }
 
-  nvs->getBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, cert_len);
-  nvs->getBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  key_len);
-  g_tls_cert_der_len = cert_len;
-  g_tls_key_der_len  = key_len;
-  return true;
+  const size_t cert_len = nvs->getBytesLength(NVS_KEY_TLS_CERT);
+  const size_t key_len  = nvs->getBytesLength(NVS_KEY_TLS_KEY);
+  if (cert_len == 0 && key_len == 0) return KeyLoad::Absent;
+  if (cert_len == 0 || key_len == 0) {
+    Serial.printf("[TLS] Certificate not loaded: the %s is stored without the %s\n",
+                  cert_len ? "certificate" : "key", cert_len ? "key" : "certificate");
+    return KeyLoad::Refused;
+  }
+
+  g_tls_cert_der = (uint8_t*)malloc(cert_len);
+  g_tls_cert_der_len = g_tls_cert_der ? cert_len : 0;
+  g_tls_key_der  = (uint8_t*)malloc(key_len);
+  g_tls_key_der_len  = g_tls_key_der ? key_len : 0;
+  if (!g_tls_cert_der || !g_tls_key_der) {
+    tls_free_buffers();
+    Serial.printf("[TLS] Certificate not loaded: no memory for it (%u and %u bytes)\n",
+                  (unsigned)cert_len, (unsigned)key_len);
+    return KeyLoad::Refused;
+  }
+
+  const size_t cert_got = nvs->getBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, cert_len);
+  const size_t key_got  = nvs->getBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  key_len);
+  if (cert_got != cert_len || key_got != key_len) {
+    tls_free_buffers();
+    Serial.printf("[TLS] Certificate not loaded: the stored pair could not be read "
+                  "(%u of %u and %u of %u bytes)\n",
+                  (unsigned)cert_got, (unsigned)cert_len, (unsigned)key_got, (unsigned)key_len);
+    return KeyLoad::Refused;
+  }
+  return KeyLoad::Loaded;
 }
 
 // True only when BOTH entries landed (F59): a certificate stored without
-// its key (or the reverse) would pass tls_load_from_nvs's presence check on
-// the next boot and hand mbedTLS a mismatched pair.
+// its key (or the reverse) is refused by the next boot's tls_load_from_nvs()
+// (F404), which makes nothing over it; before F404 it handed mbedTLS what
+// the read left.
 static bool tls_store_to_nvs() {
   if (!g_tls_cert_der || !g_tls_key_der) return false;
   NvsMainSession nvs(false);
@@ -2316,17 +2363,12 @@ static bool tls_compute_cert_fingerprint() {
 // (sweep F364): no pin is handed out (tls_after_setup() reads the empty hex
 // and g_tls_cert_persisted), and init_tls_cert() answers false, so setup()
 // leaves g_tls_enabled false and start_http_server() opens no HTTPS listener
-// (it needs both buffers, freed here). A loaded certificate stays in NVS and
-// the next boot reloads it and hashes it again; a generated one was not
-// stored (init_tls_cert() hashes it first), and the next boot makes another.
+// (it needs both buffers, freed here by tls_free_buffers()). A loaded
+// certificate stays in NVS and the next boot reloads it and hashes it again;
+// a generated one was not stored (init_tls_cert() hashes it first), and the
+// next boot makes another.
 static bool tls_refuse_unpinned_cert() {
-  free(g_tls_cert_der);
-  g_tls_cert_der = nullptr;
-  g_tls_cert_der_len = 0;
-  if (g_tls_key_der) secure_zero(g_tls_key_der, g_tls_key_der_len);
-  free(g_tls_key_der);
-  g_tls_key_der = nullptr;
-  g_tls_key_der_len = 0;
+  tls_free_buffers();
   g_tls_cert_persisted = false;
   g_tls_cert_fp_hex[0] = '\0';
   Serial.println("[TLS] Cert fingerprint not computed (SHA-256 failed) - HTTPS off this boot, no pin handed out");
@@ -2464,13 +2506,25 @@ cleanup:
 #endif // SECURACV_HAS_TLS_CERTGEN
 
 static bool init_tls_cert() {
-  // Try loading from NVS first
-  if (tls_load_from_nvs()) {
+  // The stored certificate first (sweep F404): Loaded serves it; Refused
+  // (one is, or may be, stored and was not read whole) leaves HTTPS off this
+  // boot and makes and stores nothing over it, since phones may hold its pin;
+  // only Absent goes on to make one. A read refused on a corrupt entry has
+  // had IDF erase that entry in the same read, so the next boot reads Absent
+  // and makes a new certificate whose pin is not the one phones hold; that
+  // cannot be avoided.
+  const KeyLoad stored = tls_load_from_nvs();
+  if (stored == KeyLoad::Loaded) {
     g_tls_cert_persisted = true;
     if (!tls_compute_cert_fingerprint()) return tls_refuse_unpinned_cert();
     Serial.println("[TLS] Loaded certificate from NVS");
     Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
     return true;
+  }
+  if (stored != KeyLoad::Absent) {
+    Serial.println("[TLS] Stored certificate not used (see the certificate line above) - HTTPS off "
+                   "this boot, nothing stored over it");
+    return false;
   }
 
 #if SECURACV_HAS_TLS_CERTGEN

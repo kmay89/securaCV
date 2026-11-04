@@ -45,7 +45,11 @@
  *                      flipped at copy_flip_at, the flash bit flip the CRC
  *                      caught, the F365 review); Short
  *                      (copies all but the last byte and answers that
- *                      count). */
+ *                      count).
+ *   read_key           when not empty, `read` applies to this key's blob
+ *                      only and every other blob reads Ok: one entry of a
+ *                      pair refused, the other read whole (the TLS
+ *                      certificate and its key, sweep F404). */
 #ifndef STUB_FIRST_BOOT_PREFERENCES_H
 #define STUB_FIRST_BOOT_PREFERENCES_H
 
@@ -77,6 +81,7 @@ struct HostFirstBootNvs {
   bool prefs_begin_fails = false;      // Preferences refuses every open; IDF does not
   esp_err_t length_fault = ESP_OK;     // IDF's blob lookup fails with this
   Read read = Read::Ok;                // what a blob read does once its lookup succeeded
+  std::string read_key;                // …for this key's blob only (empty: every blob)
   size_t copy_flip_at = 0;             // Copies: the byte whose bits flip…
   uint8_t copy_flip_mask = 0;          // …by this mask (0: copied as stored)
   int blob_reads = 0;                  // getBytes() calls
@@ -153,7 +158,10 @@ class Preferences {
     if (len == 0 || buf == nullptr || max_len == 0) return len;
     if (len > max_len) return 0;
     const HostFirstBootNvs::Row* r = find(key);
-    switch (host_nvs().read) {
+    const HostFirstBootNvs::Read how =
+        host_nvs().read_key.empty() || host_nvs().read_key == key ? host_nvs().read
+                                                                  : HostFirstBootNvs::Read::Ok;
+    switch (how) {
       case HostFirstBootNvs::Read::Ok:
         memcpy(buf, r->bytes.data(), len);
         return len;

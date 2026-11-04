@@ -955,7 +955,14 @@ clean: clean-wap-daily-summary
 # nvs_load_key(), nvs_store_key() and establish_identity_key(), with the
 # one-line KeyLoad enum, over the same fake NVS, which can also fail IDF's
 # blob lookup and Preferences' read: only IDF's ESP_ERR_NVS_NOT_FOUND may
-# lead to a new key, and a refused read writes nothing.
+# lead to a new key, and a refused read writes nothing. And the stored TLS
+# certificate fails closed the same way (sweep F404): the NVS_KEY_TLS_CERT
+# and NVS_KEY_TLS_KEY lines, secure_zero(), hex_to_str(),
+# tls_free_buffers(), tls_load_from_nvs(), tls_store_to_nvs(), the
+# certificate's fingerprint and its refusal, and init_tls_cert(), cut
+# verbatim over the same fake NVS: only a session that opened with neither
+# entry stored may lead to a new certificate, and a refused read stores
+# nothing over the one phones pin.
 FIRSTBOOT_BIN    = test_wap_first_boot_nvs
 FIRSTBOOT_SRC    = test_wap_first_boot_nvs.cpp
 FIRSTBOOT_WIZ    = test_wap_first_boot_nvs_wizard.inc
@@ -963,7 +970,9 @@ FIRSTBOOT_KEY    = test_wap_first_boot_nvs_key.inc
 FIRSTBOOT_PWR    = test_wap_first_boot_nvs_power.inc
 FIRSTBOOT_CHIRP  = test_wap_first_boot_nvs_chirp.inc
 FIRSTBOOT_STAMP  = test_wap_first_boot_nvs_stamp.inc
-FIRSTBOOT_INCS   = $(FIRSTBOOT_WIZ) $(FIRSTBOOT_KEY) $(FIRSTBOOT_PWR) $(FIRSTBOOT_CHIRP) $(FIRSTBOOT_STAMP)
+FIRSTBOOT_TLS    = test_wap_first_boot_nvs_tls.inc
+FIRSTBOOT_INCS   = $(FIRSTBOOT_WIZ) $(FIRSTBOOT_KEY) $(FIRSTBOOT_PWR) $(FIRSTBOOT_CHIRP) $(FIRSTBOOT_STAMP) \
+                   $(FIRSTBOOT_TLS)
 FIRSTBOOT_CUT    = ../../../tests_host/cut_functions.awk
 CUT_INCS        += $(FIRSTBOOT_INCS)
 
@@ -981,6 +990,14 @@ $(FIRSTBOOT_KEY): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
 	@grep -nE '^static const char\* NVS_KEY_PRIV +=|^enum class KeyLoad : uint8_t \{' $(SRC_DIR)/canary_wap.ino | \
 	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
 	awk -v 'sigs=static esp_err_t stored_key_length(|static KeyLoad nvs_load_key(|static bool nvs_store_key(|static bool establish_identity_key() {' \
+	  -f $(FIRSTBOOT_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_TLS): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
+	@test "$$(grep -cE '^static const char\* NVS_KEY_TLS_(CERT|KEY) +=' $(SRC_DIR)/canary_wap.ino)" = 2 || { \
+	  echo "canary_wap.ino: not one NVS_KEY_TLS_CERT and one NVS_KEY_TLS_KEY line for tls_load_from_nvs()" >&2; exit 1; }
+	@grep -nE '^static const char\* NVS_KEY_TLS_(CERT|KEY) +=' $(SRC_DIR)/canary_wap.ino | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
+	awk -v 'sigs=static void secure_zero(|static void hex_to_str(|static void tls_free_buffers() {|static KeyLoad tls_load_from_nvs() {|static bool tls_store_to_nvs() {|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool init_tls_cert() {' \
 	  -f $(FIRSTBOOT_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
 
 $(FIRSTBOOT_CHIRP): $(SRC_DIR)/chirp_channel.cpp $(FIRSTBOOT_CUT) Makefile
@@ -2125,11 +2142,11 @@ clean: clean-wap-hmac-fail
 # what the hash was for. The six [[nodiscard]] declarations (the awk below
 # takes each, a two-line one whole), the one-line RecordMade enum,
 # hex_print(), secure_zero(), hex_to_str(), the two helpers,
-# compute_fingerprint(), the certificate's fingerprint and its refusal,
-# compute_chain_hash(), update_chain(), the chain persist, the hash latch
-# line and witness_hash_failed(), create_witness_record(), the SD-tail
-# recovery, verify_record_signature(), chain_tail_intact(), the boot
-# attestation's and loop()'s record and self-verify helpers,
+# compute_fingerprint(), tls_free_buffers(), the certificate's fingerprint
+# and its refusal, compute_chain_hash(), update_chain(), the chain persist,
+# the hash latch line and witness_hash_failed(), create_witness_record(),
+# the SD-tail recovery, verify_record_signature(), chain_tail_intact(), the
+# boot attestation's and loop()'s record and self-verify helpers,
 # fingerprint_is_nonzero() and BLE discovery's identity gate are cut
 # verbatim out of canary_wap.ino; tls_after_setup() on its own,
 # init_tls_cert() on its own (the suite includes it twice, with and without
@@ -2155,7 +2172,7 @@ $(SHAFAIL_CORE): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 	  /^enum class RecordMade : uint8_t \{ Made, Unverified, Refused \};$$/ { e++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
 	  END { if (n != 6 || w != 1 || e != 1) { print "canary_wap.ino: " n + 0 " [[nodiscard]] static bool declaration(s), expected 6, " w + 0 " hash latch line(s), expected 1, and " e + 0 " one-line RecordMade enum(s), expected 1" > "/dev/stderr"; exit 1 } }' \
 	  $(SRC_DIR)/canary_wap.ino > $@.tmp
-	awk -v 'sigs=static void hex_print(|static void secure_zero(|static void hex_to_str(|static bool sha256_raw(|static bool sha256_domain(|static bool compute_fingerprint(|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool compute_chain_hash(|static bool update_chain(|static bool persist_chain_blob() {|static void persist_chain_state() {|static void witness_recover_from_sd() {|static void witness_hash_failed(|static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {|static bool verify_record_signature(|static bool chain_tail_intact() {|static RecordMade witness_record_last(|static void record_boot_attestation(|static void self_verify_last_record() {|static bool fingerprint_is_nonzero(|static bool ble_discovery_identity_ready() {' \
+	awk -v 'sigs=static void hex_print(|static void secure_zero(|static void hex_to_str(|static bool sha256_raw(|static bool sha256_domain(|static bool compute_fingerprint(|static void tls_free_buffers() {|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool compute_chain_hash(|static bool update_chain(|static bool persist_chain_blob() {|static void persist_chain_state() {|static void witness_recover_from_sd() {|static void witness_hash_failed(|static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {|static bool verify_record_signature(|static bool chain_tail_intact() {|static RecordMade witness_record_last(|static void record_boot_attestation(|static void self_verify_last_record() {|static bool fingerprint_is_nonzero(|static bool ble_discovery_identity_ready() {' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
 
 $(SHAFAIL_TLS): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
