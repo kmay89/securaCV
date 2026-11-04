@@ -726,7 +726,12 @@ describe('the household list draws each label as text, and forget posts its row\
       fire: async (element, handler, value) => {
         const code = attr(element, handler);
         assert.ok(code, `${shape(element)} has an ${handler}`);
-        await vm.runInContext(`(function () { return ${code}; }).call({ value: ${JSON.stringify(value)} })`, ctx);
+        // The value reaches the handler as a context global, never spliced
+        // into the code string (CodeQL js/bad-code-sanitization: a
+        // JSON.stringify'd value is not a safe code fragment).
+        ctx.__fireValue = value;
+        await vm.runInContext(`(function () { return ${code}; }).call({ value: __fireValue })`, ctx);
+        delete ctx.__fireValue;
         await settleAll();
       },
       forgets: () => calls.filter((c) => c.method === 'DELETE').map((c) => JSON.stringify(c.body)),
