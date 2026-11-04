@@ -322,6 +322,7 @@ static void handle_selftest(const uint8_t* data, size_t len);
 static void relay_chirp(const ReceivedChirp* chirp);
 static void prune_stale_nearby();
 static void prune_old_chirps();
+static void prune_expired_rate_rows(uint32_t now);
 static void load_settings();
 static void save_settings();
 static void publish_view();
@@ -658,21 +659,43 @@ static bool pubkey_set_contains(const uint8_t set[][SESSION_PUBKEY_SIZE], size_t
 }
 
 // A key's witnesses, MAX_WITNESSES_PER_PUBKEY_PER_HOUR an hour (audit C14),
-// counted in a window that starts at its first witness. A key with no row
-// takes a free one, or else the row whose window started longest ago: the
-// largest now - window_start_ms. That is unsigned elapsed time, so it holds
-// across uptime's wrap, and a window that has run out (older than
-// WINDOW_MS) is always older than any live one, so it goes first; a live
-// window goes only when all MAX_PUBKEY_RATE_TRACK rows are live, that is
-// when that many keys each started a window within the hour. The victim
-// was the smallest window_start_ms, and after the wrap the rows written
-// since it hold the smallest: the rows from before it stayed until uptime
-// passed their values again, up to 49.7 days, while two keys taking turns
-// evicted each other's row and each witness counted as a key's first
-// (sweep F416: 12 of 12 accepted where 4 are allowed).
+// counted in a window of PUBKEY_RATE_WINDOW_MS that starts at its first
+// witness.
+static const uint32_t PUBKEY_RATE_WINDOW_MS = 3600000;
+
+// A row whose window has run out goes at the next loop pass, on or off
+// (update() runs this beside expire_stale_tiers(), which does the same for
+// the cooldown tiers). Dropping it is the same as keeping it for its key,
+// since an expired row starts over at the key's next witness, and it keeps
+// the age below true: a row left in the table reads its age as unsigned
+// elapsed time, so one no witness touched for 2^32 ms (49.7 days) read as
+// minutes old, younger than a live window, and one new key then evicted a
+// live row instead of it (the review of F416; the fix below picks the
+// victim by that age). Rows were cleared only by init(), never set invalid.
+static void prune_expired_rate_rows(uint32_t now) {
+  for (size_t i = 0; i < MAX_PUBKEY_RATE_TRACK; i++) {
+    PubkeyRateEntry& e = g_pubkey_rate[i];
+    if (e.valid && now - e.window_start_ms > PUBKEY_RATE_WINDOW_MS) {
+      memset(&e, 0, sizeof(e));
+    }
+  }
+}
+
+// A key with no row takes a free one, or else the row whose window started
+// longest ago: the largest now - window_start_ms. That is unsigned elapsed
+// time, so it holds across uptime's wrap, and with the prune above no row
+// outlives its hour by more than a pass, so a window that has run out is
+// always older than any live one and goes first; a live window goes only
+// when all MAX_PUBKEY_RATE_TRACK rows are live, that is when that many keys
+// each started a window within the hour. The victim was the smallest
+// window_start_ms, and after the wrap the rows written since it hold the
+// smallest: the rows from before it stayed until uptime passed their values
+// again, up to 49.7 days, while two keys taking turns evicted each other's
+// row and each witness counted as a key's first (sweep F416: 12 of 12
+// accepted where 4 are allowed).
 static bool pubkey_rate_check_and_record(const uint8_t* pubkey) {
   uint32_t now = millis();
-  const uint32_t WINDOW_MS = 3600000;
+  const uint32_t WINDOW_MS = PUBKEY_RATE_WINDOW_MS;
 
   PubkeyRateEntry* entry = nullptr;
   PubkeyRateEntry* free_slot = nullptr;
@@ -1007,7 +1030,11 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   // costs those checks now. It goes in here, before the template, the rate
   // limit and the freshness window, as it did, so a verified frame that
   // one of those refuses is refused at the lookup above when it comes
-  // again, and counts against its key's hour once, not at every repeat.
+  // again while the filter holds its nonce (331 to 662 s), and counts
+  // against its key's hour once in that time, not at every repeat. Played
+  // back once a filter period it reaches the rate limit again, since that
+  // runs before the freshness window, and four plays of one captured stale
+  // frame use up its key's hour: a known limit, handed up (spec §5.3).
   // A frame dropped before the checks, below the urgency filter or during
   // a mute, leaves no nonce now, so a copy heard once the filter or the
   // mute lets it through is taken, where before it was refused as a repeat
@@ -1015,7 +1042,10 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   // lookup: send_chirp() puts their nonces in.)
   // The filter holds nonces, not who signed them: a frame that verifies
   // under any key, an attacker's own among them, still takes the nonce it
-  // carries (spec §5.3).
+  // carries, and so does a relay that names an origin key and carries no
+  // origin signature, which the soft accept above lets through on its
+  // relayer's signature alone and stores as that origin's chirp (spec
+  // §5.3; THREAT_MODEL's Chirp "Spoofed origination" cell).
   cache_nonce(hdr->nonce);
 
   ChirpTemplate template_id = (ChirpTemplate)payload->template_id;
@@ -1686,6 +1716,9 @@ void update() {
   // The tiers reset after 24 quiet hours on or off, since a disable keeps
   // them (sweep F193).
   expire_stale_tiers(millis());
+  // A per-key rate row goes once its hour has run out, on or off, so none
+  // sits long enough for its age to wrap (F416's review).
+  prune_expired_rate_rows(millis());
 
   if (g_state == CHIRP_DISABLED) {
     publish_view();

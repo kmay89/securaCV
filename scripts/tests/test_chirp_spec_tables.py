@@ -65,8 +65,13 @@ were prose with nothing holding them to the code, so this test does:
     template's. §4.2's mockup shows a real template under its own category.
     The threat model's Chirp Replay cell gives the filter's size and hash
     count as chirp_channel.cpp defines them, says it takes only verified
-    nonces, and keeps F310 open. The old text (an "activity" category, a
-    `message`, "1024-entry dedup") fails each of these.
+    nonces (a relay with no origin signature among them: v0.2's soft
+    accept), and keeps F310 open; its Chirp "Spoofed origination" cell is
+    partial for as long as handle_witness() soft-accepts such a relay, and
+    may not say so once it does not. §5.3 says a stale frame's nonce holds
+    its key's count to once per filter period, not once. The old text (an
+    "activity" category, a `message`, "1024-entry dedup", "yes (Ed25519,
+    v0.2)") fails each of these.
 
 The self-tests at the bottom hold the readers to synthetic sources they
 must refuse, so a reader that stops seeing a call fails here, not silently.
@@ -576,11 +581,12 @@ class ChirpSpecSybilCost(unittest.TestCase):
             self.assertIn(item, cell)
         # The rate limit holds per key, across uptime's wrap too (sweep
         # F416: pubkey_rate_check_and_record() gives up the row whose window
-        # started longest ago, by unsigned elapsed time; it picked the
-        # smallest start time, and after the wrap the rows written since it
-        # held the smallest, so two keys took turns past the limit). What 32
-        # rows cannot do is test_chirp_security.cpp's
-        # c14_a_live_hour_goes_only_to_a_full_table.
+        # started longest ago, by unsigned elapsed time, and update() drops
+        # a row whose hour has run out, so none sits long enough for that
+        # age to wrap; it picked the smallest start time, and after the wrap
+        # the rows written since it held the smallest, so two keys took
+        # turns past the limit). What 32 rows cannot do is
+        # test_chirp_security.cpp's c14_a_live_hour_goes_only_to_a_full_table.
         limit = constant(self.chirp, "MAX_WITNESSES_PER_PUBKEY_PER_HOUR")
         rows = constant(self.chirp, "MAX_PUBKEY_RATE_TRACK")
         self.assertIn(f"rate-limited ({limit} an hour; a full {rows}-key table gives up its oldest window first, "
@@ -856,7 +862,9 @@ def replay_cell_problems(threat: str, cpp: str) -> list[str]:
     if bits % (8 * 1024):
         problems.append(f"a half of {bits} bits is not a whole number of KB")
     want = f"a two-half Bloom filter ({bits // 8 // 1024} KB and {hashes} hashes each)"
-    for phrase in ("partial: ", want, "takes a nonce only once its frame verifies (F309)",
+    for phrase in ("partial: ", want,
+                   "takes a nonce only once its frame verifies (F309; a relay with no origin signature counts as "
+                   "verified, v0.2's soft accept)",
                    "the freshness window only while the wall clock is synced", "(sweep F310, open)"):
         if phrase not in cell:
             problems.append(f"the Chirp Replay cell does not say {phrase!r}")
@@ -868,8 +876,46 @@ def replay_cell_problems(threat: str, cpp: str) -> list[str]:
     return problems
 
 
+# The line handle_witness() logs where it soft-accepts a relay that names an
+# origin key and carries no origin signature (the v0.2 limitation).
+SOFT_ACCEPT_LOG = "chirp: relayed witness lacks origin signature (v0.2 limitation)"
+
+
+def origination_cell_problems(threat: str, cpp: str) -> list[str]:
+    """What is wrong with the threat model's Chirp "Spoofed origination" cell
+    against handle_witness()'s relay branch. While the code soft-accepts a
+    relay that names an origin key and carries no origin signature (it logs
+    SOFT_ACCEPT_LOG there), the cell is partial and says so, and the
+    Outstanding list still names the origin signature; once the code refuses
+    such a relay, the cell may not still say it is accepted. The cell read
+    "yes (Ed25519, v0.2)" while a relay could put any template under any
+    origin's key (review of sweep F309)."""
+    cell = threat_model_cell(threat, "Spoofed origination", "Chirp")
+    body = function_body(cpp, r"static void handle_witness\(const uint8_t\* data, size_t len, int8_t rssi\)")
+    soft_accepts = f'"{SOFT_ACCEPT_LOG}"' in body
+    says_accepted = "no origin signature is soft-accepted on its relayer's signature" in cell
+    problems = []
+    if soft_accepts:
+        if not cell.startswith("partial: "):
+            problems.append(f"the Chirp Spoofed origination cell reads {cell!r}, not 'partial: ', while "
+                            "handle_witness() soft-accepts a relay without an origin signature")
+        for phrase in ("no origin signature is soft-accepted on its relayer's signature",
+                       "stored as that origin's chirp with content the origin never signed",
+                       "(Outstanding: persistent origin signature across relays)"):
+            if phrase not in cell:
+                problems.append(f"the Chirp Spoofed origination cell does not say {phrase!r}")
+        outstanding = threat.split("### Outstanding work (tracked)", 1)[1]
+        if "Persistent origin signature across Chirp relays" not in outstanding:
+            problems.append("the Outstanding list no longer names the origin signature across relays")
+    elif says_accepted or cell.startswith("partial: "):
+        problems.append("handle_witness() no longer soft-accepts a relay without an origin signature; "
+                        "the Chirp Spoofed origination cell still says it does")
+    return problems
+
+
 class ChirpSpecApiExamples(unittest.TestCase):
-    """§8.2's examples, §4.2's mockup and the Replay cell are the code (sweep D19).
+    """§8.2's examples, §4.2's mockup and the Replay and Spoofed origination
+    cells are the code (sweep D19; F309's review).
 
     The examples showed an "activity" category, a free-text `message` and
     an `acks` count, and the send example posted a category and a message:
@@ -904,12 +950,31 @@ class ChirpSpecApiExamples(unittest.TestCase):
         outstanding = self.threat.split("### Outstanding work (tracked)", 1)[1]
         self.assertNotIn("Bloom-filter nonce dedup", outstanding)
 
+    def test_the_origination_cell_is_the_soft_accept(self):
+        self.assertEqual(origination_cell_problems(self.threat, self.cpp), [])
+
+    def test_the_prose_says_what_a_zero_last_send_means(self):
+        # handle_chirp_status() writes g_cooldown.last_chirp_ms, which
+        # expire_stale_tiers() zeroes after COOLDOWN_RESET_MS with no send.
+        hours = constant(namespace_body(self.mesh, "chirp_channel"), "COOLDOWN_RESET_MS") // 3600000
+        self.assertIn(f"0 if it never sent or after {hours} hours with no send",
+                      prose(spec_section(self.spec, "8.2 Response Formats")))
+
     def test_the_spec_says_only_verified_nonces_go_in(self):
         dedup = prose(spec_section(self.spec, "5.3 Deduplication"))
         self.assertIn("Only a verified frame's nonce enters the filter (sweep F309)", dedup)
         self.assertIn("a frame that verifies under any key, an attacker's own among them, takes the nonce it carries",
                       dedup)
+        self.assertIn("A relay that names an origin key and carries no origin signature at all takes it too: v0.2 "
+                      "still accepts one on its relayer's signature alone and stores it as that origin's chirp with "
+                      "content the origin never signed", dedup)
         self.assertIn("Both are known limits of this version.", dedup)
+        # A stale frame's nonce is held 331 to 662 s; played back once a
+        # filter period it reaches the rate limit each time (F309's review).
+        self.assertIn("counts against its key's hour once in that time, not at every replay", dedup)
+        self.assertIn("four plays of one captured stale frame use up its key's hour: a known limit of this version",
+                      dedup)
+        self.assertNotIn("counts against its key's hour once, not at every replay", dedup)
         mitigated = prose(spec_section(self.spec, "10.1 Threats Mitigated"))
         self.assertNotIn("5-minute TTL", mitigated)
         self.assertIn("(§5.3; sweep F310, open)", mitigated)
@@ -1020,6 +1085,23 @@ class ReaderSelfTest(unittest.TestCase):
                 self.assertNotEqual(replay_cell_problems(threat.replace(old, new), cpp), [])
         # And a filter whose size changes in the code fails the cell as written.
         self.assertNotEqual(replay_cell_problems(threat, cpp.replace("BLOOM_BITS = 32768;", "BLOOM_BITS = 65536;")), [])
+        # The Replay cell's F309 clause keeps its soft-accept qualification.
+        qualified = "(F309; a relay with no origin signature counts as verified, v0.2's soft accept)"
+        self.assertEqual(threat.count(qualified), 1)
+        self.assertNotEqual(replay_cell_problems(threat.replace(qualified, "(F309)"), cpp), [])
+        # The Spoofed origination cell: partial, and only while the code soft-accepts.
+        self.assertEqual(origination_cell_problems(threat, cpp), [])
+        for old, new in (("| partial: Ed25519 over a witness", "| yes (Ed25519, v0.2); Ed25519 over a witness"),
+                         ("no origin signature is soft-accepted on its relayer's signature",
+                          "no origin signature is refused"),
+                         ("(Outstanding: persistent origin signature across relays)", "(closed)"),
+                         ("- Persistent origin signature across Chirp relays:", "- Origin signatures across Chirp relays:")):
+            with self.subTest(plant=new):
+                self.assertEqual(threat.count(old), 1, old)
+                self.assertNotEqual(origination_cell_problems(threat.replace(old, new), cpp), [])
+        self.assertEqual(cpp.count(f'"{SOFT_ACCEPT_LOG}"'), 1)
+        self.assertNotEqual(origination_cell_problems(
+            threat, cpp.replace(f'"{SOFT_ACCEPT_LOG}"', '"chirp: rejected relayed witness"')), [])
 
     def test_the_old_api_examples_fail(self):
         old = ("### 8.2 Response Formats\n\n```json\n// GET /api/chirp/recent\n"

@@ -57,22 +57,31 @@
 //     over two hops and stored at each receiver, and lives there as long as
 //     any row does (DEFAULT_DISPLAY_MS): nothing on the receive side reads
 //     the TTL as a display time.
-//   - c9_a_forged_nonce_does_not_block_the_chirp, c9_a_refused_frame_counts_once
-//     (sweep F309): a forgery carrying a heard chirp's nonce, heard first,
-//     no longer keeps the chirp out; a frame that verifies under any key
-//     still takes its nonce (a known limit, pinned); and a verified frame a
-//     later check refuses counts against its key's hour once, however often
-//     it is played back.
+//   - c9_a_forged_nonce_does_not_block_the_chirp, c9_a_refused_frame_counts_once,
+//     c9_a_stale_frame_counts_once_a_filter_period (sweep F309): a frame
+//     carrying a heard chirp's nonce that fails its signature checks, heard
+//     first, no longer keeps the chirp out; one that verifies under any key,
+//     an attacker's own or a relay naming the origin with no origin
+//     signature (v0.2's soft accept), still does (known limits, pinned);
+//     and a verified frame a later check refuses counts against its key's
+//     hour once while the filter holds its nonce (331 to 662 s), where
+//     played back once a filter period it counts each time (a known limit,
+//     pinned; its own item).
 //   - c14_two_keys_cannot_take_turns_after_the_wrap,
 //     c14_no_key_passes_its_hour_across_the_wrap,
+//     c14_the_oldest_live_window_goes_first_across_the_wrap,
+//     c14_an_idle_row_does_not_read_young_after_2_32_ms,
 //     c14_a_live_hour_goes_only_to_a_full_table,
 //     c8_the_oldest_row_goes_first_across_the_wrap (sweep F416): the
 //     per-key rate table and the recent table pick the row to give up by
-//     age, unsigned elapsed time, so uptime's 49.7-day wrap no longer lets
-//     two keys take turns past four an hour, nor puts the newest chirps
-//     first out of a full table. All but a_live_hour fail on the code
-//     before F416; that one pins what 32 rows cannot do, with or without
-//     the wrap.
+//     age, unsigned elapsed time, and a rate row whose hour has run out is
+//     dropped at the next loop pass, so uptime's 49.7-day wrap no longer
+//     lets two keys take turns past four an hour, nor puts the newest
+//     chirps first out of a full table, nor lets a row nothing touched for
+//     2^32 ms read as minutes old. All but the last two fail on the code
+//     before F416; an_idle_row fails on F416's first cut (the age alone,
+//     no prune), and a_live_hour pins what 32 rows cannot do, with or
+//     without the wrap.
 //
 // Host-tested only: the stubs stand in for the radio and the clock; the
 // Arduino compile is CI's.
@@ -361,13 +370,19 @@ void test_c9_bloom_flood() {
 // sent it. With the nonce taken before the checks, the forgery's nonce went
 // in and the chirp was refused as a repeat.
 //
-// What the filter cannot tell apart, and this case pins as a known limit:
+// What the filter cannot tell apart, and this case pins as known limits:
 // it holds nonces, not who signed them, and so does the recent table, so a
 // frame that verifies under any key still takes the nonce it carries. An
 // attacker who signs its own witness with the heard nonce is stored, under
-// its key, and the chirp after it is refused. That costs the attacker a
-// signature and a row under a key its hour counts, and it is the same with
-// the filter before or after the checks.
+// its key, and the chirp after it is refused; that costs the attacker a
+// signature and a row under a key its hour counts. And a relay that names
+// the origin's key and carries no origin signature at all is soft-accepted
+// on its relayer's signature (handle_witness(), the v0.2 limitation;
+// THREAT_MODEL's Chirp "Spoofed origination" cell): it is stored as the
+// origin's chirp, with content the origin never signed, and the real chirp
+// after it is refused. Both are the same with the filter before or after
+// the checks. A relay whose origin signature does not verify is refused
+// (the third of forgeries()), as is one naming no origin key.
 void test_c9_a_forged_nonce_does_not_block_the_chirp() {
   const Neighbor origin = neighbor_of(0x18);
   const Neighbor relayer = neighbor_of(0x19);
@@ -390,7 +405,7 @@ void test_c9_a_forged_nonce_does_not_block_the_chirp() {
     CHECK(c->template_id == cc::TPL_EMERG_FIRE_VISIBLE && c->urgency == cc::CHIRP_URG_URGENT);
   }
 
-  // The limit: the attacker's own signed witness with the heard nonce.
+  // The first limit: the attacker's own signed witness with the heard nonce.
   boot_enabled();
   const Neighbor attacker = neighbor_of(0x1A);
   const std::vector<uint8_t> real = witness_of(origin, 0x25);
@@ -404,16 +419,44 @@ void test_c9_a_forged_nonce_does_not_block_the_chirp() {
   deliver(origin, real);
   CHECK(cc::g_recent_chirp_count == 1);
   CHECK(memcmp(row_of(nonce)->sender_pubkey, attacker.pub, 32) == 0);
+
+  // The second: a hop-1 relay of the heard fire chirp, re-signed by the
+  // attacker, naming the origin's key with an all-zero origin signature and
+  // reading "false alarm".
+  boot_enabled();
+  const std::vector<uint8_t> fire =
+      witness_of(origin, 0x2B, cc::TPL_EMERG_FIRE_VISIBLE, cc::CHIRP_URG_URGENT);
+  nonce_of(fire, nonce);
+  cc::ChirpHeader rh;
+  cc::ChirpWitnessPayload rp;
+  memcpy(&rh, fire.data(), sizeof rh);
+  memcpy(&rp, fire.data() + sizeof rh, sizeof rp);
+  memcpy(rh.session_id, attacker.sid, sizeof rh.session_id);
+  rh.hop_count = 1;
+  rp.template_id = (uint8_t)cc::TPL_CLR_FALSE_ALARM;
+  memcpy(rp.signed_origin_pubkey, origin.pub, sizeof rp.signed_origin_pubkey);
+  memset(rp.signed_origin_signature, 0, sizeof rp.signed_origin_signature);
+  g_health.clear();
+  deliver(attacker, signed_by(attacker, rh, rp));
+  CHECK(logged("chirp: relayed witness lacks origin signature (v0.2 limitation)"));
+  c = row_of(nonce);
+  CHECK(c != nullptr && memcmp(c->sender_pubkey, origin.pub, 32) == 0);   // stored as the origin's
+  CHECK(c->template_id == cc::TPL_CLR_FALSE_ALARM);                       // saying what it never said
+  deliver(origin, fire);
+  CHECK(cc::g_recent_chirp_count == 1);
+  CHECK(row_of(nonce)->template_id == cc::TPL_CLR_FALSE_ALARM);
 }
 
 // C9 (F309): where the nonce goes in. A verified frame that a later check
 // refuses (here the freshness window: its timestamp 400 s behind this
 // device's clock, a capture played back) is refused at the lookup when it
-// comes again, as before F309, so it reaches the rate limit once: it counts
-// against its key's hour once, not at every replay, and the key's next
-// three witnesses are stored and its fourth refused. Had the nonce gone in
-// only with the row, five replays of the one frame would have used the
-// key's hour, and the key's own chirps after them been refused.
+// comes again while the filter holds its nonce, as before F309, so five
+// plays within that time reach the rate limit once: it counts against its
+// key's hour once in a filter period, not at every replay, and the key's
+// next three witnesses are stored and its fourth refused. Had the nonce
+// gone in only with the row, five replays of the one frame would have used
+// the key's hour, and the key's own chirps after them been refused. What
+// the filter's memory does not cover is the next case.
 void test_c9_a_refused_frame_counts_once() {
   boot_enabled();
   const Neighbor origin = neighbor_of(0x1B);
@@ -433,6 +476,44 @@ void test_c9_a_refused_frame_counts_once() {
   deliver(origin, witness_of(origin, 0x2A));
   CHECK(!holds(witness_of(origin, 0x2A)));
   CHECK(logged("chirp: rate-limited witness from pubkey"));
+}
+
+// C9 (F309's review): a known limit, pinned. The filter holds a nonce for
+// 331 to 662 s (spec §5.3), and the rate limit runs before the freshness
+// window (handle_witness()), so one captured stale frame played back once a
+// filter period reaches the rate limit each time: four plays 11.1 min apart
+// use up its key's hour, and the key's own fresh witness after them is
+// refused. The same on the code before F309. Running the freshness window
+// first would close it; that is its own item, not this one.
+void test_c9_a_stale_frame_counts_once_a_filter_period() {
+  boot_enabled();
+  const Neighbor origin = neighbor_of(0x1C);
+  cc::ChirpHeader h = header_of(origin, cc::CHIRP_MSG_WITNESS, 0x2C);
+  h.timestamp = (uint32_t)host_sim::wall_now - 400;
+  const std::vector<uint8_t> stale = signed_by(origin, h, payload_of());
+  int reached_the_window = 0;
+  for (int play = 0; play < (int)cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR; ++play) {
+    g_health.clear();
+    deliver(origin, stale);
+    reached_the_window += logged("chirp: rejected witness \xE2\x80\x94 outside freshness window") ? 1 : 0;
+    CHECK(cc::g_recent_chirp_count == 0);
+    // 11.1 min on, past the 662 s the filter can hold a nonce; the wall
+    // clock stays, so the frame stays 400 s stale.
+    for (int m = 0; m < 11; ++m) { host_sim::now_ms += 60000; cc::update(); }
+    host_sim::now_ms += 6000;
+    cc::update();
+    CHECK(!cc::is_nonce_seen(h.nonce));
+  }
+  g_health.clear();
+  const std::vector<uint8_t> fresh = witness_of(origin, 0x2D);
+  deliver(origin, fresh);
+  const bool rate_limited = logged("chirp: rate-limited witness from pubkey");
+  std::printf("  one stale frame played %d times, 11.1 min apart: %d reached the freshness window; "
+              "the key's own fresh witness then %s\n", (int)cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR,
+              reached_the_window, rate_limited ? "rate-limited" : "stored");
+  CHECK(reached_the_window == (int)cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR);
+  CHECK(!holds(fresh));
+  CHECK(rate_limited);
 }
 
 // C8 (sweep F416): the oldest row goes first across uptime's wrap. Sixteen
@@ -515,88 +596,111 @@ void boot_with_a_full_rate_table(uint32_t at, uint32_t serial_base) {
 // wraps, then keys A and B taking turns, a second apart, twelve witnesses
 // each. A day after the wrap and 30 days after it, each is taken 4 times of
 // 12, MAX_WITNESSES_PER_PUBKEY_PER_HOUR, as with no wrap (the control:
-// the table written on day 10, the turns on day 11). The rate table evicted
-// the row with the smallest start time, and after the wrap that is the row
-// written since it: A's row went for B's, B's for A's, each witness was its
-// key's first, and A was taken 12 of 12 while 31 of the 32 rows still held
-// keys from before the wrap. Each key now takes a row whose hour has run
-// out and keeps it.
+// the table written on day 10, the turns on day 11); with a loop pass
+// between the table and the turns, which drops the 32 rows whose hour has
+// run out (prune_expired_rate_rows()), and with none, where the turns take
+// those rows as the oldest (that scene first: it is the one the old table
+// failed). The rate table evicted the row with the
+// smallest start time, and after the wrap that is the row written since
+// it: A's row went for B's, B's for A's, each witness was its key's first,
+// and A was taken 12 of 12 while 31 of the 32 rows still held keys from
+// before the wrap (nothing but init() dropped a row then). Each key now
+// takes a row whose hour has run out, or a free one, and keeps it.
 void test_c14_two_keys_cannot_take_turns_after_the_wrap() {
   const uint32_t before_wrap = (uint32_t)(0u - 2u * 3600000u);
   const uint32_t DAY = 24u * 3600000u;
-  struct Scene { uint32_t table_at; uint32_t turns_at; };
+  struct Scene { uint32_t table_at; uint32_t turns_at; bool pass; };
   const Scene scenes[] = {
-      {before_wrap, DAY},                       // a day after the wrap
-      {before_wrap, 30u * DAY},                 // 30 days after it
-      {10u * DAY, 11u * DAY},                   // the control: no wrap
+      {before_wrap, DAY, false},        {before_wrap, DAY, true},         // a day after the wrap
+      {before_wrap, 30u * DAY, false},  {before_wrap, 30u * DAY, true},   // 30 days after it
+      {10u * DAY, 11u * DAY, false},    {10u * DAY, 11u * DAY, true},     // the control: no wrap
   };
   const Neighbor a = neighbor_of(0x60);
   const Neighbor b = neighbor_of(0x61);
   for (const Scene& s : scenes) {
     boot_with_a_full_rate_table(s.table_at, 0);
     host_sim::now_ms = s.turns_at;
-    cc::update();
+    if (s.pass) {
+      cc::update();                               // the pass drops the 32 run-out rows
+      CHECK(rate_rows_held() == 0);
+    }
     int took_a = 0, took_b = 0;
     for (uint32_t i = 1; i <= 12; ++i) {
       took_a += accepted(a, witness_no(a, i)) ? 1 : 0;
       took_b += accepted(b, witness_no(b, i)) ? 1 : 0;
       host_sim::now_ms += 1000;
     }
-    std::printf("  turns at %u ms: A took %d of 12, B %d of 12\n", (unsigned)s.turns_at, took_a, took_b);
+    std::printf("  turns at %u ms, %s: A took %d of 12, B %d of 12\n", (unsigned)s.turns_at,
+                s.pass ? "after a pass" : "with no pass", took_a, took_b);
     CHECK(took_a == cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR);
     CHECK(took_b == cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR);
     CHECK(rate_row_of(a) != nullptr && rate_row_of(b) != nullptr);
+    CHECK(rate_rows_held() == (s.pass ? 2u : cc::MAX_PUBKEY_RATE_TRACK));
   }
 }
 
-// The lens on F416: 31 rows held by keys an attacker sent from 2 h before
-// the wrap, a legitimate key L that used its four in the minute after them,
-// and three keys the attacker rotates, a witness every 10 s round the three
-// for three hours. Run where the three hours lie wholly before the wrap,
-// across it, a day after it and 30 days after it. In every run no key is
-// taken more than MAX_WITNESSES_PER_PUBKEY_PER_HOUR times in any hour (each
-// sliding 3,600 s), each rotating key is taken that many in its first hour,
-// and L's row, whose hour is live while the rotation starts, is never the
-// one evicted: L's fifth witness in its hour is refused, its window start
-// unmoved. A row whose hour has run out is always older than a live one.
+// The lens on F416 over three hours: 31 rows held by keys an attacker sent
+// 50 min before, a legitimate key L that used its four in the minute
+// before, and three keys the attacker rotates, a witness every 10 s round
+// the three for three hours, with the loop's pass once a minute. Run where
+// the three hours lie wholly before the wrap, through it, where the 31 rows
+// are from before it and L and the rotation after it, a day after it and 30
+// days after it. In every run the rotation's first three witnesses take
+// the three oldest rows, the attacker's first three, and never L's; no key
+// is taken more than MAX_WITNESSES_PER_PUBKEY_PER_HOUR times in any hour
+// (each sliding 3,600 s); each rotating key is taken that many in its
+// first hour; and L's fifth witness in its hour is refused, its window
+// start unmoved. With the rows from before the wrap and L's from after it,
+// the old table gave up L's row, the smallest start time, then each
+// rotating key's row for the next key's, and every witness of the three
+// hours was its key's first.
 void test_c14_no_key_passes_its_hour_across_the_wrap() {
-  const uint32_t HOUR = 3600000u;
+  const uint32_t HOUR = 3600000u, MIN = 60000u;
   const uint32_t DAY = 24u * HOUR;
   const uint32_t WRAP = 0u;
-  struct Scene { uint32_t table_at; uint32_t rotation_at; const char* name; };
+  struct Scene { uint32_t rotation_at; const char* name; };
   const Scene scenes[] = {
-      {(uint32_t)(WRAP - 7u * HOUR), (uint32_t)(WRAP - 5u * HOUR + 30u * 60000u), "before the wrap"},
-      {(uint32_t)(WRAP - 2u * HOUR), (uint32_t)(WRAP - 30u * 60000u), "across the wrap"},
-      {(uint32_t)(WRAP - 2u * HOUR), WRAP + DAY, "a day after the wrap"},
-      {(uint32_t)(WRAP - 2u * HOUR), WRAP + 30u * DAY, "30 days after the wrap"},
+      {(uint32_t)(WRAP - 5u * HOUR), "before the wrap"},
+      {(uint32_t)(WRAP - 30u * MIN), "through the wrap"},
+      {WRAP + 2u * MIN, "the rows before the wrap, L after it"},
+      {WRAP + DAY, "a day after the wrap"},
+      {WRAP + 30u * DAY, "30 days after the wrap"},
   };
   const Neighbor legit = neighbor_of(0x70);
   const Neighbor rot[3] = {neighbor_of(0x71), neighbor_of(0x72), neighbor_of(0x73)};
   for (const Scene& s : scenes) {
-    // 31 attacker rows, then L's four, then the rotation.
-    host_sim::now_ms = s.table_at - HOUR;
+    // 31 attacker rows 50 min before the rotation, L's four a minute before it.
+    host_sim::now_ms = s.rotation_at - 50u * MIN - HOUR;   // boot_enabled() adds the hour
     boot_enabled();
     for (size_t i = 0; i + 1 < cc::MAX_PUBKEY_RATE_TRACK; ++i) {
       const Neighbor k = neighbor_of((uint8_t)(0x40 + i));
       CHECK(accepted(k, witness_no(k, 0)));
     }
-    host_sim::now_ms = s.rotation_at - 60000u;
+    host_sim::now_ms = s.rotation_at - MIN;
     cc::update();
     for (uint32_t i = 1; i <= cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR; ++i) {
       CHECK(accepted(legit, witness_no(legit, i)));
     }
     CHECK(rate_rows_held() == cc::MAX_PUBKEY_RATE_TRACK);
     const uint32_t legit_start = rate_row_of(legit)->window_start_ms;
-    host_sim::now_ms = s.rotation_at;
 
     std::vector<uint32_t> taken[3];   // ms since the rotation began
     uint32_t serial = 100;
     for (uint32_t t = 0; t < 3u * HOUR; t += 10000u) {
       host_sim::now_ms = s.rotation_at + t;
-      if (t % 60000u == 0) cc::update();                 // the loop task's pass, once a minute
+      if (t % MIN == 0) cc::update();                    // the loop task's pass, once a minute
       const size_t k = (t / 10000u) % 3;
       if (accepted(rot[k], witness_no(rot[k], serial++))) taken[k].push_back(t);
-      if (t == 50u * 60000u) {                           // L, inside its hour: refused, its row kept
+      if (t == 20000u) {                                 // three rows went: the attacker's first three
+        const bool legit_kept = rate_row_of(legit) != nullptr;
+        std::printf("  %s: after the rotation's first three, L's row %s\n", s.name,
+                    legit_kept ? "kept" : "EVICTED");
+        CHECK(legit_kept && rate_row_of(legit)->window_start_ms == legit_start);
+        for (size_t i = 0; i < 3; ++i) CHECK(rate_row_of(neighbor_of((uint8_t)(0x40 + i))) == nullptr);
+        CHECK(rate_row_of(neighbor_of(0x43)) != nullptr);
+        for (size_t i = 0; i < 3; ++i) CHECK(rate_row_of(rot[i]) != nullptr);
+      }
+      if (t == 50u * MIN) {                              // L, inside its hour: refused, its row kept
         CHECK(!accepted(legit, witness_no(legit, 99)));
         CHECK(rate_row_of(legit) != nullptr && rate_row_of(legit)->window_start_ms == legit_start);
       }
@@ -615,6 +719,89 @@ void test_c14_no_key_passes_its_hour_across_the_wrap() {
     std::printf("  %s: the three rotating keys taken %zu, %zu and %zu times in 3 h; L kept its hour\n",
                 s.name, taken[0].size(), taken[1].size(), taken[2].size());
   }
+}
+
+// The same in one step: 31 live rows written 50 min before millis() wraps,
+// a legitimate key L whose four witnesses come a minute after it, and one
+// new key K a minute later. K takes the row whose window started longest
+// ago, the first attacker row, and L's row, its hour live and full, stays:
+// L's fifth witness is refused. The table evicted the smallest start time,
+// and L's row, written after the wrap, held the smallest of all: K took
+// L's row, and L's fifth witness was its first again. The control runs the
+// same minutes on day 10.
+void test_c14_the_oldest_live_window_goes_first_across_the_wrap() {
+  const uint32_t MIN = 60000u;
+  const uint32_t wrap = 0u, control = 10u * 24u * 3600000u;
+  for (const uint32_t at : {wrap, control}) {
+    host_sim::now_ms = at - 50u * MIN - 3600000u;   // boot_enabled() adds the hour
+    boot_enabled();
+    CHECK(host_sim::now_ms == at - 50u * MIN);
+    for (size_t i = 0; i + 1 < cc::MAX_PUBKEY_RATE_TRACK; ++i) {
+      const Neighbor k = neighbor_of((uint8_t)(0x40 + i));
+      CHECK(accepted(k, witness_no(k, 0)));
+    }
+    host_sim::now_ms = at + MIN;
+    cc::update();                                    // a pass: every row is live, none goes
+    CHECK(rate_rows_held() == cc::MAX_PUBKEY_RATE_TRACK - 1);
+    const Neighbor legit = neighbor_of(0x70);
+    for (uint32_t i = 1; i <= cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR; ++i) {
+      CHECK(accepted(legit, witness_no(legit, i)));
+    }
+    CHECK(!accepted(legit, witness_no(legit, 5)));
+    CHECK(rate_rows_held() == cc::MAX_PUBKEY_RATE_TRACK);
+    host_sim::now_ms = at + 2u * MIN;
+    cc::update();
+    const Neighbor k = neighbor_of(0x74);
+    CHECK(accepted(k, witness_no(k, 0)));
+    const bool legit_kept = rate_row_of(legit) != nullptr;
+    std::printf("  %s: one new key into a full live table, L's row %s\n",
+                at == wrap ? "the rows before the wrap, L after it" : "the control", legit_kept ? "kept" : "EVICTED");
+    CHECK(legit_kept);
+    CHECK(rate_row_of(neighbor_of(0x40)) == nullptr);   // the oldest live window went
+    for (size_t i = 1; i + 1 < cc::MAX_PUBKEY_RATE_TRACK; ++i) {
+      CHECK(rate_row_of(neighbor_of((uint8_t)(0x40 + i))) != nullptr);
+    }
+    CHECK(!accepted(legit, witness_no(legit, 6)));     // and L's count stays
+  }
+}
+
+// F416's review: a row nothing touched for 2^32 ms read as minutes old. Its
+// age is unsigned elapsed time, so a row left in the table that long read
+// younger than a live window, and one new key then evicted the live window
+// instead of it. 31 rows written at P and left alone, L's four witnesses 30
+// min before P + 2^32, and one new key K 5 min after it: the loop's pass
+// drops a row the moment its hour has run out (prune_expired_rate_rows()),
+// so K takes a free row and L's row, live and full, stays. With the rows
+// kept (nothing but init() dropped one), K read them as 5 min old and L's
+// as 35, took L's row, and L's fifth witness in its hour was taken.
+void test_c14_an_idle_row_does_not_read_young_after_2_32_ms() {
+  const uint32_t MIN = 60000u;
+  const uint32_t P = 7u * 24u * 3600000u;
+  host_sim::now_ms = P - 3600000u;   // boot_enabled() adds the hour
+  boot_enabled();
+  for (size_t i = 0; i + 1 < cc::MAX_PUBKEY_RATE_TRACK; ++i) {
+    const Neighbor k = neighbor_of((uint8_t)(0x40 + i));
+    CHECK(accepted(k, witness_no(k, 0)));
+  }
+  host_sim::now_ms = P + 3600000u + 1;   // the loop runs meanwhile: a pass just past the hour
+  cc::update();
+  host_sim::now_ms = P - 30u * MIN;      // 2^32 - 30 min after P
+  cc::update();
+  const Neighbor legit = neighbor_of(0x70);
+  for (uint32_t i = 1; i <= cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR; ++i) {
+    CHECK(accepted(legit, witness_no(legit, i)));
+  }
+  CHECK(!accepted(legit, witness_no(legit, 5)));
+  host_sim::now_ms = P + 5u * MIN;
+  cc::update();
+  const Neighbor k = neighbor_of(0x74);
+  CHECK(accepted(k, witness_no(k, 0)));
+  const bool legit_kept = rate_row_of(legit) != nullptr;
+  std::printf("  31 rows idle for 2^32 ms, then one new key: L's row %s, %zu rows held\n",
+              legit_kept ? "kept" : "EVICTED", rate_rows_held());
+  CHECK(legit_kept);
+  CHECK(!accepted(legit, witness_no(legit, 6)));
+  CHECK(rate_rows_held() == 2);          // L's and K's: the idle rows went at the pass
 }
 
 // What the table cannot do, and the threat model says (the Chirp Sybil
@@ -962,8 +1149,11 @@ const Test kTests[] = {
     {"c9_bloom_flood", test_c9_bloom_flood},
     {"c9_a_forged_nonce_does_not_block_the_chirp", test_c9_a_forged_nonce_does_not_block_the_chirp},
     {"c9_a_refused_frame_counts_once", test_c9_a_refused_frame_counts_once},
+    {"c9_a_stale_frame_counts_once_a_filter_period", test_c9_a_stale_frame_counts_once_a_filter_period},
     {"c14_two_keys_cannot_take_turns_after_the_wrap", test_c14_two_keys_cannot_take_turns_after_the_wrap},
     {"c14_no_key_passes_its_hour_across_the_wrap", test_c14_no_key_passes_its_hour_across_the_wrap},
+    {"c14_the_oldest_live_window_goes_first_across_the_wrap", test_c14_the_oldest_live_window_goes_first_across_the_wrap},
+    {"c14_an_idle_row_does_not_read_young_after_2_32_ms", test_c14_an_idle_row_does_not_read_young_after_2_32_ms},
     {"c14_a_live_hour_goes_only_to_a_full_table", test_c14_a_live_hour_goes_only_to_a_full_table},
     {"c13_an_ack_waits_for_ten_minutes_of_presence", test_c13_an_ack_waits_for_ten_minutes_of_presence},
     {"c13_presence_counts_from_the_row", test_c13_presence_counts_from_the_row},

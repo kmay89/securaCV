@@ -842,15 +842,22 @@ reaches the signature check every time either way, and only a junk frame
 sent again with the same nonce now costs one. A verified frame that a later
 check refuses (an unknown template, the per-key rate limit, the freshness
 window) keeps its nonce, so it is refused at the lookup when it comes
-again: a stale frame played back counts against its key's hour once, not
-at every replay.
+again while the filter holds it (331 to 662 s, below): a stale frame
+played back counts against its key's hour once in that time, not at every
+replay. Played back once a filter period it reaches the rate limit again,
+since that runs before the freshness window, and four plays of one
+captured stale frame use up its key's hour: a known limit of this version,
+tracked as its own item (running the freshness window before the rate
+limit would close it).
 
 The filter holds nonces, not who signed them, and so does the recent
 table: a frame that verifies under any key, an attacker's own among them,
 takes the nonce it carries, and where it arrives first the chirp that
-nonce came from is refused as a repeat. A relay whose origin envelope
-carries no signature at all takes it too: v0.2 still accepts one on its
-relayer's signature alone. Both are known limits of this version.
+nonce came from is refused as a repeat. A relay that names an origin key
+and carries no origin signature at all takes it too: v0.2 still accepts
+one on its relayer's signature alone and stores it as that origin's chirp
+with content the origin never signed (THREAT_MODEL.md, the Chirp "Spoofed
+origination" cell). Both are known limits of this version.
 
 A nonce is one chirp: a receiver must refuse a witness whose nonce it has
 seen for at least as long as the frame could still be accepted. A frame is
@@ -1127,7 +1134,8 @@ field and a free-text send, none of which exists).
 A chirp is a template id (the table `GET /api/chirp/templates` lists), an
 urgency and a detail slot, never free text. `detail` is the slot's text in
 the recent list and its number in a send. `last_chirp_sent_ms` is the
-uptime of the device's last send, the cooldown's timer (§2.5.4), and
+uptime of the device's last send, the cooldown's timer (§2.5.4), 0 if it
+never sent or after 24 hours with no send (the tiers' reset), and
 `cannot_send_reason` is present only while `can_send` is false.
 
 ## 9. UI Requirements

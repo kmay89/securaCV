@@ -1560,8 +1560,8 @@ firmware or UI source.
 
 | Threat | Opera | Chirp | Beacon |
 |---|---|---|---|
-| Spoofed origination | yes (Ed25519) | yes (Ed25519, v0.2) | yes (dual Ed25519) |
-| Replay | yes (counter) | partial: a two-half Bloom filter (4 KB and 4 hashes each) that takes a nonce only once its frame verifies (F309) and the recent table, plus the freshness window only while the wall clock is synced; with no clock set, a replay is stored again once its row is gone and the filter has forgotten it (sweep F310, open) | yes (dedup + freshness) |
+| Spoofed origination | yes (Ed25519) | partial: Ed25519 over a witness and, on a relay, over its origin envelope, but a relay that names an origin key and carries no origin signature is soft-accepted on its relayer's signature (v0.2) and stored as that origin's chirp with content the origin never signed (Outstanding: persistent origin signature across relays) | yes (dual Ed25519) |
+| Replay | yes (counter) | partial: a two-half Bloom filter (4 KB and 4 hashes each) that takes a nonce only once its frame verifies (F309; a relay with no origin signature counts as verified, v0.2's soft accept) and the recent table, plus the freshness window only while the wall clock is synced; with no clock set, a replay is stored again once its row is gone and the filter has forgotten it (sweep F310, open) | yes (dedup + freshness) |
 | Sybil flood | yes (opera_id isolation) | partial: each confirmation and vote needs a distinct signed key, and a key's witnesses are rate-limited (4 an hour; a full 32-key table gives up its oldest window first, across uptime's wrap too, so a key's count is lost only when 32 other keys start an hour within its own; F416), but one device makes any number of session keys; presence beacons are unsigned (F232), so the ten-minute ACK wait (F311) runs for many keys at once, once per key and possibly before the chirp they confirm; suppress votes need no presence (F234) | yes (two-pubkey rule + audit) |
 | Physical extraction of opera_secret | partial (the FE gate keeps it off boards without flash encryption; NVS is not encrypted, so a board with flash encryption on still holds it in plaintext) | n/a | n/a |
 | Compromised device originates fake alarm | n/a | partial (suppress vote) | yes (two-pubkey rule) |
@@ -1603,4 +1603,7 @@ firmware or UI source.
   confirmation code) is a stub. Nothing writes a beacon-set entry or a peer's
   X25519 key, so the two-device co-sign path — whose transport is encrypted —
   has no reachable input on any device.
-- Persistent origin signature across Chirp relays.
+- Persistent origin signature across Chirp relays: a v0.2 relay that names
+  an origin key and carries no origin signature is soft-accepted on its
+  relayer's signature and stored as that origin's chirp (the Chirp
+  "Spoofed origination" and Replay cells above; spec §5.3).
