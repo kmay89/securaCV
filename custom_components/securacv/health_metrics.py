@@ -109,11 +109,13 @@ def memory_free_reading(health_payload: dict[str, Any]) -> int | None:
     "no reading" from "0 bytes free". A non-finite number is no number:
     json.loads takes `Infinity`, `NaN` and `1e400`, and int() raises
     OverflowError on the infinities, which out of an MQTT callback would be
-    a traceback on every such publish an untrusted broker sends.
+    a traceback on every such publish an untrusted broker sends. Nor is a
+    JSON `true` or `false`, which int() would read as 1 or 0 bytes free and
+    both Memory Critical and the Health sensor as critical (sweep HA53).
     """
     for key in ("memory_free", "free_heap"):
         value = health_payload.get(key)
-        if value is not None:
+        if value is not None and not isinstance(value, bool):
             try:
                 return int(value)
             except (TypeError, ValueError, OverflowError):
