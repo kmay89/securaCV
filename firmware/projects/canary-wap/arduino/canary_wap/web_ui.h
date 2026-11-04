@@ -2413,9 +2413,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div>
               <div class="card-title">Paired Devices</div>
               <div class="card-subtitle" id="btPairedSubtitle">Trusted connections</div>
+              <div class="card-subtitle" id="btBondStore"></div>
             </div>
             <button class="btn btn-danger btn-sm" onclick="btClearAllPaired()">Clear All</button>
           </div>
+          <p id="btBondStoreNote" style="display:none;color:var(--warning);font-size:0.8rem;margin:0 0 0.5rem;"></p>
           <div id="btPairedList" class="log-list" style="max-height:200px;">
             <p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:1rem;">No paired devices</p>
           </div>
@@ -2791,7 +2793,41 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (data.vote_sent === false) return data.message || 'Dismissed on this device only';
         return '';
       }
-      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps, otaBannerVisible, cameraPanelState, chirpSendGate, chirpActionNote };
+      // What the Bluetooth card says of NimBLE's bond store and of a late
+      // bring-up, from GET /api/bluetooth (sweep F350). bond_store {held,
+      // capacity, unlisted} is sent only once the stack is up and the store
+      // read (F209): `bonds` is '<held> of <capacity> bonds', beside the
+      // paired list, and '' with no store. A full store refuses a new pairing
+      // (F189), and a bond the list does not hold (an older firmware's) is
+      // one only Clear All deletes: `unlisted` says so when such bonds are
+      // there and the store is full. late_bring_up and services_missing
+      // (F260): a stack a tap brought up after the boot bring-up left it down
+      // carries none of the boot worker's services until a reboot, and
+      // `subtitle` names them; a boot bring-up that missed one is not a late
+      // one, and a reboot is not known to fix it, so it says nothing there.
+      const BT_SERVICE_WORDS = { ble_status: 'Phone status', ble_discovery: 'Opera, Chirp and Nearby' };
+      function btStoreLines(data) {
+        const out = { bonds: '', unlisted: '', subtitle: '' };
+        if (!data || typeof data !== 'object') return out;
+        const isCount = (n) => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+        const store = data.bond_store;
+        if (store && typeof store === 'object' && isCount(store.held) && isCount(store.capacity)) {
+          out.bonds = store.held + ' of ' + store.capacity + ' bonds';
+          if (isCount(store.unlisted) && store.unlisted > 0 && store.held >= store.capacity) {
+            const one = store.unlisted === 1;
+            out.unlisted = 'The bond store is full, so a new phone cannot pair. ' + store.unlisted +
+              (one ? ' of its bonds is' : ' of its bonds are') + ' not on this list. Clear All removes ' +
+              (one ? 'it' : 'them') + ', and the phones listed here too.';
+          }
+        }
+        if (data.late_bring_up === true && Array.isArray(data.services_missing) && data.services_missing.length) {
+          const words = data.services_missing.map((n) =>
+            (Object.prototype.hasOwnProperty.call(BT_SERVICE_WORDS, n) ? BT_SERVICE_WORDS[n] : String(n)));
+          out.subtitle = words.join(', ') + ' off until a reboot';
+        }
+        return out;
+      }
+      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps, otaBannerVisible, cameraPanelState, chirpSendGate, chirpActionNote, btStoreLines };
     })();
     if (typeof module !== 'undefined' && module.exports) { module.exports = WebUiLogic; }
     /* WEBUI_LOGIC:END */
@@ -4492,7 +4528,17 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
       list.innerHTML = data.chirps.map(c => {
         const urgColor = c.urgency === 'urgent' ? '#e67e22' : c.urgency === 'caution' ? '#f4b942' : '#63b3ed';
-        const catIcon = c.category === 'authority' ? '🚔' : c.category === 'infrastructure' ? '⚡' : c.category === 'emergency' ? '🚨' : '👁️';
+        // Each category GET /api/chirp/recent names (chirp_channel.cpp's
+        // category_name(); weather, mutual aid and all clear since F307) has
+        // its own icon, the flagship dashboard's; only 'unknown' gets the eye
+        // (sweep F418; rule CV13 holds every name to a branch here).
+        const catIcon = c.category === 'authority' ? '🚔'
+          : c.category === 'infrastructure' ? '⚡'
+          : c.category === 'emergency' ? '🚨'
+          : c.category === 'weather' ? '⛈️'
+          : c.category === 'mutual_aid' ? '🤝'
+          : c.category === 'all_clear' ? '✅'
+          : '👁️';
         return `<div class="log-item" style="border-left-color:${urgColor};">
           <div style="font-size:1.5rem;">${catIcon}</div>
           <div class="log-content">
@@ -4725,45 +4771,67 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       return                        'background:rgba(160,160,160,0.15);color:var(--muted);';
     }
 
+    // The household devices the list shows, in its order (sweep F423, F407's
+    // shape). A row's role picker and its forget button name the row by its
+    // index into this list, so no label is written into an attribute or an
+    // onclick string, and the label is drawn as text: escapeHtml() leaves
+    // quotes as they are, and the old splice escaped only the single quote,
+    // so a double quote ended the attribute and a trailing backslash ate the
+    // string's closing quote.
+    let householdShown = [];
+
+    // The name a row shows: its label, or its slot when it has none.
+    function householdName(d) {
+      return (typeof d.label === 'string' && d.label.length) ? d.label : 'Slot ' + d.slot;
+    }
+
     async function refreshHousehold() {
       const data = await api('/api/household');
       const list = document.getElementById('householdList');
       if (!list) return;
       if (!data || !Array.isArray(data.devices) || data.devices.length === 0) {
+        householdShown = [];
         list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:0.75rem;">No paired devices yet. Tap Start Pairing on the Bluetooth panel to add one.</p>';
         return;
       }
-      list.innerHTML = data.devices.map(d => {
+      householdShown = data.devices;
+      list.innerHTML = data.devices.map((d, i) => {
         const seen = (d.last_seen_ago_ms == null)
           ? 'never seen this boot'
           : 'seen ' + fmtAgo(d.last_seen_ago_ms);
         return (
           '<div style="padding:0.6rem 0.75rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:0.6rem;">' +
             '<div style="flex:1;min-width:0;">' +
-              '<div style="font-weight:600;">' + (d.label && d.label.length ? d.label : 'Slot ' + d.slot) + '</div>' +
-              '<div style="font-size:0.7rem;color:var(--muted);">' + seen + '</div>' +
+              '<div style="font-weight:600;">' + escapeHtml(householdName(d)) + '</div>' +
+              '<div style="font-size:0.7rem;color:var(--muted);">' + escapeHtml(seen) + '</div>' +
             '</div>' +
-            '<span class="badge" style="font-size:0.65rem;padding:0.15rem 0.45rem;' + roleBadgeStyle(d.role) + '">' + d.role + '</span>' +
-            '<select onchange="setHouseholdRole(' + d.slot + ', this.value)" style="background:var(--surface-2,#222);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.2rem 0.4rem;font-size:0.7rem;">' +
+            '<span class="badge" style="font-size:0.65rem;padding:0.15rem 0.45rem;' + roleBadgeStyle(d.role) + '">' + escapeHtml(d.role) + '</span>' +
+            '<select onchange="setHouseholdRole(' + i + ', this.value)" style="background:var(--surface-2,#222);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.2rem 0.4rem;font-size:0.7rem;">' +
               '<option value="guest"' + (d.role === 'guest'  ? ' selected' : '') + '>Guest</option>' +
               '<option value="family"' + (d.role === 'family' ? ' selected' : '') + '>Family</option>' +
               '<option value="owner"'  + (d.role === 'owner'  ? ' selected' : '') + '>Owner</option>' +
             '</select>' +
-            '<button class="btn btn-sm btn-ghost" onclick="forgetHousehold(' + d.slot + ', \'' + (d.label || '').replace(/'/g, '\\\'') + '\')" title="Forget this device" style="font-size:0.7rem;">×</button>' +
+            '<button class="btn btn-sm btn-ghost" onclick="forgetHousehold(' + i + ')" title="Forget this device" style="font-size:0.7rem;">×</button>' +
           '</div>'
         );
       }).join('');
     }
 
-    async function setHouseholdRole(slot, role) {
-      const r = await api('/api/household/role', 'POST', { slot: slot, role: role });
+    async function setHouseholdRole(i, role) {
+      const d = householdShown[i];
+      if (!d) return;
+      const r = await api('/api/household/role', 'POST', { slot: d.slot, role: role });
       if (r && r.success === false) alert('Role: ' + (r.error || 'failed'));
       refreshHousehold();
       refreshPresence();
     }
-    async function forgetHousehold(slot, label) {
-      if (!confirm('Forget ' + (label || 'this paired device') + '? It will need to re-pair to be recognized again.')) return;
-      const r = await api('/api/household', 'DELETE', { slot: slot });
+    // The confirm is text, so the row's label goes in as the list holds it.
+    async function forgetHousehold(i) {
+      const d = householdShown[i];
+      if (!d) return;
+      const label = (typeof d.label === 'string' && d.label.length) ? d.label : 'this paired device';
+      if (!confirm('Forget ' + label + '? It will need to re-pair to be recognized again.')) return;
+      const r = await api('/api/household', 'DELETE', { slot: d.slot });
       if (r && r.success === false) alert('Forget: ' + (r.error || 'failed'));
       refreshHousehold();
       refreshPresence();
@@ -5384,6 +5452,13 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function refreshBtStatus() {
       const data = await api('/api/bluetooth');
+      // The bond store's lines on the Paired Devices card (F350), as text:
+      // none for an answer with no store, or no answer at all.
+      const lines = WebUiLogic.btStoreLines(data);
+      const storeEl = document.getElementById('btBondStore');
+      if (storeEl) storeEl.textContent = lines.bonds;
+      const storeNote = document.getElementById('btBondStoreNote');
+      if (storeNote) { storeNote.textContent = lines.unlisted; storeNote.style.display = lines.unlisted ? '' : 'none'; }
       if (!data || !data.state) {
         // No route: FEATURE_BLUETOOTH=0 (MINIMAL), NimBLEDevice.h missing, or
         // NimBLE-Arduino 1.x, whose channel compiled empty; say which fixes it.
@@ -5434,12 +5509,13 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       // Why the radio is off (init refused or failed), cleared once a bring-up
       // works: Start Advertising or Pair can bring a refused stack up (F235).
+      // A stack a tap brought up late names what is off until a reboot (F350).
       const subtitle = document.getElementById('btSubtitle');
       if (subtitle && data.init_fail_reason) {
         subtitle.textContent = 'Radio off — ' + data.init_fail_reason;
         badge.className = 'badge warning'; text.textContent = 'Off';
       } else if (subtitle) {
-        subtitle.textContent = 'BLE connectivity';
+        subtitle.textContent = lines.subtitle ? 'BLE connectivity · ' + lines.subtitle : 'BLE connectivity';
       }
 
       // Live connection panel (Find My-like card)

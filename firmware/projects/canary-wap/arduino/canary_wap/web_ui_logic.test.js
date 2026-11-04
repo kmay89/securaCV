@@ -238,6 +238,93 @@ describe('chirpActionNote', () => {
   });
 });
 
+// What the Bluetooth card says of NimBLE's bond store and of a late bring-up
+// (sweep F350), from the keys GET /api/bluetooth writes
+// (bluetooth_api.h's handle_bluetooth_status(): bond_store {held, capacity,
+// unlisted} only while the store is known, late_bring_up and
+// services_missing always).
+describe('btStoreLines', () => {
+  const API = path.join(__dirname, 'bluetooth_api.h');
+  // The keys handle_bluetooth_status() sets, by the object it sets them on.
+  function statusKeys() {
+    const src = fs.readFileSync(API, 'utf8');
+    const at = src.indexOf('inline esp_err_t handle_bluetooth_status(');
+    assert.ok(at >= 0, 'handle_bluetooth_status() is in bluetooth_api.h');
+    const body = src.slice(at, src.indexOf('\n}\n', at));
+    const keys = {};
+    for (const [, obj, key] of body.matchAll(/\b(\w+)\["(\w+)"\]/g)) (keys[obj] = keys[obj] || new Set()).add(key);
+    return keys;
+  }
+  // An answer that records every key read of it and of its bond store.
+  function recorded(answer) {
+    const reads = { doc: new Set(), store: new Set() };
+    const watch = (o, into) => new Proxy(o, { get(t, k) { if (typeof k === 'string') into.add(k); return t[k]; } });
+    const doc = { ...answer };
+    if (answer.bond_store) doc.bond_store = watch({ ...answer.bond_store }, reads.store);
+    return { data: watch(doc, reads.doc), reads };
+  }
+  const none = { bonds: '', unlisted: '', subtitle: '' };
+  const lines = (data) => JSON.parse(JSON.stringify(L.btStoreLines(data)));
+  const UP = { state: 'advertising', late_bring_up: false, services_missing: [] };
+
+  it('reads only keys the status route writes, on the objects it writes them on', () => {
+    const sent = statusKeys();
+    for (const k of ['bond_store', 'late_bring_up', 'services_missing']) assert.ok(sent.doc.has(k), k);
+    assert.deepEqual([...sent.store].sort(), ['capacity', 'held', 'unlisted']);
+    const { data, reads } = recorded({ ...UP, late_bring_up: true, services_missing: ['ble_status'],
+                                       bond_store: { held: 8, capacity: 8, unlisted: 2 } });
+    L.btStoreLines(data);
+    for (const k of reads.doc) assert.ok(sent.doc.has(k), `reads doc.${k}, which the route does not send`);
+    for (const k of reads.store) assert.ok(sent.store.has(k), `reads bond_store.${k}, which the route does not send`);
+    assert.deepEqual([...reads.store].sort(), ['capacity', 'held', 'unlisted']);
+  });
+  it('draws nothing while the store is not known (no bond_store key) and the stack came up at boot', () => {
+    assert.deepEqual(lines(UP), none);
+    assert.deepEqual(lines(null), none);
+    assert.deepEqual(lines({ ok: false, error: 'Network error' }), none);
+  });
+  it('says how full the store is beside the paired list', () => {
+    assert.deepEqual(lines({ ...UP, bond_store: { held: 3, capacity: 8, unlisted: 0 } }),
+                     { ...none, bonds: '3 of 8 bonds' });
+    assert.equal(lines({ ...UP, bond_store: { held: 0, capacity: 8, unlisted: 0 } }).bonds, '0 of 8 bonds');
+  });
+  it('says what fills a full store that the list does not show, and that Clear All removes it', () => {
+    assert.equal(lines({ ...UP, bond_store: { held: 8, capacity: 8, unlisted: 2 } }).unlisted,
+                 'The bond store is full, so a new phone cannot pair. 2 of its bonds are not on this list. ' +
+                 'Clear All removes them, and the phones listed here too.');
+    assert.equal(lines({ ...UP, bond_store: { held: 8, capacity: 8, unlisted: 1 } }).unlisted,
+                 'The bond store is full, so a new phone cannot pair. 1 of its bonds is not on this list. ' +
+                 'Clear All removes it, and the phones listed here too.');
+  });
+  it('says nothing of unlisted bonds while the store has room, or when none are unlisted', () => {
+    assert.equal(lines({ ...UP, bond_store: { held: 5, capacity: 8, unlisted: 2 } }).unlisted, '');
+    assert.equal(lines({ ...UP, bond_store: { held: 8, capacity: 8, unlisted: 0 } }).unlisted, '');
+  });
+  it('draws no count it cannot read as one', () => {
+    for (const bad of [{ held: '3', capacity: 8, unlisted: 0 }, { held: 3, capacity: null, unlisted: 0 },
+                       { held: -1, capacity: 8, unlisted: 0 }, { held: 2.5, capacity: 8, unlisted: 0 }, 'x', null]) {
+      assert.deepEqual(lines({ ...UP, bond_store: bad }), none, JSON.stringify(bad));
+    }
+    assert.equal(lines({ ...UP, bond_store: { held: 8, capacity: 8, unlisted: '2' } }).unlisted, '');
+  });
+  it('names what a late bring-up left off until a reboot', () => {
+    assert.equal(lines({ ...UP, late_bring_up: true, services_missing: ['ble_status', 'ble_discovery'] }).subtitle,
+                 'Phone status, Opera, Chirp and Nearby off until a reboot');
+    assert.equal(lines({ ...UP, late_bring_up: true, services_missing: ['ble_discovery'] }).subtitle,
+                 'Opera, Chirp and Nearby off until a reboot');
+    assert.equal(lines({ ...UP, late_bring_up: true, services_missing: ['ble_status'] }).subtitle,
+                 'Phone status off until a reboot');
+    // A name this page has no words for reads as the device sent it.
+    assert.equal(lines({ ...UP, late_bring_up: true, services_missing: ['ble_future', '__proto__'] }).subtitle,
+                 'ble_future, __proto__ off until a reboot');
+  });
+  it('says nothing for a boot bring-up that missed a service, or a late one that missed none', () => {
+    assert.equal(lines({ ...UP, late_bring_up: false, services_missing: ['ble_status'] }).subtitle, '');
+    assert.equal(lines({ ...UP, late_bring_up: true, services_missing: [] }).subtitle, '');
+    assert.equal(lines({ ...UP, late_bring_up: 'true', services_missing: ['ble_status'] }).subtitle, '');
+  });
+});
+
 // The mute and unmute buttons show a refused answer under the Community
 // Activity list (sweep F192: a mute or an unmute on a channel that is off is
 // 409 chirp_disabled; both answers were thrown away). The two functions are
@@ -383,6 +470,49 @@ describe('the Bluetooth card after a refused stack comes up', () => {
     assert.match(page.el('btSubtitle').textContent, /not registered/);
     await refreshWith(page, { ...base, state: 'idle', advertising: false });
     assert.equal(page.el('btSubtitle').textContent, 'BLE connectivity');
+  });
+  // The bond store's lines and a late bring-up's clause (sweep F350).
+  it('shows the bond store beside the paired list, and the note only when one is owed', async () => {
+    const page = bluetoothPage();
+    await refreshWith(page, { ...base, state: 'idle', advertising: false,
+                              bond_store: { held: 3, capacity: 8, unlisted: 0 } });
+    assert.equal(page.el('btBondStore').textContent, '3 of 8 bonds');
+    assert.equal(page.el('btBondStoreNote').style.display, 'none');
+    await refreshWith(page, { ...base, state: 'idle', advertising: false,
+                              bond_store: { held: 8, capacity: 8, unlisted: 2 } });
+    assert.equal(page.el('btBondStore').textContent, '8 of 8 bonds');
+    assert.equal(page.el('btBondStoreNote').style.display, '');
+    assert.match(page.el('btBondStoreNote').textContent, /^The bond store is full.*Clear All removes them/);
+    // The store not known (a stack not up): nothing, and no stale count.
+    await refreshWith(page, { ...base, state: 'disabled', advertising: false });
+    assert.equal(page.el('btBondStore').textContent, '');
+    assert.equal(page.el('btBondStoreNote').textContent, '');
+    assert.equal(page.el('btBondStoreNote').style.display, 'none');
+  });
+  it('clears the bond store\'s lines on a refresh that found no backend', async () => {
+    const page = bluetoothPage();
+    await refreshWith(page, { ...base, state: 'idle', advertising: false,
+                              bond_store: { held: 8, capacity: 8, unlisted: 1 } });
+    await refreshWith(page, null);
+    assert.equal(page.el('btBondStore').textContent, '');
+    assert.equal(page.el('btBondStoreNote').style.display, 'none');
+  });
+  it('names what a late bring-up left off until a reboot, after the card\'s own line', async () => {
+    const page = bluetoothPage();
+    page.el('btSubtitle').textContent = cardMarkupSubtitle();
+    await refreshWith(page, { ...base, state: 'advertising', advertising: true, late_bring_up: true,
+                              services_missing: ['ble_status', 'ble_discovery'] });
+    assert.equal(page.el('btSubtitle').textContent,
+                 'BLE connectivity · Phone status, Opera, Chirp and Nearby off until a reboot');
+    await refreshWith(page, { ...base, state: 'advertising', advertising: true, late_bring_up: false,
+                              services_missing: [] });
+    assert.equal(page.el('btSubtitle').textContent, 'BLE connectivity');
+  });
+  it('the bond store\'s lines are in the markup, the note hidden until one is owed', () => {
+    const src = fs.readFileSync(UI, 'utf8');
+    const card = src.slice(src.indexOf('<div class="card-title">Paired Devices</div>'), src.indexOf('id="btPairedList"'));
+    assert.match(card, /<div class="card-subtitle" id="btBondStore"><\/div>/);
+    assert.match(card, /<p id="btBondStoreNote" style="display:none;[^"]*"><\/p>/);
   });
 });
 
@@ -546,5 +676,165 @@ describe('the nearby scan list draws every answer field as text (F407)', () => {
       assert.equal(sub.text, `${h} · ${h} dBm`);
       assert.equal(word.text, h);
     }
+  });
+});
+
+// The household list draws each paired device's label as text, and its
+// forget button and role picker name their row by its index (sweep F423,
+// F407's shape). refreshHousehold() wrote the label into innerHTML as it came
+// and spliced it into the forget button's onclick string with only its single
+// quotes escaped, so a double quote ended the attribute and a trailing
+// backslash ate the string's closing quote. The label is NVS's
+// (household::get_label(); ArduinoJson escapes it for JSON, not for HTML).
+// The functions are lifted out of web_ui.h whole, beside the page's own
+// escapeHtml(), fmtAgo() and roleBadgeStyle(), and the list's state and the
+// name helper where the page keeps them (an older page has neither).
+describe('the household list draws each label as text, and forget posts its row\'s slot (F423)', () => {
+  function householdPage(answers) {
+    const src = fs.readFileSync(UI, 'utf8');
+    const els = new Map();
+    const el = (id) => {
+      if (!els.has(id)) els.set(id, { id, textContent: '', innerHTML: '' });
+      return els.get(id);
+    };
+    const calls = [];
+    const confirms = [];
+    let served = 0;
+    const ctx = {
+      api: async (endpoint, method, body) => {
+        calls.push({ endpoint, method: method || 'GET', body });
+        if (endpoint === '/api/household' && !method) {
+          return { devices: answers[Math.min(served++, answers.length - 1)] };
+        }
+        return { success: true };
+      },
+      document: { getElementById: el, createElement: () => textElement() },
+      confirm: (m) => { confirms.push(m); return true; },
+      alert: () => {},
+      refreshPresence: () => {},
+    };
+    vm.createContext(ctx);
+    const decl = (src.match(/\n    let householdShown = [^\n]*\n/) || [''])[0];
+    const helpers = /function householdName\(/.test(src) ? glueFunction('householdName') : '';
+    vm.runInContext([decl, helpers, ...['escapeHtml', 'fmtAgo', 'roleBadgeStyle', 'refreshHousehold',
+      'setHouseholdRole', 'forgetHousehold'].map(glueFunction)].join('\n'), ctx);
+    return {
+      calls, confirms,
+      load: () => ctx.refreshHousehold(),
+      list: () => parseFragment(el('householdList').innerHTML),
+      // An element's handler run as the page's script, `this` the element.
+      fire: async (element, handler, value) => {
+        const code = attr(element, handler);
+        assert.ok(code, `${shape(element)} has an ${handler}`);
+        await vm.runInContext(`(function () { return ${code}; }).call({ value: ${JSON.stringify(value)} })`, ctx);
+        await settleAll();
+      },
+      forgets: () => calls.filter((c) => c.method === 'DELETE').map((c) => JSON.stringify(c.body)),
+      roles: () => calls.filter((c) => c.endpoint === '/api/household/role').map((c) => JSON.stringify(c.body)),
+    };
+  }
+  const PLAIN = { slot: 3, label: 'Kim\'s phone', role: 'guest', paired_since_ms: 0, last_seen_ago_ms: 65000 };
+  async function rowOf(devices) {
+    const p = householdPage([devices]);
+    await p.load();
+    return p.list();
+  }
+  const buttonOf = (f) => f.elements.filter((e) => e.tag === 'button');
+
+  it('a household row is its name, when it was seen, its role, the role picker and forget', async () => {
+    const f = await rowOf([PLAIN]);
+    assert.deepEqual(f.elements.map(shape),
+                     ['div[style]', 'div[style]', 'div[style]', 'div[style]', 'span[class style]',
+                      'select[onchange style]', 'option[value selected]', 'option[value]', 'option[value]',
+                      'button[class onclick title style]']);
+    assert.equal(f.elements[2].text, 'Kim\'s phone');
+    assert.equal(f.elements[3].text, 'seen 1 min ago');
+    assert.equal(f.elements[4].text, 'guest');
+  });
+
+  // What the old splice broke: a double quote ended the onclick attribute,
+  // so the rest of the label became attributes of its own (a second onclick
+  // is dropped, and the first then holds a cut string; any other name is a
+  // new handler), and a trailing backslash escaped the quote that closed the
+  // label's string.
+  for (const label of ['x" onclick="alert(1)', 'x" onmouseover="alert(1)', 'Phone\\']) {
+    it(`a label ${JSON.stringify(label)} is text, and forget posts its row's slot`, async () => {
+      const own = (await rowOf([PLAIN])).elements;
+      const p = householdPage([[{ ...PLAIN, slot: 4, label }]]);
+      await p.load();
+      const f = p.list();
+      assert.deepEqual(f.elements.map(shape), own.map(shape));
+      assert.equal(f.elements[2].text, label);
+      await p.fire(buttonOf(f)[0], 'onclick');
+      assert.deepEqual(p.forgets(), [JSON.stringify({ slot: 4 })]);
+    });
+  }
+
+  it('a label that reads as markup makes no element, attribute or comment', async () => {
+    const own = (await rowOf([PLAIN])).elements;
+    const labels = ['x" onclick="alert(1)', 'Phone\\', ...HOSTILE];
+    const devices = labels.map((label, k) => ({ ...PLAIN, slot: k + 1, label }));
+    const f = await rowOf(devices);
+    assert.deepEqual(f.elements.map(shape), devices.flatMap(() => own.map(shape)),
+                     'each row has exactly the row\'s own elements and attributes');
+    assert.deepEqual(f.comments, [], 'no comment opened');
+    devices.forEach((d, k) => {
+      const row = f.elements.slice(k * own.length, (k + 1) * own.length);
+      row.forEach((e, j) => {
+        for (const [n, v] of e.attrs) {
+          if (n !== 'onclick' && n !== 'onchange') assert.equal(v, attr(own[j], n), `row ${k}: ${e.tag} ${n}`);
+          assert.ok(!v.includes(d.label), `row ${k}: no label in ${e.tag} ${n}`);
+        }
+      });
+      assert.equal(row[2].text, d.label, `row ${k}: the label reads as sent`);
+    });
+  });
+
+  it('forget posts the slot of the row clicked, and its confirm names the label as sent', async () => {
+    const labels = ['x" onclick="alert(1)', 'Phone\\', ...HOSTILE];
+    const devices = labels.map((label, k) => ({ ...PLAIN, slot: 7 - (k % 8), label }));
+    const p = householdPage([devices]);
+    await p.load();
+    const buttons = buttonOf(p.list());
+    assert.equal(buttons.length, devices.length);
+    for (const [k, b] of buttons.entries()) {
+      await p.fire(b, 'onclick');
+      assert.equal(p.forgets().at(-1), JSON.stringify({ slot: devices[k].slot }), `row ${k}`);
+      assert.equal(p.confirms.at(-1),
+                   `Forget ${devices[k].label}? It will need to re-pair to be recognized again.`, `row ${k}`);
+    }
+    assert.equal(p.forgets().length, devices.length);
+  });
+
+  it('the role picker posts the slot of its row and the role picked', async () => {
+    const devices = [{ ...PLAIN, slot: 5, label: 'x" onclick="alert(1)' }, { ...PLAIN, slot: 0, label: 'Phone\\' }];
+    const p = householdPage([devices]);
+    await p.load();
+    const pickers = p.list().elements.filter((e) => e.tag === 'select');
+    await p.fire(pickers[0], 'onchange', 'owner');
+    await p.fire(pickers[1], 'onchange', 'family');
+    assert.deepEqual(p.roles(), [JSON.stringify({ slot: 5, role: 'owner' }), JSON.stringify({ slot: 0, role: 'family' })]);
+  });
+
+  it('a device with no label reads as its slot, and its confirm as this paired device', async () => {
+    const p = householdPage([[{ ...PLAIN, slot: 6, label: '' }]]);
+    await p.load();
+    const f = p.list();
+    assert.equal(f.elements[2].text, 'Slot 6');
+    await p.fire(buttonOf(f)[0], 'onclick');
+    assert.equal(p.confirms.at(-1), 'Forget this paired device? It will need to re-pair to be recognized again.');
+    assert.deepEqual(p.forgets(), [JSON.stringify({ slot: 6 })]);
+  });
+
+  it('forget names the device the list shows now, after the list has changed', async () => {
+    const first = [{ ...PLAIN, slot: 1, label: 'A' }, { ...PLAIN, slot: 2, label: 'B' }];
+    const then = [{ ...PLAIN, slot: 2, label: 'B' }];
+    const p = householdPage([first, then]);
+    await p.load();
+    await p.load();
+    const buttons = buttonOf(p.list());
+    assert.equal(buttons.length, 1);
+    await p.fire(buttons[0], 'onclick');
+    assert.deepEqual(p.forgets(), [JSON.stringify({ slot: 2 })]);
   });
 });
