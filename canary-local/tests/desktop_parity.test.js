@@ -4120,9 +4120,50 @@ const A86_ROLE_FIRMWARE = {
 
 // Comments, strings and char literals blanked (same length, newlines kept),
 // so code is read where the compiler reads it.
-const a86Strip = (src) => src.replace(
-  /(?<![A-Za-z0-9_])R"([^()\\\s]{0,16})\([\s\S]*?\)\1"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g,
-  (m) => m.replace(/[^\n]/g, " "));
+const A86_NOISE = /(?<![A-Za-z0-9_])R"([^()\\\s]{0,16})\([\s\S]*?\)\1"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g;
+const a86Strip = (src) => src.replace(A86_NOISE, (m) => m.replace(/[^\n]/g, " "));
+
+// The logical lines of a source, joined as the compiler joins physical lines
+// before it reads a directive (A93 review): [physical line numbers, the ones
+// among them that carry code, the code lines' blanked text joined by a
+// space]. A backslash ending a line splices the next onto it (inside a //
+// comment, the comment runs on and the next line carries no code); a block
+// comment or raw string spanning a newline joins the lines it spans (a
+// comment is one space). gen_flash.py's pp_logical_lines, written again.
+const A86_SPLICE = /\\[ \t]*\r?$/;
+function a86Logical(raw, stripped) {
+  const raws = raw.split("\n"), lines = stripped.split("\n"), spans = new Set();
+  let pos = 0, line = 0;
+  for (const m of raw.matchAll(A86_NOISE)) {
+    const n = m[0].split("\n").length - 1;
+    if (!n) continue;
+    for (; pos < m.index; pos++) if (raw[pos] === "\n") line++;
+    for (let k = 0; k < n; k++) spans.add(line + k);
+  }
+  const out = [];
+  for (let i = 0; i < lines.length;) {
+    const idx = [i], code = [i], parts = [lines[i]];
+    let inComment = false, j = i;
+    while (j + 1 < lines.length) {
+      if (inComment) { if (!A86_SPLICE.test(raws[j])) break; }
+      else if (spans.has(j)) { /* the comment or raw string runs on */ }
+      else if (A86_SPLICE.test(raws[j])) {
+        if (A86_SPLICE.test(lines[j])) parts[parts.length - 1] = parts[parts.length - 1].replace(A86_SPLICE, "");
+        else inComment = true;
+      } else break;
+      j++;
+      idx.push(j);
+      if (!inComment) { code.push(j); parts.push(lines[j]); }
+    }
+    out.push([idx, code, parts.join(" ")]);
+    i = j + 1;
+  }
+  return out;
+}
+// Every directive of a source, on its logical line, blanks collapsed: [first
+// physical line number, text].
+const a86Directives = (src) => a86Logical(src, a86Strip(src))
+  .filter(([, , t]) => /^\s*#/.test(t)).map(([idx, , t]) => [idx[0], t.trim().split(/\s+/).join(" ")]);
 
 // The body of C/C++ function `name`, braces counted on the stripped text.
 const a86Body = (src, name) => {
@@ -4137,20 +4178,26 @@ const a86Body = (src, name) => {
   return { raw: src.slice(m.index + m[0].length, i - 1), stripped: stripped.slice(m.index + m[0].length, i - 1) };
 };
 
-// Every line of a body that is not itself a conditional line, as [stripped,
-// raw, frames]: the conditionals opened inside the body that enclose it,
-// each { opener, branch } (branch: the #else / #elif it sits after, or null).
-// A close or a branch with nothing open marks every later line unbalanced.
+// Every code line of a body that is not part of a conditional directive, as
+// [stripped, raw, frames]: the conditionals opened inside the body that
+// enclose it, each { opener, branch } (branch: the #else / #elif it sits
+// after, or null), each directive read on its logical line (a86Logical), so
+// the lines a directive or a // comment runs on over are not code. A close or
+// a branch with nothing open marks every later line unbalanced.
 const A86_OPEN = /^\s*#\s*if/, A86_BRANCH = /^\s*#\s*(?:else|elif)/, A86_CLOSE = /^\s*#\s*endif\b/;
 const a86Lines = ({ raw, stripped }) => {
-  const rawLines = raw.split("\n"), out = [], stack = [];
+  const rawLines = raw.split("\n"), lines = stripped.split("\n"), out = [], stack = [];
   let broken = false;
-  stripped.split("\n").forEach((line, n) => {
-    if (A86_OPEN.test(line)) stack.push({ opener: line.trim(), branch: null });
-    else if (A86_BRANCH.test(line)) { if (stack.length) stack[stack.length - 1].branch = line.trim(); else broken = true; }
-    else if (A86_CLOSE.test(line)) { if (stack.length) stack.pop(); else broken = true; }
-    else out.push([line, rawLines[n], [...(broken ? [{ opener: "(unbalanced)", branch: null }] : []), ...stack.map((f) => ({ ...f }))]]);
-  });
+  for (const [, code, text] of a86Logical(raw, stripped)) {
+    const d = text.trim().split(/\s+/).join(" ");
+    if (A86_OPEN.test(d)) stack.push({ opener: d, branch: null });
+    else if (A86_BRANCH.test(d)) { if (stack.length) stack[stack.length - 1].branch = d; else broken = true; }
+    else if (A86_CLOSE.test(d)) { if (stack.length) stack.pop(); else broken = true; }
+    else {
+      const frames = [...(broken ? [{ opener: "(unbalanced)", branch: null }] : []), ...stack.map((f) => ({ ...f }))];
+      for (const n of code) out.push([lines[n], rawLines[n], frames]);
+    }
+  }
   return out;
 };
 // Lines of a body under no #if opened inside it, as [stripped, raw] pairs.
@@ -4225,7 +4272,10 @@ const a86FeedsConsole = (src) => /\.feed\s*\(\s*\(char\)\s*Serial\s*\.\s*read\s*
 function a86Answered(role) {
   const fw = A86_ROLE_FIRMWARE[role];
   assert.ok(fw, `no firmware known for role ${role}`);
-  if (fw.kind === "keys") return { kind: fw.kind, args: new Set(), ...a86ReadKeys(read(join(ROOT, fw.handler))) };
+  if (fw.kind === "keys") {
+    const source = read(join(ROOT, fw.handler));
+    return { kind: fw.kind, args: new Set(), source, ...a86ReadKeys(source) };
+  }
   const none = { gated: new Map(), refused: new Set() };
   if (fw.kind === "words") {
     // …and the project actually feeds its USB console to it.
@@ -4312,7 +4362,10 @@ function a93Chain(sections, name) {
 // env's sections (or the base [env]) is an error, as gen_flash.py refuses
 // it. Otherwise the header's default, read by c_const.js's rule, which must
 // sit directly in `#ifndef MACRO` (or `#if !defined(MACRO)`) under nothing
-// but an include guard. 1 or 0, nothing else.
+// but an include guard. 1 or 0, nothing else. An #undef of the macro in the
+// header, a #define whose logical line runs past its physical one, and a
+// guard read on its logical line that is not the #ifndef one are errors too
+// (the A93 review): the compiler's #if would read something else.
 function a93FeatureValue(projectDir, config, env, macro) {
   const named = new RegExp(`${macro}(?![A-Za-z0-9_])`);
   const strict = new RegExp(`(?:^|\\s)(-D${macro}(?:=\\d+)?)(?=\\s|$)`, "g");
@@ -4343,15 +4396,23 @@ function a93FeatureValue(projectDir, config, env, macro) {
   let fromHeader = null;
   const text = read(join(ROOT, config));
   const stripped = a86Strip(text);
+  const logical = a86Directives(text);
+  if (logical.some(([, d]) => new RegExp(`^#[ \\t]*undef[ \\t]+${macro}(?![A-Za-z0-9_])`).test(d))) {
+    return { error: `${config} #undefs ${macro}: after it the handler's #if reads 0` };
+  }
   if (new RegExp(`^[ \\t]*#[ \\t]*define[ \\t]+${macro}(?![A-Za-z0-9_])`, "m").test(stripped)) {
     try { fromHeader = readConst(text, macro, config); } catch (e) { return { error: e.message }; }
-    const directives = stripped.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("#"));
+    const physical = stripped.split("\n");
+    const directives = logical.map(([, d]) => d);
     const stack = [];
     for (const [n, d] of directives.entries()) {
       if (A86_OPEN.test(d)) stack.push({ n, opener: d, branch: null });
       else if (A86_BRANCH.test(d) && stack.length) stack[stack.length - 1].branch = d;
       else if (A86_CLOSE.test(d) && stack.length) stack.pop();
       else if (new RegExp(`^#[ \\t]*define[ \\t]+${macro}(?![A-Za-z0-9_])`).test(d)) {
+        if (d !== physical[logical[n][0]].trim().split(/\s+/).join(" ")) {
+          return { error: `${config}'s #define ${macro} runs past its line (${d}); its value is not the first line's` };
+        }
         const top = stack[stack.length - 1];
         const guarded = top && top.branch === null && new RegExp(
           `^(?:#[ \\t]*ifndef[ \\t]+${macro}|#[ \\t]*if[ \\t]+![ \\t]*defined[ \\t]*(?:\\([ \\t]*${macro}[ \\t]*\\)|[ \\t]+${macro}))$`).test(top.opener);
@@ -4370,6 +4431,11 @@ function a93FeatureValue(projectDir, config, env, macro) {
   return { value };
 }
 
+// Every `#define MACRO` / `#undef MACRO` in a handler's own file, on logical
+// lines: [line number, directive]. gen_flash.py's handler_redefines.
+const a93HandlerTouches = (source, macro) => a86Directives(source)
+  .filter(([, d]) => new RegExp(`^#[ \\t]*(?:define|undef)[ \\t]+${macro}(?![A-Za-z0-9_])`).test(d));
+
 // Every reason a product's chips are not its firmware's; [] when they are.
 function a86Wrong(product, monitor) {
   const fw = a86Answered(product.role);
@@ -4378,10 +4444,14 @@ function a86Wrong(product, monitor) {
   for (const [cmd, label] of monitor.cmds) {
     const [word, ...rest] = cmd.split(" ");
     if (!fw.commands.has(word) && fw.gated.has(word)) {
-      // A93: offered only where the product's build compiles it in.
+      // A93: offered only where the product's build compiles it in, and the
+      // handler's own file does not define or #undef the macro (its #if
+      // would read that, not the env's or the header's value).
       const macro = fw.gated.get(word), env = a93Env(product.id), spec = A86_ROLE_FIRMWARE[product.role];
+      const touched = a93HandlerTouches(fw.source || "", macro);
       const got = !env ? { error: `no build env known for ${product.id} in firmware/build_matrix.json` }
         : !spec.config ? { error: `no config header known for role ${product.role}` }
+        : touched.length ? { error: `${spec.handler} itself has ${touched.map(([, d]) => d).join(", ")}` }
         : a93FeatureValue(spec.project, spec.config, env, macro);
       if (got.error) { out.push(`${product.id}: ${JSON.stringify(cmd)} is gated by ${macro} — ${got.error}`); continue; }
       if (got.value !== 1) {
@@ -4518,6 +4588,16 @@ test("A86: every product's monitor chips are commands its own firmware answers, 
     assert.match(value("-DOTHER=1", "#pragma once\n#if BIG\n#ifndef FEATURE_X\n#define FEATURE_X 1\n#endif\n#endif\n").error || "",
       /not the #ifndef default/, "a default under another conditional");
     assert.match(value("-DOTHER=1", "#pragma once\n").error || "", /neither env x nor .* defines FEATURE_X/);
+    // What the preprocessor does after the default (the A93 review): an
+    // #undef leaves #if reading 0; a #define or a guard whose comment closes
+    // on the next line with code after it is read whole, as the compiler does.
+    assert.match(value("-DFEATURE_X=1", guarded(1).replace("#endif\n#endif\n", "#endif\n#undef FEATURE_X\n#endif\n")).error || "",
+      /#undefs FEATURE_X/);
+    assert.match(value("-DOTHER=1", guarded("1 /* a note\n */ + 1")).error || "", /runs past its line \(#define FEATURE_X 1 \+ 1\)/);
+    assert.match(value("-DFEATURE_X=0", guarded(1).replace("#ifndef FEATURE_X\n", "#if !defined(FEATURE_X) /* a note\n */ || 1\n")).error || "",
+      /not the #ifndef default/);
+    assert.deepStrictEqual(value("-DOTHER=1", guarded("1 /* a note\n    that ends here */").replace("#ifndef FEATURE_X\n", "#ifndef FEATURE_X /* a\n */\n")),
+      { value: 1 }, "a comment closed on the next line with nothing after it is no code");
   } finally {
     rmSync(a93Dir, { recursive: true, force: true });
   }
@@ -4570,6 +4650,29 @@ test("A86: every product's monitor chips are commands its own firmware answers, 
   ].join("\n"));
   assert.deepStrictEqual(Object.fromEntries(shapes.gated), { d: "FEATURE_X", f: "FEATURE_X", i: "FEATURE_X" });
   assert.deepStrictEqual([...shapes.refused].sort(), ["a", "b", "c", "e", "g", "h", "m"]);
+  // A directive is read on its logical line (the A93 review): a block comment
+  // closed on the next line is one space, a backslash splices, and the code a
+  // directive or a // comment runs on over is not code. What g++ -E keeps.
+  const joined = a86ReadKeys([
+    "void handle_serial_commands() {",
+    "#if FEATURE_X /* a note", " */ && FEATURE_Y", "  case 'a': break;", "#endif",
+    "#if FEATURE_X /* a note", "   that ends here */", "  case 'b': break;", "#endif",
+    "#if FEATURE_X \\", "  && FEATURE_Y", "  case 'c': break;", "#endif",
+    "#if FEATURE_X // a note \\", "  && FEATURE_Y, still the note", "  case 'd': break;", "#endif",
+    "#if FEATURE_X", "  case 'e': break;", "#endif /* a note", " */ case 'f': break;",
+    "  case 'g': break; // a note \\", "  case 'h': break;",
+    "  /* a note", " */ #if FEATURE_X", "  case 'i': break;", "#endif",
+    "  case 'j': /* a note", " */ case 'k': break;",
+    "}",
+  ].join("\n"));
+  assert.deepStrictEqual([...joined.commands].sort(), ["g", "j", "k"], "f is in #endif's line and h in the // comment");
+  assert.deepStrictEqual(Object.fromEntries(joined.gated), { b: "FEATURE_X", d: "FEATURE_X", e: "FEATURE_X", i: "FEATURE_X" });
+  assert.deepStrictEqual([...joined.refused].sort(), ["a", "c"]);
+  // The handler's own file touching a gated macro is no gate the env decides.
+  assert.deepStrictEqual(a93HandlerTouches('#include "cfg.h"\n#undef FEATURE_X\n#  define FEATURE_X /* a\n */ 0\n// #define FEATURE_X 1\n' +
+    'const char* k = "#undef FEATURE_X";\n#define FEATURE_XY 1\n', "FEATURE_X"), [[1, "#undef FEATURE_X"], [2, "# define FEATURE_X 0"]]);
+  assert.deepStrictEqual(a93HandlerTouches(read(join(ROOT, A86_ROLE_FIRMWARE.canary.handler)), "FEATURE_HA_MQTT"), [],
+    "the flagship's main.cpp leaves FEATURE_HA_MQTT to its env and canary_config.h");
   const words = a86ReadWords([
     "void execute_() {",
     "  if (ieq_(cmd, \"help\")) {}",

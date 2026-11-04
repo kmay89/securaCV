@@ -23,7 +23,10 @@ key under any other conditional, an env or header spelling the reader does
 not evaluate, and a value that is neither 0 nor 1 are refused by name. The
 flagship's battery, power-policy, diagnostics and data-management chips are
 on all four flagship products and its MQTT chip only on the HA build; the
-gate readings run on synthetic projects as well.
+gate readings run on synthetic projects as well. A directive is read on its
+logical line, as the compiler reads it (a backslash splice, a block comment
+closed on a later line), and an `#undef` of the macro in the config header,
+or a `#define` / `#undef` of it in the handler's own file, is refused.
 
     python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 """
@@ -279,6 +282,30 @@ class Parsers(unittest.TestCase):
         # n is answered unconditionally too, so it is a plain key.
         self.assertIn("n", self.handler("    case 'n': break;\n#if FEATURE_X\n    case 'n': break;\n#endif\n"))
 
+    def test_a_directive_is_read_on_its_logical_line(self):
+        # Review of A93: the compiler joins a backslash splice, and a block
+        # comment that closes on a later line, into the directive's line
+        # before it reads it (a comment is one space), so the gate is the
+        # joined text, and the code a directive or a // comment runs on over
+        # is not code. Each reading here is what g++ -E keeps.
+        keys, _, gated, refused = self.read(
+            "  switch (c) {\n"
+            "#if FEATURE_X /* a note\n */ && FEATURE_Y\n    case 'a': break;\n#endif\n"
+            "#if FEATURE_X /* a note\n   that ends here */\n    case 'b': break;\n#endif\n"
+            "#if FEATURE_X \\\n  && FEATURE_Y\n    case 'c': break;\n#endif\n"
+            "#if FEATURE_X // a note \\\n  && FEATURE_Y, still the note\n    case 'd': break;\n#endif\n"
+            "#if FEATURE_X\n    case 'e': break;\n#endif /* a note\n */ case 'f': break;\n"
+            "    case 'g': break; // a note \\\n    case 'h': break;\n"
+            "    /* a note\n */ #if FEATURE_X\n    case 'i': break;\n#endif\n"
+            "    case 'j': /* a note\n */ case 'k': break;\n"
+            "  }")
+        self.assertEqual(keys, {"g", "j", "k"}, "f is in #endif's line and h in the // comment: no code")
+        self.assertEqual(gated, {"b": "FEATURE_X", "d": "FEATURE_X", "e": "FEATURE_X", "i": "FEATURE_X"})
+        self.assertEqual(refused, {
+            "a": "under `#if FEATURE_X && FEATURE_Y` (a compound or defined() condition)",
+            "c": "under `#if FEATURE_X && FEATURE_Y` (a compound or defined() condition)",
+        })
+
     def test_an_unbalanced_conditional_answers_nothing_after_it(self):
         keys, _, gated, refused = self.read("    case 'a': break;\n#endif\n    case 'b': break;\n")
         self.assertEqual((keys, gated), ({"a"}, {}))
@@ -395,7 +422,9 @@ class GatedChips(VocabCase):
         for gate, says in (("#if FEATURE_X && FEATURE_Y", "`#if FEATURE_X && FEATURE_Y` (a compound or defined() condition)"),
                            ("#if defined(FEATURE_X)", "`#if defined(FEATURE_X)` (a compound or defined() condition)"),
                            ("#ifdef FEATURE_X", "`#ifdef FEATURE_X` (it asks whether a macro is defined, not its value)"),
-                           ("#if FEATURE_Y\n#if FEATURE_X", "nested under `#if FEATURE_Y` and `#if FEATURE_X`")):
+                           ("#if FEATURE_Y\n#if FEATURE_X", "nested under `#if FEATURE_Y` and `#if FEATURE_X`"),
+                           # The comment is one space: the directive is `#if FEATURE_X && 0`.
+                           ("#if FEATURE_X /* a note\n */ && 0", "`#if FEATURE_X && 0` (a compound or defined() condition)")):
             self.make(gate=gate)
             msg = self.refusal(SYNTH, "on", gate)
             self.assertIn(says, msg, gate)
@@ -435,6 +464,34 @@ class GatedChips(VocabCase):
         self.assertEqual(self.keys_of(SYNTH, "plain"), ["h", "q"], "#if !defined(X) guards it as #ifndef does")
         self.make(include='#include "other.h"')
         self.assertIn("does not include", self.refusal(SYNTH, "on"))
+
+    def test_what_the_preprocessor_does_after_the_default_is_refused(self):
+        # Review of A93: each of these leaves the handler's `#if FEATURE_X`
+        # reading 0 (or 2) where the env and the #ifndef default say 1, so the
+        # chip would be offered for a build that compiles q out (g++ -E agrees).
+        self.make(cfg=SYNTH_CFG.replace("#endif\n#endif\n", "#endif\n#undef FEATURE_X\n#endif\n"))
+        self.assertIn("has `#undef FEATURE_X`; after it FEATURE_X is undefined", self.refusal(SYNTH, "on"))
+        self.assertIn("has `#undef FEATURE_X`", self.refusal(SYNTH, "plain"))
+        self.make(cfg=SYNTH_CFG.replace("FEATURE_X 1   // on unless the env says otherwise",
+                                        "FEATURE_X 1   /* on unless\n */ + 1"))
+        self.assertIn("defines FEATURE_X as `#define FEATURE_X 1 + 1`, a logical line that runs past",
+                      self.refusal(SYNTH, "plain"))
+        self.make(cfg=SYNTH_CFG.replace("#ifndef FEATURE_X\n", "#if !defined(FEATURE_X) /* a note\n */ || 1\n"))
+        self.assertIn("inside `#ifndef SYNTH_CFG_H` and `#if !defined(FEATURE_X) || 1`", self.refusal(SYNTH, "on"))
+        for touch in ("#undef FEATURE_X", "#define FEATURE_X 0", "#  define FEATURE_X /* a note\n */ 0"):
+            self.make(include='#include "cfg.h"\n' + touch)
+            msg = self.refusal(SYNTH, "on", touch)
+            self.assertIn("chip 'q' names gate FEATURE_X, and fw/synthetic/src/main.cpp itself has", msg, touch)
+            self.assertIn("(line 2)", msg, touch)
+        # A comment that closes on a later line with nothing after it is no
+        # code, so the default and the guard still read as written.
+        self.make(cfg=SYNTH_CFG.replace("// on unless the env says otherwise", "/* on unless\n   the env says */")
+                  .replace("#ifndef FEATURE_X\n", "#ifndef FEATURE_X /* a note\n */\n"))
+        self.assertEqual(self.keys_of(SYNTH, "plain"), ["h", "q"])
+        self.assertEqual(self.keys_of(SYNTH, "off"), ["h"])
+        # A macro the handler file names only in a comment or a string is untouched.
+        self.make(include='#include "cfg.h"\n// #undef FEATURE_X\nstatic const char* k = "#define FEATURE_X 0";')
+        self.assertEqual(self.keys_of(SYNTH, "on"), ["h", "q"])
 
 
 if __name__ == "__main__":

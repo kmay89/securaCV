@@ -2637,10 +2637,12 @@ _C_NOISE = re.compile(
 )
 
 
+@functools.lru_cache(maxsize=64)
 def _c_strip(text: str) -> str:
     """`text` with every comment, string and char literal (raw strings too)
     blanked to spaces, newlines kept, so braces, `#if` lines and calls are
-    read only where the compiler would read them."""
+    read only where the compiler would read them. Cached by content: the
+    monitor reader strips the same handler for every product env."""
     return _C_NOISE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
 
 
@@ -2674,38 +2676,112 @@ _PP_CLOSE = re.compile(r"\s*#\s*endif\b")
 # The one gate a chip may sit behind: `#if NAME`, one macro name and nothing
 # else on the line (a comment after it is blanked before this reads it).
 _PP_GATE = re.compile(r"\s*#\s*if[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*")
+# A backslash that ends a physical line (blanks after it allowed, as GCC
+# allows them): it splices the next line onto this one.
+_PP_SPLICE = re.compile(r"\\[ \t]*\r?$")
+
+
+@functools.lru_cache(maxsize=64)
+def pp_logical_lines(text: str) -> tuple[tuple[tuple[int, ...], tuple[int, ...], str], ...]:
+    """The logical lines of `text`, joined the way the compiler joins physical
+    lines before it reads a directive (sweep A93, review): each as (the
+    physical line indexes it spans, the indexes among them that carry code,
+    and its text: those code lines, comments and literals blanked, joined by
+    a space).
+
+    A line that ends in a backslash splices the next one onto it; when that
+    backslash sits in a `//` comment, the comment runs on over the next line,
+    which then carries no code. A block comment or a raw string that spans a
+    newline joins the lines it spans too (a comment is one space to the
+    compiler), so `#if FEATURE_X /* note` over ` */ && 0` is the one
+    directive `#if FEATURE_X && 0`, and an `#endif /* ... */` that closes on
+    the next line swallows whatever code follows the comment there. Every
+    physical line is in exactly one logical line."""
+    raws = text.split("\n")
+    lines = _c_strip(text).split("\n")
+    spans: set[int] = set()   # lines whose newline sits inside a block comment or a raw string
+    pos = line = 0
+    for m in _C_NOISE.finditer(text):
+        n = m.group(0).count("\n")
+        if n:
+            line += text.count("\n", pos, m.start())
+            pos = m.start()
+            spans.update(range(line, line + n))
+    out: list[tuple[tuple[int, ...], tuple[int, ...], str]] = []
+    i = 0
+    while i < len(lines):
+        idx, code, parts = [i], [i], [lines[i]]
+        in_comment = False
+        j = i
+        while j + 1 < len(lines):
+            if in_comment:
+                if not _PP_SPLICE.search(raws[j]):
+                    break
+            elif j in spans:
+                pass
+            elif _PP_SPLICE.search(raws[j]):
+                if _PP_SPLICE.search(lines[j]):
+                    parts[-1] = _PP_SPLICE.sub("", parts[-1])
+                else:
+                    in_comment = True   # the backslash is the // comment's: it runs on
+            else:
+                break
+            j += 1
+            idx.append(j)
+            if not in_comment:
+                code.append(j)
+                parts.append(lines[j])
+        out.append((tuple(idx), tuple(code), " ".join(parts)))
+        i = j + 1
+    return tuple(out)
+
+
+def pp_directives(text: str) -> list[tuple[int, str]]:
+    """(first physical line index, text) of every preprocessor directive in
+    `text`, read on its logical line (pp_logical_lines) with its blanks
+    collapsed: `#if FEATURE_X /* a` over ` */ && 0` is `#if FEATURE_X && 0`."""
+    return [(idx[0], " ".join(t.split())) for idx, _, t in pp_logical_lines(text) if re.match(r"\s*#", t)]
 
 
 def gated_lines(body: str) -> list[tuple[str, str, tuple[tuple[str, str | None], ...]]]:
-    """(stripped line, raw line, frames) for every line of `body` that is not
-    itself a conditional line. `frames` are the preprocessor conditionals
-    opened inside `body` that enclose the line, outermost first, each as
-    (opener, branch): the opener as written (`#if FEATURE_X`, comments
-    blanked) and the `#else` / `#elif ...` the line sits after, or None in the
-    opener's own branch. A close or a branch with nothing open (the body ends
-    a conditional it did not open) marks every later line as under an
-    unbalanced conditional, which no reader here takes as an answer."""
-    out = []
+    """(stripped line, raw line, frames) for every physical line of `body`
+    that carries code and is not part of a conditional directive. `frames` are
+    the preprocessor conditionals opened inside `body` that enclose the line,
+    outermost first, each as (opener, branch): the opener as the compiler
+    reads it (its logical line, pp_logical_lines: comments blanked, a splice
+    or a comment spanning a newline joined, blanks collapsed) and the `#else`
+    / `#elif ...` the line sits after, or None in the opener's own branch. The
+    lines a directive's logical line swallows (a splice, a block comment
+    closed on the next line) and the lines a `//` comment runs on over are not
+    code, so they are not returned. A close or a branch with nothing open (the
+    body ends a conditional it did not open) marks every later line as under
+    an unbalanced conditional, which no reader here takes as an answer."""
+    out: list[tuple[str, str, tuple[tuple[str, str | None], ...]]] = []
     stack: list[tuple[str, str | None]] = []
     broken = False
-    for raw, line in zip(body.splitlines(), _c_strip(body).splitlines()):
-        if _PP_OPEN.match(line):
-            stack.append((line.strip(), None))
-        elif _PP_BRANCH.match(line):
+    raws = body.split("\n")
+    lines = _c_strip(body).split("\n")
+    for idx, code, text in pp_logical_lines(body):
+        directive = " ".join(text.split())
+        if _PP_OPEN.match(directive):
+            stack.append((directive, None))
+            continue
+        if _PP_BRANCH.match(directive):
             if stack:
-                stack[-1] = (stack[-1][0], line.strip())
+                stack[-1] = (stack[-1][0], directive)
             else:
                 broken = True
-        elif _PP_CLOSE.match(line):
+            continue
+        if _PP_CLOSE.match(directive):
             if stack:
                 stack.pop()
             else:
                 broken = True
-        else:
-            frames = tuple(stack)
-            if broken:
-                frames = (("an unbalanced #else/#endif", None),) + frames
-            out.append((line, raw, frames))
+            continue
+        frames = tuple(stack)
+        if broken:
+            frames = (("an unbalanced #else/#endif", None),) + frames
+        out.extend((lines[n], raws[n], frames) for n in code)
     return out
 
 
@@ -2767,10 +2843,10 @@ def answered_keys(handler: Path, where: str) -> tuple[set[str], dict[str, set[st
     text = handler.read_text(encoding="utf-8")
     body, start = c_function_body(text, "handle_serial_commands", where)
     depth_before = 0
-    for ln in _c_strip(text[:start]).splitlines():
-        if re.match(r"\s*#\s*if", ln):
+    for _, d in pp_directives(text[:start]):
+        if _PP_OPEN.match(d):
             depth_before += 1
-        elif re.match(r"\s*#\s*endif\b", ln):
+        elif _PP_CLOSE.match(d):
             depth_before -= 1
     if depth_before:
         die(f"{where}: handle_serial_commands() is defined inside a preprocessor conditional")
@@ -2852,16 +2928,26 @@ def header_default(header: Path, macro: str, where: str) -> int | None:
     -DMACRO then wins, as feature_value() reads it; a `#define` any other
     way would be the compiler's value whatever the env says, or one
     conditional on something this reader does not evaluate, so it is
-    refused."""
+    refused. So is an `#undef MACRO` anywhere in the header (after it the
+    macro is undefined, 0 to `#if`, whatever the env or the default said),
+    and a `#define` whose logical line runs past its physical one (a block
+    comment closed on the next line, with code after it: read_const reads
+    the first line only). Directives are read on their logical lines
+    (pp_directives), so a guard continued by a comment is read whole."""
     text = read(header)
     stripped = _c_strip(text)
     name = re.escape(macro)
+    rel = header.relative_to(REPO).as_posix() if header.is_relative_to(REPO) else header.as_posix()
+    directives = pp_directives(text)
+    for i, d in directives:
+        if re.fullmatch(rf"#[ \t]*undef[ \t]+{name}(?![A-Za-z0-9_]).*", d):
+            die(f"{where}: {rel} line {i + 1} has `{d}`; after it {macro} is undefined, 0 to the "
+                f"handler's `#if {macro}` whatever the env sets, and this reader does not follow "
+                f"what the preprocessor does after an #undef; refusing to read {macro}")
     if not re.search(rf"^[ \t]*#[ \t]*define[ \t]+{name}(?![A-Za-z0-9_])", stripped, re.M):
         return None
     value = read_const(header, macro, read)
-    rel = header.relative_to(REPO).as_posix() if header.is_relative_to(REPO) else header.as_posix()
-    lines = stripped.splitlines()
-    directives = [(i, ln.strip()) for i, ln in enumerate(lines) if re.match(r"\s*#", ln)]
+    lines = stripped.split("\n")
     stack: list[tuple[int, str, str | None]] = []
     for n, (i, d) in enumerate(directives):
         if _PP_OPEN.match(d):
@@ -2871,6 +2957,10 @@ def header_default(header: Path, macro: str, where: str) -> int | None:
         elif _PP_CLOSE.match(d) and stack:
             stack.pop()
         elif re.fullmatch(rf"#[ \t]*define[ \t]+{name}(?![A-Za-z0-9_]).*", d):
+            if d != " ".join(lines[i].split()):
+                die(f"{where}: {rel} line {i + 1} defines {macro} as `{d}`, a logical line that runs "
+                    f"past its physical one (a comment closed on a later line, code after it), and the "
+                    f"value is read off the first line only; refusing to read it")
             guard = re.compile(rf"#[ \t]*ifndef[ \t]+{name}|#[ \t]*if[ \t]+![ \t]*defined[ \t]*"
                                rf"(?:\([ \t]*{name}[ \t]*\)|[ \t]+{name})")
             ok = bool(stack) and stack[-1][2] is None and bool(guard.fullmatch(stack[-1][1]))
@@ -2887,6 +2977,17 @@ def header_default(header: Path, macro: str, where: str) -> int | None:
                     "); refusing to say which value the compiler takes")
             return value
     die(f"{where}: {rel} names {macro}'s #define where this reader cannot place it; refusing to read it")
+
+
+def handler_redefines(handler: Path, macro: str) -> list[tuple[int, str]]:
+    """(line index, directive) of every `#define MACRO` or `#undef MACRO` in
+    the handler's own file, read on logical lines. The handler's `#if MACRO`
+    reads whatever its own file last did to MACRO, which neither the env nor
+    the config header's default says, so a gated chip whose macro the handler
+    file touches is refused (_monitor_record)."""
+    name = re.escape(macro)
+    return [(i, d) for i, d in pp_directives(read(handler))
+            if re.fullmatch(rf"#[ \t]*(?:define|undef)[ \t]+{name}(?![A-Za-z0-9_]).*", d)]
 
 
 def feature_value(project: str, env: str, macro: str, header: Path, where: str) -> int:
@@ -2995,6 +3096,12 @@ def _monitor_record(project: str, env: str) -> dict:
                 if not includes_header(handler, header):
                     die(f"{where}: {spec['handler']} does not include {spec['config']} at its top level, so "
                         f"that header's defaults are not the ones its #if lines read")
+                touched = handler_redefines(handler, gate[0])
+                if touched:
+                    die(f"{where}: chip {key!r} names gate {gate[0]}, and {spec['handler']} itself has "
+                        + ", ".join(f"`{d}` (line {i + 1})" for i, d in touched)
+                        + f"; its #if then reads that, not the env's or {spec['config']}'s value; "
+                        f"refusing to say whether {key!r} is compiled in")
                 if feature_value(project, env, gate[0], header, where) != 1:
                     continue
             offered.append([key, label])
