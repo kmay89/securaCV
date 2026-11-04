@@ -280,6 +280,8 @@ button:disabled { opacity: 0.35; cursor: default; }
 .pdefault { color: var(--text); }
 .penum { color: var(--signed); font-size: 12px; }
 .pcomment { color: var(--muted); flex-basis: 100%; padding-left: 2px; }
+/* a long group note, whole, under its one-sentence summary (sweep C24) */
+.pnote { padding: 6px 12px 8px 20px; border-top: 1px solid #1d1d1d; font-size: 13px; line-height: 1.5; }
 
 /* ── enclosure lab: live configurator (catalog.json) ── */
 .configurator h5 { margin: 14px 0 6px; font-size: 13px; color: var(--muted);
