@@ -1646,14 +1646,19 @@ void test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears() {
       reads.fetch_add(1);
     }
   });
-  /* The history is full only on steps 16-39 of each 40-step window, and a
+  /* The history is full from its 16th record after the start or a clear
+   * until the next clear (steps 16-39, then 55-79, 95-119, ...), and a
    * loaded scheduler can let the writer finish all its steps before the
-   * reader runs in one of them (F323: pinned to one core beside busy loops,
-   * runs failed the reads/full assert below at -O1 and at CI's flags). So
-   * at the first full history the writer waits until the reader has read it
-   * full: at least one read provably overlapped a full history, and every
-   * step after it runs beside a live reader. The deadline turns a reader
-   * that never runs into a failure that says so, never a hang. */
+   * reader runs in one of those stretches (F323: pinned to one core beside
+   * busy loops, runs failed the reads/full assert below at -O1 and at CI's
+   * flags). So at the first full history the writer waits until the reader
+   * has read it full, and every step after runs beside a reader that is
+   * still reading. The read it waits for may be one taken while the writer
+   * is parked here: a pass does not prove that a read of a full history
+   * landed between two live stores. On one core each of the reader's
+   * timeslices sees one frozen history and the scheduler picks which; on a
+   * multi-core runner the reads run beside the stores. The deadline turns a
+   * reader that never runs into a failure that says so, never a hang. */
   static_assert(mesh_session::MAX_ALERT_HISTORY < 40,
                 "the history must fill inside one 40-step window");
   const auto full_wait_limit = std::chrono::seconds(10);
