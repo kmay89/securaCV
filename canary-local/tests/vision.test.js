@@ -191,7 +191,7 @@ test("the optical knobs are read by read_const's rule, a spelling it refuses ref
   const planted = (line) => opticalH.replace(lines[0], () => line);
   const def = (value) => `#define ${NAME} ${value}`;
   assert.strictEqual(knob(NAME, planted(def(v + 3))), v + 3, "the plants respell the live definition");
-  const literal = (value) => new RegExp(`^constant ${NAME} in ${OPTICAL_H} is \`${value.replace(/[()+]/g, "\\$&")}\`, not a plain integer literal`);
+  const literal = (value) => new RegExp(`^constant ${NAME} in ${OPTICAL_H} is \`${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\`, not a plain integer literal`);
   const hex = "0x" + v.toString(16);
   for (const [line, refused] of [
     [def(hex), literal(hex)],

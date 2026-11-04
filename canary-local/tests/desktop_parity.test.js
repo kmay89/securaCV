@@ -4314,11 +4314,13 @@ function a93Sections(projectDir) {
   }
   return sections;
 }
+// A key as a regex that matches only itself (every metacharacter escaped).
+const a93ReEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // One key's value in a section body (its line and indented continuation
 // lines, comment lines dropped), or null when the section does not set it.
 function a93Value(body, key) {
   const lines = body.split("\n");
-  const i = lines.findIndex((l) => new RegExp(`^\\s*${key.replace(/[.]/g, "\\.")}\\s*=`).test(l));
+  const i = lines.findIndex((l) => new RegExp(`^\\s*${a93ReEscape(key)}\\s*=`).test(l));
   if (i < 0) return null;
   const vals = [lines[i].replace(/^[^=]*=/, "")];
   for (let j = i + 1; j < lines.length; j++) {
