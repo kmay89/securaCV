@@ -107,6 +107,17 @@
 // wap_json::shown_text() writes it: every byte, the sequences UTF-8 turns
 // on, and the widest name, in every answer that carries one.
 //
+// And sweep F405 and F406. The nearby scan (ble_nearby.h, compiled here
+// over the same stand-in) took a Canary's device prefix from the four bytes
+// after "SCV-" in any advertised name that came with the SecuraCV service
+// UUID, unchecked, and GET /api/nearby's hand-built JSON wrote them between
+// quotes; now they are taken only when all four are ASCII hex digits
+// (ble_nearby_prefix.h). And the saved paired list and the saved name were
+// loaded from whatever the NVS read left in the buffer, its count from the
+// row's length rather than the read's answer, and no paired name was
+// terminated; now each loads only as NVS returns it whole, and every
+// loaded name ends in its field.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
@@ -119,6 +130,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -147,6 +159,16 @@ inline std::recursive_mutex main_nvs_mu;
 // F210 reads what another task would see there). The threaded test never
 // sets it.
 inline std::function<void(const char*)> on_main_nvs_write;
+// What a getBytes() of the key nvs_fault_key does once its lookup found the
+// row (sweep F406), as IDF's nvs_get_blob() under Arduino's Preferences can
+// answer: kOk reads the row; kCopies copies it and answers 0 (IDF copies the
+// data before its data check refuses it, the F365 case); kShort copies all
+// but its last byte and answers that count; kFails answers 0 and writes
+// nothing. boot() clears it. One key at a time: the scalar reads go through
+// getBytes() too.
+enum class NvsRead { kOk, kCopies, kShort, kFails };
+inline std::string nvs_fault_key;
+inline NvsRead nvs_fault = NvsRead::kOk;
 }  // namespace host_sim
 class FakeMainNvs {
  public:
@@ -167,8 +189,12 @@ class FakeMainNvs {
     std::lock_guard<std::recursive_mutex> g(host_sim::main_nvs_mu);
     auto it = host_sim::main_nvs.find(k);
     if (it == host_sim::main_nvs.end() || it->second.size() > n) return 0;
-    if (!it->second.empty()) memcpy(buf, it->second.data(), it->second.size());
-    return it->second.size();
+    const size_t len = it->second.size();
+    const host_sim::NvsRead read = host_sim::nvs_fault_key == k ? host_sim::nvs_fault : host_sim::NvsRead::kOk;
+    if (read == host_sim::NvsRead::kFails || len == 0) return 0;
+    const size_t copied = read == host_sim::NvsRead::kShort ? len - 1 : len;
+    memcpy(buf, it->second.data(), copied);
+    return read == host_sim::NvsRead::kCopies ? 0 : copied;
   }
   template <typename T> T get(const char* k, T d) {
     T v = d;
@@ -212,6 +238,45 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]);
 // worker. Its real header, over the same stand-in.
 #include "ble_opera.h"
 #pragma GCC diagnostic pop
+
+// What ble_nearby.h takes from FreeRTOS on a device, where Arduino.h brings
+// it in (sweep F405): its mutex, which the scan callback and the answer
+// take on one thread here, and its scan task, which no test starts.
+struct HostSemaphore {
+  std::mutex m;
+};
+typedef HostSemaphore* SemaphoreHandle_t;
+typedef void* TaskHandle_t;
+#define pdPASS pdTRUE
+inline SemaphoreHandle_t xSemaphoreCreateMutex() {
+  static HostSemaphore one;
+  return &one;
+}
+inline BaseType_t xSemaphoreTake(SemaphoreHandle_t s, TickType_t) {
+  return s != nullptr && s->m.try_lock() ? pdTRUE : pdFALSE;
+}
+inline BaseType_t xSemaphoreGive(SemaphoreHandle_t s) {
+  s->m.unlock();
+  return pdTRUE;
+}
+inline BaseType_t xTaskCreatePinnedToCore(void (*)(void*), const char*, uint32_t, void*, unsigned, TaskHandle_t*, int) {
+  return pdFALSE;
+}
+inline BaseType_t xTaskCreate(void (*)(void*), const char*, uint32_t, void*, unsigned, TaskHandle_t*) {
+  return pdFALSE;
+}
+inline void vTaskDelete(TaskHandle_t) {}
+// The nearby scan (sweep F405): its REAL callback and GET /api/nearby's
+// answer, over the same NimBLE stand-in. Held to the device build's
+// warnings, as the channel is.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
+#include "ble_nearby.h"
+#pragma GCC diagnostic pop
+static_assert(FEATURE_BLE && FEATURE_BLE_NEARBY, "the host build compiles the nearby scan");
 
 #include "http_status_line.h"   // the status line a Bluetooth not-run answer sends
 #include "json_strict.h"        // the answers parse as a browser's JSON.parse reads them (F261)
@@ -413,6 +478,8 @@ void boot(bool bring_up = true, bool wipe = true) {
   host_sim::calls.clear();
   host_sim::task = "loop";
   host_sim::on_task_delay = nullptr;
+  host_sim::nvs_fault_key.clear();         // NVS reads what it holds (F406)
+  host_sim::nvs_fault = host_sim::NvsRead::kOk;
   bc::g_state = bc::BT_DISABLED;
   bc::g_initialized = false;
   bc::g_stack_up = false;                  // sweep F167: init()'s flag and handoff, as at power-up
@@ -5050,6 +5117,10 @@ void test_a_bluetooth_name_reaches_every_answer_as_shown() {
   std::printf("PASS a_bluetooth_name_reaches_every_answer_as_shown\n");
 }
 
+// What load_saved() logs for a saved name it did not load (F261, F406).
+const char* const kNameRefusedLog =
+    "Saved Bluetooth name refused (a control byte, or a read NVS did not return whole): the default name is used";
+
 // A name saved before the rule (F261) holding a control byte is not loaded:
 // the loop task's first pass keeps the default name, init() hands the stack
 // the default to advertise, both answers parse with it, and the health log
@@ -5059,7 +5130,7 @@ void test_a_bluetooth_name_reaches_every_answer_as_shown() {
 // one (DEL included) loads as before.
 void test_a_saved_name_holding_a_control_byte_is_not_loaded() {
   const std::string def = bc::kDefaultSettings.device_name;
-  const char* const kLog = "Saved Bluetooth name held a control byte: the default name is used";
+  const char* const kLog = kNameRefusedLog;
   struct Case {
     std::string saved;
     bool kept;
@@ -5091,6 +5162,371 @@ void test_a_saved_name_holding_a_control_byte_is_not_loaded() {
     CHECK(host_sim::main_nvs["bt_name"] == std::vector<uint8_t>(expect.begin(), expect.end()));
   }
   std::printf("PASS a_saved_name_holding_a_control_byte_is_not_loaded\n");
+}
+
+// ── A saved name or paired list NVS did not return whole (sweep F406) ──
+
+// A saved name loads only as NVS returns it whole: a read that copied the
+// row and answered 0 (the data check failing after the copy) and a short
+// read keep the default name, which init() hands the stack and both answers
+// carry, and the health log says so once, on the loop task. Before, the name
+// was taken from the buffer whatever the read answered: the copy a failed
+// check had refused, or a short read's bytes and one the read never wrote.
+void test_a_saved_name_nvs_did_not_return_whole_is_not_loaded() {
+  const std::string def = bc::kDefaultSettings.device_name;
+  for (const host_sim::NvsRead read : {host_sim::NvsRead::kCopies, host_sim::NvsRead::kShort,
+                                       host_sim::NvsRead::kFails}) {
+    boot(/*bring_up=*/false);
+    host_sim::main_nvs["bt_name"].assign({'P', 'o', 'r', 'c', 'h'});
+    host_sim::nvs_fault_key = "bt_name";
+    host_sim::nvs_fault = read;
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    bc::update();
+    CHECK(bc::g_initialized);
+    CHECK(bc::g_settings.device_name == def);
+    CHECK(host_sim::nimble_name == def);
+    CHECK(health_says(kNameRefusedLog) == 1 && health_detail(kNameRefusedLog) == def);
+    answers_carry_name(def);
+  }
+  // The same row read whole loads, and logs nothing.
+  boot(/*bring_up=*/false);
+  host_sim::main_nvs["bt_name"].assign({'P', 'o', 'r', 'c', 'h'});
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  bc::update();
+  CHECK(std::string(bc::g_settings.device_name) == "Porch" && health_says(kNameRefusedLog) == 0);
+  std::printf("PASS a_saved_name_nvs_did_not_return_whole_is_not_loaded\n");
+}
+
+const char* const kPairedRefusedLog =
+    "Saved paired list unreadable: none loaded; it is rebuilt from the bond store once BLE is up";
+
+// Entry `i` of a saved list: a phone's identity address whose every byte is
+// nonzero (C1:C2:C3:C4:C5:i+1, random), bonded in NimBLE's store, named
+// `name` (copied whole, NUL or not, into the 33-byte field).
+bc::PairedDevice paired_entry(size_t i, const std::string& name) {
+  bc::PairedDevice d;
+  memset(&d, 0x41, sizeof d);   // the padding too: no zero byte the test did not put
+  const uint8_t a[6] = {0xC1, 0xC2, 0xC3, 0xC4, 0xC5, (uint8_t)(i + 1)};
+  memcpy(d.address, a, sizeof a);
+  d.address_type = 1;
+  memset(d.name, 0, sizeof d.name);
+  memcpy(d.name, name.data(), std::min(name.size(), sizeof d.name));
+  d.security = bc::SEC_BONDED;
+  d.trusted = true;
+  d.blocked = true;   // nonzero, as every other byte of the entry
+  ble_addr_t id;
+  id.type = d.address_type;
+  memcpy(id.val, d.address, sizeof id.val);
+  host_sim::store_bond(NimBLEAddress(id), /*irk=*/false);
+  return d;
+}
+void save_paired_row(const void* bytes, size_t n) {
+  const uint8_t* b = static_cast<const uint8_t*>(bytes);
+  host_sim::main_nvs["bt_paired"].assign(b, b + n);
+  host_sim::main_nvs["bt_paired_id"].assign({1});
+}
+// GET /api/bluetooth/paired: strict JSON (every name as a page shows it),
+// its count, and each device's name.
+std::vector<std::string> paired_answer_names() {
+  const Tap t = tap(bluetooth_api::handle_bluetooth_paired_list);
+  json_strict::Value v;
+  if (!strict_json(t.body, &v)) std::fprintf(stderr, "unparseable: %s\n", t.body.c_str());
+  CHECK(strict_json(t.body, &v));
+  const json_strict::Value* devices = v.get("devices");
+  const json_strict::Value* count = v.get("count");
+  CHECK(devices != nullptr && devices->kind == json_strict::Value::Array);
+  CHECK(count != nullptr && count->text == std::to_string(devices->items.size()));
+  std::vector<std::string> names;
+  for (const json_strict::Value& d : devices->items) {
+    const json_strict::Value* n = d.get("name");
+    CHECK(n != nullptr && n->kind == json_strict::Value::String);
+    names.push_back(n->text);
+  }
+  return names;
+}
+
+// A saved paired list whose 33-byte names hold no NUL: every entry's every
+// byte is nonzero, so a name read to its first NUL runs through the entry,
+// the entries after it and, from the last one, off the end of the list. Now
+// each loaded name ends at its 33rd byte: the list loads all eight, each name
+// is the 32 bytes the field holds, and GET /api/bluetooth/paired answers
+// strict JSON with each of them, whole. (Before, the last entry's name was
+// read past the answer's copy of the list: AddressSanitizer stops there.)
+void test_a_saved_paired_name_without_a_nul_ends_in_its_field() {
+  boot(/*bring_up=*/false);
+  host_sim::max_bonds = bc::MAX_PAIRED_DEVICES;
+  const std::string full(bc::MAX_DEVICE_NAME_LEN + 1, 'A');   // 33 bytes, no NUL
+  bc::PairedDevice saved[bc::MAX_PAIRED_DEVICES];
+  for (size_t i = 0; i < bc::MAX_PAIRED_DEVICES; i++) saved[i] = paired_entry(i, full);
+  save_paired_row(saved, sizeof saved);
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  CHECK(bc::g_initialized && bc::g_paired_count == bc::MAX_PAIRED_DEVICES);
+  const std::string kept(bc::MAX_DEVICE_NAME_LEN, 'A');
+  // The answer first: it reads each name to its NUL.
+  const std::vector<std::string> names = paired_answer_names();
+  CHECK(names.size() == bc::MAX_PAIRED_DEVICES);
+  for (const std::string& n : names) CHECK(n == kept);
+  for (size_t i = 0; i < bc::MAX_PAIRED_DEVICES; i++) {
+    CHECK(bc::g_paired_devices[i].name[bc::MAX_DEVICE_NAME_LEN] == '\0');
+    CHECK(std::string(bc::g_paired_devices[i].name) == kept);
+  }
+  CHECK(health_says(kPairedRefusedLog) == 0);
+  std::printf("PASS a_saved_paired_name_without_a_nul_ends_in_its_field\n");
+}
+
+// A saved paired list loads only as NVS returns it whole, a whole number of
+// entries, MAX_PAIRED_DEVICES at most: a row of a whole entry less or more
+// one byte, of one entry too many, a read that copied the row and answered
+// 0, a short read and a failed one load nothing (every entry zero, the
+// count 0, one health line, the answer an empty list), and the list is
+// rebuilt from the bond store when the loop task takes the stack, so the
+// phone NimBLE keeps a bond for is listed again (by its identity address).
+// An empty row loads nothing and says nothing; a whole row loads. Before,
+// each loaded data_len / sizeof(PairedDevice) entries of whatever the read
+// left in the buffer (a row too long loaded nothing, but its bonds stayed
+// out of the list).
+void test_a_saved_paired_list_nvs_did_not_return_whole_loads_nothing() {
+  const size_t one = sizeof(bc::PairedDevice);
+  struct Case {
+    const char* what;
+    size_t entries;   // whole entries saved
+    int extra;        // bytes more (or fewer) than those entries
+    host_sim::NvsRead read;
+    bool loads;
+  };
+  const Case cases[] = {
+      {"whole", 2, 0, host_sim::NvsRead::kOk, true},
+      {"a byte short of two entries", 2, -1, host_sim::NvsRead::kOk, false},
+      {"a byte past two entries", 2, 1, host_sim::NvsRead::kOk, false},
+      {"one entry too many", bc::MAX_PAIRED_DEVICES + 1, 0, host_sim::NvsRead::kOk, false},
+      {"copied, then refused by the data check", 2, 0, host_sim::NvsRead::kCopies, false},
+      {"a short read", 2, 0, host_sim::NvsRead::kShort, false},
+      {"a failed read", 2, 0, host_sim::NvsRead::kFails, false},
+  };
+  for (const Case& c : cases) {
+    boot(/*bring_up=*/false);
+    host_sim::max_bonds = bc::MAX_PAIRED_DEVICES + 1;
+    std::vector<uint8_t> row;
+    for (size_t i = 0; i < c.entries; i++) {
+      const bc::PairedDevice d = paired_entry(i, "phone " + std::to_string(i));
+      const uint8_t* b = reinterpret_cast<const uint8_t*>(&d);
+      row.insert(row.end(), b, b + one);
+    }
+    if (c.extra < 0) row.resize(row.size() - 1);
+    if (c.extra > 0) row.push_back(0x41);
+    save_paired_row(row.data(), row.size());
+    host_sim::nvs_fault_key = "bt_paired";
+    host_sim::nvs_fault = c.read;
+    loop_pass();                                   // the loop task loads the list, no stack yet
+    if (c.loads) {
+      CHECK(bc::g_paired_count == c.entries && bc::g_paired_by_identity);
+      for (size_t i = 0; i < c.entries; i++) {
+        CHECK(std::string(bc::g_paired_devices[i].name) == "phone " + std::to_string(i));
+      }
+      CHECK(health_says(kPairedRefusedLog) == 0);
+      CHECK(paired_answer_names().size() == c.entries);
+      continue;
+    }
+    if (bc::g_paired_count != 0) std::fprintf(stderr, "%s: %u loaded\n", c.what, (unsigned)bc::g_paired_count);
+    CHECK(bc::g_paired_count == 0 && !bc::g_paired_by_identity);
+    const uint8_t* all = reinterpret_cast<const uint8_t*>(bc::g_paired_devices);
+    CHECK(std::all_of(all, all + sizeof bc::g_paired_devices, [](uint8_t b) { return b == 0; }));
+    CHECK(health_says(kPairedRefusedLog) == 1);
+    const size_t read = c.read == host_sim::NvsRead::kShort && row.size() % one == 0 &&
+                                row.size() <= bc::MAX_PAIRED_DEVICES * one
+                            ? row.size() - 1
+                            : 0;
+    CHECK(health_detail(kPairedRefusedLog) == std::to_string(row.size()) + " bytes, " + std::to_string(read) +
+                                                  " read, entries of " + std::to_string(one));
+    CHECK(paired_answer_names().empty());
+    // The stack comes up: the list is rebuilt from the bonds NimBLE keeps.
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    loop_pass();
+    CHECK(bc::g_initialized && bc::g_paired_by_identity);
+    CHECK(bc::g_paired_count == std::min(c.entries, bc::MAX_PAIRED_DEVICES));
+    CHECK(health_says("Paired list rebuilt from the bond store") == 1);
+    for (size_t i = 0; i < bc::g_paired_count; i++) {
+      CHECK(bc::g_paired_devices[i].name[bc::MAX_DEVICE_NAME_LEN] == '\0');
+    }
+    CHECK(paired_answer_names().size() == bc::g_paired_count);
+  }
+  // An empty row (a list saved empty) loads nothing and says nothing.
+  boot(/*bring_up=*/false);
+  save_paired_row(nullptr, 0);
+  loop_pass();
+  CHECK(bc::g_paired_count == 0 && bc::g_paired_by_identity && health_says(kPairedRefusedLog) == 0);
+  std::printf("PASS a_saved_paired_list_nvs_did_not_return_whole_loads_nothing\n");
+}
+
+// ── A nearby Canary's name prefix (sweep F405) ─────────────────────────
+
+// nearby_prefix_from_name() (ble_nearby_prefix.h): the four bytes after the
+// name prefix, only when all four are ASCII hex digits, upper or lower case
+// as advertised. A quote, a backslash, a control byte, a byte past 0x7f
+// (UTF-8 too), `<!--`, a NUL inside the four, a name too short and one
+// without the prefix are refused, with `out` emptied. Every byte value at
+// each of the four places, the other three hex: the 22 hex digits pass,
+// nothing else. The old scan's substring copy took every one of these
+// names it was long enough for.
+void test_a_nearby_name_prefix_is_hex_or_refused() {
+  struct Case {
+    std::string name;
+    const char* prefix;   // nullptr: refused
+  };
+  const Case cases[] = {
+      {"SCV-ABCD", "ABCD"},
+      {"SCV-abcd", "abcd"},
+      {"SCV-09fF", "09fF"},
+      {"SCV-ABCDEF", "ABCD"},
+      {"SCV-1234\"<!--", "1234"},   // past the four: never read, as before
+      {"SCV-<!--", nullptr},
+      {"SCV-12\"4", nullptr},
+      {"SCV-ab\\\\", nullptr},
+      {"SCV-\x01" "bcd", nullptr},
+      {"SCV-\xC3\xA9" "ab", nullptr},
+      {"SCV-\xFF\xFF\xFF\xFF", nullptr},
+      {"SCV-ABC\x7F", nullptr},
+      {std::string("SCV-AB\0D", 8), nullptr},
+      {"SCV-ABg0", nullptr},
+      {"SCV- ABC", nullptr},
+      {"SCV-abc", nullptr},
+      {"SCV-", nullptr},
+      {"", nullptr},
+      {"scv-ABCD", nullptr},
+      {"XCV-ABCD", nullptr},
+  };
+  for (const Case& c : cases) {
+    char out[5];
+    memset(out, 'Z', sizeof out);
+    const bool ok = ble_nearby::nearby_prefix_from_name(c.name.data(), c.name.size(), BLE_DEVICE_NAME_PREFIX, out);
+    CHECK(ok == (c.prefix != nullptr));
+    CHECK(c.prefix != nullptr ? std::strcmp(out, c.prefix) == 0 : out[0] == '\0');
+  }
+  for (size_t at = 0; at < 4; ++at) {
+    unsigned taken = 0;
+    for (unsigned b = 0; b < 256; ++b) {
+      std::string name = "SCV-0000";
+      name[4 + at] = (char)b;
+      char out[5];
+      if (ble_nearby::nearby_prefix_from_name(name.data(), name.size(), BLE_DEVICE_NAME_PREFIX, out)) {
+        ++taken;
+        CHECK(isxdigit((int)b) && std::memcmp(out, name.data() + 4, 4) == 0 && out[4] == '\0');
+      }
+    }
+    CHECK(taken == 22);
+  }
+  char out[5] = "Z";
+  CHECK(!ble_nearby::nearby_prefix_from_name(nullptr, 8, BLE_DEVICE_NAME_PREFIX, out) && out[0] == '\0');
+  std::printf("PASS a_nearby_name_prefix_is_hex_or_refused\n");
+}
+
+// The nearby scan as a device runs it: the REAL scan callback (ble_nearby.h)
+// hears adverts on the NimBLE host task, each carrying the SecuraCV service
+// UUID, and GET /api/nearby's answer (buildNearbyJson(), the hand-built
+// String) is read after each one. A name whose four bytes are not all hex
+// digits is counted as a non-Canary and listed nowhere; a hex one is listed
+// under its own four bytes; an advert that carries a fleet-link beacon or a
+// chirp is listed under the prefix that data carries, whatever its name
+// says. Every answer is strict JSON, and every listed prefix is four hex
+// digits. (Before, `SCV-12"4` made the answer one JSON.parse refuses.)
+std::string nearby_answer(json_strict::Value* v) {
+  const std::string body = ble_nearby::buildNearbyJson().c_str();
+  if (!strict_json(body, v)) std::fprintf(stderr, "GET /api/nearby: %s\n", body.c_str());
+  CHECK(strict_json(body, v));
+  return body;
+}
+void test_a_hostile_nearby_name_never_reaches_the_answer() {
+  static HostSemaphore nearby_mutex;
+  memset(ble_nearby::g_nearbyCanaries, 0, sizeof ble_nearby::g_nearbyCanaries);
+  ble_nearby::g_nonCanaryCount = 0;
+  ble_nearby::g_beaconsReceived = 0;
+  ble_nearby::g_chirpsReceived = 0;
+  ble_nearby::g_nearbyMutex = &nearby_mutex;
+  // A fleet-link beacon (fp2 3c 5a) and a chirp (device id 7e 01), as
+  // NimBLE hands their manufacturer data over: company id first.
+  uint8_t beacon[FLEET_BEACON_MFG_LEN] = {0xFF, 0xFF};
+  fleet_beacon_build(beacon + 2, 0, 80, 90, 1234, 0x3c, 0x5a);
+  uint8_t chirp[CHIRP_PAYLOAD_SIZE + 2] = {0xFF, 0xFF, CHIRP_HEARTBEAT};
+  chirp[CHIRP_PAYLOAD_SIZE] = 0x7e;
+  chirp[CHIRP_PAYLOAD_SIZE + 1] = 0x01;
+  const std::string beacon_mfg(reinterpret_cast<const char*>(beacon), sizeof beacon);
+  const std::string chirp_mfg(reinterpret_cast<const char*>(chirp), sizeof chirp);
+  struct Heard {
+    std::string name;
+    std::string mfg;
+    const char* listed;   // the prefix it is listed under; nullptr: a non-Canary
+  };
+  const Heard heard[] = {
+      {"SCV-12\"4", "", nullptr},
+      {"SCV-ab\\\\", "", nullptr},
+      {"SCV-<!--", "", nullptr},
+      {"SCV-\x01" "bcd", "", nullptr},
+      {"SCV-\xC3\xA9" "ab", "", nullptr},
+      {"SCV-abc", "", nullptr},
+      {"SCV-ABCDEF", "", "ABCD"},
+      {"SCV-<!--", beacon_mfg, "3c5a"},
+      {"SCV-12\"4", chirp_mfg, "7e01"},
+  };
+  std::vector<std::string> listed;
+  uint16_t non_canary = 0;
+  for (const Heard& h : heard) {
+    NimBLEAdvertisedDevice adv;
+    adv.name = h.name;
+    adv.mfg = h.mfg;
+    adv.services.push_back(NimBLEUUID(SCV_SERVICE_UUID));
+    NimBLEScanCallbacks* cb = &ble_nearby::g_scanCallbacks;
+    host_sim::task = "nimble";
+    cb->onResult(&adv);
+    host_sim::task = "loop";
+    if (h.listed != nullptr) {
+      listed.push_back(h.listed);
+    } else {
+      ++non_canary;
+    }
+    json_strict::Value v;
+    const std::string body = nearby_answer(&v);
+    const json_strict::Value* canaries = v.get("canaries");
+    const json_strict::Value* others = v.get("non_canary_device_count");
+    CHECK(canaries != nullptr && canaries->kind == json_strict::Value::Array);
+    for (const json_strict::Value& c : canaries->items) {
+      const json_strict::Value* p = c.get("device_id_prefix");
+      const bool hex = p != nullptr && p->text.size() == 4 &&
+                       std::all_of(p->text.begin(), p->text.end(), ble_nearby::prefix_hex_digit);
+      if (!hex) std::fprintf(stderr, "GET /api/nearby lists a prefix that is not four hex digits: %s\n", body.c_str());
+      CHECK(hex);
+    }
+    CHECK(ble_nearby::g_nonCanaryCount == non_canary);
+    CHECK(others != nullptr && others->text == std::to_string(non_canary));
+    CHECK(canaries->items.size() == listed.size());
+    for (size_t i = 0; i < listed.size(); ++i) {
+      const json_strict::Value* p = canaries->items[i].get("device_id_prefix");
+      CHECK(p != nullptr && p->kind == json_strict::Value::String && p->text == listed[i]);
+    }
+  }
+  // What the scan keeps: four hex digits and the NUL, in every slot it uses.
+  for (const NearbyCanary& c : ble_nearby::g_nearbyCanaries) {
+    if (!c.active) continue;
+    for (size_t k = 0; k < 4; ++k) CHECK(ble_nearby::prefix_hex_digit(c.deviceIdPrefix[k]));
+    CHECK(c.deviceIdPrefix[4] == '\0');
+  }
+  CHECK(ble_nearby::g_beaconsReceived == 1 && ble_nearby::g_chirpsReceived == 1);
+  // An advert without the service UUID is no Canary, whatever its name.
+  NimBLEAdvertisedDevice stranger;
+  stranger.name = "SCV-ABCD";
+  NimBLEScanCallbacks* cb = &ble_nearby::g_scanCallbacks;
+  cb->onResult(&stranger);
+  CHECK(ble_nearby::g_nonCanaryCount == non_canary + 1);
+  ble_nearby::g_nearbyMutex = nullptr;
+  std::printf("PASS a_hostile_nearby_name_never_reaches_the_answer\n");
 }
 
 // ── What a late bring-up left out (sweep F260) ──────────────────────────
@@ -6345,6 +6781,14 @@ const Test kTests[] = {
     {"a_name_holding_a_control_byte_is_refused", test_a_name_holding_a_control_byte_is_refused},
     {"a_saved_name_holding_a_control_byte_is_not_loaded",
      test_a_saved_name_holding_a_control_byte_is_not_loaded},
+    {"a_saved_name_nvs_did_not_return_whole_is_not_loaded",
+     test_a_saved_name_nvs_did_not_return_whole_is_not_loaded},
+    {"a_saved_paired_name_without_a_nul_ends_in_its_field",
+     test_a_saved_paired_name_without_a_nul_ends_in_its_field},
+    {"a_saved_paired_list_nvs_did_not_return_whole_loads_nothing",
+     test_a_saved_paired_list_nvs_did_not_return_whole_loads_nothing},
+    {"a_nearby_name_prefix_is_hex_or_refused", test_a_nearby_name_prefix_is_hex_or_refused},
+    {"a_hostile_nearby_name_never_reaches_the_answer", test_a_hostile_nearby_name_never_reaches_the_answer},
     {"a_passkey_outside_pairing_mode_is_shown_nowhere", test_a_passkey_outside_pairing_mode_is_shown_nowhere},
     {"an_unauthenticated_bond_is_deleted_and_its_link_dropped",
      test_an_unauthenticated_bond_is_deleted_and_its_link_dropped},
