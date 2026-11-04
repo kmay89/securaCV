@@ -1304,7 +1304,11 @@ void log_health(LogLevel level, LogCategory category, const char* message, const
 // writes the detail through ArduinoJson, which writes a control byte raw, and
 // an SSID is whatever bytes an access point broadcast or a person typed. The
 // SSID goes in with its control bytes as U+FFFD (wap_json::replaced_text()),
-// cut on a character to the detail the ring keeps whole.
+// cut on a character to the detail the ring keeps whole. Since sweep F303
+// log_health() scrubs every message and detail itself (shown_text()), so
+// the ring holds well-formed text with or without this pass; it stays for
+// check rule J9, which holds every SSID a log line or printf is handed to
+// it (the Serial line and the /HEALTH file take the detail as given).
 static void log_health_ssid(LogLevel level, LogCategory category, const char* message, const char* ssid) {
   char shown[sizeof(HealthLogRingEntry::detail)];
   wap_json::replaced_text(shown, sizeof(shown), ssid);
@@ -3430,17 +3434,23 @@ void log_health(LogLevel level, LogCategory category, const char* message, const
   entry.level = level;
   entry.category = category;
   entry.ack_status = ACK_STATUS_UNREAD;
-  
-  strncpy(entry.message, message ? message : "", sizeof(entry.message) - 1);
-  entry.message[sizeof(entry.message) - 1] = '\0';
-  
-  if (detail) {
-    strncpy(entry.detail, detail, sizeof(entry.detail) - 1);
-    entry.detail[sizeof(entry.detail) - 1] = '\0';
-  } else {
-    entry.detail[0] = '\0';
-  }
-  
+
+  // Every caller's text reaches the ring through this one scrub (sweep
+  // F303). GET /api/logs writes message and detail through ArduinoJson
+  // 7.4.1, which writes a control byte raw (JSON.parse refuses it) and every
+  // other byte as it is, and callers log text a person or a radio supplied
+  // (an Opera name, an SSID, a file name); F262 held only the SSIDs, through
+  // log_health_ssid(). wap_json::shown_text() writes each control byte JSON
+  // forbids raw and each piece that is not whole UTF-8 as U+FFFD, and cuts
+  // on a character to the field (strncpy() cut at a byte count, inside a
+  // character too), so the ring holds well-formed UTF-8 any strict reader
+  // takes. The shown text, not replaced_text()'s, since no page posts a log
+  // line back; log_health_ssid()'s pass before this one changes nothing
+  // here. A NULL detail is "". check_wap_json_answers.py rule J12 holds the
+  // ring's two text fields to these two writes.
+  wap_json::shown_text(entry.message, sizeof(entry.message), message);
+  wap_json::shown_text(entry.detail, sizeof(entry.detail), detail);
+
   g_health_log_ring_head = (g_health_log_ring_head + 1) % HEALTH_LOG_RING_SIZE;
   if (g_health_log_ring_count < HEALTH_LOG_RING_SIZE) {
     g_health_log_ring_count++;
@@ -6952,18 +6962,30 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
   buf[ret > 0 ? ret : 0] = '\0';
 
+  // No body keeps the default name. A body that does not parse is refused
+  // (sweep F303): it was read as no name, so a request whose name did not
+  // fit the buffer (cut there, so no longer JSON) founded an opera under
+  // the default without a word.
   const char* opera_name = nullptr;
   JsonDocument body;
-  if (ret > 0 && deserializeJson(body, buf) == DeserializationError::Ok) {
+  if (ret > 0) {
+    if (deserializeJson(body, buf) != DeserializationError::Ok) {
+      return http_send_error(req, 400, "invalid_json");
+    }
     opera_name = body["name"] | (const char*)nullptr;
   }
 
-  // The name rides in the command (truncated to MAX_OPERA_NAME_LEN, as
-  // start_pairing_initiator() stores it); none given keeps the default.
+  // The name rides in the command whole: one the rule refuses
+  // (mesh_network::opera_name_storable(), sweep F303) is answered in the
+  // rule's words, where it was cut at MAX_OPERA_NAME_LEN bytes, inside a
+  // character if one stood there; none given keeps the default.
+  if (opera_name != nullptr && !mesh_network::opera_name_storable(opera_name)) {
+    return http_send_error(req, 400, mesh_network::opera_name_refusal());
+  }
   mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_PAIR_START);
   if (opera_name) {
     cmd.flag = true;
-    strncpy(cmd.name, opera_name, mesh_network::MAX_OPERA_NAME_LEN);
+    strncpy(cmd.name, opera_name, mesh_network::MAX_OPERA_NAME_LEN);   // whole: the rule bounds it
     cmd.name[mesh_network::MAX_OPERA_NAME_LEN] = '\0';
   }
   bool ok = false;
@@ -7088,13 +7110,16 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
     return http_send_error(req, 400, "invalid_json");
   }
 
+  // The rule set_opera_name() holds the name to (sweep F303), refused here
+  // in its words: the length was the only test, so a name holding 0x01 was
+  // stored and made GET /api/mesh unparseable.
   const char* name = body["name"] | "";
-  if (strlen(name) == 0 || strlen(name) > mesh_network::MAX_OPERA_NAME_LEN) {
-    return http_send_error(req, 400, "invalid_name");
+  if (!mesh_network::opera_name_storable(name)) {
+    return http_send_error(req, 400, mesh_network::opera_name_refusal());
   }
 
   mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_RENAME);
-  strncpy(cmd.name, name, mesh_network::MAX_OPERA_NAME_LEN);   // length checked above
+  strncpy(cmd.name, name, mesh_network::MAX_OPERA_NAME_LEN);   // whole: the rule bounds it
   cmd.name[mesh_network::MAX_OPERA_NAME_LEN] = '\0';
   bool ok = false;
   const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);

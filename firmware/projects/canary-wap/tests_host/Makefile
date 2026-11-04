@@ -1404,6 +1404,55 @@ clean-mesh-commands:
 run: run-mesh-commands
 clean: clean-mesh-commands
 
+# The Opera name and every health-log line hold no byte a strict JSON reader
+# refuses (sweep F303), on the same harness and link as
+# test_mesh_commands_wap: the REAL mesh_network.cpp (its rename and pairing
+# commands, run by update() in the handler's wait, set_opera_name(),
+# start_pairing_initiator() and the NVS load), and cut out of canary_wap.ino
+# the health log's ring and staging declarations (from its first comment
+# line to the staging lock, by the awk below, which fails unless it finds
+# each end once) and, by firmware/tests_host/cut_functions.awk,
+# log_health_ssid(), log_health(), health_log(), http_send_json(),
+# http_send_error(), handle_logs(), handle_mesh_status(),
+# handle_mesh_pair_start() and handle_mesh_name(), over stand-ins for
+# esp_http_server's request and arduinojson_tree.h. Both routes refuse a
+# name with a byte below 0x20, past 32 bytes or not whole UTF-8 in the
+# rule's words and keep one at the cap whole; GET /api/mesh and GET
+# /api/logs parse strictly and carry well-formed UTF-8 for every name and
+# every line, a line cut on a character to its field.
+OPNAME_BIN      = test_opera_name_wap
+OPNAME_SRC      = test_opera_name_wap.cpp
+OPNAME_RING_INC = test_opera_name_wap_ring.inc
+OPNAME_INC      = test_opera_name_wap.inc
+OPNAME_CUT      = ../../../tests_host/cut_functions.awk
+CUT_INCS       += $(OPNAME_RING_INC) $(OPNAME_INC)
+
+$(OPNAME_RING_INC): $(SRC_DIR)/canary_wap.ino Makefile
+	awk -v 'from=^// Health log buffer ' -v 'to=^static portMUX_TYPE g_health_pending_mux ' \
+	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(OPNAME_INC): $(SRC_DIR)/canary_wap.ino $(OPNAME_CUT) Makefile
+	awk -v 'sigs=static void log_health_ssid(LogLevel level, LogCategory category, const char* message, const char* ssid) {|void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {|void health_log(LogLevel level, LogCategory category, const char* message) {|static esp_err_t http_send_json(httpd_req_t* req, const char* json) {|static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {|static esp_err_t handle_logs(httpd_req_t* req) {|static esp_err_t handle_mesh_status(httpd_req_t* req) {|static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {|static esp_err_t handle_mesh_name(httpd_req_t* req) {' \
+	  -f $(OPNAME_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(OPNAME_BIN): $(OPNAME_SRC) $(OPNAME_RING_INC) $(OPNAME_INC) mesh_net_sim.h arduinojson_tree.h json_strict.h browser_utf8.h \
+               $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) \
+               $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h \
+               $(SRC_DIR)/health_store_logic.h $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/device_name_rule.h $(MESH_ADDR_LINK)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -I . \
+	  -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' \
+	  -DOPERA_NAME_RING_INC='"$(OPNAME_RING_INC)"' -DOPERA_NAME_INC='"$(OPNAME_INC)"' \
+	  -o $@ $(OPNAME_SRC) $(MESH_ADDR_LINK) -lcrypto)
+
+.PHONY: run-opera-name clean-opera-name
+run-opera-name: $(OPNAME_BIN)
+	$(call run_marked,$(OPNAME_BIN))
+clean-opera-name:
+	rm -f $(OPNAME_BIN) $(OPNAME_RING_INC) $(OPNAME_INC)
+
+run: run-opera-name
+clean: clean-opera-name
+
 # The owner's Chirp commands run on the loop task (sweep F111): the REAL
 # chirp_channel.cpp, #included and compiled on the host against
 # stubs/mesh_net (an ESP-NOW send log, an in-memory NVS, OpenSSL's Ed25519
