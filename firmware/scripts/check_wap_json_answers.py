@@ -355,20 +355,30 @@ J12. Every health-log line reaches the ring through one scrub (F303). GET
     of the field's name (each control byte JSON forbids raw and each piece
     that is not whole UTF-8 as U+FFFD, cut on a character). Every other
     mention of an entry's text field, in any function of the sketch,
-    through a `HealthLogRingEntry` local or parameter (any declarator), an
-    `auto` taken from the ring, `g_health_log_ring[...]` or `->`, is a
-    read: inside `sizeof()`; a later argument of a copy, printf or
-    `wap_json::` call, or any argument of a compare, length, search or
-    print call; an element read (`E.f[0]`, not assigned, changed or
-    addressed); or the whole value of an ArduinoJson subscript (`x["k"] =
-    E.f;`) or of a `const char*` local. Nothing writes an entry whole: no
-    copy, fill or printf call takes the ring or an entry as its
-    destination, no entry is assigned (`E = `, `*E = `, `g_health_log_ring[i]
-    = `), and `g_health_log_ring` itself is assigned only a zeroing
-    allocation (`csi_large_calloc(`, `calloc(`) or `nullptr`. What J12
-    cannot see: a write through a pointer it did not see taken (byte
-    offsets into the ring, a `char*` handed in from outside the sketch),
-    or a struct copy made elsewhere and copied back by bytes. Host-tested
+    through a `HealthLogRingEntry` local or parameter (any declarator, by
+    the struct's name or any `using`/`typedef` alias of it), an `auto` or
+    `decltype()` taken from the ring or from one of those (a pointer's
+    `[i]` too), `g_health_log_ring[...]` or `->`, is a read: inside
+    `sizeof()`; a later argument of a copy, printf or `wap_json::` call,
+    or any argument of a compare, length, search or print call; an
+    element read (`E.f[0]`, not assigned, changed or addressed); or the
+    whole value of an ArduinoJson subscript (`x["k"] = E.f;`) or of a
+    `const char*` local. Nothing writes an entry whole: no copy, fill or
+    printf call takes the ring or an entry as its destination, no entry is
+    assigned (`E = `, `*E = `, `g_health_log_ring[i] = `), and
+    `g_health_log_ring` itself is assigned only a zeroing allocation
+    (`csi_large_calloc(`, `calloc(`) or `nullptr`. A held entry leaves its
+    function only as a read: its address taken outside `sizeof()`, or the
+    entry itself handed to a call that is not a listed reader, returned or
+    otherwise used bare, is refused, and so is a second file-scope
+    declarator of the struct (the ring is the one), since either is a way
+    into the ring no function's own text shows (the F303 review: a
+    pointer kept in a file-scope global, a `using` alias, a `void*`
+    helper). What J12 cannot see: a write through a pointer it did not
+    see taken (a byte offset computed into the ring, a `char*` handed in
+    from outside the sketch, a type a template computes over
+    `decltype()`), or a struct copy made elsewhere and copied back by
+    bytes. Host-tested
     in tests_host/test_opera_name_wap.cpp (log_health(), log_health_ssid()
     and health_log() cut verbatim, GET /api/logs parsed strictly on
     control bytes, bytes that are not UTF-8 and text cut at each field's
@@ -4493,19 +4503,52 @@ def check_log_ring(files: dict[str, str], idx: Index) -> list[str]:
     def line_of(at: int) -> int:
         return code.count("\n", 0, at) + 1
 
+    # The struct's names: itself and every `using`/`typedef` alias of it, an alias of an alias too
+    # (the F303 review). An alias in another file names the struct and is refused above.
+    aliases = {RING_STRUCT}
+    while True:
+        alt = "|".join(re.escape(a) for a in aliases)
+        found = set(re.findall(r"\busing\s+(\w+)\s*=\s*(?:const\s+)?(?:%s)\b" % alt, code))
+        found |= set(re.findall(r"\btypedef\s+(?:const\s+)?(?:%s)\b[\s*&]*(\w+)\s*;" % alt, code))
+        if found <= aliases:
+            break
+        aliases |= found
+    struct_alt = "(?:%s)" % "|".join(re.escape(a) for a in sorted(aliases))
+    # What precedes a name in its own declaration: the struct by any name, `auto`, or `decltype()`.
+    declared = re.compile(r"(?:\b%s|\bauto|\bdecltype\s*\([^()]*\))\s*(?:const\s*)?[&*]?\s*$" % struct_alt)
+
+    # The struct's one file-scope instance is the ring. A second one (a pointer kept across calls,
+    # a scratch entry, a member of another struct) is a way into the ring that no function's own
+    # text shows, so it is refused rather than followed (the F303 review).
+    for m in re.finditer(r"\b%s\s*(?:const\s*)?[&*]?\s*(\w+)\s*(?:=|;|\[|\{)" % struct_alt, code):
+        if m.group(1) == RING_ARRAY or fn_containing(idx, INO, m.start()) is not None:
+            continue
+        if re.search(r"\btypedef\b[^;]*$", code[:m.start()]):
+            continue
+        errors.append(f"{INO}:{line_of(m.start())}: {kept[m.start():m.end()].strip()}: a {RING_STRUCT} at file "
+                      f"scope other than the ring, a way into it no function's text shows (J12)")
+
     ring_fns = [f for fs in idx.fns.values() for f in fs if f.file == INO and f.body]
     scrubs: dict[str, int] = {f: 0 for f in fields}
     field_alt = "|".join(re.escape(f) for f in fields)
     for fn in ring_fns:
         lo, hi = fn.body
         body = code[lo:hi]
-        # The entries this function holds: a HealthLogRingEntry local or parameter (any declarator),
-        # or an `auto` taken from the ring.
-        held = set(re.findall(r"\b%s\s*[&*]?\s*(\w+)" % RING_STRUCT, fn.params + "\n" + body))
-        held |= set(re.findall(r"\bauto\s*[&*]?\s*(\w+)\s*=\s*&?\s*%s\b" % RING_ARRAY, body))
-        held.discard("operator")
+        # The entries this function holds: a local or parameter of the struct by any of its names
+        # (any declarator), or an `auto` or `decltype()` taken from the ring or from one of those.
+        held = set(re.findall(r"\b%s\s*(?:const\s*)?[&*]?\s*(\w+)" % struct_alt, fn.params + "\n" + body))
+        while True:
+            names = "|".join(re.escape(h) for h in held | {RING_ARRAY})
+            more = set(re.findall(r"\bauto\s*(?:const\s*)?[&*]?\s*(\w+)\s*=\s*[&*]?\s*(?:%s)\b" % names, body))
+            more |= set(re.findall(r"\bdecltype\s*\([^()]*\b(?:%s)\b[^()]*\)\s*(?:const\s*)?[&*]?\s*(\w+)" % names,
+                                   body))
+            more -= {"operator", RING_ARRAY}
+            if more <= held:
+                break
+            held |= more
+        held -= {"operator", RING_ARRAY}
         bases = [r"\b%s\s*\[[^\]\[;]*\]\s*(?:\.|->)" % RING_ARRAY, r"\b%s\s*->" % RING_ARRAY]
-        bases += [r"(?<![\w.>])%s\s*(?:\.|->)" % re.escape(h) for h in held]
+        bases += [r"(?<![\w.>])%s\s*(?:\[[^\]\[;]*\]\s*)?(?:\.|->)" % re.escape(h) for h in held]
         mention = re.compile(r"(?:%s)\s*(%s)\b" % ("|".join(bases), field_alt))
         for m in mention.finditer(code, lo, hi):
             at, end, fld = m.start(), m.end(), m.group(1)
@@ -4554,10 +4597,25 @@ def check_log_ring(files: dict[str, str], idx: Index) -> list[str]:
                           f": a ring entry written whole (J12)")
         for h in held:
             for m in re.finditer(r"(?:(?<![\w.>])|\*\s*)%s\s*=(?!=)" % re.escape(h), body):
-                decl = re.search(r"\b(?:%s|auto)\s*[&*]?\s*$" % RING_STRUCT, body[:m.start()])
-                if decl is None:
+                if declared.search(body[:m.start()]) is None:
                     errors.append(f"{INO}:{line_of(lo + m.start())}: {fn.name}(): {h} assigned: a ring entry "
                                   f"written whole (J12)")
+        # A held entry leaves the function only as a read. Its address taken (outside sizeof()), or
+        # the entry itself handed to a call that is not a listed reader, returned, cast or used bare
+        # any other way, is refused: what takes it can write it where this rule does not look (the
+        # F303 review: `g_zz_last = &entry;`, `zz_fill(&entry, ...)`).
+        for h in held:
+            for m in re.finditer(r"(?<![\w.>])(&\s*)?%s\b(?!\s*(?:\.|->|\[))" % re.escape(h), body):
+                at = lo + m.start()
+                if declared.search(body[:m.start()]):
+                    continue                                # its own declaration
+                if m.group(1) is None and re.match(r"\s*=(?!=)", body[m.end():]):
+                    continue                                # an assignment, judged above
+                call = ring_call_at(code, lo, at)
+                if call is not None and (call[0] == "sizeof" or RING_READERS.fullmatch(call[0])):
+                    continue
+                errors.append(f"{INO}:{line_of(at)}: {fn.name}(): {kept[at:lo + m.end()].strip()}: a ring entry's "
+                              f"address taken, or the entry handed whole, where this rule cannot follow it (J12)")
         for m in re.finditer(r"\b%s\s*\[[^\]\[;]*\]\s*=(?!=)" % RING_ARRAY, body):
             errors.append(f"{INO}:{line_of(lo + m.start())}: {fn.name}(): a ring entry assigned (J12)")
         for m in re.finditer(r"(?<![\w.>])%s\s*=(?!=)" % RING_ARRAY, body):
@@ -4671,6 +4729,7 @@ RING_MSG_SCRUB = "  wap_json::shown_text(entry.message, sizeof(entry.message), m
 RING_DET_SCRUB = "  wap_json::shown_text(entry.detail, sizeof(entry.detail), detail);\n"
 RING_ACK = "      entry.ack_status = new_status;\n"
 RING_ACK_ALL = "      entry.ack_status = ACK_STATUS_ACKNOWLEDGED;\n"
+RING_DECL = "static HealthLogRingEntry* g_health_log_ring = nullptr;\n"
 
 def both(first: Mutation, second: Mutation) -> Mutation:
     def mutate(files: dict[str, str]) -> dict[str, str]:
@@ -5524,6 +5583,25 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      g_health_log_ring[0] = entry;\n")),
     ("another file names the ring",
      add_file(f"{SKETCH}/zz_ring.h", "struct HealthLogRingEntry;\nextern HealthLogRingEntry* g_health_log_ring;\n")),
+    # J12, the F303 review: ways into the ring that no function's own text shows.
+    ("a file-scope pointer to an entry, taken from the ring and written through in one caller",
+     both(raw_in(INO, RING_DECL, RING_DECL + "static HealthLogRingEntry* g_zz = nullptr;\n"),
+          raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      g_zz = &g_health_log_ring[i];\n"
+                 "      strncpy(g_zz->message, \"raw\", 4);\n"))),
+    ("log_health() keeps the entry's address in a file-scope pointer, which a caller writes through",
+     both(raw_in(INO, RING_DECL, RING_DECL + "static HealthLogRingEntry* g_zz_last = nullptr;\n"),
+          both(raw_in(INO, RING_DET_SCRUB, RING_DET_SCRUB + "  g_zz_last = &entry;\n"),
+               raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      if (g_zz_last) strncpy(g_zz_last->detail, \"raw\", 4);\n")))),
+    ("a caller writes a stored message through a `using` alias of the entry",
+     both(raw_in(INO, RING_DECL, RING_DECL + "using ZzEntry = HealthLogRingEntry;\n"),
+          raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      ZzEntry& zz = g_health_log_ring[i];\n"
+                 "      strncpy(zz.message, \"raw\", 4);\n"))),
+    ("a caller writes a stored message through decltype() of the ring",
+     raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      decltype(g_health_log_ring[i])& zz = g_health_log_ring[i];\n"
+            "      zz.message[0] = 'r';\n")),
+    ("log_health() hands the entry's address to a helper taking void*, which writes it",
+     both(raw_in(INO, RING_DECL, RING_DECL + "static void zz_fill(void* p, const char* t) { memcpy(p, t, 4); }\n"),
+          raw_in(INO, RING_DET_SCRUB, RING_DET_SCRUB + "  zz_fill(&entry, message);\n"))),
 ]
 
 
@@ -5571,6 +5649,9 @@ ACCEPTED: list[tuple[str, Mutation]] = [
             "entry.ack_status = new_status;\n")),
     ("a reader takes a const char* to a stored detail",
      raw_in(INO, RING_ACK, RING_ACK + "      const char* zz = entry.detail;\n      (void)zz;\n")),
+    ("a reader takes sizeof an entry and memcmp()s two stored messages",
+     raw_in(INO, RING_ACK, RING_ACK + "      if (sizeof(entry) > 1 && memcmp(entry.message, g_health_log_ring[0].message, 1) == 0) "
+            "entry.ack_status = new_status;\n")),
 ]
 
 

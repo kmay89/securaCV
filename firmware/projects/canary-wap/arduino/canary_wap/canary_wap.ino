@@ -3445,9 +3445,12 @@ void log_health(LogLevel level, LogCategory category, const char* message, const
   // on a character to the field (strncpy() cut at a byte count, inside a
   // character too), so the ring holds well-formed UTF-8 any strict reader
   // takes. The shown text, not replaced_text()'s, since no page posts a log
-  // line back; log_health_ssid()'s pass before this one changes nothing
-  // here. A NULL detail is "". check_wap_json_answers.py rule J12 holds the
-  // ring's two text fields to these two writes.
+  // line back; log_health_ssid()'s replaced_text() pass before this one
+  // leaves well-formed text either way (at the detail's cap its cut can
+  // drop a final ill-formed sequence whole where this pass alone keeps a
+  // U+FFFD for its first byte). A NULL detail is "".
+  // check_wap_json_answers.py rule J12 holds the ring's two text fields to
+  // these two writes.
   wap_json::shown_text(entry.message, sizeof(entry.message), message);
   wap_json::shown_text(entry.detail, sizeof(entry.detail), detail);
 

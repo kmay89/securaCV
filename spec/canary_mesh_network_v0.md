@@ -893,8 +893,11 @@ opera_id = SHA-256("securacv:opera:id:v0" || opera_secret)[0:16]
 
 Both trees found an opera on `POST /api/mesh/pair/start` when the device
 holds none, and then start the initiator pairing with it. canary-wap names it
-`"My Canary Opera"` (or the request's `name`) and keeps it in RAM if the
-flash-encryption-gated save is refused. The PlatformIO tree (v0.3, F33) does
+`"My Canary Opera"` (or the request's `name`, held to
+`mesh_network::opera_name_storable()`: 1 to 32 bytes of well-formed UTF-8 with
+no byte below 0x20; a name the rule refuses is a 400 in
+`opera_name_refusal()`'s words, and nothing is founded) and keeps it in RAM if
+the flash-encryption-gated save is refused. The PlatformIO tree (v0.3, F33) does
 the same on the same route, behind the gates that route already had (bearer
 token, rate limit, flash encryption), with the same default name (it takes
 no `name`; `POST /api/mesh/name` renames), but fails closed: the
