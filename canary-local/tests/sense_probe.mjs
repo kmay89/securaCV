@@ -4,7 +4,8 @@
 // staged flow end to end: every section renders from sense.json, the serial
 // console boots the firmware's own log, the MQTT retained snapshot and the
 // flavor-gated HA entity set land, the placement lab's FSM reaches Present
-// when the sandbox walks someone into the cone, the 3D radome mounts, and
+// when the sandbox walks someone into the cone and its vitals lock confirms
+// when they sit still on the wellbeing build, the 3D radome mounts, and
 // the tuning/placement surfaces carry their source badges — all with zero
 // page errors.
 //
@@ -112,6 +113,21 @@ try {
   await page.waitForFunction(() => /\[presence\] -> present/.test(
     document.querySelector(".wap-term-scroll")?.textContent || ""), null, { timeout: 6000 })
     .catch(() => fail("serial console missing [presence] -> present"));
+
+  // the wellbeing build in the page: close in and sit still, and the lab's
+  // vitals lock (sense-sim.js's VitalsFSM, A124) prints drive_fsms' lines,
+  // Lost on the first vitals frame, then Locked lock_ms on, and the BPMs go live
+  for (const label of [/Walk toward it/i, /Sit still and breathe/i]) {
+    let hit = false;
+    for (const c of cards) { if (label.test(await c.textContent())) { await c.click(); hit = true; break; } }
+    if (!hit) fail("no sandbox card " + label);
+  }
+  await page.waitForFunction(() => /\[vitals\] breathing lost[\s\S]*\[vitals\] breathing locked/.test(
+    document.querySelector(".wap-term-scroll")?.textContent || ""), null, { timeout: 12000 })
+    .catch(() => fail("the vitals lock never printed lost, then locked"));
+  await page.waitForFunction(() => [...document.querySelectorAll(".sense-lab-side .wap-fact")]
+    .some((r) => /^Vitals/.test(r.textContent) && /breathing locked · \d+ \/ \d+ bpm/.test(r.textContent)), null, { timeout: 3000 })
+    .catch(() => fail("the lab's Vitals row never showed the locked BPMs"));
 
   // and the stall card: pull the radar UART → Unknown + the problem sensor
   for (const c of cards) { if (/Unplug the radar/i.test(await c.textContent())) { await c.click(); break; } }

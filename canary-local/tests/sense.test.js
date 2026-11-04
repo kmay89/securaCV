@@ -9,9 +9,10 @@
 //     and LED color the page shows must still exist in the source it
 //     claims to come from.
 //  2. Exercise the DOM-free cores the page ships (sense-ui.js: bootLines,
-//     rangeBandOf, countBucketOf, makePresenceFSM, makeVitalsFSM) so the
-//     placement lab provably runs the firmware's semantics at the
-//     firmware's constants.
+//     rangeBandOf, countBucketOf, makePresenceFSM, makeRadarLabLoop, and
+//     the vitals lock it takes from sense-sim.js) so the placement lab
+//     provably runs the firmware's semantics at the firmware's constants,
+//     held to mr60_presence.cpp and mr60_vitals.cpp built natively.
 
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -300,19 +301,23 @@ test("the state row: the lab's snapshot over the build's example, published when
   const clear = senseLabSnapshot(fsm("clear", "0", "unknown"), null);
   assert.deepStrictEqual(clear, { presence: false, presence_state: "clear", occupants: "0", range: "unknown", radar_ok: true });
   assert.strictEqual(senseLabSnapshot(fsm("unknown", "0", "unknown"), null).radar_ok, false, "radar_ok is not-unknown");
-  // wellbeing: BPMs only while locked with exactly one target (bpm_valid)
-  const v = { locked: true, breath_bpm: 14, heart_bpm: 68 };
+  // wellbeing: the VitalsFSM's event (sense-sim.js) gives the block, BPMs
+  // only while bpm_valid (locked with exactly one target), as
+  // publish_state_retained writes them
+  const v = { lock: "locked", bpm_valid: true, breath_bpm: 14, heart_bpm: 68 };
   assert.strictEqual(senseLabSnapshot(fsm("present", "1", "near"), v).breath_bpm, 14);
-  const two = senseLabSnapshot(fsm("present", "2+", "near"), v);
+  const two = senseLabSnapshot(fsm("present", "2+", "near"), { ...v, bpm_valid: false, breath_bpm: 0, heart_bpm: 0 });
   assert.deepStrictEqual([two.breathing_locked, two.breath_bpm, two.heart_bpm], [true, null, null],
     "a second person drops the BPMs at once; the lock rides out lost_ms");
+  assert.ok(mqttCpp.includes('  if (s.bpm_valid) {\n    snprintf(breath_val, sizeof(breath_val), "%u", (unsigned)s.breath_bpm);'),
+    "publish_state_retained writes the BPMs only while bpm_valid");
   // due: any change but the range band alone, and every heartbeat
   const a = senseLabSnapshot(fsm("present", "1", "mid"), null);
   assert.ok(senseStateDue(a, null, false), "the first (boot) publish");
   assert.ok(!senseStateDue({ ...a, range: "near" }, a, false), "a range band alone waits for the heartbeat");
   assert.ok(senseStateDue({ ...a, range: "near" }, a, true), "...and goes out on it");
   assert.ok(senseStateDue({ ...a, occupants: "2+" }, a, false));
-  assert.ok(senseStateDue(senseLabSnapshot(fsm("present", "1", "mid"), { ...v, locked: false }), a, false), "a build switch");
+  assert.ok(senseStateDue(senseLabSnapshot(fsm("present", "1", "mid"), { ...v, lock: "lost", bpm_valid: false }), a, false), "a build switch");
   // the row: the build's keys in the firmware's order, lux carried over
   const row = senseStatePayload(templates, { ...templates.base, lux: 1.0 }, clear);
   assert.deepStrictEqual(Object.keys(row), Object.keys(templates.base));
@@ -335,7 +340,7 @@ test("the state row: the lab's snapshot over the build's example, published when
 // data no page rendered.
 test("each sandbox scene, played through the radar lab, publishes the rows sense.json lists", async () => {
   const { withFakeDom, withFakeClock, fakeBus } = require("./fixtures/fake_dom.js");
-  const { buildRadarLab, buildMqtt, buildSandbox } = await import("../assets/sense-ui.js");
+  const { buildRadarLab, buildMqtt, buildSandbox, stallUnplugMs } = await import("../assets/sense-ui.js");
   const topic = (sfx) => `securacv/${data.device.id_example}/${sfx}`;
   const scene = (id) => data.sandbox.find((s) => s.id === id);
   const rowOf = (id, sfx) => scene(id).mqtt.find((p) => p.suffix === sfx).payload;
@@ -439,8 +444,9 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
   });
 
   // the radar UART unplugged: Unknown, count and band dropped, radar_ok
-  // false; when it comes back (the scene plugs it in again after 8 s) to
-  // the person still inside, presence is earned afresh and signed
+  // false; when it comes back (the scene plugs it in again stallUnplugMs()
+  // after the unplug, 3 s past the stall window: A125) to the person still
+  // inside, presence is earned afresh and signed
   await bench(async ({ run, click, fresh, next, signed }) => {
     click("walk");
     await run(cfg.debounce_ms + 700);
@@ -449,7 +455,7 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
     click("stall");
     await run(cfg.stall_ms + 500);
     assert.deepStrictEqual(fresh(), [[topic("state"), rowOf("stall", "state")]], "health, not a witness event");
-    await run(8000 - cfg.stall_ms);
+    await run(stallUnplugMs(cfg) - cfg.stall_ms);
     await run(cfg.debounce_ms + 700);
     assert.deepStrictEqual(fresh().filter(([tp]) => tp === topic("events")),
       [[topic("events"), at(rowOf("walk", "events"), "seq", next())]], "back to the person inside: presence_detected, never a clear over a body");
@@ -466,7 +472,7 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
     // the row as it stands carries the boot's presence_cleared as its last event
     assert.deepStrictEqual(fresh(), [[topic("state"), at(rowOf("stall", "state"), "last_event", "presence_cleared")]],
       "health, not a witness event");
-    await run(8000 - cfg.stall_ms);
+    await run(stallUnplugMs(cfg) - cfg.stall_ms);
     await run(200);
     assert.deepStrictEqual(fresh(), [[topic("events"), at(rowOf("leave", "events"), "seq", next())],
       [topic("state"), rowOf("leave", "state")]], "back to an empty room: presence_cleared, and the clear row");
@@ -798,22 +804,314 @@ test("a radar that returns with a target never passes through clear (mirrors mr6
   assert.strictEqual(fsm.tick(empty, t + 10).state, "clear");
 });
 
-test("the vitals FSM locks only on sustained single-target vitals", async () => {
-  const { makeVitalsFSM } = await import("../assets/sense-ui.js");
-  const v = data.fsm.vitals;
-  const fsm = makeVitalsFSM(v);
-  let t = 1000;
-  fsm.reset(t);
-  fsm.tick(true, true, t);
-  fsm.tick(true, true, t + v.lock_ms - 50);
-  assert.notStrictEqual(fsm.lock, "locked", "locked before the confirm window");
-  fsm.tick(true, true, t + v.lock_ms);
-  assert.strictEqual(fsm.lock, "locked");
-  // a second person (singleTarget=false) must drop the lock after lost_ms
-  t += 10000;
-  fsm.tick(true, false, t);
-  fsm.tick(true, false, t + v.lost_ms);
-  assert.strictEqual(fsm.lock, "lost", "2+ targets must lose the lock");
+// The radar lab on the fake DOM, with a clock that keeps step with its
+// frames: performance.now() reads t0 while the lab is built (its FSMs reset
+// there and its heartbeat starts), and each pass of run() is one animation
+// frame STEP ms after the last followed by STEP ms of the timers, so the
+// stall scene's unplug ends between the passes it should. Every serial line
+// and state row the lab sends is kept with the pass and the time it came on.
+const STEP = 50;
+async function onLabBench(d, fn, t0 = 1000) {
+  const { withFakeDom, withFakeClock, fakeBus } = require("./fixtures/fake_dom.js");
+  const { buildRadarLab, buildSandbox } = await import("../assets/sense-ui.js");
+  await withFakeDom(() => withFakeClock(async (clock) => {
+    const bus = fakeBus();
+    const lab = { t: t0, pass: 0, lines: [], states: [] };
+    bus.on("serial", ({ text }) => lab.lines.push({ pass: lab.pass, t: lab.t, text }));
+    bus.on("labstate", ({ snap }) => lab.states.push({ pass: lab.pass, t: lab.t, snap }));
+    const realNow = performance.now;
+    performance.now = () => t0;
+    try { lab.wrap = buildRadarLab(d, bus); } finally { performance.now = realNow; }
+    lab.pad = buildSandbox(d, bus);
+    lab.run = async (ms) => {
+      for (let e = 0; e < ms; e += STEP) {
+        lab.pass++;
+        lab.t += STEP;
+        clock.frame(lab.t);
+        await clock.advance(STEP);
+      }
+    };
+    lab.cmd = (cmd) => bus.emit("labcmd", { cmd });
+    lab.toggle = (id) => lab.wrap.all("sense-toggle").find((b) => b.dataset.id === id).click();
+    lab.scene = (id) => lab.pad.all("wap-sand-card").find((c) => c.children[0].textContent === d.sandbox.find((s) => s.id === id).label).click();
+    lab.readout = () => lab.pad.all("wap-sandbox-read")[0].textContent;
+    await fn(lab);
+  }));
+}
+
+// Sweep A124: the radar lab's vitals lock against the firmware's own. The lab
+// used to run a vitals mirror of its own that no test held, and it differed
+// from mr60_vitals.cpp three ways: it took a continuous "plausible" flag
+// rather than frames, sat in Unknown until it locked (reaching Lost from
+// Unknown only lost_ms after the last valid tick, where the firmware goes
+// Lost on its first vitals frame), and had no bpm_valid and no stalled flag.
+// It now ticks sense-sim.js's VitalsFSM (held to mr60_vitals.cpp by
+// senselab.test.js, A107) on the frames its radar sends. Here the lab itself
+// runs a room on the fake DOM: walk in, close in, sit still on the wellbeing
+// build (the lock), move (the lock's deadline drops it), still again, a
+// second person (bpm_valid stops at once, the lock rides out its window and
+// drops), they leave (the lock is earned afresh), the radar unplugged
+// (Unknown, and the lock's deadline) and back, and the wellbeing build
+// switched off (a presence-only build prints no vitals line). The frames that
+// room makes, by the lab's rule (a presence frame each pass; after it, while
+// someone is still, within the vitals range and Present on the wellbeing
+// build, a vitals frame with the wellbeing row's BPMs; nothing while
+// unplugged), are played through the firmware's drive_fsms
+// (fixtures/mr60_presence_native.js, -DCANARY_SENSE_VITALS). On every pass the
+// page must print the firmware's [presence] and [vitals] lines and publish
+// its snapshot, and on every frame the lab's VitalsFSM must tick as g_vitals
+// does (lock, its change, stall, bpm_valid, the BPMs, and the single-target
+// verdict it was handed). Four planted firmware changes must each be caught.
+test("the radar lab's vitals lock ticks as mr60_vitals.cpp and drive_fsms do, through a still, moving, shared and unplugged room (A124)", async (t) => {
+  const native = require("./fixtures/mr60_presence_native.js");
+  for (const gate of native.VITALS_GATES) assert.ok(mainCpp.includes(gate), "main.cpp's drive_fsms vitals lines the driver compiles: " + gate);
+  assert.ok(mainCpp.includes('    boot_linef("[vitals] breathing %s%s", locked ? "locked" : "lost",\n               vev.stalled ? " (stall)" : "");'),
+    "drive_fsms prints the lock line on lock_changed, with ' (stall)' on the deadline's drop");
+  const b = native.build();
+  if (b.skip) { t.skip(b.skip); return; }
+  const ui = await import("../assets/sense-ui.js");
+  const S = await import("../assets/sense-sim.js");
+  const p = data.fsm.presence, v = data.fsm.vitals;
+  const fw = { present_debounce_ms: p.debounce_ms, clear_timeout_ms: p.clear_ms, stall_timeout_ms: p.stall_ms, near_cm: p.near_cm, mid_cm: p.mid_cm };
+  const vcfg = firmwareVitalsConfig();
+  const well = JSON.parse(data.mqtt.topics.find((x) => x.suffix === "state").wellbeing);
+  assert.ok(well.breath_bpm >= vcfg.breath_min_bpm && well.breath_bpm <= vcfg.breath_max_bpm && well.heart_bpm >= vcfg.heart_min_bpm
+    && well.heart_bpm <= vcfg.heart_max_bpm, "the wellbeing row's BPMs are plausible to the firmware");
+  const L = v.lock_ms, X = v.lost_ms, D = p.debounce_ms, U = p.stall_ms + 3000;
+  const t0 = 1000;
+
+  // the room, as the lab's labcmd handler and toggles place it (sense-ui.js)
+  const FOV = (data.radar.fov_deg * Math.PI / 180) / 2, MAXR = data.radar.presence_max_m, VITR = data.radar.vitals_range_m;
+  const cone = ([x, y]) => { const d = Math.hypot(x, y); return d <= MAXR && d >= 0.1 && Math.abs(Math.atan2(y, x)) <= FOV ? d : 0; };
+  const room = { p1: [5.9, 1.6], p2: null, still: false, wellbeing: false, unplugged: 0 };
+  // [ms after boot, what the visitor does to the lab, what that does to the room]
+  const script = [
+    [500, (lab) => lab.cmd("walkin"), () => { room.p1 = [3.0, 0.4]; }],
+    [1500, (lab) => lab.cmd("near"), () => { room.p1 = [1.1, 0.1]; }],
+    [2000, (lab) => lab.cmd("still"), () => { room.still = room.wellbeing = true; }],
+    [3000 + L, (lab) => lab.toggle("still"), () => { room.still = false; }],
+    [3500 + L + X, (lab) => lab.toggle("still"), () => { room.still = true; }],
+    [4000 + 2 * L + X, (lab) => lab.cmd("person2"), () => { room.p2 = [4.6, -1.4]; }],
+    [4500 + 2 * L + 2 * X, (lab) => lab.toggle("p2"), () => { room.p2 = null; }],
+    [5000 + 3 * L + 2 * X, (lab) => lab.cmd("stall"), () => { room.unplugged = U / STEP; }],
+    [6000 + 4 * L + 2 * X + U + D, (lab) => lab.toggle("well"), () => { room.wellbeing = false; }],
+  ];
+  const END = 7000 + 4 * L + 3 * X + U + D;
+
+  // the lab's VitalsFSM, every tick: what it was handed and what it said
+  const proto = S.VitalsFSM.prototype, realTick = proto.tick;
+  const seen = [];
+  proto.tick = function (frame, single, now) {
+    const ev = realTick.call(this, frame, single, now);
+    seen.push({ fsm: this, frame: { ...frame }, single, now, ev: { ...ev } });
+    return ev;
+  };
+  const passes = [];
+  let lines, states;
+  try {
+    await onLabBench(data, async (lab) => {
+      let si = 0;
+      for (let ms = STEP; ms <= END; ms += STEP) {
+        while (si < script.length && script[si][0] < ms) { script[si][1](lab); script[si][2](); si++; }
+        const unplugged = room.unplugged > 0;
+        if (unplugged) room.unplugged--;
+        const people = [room.p1, room.p2].filter(Boolean);
+        const ds = people.map(cone).filter((d) => d > 0);
+        const frame = unplugged ? null : ds.length ? { hasTarget: true, count: ds.length, distanceCm: Math.min(...ds) * 100 }
+          : { hasTarget: false, count: 0, distanceCm: 0 };
+        const near = people.some((q) => cone(q) > 0 && cone(q) <= VITR);
+        passes.push({ t: lab.t + STEP, frame, vitals: !!frame && room.wellbeing && room.still && near, wellbeing: room.wellbeing, still: room.still });
+        await lab.run(STEP);
+      }
+      assert.strictEqual(si, script.length, "the whole script ran");
+      ({ lines, states } = lab);
+    }, t0);
+  } finally {
+    proto.tick = realTick;
+  }
+
+  // the room's frames through the firmware: its presence FSM first (a vitals
+  // frame moves no presence: it lands on the same ms as the presence frame
+  // before it, inside every window), then the vitals frames where the room
+  // and the firmware's Present call for them, and drive_fsms on the lot
+  const pTick = (q) => (q.frame ? { t: q.t, target: q.frame.hasTarget, count: q.frame.count, cm: Math.round(q.frame.distanceCm) } : { t: q.t });
+  const presence = native.runFirmware(fw, [{ reset: t0 }, ...passes.map(pTick)]);
+  passes.forEach((q, i) => {
+    if (q.frame && q.frame.hasTarget)
+      assert.strictEqual(ui.rangeBandOf(q.frame.distanceCm, p), presence[i].range, `pass ${i + 1}: the lab's unrounded cm bands as the firmware's`);
+  });
+  const trace = [{ reset: t0 }], passOf = [];
+  passes.forEach((q, i) => {
+    trace.push(pTick(q));
+    passOf.push(i);
+    if (q.vitals && presence[i].state === "present") {
+      trace.push({ t: q.t, breath: well.breath_bpm, heart: well.heart_bpm });
+      passOf.push(i);
+    }
+  });
+  const want = native.runFirmware(fw, trace, vcfg);
+  want.forEach((r, i) => {
+    if (!("breath" in trace[i + 1])) assert.strictEqual(r.state, presence[passOf[i]].state, `tick ${i}: a vitals frame moved presence`);
+  });
+
+  // The lab against a firmware run of the room's frames: the first
+  // difference, named, or null. Per pass, the console lines in tick order
+  // and the state row it published (a row is due wherever the firmware's
+  // snapshot moved, the range band alone aside); then tick by tick, the
+  // VitalsFSM's inputs and event against g_vitals's.
+  const linesBy = passes.map(() => []);
+  for (const l of lines) linesBy[l.pass - 1].push(l.text);
+  const pubBy = new Map(states.map((s) => [s.pass - 1, s.snap]));
+  const moved = (a, b) => !b || [...new Set([...Object.keys(a), ...Object.keys(b)])].some((k) => k !== "range" && a[k] !== b[k]);
+  const frameKey = (f) => (f.kind === S.FrameKind.Vitals ? `V ${f.breath_rate} ${f.heart_rate}`
+    : f.kind === S.FrameKind.Presence ? `P ${f.has_target ? 1 : 0} ${f.target_count} ${f.distance_cm}` : f.kind === S.FrameKind.None ? "N" : `? ${f.kind}`);
+  const traceKey = (k, q) => ("breath" in k ? `V ${k.breath} ${k.heart}` : "target" in k ? `P ${k.target ? 1 : 0} ${k.count} ${q.frame.distanceCm}` : "N");
+  function differs(rows) {
+    const exp = passes.map(() => ({ lines: [], snap: null }));
+    rows.forEach((r, i) => {
+      const q = passes[passOf[i]], o = exp[passOf[i]];
+      if (r.state_changed) o.lines.push(`[presence] -> ${r.state}${r.stalled ? " (radar stall)" : ""}`);
+      if (r.vitals.lock_changed && q.wellbeing) o.lines.push(`[vitals] breathing ${r.vitals.lock === "locked" ? "locked" : "lost"}${r.vitals.stalled ? " (stall)" : ""}`);
+      o.snap = { presence: r.state === "present", presence_state: r.state, occupants: r.count, range: r.range, radar_ok: r.state !== "unknown" };
+      if (q.wellbeing) {
+        Object.assign(o.snap, { breathing_locked: r.vitals.breathing_locked,
+          breath_bpm: r.vitals.bpm_valid ? r.vitals.breath_bpm : null, heart_bpm: r.vitals.bpm_valid ? r.vitals.heart_bpm : null });
+      }
+    });
+    for (let k = 0; k < passes.length; k++) {
+      const at = `pass ${k + 1} (t=${passes[k].t})`;
+      if (JSON.stringify(linesBy[k]) !== JSON.stringify(exp[k].lines))
+        return `${at}: the console said ${JSON.stringify(linesBy[k])} where the firmware says ${JSON.stringify(exp[k].lines)}`;
+      const pub = pubBy.get(k);
+      if (pub && JSON.stringify(pub) !== JSON.stringify(exp[k].snap))
+        return `${at}: the lab published ${JSON.stringify(pub)} where the firmware's snapshot is ${JSON.stringify(exp[k].snap)}`;
+      if (!pub && moved(exp[k].snap, k && exp[k - 1].snap)) return `${at}: the firmware's state row is dirty and the lab published none`;
+    }
+    if (seen.length !== rows.length) return `the lab ticked a VitalsFSM ${seen.length} times where drive_fsms ticks g_vitals ${rows.length}`;
+    if (new Set(seen.map((s) => s.fsm)).size !== 1) return "the lab ticked more than one VitalsFSM";
+    for (let i = 0; i < rows.length; i++) {
+      const s = seen[i], r = rows[i], k = trace[i + 1];
+      const got = { t: s.now, frame: frameKey(s.frame), single: s.single, lock: s.ev.lock, lock_changed: s.ev.lock_changed,
+        stalled: s.ev.stalled, bpm_valid: !!s.ev.bpm_valid, breath_bpm: s.ev.breath_bpm || 0, heart_bpm: s.ev.heart_bpm || 0 };
+      const fwRow = { t: k.t, frame: traceKey(k, passes[passOf[i]]), single: r.count === "1", lock: r.vitals.lock, lock_changed: r.vitals.lock_changed,
+        stalled: r.vitals.stalled, bpm_valid: r.vitals.bpm_valid, breath_bpm: r.vitals.breath_bpm, heart_bpm: r.vitals.heart_bpm };
+      if (JSON.stringify(got) !== JSON.stringify(fwRow)) return `tick ${i}: the lab's VitalsFSM ${JSON.stringify(got)}, the firmware's ${JSON.stringify(fwRow)}`;
+    }
+    return null;
+  }
+  const real = differs(want);
+  assert.strictEqual(real, null, real);
+
+  // the room reaches what it is for, on the firmware's own rows (so a
+  // retuned window cannot empty the compare)
+  const ticks = want.map((r, i) => ({ r, k: trace[i + 1], q: passes[passOf[i]], prev: want[i - 1] }));
+  const firstV = ticks.find(({ k }) => "breath" in k);
+  assert.ok(firstV && firstV.prev.vitals.lock === "unknown" && firstV.r.vitals.lock === "lost" && firstV.r.vitals.lock_changed && !firstV.r.vitals.stalled,
+    "the first vitals frame: Unknown to Lost, seen data not yet confirmed (the old mirror sat in Unknown)");
+  const confirms = ticks.filter(({ r }) => r.vitals.lock_changed && r.vitals.lock === "locked");
+  assert.strictEqual(confirms.length, 4, "the lock is earned four times: sitting, still again, alone again, back from the stall");
+  assert.strictEqual(confirms[0].k.t, firstV.k.t + L, "lock_confirm_ms after the first valid frame");
+  const drops = ticks.filter(({ r }) => r.vitals.stalled);
+  assert.strictEqual(drops.length, 4, "the deadline drops the lock four times");
+  assert.ok(drops.every(({ r }) => r.vitals.lock === "lost" && r.vitals.lock_changed && !r.vitals.bpm_valid), "each drop is to Lost, BPMs gone");
+  assert.ok(drops[0].r.count === "1" && !drops[0].q.still, "moving: a single person's lock drops on the deadline");
+  assert.strictEqual(drops[1].r.count, "2+", "a second person: the lock drops on the deadline with two in the room");
+  assert.strictEqual(drops[2].r.state, "unknown", "unplugged: the lock drops while the radar is silent");
+  assert.ok(!drops[3].q.wellbeing && !linesBy[passOf[want.indexOf(drops[3].r)]].some((l) => l.startsWith("[vitals]")),
+    "on the presence-only build the drop prints no vitals line");
+  assert.ok(ticks.some(({ r, prev }) => r.count === "2+" && prev.count === "1" && prev.vitals.bpm_valid && !r.vitals.bpm_valid && r.vitals.lock === "locked"),
+    "a second person stops bpm_valid at once while the lock holds");
+  assert.ok(ticks.some(({ r }) => r.stalled && r.state === "unknown"), "the radar stall turns presence Unknown");
+  assert.ok(lines.some((l) => l.text === "[vitals] breathing lost (stall)") && lines.some((l) => l.text === "[vitals] breathing locked"));
+
+  // the lab builds no vitals machine of its own: one VitalsFSM, sense-sim.js's
+  const src = read(join(ROOT, "assets/sense-ui.js"));
+  assert.ok(src.includes('import { VitalsFSM, FrameKind } from "./sense-sim.js";'), "the lab's vitals lock is sense-sim.js's port");
+  assert.strictEqual(src.split("new VitalsFSM(").length, 2, "one VitalsFSM, the lab loop's");
+  assert.ok(!("makeVitalsFSM" in ui) && !src.includes("makeVitalsFSM"), "the lab's own vitals mirror is gone");
+  assert.doesNotMatch(src, /\block\s*=\s*"(?:unknown|lost|locked)"/, "no lock state kept by hand");
+
+  // and the compare bites: each planted change to mr60_vitals.cpp is caught
+  const V = "mr60_vitals.cpp";
+  const mutants = [
+    ["lock_confirm_ms halved", [[V, "elapsed(now_ms, valid_since_ms_, cfg_.lock_confirm_ms)", "elapsed(now_ms, valid_since_ms_, cfg_.lock_confirm_ms / 2)"]]],
+    ["a stall that never clears (the lock's deadline fires again on every tick once it has)",
+      [[V, "if (lock_ != VitalsLock::Lost && lock_ != VitalsLock::Unknown &&", "if (lock_ != VitalsLock::Unknown &&"]]],
+    ["bpm_valid inverted", [[V, "ev.bpm_valid  = (lock_ == VitalsLock::Locked) && single_target;", "ev.bpm_valid  = !((lock_ == VitalsLock::Locked) && single_target);", 2]]],
+    ["the exactly-one-target suppression dropped", [[V, "const bool valid = single_target && plausible(frame);", "const bool valid = plausible(frame);"]]],
+  ];
+  for (const [what, swaps] of mutants) {
+    const m = native.buildMutant(swaps);
+    const caught = differs(native.runFirmware(fw, trace, vcfg, m.bin));
+    assert.ok(caught, `the planted change "${what}" passes the compare`);
+  }
+});
+
+// Sweep A125: the stall scene unplugged the radar for a literal 8000 ms, but
+// sense_config.h lets the stall seed be tuned anywhere in
+// SENSE_STALL_MS_LO..HI, and gen_sense.py writes the scene's blurb from it
+// ("No frame for <stall_ms> ms → Unknown"). Past 8000 ms the scene never
+// reached Unknown and the blurb was false on the page. The unplug is now
+// stallUnplugMs(): the stall window and 3 s more. Each tuning is played on a
+// copy of sense.json in memory (sense.json itself is held to config.h by the
+// pins above), its blurb rewritten as gen_sense.py writes it: the card says
+// the window, the lab reaches Unknown exactly that long after its last
+// frame, and the radar comes back 3 s later to whoever is there.
+test("the stall scene reaches Unknown and comes back wherever the stall window is tuned, and its blurb holds (A125)", async () => {
+  const senseCfgH = read(join(PRJ, "include/canary/sense_config.h"));
+  const bound = (n) => Number(senseCfgH.match(new RegExp(`SENSE_STALL_MS_${n}\\s*=\\s*(\\d+);`))[1]);
+  const LO = bound("LO"), HI = bound("HI");
+  assert.deepStrictEqual([LO, HI], [1000, 20000], "the stall seed's bounds");
+  const p = data.fsm.presence;
+  const BLURB = (ms) => `No frame for ${ms} ms → Unknown`;
+  const stall = data.sandbox.find((s) => s.id === "stall");
+  assert.ok(stall.blurb.startsWith(BLURB(p.stall_ms) + " "), "the scene's blurb names the window gen_sense.py read: " + stall.blurb);
+  // each tuning's verdict, null when the scene does what its blurb says
+  const verdicts = {};
+  for (const ms of [LO, p.stall_ms, 9000, HI]) {
+    for (const inside of [true, false]) {
+      const d = JSON.parse(JSON.stringify(data));
+      d.fsm.presence.stall_ms = ms;
+      const sc = d.sandbox.find((s) => s.id === "stall");
+      sc.blurb = sc.blurb.replace(BLURB(p.stall_ms), BLURB(ms));
+      const at = `stall_ms ${ms}, ${inside ? "someone inside" : "an empty room"}`;
+      await onLabBench(d, async (lab) => {
+        if (inside) {
+          lab.scene("walk");
+          await lab.run(p.debounce_ms + 700);
+          assert.ok(lab.lines.some((l) => l.text === "[presence] -> present"), `${at}: walked in`);
+        } else {
+          await lab.run(200);
+        }
+        const lastFrame = lab.t;
+        const from = lab.lines.length;
+        lab.scene("stall");
+        const said = lab.readout().match(/No frame for (\d+) ms → Unknown/);
+        assert.ok(said && Number(said[1]) === ms, `${at}: the card says ${lab.readout()}`);
+        // long enough to see a late return too
+        await lab.run(ms + 3000 + p.debounce_ms + 5000);
+        const after = lab.lines.slice(from);
+        const unknown = after.find((l) => l.text === "[presence] -> unknown (radar stall)");
+        const back = unknown && after.find((l) => l.t > unknown.t && l.text.startsWith("[presence] -> "));
+        // the first frame after the unplug is a pass past it; a target then
+        // earns presence afresh over the debounce, an empty room is Clear at once
+        const plugged = lastFrame + ms + 3000 + STEP;
+        const want = inside ? ["[presence] -> present", plugged + p.debounce_ms] : ["[presence] -> clear", plugged];
+        verdicts[at] = !unknown ? `never reached Unknown (${JSON.stringify(after.map((l) => l.text))})`
+          : unknown.t - lastFrame !== ms ? `Unknown ${unknown.t - lastFrame} ms after the last frame, not the blurb's ${ms}`
+            : !back ? "the radar never came back"
+              : back.text !== want[0] || back.t !== want[1] ? `came back as ${JSON.stringify([back.text, back.t - lastFrame])}, not ${JSON.stringify([want[0], want[1] - lastFrame])} (ms after the last frame)`
+                : after.filter((l) => l.text.startsWith("[presence] -> ")).length !== 2 ? `said more: ${JSON.stringify(after.map((l) => l.text))}`
+                  : null;
+      });
+    }
+  }
+  assert.deepStrictEqual(Object.entries(verdicts).filter(([, v]) => v), [], "each tuning reaches Unknown on the blurb's ms and comes back 3 s on");
+  const { stallUnplugMs } = await import("../assets/sense-ui.js");
+  for (const ms of [LO, 9000, HI]) assert.strictEqual(stallUnplugMs({ ...p, stall_ms: ms }), ms + 3000);
+  assert.strictEqual(stallUnplugMs(p), 8000, "at today's stall window the scene is unchanged");
+  assert.ok(read(join(ROOT, "assets/sense-ui.js")).includes("setTimeout(() => { world.stalled = false; }, stallUnplugMs(cfg));"),
+    "the scene's unplug is stallUnplugMs of the lab's presence config");
 });
 
 test("bootLines flattens banner+boot+ready in order with mapped classes", async () => {

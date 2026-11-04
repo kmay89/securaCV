@@ -16,7 +16,8 @@
 //                      80° cone and the firmware's own range gates; drag
 //                      people (and a cat, and a fan) through it and watch
 //                      the ACTUAL presence FSM — same thresholds, mirrored
-//                      in JS — debounce, clear, and suppress vitals.
+//                      in JS — debounce, clear, and suppress vitals (the
+//                      vitals lock is sense-sim.js's port of mr60_vitals).
 //   · buildMqtt      — an MQTT-explorer view: retained topics fill on
 //                      connect, signed events stream on transitions.
 //   · buildEntities  — the HA discovery set, flavor-gated exactly like the
@@ -32,6 +33,7 @@
 import { DeviceScene, BUILDERS } from "./scene3d.js";
 import { upgradeRealShape } from "./real-shapes.js";
 import { withId, mqttApply, paneNote } from "./wap-ui.js";
+import { VitalsFSM, FrameKind } from "./sense-sim.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -66,19 +68,21 @@ export function senseChainPayload(chain, seq) {
 
 // main.cpp's g_snap after a lab tick, in the state row's own keys: what
 // refresh_snapshot reads off the presence FSM, and, on the wellbeing build
-// (`vitals` set), the vitals block: breathing_locked, and the BPMs only while
-// the lock holds with exactly one target (bpm_valid), else null — the moment a
-// second person appears the BPMs go, while the lock rides out lost_ms.
+// (`vitals` set: the VitalsFSM's event from the tick, sense-sim.js), the
+// vitals block drive_fsms copies off it: breathing_locked (the lock is
+// Locked), and the BPMs only while bpm_valid (the lock holds with exactly one
+// target), else null, as publish_state_retained writes them. The moment a
+// second person appears bpm_valid goes and the BPMs with it, while the lock
+// rides out lock_lost_ms (A124: the lab used to work bpm_valid out itself).
 export function senseLabSnapshot(fsm, vitals) {
   const snap = {
     presence: fsm.state === "present", presence_state: fsm.state,
     occupants: fsm.count, range: fsm.range, radar_ok: fsm.state !== "unknown",
   };
   if (vitals) {
-    const valid = vitals.locked && fsm.count === "1";
-    snap.breathing_locked = vitals.locked;
-    snap.breath_bpm = valid ? vitals.breath_bpm : null;
-    snap.heart_bpm = valid ? vitals.heart_bpm : null;
+    snap.breathing_locked = vitals.lock === "locked";
+    snap.breath_bpm = vitals.bpm_valid ? vitals.breath_bpm : null;
+    snap.heart_bpm = vitals.bpm_valid ? vitals.heart_bpm : null;
   }
   return snap;
 }
@@ -236,29 +240,62 @@ export function makePresenceFSM(cfg) {
   };
 }
 
-// The vitals lock mirror (mr60_vitals): plausible vitals must sustain
-// lock_ms with EXACTLY one target; anything else drains toward lost. The
-// single-target rule is the firmware's hard suppress, not advice.
-export function makeVitalsFSM(cfg) {
-  let lock = "unknown", validSince = 0, lastValid = 0, wasValid = false;
+// The wellbeing build's VitalsConfig, by mr60_vitals.h's field names, from
+// sense.json's vitals block (the wellbeing config.h's CS_VITALS_* and BPM
+// bands): what sense-sim.js's VitalsFSM takes.
+export function senseVitalsConfig(v) {
   return {
-    get lock() { return lock; },
-    reset(now) { lock = "unknown"; wasValid = false; validSince = lastValid = now; },
-    tick(plausible, singleTarget, now) {
-      const before = lock;
-      const valid = plausible && singleTarget;
-      if (valid) {
-        if (!wasValid) { wasValid = true; validSince = now; }
-        lastValid = now;
-        if (lock !== "locked" && now - validSince >= cfg.lock_ms) lock = "locked";
-      } else {
-        wasValid = false;
-        if (lock === "locked" && now - lastValid >= cfg.lost_ms) lock = "lost";
-        if (lock === "unknown" && now - lastValid >= cfg.lost_ms) lock = "lost";
-      }
-      return { lock, changed: lock !== before };
+    lock_confirm_ms: v.lock_ms, lock_lost_ms: v.lost_ms,
+    breath_min_bpm: v.breath_bpm[0], breath_max_bpm: v.breath_bpm[1],
+    heart_min_bpm: v.heart_bpm[0], heart_max_bpm: v.heart_bpm[1],
+  };
+}
+
+// A lab frame as sense-sim.js's FrameParser hands frames to the FSMs: the
+// lab's presence frame ({ hasTarget, count, distanceCm }), a vitals frame
+// ({ breath, heart }), or null, a loop with no frame (the empty Frame()).
+function parserFrame(frame) {
+  const f = { kind: FrameKind.None, has_target: false, target_count: 0, distance_cm: 0, breath_rate: 0, heart_rate: 0 };
+  if (!frame) return f;
+  if ("breath" in frame) return { ...f, kind: FrameKind.Vitals, breath_rate: frame.breath, heart_rate: frame.heart };
+  return { ...f, kind: FrameKind.Presence, has_target: frame.hasTarget, target_count: frame.count, distance_cm: frame.distanceCm };
+}
+
+// The radar lab's FSMs, as canary-sense main.cpp's drive_fsms runs them, one
+// frame per tick (sweep A124): drive(frame, now) ticks the presence FSM
+// (makePresenceFSM, held to mr60_presence.cpp; a vitals frame is, to it, a
+// loop with no presence frame) and then the vitals lock on the same frame,
+// with the debounced count's single-target verdict (pev.count ==
+// CountBucket::One). The lock is sense-sim.js's VitalsFSM, the port A107 held
+// to mr60_vitals.cpp: the lab builds no vitals machine of its own any more
+// (its own mirror took a continuous "plausible" flag, not frames, sat in
+// Unknown until it locked, and had no bpm_valid and no stalled flag). Each
+// tick returns the presence event, what the lab signs on it (radarLabSigns)
+// and the VitalsFSM's event: lock, lock_changed, stalled, bpm_valid and BPMs.
+export function makeRadarLabLoop(data) {
+  const presence = makePresenceFSM(data.fsm.presence);
+  const vitals = new VitalsFSM(senseVitalsConfig(data.fsm.vitals));
+  return {
+    presence,
+    vitals,
+    reset(now) { presence.reset(now); vitals.reset(now); },
+    drive(frame, now) {
+      const ev = presence.tick(frame && !("breath" in frame) ? frame : null, now);
+      const vev = vitals.tick(parserFrame(frame), ev.count === "1", now);
+      return { ev, signs: radarLabSigns(ev, presence), vev };
     },
   };
+}
+
+// How long the sandbox's stall scene keeps the radar UART unplugged: past
+// the stall window (sense.json's fsm.presence.stall_ms, the firmware's
+// CS_RADAR_STALL_MS), so the scene reaches Unknown wherever the stall seed is
+// tuned (sense_config.h allows 1000..20000 ms), then 3 s more of Unknown
+// before it plugs the radar back in. It used to be a literal 8000 ms, so a
+// stall seed past it (9000 ms, say) never reached Unknown, and the scene's
+// blurb ("No frame for <stall_ms> ms → Unknown") was false (A125).
+export function stallUnplugMs(cfg) {
+  return cfg.stall_ms + 3000;
 }
 
 // Presence state → the WS2812 color main.cpp shows for it.
@@ -461,7 +498,6 @@ export function buildSerial(data, bus) {
 // ── the placement lab — the real cone, the real FSM, your furniture ───────
 export function buildRadarLab(data, bus) {
   const cfg = data.fsm.presence;
-  const vcfg = data.fsm.vitals;
   const wrap = el("div", "sense-lab");
 
   const stage = el("div", "sense-lab-stage");
@@ -523,15 +559,19 @@ export function buildRadarLab(data, bus) {
     still: false, wellbeing: false,
     drag: null, stalled: false,
   };
-  const fsm = makePresenceFSM(cfg);
-  const vfsm = makeVitalsFSM(vcfg);
-  fsm.reset(performance.now());
-  vfsm.reset(performance.now());
+  // drive_fsms' two machines (A124): the presence FSM, and sense-sim.js's
+  // VitalsFSM, which runs from the lab's boot and is fed vitals frames only
+  // on the wellbeing build (a presence-only device compiles it out)
+  const loop = makeRadarLabLoop(data);
+  const fsm = loop.presence;
+  loop.reset(performance.now());
 
   const inCone = (x, y) => {
     const d = Math.hypot(x, y);
     return d <= MAXR && d >= 0.1 && Math.abs(Math.atan2(y, x)) <= FOV ? d : 0;
   };
+  // someone in the cone within the radar's vitals range
+  const nearVitals = () => world.people.some((p) => p.on && inCone(p.x, p.y) && Math.hypot(p.x, p.y) <= VITR);
 
   function radarFrame(now) {
     if (world.stalled) return null;
@@ -566,30 +606,39 @@ export function buildRadarLab(data, bus) {
 
   function tick(now) {
     world.cat.t += 0.006;
+    // One pass of main.cpp's loop(): drive_fsms on every frame the radar
+    // sent since the last pass, or once on an empty frame when none came.
+    // The lab's radar sends its presence frame on every pass and, on the
+    // wellbeing build while someone is still, within the vitals range and
+    // Present, a vitals frame after it carrying the wellbeing row's BPMs;
+    // unplugged, it sends nothing (A124). Which target the vitals belong to
+    // is the firmware's call, not the room's: the lock is ticked with the
+    // debounced count, so a second person (or the cat) in the cone stops it.
     const frame = radarFrame(now);
-    const ev = fsm.tick(frame, now);
+    const ticks = [loop.drive(frame, now)];
+    if (frame && world.wellbeing && world.still && nearVitals() && fsm.state === "present")
+      ticks.push(loop.drive({ breath: wellbeingRow.breath_bpm, heart: wellbeingRow.heart_bpm }, now));
 
-    // vitals: exactly one person-scale target, close, still, wellbeing build
-    const singlePerson = world.people.filter((p) => p.on && inCone(p.x, p.y)).length === 1
-      && !(world.cat.on && world.cat.pos && inCone(...world.cat.pos));
-    const near = world.people.some((p) => p.on && inCone(p.x, p.y) && Math.hypot(p.x, p.y) <= VITR);
-    const plausible = world.wellbeing && world.still && near && fsm.state === "present";
-    const vev = vfsm.tick(plausible, singlePerson && fsm.count === "1", now);
-
-    if (ev.stateChanged) {
-      const s = fsm.state;
-      bus.emit("state", { state: s });
-      bus.emit("serial", { text: `[presence] -> ${s}${ev.stalled ? " (radar stall)" : ""}`, kind: ev.stalled ? "warn" : "ok" });
+    for (const { ev, signs, vev } of ticks) {
+      if (ev.stateChanged) {
+        const s = fsm.state;
+        bus.emit("state", { state: s });
+        bus.emit("serial", { text: `[presence] -> ${s}${ev.stalled ? " (radar stall)" : ""}`, kind: ev.stalled ? "warn" : "ok" });
+      }
+      // drive_fsms' signing rule, presence_cleared from Unknown included
+      for (const [event, fields] of signs) publish(event, fields);
+      // drive_fsms' "[vitals] breathing %s%s" on a lock change, " (stall)"
+      // when the lock's deadline dropped it; a presence-only build has no
+      // vitals FSM, so it prints none
+      if (vev.lock_changed && world.wellbeing) {
+        const locked = vev.lock === "locked";
+        bus.emit("serial", { text: `[vitals] breathing ${locked ? "locked" : "lost"}${vev.stalled ? " (stall)" : ""}`, kind: vev.stalled ? "warn" : "ok" });
+        bus.emit("labvitals", { locked });
+      }
     }
-    // drive_fsms' signing rule, presence_cleared from Unknown included
-    for (const [event, fields] of radarLabSigns(ev, fsm)) publish(event, fields);
-    if (vev.changed) {
-      bus.emit("serial", { text: `[vitals] breathing ${vfsm.lock === "locked" ? "locked" : "lost"}`, kind: "ok" });
-      bus.emit("labvitals", { locked: vfsm.lock === "locked" });
-    }
-    const snap = senseLabSnapshot(fsm, world.wellbeing
-      ? { locked: vfsm.lock === "locked", breath_bpm: wellbeingRow.breath_bpm, heart_bpm: wellbeingRow.heart_bpm }
-      : null);
+    // the snapshot drive_fsms leaves after the pass's last frame
+    const vev = ticks[ticks.length - 1].vev;
+    const snap = senseLabSnapshot(fsm, world.wellbeing ? vev : null);
     const heartbeat = now - lastBeat >= data.mqtt.heartbeat_ms;
     if (heartbeat) lastBeat = now;
     if (senseStateDue(snap, publishedSnap, heartbeat)) {
@@ -607,7 +656,9 @@ export function buildRadarLab(data, bus) {
     rows["Range band"].textContent = fsm.range + (fsm.range !== "unknown" ? "  (raw cm never publish)" : "");
     rows["Vitals"].textContent = !world.wellbeing ? "presence-only build — compiled out"
       : snap.breath_bpm != null ? `breathing locked · ${snap.breath_bpm} / ${snap.heart_bpm} bpm (P1)`
-        : (fsm.count === "2+" ? "suppressed — 2+ targets (code rule)" : "no lock (" + vfsm.lock + ")");
+        : fsm.count === "2+" ? "suppressed — 2+ targets (code rule)"
+          : vev.lock === "locked" ? "lock held, BPMs withheld — not exactly one target"
+            : "no lock (" + vev.lock + ")";
     rows["Publishes"].textContent = lastPub;
 
     draw(now);
@@ -750,7 +801,7 @@ export function buildRadarLab(data, bus) {
 
   // the sandbox can drive the lab too (stall, identify)
   bus.on("labcmd", ({ cmd }) => {
-    if (cmd === "stall") { world.stalled = true; setTimeout(() => { world.stalled = false; }, 8000); }
+    if (cmd === "stall") { world.stalled = true; setTimeout(() => { world.stalled = false; }, stallUnplugMs(cfg)); }
     if (cmd === "still") { world.still = true; world.wellbeing = true; tStill.classList.add("on"); tWell.classList.add("on"); }
     if (cmd === "person2") { world.people[1].on = true; tPerson2.classList.add("on"); }
     if (cmd === "clearall") {
