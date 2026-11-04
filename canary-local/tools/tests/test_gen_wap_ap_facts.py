@@ -12,6 +12,12 @@ generator's sources: a value changed in the sketch moves the page, a sketch
 whose number the generator cannot take for the page is refused, and the
 generator runs with no wap_server.h at all.
 
+The HTTPS port is the sketch's HTTPS_PORT constant, which its one
+ssl_config.port_secure write takes (sweep F400): httpd_ssl_start() binds
+port_secure and writes it over ssl_config.httpd.server_port, so the old
+reader's anchor, a write to httpd.server_port, bound nothing. A write there
+is now refused, as is any other spelling of port_secure or of the constant.
+
     python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 """
 from __future__ import annotations
@@ -24,6 +30,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+# The HTTPS config's one port line and the constant it takes (sweep F400).
+PS = "ssl_config.port_secure = HTTPS_PORT;"
+CONST = "static const int   HTTPS_PORT          = 443;"
 
 TOOLS = Path(__file__).resolve().parents[1]
 REPO = TOOLS.parents[1]
@@ -121,57 +131,117 @@ class SketchApFacts(unittest.TestCase):
         self.edit(INO, "redirect_config.server_port = 80;", "redirect_config.server_port = 8080;")
         self.assert_refused("one port for the port-80 redirect server and the HTTP-only fallback")
 
-    def test_the_https_port_is_the_one_httpd_ssl_start_binds(self):
-        self.edit(INO, "ssl_config.httpd.server_port = 443;",
-                  "ssl_config.httpd.server_port = 8443;\n    ssl_config.port_secure = 8443;")
+    def test_the_https_port_is_the_constant_port_secure_binds(self):
+        # The constant moves the page: it is what the one port_secure write
+        # takes, and port_secure is what httpd_ssl_start() binds. (The
+        # sketch's static_assert stops such a build until the https addresses
+        # it spells name the port; the generator reads the text.)
+        self.edit(INO, CONST, "static const int   HTTPS_PORT          = 8443;")
         self.assert_moves(https_port=8443)
 
-    def test_an_https_port_idf_overwrites_is_refused(self):
-        # httpd_ssl_start() binds port_secure (443 by default) whatever
-        # httpd.server_port says, so this sketch would still listen on 443.
-        self.edit(INO, "ssl_config.httpd.server_port = 443;", "ssl_config.httpd.server_port = 8443;")
-        self.assert_refused("httpd_ssl_start() binds port_secure")
-
-    def test_a_port_secure_the_generator_cannot_read_is_refused(self):
-        # Each of these binds 8443 while httpd.server_port still says 443; a
-        # reader that skipped what it could not read would write 443 green.
-        for rhs in ("kWapHttpsPort", "8443U", "(8443)", "(uint16_t)8443", "0x20FB"):
-            with self.subTest(rhs=rhs):
-                self.edit(INO, "ssl_config.httpd.server_port = 443;",
-                          f"ssl_config.httpd.server_port = 443;\n    ssl_config.port_secure = {rhs};")
-                self.assert_refused("in a form this generator cannot read")
+    def test_an_httpd_server_port_write_is_refused(self):
+        # httpd_ssl_start() writes port_secure over it, so a write there binds
+        # nothing; the old reader took its number for the page. Refused with
+        # the port_secure write still in place, and in its place.
+        for new in (f"ssl_config.httpd.server_port = 443;\n    {PS}", "ssl_config.httpd.server_port = 443;",
+                    f"{PS}\n    ssl_config.httpd.server_port = HTTPS_PORT;"):
+            with self.subTest(new=new):
+                self.edit(INO, PS, new)
+                self.assert_refused("which httpd_ssl_start() overwrites with port_secure")
                 self.tearDown()
 
+    def test_a_port_secure_other_than_the_constant_is_refused(self):
+        # The constant still says 443; each of these binds another port, or
+        # 443 by a spelling the page's number is not read from.
+        for rhs in ("8443", "443", "0x1BB", "kWapHttpsPort", "8443U", "(HTTPS_PORT)", "HTTPS_PORT + 0",
+                    "(uint16_t)HTTPS_PORT"):
+            with self.subTest(rhs=rhs):
+                self.edit(INO, PS, f"ssl_config.port_secure = {rhs};")
+                self.assert_refused("write it as ssl_config.port_secure = HTTPS_PORT;")
+                self.tearDown()
+
+    def test_port_secure_8443_under_a_443_constant_is_refused(self):
+        self.edit(INO, PS, "ssl_config.port_secure = 8443;")
+        self.assert_refused("sets the HTTPS server's port in a form this generator cannot read")
+
     def test_a_port_secure_on_another_config_is_refused(self):
-        self.edit(INO, "ssl_config.httpd.server_port = 443;",
-                  "ssl_config.httpd.server_port = 443;\n    tls_config.port_secure = 8443;")
+        self.edit(INO, PS, f"{PS}\n    tls_config.port_secure = 8443;")
+        self.assert_refused("in a form this generator cannot read")
+
+    def test_a_port_insecure_write_is_refused(self):
+        self.edit(INO, PS, f"{PS}\n    ssl_config.port_insecure = 8080;")
         self.assert_refused("in a form this generator cannot read")
 
     def test_a_transport_mode_other_than_secure_is_refused(self):
         # HTTPD_SSL_TRANSPORT_INSECURE binds port_insecure, not port_secure.
-        self.edit(INO, "ssl_config.httpd.server_port = 443;",
-                  "ssl_config.httpd.server_port = 443;\n    ssl_config.transport_mode = HTTPD_SSL_TRANSPORT_INSECURE;")
+        self.edit(INO, PS, f"{PS}\n    ssl_config.transport_mode = HTTPD_SSL_TRANSPORT_INSECURE;")
         self.assert_refused("in a form this generator cannot read")
 
     def test_the_default_transport_spelled_out_moves_nothing(self):
-        self.edit(INO, "ssl_config.httpd.server_port = 443;",
-                  "ssl_config.httpd.server_port = 443;\n    ssl_config.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;")
+        self.edit(INO, PS, f"{PS}\n    ssl_config.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;")
         self.assertEqual(self.generate(), self.base)
 
     def test_a_second_port_write_is_refused(self):
-        self.edit(INO, "ssl_config.httpd.server_port = 443;",
-                  "ssl_config.httpd.server_port = 443;\n    ssl_config.port_secure = 443;\n"
-                  "    ssl_config.port_secure = 8443;")
+        self.edit(INO, PS, f"{PS}\n    {PS}")
         self.assert_refused("writes ssl_config.port_secure twice")
+
+    def test_no_port_secure_write_is_refused(self):
+        # Commented out, the write is gone: IDF's default would bind, which
+        # the page's number is not read from.
+        for new in (f"// {PS}", ""):
+            with self.subTest(new=new):
+                self.edit(INO, PS, new)
+                self.assert_refused("no ssl_config.port_secure = HTTPS_PORT; in the sketch")
+                self.tearDown()
+
+    def test_an_https_port_constant_the_generator_cannot_read_is_refused(self):
+        # 0x1BB and 0673 are 443 to the compiler (0673 is octal), 0443 is
+        # 291; none is a decimal literal the page's number is read from.
+        for new in ("static const int   HTTPS_PORT          = 0x1BB;",
+                    "static const int   HTTPS_PORT          = 0673;",
+                    "static const int   HTTPS_PORT          = 0443;",
+                    "static const int   HTTPS_PORT          = 443U;",
+                    "static const int   HTTPS_PORT          = (443);",
+                    "static const uint16_t HTTPS_PORT       = 443;",
+                    "constexpr int HTTPS_PORT = 443;",
+                    "static const int   HTTPS_PORT{443};"):
+            with self.subTest(new=new):
+                self.edit(INO, CONST, new)
+                self.assert_refused("the HTTPS_PORT constant is defined in a form this generator cannot read")
+                self.tearDown()
+
+    def test_a_second_or_missing_https_port_constant_is_refused(self):
+        for new in (f"{CONST}\n#define HTTPS_PORT 8443", f"{CONST}\nstatic const int HTTPS_PORT = 8443;",
+                    "", f"// {CONST}"):
+            with self.subTest(new=new):
+                self.edit(INO, CONST, new)
+                self.assert_refused("the HTTPS_PORT constant: expected one definition in the sketch")
+                self.tearDown()
+
+    def test_a_port_out_of_range_is_refused(self):
+        for value in ("65536", "99999"):
+            with self.subTest(value=value):
+                self.edit(INO, CONST, f"static const int   HTTPS_PORT          = {value};")
+                self.assert_refused("which is not a TCP port")
+                self.tearDown()
+
+    def test_a_plain_port_with_a_leading_zero_is_refused(self):
+        # C reads 0120 as octal 80: the page would say 120.
+        self.edit(INO, "redirect_config.server_port = 80;", "redirect_config.server_port = 0120;")
+        self.edit(INO, "    config.server_port = 80;", "    config.server_port = 0120;")
+        self.assert_refused("in a form this generator cannot read")
 
     def test_a_named_server_port_is_refused(self):
         self.edit(INO, "    config.server_port = 80;", "    config.server_port = HTTP_PORT;")
         self.assert_refused("in a form this generator cannot read")
 
     def test_a_comment_line_naming_port_secure_moves_nothing(self):
-        self.edit(INO, "ssl_config.httpd.server_port = 443;",
-                  "ssl_config.httpd.server_port = 443;\n    // httpd_ssl_start() binds port_secure = 8443; here")
-        self.assertEqual(self.generate(), self.base)
+        for line in ("// httpd_ssl_start() binds port_secure = 8443; here", "// ssl_config.port_secure = 443;",
+                     "// ssl_config.httpd.server_port = 443;"):
+            with self.subTest(line=line):
+                self.edit(INO, PS, f"{PS}\n    {line}")
+                self.assertEqual(self.generate(), self.base)
+                self.tearDown()
 
     def test_the_https_config_must_start_from_idfs_default(self):
         # The 443 fallback for an unwritten port_secure is that default's.

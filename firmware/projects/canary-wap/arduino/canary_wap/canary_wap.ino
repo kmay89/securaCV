@@ -440,6 +440,17 @@ static const uint32_t SD_SPI_SLOW = 1000000;
 
 static const int   AP_CHANNEL          = 1;
 static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for security
+// The HTTPS server's port (sweep F400): start_http_server() binds it as
+// ssl_config.port_secure, the field httpd_ssl_start() binds (it overwrites
+// ssl_config.httpd.server_port with it), and the boot and status lines print
+// it. canary-local/tools/gen_wap.py reads this line for the page's
+// https_port and refuses any other spelling of the HTTPS port.
+static const int   HTTPS_PORT          = 443;
+// Every https address the device spells names no port: the port-80
+// redirect's Location (receipt_authority.h), the receipt's base_url and the
+// address a pin is handed out for. So the server stays on the scheme's
+// default until they spell one.
+static_assert(HTTPS_PORT == 443, "the https addresses the device spells name no port");
 // F16: ask the driver for WPA2/WPA3 transition + PMF-capable on the SoftAP
 // (ap_security_policy.h). Runtime fallback: a core without SoftAP SAE, or a
 // driver refusal, keeps WPA2-PSK, logs why, and /api/wifi + /api/device-info
@@ -10802,7 +10813,7 @@ static void start_http_server() {
       + ble_discovery_handlers + fleet_handlers + beacon_handlers
       + handler_headroom;
 
-  // ── Start HTTPS server (port 443) if TLS cert is available ──
+  // ── Start HTTPS server (HTTPS_PORT) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
   if (g_tls_enabled && g_tls_cert_der && g_tls_key_der) {
     httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();
@@ -10813,7 +10824,10 @@ static void start_http_server() {
     ssl_config.httpd.uri_match_fn = httpd_uri_match_wildcard;
     ssl_config.httpd.stack_size = 10240;  // Larger stack for TLS + camera
     ssl_config.httpd.max_uri_handlers = total_handlers;
-    ssl_config.httpd.server_port = 443;
+    // httpd_ssl_start() binds port_secure and writes it over
+    // httpd.server_port (sweep F400: that write was dead), so the port is
+    // set here and only here.
+    ssl_config.port_secure = HTTPS_PORT;
     // Long-lived MJPEG peek streams routinely sit between sends for
     // hundreds of ms while the camera captures the next JPEG. With the
     // 5 s default a single WiFi retransmit storm or AP scan sweep was
@@ -10826,8 +10840,10 @@ static void start_http_server() {
     ssl_config.httpd.lru_purge_enable  = true;
 
     if (httpd_ssl_start(&g_https_server, &ssl_config) == ESP_OK) {
-      Serial.println("[HTTPS] Server started on port 443");
-      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "HTTPS server started", "port 443");
+      Serial.printf("[HTTPS] Server started on port %d\n", HTTPS_PORT);
+      char port_detail[24];
+      snprintf(port_detail, sizeof(port_detail), "port %d", HTTPS_PORT);
+      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "HTTPS server started", port_detail);
 
       // Register all routes on HTTPS server
       register_api_routes(g_https_server);
@@ -11177,8 +11193,13 @@ register_extra_routes:
   httpd_uri_t fleet_opt = { .uri = "/api/fleet", .method = HTTP_OPTIONS, .handler = handle_fleet_options };
   httpd_register_uri_handler(active_server, &fleet_opt);
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started",
-             g_tls_enabled ? "HTTPS port 443" : "HTTP port 80");
+  char server_detail[24];
+  if (g_tls_enabled) {
+    snprintf(server_detail, sizeof(server_detail), "HTTPS port %d", HTTPS_PORT);
+  } else {
+    snprintf(server_detail, sizeof(server_detail), "HTTP port 80");
+  }
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started", server_detail);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -12586,7 +12607,11 @@ static void handle_serial_commands() {
         Serial.printf("WiFi AP: %s\n", g_device.ap_ssid);
         Serial.printf("Password: %s\n", g_device.ap_password);
         Serial.printf("IP: %s\n", WiFi.softAPIP().toString().c_str());
-        Serial.printf("TLS: %s\n", g_tls_enabled ? "YES (port 443)" : "NO (port 80)");
+        if (g_tls_enabled) {
+          Serial.printf("TLS: YES (port %d)\n", HTTPS_PORT);
+        } else {
+          Serial.println("TLS: NO (port 80)");
+        }
         Serial.printf("Clients: %d\n", WiFi.softAPgetStationNum());
         {
           char redacted[16];
