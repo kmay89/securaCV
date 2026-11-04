@@ -362,9 +362,15 @@ HTTP_PORT = _HTTP_PORTS["config.server_port"]
 # MDNS.addService("<service>", "tcp", <port>); with the port a decimal
 # literal or the HTTPS_PORT constant read above, and the starts must agree.
 # A registration belongs to the MDNS.begin() line above it, in the file's
-# order. Every line that names a service call in its code (not in a comment
-# or a string, not under #if 0) is read, and each of these is refused with
-# the file and the line, never skipped: a call in any other form, one before
+# order. Every line that names a start or a service call in its code (not
+# in a comment or a string, not under #if 0) is read, and each of these is
+# refused with the file and the line, never skipped: a preprocessor line
+# that names one (a macro this reader does not expand, so it is refused as
+# a macro, not read as a start or a registration), a line that names a
+# service call this reader never reads (MDNS.enableArduino() and
+# enableWorkstation(), IDF's own mdns_service_*; a definition by such a
+# name is refused by the same words, since it is still not a registration
+# this reader can count), an addService call in any other form, one before
 # any MDNS.begin(), a third service, a service registered twice, a start
 # that registers none, two starts that disagree on a port, a start or a
 # registration under a condition this reader does not evaluate (#if X,
@@ -375,9 +381,12 @@ HTTP_PORT = _HTTP_PORTS["config.server_port"]
 _INO_REL = INO.relative_to(REPO)
 _MDNS_BEGIN = re.compile(r"\bMDNS\s*\.\s*begin\s*\(")
 # In the sketch any call named addService is read, whatever it is called on
-# (an alias of MDNS is not skipped); in its other files, an MDNS start or
-# service call, or one of IDF's own mdns_* service calls, is refused.
-_MDNS_CALL = re.compile(r"\b(?:addService|enableArduino|enableWorkstation|mdns_service_\w+)\s*\(")
+# (an alias of MDNS is not skipped), and any line naming one of the other
+# service calls, as a call or a definition, is refused; in its other files,
+# an MDNS start or service call, or one of IDF's own mdns_* service calls,
+# is refused.
+_MDNS_ADD = re.compile(r"\baddService\s*\(")
+_MDNS_OTHER = re.compile(r"\b(enableArduino|enableWorkstation|mdns_service_\w+)\s*\(")
 _MDNS_ELSEWHERE = re.compile(r"\bMDNS\s*\.\s*(?:begin|addService|enableArduino|enableWorkstation)\s*\("
                              r"|\bmdns_(?:init|service_\w+)\s*\(")
 _MDNS_PORT_NAMES = {"HTTPS_PORT": HTTPS_PORT}
@@ -388,14 +397,27 @@ _MDNS_STARTS: list = []  # (the MDNS.begin() line, {service: (port, line)})
 for _n, _ln, _code, _bare, _live, _unread in _scan_lines(read(INO)):
     if not _live or not _code:
         continue
-    _begins, _calls = _MDNS_BEGIN.search(_bare), _MDNS_CALL.search(_bare)
-    if (_begins or _calls) and _unread:
+    _begins, _adds, _other = _MDNS_BEGIN.search(_bare), _MDNS_ADD.search(_bare), _MDNS_OTHER.search(_bare)
+    if not (_begins or _adds or _other):
+        continue
+    if _code.startswith("#"):
+        # A #define naming a start or a call is no start and no call: the
+        # reader does not expand macros, so it refuses the line as a macro
+        # rather than count it (and then misname what it counted).
+        die(f"{_INO_REL}:{_n}: a preprocessor line names an mDNS start or service call ({_ln.strip()!r}): "
+            f"this generator does not expand macros; call MDNS.begin() and MDNS.addService() directly, "
+            f"outside any #define")
+    if _unread:
         die(f"{_INO_REL}:{_n}: the sketch starts mDNS or registers a service under a condition this "
             f"generator does not evaluate ({_ln.strip()!r}, under line {_unread}): start mDNS and register "
             f"its services outside any #if but #if 0, or teach gen_wap.py the condition")
+    if _other:
+        die(f"{_INO_REL}:{_n}: the sketch names {_other.group(1)}(), an mDNS service call this generator "
+            f"does not read ({_ln.strip()!r}): register each service as MDNS.addService(\"<service>\", "
+            f"\"tcp\", <port>); on its own line, or teach gen_wap.py the call")
     if _begins:
         _MDNS_STARTS.append((_n, {}))
-    if not _calls:
+    if not _adds:
         continue
     _m = _MDNS_SERVICE.fullmatch(_ln)
     if not _m:

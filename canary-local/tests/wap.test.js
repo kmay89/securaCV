@@ -34,6 +34,26 @@ const egressH = read(join(FW, "csi_event_egress.h"));
 const companionH = read(join(FW, "companion_pwa.h"));
 const doc = read(join(REPO, "docs/getting_started_canary.md"));
 
+// A code line of the sketch: not a comment line, and not under #if 0. The
+// generator reads the sketch the same way (gen_wap.py's _code_lines), so a
+// dead registration or port write it does not count is not held against the
+// page here either; a line under any other #if is read as written, as there.
+const codeLines = (text) => {
+  const lines = [];
+  const dead = []; // one entry per open #if: true while that branch is #if 0's
+  for (const line of text.split("\n")) {
+    const directive = line.match(/^\s*#\s*(if|ifdef|ifndef|else|elif|endif)\b(.*)$/);
+    if (directive) {
+      const arg = directive[2].replace(/\/\*.*?\*\//g, "").replace(/\/\/.*$/, "").trim();
+      if (directive[1].startsWith("if")) dead.push(directive[1] === "if" && arg === "0");
+      else if (directive[1] === "endif") dead.pop();
+      else if (dead.length) dead[dead.length - 1] = false; // #else, #elif: not #if 0's branch
+    }
+    if (!dead.includes(true) && !/^\s*(\/\/|\/?\*)/.test(line)) lines.push(line);
+  }
+  return lines;
+};
+
 // ── 1. shape + sanity floors ───────────────────────────────────────────────
 test("wap.json has every section the page requires", () => {
   for (const k of ["device", "ap", "captive", "routes", "wizard", "serial", "mqtt", "sensing", "sandbox", "docs"])
@@ -103,7 +123,7 @@ test("AP channel, client cap and server ports are the sketch's own (F277)", () =
   // it over httpd.server_port, so the sketch writes no httpd.server_port
   // (sweep F400).
   assert.strictEqual(data.ap.https_port, num(/static const int\s+HTTPS_PORT\s*=\s*(\d+);/, "HTTPS_PORT"));
-  const code = ino.split("\n").filter((l) => !/^\s*(\/\/|\/?\*)/.test(l));
+  const code = codeLines(ino);
   assert.strictEqual(code.filter((l) => /^\s*ssl_config\.port_secure\s*=\s*HTTPS_PORT;/.test(l)).length, 1,
     "the HTTPS server's port is not one ssl_config.port_secure = HTTPS_PORT; write");
   assert.deepStrictEqual(code.filter((l) => /\bhttpd\.server_port\b/.test(l)), [],
@@ -115,9 +135,10 @@ test("AP channel, client cap and server ports are the sketch's own (F277)", () =
 // Sweep F366: the mDNS services' ports were typed in gen_wap.py, so a start
 // that advertised another port left the page green. Each one listed is now
 // the one every mDNS start in the sketch registers (the generator refuses
-// the forms it cannot read; this holds the committed page to the sketch).
+// the forms it cannot read; this holds the committed page to the sketch,
+// reading the same code lines the generator counts, #if 0 excluded).
 test("each mDNS service and its port is the one every mDNS start registers (F366)", () => {
-  const code = ino.split("\n").filter((l) => !/^\s*(\/\/|\/?\*)/.test(l));
+  const code = codeLines(ino);
   const begins = code.filter((l) => /\bMDNS\.begin\(/.test(l)).length;
   assert.ok(begins >= 1, "no MDNS.begin() in canary_wap.ino");
   const regs = code.filter((l) => /\bMDNS\.addService\(/.test(l));

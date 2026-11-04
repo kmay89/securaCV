@@ -353,6 +353,7 @@ class SketchApFacts(unittest.TestCase):
         self.assertIsInstance(got, str, "generated a page from a sketch it cannot read")
         self.assertIn(why, got)
         self.assertRegex(got, rf"\b{re.escape(INO_NAME)}:{line}\b")
+        return got
 
     def test_the_committed_mdns_services_are_the_sketchs_at_port_80(self):
         self.assertEqual([(s["service"], s["port"]) for s in self.base["ap"]["mdns_services"]],
@@ -398,16 +399,80 @@ class SketchApFacts(unittest.TestCase):
                 ('/* web */ MDNS.addService("http", "tcp", 80);', "/* web */"),
                 ('MDNS.addService("http", "tcp", 80);  /* web */', "/* web */"),
                 ('/* the http service:\n    */ MDNS.addService("http", "tcp", 80);', "*/ MDNS"),
-                ('mdns.addService("http", "tcp", 80);', "mdns.addService"),
-                ('MDNS.enableArduino(3232);\n    ' + HTTP, "enableArduino"),
-                ('MDNS.enableWorkstation();\n    ' + HTTP, "enableWorkstation"),
-                ('mdns_service_add(nullptr, "_http", "_tcp", 8080, nullptr, 0);\n    ' + HTTP, "mdns_service_add")):
+                ('mdns.addService("http", "tcp", 80);', "mdns.addService")):
             with self.subTest(new=new):
                 try:
                     self.edit(INO, boot_http, f"\n{START_INDENT['boot']}{new}")
                     self.assert_refused_at("registers an mDNS service in a form this generator cannot read", needle)
                 finally:
                     self.tearDown()
+
+    def test_a_service_call_the_generator_never_reads_is_named_as_such(self):
+        # MDNS.enableArduino() and enableWorkstation(), and IDF's own
+        # mdns_service_*, are never read: a line naming one is refused by
+        # that name, as a call or as a definition by such a name (wave 23's
+        # review: a definition is no registration "in a form this generator
+        # cannot read", so the refusal says what it saw).
+        boot_http = self.at("boot", HTTP)
+        before_boot_http = f"\n{START_INDENT['boot']}{{}}{boot_http}"
+        anchor = "static void mdns_reannounce() {"
+        for old, new, name, needle in (
+                (boot_http, before_boot_http.format("MDNS.enableArduino(3232);"),
+                 "enableArduino", "MDNS.enableArduino(3232);"),
+                (boot_http, before_boot_http.format("MDNS.enableWorkstation();"),
+                 "enableWorkstation", "MDNS.enableWorkstation();"),
+                (boot_http, before_boot_http.format('mdns_service_add(nullptr, "_http", "_tcp", 8080, nullptr, 0);'),
+                 "mdns_service_add", "mdns_service_add("),
+                (boot_http, before_boot_http.format('mdns_service_port_set("_http", "_tcp", 8080);'),
+                 "mdns_service_port_set", "mdns_service_port_set("),
+                (anchor, f"static void mdns_service_refresh() {{\n}}\n\n{anchor}",
+                 "mdns_service_refresh", "static void mdns_service_refresh() {")):
+            with self.subTest(name=name):
+                try:
+                    self.edit(INO, old, new)
+                    got = self.assert_refused_at(f"the sketch names {name}(), an mDNS service call this generator "
+                                                 "does not read", needle)
+                    self.assertNotIn("registers an mDNS service in a form", got)
+                finally:
+                    self.tearDown()
+
+    def test_a_preprocessor_line_naming_an_mdns_call_is_refused_as_a_macro(self):
+        # A #define that names MDNS.begin() or a service call is no start and
+        # no registration (wave 23's review): it is refused as a macro the
+        # reader does not expand, not counted as a start that then "registers
+        # no service", and not as a registration in a form it cannot read.
+        # The macro's reason comes before the condition's (the fix is the
+        # same); under #if 0 it is nothing, like any dead line.
+        anchor = "static void mdns_reannounce() {"
+        why = "a preprocessor line names an mDNS start or service call"
+        for macro in ("#define MDNS_START() MDNS.begin(g_device.mdns_hostname)",
+                      '#define REG_HTTP() MDNS.addService("http", "tcp", 8080)',
+                      '#  define REG_HTTP() MDNS.addService("http", "tcp", 80)  // macro',
+                      '#define MDNS_HTTP_PORT(p) mdns_service_port_set("_http", "_tcp", p)'):
+            with self.subTest(macro=macro):
+                try:
+                    self.edit(INO, anchor, f"{macro}\n{anchor}")
+                    got = self.assert_refused_at(why, macro)
+                    self.assertIn("does not expand macros", got)
+                    self.assertNotIn("the mDNS start here registers no", got)
+                    self.assertNotIn("in a form this generator cannot read", got)
+                    self.assertNotIn("under a condition this generator does not evaluate", got)
+                finally:
+                    self.tearDown()
+        macro = '#define REG_HTTP() MDNS.addService("http", "tcp", 8080)'
+        with self.subTest(macro="under #if FEATURE_X"):
+            try:
+                self.edit(INO, anchor, f"#if FEATURE_X\n{macro}\n#endif\n{anchor}")
+                got = self.assert_refused_at(why, macro)
+                self.assertNotIn("under a condition this generator does not evaluate", got)
+            finally:
+                self.tearDown()
+        with self.subTest(macro="under #if 0"):
+            try:
+                self.edit(INO, anchor, f"#if 0\n{macro}\n#endif\n{anchor}")
+                self.assertEqual(self.generate(), self.base)
+            finally:
+                self.tearDown()
 
     def test_an_mdns_port_out_of_range_is_refused(self):
         for value in ("65536", "99999"):
