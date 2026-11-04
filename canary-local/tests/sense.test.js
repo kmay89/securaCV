@@ -861,7 +861,7 @@ async function onLabBench(d, fn, t0 = 1000) {
 // page must print the firmware's [presence] and [vitals] lines and publish
 // its snapshot, and on every frame the lab's VitalsFSM must tick as g_vitals
 // does (lock, its change, stall, bpm_valid, the BPMs, and the single-target
-// verdict it was handed). Four planted firmware changes must each be caught.
+// verdict it was handed). Five planted firmware changes must each be caught.
 test("the radar lab's vitals lock ticks as mr60_vitals.cpp and drive_fsms do, through a still, moving, shared and unplugged room (A124)", async (t) => {
   const native = require("./fixtures/mr60_presence_native.js");
   for (const gate of native.VITALS_GATES) assert.ok(mainCpp.includes(gate), "main.cpp's drive_fsms vitals lines the driver compiles: " + gate);
@@ -1031,12 +1031,14 @@ test("the radar lab's vitals lock ticks as mr60_vitals.cpp and drive_fsms do, th
   assert.ok(!("makeVitalsFSM" in ui) && !src.includes("makeVitalsFSM"), "the lab's own vitals mirror is gone");
   assert.doesNotMatch(src, /\block\s*=\s*"(?:unknown|lost|locked)"/, "no lock state kept by hand");
 
-  // and the compare bites: each planted change to mr60_vitals.cpp is caught
+  // and the compare bites: each planted change to the firmware is caught
   const V = "mr60_vitals.cpp";
   const mutants = [
     ["lock_confirm_ms halved", [[V, "elapsed(now_ms, valid_since_ms_, cfg_.lock_confirm_ms)", "elapsed(now_ms, valid_since_ms_, cfg_.lock_confirm_ms / 2)"]]],
-    ["a stall that never clears (the lock's deadline fires again on every tick once it has)",
+    ["a lock stall that never clears (the lock's deadline fires again on every tick once it has)",
       [[V, "if (lock_ != VitalsLock::Lost && lock_ != VitalsLock::Unknown &&", "if (lock_ != VitalsLock::Unknown &&"]]],
+    ["a radar stall that never clears (mr60_presence.cpp's clock stops in Unknown, so presence never returns)",
+      [["mr60_presence.cpp", "    last_frame_ms_ = now_ms;\n\n    // Track raw target edges", "    if (state_ != Presence::Unknown) last_frame_ms_ = now_ms;\n\n    // Track raw target edges"]]],
     ["bpm_valid inverted", [[V, "ev.bpm_valid  = (lock_ == VitalsLock::Locked) && single_target;", "ev.bpm_valid  = !((lock_ == VitalsLock::Locked) && single_target);", 2]]],
     ["the exactly-one-target suppression dropped", [[V, "const bool valid = single_target && plausible(frame);", "const bool valid = plausible(frame);"]]],
   ];
