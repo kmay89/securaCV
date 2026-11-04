@@ -7366,10 +7366,12 @@ function trainBefore(a, b) {
 }
 
 // gen_flash.py's CAPABILITY_TRAINS["ble_setup"] row, as written: its first
-// train and its evidence files (`evidence`, then each of `also`).
+// train and its evidence files (`evidence`, then each of `also`). The fields
+// are read in that order, whatever the indentation and however the `also`
+// list is wrapped.
 function bleSetupRow() {
   const src = read(join(CANARY, "tools/gen_flash.py"));
-  const m = /\n    "ble_setup": \{\n        "since": "(\d+(?:\.\d+)*)",\n        "evidence": "([^"\n]+)",\n(?:        "also": \[([^\]\n]*)\],\n)?    \},\n/.exec(src);
+  const m = /\n[ \t]*"ble_setup":\s*\{\s*"since":\s*"(\d+(?:\.\d+)*)",\s*"evidence":\s*"([^"\n]+)",?\s*(?:"also":\s*\[([^\]]*)\],?\s*)?\},?[ \t]*\n/.exec(src);
   assert.ok(m, "gen_flash.py's CAPABILITY_TRAINS has no ble_setup row in the shape this test reads " +
     '(`"since"`, `"evidence"`, an optional `"also"` list) — the setup door is not train-gated');
   return { since: m[1], files: [m[2], ...[...(m[3] || "").matchAll(/"([^"]+)"/g)].map((a) => a[1])] };

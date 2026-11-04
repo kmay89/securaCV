@@ -975,9 +975,10 @@ def corroborate_capability_trains() -> None:
     For every local fw-v<digits> tag, the row's evidence file (and each of
     its `also` files) must exist at the tag exactly when the row says that
     train carries the capability: a `since` set too early (the bug this
-    ledger exists for) or too late both fail here, by tag. No git, no repository, or no tags (a shallow CI
-    checkout) means there is nothing to read, and the row stands as written —
-    the catalog drift gate still pins what it produced."""
+    ledger exists for) or too late both fail here, by tag. No git, no
+    repository, or no tags (a shallow CI checkout) means there is nothing to
+    read, and the row stands as written — the catalog drift gate still pins
+    what it produced."""
     try:
         listed = subprocess.run(
             ["git", "-C", str(REPO), "tag", "--list", "fw-v*"],
