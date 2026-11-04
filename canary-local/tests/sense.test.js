@@ -590,6 +590,14 @@ test("a stall drops the count with the link, as mr60_presence.cpp does", async (
   assert.ok(presence.includes("        state_ = Presence::Unknown;\n        count_ = CountBucket::Zero;"));
 });
 
+// The wellbeing build's VitalsConfig, by its firmware field names, from
+// sense.json's vitals block.
+const firmwareVitalsConfig = () => {
+  const v = data.fsm.vitals;
+  return { lock_confirm_ms: v.lock_ms, lock_lost_ms: v.lost_ms, breath_min_bpm: v.breath_bpm[0],
+    breath_max_bpm: v.breath_bpm[1], heart_min_bpm: v.heart_bpm[0], heart_max_bpm: v.heart_bpm[1] };
+};
+
 // F131: the radar lab's presence FSM against the firmware's own, built from
 // mr60_presence.cpp with the host's g++ (fixtures/mr60_presence_native.js),
 // on the same frames: state, count, band and both change flags, every tick,
@@ -597,8 +605,9 @@ test("a stall drops the count with the link, as mr60_presence.cpp does", async (
 // loop publishes by) against what drive_fsms signs. The traces walk a room
 // the way the decoder reports it (a presence flag whose count is still 0
 // before the radar's count frame lands), a boot and a stall that come back
-// to an empty room, and a seeded 10,000-tick random walk. The lab's tick
-// takes { hasTarget, count, distanceCm } or null for a loop with no frame.
+// to an empty room, seeded 10,000-tick random walks, and the wellbeing
+// build's traces. The lab's tick takes { hasTarget, count, distanceCm } or
+// null for a loop with no presence frame.
 test("the radar lab's presence FSM ticks, and signs, as mr60_presence.cpp and drive_fsms do, frame for frame", async (t) => {
   const native = require("./fixtures/mr60_presence_native.js");
   for (const gate of native.MAIN_GATES) assert.ok(mainCpp.includes(gate), "main.cpp's drive_fsms gate the driver mirrors: " + gate);
@@ -619,7 +628,10 @@ test("the radar lab's presence FSM ticks, and signs, as mr60_presence.cpp and dr
     }
     return n;
   };
-  for (const [name, trace] of Object.entries(native.traces(fw))) {
+  // the wellbeing build's traces too: a vitals frame is, to the presence
+  // FSM, a loop with no presence frame (the lab's null)
+  const vitals = Object.entries(native.vitalsTraces(fw, firmwareVitalsConfig())).map(([n, tr]) => ["vitals " + n, tr]);
+  for (const [name, trace] of [...Object.entries(native.traces(fw)), ...vitals]) {
     const want = native.runFirmware(fw, trace);
     // the A106 traces reach what they are named for: the boot's first empty
     // frame, and a radar back from each stall to an empty room
