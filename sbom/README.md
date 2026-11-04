@@ -2,7 +2,11 @@
 
 This directory holds the Software Bill of Materials (SBOM) story for SecuraCV:
 how each document is produced, and — for the firmware — the committed document
-itself. The output format is **CycloneDX 1.5 JSON**.
+itself. Every document is **CycloneDX JSON**. The firmware document is held to
+the **1.5** schema, strictly, by `lint.yml` and by `sbom.yml`'s gate; the
+`cargo-cyclonedx` and `cdxgen` documents are at the spec version each tool
+writes (1.3 and 1.7 with the tool versions of 2026-11-04), and the gate holds
+them to their format tag, subject and contents, not to a schema.
 
 ## The documents
 
@@ -11,7 +15,7 @@ itself. The output format is **CycloneDX 1.5 JSON**.
 | Rust (kernel) | `sbom-rust.cdx.json` | `cargo-cyclonedx`, in `.github/workflows/sbom.yml` |
 | Node.js (device-api, SPA) | `sbom-node.cdx.json` | `@cyclonedx/cdxgen`, in `sbom.yml` |
 | C/C++ (ESP32 firmware) | [`sbom-firmware.cdx.json`](sbom-firmware.cdx.json) | **generated and committed** by [`scripts/gen_firmware_sbom.py`](../scripts/gen_firmware_sbom.py); byte-gated on every PR |
-| Rust (the Flasher / the Lab) | `sbom-flasher-rust.cdx.json`, `sbom-lab-rust.cdx.json` | `cargo-cyclonedx` in `desktop/src-tauri` / `desktop-lab/src-tauri`, in `sbom.yml`: the app's crate graph, its path-linked crates included |
+| Rust (the Flasher / the Lab) | `sbom-flasher-rust.cdx.json`, `sbom-lab-rust.cdx.json` | `cargo-cyclonedx --target all` in `desktop/src-tauri` / `desktop-lab/src-tauri`, in `sbom.yml`: the app's crate graph for every target it is built for (the lockfile — the macOS-only crates the universal `.dmg` links are in it, not only the Linux runner's resolution), its path-linked crates included |
 | Node.js (the Flasher / the Lab) | `sbom-flasher-node.cdx.json`, `sbom-lab-node.cdx.json` | `@cyclonedx/cdxgen` on `desktop/` / `desktop-lab/` after `npm ci`, in `sbom.yml`: the npm tree the app's lockfile installs (today the Tauri CLI that builds it) |
 
 The first three are on every release. A Flasher release (`flasher-v*`) adds

@@ -26,8 +26,8 @@ any platform.
   passed their tag and nothing else, so nothing described the apps.
 - **Fix:** `sbom.yml` takes an optional `app` (flasher: `desktop/`, lab:
   `desktop-lab/`, one `DESKTOP_APPS` table) and builds two more documents
-  for it: `sbom-<app>-rust.cdx.json` (`cargo cyclonedx` in `src-tauri`; a
-  rewritten `Cargo.lock` fails the step) and `sbom-<app>-node.cdx.json`
+  for it: `sbom-<app>-rust.cdx.json` (`cargo cyclonedx --target all` in
+  `src-tauri`; a rewritten `Cargo.lock` fails the step) and `sbom-<app>-node.cdx.json`
   (`cdxgen -t node` after `npm ci --ignore-scripts`). The gate refuses an
   app document that is empty, has no components, names another subject
   than the app's own crate or npm package, or lacks tauri (the crate; the
@@ -38,14 +38,24 @@ any platform.
   `test_release_plan.py`'s `AppReleasesCarryTheAppsOwnSboms` holds the
   callers, the table against `release-targets.yml`, and the app-picking
   step's cases. Both release notes lines now name the three documents those
-  releases carried. Built here with cargo-cyclonedx 0.5.9 and cdxgen 12.9.0:
-  the Flasher's Rust document names `securacv-flasher` with 450 components
-  (tauri 2.12.5, flash-engine, hub-core, hub-io), the Lab's `securacv-lab`
-  with 407, and each npm document its package with `@tauri-apps/cli` 2.12.3.
+  releases carried. `--target all` is load-bearing: cargo-cyclonedx resolves
+  for the host target by default and the job runs on Linux, so the first
+  version's Flasher document held 450 of its lockfile's 604 crates and none
+  of the macOS-only ones the universal `.dmg` links (security-framework,
+  core-foundation, objc2, the keyring backend `Cargo.toml` adds on macOS) —
+  a document that described the Linux build under the release's name. Built
+  here with cargo-cyclonedx 0.5.9 and cdxgen 12.9.0: the Flasher's Rust
+  document names `securacv-flasher` with 604 components, every package its
+  lockfile holds (tauri 2.12.5, flash-engine, hub-core, hub-io,
+  security-framework, windows-sys), the Lab's `securacv-lab` with 560, and
+  each npm document its package with `@tauri-apps/cli` 2.12.3.
 - **Applies to:** any compliance artifact a release attaches. Name the
   documents a release carries, not "the project's", and gate each one on its
   subject, not only its format: a well-formed bill of materials for the
-  wrong product is still a false record.
+  wrong product is still a false record. And a resolver that defaults to the
+  machine it runs on describes that machine: when the release ships for
+  more platforms than the runner is, say so to the tool (`--target all`) and
+  check the document against the lockfile, not against "it has components".
 
 ## 2026-11-04 (c) — The AppImage bundler downloaded its tools unpinned, one from a moving tag, and so did the runtime inside every AppImage (found by reading; sweep CI21)
 

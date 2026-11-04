@@ -946,6 +946,17 @@ class AppReleasesCarryTheAppsOwnSboms(unittest.TestCase):
         self.assertEqual(attach["env"]["FILES"], "${{ needs.generate-sbom.outputs.files }}")
         self.assertIn('"${paths[@]}"', attach["run"])
 
+    def test_the_app_rust_step_describes_every_target(self):
+        # cargo-cyclonedx resolves for the host target unless told otherwise,
+        # and sbom.yml runs on Linux: built that way the Flasher's document
+        # held 450 of its lockfile's 604 crates, with none of the macOS-only
+        # ones the universal .dmg links (security-framework, core-foundation,
+        # objc2) nor the keyring backend Cargo.toml adds on macOS. `--target
+        # all` lists every target's dependencies, which is the lockfile.
+        steps = {s.get("name"): s for s in self.job["steps"]}
+        run = steps["Generate each desktop app's Rust SBOM (CycloneDX)"]["run"]
+        self.assertIn("cargo cyclonedx --format json --target all", run)
+
 
 if __name__ == "__main__":
     unittest.main()

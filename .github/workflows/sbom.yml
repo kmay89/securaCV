@@ -35,8 +35,10 @@ name: SBOM Generation
 # carried only the three above (the kernel's crates, canary-vision's npm
 # packages, the firmware), none of which names a crate or npm package the app
 # ships (sweep CI20). Now each app gets two more: sbom-<app>-rust.cdx.json
-# (cargo-cyclonedx in <dir>/src-tauri: the app's crate graph, its path-linked
-# crates included) and sbom-<app>-node.cdx.json (cdxgen on <dir>/ after
+# (cargo-cyclonedx --target all in <dir>/src-tauri: the app's crate graph for
+# every target it is built for, its path-linked crates included — the
+# lockfile, not this Linux runner's own resolution) and
+# sbom-<app>-node.cdx.json (cdxgen on <dir>/ after
 # `npm ci`: the npm tree its lockfile installs, which today is the Tauri CLI
 # that builds it). `app` picks them: flasher (desktop/) or lab (desktop-lab/).
 # The two app publishers pass theirs; a tag with an app's prefix (a human
@@ -234,13 +236,20 @@ jobs:
       # resolves through `cargo metadata`, which rewrites a Cargo.lock that
       # no longer matches its Cargo.toml: the diff check refuses a document
       # that would describe a resolution the release did not build.
+      # `--target all`: without it cargo-cyclonedx resolves for the HOST
+      # target, and this job runs on Linux — the Flasher's document built
+      # that way held 450 of its lockfile's 604 crates and none of the
+      # macOS-only ones the universal .dmg links (security-framework,
+      # core-foundation, objc2, the keyring backend Cargo.toml adds on
+      # macOS). With it the document is every target's dependencies, which
+      # is the lockfile (604 and 560 components when built on 2026-11-04).
       env:
         APPS: ${{ steps.apps.outputs.list }}
       run: |
         set -euo pipefail
         for row in $APPS; do
           app="${row%%:*}"; dir="${row#*:}"
-          (cd "$dir/src-tauri" && cargo cyclonedx --format json)
+          (cd "$dir/src-tauri" && cargo cyclonedx --format json --target all)
           git diff --exit-code -- "$dir/src-tauri/Cargo.lock" \
             || { echo "::error::$dir/src-tauri/Cargo.lock is stale against its Cargo.toml; the SBOM would not describe what the release built"; exit 1; }
           crate="$(cargo metadata --no-deps --format-version 1 --manifest-path "$dir/src-tauri/Cargo.toml" \
