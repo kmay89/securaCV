@@ -38,6 +38,145 @@
   erases the whole chip, because it reconnects for every command and the
   per-block checks would cost more than they save.
 
+### The Home Assistant app declares its Frigate lists as lists (by the Supervisor's code 0.9.0 cannot start, and a bench check is owed), canary-wap uses nothing it read short and puts no radio text in an answer raw, Chirp's trust rules do what its spec says, the flagship's BOOT tap goes to the one device asking, Home Assistant's diagnostics keep the kernel's host and key out and three contract gaps close, both flashers call a flavorless display a display, and the Lab, the enclosure checks, the Wall's pairing pointers and three hardware facts tell the truth (#1916, wave 21)
+
+- **Release blocker, Home Assistant app 0.9.0: the two Frigate lists are
+  declared as lists, and list options are read whole (sweep HA38, HA39,
+  F321).** 0.9.0's `config.yaml` gives `frigate.cameras` and `frigate.labels`
+  the Supervisor's select syntax (`list(str)?`: one word from a fixed set,
+  here only `str`). By the Supervisor's own option code
+  (`supervisor/apps/options.py`), the app's default options fail that check,
+  which runs before every start and on the wizard's save, so every 0.9.0
+  install should fail to start. Both are lists now (`- str?`). Behind that,
+  `run.sh` read list options through bashio, which prints a list one item per
+  line, so a Frigate setup with labels set (the default) and a standalone one
+  with a camera configured stopped before the kernel started; it now reads
+  `cameras`, `frigate.cameras` and `frigate.labels` whole from
+  `/data/options.json`, stops with a reason in Frigate mode when that file
+  cannot be read, and gives a missing `min_confidence` 0.5. The wizard page
+  and the server spell zone ids by one rule, and the pairing screen's
+  unreadable-poll exits end from a fresh read of both Canaries. **Read from
+  the Supervisor's source and checked against a copy of its rules
+  (`test_addon_store.py`), not seen on a real install**; host tests on jq 1.6
+  and 1.7 and node; not run in the app image or on a Supervisor. **A person
+  should check 0.9.0 and this build on HA OS and decide on a patch release
+  (HA49).** The app's own CHANGELOG entry sits under `## Unreleased`, which
+  `scripts/bump_version.sh` does not rename. Filed: HA49, HA54, HA55.
+- **canary-wap uses nothing it read short (sweep F365, F364 in part, F304).**
+  The stored API token loads only on an exact read of a well-formed token, and
+  provisioning stores a new one only when NVS says none is stored, so a read
+  whose CRC failed no longer replaces the token every client holds; a stored
+  token the WAP cannot read fails provisioning (what a refusal that persists
+  should do is F402). The sketch's SHA-256 helpers answer whether they hashed
+  and zero their output when not, and each of their five callers refuses what
+  the hash was for: a failed key fingerprint or genesis head fails
+  provisioning and stays off BLE discovery, the boot's `[OK]` lines and the
+  self-verify, no chain link or record is made from a failed hash, and a
+  failed certificate fingerprint leaves HTTPS off. The module files are F364's
+  next slice. `GET /api/fleet/qr` reads its query and both values whole or
+  answers a 400 naming the field, so a 22-symbol password and a 63-character
+  passphrase are no longer cut; the Fleet sheet still shows its own fixed hint
+  for that 400 (F401). **Host-tested** (the real functions cut verbatim from
+  the sketch, under g++, clang++ 18 and ASan/UBSan); the ESP32 compiles are
+  CI's; not bench-tested. Filed: F401-F404.
+- **canary-wap: text from the air reaches no JSON answer raw (sweep F301,
+  F302).** The CSI chokepoint turns `"`, `\` and `{` into `?` too, in both
+  trees, so every event row's card line, MQTT body and REST row is JSON, and
+  the card reader refuses what an older quote could forge. Every Bluetooth
+  name in `GET /api/bluetooth`, its scan results and its paired list goes
+  through `wap_json::shown_text()`, so those answers are strict UTF-8 JSON;
+  rule J10 in `check_wap_json_answers.py` holds it (173 self-test mutations;
+  its docstring lists what it cannot see). **Host-tested only**; the ESP32
+  compiles are CI's. Filed: F405-F408.
+- **canary-wap Chirp's trust rules (sweep F305, F311, F306, F363).** No ACK
+  but CONFIRMED dismisses a chirp, and a dismissed chirp takes no
+  confirmation. An ACK counts only from a key first seen ten minutes earlier;
+  presence beacons are unsigned, so this delays a Sybil and does not price
+  one, suppress votes still need no presence (F234), and the spec and
+  `FLEET_SEMANTICS.md` say both. Relays keep the TTL their origin signed, so a
+  chirp sent with any TTL but 15 no longer fails its signature one hop on. A
+  new session beacons no last-send age, so it no longer links itself to the
+  session before. Spec §3.2, §3.3, §3.4, §8.1 and §12.3 follow, and §12.3 is
+  static_asserted and pinned by `test_chirp_spec_tables.py`. **Host-tested**
+  on the real `chirp_channel.cpp`; the ESP32 compile is CI's; not bench-tested
+  on radios. Filed: F412, D16.
+- **The flagship's BOOT tap goes to the one device that asked (sweep F354,
+  F322, F358).** Its receipt and its home-LAN page load share one tap arbiter,
+  as the WAP's receipt has since F342: a second device asking around the press
+  gets `409 tap_contended`, and nothing is handed out. The dashboard's unlock
+  banner asks before the press, keeps asking from a hidden tab and takes the
+  token without a reload, and Save recovery kit retries with the token when
+  the banner's tap wins. The pairing screen says to leave the opera first on
+  `opera_exists`, and a timeout or a code mismatch says the two Canaries may
+  run different pairing firmware. **Host-tested** (a 240-interleaving sweep
+  over the real tap step; the dashboard's own poll run against it, 17 of 17
+  failing on main's page; a new shape rule in `check_route_security.py`); the
+  PlatformIO compiles are CI's; not bench-tested. The user and security docs
+  that still describe the old tap are listed under F20. Filed: F409, F410.
+- **Home Assistant: a diagnostics download carries no kernel host, served key
+  or health counter (sweep F399, F391).** The key-mismatch Repairs issue,
+  which every download of the integration includes, holds only the two key
+  fingerprints; the served key stays in memory, and the fix flow pins only a
+  key the kernel's authenticated API served. An issue the kernel's API
+  contradicts clears at the next check, where one kept over a restart used to
+  stay critical for good. Five health counters join the redaction set as a
+  second net, and no output changes. **Host-tested** in both Home Assistant
+  lanes (the real core at 2026.5.0 and 2026.10.1); not run against a live
+  kernel. Carried files: the HACS mirror follows one sync behind. Filed: HA52.
+- **Home Assistant: three contract gaps close (sweep F368, HA48, HA44).** A
+  canary-wap's Signal Strength keeps its last reading across a reconnect
+  instead of showing 0 dBm, Memory Critical reads a canary-wap's
+  `memory_free`, and the `events` publish that creates Last Event, Motion and
+  Occupancy is shown by them, once. The contract suite's three strict expected
+  failures are passing tests. **Host- and real-core-tested** (2026.5.0 and
+  2026.10.1); the one-line `csi_mqtt.cpp` change compiles in CI; not
+  bench-tested with a real broker. Filed: F411, HA53.
+- **Lab: the Vision's generator and test read a firmware constant by one
+  strict rule (sweep F369).** `gen_vision.py` and `vision.test.js` read every
+  constant through `read_const` and its JavaScript twin, held to one case
+  table and agreeing on 200,000 fuzzed inputs, so a commented-out or second
+  definition is refused instead of read. `vision.json` and `flash.json` are
+  unchanged. **Host-tested.** Filed: A116, A117.
+- **Enclosure checks that held nothing now hold (sweep C34, C32, C26, C22).**
+  The cable gland's bush asserts its own squeezed fill at 90 %, and CI
+  requires the out-of-range configs to be refused; the design-language lint
+  refuses a knob that shares its help line with another statement, and a group
+  header that heads nothing; the 1.69's side-cluster knobs file under their
+  own header; and the Sense's screws carry SCR3 in the Lab's Assemble tab.
+  OpenSCAD 2021.01's CSG is byte-identical at the defaults, so no mesh moved.
+  **Render-checked and host-tested**; not print-validated.
+- **The viewer-token mint step reads the same everywhere (sweep A104, A105).**
+  `examples/witnessd.service` turns on the token files and says how to pair a
+  Wall, the tvOS Wall's Verification footer and `tvos/README.md` give all
+  three mint forms with `--label`, and `docs/frigate_integration.md` points at
+  Settings → Verification. **Host-tested** (`test_witnessd_unit.py`); the tvOS
+  compile is CI's, and nothing renders the footer yet (A119). Filed: A118,
+  A119.
+- **Both flashers call a flavorless display a display, and offer the
+  self-check only where the firmware prints one (sweep A96, A97, F384).**
+  Every surface in both flashers resolves a board's descriptor through the
+  display-aware match, and the WAP, the Sense and the displays get a pointer
+  to the boot log instead of a self-check ask nothing answers. The Vision's
+  module-id deny reads every source its build compiles, code only.
+  **Host-tested** (`desktop_parity.test.js`); which names real boards report
+  is a board check (A122). Filed: A120-A122, F414.
+- **Three hardware facts set straight (sweep D14, C20, F374).** The round
+  watch's pin map says what BOOT does there, the XIAO ESP32-S3 Sense's GNSS
+  row names no flag the WAP lacks (held by a new test), and a test comment's
+  date is 2026-08-08. Comments and board data only; not bench-tested. Filed:
+  F413, C35.
+- **Home Assistant entity ids, stated as far as they are proven (sweep HA16,
+  A108).** Both publishers have asked Home Assistant for the documented ids
+  since #1762; no live install has confirmed them, and the hardware checklist
+  and feature-gaps H1 now say so. The Lab's WAP sandbox says the ids are asked
+  for, how `<id>` is spelled, and that Home Assistant 2025.10 and later tries
+  to apply them at first registration (`_2` on a clash). **Docs and host
+  tests**; Home Assistant's handling was read from its source, not seen
+  running. Filed: HA50, HA51.
+- **The sweep ledger:** 34 items ticked and F364's sketch slice done, W41 and
+  C23 found closed, and the second item filed as F365 (the HTTPS port write)
+  renumbered F400.
+
 
 ## [2.4.19] - 2026-10-30
 
@@ -715,7 +854,7 @@
   `httpd_ssl_start()` would overwrite. `devices/wap.json` is unchanged.
   **Host-tested** (a scratch-copy generator unittest, a route-match case, the
   J7 guard and its self-test); the ESP32 compiles are CI's; not run on a
-  device. Filed: F365, F366.
+  device. Filed: F400 (filed as F365, a number already taken), F366.
 - **canary-wap MQTT contract fixture (sweep F34, its fixture half).** A host
   harness runs the real `csi_mqtt.cpp`, records every publish with its QoS and
   retain flag, and delivers each discovery command word back to check the WAP

@@ -1871,7 +1871,7 @@ monorepo and the website. Thirteen pieces:
   `wap_server.h` is the route list; `gen_wap.py` reads the AP and port facts
   from the sketch and refuses what it cannot read; `wap.json` does not move.
   Cherry-picked unsquashed, so its first commit alone fails J7. Host-tested.
-  Files F365 and F366.
+  Files F400 (filed as F365) and F366.
 - **The MQTT contract fixture (sweep F34's fixture half).** A host harness
   runs the real `csi_mqtt.cpp`, a pytest replays its record into the
   integration against an emulated broker, and a render test draws every

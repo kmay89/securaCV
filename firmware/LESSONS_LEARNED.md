@@ -211,6 +211,25 @@
   And when a receipt carries a security fact (`tls_cert_fp`), grep the
   consumer for it before calling the feature shipped.
 
+### A template's default is a reading: `default(0)` showed 0 dBm on every reconnect (canary-wap, F368)
+- **What happened:** the canary-wap's Signal Strength discovery row rendered
+  `{{ value_json.rssi | default(0) }}`. The retained status the connect burst
+  sends carries no `rssi`, so after every MQTT connect Home Assistant showed
+  0 dBm, a full-strength reading that no radio measured, until the next
+  status with a reading.
+- **Root cause:** a default in a value template is not "no value"; it is a
+  value the receiver records like any other.
+- **Fix:** the row renders `default('')`. Home Assistant's MQTT sensor
+  ignores an empty state on a numeric sensor and keeps the last reading.
+- **Rule:** when a field can be missing, render nothing and let the receiver
+  keep what it had, and prove what the receiver does with the real one, not
+  a stub. The canary's own Sensing RSSI renders `default(0)` too (F411, open).
+- **Regression check:** `scripts/tests/test_ha_discovery_wap_render.py` (the
+  expected failure is now a plain test) and the real-core
+  `tests/ha/test_wap_signal_strength.py`, which shows Home Assistant 2026.5.0
+  and 2026.10.1 keeping the reading and fails on any core warning.
+- **Date learned:** 2026-11
+
 ---
 
 ## A driver library's init table is a PANEL personality, not a chip default
@@ -788,6 +807,79 @@
   runs the sketch's load, probe, store and `establish_identity_key()` over
   its first-boot fake NVS, which fails the length lookup, the session or the
   read, and pins `setup()`'s halt.
+
+### A read whose count is thrown away can return a CRC-failed value as a stored one (canary-wap, F365)
+- **What happened:** The canary-wap's `nvs_load_token()` checked the stored
+  API token's length, read it with `Preferences::getBytes()`, discarded the
+  count, and took whatever passed `strlen >= 35`. When a data CRC fails, IDF
+  copies the stored chunk into the caller's buffer before it refuses the read
+  (and erases the entry), so `getBytes()` answers 0 over a buffer holding the
+  35 bytes it copied, and the load reported a token loaded: bytes no client
+  held when the data itself was corrupted. Every other `false` (a session
+  that would not open, a length of 0) `provision_device()` read as "no
+  token", and it derived a new one and stored it over the stored one, which
+  is harmless only while today's derivation gives the stored token back
+  (sweep F365, found by F359's review). F360 had fixed the same shape for the
+  identity key a few functions away.
+- **Root cause:** the count is the only part of the answer that tells a read
+  that copied from a read that succeeded. A buffer IDF filled before refusing
+  looks exactly like one it filled and kept.
+- **Fix:** `nvs_load_token()` answers Loaded, Absent or Refused, as
+  `nvs_load_key()` does: only `ESP_ERR_NVS_NOT_FOUND` is Absent, the read must
+  answer exactly the length the probe found, the token must be `cv_` and 32
+  letters or digits, and the buffer is zeroed on anything but Loaded.
+  `provision_device()` stores a token only on Absent; a refusal fails
+  provisioning with nothing written.
+- **Rule:** when one stored secret's load is fixed, read every other load
+  beside it for the same shape; a lesson applied to the key and not to the
+  token is the same bug one function down. A load that discards its count
+  cannot refuse, however careful its other checks are (`tls_load_from_nvs()`
+  discards both of its counts: sweep F404, open).
+- **Regression check:** `projects/canary-wap/tests_host/test_wap_hmac_fail.cpp`
+  runs the sketch's own `nvs_load_token()`, `nvs_store_token()` and
+  `provision_device()`, cut verbatim, over the first-boot fake NVS, whose
+  `Read::Copies` mode copies the stored bytes and answers 0 as IDF does before
+  its CRC check refuses, with and without a flipped bit; the count check alone
+  must refuse both.
+- **Date learned:** 2026-11
+
+### A hash helper that returns void cannot refuse, and a refused hash must stay off every surface that reads it (canary-wap, F364)
+- **What happened:** `canary_wap.ino`'s `sha256_raw()` and `sha256_domain()`
+  returned `void` and checked none of mbedTLS's `_starts()`, `_update()` and
+  `_finish()` answers. On the ESP32-S3 and C3 an update past the DMA
+  threshold can fail (the shared crypto DMA channel not claimed, or no
+  internal copy of a buffer that is not DMA-capable), and `_finish()` still
+  writes all 32 bytes of a digest that skipped those blocks: a wrong hash,
+  under the key fingerprint, the genesis head, the chain link, a record's
+  payload hash and the TLS certificate's pin. F359 had already fixed the HMAC
+  helper beside them.
+- **Root cause:** a helper with no return value gives its callers nothing to
+  refuse on, so none of the five did. And a refusal added only where the hash
+  is made leaves the zeroed value reaching every other reader: the review
+  found BLE discovery, the boot's `[OK] Boot attestation` line, `loop()`'s
+  table rows and the 60 s self-verify still reading the zeroed fingerprint
+  and head.
+- **Fix:** both helpers are `[[nodiscard]] bool`, check every step, free the
+  context on every path and zero the output on a failure. Each caller refuses
+  what its hash was for: provisioning fails, no link or record is made, the
+  certificate stays unpinned and HTTPS off. A refused fingerprint or genesis
+  head (`g_device.chain_refused`) keeps BLE discovery off the air and the
+  zeroed record off the boot's lines, table rows and self-verify, and a
+  generated certificate is hashed before it is stored.
+- **Rule:** wrap a primitive that can fail in a helper that says so, then
+  follow each refusal to every reader of what the helper would have produced,
+  not only the caller that sees it first. `[[nodiscard]]` is a warning on the
+  device, not a guard; the host suite is the guard. A stand-in for a failing
+  library step must let the later steps run: mbedTLS does not promise that a
+  step after a failed one fails, and a stand-in that fails everything after
+  the first fault hides a caller that checks only `_finish()`.
+- **Regression check:** `projects/canary-wap/tests_host/test_wap_sha_fail.cpp`
+  runs the helpers and their five callers, cut verbatim from the sketch, over
+  an mbedTLS stand-in that fails one named step once, and holds every caller
+  to writing nothing downstream (1280 checks). The module files that hash the
+  same way are F364's next slice (open), and two connection-bound reads that
+  still report a refused boot's identity are F403.
+- **Date learned:** 2026-11
 
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only
@@ -1433,6 +1525,66 @@
   reading through it. A new handler that takes a body loops to
   `content_len` or calls `read_all()`; it never parses after one call.
 - **Date learned:** 2026-09
+
+### A query value read into a buffer sized for its decoded form is cut before it is decoded (canary-wap, F304)
+- **What happened:** `GET /api/fleet/qr` read `ssid` and `pass` with
+  `httpd_query_key_value()` into 33- and 65-byte buffers, the sizes of the
+  decoded values, and percent-decoded them after. Encoded, one byte can take
+  three characters, so a 22-symbol password or a 63-character passphrase was
+  cut before it was decoded and drawn into the pairing QR short, and the
+  answer for `pass` was never checked. A network name whose encoded form
+  passed 32 characters was answered "ssid is required", and a legal 299-byte
+  query "Missing query parameters".
+- **Root cause:** IDF's query reader copies what fits and says so with
+  `ESP_ERR_HTTPD_RESULT_TRUNC`. A caller that sizes the buffer for the value
+  it will keep, and does not read that answer, takes a cut value for a whole
+  one.
+- **Fix:** `fleet_qr_query.h`, which the handler and a host test share, sizes
+  the query from `httpd_req_get_url_query_len()` (bounded) and each value for
+  its encoded form, checks every answer, and refuses a cut or unreadable
+  value with a 400 that names the field. The byte limits apply after
+  decoding (the network name's after it is read back to the home network,
+  F262).
+- **Rule:** size a buffer for the form the bytes arrive in, not the form you
+  will keep, and read a truncation answer as a refusal. And before scoping a
+  fix's page out, check that the page shows what the route now says: the
+  Fleet sheet shows its own fixed hint for every one of these 400s (F401,
+  open).
+- **Regression check:** `projects/canary-wap/tests_host/test_fleet_qr_query.cpp`
+  (1431 checks) runs the shared reader over the tests_host
+  `esp_http_server.h` stand-in.
+- **Date learned:** 2026-11
+
+### A JSON sanitizer must replace every byte JSON gives meaning to, and keep UTF-8 well-formed (canary-wap, F301, F302)
+- **What happened:** the CSI chokepoint's `sanitize_string_field()` turned
+  every byte outside 0x20 to 0x7E into `?`, but kept `"` and `\`, so a quote
+  in a row's label reached the card line, the MQTT `events` body and the
+  REST row as text that is not JSON, and the next load refused it, or worse,
+  read a key the row never had (sweep F301). Bluetooth names, which another
+  radio chooses, reached three answers with their control bytes raw (F302);
+  the item proposed `wap_json::replaced_text()`, which would have kept
+  ill-formed UTF-8.
+- **Root cause:** "printable" is not "safe for this format". A sanitizer has
+  to be written against the grammar it feeds: for JSON that is the quote, the
+  backslash and the bytes JSON forbids raw, and for a strict reader,
+  well-formed UTF-8.
+- **Fix:** the chokepoint also replaces `"`, `\` and `{` in both trees, and
+  the card reader refuses a string whose closing quote is not followed by `,`
+  or `}`, and a line that repeats a key. Every Bluetooth name goes through
+  `wap_json::shown_text()`, which writes ill-formed UTF-8 and the forbidden
+  control bytes as U+FFFD, and rule J10 in `check_wap_json_answers.py` holds
+  the writes in place (173 self-test mutations; its docstring lists what it
+  cannot see).
+- **Rule:** a fix to how text is written must also decide what the reader
+  does with text an older writer left; F301's reader refuses what an old
+  quote could forge and loads the rest cut at the quote, pinned so the
+  comments cannot claim more. Radio-carried text the rule does not reach yet
+  is F405 to F408 (open).
+- **Regression check:** `firmware/common/csi/csi_event_invariants_test.cpp`,
+  the event-log load and backfill tests, the Bluetooth answer test in
+  `test_bluetooth_commands_wap.cpp` and `test_wap_json_writer.cpp`; each
+  fails on the code before.
+- **Date learned:** 2026-11
 
 ---
 
@@ -3216,6 +3368,35 @@
   (`assert_only_member_heartbeats`), not deleted.
 - **Date learned:** 2026-10
 
+### A relay carries what its origin signed, and a message any key can send must not do what only one key may (canary-wap Chirp, F305, F306, F311)
+- **What happened:** three Chirp rules in `chirp_channel.cpp` did not do what
+  the spec said. A relay set `ttl_minutes` to 15 under a signature that
+  covered the value the origin sent, so a chirp sent with any other TTL
+  failed its origin signature one hop on (sweep F306). One neighbor's signed
+  RESOLVED ACK, which no firmware path sends, set `dismissed` and took any
+  chirp off a receiver at the next prune, where community suppression needs
+  more than half the nearby rows (F305). And an ACK counted from any key with
+  a nearby row, though spec §3.4 asks for ten minutes of presence (F311).
+- **Root cause:** each one read a field or a message as the owner's when any
+  key, or any relay, could set it. A relay that rewrites a signed byte breaks
+  the signature it forwards, and a message type with no sender rule is a
+  message type every key may send.
+- **Fix:** the relay carries the received TTL in a padding byte (the row
+  stays 964 B); only a CONFIRMED ACK counts, and a dismissed row takes none;
+  an ACK counts only once its key's row is ten minutes old
+  (`NearbyDevice::first_seen_ms`, wrap-safe).
+- **Rule:** say what a rule buys. Presence beacons are unsigned (F232), so
+  one radio runs the ten minutes for many keys at once: the wait delays a
+  Sybil and does not price one, and suppress votes still need no presence
+  (F234). The spec and `docs/FLEET_SEMANTICS.md` now say both, and two
+  documents that still read as a per-identity cost are D16 (open).
+- **Regression check:** `test_chirp_security.cpp`
+  (`c4_a_relay_keeps_the_signed_ttl`, the three `c13_` presence cases),
+  `test_chirp_suppress_wap.cpp` and `test_chirp_commands_wap.cpp`, on the
+  real `chirp_channel.cpp`; each fails on the code before. Spec §12.3 is
+  static_asserted row by row and pinned by `test_chirp_spec_tables.py`.
+- **Date learned:** 2026-11
+
 ### A pin on the order of a step is not a test of the step
 - **What happened:** canary-wap's `mesh_network.cpp` re-pointed a mesh
   member's radio address, and its ESP-NOW registration, at the source of
@@ -3711,6 +3892,17 @@
   fifth-review note on F345 named it. Before deciding a route's gate,
   search the ledger and the docs for the route as a remedy, not only as an
   attack.
+- **The flagship, later (sweep F354, 2026-11):** the flagship's receipt
+  and its home-LAN page load both handed out the token on a tap, through two
+  paths, so an arbiter on the receipt alone would have left the page load
+  going to the first asker. Both now take the tap through
+  `provisioning_gate_take()` (peek, `tap_arbitrate()`, `take_exact()`), and a
+  shape rule in `check_route_security.py` holds every consumer to that step.
+  A gate with two consumers is arbitrated in the one step both take. And a
+  refusal's words copied from one device to another are checked clause by
+  clause on the device that will say them: the WAP's `409` hint ends "or read
+  the token from the USB serial console", and the flagship's console never
+  prints the token, so its hint drops that clause (F410).
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)
