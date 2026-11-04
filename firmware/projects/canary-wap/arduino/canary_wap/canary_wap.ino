@@ -2347,9 +2347,12 @@ static KeyLoad tls_load_from_nvs() {
 }
 
 // True only when BOTH entries landed (F59): a certificate stored without
-// its key (or the reverse) is refused by the next boot's tls_load_from_nvs()
-// (F404), which makes nothing over it; before F404 it handed mbedTLS what
-// the read left.
+// its key (or the reverse: a put that failed, or power lost between the two)
+// is refused by every later boot's tls_load_from_nvs() (F404), which makes
+// nothing over it, so HTTPS stays off until a full flash erase (see
+// init_tls_cert()). Before F404 any refused load went on to store a new
+// pair, so a key put that failed could leave the new certificate beside an
+// older key, a mismatched pair the next boot loaded.
 static bool tls_store_to_nvs() {
   if (!g_tls_cert_der || !g_tls_key_der) return false;
   NvsMainSession nvs(false);
@@ -2525,9 +2528,14 @@ static bool init_tls_cert() {
   // (one is, or may be, stored and was not read whole) leaves HTTPS off this
   // boot and makes and stores nothing over it, since phones may hold its pin;
   // only Absent goes on to make one. A read refused on a corrupt entry has
-  // had IDF erase that entry in the same read, so the next boot reads Absent
-  // and makes a new certificate whose pin is not the one phones hold; that
-  // cannot be avoided.
+  // IDF erase that entry, and only that one: its partner stays, so every
+  // later boot refuses what is left and HTTPS stays off until a full flash
+  // erase (the factory reset keeps both entries). Only when both entries were
+  // corrupt does a later boot read Absent and make a new certificate, whose
+  // pin is not the one phones hold. Whether a lone entry should be refused
+  // (its partner's lookup may have missed for this boot only) or replaced
+  // (no certificate can be served under the old pin again) is not decided
+  // here; tests_host/test_wap_first_boot_nvs.cpp pins today's answer.
   const KeyLoad stored = tls_load_from_nvs();
   if (stored == KeyLoad::Loaded) {
     g_tls_cert_persisted = true;

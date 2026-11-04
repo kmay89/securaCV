@@ -846,7 +846,8 @@
   beside it for the same shape; a lesson applied to the key and not to the
   token is the same bug one function down. A load that discards its count
   cannot refuse, however careful its other checks are (`tls_load_from_nvs()`
-  discards both of its counts: sweep F404, open).
+  discarded both of its counts until sweep F404 made it answer Loaded, Absent
+  or Refused the same way).
 - **Regression check:** `projects/canary-wap/tests_host/test_wap_hmac_fail.cpp`
   runs the sketch's own `nvs_load_token()`, `nvs_store_token()` and
   `provision_device()`, cut verbatim, over the first-boot fake NVS, whose

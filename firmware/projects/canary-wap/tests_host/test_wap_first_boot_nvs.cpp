@@ -83,6 +83,8 @@
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run
 
+#include <dirent.h>
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -947,9 +949,8 @@ static int test_a_loaded_certificate_whose_pin_fails_is_zeroed() {
 
 // A read fault that leaves the entries in place: the next boot that reads
 // them whole serves the same certificate under the same pin, since the
-// refusal stored nothing. (A corrupt entry is another case: IDF erases it in
-// the refused read, which this fake does not model, and the next boot reads
-// Absent.)
+// refusal stored nothing. (A corrupt entry is another case, the next test's:
+// IDF erases it, and only it.)
 static int test_a_refused_certificate_is_kept_for_the_next_boot() {
   tls_unit(true, true);
   host_nvs().read = HostFirstBootNvs::Read::Fails;
@@ -959,6 +960,65 @@ static int test_a_refused_certificate_is_kept_for_the_next_boot() {
   CHECK(g_certgens == g_tls_gens_before);
   CHECK(g_tls_cert_fp_hex == pin_of(std::vector<uint8_t>(kCertLen, 0x43)));
   CHECK(printed("[TLS] Loaded certificate from NVS\n"));
+  host_release(g_tls_cert_der);
+  host_release(g_tls_key_der);
+  g_tls_cert_der_len = g_tls_key_der_len = 0;
+  return check_idle();
+}
+
+// A corrupt entry, as IDF answers one (erase_refused: the read copies, the
+// data CRC check refuses, and IDF erases that entry, only that one). One
+// entry corrupt leaves its partner, so the boot that met it is refused and
+// so is every later boot, which reads half a pair: nothing is made or
+// stored, and HTTPS stays off until a full flash erase (the factory reset
+// keeps both entries). Both corrupt: a later boot reads Absent and makes a
+// new certificate, whose pin is not the old one. Today's answer, pinned
+// while what a lone entry should get is undecided (F404's review): refused,
+// in case its partner's lookup missed for one boot only, or replaced, since
+// no certificate can be served under the old pin again.
+static int test_a_corrupt_entry_leaves_its_partner_and_https_off() {
+  using R = HostFirstBootNvs::Read;
+  const std::vector<uint8_t> cert(kCertLen, 0x43);
+  const std::vector<uint8_t> key(kKeyLen, 0x4B);
+  for (const char* which : {"tls_cert", "tls_key"}) {
+    const bool cert_hit = std::strcmp(which, "tls_cert") == 0;
+    tls_unit(true, true);
+    host_nvs().read = R::Copies;
+    host_nvs().read_key = which;
+    host_nvs().erase_refused = true;
+    const bool met = tls_boot();
+    host_nvs().read = R::Ok;
+    host_nvs().read_key.clear();
+    host_nvs().erase_refused = false;
+    CHECK(!met && host_nvs().puts == g_tls_puts_before && g_certgens == g_tls_gens_before);
+    CHECK(printed(cert_hit ? "(0 of 700 and 200 of 200 bytes)" : "(700 of 700 and 0 of 200 bytes)"));
+    CHECK(host_nvs().rows.count("securacv/tls_cert") == (cert_hit ? 0u : 1u));
+    CHECK(host_nvs().rows.count("securacv/tls_key") == (cert_hit ? 1u : 0u));
+    CHECK(cert_hit ? host_nvs().rows["securacv/tls_key"].bytes == key
+                   : host_nvs().rows["securacv/tls_cert"].bytes == cert);
+    for (int later = 0; later < 2; later++) {
+      const HostFirstBootNvs before = host_nvs();
+      const bool known = tls_boot();
+      CHECK(check_tls_refused(known, before,
+                              cert_hit ? "[TLS] Certificate not loaded: the key is stored without the certificate\n"
+                                       : "[TLS] Certificate not loaded: the certificate is stored without the key\n") ==
+            0);
+    }
+  }
+  tls_unit(true, true);
+  host_nvs().read = R::Copies;
+  host_nvs().erase_refused = true;
+  const bool met = tls_boot();
+  host_nvs().read = R::Ok;
+  host_nvs().erase_refused = false;
+  CHECK(!met && host_nvs().puts == g_tls_puts_before);
+  CHECK(host_nvs().rows.count("securacv/tls_cert") == 0 && host_nvs().rows.count("securacv/tls_key") == 0);
+  CHECK(tls_boot());
+  CHECK(g_certgens == g_tls_gens_before + 1);
+  CHECK(host_nvs().rows["securacv/tls_cert"].bytes == std::vector<uint8_t>(kGenCertLen, 0x61));
+  CHECK(g_tls_cert_persisted);
+  CHECK(g_tls_cert_fp_hex == pin_of(std::vector<uint8_t>(kGenCertLen, 0x61)));
+  CHECK(g_tls_cert_fp_hex != pin_of(cert));
   host_release(g_tls_cert_der);
   host_release(g_tls_key_der);
   g_tls_cert_der_len = g_tls_key_der_len = 0;
@@ -1193,11 +1253,34 @@ static int test_a_refused_key_halts_the_boot() {
 // Nothing else stores a certificate (F404): the one store is
 // init_tls_cert()'s, after the refusal's return and the generator; the one
 // load is init_tls_cert()'s, and setup() calls that once; only the load and
-// the store name the two NVS entries.
+// the store name the two NVS entries, and no other sketch source names them
+// at all (every .ino, .h, .cpp and .c in the sketch folder is read).
 static int test_only_an_absent_certificate_is_replaced() {
   const std::string dir = WAP_SKETCH_DIR;
   const std::string ino = strip_comments(read_file(dir + "/canary_wap.ino"));
   CHECK(!ino.empty());
+  std::vector<std::string> others;
+  if (DIR* d = opendir(dir.c_str())) {
+    while (dirent* e = readdir(d)) {
+      const std::string n = e->d_name;
+      const size_t dot = n.rfind('.');
+      if (dot == std::string::npos || n == "canary_wap.ino") continue;
+      const std::string ext = n.substr(dot);
+      if (ext == ".ino" || ext == ".h" || ext == ".cpp" || ext == ".c") others.push_back(n);
+    }
+    closedir(d);
+  }
+  CHECK(others.size() > 100);
+  for (const std::string& n : others) {
+    const std::string src = strip_comments(read_file(dir + "/" + n));
+    for (const char* name : {"\"tls_cert\"", "\"tls_key\"", "NVS_KEY_TLS_CERT", "NVS_KEY_TLS_KEY",
+                             "tls_store_to_nvs(", "g_tls_cert_der", "g_tls_key_der"}) {
+      if (src.find(name) != std::string::npos) {
+        std::fprintf(stderr, "  %s names %s\n", n.c_str(), name);
+        CHECK(src.find(name) == std::string::npos);
+      }
+    }
+  }
   for (const char* fn : {"init_tls_cert(", "tls_load_from_nvs(", "tls_store_to_nvs(",
                          "tls_generate_self_signed_cert("}) {
     CHECK(count_of(ino, fn) == 2);               // its definition and its one call
@@ -1285,6 +1368,7 @@ int main() {
   rc |= test_a_certificate_read_that_falls_short_is_refused();
   rc |= test_a_loaded_certificate_whose_pin_fails_is_zeroed();
   rc |= test_a_refused_certificate_is_kept_for_the_next_boot();
+  rc |= test_a_corrupt_entry_leaves_its_partner_and_https_off();
   rc |= test_the_boot_runs_these_opens_in_this_order();
   rc |= test_a_refused_key_halts_the_boot();
   rc |= test_only_an_absent_certificate_is_replaced();
