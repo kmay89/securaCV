@@ -230,6 +230,18 @@ struct WitnessdConfigFile {
     storage_health: Option<StorageHealthConfigFile>,
 }
 
+/// What `witness_api` reads from `WITNESS_CONFIG`: the same file `witnessd` is started with, so
+/// the operator subcommands (the viewer-token mint above all) run against the kernel's own
+/// config. The keys it uses are typed exactly as `witnessd` types them (the same
+/// `ApiConfigFile`, `ZoneConfigFile` and `RetentionConfigFile`, each `deny_unknown_fields`), so
+/// a mistake in a block it reads is refused here as there. Every block only `witnessd` reads is
+/// accepted and skipped: `IgnoredAny` takes any value without looking inside it, so a
+/// misspelled key inside `[rtsp]`, or a `detect` that is not a table at all, passes here and is
+/// `witnessd`'s to refuse when it loads the same file. A top-level key neither binary knows is
+/// still refused (`deny_unknown_fields`), and the unit test
+/// `both_binaries_take_the_same_top_level_keys` holds this struct's keys to
+/// `WitnessdConfigFile`'s, so a block added there cannot make `witness_api` refuse the file
+/// again.
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct WitnessApiConfigFile {
@@ -238,6 +250,27 @@ struct WitnessApiConfigFile {
     api: Option<ApiConfigFile>,
     zones: Option<ZoneConfigFile>,
     retention: Option<RetentionConfigFile>,
+    // witnessd-only blocks: accepted so the file parses, never read.
+    #[allow(dead_code)]
+    ingest: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    rtsp: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    file: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    v4l2: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    esp32: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    detect: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    health: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    storage: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    clock: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    storage_health: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1811,5 +1844,194 @@ skew_tolerance_s = 10
         write_file(&path, &raw);
         read_config_file::<WitnessdConfigFile>(&path)
             .expect("shipped example config must parse under deny_unknown_fields");
+    }
+
+    // ── witness_api reads a witnessd file (sweep A103) ─────────────────────
+
+    /// The field names a `#[derive(Deserialize)]` struct declares: the `fields` list serde
+    /// hands `deserialize_struct`, captured by a deserializer that refuses right after, so
+    /// nothing is built.
+    fn declared_fields<T: for<'de> Deserialize<'de>>() -> &'static [&'static str] {
+        struct Capture(Option<&'static [&'static str]>);
+        impl<'de> serde::Deserializer<'de> for &mut Capture {
+            type Error = serde::de::value::Error;
+            fn deserialize_any<V: serde::de::Visitor<'de>>(
+                self,
+                _visitor: V,
+            ) -> Result<V::Value, Self::Error> {
+                Err(serde::de::Error::custom("only a struct is read"))
+            }
+            fn deserialize_struct<V: serde::de::Visitor<'de>>(
+                self,
+                _name: &'static str,
+                fields: &'static [&'static str],
+                _visitor: V,
+            ) -> Result<V::Value, Self::Error> {
+                self.0 = Some(fields);
+                Err(serde::de::Error::custom("fields captured"))
+            }
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+                byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map enum
+                identifier ignored_any
+            }
+        }
+        let mut capture = Capture(None);
+        let _ = T::deserialize(&mut capture);
+        capture.0.expect("the type deserializes as a struct")
+    }
+
+    fn parse_witness_api(toml_str: &str) -> Result<WitnessApiConfigFile> {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("witness.toml");
+        write_file(&path, toml_str);
+        read_config_file::<WitnessApiConfigFile>(&path)
+    }
+
+    /// docs/rtsp_setup.md's "Create `witness.toml`" example, read from the doc itself.
+    fn rtsp_setup_example() -> String {
+        let doc =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rtsp_setup.md"))
+                .expect("read docs/rtsp_setup.md");
+        let at = doc
+            .find("Create `witness.toml`:")
+            .expect("docs/rtsp_setup.md still says \"Create `witness.toml`:\"");
+        let open = at + doc[at..].find("```toml\n").expect("a toml block follows") + 8;
+        let close = open + doc[open..].find("```").expect("the toml block closes");
+        let example = doc[open..close].to_string();
+        assert!(
+            example.contains("[rtsp]"),
+            "the example is a witnessd file: {example}"
+        );
+        example
+    }
+
+    #[test]
+    fn witness_api_reads_the_rtsp_setup_example() {
+        let example = rtsp_setup_example();
+        parse_witnessd(&example).expect("the example is a witnessd config");
+        let file = parse_witness_api(&example).expect("witness_api must accept the same file");
+        let config = WitnessApiConfig::from_file(file).expect("witness_api config");
+        // The shared [zones] block still reaches witness_api.
+        assert_eq!(config.sensitive_zones, vec!["zone:front_door".to_string()]);
+    }
+
+    #[test]
+    fn witness_api_reads_the_full_shipped_witnessd_file() {
+        let raw =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
+                .expect("read config.example.toml");
+        let daemon = parse_witnessd(&raw).expect("the shipped example is a witnessd config");
+        // It is a full file: every witnessd-only block is in it.
+        for (name, present) in [
+            ("ingest", daemon.ingest.is_some()),
+            ("rtsp", daemon.rtsp.is_some()),
+            ("file", daemon.file.is_some()),
+            ("v4l2", daemon.v4l2.is_some()),
+            ("esp32", daemon.esp32.is_some()),
+            ("detect", daemon.detect.is_some()),
+            ("health", daemon.health.is_some()),
+            ("storage", daemon.storage.is_some()),
+            ("clock", daemon.clock.is_some()),
+            ("storage_health", daemon.storage_health.is_some()),
+        ] {
+            assert!(present, "config.example.toml has no [{name}] block");
+        }
+        let file = parse_witness_api(&raw).expect("witness_api must accept the full witnessd file");
+        let api = WitnessApiConfig::from_file(file).expect("witness_api config");
+        let daemon = WitnessdConfig::from_file(daemon).expect("witnessd config");
+        // The keys both binaries read come out the same.
+        assert_eq!(api.db_path, daemon.db_path);
+        assert_eq!(api.ruleset_id, daemon.ruleset_id);
+        assert_eq!(api.api_addr, daemon.api_addr);
+        assert_eq!(api.sensitive_zones, daemon.zones.sensitive_zones);
+        assert_eq!(api.retention, daemon.retention);
+    }
+
+    #[test]
+    fn the_shared_api_block_reaches_witness_api_from_a_witnessd_file() {
+        let file = parse_witness_api(
+            "db_path = \"/data/witness.db\"\nruleset_id = \"ruleset:v9\"\n\
+             [api]\naddr = \"0.0.0.0:8799\"\ntoken_path = \"/data/api_token\"\n\
+             viewer_token_path = \"/secrets/viewers.json\"\n\
+             paired_token_path = \"/secrets/paired.json\"\n\
+             pairing_code_path = \"/secrets/code\"\nrate_limit_per_minute = 30\n\
+             [rtsp]\nurl = \"rtsp://camera/stream\"\nwidth = 640\nheight = 480\n\
+             [detect]\nbackend = \"tract\"\ntract_model = \"/models/x.onnx\"\n\
+             [retention]\nseconds = 3600\n",
+        )
+        .expect("a witnessd file with a full [api] block");
+        let config = WitnessApiConfig::from_file(file).expect("witness_api config");
+        assert_eq!(config.db_path, "/data/witness.db");
+        assert_eq!(config.ruleset_id, "ruleset:v9");
+        assert_eq!(config.api_addr, "0.0.0.0:8799");
+        assert_eq!(
+            config.api_token_path,
+            Some(PathBuf::from("/data/api_token"))
+        );
+        assert_eq!(
+            config.api_viewer_token_path,
+            Some(PathBuf::from("/secrets/viewers.json"))
+        );
+        assert_eq!(config.api_rate_limit_per_minute, 30);
+        let pairing = config.api_access.pairing_paths().expect("pairing paths");
+        assert_eq!(pairing.tokens_path, PathBuf::from("/secrets/paired.json"));
+        assert_eq!(pairing.code_path, PathBuf::from("/secrets/code"));
+        assert_eq!(config.retention, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn witness_api_still_refuses_a_key_neither_binary_knows() {
+        // A misspelled top-level key, and one inside the [api] block witness_api reads.
+        for (bad, key) in [
+            (
+                "db_pth = \"witness.db\"\n[rtsp]\nurl = \"rtsp://c/s\"\n",
+                "db_pth",
+            ),
+            (
+                "[rtsp]\nurl = \"rtsp://c/s\"\n[api]\ntoken_pth = \"/data/t\"\n",
+                "token_pth",
+            ),
+            ("[zones]\nsensitve = [\"zone:a\"]\n", "sensitve"),
+            ("[retention]\nsecond = 60\n", "second"),
+        ] {
+            let err = parse_witness_api(bad).expect_err("an unknown key must fail witness_api");
+            assert!(err.to_string().contains(key), "{key}: {err}");
+            let err = parse_witnessd(bad).expect_err("and witnessd");
+            assert!(err.to_string().contains(key), "{key}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_mistake_inside_a_witnessd_only_block_is_witnessds_to_refuse() {
+        // IgnoredAny takes any value without looking inside it: a misspelled key inside
+        // [rtsp], or a detect that is not a table, passes witness_api, which reads neither,
+        // and witnessd, which reads both, refuses the same file.
+        for (bad, what) in [
+            ("[rtsp]\nurll = \"rtsp://c/s\"\n", "urll"),
+            ("detect = 5\n", "detect"),
+            ("[[storage]]\nmin_free_mb = 1\n", "storage"),
+        ] {
+            parse_witness_api(bad)
+                .unwrap_or_else(|e| panic!("witness_api skips {what}, but refused it: {e}"));
+            let err = parse_witnessd(bad).expect_err("witnessd refuses it");
+            assert!(err.to_string().contains(what), "{what}: {err}");
+        }
+    }
+
+    #[test]
+    fn both_binaries_take_the_same_top_level_keys() {
+        let mut daemon = declared_fields::<WitnessdConfigFile>().to_vec();
+        let mut api = declared_fields::<WitnessApiConfigFile>().to_vec();
+        daemon.sort_unstable();
+        api.sort_unstable();
+        assert_eq!(
+            api, daemon,
+            "WitnessApiConfigFile must accept every top-level key WitnessdConfigFile does (as \
+             IgnoredAny when witness_api does not read it) and no other, or witness_api refuses \
+             the kernel's own config file"
+        );
+        // The capture reads real field lists, not an empty one.
+        assert!(daemon.contains(&"rtsp") && daemon.contains(&"api"));
     }
 }

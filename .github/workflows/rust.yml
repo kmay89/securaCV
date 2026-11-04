@@ -24,6 +24,9 @@ on:
       # The attention engine's conformance vectors, replayed by the
       # alert-relay lane's src/relay/attention.rs tests.
       - 'spec/fixtures/attention_v1.json'
+      # src/config.rs's tests parse the rtsp guide's witnessd example: witness_api
+      # must read the file the kernel is started with (sweep A103).
+      - 'docs/rtsp_setup.md'
       - '.github/workflows/rust.yml'
   pull_request:
     branches: [ "main" ]
@@ -45,6 +48,9 @@ on:
       # The attention engine's conformance vectors, replayed by the
       # alert-relay lane's src/relay/attention.rs tests.
       - 'spec/fixtures/attention_v1.json'
+      # src/config.rs's tests parse the rtsp guide's witnessd example: witness_api
+      # must read the file the kernel is started with (sweep A103).
+      - 'docs/rtsp_setup.md'
       - '.github/workflows/rust.yml'
 
 env:

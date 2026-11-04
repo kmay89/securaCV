@@ -2016,8 +2016,18 @@ witness_api mint-viewer-token --label "living room tv" --base-url http://192.168
 witness_api revoke-viewer-token <token_id>
 ```
 
+That is the host form. In the kernel's root image it is the same binary
+inside the container, `docker exec <container> witness_api mint-viewer-token --label "living room tv"`,
+walked step by step in
+[container.md](container.md#mint-a-witness-wall-viewer-token); the Docker
+sidecar wraps it as
+`docker exec securacv entrypoint.sh mint-viewer-token --label "living room tv"`
+(see [frigate_integration.md](frigate_integration.md)).
+
 The command runs with the same `WITNESS_CONFIG` and `DEVICE_KEY_SEED` as
-the serving kernel. Its stdout is one JSON line, the pairing receipt, and
+the serving kernel; a config file written for `witnessd` is read for the
+keys the two share, and its `[rtsp]`, `[detect]` and other daemon-only
+blocks are skipped. Its stdout is one JSON line, the pairing receipt, and
 the only copy of the token that will ever exist: the kernel keeps its
 sha256 in the viewer-token file — `api.viewer_token_path` /
 `WITNESS_API_VIEWER_TOKEN_PATH`, defaulting to `viewer_tokens.json` beside
@@ -2025,10 +2035,10 @@ sha256 in the viewer-token file — `api.viewer_token_path` /
 or a revoke takes effect without a restart. The receipt carries the
 kernel's current verifying key, which the Wall pins at pairing: its
 "Verified" then means Ed25519 signatures checked against that pinned key,
-not whatever key the hub serves today. The Docker sidecar wraps both
-commands (`docker exec securacv entrypoint.sh mint-viewer-token …`,
-see [frigate_integration.md](frigate_integration.md)); the Home Assistant
-app reads the file but has no control that mints one yet.
+not whatever key the hub serves today. The sidecar wraps the revoke the
+same way (`docker exec securacv entrypoint.sh revoke-viewer-token <token_id>`);
+the Home Assistant app reads the file but has no control that mints one
+yet.
 
 ### Endpoints
 

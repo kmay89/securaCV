@@ -77,6 +77,13 @@ and the restart of the unit name the install copies to. Without that, the
 "No restart" paragraph sends the owner of an older copy back to a step
 that tells them to skip it.
 
+docs/homeassistant_setup.md's "Viewer tokens (Witness Wall)" section, the
+kernel's own reference for the credential, gave the host form and the
+sidecar's (without its `--label`) but not the root image's (sweep A103,
+after A118 left the section to it). It must give all three, the root form
+under docs/container.md's `<container>` placeholder, and link that page's
+mint walk.
+
 A receipt pasted "into the Wall's settings" names no section a reader can
 find (docs/tvos/README.md and the fast path said so; sweep A118's review).
 No sentence in docs/ or tvos/ may paste into the Wall's settings without
@@ -120,6 +127,10 @@ MINT_POINTERS = (
 
 # docs/container.md's mint section, which every pointer may link instead.
 MINT_HEADING = "### Mint a Witness Wall viewer token"
+
+# The kernel's reference section for the viewer token (sweep A103).
+HA_SETUP = REPO / "docs/homeassistant_setup.md"
+HA_VIEWER_HEADING = "### Viewer tokens (Witness Wall)"
 
 # Names the Wall's pairing section has had or could be given. Any
 # "Settings → <one of these>" in docs/ or tvos/ must be the live header.
@@ -729,6 +740,27 @@ class ShortPointersReachTheRootImage(unittest.TestCase):
         # The same href read from another directory lands elsewhere.
         self.assertEqual(links_to(REPO / "tvos/discovery/DISCOVERY.md", para, CONTAINER_DOC), [])
         self.assertEqual(heading_anchor(MINT_HEADING), "mint-a-witness-wall-viewer-token")
+
+
+class KernelReferenceGivesEveryMintForm(unittest.TestCase):
+    def setUp(self) -> None:
+        self.section = doc_section(HA_SETUP.read_text(encoding="utf-8"), HA_VIEWER_HEADING)
+
+    def test_section_gives_the_three_forms(self) -> None:
+        forms = mint_forms(self.section)
+        for kind in ("host", "root", "sidecar"):
+            self.assertTrue(forms[kind], f"{HA_VIEWER_HEADING} gives no {kind} form: {norm(self.section)}")
+        self.assertEqual(forms["root"], ["<container>"], "docs/container.md's placeholder")
+
+    def test_section_links_the_root_images_mint_walk(self) -> None:
+        self.assertIn(heading_anchor(MINT_HEADING), links_to(HA_SETUP, self.section, CONTAINER_DOC),
+                      f"{HA_VIEWER_HEADING} links docs/container.md#{heading_anchor(MINT_HEADING)}")
+
+    def test_section_reader_stops_at_the_next_heading(self) -> None:
+        # The section is read to the next heading, so a form that moved out of it does not count.
+        self.assertTrue(self.section.startswith(HA_VIEWER_HEADING))
+        self.assertNotIn("\n### ", self.section[len(HA_VIEWER_HEADING):])
+        self.assertIn("mint-viewer-token", self.section)
 
 
 class SettingsPointersNameTheLiveSection(unittest.TestCase):
