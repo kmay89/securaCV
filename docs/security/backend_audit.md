@@ -9,7 +9,8 @@ It answers the "Backend audit trail" box of
 [`firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`](../../firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md)
 (section 5, sweep item F34, #1802).
 
-Read at the tree of #1802 (2026-10-13; the native-code reading 2026-10-14). The rows are a source reading, not a
+Read at the tree of #1802 (2026-10-13; the native-code reading 2026-10-14; the `tract.rs` row's
+load-time pin and its `Cargo.lock` versions 2026-11-04, sweep A102). The rows are a source reading, not a
 penetration test and not a bench run: nothing here was executed against a
 camera, and the `tract-onnx` crate tree was read from `Cargo.lock`, not from
 its source (the kernel's crates are not in any offline cache where this was
@@ -88,7 +89,7 @@ closed.
 | `src/detect/backends/cpu.rs` | `CpuBackend`, registry name `cpu`: the CPU-capability entry, motion only. Registered by `witnessd` and the demo in every build. | none (default build) | `anyhow` (required) | none in the file; it calls `motion.rs` | none: the frame is hashed in memory and dropped | Motion presence only, from `FrameHashMotion` (see `motion.rs`): reports no objects, `supports()` answers only `Motion`. `witnessd` logs at startup that this backend is motion-only. |
 | `src/detect/backends/motion.rs` | `FrameHashMotion`, the shared engine behind `cpu` and `stub` (a private module, not a registry entry). | none (default build) | `sha2`, `anyhow` (both required) | none in the file | none: keeps the previous frame's 32-byte SHA-256 and nothing else | "Motion" is "this frame's bytes differ from the last frame's": any changed pixel, including sensor noise, reads as motion (confidence 0.85, size class Large). No pixels are retained, so nothing image-like outlives the call; the exported state is the 32-byte hash, and an import of any other length is refused. |
 | `src/detect/backends/stub.rs` | `StubBackend`, registry name `stub`: the test placeholder, same engine as `cpu`. | none (default build) | `anyhow` (required) | none in the file; it calls `motion.rs` | none | Identical behavior to `cpu` by construction (one shared engine, so the two cannot drift); kept as a separate registry entry for tests and module descriptors that name it. |
-| `src/detect/backends/tract.rs` | `TractBackend`, registry name `tract`: ONNX object detection on the host (`witnessd` on a Pi or x86 machine, never the ESP32). Selected by `detect.backend = "tract"`. | `backend-tract` (also enabled by `detect-eval`) | `tract-onnx` 0.23.8 (optional), `anyhow` (required) | through `tract-onnx`: `tract-linalg` 0.23.8 lists `cc` among its dependencies in `Cargo.lock`, the crate a build script uses to compile C or assembly, so treat it as carrying native kernels (its source was not read here) | reads one local model file when constructed (`model_for_path`); per frame, in-memory tensors only; no network and no disk writes in the file | Off unless built with the feature. Frames are size-checked before use (dimension product overflow refused, byte count must match), the confidence threshold must be in 0..=1, and a model whose output has an unexpected shape is an error, not a guess. The model is the one `scripts/fetch_detection_model.sh` downloads and checks against a pinned SHA-256, once, at fetch time: the backend does not re-hash the file when it loads it, so a model swapped on disk after the fetch is loaded as given. Built and tested by `rust.yml` (clippy and tests with `--features backend-tract`) and `detect-eval.yml`. |
+| `src/detect/backends/tract.rs` | `TractBackend`, registry name `tract`: ONNX object detection on the host (`witnessd` on a Pi or x86 machine, never the ESP32). Selected by `detect.backend = "tract"`. | `backend-tract` (also enabled by `detect-eval`) | `tract-onnx` 0.23.9 (optional), `anyhow` (required) | through `tract-onnx`: `tract-linalg` 0.23.9 lists `cc` among its dependencies in `Cargo.lock`, the crate a build script uses to compile C or assembly, so treat it as carrying native kernels (its source was not read here) | reads one local model when constructed: from a path (`model_for_path`), or from bytes already read (`model_for_read`, which opens nothing); per frame, in-memory tensors only; no network and no disk writes in the file | Off unless built with the feature. Frames are size-checked before use (dimension product overflow refused, byte count must match), the confidence threshold must be in 0..=1, and a model whose output has an unexpected shape is an error, not a guess. The default model is the one `scripts/fetch_detection_model.sh` downloads and checks against a pinned SHA-256, and `witnessd` checks it again at every start: when neither `detect.tract_model` nor `WITNESS_TRACT_MODEL` names a model, it reads `vendor/models/tinyyolov2-8.onnx` once, refuses it unless those bytes hash to the same pin (`DEFAULT_TRACT_MODEL_SHA256` in `src/config.rs`, held equal to the script's by a unit test), and builds the backend from the bytes it hashed, never opening the path a second time, so a file swapped after the check is not what runs. A model the operator names is loaded as given, by path, and its SHA-256 is logged at startup with whether it matches the pin. That is the boundary: the check catches a default model file replaced or corrupted on disk after the fetch; it does not stop an account that can edit the config (which can name any model) or the binary (which can change the pin). Built and tested by `rust.yml` (clippy and tests with `--features backend-tract`) and `detect-eval.yml`. |
 
 ## What this does not cover
 
@@ -96,9 +97,10 @@ closed.
   `prost`, `memmap2` and the rest): their versions are pinned by `Cargo.lock`
   and they go through `cargo audit` in CI, but nobody has read their source
   for this table.
-- Model provenance past the fetch script's hash: which training data, what
-  the classes mean for a privacy witness, and whether a load-time hash check
-  belongs in `witnessd` are open questions, not answered here.
+- Model provenance past the fetch script's hash: which training data and
+  what the classes mean for a privacy witness are open questions, not
+  answered here. (The load-time hash check is answered: `witnessd` holds the
+  default model to the fetch script's pin, as the `tract.rs` row says.)
 - The detection modules outside this directory (`src/detect/yolo.rs`'s decode
   and NMS, the backend registry, the module runtime's capability checks): they
   are shared by every backend and belong to the kernel's own review, not to

@@ -25,6 +25,8 @@ fn clear_env() {
         "WITNESS_API_PAIRING_CODE_PATH",
         "WITNESS_API_PAIRING_TTL_SECS",
         "WITNESS_API_FLEET_ROLLCALL",
+        "WITNESS_DETECT_BACKEND",
+        "WITNESS_TRACT_MODEL",
     ] {
         std::env::remove_var(key);
     }
@@ -97,6 +99,64 @@ fn api_access_env_round_trips_and_defaults_beside_the_token() {
     std::env::set_var("WITNESS_API_PAIRING_TTL_SECS", "0");
     let err = WitnessdConfig::load().expect_err("zero ttl");
     assert!(err.to_string().contains("pairing_ttl_secs"), "got: {err}");
+
+    clear_env();
+}
+
+#[test]
+fn tract_model_env_names_a_model_and_an_empty_one_names_none() {
+    // Which tract model witnessd holds to the pin (sweep A102): the default, whenever neither
+    // detect.tract_model nor WITNESS_TRACT_MODEL names a model.
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_env();
+    std::env::set_var("WITNESS_RTSP_URL", "rtsp://camera-1");
+    std::env::set_var("WITNESS_DETECT_BACKEND", "tract");
+    let dir = tempfile::tempdir().expect("temp dir");
+    let default = dir.path().join("tinyyolov2-8.onnx");
+    std::fs::write(&default, b"the pinned model").expect("write");
+    let pin = {
+        use sha2::Digest;
+        hex::encode(sha2::Sha256::digest(b"the pinned model"))
+    };
+
+    // Unset, empty and blank all name nothing: the default, pinned.
+    for value in [None, Some(""), Some("   ")] {
+        match value {
+            None => std::env::remove_var("WITNESS_TRACT_MODEL"),
+            Some(v) => std::env::set_var("WITNESS_TRACT_MODEL", v),
+        }
+        let cfg = WitnessdConfig::load().expect("load config");
+        assert!(cfg.detect.tract_model.is_none(), "{value:?}");
+        let model = cfg
+            .detect
+            .tract_model_file_with_default(&default, &pin)
+            .expect("the pinned default");
+        assert!(model.pinned_bytes().is_some(), "{value:?}");
+    }
+
+    // Naming the default path itself configures it: loaded as given, by path, and the
+    // startup line says it matches.
+    std::env::set_var("WITNESS_TRACT_MODEL", &default);
+    let cfg = WitnessdConfig::load().expect("load config");
+    assert_eq!(cfg.detect.tract_model.as_deref(), Some(default.as_path()));
+    let model = cfg
+        .detect
+        .tract_model_file_with_default(&default, &pin)
+        .expect("configured");
+    assert!(model.pinned_bytes().is_none());
+    assert!(model.matches_pin());
+
+    // An explicitly empty detect.tract_model is refused at load, not read as "unset".
+    std::env::remove_var("WITNESS_TRACT_MODEL");
+    let mut file = NamedTempFile::new().expect("temp config");
+    std::io::Write::write_all(
+        &mut file,
+        br#"{"detect": {"backend": "tract", "tract_model": ""}}"#,
+    )
+    .expect("write config");
+    std::env::set_var("WITNESS_CONFIG", file.path());
+    let err = WitnessdConfig::load().expect_err("an empty model path");
+    assert!(err.to_string().contains("must not be empty"), "got: {err}");
 
     clear_env();
 }

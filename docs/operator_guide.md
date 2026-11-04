@@ -394,6 +394,18 @@ Build with the feature and run: `cargo run --release --features backend-tract --
 If `backend=tract` but no model is found at the resolved path, witnessd fails fast with a clear
 load error naming the expected file.
 
+**The default model is checked at every start.** When neither `detect.tract_model` nor
+`WITNESS_TRACT_MODEL` names a model (an empty `WITNESS_TRACT_MODEL` names none), witnessd reads
+`vendor/models/tinyyolov2-8.onnx` once, hashes it, and refuses to start unless it matches the
+SHA-256 the fetch script pins; the backend is then built from the bytes it hashed, so the file
+is not opened a second time. A refusal names the file, both hashes and the two ways out: run
+`bash scripts/fetch_detection_model.sh` again to restore the verified model, or name a model of
+your own. A model you name (in `detect.tract_model` or `WITNESS_TRACT_MODEL`, including the
+default path itself) is your choice: it loads as given, and witnessd logs its path, its SHA-256
+and whether it matches the pin at startup. What this guards: a default model file replaced or
+corrupted on disk after you fetched it. What it does not: an account that can edit the config
+(it can name any model) or replace the `witnessd` binary (it can change the pin).
+
 Environment overrides: `WITNESS_DETECT_BACKEND=tract`,
 `WITNESS_TRACT_MODEL=/absolute/path/to/model.onnx`,
 `WITNESS_DETECT_CONFIDENCE=0.6`. Frame dimensions must match the model input.

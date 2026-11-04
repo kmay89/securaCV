@@ -27,6 +27,9 @@ on:
       # src/config.rs's tests parse the rtsp guide's witnessd example: witness_api
       # must read the file the kernel is started with (sweep A103).
       - 'docs/rtsp_setup.md'
+      # src/config.rs's tests read the fetch script's MODEL_SHA256, the pin
+      # witnessd holds the default tract model to (sweep A102).
+      - 'scripts/fetch_detection_model.sh'
       - '.github/workflows/rust.yml'
   pull_request:
     branches: [ "main" ]
@@ -51,6 +54,9 @@ on:
       # src/config.rs's tests parse the rtsp guide's witnessd example: witness_api
       # must read the file the kernel is started with (sweep A103).
       - 'docs/rtsp_setup.md'
+      # src/config.rs's tests read the fetch script's MODEL_SHA256, the pin
+      # witnessd holds the default tract model to (sweep A102).
+      - 'scripts/fetch_detection_model.sh'
       - '.github/workflows/rust.yml'
 
 env:
@@ -312,6 +318,11 @@ jobs:
       # Quoted: the trailing `::` in the test filter would otherwise read as
       # a YAML mapping value and make this workflow unparseable.
       run: "cargo test --verbose --features backend-tract --lib detect::"
+    # witnessd's own tract wiring: the default model is installed from the
+    # bytes its pin was checked against, and a configured one as given
+    # (sweep A102). Compiled by the clippy step above, run only here.
+    - name: Test (backend-tract witnessd)
+      run: cargo test --verbose --features backend-tract --bin witnessd
     - name: Clippy (ingest-v4l2)
       run: cargo clippy --all-targets --features ingest-v4l2 -- -D warnings
     - name: Clippy (c2pa-export)

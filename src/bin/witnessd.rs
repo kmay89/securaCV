@@ -1616,20 +1616,13 @@ fn register_tract_backend(
 ) -> Result<()> {
     #[cfg(feature = "backend-tract")]
     {
-        use witness_kernel::config::TractFormat;
-        // Defaults to vendor/models/tinyyolov2-8.onnx (see fetch_detection_model.sh) when
-        // detect.tract_model is unset; a missing file yields a clear load error below.
-        let model_path = config.detect.tract_model_path();
-        let backend = match config.detect.tract_format {
-            // tiny-YOLOv2 has a fixed 416×416 input and resizes frames internally, so it does
-            // not need the ingest dimensions and works with any ingest backend.
-            TractFormat::Yolov2 => TractBackend::tiny_yolov2(&model_path)?,
-            TractFormat::PostNms => {
-                let (width, height) = tract_input_dimensions(config)?;
-                TractBackend::new(&model_path, width, height)?
-            }
-        };
-        registry.register(backend.with_threshold(config.detect.confidence_threshold));
+        // Neither detect.tract_model nor WITNESS_TRACT_MODEL set: the default
+        // vendor/models/tinyyolov2-8.onnx, read once and refused unless it hashes to the pin
+        // scripts/fetch_detection_model.sh checks (a missing file is a load error naming that
+        // script). Named: loaded as given, its sha256 logged.
+        let model = config.detect.tract_model_file()?;
+        install_tract_backend(registry, config, &model)?;
+        log::info!("{}", model.startup_line());
         Ok(())
     }
     #[cfg(not(feature = "backend-tract"))]
@@ -1640,6 +1633,23 @@ fn register_tract_backend(
             "detect.backend=tract requires the backend-tract feature"
         ))
     }
+}
+
+/// Build the tract backend from a model file already read (and, for the default, checked) and
+/// register it. A pinned default is built from the bytes that were hashed, never by reopening
+/// its path. tiny-YOLOv2 has a fixed 416×416 input and resizes frames internally, so it does
+/// not need the ingest dimensions and works with any ingest backend; `postnms` does.
+#[cfg(feature = "backend-tract")]
+fn install_tract_backend(
+    registry: &mut BackendRegistry,
+    config: &witness_kernel::config::WitnessdConfig,
+    model: &witness_kernel::config::TractModelFile,
+) -> Result<()> {
+    let backend = TractBackend::from_model_file(model, config.detect.tract_format, || {
+        tract_input_dimensions(config)
+    })?;
+    registry.register(backend.with_threshold(config.detect.confidence_threshold));
+    Ok(())
 }
 
 #[cfg(feature = "backend-tract")]
@@ -1994,5 +2004,150 @@ mod tests {
             count_failures(&mut kernel, &cfg, FailureType::StorageFull),
             expected
         );
+    }
+
+    /// The default tract model is held to its pin (sweep A102). The committed 236-byte
+    /// post-NMS fixture stands in for the default: these tests hand its location and hash to
+    /// `tract_model_file_with_default`, since the real default path is relative to the working
+    /// directory and may hold a fetched model.
+    #[cfg(feature = "backend-tract")]
+    mod tract_model {
+        use super::*;
+        use witness_kernel::config::DEFAULT_TRACT_MODEL_SHA256;
+        use witness_kernel::detect::{DetectionCapability, ObjectClass};
+
+        const FIXTURE_SHA256: &str =
+            "eb5a1733bbbd0eabd14a286a8a156fd9b7596e1cb34778b64fc2e8bba70cc5dc";
+
+        fn fixture_bytes() -> Vec<u8> {
+            std::fs::read(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/test_detector.onnx"
+            ))
+            .expect("read the fixture")
+        }
+
+        /// The fixture with the person row's confidence moved from 0.9 to 0.225 (one byte).
+        fn flipped_bytes() -> Vec<u8> {
+            let mut bytes = fixture_bytes();
+            assert_eq!(bytes[116], 0x3f, "the fixture's layout moved");
+            bytes[116] ^= 0x01;
+            bytes
+        }
+
+        fn tract_config(tract_model: Option<std::path::PathBuf>) -> WitnessdConfig {
+            let mut config = test_config();
+            config.detect.backend = DetectBackendPreference::Tract;
+            config.detect.tract_model = tract_model;
+            config.detect.tract_format = TractFormat::PostNms;
+            config.rtsp.width = 4;
+            config.rtsp.height = 4;
+            config
+        }
+
+        fn persons(registry: &mut BackendRegistry) -> usize {
+            registry
+                .detect_with_capability(
+                    DetectionCapability::ObjectDetection,
+                    &[128u8; 4 * 4 * 3],
+                    4,
+                    4,
+                )
+                .expect("the tract backend answers")
+                .detections
+                .iter()
+                .filter(|d| d.class == ObjectClass::Person)
+                .count()
+        }
+
+        #[test]
+        fn the_pinned_default_is_installed_from_the_bytes_it_checked() {
+            let dir = tempfile::tempdir().unwrap();
+            let default = dir.path().join("tinyyolov2-8.onnx");
+            std::fs::write(&default, fixture_bytes()).unwrap();
+            let config = tract_config(None);
+            let model = config
+                .detect
+                .tract_model_file_with_default(&default, FIXTURE_SHA256)
+                .expect("the pinned bytes");
+            // Swapped after the check: the backend still runs the checked bytes.
+            std::fs::write(&default, flipped_bytes()).unwrap();
+            let mut registry = BackendRegistry::new();
+            install_tract_backend(&mut registry, &config, &model).expect("installed");
+            assert_eq!(persons(&mut registry), 1);
+        }
+
+        #[test]
+        fn a_swapped_default_is_refused_before_anything_is_installed() {
+            let dir = tempfile::tempdir().unwrap();
+            let default = dir.path().join("tinyyolov2-8.onnx");
+            std::fs::write(&default, flipped_bytes()).unwrap();
+            let err = tract_config(None)
+                .detect
+                .tract_model_file_with_default(&default, FIXTURE_SHA256)
+                .expect_err("not the pinned model");
+            assert!(
+                err.to_string().contains("scripts/fetch_detection_model.sh"),
+                "{err}"
+            );
+        }
+
+        #[test]
+        fn a_configured_model_registers_as_given() {
+            let dir = tempfile::tempdir().unwrap();
+            let custom = dir.path().join("custom.onnx");
+            std::fs::write(&custom, flipped_bytes()).unwrap();
+            let config = tract_config(Some(custom));
+            let mut registry = BackendRegistry::new();
+            register_tract_backend(&mut registry, &config).expect("a configured model loads");
+            assert_eq!(
+                persons(&mut registry),
+                0,
+                "the configured (flipped) model runs"
+            );
+        }
+
+        #[test]
+        fn register_holds_the_real_default_path_to_the_pin() {
+            // Whatever sits at the real default path here (nothing, in CI; a fetched model on a
+            // developer's tree), witnessd either refuses it, naming the fetch script, or it is
+            // the pinned model.
+            let mut config = tract_config(None);
+            config.detect.tract_format = TractFormat::Yolov2;
+            let mut registry = BackendRegistry::new();
+            match register_tract_backend(&mut registry, &config) {
+                Ok(()) => {
+                    let bytes = std::fs::read(config.detect.tract_model_path()).unwrap();
+                    use sha2::Digest;
+                    assert_eq!(
+                        hex::encode(sha2::Sha256::digest(&bytes)),
+                        DEFAULT_TRACT_MODEL_SHA256
+                    );
+                }
+                Err(err) => assert!(
+                    format!("{err:#}").contains("scripts/fetch_detection_model.sh"),
+                    "{err:#}"
+                ),
+            }
+        }
+
+        #[test]
+        fn postnms_still_needs_ingest_dimensions() {
+            let dir = tempfile::tempdir().unwrap();
+            let default = dir.path().join("tinyyolov2-8.onnx");
+            std::fs::write(&default, fixture_bytes()).unwrap();
+            let mut config = tract_config(None);
+            config.ingest.backend = IngestBackend::File;
+            let model = config
+                .detect
+                .tract_model_file_with_default(&default, FIXTURE_SHA256)
+                .unwrap();
+            let err = install_tract_backend(&mut BackendRegistry::new(), &config, &model)
+                .expect_err("file ingest has no fixed frame size");
+            assert!(
+                format!("{err:#}").contains("ingest width/height"),
+                "{err:#}"
+            );
+        }
     }
 }

@@ -42,9 +42,17 @@ const DEFAULT_DETECT_CONFIDENCE: f32 = 0.5;
 // Default location for the tract object-detection model, populated by
 // scripts/fetch_detection_model.sh. Used when detect.backend=tract and detect.tract_model is
 // unset, so operators only set the backend after fetching the model — no manual path needed.
+// The file there is held to DEFAULT_TRACT_MODEL_SHA256 below.
 // HOST-ONLY: this model runs in tract on a Pi/x86 host, not on the ESP32-S3 (which uses the
 // Grove Vision AI V2 board). See scripts/fetch_detection_model.sh.
 const DEFAULT_TRACT_MODEL: &str = "vendor/models/tinyyolov2-8.onnx";
+/// The SHA-256 `scripts/fetch_detection_model.sh` pins the default tract model to (its
+/// `MODEL_SHA256`; the unit test `default_tract_model_pin_is_the_fetch_scripts` reads the script
+/// and holds the two equal). When nothing names a model, witnessd reads the default file once,
+/// refuses it unless those bytes hash to this, and builds the backend from the same bytes: see
+/// [`TractModelFile`].
+pub const DEFAULT_TRACT_MODEL_SHA256: &str =
+    "583fb7fdc948435ceac9fa82efc7708701efe8382a859a3dd46526b155f5f2ae";
 // Default post-processing format for the tract model. The bundled model is tiny-YOLOv2, whose
 // raw grid output is decoded + NMS'd on the host; set to "postnms" for models that already
 // emit final boxes.
@@ -599,6 +607,178 @@ impl DetectSettings {
             .clone()
             .unwrap_or_else(|| PathBuf::from(DEFAULT_TRACT_MODEL))
     }
+
+    /// Read the tract model witnessd builds its backend from: the default file held to
+    /// [`DEFAULT_TRACT_MODEL_SHA256`] when nothing names a model, or the configured one as given.
+    /// See [`TractModelFile`] for what each kind guarantees.
+    pub fn tract_model_file(&self) -> Result<TractModelFile> {
+        self.tract_model_file_with_default(
+            Path::new(DEFAULT_TRACT_MODEL),
+            DEFAULT_TRACT_MODEL_SHA256,
+        )
+    }
+
+    /// [`tract_model_file`](Self::tract_model_file) with the default location and its pin given,
+    /// so a test can stand a file in for the default without writing into `vendor/models/` (the
+    /// real default is relative to witnessd's working directory).
+    pub fn tract_model_file_with_default(
+        &self,
+        default_path: &Path,
+        default_sha256: &str,
+    ) -> Result<TractModelFile> {
+        match &self.tract_model {
+            Some(path) => {
+                if path.as_os_str().is_empty() {
+                    return Err(anyhow!("detect.tract_model must not be empty"));
+                }
+                let sha256 = sha256_of_file(path).map_err(|e| {
+                    anyhow!(
+                        "failed to read the configured tract model {}: {}",
+                        path.display(),
+                        e
+                    )
+                })?;
+                let matches_pin = sha256 == default_sha256;
+                Ok(TractModelFile {
+                    path: path.clone(),
+                    sha256,
+                    pinned: None,
+                    matches_pin,
+                })
+            }
+            None => {
+                // One open, one read: these bytes are hashed here and are the bytes the backend
+                // is built from (TractModelFile::pinned_bytes), so the file is never opened
+                // again and nothing can swap it between the check and the load.
+                let bytes = std::fs::read(default_path).map_err(|e| {
+                    anyhow!(
+                        "failed to read the default tract model {} ({}): run \
+                         scripts/fetch_detection_model.sh to fetch and verify it, or set \
+                         detect.tract_model (or WITNESS_TRACT_MODEL) to a model of your own",
+                        default_path.display(),
+                        e
+                    )
+                })?;
+                let sha256 = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
+                if sha256 != default_sha256 {
+                    return Err(anyhow!(
+                        "refusing the default tract model {}: its sha256 is {}, not the {} \
+                         scripts/fetch_detection_model.sh pins, so it is not the model that \
+                         script fetched (it was replaced or corrupted on disk). Run \
+                         scripts/fetch_detection_model.sh to restore the verified model, or, \
+                         to run a model of your own, name it with detect.tract_model (or \
+                         WITNESS_TRACT_MODEL): a configured model loads as given and its \
+                         sha256 is logged at startup",
+                        default_path.display(),
+                        sha256,
+                        default_sha256
+                    ));
+                }
+                Ok(TractModelFile {
+                    path: default_path.to_path_buf(),
+                    sha256,
+                    pinned: Some(bytes),
+                    matches_pin: true,
+                })
+            }
+        }
+    }
+}
+
+/// The tract model file witnessd builds its backend from, read by
+/// [`DetectSettings::tract_model_file`]. Two kinds, by whether anything named the file:
+///
+/// * **Pinned default.** Neither `detect.tract_model` nor `WITNESS_TRACT_MODEL` names a model
+///   (an empty `WITNESS_TRACT_MODEL` names none), so it is the file
+///   `scripts/fetch_detection_model.sh` writes. It was opened once and read whole, its SHA-256
+///   matched [`DEFAULT_TRACT_MODEL_SHA256`] (a mismatch is refused before this exists), and
+///   [`pinned_bytes`](Self::pinned_bytes) are the bytes that were hashed. The backend is built
+///   from them, never from the path again, so a file swapped after the read does not reach it.
+///   A symlink at the default path is followed by that one open: its target's bytes are what
+///   is hashed and built.
+/// * **Configured.** The operator named a model, which is the operator's choice: it loads as
+///   given, by path (tract opens it itself, so external data beside it still resolves).
+///   [`sha256`](Self::sha256) is of the file as read here, for the startup log; it describes
+///   the file and does not guard it. That holds when the configured path is the default path
+///   too: naming the file opts out of the pin, and the log says whether it matches.
+///
+/// The boundary: the pin catches a default model file that was swapped or corrupted after the
+/// fetch. It does not stop an account that can edit the config (it can name any model) or the
+/// binary (it can change the pin).
+#[derive(Debug)]
+pub struct TractModelFile {
+    path: PathBuf,
+    sha256: String,
+    /// The verified bytes of the pinned default; `None` for a configured model.
+    pinned: Option<Vec<u8>>,
+    /// Whether `sha256` is the pin (always, for the pinned default).
+    matches_pin: bool,
+}
+
+impl TractModelFile {
+    /// The file that was read.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Lowercase hex SHA-256 of the file as read.
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    /// Whether the file's SHA-256 is [`DEFAULT_TRACT_MODEL_SHA256`] (always true for the pinned
+    /// default; for a configured model, what the startup line reports).
+    pub fn matches_pin(&self) -> bool {
+        self.matches_pin
+    }
+
+    /// The pinned default's bytes, the ones that were hashed: what the backend is built from.
+    /// `None` for a configured model, which loads by path.
+    pub fn pinned_bytes(&self) -> Option<&[u8]> {
+        self.pinned.as_deref()
+    }
+
+    /// The line witnessd logs at startup for this model.
+    pub fn startup_line(&self) -> String {
+        if self.pinned.is_some() {
+            format!(
+                "tract model {}: sha256 {}, the pinned default (scripts/fetch_detection_model.sh), \
+                 checked at load and built from the bytes checked",
+                self.path.display(),
+                self.sha256
+            )
+        } else {
+            format!(
+                "tract model {}: sha256 {}, named by detect.tract_model or WITNESS_TRACT_MODEL \
+                 and loaded as given, not held to a pin ({} the pinned default model)",
+                self.path.display(),
+                self.sha256,
+                if self.matches_pin {
+                    "it is"
+                } else {
+                    "it is not"
+                }
+            )
+        }
+    }
+}
+
+/// Lowercase hex SHA-256 of a file, read in chunks (a model can be tens of megabytes).
+fn sha256_of_file(path: &Path) -> std::io::Result<String> {
+    use sha2::Digest;
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => hasher.update(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(hex::encode(hasher.finalize()))
 }
 
 #[derive(Debug, Clone)]
@@ -1098,8 +1278,9 @@ impl WitnessdConfig {
         }
         if self.detect.backend == DetectBackendPreference::Tract {
             // tract_model is optional: when unset it defaults to DEFAULT_TRACT_MODEL (populated by
-            // scripts/fetch_detection_model.sh). Only an explicitly-empty path is invalid; a missing
-            // model file surfaces a clear load error from the tract backend at startup.
+            // scripts/fetch_detection_model.sh), held to DEFAULT_TRACT_MODEL_SHA256 at startup
+            // (DetectSettings::tract_model_file). Only an explicitly-empty path is invalid; a
+            // missing or unpinned default is refused at startup with an error naming the script.
             if let Some(path) = &self.detect.tract_model {
                 if path.as_os_str().is_empty() {
                     return Err(anyhow!(
@@ -2033,5 +2214,214 @@ skew_tolerance_s = 10
         );
         // The capture reads real field lists, not an empty one.
         assert!(daemon.contains(&"rtsp") && daemon.contains(&"api"));
+    }
+
+    // ── The default tract model's pin (sweep A102) ─────────────────────────
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes))
+    }
+
+    fn detect_with_model(tract_model: Option<PathBuf>) -> DetectSettings {
+        DetectSettings {
+            backend: DetectBackendPreference::Tract,
+            tract_model,
+            tract_format: TractFormat::Yolov2,
+            confidence_threshold: DEFAULT_DETECT_CONFIDENCE,
+        }
+    }
+
+    #[test]
+    fn default_tract_model_pin_is_the_fetch_scripts() {
+        let script = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/scripts/fetch_detection_model.sh"
+        ))
+        .expect("read scripts/fetch_detection_model.sh");
+        let assigned = |name: &str| -> String {
+            let prefix = format!("{name}=");
+            let values: Vec<&str> = script
+                .lines()
+                .filter_map(|line| line.strip_prefix(prefix.as_str()))
+                .collect();
+            assert_eq!(
+                values.len(),
+                1,
+                "one {name}= line in the script: {values:?}"
+            );
+            values[0].trim_matches('"').to_string()
+        };
+        assert_eq!(
+            assigned("MODEL_SHA256"),
+            DEFAULT_TRACT_MODEL_SHA256,
+            "scripts/fetch_detection_model.sh's MODEL_SHA256 and src/config.rs's \
+             DEFAULT_TRACT_MODEL_SHA256 change together"
+        );
+        assert!(
+            DEFAULT_TRACT_MODEL_SHA256.len() == 64
+                && DEFAULT_TRACT_MODEL_SHA256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "the pin is 64 lowercase hex, the form the load-time check compares"
+        );
+        // The pin names the file the script writes.
+        let dir = assigned("MODEL_DIR");
+        let written = assigned("MODEL_PATH").replace("${MODEL_DIR}", &dir);
+        assert_eq!(
+            written.strip_prefix("${REPO_ROOT}/"),
+            Some(DEFAULT_TRACT_MODEL),
+            "the script writes {written}"
+        );
+    }
+
+    #[test]
+    fn an_unset_tract_model_is_the_default_read_once_and_held_to_the_pin() {
+        let dir = tempdir().expect("temp dir");
+        let default = dir.path().join("default.onnx");
+        write_file(&default, "the pinned model");
+        let pin = sha256_hex(b"the pinned model");
+        let model = detect_with_model(None)
+            .tract_model_file_with_default(&default, &pin)
+            .expect("the pinned bytes load");
+        assert_eq!(model.path(), default.as_path());
+        assert_eq!(model.sha256(), pin);
+        assert!(model.matches_pin());
+        assert_eq!(model.pinned_bytes(), Some(&b"the pinned model"[..]));
+        let line = model.startup_line();
+        assert!(
+            line.contains(&pin) && line.contains("pinned default"),
+            "{line}"
+        );
+        // The bytes in hand are the bytes hashed: a swap after the read does not reach them.
+        write_file(&default, "a swapped model");
+        assert_eq!(model.pinned_bytes(), Some(&b"the pinned model"[..]));
+    }
+
+    #[test]
+    fn a_default_tract_model_that_is_not_the_pinned_one_is_refused() {
+        let dir = tempdir().expect("temp dir");
+        let default = dir.path().join("default.onnx");
+        write_file(&default, "the pinned modem");
+        let pin = sha256_hex(b"the pinned model");
+        let err = detect_with_model(None)
+            .tract_model_file_with_default(&default, &pin)
+            .expect_err("a one-byte change is refused");
+        let msg = err.to_string();
+        for needle in [
+            default.display().to_string(),
+            sha256_hex(b"the pinned modem"),
+            pin,
+            "scripts/fetch_detection_model.sh".to_string(),
+            "detect.tract_model".to_string(),
+            "WITNESS_TRACT_MODEL".to_string(),
+        ] {
+            assert!(msg.contains(&needle), "the refusal names {needle}: {msg}");
+        }
+        // The real pin refuses it too.
+        assert!(detect_with_model(None)
+            .tract_model_file_with_default(&default, DEFAULT_TRACT_MODEL_SHA256)
+            .is_err());
+    }
+
+    #[test]
+    fn a_missing_default_tract_model_names_the_fetch_script() {
+        let dir = tempdir().expect("temp dir");
+        let default = dir.path().join("absent.onnx");
+        let err = detect_with_model(None)
+            .tract_model_file_with_default(&default, DEFAULT_TRACT_MODEL_SHA256)
+            .expect_err("no file, no model");
+        let msg = err.to_string();
+        assert!(msg.contains(&default.display().to_string()), "{msg}");
+        assert!(msg.contains("scripts/fetch_detection_model.sh"), "{msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_at_the_default_path_is_held_to_its_targets_bytes() {
+        let dir = tempdir().expect("temp dir");
+        let good = dir.path().join("good.onnx");
+        let bad = dir.path().join("bad.onnx");
+        write_file(&good, "the pinned model");
+        write_file(&bad, "another model");
+        let pin = sha256_hex(b"the pinned model");
+        let default = dir.path().join("default.onnx");
+        std::os::unix::fs::symlink(&bad, &default).expect("symlink");
+        assert!(detect_with_model(None)
+            .tract_model_file_with_default(&default, &pin)
+            .is_err());
+        std::fs::remove_file(&default).expect("unlink");
+        std::os::unix::fs::symlink(&good, &default).expect("symlink");
+        let model = detect_with_model(None)
+            .tract_model_file_with_default(&default, &pin)
+            .expect("a link to the pinned bytes loads them");
+        assert_eq!(model.pinned_bytes(), Some(&b"the pinned model"[..]));
+    }
+
+    #[test]
+    fn a_configured_tract_model_loads_as_given_and_reports_its_hash() {
+        let dir = tempdir().expect("temp dir");
+        let default = dir.path().join("default.onnx");
+        let custom = dir.path().join("custom.onnx");
+        write_file(&custom, "an operator's model");
+        let pin = sha256_hex(b"the pinned model");
+        // The default location is not read at all (here it does not exist).
+        let model = detect_with_model(Some(custom.clone()))
+            .tract_model_file_with_default(&default, &pin)
+            .expect("a configured model is the operator's choice");
+        assert_eq!(model.path(), custom.as_path());
+        assert_eq!(model.sha256(), sha256_hex(b"an operator's model"));
+        assert!(!model.matches_pin());
+        assert_eq!(
+            model.pinned_bytes(),
+            None,
+            "a configured model loads by path"
+        );
+        let line = model.startup_line();
+        for needle in [
+            custom.display().to_string(),
+            sha256_hex(b"an operator's model"),
+            "loaded as given".to_string(),
+            "it is not the pinned default model".to_string(),
+        ] {
+            assert!(
+                line.contains(&needle),
+                "the startup line names {needle}: {line}"
+            );
+        }
+        // Naming the default path itself is configuring it: as given, and the line says
+        // whether the file there is the pinned model.
+        write_file(&default, "another model");
+        let named = detect_with_model(Some(default.clone()))
+            .tract_model_file_with_default(&default, &pin)
+            .expect("named, the default path loads as given");
+        assert_eq!(named.pinned_bytes(), None);
+        assert!(named
+            .startup_line()
+            .contains("it is not the pinned default model"));
+        write_file(&default, "the pinned model");
+        let named = detect_with_model(Some(default.clone()))
+            .tract_model_file_with_default(&default, &pin)
+            .expect("named and matching");
+        assert!(named.matches_pin());
+        assert!(named
+            .startup_line()
+            .contains("it is the pinned default model"));
+    }
+
+    #[test]
+    fn an_empty_or_unreadable_configured_tract_model_is_refused() {
+        let dir = tempdir().expect("temp dir");
+        let err = detect_with_model(Some(PathBuf::new()))
+            .tract_model_file_with_default(&dir.path().join("d"), DEFAULT_TRACT_MODEL_SHA256)
+            .expect_err("an empty path names nothing");
+        assert!(err.to_string().contains("must not be empty"), "{err}");
+        let absent = dir.path().join("absent.onnx");
+        let err = detect_with_model(Some(absent.clone()))
+            .tract_model_file_with_default(&dir.path().join("d"), DEFAULT_TRACT_MODEL_SHA256)
+            .expect_err("a configured file that is not there");
+        assert!(
+            err.to_string().contains(&absent.display().to_string()),
+            "{err}"
+        );
     }
 }
