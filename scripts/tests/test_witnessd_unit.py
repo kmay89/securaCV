@@ -66,8 +66,22 @@ witness_api mint-viewer-token --label`, docs/container.md's placeholder) or
 link docs/container.md's "Mint a Witness Wall viewer token", where step 1
 names the token path the mint needs, and each must name the live
 Settings header. That step 1 says the stock unit already passes the token
-path, so a unit user skips it; the container name it gives for the unit is
-held to the unit's `--name`.
+path, so a unit user skips it; the `-e` it says the unit passes is held to
+the unit's own (the sentence before it also names
+WITNESS_API_VIEWER_TOKEN_PATH, which the unit does not pass, so a bare "it"
+could be read as either), and the container name it gives for the unit is
+held to the unit's `--name`. The unit's `-e` joined it on 2026-11-03, and
+a copy installed before then lacks it, so step 1 also says how to check a
+copy and load the fix: the `ExecStart` to look in, then the daemon-reload
+and the restart of the unit name the install copies to. Without that, the
+"No restart" paragraph sends the owner of an older copy back to a step
+that tells them to skip it.
+
+A receipt pasted "into the Wall's settings" names no section a reader can
+find (docs/tvos/README.md and the fast path said so; sweep A118's review).
+No sentence in docs/ or tvos/ may paste into the Wall's settings without
+naming the section after an arrow; the section it names is then the live
+header, by the scan above.
 
 This file adds no rows to test_docs_claims.py on purpose: that gate pins
 retired sentences, and these are live pointers read off their sources.
@@ -110,6 +124,15 @@ MINT_HEADING = "### Mint a Witness Wall viewer token"
 # Names the Wall's pairing section has had or could be given. Any
 # "Settings → <one of these>" in docs/ or tvos/ must be the live header.
 PAIRING_SECTION_NAMES = ("Pairing", "Pair", "Verification")
+
+# A paste into the Wall's settings that names no section: "paste" (any
+# form), then within the same sentence "into the Wall's / its settings" with
+# no "→ <section>" after it. Read after blockquote markers are dropped and
+# whitespace collapsed.
+VAGUE_SETTINGS_POINTER = re.compile(
+    r"\bpast(?:e|ed|es|ing)\b[^.;]{0,160}?\binto (?:the (?:Witness )?Wall(?:'s)?|its) "
+    r"\**[Ss]ettings\b(?!\**\s*(?:→|->))"
+)
 
 # Text files scanned for a stale Settings pointer.
 SCANNED_SUFFIXES = {".md", ".swift", ".txt", ".html", ".yml", ".yaml", ".json"}
@@ -645,15 +668,21 @@ class ShortPointersReachTheRootImage(unittest.TestCase):
 
     def test_step1_tells_a_unit_user_to_skip_it(self) -> None:
         # The unit already passes the -e (the class above proves it), so
-        # step 1 says a unit user skips it, and names the unit's container
-        # for the placeholder below.
+        # step 1 says a unit user skips it, names the -e it means, and names
+        # the unit's container for the placeholder below.
         step1 = norm(container_step1(CONTAINER_DOC.read_text(encoding="utf-8")))
         self.assertTrue(links_to(CONTAINER_DOC, step1, UNIT), "step 1 links the stock examples/witnessd.service")
-        self.assertRegex(step1, r"already passes it, so a unit started from that file skips this step")
-        named = re.search(r"its container is `([^`]+)`", step1)
-        self.assertIsNotNone(named, "step 1 names the unit's container for <container>")
+        said = re.search(r"already passes `-e ([A-Z][A-Z0-9_]*)=([^`\s]+)`, so a unit started from that "
+                         r"file skips this step", step1)
+        self.assertIsNotNone(said, "step 1 names the `-e NAME=VALUE` the stock unit passes, not a bare 'it' "
+                                   "after a sentence naming two variables")
         opts, _, _ = docker_run(command_words(next(
             v for s, k, v in unit_entries(UNIT.read_text(encoding="utf-8")) if s == "Service" and k == "ExecStart")))
+        self.assertEqual(unit_env_vars(opts).get(said.group(1)), said.group(2),
+                         f"step 1 says the unit passes -e {said.group(1)}={said.group(2)}; "
+                         f"it passes {unit_env_vars(opts)}")
+        named = re.search(r"its container is `([^`]+)`", step1)
+        self.assertIsNotNone(named, "step 1 names the unit's container for <container>")
         self.assertEqual(opts.get("--name"), [named.group(1)], "step 1's container name is the unit's --name")
         # "its loopback-only `-p` binding" holds while the unit publishes on
         # loopback (the unit class above holds its header to the widening).
@@ -662,6 +691,34 @@ class ShortPointersReachTheRootImage(unittest.TestCase):
             self.assertTrue(publishes and all(p.rsplit(":", 2)[0] in ("127.0.0.1", "[::1]", "localhost")
                                               for p in publishes),
                             f"step 1 calls the unit's binding loopback-only; it publishes {publishes}")
+
+    def test_step1_repairs_a_unit_copied_before_the_line(self) -> None:
+        # The install copies the unit once and nothing updates the copy, so
+        # a unit installed before its -e joined it has no token path. Step 1
+        # says where to look (`ExecStart`, for the variable the unit passes)
+        # and how to load the fix: a daemon-reload, then a restart of the
+        # name the install copied it to, which re-creates the container
+        # (ExecStop's docker stop ends a --rm container; ExecStartPre
+        # removes any leftover; the next docker run carries the new -e).
+        doc = CONTAINER_DOC.read_text(encoding="utf-8")
+        step1 = norm(container_step1(doc))
+        install = doc_section(doc, "### Run under systemd")
+        cp = re.search(r"^sudo cp examples/witnessd\.service (/etc/systemd/system/\S+\.service)$", install, re.M)
+        self.assertIsNotNone(cp, "docs/container.md's install copies the unit into /etc/systemd/system")
+        unit_name = Path(cp.group(1)).name
+        self.assertRegex(step1, r"[Aa] copy installed before that line joined the file \(\d{4}-\d{2}-\d{2}\) lacks it",
+                         "step 1 says an older copy of the unit lacks the -e")
+        self.assertIn("if its `ExecStart` has no `WITNESS_API_TOKEN_PATH`", step1,
+                      "step 1 says where to look in the copy")
+        self.assertIn("`sudo systemctl daemon-reload`", step1, "a changed unit file loads on daemon-reload")
+        self.assertIn(f"`sudo systemctl restart {unit_name}`", step1,
+                      "the restart names the unit the install copied")
+        # The restart re-creates the container only while the unit removes
+        # and re-runs it; a unit that kept its container would keep its env.
+        opts, _, _ = docker_run(command_words(next(
+            v for s, k, v in unit_entries(UNIT.read_text(encoding="utf-8")) if s == "Service" and k == "ExecStart")))
+        self.assertIn("--rm", opts, "the unit's container is --rm, so a stop removes it")
+        self.assertIn("WITNESS_API_TOKEN_PATH", unit_env_vars(opts))
 
     def test_paragraph_and_link_readers(self) -> None:
         text = "x\n\n> **Step 0:** `docker exec <c> witness_api\n> mint-viewer-token --label <s>` [a](../docs/container.md#b)\n>\n> next\n"
@@ -691,6 +748,30 @@ class SettingsPointersNameTheLiveSection(unittest.TestCase):
                 if name != self.header:
                     stale.append(f"{path.relative_to(REPO)}: Settings → {name}")
         self.assertEqual(stale, [], f"the Wall's pairing section is Settings → {self.header}")
+
+    def test_no_paste_into_unnamed_settings(self) -> None:
+        vague = []
+        for path in scanned_files():
+            raw = path.read_text(encoding="utf-8", errors="replace")
+            text = norm(re.sub(r"^[ \t]*> ?", "", raw, flags=re.MULTILINE))
+            for m in VAGUE_SETTINGS_POINTER.finditer(text):
+                vague.append(f"{path.relative_to(REPO)}: ...{m.group(0)}")
+        self.assertEqual(vague, [], f"name the section a receipt goes to: Settings → {self.header}")
+
+    def test_vague_pointer_reader(self) -> None:
+        for s in ("pasted into the Wall's settings; a hub",
+                  "paste that receipt into the Wall's settings once",
+                  "paste the line into its Settings once",
+                  "pastes it into the Wall's **Settings**, and"):
+            with self.subTest(s=s):
+                self.assertIsNotNone(VAGUE_SETTINGS_POINTER.search(s))
+        for s in ("pasted into its Settings → Verification;",
+                  "paste the one line it prints into the Wall's **Settings → Verification** once",
+                  "Paste the line into the Wall's Settings -> Verification",
+                  "the household picks the room in the Wall's Settings (Home",
+                  "paste it. Then open the Wall's settings"):
+            with self.subTest(s=s):
+                self.assertIsNone(VAGUE_SETTINGS_POINTER.search(s))
 
     def test_pairing_guides_name_the_section(self) -> None:
         for rel in PAIRING_GUIDES:
