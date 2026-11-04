@@ -594,8 +594,9 @@ class R11FloatingRunner(unittest.TestCase):
             """,
         }
 
-    # ...and these name it nowhere it reads: pinned, only in a comment or a
-    # step script, or a reusable workflow whose runner its caller passes in.
+    # ...and these name it nowhere it reads: pinned, only in a comment, only
+    # in a job's steps (a script, a step's inputs or env), or a reusable
+    # workflow whose runner its caller passes in.
     def _no_longer_floating(self) -> dict[str, str]:
         return {
             "pinned": self._job(self.PINNED),
@@ -614,6 +615,12 @@ class R11FloatingRunner(unittest.TestCase):
                 "ubuntu-24.04").replace(
                 "- uses: actions/checkout@v7",
                 "- run: echo \"this used to run on ubuntu-latest\""),
+            "only a step's inputs and env": self._job(
+                "ubuntu-24.04").replace(
+                "- uses: actions/checkout@v7",
+                "- uses: some/setup@v1\n"
+                "                    with: {image: ubuntu-latest}\n"
+                "                    env: {IMG: ubuntu-latest}"),
             "the reusable workflow its caller names it to": """
                 on:
                   workflow_call:
@@ -644,6 +651,7 @@ class R11FloatingRunner(unittest.TestCase):
             self.assertTrue(probs[0].startswith(
                 "wf.yml: R11 — listed in ci-policy.yml ubuntu_latest_ok but "
                 "names no ubuntu-latest"), (case, probs))
+            self.assertIn("comments and a job's steps do not count", probs[0])
             self.assertIn("delete the entry", probs[0])
 
     def test_the_stale_entry_rule_agrees_with_floating_runners_in(self):

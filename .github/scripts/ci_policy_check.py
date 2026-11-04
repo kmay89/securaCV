@@ -696,7 +696,7 @@ def check_floating_runners(path: str, policy: dict) -> list[str]:
             return []
         return [
             f"{name}: R11 — listed in ci-policy.yml ubuntu_latest_ok but "
-            f"names no ubuntu-latest (comments and step scripts do not "
+            f"names no ubuntu-latest (comments and a job's steps do not "
             f"count): delete the entry, or a later edit that brings the "
             f"floating label back passes unseen."
         ]
