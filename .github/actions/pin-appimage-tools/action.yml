@@ -1,0 +1,52 @@
+name: Pin the AppImage bundler's tools
+description: >
+  Before a Linux `tauri build`, puts sha256-pinned copies of the tools
+  tauri-bundler would otherwise download (AppRun, linuxdeploy, the
+  linuxdeploy AppImage plugin) where it looks for them, plus a pinned
+  AppImage runtime for appimagetool. After the build, `mode: verify` proves
+  the bundle used them. A no-op on any runner that is not Linux.
+
+# Why: tauri-bundler's prepare_tools() (crates/tauri-bundler/src/bundle/linux/
+# appimage/linuxdeploy.rs) downloads each tool it does not find in its tools
+# directory, with no hash check, and one of them (the AppImage plugin) from
+# linuxdeploy-plugin-appimage's moving `continuous` release. Each download is
+# skipped when a file of that exact name exists, so files placed first are the
+# ones used. The appimagetool inside linuxdeploy and inside the plugin fetches
+# the AppImage runtime, the code at the front of every shipped .AppImage, from
+# type2-runtime's `continuous` release unless LDAI_RUNTIME_FILE names a file.
+# Unpinned, a moved tag or a replaced asset would ship inside the Flasher and
+# the Lab with no diff to point at. pins.txt holds the names, URLs and hashes,
+# and the CLI versions the names were read at; a CLI bump fails
+# .github/scripts/test_pin_appimage_tools.py until someone re-reads the file
+# (.github/RELEASE_LESSONS.md 2026-11-04 (c)). R10: toolchain setup lives in
+# a composite action, so both release workflows run the same steps.
+#
+# Callers: immediately before each Linux-capable tauri-action step (with that
+# step's `if:`), and again with `mode: verify` immediately after it. verify
+# runs after tauri-action has uploaded (it cannot run in between), so on a
+# publish run a failure arrives after the installers are on the release; it
+# fails the build job, which keeps the updater pointer from advancing to them.
+
+inputs:
+  mode:
+    description: >
+      "place" (before the bundle) or "verify" (after it).
+    required: false
+    default: place
+  project-path:
+    description: >
+      verify only: the Tauri project directory (the tauri-action
+      `projectPath`), whose src-tauri/target holds the built .AppImage.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Pin the AppImage tools (${{ inputs.mode }})
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        PROJECT_PATH: ${{ inputs.project-path }}
+      run: bash "$GITHUB_ACTION_PATH/pin.sh" "$MODE" "$PROJECT_PATH"

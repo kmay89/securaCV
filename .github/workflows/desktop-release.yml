@@ -296,6 +296,15 @@ jobs:
             python3 -c 'import json,sys; p="src-tauri/tauri.conf.json"; c=json.load(open(p)); c["plugins"]["updater"]["pubkey"]=sys.argv[1].strip(); json.dump(c,open(p,"w"),indent=2); print("patched embedded pubkey for ephemeral build")' "$(cat "$RUNNER_TEMP/lab.key.pub")"
           fi
 
+      # The AppImage bundler's tools, sha256-pinned and placed where
+      # tauri-bundler looks before it downloads its own (one from a moving
+      # tag), plus a pinned AppImage runtime for appimagetool
+      # (.github/actions/pin-appimage-tools, RELEASE_LESSONS 2026-11-04 (c)).
+      # Linux only; a no-op on the macOS leg. Same `if:` as the build after it.
+      - name: Pin the AppImage bundler's tools (Linux)
+        if: vars.ENABLE_MACOS_SIGNING != 'true'
+        uses: ./.github/actions/pin-appimage-tools
+
       # Codesigning/notarization is OPT-IN via the `ENABLE_MACOS_SIGNING`
       # repository variable (Settings → Secrets and variables → Actions →
       # Variables). It is split into two steps on purpose: tauri's macOS
@@ -341,6 +350,18 @@ jobs:
           prerelease: false
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
+
+      # The bundle used the pinned tools: linuxdeploy carries the bundler's own
+      # mark (it zeroes 3 bytes of the copy it runs), the other tools are
+      # untouched, and every .AppImage starts with the pinned runtime's Build
+      # ID. Runs after tauri-action's upload, so a failure fails this job and
+      # holds back what follows it.
+      - name: Prove the AppImage used the pinned tools (Linux)
+        if: vars.ENABLE_MACOS_SIGNING != 'true'
+        uses: ./.github/actions/pin-appimage-tools
+        with:
+          mode: verify
+          project-path: desktop-lab
 
       - name: Verify the macOS signing certificate matches the identity
         # Fail in seconds, with the reason, instead of ~10 minutes into a
@@ -473,6 +494,11 @@ jobs:
           echo "APPLE_CERT_P12_B64=$B64" >> "$GITHUB_ENV"
           echo "Imported into a throwaway keychain — signing can proceed."
 
+      # Same pin as before the unsigned build (RELEASE_LESSONS 2026-11-04 (c)).
+      - name: Pin the AppImage bundler's tools (Linux)
+        if: vars.ENABLE_MACOS_SIGNING == 'true'
+        uses: ./.github/actions/pin-appimage-tools
+
       - name: Build & publish (signed macOS)
         if: vars.ENABLE_MACOS_SIGNING == 'true'
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
@@ -501,6 +527,14 @@ jobs:
           prerelease: false
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
+
+      # As after the unsigned build: the bundle used the pinned tools.
+      - name: Prove the AppImage used the pinned tools (Linux)
+        if: vars.ENABLE_MACOS_SIGNING == 'true'
+        uses: ./.github/actions/pin-appimage-tools
+        with:
+          mode: verify
+          project-path: desktop-lab
 
       # Always attach the built installers to the workflow run itself, so a
       # build-only smoke test (or a failed publish) still yields testable

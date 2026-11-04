@@ -12,6 +12,64 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-04 (c) — The AppImage bundler downloaded its tools unpinned, one from a moving tag, and so did the runtime inside every AppImage (found by reading; sweep CI21)
+
+- **Symptom:** none reported; it was found by reading. Every Linux build of
+  the Flasher (`desktop-flasher-release.yml`) and the Lab
+  (`desktop-release.yml`) bundled its `.AppImage` with tools fetched on the
+  release runner with no hash check, and two of them from `continuous`
+  releases that move. On 2026-11-04 the plugin's `continuous` asset hashed
+  `49d6a171…` and its newest dated release `992d502a…`; the runtime's
+  `continuous` hashed `617aa773…` and its dated `20251108` `2fca8b44…`. So
+  two builds of one tag could ship different bytes, and a replaced asset
+  would have shipped with no diff to point at.
+- **Cause:** tauri-bundler's `prepare_tools()`
+  (`crates/tauri-bundler/src/bundle/linux/appimage/linuxdeploy.rs`, the same
+  file at `@tauri-apps/cli` 2.12.3 and 2.12.4) downloads `AppRun-x86_64`,
+  `linuxdeploy-07333c6-x86_64.AppImage` and
+  `linuxdeploy-plugin-appimage.AppImage` into `~/.cache/tauri` when they are
+  missing, the last from linuxdeploy-plugin-appimage's `continuous` release.
+  The appimagetool inside linuxdeploy-07333c6 and inside the plugin (read out
+  of their squashfs images, not run) then downloads the AppImage runtime from
+  type2-runtime's `continuous` release unless `LDAI_RUNTIME_FILE` names one.
+  The runtime is the code at the front of every shipped `.AppImage`, the part
+  that runs when a person opens it. The 2026-09-03 lockfile pinned the CLI
+  that does the bundling; nothing pinned what it downloads.
+- **Fix:** `.github/actions/pin-appimage-tools` downloads the four files from
+  dated releases (`apprun-old`, `linuxdeploy-07333c6`, the plugin's
+  `1-alpha-20250213-1`, the runtime's `20251108`) and checks each against
+  the sha256 in its `pins.txt`. A mismatch fails the step before the bundle
+  runs. It marks the files executable, places them under the names
+  `prepare_tools()` looks for (each download there is skipped when the file
+  exists), and exports `LDAI_RUNTIME_FILE`. Both release workflows run it
+  immediately before every `tauri-action` step, under that step's `if:`. With
+  `mode: verify` it runs again immediately after. It checks that linuxdeploy
+  carries the bundler's own mark (`prepare_tools()` zeroes its bytes 8-10, so
+  the bundler read THIS directory), that the other files are unchanged, and
+  that every built `.AppImage` starts with the pinned runtime's GNU Build ID.
+  `.github/scripts/test_pin_appimage_tools.py` holds the table to the
+  bundler's names and to dated URLs. It holds both lockfiles' CLI (and its
+  `cli-linux-x64-gnu` binary) to the versions the names were read at, so a
+  CLI bump fails until someone re-reads `linuxdeploy.rs` at the new tag. It
+  also runs `pin.sh` offline with a stand-in curl, and checks both workflows'
+  wiring. Pinning the plugin and the runtime moves both from "whatever
+  `continuous` is today" to a dated release upstream tagged. That is a
+  change in what ships, made on purpose.
+- **Not yet proven:** a real `tauri build` here. The verify step proves it on
+  the build-only dispatches (`desktop-flasher-release.yml` with `dry_run`,
+  `desktop-release.yml` with `publish` unchecked) and on every release after.
+  verify runs after `tauri-action` has uploaded, so on a publish run its
+  failure arrives after the installers are on the release. It fails the build
+  job, so the Flasher's finalize job does not run and the updater pointer does
+  not move. The Lab's release is a draft until someone publishes it.
+- **Applies to:** every bundler that fetches its own helpers at build time
+  (tauri's NSIS and WiX tools on Windows are the same shape, if a Windows leg
+  is ever added). Pinning the tool that builds the bundle (2026-09-03) is
+  half the job. Read what that tool downloads, and pin each download by hash
+  from a dated source. Then prove after the build that the bundle used the
+  pinned files, since "placed first, so used" is a reading of someone else's
+  code.
+
 ## 2026-11-04 (b) — Three cores in one release job, and every cache key saved the last one (found by reading; sweep CI19)
 
 - **Symptom:** none reported; it was found by reading. `firmware-release.yml`

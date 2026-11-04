@@ -1,0 +1,29 @@
+# The AppImage tools the two desktop apps' Linux release builds bundle with,
+# pinned by sha256 (read by pin.sh; see action.yml for why).
+#
+# The first three are tauri-bundler's own downloads, under the names its
+# prepare_tools() looks for in its tools directory and skips downloading when
+# present: crates/tauri-bundler/src/bundle/linux/appimage/linuxdeploy.rs, read
+# at the CLI versions on the line below (the file is byte-identical, 9048 bytes,
+# at both tags). The bundler fetches the third from linuxdeploy-plugin-appimage's
+# moving `continuous` release; it is pinned here to the dated release
+# 1-alpha-20250213-1. The fourth is the AppImage runtime, the program at the
+# front of every shipped .AppImage that runs when a person opens it. The
+# appimagetool inside both linuxdeploy and the plugin downloads it from
+# type2-runtime's `continuous` release unless LDAI_RUNTIME_FILE names one, so it
+# is pinned to the dated release 20251108 and pin.sh exports that variable.
+#
+# A CLI bump fails .github/scripts/test_pin_appimage_tools.py until someone
+# re-reads linuxdeploy.rs at the new tag and adds the version here (and moves
+# any name or URL that changed).
+# tauri-cli-read-at: 2.12.3 2.12.4
+#
+# Columns: the name placed in the tools directory; the sha256 of the download;
+# the sha256 the file has after a bundle ran (`=` when the bundler leaves it
+# alone: it zeroes bytes 8-10 of linuxdeploy, its AppImage magic, in
+# prepare_tools(), which is how verify knows the bundler used THIS file); the
+# URL. Hashes recorded 2026-11-04 from two downloads each.
+AppRun-x86_64                         f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f  =                                                                 https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64
+linuxdeploy-07333c6-x86_64.AppImage   36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62  bd9521cd5ff3ca351fecb78cd9b236a4e37b3621014ac05cac0c2d767ffa0474  https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/linuxdeploy-x86_64.AppImage
+linuxdeploy-plugin-appimage.AppImage  992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3  =                                                                 https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-appimage-x86_64.AppImage
+type2-runtime-x86_64                  2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  =                                                                 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
