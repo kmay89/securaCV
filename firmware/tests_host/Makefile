@@ -891,20 +891,36 @@ WITKEY_BIN      = $(BUILD_DIR)/test_witness_key_load_projects
 # The camera's thermal step (repo sweep F432, test_camera_thermal.cpp):
 # securacv_camera's camera_thermal.h, the miss counter, fail-safe throttle,
 # 70/80 C hysteresis and frame delay CameraManager::checkThermal() calls,
-# linked with the host build of securacv_thermal.cpp, the shared
-# die-temperature provider, whose thermal_sensor_present() is false off the
-# S3, S2 and C3. A chip with no sensor never throttles and reads as no
-# sensor, three misses throttle once, and a stream's reset clears the count.
-# Built twice: as the host, and with -DCONFIG_IDF_TARGET_ESP32=1, the
-# classic ESP32 of env:esp32cam. It also reads the camera and provider
-# sources (checkThermal() reads only through the step).
-CAMTHERM_DIR  = ../canary/lib/securacv_camera/src
-CAMTHERM_PROV = ../canary/lib/securacv_thermal/src
+# linked with securacv_thermal.cpp, the shared die-temperature provider,
+# built as is once per chip target over stubs/idf_tsens: the classic ESP32
+# of env:esp32cam (no sensor), and the ESP32-S3 on ESP-IDF 4.4.7 (the stock
+# units' Arduino 2.0.17 core, driver/temp_sensor.h) and on ESP-IDF 5.5.4
+# ([env:full]'s core 3, driver/temperature_sensor.h), each with the
+# sdkconfig.h that names the target, the esp_idf_version.h that picks the
+# driver, and a fake of that driver the suite drives. The provider's
+# thermal_sensor_present() is false on the classic ESP32 and true on the
+# S3, where the reads go through the driver. The provider installs the
+# driver once and never retries a failed install, so the S3 binaries run
+# three times, in a mode each: --tsens=ok, install-fails and enable-fails.
+# A chip with no sensor never throttles and reads as no sensor, three
+# misses throttle once, a stream's reset clears the count, and a driver
+# that will not start fails safe on every stream. It also reads the camera
+# and provider sources (checkThermal() reads only through the step; the
+# provider includes sdkconfig.h before it tests the target: IDF defines
+# CONFIG_IDF_TARGET_* there and nowhere on the command line, and without
+# that include the S3 compiled the sensorless stub too).
+CAMTHERM_DIR   = ../canary/lib/securacv_camera/src
+CAMTHERM_PROV  = ../canary/lib/securacv_thermal/src
+CAMTHERM_STUBS = stubs/idf_tsens
 CAMTHERM_READS = $(CAMTHERM_DIR)/securacv_camera.cpp $(CAMTHERM_DIR)/securacv_camera.h \
                  $(CAMTHERM_DIR)/camera_thermal.h $(CAMTHERM_PROV)/securacv_thermal.cpp
-CAMTHERM_BIN  = $(BUILD_DIR)/test_camera_thermal
-CAMTHERM_BINS = $(CAMTHERM_BIN) $(CAMTHERM_BIN)_esp32
-$(CAMTHERM_BIN)_esp32: CAMTHERM_FLAGS = -DCONFIG_IDF_TARGET_ESP32=1
+CAMTHERM_HDRS  = $(wildcard $(CAMTHERM_STUBS)/*/*.h $(CAMTHERM_STUBS)/*/*/*.h)
+CAMTHERM_BIN   = $(BUILD_DIR)/test_camera_thermal
+CAMTHERM_TARGETS = esp32 esp32s3_idf4 esp32s3_idf5
+CAMTHERM_BINS  = $(foreach t,$(CAMTHERM_TARGETS),$(CAMTHERM_BIN)_$(t))
+$(CAMTHERM_BIN)_esp32: CAMTHERM_TARGET = esp32
+$(CAMTHERM_BIN)_esp32s3_idf4: CAMTHERM_TARGET = esp32s3_idf4
+$(CAMTHERM_BIN)_esp32s3_idf5: CAMTHERM_TARGET = esp32s3_idf5
 
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
@@ -1551,14 +1567,20 @@ run-witness-key-load-projects: $(WITKEY_BIN)
 	./$(WITKEY_BIN) $(WITKEY_SRCS)
 run: run-witness-key-load-projects
 
-$(CAMTHERM_BINS): test_camera_thermal.cpp $(CAMTHERM_READS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) $(CAMTHERM_FLAGS) -I $(CAMTHERM_DIR) -I $(CAMTHERM_PROV) \
-	    -I ../canary/include test_camera_thermal.cpp $(CAMTHERM_PROV)/securacv_thermal.cpp -o $@)
+$(CAMTHERM_BINS): test_camera_thermal.cpp $(CAMTHERM_READS) $(CAMTHERM_HDRS) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(CAMTHERM_STUBS)/$(CAMTHERM_TARGET) -I $(CAMTHERM_STUBS)/common \
+	    -I $(CAMTHERM_DIR) -I $(CAMTHERM_PROV) -I ../canary/include \
+	    test_camera_thermal.cpp $(CAMTHERM_PROV)/securacv_thermal.cpp -o $@)
 
 .PHONY: run-camera-thermal
 run-camera-thermal: $(CAMTHERM_BINS)
-	./$(CAMTHERM_BIN) $(CAMTHERM_READS)
 	./$(CAMTHERM_BIN)_esp32 $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf4 --tsens=ok $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf4 --tsens=install-fails $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf4 --tsens=enable-fails $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf5 --tsens=ok $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf5 --tsens=install-fails $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf5 --tsens=enable-fails $(CAMTHERM_READS)
 run: run-camera-thermal
 
 $(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)

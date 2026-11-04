@@ -9,6 +9,19 @@
 
 #include "securacv_thermal.h"
 
+/* Which chip this is comes from sdkconfig.h: IDF defines CONFIG_IDF_TARGET_*
+ * there and nowhere on the compiler's command line, and nothing else this
+ * file includes reaches it (its sibling libraries include <Arduino.h> first,
+ * which does). Without this line the test below saw no target on any chip,
+ * and the provider compiled as the sensorless stub on the ESP32-S3 too:
+ * every consumer's read was a miss, so the camera fail-safe throttled its
+ * first stream, the watchdog ran without a reading and the self-test's
+ * temperature was NAN on every stock unit (found in sweep F432's review).
+ * The host build has no sdkconfig.h of its own: test_camera_thermal.cpp
+ * compiles this file once per target with one that names it
+ * (firmware/tests_host/stubs/idf_tsens). */
+#include <sdkconfig.h>
+
 #if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S2) || \
     defined(CONFIG_IDF_TARGET_ESP32C3)
   #define SECURACV_HAVE_TSENS 1

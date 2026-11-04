@@ -37,8 +37,9 @@ extern "C" {
 bool thermal_read_die_c(float* out_c);
 
 /* True when this target has a die-temperature sensor the provider drives
- * (ESP32-S3, -S2 and -C3), false where it has none (the classic ESP32 of
- * env:esp32cam and env:esp32-wroom, and the host build), where
+ * (ESP32-S3, -S2 and -C3, by sdkconfig.h's CONFIG_IDF_TARGET_*, which
+ * securacv_thermal.cpp includes before it asks), false where it has none
+ * (the classic ESP32 of env:esp32cam and env:esp32-wroom), where
  * thermal_read_die_c() always answers false. A caller that counts misses
  * asks this first, so a chip with no sensor is not read as one whose sensor
  * fails (sweep F432). True does not promise a read: the driver can still
