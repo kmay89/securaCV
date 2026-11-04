@@ -4,7 +4,7 @@
 #
 # Install:  pip install -r requirements_test.txt
 cryptography==50.0.2   # tests/test_signature.py + signature.py Ed25519 verify
-pytest==9.1.1
+pytest==9.2.0
 PyYAML==6.0.3          # tests/test_quality_scale.py reads quality_scale.yaml (the HA lane pins the same)
-ruff==0.17.1
+ruff==0.17.3
 mypy==2.4.0
