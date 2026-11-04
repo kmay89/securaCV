@@ -1498,6 +1498,34 @@ static bool paired_row_saved() {
   return nvs.isOpen() && nvs->getBytesLength(NVS_KEY_BT_PAIRED) > 0;
 }
 
+// Whether the bond store's record of the bond under `identity` says its
+// pairing was unauthenticated (sweep F353): Just Works, which no owner
+// confirmed. ble_store_read_peer_sec() (host/ble_store.h, NimBLE-Arduino
+// 2.3.8 and 2.5.0) reads the peer's security record (PEER_SEC), keyed as
+// NimBLE keys it: by the identity address the store hands out (type and
+// value, as getBondedAddress() gave them), idx 0 for the first match. The
+// record's `authenticated` is the pairing's MITM, and ble_sm.c writes it
+// (and `sc`) only beside an LTK, so a record whose ltk_present is 0 says
+// nothing either way. True only when the read answers 0 with an LTK present
+// and `authenticated` 0. Every other answer leaves the bond to be listed as
+// before F353: a record that is not there (BLE_HS_ENOENT), any other error,
+// a record with no LTK, and an all-zero identity (the key BLE_ADDR_ANY,
+// which reads the store's first record, not this bond's, so it is not
+// read). The read takes the host's lock (ble_store_read()), so the loop
+// task may make it while the NimBLE host task runs.
+static bool bond_record_unauthenticated(const ble_addr_t* identity) {
+  static const uint8_t kNoAddress[BLE_ADDRESS_LENGTH] = {0};
+  if (identity->type == 0 && memcmp(identity->val, kNoAddress, BLE_ADDRESS_LENGTH) == 0) return false;
+  struct ble_store_key_sec key;
+  memset(&key, 0, sizeof(key));
+  key.peer_addr = *identity;
+  key.idx = 0;
+  struct ble_store_value_sec value;
+  memset(&value, 0, sizeof(value));
+  if (ble_store_read_peer_sec(&key, &value) != 0) return false;
+  return value.ltk_present && !value.authenticated;
+}
+
 // A paired list saved before sweep F172 kept each phone's over-the-air
 // address, which for a phone using resolvable private addresses (most do)
 // is one it has long since dropped, and names no bond: Remove asked NimBLE
@@ -1512,6 +1540,20 @@ static bool paired_row_saved() {
 // this runs once. An over-the-air entry cannot be matched to its bond (that
 // needs the phone's IRK, which NimBLE-Arduino does not hand out), so its
 // trust and block flags start over under the identity entry.
+//
+// A bond with no entry is added only when the store does not say its
+// pairing was unauthenticated (sweep F353). F191 deletes a Just Works bond
+// as it is reported, but a few roads leave one in the store (a reboot after
+// NimBLE stored it and before the loop task applied its report, a reboot
+// inside a kept bond's retry minute, a dropped link event), and this rebuild
+// used to list it as bonded: a phone nobody confirmed on the owner's list,
+// and a bond F209's unlisted count and lockout line never named. Now the
+// bond's record is read (bond_record_unauthenticated()), and one that says
+// unauthenticated is left out of the list and left in the store: F209
+// counts it unlisted (in GET /api/bluetooth, and in the lockout line when
+// the store is full), and Clear all removes it. Nothing is deleted here, so
+// a record that reads wrong costs a listing, never a bond. A bond whose
+// record cannot be read is listed as before.
 static void migrate_paired_devices() {
   if (g_paired_by_identity) return;
   const int bonds = NimBLEDevice::getNumBonds();
@@ -1527,20 +1569,26 @@ static void migrate_paired_devices() {
   memset(rebuilt, 0, sizeof(rebuilt));
   size_t count = 0;
   size_t kept = 0;
+  size_t unconfirmed = 0;   // F353: unauthenticated bonds left unlisted, in the store
   for (int b = 0; b < bonds && count < MAX_PAIRED_DEVICES; b++) {
     const NimBLEAddress identity = NimBLEDevice::getBondedAddress(b);
     const ble_addr_t* id = identity.getBase();
-    PairedDevice* dev = &rebuilt[count++];
-    bool found = false;
+    const PairedDevice* entry = nullptr;
     for (size_t i = 0; i < g_paired_count; i++) {
       if (memcmp(g_paired_devices[i].address, id->val, BLE_ADDRESS_LENGTH) == 0) {
-        *dev = g_paired_devices[i];
-        found = true;
-        kept++;
+        entry = &g_paired_devices[i];
         break;
       }
     }
-    if (!found) {
+    if (entry == nullptr && bond_record_unauthenticated(id)) {
+      unconfirmed++;
+      continue;
+    }
+    PairedDevice* dev = &rebuilt[count++];
+    if (entry != nullptr) {
+      *dev = *entry;
+      kept++;
+    } else {
       memcpy(dev->address, id->val, BLE_ADDRESS_LENGTH);
       strncpy(dev->name, identity.toString().c_str(), MAX_DEVICE_NAME_LEN);
       dev->name[MAX_DEVICE_NAME_LEN] = '\0';
@@ -1553,9 +1601,12 @@ static void migrate_paired_devices() {
   g_paired_count = count;
   save_paired_devices();
 
+  // Every count is at most MAX_PAIRED_DEVICES (8) or the store's
+  // CONFIG_BT_NIMBLE_MAX_BONDS (3), so the detail stays inside the 47 bytes
+  // the health log's ring keeps of one.
   char detail[64];
-  snprintf(detail, sizeof(detail), "%u kept, %u added, %u dropped", (unsigned)kept,
-           (unsigned)(count - kept), (unsigned)dropped);
+  snprintf(detail, sizeof(detail), "%u kept, %u added, %u dropped, %u unconfirmed", (unsigned)kept,
+           (unsigned)(count - kept), (unsigned)dropped, (unsigned)unconfirmed);
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Paired list rebuilt from the bond store", detail);
 }
 
