@@ -4684,7 +4684,9 @@ async function desktopCard(appJs, answer, { chip = "ESP32-S3", flashBytes = 8 * 
       const html = markup(product, version);
       const m = /p-verdict is-([a-z]+)"><span class="p-verdict-label">(.*?)<\/span>/.exec(html);
       if (!m) return null;
-      const label = m[2].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+      // One pass, the exact inverse of app.js's esc(): decoding &amp; first
+      // would turn an escaped "&lt;" (written "&amp;lt;") into "<".
+      const label = m[2].replace(/&(amp|lt|gt|quot);/g, (_, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"' })[e]);
       return { kind: m[1], label: label.replace(/^\S+ /, "") };
     },
     pick: smartPick(catalog, { chip, flashBytes, currentProject: r && !r.unknown && !r.blank ? r.projectName : null }),
