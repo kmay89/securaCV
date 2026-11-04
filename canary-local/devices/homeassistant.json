@@ -598,7 +598,7 @@
     },
     {
       "name": "Last Event",
-      "desc": "latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28), every other stateless row `unknown`; the event that creates it (a device's first on the topic) is shown too, verified and replay-gated like any other (HA44) (`last_event`; signed `events` topic)"
+      "desc": "latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28; an entities card shows them as Daily summary and Quiet Hours summary, the timeline card's words, HA41), every other stateless row `unknown`; the event that creates it (a device's first on the topic) is shown too, verified and replay-gated like any other (HA44) (`last_event`; signed `events` topic)"
     },
     {
       "name": "Health",
