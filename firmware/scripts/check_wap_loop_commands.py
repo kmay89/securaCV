@@ -318,7 +318,9 @@ CV7. What the routes put under each key (`chirp_api.h` is not host-compiled:
      `CHIRP_NEARBY_FIELDS`, `CHIRP_RECENT_FIELDS`); `cannot_send_reason`
      only from one `chirp_channel::cannot_send_reason(v)` (F146:
      `clock_unsynced`); the rows from the copy's own count and array, the
-     recent route skipping a dismissed row first (`CHIRP_ROUTE_SHAPE`);
+     recent route skipping a dismissed row first (`CHIRP_ROUTE_SHAPE`), and
+     its `category` from `template_category()` of the row's template (F307:
+     the id's high nibble named an all-clear chirp "unknown");
      `free(t)` right after `serializeJson()` (ArduinoJson keeps a `const`
      char array, the copy's emoji, by pointer until it serializes) and
      before every `return` that follows the read. `POST /api/chirp/send`
@@ -2117,7 +2119,7 @@ CHIRP_LIVE_READERS = ("get_status", "get_recent_chirps", "get_pending_chirps", "
 CHIRP_LIVE_READER_RE = r"\bchirp_channel::(" + "|".join(CHIRP_LIVE_READERS) + r")\s*\("
 # What a Chirp GET handler may call on the channel besides its one reader:
 # pure lookups of the copy it read (rule CV2).
-CHIRP_VIEW_LOOKUPS = ("state_name", "category_name", "urgency_name", "get_template_text",
+CHIRP_VIEW_LOOKUPS = ("state_name", "category_name", "template_category", "urgency_name", "get_template_text",
                       "get_detail_text", "get_validation_status", "cannot_send_reason", "seconds_left")
 # What the readers may not name: the live state and its readers (rule CV4).
 CHIRP_LIVE_STATE = ("g_state", "g_session", "g_cooldown", "g_recent_chirps", "g_recent_chirp_count",
@@ -2301,7 +2303,9 @@ CHIRP_RECENT_FIELDS = {
     "template_id": "(uint8_t)chirps[i].template_id",
     "template_text": "chirp_channel::get_template_text(chirps[i].template_id)",
     "detail": "chirp_channel::get_detail_text(chirps[i].detail)",
-    "category": "chirp_channel::category_name(cat)",
+    # The template table's category (F307): the id's high nibble named an
+    # all-clear chirp (0x80-0x82) "unknown".
+    "category": "chirp_channel::category_name(chirp_channel::template_category(chirps[i].template_id))",
     "urgency": "chirp_channel::urgency_name(chirps[i].urgency)",
     "hop_count": "chirps[i].hop_count",
     "age_sec": "(millis()-chirps[i].received_ms)/1000",
@@ -2329,7 +2333,6 @@ CHIRP_ROUTE_SHAPE = {
         "chirp_channel::read_recent(t);constsize_tcount=t->count;"
         "constchirp_channel::RecentView*chirps=t->chirps;",
         "for(size_ti=0;i<count;i++){if(chirps[i].dismissed)continue;JsonObjectc=arr.add<JsonObject>();",
-        "chirp_channel::ChirpCategorycat=(chirp_channel::ChirpCategory)((uint8_t)chirps[i].template_id>>4);",
         'charnonce_hex[17];for(intj=0;j<8;j++){snprintf(nonce_hex+j*2,3,"%02x",chirps[i].nonce[j]);}',
     ),
 }
@@ -5429,6 +5432,16 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the recent route answers validated from suppressed",
      on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"=\s*chirps\[i\]\.validated;",
               "= chirps[i].suppressed;")),
+    # F307: the category is the template table's, not the id's high nibble.
+    ("the recent route takes the category from the template id's high nibble again (F307)",
+     raw_other(CHIRP_API,
+               'c["category"] = chirp_channel::category_name(chirp_channel::template_category(chirps[i].template_id));',
+               "chirp_channel::ChirpCategory cat = (chirp_channel::ChirpCategory)(\n"
+               "      (uint8_t)chirps[i].template_id >> 4);  // Category from high nibble\n"
+               '    c["category"] = chirp_channel::category_name(cat);')),
+    ("the recent route names a template's category by its id cast to a category (F307)",
+     raw_other(CHIRP_API, "chirp_channel::template_category(chirps[i].template_id)",
+               "(chirp_channel::ChirpCategory)chirps[i].template_id")),
     ("the status route answers the session emoji twice",
      on_other(CHIRP_API, api_handler("handle_chirp_status"), r"(doc\[\"session_emoji\"\]\s*=\s*v\.session_emoji;)",
               r'\1 doc["session_emoji"] = "";')),

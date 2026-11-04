@@ -1126,6 +1126,86 @@ def test_memory_critical_stays_off_on_a_health_without_a_memory_reading(record, 
     assert _value(memory, "is_on") is True
 
 
+# What a health's memory keys can say, as the broker hands the text over
+# (json.loads takes NaN, Infinity and 1e400), and what that reads as: the
+# Health sensor's state on a unit whose battery is fine, its
+# memory_free_bytes attribute, and Memory Critical. The Health sensor reads
+# critical below WARNING_MEMORY_THRESHOLD_BYTES, Memory Critical turns on
+# below CRITICAL_MEMORY_THRESHOLD_BYTES; both read the same reading.
+_MEMORY_READINGS = [
+    # No reading: neither key holds a number. Not low memory, and no 0.
+    ("neither key", "", "healthy", None, False),
+    ("null", '"memory_free": null', "healthy", None, False),
+    ("NaN", '"memory_free": NaN', "healthy", None, False),
+    ("Infinity", '"memory_free": Infinity', "healthy", None, False),
+    ("-Infinity", '"free_heap": -Infinity', "healthy", None, False),
+    ("1e400", '"memory_free": 1e400', "healthy", None, False),
+    ("empty string", '"memory_free": ""', "healthy", None, False),
+    ("junk string", '"memory_free": "junk"', "healthy", None, False),
+    ("true", '"memory_free": true', "healthy", None, False),
+    ("false", '"free_heap": false', "healthy", None, False),
+    ("list", '"memory_free": [512]', "healthy", None, False),
+    ("object", '"memory_free": {"bytes": 512}', "healthy", None, False),
+    # A negative count: free heap is unsigned in both firmware, so no unit
+    # sends one, and it is no reading rather than low memory.
+    ("-1", '"memory_free": -1', "healthy", None, False),
+    ("-0.5", '"memory_free": -0.5', "healthy", None, False),
+    ("string -1", '"free_heap": "-1"', "healthy", None, False),
+    # A reading: a number in either key, memory_free first. A numeric string
+    # reads as its number, as the battery's does.
+    ("1024", '"memory_free": 1024', "healthy", 1024, True),
+    ("1023", '"memory_free": 1023', "critical", 1023, True),
+    ("0", '"memory_free": 0', "critical", 0, True),
+    ("2**64", f'"memory_free": {2**64}', "healthy", 2**64, False),
+    ("string 1024", '"memory_free": "1024"', "healthy", 1024, True),
+    ("string 1023", '"memory_free": "1023"', "critical", 1023, True),
+    ("free_heap only, low", '"free_heap": 512', "critical", 512, True),
+    ("free_heap only, plenty", '"free_heap": 182000', "healthy", 182000, False),
+    ("true beside free_heap", '"memory_free": true, "free_heap": 512', "critical", 512, True),
+    ("NaN beside free_heap", '"memory_free": NaN, "free_heap": 512', "critical", 512, True),
+    ("-1 beside free_heap", '"memory_free": -1, "free_heap": 512', "critical", 512, True),
+]
+
+
+@pytest.mark.parametrize(
+    ("spelled", "state", "attribute", "memory_on"),
+    [case[1:] for case in _MEMORY_READINGS],
+    ids=[case[0] for case in _MEMORY_READINGS],
+)
+def test_the_health_sensor_reads_only_a_memory_number_as_low_memory(
+    record, monkeypatch, spelled, state, attribute, memory_on
+):
+    """Sweep HA53: the Health sensor read a health with no free-memory number
+    as 0 bytes free (memory_free_bytes), so a health with neither key, or
+    with null, NaN or an infinity there, read critical on a unit whose
+    battery is fine, and its memory_free_bytes attribute claimed 0. It now
+    reads memory_free_reading, as Memory Critical does: no reading is not
+    low memory, and the attribute is None. A bool is no reading either (int()
+    read `true` as 1 byte free, critical on both), nor is a negative count,
+    which neither firmware can send. A real number below the threshold
+    still reads critical. Each body follows one that reads the other way,
+    so the state shown is the one this body set."""
+    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    health = wap.entity("health_status")
+    memory = wap.entity("tamper_memory_critical")
+    topic = _topic(record, "health")
+    fine = _one(record, "running", "health")
+    assert (fine["battery"], fine["battery_present"]) == (100, False), "the unit's battery is fine"
+    rest = json.dumps({k: v for k, v in fine.items() if k not in ("memory_free", "free_heap")})[1:-1]
+    before = '"memory_free": 182000' if state == "critical" else '"memory_free": 512'
+    wap.broker.publish(topic, "{" + rest + ", " + before + "}", True)
+    assert _value(health, "native_value") != state, before
+    body = "{" + rest + (", " + spelled if spelled else "") + "}"
+    wap.broker.publish(topic, body, True)
+    assert _value(health, "native_value") == state, body
+    attrs = _attrs(health)
+    assert "memory_free_bytes" in attrs
+    assert attrs["memory_free_bytes"] == attribute, body
+    assert type(attrs["memory_free_bytes"]) is type(attribute), body
+    assert attrs["battery_percent"] == 100
+    assert _value(memory, "is_on") is memory_on, body
+
+
 # ─── what the record shows is wrong today ──────────────────────────────
 
 

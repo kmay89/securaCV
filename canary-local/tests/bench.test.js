@@ -812,7 +812,12 @@ test("A83: holding BOOT narrates each board's own story, read off its bench bloc
     assert.ok(line.startsWith(`BOOT (${dev.bench.rom.boot_strap}) held — a strapping pin`), `${dev.id}: names its strap: ${line}`);
     assert.strictEqual(/Running firmware ignores it\./.test(line), !reads, `${dev.id}: ${line}`);
     assert.strictEqual(/This board's firmware also reads it while running/.test(line), reads, `${dev.id}: ${line}`);
-    if (reads) assert.match(line, /not wired to the twin's button, so the firmware sees no press\.$/, "and says the bench does not press it");
+    // sweep A99: the bench presses the twin's button where the firmware reads
+    // it, so the strap line points to that press and no longer says no press
+    // reaches the firmware
+    if (reads) assert.match(line, /this toggle holds the strap only, so to press the button the firmware reads, use the press control beside it\.$/,
+      `${dev.id}: the strap line points to the press control: ${line}`);
+    assert.ok(!/sees no press|not wired to the twin/.test(line), `${dev.id}: the strap line says no press reaches the firmware: ${line}`);
   }
   // a block that does not say gets neither story
   const unsaid = bootHeldLine({ rom: { boot_strap: "GPIO0" }, buttons: [{ id: "boot", label: "BOOT", note: "x" }] });
@@ -876,7 +881,9 @@ test("A83: the troubleshooter quotes only the ROM lines the Lab quotes for the b
   const nl = offeredOn["canary-nightlight"];
   assert.ok(!nl.some((s) => s.startsWith("Serial says 'waiting for download'")), "the C3 card offers no flow for a banner the Lab quotes none of for it");
   assert.ok(nl.includes("It reboots by itself (2)"), `the C3 card's reboot flow keeps its countdown and its restore: ${nl}`);
-  assert.ok(nl.includes("Screen dark, but the power light is on (1)"), `...and its screen-dark flow drops the download guess: ${nl}`);
+  // ...and its screen-dark flow keeps a download-mode guess, the one told in
+  // the bench's own words, not the banner's (sweep A101)
+  assert.ok(nl.includes("Screen dark, but the power light is on (2)"), `...and its screen-dark flow keeps two guesses: ${nl}`);
   const s3 = offeredOn["canary-display-watch"];
   assert.ok(s3.includes("Serial says 'waiting for download' (2)") && s3.includes("It reboots by itself (3)") &&
     s3.includes("Screen dark, but the power light is on (2)"), `the S3 cards keep every ROM step: ${s3}`);
@@ -906,9 +913,12 @@ test("A83: each card is offered every flow and step that fits it, as written, an
     const battery = !!dev.bench.power?.battery;
     const voice = quotedFor(dev.bench.rom.chip);
     const quoted = (x) => (x.rom || []).every((q) => voice.includes(q.quote));
+    // sweep A101: a step marked romMissing (a kind) fits a card whose chip's
+    // voice holds no line of that kind
+    const lacking = (x) => !x.romMissing || typeof (ROM_VOICES[dev.bench.rom.chip] || {})[x.romMissing] !== "string";
     const otherStory = reads ? "ignored" : "read";
     const fits = BENCH_FIXES.filter(quoted)
-      .map((f) => ({ f, steps: f.steps.filter((st) => (battery || !st.battery) && quoted(st) && st.boot !== otherStory) }))
+      .map((f) => ({ f, steps: f.steps.filter((st) => (battery || !st.battery) && quoted(st) && lacking(st) && st.boot !== otherStory) }))
       .filter(({ steps }) => steps.length);
     const offered = benchFixesFor(dev.bench);
     assert.deepStrictEqual(offered.map((f) => [f.symptom, f.steps.map((st) => st.title)]),
@@ -940,21 +950,384 @@ test("A83: each card is offered every flow and step that fits it, as written, an
     "It died the moment I unplugged the cable / The switch only gates the battery",
     "It died the moment I unplugged the cable / …and the ride-through, done right",
   ];
+  // the download-mode guess told without a banner (sweep A101): only a card
+  // whose chip's voice holds no download line is offered it
+  const NO_BANNER_GUESS = "Screen dark, but the power light is on / Second guess: the ROM is waiting for a flasher";
   const ordered = (titles) => BENCH_FIXES.flatMap((f) => f.steps.map((st) => `${f.symptom} / ${st.title}`)).filter((t) => titles.includes(t));
   assert.deepStrictEqual(leftOut, {
-    "canary-display-watch": [IGNORED_STORY],
-    "canary-display-dash": [READ_STORY],
-    "canary-display-nightstand-s3": ordered([...BATTERY_STEPS, IGNORED_STORY]),
-    "canary-display-touch169": [IGNORED_STORY],
-    "canary-display-amoled241": [IGNORED_STORY],
-    "canary-display-dash7": [READ_STORY],
+    "canary-display-watch": ordered([NO_BANNER_GUESS, IGNORED_STORY]),
+    "canary-display-dash": ordered([NO_BANNER_GUESS, READ_STORY]),
+    "canary-display-nightstand-s3": ordered([...BATTERY_STEPS, NO_BANNER_GUESS, IGNORED_STORY]),
+    "canary-display-touch169": ordered([NO_BANNER_GUESS, IGNORED_STORY]),
+    "canary-display-amoled241": ordered([NO_BANNER_GUESS, IGNORED_STORY]),
+    "canary-display-dash7": ordered([NO_BANNER_GUESS, READ_STORY]),
     // the C3: no battery, no download or restart banner the Lab quotes for it
+    // (its download-mode guess is the one told without a banner)
     "canary-nightlight": ordered([...BATTERY_STEPS, IGNORED_STORY,
       "Screen dark, but the power light is on / Second guess: it's in download mode",
       "Serial says 'waiting for download' / That's the ROM, not a fault",
       "Serial says 'waiting for download' / Recovery is one button",
       "It reboots by itself / Tell deliberate reboots from brownouts"]),
   }, "what each card leaves out");
+});
+
+// Sweep A99: on the five boards whose firmware reads BOOT while it runs, the
+// bench's BOOT chip held the strap only and said "the firmware sees no
+// press", and nothing on the page called the twin's emu_button, so the BOOT
+// grammar the twin compiles (a press wakes the glass, a hold acknowledges,
+// held 3 s it warns) could not be reached from the bench. BenchPower now owns
+// a momentary press (pressBoot/releaseBoot): only where the bench block says
+// the firmware reads BOOT, only while the app runs, held on the twin it was
+// made on and released there by everything that takes the app away, before
+// the page hears of it. The DOM half (pointer up, leave, cancel, blur, the
+// page hidden) is driven in Chromium by bench_probe.mjs.
+const READS_BOOT = ["canary-display-watch", "canary-display-nightstand-s3", "canary-display-touch169", "canary-display-amoled241", "canary-nightlight"];
+function twinRec(events, { wired = true } = {}) {
+  return {
+    button: (down) => {
+      if (!wired) return false;
+      events.push(["button", down ? 1 : 0]);
+      return true;
+    },
+  };
+}
+
+test("A99: the bench presses BOOT for the running firmware only where it reads it, and always lets go first", async () => {
+  const { BenchPower, bootPressOffered } = await importBench();
+  assert.strictEqual(typeof bootPressOffered, "function", "bench.js says where a press is offered");
+  const offered = [];
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const reads = dev.bench.buttons.find((b) => b.id === "boot").read_while_running;
+    assert.strictEqual(bootPressOffered(dev.bench), reads === true, `${dev.id}: offered exactly where read_while_running is true`);
+    const { bench, events } = rig(dev.bench, BenchPower);
+    assert.strictEqual(bench.pressBoot(twinRec(events)), reads, `${dev.id}: a press reaches the running firmware only where it reads BOOT`);
+    bench.releaseBoot();
+    assert.deepStrictEqual(events.filter(([k]) => k === "button").map(([, d]) => d), reads ? [1, 0] : [], dev.id);
+    if (reads) offered.push(dev.id);
+  }
+  assert.deepStrictEqual(offered, READS_BOOT);
+  for (const unsaid of [undefined, {}, { buttons: [{ id: "boot", label: "BOOT" }] }, { buttons: [{ id: "boot", read_while_running: "yes" }] }])
+    assert.strictEqual(bootPressOffered(unsaid), false, `no press where the bench block does not say: ${JSON.stringify(unsaid)}`);
+
+  // every way the app goes away lets go of a held press, once, on the twin it
+  // pressed, before the bench tells the page (a reset or a rail event)
+  const away = {
+    "the hand lets go": (b) => b.releaseBoot(),
+    "RESET": (b) => b.pressReset(),
+    "RESET with the strap held": (b) => { b.setBootHeld(true); b.pressReset(); },
+    "the firmware's own restart": (b) => b.firmwareRestart(),
+    "the firmware's own restart, strap held": (b) => { b.setBootHeld(true); b.firmwareRestart(); },
+    "USB out with no battery": (b) => { b.setBattery(false); b.setUsb(false); },
+    "the switch OFF on battery": (b) => { b.setUsb(false); b.setSwitch(false); },
+    "the battery running flat": (b) => { b.setUsb(false); b.soc = 0.01; b.tick(60000); },
+  };
+  for (const [what, act] of Object.entries(away)) {
+    const { bench, events } = rig(benchProfile("canary-display-watch"), BenchPower);
+    const twin = twinRec(events);
+    assert.ok(bench.pressBoot(twin), `${what}: pressed`);
+    assert.strictEqual(bench.bootPressedOn, twin, `${what}: held on the twin it pressed`);
+    act(bench);
+    const seq = events.filter(([k]) => k !== "log");
+    assert.deepStrictEqual(seq.filter(([k]) => k === "button").map(([, d]) => d), [1, 0], `${what}: one press, one release: ${JSON.stringify(seq)}`);
+    const rel = seq.findIndex(([k, d]) => k === "button" && d === 0);
+    const told = seq.findIndex(([k]) => k !== "button");
+    assert.ok(told < 0 || rel < told, `${what}: released before the page hears of it: ${JSON.stringify(seq)}`);
+    assert.strictEqual(bench.bootPressedOn, null, what);
+    assert.strictEqual(bench.releaseBoot(), false, `${what}: nothing left to release`);
+  }
+  // a battery ride-through is a non-event the firmware never notices: the press holds
+  {
+    const { bench, events } = rig(benchProfile("canary-display-watch"), BenchPower);
+    bench.pressBoot(twinRec(events));
+    bench.setUsb(false);
+    assert.ok(bench.bootPressedOn && bench.mode === "run", "USB out on a healthy battery keeps the press");
+    bench.releaseBoot();
+    assert.deepStrictEqual(events.filter(([k]) => k === "button").map(([, d]) => d), [1, 0]);
+  }
+
+  // refused: in download mode, with the rail down, twice at once, and on a
+  // twin whose dist has no button; a double press is two presses, each let go
+  const { bench, events } = rig(benchProfile("canary-nightlight"), BenchPower);
+  const presses = () => events.filter(([k]) => k === "button").map(([, d]) => d);
+  bench.setBootHeld(true);
+  bench.pressReset();
+  assert.strictEqual(bench.mode, "download");
+  assert.strictEqual(bench.bootPressable(), false, "download mode: no app to press for");
+  assert.strictEqual(bench.pressBoot(twinRec(events)), false, "no press reaches a ROM waiting for a flasher");
+  bench.setBootHeld(false);
+  bench.pressReset();
+  assert.strictEqual(bench.mode, "run", "a plain RESET still recovers: the press never touched the strap");
+  bench.setUsb(false);
+  assert.strictEqual(bench.mode, "off");
+  assert.strictEqual(bench.pressBoot(twinRec(events)), false, "no press with the rail down");
+  bench.setUsb(true);
+  assert.deepStrictEqual(presses(), [], "nothing reached a twin while there was no app");
+  const twin = twinRec(events);
+  assert.ok(bench.pressBoot(twin));
+  assert.strictEqual(bench.pressBoot(twin), false, "a second press while one is held is refused");
+  assert.strictEqual(bench.pressBoot(twinRec(events)), false, "...on any twin");
+  bench.releaseBoot();
+  bench.releaseBoot();
+  assert.ok(bench.pressBoot(twin));
+  bench.releaseBoot();
+  assert.deepStrictEqual(presses(), [1, 0, 1, 0], "a double press: two presses, each released once");
+  const unwired = twinRec(events, { wired: false });
+  assert.strictEqual(bench.pressBoot(unwired), false, "a twin whose dist has no emu_button is not pressed");
+  assert.strictEqual(bench.bootPressedOn, null, "...and not held");
+  assert.strictEqual(bench.pressBoot({}), false, "nor one with no button at all");
+  assert.strictEqual(bench.pressBoot(null), false);
+  // a hand lets go of its own press only: one kept from an earlier press
+  // cannot release a later one, and the bench's own releases need none
+  assert.ok(bench.pressBoot(twin));
+  const first = bench.bootPress;
+  bench.releaseBoot(first);
+  assert.ok(bench.pressBoot(twin));
+  assert.notStrictEqual(bench.bootPress, first, "each press is its own");
+  assert.strictEqual(bench.releaseBoot(first), false, "an earlier press's hand cannot release a later press");
+  assert.ok(bench.bootPressedOn, "...which is still held");
+  assert.strictEqual(bench.releaseBoot(bench.bootPress), true);
+  assert.deepStrictEqual(presses(), [1, 0, 1, 0, 1, 0, 1, 0]);
+  // the strap and the press are separate wires: pressing never moves the strap
+  bench.pressBoot(twin);
+  assert.strictEqual(bench.bootHeld, false, "a press is not the strap");
+  bench.pressReset();
+  assert.strictEqual(bench.mode, "run", "RESET while pressed boots the app: the strap toggle, not the press, picks download mode");
+  assert.deepStrictEqual(presses(), [1, 0, 1, 0, 1, 0, 1, 0, 1, 0]);
+});
+
+test("A99: the shell presses the twin's button through emu_button, and a dist without it says so", async () => {
+  const { CanaryEmulator } = await import("../emulator/web/emu-shell.js");
+  const fake = (withButton) => {
+    const calls = [];
+    const factory = async () => ({
+      cwrap: (name) => (...args) => { calls.push([name, ...args]); return 0; },
+      _emu_button: withButton ? () => {} : undefined,
+      HEAPU8: new Uint8Array(16),
+      UTF8ToString: () => "[]",
+    });
+    const canvas = { getContext: () => ({}), addEventListener: () => {} };
+    return { calls, emu: new CanaryEmulator(factory, { canvas }) };
+  };
+  const buttonCalls = (calls) => calls.filter(([n]) => n === "emu_button").map(([, d]) => d);
+  {
+    const { calls, emu } = fake(true);
+    assert.strictEqual(emu.button(true), false, "no module yet, no press");
+    await emu.start({});
+    assert.strictEqual(typeof emu.c.button, "function", "the shell cwraps emu_button where the dist exports it");
+    assert.strictEqual(emu.button(true), true);
+    assert.strictEqual(emu.button(false), true);
+    emu.retire();
+    assert.strictEqual(emu.button(true), false, "a retired twin takes no press");
+    assert.strictEqual(emu.button(false), true, "...but a release always reaches it");
+    assert.deepStrictEqual(buttonCalls(calls), [1, 0, 0]);
+  }
+  {
+    const { calls, emu } = fake(false);
+    await emu.start({});
+    assert.strictEqual(emu.c.button, null, "a dist without emu_button gets no binding, like backlightCap");
+    assert.strictEqual(emu.button(true), false, "...and its button() says it cannot press");
+    assert.strictEqual(emu.button(false), false);
+    assert.deepStrictEqual(buttonCalls(calls), []);
+  }
+  const shell = readFileSync(join(ROOT, "emulator/web/emu-shell.js"), "utf8");
+  assert.ok(shell.includes('button: M._emu_button ? M.cwrap("emu_button", null, ["number"]) : null,'),
+    "the shell asks for the button only of a dist that has it");
+  assert.ok(shell.includes('"canary-sense"'), "gen_senselab.py's must() still reads canary-sense in the shell");
+  // the binding the shell asks for is the twin's own, and every display dist exports it
+  const support = readFileSync(join(ROOT, "emulator/src/emu_support.cpp"), "utf8");
+  assert.ok(support.includes("EMSCRIPTEN_KEEPALIVE void emu_button(int down) {\n  g_button_level = down ? LOW : HIGH;"),
+    "emu_support.cpp's emu_button drives the level digitalRead() returns");
+  for (const dev of registry().devices) {
+    if (!dev.emulator) continue;
+    const bundle = readFileSync(join(ROOT, dev.emulator.module), "latin1");
+    assert.ok(bundle.includes('_emu_button=Module["_emu_button"]'), `${dev.id}: its committed dist exports emu_button`);
+  }
+});
+
+test("A99: the Lab's bench offers the press beside the strap where the firmware reads BOOT, and says so", async () => {
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  // the control: built only where bootPressOffered() says, pressed through the
+  // bench on the running twin, let go on every way a hand leaves it
+  assert.match(app, /\n  if \(bootPressOffered\(profile\)\) \{\n    const b = el\("button", "bench-chip bench-momentary bench-press"\);/,
+    "app.js builds the press control only where the board's firmware reads BOOT");
+  assert.strictEqual((app.match(/bench-press/g) || []).length, 1, "one press control, built in one place");
+  assert.ok(app.includes("if (bench.pressBoot(ctx.emu)) mine = bench.bootPress;"), "a press goes through the bench to the running twin, and the view keeps which");
+  assert.ok(app.includes('b.addEventListener("pointerdown", down);'));
+  assert.ok(app.includes('for (const t of ["pointerup", "pointerleave", "pointercancel", "lostpointercapture", "keyup", "blur"]) b.addEventListener(t, letGo);'),
+    "up, leave, cancel, a lost capture, a key up and a blur each let go");
+  assert.ok(app.includes("if (own && bench.releaseBoot(own)) sync();"), "a view lets go of its own press only");
+  // review of A99: a touch is captured to the control it went down on, so its
+  // pointerleave waits for the lift; a finger slid off lets go on the move
+  // that leaves the control's box (the real touch is driven in bench_probe)
+  assert.match(app, /b\.addEventListener\("pointermove", \(ev\) => \{\n\s*if \(!mine\) return;\n\s*const r = b\.getBoundingClientRect\(\);\n\s*if \(ev\.clientX < r\.left \|\| ev\.clientX > r\.right \|\| ev\.clientY < r\.top \|\| ev\.clientY > r\.bottom\) letGo\(\);\n/,
+    "a finger slid off the control lets go there, before it lifts");
+  // ...and another tab replacing the bench lets go as the view goes, not on
+  // the old view's next tick
+  assert.ok(app.includes("    ctx.leaveView = unhook;\n"), "the bench view leaves its release for the tab that replaces it");
+  assert.match(app, /const leave = ctx\.leaveView;\n\s*ctx\.leaveView = null;\n\s*leave\?\.\(\);\n\s*panel\.innerHTML = "";/,
+    "the display sheet's tabs let the old view go before they replace it");
+  // the 10 s hold: the firmware erases its networks, but the bench restarts
+  // the twin from the page's copy of its flash, which no erase reaches, so
+  // the title says it comes back on its home network (bench_probe holds it
+  // past 10 s and reads the serial). Should the twin's erase ever reach that
+  // copy, or a provisioned boot stop seeding the network, this fails first.
+  assert.match(app, /held 10 s the firmware erases its saved networks and screen settings \(the identity stays\) and " \+\n\s*"restarts, but this bench restarts it from the page's copy of its flash, which no erase reaches, so it comes " \+\n\s*"back on its home network\."/,
+    "the press's title says the bench gives the twin its network back after a factory reset");
+  const support = readFileSync(join(ROOT, "emulator/src/emu_support.cpp"), "utf8");
+  for (const fn of ["bool Preferences::remove(const char* key) {", "bool Preferences::clear() {"]) {
+    const at = support.indexOf(fn);
+    assert.ok(at >= 0, `emu_support.cpp still defines ${fn}`);
+    const body = support.slice(at, support.indexOf("\n}\n", at));
+    assert.ok(!body.includes("js_nvs_write"), `${fn} now reaches the page's copy of the flash: the press's title must say a factory reset lasts`);
+  }
+  const shellSrc = readFileSync(join(ROOT, "emulator/web/emu-shell.js"), "utf8");
+  assert.match(shellSrc, /if \(provisioned && !firstMeeting\) \{\n\s*this\._nvsPut\("securacv", "wifi_ssid", HOME_LAN\.ssid\);/,
+    "a provisioned boot seeds the home network: the press's title leans on it");
+  assert.ok(app.includes("booting again with its memory intact"), "the bench's reboot restores the page's copy of the flash");
+  assert.ok(app.includes('window.addEventListener("blur", letGo);') && app.includes('document.addEventListener("visibilitychange", hidden);'),
+    "a hand that leaves the window or the page lets go");
+  assert.match(app, /controls\.append\(usb\.b, bat\.b, sw\.b, bootBtn\.b, \.\.\.\(press \? \[press\.b\] : \[\]\), resetBtn, ff\);/,
+    "the press sits beside the strap toggle, before RESET");
+  assert.match(app, /const live = bench\.bootPressable\(\) && wired && !ctx\.emu\.dead;\n\s*\/\/ [^\n]*\n\s*press\.b\.disabled = !live && !held;/,
+    "live only while the app runs on a twin with the button, never disabled while held");
+  // the app's own restarts let go before the twin is retired
+  for (const site of ["      onReboot: async () => {\n        ctx.bench?.releaseBoot();", "      ctx.bench?.releaseBoot(); // a held press goes with the app (sweep A99)\n      ctx.emu.retire();"])
+    assert.ok(app.includes(site), `app.js lets go before it retires the twin: ${JSON.stringify(site)}`);
+  assert.ok(app.includes("ctx.dispose.push(() => ctx.bench.releaseBoot());"), "a closed sheet lets go");
+  // no flow tells a card the bench cannot press the twin's button any more
+  const { BENCH_FIXES } = await importGuides();
+  for (const f of BENCH_FIXES) {
+    for (const st of f.steps) {
+      const text = [st.title, st.body, st.onDevice].filter(Boolean).join(" ");
+      assert.ok(!/not wired to the twin|does not press the twin|will not answer it/.test(text), `${f.symptom}: ${st.title} says the bench cannot press the twin's button`);
+    }
+  }
+  const read = BENCH_FIXES.find((f) => f.symptom === "Pressing BOOT does nothing").steps.find((st) => st.boot === "read");
+  assert.match(read.body, /the press control beside it presses the twin's button while the app runs/, "the read story points to the press");
+});
+
+// Sweep A101: the Nightlight's ESP32-C3 has no download-mode banner the Lab
+// quotes, so A83 left its screen-dark flow without the download-mode guess
+// at all. That flow now carries a second form of the guess, marked
+// `romMissing: "download"`, offered exactly where the banner-quoting one is
+// not: every card that names its chip gets one download-mode guess, and the
+// C3's quotes no ROM line, names its own strap and the bench's own note, and
+// recovers the same way. A step is a download-mode guess by what its stage
+// does: it leaves the bench's ROM in download mode.
+test("A101: every card's screen-dark flow offers exactly one download-mode guess, in its own chip's words", async () => {
+  const { BENCH_FIXES, benchFixesFor } = await importGuides();
+  const { BenchPower, ROM_VOICES, romBanner } = await importBench();
+  const DARK = "Screen dark, but the power light is on";
+  const ctxFor = (bench) => ({ bench, emu: { setWifi() {}, setBroker() {}, setTimeScale() {} }, setHour() {}, note() {} });
+  const guesses = async (profile) => {
+    const flow = benchFixesFor(profile).find((f) => f.symptom === DARK);
+    const out = [];
+    for (const st of flow?.steps || []) {
+      if (!st.stage) continue;
+      const { bench } = rig(profile, BenchPower);
+      await st.stage(ctxFor(bench));
+      if (bench.mode === "download") out.push({ st, bench });
+    }
+    return out;
+  };
+  const textOf = (st) => [st.title, st.body, st.onDevice].filter(Boolean).join(" ");
+  // every light any bench block lists, by its label (PWR, CHG, DONE, USER)
+  const labels = [...new Set(registry().devices.flatMap((d) => (d.bench?.leds || []).map((l) => l.label)))];
+  assert.ok(labels.includes("PWR") && labels.length >= 3, `the registry's light labels: ${labels}`);
+  const LIGHTS = new RegExp(`\\b(?:${labels.join("|")})\\b`, "g");
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const found = await guesses(dev.bench);
+    assert.strictEqual(found.length, 1, `${dev.id}: ${found.length} download-mode guesses in its screen-dark flow`);
+    const [{ st, bench }] = found;
+    const voice = ROM_VOICES[dev.bench.rom.chip];
+    const quoted = Object.entries(voice).filter(([k, v]) => k !== "name" && typeof v === "string").map(([, v]) => v).join("\n");
+    for (const t of ROM_TOKENS)
+      assert.ok(!textOf(st).includes(t) || quoted.includes(t), `${dev.id}: its download-mode guess quotes ${t}, a line its ${voice.name} does not print`);
+    assert.ok(textOf(st).includes(`BOOT (${dev.bench.rom.boot_strap})`) || !/GPIO\d+/.test(textOf(st)), `${dev.id}: the guess names another board's strap`);
+    // the same recovery everywhere: RESET alone boots the app
+    assert.match(st.body, /Press RESET — alone — and it boots normally\.$/, dev.id);
+    bench.pressReset();
+    assert.strictEqual(bench.mode, "run", `${dev.id}: RESET alone recovers from the staged download mode`);
+    if (typeof voice.download === "string") {
+      assert.ok(st.rom?.some((q) => q.kind === "download"), `${dev.id}: a chip with a download banner gets the guess that quotes it`);
+    } else {
+      assert.strictEqual(st.romMissing, "download", `${dev.id}: a chip with no download banner gets the guess told without one`);
+    }
+    // review of A101: a guess told without a banner names no light its
+    // board's bench block does not list (the C3's lists none). The banner
+    // guess's "PWR lit", on S3 cards that list no rail light, is older than
+    // A101 and a handup, not held here.
+    if (st.romMissing) {
+      const listed = new Set((dev.bench.leds || []).map((l) => l.label));
+      for (const lab of textOf(st).match(LIGHTS) || [])
+        assert.ok(listed.has(lab), `${dev.id}: its download-mode guess names ${lab}, a light its bench block does not list`);
+      if (!(dev.bench.leds || []).some((l) => l.driver === "rail"))
+        assert.ok(!/power light|power LED/i.test(textOf(st)), `${dev.id}: its download-mode guess names a power light its bench block does not list`);
+    }
+  }
+  // the Nightlight's, whole: no ROM token at all, GPIO9, the bench's own note,
+  // which is the note romBanner() prints for its download mode
+  const [{ st: nl }] = await guesses(benchProfile("canary-nightlight"));
+  for (const t of ROM_TOKENS) assert.ok(!textOf(nl).includes(t), `the Nightlight's download-mode guess quotes ${t}`);
+  assert.ok(nl.body.startsWith("If BOOT (GPIO9) was held"), nl.body);
+  assert.match(nl.body, /The serial panel shows the bench's own note where the ROM's banner would be — the ROM waits for a flasher, and the Lab quotes no download-mode banner for this chip\./);
+  const note = romBanner("download", benchProfile("canary-nightlight").rom);
+  assert.match(note, /^\(ESP32-C3 ROM: BOOT \(GPIO9\) was low at reset, so it waits for a flasher\. Its download-mode banner is not reproduced/,
+    "the note the guess names is the one the bench prints");
+  // the marker is the other half of the banner guess: same stage, same words
+  // off the device, and offered on a card exactly where the banner one is not
+  const dark = BENCH_FIXES.find((f) => f.symptom === DARK).steps;
+  const banner = dark.find((st) => st.rom?.some((q) => q.kind === "download"));
+  const told = dark.filter((st) => st.romMissing);
+  assert.strictEqual(told.length, 1);
+  assert.strictEqual(told[0].romMissing, "download");
+  assert.strictEqual(told[0].strap, true, "it names the BOOT strap, so each card says its own pin");
+  assert.strictEqual(told[0].stage, banner.stage, "it stages what the banner guess stages");
+  assert.strictEqual(told[0].onDevice, banner.onDevice);
+  // on a chip the Lab has no voice for it is still the one guess; with no
+  // chip named there is no note to point to, and neither guess is offered
+  const c6 = { ...benchProfile("canary-nightlight"), rom: { chip: "esp32c6", boot_strap: "GPIO9" } };
+  assert.strictEqual((await guesses(c6)).length, 1, "a chip with no voice: one guess, told without a banner");
+  assert.strictEqual((await guesses(c6))[0].st.romMissing, "download");
+  const noRom = { ...benchProfile("canary-nightlight") };
+  delete noRom.rom;
+  assert.strictEqual((await guesses(noRom)).length, 0, "no chip named: no note on the serial, no guess that points to one");
+});
+
+// Review of A101: staged on the Nightlight, its download-mode guess said "the
+// Lab quotes no download-mode banner for this chip" while the glass's shade
+// read "waiting for download", the S3's banner line, hardcoded in app.js for
+// every card. The shade is now the chip's own last download line where its
+// voice holds one, else the bench's words (bench.js downloadShade()); the
+// Chromium half (the shade each card's glass shows) is bench_probe.mjs's.
+test("A101 review: the glass in download mode says its chip's own download line, or the bench's words", async () => {
+  const { ROM_VOICES, downloadShade } = await importBench();
+  assert.strictEqual(typeof downloadShade, "function", "bench.js says what the glass shows in download mode");
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const shade = downloadShade(dev.bench.rom);
+    const line = ROM_VOICES[dev.bench.rom.chip]?.download;
+    if (typeof line === "string") {
+      assert.ok(line.split("\n").includes(shade), `${dev.id}: its glass shows a line of its chip's download banner, not ${JSON.stringify(shade)}`);
+    } else {
+      for (const t of ROM_TOKENS) assert.ok(!shade.includes(t), `${dev.id}: its glass shows ${t}, a line its ${dev.bench.rom.chip} does not print`);
+      assert.strictEqual(shade, "ROM waiting for a flasher", `${dev.id}: the bench's own words`);
+    }
+  }
+  assert.strictEqual(downloadShade(benchProfile("canary-display-watch").rom), "waiting for download", "the S3 keeps its line");
+  assert.strictEqual(downloadShade(benchProfile("canary-nightlight").rom), "ROM waiting for a flasher", "the C3 shows the bench's words");
+  for (const rom of [undefined, null, {}, { chip: "esp32c6", boot_strap: "GPIO9" }])
+    assert.strictEqual(downloadShade(rom), "ROM waiting for a flasher", `no voice, no banner line: ${JSON.stringify(rom)}`);
+  // the sheet shades its glass in its own board's words, nowhere the S3's for all
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  assert.strictEqual((app.match(/setShade\(downloadShade\(rom\)\)/g) || []).length, 1, "app.js's download mode shades the glass from the board's rom");
+  assert.ok(!app.includes("waiting for download"), "app.js shades no glass with the S3's banner line whatever the chip");
+  // and the C3's guess and its glass tell one story: the ROM waits for a flasher
+  const { benchFixesFor } = await importGuides();
+  const nl = benchFixesFor(benchProfile("canary-nightlight")).flatMap((f) => f.steps).find((st) => st.romMissing === "download");
+  assert.match(nl.body, /the ROM waits for a flasher/, "the C3's guess says what its glass shows");
 });
 
 // ── the debug curriculum stages cleanly ─────────────────────────────────

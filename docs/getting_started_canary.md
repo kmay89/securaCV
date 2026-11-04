@@ -613,7 +613,7 @@ The sensing entities you'll see:
 | **Activity** | sensor | quiet / presence / motion / active |
 | **Motion Score** | sensor (%) | CSI motion bands |
 | **Breathing Score** | sensor (%) | CSI 0.1–0.5 Hz Goertzel |
-| **Sensing RSSI** | sensor (dBm) | CSI window mean |
+| **Sensing RSSI** | sensor (dBm) | CSI window mean; unknown until the first window that heard a frame, and on a build without CSI; a window that heard nothing keeps the last reading. Upgraded from older firmware, it shows that firmware's 0 dBm until the first reading (without CSI, until Home Assistant restarts) |
 | **Pattern: Smoke Alarm Cadence** | binary_sensor (smoke) | T3 cadence detected — your existing smoke alarm sounding |
 | **Pattern: CO Alarm Cadence** | binary_sensor (CO) | T4 cadence detected — your existing CO alarm sounding |
 | **Silent Panic** | binary_sensor (safety) | Touch long-press |

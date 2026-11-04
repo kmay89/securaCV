@@ -440,6 +440,17 @@ static const uint32_t SD_SPI_SLOW = 1000000;
 
 static const int   AP_CHANNEL          = 1;
 static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for security
+// The HTTPS server's port (sweep F400): start_http_server() binds it as
+// ssl_config.port_secure, the field httpd_ssl_start() binds (it overwrites
+// ssl_config.httpd.server_port with it), and the boot and status lines print
+// it. canary-local/tools/gen_wap.py reads this line for the page's
+// https_port and refuses any other spelling of the HTTPS port.
+static const int   HTTPS_PORT          = 443;
+// Every https address the device spells names no port: the port-80
+// redirect's Location (receipt_authority.h), the receipt's base_url and the
+// address a pin is handed out for. So the server stays on the scheme's
+// default until they spell one.
+static_assert(HTTPS_PORT == 443, "the https addresses the device spells name no port");
 // F16: ask the driver for WPA2/WPA3 transition + PMF-capable on the SoftAP
 // (ap_security_policy.h). Runtime fallback: a core without SoftAP SAE, or a
 // driver refusal, keeps WPA2-PSK, logs why, and /api/wifi + /api/device-info
@@ -721,12 +732,13 @@ struct WitnessRecord {
   bool        verified;
 };
 
-// What nvs_load_key() found (sweep F360, the canary's rule). Absent is the
-// one answer that may lead to a new key: IDF's NVS says nothing is stored.
-// Refused means a key is, or may be, stored and was not read or not used;
-// no new identity may be made over it. Declared here, among the types and
-// above the sketch's first function, so the prototype the Arduino builder
-// hoists for nvs_load_key() sees it. One line: the host suite cuts it.
+// What nvs_load_key() found (sweep F360, the canary's rule), and, by the same
+// rule, nvs_load_token() (F365) and tls_load_from_nvs() (F404). Absent is the
+// one answer that may lead to a new key: NVS says nothing is stored. Refused
+// means a key is, or may be, stored and was not read or not used; no new
+// identity may be made over it. Declared here, among the types and above the
+// sketch's first function, so the prototypes the Arduino builder hoists for
+// those three see it. One line: the host suites cut it.
 enum class KeyLoad : uint8_t { Loaded, Absent, Refused };
 
 // What a record into g_last_record came to (sweep F364's review;
@@ -1313,6 +1325,12 @@ static const char* wifi_state_name(WiFiProvState s);
 static void claim_catch_all_hostname();
 static void schedule_catch_all_claim();
 static void generate_mdns_hostname(char* out, size_t cap);
+// Whether this boot's identity is named and its chain anchored (sweeps
+// F364's review and F403). Four surfaces ask it first: BLE discovery (F364's
+// review), the BLE status service, the witness export's HEAD and the signer
+// (F403). Other readers of the device id, the fingerprint or the head do not
+// ask it yet; the definition names them.
+static bool identity_named_and_anchored();
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
@@ -2261,33 +2279,82 @@ static KeyLoad nvs_load_token(char* token_str, size_t max_len) {
 // TLS CERTIFICATE GENERATION & MANAGEMENT
 // ════════════════════════════════════════════════════════════════════════════
 
-static bool tls_load_from_nvs() {
+// Both certificate buffers back to nothing (sweep F404): each zeroed over
+// its whole allocation first (the key is secret, and a refused read may
+// have left part of either), freed, its pointer nulled and its length 0, so
+// start_http_server() has no certificate to serve. A length is set the
+// moment its buffer is allocated, so the zeroing covers what was allocated.
+static void tls_free_buffers() {
+  if (g_tls_cert_der) secure_zero(g_tls_cert_der, g_tls_cert_der_len);
+  free(g_tls_cert_der);
+  g_tls_cert_der = nullptr;
+  g_tls_cert_der_len = 0;
+  if (g_tls_key_der) secure_zero(g_tls_key_der, g_tls_key_der_len);
+  free(g_tls_key_der);
+  g_tls_key_der = nullptr;
+  g_tls_key_der_len = 0;
+}
+
+// The stored certificate and its key (sweep F404, nvs_load_key()'s rule):
+// Loaded only when the session opened, both entries are stored and each read
+// answered all its bytes. Absent only when the session opened and neither is
+// stored: the one answer init_tls_cert() makes and stores a new certificate
+// on. Every other way the pair goes unread answers Refused, with both
+// buffers zeroed and freed (tls_free_buffers()) and one line saying why: a
+// session that did not open, one of the two stored without the other, a
+// length malloc cannot hold, and a read that answered fewer bytes than the
+// lookup (IDF copies a blob's data before its CRC check refuses it and
+// answers 0, so the buffer can hold bytes that read refused). Before, both
+// getBytes() answers were dropped, so a refused read handed mbedTLS what the
+// buffer held; and every false meant "no certificate", so a build that can
+// generate one made a new certificate and stored it over the one whose pin
+// the phones hold.
+static KeyLoad tls_load_from_nvs() {
   NvsMainSession nvs(true);
-  if (!nvs.isOpen()) return false;
-
-  size_t cert_len = nvs->getBytesLength(NVS_KEY_TLS_CERT);
-  size_t key_len  = nvs->getBytesLength(NVS_KEY_TLS_KEY);
-
-  if (cert_len == 0 || key_len == 0) return false;
-
-  g_tls_cert_der = (uint8_t*)malloc(cert_len);
-  g_tls_key_der  = (uint8_t*)malloc(key_len);
-  if (!g_tls_cert_der || !g_tls_key_der) {
-    free(g_tls_cert_der); g_tls_cert_der = nullptr;
-    free(g_tls_key_der);  g_tls_key_der = nullptr;
-    return false;
+  if (!nvs.isOpen()) {
+    Serial.println("[TLS] Certificate not loaded: the NVS session did not open");
+    return KeyLoad::Refused;
   }
 
-  nvs->getBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, cert_len);
-  nvs->getBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  key_len);
-  g_tls_cert_der_len = cert_len;
-  g_tls_key_der_len  = key_len;
-  return true;
+  const size_t cert_len = nvs->getBytesLength(NVS_KEY_TLS_CERT);
+  const size_t key_len  = nvs->getBytesLength(NVS_KEY_TLS_KEY);
+  if (cert_len == 0 && key_len == 0) return KeyLoad::Absent;
+  if (cert_len == 0 || key_len == 0) {
+    Serial.printf("[TLS] Certificate not loaded: the %s is stored without the %s\n",
+                  cert_len ? "certificate" : "key", cert_len ? "key" : "certificate");
+    return KeyLoad::Refused;
+  }
+
+  g_tls_cert_der = (uint8_t*)malloc(cert_len);
+  g_tls_cert_der_len = g_tls_cert_der ? cert_len : 0;
+  g_tls_key_der  = (uint8_t*)malloc(key_len);
+  g_tls_key_der_len  = g_tls_key_der ? key_len : 0;
+  if (!g_tls_cert_der || !g_tls_key_der) {
+    tls_free_buffers();
+    Serial.printf("[TLS] Certificate not loaded: no memory for it (%u and %u bytes)\n",
+                  (unsigned)cert_len, (unsigned)key_len);
+    return KeyLoad::Refused;
+  }
+
+  const size_t cert_got = nvs->getBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, cert_len);
+  const size_t key_got  = nvs->getBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  key_len);
+  if (cert_got != cert_len || key_got != key_len) {
+    tls_free_buffers();
+    Serial.printf("[TLS] Certificate not loaded: the stored pair could not be read "
+                  "(%u of %u and %u of %u bytes)\n",
+                  (unsigned)cert_got, (unsigned)cert_len, (unsigned)key_got, (unsigned)key_len);
+    return KeyLoad::Refused;
+  }
+  return KeyLoad::Loaded;
 }
 
 // True only when BOTH entries landed (F59): a certificate stored without
-// its key (or the reverse) would pass tls_load_from_nvs's presence check on
-// the next boot and hand mbedTLS a mismatched pair.
+// its key (or the reverse: a put that failed, or power lost between the two)
+// is refused by every later boot's tls_load_from_nvs() (F404), which makes
+// nothing over it, so HTTPS stays off until a full flash erase (see
+// init_tls_cert()). Before F404 any refused load went on to store a new
+// pair, so a key put that failed could leave the new certificate beside an
+// older key, a mismatched pair the next boot loaded.
 static bool tls_store_to_nvs() {
   if (!g_tls_cert_der || !g_tls_key_der) return false;
   NvsMainSession nvs(false);
@@ -2316,17 +2383,12 @@ static bool tls_compute_cert_fingerprint() {
 // (sweep F364): no pin is handed out (tls_after_setup() reads the empty hex
 // and g_tls_cert_persisted), and init_tls_cert() answers false, so setup()
 // leaves g_tls_enabled false and start_http_server() opens no HTTPS listener
-// (it needs both buffers, freed here). A loaded certificate stays in NVS and
-// the next boot reloads it and hashes it again; a generated one was not
-// stored (init_tls_cert() hashes it first), and the next boot makes another.
+// (it needs both buffers, freed here by tls_free_buffers()). A loaded
+// certificate stays in NVS and the next boot reloads it and hashes it again;
+// a generated one was not stored (init_tls_cert() hashes it first), and the
+// next boot makes another.
 static bool tls_refuse_unpinned_cert() {
-  free(g_tls_cert_der);
-  g_tls_cert_der = nullptr;
-  g_tls_cert_der_len = 0;
-  if (g_tls_key_der) secure_zero(g_tls_key_der, g_tls_key_der_len);
-  free(g_tls_key_der);
-  g_tls_key_der = nullptr;
-  g_tls_key_der_len = 0;
+  tls_free_buffers();
   g_tls_cert_persisted = false;
   g_tls_cert_fp_hex[0] = '\0';
   Serial.println("[TLS] Cert fingerprint not computed (SHA-256 failed) - HTTPS off this boot, no pin handed out");
@@ -2464,13 +2526,30 @@ cleanup:
 #endif // SECURACV_HAS_TLS_CERTGEN
 
 static bool init_tls_cert() {
-  // Try loading from NVS first
-  if (tls_load_from_nvs()) {
+  // The stored certificate first (sweep F404): Loaded serves it; Refused
+  // (one is, or may be, stored and was not read whole) leaves HTTPS off this
+  // boot and makes and stores nothing over it, since phones may hold its pin;
+  // only Absent goes on to make one. A read refused on a corrupt entry has
+  // IDF erase that entry, and only that one: its partner stays, so every
+  // later boot refuses what is left and HTTPS stays off until a full flash
+  // erase (the factory reset keeps both entries). Only when both entries were
+  // corrupt does a later boot read Absent and make a new certificate, whose
+  // pin is not the one phones hold. Whether a lone entry should be refused
+  // (its partner's lookup may have missed for this boot only) or replaced
+  // (no certificate can be served under the old pin again) is not decided
+  // here; tests_host/test_wap_first_boot_nvs.cpp pins today's answer.
+  const KeyLoad stored = tls_load_from_nvs();
+  if (stored == KeyLoad::Loaded) {
     g_tls_cert_persisted = true;
     if (!tls_compute_cert_fingerprint()) return tls_refuse_unpinned_cert();
     Serial.println("[TLS] Loaded certificate from NVS");
     Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
     return true;
+  }
+  if (stored != KeyLoad::Absent) {
+    Serial.println("[TLS] Stored certificate not used (see the certificate line above) - HTTPS off "
+                   "this boot, nothing stored over it");
+    return false;
   }
 
 #if SECURACV_HAS_TLS_CERTGEN
@@ -7706,6 +7785,11 @@ uint32_t ble_witness_get_total_records() {
 
 bool ble_witness_get_head_json(char* out, size_t out_len) {
   if (!out || out_len < 200) return false;
+  // Not under an identity this boot did not make (sweep F403): the head
+  // would be a refused chain's (32 zero bytes at genesis) and the key the
+  // one its fingerprint did not hash. The export counts a snapshot failure
+  // and keeps its placeholder.
+  if (!identity_named_and_anchored()) return false;
   // Compact field names because the whole payload has to fit in MTU 247
   // (244-byte ATT data) for a single read without long-read fallback.
   //   s  = current chain seq
@@ -10437,6 +10521,34 @@ static esp_err_t handle_audio_transitions_auth(httpd_req_t* req) {
 }
 #endif
 
+// Per-device Ed25519 signature service. Mounts the keypair into a
+// dedicated module so csi_mqtt (and any future signed-egress path
+// like SD-resync) can stamp chain/event/counts publishes with a
+// signature HA verifies against its pinned-pubkey trust store.
+// Must come after generate_keypair has populated g_device.{priv,pub,fp}.
+// The fingerprint it is handed is the `fp` of every signed publish (and
+// the one /enroll prints), so it gets the lowercase spelling too; the
+// module copies it, and g_device.fingerprint_hex keeps hex_to_str's.
+// Not mounted under an identity this boot did not make (sweep F403): the
+// module's s_ready stays false, so every sign_* refuses
+// (device_signature.cpp, the common copy) and csi_mqtt publishes unsigned
+// ("signed":false), which HA marks unverified. register_api_routes() calls
+// it on each server start.
+static void device_signature_mount() {
+  if (!identity_named_and_anchored()) {
+    Serial.println("[--] Signed publishes off: the device is not named or its chain not anchored this boot");
+    log_health(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
+               "Signer not mounted", "identity not provisioned this boot");
+    return;
+  }
+  char mqtt_fp_hex[mqtt_identity::FP_HEX_CAP];
+  mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);
+  device_signature::init(g_device.privkey,
+                         g_device.pubkey,
+                         g_device.device_id,
+                         mqtt_fp_hex);
+}
+
 // Register all route handlers on a given httpd server handle
 static void register_api_routes(httpd_handle_t server) {
   // UI — no auth required. / serves the headline Sensing dashboard;
@@ -10597,20 +10709,7 @@ static void register_api_routes(httpd_handle_t server) {
   mqtt_identity::public_key_hex(pubkey_hex, g_device.pubkey);
   csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION, pubkey_hex);
 
-  // Per-device Ed25519 signature service. Mounts the keypair into a
-  // dedicated module so csi_mqtt (and any future signed-egress path
-  // like SD-resync) can stamp chain/event/counts publishes with a
-  // signature HA verifies against its pinned-pubkey trust store.
-  // Must come after generate_keypair has populated g_device.{priv,pub,fp}.
-  // The fingerprint it is handed is the `fp` of every signed publish (and
-  // the one /enroll prints), so it gets the lowercase spelling too; the
-  // module copies it, and g_device.fingerprint_hex keeps hex_to_str's.
-  char mqtt_fp_hex[mqtt_identity::FP_HEX_CAP];
-  mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);
-  device_signature::init(g_device.privkey,
-                         g_device.pubkey,
-                         g_device.device_id,
-                         mqtt_fp_hex);
+  device_signature_mount();
 }
 
 // GET /api/selftest wrapper: while the user is on the wizard's final step
@@ -10724,7 +10823,7 @@ static void start_http_server() {
       + ble_discovery_handlers + fleet_handlers + beacon_handlers
       + handler_headroom;
 
-  // ── Start HTTPS server (port 443) if TLS cert is available ──
+  // ── Start HTTPS server (HTTPS_PORT) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
   if (g_tls_enabled && g_tls_cert_der && g_tls_key_der) {
     httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();
@@ -10735,7 +10834,10 @@ static void start_http_server() {
     ssl_config.httpd.uri_match_fn = httpd_uri_match_wildcard;
     ssl_config.httpd.stack_size = 10240;  // Larger stack for TLS + camera
     ssl_config.httpd.max_uri_handlers = total_handlers;
-    ssl_config.httpd.server_port = 443;
+    // httpd_ssl_start() binds port_secure and writes it over
+    // httpd.server_port (sweep F400: that write was dead), so the port is
+    // set here and only here.
+    ssl_config.port_secure = HTTPS_PORT;
     // Long-lived MJPEG peek streams routinely sit between sends for
     // hundreds of ms while the camera captures the next JPEG. With the
     // 5 s default a single WiFi retransmit storm or AP scan sweep was
@@ -10748,8 +10850,10 @@ static void start_http_server() {
     ssl_config.httpd.lru_purge_enable  = true;
 
     if (httpd_ssl_start(&g_https_server, &ssl_config) == ESP_OK) {
-      Serial.println("[HTTPS] Server started on port 443");
-      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "HTTPS server started", "port 443");
+      Serial.printf("[HTTPS] Server started on port %d\n", HTTPS_PORT);
+      char port_detail[24];
+      snprintf(port_detail, sizeof(port_detail), "port %d", HTTPS_PORT);
+      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "HTTPS server started", port_detail);
 
       // Register all routes on HTTPS server
       register_api_routes(g_https_server);
@@ -11099,8 +11203,13 @@ register_extra_routes:
   httpd_uri_t fleet_opt = { .uri = "/api/fleet", .method = HTTP_OPTIONS, .handler = handle_fleet_options };
   httpd_register_uri_handler(active_server, &fleet_opt);
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started",
-             g_tls_enabled ? "HTTPS port 443" : "HTTP port 80");
+  char server_detail[24];
+  if (g_tls_enabled) {
+    snprintf(server_detail, sizeof(server_detail), "HTTPS port %d", HTTPS_PORT);
+  } else {
+    snprintf(server_detail, sizeof(server_detail), "HTTP port 80");
+  }
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started", server_detail);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -11638,6 +11747,34 @@ static bool fingerprint_is_nonzero(const uint8_t fingerprint[8]) {
     if (fingerprint[i] != 0) return true;
   }
   return false;
+}
+
+// Whether this boot's identity may leave the device (sweep F364's review,
+// F403): the device is named (its fingerprint hashed, so the device id and
+// fingerprint are set) and its chain anchored (a stored head loaded or the
+// genesis head hashed). After provisioning could not hash either
+// (g_device.chain_refused), the fingerprint, the device id or the head is
+// zero bytes or empty, the same on every such unit; and before a key exists
+// (a keygen that failed, after which setup() goes on) the fingerprint is
+// zero. setup() goes on otherwise (F336). These surfaces ask this first:
+// BLE discovery (Opera's SCV-0000 name and device-info id, every chirp's id
+// and head), the BLE status service (its GATT device name is the device id),
+// the witness export's HEAD (the chain head and public key a bonded peer
+// verifies against), and the signer (device_signature_mount(), so every
+// sign_* refuses). It used to be BLE discovery's alone, inside
+// #if FEATURE_BLE. Records and the chain persist refuse on chain_refused
+// themselves (F364). Not every reader asks yet: the MQTT bridge's identity
+// (handed over in setup() before the network starts, and used by a camera
+// QR join's re-init), the mDNS TXT device_id, the Improv claim and name, the
+// Bluetooth and console metadata, the mesh, the hourly chain backup (the
+// data-management pass in loop()) and, on a build that raises the SoftAP,
+// the HTTP routes (/api/status, /api/chain, /api/device-info, the enroll
+// card) and the MQTT client's boot init still read the refused values. What
+// a refused boot should serve there is not decided here.
+// tests_host/test_wap_sha_fail.cpp drives each gated surface after a refused
+// fingerprint and a refused genesis head.
+static bool identity_named_and_anchored() {
+  return !g_device.chain_refused && fingerprint_is_nonzero(g_device.pubkey_fp);
 }
 
 static bool resolve_ap_password(char* out_password, size_t out_len) {
@@ -12489,7 +12626,11 @@ static void handle_serial_commands() {
         Serial.printf("WiFi AP: %s\n", g_device.ap_ssid);
         Serial.printf("Password: %s\n", g_device.ap_password);
         Serial.printf("IP: %s\n", WiFi.softAPIP().toString().c_str());
-        Serial.printf("TLS: %s\n", g_tls_enabled ? "YES (port 443)" : "NO (port 80)");
+        if (g_tls_enabled) {
+          Serial.printf("TLS: YES (port %d)\n", HTTPS_PORT);
+        } else {
+          Serial.println("TLS: NO (port 80)");
+        }
         Serial.printf("Clients: %d\n", WiFi.softAPgetStationNum());
         {
           char redacted[16];
@@ -13831,21 +13972,6 @@ static volatile bool   g_ble_bringup_done      = false;  // worker -> loop hando
 static bool            g_ble_bringup_finalized = false;  // loop-only
 static volatile int8_t g_ble_mgr_result        = 0;      // 0=not attempted, 1=ok, -1=failed
 
-#if FEATURE_BLE
-// Whether BLE discovery may broadcast this boot's identity (sweep F364's
-// review). Opera's name and device-info id are the fingerprint's first bytes
-// and every chirp carries its first two and the chain head, to anyone in
-// range. After provisioning could not hash the fingerprint or the genesis
-// head (g_device.chain_refused), those are 8 or 32 zero bytes: every such
-// unit would advertise as SCV-0000 with an all-zero head, so discovery is
-// not started. setup() goes on otherwise (F336), and the pairing channel
-// still comes up. tests_host/test_wap_sha_fail.cpp drives it after each
-// refusal and holds ble_manager::init() behind it.
-static bool ble_discovery_identity_ready() {
-  return !g_device.chain_refused && fingerprint_is_nonzero(g_device.pubkey_fp);
-}
-#endif
-
 static void ble_bringup_task(void*) {
   Serial.printf("[HEAP] before BLE bring-up: internal free=%u largest=%u\n",
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
@@ -13882,11 +14008,19 @@ static void ble_bringup_task(void*) {
 
       // BLE GATT Status Service — register on the shared NimBLE server
       // created by bluetooth_channel. Exposes battery, health, chain,
-      // and SD status to companion phones over standard GATT.
+      // and SD status to companion phones over standard GATT. Its device
+      // name is g_device.device_id, kept by pointer, so it is not
+      // registered under an identity this boot did not make (sweep F403:
+      // after a refused fingerprint the name was empty). The channel's
+      // services_missing then names the status service, which is true.
       #if FEATURE_BLE_STATUS
       {
         NimBLEServer* ble_server = NimBLEDevice::getServer();
-        if (ble_server) {
+        if (!identity_named_and_anchored()) {
+          Serial.println("[--] BLE GATT status service not registered: the device is not named or its chain not anchored this boot");
+          log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                     "BLE status service not started", "identity not provisioned this boot");
+        } else if (ble_server) {
           if (ble_status::init(ble_server, g_device.device_id, FIRMWARE_VERSION,
                                &g_device.seq)) {
             Serial.println("[OK] BLE GATT status service registered");
@@ -13911,7 +14045,7 @@ static void ble_bringup_task(void*) {
   // registry is up by now (web server started before the window cleared), so
   // the lifecycle witness events route through the chokepoint directly.
   #if FEATURE_BLE
-  if (!ble_discovery_identity_ready()) {
+  if (!identity_named_and_anchored()) {
     // Nothing named to broadcast (sweep F364's review): no init, no
     // lifecycle event, and g_ble_mgr_result stays "not attempted".
     g_ble_init_attempted = true;  // self-test: discovery is down, not skipped

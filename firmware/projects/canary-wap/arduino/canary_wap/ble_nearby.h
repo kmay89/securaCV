@@ -22,7 +22,9 @@
 #if FEATURE_BLE && FEATURE_BLE_NEARBY
 
 #include <NimBLEDevice.h>
+#include <string>
 #include "fleet_beacon.h"   // canonical fleet-link presence beacon wire format
+#include "ble_nearby_prefix.h"   // F405: a name's prefix, all hex digits or refused
 
 namespace ble_nearby {
 
@@ -186,11 +188,13 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
                 if (hasChirpData || hasBeaconData) {
                     strncpy(prefix, tempCanary.deviceIdPrefix, 4);
                 } else {
-                    // Try to extract from BLE name "SCV-XXXX"
-                    String name = advertisedDevice->getName().c_str();
-                    if (name.startsWith(BLE_DEVICE_NAME_PREFIX) && name.length() >= 8) {
-                        name.substring(4, 8).toCharArray(prefix, 5);
-                    } else {
+                    // Try to extract from BLE name "SCV-XXXX". The name is the
+                    // advertiser's choice, so its four bytes are taken only when
+                    // all four are ASCII hex digits (sweep F405): a quote, a
+                    // backslash or a control byte reached deviceIdPrefix and GET
+                    // /api/nearby's hand-built JSON as it was.
+                    const std::string name = advertisedDevice->getName();
+                    if (!nearby_prefix_from_name(name.data(), name.size(), BLE_DEVICE_NAME_PREFIX, prefix)) {
                         // No valid device ID prefix available — treat as non-Canary
                         // (We never use MAC addresses as identifiers for privacy)
                         g_nonCanaryCount++;

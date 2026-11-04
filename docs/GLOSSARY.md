@@ -512,10 +512,16 @@ disabled, and enabling it opens the roll-call to your LAN) and type
 already published and the roll-call lists the kernel alone until
 `SECURACV_FLEET_ROLLCALL=1`. It says *Verified* only once it is
 paired: the operator mints a viewer token on the hub (`witness_api
-mint-viewer-token`), whose one-line receipt carries a token good for
-`GET /api/sealed-log` alone and the kernel's key, which the Wall pins; an
-unpaired Wall shows the devices' own report. The add-on has no control that
-mints one yet, so an add-on install gets the roll-call, not a walk.
+mint-viewer-token --label <s>` on a host install; on the `witnessd` image,
+`docker exec <container> witness_api mint-viewer-token --label <s>` in a
+container started with a token path, as
+[Mint a Witness Wall viewer token](container.md#mint-a-witness-wall-viewer-token)
+walks; in the Docker sidecar, `docker exec securacv entrypoint.sh
+mint-viewer-token --label <s>`), whose one-line receipt carries a token good
+for `GET /api/sealed-log` alone and the kernel's key, which the Wall pins
+once the receipt is pasted into its Settings → Verification; an unpaired
+Wall shows the devices' own report. The add-on has no control that mints
+one yet, so an add-on install gets the roll-call, not a walk.
 → [tvOS docs](tvos/README.md),
 [Home Assistant setup](homeassistant_setup.md#witness-wall-the-fleet-roll-call),
 [viewer tokens](homeassistant_setup.md#viewer-tokens-witness-wall)

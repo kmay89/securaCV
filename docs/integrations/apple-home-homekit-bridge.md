@@ -119,10 +119,11 @@ out of the list on purpose.** Their MQTT discovery configs ask for
 Assistant slugs it, `canary-s3-4dC2` becoming `canary_s3_4dc2`) with
 `default_entity_id`. Read from Home Assistant core's source
 (`homeassistant/components/mqtt/entity.py`), not seen in a running Home
-Assistant: Home Assistant 2025.10 and later gives an entity that id when it
-first registers it. An entity it registered before keeps the id it has, and
-an older Home Assistant ignores the key and builds the id from the device's
-name and the entity's (`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`,
+Assistant: Home Assistant 2025.10 and later tries to give an entity that id
+when it first registers it, and adds `_2` when another entity already holds
+the id. An entity it registered before keeps the id it has, and an older
+Home Assistant ignores the key and builds the id from the device's name and
+the entity's (`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`,
 `binary_sensor.canary_<canary_id>_smoke_alarm_heard` / `_co_alarm_heard`).
 Until a running Home Assistant has confirmed the new ids, find each one under
 **Settings > Devices & Services**, on the Entities tab, and add it under

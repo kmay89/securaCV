@@ -46,8 +46,10 @@ describe('GET /api/v1/peers', () => {
   });
 
   it('peer entries carry a canonical device_type', async () => {
-    // The SPA branches its pairing wizard on this: WAP-class devices pair
-    // over HTTP, vision/sense are MQTT-onboarded via Home Assistant.
+    // The SPA branches its pairing wizard on this: canary-wap takes the
+    // HTTP BOOT-tap branch (which the WAP firmware itself does not answer,
+    // docs/discovery.md §2), vision/sense are MQTT-onboarded via Home
+    // Assistant.
     const res = await client.get('/api/v1/peers');
     const types = ['canary-wap', 'canary-vision', 'canary-sense'];
     for (const peer of res.json.peers) {

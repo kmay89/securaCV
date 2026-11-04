@@ -5,9 +5,13 @@
 // it). The step must not tell the owner to press BOOT before the device has
 // answered an ask: a WAP hands a tap only to the one address asking (sweep
 // F342), so a press the first ask has not reached yet is one no page of the
-// owner's is asking for, and goes to whichever device asks first. And a WAP's
+// owner's is asking for, and goes to whichever device asks first. And a
 // `409 tap_contended` (another address asked during the same tap) is not a
-// missed tap: the capture stops and says another device asked.
+// missed tap: the capture stops and says another device asked. That branch is
+// for a device that sends CORS on its 409. The canary-wap firmware answers
+// 409 tap_contended (F342) with no Access-Control-Allow-Origin, so a browser
+// hands this page a network error instead, and the reference device-api sends
+// no 409 (sweep F355); these rows drive the branch with a stub answer.
 //
 // magic-pairing.test.js only finds the step's strings in the source; these
 // rows run the code. app.js is browser-only with no module exports, so it
@@ -385,6 +389,30 @@ describe('the Add Canary capture step', () => {
                                    'press BOOT only when this screen says to.'), JSON.stringify(t.subtitles));
     assert.ok(!t.subtitles.some((x) => /short-tap BOOT when this screen says to/.test(x)),
               'an unanswered window must not give the missed-tap advice');
+  });
+
+  // The success screen after a BOOT-tap pairing. Only the reference
+  // device-api completes one (it reports itself as a canary-wap), so the
+  // canary-wap card renders under "Canary WAP paired": no line of it may deny
+  // the pairing that screen just finished (sweep F355's review).
+  it('the success screen does not deny the pairing it just finished', async () => {
+    const receipt = { device_id: 'canary-a3f7', base_url: 'http://192.168.1.50', token: 'cv_x' };
+    const info = { device_id: 'canary-a3f7', device_type: 'canary-wap', firmware_version: '0.4.1' };
+    const h = loadApp([REFUSED, { receipt }, { receipt: info }]);
+    h.app.renderAddCanaryView();
+    await settle();
+    await nextPoll(h);
+    await settle();
+    await settle();
+    assert.deepEqual(h.asks.map((a) => a.route),
+      ['/api/provisioning-receipt', '/api/provisioning-receipt', '/api/v1/info']);
+    const t = stepTexts(h);
+    assert.ok(t.titles.includes('Canary WAP paired'), JSON.stringify(t.titles));
+    const bullets = h.appRoot.byClass('device-type-bullets')
+      .flatMap((ul) => ul.children.map((li) => li.textContent));
+    assert.ok(bullets.length > 0, 'the success screen shows the canary-wap card');
+    const denials = bullets.filter((line) => /\b(?:not|never|cannot|can't)\b[^.]*\b(?:this app|here|this page|answer)/i.test(line));
+    assert.deepEqual(denials, [], 'the card under "Canary WAP paired" denies the pairing it sits under');
   });
 
   it("an answered window with no tap ends in \"Didn't catch a tap\"", async () => {

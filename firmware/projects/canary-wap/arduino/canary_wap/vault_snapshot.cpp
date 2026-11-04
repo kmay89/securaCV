@@ -103,11 +103,20 @@ static SealResult    g_result;      /* written by worker pre-done only */
 
 /* ── Small helpers ──────────────────────────────────────────────────── */
 
-static void sha256_key_id(const uint8_t pub[vault_logic::PUBKEY_SIZE],
-                          uint8_t out[vault_logic::KEY_ID_SIZE]) {
+/* The key id every sealed header carries: SHA-256(pub)'s first KEY_ID_SIZE
+ * bytes. True only when the hash ran; on false `out` is zeroed, so a caller
+ * must not adopt the key (sweep F364: a refused one-shot leaves its digest
+ * unwritten, and the header would carry whatever the stack held). */
+[[nodiscard]] static bool sha256_key_id(const uint8_t pub[vault_logic::PUBKEY_SIZE],
+                                        uint8_t out[vault_logic::KEY_ID_SIZE]) {
   uint8_t digest[32];
-  mbedtls_sha256(pub, vault_logic::PUBKEY_SIZE, digest, 0);
+  if (mbedtls_sha256(pub, vault_logic::PUBKEY_SIZE, digest, 0) != 0) {
+    mbedtls_platform_zeroize(digest, sizeof(digest));
+    mbedtls_platform_zeroize(out, vault_logic::KEY_ID_SIZE);
+    return false;
+  }
   memcpy(out, digest, vault_logic::KEY_ID_SIZE);
+  return true;
 }
 
 static bool hex_nibble(char c, uint8_t* out) {
@@ -262,19 +271,30 @@ static void seal_task(void*) {
     aead.setIV(h.nonce, vault_logic::NONCE_SIZE);
     aead.addAuthData(header_raw, sizeof(header_raw));
 
-    mbedtls_sha256_starts(&ct_sha, 0);
+    /* The ciphertext digest is the integrity note the witness chain
+     * carries (ct_hash_hex16). Every step is checked (sweep F364): each
+     * update hashes a 4096-byte PSRAM chunk, which the S3's SHA engine
+     * takes by DMA and can refuse, and a refused step leaves a digest of
+     * the wrong bytes, or none. A seal whose digest did not compute is a
+     * failed seal: the tmp file is removed below and nothing is chained. */
+    if (mbedtls_sha256_starts(&ct_sha, 0) != 0) { fail_result("sha"); break; }
 
     constexpr size_t CHUNK = 4096;
     outbuf = (uint8_t*)heap_caps_malloc(CHUNK, MALLOC_CAP_SPIRAM);
     if (!outbuf) { fail_result("psram_alloc"); break; }
 
     bool write_ok = true;
+    bool sha_ok = true;
     for (uint32_t off = 0; off < plain_len; off += CHUNK) {
       const size_t n = (plain_len - off > CHUNK) ? CHUNK
                                                  : (size_t)(plain_len - off);
       aead.encrypt(outbuf, staging + off, n);
-      mbedtls_sha256_update(&ct_sha, outbuf, n);
+      if (mbedtls_sha256_update(&ct_sha, outbuf, n) != 0) { sha_ok = false; break; }
       if (f.write(outbuf, n) != n) { write_ok = false; break; }
+    }
+    if (!sha_ok) {
+      fail_result("sha");
+      break;
     }
     if (!write_ok) {
       fail_result("sd_write");
@@ -291,7 +311,11 @@ static void seal_task(void*) {
     f.close();
 
     uint8_t ct_digest[32];
-    mbedtls_sha256_finish(&ct_sha, ct_digest);
+    if (mbedtls_sha256_finish(&ct_sha, ct_digest) != 0) {
+      mbedtls_platform_zeroize(ct_digest, sizeof(ct_digest));
+      fail_result("sha");
+      break;
+    }
     for (int i = 0; i < 8; i++) {
       sprintf(g_result.ct_hash_hex16 + 2 * i, "%02x", ct_digest[i]);
     }
@@ -346,9 +370,26 @@ static void load_config_from(NvsMainSession& nvs) {
   g_cfg.cooldown_s = (uint16_t)cool;
 
   if (nvs->getBytesLength(NVS_KEY_PUB) == vault_logic::PUBKEY_SIZE) {
-    nvs->getBytes(NVS_KEY_PUB, g_pubkey, vault_logic::PUBKEY_SIZE);
-    sha256_key_id(g_pubkey, g_key_id);
-    g_has_pubkey = true;
+    /* Adopted only when all of it read back, and with its key id (sweep
+     * F364): a key that did not read back, or whose id did not compute,
+     * stays unadopted this boot, so the vault answers "no key" and seals
+     * nothing rather than seal to whatever the read buffer held or stamp
+     * headers with a key id nobody can match. The stored key is left as it
+     * is; the next boot tries again. */
+    uint8_t pub[vault_logic::PUBKEY_SIZE] = {};
+    uint8_t key_id[vault_logic::KEY_ID_SIZE];
+    if (nvs->getBytes(NVS_KEY_PUB, pub, vault_logic::PUBKEY_SIZE) !=
+        vault_logic::PUBKEY_SIZE) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
+                 "Vault unlock key not loaded", "key read failed");
+    } else if (sha256_key_id(pub, key_id)) {
+      memcpy(g_pubkey, pub, sizeof(g_pubkey));
+      memcpy(g_key_id, key_id, sizeof(g_key_id));
+      g_has_pubkey = true;
+    } else {
+      log_health(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
+                 "Vault unlock key not loaded", "key id hash failed");
+    }
   }
 }
 
@@ -470,6 +511,16 @@ bool set_pubkey_hex(const char* hex64) {
     pub[i] = (uint8_t)((hi << 4) | lo);
   }
 
+  /* The key id first (sweep F364): a key whose id did not compute is
+   * refused before anything is stored, so the key registered before it,
+   * if any, and its id stay as they were. */
+  uint8_t key_id[vault_logic::KEY_ID_SIZE];
+  if (!sha256_key_id(pub, key_id)) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
+               "Vault unlock key refused", "key id hash failed");
+    return false;
+  }
+
   bool stored = false;
   {
     NvsMainSession nvs(false);
@@ -479,7 +530,7 @@ bool set_pubkey_hex(const char* hex64) {
   if (!stored) return false;
 
   memcpy(g_pubkey, pub, sizeof(g_pubkey));
-  sha256_key_id(g_pubkey, g_key_id);
+  memcpy(g_key_id, key_id, sizeof(g_key_id));
   g_has_pubkey = true;
   log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Vault unlock key registered", nullptr);
   return true;

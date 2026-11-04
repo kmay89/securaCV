@@ -124,6 +124,26 @@
           [
             "w",
             "tamper log"
+          ],
+          [
+            "b",
+            "battery"
+          ],
+          [
+            "p",
+            "power policy"
+          ],
+          [
+            "d",
+            "diagnostics"
+          ],
+          [
+            "r",
+            "data management"
+          ],
+          [
+            "m",
+            "MQTT"
           ]
         ],
         "placeholder": "type a command — the firmware answers single keys; h shows its menu"
@@ -212,6 +232,22 @@
           [
             "w",
             "tamper log"
+          ],
+          [
+            "b",
+            "battery"
+          ],
+          [
+            "p",
+            "power policy"
+          ],
+          [
+            "d",
+            "diagnostics"
+          ],
+          [
+            "r",
+            "data management"
           ]
         ],
         "placeholder": "type a command — the firmware answers single keys; h shows its menu"
@@ -314,6 +350,22 @@
           [
             "w",
             "tamper log"
+          ],
+          [
+            "b",
+            "battery"
+          ],
+          [
+            "p",
+            "power policy"
+          ],
+          [
+            "d",
+            "diagnostics"
+          ],
+          [
+            "r",
+            "data management"
           ]
         ],
         "placeholder": "type a command — the firmware answers single keys; h shows its menu"
@@ -415,6 +467,22 @@
           [
             "w",
             "tamper log"
+          ],
+          [
+            "b",
+            "battery"
+          ],
+          [
+            "p",
+            "power policy"
+          ],
+          [
+            "d",
+            "diagnostics"
+          ],
+          [
+            "r",
+            "data management"
           ]
         ],
         "placeholder": "type a command — the firmware answers single keys; h shows its menu"

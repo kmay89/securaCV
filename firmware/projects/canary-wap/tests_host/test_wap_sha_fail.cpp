@@ -17,16 +17,17 @@
 // This runs the REAL functions, cut verbatim out of the sketch
 // (firmware/tests_host/cut_functions.awk): hex_print(), secure_zero(),
 // hex_to_str(), sha256_raw(), sha256_domain(), compute_fingerprint(),
-// tls_compute_cert_fingerprint(), tls_refuse_unpinned_cert(),
+// tls_free_buffers(), tls_compute_cert_fingerprint(), tls_refuse_unpinned_cert(),
 // compute_chain_hash(), update_chain(), persist_chain_blob(),
 // persist_chain_state(), witness_hash_failed() and its latch,
 // create_witness_record(), witness_recover_from_sd(),
 // verify_record_signature(), chain_tail_intact(), the RecordMade enum,
 // witness_record_last(), record_boot_attestation(),
 // self_verify_last_record(), fingerprint_is_nonzero(),
-// ble_discovery_identity_ready(), tls_after_setup(), init_tls_cert()
-// (twice: a build that can generate a certificate and one that cannot) and
-// provision_device(). Under them is a stand-in for mbedTLS's
+// identity_named_and_anchored(), tls_after_setup(), init_tls_cert()
+// (twice: a build that can generate a certificate and one that cannot),
+// provision_device(), ble_witness_get_head_json(), device_signature_mount()
+// and ble_bringup_task()'s FEATURE_BLE_STATUS block. Under them is a stand-in for mbedTLS's
 // streaming SHA-256 (declared and defined below) that runs a real SHA-256
 // over OpenSSL, or fails the step the test names in the hash it names, once
 // (a failing finish scribbles first; a failed update feeds nothing; every
@@ -60,10 +61,15 @@
 //     persisted and both buffers are freed, so start_http_server() has no
 //     certificate to serve and tls_after_setup() hands out no pin in setup
 //     or out of it; no "Cert fingerprint" line is printed;
-//   - what that boot shows and broadcasts (the F364 review): BLE discovery's
-//     gate, ble_discovery_identity_ready(), is shut after either refusal, so
-//     Opera's name and device-info id and every chirp's id and chain head
-//     never carry the zeroed fingerprint or head; the boot attestation's
+//   - what that boot shows and broadcasts (the F364 review): the identity
+//     gate, identity_named_and_anchored(), is shut after either refusal, so
+//     BLE discovery never starts and Opera's name and device-info id and
+//     every chirp's id and chain head never carry the zeroed fingerprint or
+//     head; and (F403) the BLE status service is not registered under the
+//     empty device id, the witness export's HEAD hands no bonded peer the
+//     refused head and key, and the signer is not mounted, so nothing is
+//     signed (the surfaces the gate holds; others still read the refused
+//     identity, named at the gate's definition); the boot attestation's
 //     line says it was not recorded, never "[OK]" over setup()'s zeroed
 //     record; loop()'s records are Refused (no table row) and logged once;
 //     and the periodic self-verify says nothing and leaves signing marked
@@ -73,6 +79,9 @@
 //     one made and not verified is Unverified and logged;
 //   - a certificate generated this boot whose pin did not compute is not
 //     stored, so no later boot serves a certificate no setup door pinned;
+//   - a stored certificate the load refused (F404; the load itself runs in
+//     test_wap_first_boot_nvs.cpp) is not replaced on either build: nothing
+//     is made, stored, hashed or handed out;
 //   - the sketch's text: every call of the six hashes uses its answer, each
 //     is declared [[nodiscard]], setup() turns HTTPS on only behind
 //     init_tls_cert()'s true, the HTTPS listener needs both buffers, no
@@ -105,6 +114,7 @@
 #include "chain_persist.h"   // the sketch's when-to-persist rules, pure
 #include "chain_state.h"     // the sketch's {seq, head} blob, pure
 #include "log_level.h"       // the sketch's LogLevel / LogCategory
+#include "mqtt_identity.h"   // the signer's fingerprint spelling, pure
 #include "witness_page.h"    // the sketch's page ring, pure
 #include "witness_store.h"   // the sketch's /WITNESS line format, pure
 
@@ -119,6 +129,12 @@
 #endif
 #ifndef WAP_SHA_PROV_INC
 #error "WAP_SHA_PROV_INC must name the cut of provision_device() (the Makefile passes it)"
+#endif
+#ifndef WAP_SHA_REACH_INC
+#error "WAP_SHA_REACH_INC must name the cut of the head export and the signer's mount (the Makefile passes it)"
+#endif
+#ifndef WAP_SHA_STATUS_INC
+#error "WAP_SHA_STATUS_INC must name the cut of the BLE status block (the Makefile passes it)"
 #endif
 #ifndef WAP_SKETCH_DIR
 #error "WAP_SKETCH_DIR must name the sketch directory (the Makefile passes it)"
@@ -494,7 +510,9 @@ static const std::vector<uint8_t> kCertDer = [] {
   return v;
 }();
 static bool g_cert_in_nvs = false;
+static bool g_cert_refused = false;  // the load answers Refused (F404)
 static int g_cert_stores = 0;
+static int g_cert_generates = 0;
 static void tls_hold(std::vector<uint8_t>* keep_key) {
   g_tls_cert_der = static_cast<uint8_t*>(std::malloc(kCertDer.size()));
   std::memcpy(g_tls_cert_der, kCertDer.data(), kCertDer.size());
@@ -504,10 +522,14 @@ static void tls_hold(std::vector<uint8_t>* keep_key) {
   g_tls_key_der_len = 64;
   (void)keep_key;
 }
-static bool tls_load_from_nvs() {
-  if (!g_cert_in_nvs) return false;
+// The load's three answers (F404; test_wap_first_boot_nvs.cpp runs the real
+// one over a fake NVS): Refused holds nothing, as the real one frees both
+// buffers before it answers.
+static KeyLoad tls_load_from_nvs() {
+  if (g_cert_refused) return KeyLoad::Refused;
+  if (!g_cert_in_nvs) return KeyLoad::Absent;
   tls_hold(nullptr);
-  return true;
+  return KeyLoad::Loaded;
 }
 static bool tls_store_to_nvs() {
   ++g_cert_stores;
@@ -515,6 +537,7 @@ static bool tls_store_to_nvs() {
   return true;
 }
 static bool tls_generate_self_signed_cert() {
+  ++g_cert_generates;
   tls_hold(nullptr);
   return true;
 }
@@ -576,6 +599,53 @@ static bool derive_ap_password(const uint8_t*, char* out, size_t len) {
 }
 
 #include WAP_SHA_PROV_INC
+
+// What a refused identity must not reach (F403), each a stand-in that
+// records what it was handed: the BLE status service (its GATT device name
+// is the pointer it keeps), the channel's record of the worker's services,
+// and the signer (device_signature.cpp, whose every sign_* refuses until
+// init() ran; the sketch's text below pins that).
+static const char* FIRMWARE_VERSION = "9.9.9-host";
+struct NimBLEServer {};
+static NimBLEServer g_nimble_server;
+struct NimBLEDevice {
+  static NimBLEServer* getServer() { return &g_nimble_server; }
+};
+namespace ble_status {
+static int g_inits = 0;
+static std::string g_name;
+static const uint32_t* g_seq = nullptr;
+static bool init(NimBLEServer* server, const char* device_name, const char*, uint32_t* chain_seq) {
+  ++g_inits;
+  g_name = device_name != nullptr ? device_name : "(null)";
+  g_seq = chain_seq;
+  return server != nullptr;
+}
+}  // namespace ble_status
+namespace bluetooth_channel {
+enum BootService : uint8_t { BT_BOOT_SVC_STATUS = 1u << 0 };
+static uint8_t g_registered = 0;
+static void boot_service_registered(uint8_t service) { g_registered |= service; }
+}  // namespace bluetooth_channel
+namespace device_signature {
+static int g_inits = 0;
+static std::string g_device_id;
+static std::string g_fp;
+static void init(const uint8_t*, const uint8_t*, const char* device_id, const char* fingerprint_hex) {
+  ++g_inits;
+  g_device_id = device_id;
+  g_fp = fingerprint_hex;
+}
+}  // namespace device_signature
+
+#include WAP_SHA_REACH_INC
+
+// ble_bringup_task()'s status registration, verbatim, in a build that has it.
+static void status_bringup() {
+#define FEATURE_BLE_STATUS 1
+#include WAP_SHA_STATUS_INC
+#undef FEATURE_BLE_STATUS
+}
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 // Every way a hash of `updates` updates can fail, in the hash numbered
@@ -824,7 +894,7 @@ static void a_refused_chain_is_shown_and_broadcast_nowhere() {
       if (genesis) nvs::words[NVS_KEY_SEQ] = 0;
       sha::arm(f.step, genesis ? 1 : 0, f.update);
       CHECK_MSG(!provision() && g_device.chain_refused, what + ": provisioning not refused");
-      CHECK_MSG(!ble_discovery_identity_ready(),
+      CHECK_MSG(!identity_named_and_anchored(),
                 what + ": BLE discovery would broadcast the id " + hex(g_device.pubkey_fp, 8) +
                     " and the head " + hex(g_device.chain_head, 32));
       std::memset(&g_last_record, 0, sizeof(g_last_record));  // as setup() leaves it
@@ -856,7 +926,7 @@ static void a_refused_chain_is_shown_and_broadcast_nowhere() {
   }
   // The gate holds to the fingerprint too, whatever the flag says.
   std::memset(&g_device, 0, sizeof(g_device));
-  CHECK_MSG(!ble_discovery_identity_ready(), "BLE discovery: a zero fingerprint passes the gate");
+  CHECK_MSG(!identity_named_and_anchored(), "BLE discovery: a zero fingerprint passes the gate");
 }
 
 // A working unit: the gate opens, the boot attestation's line names the
@@ -868,7 +938,7 @@ static void a_working_unit_shows_its_records() {
     stored_unit(!genesis, head);
     sha::arm(sha::Step::None);
     CHECK_MSG(provision(), what + ": provisioning answered false");
-    CHECK_MSG(ble_discovery_identity_ready(), what + ": BLE discovery kept off");
+    CHECK_MSG(identity_named_and_anchored(), what + ": BLE discovery kept off");
     const uint32_t seq = g_device.seq;
     std::memset(&g_last_record, 0, sizeof(g_last_record));
     g_log.clear();
@@ -889,6 +959,123 @@ static void a_working_unit_shows_its_records() {
     CHECK_MSG(!g_health.crypto_healthy && logged("Self-verification FAILED") == 1,
               what + ": a bad signature passed self-verify");
   }
+}
+
+// ── what a refused identity reaches through the gate (F403) ─────────────────
+// The three surfaces the identity gate now holds besides BLE discovery, run
+// as the boot runs them after provision_device(): the BLE status
+// registration (ble_bringup_task()), the witness export's HEAD (a bonded
+// peer's read) and the signer's mount (each server start). Only these: the
+// readers that do not ask the gate yet (the MQTT bridge's identity, mDNS,
+// the Improv door, the Bluetooth and console metadata, the mesh, the chain
+// backup, the HTTP routes) are named at identity_named_and_anchored()'s
+// definition and are not driven here.
+struct Reach {
+  int status_inits;
+  std::string status_name;
+  uint8_t registered;
+  bool head;
+  bool head_untouched;
+  std::string head_json;
+  int signer_inits;
+  std::string signer_id;
+  std::string signer_fp;
+};
+static Reach reach() {
+  ble_status::g_inits = 0;
+  ble_status::g_name.clear();
+  ble_status::g_seq = nullptr;
+  bluetooth_channel::g_registered = 0;
+  device_signature::g_inits = 0;
+  device_signature::g_device_id.clear();
+  device_signature::g_fp.clear();
+  Serial.all.clear();
+  g_log.clear();
+  Reach r;
+  status_bringup();
+  char head[256];
+  std::memset(head, 0x5a, sizeof(head));
+  r.head = ble_witness_get_head_json(head, sizeof(head));
+  r.head_untouched = true;
+  for (char c : head) r.head_untouched = r.head_untouched && c == 0x5a;
+  r.head_json = r.head ? std::string(head) : std::string();
+  device_signature_mount();
+  r.status_inits = ble_status::g_inits;
+  r.status_name = ble_status::g_name;
+  r.registered = bluetooth_channel::g_registered;
+  r.signer_inits = device_signature::g_inits;
+  r.signer_id = device_signature::g_device_id;
+  r.signer_fp = device_signature::g_fp;
+  return r;
+}
+
+static void refused_reach_holds(const std::string& what) {
+  const Reach r = reach();
+  CHECK_MSG(!identity_named_and_anchored(), what + ": the gate open");
+  CHECK_MSG(r.status_inits == 0 && r.registered == 0,
+            what + ": the BLE status service registered as \"" + r.status_name + "\"");
+  CHECK_MSG(Serial.all.find("[--] BLE GATT status service not registered: the device is not named or "
+                            "its chain not anchored this boot\n") != std::string::npos,
+            what + ": no line says the status service is off");
+  CHECK_MSG(logged("BLE status service not started") == 1, what + ": no health line for the status service");
+  CHECK_MSG(!r.head && r.head_untouched, what + ": the witness export's HEAD " + r.head_json);
+  CHECK_MSG(r.signer_inits == 0,
+            what + ": the signer mounted for \"" + r.signer_id + "\" (" + r.signer_fp + ")");
+  CHECK_MSG(Serial.all.find("[--] Signed publishes off: the device is not named or its chain not "
+                            "anchored this boot\n") != std::string::npos,
+            what + ": no line says the signer is off");
+  CHECK_MSG(logged("Signer not mounted") == 1, what + ": no health line for the signer");
+}
+
+static void a_refused_identity_reaches_no_gated_surface() {
+  for (int genesis = 0; genesis < 2; genesis++) {
+    for (const Failure& f : failures_of(3)) {
+      const std::string what = std::string(genesis ? "a refused genesis head, " : "a refused fingerprint, ") +
+                               sha::name_of(f.step, f.update);
+      uint8_t head[32];
+      stored_unit(/*with_chain=*/!genesis, head);
+      if (genesis) nvs::words[NVS_KEY_SEQ] = 0;
+      sha::arm(f.step, genesis ? 1 : 0, f.update);
+      CHECK_MSG(!provision() && g_device.chain_refused, what + ": provisioning not refused");
+      sha::arm(sha::Step::None);
+      refused_reach_holds(what);
+      CHECK_MSG(sha::g_inits == 0, what + ": a hash ran");
+    }
+  }
+  // A unit no key was made for (a keygen that failed: setup() goes on, the
+  // chain not refused, nothing named) is held the same way.
+  std::memset(&g_device, 0, sizeof(g_device));
+  refused_reach_holds("no key made");
+}
+
+// A working unit: each one runs, under the identity provisioning made.
+static void a_working_unit_reaches_each() {
+  for (int genesis = 0; genesis < 2; genesis++) {
+    const std::string what = genesis ? "a working unit at genesis" : "a working unit";
+    uint8_t head[32];
+    stored_unit(!genesis, head);
+    sha::arm(sha::Step::None);
+    CHECK_MSG(provision(), what + ": provisioning answered false");
+    g_health.records_created = 3;
+    const Reach r = reach();
+    CHECK_MSG(r.status_inits == 1 && r.status_name == g_device.device_id && !r.status_name.empty() &&
+                  ble_status::g_seq == &g_device.seq &&
+                  r.registered == bluetooth_channel::BT_BOOT_SVC_STATUS,
+              what + ": the BLE status service not registered under " + g_device.device_id);
+    std::string head_hex = hex(g_device.chain_head, 32);
+    std::string pub_hex = hex(g_device.pubkey, 32);
+    for (char& ch : head_hex) ch = (char)std::toupper((unsigned char)ch);
+    for (char& ch : pub_hex) ch = (char)std::toupper((unsigned char)ch);
+    const std::string want = "{\"s\":" + std::to_string(g_device.seq) + ",\"t\":3,\"h\":\"" + head_hex +
+                             "\",\"pk\":\"" + pub_hex + "\"}";
+    CHECK_MSG(r.head && r.head_json == want, what + ": the witness export's HEAD " + r.head_json);
+    CHECK_MSG(r.signer_inits == 1 && r.signer_id == g_device.device_id &&
+                  r.signer_fp == hex(g_device.pubkey_fp, 8),
+              what + ": the signer mounted as \"" + r.signer_id + "\" (" + r.signer_fp + ")");
+    CHECK_MSG(g_log.size() == 1 && logged("BLE status service started") == 1,
+              what + ": a refusal line on a working unit");
+  }
+  g_health.records_created = 0;
 }
 
 // ── create_witness_record(): the payload hash and the chain link ────────────
@@ -1109,6 +1296,8 @@ static void tls_reset() {
   g_tls_cert_persisted = false;
   g_tls_enabled = false;
   g_cert_stores = 0;
+  g_cert_generates = 0;
+  g_cert_refused = false;
   Serial.all.clear();
 }
 
@@ -1165,6 +1354,39 @@ static void a_certificate_not_hashed_is_not_used() {
                                 "this boot, no pin handed out\n") != std::string::npos,
                 what + ": no line says why");
     }
+  }
+  tls_reset();
+}
+
+// A refused load (F404) leaves HTTPS off on both builds: no certificate is
+// made or stored, no pin is computed or handed out, and nothing is served.
+static void a_refused_certificate_is_not_replaced() {
+  struct Build {
+    const char* what;
+    bool (*init)();
+  };
+  for (const Build& b : {Build{"a refused certificate", certgen::init_tls_cert},
+                         Build{"a refused certificate, no generator", no_certgen::init_tls_cert}}) {
+    const std::string what = b.what;
+    tls_reset();
+    g_cert_in_nvs = true;
+    g_cert_refused = true;
+    sha::arm(sha::Step::None);
+    CHECK_MSG(!b.init(), what + ": init_tls_cert() answered true");
+    CHECK_MSG(g_cert_generates == 0 && g_cert_stores == 0 && g_cert_in_nvs,
+              what + ": a certificate made or stored over the stored one");
+    CHECK_MSG(sha::g_inits == 0, what + ": a pin hashed");
+    CHECK_MSG(g_tls_cert_der == nullptr && g_tls_key_der == nullptr && !g_tls_cert_persisted &&
+                  g_tls_cert_fp_hex[0] == '\0',
+              what + ": a certificate or pin left for HTTPS");
+    for (int wizard = 0; wizard < 2; wizard++) {
+      setup_wizard::s_active = wizard;
+      CHECK_MSG(!tls_after_setup(), what + ": a pin handed out");
+    }
+    setup_wizard::s_active = false;
+    CHECK_MSG(Serial.all == "[TLS] Stored certificate not used (see the certificate line above) - "
+                            "HTTPS off this boot, nothing stored over it\n",
+              what + ": " + Serial.all);
   }
   tls_reset();
 }
@@ -1297,28 +1519,77 @@ static void sketch_text() {
   // review): the one ble_manager::init() call, and the id it is handed, come
   // after the gate's refusal branch.
   {
-    const size_t gate = ino.find("if (!ble_discovery_identity_ready()) {");
+    const size_t gate = ino.find("#if FEATURE_BLE\n  if (!identity_named_and_anchored()) {");
     const size_t other = gate == std::string::npos ? gate : ino.find("} else {", gate);
     const size_t init = ino.find("ble_manager::init(");
     const size_t id = ino.find("hex_to_str(ble_device_id_hex, g_device.pubkey_fp, 8);");
     CHECK_MSG(gate != std::string::npos && other != std::string::npos && init != std::string::npos &&
                   id != std::string::npos && gate < other && other < id && id < init &&
                   ino.find("ble_manager::", gate) > other,
-              "the BLE bring-up: ble_manager::init() not behind ble_discovery_identity_ready()");
+              "the BLE bring-up: ble_manager::init() not behind identity_named_and_anchored()");
+    // The gate is named by its declaration, its definition and the four
+    // surfaces it holds (F403): the head export, the signer's mount, the
+    // status registration and discovery, each cut and driven above.
     int named = 0;
-    for (size_t at = ino.find("ble_discovery_identity_ready()"); at != std::string::npos;
-         at = ino.find("ble_discovery_identity_ready()", at + 1)) {
+    for (size_t at = ino.find("identity_named_and_anchored()"); at != std::string::npos;
+         at = ino.find("identity_named_and_anchored()", at + 1)) {
       named++;
     }
-    CHECK_MSG(ino.find("ble_manager::init(", init + 1) == std::string::npos && named == 2,
+    CHECK_MSG(ino.find("ble_manager::init(", init + 1) == std::string::npos && named == 6,
               "the BLE bring-up: a second ble_manager::init() call, or the gate named " +
-                  std::to_string(named) + " time(s) (its definition and the bring-up's)");
+                  std::to_string(named) + " time(s) (its declaration, its definition and four uses)");
     for (const std::string& n : names) {
       if (n == "canary_wap.ino") continue;
       const std::string text = strip_comments(read_file(dir + "/" + n));
       CHECK_MSG(text.find("ble_manager::init(") == std::string::npos,
                 n + ": calls ble_manager::init() outside the gated bring-up");
+      CHECK_MSG(text.find("ble_status::init(") == std::string::npos,
+                n + ": calls ble_status::init() outside the gated bring-up");
+      CHECK_MSG(n == "device_signature.cpp" || text.find("device_signature::init(") == std::string::npos,
+                n + ": mounts the signer outside device_signature_mount()");
     }
+  }
+  // F403: the status registration, the head export and the signer's mount
+  // are the cuts driven above, each one call or definition, each behind the
+  // gate; and every sign_* in the signer refuses until init() ran.
+  {
+    struct Once {
+      const char* text;
+      int count;
+    };
+    for (const Once& o : {Once{"ble_status::init(", 1}, Once{"device_signature::init(", 1},
+                          Once{"device_signature_mount()", 2},   // its definition and its one call
+                          Once{"bool ble_witness_get_head_json(", 1}}) {
+      int n = 0;
+      for (size_t at = ino.find(o.text); at != std::string::npos; at = ino.find(o.text, at + 1)) n++;
+      CHECK_MSG(n == o.count, std::string("canary_wap.ino: \"") + o.text + "\" " + std::to_string(n) +
+                                  " time(s), expected " + std::to_string(o.count));
+    }
+    const size_t routes = ino.find("\nstatic void register_api_routes(httpd_handle_t server) {");
+    const size_t routes_end = routes == std::string::npos ? routes : ino.find("\n}\n", routes);
+    CHECK_MSG(routes != std::string::npos && routes_end != std::string::npos &&
+                  ino.substr(routes, routes_end - routes).find("\n  device_signature_mount();") != std::string::npos,
+              "register_api_routes(): the signer is not mounted through device_signature_mount()");
+    const std::string sig = strip_comments(read_file(dir + "/device_signature.cpp"));
+    CHECK_MSG(!sig.empty(), "device_signature.cpp not read");
+    int sign_fns = 0;
+    for (size_t at = sig.find("\nbool sign_"); at != std::string::npos; at = sig.find("\nbool sign_", at + 1)) {
+      const size_t end = sig.find("\n}\n", at);
+      const std::string body = sig.substr(at, end == std::string::npos ? std::string::npos : end - at);
+      const std::string name = body.substr(1, body.find('(') - 1);
+      ++sign_fns;
+      const bool refuses = name == "bool sign_and_encode"
+                               ? body.find("if (!s_ready) return false;") != std::string::npos
+                               : (body.find("return sign_and_encode(") != std::string::npos ||
+                                  body.find("if (!s_ready ||") != std::string::npos);
+      CHECK_MSG(refuses, "device_signature.cpp: " + name + "() does not refuse before init()");
+    }
+    CHECK_MSG(sign_fns >= 6, "device_signature.cpp: " + std::to_string(sign_fns) + " sign function(s) read");
+    int ready = 0;
+    for (size_t at = sig.find("s_ready = true;"); at != std::string::npos; at = sig.find("s_ready = true;", at + 1)) {
+      ready++;
+    }
+    CHECK_MSG(ready == 1, "device_signature.cpp: s_ready set true " + std::to_string(ready) + " time(s)");
   }
   // setup()'s and loop()'s records into g_last_record go through the helpers
   // the suite drives, and the self-verify through its own.
@@ -1361,11 +1632,14 @@ int main() {
   a_refused_chain_makes_no_record();
   a_refused_chain_is_shown_and_broadcast_nowhere();
   a_working_unit_shows_its_records();
+  a_refused_identity_reaches_no_gated_surface();
+  a_working_unit_reaches_each();
   a_record_whose_hash_fails_is_not_made();
   a_record_not_made_is_not_shown();
   the_tail_is_not_adopted_on_a_failed_hash();
   the_tail_is_not_vouched_for_on_a_failed_hash();
   a_certificate_not_hashed_is_not_used();
+  a_refused_certificate_is_not_replaced();
   sketch_text();
   if (g_failures) {
     std::printf("test_wap_sha_fail: %d of %d checks FAILED\n", g_failures, g_checks);

@@ -188,47 +188,142 @@ if not _SOFTAP or not all(re.search(r"WiFi\.softAP\([^()]*,\s*AP_CHANNEL,\s*fals
 # The ports. A reader that cannot spell a value must refuse it, never fall
 # through to "equal" (CLAUDE.md), so every code line that names a server's
 # port or the TLS transport is read, and each one must be a form read here:
-# a digit-literal write to one of the three configs the sketch starts its
-# servers from, made once. Anything else (a named constant, a cast, a suffix,
-# a second config, a second write, transport_mode) is refused, not skipped.
-# Full-line comments are not code. Any other line that names one of these
-# fields (a trailing comment on a line that is not such a write, say) is
-# refused with its text, which is the safe way to be wrong.
-_INO_CODE = [ln for ln in read(INO).splitlines() if not ln.lstrip().startswith(("//", "*", "/*"))]
-_PORT_WRITE = re.compile(r"\s*(ssl_config\.httpd\.server_port|ssl_config\.port_secure|redirect_config\.server_port"
-                         r"|config\.server_port)\s*=\s*(\d+)\s*;\s*(?://.*)?")
+# a digit-literal write to one of the two plain configs, or the HTTPS
+# config's one port_secure write from the sketch's HTTPS_PORT constant, each
+# made once. Anything else (another name, a cast, a suffix, a leading zero,
+# which C reads as octal, a second config, a second write, transport_mode,
+# port_insecure) is refused, not skipped. Full-line comments are not code.
+# Any other line that names one of these fields (a trailing comment on a
+# line that is not such a write, say) is refused with its text, which is the
+# safe way to be wrong.
+#
+# It reads lines of text, not the preprocessed program. A line with no code
+# outside its comments is not code: one that starts a comment, and one that
+# sits wholly inside a /* */ block, whatever it starts with (a write wrapped
+# in a block comment, its markers on lines of their own, binds nothing and
+# is not counted). Nor is a line inside #if 0. Any other #if is not
+# evaluated: a write under a feature switch is read as written. What keeps a
+# write the compiler drops harmless is the sketch's
+# static_assert(HTTPS_PORT == 443): HTTPD_SSL_CONFIG_DEFAULT() binds 443 too.
+
+
+def _code_lines(text: str) -> list:
+    """Each line of `text` that holds code: not wholly comment, not under #if 0.
+
+    String and character literals are read as literals, so "/*" in a route
+    pattern opens no comment.
+    """
+    kept = []
+    in_block = False
+    dead = []  # one entry per open #if: True while that branch is #if 0's
+    for line in text.splitlines():
+        code = []
+        i = 0
+        while i < len(line):
+            if in_block:
+                end = line.find("*/", i)
+                if end < 0:
+                    break
+                in_block, i = False, end + 2
+                code.append(" ")
+                continue
+            ch = line[i]
+            if ch in "\"'":
+                j = i + 1
+                while j < len(line) and line[j] != ch:
+                    j += 2 if line[j] == "\\" else 1
+                code.append(line[i:j + 1])
+                i = j + 1
+            elif line.startswith("//", i):
+                break
+            elif line.startswith("/*", i):
+                in_block, i = True, i + 2
+                code.append(" ")
+            else:
+                code.append(ch)
+                i += 1
+        stripped = "".join(code).strip()
+        directive = re.match(r"#\s*(if|ifdef|ifndef|else|elif|endif)\b\s*(.*)", stripped)
+        if directive:
+            word, arg = directive.group(1), directive.group(2).strip()
+            if word.startswith("if"):
+                dead.append(word == "if" and arg == "0")
+            elif word == "endif":
+                if dead:
+                    dead.pop()
+            elif dead:
+                dead[-1] = False  # #else or #elif: that branch is not #if 0's
+        if stripped and not any(dead) and not line.lstrip().startswith(("//", "*", "/*")):
+            kept.append(line)
+    return kept
+
+
+_INO_CODE = _code_lines(read(INO))
+_PORT_DIGITS = r"([1-9]\d{0,4})"  # a decimal literal: no sign, suffix or leading zero
+_PORT_WRITE = re.compile(r"\s*(redirect_config\.server_port|config\.server_port)\s*=\s*" + _PORT_DIGITS +
+                         r"\s*;\s*(?://.*)?")
+_PORT_SECURE_WRITE = re.compile(r"\s*ssl_config\.port_secure\s*=\s*HTTPS_PORT\s*;\s*(?://.*)?")
 _SECURE_MODE = re.compile(r"\s*ssl_config\.transport_mode\s*=\s*HTTPD_SSL_TRANSPORT_SECURE\s*;\s*(?://.*)?")
+
+
+def _port(value: str, what: str) -> int:
+    port = int(value)
+    if not 1 <= port <= 65535:
+        die(f"{what} is {port}, which is not a TCP port")
+    return port
+
+
 _PORTS: dict = {}
+_PORT_SECURE_WRITES = 0
 for _ln in _INO_CODE:
     if not re.search(r"\b(server_port|port_secure|port_insecure|transport_mode)\b", _ln):
         continue
     if _SECURE_MODE.fullmatch(_ln):
         continue  # the default, spelled out: port_secure is still what binds
+    if re.search(r"\bhttpd\.server_port\b", _ln):
+        # ESP-IDF's httpd_ssl_start() writes port_secure over it (sweep F400):
+        # a write there binds nothing, and a page read from it names a port
+        # the server may not be on.
+        die(f"the sketch writes the HTTPS config's httpd.server_port ({_ln.strip()!r}), which "
+            f"httpd_ssl_start() overwrites with port_secure: set ssl_config.port_secure = HTTPS_PORT; only")
+    if _PORT_SECURE_WRITE.fullmatch(_ln):
+        _PORT_SECURE_WRITES += 1
+        if _PORT_SECURE_WRITES > 1:
+            die("the sketch writes ssl_config.port_secure twice: write the HTTPS server's port once")
+        continue
+    if re.search(r"\bport_secure\b", _ln):
+        die(f"the sketch sets the HTTPS server's port in a form this generator cannot read "
+            f"({_ln.strip()!r}): write it as ssl_config.port_secure = HTTPS_PORT; "
+            f"with the port in the HTTPS_PORT constant")
     _m = _PORT_WRITE.fullmatch(_ln)
     if not _m:
         die(f"the sketch sets a server port or the TLS transport in a form this generator cannot read "
             f"({_ln.strip()!r}): write it as <config>.server_port = <digits>; or "
-            f"ssl_config.port_secure = <digits>; (or teach gen_wap.py the new form)")
+            f"ssl_config.port_secure = HTTPS_PORT; (or teach gen_wap.py the new form)")
     if _m.group(1) in _PORTS:
         die(f"the sketch writes {_m.group(1)} twice ({_PORTS[_m.group(1)]} and {_m.group(2)}): "
             f"write each server's port once")
-    _PORTS[_m.group(1)] = int(_m.group(2))
-# HTTPS: ESP-IDF's httpd_ssl_start() overwrites httpd.server_port with the
-# config's port_secure (HTTPD_SSL_CONFIG_DEFAULT: 443), so the port the sketch
-# writes into httpd.server_port is the page's number only while it is the one
-# bound: port_secure as the sketch sets it, or the default when it does not.
-IDF_PORT_SECURE_DEFAULT = 443  # HTTPD_SSL_CONFIG_DEFAULT()'s port_secure
+    _PORTS[_m.group(1)] = _port(_m.group(2), _m.group(1))
+# HTTPS: ESP-IDF's httpd_ssl_start() binds the config's port_secure (in the
+# default transport_mode, HTTPD_SSL_CONFIG_DEFAULT()'s secure one) and writes
+# it over httpd.server_port, so the page's number is the HTTPS_PORT constant
+# the sketch's one port_secure write takes (sweep F400). The constant is read
+# from its one definition, a decimal literal, or refused by name.
 must(INO, "httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();", "the HTTPS config starts from IDF's default")
 _SSL_STARTS = [ln.strip() for ln in _INO_CODE if "httpd_ssl_start(" in ln]
 if len(_SSL_STARTS) != 1 or not re.search(r"httpd_ssl_start\(&g_https_server,\s*&ssl_config\)", _SSL_STARTS[0]):
     die(f"expected one httpd_ssl_start() call, starting the HTTPS server from ssl_config: {_SSL_STARTS}")
-if "ssl_config.httpd.server_port" not in _PORTS:
-    die("the HTTPS server's port: no ssl_config.httpd.server_port = <digits>; in the sketch")
-HTTPS_PORT = _PORTS["ssl_config.httpd.server_port"]
-_PORT_SECURE = _PORTS.get("ssl_config.port_secure", IDF_PORT_SECURE_DEFAULT)
-if _PORT_SECURE != HTTPS_PORT:
-    die(f"the HTTPS server's httpd.server_port says {HTTPS_PORT}, but httpd_ssl_start() binds "
-        f"port_secure, {_PORT_SECURE}: set port_secure to the port the page should name")
+if _PORT_SECURE_WRITES != 1:
+    die("the HTTPS server's port: no ssl_config.port_secure = HTTPS_PORT; in the sketch")
+_HTTPS_DEFS = [ln.strip() for ln in _INO_CODE
+               if re.search(r"#\s*define\s+HTTPS_PORT\b|\bHTTPS_PORT\s*(?:=(?!=)|\{)", ln)]
+if len(_HTTPS_DEFS) != 1:
+    die(f"the HTTPS_PORT constant: expected one definition in the sketch, found {len(_HTTPS_DEFS)}: {_HTTPS_DEFS}")
+_m = re.fullmatch(r"static const int\s+HTTPS_PORT\s*=\s*" + _PORT_DIGITS + r"\s*;\s*(?://.*)?", _HTTPS_DEFS[0])
+if not _m:
+    die(f"the HTTPS_PORT constant is defined in a form this generator cannot read ({_HTTPS_DEFS[0]!r}): "
+        f"write it as static const int HTTPS_PORT = <digits>;")
+HTTPS_PORT = _port(_m.group(1), "HTTPS_PORT")
 # HTTP: the port-80 server beside HTTPS (redirect_config) and the HTTP-only
 # fallback (config) bind one port, the page's http_port.
 _HTTP_PORTS = {k: v for k, v in _PORTS.items() if k in ("redirect_config.server_port", "config.server_port")}

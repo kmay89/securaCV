@@ -1,6 +1,157 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap holds every radio-carried name to JSON and draws it as text, keeps its HTTPS slot and its identity honest before F15, and its modules use no SHA-256 they were refused; Chirp names an all-clear, keeps a mute across the clock's wrap and stops pricing a Sybil; the flasher offers the flagship's gated chips; Home Assistant says only what it was told; the Lab's Sense and Vision twins and its bench follow their firmware; and two device claims, two docs and two checks are set straight (#1919, wave 22)
+
+- **canary-wap gates every Bluetooth and Beacon name before JSON (sweep
+  F405, F406, F408).** The nearby scan takes a Canary's name prefix only as
+  four ASCII hex digits, so a name another radio advertises can no longer
+  break `GET /api/nearby`. The paired list, the saved Bluetooth name and the
+  Beacon set load only rows NVS returns whole, and every name is terminated
+  in its field; a refused paired row is rebuilt from the bond store, or
+  replaced once by the empty list. An empty list is now saved by removing the
+  row, so a Clear survives a reboot (the cleared list used to come back at
+  every boot). The Beacon set holds members only, and `GET /api/beacon/set`
+  writes names through `shown_text()`; Opera's peer names needed no code (a
+  trace). `check_wap_json_answers.py`'s J10 covers Beacon set names, and the
+  new J11 holds every append onto a `String` (230 self-test mutations).
+  **Host-tested only** (the real `bluetooth_channel.cpp` and `ble_nearby.h`
+  under g++ ASan/UBSan, TSan and clang++ 18, and the new
+  `test_beacon_set_load.cpp`); the ESP32 compiles are CI's; not run with a
+  radio, and Beacon is off in every stock build. Filed: F424, F425, CI22.
+- **canary-wap's dashboard draws radio text as text (sweep F407, F296,
+  F401).** A Bluetooth bond's name and address, and every field of a nearby
+  or scan row, are drawn as text, and Remove names its row by index, so no
+  bond text reaches an attribute or an `onclick`. BLE Discovery keeps
+  refreshing every 10 s after an empty, refused or missing answer, and
+  leaving the view leaves no timer. The Fleet sheet shows the pairing QR
+  route's own 400 text instead of always blaming the network name.
+  `web_assets_gz.h` is regenerated. **Host-tested** (19 new page cases fail
+  on the old pages; the small HTML reader they use matched Chromium locally,
+  a cross-check CI does not run); not run on a device. Filed: F422, F423.
+- **canary-wap keeps its HTTPS slot and its identity honest before F15
+  (sweep F404, F403, F400).** A stored TLS certificate that cannot be read
+  whole is refused: nothing is stored over a certificate the phones may have
+  pinned, HTTPS stays off that boot, and only an empty slot gets a new
+  certificate. One corrupt entry leaves its partner, so HTTPS then stays off
+  until a full flash erase; what a lone entry should get is a decision
+  (F420). A boot whose key fingerprint or genesis head did not hash no longer
+  registers the BLE status service, exports the witness HEAD or mounts the
+  signer; the identity's other readers are named in the code and left to a
+  decision (F419). The HTTPS port is one constant, bound as `port_secure`
+  (the old write did nothing), and `gen_wap.py` reads it; `devices/wap.json`
+  is byte-identical. The certificate load and the port are not reached on
+  stock units until F15 turns HTTPS on; the identity gate does not wait for
+  it. **Host-tested** (g++, clang++ 18 and ASan/UBSan; every behavior
+  test fails on the old code); the ESP32 compiles are CI's; not run on a
+  device. Filed: F419-F421, F434.
+- **canary-wap's modules use no SHA-256 they were refused (sweep F364,
+  slice 1a).** The vault fails a seal whose digest did not compute and
+  refuses a key whose id did not hash before anything is written; the USB
+  update drop answers `sha_failed` before any compare; the familiar-device
+  filters and Wi-Fi presence learn and count nothing from a failed hash; and
+  the mesh helper zeroes its output. **Host-tested only** (a new seam,
+  `test_wap_sha_fail_modules`, 408 checks under g++, clang++ 18 and
+  ASan/UBSan, valgrind-clean; the old sources fail 189 of them); the ESP32
+  compiles are CI's; not run on a device. F364 stays open for the Beacon,
+  Chirp, mesh, OTA and pseudonym hashes. Filed: F426.
+- **canary-wap Chirp names an all-clear, keeps a mute across the clock's
+  wrap, and its spec says what a Sybil costs (sweep F307, #1836's F361,
+  F308, D16).** `GET /api/chirp/recent` names an all-clear chirp's category
+  instead of "unknown". A mute set near uptime's 49.7-day wrap runs its full
+  length instead of ending at once, and a channel never muted reads unmuted
+  at any uptime. The spec puts Chirp on the shared radio channel and says how
+  its frames and Opera's are told apart. The spec and the threat model stop
+  pricing a Sybil: one device makes any number of session keys, the
+  ten-minute presence wait is a once-per-key delay, and the per-key rate
+  limit has a hole after the wrap (F416, open). **Host-tested** on the real
+  `chirp_channel.cpp` (46 command tests, 280,822 mute steps across the wrap)
+  and by `test_chirp_spec_tables.py`; the ESP32 compile is CI's; the wrap
+  cannot be bench-tested short of 49.7 days of uptime. Filed: F416-F418,
+  D18, D19.
+- **The flasher offers the flagship's gated chips, and its parity test
+  reaches what it claims (sweep F414, A93, A95).** The flagship's monitor
+  offers its battery, power-policy, diagnostics and data-management chips on
+  all four flagship products and MQTT only on the HA build: `gen_flash.py`
+  resolves a command behind one `#if FEATURE_X` per product env and refuses
+  by name every gate it cannot evaluate. `flash.json` is regenerated; the
+  browser flasher reads it, and the desktop Flasher embeds it at build time,
+  so the app offers the chips from its next release. The Vision's module-id
+  deny reads all of `firmware/common`, including two library sources
+  PlatformIO links without a build filter naming them. The browser monitor is
+  rendered in a test instead of pinned by regex. **Host-tested** (pytest,
+  node, a `g++ -E` comparison of the gate reader, the flasher probes in
+  Chromium); the desktop Flasher's builds are CI's; not tried on a board.
+  Filed: F429, F430, A123.
+- **Home Assistant says only what it was told (sweep HA53, F411, HA42).** A
+  health with no free-memory number no longer reads critical or claims 0
+  bytes free. The canary's Sensing RSSI is unknown until a real reading and
+  never shows an unmeasured 0 dBm; an install upgraded from older firmware
+  keeps that firmware's 0 dBm until the first reading. The last-event answer
+  says an unlisted type in words ("Daily summary"). **Host-tested** (the
+  stub-lane suite, 1021 passed; the real core at 2026.10.1 and 2026.5.0, 139
+  passed on each; a new `firmware/tests_host` suite on the real CSI code);
+  the canary firmware's compile is CI's; not bench-tested. `custom_components`
+  reaches the HACS mirror at its next sync. Filed: F431, HA57, HA58.
+- **The Lab's Sense and Vision twins are held to their firmware (sweep A106,
+  A107, A116, A117).** The Sense radar lab signs `presence_cleared` whenever
+  a tick turns Clear, as the device does, so the page's chain head reads one
+  past the example's; the Sense Lab's vitals path is held to the firmware's
+  on every tick; Vision tests about the FSM no longer fail on a legal retune
+  of the score seed; and the optical knobs are read by the shared constant
+  reader. `sense.json` is regenerated (one note). **Host-tested** (on the
+  committed dist and with `LAB_CORES=native`, the Chromium Sense probes,
+  mutation runs and on-disk retunes); no dist file moved. Filed: A124, A125.
+- **Two device claims match their firmware (sweep C35, F355).** Each board's
+  Thermals note, and `PIN_BUDGET.md`'s intro, name the firmware that
+  actually reads die temperature: the canary's passive
+  `FEATURE_THERMAL_WATCHDOG` (off on its classic-ESP32 envs) and the
+  canary-wap's `sys_monitor.h`; the display, Vision, Sense and Sentinel read
+  none. A canary-wap does not answer the Canary Vision SPA's pairing
+  (seen in a one-off headless Chromium run against a stub that answers like
+  the sketch), so the SPA and its docs now say a WAP pairs in the iPhone app,
+  from its recovery kit or over Bluetooth, and joins Home Assistant over
+  MQTT. The pairing flow and CORS are unchanged; whether the WAP should learn
+  the SPA's pairing is F357's call. **Host-tested** (a new `scripts/tests`
+  suite, canary-vision's `npm test`); nothing compiled; not run against a
+  WAP. Filed: F427, F428, F432, C36.
+- **Docs say what holds (sweep HA51, A118).** Six places no longer say Home
+  Assistant 2025.10 and later gives an entity the id asked for: it tries to,
+  and adds `_2` when another entity holds it. The glossary's Witness Wall
+  entry and `RUN_ON_APPLE_TV.md` give the root image's viewer-token mint form
+  with a link to `container.md`'s mint section, and send the receipt to
+  Settings → Verification. **Docs and host tests** (`test_docs_claims.py`,
+  `test_witnessd_unit.py`); nothing run under Home Assistant, docker or
+  systemd. Filed: HA59.
+- **The Lab's bench presses BOOT on a twin that reads it (sweep A99, A101,
+  C24).** A momentary BOOT press beside the strap toggle drives the twin's
+  button on the five boards whose firmware reads BOOT while running, and it
+  is let go on every path; its title says the bench restarts the twin on its
+  home network after the 10 s factory-reset hold. The Nightlight's card
+  keeps its download-mode guess, in the bench's own words. An enclosure
+  group's long note shows one sentence in its summary. **Host-tested and run
+  in headless Chromium** (`bench_probe.mjs` holds the press until the
+  firmware's 3 s and 10 s lines print); not bench-tested on hardware. Filed:
+  A126-A128.
+- **Two checks hold only what they guard (sweep F323, CI18).** The mesh
+  alert-history race test no longer fails on scheduling alone (the old one
+  failed 1 run in 10 pinned to one core beside busy loops; the fix passed 300
+  of 300), and `ci_policy_check.py`'s R11 refuses a `ubuntu_latest_ok` entry
+  whose file no longer names `ubuntu-latest` (the list is empty, so no
+  verdict changes). **Host-tested.** Filed: F433, CI23.
+- **The WAP guard self-tests get 30 minutes.** `check_wap_json_answers.py`'s
+  self-test grew to 230 mutations with J11, 13m07s of CPU locally, and CI
+  already took 12m49s on main at the smaller count (`firmware.yml` run
+  41770593222), so `firmware.yml`'s `wap-guard-selftests` job allows 30
+  minutes instead of 20. Running the mutations in parallel is the follow-up
+  (CI22).
+- **The sweep ledger:** 32 items ticked and F364's slice 1a done; the two
+  halves that closed by trace are folded into F408 and F411; F15, F261, F297
+  and F357 carry dated notes; and 33 items are filed (F416-F434, A123-A128,
+  HA57-HA59, C36, D18, D19, CI22, CI23). The nineteen ids D17 tracks still
+  name two items each, and no new pair was found. `IMPROVEMENT_ROADMAP.md`
+  has a wave 22 row and section.
+
 ### Dependency advisories: zip 9 in both Tauri apps, three ignores retired
 
 - **The scheduled Dependency Audit of 2026-11-02 went red on `zip` 4.6.1

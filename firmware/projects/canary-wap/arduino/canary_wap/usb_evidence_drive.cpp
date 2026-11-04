@@ -87,8 +87,12 @@ static bool dep_ed25519(const uint8_t sig[64], const uint8_t pub[32],
                         const uint8_t* msg, size_t len) {
   return Ed25519::verify(sig, pub, msg, len);
 }
-static void dep_sha256(const uint8_t* data, size_t len, uint8_t out[32]) {
-  mbedtls_sha256(data, len, out, 0 /* SHA-256, not 224 */);
+// The whole PSRAM-staged image in one call, which the S3's SHA engine takes
+// by DMA and can refuse. mbedtls_sha256() answers an int on mbedTLS 3
+// (arduino-esp32 3.x, the only core this sketch builds on); true only on 0,
+// and verify() refuses the image on false (sweep F364).
+static bool dep_sha256(const uint8_t* data, size_t len, uint8_t out[32]) {
+  return mbedtls_sha256(data, len, out, 0 /* SHA-256, not 224 */) == 0;
 }
 
 // ── update pipeline (runs on the main loop via poll) ────────────────────────

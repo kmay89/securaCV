@@ -7,14 +7,18 @@
 // tests exercise the SAME source the firmware ships.
 //
 //   node --test firmware/projects/canary-wap/arduino/canary_wap/web_ui_logic.test.js
+//
+// WAP_WEB_UI points it at another copy of the page (an older tree's, to watch
+// it fail), as it does dashboard_gates.test.js.
 
 const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { parseFragment, textElement, shape, attr, HOSTILE } = require('./html_fragment.js');
 
-const UI = path.join(__dirname, 'web_ui.h');
+const UI = process.env.WAP_WEB_UI || path.join(__dirname, 'web_ui.h');
 
 function loadLogic() {
   const src = fs.readFileSync(UI, 'utf8');
@@ -242,8 +246,9 @@ describe('chirpActionNote', () => {
 // refresh.
 function glueFunction(name) {
   const src = fs.readFileSync(UI, 'utf8');
-  const start = src.indexOf(`async function ${name}(`);
-  if (start < 0) throw new Error(`${name}() not found in web_ui.h`);
+  const m = new RegExp(`(?:async )?function ${name}\\(`).exec(src);
+  if (!m) throw new Error(`${name}() not found in web_ui.h`);
+  const start = m.index;
   let depth = 0;
   for (let i = src.indexOf('{', start); i < src.length; i++) {
     if (src[i] === '{') depth++;
@@ -378,5 +383,168 @@ describe('the Bluetooth card after a refused stack comes up', () => {
     assert.match(page.el('btSubtitle').textContent, /not registered/);
     await refreshWith(page, { ...base, state: 'idle', advertising: false });
     assert.equal(page.el('btSubtitle').textContent, 'BLE connectivity');
+  });
+});
+
+// The Bluetooth page's lists draw what a peer or a bond carries as text
+// (sweep F407). loadBtPairedDevices() wrote a bond's name and address into
+// innerHTML as they came, and spliced the address into the Remove button's
+// onclick string, where escapeHtml() (it leaves quotes alone) could not have
+// helped. The functions are lifted out of web_ui.h whole, beside the page's
+// own escapeHtml() (glueFunction() lifts a plain function as well as an async
+// one), and the markup they write is read as a browser parses it
+// (html_fragment.js): no element, attribute or comment but the row's own.
+const settleAll = () => new Promise((r) => setImmediate(r));
+
+describe('the paired list draws each bond as text, and Remove posts its address (F407)', () => {
+  function pairedPage(answers) {
+    const src = fs.readFileSync(UI, 'utf8');
+    const els = new Map();
+    const el = (id) => {
+      if (!els.has(id)) els.set(id, { id, textContent: '', innerHTML: '' });
+      return els.get(id);
+    };
+    const calls = [];
+    let served = 0;
+    const ctx = {
+      api: async (endpoint, method, body) => {
+        calls.push({ endpoint, method: method || 'GET', body });
+        if (endpoint === '/api/bluetooth/paired' && !method) {
+          const devices = answers[Math.min(served++, answers.length - 1)];
+          return { count: devices.length, devices };
+        }
+        return { success: true };
+      },
+      document: { getElementById: el, createElement: () => textElement() },
+      confirm: () => true,
+    };
+    vm.createContext(ctx);
+    // The list's own state where the page keeps one (an older page has none).
+    const decl = (src.match(/\n    let btPairedShown = [^\n]*\n/) || [''])[0];
+    vm.runInContext(`${decl}${glueFunction('escapeHtml')}\n${glueFunction('loadBtPairedDevices')}\n` +
+      `${glueFunction('btRemovePaired')}\n`, ctx);
+    return {
+      calls,
+      load: () => ctx.loadBtPairedDevices(),
+      list: () => parseFragment(el('btPairedList').innerHTML),
+      // A tap on an element: its onclick attribute run as the page's script.
+      tap: async (button) => {
+        const code = attr(button, 'onclick');
+        assert.ok(code, `${shape(button)} has an onclick`);
+        await vm.runInContext(code, ctx);
+        await settleAll();
+      },
+      deletes: () => calls.filter((c) => c.method === 'DELETE').map((c) => c.body && c.body.address),
+    };
+  }
+  const BENIGN = [{ name: 'Pixel 8', address: 'aa:bb:cc:dd:ee:ff' }];
+  async function rowOf(devices) {
+    const p = pairedPage([devices]);
+    await p.load();
+    return p.list();
+  }
+
+  it('a bond row is a box, its name, its address and Remove', async () => {
+    const f = await rowOf(BENIGN);
+    assert.deepEqual(f.elements.map(shape),
+                     ['div[class style]', 'div[]', 'strong[]', 'div[style]', 'button[class onclick]']);
+    assert.equal(f.elements[2].text, 'Pixel 8');
+    assert.equal(f.elements[3].text, 'aa:bb:cc:dd:ee:ff');
+    assert.equal(f.elements[4].text, 'Remove');
+  });
+
+  it('a name or an address that reads as markup makes no element, attribute or comment', async () => {
+    const own = (await rowOf(BENIGN)).elements;
+    const devices = HOSTILE.map((h, k) => ({ name: h, address: HOSTILE[(k + 1) % HOSTILE.length] }));
+    const p = pairedPage([devices]);
+    await p.load();
+    const f = p.list();
+    assert.deepEqual(f.elements.map(shape), devices.flatMap(() => own.map(shape)),
+                     'each row has exactly the row\'s own elements and attributes');
+    assert.deepEqual(f.comments, [], 'no comment opened');
+    devices.forEach((d, k) => {
+      const row = f.elements.slice(k * own.length, (k + 1) * own.length);
+      row.forEach((e, j) => {
+        for (const [n, v] of e.attrs) {
+          if (n !== 'onclick') assert.equal(v, attr(own[j], n), `row ${k}: ${e.tag} ${n}`);
+          assert.ok(!v.includes(d.name) && !v.includes(d.address), `row ${k}: no bond text in ${e.tag} ${n}`);
+        }
+      });
+      assert.equal(row[2].text, d.name, `row ${k}: the name reads as sent`);
+      assert.equal(row[3].text, d.address, `row ${k}: the address reads as sent`);
+    });
+  });
+
+  it('Remove posts an address that holds a quote as it was listed', async () => {
+    for (const address of ["aa:bb'cc", 'aa:bb"cc', "x'); alert(1);//"]) {
+      const p = pairedPage([[{ name: 'Phone', address }]]);
+      await p.load();
+      const [button] = p.list().elements.filter((e) => e.tag === 'button');
+      await p.tap(button);
+      assert.deepEqual(p.deletes(), [address]);
+    }
+  });
+
+  it('Remove on each row posts exactly that row\'s address', async () => {
+    const devices = HOSTILE.map((h) => ({ name: 'Phone', address: h }));
+    const p = pairedPage([devices]);
+    await p.load();
+    const buttons = p.list().elements.filter((e) => e.tag === 'button');
+    assert.equal(buttons.length, devices.length);
+    for (const [k, b] of buttons.entries()) {
+      await p.tap(b);
+      assert.equal(p.deletes().at(-1), devices[k].address, `row ${k}`);
+    }
+    assert.deepEqual(p.deletes(), devices.map((d) => d.address));
+  });
+
+  it('a bond with no name reads Unknown', async () => {
+    const f = await rowOf([{ name: '', address: 'aa:bb:cc:dd:ee:ff' }]);
+    assert.equal(f.elements[2].text, 'Unknown');
+  });
+
+  it('Remove names the bond the list shows now, after the list has changed', async () => {
+    const first = [{ name: 'A', address: '11:11:11:11:11:11' }, { name: 'B', address: '22:22:22:22:22:22' }];
+    const then = [{ name: 'B', address: '22:22:22:22:22:22' }];
+    const p = pairedPage([first, then]);
+    await p.load();
+    await p.load();                       // the list as the device now answers it
+    const buttons = p.list().elements.filter((e) => e.tag === 'button');
+    assert.equal(buttons.length, 1);
+    await p.tap(buttons[0]);
+    assert.deepEqual(p.deletes(), ['22:22:22:22:22:22']);
+  });
+});
+
+describe('the nearby scan list draws every answer field as text (F407)', () => {
+  function scanList(devices) {
+    const els = new Map();
+    const el = (id) => {
+      if (!els.has(id)) els.set(id, { id, textContent: '', innerHTML: '', dataset: {} });
+      return els.get(id);
+    };
+    const ctx = { document: { getElementById: el, createElement: () => textElement() } };
+    vm.createContext(ctx);
+    vm.runInContext(['escapeHtml', 'rssiBarCount', 'distancePretty', 'deviceIcon', 'renderBtScanList']
+      .map(glueFunction).join('\n'), ctx);
+    ctx.renderBtScanList(devices);
+    return parseFragment(el('btScanList').innerHTML);
+  }
+  const plain = { name: 'Watch', address: '11:22:33:44:55:66', rssi: -60, distance_m: 2.5,
+                  distance_label: 'Near', type: 'wearable', is_securacv: false };
+
+  it('a name, an address, a distance word or a signal that reads as markup makes nothing', () => {
+    const own = scanList([plain]).elements;
+    for (const h of HOSTILE) {
+      const f = scanList([{ ...plain, name: h, address: h, distance_label: h, rssi: h, type: h }]);
+      assert.deepEqual(f.comments, [], h.slice(0, 30));
+      assert.deepEqual(f.elements.map(shape), own.map(shape), h.slice(0, 30));
+      const meta = f.elements.find((e) => attr(e, 'class') === 'ble-name');
+      const sub = f.elements.find((e) => attr(e, 'class') === 'ble-sub');
+      const word = f.elements.find((e) => attr(e, 'class') === 'ble-dist-l');
+      assert.equal(meta.text, h);
+      assert.equal(sub.text, `${h} · ${h} dBm`);
+      assert.equal(word.text, h);
+    }
   });
 });

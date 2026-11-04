@@ -70,7 +70,7 @@ from .health_metrics import (
     health_identity,
     kernel_storage,
     kernel_thermal,
-    memory_free_bytes,
+    memory_free_reading,
     offline_queue_counters,
     round_pct,
 )
@@ -1318,8 +1318,14 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
             return
         # Both firmware spellings for battery ("battery" /
         # "battery_soc") and memory ("memory_free" / "free_heap").
+        # memory_free is the reading, or None when the health carries no
+        # number in either key (absent, null, junk, a bool, a negative
+        # count, NaN or an infinity): no reading is not low memory, as
+        # Memory Critical (binary_sensor.py) reads it. The 0
+        # memory_free_bytes() gives for that case read critical here and
+        # claimed 0 bytes free (sweep HA53).
         battery = battery_percent(data)
-        memory_free = memory_free_bytes(data)
+        memory_free = memory_free_reading(data)
 
         # Battery thresholds apply only to a discharging battery:
         # mains-powered devices (battery is None) and charging
@@ -1331,7 +1337,7 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
 
         if (
             battery_for_status < CRITICAL_BATTERY_THRESHOLD_PERCENT
-            or memory_free < WARNING_MEMORY_THRESHOLD_BYTES
+            or (memory_free is not None and memory_free < WARNING_MEMORY_THRESHOLD_BYTES)
         ):
             self._attr_native_value = "critical"
         elif battery_for_status < WARNING_BATTERY_THRESHOLD_PERCENT:
@@ -1348,6 +1354,7 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
             public_key = normalize_hex(public_key)
         self._attr_extra_state_attributes = {
             "battery_percent": 100 if battery is None else battery,
+            # The reading, or None with none: never a 0 nobody sent.
             "memory_free_bytes": memory_free,
             "uptime_seconds": data.get("uptime", 0),
             "firmware_version": data.get("firmware_version", ""),

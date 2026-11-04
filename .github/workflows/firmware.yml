@@ -918,8 +918,13 @@ jobs:
     # minutes and the Rust build job (tests/regression_script.rs runs the same
     # script) past its forty. It runs here, one job per guard, so the proof
     # stays on every PR without sitting inside those budgets.
+    # 30, not 20: check_wap_json_answers's proof grew to 230 mutations with
+    # J11 (F405), about 13 minutes of CPU locally, and a main run already took
+    # 12m49s at the smaller count (run 41770593222). Running the mutations in
+    # parallel is the follow-up; this keeps a slow runner from timing out
+    # meanwhile.
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

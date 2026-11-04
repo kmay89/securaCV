@@ -110,7 +110,16 @@ Chirp Channel uses the same ESP-NOW transport as Opera, but with different messa
 
 - **Broadcast Only**: All chirps sent to broadcast address
 - **No Pairing Required**: Devices discover each other via broadcast
-- **Separate Channel**: Uses WiFi channel 6 (Opera uses channel 1)
+- **Shared Channel**: Chirp rides the radio's current channel, as Opera
+  does. The ESP32 has one 2.4 GHz radio, so the canary-wap registers Chirp's
+  broadcast peer (`CHIRP_CHANNEL`) and Opera's peers (`ESPNOW_CHANNEL`) at
+  channel 0, which ESP-NOW reads as the current channel, and
+  `mesh_channel_policy.h` picks that channel: the STA's when it is
+  connected, else the AP's, else 6. Chirp and Opera frames are told apart by
+  their first byte, not by the channel (§12.1). This bullet said Chirp used
+  channel 6 and Opera channel 1; a send pinned to a channel the STA was not
+  on made the driver retune the radio away from the home Wi-Fi, which is
+  why the pins were removed (`docs/network_coexistence.md`; sweep F308).
 - **Range**: ~250m per hop, max 750m with 3 hops
 
 ### 2.3 Identity Model
@@ -247,6 +256,9 @@ If the answer to #1 is "yes" or #2 is "individual" or #3 is "paranoid" - **don't
 ### 2.5.3 Defense: Witness Requirement (Sybil Resistance) — v0.2
 
 **Key Insight**: A single device should not be able to broadcast to the neighborhood alone.
+The rule below asks for other session keys, not other devices, so it delays a
+device that makes its own confirming keys, once and possibly before the chirp,
+and does not stop one (the second and third points under "Why This Works").
 
 **Rule**: Chirps only propagate beyond hop 0 after **2 independent confirmations from distinct `session_pubkey`s**.
 
@@ -276,10 +288,22 @@ Device A sends chirp (hop 0) ──broadcast──→
 - The `confirm_count` is no longer carried on the wire as a sender-controlled
   field. It is local state, derived only from cryptographically authenticated
   ACK messages with unique pubkeys.
-- Single bad actor cannot inflate the count by claiming N witnesses — every
-  claim requires a fresh signed ACK from a fresh pubkey.
-- Coordinated attack needs 3+ devices in same area, each holding a distinct
-  session_pubkey and each willing to sign an ACK. Cost is real.
+- No sender can raise the count by claiming N witnesses: each one counted is
+  its own signed ACK, from a session key not yet counted for that chirp.
+- What that does not buy is a price per identity. The threshold needs 2
+  signed ACKs (1 for safety templates) from session keys other than the
+  originator's, and one device can make any number of session keys: a key
+  is a fresh random seed (§2.3). So what a Sybil costs is the ten minutes
+  of presence each confirming key must wait before its ACK counts (§3.4
+  rule 4), and one radio runs those ten minutes for many keys at once,
+  since presence beacons are unsigned (§3.2; sweep F232, open). They run
+  once per key, from its first beacon (a refresh does not move it), so
+  keys that began beaconing ten minutes before a chirp confirm it as soon
+  as it arrives: a delay, not a price per identity, and one an attack can
+  pay before it starts. A suppress vote needs no presence at all
+  (§2.5.6; sweep F234, open). This bullet said a coordinated attack needed
+  3 or more devices, each holding a distinct key, and that its cost was
+  real (sweep D16).
 - Real events naturally get confirmed by multiple witnesses.
 
 **Exception**: Safety-class templates (EMERGENCY, WEATHER) require only 1
@@ -468,7 +492,7 @@ Different rules at different times:
 
 ```
 Layer 1: Structured templates (no offensive content possible)
-Layer 2: Witness requirement (no solo broadcast)
+Layer 2: Witness requirement (no relay before other keys confirm)
 Layer 3: Escalating cooldowns (diminishing spam returns)
 Layer 4: Presence requirement (no drive-by)
 Layer 5: Community mute (organic moderation)
@@ -482,7 +506,7 @@ Layer 6: Time restrictions (reduced night attacks)
 | Spam flooding | Escalating cooldowns (max ~5/day) |
 | Offensive text | Structured templates (impossible) |
 | False "gunman" | No such template exists |
-| Coordinated spam | Witness requirement (need 3+ liars) |
+| Coordinated spam | Witness requirement: 2 signed ACKs from other session keys, which one device can make; a ten-minute delay, not a price per identity (§2.5.3) |
 | Drive-by attack | 10-min presence requirement |
 | Cry wolf | Community mute + escalating cooldowns |
 | Night harassment | Time restrictions |
@@ -1164,16 +1188,27 @@ st_chirp_at  | uint32 | the loop's self-test (canary_wap) | UNIX seconds the aud
 ### 12.1 ESP-NOW Configuration for Chirp
 
 ```c
-// Chirp uses different channel from Opera
-#define CHIRP_CHANNEL 6
+// Chirp shares the radio's channel with Opera (§2.2): its peer is
+// registered at channel 0, which ESP-NOW reads as the current channel
+#define CHIRP_CHANNEL 0  // follow the current radio channel
 
 // Chirp always broadcasts (no peer list)
 uint8_t CHIRP_BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-// Message prefix to identify chirp vs opera
+// A Chirp frame's first byte
 #define CHIRP_MAGIC 0xC4  // 'Ch' for Chirp
-#define OPERA_MAGIC 0x0A  // 'Op' for Opera
 ```
+
+Every frame the radio hears goes to both protocols, and each keeps its own
+by the first byte: a Chirp frame starts with `CHIRP_MAGIC`, and an Opera
+frame starts with its protocol version (`OPERA_VERSION`, 1) or, before
+membership, its pairing type (8 to 12, `PAIR_FIRST` to `PAIR_LAST`;
+`spec/canary_mesh_network_v0.md` §4.5), so each handler drops the other's
+frames (on the canary-wap, `mesh_network.cpp`'s receive pass hands
+every frame to `chirp_channel::dispatch_espnow_message()`, which keeps those
+that start with `CHIRP_MAGIC`). There is no Opera magic byte: this block
+defined `OPERA_MAGIC 0x0A`, which no firmware uses, and gave `CHIRP_CHANNEL`
+as 6 (sweep F308).
 
 ### 12.2 Session Identity Generation
 
@@ -1233,7 +1268,7 @@ list.
 
 Chirp Channel operates **independently** from Opera:
 - Different identity system (ephemeral vs persistent)
-- Different channel (6 vs 1)
+- Same radio channel; Chirp frames are told apart by their magic byte (§12.1)
 - Different trust model (community vs trusted)
 - Can use Chirp without Opera, and vice versa
 
@@ -1266,9 +1301,12 @@ Opera devices MUST NOT:
 - v0.2 (2026-05-11): Hardening per `docs/audit/mesh_and_chirp_audit_v1.md` —
   end-to-end signature verification (C1, C4, C6); Sybil-resistant confirmation
   via unique-pubkey set tracking and wire-format removal of `confirm_count`
-  (C2, C3, C5); signed suppress voting wired (C7); priority storage by
-  urgency (C8); Bloom-filter dedup (C9); wall-clock-anchored timestamps with
-  conservative behavior when unsynced (C10, C15); 5-emoji session display
+  (C2, C3, C5) *(amended 2026-11-04, sweep D16: the set counts distinct
+  keys, not devices, and one device makes any number of session keys, so it
+  does not price a Sybil, §2.5.3)*; signed suppress voting wired (C7);
+  priority storage by urgency (C8); Bloom-filter dedup (C9);
+  wall-clock-anchored timestamps with conservative behavior when unsynced
+  (C10, C15); 5-emoji session display
   (C11); REST API Bearer-gated *(amended 2026-10-22, #1843's sweep: behind
   `api_auth_check()`, which also takes the landing session any host on the
   network can mint, F346)* (C12); presence requirement on ACK origination

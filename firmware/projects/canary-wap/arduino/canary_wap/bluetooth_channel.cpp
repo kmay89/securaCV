@@ -324,6 +324,7 @@ static void save_settings();
 static void load_paired_devices(PairedDevice* out, size_t* count, bool* by_identity);
 static void save_paired_devices();
 static void migrate_paired_devices();
+static bool paired_row_saved();
 static void drop_entries_without_bond();
 static NimBLEAddress paired_identity(const PairedDevice& dev);
 static void update_status_characteristic();
@@ -1360,9 +1361,13 @@ static void set_state(BluetoothState new_state) {
 // A saved name that name_storable() refuses (one saved before sweep F261
 // holding a control byte) is not loaded: `out` keeps its default name, so
 // neither answer nor the advert carries the byte, and true is returned so
-// load_saved() can say so in the health log. The NVS row keeps the old bytes
-// until the next save writes the name the device holds (this opens the
-// namespace read-only).
+// load_saved() can say so in the health log. So is one NVS did not return
+// whole (sweep F406): getBytes() answers the bytes it read, short of the
+// row's length for a short read and 0 for a read whose data check failed
+// after it had copied the bytes (IDF copies before it checks, the F365
+// case), and the name was taken from the copy whatever the answer. The NVS
+// row keeps the old bytes until the next save writes the name the device
+// holds (this opens the namespace read-only).
 static bool load_settings(BluetoothSettings* out) {
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return false;
@@ -1381,9 +1386,9 @@ static bool load_settings(BluetoothSettings* out) {
   size_t name_len = nvs->getBytesLength(NVS_KEY_BT_NAME);
   if (name_len > 0 && name_len <= MAX_DEVICE_NAME_LEN) {
     char saved[MAX_DEVICE_NAME_LEN + 1];
-    nvs->getBytes(NVS_KEY_BT_NAME, saved, name_len);
+    const size_t got = nvs->getBytes(NVS_KEY_BT_NAME, saved, name_len);
     saved[name_len] = '\0';
-    if (name_storable(saved)) {
+    if (got == name_len && name_storable(saved)) {
       memcpy(out->device_name, saved, strlen(saved) + 1);
     } else {
       name_refused = true;
@@ -1407,32 +1412,90 @@ static void save_settings() {
 
 }
 
+// Writes zeros over `n` bytes at `p` through a volatile pointer, so no
+// optimizer drops a store it finds unread (the wipe of a refused paired
+// list, below).
+static void wipe_bytes(void* p, size_t n) {
+  volatile uint8_t* b = static_cast<volatile uint8_t*>(p);
+  while (n--) *b++ = 0;
+}
+
 // Into `out` (MAX_PAIRED_DEVICES entries), `count` and `by_identity`.
 // load_saved()'s, on the loop task (the F167 review); like load_settings()
 // it names none of the channel's state.
+//
+// The list is loaded only as NVS returns it whole (sweep F406): a row that
+// holds a whole number of entries, MAX_PAIRED_DEVICES at most, read to its
+// length. The count used to come from the row's length, not from what the
+// read answered, and no entry's name was terminated: a short read, a read
+// whose data check failed after IDF had copied the bytes (it answers 0, the
+// F365 case), or a row from another layout loaded whatever the buffer held,
+// and a 33-byte name with no NUL was read past its field by every answer
+// that wrote it. A row refused here loads nothing: the entries are wiped,
+// the count is 0, the health log says so, and the list is marked as not
+// keyed by identity, so the loop task rebuilds it from the bond store when
+// it takes the stack (migrate_paired_devices(), as for a list saved before
+// F172) and no bond NimBLE keeps is left out of the list the owner sees
+// (F191); with no bond to rebuild from, it saves the empty list there, so
+// the row is replaced once and not refused again at every boot (the F406
+// review). Each loaded entry's name ends at its last byte, whatever the
+// row held there.
 static void load_paired_devices(PairedDevice* out, size_t* count, bool* by_identity) {
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return;
 
-  size_t data_len = nvs->getBytesLength(NVS_KEY_BT_PAIRED);
-  if (data_len > 0 && data_len <= MAX_PAIRED_DEVICES * sizeof(PairedDevice)) {
-    nvs->getBytes(NVS_KEY_BT_PAIRED, out, data_len);
-    *count = data_len / sizeof(PairedDevice);
-  }
   *by_identity = nvs->getBool(NVS_KEY_BT_PAIRED_ID, false);
-
+  const size_t data_len = nvs->getBytesLength(NVS_KEY_BT_PAIRED);
+  if (data_len == 0) return;   // never saved, or saved empty
+  const size_t cap = MAX_PAIRED_DEVICES * sizeof(PairedDevice);
+  size_t got = 0;
+  if (data_len <= cap && data_len % sizeof(PairedDevice) == 0) {
+    got = nvs->getBytes(NVS_KEY_BT_PAIRED, out, data_len);
+  }
+  if (got != data_len) {
+    wipe_bytes(out, cap);
+    *count = 0;
+    *by_identity = false;
+    char detail[64];
+    snprintf(detail, sizeof(detail), "%u bytes, %u read, entries of %u", (unsigned)data_len,
+             (unsigned)got, (unsigned)sizeof(PairedDevice));
+    // Within the 79 bytes the health log's ring keeps of a message (the F406
+    // review); the rebuild says so in its own line, when there is one.
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Saved paired list unreadable: none loaded", detail);
+    return;
+  }
+  *count = data_len / sizeof(PairedDevice);
+  for (size_t i = 0; i < *count; i++) {
+    out[i].name[MAX_DEVICE_NAME_LEN] = '\0';
+  }
 }
 
+// An empty list is saved by removing the row (the F406 review): Arduino's
+// Preferences::putBytes() writes nothing for a length of 0 and answers 0, so
+// the row the list replaces would stay and load again at the next boot (a
+// Clear, a list whose every entry lost its bond, a refused row with no bond
+// to rebuild from).
 static void save_paired_devices() {
   NvsMainSession nvs(false);
   if (!nvs.isOpen()) return;
 
-  nvs->putBytes(NVS_KEY_BT_PAIRED, g_paired_devices, g_paired_count * sizeof(PairedDevice));
+  if (g_paired_count > 0) {
+    nvs->putBytes(NVS_KEY_BT_PAIRED, g_paired_devices, g_paired_count * sizeof(PairedDevice));
+  } else {
+    nvs->remove(NVS_KEY_BT_PAIRED);
+  }
   // Every list saved from here on holds identity addresses (apply_auth_complete).
   nvs->putBool(NVS_KEY_BT_PAIRED_ID, true);
   g_paired_by_identity = true;
   g_bond_store_dirty = true;   // F209: which bonds the list holds may have changed
 
+}
+
+// Whether NVS holds a paired-list row, of any length (migrate_paired_devices()
+// asks only when the list loaded empty and no bond is kept).
+static bool paired_row_saved() {
+  NvsMainSession nvs(true);
+  return nvs.isOpen() && nvs->getBytesLength(NVS_KEY_BT_PAIRED) > 0;
 }
 
 // A paired list saved before sweep F172 kept each phone's over-the-air
@@ -1453,8 +1516,13 @@ static void migrate_paired_devices() {
   if (g_paired_by_identity) return;
   const int bonds = NimBLEDevice::getNumBonds();
   // A device with no list and no bond (a fresh one) has nothing to rebuild,
-  // and nothing is written: its first pairing saves the list, marked.
-  if (g_paired_count == 0 && bonds <= 0) return;
+  // and nothing is written: its first pairing saves the list, marked. A row
+  // load_paired_devices() refused (sweep F406) is still in NVS: the empty
+  // list, marked, replaces it, once (the F406 review).
+  if (g_paired_count == 0 && bonds <= 0) {
+    if (paired_row_saved()) save_paired_devices();
+    return;
+  }
   PairedDevice rebuilt[MAX_PAIRED_DEVICES];
   memset(rebuilt, 0, sizeof(rebuilt));
   size_t count = 0;
@@ -1962,9 +2030,11 @@ static void load_saved() {
   g_saved_loaded = true;
   BluetoothSettings saved = kDefaultSettings;
   if (load_settings(&saved)) {
-    // As the paired list's repairs are logged (sweep F261).
+    // As the paired list's repairs are logged (sweep F261): a name that held
+    // a control byte, or that NVS did not return whole (sweep F406), within
+    // the 79 bytes the health log's ring keeps of a message (the F406 review).
     log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
-               "Saved Bluetooth name held a control byte: the default name is used",
+               "Saved Bluetooth name unreadable or held a control byte: default name used",
                saved.device_name);
   }
   g_settings = saved;

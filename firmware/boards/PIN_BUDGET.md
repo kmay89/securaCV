@@ -22,9 +22,17 @@ GPIO/peripheral tables. Buckets, in claim order:
 
 Each board also carries a **Thermals** line (from `thermal_notes`
 in `boards.json`): where the heat comes from and what to derate
-before adding load to the free pins. The *runtime* thermal gauge
-is the die-temperature watchdog every build ships
-(`FEATURE_DIAGNOSTICS` — see `firmware/build_matrix.json`).
+before adding load to the free pins. A *runtime* thermal gauge
+belongs to the firmware tree, not the board. The canary reads die
+temperature in its passive thermal watchdog
+(`FEATURE_THERMAL_WATCHDOG`, off on the classic-ESP32 lanes, which
+have no supported sensor path). The canary-wap reads it in
+`sys_monitor.h` (`FEATURE_SYS_MONITOR`). canary-display,
+canary-vision, canary-sense and canary-sentinel read none, so a
+board running one of them has no runtime gauge. A Thermals line
+that names a gauge names its flag, and
+`scripts/tests/test_board_thermal_notes.py` holds the flag to the
+tree.
 
 The gauge reads the *declared pin map*, not runtime code: a TF slot
 with no SD driver still counts committed (the copper is gone), and
@@ -257,7 +265,7 @@ Peripheral demand (declared pin map vs MCU): SPI 0/2 · I2C 1/2 · UART 0/3 · R
 Capabilities on: `HAS_BLE`, `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_TAMPER_INPUT`, `HAS_USB_CDC`, `HAS_WIFI`.
 Capabilities off (room to grow): `HAS_MICROPHONE`.
 
-**Thermals:** Same S3 heat sources as the flagship (camera PEEK + Wi-Fi bursts) on a larger PCB with more copper — runs cooler than the XIAO. Die-temp watchdog covers it.
+**Thermals:** Same S3 heat sources as the flagship (camera PEEK + Wi-Fi bursts) on a larger PCB with more copper — runs cooler than the XIAO. The canary's passive thermal watchdog (FEATURE_THERMAL_WATCHDOG) covers it.
 
 ### `waveshare-esp32c3-lcd147` — Waveshare ESP32-C3-LCD-1.47
 
@@ -374,7 +382,7 @@ Peripheral demand (declared pin map vs MCU): SPI 1/1 · I2C 0/1 · UART 0/2 · R
 Capabilities on: `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_BLE`, `HAS_DISPLAY`, `HAS_IMU`, `HAS_MICROPHONE`, `HAS_RTC`, `HAS_THREAD_ZIGBEE`, `HAS_USB_CDC`, `HAS_WIFI`.
 Capabilities off (room to grow): `HAS_CAMERA`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `HAS_RGBLED`, `HAS_SD_CARD`, `HAS_TOUCH`.
 
-**Thermals:** Battery charging warms the PCB next to the PCF85063 crystal (clock drift) and the QMI8658 (bias) — charge with the backlight dimmed and don't calibrate the IMU mid-charge. Die-temp watchdog is the runtime gauge.
+**Thermals:** Battery charging warms the PCB next to the PCF85063 crystal (clock drift) and the QMI8658 (bias) — charge with the backlight dimmed and don't calibrate the IMU mid-charge. No build uses this board yet, and canary-display, where an env for it would land, reads no die temperature, so there is no runtime gauge.
 
 ### `waveshare-esp32s3-amoled206` — Waveshare ESP32-S3-Touch-AMOLED-2.06
 
@@ -532,7 +540,7 @@ Peripheral demand (declared pin map vs MCU): SPI 2/2 · I2C 1/2 · UART 0/3 · R
 Capabilities on: `HAS_BACKLIGHT_PWM`, `HAS_BLE`, `HAS_DISPLAY`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `HAS_RGBLED`, `HAS_SD_CARD`, `HAS_USB_CDC`, `HAS_WIFI`.
 Capabilities off (room to grow): `HAS_BATTERY`, `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_RTC`, `HAS_TOUCH`.
 
-**Thermals:** USB-A stick body: S3 + octal PSRAM heat-soak into a small stick that plugs into an already-warm port. The double-buffered animation budget is the throttle knob; die-temp watchdog is the gauge.
+**Thermals:** USB-A stick body: S3 + octal PSRAM heat-soak into a small stick that plugs into an already-warm port. The double-buffered animation budget is the throttle knob. canary-display reads no die temperature, so there is no runtime gauge; derate by design margin.
 
 ### `waveshare-esp32s3-lcd43` — Waveshare ESP32-S3-Touch-LCD-4.3
 
@@ -736,7 +744,7 @@ Peripheral demand (declared pin map vs MCU): SPI 0/2 · I2C 1/2 · UART 0/3 · R
 Capabilities on: `HAS_BLE`, `HAS_CAN_RS485`, `HAS_DISPLAY`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_TOUCH`, `HAS_USB_CDC`, `HAS_WIFI`.
 Capabilities off (room to grow): `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_RGBLED`, `HAS_RTC`.
 
-**Thermals:** The hottest board in the fleet: a 7" backlight plus continuous 800x480 RGB refresh out of octal PSRAM. Backlight duty (via the CH422G) is the main relief valve and the die-temp watchdog (FEATURE_DIAGNOSTICS) the gauge; keep the GT911 glass out of direct sun — capacitive touch drifts when hot.
+**Thermals:** The hottest board in the fleet: a 7" backlight plus continuous 800x480 RGB refresh out of octal PSRAM. Backlight duty (via the CH422G) is the only relief valve. canary-display reads no die temperature, so there is no runtime gauge. Keep the GT911 glass out of direct sun — capacitive touch drifts when hot.
 
 ### `waveshare-esp32s3-touch-lcd169` — Waveshare ESP32-S3-Touch-LCD-1.69
 
@@ -982,7 +990,7 @@ Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 1/3 · R
 Capabilities on: `HAS_BLE`, `HAS_PSRAM`, `HAS_USB_CDC`, `HAS_VISION_AI`, `HAS_WIFI`.
 Capabilities off (room to grow): `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_MICROPHONE`, `HAS_SD_CARD`, `HAS_TAMPER_INPUT`.
 
-**Thermals:** Light duty — inference runs on the Vision AI module, not this host. Die-temp watchdog covers it; no special measures.
+**Thermals:** Light duty — inference runs on the Vision AI module, not this host; no special measures. canary-vision reads no die temperature, so there is no runtime gauge.
 
 ### `xiao-esp32s3-round` — Seeed Studio XIAO ESP32-S3 + Round Display
 
@@ -1084,4 +1092,4 @@ Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 1/3 · R
 Capabilities on: `HAS_BLE`, `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_MICROPHONE`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_TAMPER_INPUT`, `HAS_USB_CDC`, `HAS_WIFI`.
 Capabilities off (room to grow): —.
 
-**Thermals:** Camera PEEK + Wi-Fi bursts are the heat sources; sustained capture warms the sensor (image noise). Runtime gauge is the die-temp watchdog (FEATURE_DIAGNOSTICS). In enclosures, give the camera ribbon and u.FL antenna airspace and derate PEEK cadence before the watchdog throttles.
+**Thermals:** Camera PEEK + Wi-Fi bursts are the heat sources; sustained capture warms the sensor (image noise). The runtime gauge depends on the tree: on the canary it is the passive thermal watchdog (FEATURE_THERMAL_WATCHDOG), which records die temperature and never actuates; on the canary-wap it is the die-temp read in sys_monitor.h (FEATURE_SYS_MONITOR), which also sheds PEEK when critically hot. In enclosures, give the camera ribbon and u.FL antenna airspace and derate PEEK cadence before the camera throttles.

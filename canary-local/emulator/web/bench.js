@@ -115,6 +115,20 @@ export function romBanner(kind, rom) {
     "banner the Lab quotes from Espressif is the power-on one)\n";
 }
 
+/**
+ * The words the glass's shade shows while the ROM sits in download mode on
+ * the board whose bench block's `rom` is given: the last line of its chip's
+ * download banner where the voice holds one (the S3's "waiting for
+ * download"), else the bench's own words, never another chip's banner line
+ * (sweep A101 review: the C3's card said the Lab quotes no download banner
+ * for its chip while its glass showed the S3's).
+ */
+export function downloadShade(rom) {
+  const line = rom && rom.chip ? ROM_VOICES[rom.chip]?.download : null;
+  if (typeof line === "string" && line.trim()) return line.trim().split("\n").pop();
+  return "ROM waiting for a flasher";
+}
+
 // ── The honesty ribbon (sweep A59 review) ───────────────────────────────
 // The bench's ribbon says what is staged and what is real, per board: the
 // chip whose ROM it stages (its bench block's `rom`), which of that chip's
@@ -168,10 +182,22 @@ export function benchRibbon(profile) {
 // button says it (`read_while_running`, held to the button's note and to the
 // firmware's pin map by bench.test.js): main.cpp's BOOT grammar (a press
 // wakes the glass, a hold acknowledges) runs wherever the board's pins.h
-// names a BOOT_BUTTON_PIN. The bench's BOOT chip holds the strap only: it is
-// not wired to the twin's button input (emu_button), so on a board that reads
-// the pin the bench says so rather than implying the firmware saw a press. A
-// bench block that does not say gets neither story.
+// names a BOOT_BUTTON_PIN. The bench's BOOT chip holds the strap only. On a
+// board that reads the pin, a second control beside it presses the twin's
+// button input (emu_button) while the app runs (sweep A99: BenchPower's
+// pressBoot below), and the strap line points there. A bench block that does
+// not say gets neither story.
+/**
+ * Whether the bench offers a press of BOOT to the running firmware: only
+ * where the board's bench block says its firmware reads the pin while it runs
+ * (its BOOT button's `read_while_running` is true), never where it is false
+ * or unsaid (sweep A99).
+ * @param profile the registry entry's `bench` block
+ */
+export function bootPressOffered(profile) {
+  return (profile?.buttons || []).find((b) => b.id === "boot")?.read_while_running === true;
+}
+
 /**
  * The bench's line for BOOT held while the app runs, from the board's bench
  * block (its `rom.boot_strap` and its BOOT button's `read_while_running`).
@@ -185,8 +211,8 @@ export function bootHeldLine(profile) {
     return `${name} held — a strapping pin, sampled only at reset. Running firmware ignores it.`;
   }
   if (boot?.read_while_running === true) {
-    return `${name} held — a strapping pin, sampled at reset. This board's firmware also reads it while running, ` +
-      "but the bench holds it as the strap only: it is not wired to the twin's button, so the firmware sees no press.";
+    return `${name} held — a strapping pin, sampled at reset. This board's firmware also reads it while running; ` +
+      "this toggle holds the strap only, so to press the button the firmware reads, use the press control beside it.";
   }
   return `${name} held — a strapping pin, sampled at reset. This board's bench block does not say whether its ` +
     "running firmware reads it.";
@@ -223,6 +249,7 @@ export class BenchPower {
     this.switchOn = true;
     this.soc = 62; // arrives part-charged, so CHG has a story to tell
     this.bootHeld = false;
+    this.bootPress = null; // a held press of BOOT (pressBoot): { twin }, a new object per press
     this.rate = 1; // battery fast-forward (bench knob, not virtual time)
     this.mode = "run"; // the page auto-boots plugged in; bench starts in sync
   }
@@ -284,11 +311,61 @@ export class BenchPower {
     if (this.bootHeld && this.mode === "run") this._log(bootHeldLine(this.profile));
   }
 
+  // ── BOOT pressed for the running firmware (sweep A99) ─────────────────
+  // On a board whose firmware reads BOOT while it runs (bootPressOffered),
+  // the bench presses the twin's button input — the level main.cpp's BOOT
+  // grammar reads — and nothing else: the strap is setBootHeld()'s, so a
+  // reset into download mode is unchanged. A press is held on the twin it
+  // was made on and released there, by releaseBoot() or by anything that
+  // takes the app away (a reset, the rail, the firmware's own restart), so a
+  // release always follows a press and a twin never keeps BOOT held after
+  // the bench lets go.
+  /** Whether a press reaches the running firmware now: the board reads BOOT
+   *  while it runs and the app is running (not off, not in download mode). */
+  bootPressable() {
+    return bootPressOffered(this.profile) && this.mode === "run";
+  }
+
+  /**
+   * Press BOOT on the twin the app runs on, while pressable. One press at a
+   * time: a second press before the release is refused.
+   * @param twin the emulator shell: its `button(down)` drives the pin and
+   *   returns false where it cannot (a dist without emu_button)
+   * @returns whether the twin is now pressed
+   */
+  pressBoot(twin) {
+    if (this.bootPress || !this.bootPressable() || typeof twin?.button !== "function") return false;
+    if (twin.button(true) !== true) return false;
+    this.bootPress = { twin };
+    return true;
+  }
+
+  /** The twin a held press is on, else null. */
+  get bootPressedOn() {
+    return this.bootPress?.twin ?? null;
+  }
+
+  /**
+   * Release a held press on the twin it was made on.
+   * @param press only this press (the `bootPress` its maker kept), so a hand
+   *   that let go of an earlier one cannot release a later press; omitted,
+   *   whichever press is held
+   * @returns whether one was released
+   */
+  releaseBoot(press) {
+    const held = this.bootPress;
+    if (!held || (press !== undefined && press !== held)) return false;
+    this.bootPress = null;
+    held.twin.button(false);
+    return true;
+  }
+
   pressReset() {
     if (!this.powered()) {
       this._log("RESET pressed — no power, nothing to reset.");
       return;
     }
+    this.releaseBoot(); // the app it pressed is going away
     const kind = this.bootHeld ? "download" : "reset";
     this.mode = this.bootHeld ? "download" : "run";
     if (kind === "download") {
@@ -302,6 +379,7 @@ export class BenchPower {
 
   /** The firmware's own ESP.restart() — mode bookkeeping only. */
   firmwareRestart() {
+    this.releaseBoot(); // the app it pressed is going away
     if (this.mode === "run" && this.bootHeld) {
       // Even a software reset re-samples the straps.
       this.mode = "download";
@@ -371,6 +449,7 @@ export class BenchPower {
     const wasOff = this.mode === "off";
     if (!this.powered()) {
       if (!wasOff) {
+        this.releaseBoot(); // the rail takes the app, and the press, with it
         this.mode = "off";
         this.cb.onPower?.(false, cause);
       }

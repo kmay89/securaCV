@@ -57,9 +57,12 @@ Verdict verify(const securacv_ota_manifest_t& m,
   if (image_len == 0 || m.size != image_len)
     return fail("size_mismatch", "the image size does not match the manifest - copy both files again");
 
-  // 4) SHA-256 of the staged bytes vs the manifest.
+  // 4) SHA-256 of the staged bytes vs the manifest. A hash that did not
+  //    run is this device's failure, not the files': refused before the
+  //    compare, so an unwritten digest is never read (sweep F364).
   uint8_t sha[32];
-  d.sha256(image, image_len, sha);
+  if (!d.sha256(image, image_len, sha))
+    return fail("sha_failed", "this Canary could not hash the image - nothing was changed");
   {
     uint8_t want[32];
     if (!securacv_ota_hex_to_bytes(m.sha256, want, sizeof want))

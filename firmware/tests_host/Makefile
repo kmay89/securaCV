@@ -1543,6 +1543,26 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
+# The canary's sensing aggregator over that same trio (sweep F411):
+# securacv_sensing.cpp fed by real CSI windows, and the predicate
+# firmware/canary/src/main.cpp's sensing publish writes rssi_dbm under,
+# sensing_rssi_measured(). A window that heard nothing, or only frames below
+# the noise floor, is counted and carries a zero mean; the suite holds that
+# such a window is not a reading. main.cpp's call of the predicate is pinned
+# by scripts/tests/test_ha_discovery_canary_sensing_render.py.
+SENSRSSI_DIR = ../canary/lib/securacv_sensing/src
+SENSRSSI_BIN = $(BUILD_DIR)/test_canary_sensing_rssi
+
+$(SENSRSSI_BIN): test_canary_sensing_rssi.cpp $(CSIHAL_SRC) $(SENSRSSI_DIR)/securacv_sensing.cpp Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DCONFIG_IDF_TARGET_ESP32S3=1 -DCONFIG_ESP_WIFI_CSI_ENABLED=1 \
+	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) -I $(SENSRSSI_DIR) \
+	    test_canary_sensing_rssi.cpp $(CSIHAL_SRC) $(SENSRSSI_DIR)/securacv_sensing.cpp -o $@)
+
+.PHONY: run-canary-sensing-rssi
+run-canary-sensing-rssi: $(SENSRSSI_BIN)
+	./$(SENSRSSI_BIN)
+run: run-canary-sensing-rssi
+
 run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(VISMGR_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(SENT_LINKS_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE) $(TAP_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)

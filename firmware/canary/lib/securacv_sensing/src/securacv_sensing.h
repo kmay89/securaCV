@@ -53,6 +53,12 @@ typedef struct {
   uint8_t  activity_label;     /* sensing_label_t */
   int8_t   rssi_dbm;           /* window mean RSSI */
   int8_t   rssi_std;           /* stddev across the window */
+  /* Frames the last window's RSSI mean was taken over (feature slot
+   * v[24], clipped at 127). 0 when the window heard nothing, when every
+   * frame was below the HAL's noise floor, or when the feature layer
+   * refused every frame it was handed: then rssi_dbm is finalize()'s
+   * zero, which no radio measured. See sensing_rssi_measured(). */
+  uint8_t  rssi_frames;
   uint16_t frames_in_window;   /* last finalized window's frame count */
   uint16_t dropped_estimate;   /* per-window frames the rate limiter shed (v[25]) */
   uint8_t  channel;
@@ -174,6 +180,19 @@ void sensing_snapshot(sensing_state_t* out);
 
 /* Plain-English label for a sensing_label_t value. */
 const char* sensing_label_name(uint8_t label);
+
+/* Whether the snapshot's rssi_dbm is a reading a radio measured: true only
+ * when the last finalized CSI window's RSSI mean was taken over at least
+ * one frame. False before the first window (and for good on a build with
+ * no CSI), and after a window that heard nothing or only frames below the
+ * noise floor: the HAL still closes and emits that window every second,
+ * and its RSSI slot holds zero, which read as 0 dBm, full strength.
+ * windows_seen counts every window, empty ones too, and frames_in_window
+ * counts the frames the HAL handed on, which the feature layer can still
+ * refuse; rssi_frames is the count the mean was taken over (sweep F411). */
+static inline bool sensing_rssi_measured(const sensing_state_t* s) {
+  return s != 0 && s->rssi_frames > 0;
+}
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Witness-chain bridge (Phase 5)

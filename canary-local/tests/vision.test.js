@@ -26,7 +26,9 @@ const boards = JSON.parse(read(join(ROOT, "devices/boards.json")));
 // Repo-relative, as a refusal names them.
 const CONFIG_H = "firmware/projects/canary-vision/include/canary/config.h";
 const DETECT_CONFIG_H = "firmware/projects/canary-vision/include/canary/detect_config.h";
+const OPTICAL_H = "firmware/projects/canary-vision/include/canary/vision/optical_features.h";
 const configH = read(join(REPO, CONFIG_H));
+const opticalH = read(join(REPO, OPTICAL_H));
 const versionH = read(join(FW, "include/canary/version.h"));
 const topicsH = read(join(FW, "include/canary/topics.h"));
 const mainCpp = read(join(FW, "src/main.cpp"));
@@ -56,6 +58,13 @@ async function firmwareCore() {
 const { readConst } = require("./c_const.js");
 const constCases = JSON.parse(read(join(__dirname, "c_const_cases.json")));
 const num = (rel, name, text = read(join(REPO, rel))) => readConst(text, name, rel);
+// An optical knob (optical_features.h's posture and proximity cut-offs), by
+// the same rule (sweep A117): two tests read them with hand regexes,
+// `#define NAME (\d+)` and `#define NAME\s+(\d+)`, which read 0 out of 0x6,
+// 10 out of 010 (8 to the compiler), 6 out of `6 + 1`, a commented-out
+// definition above the live one and the first of two definitions, and found
+// nothing in `(6)`.
+const knob = (name, text = opticalH) => readConst(text, name, OPTICAL_H);
 
 // ── 1. shape + sanity floors ───────────────────────────────────────────────
 test("vision.json has every section the page requires", () => {
@@ -161,6 +170,38 @@ test("a definition planted in config.h is refused or reads what the file as comm
       assert.strictEqual(num(CONFIG_H, row.name, text), num(CONFIG_H, row.name), row.why);
     }
   }
+});
+
+// Sweep A117: the four optical knobs the A37 and A42 tests compute their
+// expectations from are read by read_const's rule too. Each is a plain
+// decimal literal defined once, and a spelling the rule refuses is refused
+// here by name, where the hand regexes that read them before read a number
+// the compiler does not (0x6, 010, `6 + 1`, the first of two definitions, a
+// commented-out definition above the live one) or found none (`(6)`). A U
+// or L suffix is the same number to the compiler and to the rule. The
+// plants respell OPT_PROXIMITY_FAR_PCT's live line from the value it holds,
+// so a retuned knob moves them with it.
+test("the optical knobs are read by read_const's rule, a spelling it refuses refused (sweep A117)", () => {
+  for (const name of ["OPT_POSTURE_UPRIGHT_RATIO_X100", "OPT_POSTURE_HORIZONTAL_RATIO_X100",
+                      "OPT_PROXIMITY_NEAR_PCT", "OPT_PROXIMITY_FAR_PCT"])
+    assert.ok(Number.isSafeInteger(knob(name)) && knob(name) > 0, name);
+  const NAME = "OPT_PROXIMITY_FAR_PCT", v = knob(NAME);
+  const lines = opticalH.split("\n").filter((l) => new RegExp(`^[ \t]*#[ \t]*define[ \t]+${NAME}(?![A-Za-z0-9_])`).test(l));
+  assert.strictEqual(lines.length, 1, `the line the plants respell: one #define ${NAME} in ${OPTICAL_H}`);
+  const planted = (line) => opticalH.replace(lines[0], () => line);
+  const def = (value) => `#define ${NAME} ${value}`;
+  assert.strictEqual(knob(NAME, planted(def(v + 3))), v + 3, "the plants respell the live definition");
+  const literal = (value) => new RegExp(`^constant ${NAME} in ${OPTICAL_H} is \`${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\`, not a plain integer literal`);
+  const hex = "0x" + v.toString(16);
+  for (const [line, refused] of [
+    [def(hex), literal(hex)],
+    [def("0" + v), /a leading 0 is octal in C and C\+\+/],
+    [def(`(${v})`), literal(`(${v})`)],
+    [def(`${v} + 1`), literal(`${v} + 1`)],
+    [lines[0] + "\n#else\n" + def(v + 3), /is defined 2 times in .*refusing to pick one/],
+  ]) assert.throws(() => knob(NAME, planted(line)), (e) => refused.test(e.message), line);
+  assert.strictEqual(knob(NAME, `// ${def(v + 3)}\n` + opticalH), v, "a commented-out definition is not code");
+  assert.strictEqual(knob(NAME, planted(def(v + "u"))), v, `${v}u is ${v}`);
 });
 
 test("event vocabulary is exactly the FSM's emit set", () => {
@@ -343,9 +384,8 @@ test("a sandbox event publishes in the firmware's shape, the sandbox's values la
   assert.ok(mainCpp.includes('"\\"event\\":\\"%s\\","\n        "\\"reason\\":\\"%s\\","'),
     "main.cpp's reason branch still writes reason right after event");
   // the occupancy words are optical_features.h's buckets
-  const optical = read(join(FW, "include/canary/vision/optical_features.h"));
   assert.deepStrictEqual(data.mqtt.pane.occupancy,
-    [...optical.split("inline const char* occupancy_name(int count) {")[1].split("\n}\n")[0].matchAll(/return "([a-z]+)";/g)].map((m) => m[1]));
+    [...opticalH.split("inline const char* occupancy_name(int count) {")[1].split("\n}\n")[0].matchAll(/return "([a-z]+)";/g)].map((m) => m[1]));
 });
 
 // Sweep A39: the committed core returns what the pane reads. The tick JSON's
@@ -385,11 +425,12 @@ test("the committed Vision core returns the fsm keys its bindings print (sweep A
 // tracker's settled cell and visit_ms the FSM's last_visit_ms_, both from
 // the core, where the pane used to show the frame's cell and keep its own
 // visit latch. Both need a dist built from this tree's presence_fsm.cpp and
-// vision_core_bindings.cpp (the test below names a stale one).
+// vision_core_bindings.cpp (the test below names a stale one). It runs on
+// the seed score_min, as the page does (sweep A116): VisionSim's people
+// score 90 or 84, give or take 3 and less at the frame's edges, so a seed
+// retuned over them moves this test, as it moves the page.
 test("the pane's clocks and coarse features follow the sandbox (sweep A37)", async () => {
   const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
-  const optical = read(join(FW, "include/canary/vision/optical_features.h"));
-  const knob = (n) => +optical.match(new RegExp("#define " + n + " (\\d+)"))[1];
   const posture = (w, h) => (h * 100 >= w * knob("OPT_POSTURE_UPRIGHT_RATIO_X100") ? "upright"
     : w * 100 >= h * knob("OPT_POSTURE_HORIZONTAL_RATIO_X100") ? "horizontal" : "ambiguous");
   const proximity = (w, h) => {
@@ -515,6 +556,24 @@ test("placement presets stay inside the firmware's tunable bounds", () => {
 });
 
 // ── 7. the browser executes the production firmware core ──────────────────
+// The firmware-core tests below that score their boxes 90 (the FSM's, and
+// the bbox-to-voxel arithmetic's) configure their own score floor under it
+// (sweep A116): a core nobody configures runs on the seed it was compiled
+// with. The seed, config.h's SCORE_MIN and vision.json's detect.score_min,
+// may be retuned anywhere in detect_config.h's bounds (to
+// DETECT_SCORE_MIN_HI, 100), and a test about the FSM or the pipeline's
+// arithmetic must not fail because the floor rose over its boxes: with the
+// core rebuilt at a seed of 91, seven of them did, one by spinning until
+// F369 bounded its loop. The class-filter test and A42's grid pin floors of
+// their own (70 and 50). The tests about the seed itself stay on it: the
+// pane following the sandbox and VisionSim (whose people score 90 or 84,
+// give or take 3), and the dist's contract (the dist bakes the seed in, so
+// a retune fails there until the dist is rebuilt).
+const FSM_SCORE_MIN = 70;
+
+// The dist's contract holds the seed it was built with to vision.json's, so
+// a seed retune fails here until the dist is rebuilt (sweep A116 keeps it on
+// the seed).
 test("committed wasm contract is exact and its build compiles production sources", async () => {
   const core = await firmwareCore();
   core.assertGeneratedData(data);
@@ -567,6 +626,9 @@ test("firmware wasm: class filter, threshold and highest score", async () => {
 
 test("firmware wasm: bbox-to-voxel integer math and clamps", async () => {
   const core = await firmwareCore();
+  // its boxes score 90: on the seed, a retune over them reads voxel -1/-1
+  // (sweep A116)
+  core.configure({ ...data.detect, score_min: FSM_SCORE_MIN });
   assert.ok(detectionPipelineH.includes("const int64_t col = (px * safe_cols) / FRAME_W;"));
   // center of frame lands center cell
   assert.deepStrictEqual(core.tick(0,
@@ -600,7 +662,7 @@ test("aimPayload: the firmware's key set, key for key", async () => {
 
 test("firmware wasm: the production FSM event order", async () => {
   const core = await firmwareCore();
-  core.configure({ ...data.detect, dwell_start_ms: 1000, lost_timeout_ms: 500 });
+  core.configure({ ...data.detect, score_min: FSM_SCORE_MIN, dwell_start_ms: 1000, lost_timeout_ms: 500 });
   const person = [{ x: 100, y: 100, w: 40, h: 80, score: 90, target: 0 }];
   assert.strictEqual(core.tick(0, person).event, "presence_started");
   assert.strictEqual(core.tick(100, person).event, null);
@@ -625,7 +687,7 @@ test("firmware wasm: the production FSM event order", async () => {
 
 test("firmware wasm: a stable voxel qualifies interaction without dwell", async () => {
   const core = await firmwareCore();
-  core.configure({ ...data.detect, dwell_start_ms: 60000, lost_timeout_ms: 500 });
+  core.configure({ ...data.detect, score_min: FSM_SCORE_MIN, dwell_start_ms: 60000, lost_timeout_ms: 500 });
   const person = [{ x: 100, y: 100, w: 40, h: 80, score: 90, target: 0 }];
   assert.strictEqual(core.tick(0, person).event, "presence_started");
   assert.strictEqual(core.tick(1000, person).event, null);
@@ -637,7 +699,7 @@ test("firmware wasm: a stable voxel qualifies interaction without dwell", async 
 
   // The same qualified visit expires after the production post-leave window.
   core.reset();
-  core.configure({ ...data.detect, dwell_start_ms: 60000, lost_timeout_ms: 500 });
+  core.configure({ ...data.detect, score_min: FSM_SCORE_MIN, dwell_start_ms: 60000, lost_timeout_ms: 500 });
   core.tick(0, person);
   core.tick(2600, person);
   assert.strictEqual(core.tick(3200, []).event, "presence_ended");
@@ -656,7 +718,7 @@ test("firmware wasm: a stable voxel qualifies interaction without dwell", async 
 // fails here.
 test("firmware wasm: each visit starts its own interaction clock and cell (sweep F152)", async () => {
   const core = await firmwareCore();
-  core.configure({ ...data.detect, dwell_start_ms: 60000, lost_timeout_ms: 500 });
+  core.configure({ ...data.detect, score_min: FSM_SCORE_MIN, dwell_start_ms: 60000, lost_timeout_ms: 500 });
   const at = (cx, cy) => [{ x: cx - 20, y: cy - 40, w: 40, h: 80, score: 90, target: 0 }];
   const center = at(120, 120), corner = at(200, 40);
   const events = [];
@@ -713,7 +775,7 @@ test("firmware wasm: each visit starts its own interaction clock and cell (sweep
 // LAB_CORES=native.
 test("firmware wasm: a dweller seen on the frame after dwell_ended opens the next visit, not a second dwell (sweep F186)", async () => {
   const core = await firmwareCore();
-  core.configure({ ...data.detect, dwell_start_ms: 1000, lost_timeout_ms: 500 });
+  core.configure({ ...data.detect, score_min: FSM_SCORE_MIN, dwell_start_ms: 1000, lost_timeout_ms: 500 });
   const person = [{ x: 100, y: 100, w: 40, h: 80, score: 90, target: 0 }];
   const events = [];
   const tick = (t, boxes) => {
@@ -723,10 +785,11 @@ test("firmware wasm: a dweller seen on the frame after dwell_ended opens the nex
   };
   for (let t = 0; t < 2000; t += 100) tick(t, person);
   let t = 2000;
-  // Bounded, so a score floor retuned above the box's 90 (a visit never
-  // opens) fails here by name instead of spinning until the job times out.
+  // Bounded, so a visit that never opens (a box under the pinned score
+  // floor, say) fails here by name instead of spinning until the job times
+  // out.
   for (; tick(t, []).event !== "dwell_ended"; t += 100)
-    assert.ok(t < 12000, `no dwell_ended by ${t} ms (score_min ${data.detect.score_min}, the box scores 90)`);
+    assert.ok(t < 12000, `no dwell_ended by ${t} ms (score_min ${FSM_SCORE_MIN}, the box scores 90)`);
   t += 100;
   const ended = tick(t, person);
   assert.strictEqual(ended.event, "presence_ended", "the frame after dwell_ended ends the stay, seen or not");
@@ -761,7 +824,7 @@ test("firmware wasm: a dweller last seen on the dwell_started frame leaves with 
   const ring = [[40, 40], [120, 40], [200, 40], [200, 120], [200, 200], [120, 200], [40, 200], [40, 120]];
   for (const moving of [false, true]) {
     core.reset();
-    core.configure({ ...data.detect });
+    core.configure({ ...data.detect, score_min: FSM_SCORE_MIN });
     const events = [];
     let t = 1000, i = 0;
     for (;; t += 100, i++) {
@@ -803,16 +866,10 @@ test("firmware wasm: a dweller last seen on the dwell_started frame leaves with 
 // LAB_CORES=native.
 test("firmware wasm: a box near the int range's ends reads what exact arithmetic says (sweep A42)", async () => {
   const core = await firmwareCore();
-  const opticalH = read(join(FW, "include/canary/vision/optical_features.h"));
-  const define = (name) => {
-    const m = opticalH.match(new RegExp("#define " + name + "\\s+(\\d+)"));
-    assert.ok(m, name + " not found in optical_features.h");
-    return BigInt(m[1]);
-  };
-  const UPRIGHT = define("OPT_POSTURE_UPRIGHT_RATIO_X100");
-  const HORIZONTAL = define("OPT_POSTURE_HORIZONTAL_RATIO_X100");
-  const NEAR = define("OPT_PROXIMITY_NEAR_PCT");
-  const FAR = define("OPT_PROXIMITY_FAR_PCT");
+  const UPRIGHT = BigInt(knob("OPT_POSTURE_UPRIGHT_RATIO_X100"));
+  const HORIZONTAL = BigInt(knob("OPT_POSTURE_HORIZONTAL_RATIO_X100"));
+  const NEAR = BigInt(knob("OPT_PROXIMITY_NEAR_PCT"));
+  const FAR = BigInt(knob("OPT_PROXIMITY_FAR_PCT"));
   const { rows, cols } = data.detect.voxel;
   const FW_ = BigInt(data.detect.frame.w), FH_ = BigInt(data.detect.frame.h);
   // C++ division truncates toward zero, as BigInt's does; then the grid clamps.
@@ -888,7 +945,7 @@ test("firmware wasm: a box near the int range's ends reads what exact arithmetic
 test("firmware wasm: a box with a side that is not positive reads no proximity (sweep F221)", async () => {
   const core = await firmwareCore();
   core.reset();
-  core.configure({ ...data.detect });
+  core.configure({ ...data.detect, score_min: FSM_SCORE_MIN });
   let t = 0;
   const read1 = (w, h) => core.tick(t += 100, [{ x: 120, y: 120, w, h, score: 90, target: 0 }]).sample;
   for (const [w, h] of [[-100, -100], [-1, -1], [-2000000000, -100], [-100, 100], [100, -100], [0, 80], [80, 0]]) {
@@ -926,6 +983,8 @@ test("bootLines + mqttApply contracts", async () => {
   assert.deepStrictEqual(store, {});
 });
 
+// On the seed score_min, as the page runs (sweep A116): the walk's person
+// scores 90, give or take 3, so a seed over that is a page with no visit.
 test("VisionSim wires the cores together end to end", async () => {
   const { VisionSim } = await import("../assets/vision-ui.js");
   const sim = new VisionSim(data, await firmwareCore());

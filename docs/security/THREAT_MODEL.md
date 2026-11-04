@@ -1562,7 +1562,7 @@ firmware or UI source.
 |---|---|---|---|
 | Spoofed origination | yes (Ed25519) | yes (Ed25519, v0.2) | yes (dual Ed25519) |
 | Replay | yes (counter) | yes (1024-entry dedup + freshness) | yes (dedup + freshness) |
-| Sybil flood | yes (opera_id isolation) | yes (per-pubkey rate + unique-pubkey set) | yes (two-pubkey rule + audit) |
+| Sybil flood | yes (opera_id isolation) | partial: each confirmation and vote needs a distinct signed key, and a key's witnesses are rate-limited (4 an hour; after uptime's 49.7-day wrap a full 32-key table evicts the rows written since the wrap before any older one, so two keys can take turns past the limit; sweep F416, open), but one device makes any number of session keys; presence beacons are unsigned (F232), so the ten-minute ACK wait (F311) runs for many keys at once, once per key and possibly before the chirp they confirm; suppress votes need no presence (F234) | yes (two-pubkey rule + audit) |
 | Physical extraction of opera_secret | partial (the FE gate keeps it off boards without flash encryption; NVS is not encrypted, so a board with flash encryption on still holds it in plaintext) | n/a | n/a |
 | Compromised device originates fake alarm | n/a | partial (suppress vote) | yes (two-pubkey rule) |
 | Reserved-tone or reserved-phrase impersonation | n/a | yes (lint) | yes (lint, color, frequencies) |

@@ -742,10 +742,14 @@ namespace chirp_channel {
 static const uint8_t PROTOCOL_VERSION = 1;
 static const uint8_t CHIRP_MAGIC = 0xC4;           // Message identifier
 // CHIRP_CHANNEL: previously pinned to 6 to keep chirp off Opera's channel 1.
-// With the shared single-radio reality (see mesh_channel_policy.h) chirp now
-// rides the same radio as Opera; the broadcast peer is registered with
-// channel = 0 so it follows the current radio channel. The constant is kept
-// at its historical value purely as the host-build fallback for tests.
+// The ESP32 has one radio (mesh_channel_policy.h, docs/network_coexistence.md),
+// so chirp rides the channel Opera does: the broadcast peer is registered
+// with channel 0, which ESP-NOW reads as the radio's current channel (the
+// STA's, else the AP's, else MESH_FALLBACK_CHANNEL, 6). The two are told
+// apart by a frame's first byte (CHIRP_MAGIC here; in an Opera frame the
+// protocol version, 1, or before membership a pairing type, 8..12,
+// mesh_wire.h), not by the channel. Spec §2.2, §12.1 and §13.1 say so
+// (sweep F308; scripts/tests/test_chirp_spec_tables.py reads this value).
 static const uint8_t CHIRP_CHANNEL = 0;            // 0 = follow current radio channel
 static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length (legacy field; v0.2 uses structured fields)
 static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps (priority heap by urgency)
@@ -1558,6 +1562,14 @@ const char* state_name(ChirpState state);
 
 // Get category name as string
 const char* category_name(ChirpCategory category);
+
+// A template's category, from the template table (the mapping handle_ack()
+// counts confirmations by): the all-clear templates, 0x80 to 0x82, are
+// CHIRP_CAT_ALL_CLEAR (5). GET /api/chirp/recent took the id's high nibble,
+// 8 for those three, which category_name() answers "unknown" (sweep F307).
+// An id the table lacks also reads CHIRP_CAT_ALL_CLEAR; no stored chirp
+// holds one, since handle_witness() refuses an unknown template.
+ChirpCategory template_category(ChirpTemplate template_id);
 
 // Get urgency name as string
 const char* urgency_name(ChirpUrgency urgency);

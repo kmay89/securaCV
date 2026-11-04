@@ -31,6 +31,7 @@ const vm = require("node:vm");
 const ROOT = join(__dirname, "..", "..");     // repo root
 const CANARY = join(__dirname, "..");         // canary-local/
 const read = (p) => readFileSync(p, "utf8");
+const { readConst } = require("./c_const.js");
 
 const catalog = JSON.parse(read(join(CANARY, "devices/flash.json")));
 const libRs = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
@@ -3562,6 +3563,13 @@ function fakeDocument() {
     }
     append(...nodes) { for (const n of nodes) { if (n.parent) n.remove(); n.parent = this; this.children.push(n); } }
     remove() { if (this.parent) { this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; } }
+    after(...nodes) {
+      const p = this.parent;
+      if (!p) return;
+      for (const n of nodes) n.remove();
+      p.children.splice(p.children.indexOf(this) + 1, 0, ...nodes);
+      for (const n of nodes) n.parent = p;
+    }
     set innerHTML(_) { for (const c of [...this.children]) c.remove(); this._text = ""; }
     get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
     set textContent(t) { for (const c of [...this.children]) c.remove(); this._text = String(t); }
@@ -4094,11 +4102,15 @@ test("A85: a second flash leaves one set of monitor listeners, and a re-read lea
 // comments and literals blanked, #if depth counted — written again here, so a
 // generator change that loosens it does not loosen this), not an independent
 // one: a blind spot of the method is shared. Every chip must be a command the
-// product's firmware answers with no #if around it, labeled in the
-// firmware's own help-menu words.
+// product's firmware answers, labeled in the firmware's own help-menu words:
+// with no #if around it, or (sweep A93) under exactly one `#if FEATURE_X`
+// that the product's build resolves to 1 (the env's -DFEATURE_X, else the
+// config header's #ifndef default), the same rule gen_flash.py's
+// feature_value() reads, written again.
 const A86_ROLE_FIRMWARE = {
   // role -> how its firmware reads the console
-  canary: { kind: "keys", handler: "firmware/canary/src/main.cpp" },
+  canary: { kind: "keys", handler: "firmware/canary/src/main.cpp", project: "firmware/canary",
+    config: "firmware/canary/include/canary_config.h" },
   wap: { kind: "keys", handler: "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino" },
   vision: { kind: "keys", handler: "firmware/projects/canary-vision/src/main.cpp" },
   sense: { kind: "words", handler: "firmware/common/console/tuning_console.h",
@@ -4108,9 +4120,50 @@ const A86_ROLE_FIRMWARE = {
 
 // Comments, strings and char literals blanked (same length, newlines kept),
 // so code is read where the compiler reads it.
-const a86Strip = (src) => src.replace(
-  /(?<![A-Za-z0-9_])R"([^()\\\s]{0,16})\([\s\S]*?\)\1"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g,
-  (m) => m.replace(/[^\n]/g, " "));
+const A86_NOISE = /(?<![A-Za-z0-9_])R"([^()\\\s]{0,16})\([\s\S]*?\)\1"|\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g;
+const a86Strip = (src) => src.replace(A86_NOISE, (m) => m.replace(/[^\n]/g, " "));
+
+// The logical lines of a source, joined as the compiler joins physical lines
+// before it reads a directive (A93 review): [physical line numbers, the ones
+// among them that carry code, the code lines' blanked text joined by a
+// space]. A backslash ending a line splices the next onto it (inside a //
+// comment, the comment runs on and the next line carries no code); a block
+// comment or raw string spanning a newline joins the lines it spans (a
+// comment is one space). gen_flash.py's pp_logical_lines, written again.
+const A86_SPLICE = /\\[ \t]*\r?$/;
+function a86Logical(raw, stripped) {
+  const raws = raw.split("\n"), lines = stripped.split("\n"), spans = new Set();
+  let pos = 0, line = 0;
+  for (const m of raw.matchAll(A86_NOISE)) {
+    const n = m[0].split("\n").length - 1;
+    if (!n) continue;
+    for (; pos < m.index; pos++) if (raw[pos] === "\n") line++;
+    for (let k = 0; k < n; k++) spans.add(line + k);
+  }
+  const out = [];
+  for (let i = 0; i < lines.length;) {
+    const idx = [i], code = [i], parts = [lines[i]];
+    let inComment = false, j = i;
+    while (j + 1 < lines.length) {
+      if (inComment) { if (!A86_SPLICE.test(raws[j])) break; }
+      else if (spans.has(j)) { /* the comment or raw string runs on */ }
+      else if (A86_SPLICE.test(raws[j])) {
+        if (A86_SPLICE.test(lines[j])) parts[parts.length - 1] = parts[parts.length - 1].replace(A86_SPLICE, "");
+        else inComment = true;
+      } else break;
+      j++;
+      idx.push(j);
+      if (!inComment) { code.push(j); parts.push(lines[j]); }
+    }
+    out.push([idx, code, parts.join(" ")]);
+    i = j + 1;
+  }
+  return out;
+}
+// Every directive of a source, on its logical line, blanks collapsed: [first
+// physical line number, text].
+const a86Directives = (src) => a86Logical(src, a86Strip(src))
+  .filter(([, , t]) => /^\s*#/.test(t)).map(([idx, , t]) => [idx[0], t.trim().split(/\s+/).join(" ")]);
 
 // The body of C/C++ function `name`, braces counted on the stripped text.
 const a86Body = (src, name) => {
@@ -4125,30 +4178,64 @@ const a86Body = (src, name) => {
   return { raw: src.slice(m.index + m[0].length, i - 1), stripped: stripped.slice(m.index + m[0].length, i - 1) };
 };
 
-// Lines of a body under no #if opened inside it, as [stripped, raw] pairs.
-const a86Unconditional = ({ raw, stripped }) => {
-  const rawLines = raw.split("\n"), out = [];
-  let depth = 0;
-  stripped.split("\n").forEach((line, n) => {
-    if (/^\s*#\s*if/.test(line)) depth++;
-    else if (/^\s*#\s*endif\b/.test(line)) depth--;
-    else if (depth === 0) out.push([line, rawLines[n]]);
-  });
+// Every code line of a body that is not part of a conditional directive, as
+// [stripped, raw, frames]: the conditionals opened inside the body that
+// enclose it, each { opener, branch } (branch: the #else / #elif it sits
+// after, or null), each directive read on its logical line (a86Logical), so
+// the lines a directive or a // comment runs on over are not code. A close or
+// a branch with nothing open marks every later line unbalanced.
+const A86_OPEN = /^\s*#\s*if/, A86_BRANCH = /^\s*#\s*(?:else|elif)/, A86_CLOSE = /^\s*#\s*endif\b/;
+const a86Lines = ({ raw, stripped }) => {
+  const rawLines = raw.split("\n"), lines = stripped.split("\n"), out = [], stack = [];
+  let broken = false;
+  for (const [, code, text] of a86Logical(raw, stripped)) {
+    const d = text.trim().split(/\s+/).join(" ");
+    if (A86_OPEN.test(d)) stack.push({ opener: d, branch: null });
+    else if (A86_BRANCH.test(d)) { if (stack.length) stack[stack.length - 1].branch = d; else broken = true; }
+    else if (A86_CLOSE.test(d)) { if (stack.length) stack.pop(); else broken = true; }
+    else {
+      const frames = [...(broken ? [{ opener: "(unbalanced)", branch: null }] : []), ...stack.map((f) => ({ ...f }))];
+      for (const n of code) out.push([lines[n], rawLines[n], frames]);
+    }
+  }
   return out;
+};
+// Lines of a body under no #if opened inside it, as [stripped, raw] pairs.
+const a86Unconditional = (body) => a86Lines(body).filter(([, , f]) => !f.length).map(([l, r]) => [l, r]);
+// The one gate a key may sit behind: exactly one enclosing `#if NAME`, in its
+// own branch. Anything else (nested, compound, defined(), #ifdef, #else,
+// #elif) is null: not a gate this oracle reads.
+const a93Gate = (frames) => {
+  if (frames.length !== 1 || frames[0].branch !== null) return null;
+  const m = /^#\s*if[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*$/.exec(frames[0].opener);
+  return m ? m[1] : null;
 };
 const a86Words = (t) => new Set(t.toLowerCase().replace(/-/g, "").split(/[^a-z0-9]+/).filter(Boolean));
 const a86Literals = (t) => [...t.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)].map((m) => m[1]);
 
 // A key console's answers, read from one handler source: the keys
-// handle_serial_commands() takes under no #if opened inside it, and each
-// key's help-line words. { commands: Set, help: Map(key -> Set(words)) }.
+// handle_serial_commands() takes under no #if opened inside it, each key it
+// takes only under one `#if NAME` (with NAME), the keys under any other
+// conditional, and each key's help-line words.
+// { commands: Set, gated: Map(key -> macro), refused: Set, help: Map(key -> Set(words)) }.
 function a86ReadKeys(src) {
-  const commands = new Set(), help = new Map();
+  const commands = new Set(), help = new Map(), gates = new Map(), odd = new Set();
   const body = a86Body(src, "handle_serial_commands");
-  for (const [line, raw] of a86Unconditional(body)) {
+  for (const [line, raw, frames] of a86Lines(body)) {
     for (const m of raw.matchAll(/\bcase\s+'(.)'\s*:|\b\w+\s*==\s*'(.)'/g)) {
-      if (line[m.index] !== " ") commands.add(m[1] || m[2]);
+      if (line[m.index] === " ") continue;
+      const k = m[1] || m[2];
+      const gate = frames.length ? a93Gate(frames) : null;
+      if (!frames.length) commands.add(k);
+      else if (gate) gates.set(k, new Set([...(gates.get(k) || []), gate]));
+      else odd.add(k);
     }
+  }
+  const gated = new Map(), refused = new Set();
+  for (const k of new Set([...gates.keys(), ...odd])) {
+    if (commands.has(k)) continue;
+    if (odd.has(k) || gates.get(k).size > 1) refused.add(k);
+    else gated.set(k, [...gates.get(k)][0]);
   }
   let helpText = body.raw;
   if (/\bprint_help\s*\(/.test(body.stripped)) helpText += a86Body(src, "print_help").raw;
@@ -4156,7 +4243,7 @@ function a86ReadKeys(src) {
     const m = /^[\s│]*(\S)(?:\s*\/\s*\S)?\s+[-:]\s+(.+?)[\s│]*$/.exec(lit);
     if (m) help.set(m[1], new Set([...(help.get(m[1]) || []), ...a86Words(m[2])]));
   }
-  return { commands, help };
+  return { commands, gated, refused, help };
 }
 
 // A word console's answers (the tuning console's execute_()): its words, the
@@ -4180,19 +4267,176 @@ function a86ReadWords(src) {
 // Whether a project's source feeds its USB console to the tuning console.
 const a86FeedsConsole = (src) => /\.feed\s*\(\s*\(char\)\s*Serial\s*\.\s*read\s*\(\s*\)\s*\)/.test(a86Strip(src));
 
-// What one role's firmware answers: { commands: Set, args: Set("word arg"), help: Map(cmd -> Set(words)) }.
+// What one role's firmware answers: { commands: Set, gated: Map(key -> macro),
+// refused: Set, args: Set("word arg"), help: Map(cmd -> Set(words)) }.
 function a86Answered(role) {
   const fw = A86_ROLE_FIRMWARE[role];
   assert.ok(fw, `no firmware known for role ${role}`);
-  if (fw.kind === "keys") return { kind: fw.kind, args: new Set(), ...a86ReadKeys(read(join(ROOT, fw.handler))) };
+  if (fw.kind === "keys") {
+    const source = read(join(ROOT, fw.handler));
+    return { kind: fw.kind, args: new Set(), source, ...a86ReadKeys(source) };
+  }
+  const none = { gated: new Map(), refused: new Set() };
   if (fw.kind === "words") {
     // …and the project actually feeds its USB console to it.
     assert.ok(a86FeedsConsole(read(join(ROOT, fw.wiring))),
       "the Sense firmware no longer feeds its serial console to the tuning console");
-    return { kind: fw.kind, ...a86ReadWords(read(join(ROOT, fw.handler))) };
+    return { kind: fw.kind, ...none, ...a86ReadWords(read(join(ROOT, fw.handler))) };
   }
-  return { kind: fw.kind, commands: new Set(), args: new Set(), help: new Map() };
+  return { kind: fw.kind, ...none, commands: new Set(), args: new Set(), help: new Map() };
 }
+
+// ── sweep A93: the value a product's build gives a feature macro ────────────
+// The env a flasher product's image is built from, read off
+// firmware/build_matrix.json (the flasher installs a product's RELEASE image:
+// a product with levels's `release` level, every other product's one build),
+// which scripts/lint_build_matrix.py holds to platformio.ini and the
+// flasher catalog: an input gen_flash.py does not read.
+const BUILD_MATRIX = JSON.parse(read(join(ROOT, "firmware/build_matrix.json")));
+function a93Env(productId) {
+  const p = BUILD_MATRIX.products.find((x) => `${BUILD_MATRIX.flasher.productPrefix}${x.id}` === productId);
+  if (!p) return null;
+  return p.hasLevels ? p.levels.release.env : p.build.env;
+}
+
+// A project's PlatformIO sections, its platformio.ini and the extra_configs
+// it pulls in: name -> body (the first definition wins, as PlatformIO's does).
+function a93Sections(projectDir) {
+  const main = read(join(ROOT, projectDir, "platformio.ini"));
+  const files = [main, ...iniListValues(main, "extra_configs").filter((f) => f.endsWith(".ini"))
+    .map((f) => resolve(ROOT, projectDir, f)).filter((f) => existsSync(f)).map((f) => read(f))];
+  const sections = new Map();
+  for (const text of files) {
+    for (const chunk of text.split(/^\[/m).slice(1)) {
+      const name = chunk.slice(0, chunk.indexOf("]")).trim();
+      if (!sections.has(name)) sections.set(name, chunk.slice(chunk.indexOf("]") + 1));
+    }
+  }
+  return sections;
+}
+// A key as a regex that matches only itself (every metacharacter escaped).
+const a93ReEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// One key's value in a section body (its line and indented continuation
+// lines, comment lines dropped), or null when the section does not set it.
+function a93Value(body, key) {
+  const lines = body.split("\n");
+  const i = lines.findIndex((l) => new RegExp(`^\\s*${a93ReEscape(key)}\\s*=`).test(l));
+  if (i < 0) return null;
+  const vals = [lines[i].replace(/^[^=]*=/, "")];
+  for (let j = i + 1; j < lines.length; j++) {
+    const t = lines[j].trim();
+    if (!t || /^[;#]/.test(t)) continue;
+    if (!/^[ \t]/.test(lines[j])) break;
+    vals.push(t);
+  }
+  return vals.join("\n");
+}
+// The build flags a section resolves to: its own, each ${other.build_flags}
+// expanded, or its `extends`' when it sets none.
+function a93Flags(sections, name, seen = new Set()) {
+  if (seen.has(name) || !sections.has(name)) return "";
+  seen.add(name);
+  const body = sections.get(name);
+  const own = a93Value(body, "build_flags");
+  if (own === null) {
+    const ext = /^\s*extends\s*=\s*(\S+)/m.exec(body);
+    return ext ? a93Flags(sections, ext[1], seen) : "";
+  }
+  return [own, ...[...own.matchAll(/\$\{([A-Za-z0-9_.:-]+)\.build_flags\}/g)].map((m) => a93Flags(sections, m[1], seen))].join("\n");
+}
+// Every section an env resolves through: itself, what it extends, what it
+// interpolates.
+function a93Chain(sections, name) {
+  const chain = new Set(), todo = [name];
+  while (todo.length) {
+    const cur = todo.pop();
+    if (chain.has(cur)) continue;
+    chain.add(cur);
+    const body = sections.get(cur) || "";
+    todo.push(...(a93Value(body, "extends") || "").split(/[,\s]+/).filter(Boolean));
+    todo.push(...[...body.matchAll(/\$\{([A-Za-z0-9_.:-]+)\.[A-Za-z0-9_]+\}/g)].map((m) => m[1]));
+  }
+  return chain;
+}
+// The value `macro` has when `env` builds `projectDir` with `config` as its
+// defaults header: { value } or { error }. The env's -DMACRO / -DMACRO=<d>
+// first; the macro named in any other spelling or under any other key in the
+// env's sections (or the base [env]) is an error, as gen_flash.py refuses
+// it. Otherwise the header's default, read by c_const.js's rule, which must
+// sit directly in `#ifndef MACRO` (or `#if !defined(MACRO)`) under nothing
+// but an include guard. 1 or 0, nothing else. An #undef of the macro in the
+// header, a #define whose logical line runs past its physical one, and a
+// guard read on its logical line that is not the #ifndef one are errors too
+// (the A93 review): the compiler's #if would read something else.
+function a93FeatureValue(projectDir, config, env, macro) {
+  const named = new RegExp(`${macro}(?![A-Za-z0-9_])`);
+  const strict = new RegExp(`(?:^|\\s)(-D${macro}(?:=\\d+)?)(?=\\s|$)`, "g");
+  const values = new Set();
+  if (!/^(?:profile|arduino):/.test(env)) {
+    const sections = a93Sections(projectDir);
+    for (const sec of new Set([...a93Chain(sections, `env:${env}`), ...a93Chain(sections, "env")])) {
+      let key = null;
+      for (const line of (sections.get(sec) || "").split("\n")) {
+        if (!line.trim() || /^\s*[;#]/.test(line)) continue;
+        const kv = /^([A-Za-z0-9_.:-]+)\s*=/.exec(line);
+        if (kv) key = kv[1];
+        else if (!/^[ \t]/.test(line)) key = null;
+        if (named.test(line) && (key !== "build_flags" || named.test(line.replace(strict, " ")))) {
+          return { error: `[${sec}] ${key || "(bare line)"} names ${macro} in a spelling this oracle does not read` };
+        }
+      }
+    }
+    for (const m of a93Flags(sections, `env:${env}`).matchAll(strict)) {
+      const [, eq, digits] = /^-D[A-Za-z0-9_]+(=?)(\d*)$/.exec(m[1]);
+      if (eq && digits.length > 1 && digits.startsWith("0")) return { error: `-D${macro}=${digits} is octal` };
+      values.add(eq ? Number(digits) : 1);
+    }
+  }
+  if (values.size > 1) return { error: `env ${env} defines ${macro} as ${[...values].sort()}` };
+  // The header is read whether or not the env sets the macro: a default that
+  // is not the overridable #ifndef kind would win over the env's -D.
+  let fromHeader = null;
+  const text = read(join(ROOT, config));
+  const stripped = a86Strip(text);
+  const logical = a86Directives(text);
+  if (logical.some(([, d]) => new RegExp(`^#[ \\t]*undef[ \\t]+${macro}(?![A-Za-z0-9_])`).test(d))) {
+    return { error: `${config} #undefs ${macro}: after it the handler's #if reads 0` };
+  }
+  if (new RegExp(`^[ \\t]*#[ \\t]*define[ \\t]+${macro}(?![A-Za-z0-9_])`, "m").test(stripped)) {
+    try { fromHeader = readConst(text, macro, config); } catch (e) { return { error: e.message }; }
+    const physical = stripped.split("\n");
+    const directives = logical.map(([, d]) => d);
+    const stack = [];
+    for (const [n, d] of directives.entries()) {
+      if (A86_OPEN.test(d)) stack.push({ n, opener: d, branch: null });
+      else if (A86_BRANCH.test(d) && stack.length) stack[stack.length - 1].branch = d;
+      else if (A86_CLOSE.test(d) && stack.length) stack.pop();
+      else if (new RegExp(`^#[ \\t]*define[ \\t]+${macro}(?![A-Za-z0-9_])`).test(d)) {
+        if (d !== physical[logical[n][0]].trim().split(/\s+/).join(" ")) {
+          return { error: `${config}'s #define ${macro} runs past its line (${d}); its value is not the first line's` };
+        }
+        const top = stack[stack.length - 1];
+        const guarded = top && top.branch === null && new RegExp(
+          `^(?:#[ \\t]*ifndef[ \\t]+${macro}|#[ \\t]*if[ \\t]+![ \\t]*defined[ \\t]*(?:\\([ \\t]*${macro}[ \\t]*\\)|[ \\t]+${macro}))$`).test(top.opener);
+        const outerOk = stack.slice(0, -1).every((f) => {
+          const g = /^#[ \t]*ifndef[ \t]+([A-Za-z_][A-Za-z0-9_]*)$/.exec(f.opener);
+          return g && f.branch === null && new RegExp(`^#[ \\t]*define[ \\t]+${g[1]}$`).test(directives[f.n + 1] || "");
+        });
+        if (!guarded || !outerOk) return { error: `${config}'s ${macro} is not the #ifndef default an env's -D overrides` };
+        break;
+      }
+    }
+  }
+  const value = values.size ? [...values][0] : fromHeader;
+  if (value === null) return { error: `neither env ${env} nor ${config} defines ${macro}` };
+  if (value !== 0 && value !== 1) return { error: `${macro} is ${value} for env ${env}, neither 0 nor 1` };
+  return { value };
+}
+
+// Every `#define MACRO` / `#undef MACRO` in a handler's own file, on logical
+// lines: [line number, directive]. gen_flash.py's handler_redefines.
+const a93HandlerTouches = (source, macro) => a86Directives(source)
+  .filter(([, d]) => new RegExp(`^#[ \\t]*(?:define|undef)[ \\t]+${macro}(?![A-Za-z0-9_])`).test(d));
 
 // Every reason a product's chips are not its firmware's; [] when they are.
 function a86Wrong(product, monitor) {
@@ -4201,7 +4445,26 @@ function a86Wrong(product, monitor) {
   if (monitor.kind !== fw.kind) out.push(`${product.id}: kind ${monitor.kind}, its firmware reads ${fw.kind}`);
   for (const [cmd, label] of monitor.cmds) {
     const [word, ...rest] = cmd.split(" ");
-    if (!fw.commands.has(word)) { out.push(`${product.id}: ${JSON.stringify(cmd)} is not a command its firmware answers`); continue; }
+    if (!fw.commands.has(word) && fw.gated.has(word)) {
+      // A93: offered only where the product's build compiles it in, and the
+      // handler's own file does not define or #undef the macro (its #if
+      // would read that, not the env's or the header's value).
+      const macro = fw.gated.get(word), env = a93Env(product.id), spec = A86_ROLE_FIRMWARE[product.role];
+      const touched = a93HandlerTouches(fw.source || "", macro);
+      const got = !env ? { error: `no build env known for ${product.id} in firmware/build_matrix.json` }
+        : !spec.config ? { error: `no config header known for role ${product.role}` }
+        : touched.length ? { error: `${spec.handler} itself has ${touched.map(([, d]) => d).join(", ")}` }
+        : a93FeatureValue(spec.project, spec.config, env, macro);
+      if (got.error) { out.push(`${product.id}: ${JSON.stringify(cmd)} is gated by ${macro} — ${got.error}`); continue; }
+      if (got.value !== 1) {
+        out.push(`${product.id}: ${JSON.stringify(cmd)} is compiled out of its build (${macro}=${got.value} for env ${env})`);
+        continue;
+      }
+    } else if (!fw.commands.has(word)) {
+      const why = fw.refused.has(word) ? " (it sits under a conditional that is not one #if NAME)" : "";
+      out.push(`${product.id}: ${JSON.stringify(cmd)} is not a command its firmware answers${why}`);
+      continue;
+    }
     for (const a of rest) if (!fw.args.has(`${word} ${a}`)) out.push(`${product.id}: ${JSON.stringify(cmd)} — no ${a} after ${word}`);
     const missing = [...a86Words(label)].filter((w) => !(fw.help.get(word) || new Set()).has(w));
     if (missing.length) out.push(`${product.id}: ${JSON.stringify(cmd)} labeled ${JSON.stringify(label)} — not its help line's words (${missing})`);
@@ -4268,8 +4531,78 @@ test("A86: every product's monitor chips are commands its own firmware answers, 
   assert.ok(a86Wrong(wap, { ...wap.monitor, cmds: [["h", "help"], ["j", "self-manifest"]] })
     .some((w) => /"j" is not a command/.test(w)), "a key the WAP does not answer must fail");
   const flagship = catalog.products.find((x) => x.id === "securacv-canary");
-  assert.ok(a86Wrong(flagship, { ...flagship.monitor, cmds: [["h", "help"], ["m", "MQTT"]] })
-    .some((w) => /"m" is not a command/.test(w)), "a key behind #if FEATURE_HA_MQTT must fail");
+  const esp32cam = catalog.products.find((x) => x.id === "securacv-canary-esp32cam");
+  assert.deepStrictEqual(a86Wrong(flagship, { ...flagship.monitor, cmds: [["h", "help"], ["m", "MQTT"]] }), [],
+    "the Canary's build (release_ha) sets -DFEATURE_HA_MQTT=1: its m is a command it answers");
+  assert.ok(a86Wrong(esp32cam, { ...esp32cam.monitor, cmds: [["h", "help"], ["m", "MQTT"]] })
+    .some((w) => /"m" is compiled out of its build \(FEATURE_HA_MQTT=0 for env esp32cam\)/.test(w)),
+    "a key behind #if FEATURE_HA_MQTT must fail on a build that compiles it out");
+  assert.ok(a86Wrong(flagship, { ...flagship.monitor, cmds: [["h", "help"], ["n", "nearby"]] })
+    .some((w) => /"n" is not a command its firmware answers \(it sits under a conditional that is not one #if NAME\)/.test(w)),
+    "a key nested under two conditionals is no chip");
+
+  // A93: the flagship's gated status readouts are on every flagship product
+  // whose build compiles them (all four: canary_config.h defaults them to 1
+  // and no env sets them), and MQTT only on the HA build.
+  const flagshipIds = catalog.products.filter((p) => p.role === "canary").map((p) => p.id).sort();
+  assert.deepStrictEqual(flagshipIds, ["securacv-canary", "securacv-canary-esp32cam", "securacv-canary-freenove-s3", "securacv-canary-wroom"]);
+  const fwCanary = a86Answered("canary");
+  assert.deepStrictEqual(["b", "p", "d", "r", "m"].map((k) => fwCanary.gated.get(k)),
+    ["FEATURE_POWER_MONITOR", "FEATURE_POWER_POLICY", "FEATURE_DIAGNOSTICS", "FEATURE_DATA_MGMT", "FEATURE_HA_MQTT"]);
+  for (const id of flagshipIds) {
+    const env = a93Env(id);
+    for (const k of ["b", "p", "d", "r"]) {
+      assert.deepStrictEqual(a93FeatureValue("firmware/canary", A86_ROLE_FIRMWARE.canary.config, env, fwCanary.gated.get(k)), { value: 1 });
+      assert.ok(keysOf(id).includes(k), `${id} (${env}) compiles ${k} in, and offers no chip for it`);
+    }
+    const mqtt = a93FeatureValue("firmware/canary", A86_ROLE_FIRMWARE.canary.config, env, "FEATURE_HA_MQTT").value;
+    assert.strictEqual(keysOf(id).includes("m"), mqtt === 1, `${id} (${env}): an m chip exactly where FEATURE_HA_MQTT is 1`);
+    assert.strictEqual(mqtt === 1, id === "securacv-canary", `${id}: only release_ha sets -DFEATURE_HA_MQTT=1`);
+  }
+  // The oracle's value reader on the env and header shapes it must refuse
+  // or read as the compiler would: a stand-in project tree under ROOT's
+  // reader would be a second fixture, so the shapes are spelled into a
+  // scratch platformio.ini and header beside the real ones.
+  const a93Dir = mkdtempSync(join(tmpdir(), "a93-"));
+  try {
+    const rel = relative(ROOT, a93Dir);
+    const ini = (flag) => `[env]\nbuild_flags =\n    -DBOARD_HAS_PSRAM\n\n[env:x]\nbuild_flags =\n    \${env.build_flags}\n    ${flag}\n`;
+    const value = (flag, cfg) => {
+      writeFileSync(join(a93Dir, "platformio.ini"), ini(flag));
+      writeFileSync(join(a93Dir, "cfg.h"), cfg);
+      return a93FeatureValue(rel, join(rel, "cfg.h"), "x", "FEATURE_X");
+    };
+    const guarded = (v) => `#ifndef CFG_H\n#define CFG_H\n#ifndef FEATURE_X\n  #define FEATURE_X ${v}  // default\n#endif\n#endif\n`;
+    assert.deepStrictEqual(value("-DFEATURE_X=1", guarded(0)), { value: 1 }, "the env's -D over the #ifndef default");
+    assert.deepStrictEqual(value("-DFEATURE_X=0", guarded(1)), { value: 0 });
+    assert.deepStrictEqual(value("-DFEATURE_X", guarded(0)), { value: 1 }, "a bare -D is 1");
+    assert.deepStrictEqual(value("-DOTHER=1", guarded(1)), { value: 1 }, "no -D: the header's default");
+    assert.deepStrictEqual(value("-DOTHER=1", "#pragma once\n#if !defined(FEATURE_X)\n#define FEATURE_X 0\n#endif\n"), { value: 0 });
+    for (const flag of ["-DFEATURE_X=0x1", "-DFEATURE_X=true", "'-DFEATURE_X=1'", "-D FEATURE_X"]) {
+      assert.match(value(flag, guarded(1)).error || "", /names FEATURE_X in a spelling this oracle does not read/, flag);
+    }
+    assert.match(value("-DFEATURE_X=2", guarded(1)).error || "", /neither 0 nor 1/);
+    assert.match(value("-DFEATURE_X=01", guarded(1)).error || "", /octal/);
+    assert.match(value("-DFEATURE_X=1\n    -DFEATURE_X=0", guarded(1)).error || "", /defines FEATURE_X as 0,1/);
+    assert.match(value("-DOTHER=1", guarded("(1)")).error || "", /not a plain integer literal/);
+    assert.match(value("-DFEATURE_X=1", "#pragma once\n#define FEATURE_X 0\n").error || "", /not the #ifndef default/,
+      "an unguarded #define wins over the env's -D, so the env's reading is refused");
+    assert.match(value("-DOTHER=1", "#pragma once\n#if BIG\n#ifndef FEATURE_X\n#define FEATURE_X 1\n#endif\n#endif\n").error || "",
+      /not the #ifndef default/, "a default under another conditional");
+    assert.match(value("-DOTHER=1", "#pragma once\n").error || "", /neither env x nor .* defines FEATURE_X/);
+    // What the preprocessor does after the default (the A93 review): an
+    // #undef leaves #if reading 0; a #define or a guard whose comment closes
+    // on the next line with code after it is read whole, as the compiler does.
+    assert.match(value("-DFEATURE_X=1", guarded(1).replace("#endif\n#endif\n", "#endif\n#undef FEATURE_X\n#endif\n")).error || "",
+      /#undefs FEATURE_X/);
+    assert.match(value("-DOTHER=1", guarded("1 /* a note\n */ + 1")).error || "", /runs past its line \(#define FEATURE_X 1 \+ 1\)/);
+    assert.match(value("-DFEATURE_X=0", guarded(1).replace("#ifndef FEATURE_X\n", "#if !defined(FEATURE_X) /* a note\n */ || 1\n")).error || "",
+      /not the #ifndef default/);
+    assert.deepStrictEqual(value("-DOTHER=1", guarded("1 /* a note\n    that ends here */").replace("#ifndef FEATURE_X\n", "#ifndef FEATURE_X /* a\n */\n")),
+      { value: 1 }, "a comment closed on the next line with nothing after it is no code");
+  } finally {
+    rmSync(a93Dir, { recursive: true, force: true });
+  }
 
   // Each of the oracle's other checks fails on its own, one wrong thing at a time.
   const only = (product, monitor, re, why) => {
@@ -4302,7 +4635,46 @@ test("A86: every product's monitor chips are commands its own firmware answers, 
     "}",
   ].join("\n"));
   assert.deepStrictEqual([...keys.commands].sort(), ["a", "f"], "commented, quoted and #if-gated keys are not answers");
+  assert.deepStrictEqual([...keys.gated], [["t", "FEATURE_X"]], "a key under one #if NAME is gated by NAME");
   assert.deepStrictEqual([...keys.help.get("a")], ["all"]);
+  // Every gate shape but one #if NAME (a comment after it is not code) is no gate.
+  const shapes = a86ReadKeys([
+    "void handle_serial_commands() {",
+    "#if FEATURE_A && FEATURE_B", "  case 'a': break;", "#endif",
+    "#if defined(FEATURE_X)", "  case 'b': break;", "#endif",
+    "#if FEATURE_X", "#if FEATURE_Y", "  case 'c': break;", "#endif", "#endif",
+    "#if FEATURE_X", "  case 'd': break;", "#else", "  case 'e': break;", "#endif",
+    "#if FEATURE_X", "  case 'f': break;", "#elif FEATURE_Y", "  case 'g': break;", "#endif",
+    "#ifdef FEATURE_X", "  case 'h': break;", "#endif",
+    "#if FEATURE_X // why", "  case 'i': break;", "#endif",
+    "#if FEATURE_X", "  case 'm': break;", "#endif", "#if FEATURE_Y", "  case 'm': break;", "#endif",
+    "}",
+  ].join("\n"));
+  assert.deepStrictEqual(Object.fromEntries(shapes.gated), { d: "FEATURE_X", f: "FEATURE_X", i: "FEATURE_X" });
+  assert.deepStrictEqual([...shapes.refused].sort(), ["a", "b", "c", "e", "g", "h", "m"]);
+  // A directive is read on its logical line (the A93 review): a block comment
+  // closed on the next line is one space, a backslash splices, and the code a
+  // directive or a // comment runs on over is not code. What g++ -E keeps.
+  const joined = a86ReadKeys([
+    "void handle_serial_commands() {",
+    "#if FEATURE_X /* a note", " */ && FEATURE_Y", "  case 'a': break;", "#endif",
+    "#if FEATURE_X /* a note", "   that ends here */", "  case 'b': break;", "#endif",
+    "#if FEATURE_X \\", "  && FEATURE_Y", "  case 'c': break;", "#endif",
+    "#if FEATURE_X // a note \\", "  && FEATURE_Y, still the note", "  case 'd': break;", "#endif",
+    "#if FEATURE_X", "  case 'e': break;", "#endif /* a note", " */ case 'f': break;",
+    "  case 'g': break; // a note \\", "  case 'h': break;",
+    "  /* a note", " */ #if FEATURE_X", "  case 'i': break;", "#endif",
+    "  case 'j': /* a note", " */ case 'k': break;",
+    "}",
+  ].join("\n"));
+  assert.deepStrictEqual([...joined.commands].sort(), ["g", "j", "k"], "f is in #endif's line and h in the // comment");
+  assert.deepStrictEqual(Object.fromEntries(joined.gated), { b: "FEATURE_X", d: "FEATURE_X", e: "FEATURE_X", i: "FEATURE_X" });
+  assert.deepStrictEqual([...joined.refused].sort(), ["a", "c"]);
+  // The handler's own file touching a gated macro is no gate the env decides.
+  assert.deepStrictEqual(a93HandlerTouches('#include "cfg.h"\n#undef FEATURE_X\n#  define FEATURE_X /* a\n */ 0\n// #define FEATURE_X 1\n' +
+    'const char* k = "#undef FEATURE_X";\n#define FEATURE_XY 1\n', "FEATURE_X"), [[1, "#undef FEATURE_X"], [2, "# define FEATURE_X 0"]]);
+  assert.deepStrictEqual(a93HandlerTouches(read(join(ROOT, A86_ROLE_FIRMWARE.canary.handler)), "FEATURE_HA_MQTT"), [],
+    "the flagship's main.cpp leaves FEATURE_HA_MQTT to its env and canary_config.h");
   const words = a86ReadWords([
     "void execute_() {",
     "  if (ieq_(cmd, \"help\")) {}",
@@ -4555,19 +4927,346 @@ test("A86: the browser flasher's monitor offers the flashed or the identified bo
   const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
   assert.deepStrictEqual(vocabFor({ projectName: "canary" }, { product: wap }), catalogMonitor("securacv-canary-wap"));
   assert.deepStrictEqual(vocabFor({ projectName: "canary" }, { product: null }), catalog.monitor_unknown);
-  assert.match(flashJs, /const flashed = \(opts\.product && !opts\.isBackup && !opts\.isLocal\) \? opts\.product : null;\s*return openMonitor\(\{[^}]*hatchProduct: flashed, product: flashed \}\)/,
-    "the post-flash monitor must be told which product it is watching");
-  // phaseMonitor draws its chips and box from that choice, through the shared rule.
-  const phase = fnSource(flashJs, "phaseMonitor");
-  assert.match(phase, /const monProduct = monitorProduct\(opts\);\s*const vocab = core\.monitorVocabulary\(state\.catalog, monProduct\);/);
-  assert.match(phase, /for \(const \[cmd, label\] of vocab\.cmds\)/);
-  assert.match(phase, /send\(cmd \+ "\\n"\)/, "a chip sends its command and the newline a word console needs");
-  assert.match(phase, /input\.placeholder = vocab\.placeholder;/);
+  // What phaseMonitor draws from that choice (its chips and box, the j ask,
+  // the status lines), and phaseDone's backup / local-file rule that hands
+  // it the product, are rendered by the A95 test below.
   // The role line names the same product the monitor does.
   assert.match(fnSource(flashJs, "renderRoleLine"), /const prod = core\.productForProject\(state\.catalog, cur\.projectName\);/);
-  // The identity ask (j) goes only to a firmware that answers it.
-  assert.match(phase, /if \(opts\.proveIdentity && !mon\.askedManifest && core\.requiresLiveReceipt\(monProduct\)\) \{/,
-    "the browser must not ask a WAP, a Sense or a display for a j it does not have");
+});
+
+// ── sweep A95: the browser monitor, rendered ───────────────────────────────
+// phaseMonitor (flash.js) draws the monitor: the command chips from the
+// product's vocabulary, the box's placeholder, the status line put in place
+// on connect and when the board stays quiet, and the `j` identity ask after
+// a flash. It used to be held by regex pins over its source only, which a
+// change can satisfy while drawing the wrong thing. It is now rendered:
+// flash.js's own el, sleep, modeBadge, boardProduct, monitorProduct,
+// openMonitor, openMonitorInner and phaseMonitor, evaluated together in a vm
+// context over a stand-in DOM, the generated catalog, the real flash-core
+// module, fake timers and a fake Web Serial port (a writer that records what
+// is sent, a reader that yields scripted boot text). Each case enters the way
+// the page does: a flash through phaseDone's own proveReal (its prove block
+// and its backup / local-file rule), the connect page's "Serial monitor"
+// button (openMonitor()), or "ask the board itself" (openMonitor({
+// proveIdentity: true })). What a case reads back: the chips' commands and
+// labels, the placeholder, both status lines against monitorStatusText(),
+// what a chip and the box send, how many `j\n` asks were written (by 2 s
+// after connect, and over the whole time before any tap: every timer run,
+// the boot text heard), and whether a signed self-manifest, once it
+// arrives, mounts the product's "first flight" hatch card.
+
+// A top-level `const NAME = ...;` of flash.js, braces and parentheses counted.
+function topConst(src, name) {
+  const i = src.indexOf(`\nconst ${name} = `);
+  assert.ok(i >= 0, `flash.js no longer defines const ${name}`);
+  let d = 0;
+  for (let k = i + 1; k < src.length; k++) {
+    const c = src[k];
+    if ("({[".includes(c)) d++;
+    else if (")}]".includes(c)) d--;
+    else if (c === ";" && !d) return src.slice(i + 1, k + 1);
+  }
+  throw new Error(`unbalanced const ${name}`);
+}
+
+// phaseDone's proveSpec and proveReal, cut from its body: what a flash's
+// "watch it boot" button opens, and with which options.
+function a95ProveReal(flashJs) {
+  const done = fnSource(flashJs, "phaseDone");
+  const from = done.indexOf("const proveSpec =");
+  const head = done.indexOf("const proveReal = () => {");
+  assert.ok(from >= 0 && head > from, "flash.js phaseDone no longer defines proveSpec / proveReal");
+  let d = 0, k = done.indexOf("{", head);
+  for (; k < done.length; k++) {
+    if (done[k] === "{") d++;
+    else if (done[k] === "}" && !--d) break;
+  }
+  return done.slice(from, k + 1) + ";";
+}
+
+// Timers that run only when told to: run(ms) fires every one-shot timer due by
+// `ms` after it was set, earliest first.
+function a95Timers() {
+  let id = 0;
+  const live = new Map();
+  return {
+    setTimeout: (fn, ms) => { live.set(++id, { fn, ms: ms || 0, repeat: false }); return id; },
+    setInterval: (fn, ms) => { live.set(++id, { fn, ms: ms || 0, repeat: true }); return id; },
+    clear: (i) => { live.delete(i); },
+    run(by) {
+      for (const [i, t] of [...live].sort((a, b) => a[1].ms - b[1].ms)) {
+        if (t.repeat || t.ms > by || !live.has(i)) continue;
+        live.delete(i);
+        t.fn();
+      }
+    },
+    clearAll: () => live.clear(),
+  };
+}
+
+// A Web Serial port: what is written is recorded as text, and the reader
+// yields what feed() hands it (a cancel ends a pending read).
+function a95Port() {
+  const writes = [], queue = [];
+  let pending = null;
+  const give = (v) => { if (pending) { const p = pending; pending = null; p(v); } else queue.push(v); };
+  const reader = {
+    read: () => (queue.length ? Promise.resolve(queue.shift()) : new Promise((r) => { pending = r; })),
+    cancel: async () => give({ done: true }),
+    releaseLock: () => {},
+  };
+  const port = {
+    bauds: [],
+    open: async ({ baudRate }) => { port.bauds.push(baudRate); },
+    close: async () => {},
+    getInfo: () => ({ usbVendorId: 0x303a }),
+    writable: { getWriter: () => ({ write: (b) => { writes.push(new TextDecoder().decode(b)); return Promise.resolve(); }, releaseLock: () => {} }) },
+    readable: { getReader: () => reader },
+  };
+  return { port, writes, feed: (text) => give({ value: new TextEncoder().encode(text), done: false }) };
+}
+
+const a95Settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+
+// One monitor, opened the way `enter` says, over a board whose descriptor
+// reads `projectName`. Returns what it drew and sent.
+async function a95Render(flashJs, core, { projectName, enter }) {
+  const doc = fakeDocument();
+  const timers = a95Timers();
+  const { port, writes, feed } = a95Port();
+  const phases = [];
+  const serial = { listeners: {}, addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); },
+    removeEventListener(t, f) { this.listeners[t] = (this.listeners[t] || []).filter((x) => x !== f); },
+    getPorts: async () => [port], requestPort: async () => port };
+  const state = {
+    catalog, busy: false, opening: false, voice: null,
+    current: projectName == null ? null : { version: "2.4.0", projectName },
+    session: { port, esploader: { after: async () => {} }, transport: { disconnect: async () => {} } },
+  };
+  let confetti = 0;
+  const ctx = vm.createContext({
+    state, core, document: doc, navigator: { serial }, TextEncoder, TextDecoder,
+    setTimeout: timers.setTimeout, clearTimeout: timers.clear, setInterval: timers.setInterval, clearInterval: timers.clear,
+    setPhase: (n) => { phases.push(n); }, phaseConnect: () => ({ connectPage: true }), stopVoice: async () => null,
+    confettiBurst: () => { confetti++; }, fact: () => doc.createElement("div"),
+    hatchMomentCard: (moment) => { const n = doc.createElement("div"); n.className = "a95-hatch"; n.textContent = moment.title; return n; },
+  });
+  vm.runInContext([topConst(flashJs, "el"), topConst(flashJs, "sleep"),
+    ...["modeBadge", "boardProduct", "monitorProduct", "openMonitor", "openMonitorInner", "phaseMonitor"]
+      .map((n) => (flashJs.includes(`async function ${n}(`) ? "async " : "") + fnSource(flashJs, n)),
+  ].join("\n"), ctx, { filename: "flash.js (A95)" });
+
+  // In: a flash's proveReal hands its options to openMonitor; the buttons call it.
+  let opts;
+  if (enter.flash) {
+    const pick = new Function("opts", "state", "openMonitor", "openSenseBench", "openWapBench", "onDisconnect", "setPhase",
+      "phaseModule", "phaseConnect", `${a95ProveReal(flashJs)}\nreturn proveReal;`)(
+      enter.flash, state, (o) => { opts = o; return ctx.openMonitor(o); },
+      () => { throw new Error("proveReal opened the radar bench"); }, () => { throw new Error("proveReal opened the field bench"); },
+      () => { throw new Error("proveReal opened the camera module flow"); }, () => {}, () => {}, () => {});
+    await pick();
+    assert.ok(opts, "proveReal did not open the monitor");
+  } else {
+    opts = enter.opts;
+    await (opts === undefined ? ctx.openMonitor() : ctx.openMonitor(opts));
+  }
+  await a95Settle();
+  const box = phases[0];
+  assert.ok(box && box.className === "flash-card flash-monitor", "the monitor did not draw its card");
+  const status = box.find((n) => n.className === "muted flash-mon-status");
+  const input = box.find((n) => n.tagName === "input");
+  const chipRow = box.find((n) => n.className === "flash-mon-chips");
+  const seen = {
+    opts,
+    bauds: [...port.bauds],
+    chips: chipRow.children.map((b) => [b.dataset.cmd, b.textContent]),
+    placeholder: input.placeholder,
+    connected: status.textContent,
+  };
+  const asks = () => writes.filter((w) => w === "j\n").length;
+  timers.run(2000);                            // the j asks (600 and 2000 ms after connect)
+  seen.asksBy2s = asks();
+  timers.run(4000);                            // nothing heard yet
+  seen.quiet = status.textContent;
+  feed("ESP-ROM:esp32s3-20210327\r\nSecuraCV boot: firmware up\r\n");
+  await a95Settle();
+  seen.afterBytes = status.textContent;
+  seen.confetti = confetti;
+  seen.console = box.find((n) => n.tagName === "pre").textContent;
+  timers.run(60000);                           // every timer still due, the boot text heard
+  await a95Settle();
+  seen.asks = asks();                          // everything written before any tap
+  seen.otherWrites = writes.filter((w) => w !== "j\n");
+  // The board answers j with its signed self-manifest: the identity card,
+  // and the first-flight card where the flashed product's hatch waits on it.
+  feed(`${A95_MANIFEST}\r\n`);
+  await a95Settle();
+  seen.identity = status.textContent;
+  const hatch = box.find((n) => n.className === "a95-hatch");
+  seen.hatch = hatch ? hatch.textContent : null;
+  const before = writes.length;
+  if (chipRow.children.length) chipRow.children[chipRow.children.length - 1].fire("click");
+  input.value = "status";
+  input.fire("keydown", { key: "Enter" });
+  seen.sent = writes.slice(before);
+  // Out: "back to the flasher" stops the streams and leaves for the connect page.
+  box.find((n) => n.tagName === "button" && n.textContent === "← back to the flasher").fire("click");
+  await a95Settle();
+  seen.left = phases.length === 2 && phases[1].connectPage === true;
+  seen.listenersLeft = (serial.listeners.disconnect || []).length;
+  timers.clearAll();
+  return seen;
+}
+
+// A signed self-manifest line, as a firmware prints it in answer to `j`.
+const A95_MANIFEST = JSON.stringify({ schema: "securacv.canary.manifest/1", board: "esp32s3", firmware: "2.4.0",
+  pubkey_fp: "a1b2c3d4e5f60718", boots: 3, health: 92 });
+
+// The cases, each with the product whose record the monitor must show,
+// whether it must ask for j, and whose first-flight card the receipt mounts.
+// A backup or a local file names no product, so it gets no chips and no
+// first-flight card; the ask still goes out there (requiresLiveReceipt is
+// true when nothing says the firmware lacks j, and the ask is a read). A
+// display's hatch needs no receipt (serial_receipt false): its card is the
+// done screen's, so the monitor mounts none. `opened` is what proveReal
+// hands openMonitor (a button passes neither key).
+const A95_FLAGSHIP_HATCH = "securacv-canary";
+const A95_CASES = [
+  { name: "a flagship flash over a WAP", projectName: "canary_wap",
+    enter: { flash: { product: "securacv-canary" } }, product: "securacv-canary", asks: 2, celebrates: true,
+    hatch: A95_FLAGSHIP_HATCH, opened: ["securacv-canary", "securacv-canary"] },
+  { name: "a display flash over the flagship", projectName: "canary",
+    enter: { flash: { product: "securacv-canary-display-dash" } }, product: "securacv-canary-display-dash", asks: 0, celebrates: true,
+    hatch: null, opened: ["securacv-canary-display-dash", "securacv-canary-display-dash"] },
+  { name: "a backup restored over the flagship", projectName: "canary",
+    enter: { flash: { product: "securacv-canary", isBackup: true } }, product: null, asks: 2, celebrates: true,
+    hatch: null, opened: [null, null] },
+  { name: "a local file over the flagship", projectName: "canary",
+    enter: { flash: { isLocal: true } }, product: null, asks: 2, celebrates: true,
+    hatch: null, opened: [null, null] },
+  { name: "the Serial monitor button on a WAP", projectName: "canary_wap",
+    enter: { opts: undefined }, product: "securacv-canary-wap", asks: 0, celebrates: false,
+    hatch: null, opened: ["(not given)", "(not given)"] },
+  { name: "ask the board itself, on a Vision", projectName: "canary_vision",
+    enter: { opts: { proveIdentity: true } }, product: "securacv-canary-vision", asks: 2, celebrates: false,
+    hatch: null, opened: ["(not given)", "(not given)"] },
+  { name: "the Serial monitor button on an unidentified board", projectName: "esp32_display_demo",
+    enter: { opts: undefined }, product: null, asks: 0, celebrates: false,
+    hatch: null, opened: ["(not given)", "(not given)"] },
+];
+
+// Every way the rendered monitors differ from what the catalog and
+// flash-core say they must show; [] when none does.
+async function a95Wrong(flashJs, core) {
+  const out = [];
+  for (const c of A95_CASES) {
+    const flash = c.enter.flash && { ...c.enter.flash,
+      product: c.enter.flash.product && catalog.products.find((p) => p.id === c.enter.flash.product) };
+    let seen;
+    try {
+      seen = await a95Render(flashJs, core, { projectName: c.projectName, enter: flash ? { flash } : c.enter });
+    } catch (e) { out.push(`${c.name}: the monitor did not render (${e.message})`); continue; }
+    const product = c.product && catalog.products.find((p) => p.id === c.product);
+    const vocab = product ? product.monitor : catalog.monitor_unknown;
+    const want = (what, got, exp) => { if (JSON.stringify(got) !== JSON.stringify(exp)) out.push(`${c.name}: ${what} ${JSON.stringify(got)}, expected ${JSON.stringify(exp)}`); };
+    want("chips", seen.chips, vocab.cmds.map(([cmd, label]) => [cmd, `${label} (${cmd})`]));
+    want("placeholder", seen.placeholder, vocab.placeholder);
+    want("connected status", seen.connected, core.monitorStatusText(vocab, "connected", catalog.console_baud));
+    want("quiet status", seen.quiet, core.monitorStatusText(vocab, "quiet", catalog.console_baud));
+    want("j asks written by 2 s after connect", seen.asksBy2s, c.asks);
+    want("j asks written before any tap", seen.asks, c.asks);
+    want("other writes before any tap", seen.otherWrites, []);
+    const given = (k) => (!seen.opts || !(k in seen.opts) ? "(not given)" : seen.opts[k] ? seen.opts[k].id : null);
+    want("opened with product / hatchProduct", [given("product"), given("hatchProduct")], c.opened);
+    want("status on the signed receipt", seen.identity, "✓ Identity confirmed — it’s running and answering.");
+    const hatchOf = c.hatch && core.hatchMoment(catalog.products.find((p) => p.id === c.hatch));
+    if (c.hatch && !hatchOf) out.push(`${c.name}: ${c.hatch} carries no first-flight card to expect`);
+    want("first-flight card on the receipt", seen.hatch, hatchOf ? hatchOf.title : null);
+    want("port opened at", seen.bauds, [catalog.console_baud]);
+    const last = vocab.cmds[vocab.cmds.length - 1];
+    want("sent by the last chip and the box", seen.sent, [...(last ? [`${last[0]}\n`] : []), "status\n"]);
+    want("status after the boot text", seen.afterBytes,
+      c.celebrates ? "✓ It’s talking — your Canary is alive." : core.monitorStatusText(vocab, "quiet", catalog.console_baud));
+    want("confetti", seen.confetti, c.celebrates ? 1 : 0);
+    want("console shows the boot text", seen.console.includes("SecuraCV boot: firmware up"), true);
+    want("left for the connect page", seen.left, true);
+    want("disconnect listeners left", seen.listenersLeft, 0);
+  }
+  return out;
+}
+
+test("A95: the browser monitor, rendered: its chips, box, status lines and j ask per product, backups and local files included", async () => {
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  // The connect page's button opens the monitor with no options, so the
+  // board's own product names its chips (the "Serial monitor button" cases).
+  assert.match(fnSource(flashJs, "phaseConnected"), /mon\.addEventListener\("click", \(\) => openMonitor\(\)\);/);
+  assert.match(fnSource(flashJs, "renderLiveStoryAsk"), /ask\.addEventListener\("click", \(\) => openMonitor\(\{ proveIdentity: true \}\)\);/);
+  assert.deepStrictEqual(await a95Wrong(flashJs, core), [], "the browser monitor draws or sends something its catalog record does not say");
+  // The cases reach what they are about: the flagship's flash carries its
+  // product and the j ask; a backup and a local file carry an explicit null.
+  const flagship = catalog.products.find((p) => p.id === "securacv-canary");
+  const seen = await a95Render(flashJs, core, { projectName: "canary_wap", enter: { flash: { product: flagship } } });
+  assert.strictEqual(seen.opts.product, flagship);
+  assert.strictEqual(seen.opts.proveIdentity, true);
+  assert.ok(seen.chips.some(([c]) => c === "m"), "the flagship's monitor shows its MQTT chip (A93)");
+  const backup = await a95Render(flashJs, core, { projectName: "canary", enter: { flash: { product: flagship, isBackup: true } } });
+  assert.strictEqual(backup.opts.product, null);
+  assert.deepStrictEqual(backup.chips, []);
+
+  // The render bites where source pins did not: each mutant below draws or
+  // sends something wrong, and every one but one passed all nine regex pins
+  // this test replaced (over phaseMonitor and phaseDone's `hatchProduct:
+  // flashed`; checked over these mutants in sweep wave 22). The one the pins
+  // did hold, a backup's hatch named after the product it restored over, the
+  // render holds now.
+  const mutants = [
+    ["the wrong product chosen for a backup",
+      'return "product" in opts ? opts.product : boardProduct();', "return opts.product || boardProduct();",
+      /a backup restored over the flagship: chips/],
+    ["the wrong product chosen for a backup, inside phaseMonitor",
+      "function phaseMonitor(port, opts = {}) {\n", "function phaseMonitor(port, opts = {}) {\n  if (opts.product === null) opts = { ...opts, product: boardProduct() };\n",
+      /a local file over the flagship: chips/],
+    ["the status line taken from another record",
+      "  async function pumpOnce(p, baud) {\n", "  async function pumpOnce(p, baud) {\n    const vocab = core.monitorVocabulary(state.catalog, boardProduct());\n",
+      /a display flash over the flagship: connected status/],
+    ["j written for a display",
+      "      setTimeout(ask, 2000);\n    }\n", "      setTimeout(ask, 2000);\n    } else if (opts.proveIdentity) setTimeout(() => send(\"j\\n\"), 600);\n",
+      /a display flash over the flagship: j asks written by 2 s after connect 1, expected 0/],
+    ["the j write skipped",
+      "      setTimeout(ask, 600);\n      setTimeout(ask, 2000);\n", "",
+      /a flagship flash over a WAP: j asks written before any tap 0, expected 2/],
+    ["the WAP's placeholder put back to one firmware's hint",
+      "    reconnectBtn.classList.add(\"flash-hidden\");\n    setStatus(core.monitorStatusText(vocab, \"connected\", baud));\n",
+      "    reconnectBtn.classList.add(\"flash-hidden\");\n    setStatus(core.monitorStatusText(vocab, \"connected\", baud));\n    input.placeholder = \"type a command — single keys; h shows the menu\";\n",
+      /the Serial monitor button on a WAP: placeholder/],
+    ["a chip that carries its label as its command",
+      "    b.dataset.cmd = cmd;\n", "    b.dataset.cmd = label;\n",
+      /a flagship flash over a WAP: chips/],
+    ["j written late for a display",
+      "\"quiet\", baud));\n    }, 4000);\n    const dec = new TextDecoder();\n",
+      "\"quiet\", baud));\n    }, 4000);\n    if (opts.proveIdentity && !core.requiresLiveReceipt(monitorProduct(opts))) setTimeout(() => send(\"j\\n\"), 3000);\n    const dec = new TextDecoder();\n",
+      /a display flash over the flagship: j asks written before any tap 1, expected 0/],
+    ["j written when the boot text arrives",
+      "          confettiBurst();\n", "          confettiBurst();\n          if (opts.proveIdentity) send(\"j\\n\");\n",
+      /a display flash over the flagship: j asks written before any tap 1, expected 0/],
+    ["a third j ask, after the two",
+      "      setTimeout(ask, 2000);\n    }\n", "      setTimeout(ask, 2000);\n      setTimeout(ask, 3500);\n    }\n",
+      /a flagship flash over a WAP: j asks written before any tap 3, expected 2/],
+    ["a backup's hatch named after the product it restored over",
+      "hatchProduct: flashed, product: flashed });", "hatchProduct: opts.product, product: flashed });",
+      /a backup restored over the flagship: first-flight card on the receipt "Your Canary/],
+    ["the first-flight card falling back to the board's product",
+      "    if (opts.hatchProduct && core.requiresLiveReceipt(opts.hatchProduct)) {\n      const moment = core.hatchMoment(opts.hatchProduct);\n",
+      "    const hp = opts.hatchProduct || boardProduct();\n    if (hp && core.requiresLiveReceipt(opts.hatchProduct)) {\n      const moment = core.hatchMoment(hp);\n",
+      /a local file over the flagship: first-flight card on the receipt "Your Canary/],
+  ];
+  for (const [what, from, to, caught] of mutants) {
+    assert.strictEqual(flashJs.split(from).length, 2, `mutant "${what}": its anchor is not in flash.js exactly once`);
+    const mutant = flashJs.replace(from, to);
+    const wrong = await a95Wrong(mutant, core);
+    assert.ok(wrong.some((w) => caught.test(w)), `mutant "${what}" passes the render: ${JSON.stringify(wrong)}`);
+  }
 });
 
 // ── A96 / A97: one resolution behind every surface, in both flashers ─────────
@@ -5054,10 +5753,8 @@ test("A86: the browser monitor's status lines name the firmware's own menu comma
   // A key vocabulary without h names no menu key (the line names chips only).
   assert.strictEqual(core.monitorStatusText({ kind: "keys", cmds: [["j", "install receipt"]] }, "connected", 1),
     "Connected at 1 — the board is talking.");
-  // The browser monitor shows these lines, and no hard-coded h hint remains.
-  const phase = fnSource(flashJs, "phaseMonitor");
-  assert.match(phase, /setStatus\(core\.monitorStatusText\(vocab, "connected", baud\)\);/);
-  assert.match(phase, /setStatus\(core\.monitorStatusText\(vocab, "quiet", baud\)\);/);
+  // The browser monitor shows these lines (the A95 render holds each one,
+  // product by product), and no hard-coded h hint remains.
   assert.doesNotMatch(flashJs, /h for its menu/, "flash.js must not tell every firmware to press h");
 });
 
@@ -5536,13 +6233,52 @@ function cSourcesUnder(root) {
 }
 
 // The C/C++ sources the Vision firmware builds from, read off
-// canary-vision.ini rather than typed, so a new env or a new shared TU joins
-// the scan by itself: every source under firmware/projects/canary-vision
-// (src/, include/, secrets/), every include directory an env adds outside
-// firmware/common (its Vision-only config, each env's board pins), and each
-// firmware/common translation unit a build_src_filter compiles. What the
-// scan does NOT read: the headers under firmware/common, which every product
-// shares and which those TUs and the Vision sources include.
+// canary-vision.ini rather than typed, so a new env, a new shared TU or a new
+// library directory joins the scan by itself. A source reaches a Vision build
+// three ways, and the scan reads a superset of each:
+//   - the project itself: every source under firmware/projects/canary-vision
+//     (src/, include/, secrets/);
+//   - an include directory an env adds (-I): every source under one outside
+//     firmware/common (its Vision-only config, each env's board pins), and
+//     every header under one inside it. firmware/common is shared by every
+//     product, so all of its headers are read, not only the ones the Vision
+//     includes (sweep F414): a superset, conservative like the #if 0 rule
+//     below, and no include resolver to get wrong;
+//   - a compiled file outside the project: each translation unit a
+//     build_src_filter names, and every source under each lib_extra_dirs
+//     directory. PlatformIO's dependency finder takes every folder in a
+//     lib_extra_dirs directory as a library and compiles a library's sources
+//     when the build includes one of its headers, which is how at least two
+//     library sources no build_src_filter names reach the Vision today:
+//     firmware/common/boot/boot_banner.cpp (its library.json puts its
+//     include directory at firmware/common, and main.cpp includes
+//     boot/boot_banner.h) and firmware/common/ota/src/securacv_ota.cpp (an
+//     Arduino library; src/net/ota_mgr.cpp includes securacv_ota.h). The
+//     Vision's lib_extra_dirs is firmware/common, so the whole of
+//     firmware/common is read.
+// Nothing else is: firmware/canary and the other projects reach no Vision
+// build (no -I, no build_src_filter entry and no lib_extra_dirs names them).
+const C_HEADER = /\.(?:h|hh|hpp|hxx)$/;
+
+// The paths a PlatformIO multi-line key lists, across every section of `ini`
+// that sets it: the `key =` line's own value and its indented continuation
+// lines, comment lines and inline `;` comments dropped.
+function iniListValues(ini, key) {
+  const out = [];
+  const lines = ini.split("\n");
+  lines.forEach((line, i) => {
+    const m = new RegExp(`^${key}\\s*=(.*)$`).exec(line);
+    if (!m) return;
+    const vals = [m[1]];
+    for (let j = i + 1; j < lines.length && /^[ \t]/.test(lines[j]); j++) vals.push(lines[j]);
+    for (const v of vals) {
+      const t = v.replace(/(^|\s);.*$/, "").trim();
+      if (t && !t.startsWith("#")) out.push(t);
+    }
+  });
+  return out;
+}
+
 function visionSources(firmwareRoot) {
   const project = join(firmwareRoot, "projects/canary-vision");
   const common = join(firmwareRoot, "common");
@@ -5550,12 +6286,17 @@ function visionSources(firmwareRoot) {
   const files = new Set(cSourcesUnder(project));
   for (const m of ini.matchAll(/-I\$\{PROJECT_DIR\}\/(\S+)/g)) {
     const dir = resolve(project, m[1]);
-    if (dir === common || dir.startsWith(common + sep)) continue;
-    if (existsSync(dir)) for (const f of cSourcesUnder(dir)) files.add(f);
+    if (!existsSync(dir)) continue;
+    const shared = dir === common || dir.startsWith(common + sep);
+    for (const f of cSourcesUnder(dir)) if (!shared || C_HEADER.test(f)) files.add(f);
   }
   for (const m of ini.matchAll(/^\s*\+<(\.\.\/[^>*]+)>/gm)) {
     const f = resolve(project, "src", m[1]);
     if (C_SOURCE.test(f)) files.add(f);
+  }
+  for (const rel of iniListValues(ini, "lib_extra_dirs")) {
+    const dir = resolve(project, rel);
+    if (existsSync(dir)) for (const f of cSourcesUnder(dir)) files.add(f);
   }
   return [...files].sort();
 }
@@ -5629,7 +6370,7 @@ function sscmaIdCalls(firmwareRoot) {
 
 test("F384: the module-id deny reaches every Vision source, and reads code, not comments or strings", () => {
   // The walk: the project tree, headers included, the Vision-only include
-  // directories and the shared TUs the build compiles.
+  // directories, the shared TUs the build compiles and firmware/common whole.
   const sources = visionSources(FIRMWARE);
   const files = sources.map((f) => relative(FIRMWARE, f).split("\\").join("/"));
   const ini = read(join(FIRMWARE, VISION_INI));
@@ -5641,14 +6382,41 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
                       "boards/esp32-c3/pins/pins.h", ...tus]) {
     assert.ok(files.includes(want), `the scan no longer reads ${want}`);
   }
-  // Every include directory an env adds outside firmware/common exists (a
-  // renamed one would otherwise drop out of the scan in silence), and
-  // nothing under firmware/common is read but the TUs the build compiles.
+  // Every include and library directory an env names exists (a renamed one
+  // would otherwise drop out of the scan in silence).
   for (const m of ini.matchAll(/-I\$\{PROJECT_DIR\}\/(\S+)/g)) {
     assert.ok(existsSync(resolve(VISION_FW, m[1])), `canary-vision.ini adds ${m[1]}, which is not there`);
   }
-  assert.deepStrictEqual(files.filter((f) => f.startsWith("common/")).sort(), [...new Set(tus)].sort(),
-    "the scan reads firmware/common beyond the TUs the Vision compiles");
+  const libDirs = iniListValues(ini, "lib_extra_dirs");
+  assert.ok(libDirs.length >= 4, `canary-vision.ini names ${libDirs.length} lib_extra_dirs`);
+  for (const d of libDirs) assert.ok(existsSync(resolve(VISION_FW, d)), `canary-vision.ini's lib_extra_dirs ${d} is not there`);
+  // firmware/common is read whole (F414): every header, which -I../../common
+  // offers every Vision source, and every source, since it is the Vision's
+  // lib_extra_dirs. The library route is live, not hypothetical, for at
+  // least two sources no build_src_filter names: boot_banner.cpp is compiled
+  // for the Vision because firmware/common/boot is a library whose include
+  // directory is firmware/common and main.cpp includes boot/boot_banner.h,
+  // and securacv_ota.cpp because firmware/common/ota is an Arduino library
+  // (library.properties, src/) and ota_mgr.cpp includes securacv_ota.h.
+  const common = cSourcesUnder(join(FIRMWARE, "common")).map((f) => relative(FIRMWARE, f).split("\\").join("/"));
+  assert.ok(common.filter((f) => C_HEADER.test(f)).length > 100, `firmware/common holds ${common.length} sources`);
+  assert.deepStrictEqual(files.filter((f) => f.startsWith("common/")), [...common].sort(),
+    "the scan must read every source under firmware/common, the Vision's -I and lib_extra_dirs directory");
+  assert.ok(new Set(libDirs.map((d) => resolve(VISION_FW, d))).has(join(FIRMWARE, "common")),
+    "the Vision's lib_extra_dirs no longer names firmware/common: say what the scan reads instead");
+  assert.strictEqual(JSON.parse(read(join(FIRMWARE, "common/boot/library.json"))).build.includeDir, "..");
+  assert.match(read(join(VISION_FW, "src/main.cpp")), /^#include "boot\/boot_banner\.h"$/m,
+    "the Vision no longer includes boot/boot_banner.h: say how boot_banner.cpp reaches it, or that it does not");
+  assert.ok(files.includes("common/boot/boot_banner.cpp"), "the scan no longer reads the library source the Vision links");
+  assert.ok(existsSync(join(FIRMWARE, "common/ota/library.properties")), "firmware/common/ota is no longer an Arduino library");
+  assert.match(read(join(VISION_FW, "src/net/ota_mgr.cpp")), /^#include "securacv_ota\.h"/m,
+    "the Vision no longer includes securacv_ota.h: say how securacv_ota.cpp reaches it, or that it does not");
+  assert.ok(!tus.includes("common/ota/src/securacv_ota.cpp") && files.includes("common/ota/src/securacv_ota.cpp"),
+    "securacv_ota.cpp reaches the Vision as a library source, and the scan reads it");
+  // Nothing from another product's tree: no -I, build_src_filter entry or
+  // lib_extra_dirs reaches firmware/canary or another project.
+  assert.deepStrictEqual(files.filter((f) => !/^(?:projects\/canary-vision|common|configs\/canary-vision|boards)\//.test(f)), [],
+    "the scan reads a file outside the Vision's own tree, its config, its board pins and firmware/common");
   assert.ok(files.filter((f) => f.startsWith("projects/canary-vision/src/")).length > 5, `the scan reads ${files.length} files`);
   // Where the tree names ID( today (vision_mgr.cpp and its header explain
   // why it is never called), it does so in comments: the code has none.
@@ -5687,6 +6455,19 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
     const qualified = plant(`${P}src/vision/vision_mgr.cpp`, "\nauto planted_qualified = &SSCMA::ID ;\nint q = SSCMA::ID(true);\n");
     const config = plant("configs/canary-vision/default/config.h", "\n#define PLANTED_ID() (AI.ID())\n");
     const shared = plant(tus[0], "\nint planted_shared(SSCMA& m) { return m.ID(); }\n");
+    // F414: a header under firmware/common the Vision includes (wifi_mgr.cpp
+    // reads network/wifi_join_policy.h), and the two library sources the
+    // build links through lib_extra_dirs. Before F414 the scan read none of
+    // these.
+    assert.match(read(join(mirror, `${P}src/net/wifi_mgr.cpp`)), /#include "network\/wifi_join_policy\.h"/);
+    const sharedHeader = plant("common/network/wifi_join_policy.h", "\ninline int planted_policy(SSCMA* ai) { return ai->ID(); }\n");
+    const library = plant("common/boot/boot_banner.cpp", "\nint planted_banner() { return AI.ID(); }\n");
+    const otaLibrary = plant("common/ota/src/securacv_ota.cpp", "\nint planted_ota() { return AI.ID(); }\n");
+    // And a file no Vision build reaches (firmware/canary is the flagship's
+    // tree: no -I, build_src_filter entry or lib_extra_dirs names it) is not
+    // read, so a call there is not this deny's to find.
+    mkdirSync(join(mirror, "canary/lib/planted"), { recursive: true });
+    writeFileSync(join(mirror, "canary/lib/planted/planted.h"), "inline int planted_flagship() { return AI.ID(); }\n");
     // One digit separator per line: the old scan opened a character literal
     // at it and blanked the rest of that line, the call after it included.
     const separator = plant(`${P}src/main.cpp`, "\nstatic int planted_sep = 1'000; static int planted_after = AI.ID();\n");
@@ -5695,7 +6476,7 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
     plant(`${P}src/main.cpp`, "\n// AI.ID() is never called here\n/* nor AI.ID( */\nstatic const char* k_planted = \"AI.ID()\";\n" +
       "static const char* k_raw = R\"x(AI.ID() and \"quotes\")x\";\nstatic const char k_c = 'I'; // ID(\n" +
       "// a comment that runs on \\\n   AI.ID(); still the comment\n");
-    assert.deepStrictEqual(sscmaIdCalls(mirror).sort(), [arrow, header, main, qualified, config, shared, separator, hexSeparator, prefix].sort(),
+    assert.deepStrictEqual(sscmaIdCalls(mirror).sort(), [arrow, header, main, qualified, config, shared, sharedHeader, library, otaLibrary, separator, hexSeparator, prefix].sort(),
       "the scan must find each planted call where it was planted, and nothing in a comment or a string");
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -5734,9 +6515,11 @@ test("Vision module proof: the desktop reads module_ok and the firmware's own bo
   // identifier: no AI.ID() call in any form, in vision_mgr.cpp or in any
   // other source the Vision firmware builds from as canary-vision.ini names
   // them (the project's src/, include/ and secrets/, its config and board
-  // pins, and the firmware/common TUs it compiles; the shared headers under
-  // firmware/common are not read). The F384 test plants calls to prove the
-  // scan reaches each kind of file and reads only code.
+  // pins, and the whole of firmware/common: its shared headers, the TUs a
+  // build_src_filter compiles and the library sources lib_extra_dirs offers
+  // the build, F414). The F384 test plants calls to prove the scan reaches
+  // each kind of file, a shared header and a library source included, and
+  // reads only code.
   assert.ok(!/\bAI\.ID\s*\(/.test(mgr), "vision_mgr.cpp calls AI.ID() again");
   assert.deepStrictEqual(sscmaIdCalls(FIRMWARE), [],
     "the Vision firmware calls the SSCMA module's ID() again — its id is a per-unit identifier this design never reads");

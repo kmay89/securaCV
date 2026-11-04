@@ -154,6 +154,36 @@ def test_memory_free_reading_takes_a_non_finite_number_as_no_reading():
     assert memory_free_reading(json.loads('{"memory_free": Infinity, "free_heap": 4096}')) == 4096
 
 
+def test_memory_free_reading_takes_a_bool_as_no_reading():
+    """A JSON true or false is not a byte count: int() read them as 1 and 0
+    bytes free, which both the Health sensor and Memory Critical showed as
+    critical (sweep HA53). A bool is skipped like junk, so the other
+    spelling is read, else None."""
+    for raw in ('{"memory_free": true}', '{"memory_free": false}', '{"free_heap": true}'):
+        body = json.loads(raw)
+        assert memory_free_reading(body) is None, raw
+        assert memory_free_bytes(body) == 0, raw
+    assert memory_free_reading(json.loads('{"memory_free": true, "free_heap": 4096}')) == 4096
+    # A number is still a number, in either spelling and as a numeric string.
+    assert memory_free_reading({"memory_free": 1}) == 1
+    assert memory_free_reading({"free_heap": "1023"}) == 1023
+
+
+def test_memory_free_reading_takes_a_negative_count_as_no_reading():
+    """Free heap is unsigned in both firmware (uint32_t, the WAP publishing
+    it with %lu), so a negative count is not one a unit sends: it is skipped
+    like junk, not read as low memory on both entities. The sign is read
+    before int() truncates, so -0.5 is not 0 bytes free."""
+    for raw in ('{"memory_free": -1}', '{"free_heap": -1}', '{"memory_free": -0.5}',
+                '{"memory_free": "-1"}', '{"free_heap": -1e9}'):
+        body = json.loads(raw)
+        assert memory_free_reading(body) is None, raw
+        assert memory_free_bytes(body) == 0, raw
+    assert memory_free_reading(json.loads('{"memory_free": -1, "free_heap": 512}')) == 512
+    assert memory_free_reading({"memory_free": 0}) == 0
+    assert memory_free_reading({"memory_free": 0.5}) == 0
+
+
 def test_battery_percent_reads_both_firmware_spellings():
     # canary-wap spelling: trusted with or without presence info.
     assert battery_percent({"battery": 88}) == 88

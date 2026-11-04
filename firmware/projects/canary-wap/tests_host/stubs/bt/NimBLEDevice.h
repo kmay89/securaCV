@@ -47,7 +47,12 @@
  * lets FULL proceed and answers OVERFLOW by ble_gap_unpair_oldest_peer(),
  * which goes through ble_gap_unpair()'s busy guard like deleteBond(). The
  * stack persists a bond before it reports the link's authentication, so a
- * test pairs a phone through pairing_starts() and persist_bond() first. */
+ * test pairs a phone through pairing_starts() and persist_bond() first.
+ *
+ * And since sweep F405, what ble_nearby.h's scan callback reads off an
+ * advertisement (its service UUIDs, its name, its manufacturer data) and
+ * the scan calls its task makes, so the suite drives the real nearby scan
+ * and GET /api/nearby's answer. */
 #ifndef STUB_BT_NIMBLE_DEVICE_H
 #define STUB_BT_NIMBLE_DEVICE_H
 
@@ -458,17 +463,24 @@ class NimBLEAdvertisedDevice {
   std::string name;
   bool connectable = true;
   std::vector<NimBLEUUID> services;   // the service UUIDs it advertises
+  // Its manufacturer data, company id first, as NimBLE hands it over (a
+  // std::string, embedded NULs kept): ble_nearby.h's chirp and fleet-link
+  // beacon (sweep F405's scan path).
+  std::string mfg;
   NimBLEAddress getAddress() const { return address; }
   int getRSSI() const { return rssi; }
   bool haveName() const { return !name.empty(); }
   std::string getName() const { return name; }
   bool isConnectable() const { return connectable; }
+  bool haveServiceUUID() const { return !services.empty(); }
   bool isAdvertisingService(const NimBLEUUID& u) const {
     for (const NimBLEUUID& s : services) {
       if (s == u) return true;
     }
     return false;
   }
+  bool haveManufacturerData() const { return !mfg.empty(); }
+  std::string getManufacturerData(uint8_t = 0) const { return mfg; }
   bool haveAppearance() const { return false; }
   uint16_t getAppearance() const { return 0; }
 };
@@ -500,6 +512,13 @@ class NimBLEScan {
     return true;
   }
   bool isScanning() const { return __atomic_load_n(&scanning_, __ATOMIC_ACQUIRE); }
+  // NimBLE-Arduino 2.x's blocking scan and its result list (ble_nearby.h's
+  // scan task, which the host suite does not run): recorded, nothing heard.
+  NimBLEScanResults getResults(uint32_t, bool = false) {
+    host_sim::note("scan_results");
+    return NimBLEScanResults();
+  }
+  void clearResults() {}
  private:
   NimBLEScanCallbacks* cb_ = nullptr;
   bool scanning_ = false;

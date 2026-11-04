@@ -42,7 +42,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .const import event_type_metadata
+from .const import event_type_metadata, normalize_event_type
 
 # Verify-dict reasons (async_record_verify) that mean "publishes without a
 # checkable signature" rather than "signature failed".
@@ -134,6 +134,32 @@ def _spoken_label(event_type: Any) -> str:
     if label == event_type:
         label = label.replace("_", " ")
     return label[:1].lower() + label[1:]
+
+
+def _said_label(event_type: Any, *, sentence_start: bool = False) -> str:
+    """An event type's label as the last-event answer says it.
+
+    A type the dictionary lists says its label exactly as written ("Tamper
+    detected", mid-sentence too, as it always has); so does no type at all
+    (the dictionary's "Unknown"). A type it does not list says its own id
+    in words, never an underscore (sweep HA42: it was spoken raw,
+    "daily_summary, within ..."): a Canary's snake_case id with each run of
+    underscores read as one space, and the kernel's CamelCase variant
+    (``HeldSummary``, from a kernel newer than this integration) first
+    folded the way the dictionary looks it up (normalize_event_type), so
+    the two spellings of one type are said alike, "held summary". The first
+    letter is raised (to its titlecase) only where it starts the sentence;
+    mid-sentence a snake_case id keeps its own capitals.
+    """
+    label = event_type_metadata(event_type)["label"]
+    if label != event_type:
+        return label
+    text = label if "_" in label or label.islower() else (normalize_event_type(label) or "")
+    words = " ".join(text.replace("_", " ").split())
+    if not words:
+        # Underscores and nothing else name no type: said as none is.
+        return event_type_metadata(None)["label"]
+    return words[:1].title() + words[1:] if sentence_start else words
 
 
 def _snake(event_type: Any) -> str:
@@ -668,18 +694,24 @@ def speak_last_event(brief: dict[str, Any]) -> str:
     kernel_event = brief.get("kernel_latest_event")
 
     if canary:
-        label = event_type_metadata(canary.get("event_type"))["label"]
+        canary_type = canary.get("event_type")
+        label = _said_label(canary_type, sentence_start=True)
         when = ago_phrase(brief["now"] - canary["received_at"])
         speech = f"{label}, {when}, from Canary {canary['device_id']}."
         speech += _canary_trust_clause(canary)
         if kernel_event:
-            kernel_label = event_type_metadata(kernel_event.get("event_type"))["label"]
-            if kernel_label != label:
+            kernel_label = _said_label(kernel_event.get("event_type"))
+            # Like with like: both labels as said mid-sentence, each spelling
+            # read into the same words, so a type the dictionary does not
+            # list is not named twice for the sentence-start capital on one
+            # side, or for the Canary's snake_case beside the kernel's
+            # CamelCase.
+            if kernel_label != _said_label(canary_type):
                 speech += f" The kernel log's latest event is {kernel_label}."
         return speech
 
     if kernel_event:
-        label = event_type_metadata(kernel_event.get("event_type"))["label"]
+        label = _said_label(kernel_event.get("event_type"), sentence_start=True)
         return f"{label} — the latest event in the kernel log."
 
     return "No witness events since the hub started listening."

@@ -64,12 +64,33 @@
 // the old code's shape (the sweep's F360 entry lists each change), the key
 // cases fail.
 //
+// And the stored TLS certificate fails closed the same way (sweep F404).
+// tls_load_from_nvs() checked both lengths and then dropped both getBytes()
+// answers, so a refused read handed mbedTLS what the buffer held, and its
+// one false meant "no certificate": init_tls_cert() then made a new
+// certificate on a build that can, and stored it over the one whose pin the
+// phones hold. Now it answers KeyLoad: Absent only for a session that opened
+// with neither entry stored; a session that did not open, half a pair, a
+// length malloc cannot hold and a read that answered fewer bytes than its
+// length are Refused, with both buffers zeroed and freed; and init_tls_cert()
+// makes a certificate only on Absent. Cut verbatim (with secure_zero(),
+// hex_to_str(), tls_free_buffers(), tls_store_to_nvs() and the pin's
+// helpers) over the same fake NVS, whose read can refuse one entry of the
+// pair (read_key), and a counting allocator that poisons every buffer and
+// checks it is all zeros when freed. Against the old load, the read and
+// allocation cases fail: the old code serves the buffer or stores a new
+// certificate over the stored one.
+//
 // Build/run: make -C firmware/projects/canary-wap/tests_host run
+
+#include <dirent.h>
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -118,6 +139,7 @@ struct DeviceIdentity {
   bool key_is_new;
   bool key_refused;
   bool first_boot;
+  char fingerprint_hex[17];   // init_tls_cert()'s CN line (F404)
 };
 static DeviceIdentity g_device;
 static int g_keygens = 0;
@@ -173,6 +195,105 @@ static void load_stamp() {
 #include "test_wap_first_boot_nvs_stamp.inc"
 }
 }  // namespace selftest
+
+// ── canary_wap.ino's stored TLS certificate, cut verbatim (F404) ────────
+// The cut's malloc() and free() go through a counting allocator: every
+// buffer starts as 0xCD poison (so a buffer the load never wrote is not
+// zero by accident), the allocation numbered fail_at since reset() fails (a
+// length malloc cannot hold), and a free counts a buffer that still holds a
+// nonzero byte, or one this allocator did not hand out.
+namespace host_alloc {
+std::map<void*, size_t> live;   // handed out, not yet freed
+int made = 0;                   // allocations asked for since reset()
+int fail_at = 0;                // the one that fails (1-based; 0: none)
+int frees = 0;
+int freed_unzeroed = 0;
+int foreign_frees = 0;
+static void reset() {
+  made = fail_at = frees = freed_unzeroed = foreign_frees = 0;
+}
+}  // namespace host_alloc
+static void* host_malloc(size_t n) {
+  if (++host_alloc::made == host_alloc::fail_at) return nullptr;
+  void* p = std::malloc(n == 0 ? 1 : n);
+  if (p != nullptr) {
+    std::memset(p, 0xCD, n);
+    host_alloc::live[p] = n;
+  }
+  return p;
+}
+static void host_free(void* p) {
+  if (p == nullptr) return;
+  host_alloc::frees++;
+  auto it = host_alloc::live.find(p);
+  if (it == host_alloc::live.end()) {
+    host_alloc::foreign_frees++;
+    return;
+  }
+  const uint8_t* b = static_cast<const uint8_t*>(p);
+  for (size_t i = 0; i < it->second; i++) {
+    if (b[i] != 0) {
+      host_alloc::freed_unzeroed++;
+      break;
+    }
+  }
+  host_alloc::live.erase(it);
+  std::free(p);
+}
+// The test's own release, with no zero check (the next boot's RAM).
+static void host_release(uint8_t*& p) {
+  if (p != nullptr) {
+    host_alloc::live.erase(p);
+    std::free(p);
+  }
+  p = nullptr;
+}
+
+// The sketch's TLS globals the cut reads and writes.
+static bool g_tls_cert_persisted = false;
+static uint8_t* g_tls_cert_der = nullptr;
+static size_t g_tls_cert_der_len = 0;
+static uint8_t* g_tls_key_der = nullptr;
+static size_t g_tls_key_der_len = 0;
+static char g_tls_cert_fp_hex[65] = {0};
+
+// The pin's hash: a stand-in that folds the bytes (test_wap_sha_fail.cpp
+// runs the sketch's real SHA-256 and its failures); g_sha_fails makes it
+// refuse, as a failed hash does.
+static bool g_sha_fails = false;
+static bool sha256_raw(const uint8_t* data, size_t n, uint8_t out[32]) {
+  for (size_t i = 0; i < 32; i++) out[i] = (uint8_t)(i * 29 + n);
+  for (size_t i = 0; i < n; i++) out[i % 32] = (uint8_t)(out[i % 32] * 31 + data[i]);
+  if (g_sha_fails) std::memset(out, 0, 32);
+  return !g_sha_fails;
+}
+
+// The generator: a stand-in that counts its calls and makes a certificate
+// and key of its own bytes (the sketch's runs mbedTLS, seconds of RSA).
+static const size_t kGenCertLen = 300;
+static const size_t kGenKeyLen = 120;
+static int g_certgens = 0;
+static bool tls_generate_self_signed_cert() {
+  ++g_certgens;
+  g_tls_cert_der = static_cast<uint8_t*>(host_malloc(kGenCertLen));
+  g_tls_key_der = static_cast<uint8_t*>(host_malloc(kGenKeyLen));
+  if (g_tls_cert_der == nullptr || g_tls_key_der == nullptr) return false;
+  g_tls_cert_der_len = kGenCertLen;
+  std::memset(g_tls_cert_der, 0x61, kGenCertLen);
+  g_tls_key_der_len = kGenKeyLen;
+  std::memset(g_tls_key_der, 0x62, kGenKeyLen);
+  return true;
+}
+
+// The build that can generate one: the build in which a refusal read as
+// "no certificate" stored a new one over the stored one.
+#define SECURACV_HAS_TLS_CERTGEN 1
+#define malloc host_malloc
+#define free host_free
+#include "test_wap_first_boot_nvs_tls.inc"
+#undef free
+#undef malloc
+#undef SECURACV_HAS_TLS_CERTGEN
 
 // ── A boot, in setup()'s order ──────────────────────────────────────────
 struct BootResult {
@@ -599,6 +720,311 @@ static int test_a_key_that_cannot_be_stored_fails_provisioning() {
   return check_idle();
 }
 
+// ── The stored TLS certificate fails closed (F404) ──────────────────────
+// A stored pair: a certificate of 700 bytes of 0x43 and a key of 200 of
+// 0x4B, in the "securacv" namespace beside the identity key that
+// provisioning stored (init_tls_cert() runs only on an initialized boot).
+static const size_t kCertLen = 700;
+static const size_t kKeyLen = 200;
+static void store_blob(const char* key, size_t len, uint8_t v) {
+  HostFirstBootNvs::Row& r = host_nvs().rows[std::string("securacv/") + key];
+  r.type = 'b';
+  r.bytes.assign(len, v);
+}
+static void tls_unit(bool cert, bool key) {
+  host_nvs().clear();
+  store_key(32, kStoredKey);
+  if (cert) store_blob("tls_cert", kCertLen, 0x43);
+  if (key) store_blob("tls_key", kKeyLen, 0x4B);
+}
+static std::string pin_of(const std::vector<uint8_t>& cert) {
+  uint8_t fp[32];
+  (void)sha256_raw(cert.data(), cert.size(), fp);
+  static const char* d = "0123456789ABCDEF";
+  std::string out;
+  for (uint8_t b : fp) {
+    out += d[b >> 4];
+    out += d[b & 15];
+  }
+  return out;
+}
+
+// One init_tls_cert() as setup() runs it on an initialized boot: RAM gone
+// (the last boot's buffers released), NVS kept, the counters at zero, and
+// the allocation numbered fail_alloc (from 1) refused.
+static int g_tls_puts_before = 0;
+static int g_tls_rw_before = 0;
+static int g_tls_gens_before = 0;
+static bool tls_boot(int fail_alloc = 0) {
+  host_release(g_tls_cert_der);
+  host_release(g_tls_key_der);
+  g_tls_cert_der_len = g_tls_key_der_len = 0;
+  g_tls_cert_persisted = false;
+  std::memset(g_tls_cert_fp_hex, 0, sizeof(g_tls_cert_fp_hex));
+  std::memset(&g_device, 0, sizeof(g_device));
+  std::snprintf(g_device.fingerprint_hex, sizeof(g_device.fingerprint_hex), "7916CA487912FA1B");
+  host_alloc::reset();
+  host_alloc::fail_at = fail_alloc;
+  Serial.all.clear();
+  host_nvs().reset_counts();
+  g_tls_puts_before = host_nvs().puts;
+  g_tls_rw_before = host_nvs().rw_begins;
+  g_tls_gens_before = g_certgens;
+  return init_tls_cert();
+}
+
+// What a refusal leaves: false (setup() keeps HTTPS off), nothing made or
+// written (no read-write session, no put, NVS as it was, so the stored
+// certificate's bytes survive), no certificate or key in RAM, every buffer
+// the load took freed and all zeros when freed, no pin, and the two lines
+// that say why.
+static int check_tls_refused(bool known, const HostFirstBootNvs& before, const std::string& why) {
+  CHECK(!known);
+  CHECK(g_certgens == g_tls_gens_before);
+  CHECK(host_nvs().puts == g_tls_puts_before);
+  CHECK(host_nvs().rw_begins == g_tls_rw_before);
+  CHECK(same_store(before, host_nvs()));
+  CHECK(g_tls_cert_der == nullptr && g_tls_key_der == nullptr);
+  CHECK(g_tls_cert_der_len == 0 && g_tls_key_der_len == 0);
+  CHECK(host_alloc::live.empty());
+  CHECK(host_alloc::freed_unzeroed == 0);
+  CHECK(host_alloc::foreign_frees == 0);
+  CHECK(!g_tls_cert_persisted && g_tls_cert_fp_hex[0] == '\0');
+  CHECK(printed(why.c_str()));
+  CHECK(printed("[TLS] Stored certificate not used (see the certificate line above) - HTTPS off "
+                "this boot, nothing stored over it\n"));
+  CHECK(!printed("[TLS] Loaded certificate from NVS"));
+  CHECK(!printed("Cert fingerprint:"));
+  CHECK(!printed("[TLS] CN:"));
+  return check_idle();
+}
+
+// A stored pair loads whole: the buffers hold its bytes, the pin is its
+// certificate's, it is the one the next boot reloads, and nothing is made
+// or written.
+static int test_a_stored_certificate_loads_unchanged() {
+  tls_unit(true, true);
+  const HostFirstBootNvs before = host_nvs();
+  CHECK(tls_boot());
+  CHECK(g_certgens == g_tls_gens_before);
+  CHECK(host_nvs().puts == g_tls_puts_before && host_nvs().rw_begins == g_tls_rw_before);
+  CHECK(same_store(before, host_nvs()));
+  CHECK(g_tls_cert_der_len == kCertLen && g_tls_key_der_len == kKeyLen);
+  CHECK(std::vector<uint8_t>(g_tls_cert_der, g_tls_cert_der + kCertLen) ==
+        std::vector<uint8_t>(kCertLen, 0x43));
+  CHECK(std::vector<uint8_t>(g_tls_key_der, g_tls_key_der + kKeyLen) ==
+        std::vector<uint8_t>(kKeyLen, 0x4B));
+  CHECK(g_tls_cert_persisted);
+  CHECK(g_tls_cert_fp_hex == pin_of(std::vector<uint8_t>(kCertLen, 0x43)));
+  CHECK(printed("[TLS] Loaded certificate from NVS\n"));
+  CHECK(host_alloc::frees == 0);
+  CHECK(host_nvs().blob_reads == 2);
+  return check_idle();
+}
+
+// Neither entry stored, in a namespace that opened: Absent, the one answer
+// a certificate is made on, and it is stored and pinned.
+static int test_no_stored_certificate_makes_and_stores_one() {
+  tls_unit(false, false);
+  CHECK(tls_boot());
+  CHECK(g_certgens == g_tls_gens_before + 1);
+  CHECK(host_nvs().rows["securacv/tls_cert"].bytes == std::vector<uint8_t>(kGenCertLen, 0x61));
+  CHECK(host_nvs().rows["securacv/tls_key"].bytes == std::vector<uint8_t>(kGenKeyLen, 0x62));
+  CHECK(g_tls_cert_persisted);
+  CHECK(g_tls_cert_fp_hex == pin_of(std::vector<uint8_t>(kGenCertLen, 0x61)));
+  CHECK(printed("[TLS] CN: securacv-7916CA487912FA1B\n"));
+  CHECK(!printed("[TLS] Certificate not loaded"));
+  // The next boot loads the certificate it stored, and makes none.
+  CHECK(tls_boot());
+  CHECK(g_certgens == g_tls_gens_before);
+  CHECK(printed("[TLS] Loaded certificate from NVS\n"));
+  CHECK(g_tls_cert_fp_hex == pin_of(std::vector<uint8_t>(kGenCertLen, 0x61)));
+  return check_idle();
+}
+
+// A session that will not open (Preferences refuses it, the shared
+// handle's lock wait timed out; or NVS refuses every open): Refused.
+// Before, that read as "no certificate", and one was made (and, with the
+// session refused, not stored: HTTPS ran on this boot's certificate).
+static int test_a_certificate_session_that_will_not_open_is_refused() {
+  for (int fault = 0; fault < 2; fault++) {
+    tls_unit(true, true);
+    const HostFirstBootNvs before = host_nvs();
+    (fault ? host_nvs().fail_begin : host_nvs().prefs_begin_fails) = true;
+    const bool known = tls_boot();
+    host_nvs().fail_begin = host_nvs().prefs_begin_fails = false;
+    CHECK(check_tls_refused(known, before,
+                            "[TLS] Certificate not loaded: the NVS session did not open\n") == 0);
+  }
+  return 0;
+}
+
+// Half a pair, either half: Refused, and the half that is there is kept.
+// Before, the half pair read as "no certificate" and a new pair was stored
+// over it.
+static int test_half_a_stored_pair_is_refused() {
+  for (int cert = 0; cert < 2; cert++) {
+    tls_unit(cert == 1, cert == 0);
+    const HostFirstBootNvs before = host_nvs();
+    const bool known = tls_boot();
+    CHECK(check_tls_refused(known, before,
+                            cert ? "[TLS] Certificate not loaded: the certificate is stored without the key\n"
+                                 : "[TLS] Certificate not loaded: the key is stored without the certificate\n") ==
+          0);
+    CHECK(host_nvs().blob_reads == 0);
+  }
+  return 0;
+}
+
+// A length malloc cannot hold, the certificate's or the key's: Refused,
+// with the buffer that was allocated zeroed and freed. Before, the false
+// read as "no certificate" and a new one was stored over the stored one.
+static int test_a_certificate_with_no_memory_for_it_is_refused() {
+  for (int fail_at = 1; fail_at <= 2; fail_at++) {
+    tls_unit(true, true);
+    const HostFirstBootNvs before = host_nvs();
+    const bool known = tls_boot(fail_at);        // the load's are the boot's first two
+    CHECK(check_tls_refused(known, before,
+                            "[TLS] Certificate not loaded: no memory for it (700 and 200 bytes)\n") == 0);
+    CHECK(host_alloc::frees == 1);               // the one that was allocated
+    CHECK(host_nvs().blob_reads == 0);
+  }
+  return 0;
+}
+
+// A read that answers fewer bytes than its length, of the certificate, the
+// key or both: Fails (nothing copied), Garbles (0xA5 written, then 0),
+// Copies (the stored bytes copied, one bit flipped, then 0, as IDF answers
+// a data CRC that failed after it copied) and Short (all but the last
+// byte). Refused, with both buffers zeroed and freed. Before, both answers
+// were dropped and the buffers went to mbedTLS as they were.
+static int test_a_certificate_read_that_falls_short_is_refused() {
+  using R = HostFirstBootNvs::Read;
+  for (R how : {R::Fails, R::Garbles, R::Copies, R::Short}) {
+    for (const char* which : {"", "tls_cert", "tls_key"}) {
+      tls_unit(true, true);
+      host_nvs().read = how;
+      host_nvs().read_key = which;
+      host_nvs().copy_flip_at = 5;
+      host_nvs().copy_flip_mask = 0x10;
+      const HostFirstBootNvs before = host_nvs();
+      const bool known = tls_boot();
+      const bool cert_hit = which[0] == '\0' || std::strcmp(which, "tls_cert") == 0;
+      const bool key_hit = which[0] == '\0' || std::strcmp(which, "tls_key") == 0;
+      const unsigned short_by = how == R::Short ? 1 : 0;
+      const unsigned cert_got = cert_hit ? (how == R::Short ? kCertLen - short_by : 0) : kCertLen;
+      const unsigned key_got = key_hit ? (how == R::Short ? kKeyLen - short_by : 0) : kKeyLen;
+      char why[160];
+      std::snprintf(why, sizeof(why),
+                    "[TLS] Certificate not loaded: the stored pair could not be read "
+                    "(%u of %u and %u of %u bytes)\n",
+                    cert_got, (unsigned)kCertLen, key_got, (unsigned)kKeyLen);
+      host_nvs().read = R::Ok;
+      host_nvs().read_key.clear();
+      CHECK(check_tls_refused(known, before, why) == 0);
+      CHECK(host_alloc::frees == 2);
+      CHECK(host_nvs().blob_reads == 2);
+    }
+  }
+  return 0;
+}
+
+// A pin that did not compute frees the loaded pair through the same
+// helper: both buffers all zeros when freed (the key is secret), nothing
+// written.
+static int test_a_loaded_certificate_whose_pin_fails_is_zeroed() {
+  tls_unit(true, true);
+  const HostFirstBootNvs before = host_nvs();
+  g_sha_fails = true;
+  const bool known = tls_boot();
+  g_sha_fails = false;
+  CHECK(!known);
+  CHECK(same_store(before, host_nvs()));
+  CHECK(g_tls_cert_der == nullptr && g_tls_key_der == nullptr);
+  CHECK(host_alloc::live.empty() && host_alloc::frees == 2 && host_alloc::freed_unzeroed == 0);
+  CHECK(!g_tls_cert_persisted && g_tls_cert_fp_hex[0] == '\0');
+  CHECK(g_certgens == g_tls_gens_before);
+  return check_idle();
+}
+
+// A read fault that leaves the entries in place: the next boot that reads
+// them whole serves the same certificate under the same pin, since the
+// refusal stored nothing. (A corrupt entry is another case, the next test's:
+// IDF erases it, and only it.)
+static int test_a_refused_certificate_is_kept_for_the_next_boot() {
+  tls_unit(true, true);
+  host_nvs().read = HostFirstBootNvs::Read::Fails;
+  CHECK(!tls_boot());
+  host_nvs().read = HostFirstBootNvs::Read::Ok;
+  CHECK(tls_boot());
+  CHECK(g_certgens == g_tls_gens_before);
+  CHECK(g_tls_cert_fp_hex == pin_of(std::vector<uint8_t>(kCertLen, 0x43)));
+  CHECK(printed("[TLS] Loaded certificate from NVS\n"));
+  host_release(g_tls_cert_der);
+  host_release(g_tls_key_der);
+  g_tls_cert_der_len = g_tls_key_der_len = 0;
+  return check_idle();
+}
+
+// A corrupt entry, as IDF answers one (erase_refused: the read copies, the
+// data CRC check refuses, and IDF erases that entry, only that one). One
+// entry corrupt leaves its partner, so the boot that met it is refused and
+// so is every later boot, which reads half a pair: nothing is made or
+// stored, and HTTPS stays off until a full flash erase (the factory reset
+// keeps both entries). Both corrupt: a later boot reads Absent and makes a
+// new certificate, whose pin is not the old one. Today's answer, pinned
+// while what a lone entry should get is undecided (F404's review): refused,
+// in case its partner's lookup missed for one boot only, or replaced, since
+// no certificate can be served under the old pin again.
+static int test_a_corrupt_entry_leaves_its_partner_and_https_off() {
+  using R = HostFirstBootNvs::Read;
+  const std::vector<uint8_t> cert(kCertLen, 0x43);
+  const std::vector<uint8_t> key(kKeyLen, 0x4B);
+  for (const char* which : {"tls_cert", "tls_key"}) {
+    const bool cert_hit = std::strcmp(which, "tls_cert") == 0;
+    tls_unit(true, true);
+    host_nvs().read = R::Copies;
+    host_nvs().read_key = which;
+    host_nvs().erase_refused = true;
+    const bool met = tls_boot();
+    host_nvs().read = R::Ok;
+    host_nvs().read_key.clear();
+    host_nvs().erase_refused = false;
+    CHECK(!met && host_nvs().puts == g_tls_puts_before && g_certgens == g_tls_gens_before);
+    CHECK(printed(cert_hit ? "(0 of 700 and 200 of 200 bytes)" : "(700 of 700 and 0 of 200 bytes)"));
+    CHECK(host_nvs().rows.count("securacv/tls_cert") == (cert_hit ? 0u : 1u));
+    CHECK(host_nvs().rows.count("securacv/tls_key") == (cert_hit ? 1u : 0u));
+    CHECK(cert_hit ? host_nvs().rows["securacv/tls_key"].bytes == key
+                   : host_nvs().rows["securacv/tls_cert"].bytes == cert);
+    for (int later = 0; later < 2; later++) {
+      const HostFirstBootNvs before = host_nvs();
+      const bool known = tls_boot();
+      CHECK(check_tls_refused(known, before,
+                              cert_hit ? "[TLS] Certificate not loaded: the key is stored without the certificate\n"
+                                       : "[TLS] Certificate not loaded: the certificate is stored without the key\n") ==
+            0);
+    }
+  }
+  tls_unit(true, true);
+  host_nvs().read = R::Copies;
+  host_nvs().erase_refused = true;
+  const bool met = tls_boot();
+  host_nvs().read = R::Ok;
+  host_nvs().erase_refused = false;
+  CHECK(!met && host_nvs().puts == g_tls_puts_before);
+  CHECK(host_nvs().rows.count("securacv/tls_cert") == 0 && host_nvs().rows.count("securacv/tls_key") == 0);
+  CHECK(tls_boot());
+  CHECK(g_certgens == g_tls_gens_before + 1);
+  CHECK(host_nvs().rows["securacv/tls_cert"].bytes == std::vector<uint8_t>(kGenCertLen, 0x61));
+  CHECK(g_tls_cert_persisted);
+  CHECK(g_tls_cert_fp_hex == pin_of(std::vector<uint8_t>(kGenCertLen, 0x61)));
+  CHECK(g_tls_cert_fp_hex != pin_of(cert));
+  host_release(g_tls_cert_der);
+  host_release(g_tls_key_der);
+  g_tls_cert_der_len = g_tls_key_der_len = 0;
+  return check_idle();
+}
+
 // ── The "chirp" namespace (F220) ────────────────────────────────────────
 // A boot's chirp reads, in their order: setup()'s chirp_channel::init()
 // (load_settings()), then loop()'s first pass (the self-test stamp). RAM
@@ -824,6 +1250,63 @@ static int test_a_refused_key_halts_the_boot() {
   return 0;
 }
 
+// Nothing else stores a certificate (F404): the one store is
+// init_tls_cert()'s, after the refusal's return and the generator; the one
+// load is init_tls_cert()'s, and setup() calls that once; only the load and
+// the store name the two NVS entries, and no other sketch source names them
+// at all (every .ino, .h, .cpp and .c in the sketch folder is read).
+static int test_only_an_absent_certificate_is_replaced() {
+  const std::string dir = WAP_SKETCH_DIR;
+  const std::string ino = strip_comments(read_file(dir + "/canary_wap.ino"));
+  CHECK(!ino.empty());
+  std::vector<std::string> others;
+  if (DIR* d = opendir(dir.c_str())) {
+    while (dirent* e = readdir(d)) {
+      const std::string n = e->d_name;
+      const size_t dot = n.rfind('.');
+      if (dot == std::string::npos || n == "canary_wap.ino") continue;
+      const std::string ext = n.substr(dot);
+      if (ext == ".ino" || ext == ".h" || ext == ".cpp" || ext == ".c") others.push_back(n);
+    }
+    closedir(d);
+  }
+  CHECK(others.size() > 100);
+  for (const std::string& n : others) {
+    const std::string src = strip_comments(read_file(dir + "/" + n));
+    for (const char* name : {"\"tls_cert\"", "\"tls_key\"", "NVS_KEY_TLS_CERT", "NVS_KEY_TLS_KEY",
+                             "tls_store_to_nvs(", "g_tls_cert_der", "g_tls_key_der"}) {
+      if (src.find(name) != std::string::npos) {
+        std::fprintf(stderr, "  %s names %s\n", n.c_str(), name);
+        CHECK(src.find(name) == std::string::npos);
+      }
+    }
+  }
+  for (const char* fn : {"init_tls_cert(", "tls_load_from_nvs(", "tls_store_to_nvs(",
+                         "tls_generate_self_signed_cert("}) {
+    CHECK(count_of(ino, fn) == 2);               // its definition and its one call
+  }
+  CHECK(body_of(ino, "void setup() {").find("const bool cert_known = init_tls_cert();") !=
+        std::string::npos);
+  const std::string init = body_of(ino, "static bool init_tls_cert() {");
+  const size_t load = init.find("const KeyLoad stored = tls_load_from_nvs();");
+  const size_t loaded = init.find("if (stored == KeyLoad::Loaded) {");
+  const size_t refused = init.find("if (stored != KeyLoad::Absent) {");
+  const size_t refused_ret = init.find("return false;", refused);
+  const size_t gen = init.find("tls_generate_self_signed_cert()");
+  const size_t store = init.find("tls_store_to_nvs()");
+  CHECK(load != std::string::npos && loaded != std::string::npos && refused != std::string::npos);
+  CHECK(gen != std::string::npos && store != std::string::npos);
+  CHECK(load < loaded && loaded < refused && refused < refused_ret && refused_ret < gen && gen < store);
+  CHECK(init.find('}', refused) > refused_ret);  // the return is the refusal block's
+  const size_t named =
+      count_of(body_of(ino, "static KeyLoad tls_load_from_nvs() {"), "NVS_KEY_TLS_") +
+      count_of(body_of(ino, "static bool tls_store_to_nvs() {"), "NVS_KEY_TLS_");
+  CHECK(named == 6);                             // two lengths, two reads, two puts
+  CHECK(count_of(ino, "NVS_KEY_TLS_") == named + 2);   // and the two definitions
+  CHECK(count_of(ino, "\"tls_cert\"") == 1 && count_of(ino, "\"tls_key\"") == 1);
+  return 0;
+}
+
 // The chirp reads (F220): setup() calls chirp_channel::init(), which loads
 // the settings, before loop() runs; the stamp read the cut took is loop()'s;
 // NvsSession's read-only open is the quiet one, and the convenience readers
@@ -877,8 +1360,18 @@ int main() {
   rc |= test_a_key_with_one_byte_set_loads();
   rc |= test_a_refused_boot_keeps_the_key_for_the_next();
   rc |= test_a_key_that_cannot_be_stored_fails_provisioning();
+  rc |= test_a_stored_certificate_loads_unchanged();
+  rc |= test_no_stored_certificate_makes_and_stores_one();
+  rc |= test_a_certificate_session_that_will_not_open_is_refused();
+  rc |= test_half_a_stored_pair_is_refused();
+  rc |= test_a_certificate_with_no_memory_for_it_is_refused();
+  rc |= test_a_certificate_read_that_falls_short_is_refused();
+  rc |= test_a_loaded_certificate_whose_pin_fails_is_zeroed();
+  rc |= test_a_refused_certificate_is_kept_for_the_next_boot();
+  rc |= test_a_corrupt_entry_leaves_its_partner_and_https_off();
   rc |= test_the_boot_runs_these_opens_in_this_order();
   rc |= test_a_refused_key_halts_the_boot();
+  rc |= test_only_an_absent_certificate_is_replaced();
   rc |= test_a_first_boot_logs_no_chirp_line();
   rc |= test_stored_chirp_settings_read_as_before();
   rc |= test_an_nvs_fault_keeps_its_chirp_lines();

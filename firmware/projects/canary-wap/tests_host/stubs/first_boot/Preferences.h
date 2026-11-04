@@ -35,9 +35,9 @@
  *                      the F360 case); Garbles (fills the buffer with 0xA5,
  *                      then answers 0, as IDF fills it before its data CRC
  *                      check refuses; IDF also erases that entry in the
- *                      same read, which this fake does not: what the suite
- *                      holds is that the sketch's key block writes
- *                      nothing); Copies (copies the stored bytes, then
+ *                      same read, which this fake does only with
+ *                      erase_refused: what the suite holds is that the
+ *                      sketch's key block writes nothing); Copies (copies the stored bytes, then
  *                      answers 0: IDF copies the data before its data CRC
  *                      check refuses it, so the buffer can hold a
  *                      well-formed value behind a count of 0; with
@@ -45,7 +45,15 @@
  *                      flipped at copy_flip_at, the flash bit flip the CRC
  *                      caught, the F365 review); Short
  *                      (copies all but the last byte and answers that
- *                      count). */
+ *                      count).
+ *   read_key           when not empty, `read` applies to this key's blob
+ *                      only and every other blob reads Ok: one entry of a
+ *                      pair refused, the other read whole (the TLS
+ *                      certificate and its key, sweep F404).
+ *   erase_refused      Garbles and Copies also erase the entry they refused,
+ *                      as IDF erases an entry whose data CRC check failed
+ *                      (only that entry: its partner in a pair stays), so
+ *                      a later boot finds it gone (F404's review). */
 #ifndef STUB_FIRST_BOOT_PREFERENCES_H
 #define STUB_FIRST_BOOT_PREFERENCES_H
 
@@ -77,6 +85,8 @@ struct HostFirstBootNvs {
   bool prefs_begin_fails = false;      // Preferences refuses every open; IDF does not
   esp_err_t length_fault = ESP_OK;     // IDF's blob lookup fails with this
   Read read = Read::Ok;                // what a blob read does once its lookup succeeded
+  std::string read_key;                // …for this key's blob only (empty: every blob)
+  bool erase_refused = false;          // Garbles/Copies erase the entry, as IDF's CRC refusal does
   size_t copy_flip_at = 0;             // Copies: the byte whose bits flip…
   uint8_t copy_flip_mask = 0;          // …by this mask (0: copied as stored)
   int blob_reads = 0;                  // getBytes() calls
@@ -153,7 +163,10 @@ class Preferences {
     if (len == 0 || buf == nullptr || max_len == 0) return len;
     if (len > max_len) return 0;
     const HostFirstBootNvs::Row* r = find(key);
-    switch (host_nvs().read) {
+    const HostFirstBootNvs::Read how =
+        host_nvs().read_key.empty() || host_nvs().read_key == key ? host_nvs().read
+                                                                  : HostFirstBootNvs::Read::Ok;
+    switch (how) {
       case HostFirstBootNvs::Read::Ok:
         memcpy(buf, r->bytes.data(), len);
         return len;
@@ -161,12 +174,14 @@ class Preferences {
         return 0;
       case HostFirstBootNvs::Read::Garbles:
         memset(buf, 0xA5, len);
+        if (host_nvs().erase_refused) host_nvs().rows.erase(path(key));
         return 0;
       case HostFirstBootNvs::Read::Copies:
         memcpy(buf, r->bytes.data(), len);
         if (host_nvs().copy_flip_at < len) {
           static_cast<uint8_t*>(buf)[host_nvs().copy_flip_at] ^= host_nvs().copy_flip_mask;
         }
+        if (host_nvs().erase_refused) host_nvs().rows.erase(path(key));
         return 0;
       case HostFirstBootNvs::Read::Short:
         memcpy(buf, r->bytes.data(), len - 1);

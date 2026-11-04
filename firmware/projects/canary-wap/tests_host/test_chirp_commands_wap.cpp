@@ -1013,6 +1013,107 @@ void test_a_frame_shows_in_the_tables_after_its_pass() {
   std::printf("PASS a_frame_shows_in_the_tables_after_its_pass\n");
 }
 
+// ── The recent route names an all-clear chirp's category (sweep F307) ───
+
+// The category each template's name places it in (mesh_network.h's
+// ranges: authority 0x00-0x0F up to mutual aid 0x40-0x4F, all clear
+// 0x80-0x8F), by a switch with no default: -Wswitch (in -Wall, an error in
+// this build) fails the compile on a TPL_* this list does not place.
+// TPL_INVALID is no template.
+bool named_category(cc::ChirpTemplate t, cc::ChirpCategory* out) {
+  switch (t) {
+    case cc::TPL_AUTH_POLICE_ACTIVITY:
+    case cc::TPL_AUTH_HEAVY_RESPONSE:
+    case cc::TPL_AUTH_ROAD_BLOCKED_LE:
+    case cc::TPL_AUTH_HELICOPTER:
+      *out = cc::CHIRP_CAT_AUTHORITY;
+      return true;
+    case cc::TPL_INFRA_POWER_OUT:
+    case cc::TPL_INFRA_WATER_ISSUE:
+    case cc::TPL_INFRA_GAS_SMELL:
+    case cc::TPL_INFRA_INTERNET_DOWN:
+    case cc::TPL_INFRA_ROAD_CLOSED:
+      *out = cc::CHIRP_CAT_INFRA;
+      return true;
+    case cc::TPL_EMERG_FIRE_VISIBLE:
+    case cc::TPL_EMERG_MEDICAL_SCENE:
+    case cc::TPL_EMERG_MULTIPLE_AMBULANCE:
+    case cc::TPL_EMERG_EVACUATION:
+    case cc::TPL_EMERG_SHELTER_IN_PLACE:
+      *out = cc::CHIRP_CAT_EMERGENCY;
+      return true;
+    case cc::TPL_WX_SEVERE_WARNING:
+    case cc::TPL_WX_TORNADO:
+    case cc::TPL_WX_FLOOD:
+    case cc::TPL_WX_LIGHTNING_CLOSE:
+      *out = cc::CHIRP_CAT_WEATHER;
+      return true;
+    case cc::TPL_AID_WELFARE_CHECK:
+    case cc::TPL_AID_SUPPLIES_NEEDED:
+    case cc::TPL_AID_OFFERING_HELP:
+      *out = cc::CHIRP_CAT_MUTUAL_AID;
+      return true;
+    case cc::TPL_CLR_RESOLVED:
+    case cc::TPL_CLR_SAFE:
+    case cc::TPL_CLR_FALSE_ALARM:
+      *out = cc::CHIRP_CAT_ALL_CLEAR;
+      return true;
+    case cc::TPL_INVALID:
+      return false;
+  }
+  return false;   // an id no enumerator names (0x04, the reserved one, among them)
+}
+
+// GET /api/chirp/recent answered `category` from the template id's high
+// nibble. The all-clear templates are 0x80 to 0x82, nibble 8, while
+// CHIRP_CAT_ALL_CLEAR is 5, so category_name() named every all-clear chirp
+// "unknown" (the dashboard printed it under the chirp). The route now asks
+// template_category(), the template table's mapping handle_ack() counts
+// confirmations by (check_wap_loop_commands.py holds chirp_api.h to that
+// expression; ArduinoJson is not on the host). Every one of the 256 ids:
+// the table holds exactly the enumerators, each in its name's range, and
+// template_category() names that range's category; then a neighbor's
+// signed all-clear chirp, through the real receive path and the published
+// copy, reads "all_clear" by the route's expression.
+void test_the_recent_route_names_every_category() {
+  unsigned placed = 0;
+  for (unsigned id = 0; id < 256; ++id) {
+    const cc::ChirpTemplate t = (cc::ChirpTemplate)id;
+    cc::ChirpCategory want = cc::CHIRP_CAT_AUTHORITY;
+    const bool named = named_category(t, &want);
+    CHECK(cc::is_valid_template(t) == named);
+    if (!named) continue;
+    ++placed;
+    const unsigned range = want == cc::CHIRP_CAT_ALL_CLEAR ? 0x80u : (unsigned)want << 4;
+    CHECK((id & 0xF0u) == range);
+    CHECK(cc::template_category(t) == want);
+    CHECK(std::string(cc::category_name(cc::template_category(t))) != "unknown");
+  }
+  CHECK(placed == cc::TEMPLATE_COUNT && placed == 24);
+  const cc::ChirpTemplate clear[] = {cc::TPL_CLR_RESOLVED, cc::TPL_CLR_SAFE, cc::TPL_CLR_FALSE_ALARM};
+  for (cc::ChirpTemplate t : clear) {
+    CHECK(std::string(cc::category_name(cc::template_category(t))) == "all_clear");
+    // What the route's old derivation answered for it.
+    CHECK(std::string(cc::category_name((cc::ChirpCategory)((uint8_t)t >> 4))) == "unknown");
+  }
+
+  boot();
+  enabled_channel();
+  const Neighbor N = neighbor_of(0x61);
+  deliver(N, presence_of(N));
+  deliver(N, witness_of(N, cc::TPL_CLR_SAFE, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x62));
+  deliver(N, witness_of(N, cc::TPL_WX_FLOOD, cc::CHIRP_URG_CAUTION, cc::DETAIL_NONE, 0x63));
+  cc::update();
+  const cc::RecentTable r = recent_read();
+  CHECK(r.count == 2);
+  const cc::RecentView* chirps = r.chirps;   // the route's names for the copy and its rows
+  CHECK(chirps[0].template_id == cc::TPL_CLR_SAFE && chirps[1].template_id == cc::TPL_WX_FLOOD);
+  CHECK(std::string(cc::category_name(cc::template_category(chirps[0].template_id))) == "all_clear");
+  CHECK(std::string(cc::category_name(cc::template_category(chirps[1].template_id))) == "weather");
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS the_recent_route_names_every_category\n");
+}
+
 // Sweep F213: a presence beacon is unsigned, and handle_presence() copied
 // its 31 emoji bytes into the nearby table as sent, so any device in
 // ESP-NOW range put quotes, control bytes or markup (or 31 bytes with no
@@ -1970,6 +2071,248 @@ void test_a_disable_ends_the_mute() {
   std::printf("PASS a_disable_ends_the_mute\n");
 }
 
+// ── A mute counts across the uptime wrap (sweep F361) ───────────────────
+
+// mute() stores its deadline, the time it ran plus the duration, and
+// update(), is_muted(), get_status() and read_status() compared it with
+// millis() as an absolute time. A deadline past uptime's 49.7-day wrap
+// wraps to a small number and read as long past: a 15-minute mute set 5
+// minutes before the wrap was ended by the very pass that ran it (update()
+// drains the command, then ends a mute whose deadline it reads as passed),
+// and is_muted() read false from the start, so handle_witness() would take
+// the chirps it was set to drop and the beacon said listening. Each reader
+// now counts the time to the deadline across the wrap (mute_left_ms()).
+// These tests put the clock back when they end.
+void test_a_mute_set_before_the_wrap_runs_its_length() {
+  const uint32_t clock_was = host_sim::now_ms;
+  constexpr uint32_t MIN_MS = 60000;
+  host_sim::now_ms = 0u - 15u * MIN_MS;
+  boot();
+  enabled_channel();                                   // on, ten minutes present
+  const Neighbor bee = neighbor_of(0x42);
+  deliver(bee, presence_of(bee));
+  const uint32_t before_mute = host_sim::now_ms;
+  CHECK(before_mute == 0u - 5u * MIN_MS + cc::COMMAND_POLL_MS);   // 2^32 - 5 min, and the drain's 5 ms
+  CHECK(rest(mute_of(15)).r.ok);
+  CHECK(cc::g_muted && cc::g_state == cc::CHIRP_MUTED);   // the pass that ran it kept it
+  const uint32_t until = cc::g_mute_until_ms;
+  CHECK(until == before_mute + cc::COMMAND_POLL_MS + 15u * MIN_MS);   // the drain ran on the first sleep
+  CHECK(until < before_mute);                          // the deadline wrapped
+  const uint32_t left = until - host_sim::now_ms;
+  CHECK(left == 15u * MIN_MS);
+
+  // Muted, with its 15 minutes left, live and in the published view.
+  CHECK(cc::is_muted());
+  cc::ChirpStatus live = cc::get_status();
+  CHECK(live.muted && live.mute_remaining_ms == left);
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_MUTED && v.muted && v.mute_remaining_ms == left);
+  CHECK(v.mute_remaining_ms / 1000 == 900);            // the route's mute_remaining_sec
+
+  // A pass keeps it; a neighbor's chirp is dropped; the beacon says deaf.
+  cc::update();
+  CHECK(cc::g_muted && cc::g_state == cc::CHIRP_MUTED);
+  deliver(bee, witness_of(bee, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x43));
+  CHECK(cc::g_recent_chirp_count == 0);
+  size_t before = host_sim::espnow->sent.size();
+  host_sim::now_ms += cc::PRESENCE_INTERVAL_MS;        // the next beacon is due
+  cc::update();
+  CHECK(presence_listening(before) == std::vector<uint8_t>{0});
+  CHECK(status_read().mute_remaining_ms == left - cc::PRESENCE_INTERVAL_MS);
+
+  // Past the wrap: a millisecond before the deadline it still runs.
+  host_sim::now_ms = 2u * MIN_MS;
+  cc::update();
+  CHECK(cc::is_muted() && cc::g_state == cc::CHIRP_MUTED);
+  CHECK(status_read().mute_remaining_ms == until - 2u * MIN_MS);
+  host_sim::now_ms = until - 1;
+  cc::update();
+  CHECK(cc::is_muted() && cc::get_status().mute_remaining_ms == 1);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_MUTED && v.muted && v.mute_remaining_ms == 1);
+
+  // At it, the mute is over, and the pass ends it.
+  host_sim::now_ms = until;
+  CHECK(!cc::is_muted() && cc::get_status().mute_remaining_ms == 0);
+  CHECK(status_read().mute_remaining_ms == 0);          // counted at the read, before the pass
+  before = host_sim::espnow->sent.size();
+  host_sim::now_ms = until + cc::PRESENCE_INTERVAL_MS;  // a beacon due on the pass that ends it
+  cc::update();
+  CHECK(!cc::g_muted && cc::g_state == cc::CHIRP_ACTIVE);
+  v = status_read();
+  CHECK(v.state == cc::CHIRP_ACTIVE && !v.muted && v.mute_remaining_ms == 0);
+  CHECK(presence_listening(before) == std::vector<uint8_t>{1});
+  deliver(bee, presence_of(bee));
+  deliver(bee, witness_of(bee, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x44));
+  CHECK(cc::g_recent_chirp_count == 1);
+  CHECK(host_sim::httpd_side_effects == 0);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS a_mute_set_before_the_wrap_runs_its_length\n");
+}
+
+// The same count at the clock's edges: a mute of every length the channel
+// offers, set at 2^32 - 1, at 2^32 less exactly 15 minutes and a
+// millisecond either side (a 15-minute deadline at, before and after the
+// wrap), at 0, and at 2^31 + 1 and 2^31 - 1 (where the deadline's sign as an
+// int32 turns), and stepped in 1 ms, 1 s and 10 min passes. The 1 ms passes
+// cover its first two seconds, two seconds about the wrap when the mute
+// runs across it, and two seconds either side of its deadline; the others
+// cover its whole length and two strides past it. At every step, before the
+// pass and after it, is_muted(), get_status() and read_status() say the time
+// left to the deadline (none from the deadline on), and the flag ends
+// exactly once, on the first pass at or past the deadline.
+void test_a_mute_ends_once_at_its_deadline_across_the_wrap() {
+  const uint32_t clock_was = host_sim::now_ms;
+  constexpr uint32_t MIN_MS = 60000;
+  const uint32_t starts[] = {0xFFFFFFFFu, 0u - 15u * MIN_MS - 1u, 0u - 15u * MIN_MS, 0u - 15u * MIN_MS + 1u,
+                             0u, 0x80000001u, 0x7FFFFFFFu};
+  const uint8_t lengths[] = {15, 30, 60, 120};
+  const uint32_t strides[] = {1, 1000, 10u * MIN_MS};
+  unsigned steps = 0;
+  for (uint32_t start : starts) {
+    for (uint8_t minutes : lengths) {
+      const uint32_t dur = minutes * MIN_MS;
+      for (uint32_t stride : strides) {
+        // The offsets from `start` this run visits, in order.
+        std::vector<uint32_t> at;
+        if (stride == 1) {
+          const uint32_t wrap = 0u - start;            // the offset of 2^32 (0 for start 0)
+          for (uint32_t e = 0; e < 2000; ++e) at.push_back(e);
+          if (wrap > 2000 && wrap < dur) {
+            for (uint32_t e = wrap - 1000; e < wrap + 1000; ++e) at.push_back(e);
+          }
+          for (uint32_t e = dur - 2000; e < dur + 2000; ++e) at.push_back(e);
+          std::sort(at.begin(), at.end());
+          at.erase(std::unique(at.begin(), at.end()), at.end());
+        } else {
+          for (uint32_t e = 0; e <= dur + 2 * stride; e += stride) at.push_back(e);
+        }
+
+        host_sim::now_ms = start - MIN_MS;
+        boot();
+        enabled_channel(false);
+        host_sim::now_ms = start;
+        // No mute yet: unmuted at `start`, past 2^31 too (its deadline is 0).
+        CHECK(!cc::is_muted() && cc::get_status().mute_remaining_ms == 0);
+        CHECK(status_read().mute_remaining_ms == 0);
+        CHECK(cc::mute(minutes, nullptr));             // the loop task's command, at `start`
+        CHECK(cc::g_mute_until_ms == start + dur);
+        unsigned ends = 0;
+        uint32_t ended_at = 0;
+        for (uint32_t e : at) {
+          host_sim::now_ms = start + e;
+          const uint32_t want = e < dur ? dur - e : 0;
+          if (cc::is_muted() != (want > 0)) {
+            std::fprintf(stderr, "a %u-minute mute set at %u, %u ms on (stride %u ms): is_muted() %d\n",
+                         (unsigned)minutes, start, e, stride, (int)cc::is_muted());
+          }
+          CHECK(cc::is_muted() == (want > 0));
+          CHECK(cc::get_status().mute_remaining_ms == want);
+          if (e > 0) CHECK(status_read().mute_remaining_ms == want);   // the last pass's copy, counted now
+          const bool was = cc::g_muted;
+          cc::update();
+          if (was && !cc::g_muted) {
+            ++ends;
+            ended_at = e;
+          }
+          CHECK(cc::g_muted == (want > 0));
+          CHECK(cc::is_muted() == (want > 0));
+          const cc::ChirpStatus live = cc::get_status();
+          CHECK(live.muted == (want > 0) && live.mute_remaining_ms == want);
+          const cc::StatusView v = status_read();
+          CHECK(v.muted == (want > 0) && v.mute_remaining_ms == want);
+          CHECK(v.state == (want > 0 ? cc::CHIRP_MUTED : cc::CHIRP_ACTIVE));
+          ++steps;
+        }
+        CHECK(ends == 1);
+        CHECK(ended_at == (dur + stride - 1) / stride * stride);   // the first visited offset at or past dur
+        CHECK(stride == 10u * MIN_MS || ended_at == dur);
+      }
+    }
+  }
+  CHECK(steps > 250000);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS a_mute_ends_once_at_its_deadline_across_the_wrap (%u steps)\n", steps);
+}
+
+// With no mute running the channel reads unmuted at any uptime. The stored
+// deadline is then 0 (a boot, an unmute, a disable) or a deadline that has
+// passed (a mute that ran out, which update() leaves in place), and the
+// difference read as signed says nothing about it: `0 - now` is positive as
+// an int32 for every `now` past 2^31 ms (24.8 days of uptime), and so is a
+// deadline more than 2^31 ms gone. mute_left_ms() counts only while the flag
+// is set; without that, a channel up that long would read muted after any
+// unmute, drop every chirp and beacon "not listening". Read at the sign
+// boundary, between it and the wrap, and at the wrap: never muted, unmuted,
+// disabled and enabled again, and more than 24.8 days after a mute ran out. At each, before and after a pass, is_muted(), get_status() and
+// read_status() say no mute, the pass's beacon says listening, and a
+// neighbor's chirp is taken. These tests put the clock back when they end.
+void test_no_mute_reads_unmuted_past_the_sign_boundary() {
+  const uint32_t clock_was = host_sim::now_ms;
+  constexpr uint32_t MIN_MS = 60000;
+  const uint32_t reads[] = {0x7FFFFFFFu, 0x80000000u, 0x80000001u, 0xC0000000u, 0xFFFFFFFFu};
+  enum How { kNever, kUnmuted, kEnabledAgain, kRanOut, kHows };
+  const char* const names[kHows] = {"never muted", "unmuted", "disabled and enabled again", "a mute that ran out"};
+  uint8_t seed = 0x60;
+  unsigned cases = 0;
+  for (uint32_t at : reads) {
+    for (int how = kNever; how < kHows; ++how) {
+      // On, ten minutes present, twenty minutes before `at`; for a mute that
+      // runs out, 2^31 ms and 15 minutes earlier still, so its deadline is
+      // 2^31 ms and about twenty minutes gone at `at`.
+      const uint32_t lead = cc::PRESENCE_REQUIRED_MS + 20u * MIN_MS;
+      host_sim::now_ms = (how == kRanOut) ? at - 0x80000000u - 15u * MIN_MS - lead : at - lead;
+      boot();
+      enabled_channel();
+      if (how == kUnmuted) {
+        CHECK(rest(mute_of(15)).r.ok && cc::is_muted());
+        CHECK(rest(cmd_of(cc::CHIRP_CMD_UNMUTE)).r.ok);
+        CHECK(!cc::g_muted && cc::g_mute_until_ms == 0);
+      } else if (how == kEnabledAgain) {
+        CHECK(rest(mute_of(120)).r.ok && cc::is_muted());
+        CHECK(rest(cmd_of(cc::CHIRP_CMD_DISABLE)).r.ok);
+        CHECK(rest(cmd_of(cc::CHIRP_CMD_ENABLE)).r.ok);
+        CHECK(!cc::g_muted && cc::g_mute_until_ms == 0 && cc::g_state == cc::CHIRP_ACTIVE);
+      } else if (how == kRanOut) {
+        CHECK(rest(mute_of(15)).r.ok && cc::is_muted());
+        const uint32_t until = cc::g_mute_until_ms;
+        host_sim::now_ms = until;
+        cc::update();                                  // the pass at the deadline ends it
+        CHECK(!cc::g_muted && cc::g_mute_until_ms == until && cc::g_state == cc::CHIRP_ACTIVE);
+        CHECK(at - until > 0x80000000u && at - until < 0x80000000u + lead);   // more than 2^31 ms gone at `at`
+      }
+      host_sim::now_ms = at;
+      for (int pass = 0; pass < 2; ++pass) {
+        const bool im = cc::is_muted();
+        const cc::ChirpStatus live = cc::get_status();
+        const cc::StatusView v = status_read();
+        if (im || live.muted || live.mute_remaining_ms != 0 || v.muted || v.mute_remaining_ms != 0) {
+          std::fprintf(stderr, "%s, read at %u (%s the pass): is_muted() %d, get_status() %u ms, read_status() %u ms\n",
+                       names[how], at, pass == 0 ? "before" : "after", (int)im, live.mute_remaining_ms,
+                       v.mute_remaining_ms);
+        }
+        CHECK(!im && !live.muted && live.mute_remaining_ms == 0);
+        CHECK(!v.muted && v.mute_remaining_ms == 0);
+        CHECK(live.state == cc::CHIRP_ACTIVE && (pass == 0 || v.state == cc::CHIRP_ACTIVE));
+        if (pass == 0) {
+          const size_t before = host_sim::espnow->sent.size();
+          cc::update();                                // a beacon due: twenty minutes since the last
+          CHECK(presence_listening(before) == std::vector<uint8_t>{1});
+        }
+      }
+      const Neighbor nb = neighbor_of(seed++);
+      deliver(nb, presence_of(nb));
+      deliver(nb, witness_of(nb, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x61));
+      CHECK(cc::g_recent_chirp_count == 1);           // taken, not dropped as muted
+      ++cases;
+    }
+  }
+  CHECK(cases == 20);
+  CHECK(host_sim::httpd_side_effects == 0);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS no_mute_reads_unmuted_past_the_sign_boundary (%u cases)\n", cases);
+}
+
 // ── The tiers reset after 24 quiet hours and outlive a disable (F193) ───
 
 // spec 2.5.4: escalating cooldowns, "Reset: 24 hours of no chirps".
@@ -2679,6 +3022,9 @@ const Test kTests[] = {
     {"the_beacon_says_listening_through_a_cooldown", test_the_beacon_says_listening_through_a_cooldown},
     {"a_mute_needs_a_channel_that_is_on", test_a_mute_needs_a_channel_that_is_on},
     {"a_disable_ends_the_mute", test_a_disable_ends_the_mute},
+    {"a_mute_set_before_the_wrap_runs_its_length", test_a_mute_set_before_the_wrap_runs_its_length},
+    {"a_mute_ends_once_at_its_deadline_across_the_wrap", test_a_mute_ends_once_at_its_deadline_across_the_wrap},
+    {"no_mute_reads_unmuted_past_the_sign_boundary", test_no_mute_reads_unmuted_past_the_sign_boundary},
     {"the_tiers_reset_24_quiet_hours_after_the_last_send",
      test_the_tiers_reset_24_quiet_hours_after_the_last_send},
     {"a_send_that_ends_a_quiet_day_counts_from_tier_1", test_a_send_that_ends_a_quiet_day_counts_from_tier_1},
@@ -2702,6 +3048,7 @@ const Test kTests[] = {
     {"a_read_right_after_a_post_shows_what_it_did", test_a_read_right_after_a_post_shows_what_it_did},
     {"the_pass_publishes_what_it_changed", test_the_pass_publishes_what_it_changed},
     {"a_frame_shows_in_the_tables_after_its_pass", test_a_frame_shows_in_the_tables_after_its_pass},
+    {"the_recent_route_names_every_category", test_the_recent_route_names_every_category},
     {"a_beacon_emoji_is_its_session_display", test_a_beacon_emoji_is_its_session_display},
     {"every_session_display_is_five_emoji_in_its_field", test_every_session_display_is_five_emoji_in_its_field},
     {"the_prune_shows_in_the_tables", test_the_prune_shows_in_the_tables},

@@ -31,22 +31,27 @@ TXT:
 
 | `dt` | Display role | What it is |
 |------|--------------|------------|
-| `canary-wap` | witness beacon | GPS + signed event log with its own WiFi hotspot; HTTP API + mDNS |
+| `canary-wap` | witness beacon | GPS + signed event log with its own WiFi hotspot; its own HTTP API + mDNS (not paired from this SPA, see §2) |
 | `canary-vision` | camera witness | On-device person detection; semantic events only, never stores video |
 | `canary-sense` | radar witness | 60 GHz mmWave presence/breathing/heartbeat; no camera, no microphone |
 
-The SPA and WAP-class devices listen for `_securacv._tcp` announcements on the local network. When a new service appears, the listener extracts the hostname (e.g., `canary-a3f7.local`) and can resolve it to a LAN IP.
+The canary-wap listens for `_securacv._tcp` announcements on the local network (a browser cannot, so the SPA learns peers from §2's list). When a new service appears, the listener extracts the hostname (e.g., `canary-a3f7.local`) and can resolve it to a LAN IP.
 
 **How it works on the ESP32 — behavior differs by type:**
 
 - **canary-wap** both advertises its own `_securacv._tcp` service *and*
-  browses for peers, and it serves the HTTP API (including
-  `GET /api/v1/peers`). It is the only variant with an HTTP server.
+  browses for peers, and it runs an HTTP server. That server is the WAP's
+  own API, not the one this SPA pairs with: it serves neither
+  `GET /api/v1/peers` nor `GET /api/v1/info` (see §2).
+- The flagship canary firmware (`firmware/canary`, `dt` `canary`, which has
+  no row above and no card in this SPA) also advertises, browses and runs an
+  HTTP server, and it serves `GET /api/v1/peers` (§2), but not
+  `GET /api/v1/info`.
 - **canary-vision** and **canary-sense** *advertise only*. They run no
   HTTP server and cannot be paired over HTTP; they are onboarded through
   Home Assistant via MQTT discovery (their `broker`/`bport` TXT keys show
-  which broker they use). Peers relayed by a WAP's fleet scan carry their
-  `dt` and `role` so clients can render them correctly.
+  which broker they use). Peers relayed in a device's peer list (§2) carry
+  their `dt` and `role` so clients can render them correctly.
 
 ```
 mdns_hostname: canary-a3f7.local
@@ -59,7 +64,11 @@ The `network.mdns_enabled` config flag controls whether the device participates 
 
 ### 2. Peer List API
 
-Each WAP-class device maintains a list of known peers (gathered by its mDNS fleet scan) and exposes it at `GET /api/v1/peers`. When the SPA connects to one WAP, it can query that device's peer list to discover other Canary devices on the network — including MQTT-only vision/sense sensors, whose `dt`/`role` the WAP relays from their TXT records (the API normalizes `dt` to `device_type`).
+The reference device-api (`device-api/`, the server this SPA ships with) maintains a list of known peers and exposes it at `GET /api/v1/peers`, and the flagship canary firmware (`firmware/canary`, `dt` `canary`) serves the same route from its mDNS browse cache. When the SPA connects to one such device, it can query that device's peer list to discover other Canary devices on the network — including MQTT-only vision/sense sensors, whose `dt`/`role` the device relays from their TXT records (the API normalizes `dt` to `device_type`).
+
+**The canary-wap firmware is not paired from this SPA.** On `GET /api/provisioning-receipt` its 403s, its 409 and the receipt itself carry no `Access-Control-Allow-Origin`, so a browser hides them from this page: the BOOT-tap capture never hears the device answer and ends as "The Canary didn't answer" (recorded in Chromium against a stub that answers the way the sketch does, sweep F355). Past the receipt, the WAP takes its token as `Authorization: Bearer` and never reads `X-Canary-Token`, and it serves neither `GET /api/v1/info` nor `GET /api/v1/peers`. Pair a WAP in the SecuraCV iPhone app, from the recovery kit its dashboard saves (**Settings → Device → Save my recovery kit**) or through its Bluetooth setup, and bring it into Home Assistant, which finds it over MQTT. Its dashboard's own pairing card ("Pair with the Canary Vision app", **Show QR**) points back to this SPA's QR scan, and that QR fails here the way §3's entry does, so it is no way in either.
+
+No firmware in this monorepo serves `GET /api/v1/info` or reads `X-Canary-Token`, so the flagship canary is not paired from this SPA either, though it serves the peer list above. The HTTP pairing this section and §3–§4 describe is the reference device-api's.
 
 **Example flow:**
 
@@ -76,8 +85,11 @@ Each WAP-class device maintains a list of known peers (gathered by its mDNS flee
 3. SPA renders a "Discovered on your network" section on the My Canaries
    view with one card per peer that is not yet in the user's device list,
    badged with the peer's type and a one-line explanation.
-4. The user taps "Pair this Canary". For WAP-class peers the host is
-   pre-filled and pairing proceeds over HTTP (BOOT-tap or token). For
+4. The user taps "Pair this Canary". For an HTTP peer (a reference
+   device-api) the host is pre-filled and pairing proceeds over HTTP
+   (BOOT-tap or token). A canary-wap peer is offered the same button and
+   the same BOOT-tap step today, and against WAP firmware that step cannot
+   complete (above); its card says where a WAP pairs instead. For
    vision/sense peers there is no HTTP pairing — the SPA explains the
    device and points the user to Home Assistant, where the sensor appears
    automatically via MQTT discovery. Each HTTP peer is independently
@@ -100,7 +112,7 @@ The SPA allows the user to manually add a device by entering:
 
 The SPA validates that the entered address resolves to a private-network IP (RFC 1918 or `.local`) before making any request. Public internet addresses are rejected.
 
-After entry, the SPA calls `GET /api/v1/info` with the provided token to verify connectivity and retrieve device metadata.
+After entry, the SPA calls `GET /api/v1/info` with the provided token to verify connectivity and retrieve device metadata. That is the reference device-api's contract: a canary-wap's address and token fail here, since the WAP serves no `/api/v1/info` and reads no `X-Canary-Token` (§2).
 
 ### 4. Provisioning Receipt Import
 
@@ -118,7 +130,7 @@ During physical provisioning (first-time setup), each device generates a JSON pr
 
 Alternative field names `host` (for `base_url`) and `api_token` (for `token`) are also accepted.
 
-The SPA parses the receipt, validates the URL is a private-network address, and tests the connection before saving.
+The SPA parses the receipt, validates the URL is a private-network address, and tests the connection before saving. A canary-wap's receipt (its recovery kit, or the QR its dashboard shows) fails that test the way §3's entry does; the kit belongs in the SecuraCV iPhone app.
 
 ---
 
@@ -155,3 +167,5 @@ Tokens never leave the browser. They are sent only to the corresponding device's
 When the SPA is served from one device (e.g., `canary-a3f7.local`) and makes cross-origin requests to a peer (e.g., `canary-b1c2.local`), CORS applies. The target device does **not** allowlist peers: being in a peer list grants no cross-origin access (a compromised peer could otherwise pivot across the mesh). Instead, the target answers CORS only for its own origin and for origins enrolled by trust-on-pair — plus any private-network origin for the BOOT-gated `/api/provisioning-receipt` endpoint only (see [security.md](security.md), D3).
 
 So for the SPA served from device A to reach device B's API, device B must be paired *from that SPA* once: a physical BOOT-button press on B releases its provisioning receipt to the SPA's origin, and B records that origin as durably allowed from then on.
+
+This is the reference device-api's CORS. The canary-wap firmware sends no `Access-Control-Allow-Origin` on its receipt route's 403, 409 or receipt, and keeps no list of paired origins, which is part of why it is not paired from this SPA (§2).

@@ -14,7 +14,7 @@
       "canary-wap"
     ],
     "notes": "Primary witness board: camera, PDM mic, microSD, 8 MB octal PSRAM. External u.FL antenna required — WiFi and BLE (pairing + offline console) need it seated; without it Bluetooth may not work at all.",
-    "thermal_notes": "Camera PEEK + Wi-Fi bursts are the heat sources; sustained capture warms the sensor (image noise). Runtime gauge is the die-temp watchdog (FEATURE_DIAGNOSTICS). In enclosures, give the camera ribbon and u.FL antenna airspace and derate PEEK cadence before the watchdog throttles.",
+    "thermal_notes": "Camera PEEK + Wi-Fi bursts are the heat sources; sustained capture warms the sensor (image noise). The runtime gauge depends on the tree: on the canary it is the passive thermal watchdog (FEATURE_THERMAL_WATCHDOG), which records die temperature and never actuates; on the canary-wap it is the die-temp read in sys_monitor.h (FEATURE_SYS_MONITOR), which also sheds PEEK when critically hot. In enclosures, give the camera ribbon and u.FL antenna airspace and derate PEEK cadence before the camera throttles.",
     "psram_type": "octal"
   },
   {
@@ -31,7 +31,7 @@
       "canary-vision"
     ],
     "notes": "Grove Vision AI V2 Kit pairing; external u.FL antenna required.",
-    "thermal_notes": "Light duty — inference runs on the Vision AI module, not this host. Die-temp watchdog covers it; no special measures.",
+    "thermal_notes": "Light duty — inference runs on the Vision AI module, not this host; no special measures. canary-vision reads no die temperature, so there is no runtime gauge.",
     "psram_type": "octal"
   },
   {
@@ -97,7 +97,7 @@
       "canary"
     ],
     "notes": "The default Amazon 'ESP32-S3 camera kit' a US newcomer receives. Same S3 base as the flagship, camera on the Espressif S3-EYE reference map (entirely different pins — hence its own OTA product). microSD slot is 1-bit SDMMC only (no DAT3/CS routed), so the SPI-mode storage driver can't use it: SD off until an SDMMC path exists. No mic. Promote with a hardware test report.",
-    "thermal_notes": "Same S3 heat sources as the flagship (camera PEEK + Wi-Fi bursts) on a larger PCB with more copper — runs cooler than the XIAO. Die-temp watchdog covers it.",
+    "thermal_notes": "Same S3 heat sources as the flagship (camera PEEK + Wi-Fi bursts) on a larger PCB with more copper — runs cooler than the XIAO. The canary's passive thermal watchdog (FEATURE_THERMAL_WATCHDOG) covers it.",
     "psram_type": "octal"
   },
   {
@@ -292,7 +292,7 @@
     "tier_evidence": "",
     "used_by": [],
     "notes": "Nightstand Line candidate (battery/pocket glance node): ST7789V2 240x280 SPI (20-px ROW offset), QMI8658 IMU + PCF85063 RTC on a shared I2C bus, 3.7 V MX1.25 battery with onboard charging, and a vendor-marketed 'AI speech' path (ES8311 codec + mic — treat as MIC-BEARING, mic off by default, until the schematic proves otherwise; same posture as the 4.3C). PARTIAL pin map: the vendor wiki was unreachable from the CI sandbox, so pins.h commits only chip facts + the family-shared ST7789 block and marks the rest -1 VERIFY (boards/waveshare-esp32c6-lcd169/README.md). Not in any build env yet.",
-    "thermal_notes": "Battery charging warms the PCB next to the PCF85063 crystal (clock drift) and the QMI8658 (bias) — charge with the backlight dimmed and don't calibrate the IMU mid-charge. Die-temp watchdog is the runtime gauge."
+    "thermal_notes": "Battery charging warms the PCB next to the PCF85063 crystal (clock drift) and the QMI8658 (bias) — charge with the backlight dimmed and don't calibrate the IMU mid-charge. No build uses this board yet, and canary-display, where an env for it would land, reads no die temperature, so there is no runtime gauge."
   },
   {
     "id": "waveshare-esp32s3-lcd147",
@@ -308,7 +308,7 @@
       "canary-display"
     ],
     "notes": "Nightstand Line display (USB-A stick): SAME ST7789 172x320 panel as the C6 sibling but every display pin differs; 1x WS2812 ambient LED (GPIO38, RMT), dual-core S3 with 8 MB PSRAM, native USB. Wired as the canary-display 'nightstand' flavor (env canary-display-nightstand-s3): display_1in47.cpp HAL + portrait_ui.cpp + ambient_led.cpp. Bench validation pending (docs/hardware/display_nightstand_line.md).",
-    "thermal_notes": "USB-A stick body: S3 + octal PSRAM heat-soak into a small stick that plugs into an already-warm port. The double-buffered animation budget is the throttle knob; die-temp watchdog is the gauge.",
+    "thermal_notes": "USB-A stick body: S3 + octal PSRAM heat-soak into a small stick that plugs into an already-warm port. The double-buffered animation budget is the throttle knob. canary-display reads no die temperature, so there is no runtime gauge; derate by design margin.",
     "psram_type": "quad"
   },
   {
@@ -342,7 +342,7 @@
       "canary-display"
     ],
     "notes": "Nightstand Line big glass: 7\" 800x480 RGB565 parallel + GT911 5-point touch + CH422G IO expander (backlight + touch-reset) — electrically the 4.3\" Canary Dash at 7\", so it reuses the dash RGB HAL/GT911/CH422G. Requires the 8 MB octal PSRAM for the 768 KB framebuffer. Wired as TWO canary-display products on the same glass: the wall 'dash7' flavor (env canary-display-dash7 — dash config + pins only, same HAL/UI) and the bedside 'nightstand7' flavor (env canary-display-nightstand7 — same RGB HAL/GT911/CH422G, its own clock-hero face, red night clock focus, and the lantern night light). Full 5-point touch gestures + bench validation pending (docs/hardware/display_nightstand_line.md).",
-    "thermal_notes": "The hottest board in the fleet: a 7\" backlight plus continuous 800x480 RGB refresh out of octal PSRAM. Backlight duty (via the CH422G) is the main relief valve and the die-temp watchdog (FEATURE_DIAGNOSTICS) the gauge; keep the GT911 glass out of direct sun — capacitive touch drifts when hot.",
+    "thermal_notes": "The hottest board in the fleet: a 7\" backlight plus continuous 800x480 RGB refresh out of octal PSRAM. Backlight duty (via the CH422G) is the only relief valve. canary-display reads no die temperature, so there is no runtime gauge. Keep the GT911 glass out of direct sun — capacitive touch drifts when hot.",
     "psram_type": "octal"
   },
   {

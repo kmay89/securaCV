@@ -98,7 +98,16 @@ test("AP channel, client cap and server ports are the sketch's own (F277)", () =
   for (const line of softAps) {
     assert.match(line, /,\s*AP_CHANNEL,\s*false,\s*AP_MAX_CLIENTS\);/, "a SoftAP raised without the two constants");
   }
-  assert.strictEqual(data.ap.https_port, num(/ssl_config\.httpd\.server_port\s*=\s*(\d+);/, "the HTTPS server's port"));
+  // The HTTPS port is the HTTPS_PORT constant, which the HTTPS config's one
+  // port_secure write takes; httpd_ssl_start() binds port_secure and writes
+  // it over httpd.server_port, so the sketch writes no httpd.server_port
+  // (sweep F400).
+  assert.strictEqual(data.ap.https_port, num(/static const int\s+HTTPS_PORT\s*=\s*(\d+);/, "HTTPS_PORT"));
+  const code = ino.split("\n").filter((l) => !/^\s*(\/\/|\/?\*)/.test(l));
+  assert.strictEqual(code.filter((l) => /^\s*ssl_config\.port_secure\s*=\s*HTTPS_PORT;/.test(l)).length, 1,
+    "the HTTPS server's port is not one ssl_config.port_secure = HTTPS_PORT; write");
+  assert.deepStrictEqual(code.filter((l) => /\bhttpd\.server_port\b/.test(l)), [],
+    "the sketch writes ssl_config.httpd.server_port, which httpd_ssl_start() overwrites");
   assert.strictEqual(data.ap.http_port, num(/redirect_config\.server_port\s*=\s*(\d+);/, "the port-80 redirect server's port"));
   assert.strictEqual(data.ap.http_port, num(/[^\w.]config\.server_port\s*=\s*(\d+);/, "the HTTP-only server's port"));
 });
@@ -366,9 +375,9 @@ test("every sandbox events row is one a WAP module commits; the WAP has no panic
 
 // A108 (sweep HA16): the sandbox's Home Assistant lines are the ids the WAP's
 // discovery configs ask for, and the page says when an install shows them:
-// Home Assistant 2025.10 and later applies def_ent_id when it first registers
-// an entity (a _2 on the end when another entity holds that id), an entity
-// registered earlier keeps its id across an upgrade,
+// Home Assistant 2025.10 and later tries to give an entity the def_ent_id id
+// when it first registers it (a _2 on the end when another entity holds that
+// id), an entity registered earlier keeps its id across an upgrade,
 // and an older release, which reads only obj_id, builds the id from the
 // device and entity names. wap.js is a page module (it imports the 3D board
 // lab), so the sentence is read from its source; wap_probe.mjs sees it render.
