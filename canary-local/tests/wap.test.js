@@ -366,9 +366,9 @@ test("every sandbox events row is one a WAP module commits; the WAP has no panic
 
 // A108 (sweep HA16): the sandbox's Home Assistant lines are the ids the WAP's
 // discovery configs ask for, and the page says when an install shows them:
-// Home Assistant 2025.10 and later applies def_ent_id when it first registers
-// an entity (a _2 on the end when another entity holds that id), an entity
-// registered earlier keeps its id across an upgrade,
+// Home Assistant 2025.10 and later tries to give an entity the def_ent_id id
+// when it first registers it (a _2 on the end when another entity holds that
+// id), an entity registered earlier keeps its id across an upgrade,
 // and an older release, which reads only obj_id, builds the id from the
 // device and entity names. wap.js is a page module (it imports the 3D board
 // lab), so the sentence is read from its source; wap_probe.mjs sees it render.

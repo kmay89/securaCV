@@ -3468,7 +3468,8 @@ RETIRED_IN = (
      "registers an entity;",
      "H1's correction says Home Assistant 2025.10 and later tries to give an "
      "entity the id the key names when it first registers it, and adds `_2` "
-     "when another entity already holds that id (HA51)"),
+     "when another entity already holds that id, under its own amendment "
+     "date (2026-11-04, HA51)"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -5931,7 +5932,8 @@ MUST_PASS_IN = [
     ("docs/audit/feature_gaps_2026-09.md",
      "Home Assistant 2025.10 and later tries to give an entity the id the key "
      "names when it first registers it, and adds `_2` when another entity "
-     "already holds that id (HA51); an entity it registered before keeps its id"),
+     "already holds that id *(Amended 2026-11-04, HA51)*; an entity it "
+     "registered before keeps its id"),
 
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
