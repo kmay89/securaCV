@@ -1319,10 +1319,11 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
         # Both firmware spellings for battery ("battery" /
         # "battery_soc") and memory ("memory_free" / "free_heap").
         # memory_free is the reading, or None when the health carries no
-        # number in either key (absent, null, junk, a bool, NaN or an
-        # infinity): no reading is not low memory, as Memory Critical
-        # (binary_sensor.py) reads it. The 0 memory_free_bytes() gives for
-        # that case read critical here and claimed 0 bytes free (sweep HA53).
+        # number in either key (absent, null, junk, a bool, a negative
+        # count, NaN or an infinity): no reading is not low memory, as
+        # Memory Critical (binary_sensor.py) reads it. The 0
+        # memory_free_bytes() gives for that case read critical here and
+        # claimed 0 bytes free (sweep HA53).
         battery = battery_percent(data)
         memory_free = memory_free_reading(data)
 

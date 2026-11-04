@@ -1146,12 +1146,16 @@ _MEMORY_READINGS = [
     ("false", '"free_heap": false', "healthy", None, False),
     ("list", '"memory_free": [512]', "healthy", None, False),
     ("object", '"memory_free": {"bytes": 512}', "healthy", None, False),
+    # A negative count: free heap is unsigned in both firmware, so no unit
+    # sends one, and it is no reading rather than low memory.
+    ("-1", '"memory_free": -1', "healthy", None, False),
+    ("-0.5", '"memory_free": -0.5', "healthy", None, False),
+    ("string -1", '"free_heap": "-1"', "healthy", None, False),
     # A reading: a number in either key, memory_free first. A numeric string
     # reads as its number, as the battery's does.
     ("1024", '"memory_free": 1024', "healthy", 1024, True),
     ("1023", '"memory_free": 1023', "critical", 1023, True),
     ("0", '"memory_free": 0', "critical", 0, True),
-    ("-1", '"memory_free": -1', "critical", -1, True),
     ("2**64", f'"memory_free": {2**64}', "healthy", 2**64, False),
     ("string 1024", '"memory_free": "1024"', "healthy", 1024, True),
     ("string 1023", '"memory_free": "1023"', "critical", 1023, True),
@@ -1159,6 +1163,7 @@ _MEMORY_READINGS = [
     ("free_heap only, plenty", '"free_heap": 182000', "healthy", 182000, False),
     ("true beside free_heap", '"memory_free": true, "free_heap": 512', "critical", 512, True),
     ("NaN beside free_heap", '"memory_free": NaN, "free_heap": 512', "critical", 512, True),
+    ("-1 beside free_heap", '"memory_free": -1, "free_heap": 512', "critical", 512, True),
 ]
 
 
@@ -1176,9 +1181,10 @@ def test_the_health_sensor_reads_only_a_memory_number_as_low_memory(
     battery is fine, and its memory_free_bytes attribute claimed 0. It now
     reads memory_free_reading, as Memory Critical does: no reading is not
     low memory, and the attribute is None. A bool is no reading either (int()
-    read `true` as 1 byte free, critical on both). A real number below the
-    threshold still reads critical. Each body follows one that reads the
-    other way, so the state shown is the one this body set."""
+    read `true` as 1 byte free, critical on both), nor is a negative count,
+    which neither firmware can send. A real number below the threshold
+    still reads critical. Each body follows one that reads the other way,
+    so the state shown is the one this body set."""
     wap = _Wap(record, monkeypatch).replay("connect", "running")
     health = wap.entity("health_status")
     memory = wap.entity("tamper_memory_critical")

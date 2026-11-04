@@ -169,6 +169,21 @@ def test_memory_free_reading_takes_a_bool_as_no_reading():
     assert memory_free_reading({"free_heap": "1023"}) == 1023
 
 
+def test_memory_free_reading_takes_a_negative_count_as_no_reading():
+    """Free heap is unsigned in both firmware (uint32_t, the WAP publishing
+    it with %lu), so a negative count is not one a unit sends: it is skipped
+    like junk, not read as low memory on both entities. The sign is read
+    before int() truncates, so -0.5 is not 0 bytes free."""
+    for raw in ('{"memory_free": -1}', '{"free_heap": -1}', '{"memory_free": -0.5}',
+                '{"memory_free": "-1"}', '{"free_heap": -1e9}'):
+        body = json.loads(raw)
+        assert memory_free_reading(body) is None, raw
+        assert memory_free_bytes(body) == 0, raw
+    assert memory_free_reading(json.loads('{"memory_free": -1, "free_heap": 512}')) == 512
+    assert memory_free_reading({"memory_free": 0}) == 0
+    assert memory_free_reading({"memory_free": 0.5}) == 0
+
+
 def test_battery_percent_reads_both_firmware_spellings():
     # canary-wap spelling: trusted with or without presence info.
     assert battery_percent({"battery": 88}) == 88
