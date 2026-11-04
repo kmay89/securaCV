@@ -5502,23 +5502,25 @@ void test_a_cleared_list_stays_cleared_after_a_reboot() {
 // ── A nearby Canary's name prefix (sweep F405) ─────────────────────────
 
 // nearby_prefix_from_name() (ble_nearby_prefix.h): the four bytes after the
-// name prefix, only when all four are ASCII hex digits, upper or lower case
-// as advertised. A quote, a backslash, a control byte, a byte past 0x7f
-// (UTF-8 too), `<!--`, a NUL inside the four, a name too short and one
+// name prefix, only when all four are ASCII hex digits, folded to lowercase
+// as the chirp's and the beacon's "%02x" writes them (sweep F425; F405 kept
+// the advertised case). A quote, a backslash, a control byte, a byte past
+// 0x7f (UTF-8 too), `<!--`, a NUL inside the four, a name too short and one
 // without the prefix are refused, with `out` emptied. Every byte value at
 // each of the four places, the other three hex: the 22 hex digits pass,
-// nothing else. The old scan's substring copy took every one of these
-// names it was long enough for.
+// each as its lowercase digit, nothing else. The old scan's substring copy
+// took every one of these names it was long enough for.
 void test_a_nearby_name_prefix_is_hex_or_refused() {
   struct Case {
     std::string name;
     const char* prefix;   // nullptr: refused
   };
   const Case cases[] = {
-      {"SCV-ABCD", "ABCD"},
+      {"SCV-ABCD", "abcd"},
       {"SCV-abcd", "abcd"},
-      {"SCV-09fF", "09fF"},
-      {"SCV-ABCDEF", "ABCD"},
+      {"SCV-09fF", "09ff"},
+      {"SCV-ABCDEF", "abcd"},
+      {"SCV-7E01", "7e01"},
       {"SCV-1234\"<!--", "1234"},   // past the four: never read, as before
       {"SCV-<!--", nullptr},
       {"SCV-12\"4", nullptr},
@@ -5551,7 +5553,9 @@ void test_a_nearby_name_prefix_is_hex_or_refused() {
       char out[5];
       if (ble_nearby::nearby_prefix_from_name(name.data(), name.size(), BLE_DEVICE_NAME_PREFIX, out)) {
         ++taken;
-        CHECK(isxdigit((int)b) && std::memcmp(out, name.data() + 4, 4) == 0 && out[4] == '\0');
+        std::string lower = name.substr(4, 4);
+        lower[at] = (char)tolower((int)b);
+        CHECK(isxdigit((int)b) && std::memcmp(out, lower.data(), 4) == 0 && out[4] == '\0');
       }
     }
     CHECK(taken == 22);
@@ -5566,10 +5570,11 @@ void test_a_nearby_name_prefix_is_hex_or_refused() {
 // UUID, and GET /api/nearby's answer (buildNearbyJson(), the hand-built
 // String) is read after each one. A name whose four bytes are not all hex
 // digits is counted as a non-Canary and listed nowhere; a hex one is listed
-// under its own four bytes; an advert that carries a fleet-link beacon or a
-// chirp is listed under the prefix that data carries, whatever its name
-// says. Every answer is strict JSON, and every listed prefix is four hex
-// digits. (Before, `SCV-12"4` made the answer one JSON.parse refuses.)
+// under its four digits, lowercase (F425); an advert that carries a
+// fleet-link beacon or a chirp is listed under the prefix that data
+// carries, whatever its name says. Every answer is strict JSON, and every
+// listed prefix is four hex digits. (Before, `SCV-12"4` made the answer one
+// JSON.parse refuses.)
 std::string nearby_answer(json_strict::Value* v) {
   const std::string body = ble_nearby::buildNearbyJson().c_str();
   if (!strict_json(body, v)) std::fprintf(stderr, "GET /api/nearby: %s\n", body.c_str());
@@ -5604,7 +5609,7 @@ void test_a_hostile_nearby_name_never_reaches_the_answer() {
       {"SCV-\x01" "bcd", "", nullptr},
       {"SCV-\xC3\xA9" "ab", "", nullptr},
       {"SCV-abc", "", nullptr},
-      {"SCV-ABCDEF", "", "ABCD"},
+      {"SCV-ABCDEF", "", "abcd"},
       {"SCV-<!--", beacon_mfg, "3c5a"},
       {"SCV-12\"4", chirp_mfg, "7e01"},
   };
@@ -5659,6 +5664,100 @@ void test_a_hostile_nearby_name_never_reaches_the_answer() {
   CHECK(ble_nearby::g_nonCanaryCount == non_canary + 1);
   ble_nearby::g_nearbyMutex = nullptr;
   std::printf("PASS a_hostile_nearby_name_never_reaches_the_answer\n");
+}
+
+// One Canary heard every way it advertises (sweep F425): its name as
+// ble_manager.h builds it ("SCV-" and the last four of hex_to_str()'s
+// uppercase key fingerprint, 'SCV-7E01'), its chirp (device id 7e 01, at
+// the payload's [13..14]), its fleet-link beacon (fp2 7e 01) and the same
+// name in lowercase, in every one of the 24 orders, each advert with the
+// SecuraCV service UUID as the real scan callback hears it. GET
+// /api/nearby lists it once after every advert, and as '7e01' each time;
+// every order fills one slot, discovers one Canary and keeps the four RSSI
+// readings in that slot. A name with a digit that is not hex ('SCV-7G01', 'SCV-7g01') is
+// still a non-Canary and never reaches the answer. Before, the name's
+// uppercase prefix and the chirp's and the beacon's lowercase "%02x" took
+// two slots under strncmp(): 'SCV-7E01' then the chirp listed '7E01' and
+// '7e01'.
+void test_one_canary_heard_by_name_chirp_and_beacon_takes_one_slot() {
+  static HostSemaphore nearby_mutex;
+  uint8_t beacon[FLEET_BEACON_MFG_LEN] = {0xFF, 0xFF};
+  fleet_beacon_build(beacon + 2, 0, 80, 90, 1234, 0x7e, 0x01);
+  uint8_t chirp[CHIRP_PAYLOAD_SIZE + 2] = {0xFF, 0xFF, CHIRP_HEARTBEAT};
+  chirp[CHIRP_PAYLOAD_SIZE] = 0x7e;
+  chirp[CHIRP_PAYLOAD_SIZE + 1] = 0x01;
+  struct Advert {
+    const char* what;
+    std::string name;
+    std::string mfg;
+  };
+  const Advert adverts[] = {
+      {"name", "SCV-7E01", ""},
+      {"chirp", "SCV-7E01", std::string(reinterpret_cast<const char*>(chirp), sizeof chirp)},
+      {"beacon", "SCV-7E01", std::string(reinterpret_cast<const char*>(beacon), sizeof beacon)},
+      {"lowercase name", "SCV-7e01", ""},
+  };
+  auto hear = [](const std::string& name, const std::string& mfg) {
+    NimBLEAdvertisedDevice adv;
+    adv.name = name;
+    adv.mfg = mfg;
+    adv.services.push_back(NimBLEUUID(SCV_SERVICE_UUID));
+    NimBLEScanCallbacks* cb = &ble_nearby::g_scanCallbacks;
+    host_sim::task = "nimble";
+    cb->onResult(&adv);
+    host_sim::task = "loop";
+  };
+  // The one Canary GET /api/nearby lists, and the prefix it lists it under.
+  auto listed_once = [](const std::string& order) {
+    json_strict::Value v;
+    const std::string body = nearby_answer(&v);
+    const json_strict::Value* canaries = v.get("canaries");
+    const bool once = canaries != nullptr && canaries->kind == json_strict::Value::Array &&
+                      canaries->items.size() == 1;
+    if (!once) std::fprintf(stderr, "heard %s; GET /api/nearby: %s\n", order.c_str(), body.c_str());
+    CHECK(once);
+    const json_strict::Value* p = canaries->items[0].get("device_id_prefix");
+    CHECK(p != nullptr && p->kind == json_strict::Value::String);
+    return p->text;
+  };
+  size_t order[] = {0, 1, 2, 3};
+  unsigned orders = 0;
+  do {
+    memset(ble_nearby::g_nearbyCanaries, 0, sizeof ble_nearby::g_nearbyCanaries);
+    ble_nearby::g_nonCanaryCount = 0;
+    ble_nearby::g_beaconsReceived = 0;
+    ble_nearby::g_chirpsReceived = 0;
+    ble_nearby::g_canariesDiscovered = 0;
+    ble_nearby::g_nearbyMutex = &nearby_mutex;
+    std::string heard;
+    std::vector<std::string> prefixes;
+    for (const size_t i : order) {
+      heard += heard.empty() ? adverts[i].what : std::string(", then ") + adverts[i].what;
+      hear(adverts[i].name, adverts[i].mfg);
+      prefixes.push_back(listed_once(heard));
+    }
+    for (const std::string& p : prefixes) {
+      if (p != "7e01") std::fprintf(stderr, "heard %s; listed as %s\n", heard.c_str(), p.c_str());
+      CHECK(p == "7e01");
+    }
+    unsigned used = 0;
+    for (const NearbyCanary& c : ble_nearby::g_nearbyCanaries) {
+      if (!c.active) continue;
+      ++used;
+      CHECK(std::strcmp(c.deviceIdPrefix, "7e01") == 0 && c.rssiCount == 4);
+    }
+    CHECK(used == 1 && ble_nearby::g_canariesDiscovered == 1 && ble_nearby::g_nonCanaryCount == 0);
+    CHECK(ble_nearby::g_chirpsReceived == 1 && ble_nearby::g_beaconsReceived == 1);
+    // Not hex: no Canary, and the one listed stays the only one.
+    hear("SCV-7G01", "");
+    hear("SCV-7g01", "");
+    CHECK(ble_nearby::g_nonCanaryCount == 2 && ble_nearby::g_canariesDiscovered == 1);
+    CHECK(listed_once(heard + ", then SCV-7G01 and SCV-7g01") == "7e01");
+    ++orders;
+  } while (std::next_permutation(std::begin(order), std::end(order)));
+  CHECK(orders == 24);
+  ble_nearby::g_nearbyMutex = nullptr;
+  std::printf("PASS one_canary_heard_by_name_chirp_and_beacon_takes_one_slot\n");
 }
 
 // ── What a late bring-up left out (sweep F260) ──────────────────────────
@@ -6923,6 +7022,8 @@ const Test kTests[] = {
     {"a_cleared_list_stays_cleared_after_a_reboot", test_a_cleared_list_stays_cleared_after_a_reboot},
     {"a_nearby_name_prefix_is_hex_or_refused", test_a_nearby_name_prefix_is_hex_or_refused},
     {"a_hostile_nearby_name_never_reaches_the_answer", test_a_hostile_nearby_name_never_reaches_the_answer},
+    {"one_canary_heard_by_name_chirp_and_beacon_takes_one_slot",
+     test_one_canary_heard_by_name_chirp_and_beacon_takes_one_slot},
     {"a_passkey_outside_pairing_mode_is_shown_nowhere", test_a_passkey_outside_pairing_mode_is_shown_nowhere},
     {"an_unauthenticated_bond_is_deleted_and_its_link_dropped",
      test_an_unauthenticated_bond_is_deleted_and_its_link_dropped},
