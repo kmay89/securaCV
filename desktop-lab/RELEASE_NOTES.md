@@ -158,7 +158,10 @@ the menu bar.**
   published once a board is connected, and downloads the image you chose
   when you press Flash.
 - Under the hood: rustls 0.23.45 (RUSTSEC-2026-0285), mdns-sd 0.21.4, Tauri
-  CLI 2.12.0; publishing a draft attaches the project's SBOMs.
+  CLI 2.12.0; publishing a draft attaches three SBOMs: `sbom-rust.cdx.json`
+  (the witness kernel's crates), `sbom-node.cdx.json` (canary-vision's npm
+  packages) and `sbom-firmware.cdx.json`. None of them lists the Lab's own
+  crates or npm packages.
 
 ## 0.2.4 — 2026-09-03
 

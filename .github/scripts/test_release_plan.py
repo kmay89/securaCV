@@ -810,5 +810,142 @@ class SbomsRideEveryRelease(unittest.TestCase):
         self.assertEqual(by_name["lab"]["workflow"], "desktop-release.yml")
 
 
+class AppReleasesCarryTheAppsOwnSboms(unittest.TestCase):
+    """Until sweep CI20 a Flasher or Lab release attached the kernel's,
+    canary-vision's and the firmware's SBOMs, and none naming a crate or npm
+    package the app ships, while both apps' release notes said the releases
+    carried "the project's SBOMs". sbom.yml now takes an `app` and builds that
+    app's own two documents. These hold each app publisher to passing its app,
+    sbom.yml's one app table to the release catalog, and the step that picks
+    the apps to the cases a release, a human publish, a backfill and a PR
+    bring."""
+
+    APP_PUBLISHERS = {
+        "desktop-flasher-release.yml": "flasher",
+        "lab-publish.yml": "lab",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml as _yaml
+
+        cls.dir = os.path.join(rp.REPO_ROOT, ".github", "workflows")
+        cls.docs = {}
+        for name in SbomsRideEveryRelease.PUBLISHERS | {"sbom.yml"}:
+            with open(os.path.join(cls.dir, name), encoding="utf-8") as handle:
+                cls.docs[name] = _yaml.safe_load(handle)
+        cls.sbom = cls.docs["sbom.yml"]
+        cls.job = cls.sbom["jobs"]["generate-sbom"]
+
+    def _table(self) -> dict[str, tuple[str, str]]:
+        rows = {}
+        for row in str(self.job.get("env", {}).get("DESKTOP_APPS", "")).split():
+            name, directory, prefix = row.split(":")
+            rows[name] = (directory, prefix)
+        return rows
+
+    def test_sbom_yml_takes_an_optional_app(self):
+        triggers = self.sbom.get("on", self.sbom.get(True, {}))
+        for event in ("workflow_call", "workflow_dispatch"):
+            with self.subTest(event=event):
+                app = triggers[event]["inputs"]["app"]
+                self.assertEqual(app["type"], "string")
+                self.assertFalse(app.get("required", False))
+                self.assertEqual(app.get("default"), "")
+
+    def test_every_app_publisher_passes_its_app(self):
+        for name, app in sorted(self.APP_PUBLISHERS.items()):
+            with self.subTest(workflow=name):
+                calls = [job for job in self.docs[name]["jobs"].values()
+                         if job.get("uses") == "./.github/workflows/sbom.yml"]
+                self.assertEqual(len(calls), 1, name)
+                self.assertEqual(calls[0].get("with", {}).get("app"), app,
+                                 f"{name} publishes the {app} release but does not "
+                                 f"ask sbom.yml for the {app}'s own documents")
+
+    def test_no_other_publisher_passes_an_app(self):
+        for name in sorted(SbomsRideEveryRelease.PUBLISHERS - set(self.APP_PUBLISHERS)):
+            with self.subTest(workflow=name):
+                for job in self.docs[name]["jobs"].values():
+                    if job.get("uses") == "./.github/workflows/sbom.yml":
+                        self.assertNotIn("app", job.get("with", {}), name)
+
+    def test_the_app_table_matches_the_release_catalog(self):
+        # Each row's name is a catalog target, its tag prefix is that
+        # target's, and its directory is in that target's watch — so a tag a
+        # human publishes is matched to the app it ships.
+        by_name = {t["name"]: t for t in rp.load_catalog()}
+        table = self._table()
+        self.assertEqual(sorted(table), sorted(self.APP_PUBLISHERS.values()))
+        for app, (directory, prefix) in table.items():
+            with self.subTest(app=app):
+                self.assertEqual(by_name[app]["tag_prefix"], prefix)
+                self.assertIn(directory, by_name[app]["watch"])
+                self.assertTrue(os.path.isfile(os.path.join(
+                    rp.REPO_ROOT, directory, "src-tauri", "Cargo.toml")), directory)
+                self.assertTrue(os.path.isfile(os.path.join(
+                    rp.REPO_ROOT, directory, "package-lock.json")), directory)
+
+    def _pick(self, app: str, tag: str) -> tuple[int, str]:
+        import subprocess
+
+        step = next(s for s in self.job["steps"]
+                    if s.get("name") == "Which desktop apps this run describes")
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "out")
+            env = {"PATH": os.environ["PATH"], "APP": app, "TAG": tag,
+                   "GITHUB_OUTPUT": out,
+                   "DESKTOP_APPS": self.job["env"]["DESKTOP_APPS"]}
+            r = subprocess.run(["bash", "-e", "-c", step["run"]], env=env,
+                               capture_output=True, text=True, check=False)
+            got = ""
+            if os.path.exists(out):
+                with open(out, encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("list="):
+                            got = line[len("list="):].strip()
+            return r.returncode, got
+
+    def test_which_apps_a_run_describes(self):
+        for app, tag, want in (
+            ("flasher", "flasher-v0.12.5", "flasher:desktop"),   # the Flasher's call
+            ("lab", "app-v0.3.5", "lab:desktop-lab"),            # lab-publish.yml's call
+            ("", "flasher-v0.12.5", "flasher:desktop"),          # a human publish / backfill
+            ("", "app-v0.3.5", "lab:desktop-lab"),
+            ("", "fw-v2.4.20", ""),                              # firmware-release.yml
+            ("", "v0.9.0", ""),                                  # the kernel's release.yml
+            ("", "", "flasher:desktop lab:desktop-lab"),         # a PR, a main push, a snapshot
+            ("lab", "", "lab:desktop-lab"),                      # a snapshot of one app
+        ):
+            with self.subTest(app=app, tag=tag):
+                self.assertEqual(self._pick(app, tag), (0, want))
+
+    def test_an_app_that_does_not_match_its_tag_is_refused(self):
+        # The Lab's documents attached to a Flasher release would be a false
+        # record of what that release ships.
+        for app, tag in (("lab", "flasher-v0.12.5"), ("flasher", "fw-v2.4.20"),
+                         ("kernel", "")):
+            with self.subTest(app=app, tag=tag):
+                rc, _ = self._pick(app, tag)
+                self.assertNotEqual(rc, 0)
+
+    def test_the_gate_and_the_attach_carry_the_app_documents(self):
+        steps = {s.get("name"): s for s in self.job["steps"]}
+        gate = steps["Validate SBOMs are well-formed CycloneDX"]
+        for needle in ("sbom-$app-rust.cdx.json", "sbom-$app-node.cdx.json",
+                       '(.components | length) > 0', ".metadata.component.name == $subject",
+                       'any(.components[]; .name == "tauri")', 'echo "files=$files"'):
+            self.assertIn(needle, gate["run"], needle)
+        self.assertEqual(self.job["outputs"]["files"], "${{ steps.gate.outputs.files }}")
+        upload = next(s for s in self.job["steps"]
+                      if str(s.get("uses", "")).startswith("actions/upload-artifact@"))
+        for app in self._table():
+            for kind in ("rust", "node"):
+                self.assertIn(f"sbom-{app}-{kind}.cdx.json", upload["with"]["path"])
+        attach = self.sbom["jobs"]["attach-to-release"]["steps"][-1]
+        self.assertEqual(attach["env"]["FILES"], "${{ needs.generate-sbom.outputs.files }}")
+        self.assertIn('"${paths[@]}"', attach["run"])
+
+
 if __name__ == "__main__":
     unittest.main()

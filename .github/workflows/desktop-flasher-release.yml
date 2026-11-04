@@ -1181,5 +1181,8 @@ jobs:
     uses: ./.github/workflows/sbom.yml
     with:
       tag: ${{ needs.finalize.outputs.tag }}
+      # The Flasher's own crate graph and npm tree join the three project
+      # documents (sbom-flasher-rust/-node.cdx.json; sweep CI20).
+      app: flasher
     permissions:
       contents: write

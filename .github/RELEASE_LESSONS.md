@@ -12,6 +12,41 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-04 (d) — "Releases carry the project's SBOMs", and none of them named a crate the app ships (found by reading; sweep CI20)
+
+- **Symptom:** none reported; it was found by reading. Since 2026-10-09 every
+  Flasher and Lab release carried the three SBOMs `sbom.yml` builds: the
+  witness kernel's crates (`sbom-rust.cdx.json`), canary-vision's npm
+  packages (`sbom-node.cdx.json`) and the firmware. No release carried a
+  document listing the app's own crates (tauri, rustls, the flash engine) or
+  its npm tree. Both apps' release notes said the releases carried "the
+  project's SBOMs", which a reader takes to mean the app's.
+- **Cause:** `sbom.yml` took only a `tag` and described the repository's
+  first products. The app publishers that began calling it on 2026-10-09
+  passed their tag and nothing else, so nothing described the apps.
+- **Fix:** `sbom.yml` takes an optional `app` (flasher: `desktop/`, lab:
+  `desktop-lab/`, one `DESKTOP_APPS` table) and builds two more documents
+  for it: `sbom-<app>-rust.cdx.json` (`cargo cyclonedx` in `src-tauri`; a
+  rewritten `Cargo.lock` fails the step) and `sbom-<app>-node.cdx.json`
+  (`cdxgen -t node` after `npm ci --ignore-scripts`). The gate refuses an
+  app document that is empty, has no components, names another subject
+  than the app's own crate or npm package, or lacks tauri (the crate; the
+  `@tauri-apps/cli` package). The attach step uploads exactly the files the
+  gate passed. Both app publishers pass `app:`. A tag with an app's prefix
+  implies it, so a human's UI publish of a Lab draft gets the Lab's
+  documents too. A run with no tag builds both, so a PR proves both steps.
+  `test_release_plan.py`'s `AppReleasesCarryTheAppsOwnSboms` holds the
+  callers, the table against `release-targets.yml`, and the app-picking
+  step's cases. Both release notes lines now name the three documents those
+  releases carried. Built here with cargo-cyclonedx 0.5.9 and cdxgen 12.9.0:
+  the Flasher's Rust document names `securacv-flasher` with 450 components
+  (tauri 2.12.5, flash-engine, hub-core, hub-io), the Lab's `securacv-lab`
+  with 407, and each npm document its package with `@tauri-apps/cli` 2.12.3.
+- **Applies to:** any compliance artifact a release attaches. Name the
+  documents a release carries, not "the project's", and gate each one on its
+  subject, not only its format: a well-formed bill of materials for the
+  wrong product is still a false record.
+
 ## 2026-11-04 (c) — The AppImage bundler downloaded its tools unpinned, one from a moving tag, and so did the runtime inside every AppImage (found by reading; sweep CI21)
 
 - **Symptom:** none reported; it was found by reading. Every Linux build of

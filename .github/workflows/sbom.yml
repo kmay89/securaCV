@@ -30,6 +30,21 @@ name: SBOM Generation
 # generate-sbom and nothing is attached. Every release that went out without
 # SBOMs predates that (the newest: fw-v2.4.15, flasher-v0.11.9, app-v0.2.4),
 # so the next release on each train is the first to carry them.
+#
+# THE DESKTOP APPS' OWN DOCUMENTS. Until 2026-11-04 a Flasher or Lab release
+# carried only the three above (the kernel's crates, canary-vision's npm
+# packages, the firmware), none of which names a crate or npm package the app
+# ships (sweep CI20). Now each app gets two more: sbom-<app>-rust.cdx.json
+# (cargo-cyclonedx in <dir>/src-tauri: the app's crate graph, its path-linked
+# crates included) and sbom-<app>-node.cdx.json (cdxgen on <dir>/ after
+# `npm ci`: the npm tree its lockfile installs, which today is the Tauri CLI
+# that builds it). `app` picks them: flasher (desktop/) or lab (desktop-lab/).
+# The two app publishers pass theirs; a tag with an app's prefix (a human
+# publish's release event, a backfill dispatch) implies it; a run with no tag
+# (a PR, a main push, a snapshot) builds both, so a PR proves both steps; any
+# other tag builds neither. DESKTOP_APPS below is the one table of names,
+# directories and prefixes, and test_release_plan.py holds it to
+# .github/release-targets.yml.
 on:
   push:
     branches: [ "main" ]
@@ -41,6 +56,16 @@ on:
       - 'sbom/**'
       - 'scripts/gen_firmware_sbom.py'
       - '.github/workflows/sbom.yml'
+      # The desktop apps' documents read each app's npm manifest and lockfile
+      # and its crate graph (src-tauri plus the path-linked crates).
+      - 'desktop/package.json'
+      - 'desktop/package-lock.json'
+      - 'desktop-lab/package.json'
+      - 'desktop-lab/package-lock.json'
+      - 'desktop/**/Cargo.toml'
+      - 'desktop/**/Cargo.lock'
+      - 'desktop-lab/**/Cargo.toml'
+      - 'desktop-lab/**/Cargo.lock'
   pull_request:
     branches: [ "main" ]
     paths:
@@ -51,6 +76,16 @@ on:
       - 'sbom/**'
       - 'scripts/gen_firmware_sbom.py'
       - '.github/workflows/sbom.yml'
+      # The desktop apps' documents read each app's npm manifest and lockfile
+      # and its crate graph (src-tauri plus the path-linked crates).
+      - 'desktop/package.json'
+      - 'desktop/package-lock.json'
+      - 'desktop-lab/package.json'
+      - 'desktop-lab/package-lock.json'
+      - 'desktop/**/Cargo.toml'
+      - 'desktop/**/Cargo.lock'
+      - 'desktop-lab/**/Cargo.toml'
+      - 'desktop-lab/**/Cargo.lock'
   release:
     types: [ published ]
   workflow_call:
@@ -59,10 +94,20 @@ on:
         description: "Release tag to build the SBOMs from and attach them to"
         type: string
         required: true
+      app:
+        description: "The desktop app this release ships, flasher or lab, whose own two documents join the three; blank = the app the tag's prefix names, if any"
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       tag:
         description: "Release tag to build the SBOMs from and attach them to; its tree must carry gen_firmware_sbom.py --validate (2026-09-20 on). Blank = snapshot of this ref, no attach"
+        type: string
+        required: false
+        default: ""
+      app:
+        description: "flasher or lab: that desktop app's own documents too. Blank = the app the tag's prefix names (none for other tags); with no tag, both"
         type: string
         required: false
         default: ""
@@ -84,6 +129,15 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    outputs:
+      # Every document the gate below passed, for attach-to-release.
+      files: ${{ steps.gate.outputs.files }}
+    env:
+      # The desktop apps: <app>:<directory>:<release tag prefix>. One table,
+      # read by every step below; test_release_plan.py holds each row to
+      # .github/release-targets.yml (the target's name, a watch entry, its
+      # tag_prefix).
+      DESKTOP_APPS: "flasher:desktop:flasher-v lab:desktop-lab:app-v"
 
     steps:
     - uses: actions/checkout@v7
@@ -110,6 +164,44 @@ jobs:
       # what "valid" means, so it never floats.
       run: python3 -m pip install --quiet pyyaml 'cyclonedx-python-lib[json-validation]==11.12.0'
 
+    - name: Which desktop apps this run describes
+      id: apps
+      env:
+        APP: ${{ inputs.app }}
+        TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      run: |
+        set -euo pipefail
+        dir_of() { local row; for row in $DESKTOP_APPS; do [ "${row%%:*}" = "$1" ] && { row="${row#*:}"; echo "${row%%:*}"; return; }; done; }
+        tag_app=""
+        for row in $DESKTOP_APPS; do
+          prefix="${row##*:}"
+          case "$TAG" in "$prefix"*) tag_app="${row%%:*}" ;; esac
+        done
+        if [ -n "$APP" ]; then
+          if [ -z "$(dir_of "$APP")" ]; then
+            names=""; for row in $DESKTOP_APPS; do names="$names ${row%%:*}"; done
+            echo "::error::app '$APP' is not one of:${names}"
+            exit 1
+          fi
+          # An app's documents describe its own tree; attached to another
+          # train's release they would be a false record.
+          if [ -n "$TAG" ] && [ "$tag_app" != "$APP" ]; then
+            echo "::error::app '$APP' was asked for, but the tag '$TAG' belongs to: ${tag_app:-no desktop app}"
+            exit 1
+          fi
+          apps="$APP"
+        elif [ -n "$TAG" ]; then
+          apps="$tag_app"
+        else
+          apps=""
+          for row in $DESKTOP_APPS; do apps="$apps ${row%%:*}"; done
+        fi
+        list=""
+        for a in $apps; do list="$list $a:$(dir_of "$a")"; done
+        list="${list# }"
+        echo "list=${list}" >> "$GITHUB_OUTPUT"
+        echo "desktop apps described by this run: ${list:-none}"
+
     # ---- Rust SBOM ----
     # Compiling cargo-cyclonedx from source cost ~5-10 min of every run.
     # Cache the built binary under a weekly key: at most one build per
@@ -135,12 +227,37 @@ jobs:
         cargo cyclonedx --format json
         mv witness-kernel.cdx.json sbom-rust.cdx.json
 
+    - name: Generate each desktop app's Rust SBOM (CycloneDX)
+      if: steps.apps.outputs.list != ''
+      # Each app is its own Cargo workspace (src-tauri), so cargo-cyclonedx
+      # runs there and writes <package>.cdx.json beside its Cargo.toml. It
+      # resolves through `cargo metadata`, which rewrites a Cargo.lock that
+      # no longer matches its Cargo.toml: the diff check refuses a document
+      # that would describe a resolution the release did not build.
+      env:
+        APPS: ${{ steps.apps.outputs.list }}
+      run: |
+        set -euo pipefail
+        for row in $APPS; do
+          app="${row%%:*}"; dir="${row#*:}"
+          (cd "$dir/src-tauri" && cargo cyclonedx --format json)
+          git diff --exit-code -- "$dir/src-tauri/Cargo.lock" \
+            || { echo "::error::$dir/src-tauri/Cargo.lock is stale against its Cargo.toml; the SBOM would not describe what the release built"; exit 1; }
+          crate="$(cargo metadata --no-deps --format-version 1 --manifest-path "$dir/src-tauri/Cargo.toml" \
+            | jq -r --arg m "$PWD/$dir/src-tauri/Cargo.toml" '.packages[] | select(.manifest_path == $m) | .name')"
+          mv "$dir/src-tauri/$crate.cdx.json" "sbom-$app-rust.cdx.json"
+          echo "$crate" > "sbom-$app-rust.crate"
+        done
+
     # ---- Node.js SBOM ----
     - uses: actions/setup-node@v7
       with:
         node-version: '20'
         cache: npm
-        cache-dependency-path: canary-vision/package-lock.json
+        cache-dependency-path: |
+          canary-vision/package-lock.json
+          desktop/package-lock.json
+          desktop-lab/package-lock.json
 
     - name: Install Node.js dependencies
       run: cd canary-vision && npm ci
@@ -150,6 +267,21 @@ jobs:
 
     - name: Generate Node.js SBOM (CycloneDX)
       run: cdxgen -t node -o sbom-node.cdx.json canary-vision/
+
+    - name: Generate each desktop app's Node.js SBOM (CycloneDX)
+      if: steps.apps.outputs.list != ''
+      # `npm ci` from the committed lockfile, the install the release runs.
+      # --ignore-scripts: a bill of materials needs the tree, not anything a
+      # package's install script would build.
+      env:
+        APPS: ${{ steps.apps.outputs.list }}
+      run: |
+        set -euo pipefail
+        for row in $APPS; do
+          app="${row%%:*}"; dir="${row#*:}"
+          (cd "$dir" && npm ci --ignore-scripts)
+          cdxgen -t node -o "sbom-$app-node.cdx.json" "$dir/"
+        done
 
     # ---- Firmware (C/C++) SBOM ----
     # Derived, not typed. This step used to write the document from a heredoc
@@ -178,12 +310,38 @@ jobs:
     # Fail loudly if any SBOM is empty or malformed instead of silently
     # uploading a broken artifact.
     - name: Validate SBOMs are well-formed CycloneDX
+      id: gate
+      env:
+        APPS: ${{ steps.apps.outputs.list }}
       run: |
         set -euo pipefail
-        for f in sbom-rust.cdx.json sbom-node.cdx.json sbom-firmware.cdx.json; do
+        files="sbom-rust.cdx.json sbom-node.cdx.json sbom-firmware.cdx.json"
+        for f in $files; do
           jq -e '.bomFormat == "CycloneDX"' "$f" > /dev/null \
             || { echo "::error::$f is missing or not a CycloneDX document"; exit 1; }
         done
+        # Each desktop app's two documents must describe THAT app: its own
+        # crate or npm package as the subject, a non-empty component list,
+        # and the framework it is built with in it (the tauri crate; the
+        # @tauri-apps/cli package its lockfile installs). An empty document,
+        # or the kernel's under an app's name, fails here.
+        for row in $APPS; do
+          app="${row%%:*}"; dir="${row#*:}"
+          crate="$(cat "sbom-$app-rust.crate")"
+          pkg="$(jq -r .name "$dir/package.json")"
+          jq -e --arg subject "$crate" '.bomFormat == "CycloneDX" and (.components | length) > 0
+                 and .metadata.component.name == $subject
+                 and any(.components[]; .name == "tauri")' \
+            "sbom-$app-rust.cdx.json" > /dev/null \
+            || { echo "::error::sbom-$app-rust.cdx.json is missing, empty, or not $crate's crate graph"; exit 1; }
+          jq -e --arg subject "$pkg" '.bomFormat == "CycloneDX" and (.components | length) > 0
+                 and .metadata.component.name == $subject
+                 and any(.components[]; .group == "@tauri-apps" and .name == "cli")' \
+            "sbom-$app-node.cdx.json" > /dev/null \
+            || { echo "::error::sbom-$app-node.cdx.json is missing, empty, or not $pkg's npm tree"; exit 1; }
+          files="$files sbom-$app-rust.cdx.json sbom-$app-node.cdx.json"
+        done
+        echo "files=$files" >> "$GITHUB_OUTPUT"
         # The firmware document is ours end to end, so hold it to more than
         # the format tag. First the CycloneDX 1.5 JSON schema in strict mode,
         # on THIS file — the timestamped bytes that upload, not a re-render —
@@ -214,6 +372,10 @@ jobs:
           sbom-rust.cdx.json
           sbom-node.cdx.json
           sbom-firmware.cdx.json
+          sbom-flasher-rust.cdx.json
+          sbom-flasher-node.cdx.json
+          sbom-lab-rust.cdx.json
+          sbom-lab-node.cdx.json
         retention-days: 90
 
   # Promote the generated SBOMs to permanent release assets. Split into its own
@@ -248,11 +410,17 @@ jobs:
         # follows it.
         TAG: ${{ inputs.tag || github.event.release.tag_name }}
         REPO: ${{ github.repository }}
+        # Exactly the documents generate-sbom's gate passed: the three, plus
+        # the app's two on a Flasher or Lab release.
+        FILES: ${{ needs.generate-sbom.outputs.files }}
       # --clobber so a re-run (or a re-published release) overwrites the
       # existing assets instead of failing on the duplicate name.
       run: |
-        gh release upload "$TAG" \
-          sbom/sbom-rust.cdx.json \
-          sbom/sbom-node.cdx.json \
-          sbom/sbom-firmware.cdx.json \
-          --clobber --repo "$REPO"
+        set -euo pipefail
+        paths=()
+        for f in $FILES; do
+          [ -f "sbom/$f" ] || { echo "::error::$f passed the gate but is not in the artifact"; exit 1; }
+          paths+=("sbom/$f")
+        done
+        [ "${#paths[@]}" -ge 3 ] || { echo "::error::generate-sbom passed fewer than the three documents: '$FILES'"; exit 1; }
+        gh release upload "$TAG" "${paths[@]}" --clobber --repo "$REPO"
