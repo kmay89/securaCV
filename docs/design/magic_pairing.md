@@ -1220,6 +1220,63 @@ cannot speak to.
 - [ ] A unit flashed on `default.csv` takes the one USB reflash to
       `min_spiffs.csv` and then OTAs normally.
 
+**The hub hand-off (Sense, Vision; §3.6)**
+
+The code landed in #1804 (2026-10-16); none of these rows has been run.
+Run each on a Sense (NimBLE 2.x) and on a Vision (NimBLE 1.4.x). The
+iPhone writes only well-formed documents, so the refusal rows need a client
+that writes the companion service's HUB characteristic
+(`8fc1cf02-b162-4401-9607-c8ac21383e90`) by hand, after sending
+`WIFI_SETTINGS` itself: the provisioning link lingers only 20 s after the
+join, so a short script (Python `bleak`) suits them better than nRF Connect
+by hand, one document per join. What gates a write is the session's join,
+not the open door: `handle_hub()` takes a document only while the session
+is Provisioned or Provisioning, so a write on the provisioning link after
+the join is taken although `door_open_now()` is already false (a
+Provisioned session advertises the beacon). Once that link drops the
+advert is non-connectable, so no later client reaches HUB until a new tap.
+
+- [ ] A fresh unit (no Wi-Fi, no broker in NVS) set up from the iPhone's
+      card, with the hub already set up on the phone: after the join the
+      console prints `[IMPROV] hub hand-off stored: <host>:1883 with a
+      login`, the card says "It reports to your hub at <host>.", and the
+      unit connects to that broker and appears in Home Assistant with no
+      Flasher step; after a power cycle it still reports there.
+- [ ] The status byte: a READ of HUB on the provisioning link answers one
+      byte — `0` once `WIFI_SETTINGS` is accepted and before any HUB write,
+      `1` after a stored write, `2` after a refused one — never `3`, and
+      never the bytes written (read it right after a write that carried a
+      password).
+- [ ] An unencrypted write: from a client that declines to pair, a HUB
+      write is refused by the stack (`WRITE_ENC`) and the console prints no
+      `hub hand-off` line; if the stack ever lets one through, the
+      handler's second check (`isEncrypted()` on 2.x, `sec_state.encrypted`
+      on 1.4.x) logs `[IMPROV] hub hand-off on an unencrypted link refused`
+      and the byte reads `2`. Either way nothing is stored; note which of
+      the two the bench saw.
+- [ ] No join, no hub: on a unit that already has Wi-Fi, short-tap BOOT
+      (the door opens for 60 s), connect and pair, and write a well-formed
+      document without sending `WIFI_SETTINGS`: `[IMPROV] hub hand-off
+      refused: no join this session`, the byte reads `2`, and the unit keeps
+      the broker it had. Keep the link up past the 60 s, so the door shuts,
+      and write again: the same refusal.
+- [ ] A refused document keeps nothing: on the provisioning link after a
+      join, one per join, write a duplicate key
+      (`{"host":"a.local","host":"b.local"}`), a password holding `\n`, a
+      241-byte document, the host `-ha.local`, `"port":0`, and a `user`
+      with no `pass`. The console names each verdict — `malformed`,
+      `malformed`, `too long`, `bad host`, `bad port`, `bad credentials` —
+      and never the document; each reads `2`; the unit keeps the broker it
+      had before the write (or none). The wipe of the record and the
+      mailboxes is host-tested (`test_hub_handoff.cpp`); the bench sees
+      that nothing was kept.
+- [ ] A unit already talking to a broker (seeded by the Flasher) that takes
+      a different hub through a tap and the iPhone's card: the card says it
+      reports to the new hub (the byte read `1`), the console says `Hub
+      handed over while connected to another broker - restarting shortly.`,
+      and about 25 s after the write it logs `Restarting onto the
+      handed-over broker.`, restarts and reports to the new broker.
+
 **WAP (FULL profile)**
 
 - [ ] The pairing channel is up 5 s after a fresh boot with nobody on the
