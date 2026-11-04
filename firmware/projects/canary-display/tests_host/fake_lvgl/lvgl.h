@@ -1,7 +1,7 @@
 // tests_host/fake_lvgl/lvgl.h — LVGL 8's object POSITION model, for host
 // tests that compile a real display TU (src/ui/canary_mark.cpp,
-// src/ui/onboard_ui.cpp with src/ui/round_frame.cpp, and src/ui/splash.cpp)
-// with no LVGL on the machine.
+// src/ui/onboard_ui.cpp with src/ui/round_frame.cpp, src/ui/splash.cpp, and
+// src/playground/playground_ui.cpp) with no LVGL on the machine.
 //
 // Only what those TUs call, and only the semantics a placement test reads:
 // where each object's box lands, and what a label says in which font at
@@ -86,6 +86,27 @@ struct lv_font_t {
   int (*glyph_w)(const lv_font_t*, uint32_t, uint32_t);
   const void* dsc;  // the test's own handle for the face
 };
+// The built-in faces a TU names directly (LV_FONT_DECLARE in lv_font.h, for
+// the sizes lv_conf.h enables). Declared only: a test that links such a TU
+// (test_playground_glass.cpp, for src/playground/playground_ui.cpp) defines
+// the ones it uses, with LVGL's own metrics.
+extern const lv_font_t lv_font_montserrat_12;
+extern const lv_font_t lv_font_montserrat_14;
+extern const lv_font_t lv_font_montserrat_16;
+extern const lv_font_t lv_font_montserrat_20;
+extern const lv_font_t lv_font_montserrat_24;
+extern const lv_font_t lv_font_montserrat_28;
+extern const lv_font_t lv_font_montserrat_36;
+
+// lv_symbol_def.h (LVGL 8.4, the same in 9.5): the symbols the playground
+// glass pastes into its labels, FontAwesome code points in LVGL's built-in
+// faces. montserrat_metrics.h carries no symbol, so a test measures none.
+#define LV_SYMBOL_OK "\xEF\x80\x8C"      /*61452, 0xF00C*/
+#define LV_SYMBOL_CLOSE "\xEF\x80\x8D"   /*61453, 0xF00D*/
+#define LV_SYMBOL_LEFT "\xEF\x81\x93"    /*61523, 0xF053*/
+#define LV_SYMBOL_MINUS "\xEF\x81\xA8"   /*61544, 0xF068*/
+#define LV_SYMBOL_WARNING "\xEF\x81\xB1" /*61553, 0xF071*/
+
 inline lv_coord_t lv_font_get_line_height(const lv_font_t* f) {
   return (lv_coord_t)f->line_height;
 }
@@ -192,6 +213,7 @@ struct _lv_obj_t {
   bool text_color_set;        // (not inherited: the test reads what it set)
   lv_coord_t arc_w_main, arc_w_ind;  // LV_STYLE_ARC_WIDTH per part
   uint8_t opa;                // LV_STYLE_OPA (the whole object's)
+  lv_coord_t line_space;      // LV_STYLE_TEXT_LINE_SPACE as set on the label
 };
 
 namespace fake_lvgl {
@@ -226,6 +248,7 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   o->text_color_set = false;
   o->arc_w_main = o->arc_w_ind = 0;
   o->opa = 255;  // LV_OPA_COVER, LVGL's default
+  o->line_space = 0;
   if (parent == nullptr) {
     // A screen: the display's size, at the origin. The first one is active
     // (lv_obj_constructor: the display's act_scr when it has none).
@@ -418,6 +441,11 @@ inline void lv_obj_set_style_text_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) 
 // Not modeled: text widths are measured at letter_space 0 (no caller here
 // reads a spaced label's box).
 inline void lv_obj_set_style_text_letter_space(lv_obj_t*, lv_coord_t, lv_style_selector_t) {}
+// Set on the label itself (LVGL inherits it from a parent too; no caller here
+// sets it on one).
+inline void lv_obj_set_style_text_line_space(lv_obj_t* o, lv_coord_t v, lv_style_selector_t) {
+  o->line_space = v;
+}
 
 inline lv_obj_t* lv_arc_create(lv_obj_t* parent) {
   lv_obj_t* o = lv_obj_create(parent);
@@ -463,6 +491,10 @@ inline int text_width(const lv_font_t* f, const std::string& t) {
 }
 }  // namespace fake_lvgl
 inline lv_obj_t* lv_scr_act() { return fake_lvgl::active_screen(); }
+// lv_obj_clean (lv_obj_tree.c): every child deleted, the object kept.
+inline void lv_obj_clean(lv_obj_t* o) {
+  while (!o->children.empty()) lv_obj_del(o->children.front());
+}
 inline void lv_scr_load(lv_obj_t* scr) { fake_lvgl::active_screen() = scr; }
 // lv_scr_load_anim with auto_del: the old screen is deleted once the new one
 // is in (at once here: nothing animates a screen in this model).
@@ -496,7 +528,9 @@ inline void refr_size(lv_obj_t* c) {
         FontGlyphW g = {f};
         lines = lvwrap::line_count(c->text.c_str(), g, c->w - 2 * inset(c));
       }
-      c->h = (lv_coord_t)(f ? lines * f->line_height : 0);
+      // lv_txt_get_size: each line's height plus the line space, the last
+      // line's space taken off.
+      c->h = (lv_coord_t)(f ? lines * f->line_height + (lines - 1) * c->line_space : 0);
     }
     return;
   }

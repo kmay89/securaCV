@@ -638,8 +638,10 @@ test("the sim's state has PgState's fields and defaults, last_exc among them", a
 
 // The glass's RS485 words are playground.h's rs485_row_words() and
 // rs485_tile_words(), which tests_host/test_fieldbus_glue.cpp holds to every
-// probe outcome in three builds. Both copies of playground_ui.cpp must draw
-// the row and the tile through them, with no word of their own.
+// probe outcome in three builds; tests_host/test_playground_glass.cpp
+// compiles the canonical playground_ui.cpp and holds what it draws to them.
+// Here both copies of playground_ui.cpp, the Arduino mirror too, must draw the
+// row and the tile through them, with no word of their own.
 test("the RS485 row and tile on the glass draw only playground.h's held words", () => {
   for (const file of [SRC_UI, PLAYGROUND_UI]) {
     const ui = readFileSync(file, "utf8");

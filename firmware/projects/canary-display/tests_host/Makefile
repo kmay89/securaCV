@@ -537,6 +537,33 @@ clean-fieldbus-glue:
 run: run-fieldbus-glue
 clean: clean-fieldbus-glue
 
+# The Dev Playground glass's RS485 words (F317): the REAL
+# src/playground/playground_ui.cpp against fake_lvgl/ with LVGL's own
+# Montserrat metrics (montserrat_metrics.h), the 4.3B pins and the dash
+# config, as the canary-display-playground env compiles it. The row and tile
+# must draw playground.h's rs485_row_words() / rs485_tile_words() (which
+# test_fieldbus_glue holds to every probe outcome) and fit the panels LVGL
+# clips them to; the driver calls the UI makes are stubbed in the test.
+PG_GLASS_SRC = test_playground_glass.cpp ../src/playground/playground_ui.cpp
+PG_GLASS_DEPS = $(PG_GLASS_SRC) fake_lvgl/lvgl.h fake_lvgl/Arduino.h lv_txt_wrap.h \
+  montserrat_metrics.h ../include/canary/playground/playground.h \
+  ../include/canary/playground/playground_ui.h \
+  ../../../boards/waveshare-esp32s3-lcd43b/pins/pins.h \
+  ../../../configs/canary-display/dash/config.h
+
+test_playground_glass: $(PG_GLASS_DEPS)
+	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl $(INC) -I ../../../configs/canary-display/dash \
+	  -I ../../../boards/waveshare-esp32s3-lcd43b/pins -DFEATURE_PLAYGROUND=1 -o $@ $(PG_GLASS_SRC)
+
+.PHONY: run-playground-glass clean-playground-glass
+run-playground-glass: test_playground_glass
+	$(call run_marked,test_playground_glass)
+clean-playground-glass:
+	rm -f test_playground_glass
+
+run: run-playground-glass
+clean: clean-playground-glass
+
 # The boot splash's seats (canary/ui/splash_layout.h, F88): on every canvas
 # the splash runs on (each display env's panel, and the panel turned for the
 # two flavors main.cpp rotates before splash_play), the bird's whole box over

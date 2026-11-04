@@ -206,8 +206,9 @@ static uint64_t now_ms() { return fake::now_us / 1000; }
 
 // ── What the glass says (F317) ──────────────────────────────────────────────
 // playground_ui.cpp draws the RS485 row and tile with playground.h's
-// rs485_row_words() / rs485_tile_words(); these hold their words and looks to
-// the state each scenario leaves, in every build.
+// rs485_row_words() / rs485_tile_words() (test_playground_glass.cpp holds the
+// real glass to them); these hold their words and looks to the state each
+// scenario leaves, in every build.
 
 static void expect_glass(const char* row, pg::Rs485Look row_look, const char* val,
                          const char* sub, pg::Rs485Look tile_look) {

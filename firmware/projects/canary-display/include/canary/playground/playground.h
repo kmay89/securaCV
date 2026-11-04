@@ -125,15 +125,18 @@ bool i2c_addr_reserved(uint8_t addr);       // CH422G/GT911 command addresses
 // ── The RS485 station's words on the glass (F317) ───────────────────────
 // What the pin tracker's RS485 row and the station's tile say about the last
 // probe, from the station state alone. Pure (no LVGL): playground_ui.cpp
-// draws them, and tests_host/test_fieldbus_glue.cpp holds them, in all three
-// builds, to the state each probe scenario leaves. A Modbus exception is
-// named ("exc 2 • check register" on the row, "exception 2" on the tile): the
-// slave answered and refused the register, and "no reply • check A/B" would
-// send the bench to wiring that works. The row is narrow: its value column
-// has about 145 px of Montserrat 12 before the tracker panel's edge (LVGL
-// 8.4's glyph widths), where "exc 255 • check register" is 142 px and
-// "exception 2 • check the register" 192, which the edge would cut short;
-// the tile and its detail panel have room for the whole word.
+// draws them, tests_host/test_fieldbus_glue.cpp holds them, in all three
+// builds, to the state each probe scenario leaves, and
+// tests_host/test_playground_glass.cpp holds the real glass to them. A Modbus
+// exception is named ("exc 2 • check register" on the row, "exception 2" on
+// the tile): the slave answered and refused the register, and "no reply •
+// check A/B" would send the bench to wiring that works. The row is narrow:
+// its value runs from x=140 to the tracker panel's border at 284, 138 px of
+// it inside the padding where the other rows' values sit. In Montserrat 12
+// (LVGL's own metrics, as that test measures) "exc 11 • check register" fits
+// the 138, the widest code's "exc 200 • check register" (141 px) the border,
+// and "exception 2 • check the register" (187 px) neither; the tile and its
+// detail panel have room for the whole word.
 enum Rs485Look : uint8_t { RS485_LOOK_IDLE, RS485_LOOK_OK, RS485_LOOK_WARN };
 
 // The row: its text into `out`, and its look.
