@@ -1,5 +1,7 @@
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 // Dev Playground (FEATURE_PLAYGROUND, docs/hardware/dev_playground_43b.md):
 // a guided, safe peripheral bench mode for the Waveshare 4.3B — the
@@ -80,6 +82,11 @@ struct Rs485State {
   uint32_t replies = 0;       // valid Modbus responses parsed
   uint16_t last_val = 0;      // last holding-register value read
   bool     last_ok = false;   // last probe got a good reply
+  // The last probe's Modbus exception code, -1 when it got none (a good
+  // reply, or no reply). Wider than the code's byte because every byte is a
+  // code on the wire: the station takes a CRC-good exception carrying 0 as
+  // one ("slave=1 exception=0"), so 0 cannot also mean "none".
+  int16_t  last_exc = -1;
 };
 
 struct CanState {
@@ -114,6 +121,51 @@ void action_can_send();               // transmit one CAN test frame
 const char* pad_preset_name(uint8_t idx);
 const char* i2c_device_name(uint8_t addr);  // known-address lookup, "" unknown
 bool i2c_addr_reserved(uint8_t addr);       // CH422G/GT911 command addresses
+
+// ── The RS485 station's words on the glass (F317) ───────────────────────
+// What the pin tracker's RS485 row and the station's tile say about the last
+// probe, from the station state alone. Pure (no LVGL): playground_ui.cpp
+// draws them, and tests_host/test_fieldbus_glue.cpp holds them, in all three
+// builds, to the state each probe scenario leaves. A Modbus exception is
+// named ("exc 2 • check register" on the row, "exception 2" on the tile): the
+// slave answered and refused the register, and "no reply • check A/B" would
+// send the bench to wiring that works. The row is narrow: its value column
+// has about 145 px of Montserrat 12 before the tracker panel's edge (LVGL
+// 8.4's glyph widths), where "exc 255 • check register" is 142 px and
+// "exception 2 • check the register" 192, which the edge would cut short;
+// the tile and its detail panel have room for the whole word.
+enum Rs485Look : uint8_t { RS485_LOOK_IDLE, RS485_LOOK_OK, RS485_LOOK_WARN };
+
+// The row: its text into `out`, and its look.
+inline Rs485Look rs485_row_words(const Rs485State& s, char* out, size_t cap) {
+  if (s.last_exc >= 0) {
+    snprintf(out, cap, "exc %u • check register", (unsigned)s.last_exc);
+    return RS485_LOOK_WARN;
+  }
+  if (s.replies) {
+    snprintf(out, cap, "RTU • reg0=%u", (unsigned)s.last_val);
+    return RS485_LOOK_OK;
+  }
+  snprintf(out, cap, "%s", s.polls ? "no reply • check A/B" : "Modbus • tap to probe");
+  return s.polls ? RS485_LOOK_WARN : RS485_LOOK_IDLE;
+}
+
+// The tile: its value into `val`, its sub line into `sub`, and its look.
+inline Rs485Look rs485_tile_words(const Rs485State& s, char* val, size_t val_cap,
+                                  char* sub, size_t sub_cap) {
+  if (s.last_ok) {
+    snprintf(val, val_cap, "%u", (unsigned)s.last_val);
+    snprintf(sub, sub_cap, "%s", "reg0 • slave 1");
+    return RS485_LOOK_OK;
+  }
+  snprintf(val, val_cap, "%s", s.polls ? "?" : "-");
+  if (s.last_exc >= 0) {
+    snprintf(sub, sub_cap, "exception %u", (unsigned)s.last_exc);
+  } else {
+    snprintf(sub, sub_cap, "%s", s.polls ? "no reply" : "tap to probe");
+  }
+  return s.polls ? RS485_LOOK_WARN : RS485_LOOK_IDLE;
+}
 
 // ── Mode entry points (called from main.cpp under FEATURE_PLAYGROUND) ───
 void playground_setup();
