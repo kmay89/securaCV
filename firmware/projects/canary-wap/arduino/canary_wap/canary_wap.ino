@@ -1326,8 +1326,10 @@ static void claim_catch_all_hostname();
 static void schedule_catch_all_claim();
 static void generate_mdns_hostname(char* out, size_t cap);
 // Whether this boot's identity is named and its chain anchored (sweeps
-// F364's review and F403): every surface that hands out the device id, the
-// fingerprint, the chain head or a signature asks it first.
+// F364's review and F403). Four surfaces ask it first: BLE discovery (F364's
+// review), the BLE status service, the witness export's HEAD and the signer
+// (F403). Other readers of the device id, the fingerprint or the head do not
+// ask it yet; the definition names them.
 static bool identity_named_and_anchored();
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -11754,14 +11756,23 @@ static bool fingerprint_is_nonzero(const uint8_t fingerprint[8]) {
 // (g_device.chain_refused), the fingerprint, the device id or the head is
 // zero bytes or empty, the same on every such unit; and before a key exists
 // (a keygen that failed, after which setup() goes on) the fingerprint is
-// zero. setup() goes on otherwise (F336), so every surface that hands out
-// the identity asks this first: BLE discovery (Opera's SCV-0000 name and
-// device-info id, every chirp's id and head), the BLE status service (its
-// GATT device name is the device id), the witness export's HEAD (the chain
-// head and public key a bonded peer verifies against), and the signer
-// (device_signature_mount(), so every sign_* refuses). It used to be BLE
-// discovery's alone, inside #if FEATURE_BLE. tests_host/test_wap_sha_fail.cpp
-// drives each one after a refused fingerprint and a refused genesis head.
+// zero. setup() goes on otherwise (F336). These surfaces ask this first:
+// BLE discovery (Opera's SCV-0000 name and device-info id, every chirp's id
+// and head), the BLE status service (its GATT device name is the device id),
+// the witness export's HEAD (the chain head and public key a bonded peer
+// verifies against), and the signer (device_signature_mount(), so every
+// sign_* refuses). It used to be BLE discovery's alone, inside
+// #if FEATURE_BLE. Records and the chain persist refuse on chain_refused
+// themselves (F364). Not every reader asks yet: the MQTT bridge's identity
+// (handed over in setup() before the network starts, and used by a camera
+// QR join's re-init), the mDNS TXT device_id, the Improv claim and name, the
+// Bluetooth and console metadata, the mesh, the hourly chain backup (the
+// data-management pass in loop()) and, on a build that raises the SoftAP,
+// the HTTP routes (/api/status, /api/chain, /api/device-info, the enroll
+// card) and the MQTT client's boot init still read the refused values. What
+// a refused boot should serve there is not decided here.
+// tests_host/test_wap_sha_fail.cpp drives each gated surface after a refused
+// fingerprint and a refused genesis head.
 static bool identity_named_and_anchored() {
   return !g_device.chain_refused && fingerprint_is_nonzero(g_device.pubkey_fp);
 }

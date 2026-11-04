@@ -890,8 +890,11 @@
   runs the helpers and their five callers, cut verbatim from the sketch, over
   an mbedTLS stand-in that fails one named step once, and holds every caller
   to writing nothing downstream (1280 checks). The module files that hash the
-  same way are F364's next slice (open), and two connection-bound reads that
-  still report a refused boot's identity are F403.
+  same way are F364's next slice (open). F403 put the BLE status service, the
+  witness export's HEAD and the signer behind the same gate as BLE discovery;
+  the MQTT bridge's identity, mDNS, the Improv door, the Bluetooth and console
+  metadata, the mesh, the hourly chain backup and the HTTP routes still read a
+  refused boot's identity (open).
 - **Date learned:** 2026-11
 
 ### Token must never enter witness chain

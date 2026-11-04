@@ -68,7 +68,8 @@
 //     head; and (F403) the BLE status service is not registered under the
 //     empty device id, the witness export's HEAD hands no bonded peer the
 //     refused head and key, and the signer is not mounted, so nothing is
-//     signed; the boot attestation's
+//     signed (the surfaces the gate holds; others still read the refused
+//     identity, named at the gate's definition); the boot attestation's
 //     line says it was not recorded, never "[OK]" over setup()'s zeroed
 //     record; loop()'s records are Refused (no table row) and logged once;
 //     and the periodic self-verify says nothing and leaves signing marked
@@ -960,11 +961,15 @@ static void a_working_unit_shows_its_records() {
   }
 }
 
-// ── what a refused identity reaches (F403) ──────────────────────────────────
+// ── what a refused identity reaches through the gate (F403) ─────────────────
 // The three surfaces the identity gate now holds besides BLE discovery, run
 // as the boot runs them after provision_device(): the BLE status
 // registration (ble_bringup_task()), the witness export's HEAD (a bonded
-// peer's read) and the signer's mount (each server start).
+// peer's read) and the signer's mount (each server start). Only these: the
+// readers that do not ask the gate yet (the MQTT bridge's identity, mDNS,
+// the Improv door, the Bluetooth and console metadata, the mesh, the chain
+// backup, the HTTP routes) are named at identity_named_and_anchored()'s
+// definition and are not driven here.
 struct Reach {
   int status_inits;
   std::string status_name;
@@ -1022,7 +1027,7 @@ static void refused_reach_holds(const std::string& what) {
   CHECK_MSG(logged("Signer not mounted") == 1, what + ": no health line for the signer");
 }
 
-static void a_refused_identity_reaches_nothing() {
+static void a_refused_identity_reaches_no_gated_surface() {
   for (int genesis = 0; genesis < 2; genesis++) {
     for (const Failure& f : failures_of(3)) {
       const std::string what = std::string(genesis ? "a refused genesis head, " : "a refused fingerprint, ") +
@@ -1627,7 +1632,7 @@ int main() {
   a_refused_chain_makes_no_record();
   a_refused_chain_is_shown_and_broadcast_nowhere();
   a_working_unit_shows_its_records();
-  a_refused_identity_reaches_nothing();
+  a_refused_identity_reaches_no_gated_surface();
   a_working_unit_reaches_each();
   a_record_whose_hash_fails_is_not_made();
   a_record_not_made_is_not_shown();
