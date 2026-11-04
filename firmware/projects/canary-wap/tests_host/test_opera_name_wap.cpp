@@ -603,8 +603,11 @@ void test_every_log_line_reaches_the_ring_clean() {
   }
 
   // The other two ways in: health_log() (every module's) and
-  // log_health_ssid(), whose own pass leaves the ring as log_health() alone
-  // would.
+  // log_health_ssid(), whose own replaced_text() pass before log_health()'s
+  // leaves well-formed text as log_health() alone would, and for this SSID
+  // the same bytes (not for every one: at the detail's cap its pass can
+  // drop a final ill-formed sequence whole where shown_text() alone keeps
+  // a U+FFFD for its first byte; both are well-formed).
   no_opera(A);
   reset_log();
   health_log(SCV_LOG_WARNING, SCV_CAT_MESH, "opera\x01 line\xC3");
@@ -616,11 +619,15 @@ void test_every_log_line_reaches_the_ring_clean() {
   if (lines.size() == 3) {
     CHECK_MSG(lines[2].message == "opera" + rep + " line" + rep, shown(lines[2].message));
     CHECK_MSG(lines[1].detail == "Cafe" + rep + "Net" + rep, shown(lines[1].detail));
-    CHECK_MSG(lines[0].detail == lines[1].detail, "log_health_ssid() stores what log_health() alone stores");
+    CHECK_MSG(lines[0].detail == lines[1].detail,
+              "log_health_ssid() stores what log_health() alone stores for this SSID");
   }
 
-  // And a line from mesh_network.cpp that is longer than the field (the
-  // pairing timeout's, sweep F359): its first 79 bytes, on a character.
+  // And the line mesh_network.cpp logs when a pairing times out after this
+  // side confirmed (sweep F359), the one line of the mesh layer written as
+  // message and detail: each reaches GET /api/logs whole, under the fields'
+  // 79 and 47 bytes (the F359 review: one longer line reached the owner cut
+  // before its reason).
   opera_named(A, "test");
   reset_log();
   become(A);
@@ -632,8 +639,14 @@ void test_every_log_line_reaches_the_ring_clean() {
   host_sim::now_ms += mn::PAIRING_TIMEOUT_MS + 1000;
   mn::update();
   CHECK(!mn::is_pairing());
-  CHECK(logged_message(logs(A, "the pairing timeout's line"),
-                       "opera: pairing timed out after this side confirmed the code; the other Canary d"));
+  const std::vector<LogLine> timeout_lines = logs(A, "the pairing timeout's line");
+  bool timeout_whole = false;
+  for (const LogLine& l : timeout_lines) {
+    if (l.message == "opera: pairing timed out; code confirmed here, no answer from the other Canary") {
+      timeout_whole = l.has_detail && l.detail == "check its log; older firmware? update both";
+    }
+  }
+  CHECK_MSG(timeout_whole, "the pairing timeout's message and detail reach GET /api/logs whole");
   std::printf("PASS every_log_line_reaches_the_ring_clean\n");
 }
 

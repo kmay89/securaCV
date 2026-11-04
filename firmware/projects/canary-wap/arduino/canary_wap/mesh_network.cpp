@@ -2427,20 +2427,30 @@ void update() {
   // confirm (confirm_pairing() refuses before). An initiator whose owner and
   // joiner both confirmed has completed in initiator_step() above, so one
   // that confirmed and times out never had the joiner's CONFIRM, and a joiner
-  // that confirmed never had the COMPLETE (never sent, or every copy lost on
-  // the air, which the initiator logs as an unanswered COMPLETE): either way
-  // the pairing did not finish with the other Canary.
+  // that confirmed never had the COMPLETE. The line says what this side
+  // knows: nothing came back after its owner confirmed. Why is one of three
+  // things it cannot tell apart, so it names none as the cause: the other
+  // owner never confirmed; the other Canary runs pairing firmware from
+  // before F75/F94 and did not answer as this one expects; or every copy was
+  // lost on the air (the initiator then holds the member and logs an
+  // unanswered COMPLETE, so the other Canary's log says which: the detail
+  // points there). Written as message and detail through log_health(): the
+  // ring keeps 79 bytes of a message and 47 of a detail (HealthLogRingEntry),
+  // and GET /api/logs, the dashboard and the BLE log read the ring, so one
+  // longer line reached the owner cut before its reason (the F359 review);
+  // Serial and the /HEALTH file carry both fields whole.
+  // test_mesh_liveness_wap.cpp and test_opera_name_wap.cpp hold the words
+  // and that both fields reach GET /api/logs whole.
   if ((g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN ||
        g_mesh_state == MESH_PAIRING_CONFIRM) &&
       now - g_pairing.started_ms > PAIRING_TIMEOUT_MS) {
     const bool confirmed_here = g_pairing.code_confirmed;
     cancel_pairing();
-    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+    log_health(SCV_LOG_WARNING, SCV_CAT_MESH,
                confirmed_here
-                   ? "opera: pairing timed out after this side confirmed the code; the other "
-                     "Canary did not finish (its owner may not have confirmed, or it runs older "
-                     "pairing firmware: update both)"
-                   : "opera: pairing timed out");
+                   ? "opera: pairing timed out; code confirmed here, no answer from the other Canary"
+                   : "opera: pairing timed out",
+               confirmed_here ? "check its log; older firmware? update both" : nullptr);
   }
 
   // Send periodic heartbeat — while MESH_CONNECTING too (sweep F76). It
