@@ -1314,6 +1314,10 @@ static const char* wifi_state_name(WiFiProvState s);
 static void claim_catch_all_hostname();
 static void schedule_catch_all_claim();
 static void generate_mdns_hostname(char* out, size_t cap);
+// Whether this boot's identity is named and its chain anchored (sweeps
+// F364's review and F403): every surface that hands out the device id, the
+// fingerprint, the chain head or a signature asks it first.
+static bool identity_named_and_anchored();
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
@@ -7760,6 +7764,11 @@ uint32_t ble_witness_get_total_records() {
 
 bool ble_witness_get_head_json(char* out, size_t out_len) {
   if (!out || out_len < 200) return false;
+  // Not under an identity this boot did not make (sweep F403): the head
+  // would be a refused chain's (32 zero bytes at genesis) and the key the
+  // one its fingerprint did not hash. The export counts a snapshot failure
+  // and keeps its placeholder.
+  if (!identity_named_and_anchored()) return false;
   // Compact field names because the whole payload has to fit in MTU 247
   // (244-byte ATT data) for a single read without long-read fallback.
   //   s  = current chain seq
@@ -10491,6 +10500,34 @@ static esp_err_t handle_audio_transitions_auth(httpd_req_t* req) {
 }
 #endif
 
+// Per-device Ed25519 signature service. Mounts the keypair into a
+// dedicated module so csi_mqtt (and any future signed-egress path
+// like SD-resync) can stamp chain/event/counts publishes with a
+// signature HA verifies against its pinned-pubkey trust store.
+// Must come after generate_keypair has populated g_device.{priv,pub,fp}.
+// The fingerprint it is handed is the `fp` of every signed publish (and
+// the one /enroll prints), so it gets the lowercase spelling too; the
+// module copies it, and g_device.fingerprint_hex keeps hex_to_str's.
+// Not mounted under an identity this boot did not make (sweep F403): the
+// module's s_ready stays false, so every sign_* refuses
+// (device_signature.cpp, the common copy) and csi_mqtt publishes unsigned
+// ("signed":false), which HA marks unverified. register_api_routes() calls
+// it on each server start.
+static void device_signature_mount() {
+  if (!identity_named_and_anchored()) {
+    Serial.println("[--] Signed publishes off: the device is not named or its chain not anchored this boot");
+    log_health(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
+               "Signer not mounted", "identity not provisioned this boot");
+    return;
+  }
+  char mqtt_fp_hex[mqtt_identity::FP_HEX_CAP];
+  mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);
+  device_signature::init(g_device.privkey,
+                         g_device.pubkey,
+                         g_device.device_id,
+                         mqtt_fp_hex);
+}
+
 // Register all route handlers on a given httpd server handle
 static void register_api_routes(httpd_handle_t server) {
   // UI — no auth required. / serves the headline Sensing dashboard;
@@ -10651,20 +10688,7 @@ static void register_api_routes(httpd_handle_t server) {
   mqtt_identity::public_key_hex(pubkey_hex, g_device.pubkey);
   csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION, pubkey_hex);
 
-  // Per-device Ed25519 signature service. Mounts the keypair into a
-  // dedicated module so csi_mqtt (and any future signed-egress path
-  // like SD-resync) can stamp chain/event/counts publishes with a
-  // signature HA verifies against its pinned-pubkey trust store.
-  // Must come after generate_keypair has populated g_device.{priv,pub,fp}.
-  // The fingerprint it is handed is the `fp` of every signed publish (and
-  // the one /enroll prints), so it gets the lowercase spelling too; the
-  // module copies it, and g_device.fingerprint_hex keeps hex_to_str's.
-  char mqtt_fp_hex[mqtt_identity::FP_HEX_CAP];
-  mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);
-  device_signature::init(g_device.privkey,
-                         g_device.pubkey,
-                         g_device.device_id,
-                         mqtt_fp_hex);
+  device_signature_mount();
 }
 
 // GET /api/selftest wrapper: while the user is on the wizard's final step
@@ -11692,6 +11716,25 @@ static bool fingerprint_is_nonzero(const uint8_t fingerprint[8]) {
     if (fingerprint[i] != 0) return true;
   }
   return false;
+}
+
+// Whether this boot's identity may leave the device (sweep F364's review,
+// F403): the device is named (its fingerprint hashed, so the device id and
+// fingerprint are set) and its chain anchored (a stored head loaded or the
+// genesis head hashed). After provisioning could not hash either
+// (g_device.chain_refused), the fingerprint, the device id or the head is
+// zero bytes or empty, the same on every such unit; and before a key exists
+// (a keygen that failed, after which setup() goes on) the fingerprint is
+// zero. setup() goes on otherwise (F336), so every surface that hands out
+// the identity asks this first: BLE discovery (Opera's SCV-0000 name and
+// device-info id, every chirp's id and head), the BLE status service (its
+// GATT device name is the device id), the witness export's HEAD (the chain
+// head and public key a bonded peer verifies against), and the signer
+// (device_signature_mount(), so every sign_* refuses). It used to be BLE
+// discovery's alone, inside #if FEATURE_BLE. tests_host/test_wap_sha_fail.cpp
+// drives each one after a refused fingerprint and a refused genesis head.
+static bool identity_named_and_anchored() {
+  return !g_device.chain_refused && fingerprint_is_nonzero(g_device.pubkey_fp);
 }
 
 static bool resolve_ap_password(char* out_password, size_t out_len) {
@@ -13885,21 +13928,6 @@ static volatile bool   g_ble_bringup_done      = false;  // worker -> loop hando
 static bool            g_ble_bringup_finalized = false;  // loop-only
 static volatile int8_t g_ble_mgr_result        = 0;      // 0=not attempted, 1=ok, -1=failed
 
-#if FEATURE_BLE
-// Whether BLE discovery may broadcast this boot's identity (sweep F364's
-// review). Opera's name and device-info id are the fingerprint's first bytes
-// and every chirp carries its first two and the chain head, to anyone in
-// range. After provisioning could not hash the fingerprint or the genesis
-// head (g_device.chain_refused), those are 8 or 32 zero bytes: every such
-// unit would advertise as SCV-0000 with an all-zero head, so discovery is
-// not started. setup() goes on otherwise (F336), and the pairing channel
-// still comes up. tests_host/test_wap_sha_fail.cpp drives it after each
-// refusal and holds ble_manager::init() behind it.
-static bool ble_discovery_identity_ready() {
-  return !g_device.chain_refused && fingerprint_is_nonzero(g_device.pubkey_fp);
-}
-#endif
-
 static void ble_bringup_task(void*) {
   Serial.printf("[HEAP] before BLE bring-up: internal free=%u largest=%u\n",
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
@@ -13936,11 +13964,19 @@ static void ble_bringup_task(void*) {
 
       // BLE GATT Status Service — register on the shared NimBLE server
       // created by bluetooth_channel. Exposes battery, health, chain,
-      // and SD status to companion phones over standard GATT.
+      // and SD status to companion phones over standard GATT. Its device
+      // name is g_device.device_id, kept by pointer, so it is not
+      // registered under an identity this boot did not make (sweep F403:
+      // after a refused fingerprint the name was empty). The channel's
+      // services_missing then names the status service, which is true.
       #if FEATURE_BLE_STATUS
       {
         NimBLEServer* ble_server = NimBLEDevice::getServer();
-        if (ble_server) {
+        if (!identity_named_and_anchored()) {
+          Serial.println("[--] BLE GATT status service not registered: the device is not named or its chain not anchored this boot");
+          log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                     "BLE status service not started", "identity not provisioned this boot");
+        } else if (ble_server) {
           if (ble_status::init(ble_server, g_device.device_id, FIRMWARE_VERSION,
                                &g_device.seq)) {
             Serial.println("[OK] BLE GATT status service registered");
@@ -13965,7 +14001,7 @@ static void ble_bringup_task(void*) {
   // registry is up by now (web server started before the window cleared), so
   // the lifecycle witness events route through the chokepoint directly.
   #if FEATURE_BLE
-  if (!ble_discovery_identity_ready()) {
+  if (!identity_named_and_anchored()) {
     // Nothing named to broadcast (sweep F364's review): no init, no
     // lifecycle event, and g_ble_mgr_result stays "not attempted".
     g_ble_init_attempted = true;  // self-test: discovery is down, not skipped

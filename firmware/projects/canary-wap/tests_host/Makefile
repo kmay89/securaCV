@@ -2147,22 +2147,30 @@ clean: clean-wap-hmac-fail
 # the hash latch line and witness_hash_failed(), create_witness_record(),
 # the SD-tail recovery, verify_record_signature(), chain_tail_intact(), the
 # boot attestation's and loop()'s record and self-verify helpers,
-# fingerprint_is_nonzero() and BLE discovery's identity gate are cut
-# verbatim out of canary_wap.ino; tls_after_setup() on its own,
-# init_tls_cert() on its own (the suite includes it twice, with and without
-# the certificate generator) and provision_device() on its own (firmware/
-# tests_host/cut_functions.awk). Under them: a stand-in for mbedTLS's
-# streaming SHA-256, defined in the suite over OpenSSL, that fails the step
-# and the hash the test names, and the fake SD card (stubs/sd_fake). It also
-# reads canary_wap.ino (the sketch directory's path is passed in), so it
-# re-runs on every `make`: each call of the six uses its result.
+# fingerprint_is_nonzero() and the identity gate,
+# identity_named_and_anchored(), are cut verbatim out of canary_wap.ino;
+# tls_after_setup() on its own, init_tls_cert() on its own (the suite
+# includes it twice, with and without the certificate generator),
+# provision_device() on its own, and what the gate holds back after a
+# refused identity (sweep F403): ble_witness_get_head_json() and
+# device_signature_mount() (firmware/tests_host/cut_functions.awk), and
+# ble_bringup_task()'s FEATURE_BLE_STATUS block, cut by line from its one
+# opening line to the first #endif at its depth. Under them: a stand-in
+# for mbedTLS's streaming SHA-256, defined in the suite over OpenSSL, that
+# fails the step and the hash the test names, and the fake SD card
+# (stubs/sd_fake). It also reads canary_wap.ino (the sketch directory's
+# path is passed in), so it re-runs on every `make`: each call of the six
+# uses its result.
 SHAFAIL_BIN   = test_wap_sha_fail
 SHAFAIL_SRC   = test_wap_sha_fail.cpp
 SHAFAIL_CORE  = test_wap_sha_fail_core.inc
 SHAFAIL_TLS   = test_wap_sha_fail_tls.inc
 SHAFAIL_AFTER = test_wap_sha_fail_after.inc
 SHAFAIL_PROV  = test_wap_sha_fail_prov.inc
-SHAFAIL_INCS  = $(SHAFAIL_CORE) $(SHAFAIL_TLS) $(SHAFAIL_AFTER) $(SHAFAIL_PROV)
+SHAFAIL_REACH = test_wap_sha_fail_reach.inc
+SHAFAIL_STATUS = test_wap_sha_fail_status.inc
+SHAFAIL_INCS  = $(SHAFAIL_CORE) $(SHAFAIL_TLS) $(SHAFAIL_AFTER) $(SHAFAIL_PROV) $(SHAFAIL_REACH) \
+                $(SHAFAIL_STATUS)
 CUT_INCS     += $(SHAFAIL_INCS)
 
 $(SHAFAIL_CORE): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
@@ -2172,7 +2180,7 @@ $(SHAFAIL_CORE): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 	  /^enum class RecordMade : uint8_t \{ Made, Unverified, Refused \};$$/ { e++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
 	  END { if (n != 6 || w != 1 || e != 1) { print "canary_wap.ino: " n + 0 " [[nodiscard]] static bool declaration(s), expected 6, " w + 0 " hash latch line(s), expected 1, and " e + 0 " one-line RecordMade enum(s), expected 1" > "/dev/stderr"; exit 1 } }' \
 	  $(SRC_DIR)/canary_wap.ino > $@.tmp
-	awk -v 'sigs=static void hex_print(|static void secure_zero(|static void hex_to_str(|static bool sha256_raw(|static bool sha256_domain(|static bool compute_fingerprint(|static void tls_free_buffers() {|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool compute_chain_hash(|static bool update_chain(|static bool persist_chain_blob() {|static void persist_chain_state() {|static void witness_recover_from_sd() {|static void witness_hash_failed(|static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {|static bool verify_record_signature(|static bool chain_tail_intact() {|static RecordMade witness_record_last(|static void record_boot_attestation(|static void self_verify_last_record() {|static bool fingerprint_is_nonzero(|static bool ble_discovery_identity_ready() {' \
+	awk -v 'sigs=static void hex_print(|static void secure_zero(|static void hex_to_str(|static bool sha256_raw(|static bool sha256_domain(|static bool compute_fingerprint(|static void tls_free_buffers() {|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool compute_chain_hash(|static bool update_chain(|static bool persist_chain_blob() {|static void persist_chain_state() {|static void witness_recover_from_sd() {|static void witness_hash_failed(|static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {|static bool verify_record_signature(|static bool chain_tail_intact() {|static RecordMade witness_record_last(|static void record_boot_attestation(|static void self_verify_last_record() {|static bool fingerprint_is_nonzero(|static bool identity_named_and_anchored() {' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
 
 $(SHAFAIL_TLS): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
@@ -2184,12 +2192,27 @@ $(SHAFAIL_AFTER): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 $(SHAFAIL_PROV): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 	awk -v 'sigs=static bool provision_device() {' -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
+$(SHAFAIL_REACH): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=bool ble_witness_get_head_json(|static void device_signature_mount() {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+# The status service's registration is a block inside ble_bringup_task(), not
+# a function: cut from its one opening line to the first line that closes
+# it at the same depth, or fail.
+$(SHAFAIL_STATUS): $(SRC_DIR)/canary_wap.ino Makefile
+	awk -v 'start=      #if FEATURE_BLE_STATUS' -v 'stop=      #endif' \
+	  '$$0 == start { n++; if (n == 1) { printf "#line %d \"%s\"\n", FNR, FILENAME; on = 1 } } \
+	   on { print } on && $$0 == stop { on = 0; done = 1 } \
+	   END { if (n != 1 || on || !done) { print "canary_wap.ino: the BLE status registration is not one block" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
 $(SHAFAIL_BIN): $(SHAFAIL_SRC) $(SHAFAIL_INCS) arduino_globals.h $(SRC_DIR)/log_level.h \
                 $(SRC_DIR)/chain_state.h $(SRC_DIR)/chain_persist.h $(SRC_DIR)/witness_page.h \
-                $(SRC_DIR)/witness_store.h $(wildcard stubs/sd_fake/*.h)
+                $(SRC_DIR)/witness_store.h $(SRC_DIR)/mqtt_identity.h $(wildcard stubs/sd_fake/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations -I stubs/sd_fake -I $(SRC_DIR) -I . \
 	  -DWAP_SHA_INC='"$(SHAFAIL_CORE)"' -DWAP_SHA_TLS_INC='"$(SHAFAIL_TLS)"' \
 	  -DWAP_SHA_TLS_AFTER_INC='"$(SHAFAIL_AFTER)"' -DWAP_SHA_PROV_INC='"$(SHAFAIL_PROV)"' \
+	  -DWAP_SHA_REACH_INC='"$(SHAFAIL_REACH)"' -DWAP_SHA_STATUS_INC='"$(SHAFAIL_STATUS)"' \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(SHAFAIL_SRC) -lcrypto
 
 .PHONY: run-wap-sha-fail clean-wap-sha-fail
