@@ -10318,11 +10318,25 @@ static esp_err_t handle_vault_key_set(httpd_req_t* req) {
   if (deserializeJson(body, content) != DeserializationError::Ok) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
+  // Two refusals, in their own words (sweep F426): a key that is not 64 hex
+  // characters, and a well-formed key the device could not keep (its key id
+  // did not compute, or NVS did not open or refused the write). The second
+  // was answered as the first, so an owner who pasted the right key was told
+  // it was the wrong shape. Either way nothing changed: the key registered
+  // before, if any, is still the one. vault_snapshot logs the second.
   const char* pub = body["pubkey"];
-  if (!pub || !vault_snapshot::set_pubkey_hex(pub)) {
+  const vault_snapshot::KeySet set =
+      pub ? vault_snapshot::set_pubkey_hex(pub) : vault_snapshot::KeySet::Malformed;
+  if (set == vault_snapshot::KeySet::Malformed) {
     return http_send_json(req,
         "{\"ok\":false,\"error\":\"pubkey must be the 64-hex X25519 public key "
         "printed by unseal_snapshot.py gen-key\"}");
+  }
+  if (set != vault_snapshot::KeySet::Stored) {
+    return http_send_json(req,
+        "{\"ok\":false,\"error\":\"The device could not save this key (its key id did not "
+        "compute, or storage refused the write). Nothing changed. Try again, and check the "
+        "health log if it repeats.\"}");
   }
   char key_id[17];
   vault_snapshot::key_id_hex(key_id);

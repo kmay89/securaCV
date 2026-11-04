@@ -2329,8 +2329,15 @@ SHAMOD_FAM          = test_wap_sha_fail_modules_familiar.inc
 SHAMOD_WP_STATE     = test_wap_sha_fail_modules_presence_state.inc
 SHAMOD_WP           = test_wap_sha_fail_modules_presence.inc
 SHAMOD_USB          = test_wap_sha_fail_modules_usb.inc
+# And POST /api/vault/key's handler (sweep F426): handle_vault_key_set(), cut
+# verbatim out of canary_wap.ino, over the vault's cut functions, a stand-in
+# for its one body read and http_send_json(), and arduinojson_tree.h. A key
+# whose key id did not compute, and one NVS did not open for or refused,
+# answer the device's refusal (not the 64-hex shape text) and leave the key
+# registered before in RAM and NVS; a malformed key answers the shape text.
+SHAMOD_VAULT_KEY    = test_wap_sha_fail_modules_vault_key.inc
 SHAMOD_INCS         = $(SHAMOD_VAULT_STATE) $(SHAMOD_VAULT) $(SHAMOD_FAM_STATE) $(SHAMOD_FAM) \
-                      $(SHAMOD_WP_STATE) $(SHAMOD_WP) $(SHAMOD_USB)
+                      $(SHAMOD_WP_STATE) $(SHAMOD_WP) $(SHAMOD_USB) $(SHAMOD_VAULT_KEY)
 CUT_INCS           += $(SHAMOD_INCS)
 # A state block: every line from the first line matching `from` to the next
 # matching `to`, behind a #line naming the file, found exactly once.
@@ -2343,7 +2350,7 @@ $(SHAMOD_VAULT_STATE): $(SRC_DIR)/vault_snapshot.cpp Makefile
 	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/vault_snapshot.cpp > $@.tmp && mv $@.tmp $@
 
 $(SHAMOD_VAULT): $(SRC_DIR)/vault_snapshot.cpp $(HMACFAIL_CUT) Makefile
-	awk -v 'sigs=[[nodiscard]] static bool sha256_key_id(|static bool hex_nibble(|static void fail_result(|static void seal_task(void*) {|static void load_config_from(|bool set_pubkey_hex(|bool has_pubkey() {|void key_id_hex(' \
+	awk -v 'sigs=[[nodiscard]] static bool sha256_key_id(|static bool hex_nibble(|static void fail_result(|static void seal_task(void*) {|static void load_config_from(|KeySet set_pubkey_hex(|bool has_pubkey() {|void key_id_hex(' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/vault_snapshot.cpp > $@.tmp && mv $@.tmp $@
 
 $(SHAMOD_FAM_STATE): $(SRC_DIR)/familiar.cpp Makefile
@@ -2366,13 +2373,19 @@ $(SHAMOD_USB): $(SRC_DIR)/usb_evidence_drive.cpp $(HMACFAIL_CUT) Makefile
 	awk -v 'sigs=static bool dep_sha256(' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/usb_evidence_drive.cpp > $@.tmp && mv $@.tmp $@
 
-$(SHAMOD_BIN): $(SHAMOD_SRC) $(SHAMOD_INCS) $(SHAMOD_LINK) arduino_globals.h
+$(SHAMOD_VAULT_KEY): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static esp_err_t handle_vault_key_set(httpd_req_t* req) {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_BIN): $(SHAMOD_SRC) $(SHAMOD_INCS) $(SHAMOD_LINK) arduino_globals.h arduinojson_tree.h json_strict.h \
+               $(SRC_DIR)/vault_snapshot.h
 	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I stubs/sd_fake \
 	  -I $(SRC_DIR) -I . -DSECURACV_OTA_HOST_BUILD \
 	  -DWAP_SHAMOD_VAULT_STATE_INC='"$(SHAMOD_VAULT_STATE)"' -DWAP_SHAMOD_VAULT_INC='"$(SHAMOD_VAULT)"' \
 	  -DWAP_SHAMOD_FAMILIAR_STATE_INC='"$(SHAMOD_FAM_STATE)"' -DWAP_SHAMOD_FAMILIAR_INC='"$(SHAMOD_FAM)"' \
 	  -DWAP_SHAMOD_PRESENCE_STATE_INC='"$(SHAMOD_WP_STATE)"' -DWAP_SHAMOD_PRESENCE_INC='"$(SHAMOD_WP)"' \
-	  -DWAP_SHAMOD_USB_INC='"$(SHAMOD_USB)"' -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -DWAP_SHAMOD_USB_INC='"$(SHAMOD_USB)"' -DWAP_SHAMOD_VAULT_KEY_INC='"$(SHAMOD_VAULT_KEY)"' \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
 	  -o $@ $(SHAMOD_SRC) $(SHAMOD_LINK) -lcrypto)
 
 .PHONY: run-wap-sha-fail-modules clean-wap-sha-fail-modules
