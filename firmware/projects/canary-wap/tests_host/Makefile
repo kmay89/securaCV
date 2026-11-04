@@ -1501,15 +1501,19 @@ clean: clean-bt-commands
 
 # The Beacon set as it loads from NVS and as GET /api/beacon/set answers it
 # (sweep F408): load_beacon_set(), get_beacon_set_size() and
-# get_beacon_set_entry() cut verbatim out of beacon_channel.cpp, and
+# get_beacon_set_entry() cut verbatim out of beacon_channel.cpp, with the
+# readers of the set the F408 review found counting a refused entry
+# (persist_beacon_set(), recompute_trouble_reasons() and
+# revoke_beacon_set_entry()), and
 # handle_set_list() with the helpers it calls cut verbatim out of
 # beacon_api.h (firmware/tests_host/cut_functions.awk; REPLY_BUF's line
 # starts the cut that carries send_reply(), the function right after it, to
 # its closing brace), over the REAL beacon_wire.h and wap_json_writer.h and
 # stubs/bt's ArduinoJson and esp_http_server stand-ins. An entry NVS did not
 # return whole is left out, every loaded name ends in its field, and the
-# answer is strict JSON with each name as a page shows it. Built with
-# AddressSanitizer.
+# answer is strict JSON with each name as a page shows it; the set holds its
+# members only, so a set of refused rows reads empty and no revoke finds a
+# hole. Built with AddressSanitizer.
 BSET_BIN  = test_beacon_set_load
 BSET_SRC  = test_beacon_set_load.cpp
 BSET_CHANNEL_INC = test_beacon_set_load_channel.inc
@@ -1518,7 +1522,7 @@ BSET_CUT  = ../../../tests_host/cut_functions.awk
 CUT_INCS += $(BSET_CHANNEL_INC) $(BSET_API_INC)
 
 $(BSET_CHANNEL_INC): $(SRC_DIR)/beacon_channel.cpp $(BSET_CUT) Makefile
-	awk -v 'sigs=static bool load_beacon_set() {|uint8_t get_beacon_set_size() {|const BeaconSetEntry* get_beacon_set_entry(uint8_t index) {' \
+	awk -v 'sigs=static bool persist_beacon_set() {|static bool load_beacon_set() {|static void recompute_trouble_reasons() {|uint8_t get_beacon_set_size() {|const BeaconSetEntry* get_beacon_set_entry(uint8_t index) {|bool revoke_beacon_set_entry(const uint8_t* fingerprint) {' \
 	  -f $(BSET_CUT) $(SRC_DIR)/beacon_channel.cpp > $@.tmp && mv $@.tmp $@
 
 $(BSET_API_INC): $(SRC_DIR)/beacon_api.h $(BSET_CUT) Makefile
@@ -1527,7 +1531,8 @@ $(BSET_API_INC): $(SRC_DIR)/beacon_api.h $(BSET_CUT) Makefile
 
 $(BSET_BIN): $(BSET_SRC) $(BSET_CHANNEL_INC) $(BSET_API_INC)
 	$(CXX) $(CXXFLAGS) -g -Werror -fsanitize=address -fno-omit-frame-pointer -I stubs/bt -I $(SRC_DIR) -I . \
-	  -DBEACON_SET_CHANNEL_INC='"$(BSET_CHANNEL_INC)"' -DBEACON_SET_API_INC='"$(BSET_API_INC)"' -o $@ $(BSET_SRC)
+	  -DBEACON_SET_CHANNEL_INC='"$(BSET_CHANNEL_INC)"' -DBEACON_SET_API_INC='"$(BSET_API_INC)"' \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(BSET_SRC)
 
 .PHONY: run-beacon-set-load clean-beacon-set-load
 run-beacon-set-load: $(BSET_BIN)

@@ -134,9 +134,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -172,13 +174,23 @@ inline NvsRead nvs_fault = NvsRead::kOk;
 }  // namespace host_sim
 class FakeMainNvs {
  public:
+  // As Arduino-ESP32's Preferences::putBytes(): a length of 0 writes nothing
+  // and answers 0, so the row it was meant to replace stays (the F406
+  // review; the empty list is saved by remove()).
   size_t putBytes(const char* k, const void* v, size_t n) {
     host_sim::note("nvs_write");
     if (host_sim::on_main_nvs_write) host_sim::on_main_nvs_write(k);
+    if (v == nullptr || n == 0) return 0;
     std::lock_guard<std::recursive_mutex> g(host_sim::main_nvs_mu);
     const uint8_t* b = static_cast<const uint8_t*>(v);
     host_sim::main_nvs[k].assign(b, b + n);
     return n;
+  }
+  bool remove(const char* k) {
+    host_sim::note("nvs_write");
+    if (host_sim::on_main_nvs_write) host_sim::on_main_nvs_write(k);
+    std::lock_guard<std::recursive_mutex> g(host_sim::main_nvs_mu);
+    return host_sim::main_nvs.erase(k) == 1;
   }
   size_t getBytesLength(const char* k) {
     std::lock_guard<std::recursive_mutex> g(host_sim::main_nvs_mu);
@@ -5118,8 +5130,44 @@ void test_a_bluetooth_name_reaches_every_answer_as_shown() {
 }
 
 // What load_saved() logs for a saved name it did not load (F261, F406).
-const char* const kNameRefusedLog =
-    "Saved Bluetooth name refused (a control byte, or a read NVS did not return whole): the default name is used";
+const char* const kNameRefusedLog = "Saved Bluetooth name unreadable or held a control byte: default name used";
+
+// The bytes the health log's ring keeps of a line: a message and a detail
+// each to its field's size less its NUL (log_health() copies them with
+// strncpy), as canary_wap.ino's HealthLogRingEntry declares them, read from
+// the sketch beside bluetooth_channel.cpp, so a ring that changes size moves
+// the bound with it. GET /api/logs shows a longer one cut mid-word (the F406
+// review: the two refusal lines F406 added were 91 and 107 bytes). 0 when
+// the declaration is not found, which no line fits.
+struct HealthRing {
+  size_t message = 0;
+  size_t detail = 0;
+};
+HealthRing health_ring() {
+  static const HealthRing ring = [] {
+    HealthRing r;
+    std::string path = BLUETOOTH_CHANNEL_CPP;
+    path = path.substr(0, path.rfind('/') + 1) + "canary_wap.ino";
+    std::ifstream in(path);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string text = ss.str();
+    const size_t at = text.find("struct HealthLogRingEntry {");
+    const size_t end = at == std::string::npos ? at : text.find("};", at);
+    auto field = [&](const std::string& decl) -> size_t {
+      const size_t f = end == std::string::npos ? end : text.find(decl, at);
+      return f < end ? std::strtoul(text.c_str() + f + decl.size(), nullptr, 10) : 0;
+    };
+    r.message = field("char message[");
+    r.detail = field("char detail[");
+    return r;
+  }();
+  return ring;
+}
+bool fits_health_ring(const std::string& message, const std::string& detail) {
+  const HealthRing r = health_ring();
+  return message.size() < r.message && detail.size() < r.detail;
+}
 
 // A name saved before the rule (F261) holding a control byte is not loaded:
 // the loop task's first pass keeps the default name, init() hands the stack
@@ -5156,6 +5204,7 @@ void test_a_saved_name_holding_a_control_byte_is_not_loaded() {
       CHECK(l.detail == def && l.task == "loop");
     }
     CHECK(logged == (c.kept ? 0u : 1u));
+    CHECK(fits_health_ring(kLog, def));
     answers_carry_name(expect);
     const Tap t = tap(bluetooth_api::handle_bluetooth_settings_set, "{\"auto_advertise\":true}");
     CHECK(t.body == succeeded_with("Settings updated"));
@@ -5188,6 +5237,7 @@ void test_a_saved_name_nvs_did_not_return_whole_is_not_loaded() {
     CHECK(bc::g_settings.device_name == def);
     CHECK(host_sim::nimble_name == def);
     CHECK(health_says(kNameRefusedLog) == 1 && health_detail(kNameRefusedLog) == def);
+    CHECK(fits_health_ring(kNameRefusedLog, health_detail(kNameRefusedLog)));
     answers_carry_name(def);
   }
   // The same row read whole loads, and logs nothing.
@@ -5201,8 +5251,7 @@ void test_a_saved_name_nvs_did_not_return_whole_is_not_loaded() {
   std::printf("PASS a_saved_name_nvs_did_not_return_whole_is_not_loaded\n");
 }
 
-const char* const kPairedRefusedLog =
-    "Saved paired list unreadable: none loaded; it is rebuilt from the bond store once BLE is up";
+const char* const kPairedRefusedLog = "Saved paired list unreadable: none loaded";
 
 // Entry `i` of a saved list: a phone's identity address whose every byte is
 // nonzero (C1:C2:C3:C4:C5:i+1, random), bonded in NimBLE's store, named
@@ -5345,6 +5394,7 @@ void test_a_saved_paired_list_nvs_did_not_return_whole_loads_nothing() {
                             : 0;
     CHECK(health_detail(kPairedRefusedLog) == std::to_string(row.size()) + " bytes, " + std::to_string(read) +
                                                   " read, entries of " + std::to_string(one));
+    CHECK(fits_health_ring(kPairedRefusedLog, health_detail(kPairedRefusedLog)));
     CHECK(paired_answer_names().empty());
     // The stack comes up: the list is rebuilt from the bonds NimBLE keeps.
     host_sim::task = "bringup";
@@ -5365,6 +5415,88 @@ void test_a_saved_paired_list_nvs_did_not_return_whole_loads_nothing() {
   loop_pass();
   CHECK(bc::g_paired_count == 0 && bc::g_paired_by_identity && health_says(kPairedRefusedLog) == 0);
   std::printf("PASS a_saved_paired_list_nvs_did_not_return_whole_loads_nothing\n");
+}
+
+// A refused row with no bond to rebuild from (the F406 review): the loop
+// task's first pass logs the refusal, and once it takes the stack it saves
+// the empty list, marked, over the row (the row removed: Preferences writes
+// nothing for 0 bytes), so the next boot loads an empty list and says
+// nothing, whether or not the stack comes up. Before, the rebuild returned
+// early with nothing to rebuild and wrote nothing, so every boot refused the
+// same row again and logged it at WARNING, which counts toward the logs
+// the owner has not acknowledged.
+void test_a_refused_paired_row_with_no_bond_is_replaced_once() {
+  boot(/*bring_up=*/false);
+  std::vector<uint8_t> row;
+  for (size_t i = 0; i < 2; i++) {
+    const bc::PairedDevice d = paired_entry(i, "phone " + std::to_string(i));
+    const uint8_t* b = reinterpret_cast<const uint8_t*>(&d);
+    row.insert(row.end(), b, b + sizeof d);
+  }
+  row.pop_back();                                  // a byte short of two entries
+  save_paired_row(row.data(), row.size());
+  host_sim::bonds.clear();                         // and NimBLE keeps no bond
+  host_sim::bond_irks.clear();
+  size_t refused = 0;
+  for (int b = 0; b < 3; b++) {
+    if (b > 0) boot(/*bring_up=*/false, /*wipe=*/false);
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    loop_pass();
+    CHECK(bc::g_initialized && bc::g_paired_count == 0 && bc::g_paired_by_identity);
+    CHECK(host_sim::main_nvs.count("bt_paired") == 0);
+    CHECK(host_sim::main_nvs["bt_paired_id"] == std::vector<uint8_t>{1});
+    CHECK(health_says("Paired list rebuilt from the bond store") == 0);
+    CHECK(paired_answer_names().empty());
+    refused += health_says(kPairedRefusedLog);
+    if (b == 0) CHECK(health_level(kPairedRefusedLog) == SCV_LOG_WARNING);
+  }
+  if (refused != 1) std::fprintf(stderr, "the refused row was logged %u times in three boots\n", (unsigned)refused);
+  CHECK(refused == 1);
+  // And a boot whose stack never comes up after it loads the empty list, silently.
+  boot(/*bring_up=*/false, /*wipe=*/false);
+  loop_pass();
+  CHECK(!bc::g_initialized && bc::g_paired_count == 0 && health_says(kPairedRefusedLog) == 0);
+  // A fresh device (no row, no bond) still writes nothing when the stack comes up.
+  boot(/*bring_up=*/false);
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  CHECK(bc::g_initialized && host_sim::main_nvs.count("bt_paired") == 0 &&
+        host_sim::main_nvs.count("bt_paired_id") == 0);
+  std::printf("PASS a_refused_paired_row_with_no_bond_is_replaced_once\n");
+}
+
+// A Clear that leaves no entry saves the empty list by removing the row (the
+// F406 review): Arduino's Preferences::putBytes() writes nothing for 0
+// bytes, so the cleared entries stayed in NVS, loaded again at the next
+// boot, and were dropped there as entries without a bond, a line logged at
+// every boot after. Now the next boot loads an empty list and says nothing.
+void test_a_cleared_list_stays_cleared_after_a_reboot() {
+  boot(/*bring_up=*/false);
+  bc::PairedDevice saved[2];
+  for (size_t i = 0; i < 2; i++) saved[i] = paired_entry(i, "phone " + std::to_string(i));
+  save_paired_row(saved, sizeof saved);
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  CHECK(bc::g_initialized && bc::g_paired_count == 2 && host_sim::bonds.size() == 2);
+  const Rest r = rest(cmd_of(bc::BT_CMD_PAIRED_CLEAR));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && bc::g_paired_count == 0 && host_sim::bonds.empty());
+  CHECK(host_sim::main_nvs.count("bt_paired") == 0);
+  for (int b = 0; b < 2; b++) {
+    boot(/*bring_up=*/false, /*wipe=*/false);
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    loop_pass();
+    CHECK(bc::g_initialized && bc::g_paired_count == 0 && paired_answer_names().empty());
+    CHECK(health_says("Paired list: entries without a bond dropped") == 0);
+  }
+  std::printf("PASS a_cleared_list_stays_cleared_after_a_reboot\n");
 }
 
 // ── A nearby Canary's name prefix (sweep F405) ─────────────────────────
@@ -6787,6 +6919,8 @@ const Test kTests[] = {
      test_a_saved_paired_name_without_a_nul_ends_in_its_field},
     {"a_saved_paired_list_nvs_did_not_return_whole_loads_nothing",
      test_a_saved_paired_list_nvs_did_not_return_whole_loads_nothing},
+    {"a_refused_paired_row_with_no_bond_is_replaced_once", test_a_refused_paired_row_with_no_bond_is_replaced_once},
+    {"a_cleared_list_stays_cleared_after_a_reboot", test_a_cleared_list_stays_cleared_after_a_reboot},
     {"a_nearby_name_prefix_is_hex_or_refused", test_a_nearby_name_prefix_is_hex_or_refused},
     {"a_hostile_nearby_name_never_reaches_the_answer", test_a_hostile_nearby_name_never_reaches_the_answer},
     {"a_passkey_outside_pairing_mode_is_shown_nowhere", test_a_passkey_outside_pairing_mode_is_shown_nowhere},

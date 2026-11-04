@@ -671,15 +671,23 @@ static bool persist_beacon_set() {
   return true;
 }
 
-// Each entry is loaded only as NVS returns it whole (sweep F408): getBytes()
-// answers the bytes it read, short of sizeof(BeaconSetEntry) for a row from
-// another layout that is shorter, 0 for one that is longer (Preferences reads
-// nothing into a buffer it does not fit) and 0 for a read whose data check
-// failed after IDF had copied the bytes; the answer used to be dropped, so
-// the entry kept whatever the buffer then held, and its name was never
-// terminated, which GET /api/beacon/set read past. A refused entry is left
-// zeroed (valid false: every reader of the set skips it), the health log
-// counts them once, and each loaded entry's name ends at its last byte.
+// The set holds only the members NVS returns whole (sweep F408 and its
+// review). getBytes() answers the bytes it read: short of
+// sizeof(BeaconSetEntry) for a row from another layout that is shorter, 0
+// for one that is longer (Preferences reads nothing into a buffer it does
+// not fit), 0 for a missing row, and 0 for a read whose data check failed
+// after IDF had copied the bytes. The answer used to be dropped, so the
+// entry kept whatever the buffer then held, and its name was never
+// terminated, which GET /api/beacon/set read past. An entry refused here is
+// not loaded, nor is a whole one that is no member (its `valid` byte not 1:
+// a hole an earlier load left where a row was refused or missing, which
+// persist_beacon_set() then saved), and each loaded entry's name ends at its
+// last byte. So the set and its count hold members only, and every reader of
+// them reads members: the empty-set trouble (recompute_trouble_reasons()),
+// a revoke and a self-test's match by fingerprint (a hole's is all zeros),
+// the status's set size, the answer. Before the review a refused entry was
+// kept as a hole and counted, so a set of refused rows did not read empty.
+// The health log counts the refused ones once.
 static bool load_beacon_set() {
   if (!flash_encryption_enabled()) {
     g_beacon_set_count = 0;
@@ -687,24 +695,29 @@ static bool load_beacon_set() {
     return false;
   }
   g_prefs.begin(NVS_NS, true);
-  g_beacon_set_count = g_prefs.getUChar(NVS_SET_COUNT, 0);
-  if (g_beacon_set_count > MAX_BEACON_SET) g_beacon_set_count = MAX_BEACON_SET;
+  uint8_t saved = g_prefs.getUChar(NVS_SET_COUNT, 0);
+  if (saved > MAX_BEACON_SET) saved = MAX_BEACON_SET;
+  g_beacon_set_count = 0;
   unsigned refused = 0;
-  for (uint8_t i = 0; i < g_beacon_set_count; i++) {
+  for (uint8_t i = 0; i < saved; i++) {
     char key[16];
     snprintf(key, sizeof(key), "%s%u", NVS_SET_PREFIX, (unsigned)i);
-    BeaconSetEntry* e = &g_beacon_set[i];
-    if (g_prefs.getBytes(key, e, sizeof(BeaconSetEntry)) != sizeof(BeaconSetEntry)) {
+    BeaconSetEntry* e = &g_beacon_set[g_beacon_set_count];
+    const bool whole = g_prefs.getBytes(key, e, sizeof(BeaconSetEntry)) == sizeof(BeaconSetEntry);
+    uint8_t member = 0;
+    memcpy(&member, &e->valid, 1);   // a byte: a bool read from other bytes than 0 or 1 is undefined
+    if (!whole || member != 1) {
       memset(e, 0, sizeof(BeaconSetEntry));
-      refused++;
+      if (!whole) refused++;
       continue;
     }
     e->name[BEACON_NAME_LEN] = '\0';
+    g_beacon_set_count++;
   }
   g_prefs.end();
   if (refused > 0) {
-    char msg[96];
-    snprintf(msg, sizeof(msg), "beacon: %u set entries NVS did not return whole were left out",
+    char msg[80];
+    snprintf(msg, sizeof(msg), "beacon: set entries NVS did not return whole were left out (%u)",
              refused);
     health_log(SCV_LOG_WARNING, SCV_CAT_STORAGE, msg);
   }

@@ -13,12 +13,18 @@
 // start_pair_join() only set the state, "deferred to v0.3"), but v0.3's
 // pairing will, from a peer's frame.
 //
-// Now an entry is loaded only as NVS returns it whole (any other answer
-// leaves it zeroed, valid false, and the health log counts them once), each
-// loaded name ends at its last byte, and the answer writes each name through
-// wap_json::shown_text(). This suite runs the REAL code:
-// load_beacon_set(), get_beacon_set_size() and get_beacon_set_entry() cut
-// verbatim out of beacon_channel.cpp, and handle_set_list() with the helpers
+// Now an entry is loaded only as NVS returns it whole and as a member (its
+// `valid` byte 1): any other is not loaded, so the set and its count hold
+// members only (the F408 review: a refused entry kept as a hole was counted,
+// so a set of refused rows did not raise the empty-set trouble, and a revoke
+// of a hole's all-zero fingerprint "revoked" it). The health log counts the
+// refused ones once, in a line its ring keeps whole, each loaded name ends
+// at its last byte, and the answer writes each name through
+// wap_json::shown_text(). This suite runs the REAL code: load_beacon_set(),
+// get_beacon_set_size(), get_beacon_set_entry() and the set's readers the
+// review named (recompute_trouble_reasons(), revoke_beacon_set_entry() and
+// the persist_beacon_set() it calls) cut verbatim out of beacon_channel.cpp,
+// and handle_set_list() with the helpers
 // it calls (send_json(), send_reply() with its REPLY_BUF, send_error(),
 // fp_to_hex()) cut verbatim out of beacon_api.h, both by
 // firmware/tests_host/cut_functions.awk (the Makefile cuts them), over the
@@ -26,7 +32,8 @@
 // ArduinoJson and esp_http_server stand-ins. beacon_channel.cpp needs the
 // whole radio stack, so no suite compiles it whole; the cut functions name
 // only what this file declares for them below (the set, its NVS keys, the
-// flash-encryption gate, the health log). Built with AddressSanitizer: the
+// flash-encryption gate, the health log, the trouble mask and the state it
+// sets, a quiet airtime governor). Built with AddressSanitizer: the
 // old load's unterminated name, read past the set's last entry, stops there.
 //
 // Host-tested only. Beacon is off in every stock build (FEATURE_BEACON_CHANNEL
@@ -43,10 +50,14 @@
 #endif
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -63,6 +74,23 @@
 std::vector<std::string> g_health;
 void health_log(LogLevel, LogCategory, const char* message) { g_health.push_back(message ? message : ""); }
 
+// The bytes the health log's ring keeps of a message (canary_wap.ino's
+// HealthLogRingEntry::message, less its NUL), read from the sketch, so a ring
+// that changes size moves the bound with it; 0 when it is not found.
+size_t health_ring_message() {
+  static const size_t n = [] {
+    std::ifstream in(CANARY_WAP_INO);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string text = ss.str();
+    const size_t at = text.find("struct HealthLogRingEntry {");
+    const size_t end = at == std::string::npos ? at : text.find("};", at);
+    const size_t f = end == std::string::npos ? end : text.find("char message[", at);
+    return f < end ? (size_t)std::strtoul(text.c_str() + f + std::strlen("char message["), nullptr, 10) : (size_t)0;
+  }();
+  return n;
+}
+
 // Arduino-ESP32 3.3.8's Preferences, as load_beacon_set() calls it, over one
 // in-memory namespace. getBytes() answers as Preferences::getBytes() does:
 // the row's length (0) for a missing or empty row, 0 with nothing read for a
@@ -77,11 +105,27 @@ struct HostPrefs {
   Read fault = Read::kOk;
   int begins = 0;
   int ends = 0;
-  bool begin(const char*, bool) {
+  int writes = 0;            // puts, by persist_beacon_set()
+  bool read_only = true;
+  bool begin(const char*, bool ro) {
     ++begins;
+    read_only = ro;
     return true;
   }
   void end() { ++ends; }
+  size_t putUChar(const char* key, uint8_t v) {
+    if (read_only) return 0;
+    ++writes;
+    rows[key] = {v};
+    return 1;
+  }
+  size_t putBytes(const char* key, const void* v, size_t len) {
+    if (read_only || v == nullptr || len == 0) return 0;
+    ++writes;
+    const uint8_t* b = static_cast<const uint8_t*>(v);
+    rows[key].assign(b, b + len);
+    return len;
+  }
   uint8_t getUChar(const char* key, uint8_t d) {
     auto it = rows.find(key);
     return it != rows.end() && it->second.size() == 1 ? it->second[0] : d;
@@ -109,6 +153,15 @@ static const char* NVS_SET_COUNT = "set_count";
 static const char* NVS_SET_PREFIX = "set_";
 static bool g_flash_encrypted = true;
 static bool flash_encryption_enabled() { return g_flash_encrypted; }
+// recompute_trouble_reasons()'s: the mask, the alarm it defers to, the state
+// it sets, and an airtime governor with the channel quiet.
+static uint16_t g_trouble_reasons = 0;
+static bool g_active_alarm_valid = false;
+static BeaconState g_state = BEACON_STATE_NORMAL;
+static void set_state(BeaconState s) { g_state = s; }
+namespace airtime_governor {
+uint16_t airtime_pct_x100(uint32_t) { return 0; }
+}  // namespace airtime_governor
 #include BEACON_SET_CHANNEL_INC
 }  // namespace beacon_channel
 
@@ -131,7 +184,7 @@ int g_checks = 0;
 namespace bc = beacon_channel;
 using bc::BeaconSetEntry;
 
-const char* const kRefusedLog = "set entries NVS did not return whole were left out";
+const char* const kRefusedLog = "beacon: set entries NVS did not return whole were left out";
 
 // An entry with no zero byte anywhere, padding included (a 25-byte name of
 // `fill` with no NUL, a fingerprint of `id`), valid, a gateway's.
@@ -162,7 +215,7 @@ void boot(size_t n) {
 }
 size_t refused_lines() {
   size_t n = 0;
-  for (const std::string& m : g_health) n += m.find(kRefusedLog) != std::string::npos;
+  for (const std::string& m : g_health) n += m.rfind(kRefusedLog, 0) == 0;
   return n;
 }
 
@@ -202,15 +255,24 @@ std::vector<std::string> set_answer_names() {
   return names;
 }
 
+// Every slot of the set past its count holds no byte: what a refused read
+// copied, or a hole's, is not left behind.
+bool past_count_zero() {
+  const uint8_t* b = reinterpret_cast<const uint8_t*>(&bc::g_beacon_set[bc::get_beacon_set_size()]);
+  const uint8_t* e = reinterpret_cast<const uint8_t*>(bc::g_beacon_set + bc::MAX_BEACON_SET);
+  return std::all_of(b, e, [](uint8_t x) { return x == 0; });
+}
+
 // A full set whose every entry holds no zero byte but in its `valid` flag
-// (the first half are stored holes, valid false; the answer lists the
-// other half, and the set's last entry is one of them): each name is cut at
-// its field's last byte as it loads, so each is BEACON_NAME_LEN bytes, and
-// the answer lists every valid member with that name, whole. (Before, the
-// last entry's name was read past the end of the set: AddressSanitizer
-// stops there; the others carried the bytes after their field.) Half,
-// because the answer refuses a list over 4096 bytes, which a full set of
-// full-length names exceeds, before this change and after it.
+// (the first half are stored holes, valid false; the other half members,
+// the set's last entry one of them): the holes are not loaded, so the set
+// holds the members, first to last, and each name is cut at its field's last
+// byte as it loads, so each is BEACON_NAME_LEN bytes, and the answer lists
+// every member with that name, whole. (Before, the last entry's name was read
+// past the end of the set: AddressSanitizer stops there; the others carried
+// the bytes after their field.) Half, because the answer refuses a list over
+// 4096 bytes, which a full set of full-length names exceeds, before this
+// change and after it.
 void test_a_name_without_a_nul_ends_in_its_field() {
   const size_t holes = bc::MAX_BEACON_SET / 2;
   boot(bc::MAX_BEACON_SET);
@@ -220,48 +282,51 @@ void test_a_name_without_a_nul_ends_in_its_field() {
     bc::g_prefs.rows[key_of(i)] = bytes_of(e);
   }
   CHECK(bc::load_beacon_set());
-  CHECK(bc::get_beacon_set_size() == bc::MAX_BEACON_SET);
-  CHECK(bc::g_prefs.begins == 1 && bc::g_prefs.ends == 1);
+  CHECK(bc::get_beacon_set_size() == bc::MAX_BEACON_SET - holes);
+  CHECK(bc::g_prefs.begins == 1 && bc::g_prefs.ends == 1 && bc::g_prefs.writes == 0);
   const std::string kept(bc::BEACON_NAME_LEN, 'B');
   const std::vector<std::string> names = set_answer_names();   // the answer first: it reads each name to its NUL
   CHECK(names.size() == bc::MAX_BEACON_SET - holes);
   for (const std::string& n : names) CHECK(n == kept);
-  for (size_t i = 0; i < bc::MAX_BEACON_SET; ++i) {
+  for (size_t i = 0; i < bc::get_beacon_set_size(); ++i) {
     const BeaconSetEntry* e = bc::get_beacon_set_entry((uint8_t)i);
-    CHECK(e != nullptr && e->valid == (i >= holes));
+    CHECK(e != nullptr && e->valid && e->fingerprint[0] == (uint8_t)(holes + i + 1));
     CHECK(e->name[bc::BEACON_NAME_LEN] == '\0' && std::string(e->name) == kept);
   }
+  CHECK(bc::get_beacon_set_entry((uint8_t)bc::get_beacon_set_size()) == nullptr && past_count_zero());
   CHECK(refused_lines() == 0);
   std::printf("PASS a_name_without_a_nul_ends_in_its_field\n");
 }
 
-// An entry NVS did not return whole is left out: a row a byte shorter than
+// An entry NVS did not return whole is not loaded: a row a byte shorter than
 // the entry (a short read of it), one a byte longer (Preferences reads
 // nothing into a buffer it does not fit), a read that copied the row and
-// answered 0, and a short read of a whole row are each left zeroed (valid
-// false) and unlisted, the entries around them load, the count stays the
-// saved count, and the health log says how many once. Every byte length
-// around the entry's, each alone. (Before, a short row's and a copied
-// read's entry was listed from whatever the read left in it.)
+// answered 0, and a short read of a whole row are each left out, the
+// entries around them load in order, the count is the members', nothing a
+// refused read copied stays behind, and the health log says how many once,
+// in a line its ring keeps whole. Every byte length around the entry's, each
+// alone. (Before, a short row's and a copied read's entry was listed from
+// whatever the read left in it.)
 void test_an_entry_nvs_did_not_return_whole_is_left_out() {
   const size_t n = 6;
   boot(n);
   for (size_t i = 0; i < n; ++i) bc::g_prefs.rows[key_of(i)] = bytes_of(entry((uint8_t)(i + 1), (char)('a' + i)));
   bc::g_prefs.rows[key_of(1)].pop_back();                    // a byte short
   bc::g_prefs.rows[key_of(2)].push_back(0x5A);               // a byte long
-  bc::g_prefs.fault_key = key_of(3);
-  bc::g_prefs.fault = HostPrefs::Read::kCopies;              // copied, then refused
+  bc::g_prefs.fault_key = key_of(5);
+  bc::g_prefs.fault = HostPrefs::Read::kCopies;              // copied, then refused: the last one
   CHECK(bc::load_beacon_set());
-  CHECK(bc::get_beacon_set_size() == n);
-  for (size_t i : {(size_t)1, (size_t)2, (size_t)3}) {
-    const uint8_t* b = reinterpret_cast<const uint8_t*>(bc::get_beacon_set_entry((uint8_t)i));
-    CHECK(std::all_of(b, b + sizeof(BeaconSetEntry), [](uint8_t x) { return x == 0; }));
-    CHECK(!bc::get_beacon_set_entry((uint8_t)i)->valid);
+  CHECK(bc::get_beacon_set_size() == 3 && past_count_zero());
+  const char want[] = {'a', 'd', 'e'};
+  for (size_t i = 0; i < 3; ++i) {
+    const BeaconSetEntry* e = bc::get_beacon_set_entry((uint8_t)i);
+    CHECK(e->valid && std::string(e->name) == std::string(bc::BEACON_NAME_LEN, want[i]));
   }
   const std::vector<std::string> names = set_answer_names();
-  CHECK((names == std::vector<std::string>{std::string(bc::BEACON_NAME_LEN, 'a'), std::string(bc::BEACON_NAME_LEN, 'e'),
-                                           std::string(bc::BEACON_NAME_LEN, 'f')}));
-  CHECK(refused_lines() == 1 && g_health[0] == "beacon: 3 " + std::string(kRefusedLog));
+  CHECK((names == std::vector<std::string>{std::string(bc::BEACON_NAME_LEN, 'a'), std::string(bc::BEACON_NAME_LEN, 'd'),
+                                           std::string(bc::BEACON_NAME_LEN, 'e')}));
+  CHECK(refused_lines() == 1 && g_health[0] == std::string(kRefusedLog) + " (3)");
+  CHECK(g_health[0].size() < health_ring_message());
 
   // A short read of a whole row.
   boot(1);
@@ -269,7 +334,7 @@ void test_an_entry_nvs_did_not_return_whole_is_left_out() {
   bc::g_prefs.fault_key = key_of(0);
   bc::g_prefs.fault = HostPrefs::Read::kShort;
   CHECK(bc::load_beacon_set());
-  CHECK(bc::get_beacon_set_size() == 1 && !bc::get_beacon_set_entry(0)->valid);
+  CHECK(bc::get_beacon_set_size() == 0 && past_count_zero());
   CHECK(set_answer_names().empty() && refused_lines() == 1);
 
   // Every row length from empty to two entries, alone: only the entry's own loads.
@@ -280,11 +345,66 @@ void test_an_entry_nvs_did_not_return_whole_is_left_out() {
     bc::g_prefs.rows[key_of(0)] = row;
     CHECK(bc::load_beacon_set());
     const bool whole = len == sizeof(BeaconSetEntry);
-    CHECK(bc::get_beacon_set_entry(0)->valid == whole);
+    CHECK(bc::get_beacon_set_size() == (whole ? 1u : 0u) && past_count_zero());
     CHECK(set_answer_names().size() == (whole ? 1u : 0u));
     CHECK(refused_lines() == (whole ? 0u : 1u));
   }
+  // A whole row whose `valid` byte is neither 0 nor 1 (another layout's) is no member.
+  boot(1);
+  BeaconSetEntry odd = entry(9, 'o');
+  std::vector<uint8_t> row = bytes_of(odd);
+  row[offsetof(BeaconSetEntry, valid)] = 0x5A;
+  bc::g_prefs.rows[key_of(0)] = row;
+  CHECK(bc::load_beacon_set() && bc::get_beacon_set_size() == 0 && past_count_zero() && refused_lines() == 0);
   std::printf("PASS an_entry_nvs_did_not_return_whole_is_left_out\n");
+}
+
+// The set's readers read members only (the F408 review). A set whose every
+// saved row NVS did not return whole is empty: its count is 0 and
+// recompute_trouble_reasons() raises the empty-set trouble, as for a set
+// never saved; one member among refused rows clears it. A revoke of the
+// all-zero fingerprint a hole would hold finds nothing, persists nothing and
+// logs nothing; a revoke of a member's revokes it and persists the members.
+// (Before, a refused row was kept as a hole and counted: three refused rows
+// read as a set of three, so the trouble stayed clear, and a revoke of the
+// zero fingerprint matched the first hole, persisted it and answered true.)
+void test_a_set_of_refused_rows_reads_empty() {
+  boot(3);
+  for (size_t i = 0; i < 3; ++i) {
+    std::vector<uint8_t> row = bytes_of(entry((uint8_t)(i + 1), 'r'));
+    row.pop_back();                                          // each a byte short
+    bc::g_prefs.rows[key_of(i)] = row;
+  }
+  CHECK(bc::load_beacon_set());
+  CHECK(bc::get_beacon_set_size() == 0 && set_answer_names().empty());
+  bc::g_trouble_reasons = 0;
+  bc::recompute_trouble_reasons();
+  CHECK((bc::g_trouble_reasons & bc::BCN_TROUBLE_BEACON_SET_EMPTY) != 0);
+  CHECK(bc::g_state == bc::BEACON_STATE_TROUBLE);
+  const uint8_t zero[bc::DEVICE_FP_SIZE] = {};
+  const int writes = bc::g_prefs.writes;
+  const size_t lines = g_health.size();
+  CHECK(!bc::revoke_beacon_set_entry(zero));
+  CHECK(bc::g_prefs.writes == writes && g_health.size() == lines);
+
+  // One member among them: the set is not empty, and its revoke persists the member alone.
+  boot(3);
+  for (size_t i = 0; i < 3; ++i) {
+    std::vector<uint8_t> row = bytes_of(entry((uint8_t)(i + 1), 'r'));
+    if (i != 1) row.pop_back();
+    bc::g_prefs.rows[key_of(i)] = row;
+  }
+  CHECK(bc::load_beacon_set() && bc::get_beacon_set_size() == 1);
+  bc::recompute_trouble_reasons();
+  CHECK((bc::g_trouble_reasons & bc::BCN_TROUBLE_BEACON_SET_EMPTY) == 0);
+  CHECK(!bc::revoke_beacon_set_entry(zero));
+  uint8_t fp[bc::DEVICE_FP_SIZE];
+  memset(fp, 2, sizeof fp);
+  CHECK(bc::revoke_beacon_set_entry(fp));
+  CHECK(bc::get_beacon_set_entry(0)->trust_level == bc::BCN_TRUST_REVOKED);
+  CHECK(bc::g_prefs.rows["set_count"] == std::vector<uint8_t>{1});
+  CHECK(bc::g_prefs.rows[key_of(0)] == bytes_of(*bc::get_beacon_set_entry(0)));
+  std::printf("PASS a_set_of_refused_rows_reads_empty\n");
 }
 
 // What v0.3's pairing will put in a member's name comes from a peer's frame:
@@ -330,9 +450,11 @@ void test_without_flash_encryption_nothing_loads() {
   const uint8_t* b = reinterpret_cast<const uint8_t*>(bc::g_beacon_set);
   CHECK(std::all_of(b, b + sizeof bc::g_beacon_set, [](uint8_t x) { return x == 0; }));
   CHECK(set_answer_names().empty());
-  // A count past the set's room is held to it.
+  // A count past the set's room is held to it: its first MAX_BEACON_SET rows load.
   boot(bc::MAX_BEACON_SET + 8);
+  for (size_t i = 0; i < bc::MAX_BEACON_SET + 8; ++i) bc::g_prefs.rows[key_of(i)] = bytes_of(entry((uint8_t)(i + 1), 'm'));
   CHECK(bc::load_beacon_set() && bc::get_beacon_set_size() == bc::MAX_BEACON_SET);
+  CHECK(bc::get_beacon_set_entry(bc::MAX_BEACON_SET - 1)->fingerprint[0] == bc::MAX_BEACON_SET);
   std::printf("PASS without_flash_encryption_nothing_loads\n");
 }
 
@@ -341,6 +463,7 @@ void test_without_flash_encryption_nothing_loads() {
 int main() {
   test_a_name_without_a_nul_ends_in_its_field();
   test_an_entry_nvs_did_not_return_whole_is_left_out();
+  test_a_set_of_refused_rows_reads_empty();
   test_a_member_name_reaches_the_answer_as_shown();
   test_without_flash_encryption_nothing_loads();
   std::printf("ALL %d Beacon set load checks PASSED\n", g_checks);
