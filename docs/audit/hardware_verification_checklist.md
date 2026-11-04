@@ -2411,8 +2411,9 @@ device.
     name: 1 to 32 bytes, no byte below 0x20" and nothing else in the
     settings POST is applied; both GETs parse and the radio still advertises
     the old name. On the upgraded device both answers parse, the name is the
-    default one, and the health log holds "Saved Bluetooth name held a control
-    byte: the default name is used" (before F261 both answers were
+    default one, and the health log holds "Saved Bluetooth name unreadable or
+    held a control byte: default name used" (the F406 review's wording, which
+    the health log's ring keeps whole; before F261 both answers were
     unparseable in the browser).
   - Artifact: `docs/audit/repro/F261/control-byte-bt-name/`.
 - [ ] **An SSID holding a control byte reaches every answer as U+FFFD, and the device joins it from every list (F262)**

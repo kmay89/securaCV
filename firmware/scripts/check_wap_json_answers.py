@@ -290,37 +290,52 @@ J11. Every append onto a String in the sketch is text JSON keeps whole
     appended between quotes is written as it is: the nearby scan took a
     Canary's four-character device prefix from any advertised name that
     came with the SecuraCV service UUID, unchecked, and `SCV-12"4` made the
-    answer one JSON.parse refuses. Every `x += v;` and `x.concat(v)` onto a
-    String (a local, a parameter or a file-scope one declared `String`, or
-    a local `auto x = String(...)`), in any file of the sketch, and that
-    String's own first value (`String x = v;`), takes one
-    of: a string literal; a ternary of such values; String(<number>) (a
-    numeric literal, a variable or a field of a numeric type, a cast to
-    one, arithmetic of those) or String(<literal>); the answer of a
-    function JSON_APPEND_VOCAB records, each of whose returns is a literal
-    with no byte JSON escapes (checked, never trusted); or a char array (a
-    local, a file-scope one, or a struct field by its name in every struct
-    that declares it) whose every writer in the sketch is held to hex
-    digits. A writer is every use of the array that may change it: a
-    printf into it, whose format must be hex conversions alone (`%02x`);
-    a copy into it (strncpy(), memcpy(), strcat() and their kind) from a
-    literal of hex digits or from another array held the same way,
-    followed to a fixpoint (a cycle of copies adds no byte); a memset() to
-    0; an element assigned '\\0'; its declaration's initializer (zero, or
-    hex digits); a call of a HEX_WRITERS function at the position recorded
-    there (nearby_prefix_from_name(), whose body the host suite holds); and
-    nothing else: an assignment of any other value, a change in place, a
-    call of a function that may write it (any but the readers the rule
-    names and the sketch's own functions whose parameter there is a
-    pointer to const), a pointer or a reference whose pointee is not const
-    taking it (`auto` included), or a function handing it out as one. A
-    record the code
-    no longer uses fails. What J11 cannot see: an append spelled another
-    way (`json = json + v`, `operator+=` spelled out, a String built with
-    `+` and assigned), a write through a pointer it was handed some way it
-    does not follow (byte offsets into the struct, memcpy() of the whole
-    struct from another's bytes), and the body of a HEX_WRITERS function,
-    which the host suite holds instead. Host-tested in
+    answer one JSON.parse refuses. Every `x += v;`, `x.concat(v)` and
+    `x->concat(v)` onto a String (a local, a parameter or a file-scope one
+    declared `String`, `String&` or `String*`, any declarator of its
+    statement, `String a, x;`; a local `auto x = String(...)`; or a
+    struct's String member, as `b.x`, `p->x` or by its name in the
+    struct's own functions), in any file of the sketch, and that String's
+    own first value (`String x = v;`, `String x(v);`, `String x{v};`),
+    takes one of: a string literal; a ternary of such values (both
+    choices); String(<number>) (a numeric literal, a variable or a field of
+    a numeric type, a cast to one, arithmetic of those) or
+    String(<literal>); the answer of a function JSON_APPEND_VOCAB records,
+    each of whose returns is a literal with no control byte, quote or
+    backslash (checked, never trusted); or a char array (a local, a
+    file-scope one, or a struct field by its name in every struct that
+    declares it) whose every writer in the sketch is held to hex digits.
+    Every use of the array is judged. An element (`a[k]`, its address not
+    taken) is a value: read, unless it is assigned (only a '\\0'
+    terminator passes), changed in place (`a[k]++`, `++a[k]`, `a[k] |= x`)
+    or written through a cast (`((char*)a)[k] = c`). Any other use yields a
+    pointer into it, by the array's name, its address (`&a`, `&a[k]`) or a
+    cast to a pointer (`(char*)a`, `reinterpret_cast<char*>(a)`), and that
+    pointer is held as follows. Handed to a call, it may be printed into
+    with a format of hex conversions alone (`%02x`); copied into (strncpy(),
+    memcpy(), strcat() and their kind) from a literal of hex digits or from
+    another array held the same way, followed to a fixpoint (a cycle of
+    copies adds no byte); set by memset() to 0; or filled by a HEX_WRITERS
+    function at the position recorded there (nearby_prefix_from_name(),
+    whose body the host suite holds). It may be read by the readers the
+    rule names and by the sketch's own functions whose parameter there is
+    a pointer to const. Out of a call, it may be appended onto a String,
+    compared, dereferenced to read a byte, or taken by a pointer, a
+    reference or a function's return whose pointee is const. Anything
+    else refuses: a dereference written through (`*(a + 1) = c`); a
+    pointer or a reference whose pointee is not const taking it (`auto`
+    included, `char (*p)[5] = &a`, `char* p{a}`); a function handing it
+    out as one; a call of a function that may write it; a use the rule
+    cannot follow. Its declaration's initializer must be zero or hex
+    digits. A record the code no longer uses fails. What J11 cannot see:
+    an append spelled another way (`json = json + v`, `operator+=`
+    spelled out, a String built with `+` and assigned); a String no
+    function body holds (an append in a lambda defined at namespace scope)
+    or in a function defined out of its class (`void T::f() {...}`, which
+    the index does not read); a write through a pointer it was handed in
+    a way it does not follow (byte offsets into the struct, memcpy() of the
+    whole struct from another's bytes); and the body of a HEX_WRITERS
+    function, which the host suite holds instead. Host-tested in
     test_bluetooth_commands_wap.cpp (the helper, and the scan's callback
     and the answer it builds, over hostile names).
 
@@ -3859,11 +3874,98 @@ def j11_uses(idx: Index, files: dict[str, str], place: Place) -> list[J11Use]:
     return out
 
 
+def j11_stmt_start(code: str, at: int) -> int:
+    """Where the statement around offset `at` starts: after the `;`, `}` or block-opening `{` before
+    it. A `{` that opens an initializer in the same statement (`char* p{a}`, `T v = {a}`: after a
+    name, `=`, `]`, `(` or `,`) is part of it."""
+    depth = 0
+    j = at - 1
+    while j >= 0:
+        c = code[j]
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            depth -= 1
+        elif c == ";" and depth <= 0:
+            return j + 1
+        elif c == "}" and depth <= 0:
+            return j + 1
+        elif c == "{" and depth <= 0:
+            prev = code[:j].rstrip()
+            word = re.search(r"[A-Za-z_]\w*$", prev)
+            if not ((word and word.group(0) not in KEYWORDS | {"else", "try", "do"}) or prev.endswith(("=", "]", "(", ","))):
+                return j + 1
+        j -= 1
+    return 0
+
+
 def j11_stmt(ctx: Ctx, at: int) -> str:
     """The statement around offset `at`, as the file spells it, on one line."""
-    lo = max(ctx.code.rfind(";", 0, at), ctx.code.rfind("{", 0, at), ctx.code.rfind("}", 0, at)) + 1
+    lo = j11_stmt_start(ctx.code, at)
     end = statement_end(ctx.code, lo)
     return re.sub(r"\s+", " ", ctx.kept[lo:end + 1 if end > 0 else at + 40].strip())
+
+
+# A cast to a pointer, spelled C's way (`(char*)`, `(const uint8_t *)`, `(char* const)`) at the end
+# of a text, and C++'s (`reinterpret_cast<char*>(`) opened there.
+J11_PTR_CAST_END = re.compile(r"\(\s*(?P<t>(?:(?:const|volatile|unsigned|signed|struct)\s+)*[A-Za-z_][\w:]*"
+                              r"(?:\s+(?:long|int|short|char))*\s*(?:const\s*)?)\*+\s*(?:const\s*)?\)$")
+J11_CXX_CAST_END = re.compile(r"\b(?:reinterpret_cast|static_cast|const_cast)\s*<(?P<t>[^<>;]*?)\*+\s*(?:const\s*)?>\s*\($")
+
+
+def j11_unary_before(code: str, start: int) -> tuple[int, bool, bool, int]:
+    """The text before the place at `start`, with the unary `&`, the pointer casts and the grouping
+    parentheses that end it taken off: where it then ends, whether an `&` was taken off (the place's
+    address taken), whether a cast to a pointer whose pointee is not const was (the F405 review:
+    `&prefix[0]`, `(char*)prefix` and `(char*)&prefix` hand the bytes on as surely as `prefix`), and
+    the outermost grouping `(` taken off (-1 for none)."""
+    cut = start
+    addr = writes = False
+    group = -1
+    while True:
+        b = code[:cut].rstrip()
+        m = J11_PTR_CAST_END.search(b) or J11_CXX_CAST_END.search(b)
+        if m:
+            writes = writes or not re.match(r"(?:volatile\s+)?const\b", m.group("t").strip())
+            cut = m.start()
+            continue
+        if b.endswith("&") and not b.endswith("&&"):
+            prev = b[:-1].rstrip()
+            if not prev or prev[-1] in "=(,{;:?!|<>+-*/%^~[" or re.search(r"\breturn$", prev):
+                addr = True
+                cut = len(prev) if prev else 0
+                continue
+        if b.endswith("(") and not re.search(r"[\w\])>]\s*\($", b):
+            cut = group = len(b) - 1                  # a grouping parenthesis, not a call's
+            continue
+        return len(b), addr, writes, group
+
+
+def j11_value_arg(shape: str, subscripted: bool) -> bool:
+    """An argument shape (`@P@` the place, spaces gone) that hands the callee a value, not a pointer
+    into the place: an element whose address is not taken, a dereference, a comparison. Anything else
+    is a pointer, the callee's to read or write (the F405 review: the old test knew only `@P@`, a cast
+    of it, and `&@P@[k]`, so `&prefix` and `(char*)&prefix` read as reads)."""
+    core, addr = shape, False
+    while True:
+        m = re.match(r"^\((?:const|volatile|unsigned|signed|struct)*[A-Za-z_][\w:]*\*+(?:const)?\)", core)
+        if m:
+            core = core[m.end():]
+            continue
+        m = re.match(r"^(?:reinterpret_cast|static_cast|const_cast)<[^<>]*>\(", core)
+        if m and matching_paren(core, m.end() - 1) == len(core) - 1:
+            core = core[m.end():-1]
+            continue
+        if core.startswith("(") and matching_paren(core, 0) == len(core) - 1:
+            core = core[1:-1]
+            continue
+        if core.startswith("&") and not core.startswith("&&"):
+            core, addr = core[1:], True
+            continue
+        break
+    if subscripted and not addr:
+        return True
+    return core.startswith("*") or re.search(r"(?:==|!=)@P@|@P@(?:==|!=)", core) is not None
 
 
 def j11_judge_use(idx: Index, ctx: Ctx, place: Place, m: re.Match) -> J11Use | None:
@@ -3974,9 +4076,7 @@ def j11_judge_use(idx: Index, ctx: Ctx, place: Place, m: re.Match) -> J11Use | N
             rel_s, rel_e = start - args[k][0], end - args[k][0]
             shape = arg[:rel_s] + "@P@" + arg[rel_e:]
             shape = re.sub(r"\s+", "", shape)
-            cast = J11_CAST.replace(r"\s*", "").replace(r"\s+", "")
-            pointer = (re.fullmatch(cast + r"@P@(?:\+.*)?", shape) is not None if not subscripted
-                       else re.fullmatch(cast + r"&@P@(?:\+.*)?", shape) is not None)
+            pointer = not j11_value_arg(shape, subscripted)
             if not pointer or callee in J11_READERS:
                 return use("read")
             if callee in J11_PRINTFS and not method:
@@ -4009,22 +4109,43 @@ def j11_judge_use(idx: Index, ctx: Ctx, place: Place, m: re.Match) -> J11Use | N
             if fns and all(k < len(ps) and re.match(r"const\b", ps[k]) for ps in (split_top(f.params) for f in fns)):
                 return use("read")
             return use("bad", f"handed to {callee}(), which the rule does not know to leave it unwritten")
-    # Anywhere else: a read, unless a pointer or a reference that may write it takes it: an `auto`
-    # (`const auto p = a;` is a char* const), or one whose pointee is not const (`char* const p`).
+    # Anywhere else. An element (subscripted, its address not taken) is a value, read. Otherwise the use yields a pointer into the place (the array's name, `&a`, `&a[k]`,
+    # `(char*)a`), a read only where nothing can write through it: appended onto a String (`json +=
+    # a`), dereferenced, compared, or taken by a pointer, a reference or a function's return whose
+    # pointee is const. Any other use refuses (the F405 review: `char* p = &a[0]`, `char* p =
+    # (char*)a` and `return &c.a[0]` read as reads, the `&` or the cast between the place and the `=`
+    # or the `return`).
     def writes_through(t: str) -> bool:
         head = re.split(r"[*&]", t, maxsplit=1)
         return bool(re.search(r"\bauto\b", t)) or (len(head) > 1 and not re.search(r"\bconst\b", head[0]))
 
-    if re.search(r"\breturn\s*$", before) and writes_through(ctx.fn.ret):
-        return use("bad", "handed out by a function that returns a pointer to it that is not to const")
-    if re.search(r"(?<![=!<>+\-*/%&|^])=\s*$", before) or before.endswith("{"):
-        lhs = code[max(code.rfind(";", 0, start), code.rfind("{", 0, start - 1), code.rfind("}", 0, start)) + 1:start]
+    cut, addr, cast_writes, group = j11_unary_before(code, start)
+    b2 = code[:cut]
+    if re.search(r"(?:^|[^\w)\]])\*$", b2) and (group >= 0 or not subscripted):
+        # A dereference (`*a`, `*(a + k)`): the byte it names is a value, unless it is written.
+        operand_end = matching_paren(code, group) + 1 if group >= 0 else end
+        if re.match(r"\s*(?:(?:[-+*/%&|^]|<<|>>)?=(?!=)|\+\+|--)", code[operand_end:]) or \
+                b2[:-1].rstrip().endswith(("++", "--")):
+            return use("bad", "written through a dereference")
+        return use("read")
+    if subscripted and not addr:
+        return use("read")
+    if re.match(r"(?:==|!=)", after) or re.search(r"(?:==|!=)\s*$", b2) or b2.endswith("+="):
+        return use("read")
+    if re.search(r"\breturn$", b2):
+        if writes_through(ctx.fn.ret):
+            return use("bad", "handed out by a function that returns a pointer to it that is not to const")
+        return use("read")
+    if re.search(r"(?<![=!<>+\-*/%&|^])=$", b2) or b2.endswith("{"):
+        lhs = code[j11_stmt_start(code, cut - 1 if b2.endswith("{") else cut):cut]
         decl = re.sub(r"\s*[={]\s*$", "", lhs).strip()
         named = re.fullmatch(r"[A-Za-z_]\w*", decl)
         t = decl_type(ctx, decl, start) if named else None
         if writes_through(t[0] if t is not None else "" if named else decl):
             return use("bad", "held by a pointer that may write it")
-    return use("read")
+        return use("read")
+    return use("bad", "a pointer to it taken where the rule cannot follow it" + (", through a cast to a pointer that is "
+                                                                                   "not to const" if cast_writes else ""))
 
 
 def j11_gated(idx: Index, files: dict[str, str], place: Place) -> J11Use | None:
@@ -4091,50 +4212,120 @@ def j11_operand(ctx: Ctx, files: dict[str, str], expr: str, pos: int, used: set[
             f"`{bad.stmt}` ({bad.why})")
 
 
+def j11_string_decls(code: str, lo: int, hi: int) -> dict[str, list[tuple[int, int, int]]]:
+    """The names declared `String` in code[lo:hi], each with its declarations: (the declarator's
+    offset, its initializer's start and end, or -1, -1). Every declarator of a statement that starts
+    `String` counts (`String a, v;`), and every initializer form: `= x`, `(x)`, `{x}`, so `String
+    v(x);`, which decl_type() does not read, is found here (the F405 review). A parameter list's
+    String is one declarator; a function returning String names no variable anyone appends to."""
+    out: dict[str, list[tuple[int, int, int]]] = {}
+    for m in re.finditer(r"\bString\b(?!\s*(?:\(|::|>|,|\)))", code[lo:hi]):
+        i = lo + m.end()
+        decl_start = i
+        depth = 0
+        while i < hi:
+            c = code[i]
+            if c in "([":
+                depth += 1
+            elif c in ")]":
+                if depth == 0:
+                    break                                 # a parameter list's end
+                depth -= 1
+            elif c == "{" and depth == 0:
+                if code[decl_start:i].rstrip().endswith(")"):
+                    break                                 # a function's body
+                end = close_brace(code, i)
+                if end < 0:
+                    break
+                i = end
+            elif c in ";}" and depth == 0:
+                break
+            i += 1
+        text = code[decl_start:i]
+        at = decl_start
+        for piece in split_top(text):
+            k = code.find(piece, at, i) if piece else -1
+            if k < 0:
+                continue
+            at = k + len(piece)
+            d = re.match(r"[&*\s]*([A-Za-z_]\w*)\s*(?:(=)|(\()|(\{)|$)", piece)
+            if d is None or d.group(1) in KEYWORDS | {"const", "volatile", "operator"}:
+                continue
+            if d.group(2):
+                a = k + d.end()
+                b = k + len(piece)
+            elif d.group(3) or d.group(4):
+                a = k + d.end()
+                b = matching_paren(code, a - 1) if d.group(3) else close_brace(code, a - 1)
+            else:
+                a = b = -1
+            out.setdefault(d.group(1), []).append((k + d.start(1), a, b))
+    return out
+
+
 @functools.lru_cache(maxsize=CACHE_ENTRIES)
-def j11_sites(name: str, src: str) -> tuple[tuple[int, int, int, int], ...]:
+def j11_sites(name: str, src: str, string_fields: frozenset[str] = frozenset()
+              ) -> tuple[tuple[int, int, int, int], ...]:
     """Every append onto a String in one file: (its function's body start, the append's offset, the
     appended value's start and end). File-local, so cached: a mutation of the self-test re-reads
     only the file it changed. A String is a local, a parameter or a file-scope variable declared
-    `String` (`String&` too), or a local `auto v = String(...)`."""
+    `String` (`String&` and `String*` too, any declarator of the statement, any initializer form),
+    a local `auto v = String(...)`, or a field `string_fields` names (a struct's `String` member,
+    appended as `b.v`, `p->v`, or by its bare name in a member function). `v->concat(x)` on a
+    `String*` is an append as `v.concat(x)` is (the F405 review)."""
     code = blank_comments_and_strings(src)
     if "+=" not in code and "concat" not in code:
         return ()
-    typed = set(re.findall(r"\bString\s*[&*]?\s*([A-Za-z_]\w*)", code))
     autos = set(re.findall(r"\bauto\s*&?\s*([A-Za-z_]\w*)\s*=\s*String\b", code))
-    if not typed | autos:
+    if not re.search(r"\bString\b", code) and not string_fields & set(re.findall(r"[A-Za-z_]\w*", code)):
         return ()
     kept = blank_comments_only(src)
     one = Index({name: src})
+    fns = [f for fs in index_file(name, src).fns.values() for f in fs if f.body]
+    bodies = [f.body for f in fns]
+    # File scope (and a struct's members): the declarations outside every function's body.
+    file_scope = {v: ds for v, ds in j11_string_decls(code, 0, len(code)).items()
+                  if any(not any(a <= k < b for a, b in bodies) for k, _, _ in ds)}
     out: list[tuple[int, int, int, int]] = []
-    for fs in index_file(name, src).fns.values():
-        for f in fs:
-            if not f.body:
-                continue
-            lo, hi = f.body
-            ctx = Ctx(one, name, f, kept, code)
-            strings: set[str] = set()
-            for m in re.finditer(r"(?<![\w.>:])([A-Za-z_]\w*)\s*(\+=|\.\s*concat\s*\()", code[lo:hi]):
-                v = m.group(1)
-                if v not in typed and v not in autos:
+    for f in fns:
+        lo, hi = f.body
+        ctx = Ctx(one, name, f, kept, code)
+        local = j11_string_decls(code, lo, hi)
+        strings: set[str] = set()
+        for m in re.finditer(r"(?:(\.|->)\s*|(?<![\w:.>]))([A-Za-z_]\w*)\s*(\+=|\.\s*concat\s*\(|->\s*concat\s*\()",
+                             code[lo:hi]):
+            v = m.group(2)
+            at = lo + m.start()
+            if m.group(1):
+                if v not in string_fields:
+                    continue                              # a member, and no struct's String
+                # back over the object it is a member of: the append's offset is the statement's
+                at = j11_stmt_start(code, at)
+            else:
+                if code[:at].rstrip().endswith((".", "->")):
                     continue
-                at = lo + m.start()
-                t = decl_type(ctx, v, at) or j11_global_decl(one, name, v)
-                if t is None or not (re.search(r"\bString\b", t[0]) or (t[0].strip() == "auto" and v in autos)):
+                t = decl_type(ctx, v, at)
+                if t is not None:
+                    is_string = bool(re.search(r"\bString\b", t[0])) or (t[0].strip() == "auto" and v in autos)
+                else:
+                    is_string = any(k < at for k, _, _ in local.get(v, [])) or v in file_scope
+                if not is_string:
                     continue
                 strings.add(v)
-                a = lo + m.end()
-                b = statement_end(code, a) if m.group(2) == "+=" else matching_paren(code, a - 1)
-                if b > 0:
-                    out.append((lo, at, a, b))
-            # The String's own first value: `String v = x;`, `String v(x);`, `String v{x};`, `auto v = String(x);`.
-            for v in strings:
-                d = re.search(r"\b(?:String\s+|auto\s*&?\s*)" + re.escape(v) + r"\s*([=({])", code[lo:hi])
-                if d is None:
-                    continue
+            a = lo + m.end()
+            b = statement_end(code, a) if m.group(3) == "+=" else matching_paren(code, a - 1)
+            if b > 0:
+                out.append((lo, at, a, b))
+        # The String's own first value, every form: `String v = x;`, `String v(x);`, `String v{x};`,
+        # `String a, v = x;`, `auto v = String(x);`.
+        for v in strings:
+            for k, a, b in local.get(v, []):
+                if a >= 0 and b > a and kept[a:b].strip():
+                    out.append((lo, k, a, b))
+            d = re.search(r"\bauto\s*&?\s*" + re.escape(v) + r"\s*=", code[lo:hi])
+            if d is not None:
                 a = lo + d.end()
-                b = statement_end(code, a) if d.group(1) == "=" else (
-                    matching_paren(code, a - 1) if d.group(1) == "(" else close_brace(code, a - 1))
+                b = statement_end(code, a)
                 if b > a and kept[a:b].strip():
                     out.append((lo, lo + d.start(), a, b))
     return tuple(out)
@@ -4148,8 +4339,10 @@ def check_string_appends(files: dict[str, str], idx: Index) -> list[str]:
     they are, and each record is still used, as each HEX_WRITERS writer is."""
     errors: list[str] = []
     used: set[str] = set()
+    string_fields = frozenset(fname for sts in idx.structs.values() for st in sts
+                              for fname, (t, _dims) in st.fields.items() if re.search(r"\bString\b", t))
     for name, src in files.items():
-        sites = j11_sites(name, src)
+        sites = j11_sites(name, src, string_fields)
         if not sites:
             continue
         code = blank_comments_and_strings(src)
@@ -5050,6 +5243,66 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw_in(NEARBY, NEARBY_GATE, "                    if (true) {")),
     ("a recorded hex writer the sketch no longer defines",
      raw_in(f"{SKETCH}/ble_nearby_prefix.h", "inline bool nearby_prefix_from_name(", "inline bool zz_prefix_from_name(")),
+    # J11, the F405 review: each refusal the deletion log found no mutation for, and the writes
+    # through an address or a cast the first version read as reads.
+    ("a prefix byte is incremented before anything reads it",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                ++prefix[0];\n")),
+    ("a pointer brace-initialized from the prefix takes it",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                char* zz{prefix};\n                (void)zz;\n")),
+    ("the answer's ternary appends a variable as its first choice",
+     raw_in(NEARBY, '    json += g_scanActive ? "true" : "false";', '    json += g_scanActive ? g_zz_text : "false";')),
+    ("a file-scope String appends a scanned device's name",
+     add_file(f"{SKETCH}/zz_glob.h", "static String g_zz_json;\ninline void zz_list(const bluetooth_channel::ScannedDevice& d) {\n"
+              "  g_zz_json += d.name;\n}\n")),
+    ("a recorded vocabulary function returns a variable",
+     raw_in(BLE_CONFIG, '    return "weak";', '    return g_zz_band;')),
+    ("a recorded vocabulary function returns a control byte",
+     raw_in(BLE_CONFIG, '    return "weak";', '    return "we\\x01ak";')),
+    ("the prefix's first element's address is handed to a copy",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + '                strcpy(&prefix[0], "\\"<!");\n')),
+    ("the answer appends a function's answer the sketch defines and the record does not name",
+     both(add_file(f"{SKETCH}/zz_band.h", "inline const char* zz_band(int rssi) { return rssi > 0 ? \"up\" : \"down\"; }\n"),
+          raw_in(NEARBY, "            json += rssiQuality(cur);\n", "            json += rssiQuality(cur);\n            json += zz_band(cur);\n"))),
+    ("the scan copies into the prefix's address",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + '                memcpy(&prefix, "\\"<!-", 4);\n')),
+    ("a kept prefix's address takes the name's bytes",
+     raw_in(NEARBY, NEARBY_SLOT_TERM, NEARBY_SLOT_TERM + "                    memcpy(&g_nearbyCanaries[slot].deviceIdPrefix, "
+            "advertisedDevice->getName().c_str() + 4, 4);\n")),
+    ("a copy writes the prefix through a cast of its address",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + '                strcpy((char*)&prefix, "\\"<!");\n')),
+    ("a pointer takes the address of the prefix's first byte",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                char* zz = &prefix[0];\n                zz[0] = '\"';\n")),
+    ("a pointer of another type takes a kept prefix through a cast",
+     raw_in(NEARBY, NEARBY_SLOT_TERM, NEARBY_SLOT_TERM + "                    uint8_t* zz = (uint8_t*)g_nearbyCanaries[slot].deviceIdPrefix;\n"
+            "                    (void)zz;\n")),
+    ("a pointer to the whole prefix array takes its address",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                char (*zz)[5] = &prefix;\n                (void)zz;\n")),
+    ("a function hands out a kept prefix's first byte's address",
+     add_file(f"{SKETCH}/zz_out2.h", "inline char* zz_prefix_of(NearbyCanary& c) { return &c.deviceIdPrefix[0]; }\n")),
+    ("a function hands out a kept prefix through a cast",
+     add_file(f"{SKETCH}/zz_out3.h", "inline char* zz_prefix_of(NearbyCanary& c) { return (char*)c.deviceIdPrefix; }\n")),
+    ("a prefix byte is written through a cast in place",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                ((char*)prefix)[0] = '\"';\n")),
+    ("a prefix byte is written through a dereference",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                *(prefix + 1) = '\"';\n")),
+    ("a String declared auto starts from a scanned device's name",
+     add_file(f"{SKETCH}/zz_auto2.h", "inline String zz_list(const bluetooth_channel::ScannedDevice& d) {\n"
+              "  auto json = String(d.name);\n  json += \"x\";\n  return json;\n}\n")),
+    ("a String initialized in parentheses appends a scanned device's name",
+     add_file(f"{SKETCH}/zz_paren.h", "inline String zz_list(const bluetooth_channel::ScannedDevice& d) {\n"
+              "  String json(\"{\");\n  json += d.name;\n  return json;\n}\n")),
+    ("a String starts from a scanned device's name in parentheses",
+     add_file(f"{SKETCH}/zz_paren2.h", "inline String zz_list(const bluetooth_channel::ScannedDevice& d) {\n"
+              "  String json(d.name);\n  json += \"x\";\n  return json;\n}\n")),
+    ("a String declared second in its statement appends a scanned device's name",
+     add_file(f"{SKETCH}/zz_multi.h", "inline String zz_list(const bluetooth_channel::ScannedDevice& d) {\n"
+              "  String head, json;\n  json += d.name;\n  return head + json;\n}\n")),
+    ("a struct's String member appends a scanned device's name",
+     add_file(f"{SKETCH}/zz_member.h", "struct ZzList { String json; };\n"
+              "inline void zz_list(ZzList& b, const bluetooth_channel::ScannedDevice& d) {\n  b.json += d.name;\n}\n")),
+    ("a String through a pointer concatenates a scanned device's name",
+     add_file(f"{SKETCH}/zz_ptr.h", "inline void zz_list(String* out, const bluetooth_channel::ScannedDevice& d) {\n"
+              "  out->concat(d.name);\n}\n")),
 ]
 
 
@@ -5079,6 +5332,18 @@ ACCEPTED: list[tuple[str, Mutation]] = [
      raw_in(NEARBY, NEARBY_TERM, "                if (prefix[0] == '\\0') strcpy(prefix, \"0000\");\n" + NEARBY_TERM)),
     ("the answer appends String() of a cast and of arithmetic",
      raw_in(NEARBY, "            json += String(cur);\n", "            json += String((int)cur * 1);\n")),
+    # J11, the F405 review: a pointer to const (assigned or brace-initialized), a dereference and a
+    # paren-initialized String are reads.
+    ("a pointer to const takes a kept prefix's first byte's address",
+     raw_in(NEARBY, NEARBY_SLOT_TERM, NEARBY_SLOT_TERM + "                    const char* zz = &g_nearbyCanaries[slot].deviceIdPrefix[0];\n"
+            "                    (void)zz;\n")),
+    ("a pointer to const brace-initialized from a kept prefix",
+     raw_in(NEARBY, NEARBY_SLOT_TERM, NEARBY_SLOT_TERM + "                    const char* zz{g_nearbyCanaries[slot].deviceIdPrefix};\n"
+            "                    (void)zz;\n")),
+    ("the scan reads the prefix's first byte through a dereference",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                if (*prefix == '\\0') g_nonCanaryCount++;\n")),
+    ("a String initialized in parentheses appends literals",
+     add_file(f"{SKETCH}/zz_paren_ok.h", "inline String zz_list() {\n  String json(\"{\");\n  json += \"}\";\n  return json;\n}\n")),
 ]
 
 
