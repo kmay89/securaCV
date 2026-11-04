@@ -78,6 +78,12 @@
       "value": 30
     },
     {
+      "why": "block comments over lines holding characters past the Basic Multilingual Plane, above the #define and after its value with nothing after the close (an offset counted in UTF-16 units in JavaScript, code points in Python)",
+      "name": "WAIT_MS",
+      "text": "/* \ud83d\udc24\n\ud83d\udc24 */\n#define WAIT_MS 30 /* \ud83d\udc24\n */\n",
+      "value": 30
+    },
+    {
       "why": "CRLF line endings",
       "name": "LOST_MS",
       "text": "static constexpr int SCORE_MIN = 70;\r\n#define LOST_MS 1500\r\n",
@@ -369,6 +375,12 @@
       "why": "code and then a // comment after the close",
       "name": "WAIT_MS",
       "text": "#define WAIT_MS 30 /* a\n */ * 1000 // ms\n",
+      "refused": "constant WAIT_MS in {where} runs into a block comment closed on a later line, and the #define goes on past the comment (`* 1000`); refusing to read a number out of it"
+    },
+    {
+      "why": "the same past a block comment holding a character past the Basic Multilingual Plane",
+      "name": "WAIT_MS",
+      "text": "/* \ud83d\udc24 */ #define WAIT_MS 30 /* \ud83d\udc24\ud83d\udc24\n */ * 1000\n",
       "refused": "constant WAIT_MS in {where} runs into a block comment closed on a later line, and the #define goes on past the comment (`* 1000`); refusing to read a number out of it"
     },
     {
