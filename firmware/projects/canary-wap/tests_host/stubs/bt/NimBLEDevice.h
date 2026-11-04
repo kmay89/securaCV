@@ -615,7 +615,11 @@ inline bool has_irk(const NimBLEAddress& a) {
 inline std::vector<ble_store_value_sec> peer_secs;
 inline uint16_t peer_bond_count = 0;   // ble_store_config_peer_bond_count's role
 // Nonzero: every ble_store_read_peer_sec() answers it, a store whose read
-// fails (BLE_HS_ENOTSUP: no store_read_cb; an NVS read error).
+// fails. The read never touches NVS: ble_store_read() hands it to
+// store_read_cb (BLE_HS_ENOTSUP when there is none), and NimBLE-Arduino
+// 2.3.8/2.5.0's ble_store_config_read_peer_sec() walks the array loaded
+// at init (BLE_HS_ENOENT when no record matches). The channel lists the
+// bond on either, and on whatever a future store answers.
 inline int peer_sec_read_fails = 0;
 // The task of each ble_store_read_peer_sec(), in order, and the keys whose
 // address type was neither public (0) nor random (1), which its
