@@ -241,6 +241,12 @@ const ribbon = () => page.evaluate(() => document.querySelector(".bench-ribbon")
   if (!r.includes("download-mode lines are the bench's own")) await fail(`the watch's ribbon calls its download lines quoted: ${r}`);
   if (!r.includes("The CHG light is hardwired") || /\b(PWR|DONE|USER)\b/.test(r)) await fail(`the watch's ribbon names lights it has not: ${r}`);
 }
+// review of A128: the charge-flicker flow is the watch's — the registry flags
+// its CHG flicker_without_battery, and the bench shows it with no battery
+{
+  const fixes = await page.locator(".bench-trouble .fix summary").allTextContents();
+  if (!fixes.includes("The CHG light is flickering")) await fail(`the watch's troubleshooter lost the charge-flicker flow: ${fixes.join(" | ")}`);
+}
 if ((await page.locator(".bench-led-dot.on, .bench-led-dot.flicker").count()) < 1)
   await fail("no LED lit on a powered, charging board");
 await page
@@ -672,8 +678,11 @@ if (/rides the battery|ride-through/.test(await page.locator(".bench-trouble").t
 // names one (no label, no power or charge light, no light at all), and the
 // screen-dark flow says its symptom without the PWR light it does not list
 {
-  const named = (await page.locator(".bench-trouble").textContent()).match(/\b(?:PWR|CHG|DONE|USER)\b|\b(?:lights?|LEDs?)\b/gi);
-  if (named) await fail(`the Nightlight's troubleshooter names lights its bench block does not list: ${[...new Set(named)].join(", ")}`);
+  // the labels and LED as the registry spells them (upper case: "done",
+  // "user" and "led" are ordinary words too), "light(s)" in any case
+  const trouble = await page.locator(".bench-trouble").textContent();
+  const named = [...(trouble.match(/\b(?:PWR|CHG|DONE|USER|LEDs?)\b/g) || []), ...(trouble.match(/\blights?\b/gi) || [])];
+  if (named.length) await fail(`the Nightlight's troubleshooter names lights its bench block does not list: ${[...new Set(named)].join(", ")}`);
   if (!nlFixes.includes("Screen dark")) await fail(`the Nightlight's screen-dark flow is not worded for a board with no PWR light: ${nlFixes.join(" | ")}`);
 }
 // its screen-dark flow keeps a download-mode guess, told in the bench's own
@@ -805,6 +814,9 @@ if (!(await chip("BOOT").count())) await fail("the dash's bench lost its strap t
   for (const want of ["The PWR light is always on — can I turn it off?", "Screen dark, but the PWR light is on", "Nothing at all — no PWR light, no glass"])
     if (!fixes.includes(want)) await fail(`the dash's troubleshooter lost "${want}": ${fixes.join(" | ")}`);
   if (/\bUSER\b/.test(await page.locator(".bench-trouble").textContent())) await fail("the dash's troubleshooter names a USER LED its bench block does not list");
+  // and not the charge-flicker flow: the registry flags no flicker on its
+  // CHG, which the bench shows dark with USB in and no battery (review of A128)
+  if (fixes.includes("The CHG light is flickering")) await fail(`the dash's troubleshooter offers the charge-flicker flow, though its CHG never flickers on the bench: ${fixes.join(" | ")}`);
 }
 
 // ── A dist without emu_button (sweep A99) ───────────────────────────────

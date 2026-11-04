@@ -277,7 +277,7 @@ Three doors into the same live device, all driven by one scenario API
   ribbon says which is which on each card. NVS rides through
   every power event like the flash it is, and a live diagnostics pane
   (power source, boot stage, uptime, backlight duty, flush count, link,
-  MQTT session, NVS keys) plus symptom-first debug flows ("a red light
+  MQTT session, NVS keys) plus symptom-first debug flows ("the PWR light
   is always on", "waiting for download", "it died when I unplugged it")
   make it a troubleshooting mode for the real bench. Hardware facts per
   board come from the registry's `bench` block, never from code.

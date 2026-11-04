@@ -356,6 +356,10 @@ const DARK_SERIAL_SILENT =
 // the lights the symptom names (`Screen dark` on a card with no PWR), the
 // first that fits; a flow with no wording or no step that fits is not
 // offered. Each flow's `id` names it whatever a card's wording says.
+// A symptom or step whose words stage a light's no-battery flicker says so
+// too (`flicker`: led ids), and is offered only where the card's bench block
+// flags that light `flicker_without_battery` (the watch's CHG; the dashes'
+// CHG goes dark with USB in and no battery, and the bench shows it so).
 const watchLedRail = async (ctx) => {
   ctx.bench?.setUsb(true);
   ctx.note?.("watch the LED rail — the firmware has no say in it");
@@ -449,10 +453,12 @@ export const BENCH_FIXES = [
     id: "charge-flicker",
     symptom: "The CHG light is flickering",
     lights: ["chg"],
+    flicker: ["chg"],
     steps: [
       {
         title: "It's hunting for a battery",
         lights: ["chg"],
+        flicker: ["chg"],
         body:
           "On the watch's XIAO, a flickering CHG light with USB in means no " +
           "battery is fitted — the charge chip keeps probing for a cell and " +
@@ -465,18 +471,7 @@ export const BENCH_FIXES = [
       },
       {
         title: "Fit the battery and it settles",
-        lights: ["chg", "done"],
-        body:
-          "Battery back in: CHG goes steady while filling, then hands over " +
-          "to DONE when the cell is full. Use the bench's fast-forward to " +
-          "watch the handover without waiting.",
-        battery: true, // stages a battery: never offered where the board has none
-        stage: fitTheBattery,
-      },
-      {
-        title: "Fit the battery and it settles, then goes out",
         lights: ["chg"],
-        unlit: ["done"],
         body:
           "Battery back in: CHG goes steady while filling, then goes out " +
           "when the cell is full. Use the bench's fast-forward to watch it " +
@@ -802,24 +797,30 @@ function bootSays(profile, boot) {
   const reads = (profile?.buttons || []).find((b) => b.id === "boot")?.read_while_running;
   return typeof reads === "boolean" && (boot === "read") === reads;
 }
-// A symptom or step's `lights` are all lights the card lists, and its
-// `unlit` none of them (sweep A128). `listed` is the card's led ids: none
-// where its bench block lists none, or has no `leds` at all (the Nightlight).
-function lightsFit(listed, x) {
-  return (x.lights || []).every((id) => listed.has(id)) && !(x.unlit || []).some((id) => listed.has(id));
+// A symptom or step's `lights` are all lights the card lists, its `unlit`
+// none of them, and its `flicker` lights the card's bench block flags
+// flicker_without_battery (sweep A128). `lit` holds the card's led ids and
+// the flagged ones: none where its bench block lists none, or has no `leds`
+// at all (the Nightlight).
+function lightsFit(lit, x) {
+  return (x.lights || []).every((id) => lit.listed.has(id))
+    && !(x.unlit || []).some((id) => lit.listed.has(id))
+    && (x.flicker || []).every((id) => lit.flickers.has(id));
 }
 export function benchFixesFor(profile) {
   const strap = profile?.rom?.boot_strap;
   const restrap = !!strap && strap !== FLOWS_STRAP;
   const pin = (t) => (typeof t === "string" ? t.split(FLOWS_STRAP).join(strap) : t);
-  const listed = new Set((profile?.leds || []).map((l) => l.id));
+  const leds = profile?.leds || [];
+  const lit = { listed: new Set(leds.map((l) => l.id)), flickers: new Set(leds.filter((l) => l.flicker_without_battery).map((l) => l.id)) };
   return BENCH_FIXES
     .filter((f) => romSays(profile, f.rom))
     .map((f) => {
       // the card's own words for the symptom: the flow's where it lists the
       // lights they name, else the first wording that fits it
-      const said = [f, ...(f.wordings || [])].find((w) => lightsFit(listed, w));
-      const { wordings, ...flow } = f;
+      const said = [f, ...(f.wordings || [])].find((w) => lightsFit(lit, w));
+      const flow = { ...f };
+      delete flow.wordings; // the card's own wording stands in their place
       return {
         ...flow,
         symptom: said?.symptom,
@@ -827,7 +828,7 @@ export function benchFixesFor(profile) {
         steps: f.steps
           .filter((st) => profile?.power?.battery || !st.battery)
           .filter((st) => romSays(profile, st.rom) && romLacks(profile, st.romMissing) && bootSays(profile, st.boot))
-          .filter((st) => lightsFit(listed, st))
+          .filter((st) => lightsFit(lit, st))
           .map((st) => (restrap && st.strap ? { ...st, title: pin(st.title), body: pin(st.body), onDevice: pin(st.onDevice) } : st)),
       };
     })
