@@ -430,13 +430,19 @@ while the client stayed connected, a stranger who paired and sent no
 Wi-Fi — the write stores nothing, logs one health line, and reads back as
 rejected. The shut door is not itself the gate: a Provisioned session
 already counts as shut (`door_open_now()` is false: it advertises the
-beacon) and still takes a write on the link that is up, which is the one
-that provisioned it — the glue puts nothing on air while a client is
-connected, and once that link drops the advert is non-connectable, so no
-later client reaches HUB until a new tap. `handle_hub()` checks the
-session, not which link wrote. The write callback runs on the NimBLE host
-task and only copies the document into a mailbox (release/acquire, exactly
-like the RPC command's); the loop task parses and applies it in `tick()`.
+beacon) and still takes a write on the link that is up. Once the join has
+succeeded, that link is the one that provisioned it — the glue puts
+nothing on air while a client is connected, and when a Provisioned
+session's link drops the advert is non-connectable, so no later client
+reaches HUB until a new tap. Mid-join the rule is narrower: a Provisioning
+session still advertises connectable (`advert_for()` answers Improv), so a
+phone that drops before the verdict can be followed, inside the join's
+30 s (`provisioning_timeout_ms`), by another client that inherits the
+session, and once the join lands that client's HUB write is taken too.
+`handle_hub()` checks the session, not which link wrote. The write
+callback runs on the NimBLE host task and only copies the document into a
+mailbox (release/acquire, exactly like the RPC command's); the loop task
+parses and applies it in `tick()`.
 
 **What "stored" means.** The glue hands the parsed record to the board
 (`Identity::store_hub`), which persists it through `runtime_config`'s
@@ -1240,8 +1246,11 @@ by hand, one document per join. What gates a write is the session's join,
 not the open door (§3.6): `handle_hub()` takes a document only while the
 session is Provisioned or Provisioning, so a write on the provisioning link
 after the join is taken although `door_open_now()` is already false. Once
-that link drops the advert is non-connectable, so no later client reaches
-HUB until a new tap.
+the join has succeeded and that link drops, the advert is non-connectable
+(a Provisioned session advertises the beacon), so no later client reaches
+HUB until a new tap; mid-join the door still advertises connectable, so a
+phone that drops before the verdict can be followed by another client that
+inherits the session (§3.6).
 
 - [ ] A fresh unit (no Wi-Fi, no broker in NVS) set up from the iPhone's
       card, with the hub already set up on the phone: after the join the
@@ -1271,18 +1280,31 @@ HUB until a new tap.
       join, one per join, write a duplicate key
       (`{"host":"a.local","host":"b.local"}`), a password holding `\n`, a
       241-byte document, the host `-ha.local`, `"port":0`, and a `user`
-      with no `pass`. The console names each verdict — `malformed`,
-      `malformed`, `too long`, `bad host`, `bad port`, `bad credentials` —
-      and never the document; each reads `2`; the unit keeps the broker it
-      had before the write (or none). The wipe of the record and the
-      mailboxes is host-tested (`test_hub_handoff.cpp`); the bench sees
-      that nothing was kept.
+      with no `pass` — each otherwise well-formed, with `"host":"ha.local"`
+      where the host is not the fault (`{"host":"ha.local","port":0}`,
+      `{"host":"ha.local","user":"canary"}`): the parser answers `bad host`
+      before `bad port` before `bad credentials`, so a document with no
+      valid host logs `bad host` whatever else is wrong with it. The
+      console names each verdict — `malformed`, `malformed`, `too long`,
+      `bad host`, `bad port`, `bad credentials` — and never the document;
+      each reads `2`; the unit keeps the broker it had before the write
+      (or none). The wipe of the record is host-tested
+      (`test_hub_handoff.cpp`); the mailbox's and the attribute's
+      (`handle_hub()`, `HubCb::scrub()` in `improv_ble.cpp`) are the glue's
+      and not host-tested; the bench sees that nothing was kept.
 - [ ] A unit already talking to a broker (seeded by the Flasher) that takes
       a different hub through a tap and the iPhone's card: the card says it
-      reports to the new hub (the byte read `1`), the console says `Hub
-      handed over while connected to another broker - restarting shortly.`,
-      and about 25 s after the write it logs `Restarting onto the
-      handed-over broker.`, restarts and reports to the new broker.
+      reports to the new hub (the byte read `1`), and the unit ends up
+      reporting to the new broker by one of two paths; note which. Either
+      the console says `Hub handed over while connected to another broker -
+      restarting shortly.` and about 25 s after the write `Restarting onto
+      the handed-over broker.`, then it restarts (`store_hub` found
+      `mqtt_connected()` true: the manager's session to the old broker
+      survived the join's Wi-Fi bounce, or `mqtt_supervise`, which runs
+      every loop pass, re-dialed it before the phone wrote); or no restart
+      at all: `store_hub` found it disconnected and re-pointed the manager
+      in place (`mqtt_init` and an immediate attempt), so the next attempt
+      dialed the new broker. Either way it reports to the new broker.
 
 **WAP (FULL profile)**
 
