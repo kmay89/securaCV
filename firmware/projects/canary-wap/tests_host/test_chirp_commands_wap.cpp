@@ -2192,6 +2192,9 @@ void test_a_mute_ends_once_at_its_deadline_across_the_wrap() {
         boot();
         enabled_channel(false);
         host_sim::now_ms = start;
+        // No mute yet: unmuted at `start`, past 2^31 too (its deadline is 0).
+        CHECK(!cc::is_muted() && cc::get_status().mute_remaining_ms == 0);
+        CHECK(status_read().mute_remaining_ms == 0);
         CHECK(cc::mute(minutes, nullptr));             // the loop task's command, at `start`
         CHECK(cc::g_mute_until_ms == start + dur);
         unsigned ends = 0;
@@ -2230,6 +2233,84 @@ void test_a_mute_ends_once_at_its_deadline_across_the_wrap() {
   CHECK(steps > 250000);
   host_sim::now_ms = clock_was;
   std::printf("PASS a_mute_ends_once_at_its_deadline_across_the_wrap (%u steps)\n", steps);
+}
+
+// With no mute running the channel reads unmuted at any uptime. The stored
+// deadline is then 0 (a boot, an unmute, a disable) or a deadline that has
+// passed (a mute that ran out, which update() leaves in place), and the
+// difference read as signed says nothing about it: `0 - now` is positive as
+// an int32 for every `now` past 2^31 ms (24.8 days of uptime), and so is a
+// deadline more than 2^31 ms gone. mute_left_ms() counts only while the flag
+// is set; without that, a channel up that long would read muted after any
+// unmute, drop every chirp and beacon "not listening". Read at the sign
+// boundary, between it and the wrap, and at the wrap: never muted, unmuted,
+// disabled and enabled again, and more than 24.8 days after a mute ran out. At each, before and after a pass, is_muted(), get_status() and
+// read_status() say no mute, the pass's beacon says listening, and a
+// neighbor's chirp is taken. These tests put the clock back when they end.
+void test_no_mute_reads_unmuted_past_the_sign_boundary() {
+  const uint32_t clock_was = host_sim::now_ms;
+  constexpr uint32_t MIN_MS = 60000;
+  const uint32_t reads[] = {0x7FFFFFFFu, 0x80000000u, 0x80000001u, 0xC0000000u, 0xFFFFFFFFu};
+  enum How { kNever, kUnmuted, kEnabledAgain, kRanOut, kHows };
+  const char* const names[kHows] = {"never muted", "unmuted", "disabled and enabled again", "a mute that ran out"};
+  uint8_t seed = 0x60;
+  unsigned cases = 0;
+  for (uint32_t at : reads) {
+    for (int how = kNever; how < kHows; ++how) {
+      // On, ten minutes present, twenty minutes before `at`; for a mute that
+      // runs out, 2^31 ms and 15 minutes earlier still, so its deadline is
+      // 2^31 ms and about twenty minutes gone at `at`.
+      const uint32_t lead = cc::PRESENCE_REQUIRED_MS + 20u * MIN_MS;
+      host_sim::now_ms = (how == kRanOut) ? at - 0x80000000u - 15u * MIN_MS - lead : at - lead;
+      boot();
+      enabled_channel();
+      if (how == kUnmuted) {
+        CHECK(rest(mute_of(15)).r.ok && cc::is_muted());
+        CHECK(rest(cmd_of(cc::CHIRP_CMD_UNMUTE)).r.ok);
+        CHECK(!cc::g_muted && cc::g_mute_until_ms == 0);
+      } else if (how == kEnabledAgain) {
+        CHECK(rest(mute_of(120)).r.ok && cc::is_muted());
+        CHECK(rest(cmd_of(cc::CHIRP_CMD_DISABLE)).r.ok);
+        CHECK(rest(cmd_of(cc::CHIRP_CMD_ENABLE)).r.ok);
+        CHECK(!cc::g_muted && cc::g_mute_until_ms == 0 && cc::g_state == cc::CHIRP_ACTIVE);
+      } else if (how == kRanOut) {
+        CHECK(rest(mute_of(15)).r.ok && cc::is_muted());
+        const uint32_t until = cc::g_mute_until_ms;
+        host_sim::now_ms = until;
+        cc::update();                                  // the pass at the deadline ends it
+        CHECK(!cc::g_muted && cc::g_mute_until_ms == until && cc::g_state == cc::CHIRP_ACTIVE);
+        CHECK(at - until > 0x80000000u && at - until < 0x80000000u + lead);   // more than 2^31 ms gone at `at`
+      }
+      host_sim::now_ms = at;
+      for (int pass = 0; pass < 2; ++pass) {
+        const bool im = cc::is_muted();
+        const cc::ChirpStatus live = cc::get_status();
+        const cc::StatusView v = status_read();
+        if (im || live.muted || live.mute_remaining_ms != 0 || v.muted || v.mute_remaining_ms != 0) {
+          std::fprintf(stderr, "%s, read at %u (%s the pass): is_muted() %d, get_status() %u ms, read_status() %u ms\n",
+                       names[how], at, pass == 0 ? "before" : "after", (int)im, live.mute_remaining_ms,
+                       v.mute_remaining_ms);
+        }
+        CHECK(!im && !live.muted && live.mute_remaining_ms == 0);
+        CHECK(!v.muted && v.mute_remaining_ms == 0);
+        CHECK(live.state == cc::CHIRP_ACTIVE && (pass == 0 || v.state == cc::CHIRP_ACTIVE));
+        if (pass == 0) {
+          const size_t before = host_sim::espnow->sent.size();
+          cc::update();                                // a beacon due: twenty minutes since the last
+          CHECK(presence_listening(before) == std::vector<uint8_t>{1});
+        }
+      }
+      const Neighbor nb = neighbor_of(seed++);
+      deliver(nb, presence_of(nb));
+      deliver(nb, witness_of(nb, cc::TPL_INFRA_POWER_OUT, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x61));
+      CHECK(cc::g_recent_chirp_count == 1);           // taken, not dropped as muted
+      ++cases;
+    }
+  }
+  CHECK(cases == 20);
+  CHECK(host_sim::httpd_side_effects == 0);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS no_mute_reads_unmuted_past_the_sign_boundary (%u cases)\n", cases);
 }
 
 // ── The tiers reset after 24 quiet hours and outlive a disable (F193) ───
@@ -2943,6 +3024,7 @@ const Test kTests[] = {
     {"a_disable_ends_the_mute", test_a_disable_ends_the_mute},
     {"a_mute_set_before_the_wrap_runs_its_length", test_a_mute_set_before_the_wrap_runs_its_length},
     {"a_mute_ends_once_at_its_deadline_across_the_wrap", test_a_mute_ends_once_at_its_deadline_across_the_wrap},
+    {"no_mute_reads_unmuted_past_the_sign_boundary", test_no_mute_reads_unmuted_past_the_sign_boundary},
     {"the_tiers_reset_24_quiet_hours_after_the_last_send",
      test_the_tiers_reset_24_quiet_hours_after_the_last_send},
     {"a_send_that_ends_a_quiet_day_counts_from_tier_1", test_a_send_that_ends_a_quiet_day_counts_from_tier_1},
