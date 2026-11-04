@@ -196,7 +196,69 @@ if not _SOFTAP or not all(re.search(r"WiFi\.softAP\([^()]*,\s*AP_CHANNEL,\s*fals
 # Any other line that names one of these fields (a trailing comment on a
 # line that is not such a write, say) is refused with its text, which is the
 # safe way to be wrong.
-_INO_CODE = [ln for ln in read(INO).splitlines() if not ln.lstrip().startswith(("//", "*", "/*"))]
+#
+# It reads lines of text, not the preprocessed program. A line with no code
+# outside its comments is not code: one that starts a comment, and one that
+# sits wholly inside a /* */ block, whatever it starts with (a write wrapped
+# in a block comment, its markers on lines of their own, binds nothing and
+# is not counted). Nor is a line inside #if 0. Any other #if is not
+# evaluated: a write under a feature switch is read as written. What keeps a
+# write the compiler drops harmless is the sketch's
+# static_assert(HTTPS_PORT == 443): HTTPD_SSL_CONFIG_DEFAULT() binds 443 too.
+
+
+def _code_lines(text: str) -> list:
+    """Each line of `text` that holds code: not wholly comment, not under #if 0.
+
+    String and character literals are read as literals, so "/*" in a route
+    pattern opens no comment.
+    """
+    kept = []
+    in_block = False
+    dead = []  # one entry per open #if: True while that branch is #if 0's
+    for line in text.splitlines():
+        code = []
+        i = 0
+        while i < len(line):
+            if in_block:
+                end = line.find("*/", i)
+                if end < 0:
+                    break
+                in_block, i = False, end + 2
+                code.append(" ")
+                continue
+            ch = line[i]
+            if ch in "\"'":
+                j = i + 1
+                while j < len(line) and line[j] != ch:
+                    j += 2 if line[j] == "\\" else 1
+                code.append(line[i:j + 1])
+                i = j + 1
+            elif line.startswith("//", i):
+                break
+            elif line.startswith("/*", i):
+                in_block, i = True, i + 2
+                code.append(" ")
+            else:
+                code.append(ch)
+                i += 1
+        stripped = "".join(code).strip()
+        directive = re.match(r"#\s*(if|ifdef|ifndef|else|elif|endif)\b\s*(.*)", stripped)
+        if directive:
+            word, arg = directive.group(1), directive.group(2).strip()
+            if word.startswith("if"):
+                dead.append(word == "if" and arg == "0")
+            elif word == "endif":
+                if dead:
+                    dead.pop()
+            elif dead:
+                dead[-1] = False  # #else or #elif: that branch is not #if 0's
+        if stripped and not any(dead) and not line.lstrip().startswith(("//", "*", "/*")):
+            kept.append(line)
+    return kept
+
+
+_INO_CODE = _code_lines(read(INO))
 _PORT_DIGITS = r"([1-9]\d{0,4})"  # a decimal literal: no sign, suffix or leading zero
 _PORT_WRITE = re.compile(r"\s*(redirect_config\.server_port|config\.server_port)\s*=\s*" + _PORT_DIGITS +
                          r"\s*;\s*(?://.*)?")

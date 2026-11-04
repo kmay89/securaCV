@@ -235,6 +235,47 @@ class SketchApFacts(unittest.TestCase):
         self.edit(INO, "    config.server_port = 80;", "    config.server_port = HTTP_PORT;")
         self.assert_refused("in a form this generator cannot read")
 
+    def test_a_write_the_compiler_never_sees_is_not_counted(self):
+        # The reader reads lines, so a write wrapped in a block comment whose
+        # markers sit on lines of their own, or under #if 0, is not code: the
+        # only one so wrapped leaves no write (IDF's default would bind), and
+        # a second one so wrapped moves nothing.
+        # Each case restores the sketch even when it fails, so one failure
+        # does not leak into the next.
+        for wrap in ("/*\n    {}\n    */", "#if 0\n    {}\n#endif", "#if 0\n#if FEATURE_X\n    {}\n#endif\n#endif"):
+            with self.subTest(only=wrap):
+                try:
+                    self.edit(INO, PS, wrap.format(PS))
+                    self.assert_refused("no ssl_config.port_secure = HTTPS_PORT; in the sketch")
+                finally:
+                    self.tearDown()
+            with self.subTest(second=wrap):
+                try:
+                    self.edit(INO, PS, f"{PS}\n" + wrap.format(PS))
+                    self.assertEqual(self.generate(), self.base)
+                finally:
+                    self.tearDown()
+        for wrap in ("/*\n{}\n*/", "#if 0\n{}\n#endif"):
+            with self.subTest(constant=wrap):
+                try:
+                    self.edit(INO, CONST, f"{CONST}\n" + wrap.format("static const int HTTPS_PORT = 8443;"))
+                    self.assertEqual(self.generate(), self.base)
+                finally:
+                    self.tearDown()
+
+    def test_a_write_in_a_live_branch_is_counted(self):
+        # #else of an #if 0 is compiled; so is a write after a string that
+        # holds "/*" (the redirect route's pattern opens no comment).
+        with self.subTest(branch="#else"):
+            try:
+                self.edit(INO, PS, f"#if 0\n    ssl_config.port_secure = 8443;\n#else\n    {PS}\n#endif")
+                self.assertEqual(self.generate(), self.base)
+            finally:
+                self.tearDown()
+        with self.subTest(after='"/*"'):
+            self.edit(INO, PS, f'static const char* kAllRoutes = "/*";\n    {PS}\n    {PS}')
+            self.assert_refused("writes ssl_config.port_secure twice")
+
     def test_a_comment_line_naming_port_secure_moves_nothing(self):
         for line in ("// httpd_ssl_start() binds port_secure = 8443; here", "// ssl_config.port_secure = 443;",
                      "// ssl_config.httpd.server_port = 443;"):
