@@ -28,7 +28,11 @@
 //     a table full of urgent chirps refuses an info one.
 //   - c9_bloom_flood: replaced. A witness's nonce is still refused after a
 //     thousand more nonces reached the real filter, which took very few of
-//     those thousand for repeats.
+//     those thousand for repeats. Since sweep F309 a frame's nonce goes in
+//     only once its signatures verify: a thousand frames that do not
+//     (unsigned, badly signed, or a relay whose origin envelope fails)
+//     leave every byte of the filter, and so its false-positive rate, as it
+//     was, and the witness is still refused, by the filter alone.
 //   - c11_emoji_size_lifted: retired. It compared two literals;
 //     test_chirp_commands_wap.cpp's every_session_display_is_five_emoji_in_its_field
 //     renders every session display through the real generate_emoji_string()
@@ -53,6 +57,22 @@
 //     over two hops and stored at each receiver, and lives there as long as
 //     any row does (DEFAULT_DISPLAY_MS): nothing on the receive side reads
 //     the TTL as a display time.
+//   - c9_a_forged_nonce_does_not_block_the_chirp, c9_a_refused_frame_counts_once
+//     (sweep F309): a forgery carrying a heard chirp's nonce, heard first,
+//     no longer keeps the chirp out; a frame that verifies under any key
+//     still takes its nonce (a known limit, pinned); and a verified frame a
+//     later check refuses counts against its key's hour once, however often
+//     it is played back.
+//   - c14_two_keys_cannot_take_turns_after_the_wrap,
+//     c14_no_key_passes_its_hour_across_the_wrap,
+//     c14_a_live_hour_goes_only_to_a_full_table,
+//     c8_the_oldest_row_goes_first_across_the_wrap (sweep F416): the
+//     per-key rate table and the recent table pick the row to give up by
+//     age, unsigned elapsed time, so uptime's 49.7-day wrap no longer lets
+//     two keys take turns past four an hour, nor puts the newest chirps
+//     first out of a full table. All but a_live_hour fail on the code
+//     before F416; that one pins what 32 rows cannot do, with or without
+//     the wrap.
 //
 // Host-tested only: the stubs stand in for the radio and the clock; the
 // Arduino compile is CI's.
@@ -212,39 +232,417 @@ void test_c8_priority_storage_eviction() {
   for (const auto& w : urgents) CHECK(holds(w));
 }
 
-// C9: a witness's nonce survives a flood. The filter takes a witness frame's
-// nonce before it checks the frame, so a thousand made-up frames from any
-// device in range reach it. Spec §5.3 puts a half's false-positive rate near
-// 0.02 % at 1,000 nonces; at most 5 of these 1,000 lookups may come back as
-// repeats, and the target must be refused after them, with the recent table
-// emptied so that only the filter holds it.
+// `signer`'s witness frame: the header `h` and the payload `p` as given, with
+// `signer`'s key carried and its signature over them, as send_chirp() (hop
+// 0) or relay_chirp() (hop 1 and on) signs one.
+std::vector<uint8_t> signed_by(const Neighbor& signer, const cc::ChirpHeader& h,
+                               cc::ChirpWitnessPayload p) {
+  memcpy(p.session_pubkey, signer.pub, sizeof p.session_pubkey);
+  uint8_t canonical[256];
+  const size_t cl = cc::build_witness_canonical(&h, &p, signer.pub, canonical, sizeof canonical);
+  CHECK(cl > 0);
+  Ed25519::sign(p.signature, signer.priv, signer.pub, canonical, cl);
+  return frame_of(h, p);
+}
+cc::ChirpWitnessPayload payload_of(cc::ChirpTemplate tpl = cc::TPL_INFRA_POWER_OUT,
+                                   cc::ChirpUrgency urg = cc::CHIRP_URG_CAUTION) {
+  cc::ChirpWitnessPayload p;
+  memset(&p, 0, sizeof p);
+  p.template_id = (uint8_t)tpl;
+  p.detail_slot = (uint8_t)cc::DETAIL_NONE;
+  p.urgency = (uint8_t)urg;
+  p.ttl_minutes = 15;
+  return p;
+}
+// `relayer`'s hop-1 relay of the witness `w`: its own signature on top, and
+// the origin envelope `w`'s signer signed, or `origin_sig` in its place.
+std::vector<uint8_t> relay_of(const Neighbor& relayer, const std::vector<uint8_t>& w,
+                              const uint8_t* origin_sig = nullptr) {
+  cc::ChirpHeader h;
+  cc::ChirpWitnessPayload p;
+  memcpy(&h, w.data(), sizeof h);
+  memcpy(&p, w.data() + sizeof h, sizeof p);
+  memcpy(h.session_id, relayer.sid, sizeof h.session_id);
+  h.hop_count = 1;
+  memcpy(p.signed_origin_pubkey, p.session_pubkey, sizeof p.signed_origin_pubkey);
+  memcpy(p.signed_origin_signature, origin_sig != nullptr ? origin_sig : p.signature,
+         sizeof p.signed_origin_signature);
+  return signed_by(relayer, h, p);
+}
+// Three forgeries carrying `nonce` in `origin`'s session, none of which
+// verifies whole: bytes signed by nobody (the carried key is not the
+// header's session id); the right key with a signature that does not
+// verify; and a relay whose own signature verifies, under `relayer`'s key,
+// around an origin envelope that does not (top-level passes, origin fails).
+std::vector<std::vector<uint8_t>> forgeries(const Neighbor& origin, const Neighbor& relayer,
+                                            const uint8_t nonce[8], std::mt19937* rng) {
+  cc::ChirpHeader h = header_of(origin, cc::CHIRP_MSG_WITNESS, 0);
+  memcpy(h.nonce, nonce, 8);
+  cc::ChirpWitnessPayload junk;
+  memset(&junk, 0xEE, sizeof junk);
+  cc::ChirpWitnessPayload bad_sig = payload_of();
+  memcpy(bad_sig.session_pubkey, origin.pub, sizeof bad_sig.session_pubkey);
+  for (uint8_t& b : bad_sig.signature) b = (uint8_t)(*rng)();
+  uint8_t bad_origin[64];
+  for (uint8_t& b : bad_origin) b = (uint8_t)(*rng)();
+  bad_origin[0] |= 1;   // not the all-zero envelope a v0.2 relay may carry
+  const std::vector<uint8_t> genuine = signed_by(origin, h, payload_of());
+  return {frame_of(h, junk), frame_of(h, bad_sig), relay_of(relayer, genuine, bad_origin)};
+}
+// The nonce filter's bytes, both halves.
+std::vector<uint8_t> filter_bytes() {
+  return std::vector<uint8_t>(cc::g_bloom, cc::g_bloom + 2 * cc::BLOOM_BYTES);
+}
+// Of `probes` random nonces from `seed`, none of them heard, how many the
+// filter reads as repeats: its false-positive count on that sample.
+size_t false_repeats(uint32_t seed, int probes) {
+  std::mt19937 rng(seed);
+  size_t n = 0;
+  for (int i = 0; i < probes; ++i) {
+    uint8_t nonce[8];
+    for (uint8_t& b : nonce) b = (uint8_t)rng();
+    n += cc::is_nonce_seen(nonce) ? 1 : 0;
+  }
+  return n;
+}
+void drop_all_rows() {
+  memset(cc::g_recent_chirps, 0, cc::MAX_RECENT_CHIRPS * sizeof(cc::ReceivedChirp));
+  cc::g_recent_chirp_count = 0;
+}
+
+// C9 (sweep F309): a flood of frames that do not verify leaves the nonce
+// filter as it was. The filter took a witness frame's nonce before it
+// checked the session id or a signature, so any device in range filled it
+// with made-up frames: a half's false-positive rate is about 0.02 % at 1,000
+// nonces and 2.4 % at 4,096 (spec §5.3), each a new witness dropped as a
+// repeat. Now only a frame whose signatures verify puts its nonce in. A
+// thousand forgeries, a third of each kind forgeries() builds, change no
+// byte of the filter, so its false-positive rate on a sample of 4,096
+// nonces is what it was before them. And what the filter is for still holds: the real chirp,
+// heard again while its row is held, and again with the recent table
+// emptied so that only the filter holds it, is refused, and so is a
+// neighbor's relay of it; a new witness from the same key is stored.
 void test_c9_bloom_flood() {
   boot_enabled();
   const Neighbor origin = neighbor_of(0x16);
+  const Neighbor relayer = neighbor_of(0x17);
   const std::vector<uint8_t> target = witness_of(origin, 0x22);
   deliver(origin, target);
   CHECK(holds(target));
-  memset(cc::g_recent_chirps, 0, cc::MAX_RECENT_CHIRPS * sizeof(cc::ReceivedChirp));
-  cc::g_recent_chirp_count = 0;
+  deliver(origin, target);                      // heard again while its row is held
+  CHECK(cc::g_recent_chirp_count == 1);
+  drop_all_rows();
 
+  const std::vector<uint8_t> before = filter_bytes();
+  const size_t fp_before = false_repeats(7, 4096);
   std::mt19937 rng(42);
-  int false_repeats = 0;
   for (int i = 0; i < 1000; ++i) {
-    cc::ChirpHeader h = header_of(origin, cc::CHIRP_MSG_WITNESS, 0);
-    for (uint8_t& b : h.nonce) b = (uint8_t)rng();
-    if (cc::is_nonce_seen(h.nonce)) ++false_repeats;
-    cc::ChirpWitnessPayload junk;
-    memset(&junk, 0xEE, sizeof junk);   // signed by nobody
-    deliver(origin, frame_of(h, junk));
+    uint8_t nonce[8];
+    for (uint8_t& b : nonce) b = (uint8_t)rng();
+    const std::vector<std::vector<uint8_t>> fs = forgeries(origin, relayer, nonce, &rng);
+    deliver(i % 3 == 2 ? relayer : origin, fs[(size_t)(i % 3)]);
   }
-  CHECK(false_repeats <= 5);
-  CHECK(cc::g_recent_chirp_count == 0);   // no junk frame was stored
+  CHECK(cc::g_recent_chirp_count == 0);         // no forgery was stored
+  CHECK(filter_bytes() == before);              // and none put its nonce in
+  CHECK(false_repeats(7, 4096) == fp_before);   // so the false-positive rate is unchanged
+
   deliver(origin, target);
-  CHECK(cc::g_recent_chirp_count == 0);   // the target: still refused
-  // And a new witness from the same origin is stored: the flood did not
-  // fill the filter.
+  CHECK(cc::g_recent_chirp_count == 0);         // the target: still refused, by the filter
+  deliver(relayer, relay_of(relayer, target));
+  CHECK(cc::g_recent_chirp_count == 0);         // and a relay of it
   deliver(origin, witness_of(origin, 0x23));
   CHECK(cc::g_recent_chirp_count == 1);
+}
+
+// C9 (F309): a forgery carrying a heard chirp's nonce does not keep that
+// chirp out. A receiver the chirp has not reached yet hears, first, a frame
+// with its nonce that does not verify, of each kind forgeries() builds; the
+// forgery is refused, and the chirp, when it comes, is stored as its origin
+// sent it. With the nonce taken before the checks, the forgery's nonce went
+// in and the chirp was refused as a repeat.
+//
+// What the filter cannot tell apart, and this case pins as a known limit:
+// it holds nonces, not who signed them, and so does the recent table, so a
+// frame that verifies under any key still takes the nonce it carries. An
+// attacker who signs its own witness with the heard nonce is stored, under
+// its key, and the chirp after it is refused. That costs the attacker a
+// signature and a row under a key its hour counts, and it is the same with
+// the filter before or after the checks.
+void test_c9_a_forged_nonce_does_not_block_the_chirp() {
+  const Neighbor origin = neighbor_of(0x18);
+  const Neighbor relayer = neighbor_of(0x19);
+  std::mt19937 rng(309);
+  for (size_t kind = 0; kind < 3; ++kind) {
+    boot_enabled();
+    const std::vector<uint8_t> real = witness_of(origin, 0x24, cc::TPL_EMERG_FIRE_VISIBLE,
+                                                 cc::CHIRP_URG_URGENT);
+    uint8_t nonce[8];
+    nonce_of(real, nonce);
+    const std::vector<std::vector<uint8_t>> fs = forgeries(origin, relayer, nonce, &rng);
+    deliver(kind == 2 ? relayer : origin, fs[kind]);
+    CHECK(cc::g_recent_chirp_count == 0);
+    const bool forgery_took_the_nonce = cc::is_nonce_seen(nonce);
+    deliver(origin, real);
+    cc::ReceivedChirp* c = row_of(nonce);
+    CHECK(c != nullptr);                     // the chirp is stored
+    CHECK(!forgery_took_the_nonce);
+    CHECK(memcmp(c->sender_pubkey, origin.pub, 32) == 0);
+    CHECK(c->template_id == cc::TPL_EMERG_FIRE_VISIBLE && c->urgency == cc::CHIRP_URG_URGENT);
+  }
+
+  // The limit: the attacker's own signed witness with the heard nonce.
+  boot_enabled();
+  const Neighbor attacker = neighbor_of(0x1A);
+  const std::vector<uint8_t> real = witness_of(origin, 0x25);
+  uint8_t nonce[8];
+  nonce_of(real, nonce);
+  cc::ChirpHeader h = header_of(attacker, cc::CHIRP_MSG_WITNESS, 0);
+  memcpy(h.nonce, nonce, 8);
+  deliver(attacker, signed_by(attacker, h, payload_of(cc::TPL_CLR_FALSE_ALARM)));
+  cc::ReceivedChirp* c = row_of(nonce);
+  CHECK(c != nullptr && memcmp(c->sender_pubkey, attacker.pub, 32) == 0);
+  deliver(origin, real);
+  CHECK(cc::g_recent_chirp_count == 1);
+  CHECK(memcmp(row_of(nonce)->sender_pubkey, attacker.pub, 32) == 0);
+}
+
+// C9 (F309): where the nonce goes in. A verified frame that a later check
+// refuses (here the freshness window: its timestamp 400 s behind this
+// device's clock, a capture played back) is refused at the lookup when it
+// comes again, as before F309, so it reaches the rate limit once: it counts
+// against its key's hour once, not at every replay, and the key's next
+// three witnesses are stored and its fourth refused. Had the nonce gone in
+// only with the row, five replays of the one frame would have used the
+// key's hour, and the key's own chirps after them been refused.
+void test_c9_a_refused_frame_counts_once() {
+  boot_enabled();
+  const Neighbor origin = neighbor_of(0x1B);
+  cc::ChirpHeader h = header_of(origin, cc::CHIRP_MSG_WITNESS, 0x26);
+  h.timestamp = (uint32_t)host_sim::wall_now - 400;
+  const std::vector<uint8_t> stale = signed_by(origin, h, payload_of());
+  g_health.clear();
+  for (int i = 0; i < 5; ++i) deliver(origin, stale);
+  CHECK(std::count(g_health.begin(), g_health.end(),
+                   std::string("chirp: rejected witness \xE2\x80\x94 outside freshness window")) == 1);
+  CHECK(cc::g_recent_chirp_count == 0);
+  for (uint8_t b = 0x27; b < 0x2A; ++b) {
+    deliver(origin, witness_of(origin, b));
+    CHECK(holds(witness_of(origin, b)));
+  }
+  g_health.clear();
+  deliver(origin, witness_of(origin, 0x2A));
+  CHECK(!holds(witness_of(origin, 0x2A)));
+  CHECK(logged("chirp: rate-limited witness from pubkey"));
+}
+
+// C8 (sweep F416): the oldest row goes first across uptime's wrap. Sixteen
+// info chirps a second apart, the first eight before millis() wraps and the
+// last eight after it: the next info chirp evicts the first one stored, and
+// the one after that the second. The tie between rows of one urgency went
+// to the smallest received_ms, and a row stored before the wrap holds a
+// larger value than one stored after it, so the ninth chirp, the first
+// after the wrap, went first, while the eight older ones stayed.
+void test_c8_the_oldest_row_goes_first_across_the_wrap() {
+  host_sim::now_ms = (uint32_t)(0u - 3600000u - 8500u);   // boot_enabled() adds the hour
+  boot_enabled();
+  std::vector<std::vector<uint8_t>> info;
+  fill_with(cc::TPL_AID_OFFERING_HELP, cc::CHIRP_URG_INFO, 0x30, 0x40, &info);
+  CHECK(cc::g_recent_chirps[7].received_ms > cc::g_recent_chirps[8].received_ms);   // the wrap
+  CHECK(host_sim::now_ms < 10000u);
+  const Neighbor late = neighbor_of(0x39);
+  host_sim::now_ms += 1000;
+  const std::vector<uint8_t> next = witness_of(late, 0x61, cc::TPL_AID_OFFERING_HELP, cc::CHIRP_URG_INFO);
+  deliver(late, next);
+  CHECK(holds(next));
+  CHECK(!holds(info[0]));
+  for (size_t i = 1; i < info.size(); ++i) CHECK(holds(info[i]));
+  host_sim::now_ms += 1000;
+  const std::vector<uint8_t> after = witness_of(late, 0x62, cc::TPL_AID_OFFERING_HELP, cc::CHIRP_URG_INFO);
+  deliver(late, after);
+  CHECK(holds(after) && holds(next));
+  CHECK(!holds(info[1]));
+  for (size_t i = 2; i < info.size(); ++i) CHECK(holds(info[i]));
+}
+
+// ── C14: a key's witnesses, four an hour (sweep F416) ──────────────────────
+
+// `n`'s signed witness with the nonce that `serial` names (a key's
+// witnesses here outnumber the 256 nonce_byte spells).
+std::vector<uint8_t> witness_no(const Neighbor& n, uint32_t serial) {
+  cc::ChirpHeader h = header_of(n, cc::CHIRP_MSG_WITNESS, 0);
+  h.nonce[1] = 0xF4;
+  memcpy(h.nonce + 2, &serial, 4);
+  h.nonce[6] = 0x16;
+  h.nonce[7] = 0x41;
+  return signed_by(n, h, payload_of());
+}
+// Whether the witness `w` from `n` was taken: the log says it was accepted.
+bool accepted(const Neighbor& n, const std::vector<uint8_t>& w) {
+  g_health.clear();
+  deliver(n, w);
+  for (const std::string& line : g_health) {
+    if (line.rfind("chirp: witness accepted", 0) == 0) return true;
+  }
+  return false;
+}
+// The rate table's row for `n`'s key, or nullptr.
+const cc::PubkeyRateEntry* rate_row_of(const Neighbor& n) {
+  for (size_t i = 0; i < cc::MAX_PUBKEY_RATE_TRACK; ++i) {
+    const cc::PubkeyRateEntry& e = cc::g_pubkey_rate[i];
+    if (e.valid && memcmp(e.pubkey, n.pub, 32) == 0) return &e;
+  }
+  return nullptr;
+}
+size_t rate_rows_held() {
+  size_t n = 0;
+  for (size_t i = 0; i < cc::MAX_PUBKEY_RATE_TRACK; ++i) n += cc::g_pubkey_rate[i].valid ? 1 : 0;
+  return n;
+}
+// The receiver boots so that its uptime reads `at`, and MAX_PUBKEY_RATE_TRACK
+// keys (seeds from 0x40) each send it one witness then: a full rate table.
+void boot_with_a_full_rate_table(uint32_t at, uint32_t serial_base) {
+  host_sim::now_ms = at - 3600000u;   // boot_enabled() adds the hour
+  boot_enabled();
+  CHECK(host_sim::now_ms == at);
+  for (size_t i = 0; i < cc::MAX_PUBKEY_RATE_TRACK; ++i) {
+    const Neighbor k = neighbor_of((uint8_t)(0x40 + i));
+    CHECK(accepted(k, witness_no(k, serial_base)));
+  }
+  CHECK(rate_rows_held() == cc::MAX_PUBKEY_RATE_TRACK);
+}
+
+// The review's probe of F416: a full table written 2 h before millis()
+// wraps, then keys A and B taking turns, a second apart, twelve witnesses
+// each. A day after the wrap and 30 days after it, each is taken 4 times of
+// 12, MAX_WITNESSES_PER_PUBKEY_PER_HOUR, as with no wrap (the control:
+// the table written on day 10, the turns on day 11). The rate table evicted
+// the row with the smallest start time, and after the wrap that is the row
+// written since it: A's row went for B's, B's for A's, each witness was its
+// key's first, and A was taken 12 of 12 while 31 of the 32 rows still held
+// keys from before the wrap. Each key now takes a row whose hour has run
+// out and keeps it.
+void test_c14_two_keys_cannot_take_turns_after_the_wrap() {
+  const uint32_t before_wrap = (uint32_t)(0u - 2u * 3600000u);
+  const uint32_t DAY = 24u * 3600000u;
+  struct Scene { uint32_t table_at; uint32_t turns_at; };
+  const Scene scenes[] = {
+      {before_wrap, DAY},                       // a day after the wrap
+      {before_wrap, 30u * DAY},                 // 30 days after it
+      {10u * DAY, 11u * DAY},                   // the control: no wrap
+  };
+  const Neighbor a = neighbor_of(0x60);
+  const Neighbor b = neighbor_of(0x61);
+  for (const Scene& s : scenes) {
+    boot_with_a_full_rate_table(s.table_at, 0);
+    host_sim::now_ms = s.turns_at;
+    cc::update();
+    int took_a = 0, took_b = 0;
+    for (uint32_t i = 1; i <= 12; ++i) {
+      took_a += accepted(a, witness_no(a, i)) ? 1 : 0;
+      took_b += accepted(b, witness_no(b, i)) ? 1 : 0;
+      host_sim::now_ms += 1000;
+    }
+    std::printf("  turns at %u ms: A took %d of 12, B %d of 12\n", (unsigned)s.turns_at, took_a, took_b);
+    CHECK(took_a == cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR);
+    CHECK(took_b == cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR);
+    CHECK(rate_row_of(a) != nullptr && rate_row_of(b) != nullptr);
+  }
+}
+
+// The lens on F416: 31 rows held by keys an attacker sent from 2 h before
+// the wrap, a legitimate key L that used its four in the minute after them,
+// and three keys the attacker rotates, a witness every 10 s round the three
+// for three hours. Run where the three hours lie wholly before the wrap,
+// across it, a day after it and 30 days after it. In every run no key is
+// taken more than MAX_WITNESSES_PER_PUBKEY_PER_HOUR times in any hour (each
+// sliding 3,600 s), each rotating key is taken that many in its first hour,
+// and L's row, whose hour is live while the rotation starts, is never the
+// one evicted: L's fifth witness in its hour is refused, its window start
+// unmoved. A row whose hour has run out is always older than a live one.
+void test_c14_no_key_passes_its_hour_across_the_wrap() {
+  const uint32_t HOUR = 3600000u;
+  const uint32_t DAY = 24u * HOUR;
+  const uint32_t WRAP = 0u;
+  struct Scene { uint32_t table_at; uint32_t rotation_at; const char* name; };
+  const Scene scenes[] = {
+      {(uint32_t)(WRAP - 7u * HOUR), (uint32_t)(WRAP - 5u * HOUR + 30u * 60000u), "before the wrap"},
+      {(uint32_t)(WRAP - 2u * HOUR), (uint32_t)(WRAP - 30u * 60000u), "across the wrap"},
+      {(uint32_t)(WRAP - 2u * HOUR), WRAP + DAY, "a day after the wrap"},
+      {(uint32_t)(WRAP - 2u * HOUR), WRAP + 30u * DAY, "30 days after the wrap"},
+  };
+  const Neighbor legit = neighbor_of(0x70);
+  const Neighbor rot[3] = {neighbor_of(0x71), neighbor_of(0x72), neighbor_of(0x73)};
+  for (const Scene& s : scenes) {
+    // 31 attacker rows, then L's four, then the rotation.
+    host_sim::now_ms = s.table_at - HOUR;
+    boot_enabled();
+    for (size_t i = 0; i + 1 < cc::MAX_PUBKEY_RATE_TRACK; ++i) {
+      const Neighbor k = neighbor_of((uint8_t)(0x40 + i));
+      CHECK(accepted(k, witness_no(k, 0)));
+    }
+    host_sim::now_ms = s.rotation_at - 60000u;
+    cc::update();
+    for (uint32_t i = 1; i <= cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR; ++i) {
+      CHECK(accepted(legit, witness_no(legit, i)));
+    }
+    CHECK(rate_rows_held() == cc::MAX_PUBKEY_RATE_TRACK);
+    const uint32_t legit_start = rate_row_of(legit)->window_start_ms;
+    host_sim::now_ms = s.rotation_at;
+
+    std::vector<uint32_t> taken[3];   // ms since the rotation began
+    uint32_t serial = 100;
+    for (uint32_t t = 0; t < 3u * HOUR; t += 10000u) {
+      host_sim::now_ms = s.rotation_at + t;
+      if (t % 60000u == 0) cc::update();                 // the loop task's pass, once a minute
+      const size_t k = (t / 10000u) % 3;
+      if (accepted(rot[k], witness_no(rot[k], serial++))) taken[k].push_back(t);
+      if (t == 50u * 60000u) {                           // L, inside its hour: refused, its row kept
+        CHECK(!accepted(legit, witness_no(legit, 99)));
+        CHECK(rate_row_of(legit) != nullptr && rate_row_of(legit)->window_start_ms == legit_start);
+      }
+    }
+    for (size_t k = 0; k < 3; ++k) {
+      const std::vector<uint32_t>& ts = taken[k];
+      size_t first_hour = 0;
+      for (uint32_t t : ts) first_hour += t < HOUR ? 1 : 0;
+      CHECK(first_hour == cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR);
+      for (size_t i = 0; i < ts.size(); ++i) {
+        size_t in_hour = 0;
+        for (size_t j = i; j < ts.size() && ts[j] - ts[i] < HOUR; ++j) ++in_hour;
+        CHECK(in_hour <= cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR);
+      }
+    }
+    std::printf("  %s: the three rotating keys taken %zu, %zu and %zu times in 3 h; L kept its hour\n",
+                s.name, taken[0].size(), taken[1].size(), taken[2].size());
+  }
+}
+
+// What the table cannot do, and the threat model says (the Chirp Sybil
+// cell): 32 rows hold 32 keys' hours. A live hour is evicted only when every
+// row is live, so a key keeps its count until 32 other keys start an hour
+// within its own; the 32nd evicts the oldest live row, here L's, and L's
+// next witness is its first again. One device makes any number of session
+// keys, so this is the per-key limit's price, with or without the wrap.
+void test_c14_a_live_hour_goes_only_to_a_full_table() {
+  host_sim::now_ms = 5u * 24u * 3600000u;
+  boot_enabled();
+  const Neighbor legit = neighbor_of(0x70);
+  for (uint32_t i = 1; i <= cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR; ++i) {
+    CHECK(accepted(legit, witness_no(legit, i)));
+  }
+  for (size_t i = 0; i + 1 < cc::MAX_PUBKEY_RATE_TRACK; ++i) {
+    host_sim::now_ms += 1000;
+    const Neighbor k = neighbor_of((uint8_t)(0x40 + i));
+    CHECK(accepted(k, witness_no(k, 0)));
+    CHECK(rate_row_of(legit) != nullptr);
+  }
+  CHECK(rate_rows_held() == cc::MAX_PUBKEY_RATE_TRACK);
+  CHECK(!accepted(legit, witness_no(legit, 5)));     // its hour, full
+  host_sim::now_ms += 1000;
+  const Neighbor k32 = neighbor_of(0x5F);
+  CHECK(accepted(k32, witness_no(k32, 0)));
+  CHECK(rate_row_of(legit) == nullptr);              // the oldest live row went
+  CHECK(accepted(legit, witness_no(legit, 6)));      // and L's count with it
 }
 
 // C13 (sweep F311): an ACK counts from a key whose nearby row is at least
@@ -560,7 +958,13 @@ const Test kTests[] = {
     {"c2_c3_no_self_count", test_c2_c3_no_self_count},
     {"c5_ack_dedup_by_pubkey", test_c5_ack_dedup_by_pubkey},
     {"c8_priority_storage_eviction", test_c8_priority_storage_eviction},
+    {"c8_the_oldest_row_goes_first_across_the_wrap", test_c8_the_oldest_row_goes_first_across_the_wrap},
     {"c9_bloom_flood", test_c9_bloom_flood},
+    {"c9_a_forged_nonce_does_not_block_the_chirp", test_c9_a_forged_nonce_does_not_block_the_chirp},
+    {"c9_a_refused_frame_counts_once", test_c9_a_refused_frame_counts_once},
+    {"c14_two_keys_cannot_take_turns_after_the_wrap", test_c14_two_keys_cannot_take_turns_after_the_wrap},
+    {"c14_no_key_passes_its_hour_across_the_wrap", test_c14_no_key_passes_its_hour_across_the_wrap},
+    {"c14_a_live_hour_goes_only_to_a_full_table", test_c14_a_live_hour_goes_only_to_a_full_table},
     {"c13_an_ack_waits_for_ten_minutes_of_presence", test_c13_an_ack_waits_for_ten_minutes_of_presence},
     {"c13_presence_counts_from_the_row", test_c13_presence_counts_from_the_row},
     {"c13_the_ten_minutes_run_together_for_every_key", test_c13_the_ten_minutes_run_together_for_every_key},

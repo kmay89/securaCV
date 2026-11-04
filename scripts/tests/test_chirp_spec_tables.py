@@ -55,6 +55,19 @@ were prose with nothing holding them to the code, so this test does:
     ACKs from other keys and the ten minutes (PRESENCE_REQUIRED_MS) as a
     delay, and the old phrases are gone.
 
+  * API examples, the receive mockup and the Replay cell (§8.2, §4.2, §5.3,
+    §10.1, THREAT_MODEL.md; sweeps D19, F309). Each §8.2 example names a
+    route chirp_api.h registers, and its keys are exactly the keys that
+    route's handler writes (`doc["..."]`, `c["..."]`) or, for a send, reads
+    (`input["..."]`); every category, urgency, status, state, refusal,
+    template and detail it shows is one the firmware's own functions and
+    tables can produce, and a template's text and category are that
+    template's. §4.2's mockup shows a real template under its own category.
+    The threat model's Chirp Replay cell gives the filter's size and hash
+    count as chirp_channel.cpp defines them, says it takes only verified
+    nonces, and keeps F310 open. The old text (an "activity" category, a
+    `message`, "1024-entry dedup") fails each of these.
+
 The self-tests at the bottom hold the readers to synthetic sources they
 must refuse, so a reader that stops seeing a call fails here, not silently.
 
@@ -64,6 +77,7 @@ CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests), unfiltere
 
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -560,15 +574,345 @@ class ChirpSpecSybilCost(unittest.TestCase):
         self.assertIn("one device makes any number of session keys", cell)
         for item in ("F232", "F311", "F234"):
             self.assertIn(item, cell)
-        # The rate limit holds per key, and not past uptime's wrap on a full
-        # table (pubkey_rate_check_and_record() picks its victim by the
+        # The rate limit holds per key, across uptime's wrap too (sweep
+        # F416: pubkey_rate_check_and_record() gives up the row whose window
+        # started longest ago, by unsigned elapsed time; it picked the
         # smallest start time, and after the wrap the rows written since it
-        # hold the smallest).
+        # held the smallest, so two keys took turns past the limit). What 32
+        # rows cannot do is test_chirp_security.cpp's
+        # c14_a_live_hour_goes_only_to_a_full_table.
         limit = constant(self.chirp, "MAX_WITNESSES_PER_PUBKEY_PER_HOUR")
         rows = constant(self.chirp, "MAX_PUBKEY_RATE_TRACK")
-        self.assertIn(f"rate-limited ({limit} an hour; after uptime's 49.7-day wrap a full {rows}-key table "
-                      "evicts the rows written since the wrap before any older one", cell)
+        self.assertIn(f"rate-limited ({limit} an hour; a full {rows}-key table gives up its oldest window first, "
+                      f"across uptime's wrap too, so a key's count is lost only when {rows} other keys start an "
+                      "hour within its own; F416)", cell)
+        self.assertNotIn("F416, open", cell)
+        self.assertNotIn("take turns past the limit", cell)
         self.assertIn("once per key and possibly before the chirp they confirm", cell)
+
+
+API_H = SKETCH / "chirp_api.h"
+CHIRP_CPP = SKETCH / "chirp_channel.cpp"
+
+
+def function_bodies(src: str, head: str) -> list[str]:
+    """The bodies of every function definition in `src` (comments stripped)
+    whose text before its `{` matches the regex `head`, braces in string
+    and character literals skipped."""
+    code = strip_comments(src)
+    out = []
+    for m in re.finditer(head + r"\s*\{", code):
+        depth, i = 1, m.end()
+        while i < len(code) and depth:
+            c = code[i]
+            if c in "\"'":
+                j = i + 1
+                while j < len(code) and code[j] != c:
+                    j += 2 if code[j] == "\\" else 1
+                i = j
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+            i += 1
+        if depth:
+            raise Unreadable(f"{head} never closes")
+        out.append(code[m.end():i - 1])
+    return out
+
+
+def function_body(src: str, head: str) -> str:
+    bodies = function_bodies(src, head)
+    if len(bodies) != 1:
+        raise Unreadable(f"{head} is defined {len(bodies)} times; this reader reads one definition")
+    return bodies[0]
+
+
+def case_names(src: str, fn: str) -> dict[str, str]:
+    """{enumerator: name} for each `case X: return "name";` of `fn`; its
+    default is not a name it gives a value."""
+    body = function_body(src, r"const char\*\s+" + re.escape(fn) + r"\([^)]*\)")
+    names = dict(re.findall(r'\bcase\s+(\w+)\s*:\s*return\s+"([^"\\]+)"\s*;', body))
+    if not names:
+        raise Unreadable(f"{fn}() has no case this reader can spell")
+    return names
+
+
+def returned_strings(src: str, fn: str) -> set[str]:
+    """Every string literal a `return "..."` gives in each definition of `fn`."""
+    bodies = function_bodies(src, r"const char\*\s+" + re.escape(fn) + r"\([^)]*\)")
+    if not bodies:
+        raise Unreadable(f"{fn}() is not defined")
+    return {v for b in bodies for v in re.findall(r'\breturn\s+"([^"\\]+)"\s*;', b)}
+
+
+def enum_values(mesh: str, prefix: str) -> dict[str, int]:
+    return {name: int(v, 0) for name, v in re.findall(
+        r"\b(" + prefix + r"\w+)\s*=\s*(0[xX][0-9A-Fa-f]+|\d+)(?=\s*[,}])", strip_comments(mesh))}
+
+
+def table_rows(cpp: str, table: str, row: str) -> list[tuple[str, ...]]:
+    """The rows of `static const <T> <table>[] = { ... };`, each matched by
+    `row`; a row the pattern cannot spell is refused."""
+    m = re.search(r"\b" + re.escape(table) + r"\[\]\s*=\s*\{(.*?)\n\};", strip_comments(cpp), re.S)
+    if m is None:
+        raise Unreadable(f"{table} moved")
+    rows = re.findall(row, m.group(1))
+    if len(rows) != m.group(1).count("{"):
+        raise Unreadable(f"{table} has a row this reader cannot spell")
+    return rows
+
+
+def templates(cpp: str, mesh: str) -> dict[int, tuple[str, str]]:
+    """{template id: (text, ChirpCategory enumerator)} from TEMPLATE_TABLE."""
+    ids = enum_values(mesh, "TPL_")
+    out = {}
+    for name, text, cat in table_rows(cpp, "TEMPLATE_TABLE",
+                                      r'\{\s*(TPL_\w+)\s*,\s*"([^"\\]*)"\s*,\s*(CHIRP_CAT_\w+)\s*,'
+                                      r"\s*(?:true|false)\s*\}"):
+        if name not in ids:
+            raise Unreadable(f"TEMPLATE_TABLE names {name}, which mesh_network.h does not give a value")
+        out[ids[name]] = (text, cat)
+    return out
+
+
+def details(cpp: str, mesh: str) -> dict[int, str]:
+    """{detail slot: text} from DETAIL_TABLE."""
+    ids = enum_values(mesh, "DETAIL_")
+    out = {}
+    for name, text in table_rows(cpp, "DETAIL_TABLE", r'\{\s*(DETAIL_\w+)\s*,\s*"([^"\\]*)"\s*\}'):
+        if name not in ids:
+            raise Unreadable(f"DETAIL_TABLE names {name}, which mesh_network.h does not give a value")
+        out[ids[name]] = text
+    return out
+
+
+def written_keys(body: str, obj: str) -> set[str]:
+    """The keys `obj["..."]` names in a handler body; a key that is not a
+    string literal is refused."""
+    if re.search(r"\b" + obj + r"\[(?!\")", body):
+        raise Unreadable(f'{obj}[...] with a key that is not a string literal')
+    return set(re.findall(r"\b" + obj + r'\["([A-Za-z0-9_]+)"\]', body))
+
+
+def route_handlers(api: str) -> dict[tuple[str, str], str]:
+    """{(path, method): handler} from chirp_api.h's register_api_handler() calls."""
+    return {(path, method): fn for path, method, fn in re.findall(
+        r'register_api_handler\(server,\s*"([^"]+)",\s*HTTP_(GET|POST),\s*chirp_auth_gated<(\w+)>\);',
+        strip_comments(api))}
+
+
+def spec_api_examples(section: str) -> dict[tuple[str, str], object]:
+    """{(path, method): parsed JSON} for each `// METHOD /path` example of
+    the section's one json block; text this reader cannot place is refused."""
+    blocks = re.findall(r"```json\n(.*?)```", section, re.S)
+    assert len(blocks) == 1, f"the section has {len(blocks)} json blocks; this reader reads one"
+    examples: dict[tuple[str, str], object] = {}
+    current, lines = None, []
+
+    def flush():
+        if current is None:
+            assert not "".join(lines).strip(), "json before the first // METHOD /path line"
+            return
+        assert current not in examples, f"{current} is shown twice"
+        try:
+            examples[current] = json.loads("\n".join(lines))
+        except ValueError as e:
+            raise AssertionError(f"the {current} example is not JSON this reader can parse: {e}")
+
+    for line in blocks[0].splitlines():
+        m = re.fullmatch(r"// (GET|POST) (/\S+)", line.strip())
+        if m:
+            flush()
+            current, lines = (m.group(2), m.group(1)), []
+        else:
+            assert not line.strip().startswith("//"), f"a comment this reader cannot place: {line!r}"
+            lines.append(line)
+    flush()
+    return examples
+
+
+def api_example_problems(spec: str, api: str, cpp: str, mesh: str) -> list[str]:
+    """What is wrong with §8.2's examples against chirp_api.h and the
+    firmware's tables; empty when nothing is."""
+    problems: list[str] = []
+    examples = spec_api_examples(spec_section(spec, "8.2 Response Formats"))
+    routes = route_handlers(api)
+    shown = {("/api/chirp", "GET"), ("/api/chirp/recent", "GET"), ("/api/chirp/send", "POST")}
+    if set(examples) != shown:
+        problems.append(f"§8.2 shows {sorted(examples)}, not {sorted(shown)}")
+    categories = case_names(cpp, "category_name")
+    urgencies = set(case_names(cpp, "urgency_name").values())
+    states = set(case_names(cpp, "state_name").values())
+    statuses = returned_strings(cpp, "get_validation_status") - {"unknown"}
+    reasons = returned_strings(cpp, "cannot_send_reason")
+    tpl = templates(cpp, mesh)
+    det = details(cpp, mesh)
+
+    def same_keys(where: str, got, want: set[str]):
+        if not isinstance(got, dict):
+            problems.append(f"{where} is not an object")
+            return False
+        if set(got) != want:
+            problems.append(f"{where}: keys {sorted(set(got) - want)} the handler does not have, "
+                            f"{sorted(want - set(got))} it has and the example leaves out")
+        return True
+
+    def template_ok(where: str, tid, text=None, category=None):
+        if tid not in tpl:
+            problems.append(f"{where}: template_id {tid!r} is no template")
+            return
+        t_text, t_cat = tpl[tid]
+        if text is not None and text != t_text:
+            problems.append(f"{where}: template {tid}'s text is {t_text!r}, not {text!r}")
+        if category is not None and category != categories.get(t_cat):
+            problems.append(f"{where}: template {tid}'s category is {categories.get(t_cat)!r}, not {category!r}")
+
+    for (path, method), body in sorted(examples.items()):
+        where = f"§8.2 {method} {path}"
+        handler = routes.get((path, method))
+        if handler is None:
+            problems.append(f"{where}: chirp_api.h registers no such route")
+            continue
+        hb = function_body(api, r"inline esp_err_t\s+" + re.escape(handler) + r"\(httpd_req_t\*\s*req\)")
+        if path == "/api/chirp":
+            if same_keys(where, body, written_keys(hb, "doc")):
+                if body.get("state") not in states:
+                    problems.append(f"{where}: state {body.get('state')!r} is not one state_name() gives")
+                if "cannot_send_reason" in body and body["cannot_send_reason"] not in reasons:
+                    problems.append(f"{where}: cannot_send_reason {body['cannot_send_reason']!r} is not one "
+                                    "cannot_send_reason() gives")
+        elif path == "/api/chirp/recent":
+            if not same_keys(where, body, written_keys(hb, "doc")):
+                continue
+            chirps = body.get("chirps")
+            if not isinstance(chirps, list) or not chirps:
+                problems.append(f"{where}: no chirp shown")
+                continue
+            for c in chirps:
+                if not same_keys(where + " chirp", c, written_keys(hb, "c")):
+                    continue
+                if c.get("category") not in categories.values():
+                    problems.append(f"{where}: category {c.get('category')!r} is not one category_name() gives")
+                if c.get("urgency") not in urgencies:
+                    problems.append(f"{where}: urgency {c.get('urgency')!r} is not one urgency_name() gives")
+                if c.get("status") not in statuses:
+                    problems.append(f"{where}: status {c.get('status')!r} is not one get_validation_status() gives")
+                if c.get("detail") not in det.values():
+                    problems.append(f"{where}: detail {c.get('detail')!r} is no detail's text")
+                template_ok(where, c.get("template_id"), c.get("template_text"), c.get("category"))
+        elif path == "/api/chirp/send":
+            if same_keys(where, body, written_keys(hb, "input")):
+                sendable = set(re.findall(r'strcmp\(urgency_str,\s*"(\w+)"\)', hb))
+                sendable |= set(re.findall(r'input\["urgency"\]\s*\|\s*"(\w+)"', hb))
+                if body.get("urgency") not in sendable:
+                    problems.append(f"{where}: urgency {body.get('urgency')!r} is not one the handler reads")
+                if body.get("detail") not in det:
+                    problems.append(f"{where}: detail {body.get('detail')!r} is no detail slot")
+                template_ok(where, body.get("template_id"))
+    return problems
+
+
+def mockup_problems(spec: str, cpp: str, mesh: str) -> list[str]:
+    """What is wrong with §4.2's receive mockup: its category and urgency
+    line, and the quoted text under it, must be a template under its own
+    category."""
+    section = spec_section(spec, "4.2 Receiving a Chirp")
+    block = re.search(r"```\n(.*?)```", section, re.S)
+    assert block, "§4.2 has no mockup block"
+    lines = [ln.strip().strip("\u2502").strip() for ln in block.group(1).splitlines()]
+    heads = [i for i, ln in enumerate(lines) if "\u2022" in ln and not ln.startswith("\u23f1")]
+    assert len(heads) == 1, f"§4.2's mockup has {len(heads)} category lines; this reader reads one"
+    m = re.fullmatch(r"\S+\s+([A-Za-z][A-Za-z ]*?)\s+\u2022\s+([A-Za-z]+)", lines[heads[0]])
+    assert m, f"§4.2's category line reads {lines[heads[0]]!r}, which this reader cannot spell"
+    q = re.fullmatch(r'"([^"]+)"', lines[heads[0] + 1])
+    assert q, f"§4.2's message line reads {lines[heads[0] + 1]!r}, not a quoted template text"
+    category, urgency, text = m.group(1).lower().replace(" ", "_"), m.group(2).lower(), q.group(1)
+    categories = case_names(cpp, "category_name")
+    problems = []
+    if category not in categories.values():
+        problems.append(f"§4.2's category {m.group(1)!r} is not one category_name() gives")
+    if urgency not in set(case_names(cpp, "urgency_name").values()):
+        problems.append(f"§4.2's urgency {m.group(2)!r} is not one urgency_name() gives")
+    rows = [cat for t, cat in templates(cpp, mesh).values() if t == text]
+    if not rows:
+        problems.append(f"§4.2's {text!r} is no template's text: a chirp has no free text")
+    elif categories.get(rows[0]) != category:
+        problems.append(f"§4.2 shows {text!r} under {m.group(1)!r}; its category is {categories.get(rows[0])!r}")
+    return problems
+
+
+def replay_cell_problems(threat: str, cpp: str) -> list[str]:
+    """What is wrong with the threat model's Chirp Replay cell against the
+    filter chirp_channel.cpp defines."""
+    cell = threat_model_cell(threat, "Replay", "Chirp")
+    code = strip_comments(cpp)
+    bits, hashes = constant(code, "BLOOM_BITS"), constant(code, "BLOOM_HASHES")
+    if not re.search(r"\bstatic const size_t BLOOM_BYTES = BLOOM_BITS / 8;", code):
+        raise Unreadable("BLOOM_BYTES is no longer BLOOM_BITS / 8")
+    if "csi_large_calloc(2 * BLOOM_BYTES)" not in code:
+        raise Unreadable("the filter is no longer allocated as two halves of BLOOM_BYTES")
+    problems = []
+    if bits % (8 * 1024):
+        problems.append(f"a half of {bits} bits is not a whole number of KB")
+    want = f"a two-half Bloom filter ({bits // 8 // 1024} KB and {hashes} hashes each)"
+    for phrase in ("partial: ", want, "takes a nonce only once its frame verifies (F309)",
+                   "the freshness window only while the wall clock is synced", "(sweep F310, open)"):
+        if phrase not in cell:
+            problems.append(f"the Chirp Replay cell does not say {phrase!r}")
+    if not cell.startswith("partial: "):
+        problems.append("the Chirp Replay cell does not start 'partial: ': F310 is open, replay is not closed")
+    for stale in ("1024-entry", "yes ("):
+        if stale in cell:
+            problems.append(f"the Chirp Replay cell still says {stale!r}")
+    return problems
+
+
+class ChirpSpecApiExamples(unittest.TestCase):
+    """§8.2's examples, §4.2's mockup and the Replay cell are the code (sweep D19).
+
+    The examples showed an "activity" category, a free-text `message` and
+    an `acks` count, and the send example posted a category and a message:
+    Chirp sends templates only, in six categories, and the handlers read
+    and write other keys. The threat model's Replay cell gave a
+    "1024-entry dedup", the v0.2 array v0.3 replaced with a Bloom filter
+    (two halves since F270, verified nonces only since F309), and its
+    Outstanding list still named the filter as work to do.
+    """
+
+    def setUp(self):
+        self.spec = SPEC.read_text(encoding="utf-8")
+        self.api = API_H.read_text(encoding="utf-8")
+        self.cpp = CHIRP_CPP.read_text(encoding="utf-8")
+        self.mesh = MESH_H.read_text(encoding="utf-8")
+        self.threat = THREAT_MODEL.read_text(encoding="utf-8")
+
+    def test_every_example_is_its_handler(self):
+        self.assertEqual(api_example_problems(self.spec, self.api, self.cpp, self.mesh), [])
+
+    def test_the_mockup_is_a_template(self):
+        self.assertEqual(mockup_problems(self.spec, self.cpp, self.mesh), [])
+
+    def test_the_categories_are_the_six(self):
+        # §4.2's prose says six; category_name() gives each of them a name.
+        self.assertEqual(sorted(case_names(self.cpp, "category_name").values()),
+                         ["all_clear", "authority", "emergency", "infrastructure", "mutual_aid", "weather"])
+        self.assertIn("six categories are `category_name()`'s", prose(spec_section(self.spec, "4.2 Receiving a Chirp")))
+
+    def test_the_replay_cell_is_the_filter(self):
+        self.assertEqual(replay_cell_problems(self.threat, self.cpp), [])
+        outstanding = self.threat.split("### Outstanding work (tracked)", 1)[1]
+        self.assertNotIn("Bloom-filter nonce dedup", outstanding)
+
+    def test_the_spec_says_only_verified_nonces_go_in(self):
+        dedup = prose(spec_section(self.spec, "5.3 Deduplication"))
+        self.assertIn("Only a verified frame's nonce enters the filter (sweep F309)", dedup)
+        self.assertIn("a frame that verifies under any key, an attacker's own among them, takes the nonce it carries",
+                      dedup)
+        self.assertIn("Both are known limits of this version.", dedup)
+        mitigated = prose(spec_section(self.spec, "10.1 Threats Mitigated"))
+        self.assertNotIn("5-minute TTL", mitigated)
+        self.assertIn("(§5.3; sweep F310, open)", mitigated)
 
 
 class ReaderSelfTest(unittest.TestCase):
@@ -641,6 +985,73 @@ class ReaderSelfTest(unittest.TestCase):
             threat_model_cell(text + "| Sybil flood | a | b | c |\n", "Sybil flood", "Chirp")
         with self.assertRaises(AssertionError):
             threat_model_cell(text.replace("| c |", "| c | d |"), "Sybil flood", "Chirp")
+
+    def test_the_api_examples_reader_refuses_a_wrong_example(self):
+        # The lens on D19: a wrong key, a category category_name() cannot
+        # give, a template's text under another category, the old free-text
+        # send and a wrong filter size each fail.
+        spec, api = SPEC.read_text(encoding="utf-8"), API_H.read_text(encoding="utf-8")
+        cpp, mesh = CHIRP_CPP.read_text(encoding="utf-8"), MESH_H.read_text(encoding="utf-8")
+        threat = THREAT_MODEL.read_text(encoding="utf-8")
+        self.assertEqual(api_example_problems(spec, api, cpp, mesh), [])
+        plants = [('"template_text": "power outage"', '"template_txt": "power outage"'),
+                  ('"category": "infrastructure"', '"category": "activity"'),
+                  ('"template_text": "power outage"', '"template_text": "water service disruption"'),
+                  ('"category": "infrastructure"', '"category": "weather"'),
+                  ('"urgency": "caution",\n  "detail": 0', '"urgency": "caution",\n  "message": "x"'),
+                  ('"state": "cooldown"', '"state": "ACTIVE"'),
+                  ('"status": "awaiting_confirmation"', '"status": "pending"')]
+        for old, new in plants:
+            with self.subTest(plant=new):
+                self.assertEqual(spec.count(old), 1, old)
+                self.assertNotEqual(api_example_problems(spec.replace(old, new), api, cpp, mesh), [])
+        self.assertEqual(mockup_problems(spec, cpp, mesh), [])
+        for old, new in (("Infrastructure \u2022", "Activity \u2022"), ('"power outage"   ', '"car doors"      '),
+                         ("Infrastructure \u2022", "Weather \u2022")):
+            with self.subTest(plant=new):
+                self.assertNotEqual(mockup_problems(spec.replace(old, new, 1), cpp, mesh), [])
+        self.assertEqual(replay_cell_problems(threat, cpp), [])
+        for old, new in (("(4 KB and 4 hashes each)", "(8 KB and 4 hashes each)"),
+                         ("(4 KB and 4 hashes each)", "(4 KB and 3 hashes each)"),
+                         ("(sweep F310, open)", "(sweep F310)"),
+                         ("| partial: a two-half Bloom filter", "| yes (1024-entry dedup + freshness); a two-half Bloom filter")):
+            with self.subTest(plant=new):
+                self.assertEqual(threat.count(old), 1, old)
+                self.assertNotEqual(replay_cell_problems(threat.replace(old, new), cpp), [])
+        # And a filter whose size changes in the code fails the cell as written.
+        self.assertNotEqual(replay_cell_problems(threat, cpp.replace("BLOOM_BITS = 32768;", "BLOOM_BITS = 65536;")), [])
+
+    def test_the_old_api_examples_fail(self):
+        old = ("### 8.2 Response Formats\n\n```json\n// GET /api/chirp/recent\n"
+               '{"chirps": [{"emoji": "x", "category": "activity", "urgency": "caution",\n'
+               '  "message": "someone checking car doors", "age_sec": 120, "hop_count": 1, "acks": 3}]}\n\n'
+               "// POST /api/chirp/send\n"
+               '{"category": "activity", "urgency": "caution", "message": "someone checking car doors",\n'
+               '  "ttl_minutes": 15}\n```\n\n## 9.')
+        api, cpp, mesh = (API_H.read_text(encoding="utf-8"), CHIRP_CPP.read_text(encoding="utf-8"),
+                          MESH_H.read_text(encoding="utf-8"))
+        problems = api_example_problems(old, api, cpp, mesh)
+        self.assertTrue(any("'message'" in p for p in problems), problems)
+        self.assertTrue(any("§8.2 shows" in p for p in problems), problems)
+
+    def test_the_example_readers_refuse_what_they_cannot_spell(self):
+        with self.assertRaises(AssertionError):
+            spec_api_examples("```json\n// GET /a\n{\"a\": 1,}\n```\n")
+        with self.assertRaises(AssertionError):
+            spec_api_examples("```json\n// a note\n{}\n```\n")
+        with self.assertRaises(AssertionError):
+            spec_api_examples("```json\n{}\n// GET /a\n{}\n```\n")
+        self.assertEqual(spec_api_examples("```json\n// GET /a\n{\"k\": 1}\n\n// POST /b\n[]\n```\n"),
+                         {("/a", "GET"): {"k": 1}, ("/b", "POST"): []})
+        with self.assertRaises(Unreadable):
+            written_keys('doc[key] = 1; doc["a"] = 2;', "doc")
+        self.assertEqual(written_keys('doc["a"] = 1; doc["b"].to<JsonArray>(); c["z"] = 0;', "doc"), {"a", "b"})
+        self.assertEqual(function_body('int f() { const char* s = "}"; if (x) { y(); } return 1; }', r"int f\(\)"),
+                         ' const char* s = "}"; if (x) { y(); } return 1; ')
+        with self.assertRaises(Unreadable):
+            function_body("int f() { } int f() { }", r"int f\(\)")
+        with self.assertRaises(Unreadable):
+            table_rows("static const E T[] = {\n  { A, \"x\" },\n  { B, y },\n};", "T", r'\{\s*(\w+)\s*,\s*"([^"]*)"\s*\}')
 
     def test_a_stale_or_missing_row_fails(self):
         rows = spec_nvs_rows("```\nNVS Key | Type | Description\n--------|------|---\n"

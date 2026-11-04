@@ -657,6 +657,19 @@ static bool pubkey_set_contains(const uint8_t set[][SESSION_PUBKEY_SIZE], size_t
   return false;
 }
 
+// A key's witnesses, MAX_WITNESSES_PER_PUBKEY_PER_HOUR an hour (audit C14),
+// counted in a window that starts at its first witness. A key with no row
+// takes a free one, or else the row whose window started longest ago: the
+// largest now - window_start_ms. That is unsigned elapsed time, so it holds
+// across uptime's wrap, and a window that has run out (older than
+// WINDOW_MS) is always older than any live one, so it goes first; a live
+// window goes only when all MAX_PUBKEY_RATE_TRACK rows are live, that is
+// when that many keys each started a window within the hour. The victim
+// was the smallest window_start_ms, and after the wrap the rows written
+// since it hold the smallest: the rows from before it stayed until uptime
+// passed their values again, up to 49.7 days, while two keys taking turns
+// evicted each other's row and each witness counted as a key's first
+// (sweep F416: 12 of 12 accepted where 4 are allowed).
 static bool pubkey_rate_check_and_record(const uint8_t* pubkey) {
   uint32_t now = millis();
   const uint32_t WINDOW_MS = 3600000;
@@ -664,16 +677,20 @@ static bool pubkey_rate_check_and_record(const uint8_t* pubkey) {
   PubkeyRateEntry* entry = nullptr;
   PubkeyRateEntry* free_slot = nullptr;
   PubkeyRateEntry* oldest = nullptr;
-  uint32_t oldest_start = UINT32_MAX;
+  uint32_t oldest_age = 0;
 
   for (size_t i = 0; i < MAX_PUBKEY_RATE_TRACK; i++) {
     PubkeyRateEntry& e = g_pubkey_rate[i];
     if (e.valid && memcmp(e.pubkey, pubkey, SESSION_PUBKEY_SIZE) == 0) {
       entry = &e; break;
     }
-    if (!e.valid && !free_slot) free_slot = &e;
-    if (e.valid && e.window_start_ms < oldest_start) {
-      oldest_start = e.window_start_ms;
+    if (!e.valid) {
+      if (!free_slot) free_slot = &e;
+      continue;
+    }
+    const uint32_t age = now - e.window_start_ms;
+    if (!oldest || age > oldest_age) {
+      oldest_age = age;
       oldest = &e;
     }
   }
@@ -743,18 +760,25 @@ static void drop_recent_at(size_t i) {
   memset(&g_recent_chirps[g_recent_chirp_count], 0, sizeof(ReceivedChirp));
 }
 
-// C8: priority storage — replace FIFO with urgency-aware insert.
+// C8: priority storage — replace FIFO with urgency-aware insert. A full
+// table gives up its least urgent row, and of those the one held longest:
+// the largest now - received_ms, unsigned elapsed time, so the order holds
+// across uptime's wrap. The tie went to the smallest received_ms, and in
+// the 30 minutes after the wrap (a row lives DEFAULT_DISPLAY_MS) a row
+// stored before it held a larger value than every row stored since, so the
+// newer rows went first (sweep F416).
 static void priority_heap_insert(const ReceivedChirp* incoming) {
   if (g_recent_chirp_count < MAX_RECENT_CHIRPS) {
     g_recent_chirps[g_recent_chirp_count++] = *incoming;
     return;
   }
+  const uint32_t now = millis();
   size_t evict_idx = 0;
   for (size_t i = 1; i < g_recent_chirp_count; i++) {
     const ReceivedChirp& a = g_recent_chirps[evict_idx];
     const ReceivedChirp& b = g_recent_chirps[i];
     if (b.urgency < a.urgency ||
-        (b.urgency == a.urgency && b.received_ms < a.received_ms)) {
+        (b.urgency == a.urgency && now - b.received_ms > now - a.received_ms)) {
       evict_idx = i;
     }
   }
@@ -807,10 +831,26 @@ static void send_presence() {
   // lists showed a device in its cooldown as deaf (sweep F194).
   payload->listening = is_muted() ? 0 : 1;
 
+  // The age stops at 254 minutes, the field's cap (spec §3.2), and stays
+  // there: once it reaches the cap the send time slides forward to hold it
+  // at exactly 254 minutes, so it never runs on to read small again. It was
+  // unsigned elapsed time with nothing to stop it, and 2^32 ms (49.7 days)
+  // after a session's last send the beacon said a few minutes, which is
+  // false (sweep F417). A beacon goes out every PRESENCE_INTERVAL_MS while
+  // the channel is on, so the slide runs long before that. A send sets the
+  // time again and an enable clears it; 0 is "never", which the slide does
+  // not write (UINT32_MAX reads one millisecond older than the cap).
   if (g_last_chirp_sent_ms == 0) {
     payload->last_chirp_age_min = 255;
   } else {
-    uint32_t age_ms = millis() - g_last_chirp_sent_ms;
+    static const uint32_t AGE_CAP_MS = 254u * 60000u;
+    const uint32_t now = millis();
+    uint32_t age_ms = now - g_last_chirp_sent_ms;
+    if (age_ms >= AGE_CAP_MS) {
+      g_last_chirp_sent_ms = now - AGE_CAP_MS;
+      if (g_last_chirp_sent_ms == 0) g_last_chirp_sent_ms = UINT32_MAX;
+      age_ms = AGE_CAP_MS;
+    }
     uint32_t age_min = age_ms / 60000;
     payload->last_chirp_age_min = (age_min > 254) ? 254 : (uint8_t)age_min;
   }
@@ -882,8 +922,9 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   // it). Before, the filter was cleared whole every 5 minutes, and the same
   // frame heard just after a reset was stored again: a second row of a
   // chirp still held, or a suppressed chirp back with no votes.
+  // The nonce goes into the filter only once the frame's signatures verify,
+  // below (sweep F309).
   if (is_nonce_seen(hdr->nonce) || recent_index_of(hdr->nonce) >= 0) return;
-  cache_nonce(hdr->nonce);
 
   if (payload->urgency < (uint8_t)g_urgency_filter) return;
   if (is_muted()) return;   // what the presence beacon's `listening` says (sweep F194)
@@ -953,6 +994,29 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   } else {
     memcpy(origin_pubkey, payload->session_pubkey, SESSION_PUBKEY_SIZE);
   }
+
+  // Only a nonce whose frame verified enters the filter (sweep F309). The
+  // insert came first, before the session-id and signature checks, so
+  // unsigned frames from any device in range filled it (a half's
+  // false-positive rate is about 2.4 % at 4,096 nonces and climbs from
+  // there, each a new witness dropped as a repeat), and a made-up frame
+  // carrying a heard chirp's nonce kept that chirp out of a receiver it had
+  // not reached yet. Taking it first saved nothing a flooder cannot route
+  // around: a fresh nonce per frame reaches the SHA-256 and the Ed25519
+  // checks every time; only a junk frame sent again with the same nonce
+  // costs those checks now. It goes in here, before the template, the rate
+  // limit and the freshness window, as it did, so a verified frame that
+  // one of those refuses is refused at the lookup above when it comes
+  // again, and counts against its key's hour once, not at every repeat.
+  // A frame dropped before the checks, below the urgency filter or during
+  // a mute, leaves no nonce now, so a copy heard once the filter or the
+  // mute lets it through is taken, where before it was refused as a repeat
+  // for up to 662 s. (This device's own frames are still refused at the
+  // lookup: send_chirp() puts their nonces in.)
+  // The filter holds nonces, not who signed them: a frame that verifies
+  // under any key, an attacker's own among them, still takes the nonce it
+  // carries (spec §5.3).
+  cache_nonce(hdr->nonce);
 
   ChirpTemplate template_id = (ChirpTemplate)payload->template_id;
   if (!find_template(template_id)) {
@@ -1415,6 +1479,9 @@ void read_status(StatusView* out) {
                                                 out->cooldown_ms, now);
   out->state = shown_state(out->state, out->cooldown_remaining_ms);
   out->mute_remaining_ms = mute_left_ms(out->muted, out->mute_until_ms, now);   // F361
+  // Unsigned elapsed time, as has_presence_requirement() counts it, with the
+  // same known limit: a session on without a break reads presence unmet for
+  // ten minutes every 2^32 ms (49.7 days), and fails closed (sweep F417).
   out->presence_met = out->session_start_ms != 0 &&
                       (now - out->session_start_ms) >= PRESENCE_REQUIRED_MS;
   out->clock_synced = wall_clock_is_synced();
@@ -1696,6 +1763,15 @@ bool is_active() {
   return shown == CHIRP_ACTIVE || shown == CHIRP_LISTENING;
 }
 
+// This session on for at least PRESENCE_REQUIRED_MS (spec §2.5.5). The age
+// is unsigned elapsed time, so uptime's wrap does not shorten it. A session
+// kept on without a break reads as new again for ten minutes every 2^32 ms
+// (49.7 days): its sends, confirmations and suppress votes are refused as
+// presence_required for those minutes, and none ever goes early. A known
+// limit that fails closed, the one F311 wrote down for a nearby row's
+// first_seen_ms (sweep F417); read_status() counts presence_met the same
+// way. Latching it would publish a new StatusView field and move
+// test_chirp_commands_wap.cpp's the_view_sizes pin.
 bool has_presence_requirement() {
   if (g_session_start_ms == 0) return false;
   return (millis() - g_session_start_ms) >= PRESENCE_REQUIRED_MS;

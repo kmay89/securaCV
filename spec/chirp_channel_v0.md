@@ -562,6 +562,10 @@ chirp_presence = {
   one chirp how many minutes ago that was, and linked the two sessions on
   the wire (§6.4; sweep F415). The send cooldown (§2.5.4) is the device's
   and still counts from its last send.
+- The canary-wap's `last_chirp_age_min` stops at 254 and stays there until
+  the session sends again. It counted on with nothing to stop it, so 2^32 ms
+  (49.7 days) after a send uptime's wrap made it read a few minutes, which
+  was false (sweep F417).
 - The beacon is unsigned, so a receiver never shows its `emoji` field. The
   canary-wap's nearby list shows the display of the header's `session_id`
   (§2.3), derived as a witness's sender emoji is (it is what an honest
@@ -759,14 +763,21 @@ When chirp received, display is **calm and informative**, not alarming:
 ┌─────────────────────────────────────────┐
 │  🐝🌸💧🔔🌻 shared nearby:               │
 │                                         │
-│  📍 Activity • Caution                  │
-│  "someone checking car doors"           │
+│  📍 Infrastructure • Caution            │
+│  "power outage"                         │
 │                                         │
-│  ⏱️ 2 min ago • 🔄 3 relays              │
+│  ⏱️ 2 min ago • 🔄 hop 1                 │
 │                                         │
 │  [ Dismiss ]  [ I see it too ]          │
 └─────────────────────────────────────────┘
 ```
+
+What a chirp says is a template's text with its category and urgency, and
+at most a detail from a fixed list (§2.5.3): there is no free text, and the
+six categories are `category_name()`'s (`chirp_channel.cpp`). `GET
+/api/chirp/recent` carries the same fields (§8.2). The mockup showed an
+"Activity" category and a free-text message, neither of which exists
+(sweep D19).
 
 ### 4.3 Rate Limiting
 
@@ -811,11 +822,35 @@ Devices do NOT relay if:
 ```
 if (chirp.nonce in nonce_filter or chirp.nonce in recent_chirps) {
   drop_duplicate()
+} else if (!signatures_verify(chirp)) {   // session id, signature, a relay's origin envelope
+  drop()                                  // and its nonce is not kept
 } else {
   nonce_filter.add(chirp.nonce)
-  process_chirp()
+  process_chirp()                         // template, per-key rate limit, freshness, store
 }
 ```
+
+Only a verified frame's nonce enters the filter (sweep F309): one whose
+`session_id` derives from the key it carries, whose signature verifies
+under that key, and, for a relay, whose origin envelope verifies. The
+canary-wap took the nonce first, before any check, so frames no key signed,
+from any device in range, filled the filter (raising the rate at which it
+drops a new witness as a repeat, below), and a made-up frame carrying a
+heard chirp's nonce kept that chirp out of a receiver it had not reached
+yet. Taking it first saved little: a flood with a fresh nonce per frame
+reaches the signature check every time either way, and only a junk frame
+sent again with the same nonce now costs one. A verified frame that a later
+check refuses (an unknown template, the per-key rate limit, the freshness
+window) keeps its nonce, so it is refused at the lookup when it comes
+again: a stale frame played back counts against its key's hour once, not
+at every replay.
+
+The filter holds nonces, not who signed them, and so does the recent
+table: a frame that verifies under any key, an attacker's own among them,
+takes the nonce it carries, and where it arrives first the chirp that
+nonce came from is refused as a repeat. A relay whose origin envelope
+carries no signature at all takes it too: v0.2 still accepts one on its
+relayer's signature alone. Both are known limits of this version.
 
 A nonce is one chirp: a receiver must refuse a witness whose nonce it has
 seen for at least as long as the frame could still be accepted. A frame is
@@ -1034,16 +1069,28 @@ shows what the POST did. The answers keep their shape.
 
 ### 8.2 Response Formats
 
+The keys below are the ones `chirp_api.h` writes and reads, and
+`scripts/tests/test_chirp_spec_tables.py` holds each example to its
+handler (sweep D19: the examples showed an `activity` category, a `message`
+field and a free-text send, none of which exists).
+
 ```json
 // GET /api/chirp
 {
-  "state": "ACTIVE",
+  "state": "cooldown",
   "session_emoji": "🐦🌳⭐🌙🍀",
   "nearby_count": 12,
   "recent_chirps": 2,
-  "last_chirp_sent": null,
-  "cooldown_remaining_sec": 0,
-  "relay_enabled": true
+  "last_chirp_sent_ms": 5400000,
+  "cooldown_remaining_sec": 240,
+  "cooldown_tier": 1,
+  "presence_met": true,
+  "night_mode": false,
+  "relay_enabled": true,
+  "muted": false,
+  "mute_remaining_sec": 0,
+  "can_send": false,
+  "cannot_send_reason": "cooldown"
 }
 
 // GET /api/chirp/recent
@@ -1051,24 +1098,37 @@ shows what the POST did. The answers keep their shape.
   "chirps": [
     {
       "emoji": "🐝🌸💧🔔🌻",
-      "category": "activity",
+      "template_id": 16,
+      "template_text": "power outage",
+      "detail": "",
+      "category": "infrastructure",
       "urgency": "caution",
-      "message": "someone checking car doors",
-      "age_sec": 120,
       "hop_count": 1,
-      "acks": 3
+      "age_sec": 120,
+      "confirm_count": 1,
+      "validated": false,
+      "status": "awaiting_confirmation",
+      "relayed": false,
+      "suppressed": false,
+      "nonce": "3fa1c2d4e5f60718"
     }
   ]
 }
 
 // POST /api/chirp/send
 {
-  "category": "activity",
+  "template_id": 16,
   "urgency": "caution",
-  "message": "someone checking car doors",
+  "detail": 0,
   "ttl_minutes": 15
 }
 ```
+
+A chirp is a template id (the table `GET /api/chirp/templates` lists), an
+urgency and a detail slot, never free text. `detail` is the slot's text in
+the recent list and its number in a send. `last_chirp_sent_ms` is the
+uptime of the device's last send, the cooldown's timer (§2.5.4), and
+`cannot_send_reason` is present only while `can_send` is false.
 
 ## 9. UI Requirements
 
@@ -1111,7 +1171,10 @@ Chirp notifications should be **informative, not alarming**:
 1. **Spam/Abuse**: Rate limiting (1 per 5 min)
 2. **Tracking**: Ephemeral session identity
 3. **Hysteria**: Human confirmation required, calm UI
-4. **Replay**: Nonce deduplication, 5-minute TTL
+4. **Replay**: one nonce, one chirp: the nonce filter, which takes only
+   verified nonces, and the recent table (§5.3), with the freshness window
+   while the wall clock is set; with no clock set, a replay is stored
+   again once both have forgotten it (§5.3; sweep F310, open)
 5. **Impersonation**: Ed25519 session signatures
 6. **Range abuse**: 3-hop limit
 

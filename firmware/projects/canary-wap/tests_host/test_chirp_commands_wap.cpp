@@ -47,6 +47,12 @@
 // uptime wrap, a mute and the votes beside the kept tiers leave them be,
 // and the tiers let 9 sends out on a first day, then 6 a day.
 //
+// A presence beacon's age since the session's last send stops at 254
+// minutes and stays there across uptime's wrap; it read 5 minutes 2^32 ms
+// and 5 minutes after a send (sweep F417). And presence itself reads unmet
+// for ten minutes every 2^32 ms of a session on without a break, a known
+// limit that fails closed, held here as it is.
+//
 // The harness is one thread, so "the HTTP server's task" is a role the test
 // plays: rest() sets host_sim::on_httpd_task and calls submit() the way a
 // handler does. submit() waits in vTaskDelay, and the stub's vTaskDelay is
@@ -2597,6 +2603,119 @@ void test_a_new_session_beacons_no_last_send() {
   std::printf("PASS a_new_session_beacons_no_last_send\n");
 }
 
+// The session runs on without a break, the loop task's pass once a minute
+// (as on a device, where update() runs every loop and a beacon is due every
+// PRESENCE_INTERVAL_MS), from `from` until `until` ms after `t0`, both
+// counted in 64 bits so the span can pass 2^32 ms. `each(elapsed)` runs
+// after every pass; the send log is emptied as it goes.
+template <typename F>
+void run_on(uint32_t t0, uint64_t from, uint64_t until, F each) {
+  for (uint64_t e = from; e <= until; e += 60000) {
+    host_sim::now_ms = t0 + (uint32_t)e;
+    host_sim::espnow->sent.clear();
+    cc::update();
+    each(e);
+  }
+}
+
+// The beacon's age stops at 254, across uptime's wrap (sweep F417).
+// send_presence() counted last_chirp_age_min as the time since this
+// session's last send with nothing to stop it, so 2^32 ms (49.7 days) after
+// a send it read small again: a send, then a beacon every minute for 2^32 ms
+// and 5 minutes, and the last one said 5, which is false. Now every beacon
+// says the whole minutes since the send up to 254, the field's cap (spec
+// §3.2, 255 being "never"), and 254 from then on, read off a send time
+// that each beacon past the cap slides forward to hold it there. The slide
+// never writes 0, which reads as "never": a beacon at the uptime where the
+// slide would land on it holds 254 too. A disable and an enable say 255
+// (F415).
+void test_the_beacon_age_stops_at_254_across_the_wrap() {
+  boot();
+  enabled_channel();
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT)).r.ok);
+  const uint32_t sent = cc::g_last_chirp_sent_ms;
+  CHECK(sent != 0);
+  const uint64_t SPAN = (1ull << 32) + 5u * 60000u;
+  size_t beacons = 0, wrong = 0;
+  uint8_t last = 0;
+  const auto check_beacons = [&](uint64_t e) {
+    for (uint8_t age : presence_ages(0)) {
+      const uint64_t want = e / 60000 < 254 ? e / 60000 : 254;
+      ++beacons;
+      if (age != want) ++wrong;
+      last = age;
+    }
+  };
+  run_on(sent, 60000, SPAN - 5u * 60000u, check_beacons);   // a minute a pass, up to 2^32 ms
+  host_sim::now_ms = sent + (uint32_t)SPAN;                 // and the pass at 2^32 ms + 5 min
+  host_sim::espnow->sent.clear();
+  cc::g_last_presence_ms = host_sim::now_ms - cc::PRESENCE_INTERVAL_MS;
+  cc::update();
+  check_beacons(SPAN);
+  std::printf("  %zu beacons over 2^32 ms + 5 min after a send; the last says %u minutes\n", beacons,
+              (unsigned)last);
+  CHECK(beacons > 71000);
+  CHECK(last == 254);
+  CHECK(wrong == 0);
+
+  // Where the slide would write 0: a send 1 s before the wrap, and a beacon
+  // at 254 minutes after it.
+  cc::g_last_chirp_sent_ms = 0u - 1000u;
+  host_sim::now_ms = 254u * 60000u;
+  cc::g_last_presence_ms = host_sim::now_ms - cc::PRESENCE_INTERVAL_MS;
+  host_sim::espnow->sent.clear();
+  cc::update();
+  CHECK(presence_ages(0) == std::vector<uint8_t>{254});
+  CHECK(cc::g_last_chirp_sent_ms != 0);
+  host_sim::now_ms += cc::PRESENCE_INTERVAL_MS;
+  host_sim::espnow->sent.clear();
+  cc::update();
+  CHECK(presence_ages(0) == std::vector<uint8_t>{254});    // not 255, "never"
+
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_DISABLE)).r.ok);
+  const size_t before = host_sim::espnow->sent.size();
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_ENABLE)).r.ok);
+  CHECK(presence_ages(before) == std::vector<uint8_t>{255});
+  std::printf("PASS the_beacon_age_stops_at_254_across_the_wrap\n");
+}
+
+// A known limit, written down (sweep F417): presence reads unmet again for
+// ten minutes every 2^32 ms. has_presence_requirement() and read_status()'s
+// presence_met count the session's age as unsigned elapsed time, as F311's
+// nearby rows do, so uptime's wrap never makes it read longer, and a session
+// on without a break for 2^32 ms reads as ten minutes new again: its sends
+// are refused as presence_required (and its confirmations and votes) for
+// those ten minutes, and nothing goes early. This case holds the limit as it
+// is, failing closed: met through the whole span, then unmet from 2^32 ms
+// to 2^32 ms + 10 minutes less 1 ms after the session started, and met, a
+// send going out, at 2^32 ms + 10 minutes. Latching it would publish a new
+// StatusView field and move the_view_sizes pin.
+void test_presence_reads_new_again_every_2_32_ms() {
+  boot();
+  enabled_channel();
+  const uint32_t start = cc::g_session_start_ms;
+  const uint64_t W = 1ull << 32;
+  size_t unmet = 0;
+  run_on(start, cc::PRESENCE_REQUIRED_MS, W - 60000u, [&](uint64_t) {
+    if (!cc::has_presence_requirement()) ++unmet;
+  });
+  CHECK(unmet == 0);
+  for (const uint64_t e : {W, W + 5u * 60000u, W + cc::PRESENCE_REQUIRED_MS - 1}) {
+    host_sim::now_ms = start + (uint32_t)e;
+    cc::update();
+    const cc::StatusView v = status_read();
+    CHECK(!cc::has_presence_requirement() && !v.presence_met);
+    CHECK(reason_of(v) == "presence_required");
+  }
+  host_sim::now_ms = start + (uint32_t)(W + 5u * 60000u);
+  const Rest refused = rest(send_of(cc::TPL_INFRA_POWER_OUT), 1, Turn::kDrain);
+  CHECK(!refused.r.ok && refused.r.refusal == cc::SEND_REFUSED_PRESENCE);
+  host_sim::now_ms = start + (uint32_t)(W + cc::PRESENCE_REQUIRED_MS);
+  CHECK(cc::has_presence_requirement() && status_read().presence_met);
+  CHECK(rest(send_of(cc::TPL_INFRA_POWER_OUT), 1, Turn::kDrain).r.ok);
+  std::printf("PASS presence_reads_new_again_every_2_32_ms\n");
+}
+
 // The count stops at 255. Kept across days, it reaches 256 after about 42
 // days of a send every 4 hours, and a uint8_t that wrapped to 0 read tier 0:
 // the next send went out with no cooldown, and the one after it at tier 1.
@@ -3030,6 +3149,8 @@ const Test kTests[] = {
     {"a_send_that_ends_a_quiet_day_counts_from_tier_1", test_a_send_that_ends_a_quiet_day_counts_from_tier_1},
     {"a_disable_keeps_the_tiers", test_a_disable_keeps_the_tiers},
     {"a_new_session_beacons_no_last_send", test_a_new_session_beacons_no_last_send},
+    {"the_beacon_age_stops_at_254_across_the_wrap", test_the_beacon_age_stops_at_254_across_the_wrap},
+    {"presence_reads_new_again_every_2_32_ms", test_presence_reads_new_again_every_2_32_ms},
     {"the_tier_count_stops_at_255", test_the_tier_count_stops_at_255},
     {"the_tiers_count_across_the_uptime_wrap", test_the_tiers_count_across_the_uptime_wrap},
     {"a_mute_beside_the_kept_tiers", test_a_mute_beside_the_kept_tiers},
