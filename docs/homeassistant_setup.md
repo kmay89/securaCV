@@ -1732,12 +1732,13 @@ kernel through its core `mqtt` integration:
 | `binary_sensor.pwk_chain_problem` | Binary Sensor | The kernel's **self**-report of a chain problem |
 | `button.pwk_verify_now` | Button | Ask the kernel to verify itself |
 
-The bridge asks Home Assistant for these ids with `default_entity_id`, which
-Home Assistant 2025.10 and later honors when it first registers an entity;
+The bridge asks Home Assistant for these ids with `default_entity_id`;
 `<zone>` is the zone id without its `zone:` prefix, as Home Assistant slugs
-it (`zone:back-gate` becomes `back_gate`). An entity your Home Assistant
-registered before keeps the id it has, and an older Home Assistant names the
-entity from the device name and the entity name.
+it (`zone:back-gate` becomes `back_gate`). Home Assistant 2025.10 and later
+tries to give each entity the id asked for when it first registers it, and
+adds `_2` when another entity already holds the id. An entity your Home
+Assistant registered before keeps the id it has, and an older Home Assistant
+names the entity from the device name and the entity name.
 
 These entities show the kernel's **self-report**: the dashboard and the
 blueprints label them *Chain OK (kernel-reported)*, never Verified. Once the

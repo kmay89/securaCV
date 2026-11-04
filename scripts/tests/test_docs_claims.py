@@ -3426,6 +3426,49 @@ RETIRED_IN = (
      "`csi_mqtt.cpp`) |",
      "the evidence cell carries its amendment: sent since #1762; "
      "unconfirmed in a live install (the checklist's HA16 row)"),
+    # HA51: the sentences that said Home Assistant gives (honors, applies)
+    # the requested entity id. Read from its core's source, it tries to:
+    # the registry hands out the id only while no other entity holds it,
+    # and adds `_2` when one does. The Lab's sandbox note already said so
+    # (canary-local/assets/wap.js SANDBOX_ID_NOTE).
+    ("docs/integrations/apple-home-homekit-bridge.md",
+     "Home Assistant 2025.10 and later gives an entity that id when it "
+     "first registers it.",
+     "Home Assistant 2025.10 and later tries to give an entity that id when "
+     "it first registers it, and adds `_2` when another entity already holds "
+     "the id"),
+    ("docs/network_coexistence.md",
+     "The firmware asks for these ids with `default_entity_id`, which Home "
+     "Assistant 2025.10 and later honors when it first registers an entity;",
+     "the firmware asks for them; Home Assistant 2025.10 and later tries to "
+     "give each entity the id asked for when it first registers it, and adds "
+     "`_2` when another entity already holds the id"),
+    ("docs/homeassistant_setup.md",
+     "The bridge asks Home Assistant for these ids with `default_entity_id`, "
+     "which Home Assistant 2025.10 and later honors when it first registers "
+     "an entity;",
+     "the bridge asks for them; Home Assistant 2025.10 and later tries to "
+     "give each entity the id asked for when it first registers it, and adds "
+     "`_2` when another entity already holds the id"),
+    ("docs/manual_test_plan_mqtt.md",
+     "The bridge asks for them with `default_entity_id`, which Home Assistant "
+     "2025.10 and later honors when it first registers an entity;",
+     "the bridge asks for them; Home Assistant 2025.10 and later tries to "
+     "give each entity the id asked for when it first registers it, and adds "
+     "`_2` when another entity already holds the id"),
+    ("spec/beacon_channel_v0.md",
+     "The discovery config asks for that id with `default_entity_id`, which "
+     "Home Assistant 2025.10 and later applies when it first registers the "
+     "entity",
+     "the discovery config asks for it; Home Assistant 2025.10 and later "
+     "tries to give the entity that id when it first registers it, and adds "
+     "`_2` when another entity already holds the id"),
+    ("docs/audit/feature_gaps_2026-09.md",
+     "Home Assistant 2025.10 and later applies the key when it first "
+     "registers an entity;",
+     "H1's correction says Home Assistant 2025.10 and later tries to give an "
+     "entity the id the key names when it first registers it, and adds `_2` "
+     "when another entity already holds that id (HA51)"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -5854,6 +5897,41 @@ MUST_PASS_IN = [
      "re-read (no `default_entity_id` in `event_mqtt_bridge.rs` or "
      "`csi_mqtt.cpp`) *(Amended 2026-11-03: sent since #1762; unconfirmed in "
      "a live install."),
+    # HA51's replacements, as they stand.
+    ("docs/integrations/apple-home-homekit-bridge.md",
+     "Assistant: Home Assistant 2025.10 and later tries to give an entity that "
+     "id when it first registers it, and adds `_2` when another entity already "
+     "holds the id. An entity it registered before keeps the id it has"),
+    ("docs/network_coexistence.md",
+     "The firmware asks for these ids with `default_entity_id`. Home Assistant "
+     "2025.10 and later tries to give each entity the id asked for when it "
+     "first registers it, and adds `_2` when another entity already holds the "
+     "id; an entity registered before keeps its id"),
+    ("docs/homeassistant_setup.md",
+     "The bridge asks Home Assistant for these ids with `default_entity_id`; "
+     "`<zone>` is the zone id without its `zone:` prefix"),
+    ("docs/homeassistant_setup.md",
+     "(`zone:back-gate` becomes `back_gate`). Home Assistant 2025.10 and later "
+     "tries to give each entity the id asked for when it first registers it, "
+     "and adds `_2` when another entity already holds the id. An entity your "
+     "Home Assistant registered before keeps the id it has"),
+    ("docs/manual_test_plan_mqtt.md",
+     "The bridge asks for them with `default_entity_id`; `<zone>` is the zone "
+     "id without its `zone:` prefix"),
+    ("docs/manual_test_plan_mqtt.md",
+     "(`zone:back-gate` becomes `back_gate`). Home Assistant 2025.10 and later "
+     "tries to give each entity the id asked for when it first registers it, "
+     "and adds `_2` when another entity already holds the id. An entity your "
+     "Home Assistant registered before keeps the id it has"),
+    ("spec/beacon_channel_v0.md",
+     "The discovery config asks for that id with `default_entity_id`; Home "
+     "Assistant 2025.10 and later tries to give the entity that id when it "
+     "first registers it, and adds `_2` when another entity already holds the "
+     "id (sweep HA16):"),
+    ("docs/audit/feature_gaps_2026-09.md",
+     "Home Assistant 2025.10 and later tries to give an entity the id the key "
+     "names when it first registers it, and adds `_2` when another entity "
+     "already holds that id (HA51); an entity it registered before keeps its id"),
 
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
@@ -8470,6 +8548,30 @@ MUST_FAIL_IN = [
     ("docs/audit/feature_gaps_2026-09.md",
      "| code (both publishers) | sweep HA16 | re-read (no `default_entity_id` "
      "in `event_mqtt_bridge.rs` or `csi_mqtt.cpp`) |"),
+    # HA51's retired sentences, as they stood at 36119c7a.
+    ("docs/integrations/apple-home-homekit-bridge.md",
+     "Assistant: Home Assistant 2025.10 and later gives an entity that id when it\n"
+     "first registers it. An entity it registered before keeps the id it has, and\n"),
+    ("docs/network_coexistence.md",
+     "`canary_s3_4dc2`). The firmware asks for these ids with `default_entity_id`,\n"
+     "which Home Assistant 2025.10 and later honors when it first registers an\n"
+     "entity; an entity registered before keeps its id, and an older Home Assistant\n"),
+    ("docs/homeassistant_setup.md",
+     "The bridge asks Home Assistant for these ids with `default_entity_id`, which\n"
+     "Home Assistant 2025.10 and later honors when it first registers an entity;\n"
+     "`<zone>` is the zone id without its `zone:` prefix, as Home Assistant slugs\n"),
+    ("docs/manual_test_plan_mqtt.md",
+     "  - These ids need Home Assistant 2025.10 or later. The bridge asks for them\n"
+     "    with `default_entity_id`, which Home Assistant 2025.10 and later honors\n"
+     "    when it first registers an entity; `<zone>` is the zone id without its\n"),
+    ("spec/beacon_channel_v0.md",
+     "The discovery config asks for that id with `default_entity_id`, which Home "
+     "Assistant 2025.10 and later applies when it first registers the entity "
+     "(sweep HA16):"),
+    ("docs/audit/feature_gaps_2026-09.md",
+     "host-tested. Home Assistant 2025.10 and later applies the key when it first "
+     "registers an entity; an entity it registered before keeps its id, and an "
+     "older release names the entity from the device and entity names."),
 ]
 
 
