@@ -4,8 +4,9 @@ the fleet scan's cache keeps the adverts that fit (F211), the answers spelled
 with snprintf() are measured and escaped (F212), every other JSON text spelled
 with printf is held or recorded (F227), the device name holds no byte
 ArduinoJson would write raw (F226), neither does any SSID a JSON text
-carries (F262), and no Bluetooth device's name reaches an ArduinoJson value
-as it is (F302).
+carries (F262), no Bluetooth device's name reaches an ArduinoJson value
+as it is (F302), and neither does a Beacon set member's (F408), and every
+append onto a String takes text JSON keeps whole (F405).
 
 ArduinoJson's `serializeJson(doc, char_array)` and its sized form
 `serializeJson(doc, buf, n)` write at most the buffer's size and add the
@@ -263,9 +264,65 @@ J10. No Bluetooth device's name reaches an ArduinoJson value as it is
     helper outside the sketch); a posted string read some other way (a
     subscript handed straight to a call, `parse(input["k"])`); and a name
     that reaches a JSON text some other way than an ArduinoJson value: a
-    printf's %s is J7's (a char array it cannot read fails there), but a
-    hand-built `String` (`json += ...`) is neither's. Host-tested in
+    printf's %s is J7's (a char array it cannot read fails there), and a
+    hand-built `String` (`json += ...`) is J11's. Host-tested in
     test_bluetooth_commands_wap.cpp and test_wap_json_writer.cpp.
+    The Beacon set's names are held the same way (F408): NAME_FAMILIES
+    names each namespace whose structs keep a name another device chose,
+    bluetooth_channel's (MAX_DEVICE_NAME_LEN) and beacon_channel's
+    (`BeaconSetEntry::name`, beacon_wire.h, BEACON_NAME_LEN), and each is
+    derived and held as above, its shown text's buffer
+    `char x[wap_json::replaced_cap(beacon_channel::BEACON_NAME_LEN)]`.
+    Nothing fills a set member's name yet (v0.3's pairing will, from a
+    peer's frame); GET /api/beacon/set writes it through shown_text()
+    already. Host-tested in test_beacon_set_load.cpp. Not J10's either: the
+    Opera mesh's peer names (mesh_network.h's OperaPeer::name, which GET
+    /api/mesh/peers writes raw). No frame field reaches one: add_peer()'s
+    only callers pass the literals "New Device" (initiator_complete()) and
+    "Opera Creator" (handle_pair_complete()), the NVS load refuses a row
+    of any other length and terminates the name (load_peers()), and
+    publish_view() copies the field whole into the view read_status()
+    hands the route. A writer that takes a peer's name from a frame makes
+    it a family here (F408's trace).
+J11. Every append onto a String in the sketch is text JSON keeps whole
+    (F405). ble_nearby.h builds GET /api/nearby's answer by hand (`json
+    += ...`), outside ArduinoJson and every printf, so a char array
+    appended between quotes is written as it is: the nearby scan took a
+    Canary's four-character device prefix from any advertised name that
+    came with the SecuraCV service UUID, unchecked, and `SCV-12"4` made the
+    answer one JSON.parse refuses. Every `x += v;` and `x.concat(v)` onto a
+    String (a local, a parameter or a file-scope one declared `String`, or
+    a local `auto x = String(...)`), in any file of the sketch, and that
+    String's own first value (`String x = v;`), takes one
+    of: a string literal; a ternary of such values; String(<number>) (a
+    numeric literal, a variable or a field of a numeric type, a cast to
+    one, arithmetic of those) or String(<literal>); the answer of a
+    function JSON_APPEND_VOCAB records, each of whose returns is a literal
+    with no byte JSON escapes (checked, never trusted); or a char array (a
+    local, a file-scope one, or a struct field by its name in every struct
+    that declares it) whose every writer in the sketch is held to hex
+    digits. A writer is every use of the array that may change it: a
+    printf into it, whose format must be hex conversions alone (`%02x`);
+    a copy into it (strncpy(), memcpy(), strcat() and their kind) from a
+    literal of hex digits or from another array held the same way,
+    followed to a fixpoint (a cycle of copies adds no byte); a memset() to
+    0; an element assigned '\\0'; its declaration's initializer (zero, or
+    hex digits); a call of a HEX_WRITERS function at the position recorded
+    there (nearby_prefix_from_name(), whose body the host suite holds); and
+    nothing else: an assignment of any other value, a change in place, a
+    call of a function that may write it (any but the readers the rule
+    names and the sketch's own functions whose parameter there is a
+    pointer to const), a pointer or a reference whose pointee is not const
+    taking it (`auto` included), or a function handing it out as one. A
+    record the code
+    no longer uses fails. What J11 cannot see: an append spelled another
+    way (`json = json + v`, `operator+=` spelled out, a String built with
+    `+` and assigned), a write through a pointer it was handed some way it
+    does not follow (byte offsets into the struct, memcpy() of the whole
+    struct from another's bytes), and the body of a HEX_WRITERS function,
+    which the host suite holds instead. Host-tested in
+    test_bluetooth_commands_wap.cpp (the helper, and the scan's callback
+    and the answer it builds, over hostile names).
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
@@ -3009,13 +3066,38 @@ def check_ssid_posts(files: dict[str, str], idx: Index) -> list[str]:
     return errors
 
 
-# J10: a Bluetooth device's name reaches no ArduinoJson value raw (F302).
+# J10: a Bluetooth device's name reaches no ArduinoJson value raw (F302), and neither does a Beacon
+# set member's (F408).
 BT_NS = "bluetooth_channel"
 BT_API = f"{SKETCH}/bluetooth_api.h"
 # The Canary's own name, which bluetooth_channel.h keeps beside the others: device_name_rule holds
 # its bytes (F261), and a page posts it (POST /api/bluetooth/name and /settings), so it is not one
 # a device it heard chose.
 BT_OWN_NAME = "device_name"
+
+
+@dataclass(frozen=True)
+class NameFamily:
+    """The names another device chose that one namespace's structs keep (J10): its namespace, the
+    header that declares them (named when J10 finds none), the constant a name's field is sized by
+    (the shown text's buffer is `replaced_cap(<ns>::<bound>)`), a name field that is the Canary's
+    own and not one (None: none is), what a name is in words, and the sweep item."""
+    ns: str
+    header: str
+    bound: str
+    own: str | None
+    what: str
+    item: str
+
+
+NAME_FAMILIES = (
+    NameFamily(BT_NS, f"{SKETCH}/bluetooth_channel.h", "MAX_DEVICE_NAME_LEN", BT_OWN_NAME,
+               "a Bluetooth device's name", "F302"),
+    # BeaconSetEntry::name (beacon_wire.h): nothing fills it yet, but v0.3's pairing will, from a
+    # peer's frame (F408).
+    NameFamily("beacon_channel", f"{SKETCH}/beacon_wire.h", "BEACON_NAME_LEN", None,
+               "a Beacon set member's name", "F408"),
+)
 # A value written into a JSON document: `x[...] = v` (any key, a literal, `F("...")`, a variable;
 # not a C array or pointer the function declares, which is a place, below), `x.set(v)`
 # (`.template set<T>(v)` too), `x.add(v)`.
@@ -3073,20 +3155,20 @@ BT_POSTED_VIA = (r"\b{v}\s*\.\s*as\s*<\s*" + BT_STRINGY + r"\s*>|\b{v}\s*\|\s*\"
                  + r"\s*&?\s*\w+\s*(?:=|\{|\()\s*{v}\s*[;})]")
 
 
-def bt_name_shape(idx: Index) -> tuple[list[str], set[str], set[str]]:
-    """(fields, holders, readers): the char-array members bluetooth_channel's structs keep a device's
-    name in (one sized by MAX_DEVICE_NAME_LEN, or one called `name` or `..._name`, the Canary's own
-    `device_name` aside), derived from bluetooth_channel.h, never typed; the structs that hold one,
-    directly or through a member or a pointer (ScanView's devices, BluetoothStatus's connection); and
-    the functions of the namespace whose signature names such a struct (read_scan(), read_status(),
-    ...)."""
-    structs = {st.name: st for sts in idx.structs.values() for st in sts if BT_NS in st.ns}
+def bt_name_shape(idx: Index, fam: NameFamily = NAME_FAMILIES[0]) -> tuple[list[str], set[str], set[str]]:
+    """(fields, holders, readers): the char-array members a family's structs keep a device's name in
+    (one sized by its bound, MAX_DEVICE_NAME_LEN for bluetooth_channel's, or one called `name` or
+    `..._name`, the Canary's own `device_name` aside), derived from the headers, never typed; the
+    structs that hold one, directly or through a member or a pointer (ScanView's devices,
+    BluetoothStatus's connection); and the functions of the namespace whose signature names such a
+    struct (read_scan(), read_status(), get_beacon_set_entry(), ...)."""
+    structs = {st.name: st for sts in idx.structs.values() for st in sts if fam.ns in st.ns}
     fields: set[str] = set()
     holders: set[str] = set()
     for st in structs.values():
         for f, (t, dims) in st.fields.items():
-            if (t == "char" and len(dims) == 1 and f != BT_OWN_NAME
-                    and (re.search(r"\bMAX_DEVICE_NAME_LEN\b", dims[0]) or re.search(r"(?:^|_)name$", f))):
+            if (t == "char" and len(dims) == 1 and f != fam.own
+                    and (re.search(r"\b" + fam.bound + r"\b", dims[0]) or re.search(r"(?:^|_)name$", f))):
                 fields.add(f)
                 holders.add(st.name)
     while True:
@@ -3099,7 +3181,7 @@ def bt_name_shape(idx: Index) -> tuple[list[str], set[str], set[str]]:
     if not holders:
         return sorted(fields), holders, set()
     held = re.compile(r"\b(?:" + "|".join(sorted(holders)) + r")\b")
-    readers = {f.name for fs in idx.fns.values() for f in fs if BT_NS in f.ns and held.search(f.ret + " " + f.params)}
+    readers = {f.name for fs in idx.fns.values() for f in fs if fam.ns in f.ns and held.search(f.ret + " " + f.params)}
     return sorted(fields), holders, readers
 
 
@@ -3394,16 +3476,16 @@ def bt_scope_spans(code: str, fns: list[Fn]) -> list[tuple[int, int]]:
     return spans
 
 
-@functools.lru_cache(maxsize=CACHE_ENTRIES)
-def bt_file_facts(name: str, src: str, holder_alt: str) -> tuple[str, bool, frozenset[str], frozenset[str]]:
+@functools.lru_cache(maxsize=2 * CACHE_ENTRIES)
+def bt_file_facts(name: str, src: str, holder_alt: str, ns: str = BT_NS) -> tuple[str, bool, frozenset[str], frozenset[str]]:
     """What one file says of the namespace (cached: a mutation of the self-test changes one file):
     the qualifier that names it there (`bluetooth_channel::`, or a namespace alias of it), whether
     the file opens it (`using namespace`), and the variables of a holder type (`holder_alt`) it
     declares at file or namespace scope, inside the namespace and outside it."""
     code = blank_comments_and_strings(src)
-    aliased = {m.group(1) for m in re.finditer(r"\bnamespace\s+(\w+)\s*=\s*(?:::)?\s*" + BT_NS + r"\s*;", code)}
-    opened = re.search(r"\busing\s+namespace\s+(?:::)?\s*" + BT_NS + r"\s*;", code) is not None
-    prefix = r"\b(?:" + "|".join(sorted({BT_NS} | aliased)) + r")\s*::\s*"
+    aliased = {m.group(1) for m in re.finditer(r"\bnamespace\s+(\w+)\s*=\s*(?:::)?\s*" + ns + r"\s*;", code)}
+    opened = re.search(r"\busing\s+namespace\s+(?:::)?\s*" + ns + r"\s*;", code) is not None
+    prefix = r"\b(?:" + "|".join(sorted({ns} | aliased)) + r")\s*::\s*"
     inside: set[str] = set()
     outside: set[str] = set()
     if re.search(r"\b(?:" + holder_alt + r")\b", code):
@@ -3418,15 +3500,16 @@ def bt_file_facts(name: str, src: str, holder_alt: str) -> tuple[str, bool, froz
                             code.rfind("}", 0, m.start(2))) + 1:m.start(2)]
             if stmt.count("(") != stmt.count(")"):
                 continue                                # a parameter, not a variable
-            if BT_NS in ns_at(ns_spans, m.start(2)):
+            if ns in ns_at(ns_spans, m.start(2)):
                 inside.add(m.group(2))
             elif m.group(1) or opened:
                 outside.add(m.group(2))
     return prefix, opened, frozenset(inside), frozenset(outside)
 
 
-@functools.lru_cache(maxsize=CACHE_ENTRIES)
-def bt_file_holds(name: str, src: str, qual: str, held: str, glob: str | None, opened: bool) -> frozenset[int]:
+@functools.lru_cache(maxsize=2 * CACHE_ENTRIES)
+def bt_file_holds(name: str, src: str, qual: str, held: str, glob: str | None, opened: bool,
+                  ns: str = BT_NS) -> frozenset[int]:
     """The body offsets of the functions of one file that hold a name (check_bt_names(), cached)."""
     code = blank_comments_and_strings(src)
     q, h, g = re.compile(qual), re.compile(held), re.compile(glob) if glob else None
@@ -3436,46 +3519,89 @@ def bt_file_holds(name: str, src: str, qual: str, held: str, glob: str | None, o
             if not f.body:
                 continue
             text = f.ret + " " + f.params + " " + code[f.body[0]:f.body[1]]
-            if BT_NS in f.ns or q.search(text) or (opened and h.search(text)) or (g and g.search(text)):
+            if ns in f.ns or q.search(text) or (opened and h.search(text)) or (g and g.search(text)):
                 out.add(f.body[0])
     return frozenset(out)
 
 
 def check_bt_names(files: dict[str, str], idx: Index) -> list[str]:
-    """J10: every ArduinoJson value that reads a Bluetooth device's name, in any function of the
-    sketch that holds one, reads wap_json::shown_text()'s text of it, and so does every argument a
-    function that writes its parameter into one is handed (F302); and every string bluetooth_api.h
-    reads from a post, in the spellings BT_POSTED and BT_POSTED_DECL see, is recorded in
-    BT_POSTED_TEXT."""
+    """J10: every ArduinoJson value that reads a Bluetooth device's name (F302) or a Beacon set
+    member's (F408), in any function of the sketch that holds one, reads wap_json::shown_text()'s
+    text of it, and so does every argument a function that writes its parameter into one is handed;
+    and every string bluetooth_api.h reads from a post, in the spellings BT_POSTED and BT_POSTED_DECL
+    see, is recorded in BT_POSTED_TEXT."""
     errors: list[str] = []
-    fields, holders, readers = bt_name_shape(idx)
+    codes = {name: blank_comments_and_strings(src) for name, src in files.items()}
+    all_fns = [f for fs in idx.fns.values() for f in fs if f.body and f.file in files]
+    by_file: dict[str, list[Fn]] = {}
+    for f in all_fns:
+        by_file.setdefault(f.file, []).append(f)
+    sinks = bt_sinks(all_fns, codes)
+    for fam in NAME_FAMILIES:
+        errors += check_name_family(files, idx, fam, codes, all_fns, by_file, sinks)
+    # The way back: no page posts back a name these answers showed it.
+    if BT_API in files:
+        code = blank_comments_and_strings(files[BT_API])
+        kept = blank_comments_only(files[BT_API])
+        used: set[tuple[str, str]] = set()
+        found: list[tuple[int, str]] = []
+        for m in BT_POSTED.finditer(kept):
+            if code[m.start()] in '[h':                    # not inside a literal
+                found.append((m.start(), m.group(1) if m.group(1) is not None else m.group(2)))
+        for m in BT_POSTED_DECL.finditer(kept):
+            if code[m.start()].isspace():
+                continue
+            if m.group(1) in ("JsonVariantConst", "JsonVariant", "auto"):
+                fn = fn_containing(idx, BT_API, m.start())
+                rest = code[m.end():fn.body[1]] if fn and fn.body else code[m.end():]
+                if not re.search(BT_POSTED_VIA.replace("{v}", re.escape(m.group(2))), rest):
+                    continue                            # a variant never read as text
+            found.append((m.start(), m.group(3)))
+        for at, k in found:
+            fn = fn_containing(idx, BT_API, at)
+            key = (fn.name if fn else "?", k)
+            if key not in BT_POSTED_TEXT:
+                line = kept.count("\n", 0, at) + 1
+                errors.append(f"{BT_API}:{line}: {key[0]}() reads a posted string \"{key[1]}\" BT_POSTED_TEXT does "
+                              "not record: if a page posts back a name it was shown, it posts shown_text()'s "
+                              "U+FFFD, and needs a read-back to the device's own bytes (wap_json::shows_as(), "
+                              "J9's); record what the string is (J10, F302)")
+            used.add(key)
+        for key in BT_POSTED_TEXT:
+            if key not in used:
+                errors.append(f"{BT_API}: BT_POSTED_TEXT records {key[0]}()'s posted \"{key[1]}\", which it no longer "
+                              "reads: drop the record (J10)")
+    return errors
+
+
+def check_name_family(files: dict[str, str], idx: Index, fam: NameFamily, codes: dict[str, str],
+                      all_fns: list[Fn], by_file: dict[str, list[Fn]],
+                      sinks: dict[str, frozenset[int]]) -> list[str]:
+    """J10 for one family's names: check_bt_names()'s rule, over the structs of `fam.ns`."""
+    errors: list[str] = []
+    fields, holders, readers = bt_name_shape(idx, fam)
     if not fields:
-        errors.append(f"{SKETCH}/bluetooth_channel.h: no struct of bluetooth_channel keeps a device's name in a "
-                      "char array sized by MAX_DEVICE_NAME_LEN or called `name` or `..._name`: J10 reads no "
-                      "name, so it holds nothing; follow the names' new shape (J10, F302)")
+        errors.append(f"{fam.header}: no struct of {fam.ns} keeps {fam.what} in a char array sized by "
+                      f"{fam.bound} or called `name` or `..._name`: J10 reads no name, so it holds nothing; "
+                      f"follow the names' new shape (J10, {fam.item})")
         return errors
 
     # The functions that hold a name: every function of the namespace; one whose signature or body
     # names one of the holders or readers, qualified (`bluetooth_channel::ScanView`, or through a
     # namespace alias of it), or unqualified inside the namespace or a file that opens it; and one
     # that names a variable of a holder type declared at file or namespace scope (a global).
-    codes = {name: blank_comments_and_strings(src) for name, src in files.items()}
-    all_fns = [f for fs in idx.fns.values() for f in fs if f.body and f.file in files]
-    by_file: dict[str, list[Fn]] = {}
-    for f in all_fns:
-        by_file.setdefault(f.file, []).append(f)
     # A variable of a holder type declared at file or namespace scope (`static ScannedDevice
     # g_seen[8];`): one inside the namespace is named qualified outside it, as its types are; one
     # outside it by its own name.
     holder_alt = "|".join(sorted(holders))
-    facts = {name: bt_file_facts(name, src, holder_alt) for name, src in files.items()}
+    facts = {name: bt_file_facts(name, src, holder_alt, fam.ns) for name, src in files.items()}
     ns_globals = set().union(*(f[2] for f in facts.values()))
     file_globals = set().union(*(f[3] for f in facts.values()))
     held_alt = "|".join(sorted(holders | readers | ns_globals))
     held = re.compile(r"\b(?:" + held_alt + r")\b")
     glob = r"(?<![\w.>:])(?:" + "|".join(sorted(file_globals)) + r")\b" if file_globals else None
     holding = {name: bt_file_holds(name, src, facts[name][0] + r"(?:" + held_alt + r")\b", held.pattern, glob,
-                                   facts[name][1])
+                                   facts[name][1], fam.ns)
                for name, src in files.items()}
 
     def text_of(fn: Fn) -> str:
@@ -3517,7 +3643,6 @@ def check_bt_names(files: dict[str, str], idx: Index) -> list[str]:
             break
     gkey, wkey = tuple(sorted(getters)), tuple(sorted(writers.items()))
     base_reads = bt_base(fkey, gkey)
-    sinks = bt_sinks(all_fns, codes)
 
     # Of those, the ones that touch an ArduinoJson value (a document, an object, an array or a
     # variant, in the signature or the body) or call a function that writes one are the ones that
@@ -3546,68 +3671,532 @@ def check_bt_names(files: dict[str, str], idx: Index) -> list[str]:
 
             for at, a, b, end in bt_json_writes(body, fn.params):
                 if reads(body[a:b]):
-                    errors.append(f"{where(at)}: {quote(at, end)}: a Bluetooth device's name written into a "
+                    errors.append(f"{where(at)}: {quote(at, end)}: {fam.what} written into a "
                                   "JSON value as it is: ArduinoJson writes its control bytes raw and its "
                                   "ill-formed UTF-8 as it is; write wap_json::shown_text()'s text of it, from a "
-                                  "`char x[wap_json::replaced_cap(bluetooth_channel::MAX_DEVICE_NAME_LEN)]` "
-                                  "(J10, F302)")
+                                  f"`char x[wap_json::replaced_cap({fam.ns}::{fam.bound})]` "
+                                  f"(J10, {fam.item})")
             # A name handed to a function (or a local lambda) that writes that parameter into a JSON
             # value: send_success(req, name), send_error(req, name), copyArray(&name, 1, arr).
             here = {**sinks, **bt_lambda_sinks(body, sinks)}
             for at, callee, args, close in bt_calls(body, methods=True):
                 for k in sorted(here.get(callee, ())):
                     if k < len(args) and reads(args[k]):
-                        errors.append(f"{where(at)}: {quote(at, close + 1)}: a Bluetooth device's name handed to "
+                        errors.append(f"{where(at)}: {quote(at, close + 1)}: {fam.what} handed to "
                                       f"{callee}(), which writes its argument {k + 1} into a JSON value as it is; "
                                       "hand it wap_json::shown_text()'s text of the name, from a `char "
-                                      "x[wap_json::replaced_cap(bluetooth_channel::MAX_DEVICE_NAME_LEN)]` "
-                                      "(J10, F302)")
-            # Every shown text of a name is whole: its buffer holds MAX_DEVICE_NAME_LEN bytes' text.
+                                      f"x[wap_json::replaced_cap({fam.ns}::{fam.bound})]` "
+                                      f"(J10, {fam.item})")
+            # Every shown text of a name is whole: its buffer holds the bound's bytes' text.
             for m in re.finditer(r"\bwap_json\s*::\s*shown_text\s*\(", body):
                 close = matching_paren(body, m.end() - 1)
                 args = split_top(body[m.end():close]) if close > 0 else []
                 if len(args) == 3 and reads(args[2]):
                     buf = args[0]
                     sized = re.search(r"\bchar\s+" + re.escape(buf) + r"\s*\[\s*wap_json\s*::\s*replaced_cap\s*\(\s*"
-                                      r"(?:bluetooth_channel\s*::\s*)?MAX_DEVICE_NAME_LEN\s*\)\s*\]", body[:m.start()])
+                                      r"(?:" + fam.ns + r"\s*::\s*)?" + fam.bound + r"\s*\)\s*\]", body[:m.start()])
                     if not (re.fullmatch(r"\w+", buf) and args[1] == f"sizeof({buf})" and sized):
-                        errors.append(f"{where(m.start())}: a Bluetooth name's shown text written into "
-                                      f"{buf}, not a `char {buf}[wap_json::replaced_cap(bluetooth_channel::"
-                                      "MAX_DEVICE_NAME_LEN)]` given its own sizeof: a smaller buffer cuts the name "
-                                      "(J10, F302)")
-    # The way back: no page posts back a name these answers showed it.
-    if BT_API in files:
-        code = blank_comments_and_strings(files[BT_API])
-        kept = blank_comments_only(files[BT_API])
-        used: set[tuple[str, str]] = set()
-        found: list[tuple[int, str]] = []
-        for m in BT_POSTED.finditer(kept):
-            if code[m.start()] in '[h':                    # not inside a literal
-                found.append((m.start(), m.group(1) if m.group(1) is not None else m.group(2)))
-        for m in BT_POSTED_DECL.finditer(kept):
-            if code[m.start()].isspace():
-                continue
-            if m.group(1) in ("JsonVariantConst", "JsonVariant", "auto"):
-                fn = fn_containing(idx, BT_API, m.start())
-                rest = code[m.end():fn.body[1]] if fn and fn.body else code[m.end():]
-                if not re.search(BT_POSTED_VIA.replace("{v}", re.escape(m.group(2))), rest):
-                    continue                            # a variant never read as text
-            found.append((m.start(), m.group(3)))
-        for at, k in found:
-            fn = fn_containing(idx, BT_API, at)
-            key = (fn.name if fn else "?", k)
-            if key not in BT_POSTED_TEXT:
-                line = kept.count("\n", 0, at) + 1
-                errors.append(f"{BT_API}:{line}: {key[0]}() reads a posted string \"{key[1]}\" BT_POSTED_TEXT does "
-                              "not record: if a page posts back a name it was shown, it posts shown_text()'s "
-                              "U+FFFD, and needs a read-back to the device's own bytes (wap_json::shows_as(), "
-                              "J9's); record what the string is (J10, F302)")
-            used.add(key)
-        for key in BT_POSTED_TEXT:
-            if key not in used:
-                errors.append(f"{BT_API}: BT_POSTED_TEXT records {key[0]}()'s posted \"{key[1]}\", which it no longer "
-                              "reads: drop the record (J10)")
+                        errors.append(f"{where(m.start())}: the shown text of {fam.what} written into "
+                                      f"{buf}, not a `char {buf}[wap_json::replaced_cap({fam.ns}::"
+                                      f"{fam.bound})]` given its own sizeof: a smaller buffer cuts the name "
+                                      f"(J10, {fam.item})")
     return errors
+
+
+# J11: every append onto a String is text JSON keeps whole (F405). ble_nearby.h builds GET
+# /api/nearby's answer by hand (`json += ...`), outside ArduinoJson and every printf: a char array
+# appended between quotes is written as it is, so a quote, a backslash or a control byte in it
+# breaks the answer.
+NEARBY = f"{SKETCH}/ble_nearby.h"
+# Functions an append may take whole: each returns only string literals JSON writes as they are
+# (checked, never trusted), with why its text is the device's own.
+JSON_APPEND_VOCAB: dict[str, str] = {
+    "rssiQuality": "ble_config.h: the RSSI band's name, one of four literals",
+    "chirpTypeName": "ble_config.h: the chirp type's name, one of six literals",
+}
+# The writers of a char array that are not a hex printf, a terminator or a copy of a hex-only
+# array, by the position of the array they write, with what holds them to hex digits. The rule
+# reads their calls, not their bodies: the host suite named here holds each body.
+HEX_WRITERS: dict[str, tuple[int, str]] = {
+    "nearby_prefix_from_name": (3, "ble_nearby_prefix.h: copies the four bytes after the name prefix only when all "
+                                   "four are ASCII hex digits (test_bluetooth_commands_wap.cpp)"),
+}
+J11_COPIES = {"strncpy", "strcpy", "strlcpy", "memcpy", "memmove", "strncat", "strcat", "strlcat"}
+J11_PRINTFS = {"snprintf": 2, "vsnprintf": 2, "sprintf": 1, "vsprintf": 1}   # the format's position
+J11_READERS = {"strncmp", "strcmp", "memcmp", "strlen", "strnlen", "strchr", "strrchr", "strstr", "strcasecmp",
+               "strncasecmp", "printf", "print", "println", "String", "sizeof"}
+J11_HEX_FORMAT = re.compile(rb"(?:%0?\d*(?:hh|h|ll|l)?[xX])+")
+J11_CAST = r"(?:\(\s*(?:const\s+)?(?:unsigned\s+)?(?:char|uint8_t|int8_t|void)\s*\*\s*\)\s*)*"
+
+
+@dataclass(frozen=True)
+class Place:
+    """A char array an append may write: a struct field (by name, in every struct of the sketch that
+    declares it), or a local (by its function's body) or file-scope array (by its file)."""
+    kind: str                     # "field", "local" or "global"
+    name: str
+    file: str = ""
+    body: tuple[int, int] = (0, 0)
+
+
+def j11_fields(idx: Index, fname: str) -> list[tuple[str, list[str]]]:
+    return [st.fields[fname] for sts in idx.structs.values() for st in sts if fname in st.fields]
+
+
+def j11_numeric(idx: Index, t: str, dims: list[str], ns: tuple[str, ...]) -> bool:
+    if dims:
+        return False
+    base = re.sub(r"\b(?:const|volatile|static)\b", "", t).replace(" ", "").rstrip("&")
+    if base.endswith("*"):
+        return False
+    if base in INT_WIDTHS or base in FLOAT_TYPES:
+        return True
+    parts = base.split("::")
+    return bool(pick(idx.enums.get(parts[-1], []), ns, tuple(p for p in parts[:-1] if p)))
+
+
+def j11_global_decl(idx: Index, file: str, name: str) -> tuple[str, list[str]] | None:
+    """The type and dims of `name` declared at file or namespace scope of `file`."""
+    src = idx.files[file]
+    code = blank_comments_and_strings(src)
+    spans = bt_scope_spans(code, [f for fs in index_file(file, src).fns.values() for f in fs])
+    for m in re.finditer(r"(?:^|[;{}])\s*(?:(?:static|extern|volatile|inline|constexpr)\s+)*(?P<const>const\s+)?"
+                         r"(?P<type>(?:unsigned\s+)?[A-Za-z_][\w:]*(?:\s+(?:long|int|short|char))*)\s*(?P<ptr>[*&]*)\s*"
+                         r"\b" + re.escape(name) + r"\b\s*(?P<dims>(?:\[[^\]]*\]\s*)*)\s*[=;{,]", code, re.M):
+        if any(a <= m.start("type") < b for a, b in spans) or m.group("type") in KEYWORDS | {"return"}:
+            continue
+        return ((m.group("const") or "") + m.group("type") + m.group("ptr"), re.findall(r"\[([^\]]*)\]", m.group("dims")))
+    return None
+
+
+def j11_place(ctx: Ctx, expr: str, pos: int) -> Place | None:
+    """`expr` (a pointer to its first byte: no subscript) as a char array the rule follows, or None."""
+    e = strip_parens(re.sub(r"^" + J11_CAST, "", expr.strip()))
+    m = re.fullmatch(r"[A-Za-z_]\w*(?:\s*\[[^\]\[]*\])*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*(?:\s*\[[^\]\[]*\])*)*"
+                     r"\s*(?:\.|->)\s*([A-Za-z_]\w*)", e)
+    if m:
+        shapes = j11_fields(ctx.idx, m.group(1))
+        if shapes and all(t.replace(" ", "") in ("char", "unsignedchar", "uint8_t") and len(d) == 1 for t, d in shapes):
+            return Place("field", m.group(1))
+        return None
+    if not re.fullmatch(r"[A-Za-z_]\w*", e):
+        return None
+    local = local_decl(ctx, e, pos)
+    if local is not None:
+        t, dims = local
+        if t.replace(" ", "") in ("char", "unsignedchar", "uint8_t") and len(dims) == 1:
+            return Place("local", e, ctx.file, ctx.fn.body)
+        return None
+    if decl_type(ctx, e, pos) is not None:
+        return None                                       # a parameter: anyone's bytes
+    g = j11_global_decl(ctx.idx, ctx.file, e)
+    if g is not None and g[0].replace(" ", "") in ("char", "unsignedchar", "uint8_t") and len(g[1]) == 1:
+        return Place("global", e, ctx.file)
+    return None
+
+
+def j11_number(ctx: Ctx, expr: str, pos: int) -> bool:
+    """`expr` is a number: a numeric literal, a numeric variable or field, a cast to a numeric type,
+    or arithmetic of those (String(x) spells it in digits)."""
+    e = strip_parens(expr)
+    if re.fullmatch(r"-?(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)[uUlLfF]*", e):
+        return True
+    ops = top_binary(e)
+    if ops is not None:
+        return all(j11_number(ctx, op, pos) for op in ops)
+    cast = re.match(r"^\(\s*((?:const\s+)?(?:unsigned\s+)?[A-Za-z_][\w:]*(?:\s+(?:long|int|short|char))*)\s*\)\s*(.+)$",
+                    e, re.S)
+    if cast is not None:
+        return j11_numeric(ctx.idx, cast.group(1), [], ctx.fn.ns)
+    m = re.fullmatch(r"[A-Za-z_]\w*(?:\s*\[[^\]\[]*\])*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*(?:\s*\[[^\]\[]*\])*)*"
+                     r"\s*(?:\.|->)\s*([A-Za-z_]\w*)", e)
+    if m:
+        shapes = j11_fields(ctx.idx, m.group(1))
+        return bool(shapes) and all(j11_numeric(ctx.idx, t, d, ctx.fn.ns) for t, d in shapes)
+    if re.fullmatch(r"[A-Za-z_]\w*", e):
+        t = decl_type(ctx, e, pos) or j11_global_decl(ctx.idx, ctx.file, e)
+        return t is not None and j11_numeric(ctx.idx, t[0], t[1], ctx.fn.ns)
+    return False
+
+
+@dataclass
+class J11Use:
+    """One use of a place: `kind` "read", "ok" (a writer held to hex digits), "bad" (one that is
+    not, `why`), or "copy" (from `source`, a place, written there)."""
+    kind: str
+    file: str
+    line: int
+    fn: str
+    stmt: str
+    why: str = ""
+    source: Place | None = None
+
+
+def j11_uses(idx: Index, files: dict[str, str], place: Place) -> list[J11Use]:
+    """Every use of `place` in the sketch, each judged as a read or a writer."""
+    out: list[J11Use] = []
+    if place.kind == "field":
+        where = [(n, None) for n in files]
+        pat = re.compile(r"(?:\.|->)\s*" + re.escape(place.name) + r"\b(?!\s*\()")
+    elif place.kind == "local":
+        where = [(place.file, place.body)]
+        pat = re.compile(r"(?<![\w.>:])" + re.escape(place.name) + r"\b")
+    else:
+        where = [(place.file, None)]
+        pat = re.compile(r"(?<![\w.>:])" + re.escape(place.name) + r"\b")
+    for name, span in where:
+        src = files[name]
+        code = blank_comments_and_strings(src)
+        kept = blank_comments_only(src)
+        lo, hi = span if span else (0, len(code))
+        for m in pat.finditer(code, lo, hi):
+            fn = fn_containing(idx, name, m.start())
+            if fn is None:
+                continue                                  # a declaration of the field or the global
+            use = j11_judge_use(idx, Ctx(idx, name, fn, kept, code), place, m)
+            if use is not None:
+                out.append(use)
+    return out
+
+
+def j11_stmt(ctx: Ctx, at: int) -> str:
+    """The statement around offset `at`, as the file spells it, on one line."""
+    lo = max(ctx.code.rfind(";", 0, at), ctx.code.rfind("{", 0, at), ctx.code.rfind("}", 0, at)) + 1
+    end = statement_end(ctx.code, lo)
+    return re.sub(r"\s+", " ", ctx.kept[lo:end + 1 if end > 0 else at + 40].strip())
+
+
+def j11_judge_use(idx: Index, ctx: Ctx, place: Place, m: re.Match) -> J11Use | None:
+    code, kept = ctx.code, ctx.kept
+    line = code.count("\n", 0, m.start()) + 1
+
+    def use(kind: str, why: str = "", source: Place | None = None) -> J11Use:
+        return J11Use(kind, ctx.file, line, ctx.fn.name, j11_stmt(ctx, m.start()), why, source)
+
+    # The place's expression: back over the object it is a member of, on over its subscripts.
+    start = m.start()
+    if place.kind == "field":
+        j = start
+        while True:
+            k = j
+            while k > 0 and code[k - 1].isspace():
+                k -= 1
+            if k > 0 and code[k - 1] in ")]":
+                opener = "(" if code[k - 1] == ")" else "["
+                depth, k2 = 0, k - 1
+                while k2 >= 0:
+                    if code[k2] in ")]":
+                        depth += 1
+                    elif code[k2] in "([":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    k2 -= 1
+                if k2 < 0 or code[k2] != opener:
+                    break
+                j = k2
+                continue
+            w = re.search(r"[A-Za-z_]\w*$", code[:k])
+            if not w:
+                break
+            j = w.start()
+            before = code[:j].rstrip()
+            if before.endswith(".") or before.endswith("->") or before.endswith("::"):
+                j = len(before) - (2 if before.endswith(("->", "::")) else 1)
+                continue
+            break
+        start = j
+    end = m.end()
+    subscripted = False
+    while True:
+        s = re.match(r"\s*\[", code[end:])
+        if not s:
+            break
+        depth, k = 0, end + s.end() - 1
+        while k < len(code):
+            if code[k] == "[":
+                depth += 1
+            elif code[k] == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+        end = k + 1
+        subscripted = True
+    after = code[end:].lstrip()
+    before = code[:start].rstrip()
+    # A declaration of the local or global: its initializer.
+    if place.kind != "field" and re.search(r"\b(?:char|uint8_t|int8_t)\s*$", before):
+        init = re.match(r"\s*\[[^\]]*\]\s*(=\s*)?([^;]*);", kept[m.end():])
+        value = init.group(2).strip() if init else kept[m.end():statement_end(kept, m.end())].strip()
+        if value in ("", "{}", "{0}", "{ 0 }", "{'\\0'}", '""'):
+            return None
+        data = c_literal_bytes(value)
+        if data is not None and all(chr(b) in "0123456789abcdefABCDEF" for b in data):
+            return None
+        return use("bad", f"initialized to {value}, not hex digits")
+    if re.match(r"(?:[-+*/%&|^]|<<|>>)=|\+\+|--", after) or before.endswith(("++", "--")):
+        return use("bad", "changed in place")
+    if re.match(r"=(?!=)", after):
+        rhs = kept[code.index("=", end) + 1:statement_end(code, end)].strip()
+        if subscripted and rhs in ("'\\0'", "0", "'\\x00'"):
+            return None                                   # a terminator
+        return use("bad", f"assigned {rhs}")
+    # An argument of a call: which call, which argument, and whether it points into the place.
+    depth, p = 0, start - 1
+    while p >= 0:
+        c = code[p]
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            if depth == 0:
+                break
+            depth -= 1
+        elif c in ";{}" and depth == 0:
+            p = -1
+            break
+        p -= 1
+    if p >= 0 and code[p] == "(":
+        callee_m = re.search(r"(?:(\.|->)\s*)?([A-Za-z_]\w*)\s*(?:<[^<>;()]*>)?\s*$", code[:p])
+        callee = callee_m.group(2) if callee_m else ""
+        method = bool(callee_m and callee_m.group(1))
+        close = matching_paren(code, p)
+        if callee and callee not in KEYWORDS - {"sizeof"} and close > 0:
+            args, at = [], p + 1
+            for piece in split_top(code[p + 1:close]):
+                k = code.index(piece, at) if piece else at
+                args.append((k, k + len(piece)))
+                at = k + len(piece)
+            k = next((i for i, (a, b) in enumerate(args) if a <= start < b), -1)
+            if k < 0:
+                return None
+            arg = code[args[k][0]:args[k][1]]
+            rel_s, rel_e = start - args[k][0], end - args[k][0]
+            shape = arg[:rel_s] + "@P@" + arg[rel_e:]
+            shape = re.sub(r"\s+", "", shape)
+            cast = J11_CAST.replace(r"\s*", "").replace(r"\s+", "")
+            pointer = (re.fullmatch(cast + r"@P@(?:\+.*)?", shape) is not None if not subscripted
+                       else re.fullmatch(cast + r"&@P@(?:\+.*)?", shape) is not None)
+            if not pointer or callee in J11_READERS:
+                return use("read")
+            if callee in J11_PRINTFS and not method:
+                if k != 0:
+                    return use("read")
+                fi = J11_PRINTFS[callee]
+                fmt = c_literal_bytes(kept[args[fi][0]:args[fi][1]]) if fi < len(args) else None
+                if fmt is not None and J11_HEX_FORMAT.fullmatch(fmt):
+                    return None
+                return use("bad", "printed with a format that is not hex conversions alone")
+            if callee in J11_COPIES and not method:
+                if k != 0:
+                    return use("read")
+                src_text = kept[args[1][0]:args[1][1]] if len(args) > 1 else ""
+                data = c_literal_bytes(src_text)
+                if data is not None and all(chr(b) in "0123456789abcdefABCDEF" for b in data):
+                    return None
+                q = j11_place(ctx, re.sub(r"\s*\+\s*[^+]+$", "", src_text) if "+" in src_text else src_text, args[1][0])
+                if q is None:
+                    return use("bad", f"copied from {src_text.strip()}, which is no char array the rule follows")
+                return use("copy", source=q)
+            if callee == "memset" and not method:
+                if k == 0 and len(args) > 1 and kept[args[1][0]:args[1][1]].strip() in ("0", "'\\0'"):
+                    return None
+                return use("bad", "set to a byte that is not 0")
+            if callee in HEX_WRITERS and not method:
+                return None if k == HEX_WRITERS[callee][0] else use("read")
+            # A function of the sketch whose parameter there is a pointer to const reads it.
+            fns = idx.fns.get(callee, []) if not method else []
+            if fns and all(k < len(ps) and re.match(r"const\b", ps[k]) for ps in (split_top(f.params) for f in fns)):
+                return use("read")
+            return use("bad", f"handed to {callee}(), which the rule does not know to leave it unwritten")
+    # Anywhere else: a read, unless a pointer or a reference that may write it takes it: an `auto`
+    # (`const auto p = a;` is a char* const), or one whose pointee is not const (`char* const p`).
+    def writes_through(t: str) -> bool:
+        head = re.split(r"[*&]", t, maxsplit=1)
+        return bool(re.search(r"\bauto\b", t)) or (len(head) > 1 and not re.search(r"\bconst\b", head[0]))
+
+    if re.search(r"\breturn\s*$", before) and writes_through(ctx.fn.ret):
+        return use("bad", "handed out by a function that returns a pointer to it that is not to const")
+    if re.search(r"(?<![=!<>+\-*/%&|^])=\s*$", before) or before.endswith("{"):
+        lhs = code[max(code.rfind(";", 0, start), code.rfind("{", 0, start - 1), code.rfind("}", 0, start)) + 1:start]
+        decl = re.sub(r"\s*[={]\s*$", "", lhs).strip()
+        named = re.fullmatch(r"[A-Za-z_]\w*", decl)
+        t = decl_type(ctx, decl, start) if named else None
+        if writes_through(t[0] if t is not None else "" if named else decl):
+            return use("bad", "held by a pointer that may write it")
+    return use("read")
+
+
+def j11_gated(idx: Index, files: dict[str, str], place: Place) -> J11Use | None:
+    """None when every writer of `place`, and of every array it is copied from, to a fixpoint, is
+    held to hex digits; otherwise the first writer that is not (the greatest fixpoint: a cycle of
+    copies with no other writer adds no byte)."""
+    uses: dict[Place, list[J11Use]] = {}
+    todo = [place]
+    while todo:
+        p = todo.pop()
+        if p in uses:
+            continue
+        uses[p] = j11_uses(idx, files, p)
+        todo += [u.source for u in uses[p] if u.kind == "copy" and u.source is not None]
+    bad: dict[Place, J11Use] = {}
+    for p, us in uses.items():
+        first = next((u for u in us if u.kind == "bad"), None)
+        if first is not None:
+            bad[p] = first
+    while True:
+        more = {p: next(u for u in us if u.kind == "copy" and u.source in bad)
+                for p, us in uses.items() if p not in bad and any(u.kind == "copy" and u.source in bad for u in us)}
+        if not more:
+            break
+        bad.update(more)
+    if place not in bad:
+        return None
+    u = bad[place]
+    while u.kind == "copy" and u.source is not None and u.source in bad and bad[u.source] is not u:
+        u = bad[u.source]
+    return u
+
+
+def j11_operand(ctx: Ctx, files: dict[str, str], expr: str, pos: int, used: set[str]) -> str | None:
+    """Why an append of `expr` is refused, or None: a literal, a ternary of appendable operands,
+    String(<number>) or String(<literal>), a recorded vocabulary function's answer, or a char array
+    whose every writer is held to hex digits."""
+    e = strip_parens(expr)
+    if c_literal_bytes(e) is not None:
+        return None
+    tern = top_ternary(e)
+    if tern is not None:
+        return j11_operand(ctx, files, tern[0], pos, used) or j11_operand(ctx, files, tern[1], pos, used)
+    s = re.fullmatch(r"String\s*\((.*)\)", e, re.S)
+    if s and matching_paren(e, e.index("(")) == len(e) - 1:
+        arg = s.group(1).strip()
+        if c_literal_bytes(arg) is not None or j11_number(ctx, arg, pos):
+            return None
+        return f"String({arg}) spells text the rule cannot read (String() of a number or of a literal only)"
+    call = re.fullmatch(r"([A-Za-z_]\w*)\s*\((.*)\)", e, re.S)
+    if call and matching_paren(e, e.index("(")) == len(e) - 1:
+        if call.group(1) in JSON_APPEND_VOCAB:
+            used.add(call.group(1))
+            return None
+        return f"{call.group(1)}()'s answer is no recorded vocabulary function's (JSON_APPEND_VOCAB)"
+    place = j11_place(ctx, e, pos)
+    if place is None:
+        return (f"{e} is none of what an append may take (a literal, String(<number>), a recorded vocabulary "
+                "function's answer, or a char array held to hex digits)")
+    bad = j11_gated(ctx.idx, files, place)
+    if bad is None:
+        return None
+    return (f"{e} is a char array {bad.file}:{bad.line}: {bad.fn}() writes as no hex writer does, "
+            f"`{bad.stmt}` ({bad.why})")
+
+
+@functools.lru_cache(maxsize=CACHE_ENTRIES)
+def j11_sites(name: str, src: str) -> tuple[tuple[int, int, int, int], ...]:
+    """Every append onto a String in one file: (its function's body start, the append's offset, the
+    appended value's start and end). File-local, so cached: a mutation of the self-test re-reads
+    only the file it changed. A String is a local, a parameter or a file-scope variable declared
+    `String` (`String&` too), or a local `auto v = String(...)`."""
+    code = blank_comments_and_strings(src)
+    if "+=" not in code and "concat" not in code:
+        return ()
+    typed = set(re.findall(r"\bString\s*[&*]?\s*([A-Za-z_]\w*)", code))
+    autos = set(re.findall(r"\bauto\s*&?\s*([A-Za-z_]\w*)\s*=\s*String\b", code))
+    if not typed | autos:
+        return ()
+    kept = blank_comments_only(src)
+    one = Index({name: src})
+    out: list[tuple[int, int, int, int]] = []
+    for fs in index_file(name, src).fns.values():
+        for f in fs:
+            if not f.body:
+                continue
+            lo, hi = f.body
+            ctx = Ctx(one, name, f, kept, code)
+            strings: set[str] = set()
+            for m in re.finditer(r"(?<![\w.>:])([A-Za-z_]\w*)\s*(\+=|\.\s*concat\s*\()", code[lo:hi]):
+                v = m.group(1)
+                if v not in typed and v not in autos:
+                    continue
+                at = lo + m.start()
+                t = decl_type(ctx, v, at) or j11_global_decl(one, name, v)
+                if t is None or not (re.search(r"\bString\b", t[0]) or (t[0].strip() == "auto" and v in autos)):
+                    continue
+                strings.add(v)
+                a = lo + m.end()
+                b = statement_end(code, a) if m.group(2) == "+=" else matching_paren(code, a - 1)
+                if b > 0:
+                    out.append((lo, at, a, b))
+            # The String's own first value: `String v = x;`, `String v(x);`, `String v{x};`, `auto v = String(x);`.
+            for v in strings:
+                d = re.search(r"\b(?:String\s+|auto\s*&?\s*)" + re.escape(v) + r"\s*([=({])", code[lo:hi])
+                if d is None:
+                    continue
+                a = lo + d.end()
+                b = statement_end(code, a) if d.group(1) == "=" else (
+                    matching_paren(code, a - 1) if d.group(1) == "(" else close_brace(code, a - 1))
+                if b > a and kept[a:b].strip():
+                    out.append((lo, lo + d.start(), a, b))
+    return tuple(out)
+
+
+def check_string_appends(files: dict[str, str], idx: Index) -> list[str]:
+    """J11: every append onto a String in the sketch (`x += v;`, `x.concat(v)`, and the String's
+    own initializer) takes a literal, a ternary of appendable values, String(<number>), a recorded
+    vocabulary function's answer, or a char array whose every writer, followed through copies, is
+    held to hex digits (F405); each JSON_APPEND_VOCAB function returns only literals JSON writes as
+    they are, and each record is still used, as each HEX_WRITERS writer is."""
+    errors: list[str] = []
+    used: set[str] = set()
+    for name, src in files.items():
+        sites = j11_sites(name, src)
+        if not sites:
+            continue
+        code = blank_comments_and_strings(src)
+        kept = blank_comments_only(src)
+        by_body = {f.body[0]: f for fs in index_file(name, src).fns.values() for f in fs if f.body}
+        for lo, at, a, b in sites:
+            f = by_body[lo]
+            ctx = Ctx(idx, name, f, kept, code)
+            why = j11_operand(ctx, files, kept[a:b], a, used)
+            if why:
+                line = code.count("\n", 0, at) + 1
+                errors.append(f"{name}:{line}: {f.name}(): `{j11_stmt(ctx, at)}`: {why}; an append onto "
+                              "a String writes it as it is, so a quote, a backslash or a control byte in it "
+                              "breaks the JSON text the String builds (J11, F405)")
+    for fn, why in JSON_APPEND_VOCAB.items():
+        defs = [f for f in idx.fns.get(fn, []) if f.body and f.file in files]
+        if not defs:
+            errors.append(f"JSON_APPEND_VOCAB records {fn}() ({why}), which the sketch no longer defines (J11)")
+            continue
+        for f in defs:
+            kept = blank_comments_only(files[f.file])
+            code = blank_comments_and_strings(files[f.file])
+            for r in re.finditer(r"\breturn\b", code[f.body[0]:f.body[1]]):
+                a = f.body[0] + r.end()
+                value = kept[a:statement_end(kept, a)].strip()
+                data = c_literal_bytes(value)
+                if data is None or any(b < 0x20 or b in b'"\\' for b in data):
+                    errors.append(f"{f.file}: {fn}() returns {value}, not a literal JSON writes as it is: an append "
+                                  "takes it whole (JSON_APPEND_VOCAB, J11)")
+        if fn not in used:
+            errors.append(f"JSON_APPEND_VOCAB records {fn}(), which no append takes any more: drop the record (J11)")
+    for fn, (k, why) in HEX_WRITERS.items():
+        if not [f for f in idx.fns.get(fn, []) if f.body and f.file in files]:
+            errors.append(f"HEX_WRITERS records {fn}() ({why}), which the sketch no longer defines (J11)")
+        elif not any(fn_calls_outside_def(idx, name, src, fn) for name, src in files.items()):
+            errors.append(f"HEX_WRITERS records {fn}(), which nothing calls any more: drop the record (J11)")
+    return errors
+
+
+def fn_calls_outside_def(idx: Index, name: str, src: str, fn: str) -> bool:
+    """True when `src` calls `fn` somewhere other than its own definition."""
+    code = blank_comments_and_strings(src)
+    for m in re.finditer(r"(?<![\w.>])" + re.escape(fn) + r"\s*\(", code):
+        owner = fn_containing(idx, name, m.start())
+        if owner is not None:
+            return True
+    return False
 
 
 def check_unsized_printf(files: dict[str, str]) -> list[str]:
@@ -3639,6 +4228,7 @@ def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
     errors += check_ssid_texts(files, idx)
     errors += check_ssid_posts(files, idx)
     errors += check_bt_names(files, idx)
+    errors += check_string_appends(files, idx)
     printf_errors, printfs = check_printf_answers(files, idx)
     errors += printf_errors
     errors += check_recorded_json_texts(files, idx, {(pf.file, pf.line) for pf in printfs})
@@ -3678,6 +4268,15 @@ MESH_H = f"{SKETCH}/mesh_network.h"
 HOUSEHOLD = f"{SKETCH}/household_api.h"
 RF = f"{SKETCH}/rf_presence_api.h"
 BEACON = f"{SKETCH}/beacon_api.h"
+# J10's Beacon mutations: the set list's shown name (F408).
+BCN_SHOWN = ('    char name[wap_json::replaced_cap(beacon_channel::BEACON_NAME_LEN)];\n'
+             '    wap_json::shown_text(name, sizeof(name), e->name);\n    m["name"] = name;\n')
+# J11's: the nearby scan's name gate, and the lines the mutations write beside.
+NEARBY_GATE = ('                    const std::string name = advertisedDevice->getName();\n'
+               '                    if (!nearby_prefix_from_name(name.data(), name.size(), BLE_DEVICE_NAME_PREFIX, prefix)) {')
+NEARBY_TERM = "                prefix[4] = '\\0';\n"
+NEARBY_SLOT_TERM = "                    g_nearbyCanaries[slot].deviceIdPrefix[4] = '\\0';\n"
+BLE_CONFIG = f"{SKETCH}/ble_config.h"
 # J10's mutations: the scan list's shown name and the line after it.
 BT_SCAN_NAME = ('    char name[wap_json::replaced_cap(bluetooth_channel::MAX_DEVICE_NAME_LEN)];\n'
                 '    wap_json::shown_text(name, sizeof(name), devices[i].name);\n'
@@ -4380,6 +4979,77 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      lambda files: {**files, f"{SKETCH}/bluetooth_channel.h": re.sub(
          r"char\s+(?!device_name)(\w*)name\[MAX_DEVICE_NAME_LEN[^\]]*\]", r"char \1nm[NAME_CAP]",
          files[f"{SKETCH}/bluetooth_channel.h"])}),
+    # J10, the Beacon set's names (F408).
+    ("GET /api/beacon/set lists each member's name raw again",
+     raw_in(BEACON, BCN_SHOWN, '    m["name"] = e->name;\n')),
+    ("the Beacon set list's shown text is cut short of a whole name",
+     raw_in(BEACON, BCN_SHOWN, BCN_SHOWN.replace("wap_json::replaced_cap(beacon_channel::BEACON_NAME_LEN)", "16"))),
+    ("beacon_wire.h keeps no name J10 can find",
+     raw_in(f"{SKETCH}/beacon_wire.h", "  char     name[BEACON_NAME_LEN + 1];", "  char     nm[BEACON_CAP];")),
+    # J11: every append onto a String takes text JSON keeps whole (F405).
+    ("the nearby scan takes a name's four bytes unchecked again",
+     raw_in(NEARBY, NEARBY_GATE, '                    String name = advertisedDevice->getName().c_str();\n'
+            '                    name.substring(4, 8).toCharArray(prefix, 5);\n'
+            '                    if (!(name.startsWith(BLE_DEVICE_NAME_PREFIX) && name.length() >= 8)) {')),
+    ("the nearby scan copies the name's bytes into the prefix",
+     raw_in(NEARBY, NEARBY_GATE, NEARBY_GATE.replace("if (!nearby", "memcpy(prefix, name.data() + 4, 4);\n"
+                                                                     "                    if (!nearby"))),
+    ("the chirp parser prints its prefix as characters",
+     raw_in(NEARBY, 'snprintf(canary->deviceIdPrefix, 5, "%02x%02x", payload[13], payload[14]);',
+            'snprintf(canary->deviceIdPrefix, 5, "%c%c", payload[13], payload[14]);')),
+    ("a prefix byte is set from the advert",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                prefix[0] = (char)advertisedDevice->getRSSI();\n")),
+    ("a kept prefix byte is changed in place",
+     raw_in(NEARBY, NEARBY_SLOT_TERM, NEARBY_SLOT_TERM + "                    g_nearbyCanaries[slot].deviceIdPrefix[0]++;\n")),
+    ("the prefix is set to a byte that is not a digit",
+     raw_in(NEARBY, NEARBY_TERM, "                memset(prefix, 'A', 4);\n" + NEARBY_TERM)),
+    ("a pointer that may write a kept prefix takes it",
+     raw_in(NEARBY, NEARBY_SLOT_TERM, NEARBY_SLOT_TERM + "                    char* zz = g_nearbyCanaries[slot].deviceIdPrefix;\n"
+            "                    (void)zz;\n")),
+    ("an auto pointer takes the prefix",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                auto zz = prefix;\n                (void)zz;\n")),
+    ("a const auto pointer (a char* const) takes the prefix",
+     raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                const auto zz = prefix;\n                (void)zz;\n")),
+    ("a pointer declared before takes a kept prefix",
+     raw_in(NEARBY, NEARBY_SLOT_TERM, NEARBY_SLOT_TERM + "                    char* zz = nullptr;\n"
+            "                    zz = g_nearbyCanaries[slot].deviceIdPrefix;\n                    (void)zz;\n")),
+    ("the prefix starts out holding a quote",
+     raw_in(NEARBY, "char prefix[5] = {0};", 'char prefix[5] = "<!-";')),
+    ("a function of the sketch that writes its parameter is handed the prefix",
+     both(add_file(f"{SKETCH}/zz_fill.h", "inline void zz_fill(char* out) { out[0] = '\"'; }\n"),
+          raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                zz_fill(prefix);\n"))),
+    ("a function hands a kept prefix out to be written",
+     add_file(f"{SKETCH}/zz_out.h", "inline char* zz_prefix_of(NearbyCanary& c) { return c.deviceIdPrefix; }\n")),
+    ("the answer appends String() of a char array",
+     raw_in(NEARBY, "            json += hashHex;\n", "            json += String(hashHex);\n")),
+    ("the answer appends a pointer it holds",
+     raw_in(NEARBY, "            json += hashHex;\n", "            const char* zz = hashHex;\n            json += zz;\n")),
+    ("the answer appends a function's answer the record does not name",
+     raw_in(NEARBY, "            json += rssiQuality(cur);\n", "            json += rssiQuality(cur);\n            json += zz_band(cur);\n")),
+    ("the answer concatenates String() of a char array",
+     raw_in(NEARBY, "            json += hashHex;\n", "            json.concat(String(hashHex));\n")),
+    ("the answer's ternary appends a variable",
+     raw_in(NEARBY, '    json += g_scanActive ? "true" : "false";', '    json += g_scanActive ? "true" : g_zz_text;')),
+    ("the answer starts from a variable",
+     raw_in(NEARBY, 'String json = "{\\"canaries\\":[";', 'String json = g_zz_head;')),
+    ("another file's String appends a scanned device's name",
+     add_file(f"{SKETCH}/zz_list.h", "inline String zz_list(const bluetooth_channel::ScannedDevice& d) {\n"
+              "  String json = \"{\\\"name\\\":\\\"\";\n  json += d.name;\n  json += \"\\\"}\";\n  return json;\n}\n")),
+    ("a String declared auto appends a scanned device's name",
+     add_file(f"{SKETCH}/zz_auto.h", "inline String zz_list(const bluetooth_channel::ScannedDevice& d) {\n"
+              "  auto json = String(\"[\");\n  json += d.name;\n  return json;\n}\n")),
+    ("a helper appends the text it is handed",
+     add_file(f"{SKETCH}/zz_add.h", "inline void zz_add(String& json, const char* p) {\n  json += p;\n}\n")),
+    ("a recorded vocabulary function returns a quote",
+     raw_in(BLE_CONFIG, '    return "weak";', '    return "we\\"ak";')),
+    ("a recorded vocabulary function no append takes",
+     raw_in(NEARBY, "            json += rssiQuality(cur);\n", '            json += "weak";\n')),
+    ("a recorded vocabulary function the sketch no longer defines",
+     raw_in(BLE_CONFIG, "inline const char* rssiQuality(int rssi) {", "inline const char* zz_rssiQuality(int rssi) {")),
+    ("a recorded hex writer nothing calls",
+     raw_in(NEARBY, NEARBY_GATE, "                    if (true) {")),
+    ("a recorded hex writer the sketch no longer defines",
+     raw_in(f"{SKETCH}/ble_nearby_prefix.h", "inline bool nearby_prefix_from_name(", "inline bool zz_prefix_from_name(")),
 ]
 
 
@@ -4399,6 +5069,16 @@ ACCEPTED: list[tuple[str, Mutation]] = [
                    "const char** out) { *out = d.name; }\n"),
           raw_in(BT_API, BT_SHOWN, '    const char* zz = nullptr;\n    zz_name_into(devices[i], &zz);\n'
                  '    wap_json::shown_text(name, sizeof(name), zz);\n    dev["name"] = name;\n    dev["rssi"]'))),
+    # J11 (F405): a prefix copied whole into a second array, a copy of hex digits, String() of a cast
+    # and of arithmetic.
+    ("the answer appends a kept prefix through a second array it copied whole",
+     raw_in(NEARBY, "            json += g_nearbyCanaries[i].deviceIdPrefix;\n",
+            "            char zz[5];\n            memcpy(zz, g_nearbyCanaries[i].deviceIdPrefix, sizeof(zz));\n"
+            "            json += zz;\n")),
+    ("the scan writes hex digits into an empty prefix",
+     raw_in(NEARBY, NEARBY_TERM, "                if (prefix[0] == '\\0') strcpy(prefix, \"0000\");\n" + NEARBY_TERM)),
+    ("the answer appends String() of a cast and of arithmetic",
+     raw_in(NEARBY, "            json += String(cur);\n", "            json += String((int)cur * 1);\n")),
 ]
 
 
@@ -4458,8 +5138,10 @@ def main(argv: list[str]) -> int:
           f"{j7_sites} other JSON texts spelled with printf in {j7_fns} functions, {j7_recorded} of them "
           f"recorded by the values the check cannot read; the device name's setter, loader and routes; "
           f"every SSID a JSON text carries written through replaced_text() ({len(SSID_RAW)} raw uses "
-          f"recorded); every Bluetooth device's name an answer carries written through shown_text() "
-          f"({len(BT_POSTED_TEXT)} posted strings recorded) "
+          f"recorded); every Bluetooth device's and Beacon set member's name an answer carries written through "
+          f"shown_text() ({len(BT_POSTED_TEXT)} posted strings recorded); every append onto a String held to "
+          f"text JSON keeps whole ({len(JSON_APPEND_VOCAB)} vocabulary functions, {len(HEX_WRITERS)} hex writer "
+          f"recorded) "
           + ("(self-test skipped)." if "--no-self-test" in argv
              else f"({len(MUTATIONS)} mutations refused, {len(ACCEPTED)} correct edits passed)."))
     return 0
