@@ -53,9 +53,21 @@ footer has none, and a link would not change the text it shows).
 docs/frigate_integration.md sent the receipt to "Settings → Pair"; the
 section is the one that holds the receipt field, and its header is read
 from the Swift file. Every "Settings → Pair / Pairing / Verification" in
-docs/ and tvos/ must name that header, and the four guides that walk a
+docs/ and tvos/ must name that header, and the guides that walk a
 pairing must name it. docs/audit/ is not read: a dated audit quotes the
 wrong pointer it found.
+
+The glossary's Witness Wall entry and the fast path's Step 0
+(tvos/RUN_ON_APPLE_TV.md) named only `witness_api mint-viewer-token`, the
+host binary's command, which a reader on the root image cannot run as
+written, and the fast path sent the receipt to "the Wall's settings"
+(sweep A118). Each must now give the root form (`docker exec <container>
+witness_api mint-viewer-token --label`, docs/container.md's placeholder) or
+link docs/container.md's "Mint a Witness Wall viewer token", where step 1
+names the token path the mint needs, and each must name the live
+Settings header. That step 1 says the stock unit already passes the token
+path, so a unit user skips it; the container name it gives for the unit is
+held to the unit's `--name`.
 
 This file adds no rows to test_docs_claims.py on purpose: that gate pins
 retired sentences, and these are live pointers read off their sources.
@@ -81,8 +93,19 @@ PAIRING_GUIDES = (
     "docs/container.md",
     "docs/frigate_integration.md",
     "tvos/README.md",
+    "tvos/RUN_ON_APPLE_TV.md",
     "tvos/discovery/DISCOVERY.md",
 )
+
+# The short pointers that name the mint without walking it (sweep A118):
+# (file, the text that opens the paragraph holding the pointer).
+MINT_POINTERS = (
+    ("docs/GLOSSARY.md", "**The Witness Wall** —"),
+    ("tvos/RUN_ON_APPLE_TV.md", "> **Step 0:**"),
+)
+
+# docs/container.md's mint section, which every pointer may link instead.
+MINT_HEADING = "### Mint a Witness Wall viewer token"
 
 # Names the Wall's pairing section has had or could be given. Any
 # "Settings → <one of these>" in docs/ or tvos/ must be the live header.
@@ -365,6 +388,39 @@ def readme_pairing_window(text: str) -> str:
     return text[start:end + 80]
 
 
+def pointer_paragraph(text: str, opener: str) -> str:
+    """The paragraph that starts at `opener`, up to the next blank line.
+
+    A blockquote's `>` markers are dropped, so a command or a link that
+    wraps from one quoted line to the next reads as written.
+    """
+    start = text.index(opener)
+    end = re.compile(r"\n[ \t>]*\n").search(text, start)
+    para = text[start:end.start() if end else len(text)]
+    return re.sub(r"^[ \t]*> ?", "", para, flags=re.MULTILINE)
+
+
+def heading_anchor(heading: str) -> str:
+    """GitHub's anchor for a Markdown heading (scripts/lint_md_links.py's rule)."""
+    h = heading.lstrip("#").strip().lower().replace("`", "").replace("*", "")
+    return "".join(ch for ch in h if ch.isalnum() or ch in "-_ ").replace(" ", "-")
+
+
+def links_to(source: Path, text: str, target: Path) -> list[str]:
+    """The #fragments of every Markdown link in `text` that resolves to `target`."""
+    fragments = []
+    for href in re.findall(r"\]\(([^)\s]+)\)", norm(text)):
+        path, _, fragment = href.partition("#")
+        if path and (source.parent / path).resolve() == target.resolve():
+            fragments.append(fragment)
+    return fragments
+
+
+def container_step1(text: str) -> str:
+    section = doc_section(text, MINT_HEADING)
+    return section[section.index("\n1. "):section.index("\n2. ")]
+
+
 def scanned_files() -> list[Path]:
     files = []
     for root in ("docs", "tvos"):
@@ -556,6 +612,66 @@ class WallNamesEveryMintForm(unittest.TestCase):
             self.assertTrue(forms[kind], f"tvos/README.md's pairing paragraph has no {kind} form: {window}")
         self.assertEqual(forms["root"], ["<container>"], "the README's placeholder is docs/container.md's")
         self.assertIn(f"Settings → {self.header}", window)
+
+
+class ShortPointersReachTheRootImage(unittest.TestCase):
+    def setUp(self) -> None:
+        self.header, _ = pairing_section(WALL_SETTINGS.read_text(encoding="utf-8"))
+        self.mint_anchor = heading_anchor(MINT_HEADING)
+        doc_section(CONTAINER_DOC.read_text(encoding="utf-8"), MINT_HEADING)
+
+    def test_each_pointer_gives_the_root_form_or_links_the_mint_walk(self) -> None:
+        for rel, opener in MINT_POINTERS:
+            path = REPO / rel
+            with self.subTest(pointer=rel):
+                para = pointer_paragraph(path.read_text(encoding="utf-8"), opener)
+                # A pointer that moved out of its paragraph makes the rest vacuous.
+                self.assertIn("mint-viewer-token", norm(para), f"{rel}: the mint pointer left {opener!r}")
+                root = mint_forms(para)["root"]
+                links = links_to(path, para, CONTAINER_DOC)
+                self.assertTrue(
+                    root or self.mint_anchor in links,
+                    f"{rel}: gives neither the root image's `docker exec <container> witness_api "
+                    f"mint-viewer-token --label` nor a link to docs/container.md#{self.mint_anchor}: {norm(para)}",
+                )
+                for placeholder in root:
+                    self.assertEqual(placeholder, "<container>", f"{rel}: docs/container.md's placeholder")
+
+    def test_each_pointer_names_the_settings_section(self) -> None:
+        for rel, opener in MINT_POINTERS:
+            with self.subTest(pointer=rel):
+                para = norm(pointer_paragraph((REPO / rel).read_text(encoding="utf-8"), opener))
+                self.assertIn(f"Settings → {self.header}", para, f"{rel}: where the receipt goes")
+
+    def test_step1_tells_a_unit_user_to_skip_it(self) -> None:
+        # The unit already passes the -e (the class above proves it), so
+        # step 1 says a unit user skips it, and names the unit's container
+        # for the placeholder below.
+        step1 = norm(container_step1(CONTAINER_DOC.read_text(encoding="utf-8")))
+        self.assertTrue(links_to(CONTAINER_DOC, step1, UNIT), "step 1 links the stock examples/witnessd.service")
+        self.assertRegex(step1, r"already passes it, so a unit started from that file skips this step")
+        named = re.search(r"its container is `([^`]+)`", step1)
+        self.assertIsNotNone(named, "step 1 names the unit's container for <container>")
+        opts, _, _ = docker_run(command_words(next(
+            v for s, k, v in unit_entries(UNIT.read_text(encoding="utf-8")) if s == "Service" and k == "ExecStart")))
+        self.assertEqual(opts.get("--name"), [named.group(1)], "step 1's container name is the unit's --name")
+        # "its loopback-only `-p` binding" holds while the unit publishes on
+        # loopback (the unit class above holds its header to the widening).
+        if "loopback-only" in step1:
+            publishes = opts.get("-p", []) + opts.get("--publish", [])
+            self.assertTrue(publishes and all(p.rsplit(":", 2)[0] in ("127.0.0.1", "[::1]", "localhost")
+                                              for p in publishes),
+                            f"step 1 calls the unit's binding loopback-only; it publishes {publishes}")
+
+    def test_paragraph_and_link_readers(self) -> None:
+        text = "x\n\n> **Step 0:** `docker exec <c> witness_api\n> mint-viewer-token --label <s>` [a](../docs/container.md#b)\n>\n> next\n"
+        para = pointer_paragraph(text, "> **Step 0:**")
+        self.assertEqual(para, "**Step 0:** `docker exec <c> witness_api\nmint-viewer-token --label <s>` [a](../docs/container.md#b)")
+        self.assertEqual(mint_forms(para)["root"], ["<c>"])
+        self.assertEqual(links_to(REPO / "tvos/RUN_ON_APPLE_TV.md", para, CONTAINER_DOC), ["b"])
+        # The same href read from another directory lands elsewhere.
+        self.assertEqual(links_to(REPO / "tvos/discovery/DISCOVERY.md", para, CONTAINER_DOC), [])
+        self.assertEqual(heading_anchor(MINT_HEADING), "mint-a-witness-wall-viewer-token")
 
 
 class SettingsPointersNameTheLiveSection(unittest.TestCase):

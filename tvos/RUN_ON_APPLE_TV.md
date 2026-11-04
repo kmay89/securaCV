@@ -9,9 +9,15 @@ afternoon on. There are two tracks — pick by what you're trying to do.
 > home / business / apartment profiles and skins, zero-typing LAN discovery
 > (it probes `canary.local` by itself), and the Rust verification core wired
 > into the poll loop. The kernel serves its sealed log at
-> `GET /api/sealed-log` to a viewer token (`witness_api mint-viewer-token`);
-> paste that receipt into the Wall's settings once and it verifies the log
-> against the key it pinned. Unpaired, it phrases the fleet's status as the
+> `GET /api/sealed-log` to a viewer token: mint one on the hub
+> (`witness_api mint-viewer-token --label <s>` on a host install,
+> `docker exec <container> witness_api mint-viewer-token --label <s>` on the
+> `witnessd` image, as
+> [`docs/container.md`](../docs/container.md#mint-a-witness-wall-viewer-token)
+> walks, or `docker exec securacv entrypoint.sh mint-viewer-token --label <s>`
+> in the Docker sidecar), paste the one line it prints into the Wall's
+> **Settings → Verification** once, and it verifies the log against the key
+> it pinned. Unpaired, it phrases the fleet's status as the
 > fleet's own report, never as verified. What's left is Apple's side —
 > the account and keys — which is exactly what Tracks B and C below walk
 > through.

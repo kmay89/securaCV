@@ -136,7 +136,11 @@ bare, `witness_api` is the Event API daemon and tries to serve beside
 1. Start the container with a token path, so `witnessd` knows where the
    viewer-token file lives — add
    `-e WITNESS_API_TOKEN_PATH=/data/api_token` to the `docker run` above
-   (or name the file itself with `WITNESS_API_VIEWER_TOKEN_PATH`).
+   (or name the file itself with `WITNESS_API_VIEWER_TOKEN_PATH`). The stock
+   [`examples/witnessd.service`](../examples/witnessd.service) already
+   passes it, so a unit started from that file skips this step: its
+   container is `witnessd`, and its header says to widen its loopback-only
+   `-p` binding before you mint.
 2. Once `witnessd` has started at least once (it creates the device seed
    whose key the receipt carries), mint one token per screen:
 
