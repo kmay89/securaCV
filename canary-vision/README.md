@@ -73,7 +73,7 @@ canary-vision/
 
 ### Device API
 
-The reference implementation in `device-api/` uses Express and defines the HTTP API this SPA pairs with (`X-Canary-Token`, `/api/v1/*`). No Canary firmware answers that pairing (`GET /api/v1/info` with `X-Canary-Token`). The canary-wap, for one, runs an HTTP server of its own: it takes `Authorization: Bearer`, its only `/api/v1/` route is `/api/v1/witness`, and it is paired from its own dashboard or the SecuraCV iPhone app ([discovery.md §2](docs/discovery.md#2-peer-list-api)). The SPA is served as static files from the same server.
+The reference implementation in `device-api/` uses Express and defines the HTTP API this SPA pairs with (`X-Canary-Token`, `/api/v1/*`). No Canary firmware answers that pairing (`GET /api/v1/info` with `X-Canary-Token`). The canary-wap, for one, runs an HTTP server of its own: it takes `Authorization: Bearer`, its only `/api/v1/` route is `/api/v1/witness`, and it is paired in the SecuraCV iPhone app, from the recovery kit its dashboard saves or through its Bluetooth setup ([discovery.md §2](docs/discovery.md#2-peer-list-api)). The SPA is served as static files from the same server.
 
 **Middleware stack (order matters):**
 

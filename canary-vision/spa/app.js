@@ -485,7 +485,11 @@ function labelFor(key) {
 // the 'http' branch, but its firmware does not answer it: its receipt
 // carries no Access-Control-Allow-Origin, it takes Authorization: Bearer
 // and not X-Canary-Token, and it serves no /api/v1/info, so its card says
-// where a WAP pairs instead (docs/discovery.md §2, sweep F355).
+// where a WAP does pair (docs/discovery.md §2, sweep F355). The card
+// renders on the success screen, under "Canary WAP paired", which only a
+// reference device-api reaches (it reports itself as a canary-wap), so the
+// line names where a WAP pairs and does not deny the pairing that screen
+// just finished.
 
 var DEVICE_TYPES = {
   'canary-wap': {
@@ -496,7 +500,7 @@ var DEVICE_TYPES = {
     whatsDifferent: [
       'Keeps a GPS-timestamped, cryptographically signed event log',
       'Runs its own WiFi hotspot, so it witnesses even with no infrastructure',
-      'Pairs from its own dashboard or the SecuraCV iPhone app, and joins Home Assistant over MQTT — its firmware does not answer the pairing in this app',
+      'Pairs in the SecuraCV iPhone app, from the recovery kit its dashboard saves or through its Bluetooth setup, and joins Home Assistant over MQTT',
     ],
     icon: [
       { tag: 'circle', attrs: { cx: '12', cy: '15', r: '2', fill: 'currentColor' } },
@@ -561,8 +565,8 @@ function deviceTypeInfo(value) {
   return DEVICE_TYPES[canonicalDeviceType(value)] || DEVICE_TYPES.unknown;
 }
 
-// Peers relayed by a WAP carry the mDNS TXT `dt` key; API payloads use
-// the long `device_type` spelling. Accept either.
+// Peers relayed in a device's peer list carry the mDNS TXT `dt` key; API
+// payloads use the long `device_type` spelling. Accept either.
 function peerDeviceType(peer) {
   if (!peer) return '';
   return canonicalDeviceType(peer.dt || peer.device_type || '');
@@ -1751,8 +1755,13 @@ function startReceiptCapture(baseUrl, handlers) {
           return;
         }
         if (err && err.status === 409) {
-          // Another device asked during the same tap (a WAP, sweep F342):
-          // the tap was closed and nothing was handed out, so stop here.
+          // Another device asked during the same tap: the tap was closed and
+          // nothing was handed out, so stop here. This branch is for a
+          // device that sends CORS on its 409. The canary-wap firmware
+          // answers 409 tap_contended (sweep F342) with no
+          // Access-Control-Allow-Origin, so the browser hands this page a
+          // network error instead, and the reference device-api sends no
+          // 409 (F355); whether the WAP should is F357's decision.
           // Returning without scheduling a tick is the stop: no ask is in
           // flight past this one (receipt-capture.test.js).
           handlers.onContended();
@@ -1868,7 +1877,7 @@ function openQrScanSheet(onReceipt) {
   video.setAttribute('playsinline', '');
   var sheet = el('div', { className: 'qr-sheet' }, [
     el('div', { className: 'qr-sheet-title', textContent: 'Scan the pairing QR' }),
-    el('div', { className: 'qr-sheet-hint', textContent: 'On the Canary dashboard, open Settings → Device → Show QR.' }),
+    el('div', { className: 'qr-sheet-hint', textContent: 'A canary-wap’s dashboard QR does not pair in this app: add a WAP in the SecuraCV iPhone app, from its recovery kit.' }),
     video,
     el('button', {
       className: 'btn btn-secondary btn-block mt-12',

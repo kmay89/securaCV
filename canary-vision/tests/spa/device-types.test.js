@@ -112,48 +112,212 @@ describe('SPA device types', () => {
 
 // The canary-wap card must not say this SPA pairs a WAP (sweep F355). The
 // canary-wap firmware does not answer the SPA's pairing: its receipt route
-// sends no Access-Control-Allow-Origin, so a browser hides its 403 and its
-// receipt from this page (recorded in Chromium against a stub that answers
-// the way the sketch does: the capture never saw asked=true and ended
+// sends no Access-Control-Allow-Origin, so a browser hides its 403, its 409
+// and its receipt from this page (recorded in Chromium against a stub that
+// answers the way the sketch does: the capture never saw asked=true and ended
 // onTimeout(false)), it reads `Authorization: Bearer` and never
 // `X-Canary-Token`, and it registers no /api/v1/info or /api/v1/peers. The
 // card is held to those facts, read from the sketch: if a WAP ever answers
-// this SPA's pairing, the premise row fails and names what to revisit.
+// this SPA's pairing, the premise row fails and names what to revisit. The
+// card renders on the success screen, under "Canary WAP paired" (only the
+// reference device-api, which reports itself as a canary-wap, gets there), so
+// it says where a WAP pairs without denying that screen's pairing
+// (receipt-capture.test.js holds the screen).
 const WAP_SKETCH_DIR = path.join(__dirname, '..', '..', '..',
   'firmware', 'projects', 'canary-wap', 'arduino', 'canary_wap');
 
-// Every card line that says or implies the WAP pairs in this SPA.
+// Every card line that says or implies a WAP pairs in this SPA, or that
+// mentions this app at all (the card sits on this app's success screen).
 function spaPairingClaims(lines) {
-  return lines.filter((line) => /\b(?:right )?here\b/i.test(line)
+  return lines.filter((line) => /\bhere\b/i.test(line)
     || /\bover HTTP\b/i.test(line)
     || /\bBOOT\b/.test(line)
-    || /\bpairs? (?:in|from|with) this app\b/i.test(line));
+    || /\bthis (?:app|page|SPA)\b/i.test(line)
+    || /\bin the app\b/i.test(line)
+    || /\bone (?:press|tap)\b/i.test(line)
+    || /\bdashboard QR\b|\bShow QR\b|\bpairing QR\b/i.test(line));
 }
 
-function functionBody(src, name) {
-  const start = src.indexOf(`static esp_err_t ${name}(`);
-  assert.ok(start >= 0, `canary_wap.ino no longer defines ${name}()`);
-  const end = src.indexOf('\n}\n', start);
-  return src.slice(start, end);
+// C source with comments blanked (string and char literals kept whole, so a
+// brace or "//" inside one is not code).
+function stripComments(src) {
+  let out = '';
+  for (let i = 0; i < src.length;) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (c === '/' && n === '/') {
+      const j = src.indexOf('\n', i);
+      const end = j < 0 ? src.length : j;
+      out += ' '.repeat(end - i);
+      i = end;
+    } else if (c === '/' && n === '*') {
+      const j = src.indexOf('*/', i + 2);
+      const end = j < 0 ? src.length : j + 2;
+      out += src.slice(i, end).replace(/[^\n]/g, ' ');
+      i = end;
+    } else if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && src[j] !== '\n') j += src[j] === '\\' ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+    } else {
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+// name -> body text of every function defined in `src` (comment-stripped),
+// braces matched outside string and char literals.
+function functionBodies(src) {
+  const code = stripComments(src);
+  const bodies = new Map();
+  // A definition starts at column 0 with its return type on the same line.
+  const def = /^[A-Za-z_][\w:<>*& \t]*?\b([A-Za-z_]\w*)[ \t]*\([^;{}()]*(?:\([^;{}()]*\)[^;{}()]*)*\)\s*(?:const\s*)?\{/gm;
+  let m;
+  while ((m = def.exec(code))) {
+    if (/^(?:if|for|while|switch|return|else|do|sizeof)$/.test(m[1])) continue;
+    let depth = 0;
+    let i = m.index + m[0].length - 1;
+    for (; i < code.length; i++) {
+      const c = code[i];
+      if (c === '"' || c === "'") {
+        let j = i + 1;
+        while (j < code.length && code[j] !== c && code[j] !== '\n') j += code[j] === '\\' ? 2 : 1;
+        i = j;
+      } else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) break;
+    }
+    if (!bodies.has(m[1])) bodies.set(m[1], code.slice(m.index, i + 1));
+    def.lastIndex = i + 1;
+  }
+  return bodies;
+}
+
+const ACAO = 'Access-Control-Allow-Origin';
+
+// Every call in `body`: { name, args } with args the text between the call's
+// own parentheses (matched, so a nested call does not end it).
+function callsIn(body) {
+  const out = [];
+  const open = /\b([A-Za-z_]\w*)\s*\(/g;
+  let m;
+  while ((m = open.exec(body))) {
+    let depth = 0;
+    let i = m.index + m[0].length - 1;
+    for (; i < body.length; i++) {
+      const c = body[i];
+      if (c === '"' || c === "'") {
+        let j = i + 1;
+        while (j < body.length && body[j] !== c && body[j] !== '\n') j += body[j] === '\\' ? 2 : 1;
+        i = j;
+      } else if (c === '(') depth++;
+      else if (c === ')' && --depth === 0) break;
+    }
+    out.push({ name: m[1], args: body.slice(m.index + m[0].length, i) });
+  }
+  return out;
+}
+
+// The calls in `calls` (one body's) to a CORS sender that can answer the
+// pairing: every call except an error answer with a 5xx status literal
+// (`http_send_error(req, 503, ...)`), which is not the 403, 409 or receipt
+// the SPA's pairing reads.
+function corsCalls(calls, senders, self) {
+  return calls.filter((c) => c.name !== self && senders.has(c.name)
+    && !/^\s*req\s*,\s*5\d\d\s*,/.test(c.args));
+}
+
+// Every way the receipt route's answers carry CORS in `sources` (the sketch's
+// files, name -> text). A CORS sender is a function whose body sets the
+// header, or answers through one that does (corsCalls; resolved to a
+// fixpoint, so http_send_error -> http_send_json counts). In the two receipt
+// functions a direct header, or a corsCalls() call, is a finding.
+function receiptCorsFindings(sources) {
+  const bodies = new Map();
+  for (const text of sources.values()) {
+    for (const [name, body] of functionBodies(text)) {
+      if (!bodies.has(name)) {
+        const inner = body.slice(body.indexOf('{'));
+        bodies.set(name, { inner, calls: callsIn(inner) });
+      }
+    }
+  }
+  const senders = new Set([...bodies].filter(([, b]) => b.inner.includes(ACAO)).map(([n]) => n));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [name, b] of bodies) {
+      if (!senders.has(name) && corsCalls(b.calls, senders, name).length) {
+        senders.add(name);
+        grew = true;
+      }
+    }
+  }
+  const findings = [];
+  for (const fn of ['handle_provisioning_receipt', 'send_provisioning_receipt']) {
+    const b = bodies.get(fn);
+    if (!b) { findings.push(`canary_wap.ino no longer defines ${fn}()`); continue; }
+    if (b.inner.includes(ACAO)) findings.push(`${fn}() sets ${ACAO} itself`);
+    for (const c of corsCalls(b.calls, senders, fn)) {
+      findings.push(`${fn}() answers through ${c.name}(), which sends ${ACAO}: `
+        + `${c.name}(${c.args.replace(/\s+/g, ' ').trim()})`);
+    }
+  }
+  return findings;
+}
+
+function readSketch() {
+  const files = fs.readdirSync(WAP_SKETCH_DIR).filter((f) => /\.(?:ino|h|cpp)$/.test(f));
+  return new Map(files.map((f) => [f, fs.readFileSync(path.join(WAP_SKETCH_DIR, f), 'utf8')]));
 }
 
 describe('SPA device types: the canary-wap card makes no SPA-pairing claim', () => {
   let app;
-  before(() => { app = loadApp(); });
+  let sketch;
+  before(() => { app = loadApp(); sketch = readSketch(); });
 
   it('premise: the canary-wap firmware does not answer this SPA\'s pairing', () => {
-    const files = fs.readdirSync(WAP_SKETCH_DIR).filter((f) => /\.(?:ino|h|cpp)$/.test(f));
-    const sketch = files.map((f) => fs.readFileSync(path.join(WAP_SKETCH_DIR, f), 'utf8')).join('\n');
-    const ino = fs.readFileSync(path.join(WAP_SKETCH_DIR, 'canary_wap.ino'), 'utf8');
+    const all = [...sketch.values()].join('\n');
     const revisit = ' — the WAP may now answer this SPA\'s pairing: revisit '
       + "DEVICE_TYPES['canary-wap'] and docs/discovery.md §2-§4";
-    assert.ok(!/\.uri\s*=\s*"\/api\/v1\/(?:info|peers)"/.test(sketch),
+    assert.ok(!/\.uri\s*=\s*"\/api\/v1\/(?:info|peers)"/.test(all),
       'the sketch registers /api/v1/info or /api/v1/peers' + revisit);
-    assert.ok(!/X-Canary-Token/i.test(sketch), 'the sketch reads X-Canary-Token' + revisit);
-    for (const fn of ['handle_provisioning_receipt', 'send_provisioning_receipt']) {
-      assert.ok(!functionBody(ino, fn).includes('Access-Control-Allow-Origin'),
-        `${fn}() sends Access-Control-Allow-Origin` + revisit);
-    }
+    assert.ok(!/X-Canary-Token/i.test(all), 'the sketch reads X-Canary-Token' + revisit);
+    assert.deepEqual(receiptCorsFindings(sketch), [],
+      'the receipt route now answers with CORS' + revisit);
+  });
+
+  it('the CORS check sees a header set directly or through the sketch\'s JSON helpers', () => {
+    const ino = sketch.get('canary_wap.ino');
+    // Replace `from` with `to` inside function `fn` only.
+    const mutate = (fn, from, to) => {
+      const start = ino.indexOf(`static esp_err_t ${fn}(`);
+      assert.ok(start >= 0, `canary_wap.ino no longer defines ${fn}()`);
+      const end = ino.indexOf('\n}\n', start);
+      const region = ino.slice(start, end);
+      assert.equal(region.split(from).length, 2, `the mutation's anchor is not once in ${fn}(): ${from}`);
+      return new Map([...sketch, ['canary_wap.ino',
+        ino.slice(0, start) + region.replace(from, to) + ino.slice(end)]]);
+    };
+    // The receipt sent through http_send_json(), which sets ACAO *.
+    const viaHelper = mutate('send_provisioning_receipt',
+      'httpd_resp_set_type(req, "application/json");\n  httpd_resp_set_hdr(req, "Cache-Control", "no-store");\n  const esp_err_t ret = httpd_resp_sendstr(req, json);',
+      'const esp_err_t ret = http_send_json(req, json);');
+    assert.match(receiptCorsFindings(viaHelper).join('\n'), /send_provisioning_receipt\(\) answers through http_send_json\(\)/);
+    // The 409 sent through http_send_error(), which calls http_send_json().
+    const via409 = mutate('handle_provisioning_receipt',
+      'httpd_resp_set_status(req, "409 Conflict");',
+      'return http_send_error(req, 409, "tap_contended");');
+    assert.match(receiptCorsFindings(via409).join('\n'), /handle_provisioning_receipt\(\) answers through http_send_error\(\)/);
+    // The header set by hand on the 403.
+    const direct = mutate('handle_provisioning_receipt',
+      'httpd_resp_set_status(req, "403 Forbidden");\n    httpd_resp_set_type(req, "application/json");\n    return httpd_resp_sendstr(req, body);',
+      'httpd_resp_set_status(req, "403 Forbidden");\n    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");\n    return httpd_resp_sendstr(req, body);');
+    assert.match(receiptCorsFindings(direct).join('\n'), /handle_provisioning_receipt\(\) sets Access-Control-Allow-Origin itself/);
+    // A 5xx error through the helper is not the pairing's answer.
+    assert.ok(/http_send_error\(req, 503, "no_address"\)/.test(ino),
+      'send_provisioning_receipt\'s 5xx error path moved; re-check the allowance');
   });
 
   it('no line of the card says it pairs in this SPA, and one says where it pairs', () => {
@@ -161,15 +325,27 @@ describe('SPA device types: the canary-wap card makes no SPA-pairing claim', () 
     const lines = [info.tagline, ...info.whatsDifferent, info.proof].filter(Boolean);
     assert.deepEqual(spaPairingClaims(lines), [],
       'the canary-wap card claims SPA pairing its firmware does not answer');
-    const where = lines.find((l) => /dashboard/i.test(l) && /iPhone app/.test(l) && /Home Assistant/.test(l));
-    assert.ok(where, 'the canary-wap card must say where a WAP pairs (its dashboard, the iPhone app, Home Assistant)');
-    assert.match(where, /not\b.*\bthis app\b/i, 'and that it does not pair in this app');
+    const where = lines.find((l) => /iPhone app/.test(l) && /recovery kit/.test(l)
+      && /Bluetooth/.test(l) && /Home Assistant/.test(l));
+    assert.ok(where, 'the canary-wap card must say where a WAP pairs (the iPhone app, from its recovery kit or '
+      + 'its Bluetooth setup, and Home Assistant)');
+    // The dashboard's own pairing card leads back to this SPA's QR scan, so
+    // the dashboard is named only as where the recovery kit comes from.
+    assert.ok(!/\bfrom its own dashboard\b|\bpairs? (?:from|on) (?:its|the) dashboard\b/i.test(where),
+      'the dashboard does not pair a WAP; its pairing card sends the owner back to this SPA');
   });
 
-  it('the claim check catches the line the card used to carry', () => {
-    assert.equal(spaPairingClaims(['Pairs right here over HTTP with a short tap of its BOOT button']).length, 1);
-    assert.equal(spaPairingClaims(['Pairs right here']).length, 1);
-    assert.equal(spaPairingClaims(['Pairs with this app over HTTP']).length, 1);
+  it('the claim check catches the line the card used to carry, and its paraphrases', () => {
+    for (const line of [
+      'Pairs right here over HTTP with a short tap of its BOOT button',
+      'Pairs right here',
+      'Pairs with this app over HTTP',
+      'Pairs right here, or from its own dashboard or the SecuraCV iPhone app',
+      'Pair it from this page with one press; also from its own dashboard or the SecuraCV iPhone app, and Home Assistant — not this app',
+      'Scan its dashboard QR in the app',
+    ]) {
+      assert.equal(spaPairingClaims([line]).length, 1, line);
+    }
   });
 
   it('keeps the http wizard branch: the copy changed, not the flow', () => {
