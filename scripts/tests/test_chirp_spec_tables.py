@@ -43,7 +43,8 @@ were prose with nothing holding them to the code, so this test does:
     channel 6. Every `#define` in §12.1's block names a constant the
     firmware defines with that value, so `OPERA_MAGIC` (no firmware defines
     it: an Opera frame starts with its version byte, mesh_wire.h's
-    `OPERA_VERSION`) is refused. The constants come from a strict reader
+    `OPERA_VERSION`, or before membership with a pairing type,
+    `PAIR_FIRST` to `PAIR_LAST`) is refused. The constants come from a strict reader
     that refuses a definition it cannot spell (an expression, a name, two
     definitions) rather than guessing.
 
@@ -70,6 +71,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SKETCH = REPO / "firmware/projects/canary-wap/arduino/canary_wap"
 SPEC = REPO / "spec/chirp_channel_v0.md"
+MESH_SPEC = REPO / "spec/canary_mesh_network_v0.md"
 NVS_STORE = SKETCH / "nvs_store.h"
 
 CALLS = ("nvs_get_u8", "nvs_set_u8", "nvs_get_u32", "nvs_set_u32", "nvs_has_key", "nvs_remove")
@@ -482,14 +484,30 @@ class ChirpSpecChannel(unittest.TestCase):
                 self.assertEqual(value, fw, f"spec §12.1's {name} is not mesh_network.h's")
         self.assertEqual(sorted(defines), ["CHIRP_CHANNEL", "CHIRP_MAGIC"])
 
-    def test_an_opera_frame_starts_with_its_version(self):
-        version = constant((SKETCH / "mesh_wire.h").read_text(encoding="utf-8"), "OPERA_VERSION")
+    def test_an_opera_frame_starts_with_its_version_or_a_pairing_type(self):
+        # A signed Opera frame starts with OPERA_VERSION; the five
+        # pre-membership pairing frames start with their type, PAIR_FIRST to
+        # PAIR_LAST (mesh_network.cpp classifies those before the version
+        # check). The spec names both, and CHIRP_MAGIC is neither.
+        wire = (SKETCH / "mesh_wire.h").read_text(encoding="utf-8")
+        version = constant(wire, "OPERA_VERSION")
+        first, last = constant(wire, "PAIR_FIRST"), constant(wire, "PAIR_LAST")
         section = prose(spec_section(self.spec, "12.1 ESP-NOW Configuration for Chirp"))
         self.assertIn(f"a Chirp frame starts with `CHIRP_MAGIC`, and an Opera frame starts with its "
-                      f"protocol version ({version})", section)
+                      f"protocol version (`OPERA_VERSION`, {version}) or, before membership, its pairing "
+                      f"type ({first} to {last}, `PAIR_FIRST` to `PAIR_LAST`; "
+                      "`spec/canary_mesh_network_v0.md` §4.5)", section)
         self.assertIn("There is no Opera magic byte", section)
         magic = constant(self.chirp, "CHIRP_MAGIC")
         self.assertNotEqual(magic, version, "the first byte must tell the two apart")
+        self.assertFalse(first <= magic <= last, "CHIRP_MAGIC must not be a pairing type")
+        pair = (SKETCH / "mesh_pair_frame.h").read_text(encoding="utf-8")
+        self.assertIn("constexpr uint8_t TYPE_DISCOVER = mesh_wire::PAIR_DISCOVER;", pair)
+        self.assertIn("constexpr uint8_t TYPE_COMPLETE = mesh_wire::PAIR_COMPLETE;", pair)
+        self.assertEqual((constant(wire, "PAIR_DISCOVER"), constant(wire, "PAIR_COMPLETE")), (first, last))
+        mesh_table = prose(spec_section(MESH_SPEC.read_text(encoding="utf-8"),
+                                        "4.5 Wire Type Registry and Outer Frame — v0.4"))
+        self.assertIn(f"| `{first}..{last}` | pre-membership pairing, unsigned |", mesh_table)
         cpp = strip_comments((SKETCH / "chirp_channel.cpp").read_text(encoding="utf-8"))
         self.assertIn("if (hdr->magic != CHIRP_MAGIC) return;", cpp)
 
@@ -518,6 +536,11 @@ class ChirpSpecSybilCost(unittest.TestCase):
                       section)
         self.assertIn("what a Sybil costs is the ten minutes of presence each confirming key must wait", section)
         self.assertIn("a delay, not a price per identity", section)
+        # The ten minutes count from a key's first beacon (§3.4 rule 4), so
+        # they run once per key and can run before the chirp they confirm.
+        self.assertIn("They run once per key, from its first beacon (a refresh does not move it)", section)
+        self.assertIn("one an attack can pay before it starts", section)
+        self.assertNotIn("slows a device", section)
         # F232 and F234 are open: the bullet says so, and calls neither fixed.
         self.assertIn("(§3.2; sweep F232, open)", section)
         self.assertIn("(§2.5.6; sweep F234, open)", section)
@@ -537,6 +560,15 @@ class ChirpSpecSybilCost(unittest.TestCase):
         self.assertIn("one device makes any number of session keys", cell)
         for item in ("F232", "F311", "F234"):
             self.assertIn(item, cell)
+        # The rate limit holds per key, and not past uptime's wrap on a full
+        # table (pubkey_rate_check_and_record() picks its victim by the
+        # smallest start time, and after the wrap the rows written since it
+        # hold the smallest).
+        limit = constant(self.chirp, "MAX_WITNESSES_PER_PUBKEY_PER_HOUR")
+        rows = constant(self.chirp, "MAX_PUBKEY_RATE_TRACK")
+        self.assertIn(f"rate-limited ({limit} an hour; after uptime's 49.7-day wrap a full {rows}-key table "
+                      "evicts the rows written since the wrap before any older one", cell)
+        self.assertIn("once per key and possibly before the chirp they confirm", cell)
 
 
 class ReaderSelfTest(unittest.TestCase):

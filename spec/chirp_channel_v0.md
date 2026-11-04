@@ -256,9 +256,9 @@ If the answer to #1 is "yes" or #2 is "individual" or #3 is "paranoid" - **don't
 ### 2.5.3 Defense: Witness Requirement (Sybil Resistance) — v0.2
 
 **Key Insight**: A single device should not be able to broadcast to the neighborhood alone.
-The rule below asks for other session keys, not other devices, so it slows a
-device that makes its own confirming keys and does not stop one (the second
-and third points under "Why This Works").
+The rule below asks for other session keys, not other devices, so it delays a
+device that makes its own confirming keys, once and possibly before the chirp,
+and does not stop one (the second and third points under "Why This Works").
 
 **Rule**: Chirps only propagate beyond hop 0 after **2 independent confirmations from distinct `session_pubkey`s**.
 
@@ -296,8 +296,11 @@ Device A sends chirp (hop 0) ──broadcast──→
   is a fresh random seed (§2.3). So what a Sybil costs is the ten minutes
   of presence each confirming key must wait before its ACK counts (§3.4
   rule 4), and one radio runs those ten minutes for many keys at once,
-  since presence beacons are unsigned (§3.2; sweep F232, open): a delay,
-  not a price per identity. A suppress vote needs no presence at all
+  since presence beacons are unsigned (§3.2; sweep F232, open). They run
+  once per key, from its first beacon (a refresh does not move it), so
+  keys that began beaconing ten minutes before a chirp confirm it as soon
+  as it arrives: a delay, not a price per identity, and one an attack can
+  pay before it starts. A suppress vote needs no presence at all
   (§2.5.6; sweep F234, open). This bullet said a coordinated attack needed
   3 or more devices, each holding a distinct key, and that its cost was
   real (sweep D16).
@@ -1198,8 +1201,10 @@ uint8_t CHIRP_BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 Every frame the radio hears goes to both protocols, and each keeps its own
 by the first byte: a Chirp frame starts with `CHIRP_MAGIC`, and an Opera
-frame starts with its protocol version (1), so each handler drops the
-other's frames (on the canary-wap, `mesh_network.cpp`'s receive pass hands
+frame starts with its protocol version (`OPERA_VERSION`, 1) or, before
+membership, its pairing type (8 to 12, `PAIR_FIRST` to `PAIR_LAST`;
+`spec/canary_mesh_network_v0.md` §4.5), so each handler drops the other's
+frames (on the canary-wap, `mesh_network.cpp`'s receive pass hands
 every frame to `chirp_channel::dispatch_espnow_message()`, which keeps those
 that start with `CHIRP_MAGIC`). There is no Opera magic byte: this block
 defined `OPERA_MAGIC 0x0A`, which no firmware uses, and gave `CHIRP_CHANNEL`

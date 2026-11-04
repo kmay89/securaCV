@@ -82,7 +82,7 @@ extern "C" {
 
 // On the wire: a receiver depends on these.
 #define CHIRP_WIRE_VERSION          1       // PROTOCOL_VERSION: v0.2 frames (v0.1 was 0)
-#define CHIRP_WIRE_MAGIC            0xC4    // CHIRP_MAGIC (Opera's is 0x0A)
+#define CHIRP_WIRE_MAGIC            0xC4    // CHIRP_MAGIC (no Opera magic: an Opera frame starts with 1 or 8..12)
 #define CHIRP_SESSION_ID_SIZE       8       // SESSION_ID_SIZE
 #define CHIRP_SESSION_PUBKEY_SIZE   32      // SESSION_PUBKEY_SIZE: Ed25519, carried in every signed frame
 #define CHIRP_NONCE_SIZE            8       // the header's nonce

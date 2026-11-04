@@ -746,8 +746,9 @@ static const uint8_t CHIRP_MAGIC = 0xC4;           // Message identifier
 // so chirp rides the channel Opera does: the broadcast peer is registered
 // with channel 0, which ESP-NOW reads as the radio's current channel (the
 // STA's, else the AP's, else MESH_FALLBACK_CHANNEL, 6). The two are told
-// apart by a frame's first byte (CHIRP_MAGIC here, the protocol version in
-// an Opera frame), not by the channel. Spec §2.2, §12.1 and §13.1 say so
+// apart by a frame's first byte (CHIRP_MAGIC here; in an Opera frame the
+// protocol version, 1, or before membership a pairing type, 8..12,
+// mesh_wire.h), not by the channel. Spec §2.2, §12.1 and §13.1 say so
 // (sweep F308; scripts/tests/test_chirp_spec_tables.py reads this value).
 static const uint8_t CHIRP_CHANNEL = 0;            // 0 = follow current radio channel
 static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length (legacy field; v0.2 uses structured fields)
