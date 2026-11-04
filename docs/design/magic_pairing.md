@@ -425,11 +425,18 @@ record. Host-tested in `firmware/tests_host/test_hub_handoff.cpp`.
 encryption again, as the RPC write does — **and** only while the Improv
 session is **Provisioned** (the device has the Wi-Fi this phone gave it) or
 **Provisioning** (a phone that writes a beat before the verdict lands). Any
-other time — the door open but no join, the door shut, a stranger who
-paired — the write stores nothing, logs one health line, and reads back as
-rejected. The write callback runs on the NimBLE host task and only copies
-the document into a mailbox (release/acquire, exactly like the RPC
-command's); the loop task parses and applies it in `tick()`.
+other time — the door open but no join, a tap's door that shut with no join
+while the client stayed connected, a stranger who paired and sent no
+Wi-Fi — the write stores nothing, logs one health line, and reads back as
+rejected. The shut door is not itself the gate: a Provisioned session
+already counts as shut (`door_open_now()` is false: it advertises the
+beacon) and still takes a write on the link that is up, which is the one
+that provisioned it — the glue puts nothing on air while a client is
+connected, and once that link drops the advert is non-connectable, so no
+later client reaches HUB until a new tap. `handle_hub()` checks the
+session, not which link wrote. The write callback runs on the NimBLE host
+task and only copies the document into a mailbox (release/acquire, exactly
+like the RPC command's); the loop task parses and applies it in `tick()`.
 
 **What "stored" means.** The glue hands the parsed record to the board
 (`Identity::store_hub`), which persists it through `runtime_config`'s
@@ -1230,11 +1237,11 @@ that writes the companion service's HUB characteristic
 `WIFI_SETTINGS` itself: the provisioning link lingers only 20 s after the
 join, so a short script (Python `bleak`) suits them better than nRF Connect
 by hand, one document per join. What gates a write is the session's join,
-not the open door: `handle_hub()` takes a document only while the session
-is Provisioned or Provisioning, so a write on the provisioning link after
-the join is taken although `door_open_now()` is already false (a
-Provisioned session advertises the beacon). Once that link drops the
-advert is non-connectable, so no later client reaches HUB until a new tap.
+not the open door (§3.6): `handle_hub()` takes a document only while the
+session is Provisioned or Provisioning, so a write on the provisioning link
+after the join is taken although `door_open_now()` is already false. Once
+that link drops the advert is non-connectable, so no later client reaches
+HUB until a new tap.
 
 - [ ] A fresh unit (no Wi-Fi, no broker in NVS) set up from the iPhone's
       card, with the hub already set up on the phone: after the join the
