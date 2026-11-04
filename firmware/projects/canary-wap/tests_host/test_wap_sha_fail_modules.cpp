@@ -26,7 +26,9 @@
 //     file removed and no final file, the frame buffer returned, both PSRAM
 //     buffers and the context freed;
 //   - sha256_key_id() answers false with a zeroed id; load_config_from()
-//     leaves the stored key unadopted (no key, no key id) and logs it, and
+//     leaves the stored key unadopted (no key, no key id) and logs it, as
+//     it does a stored key that did not read back (rather than adopt what
+//     its read buffer held), and
 //     set_pubkey_hex() refuses before NVS is written, the key registered
 //     before it and its id as they were;
 //   - dep_sha256() answers mbedTLS's answer, and verify() fails sha_failed,
@@ -44,7 +46,13 @@
 //     output after a failed step, as the canary library's IDF 5 body does.
 // And the sources: none of the five modules' files, nor
 // evidence_update_verify.cpp, makes a bare call of an mbedTLS SHA step, of
-// the helpers above or of verify()'s injected hash.
+// the helpers above or of verify()'s injected hash. That scan is a line
+// tripwire, not the proof: it flags a call that starts a statement on its
+// line (at the line's start; after `;`, `{` or `}`; as the body of an
+// `if (...)`, `while (...)`, `for (...)`, `else` or `do`; or behind a
+// `(void)` cast, which [[nodiscard]] lets through), and holds itself to a
+// table of such lines, but a statement split across lines can still pass
+// it. The behavioral cases above are the proof.
 //
 // This runs the REAL code: mesh_crypto.cpp whole, evidence_update_verify.cpp
 // and securacv_ota.cpp's pure subset linked, and the rest cut verbatim out of
@@ -71,6 +79,7 @@
 #include <openssl/evp.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -313,6 +322,10 @@ struct FakePrefs {
   std::map<std::string, bool> bools;
   std::map<std::string, uint32_t> uints;
   int writes = 0;
+  // A blob whose length reads back but whose data does not: getBytes()
+  // answers 0 and writes nothing, as Preferences::getBytes() does when
+  // nvs_get_blob() fails after getBytesLength() answered.
+  bool get_fails = false;
   bool getBool(const char* k, bool def) const {
     auto it = bools.find(k);
     return it == bools.end() ? def : it->second;
@@ -327,7 +340,7 @@ struct FakePrefs {
   }
   size_t getBytes(const char* k, void* buf, size_t len) const {
     auto it = blobs.find(k);
-    if (it == blobs.end() || it->second.size() > len) return 0;
+    if (get_fails || it == blobs.end() || it->second.size() > len) return 0;
     std::memcpy(buf, it->second.data(), it->second.size());
     return it->second.size();
   }
@@ -636,7 +649,32 @@ static void test_vault_key_id() {
               label + ": neither the key nor an id is held");
     CHECK_MSG(g_nvs.blobs.count("vault_pub") == 1 && g_nvs.writes == 0,
               label + ": the stored key is left as it is");
-    CHECK_MSG(log_has("Vault unlock key not loaded"), label + ": the refusal is logged");
+    CHECK_MSG(log_has("Vault unlock key not loaded|key id hash failed"),
+              label + ": the refusal is logged");
+  }
+  // A stored key whose bytes did not read back is not adopted either: the
+  // vault must not take whatever its read buffer held as the operator key
+  // (stack bytes would seal evidence to a key nobody holds), and nothing is
+  // hashed from it.
+  {
+    const std::string label = "vault key load, the key does not read back";
+    vault_reset();
+    g_nvs.blobs["vault_pub"].assign(kOperatorPub, kOperatorPub + 32);
+    g_nvs.get_fails = true;
+    stub_sha256::arm();  // count, fail nothing
+    NvsMainSession nvs(true);
+    load_config_from(nvs);
+    CHECK_MSG(!has_pubkey(), label + ": the key is not adopted");
+    char kid[17] = {'x', 0};
+    key_id_hex(kid);
+    CHECK_MSG(kid[0] == '\0', label + ": no key id is shown");
+    CHECK_MSG(all_zero(g_key_id, sizeof g_key_id) && all_zero(g_pubkey, sizeof g_pubkey),
+              label + ": neither a key nor an id is held");
+    CHECK_MSG(stub_sha256::hashes == 0, label + ": nothing was hashed from it");
+    CHECK_MSG(g_nvs.blobs.count("vault_pub") == 1 && g_nvs.writes == 0,
+              label + ": the stored key is left as it is");
+    CHECK_MSG(log_has("Vault unlock key not loaded|key read failed"),
+              label + ": the refusal is logged");
   }
 
   // Registering: a key whose id did not compute is refused before NVS, and
@@ -808,7 +846,7 @@ static void test_familiar() {
 
   const FailCase cases[] = {
       {Step::Starts, 0, 0, Out::Scribble, "start"},
-      {Step::Update, 0, 0, Out::Scribble, "update (its first, middle and last)"},
+      {Step::Update, 0, 0, Out::Scribble, "update (its only one)"},
       {Step::Finish, 0, 0, Out::Scribble, "finish"},
       {Step::Finish, 0, 0, Out::Untouched, "finish"},
       {Step::Finish, 0, 0, Out::Digest, "finish"},
@@ -1015,11 +1053,100 @@ static std::string read_file(const std::string& path) {
   return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
+// The identifier that ends at body[end - 1], or "" if none does.
+static std::string word_before(const std::string& body, size_t end) {
+  size_t k = end;
+  while (k > 0 && (body[k - 1] == ' ' || body[k - 1] == '\t')) --k;
+  size_t w = k;
+  while (w > 0 && (std::isalnum(static_cast<unsigned char>(body[w - 1])) || body[w - 1] == '_')) --w;
+  return body.substr(w, k - w);
+}
+
+// True when `body` (one line, leading whitespace removed, not a comment
+// line) holds `call` as a bare statement whose answer nothing reads: at the
+// line's start; after `;`, `{` or `}`; as the body of an `if (...)`,
+// `while (...)`, `for (...)`, `else` or `do` on the same line; or behind a
+// `(void)` cast. A call whose answer is used follows `if (`, `=`, `return`,
+// `!`, a value cast or a type (its definition). An occurrence after a `//`
+// on the line is a comment.
+static bool bare_call(const std::string& body, const std::string& call) {
+  const size_t comment = body.find("//");
+  for (size_t at = body.find(call); at != std::string::npos; at = body.find(call, at + 1)) {
+    if (comment != std::string::npos && at > comment) break;
+    if (at > 0) {
+      // `d.sha256(` is the whole name; `x.mbedtls_sha256(` is not a call of it.
+      const char prev = body[at - 1];
+      if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_' || prev == '.') continue;
+    }
+    size_t k = at;
+    while (k > 0 && (body[k - 1] == ' ' || body[k - 1] == '\t')) --k;
+    if (k == 0) return true;
+    const char before = body[k - 1];
+    if (before == ';' || before == '{' || before == '}') return true;
+    if (before == ')') {
+      // The '(' that closes: a `(void)` cast, or an if/while/for condition.
+      size_t open = k - 1;
+      int depth = 0;
+      for (size_t j = k; j-- > 0;) {
+        if (body[j] == ')') ++depth;
+        if (body[j] == '(' && --depth == 0) {
+          open = j;
+          break;
+        }
+      }
+      if (depth == 0 && open < k - 1) {
+        std::string inside = body.substr(open + 1, k - 2 - open);
+        inside.erase(std::remove(inside.begin(), inside.end(), ' '), inside.end());
+        if (inside == "void") return true;
+        const std::string kw = word_before(body, open);
+        if (kw == "if" || kw == "while" || kw == "for") return true;
+      }
+    }
+    const std::string kw = word_before(body, k);
+    if (kw == "else" || kw == "do") return true;
+  }
+  return false;
+}
+
 static void test_sources() {
+  // The tripwire itself, on lines written to pass and to fail it.
+  struct ScanCase {
+    const char* line;
+    const char* call;
+    bool bare;
+  };
+  const ScanCase scan_cases[] = {
+      {"mbedtls_sha256_update(&c, p, n);", "mbedtls_sha256_update(", true},
+      {"(void)hash_mac(mac, h);", "hash_mac(", true},
+      {"(void) mbedtls_sha256_finish(&c, out);", "mbedtls_sha256_finish(", true},
+      {"x = 1; mbedtls_sha256_update(&c, p, n);", "mbedtls_sha256_update(", true},
+      {"if (ok) { mbedtls_sha256_starts(&c, 0); }", "mbedtls_sha256_starts(", true},
+      {"} mbedtls_sha256(in, n, out, 0);", "mbedtls_sha256(", true},
+      {"if (ready) mbedtls_sha256_update(&c, p, n);", "mbedtls_sha256_update(", true},
+      {"for (size_t i = 0; i < n; i++) hash_mac(m[i], h);", "hash_mac(", true},
+      {"else hash_indices(fp, bits, k, idx);", "hash_indices(", true},
+      {"rc = (int)mbedtls_sha256(in, n, out, 0);", "mbedtls_sha256(", false},
+      {"if (rc == 0 && (n > 0)) rc = mbedtls_sha256_update(&c, p, n);", "mbedtls_sha256_update(",
+       false},
+      {"if (mbedtls_sha256_update(&c, p, n) != 0) { sha_ok = false; break; }",
+       "mbedtls_sha256_update(", false},
+      {"int ret = mbedtls_sha256_starts(&ctx, 0);", "mbedtls_sha256_starts(", false},
+      {"if (ret == 0) ret = mbedtls_sha256_finish(&ctx, digest);", "mbedtls_sha256_finish(", false},
+      {"return mbedtls_sha256(data, len, out, 0) == 0;", "mbedtls_sha256(", false},
+      {"if (!d.sha256(image, len, digest)) {", "d.sha256(", false},
+      {"[[nodiscard]] static bool hash_mac(const uint8_t mac[6], uint8_t out[4]) {", "hash_mac(",
+       false},
+      {"if (!hash_mac(mac, h)) continue;  // x; hash_mac(", "hash_mac(", false},
+      {"if (!rehash_mac(mac, h)) return; my_hash_mac(m, h);", "hash_mac(", false},
+  };
+  for (const ScanCase& sc : scan_cases) {
+    CHECK_MSG(bare_call(sc.line, sc.call) == sc.bare,
+              std::string("the scan reads `") + sc.line + "` as " + (sc.bare ? "not " : "") +
+                  "a bare call");
+  }
+
   const char* files[] = {"vault_snapshot.cpp", "usb_evidence_drive.cpp", "familiar.cpp",
                          "wifi_presence.h", "mesh_crypto.cpp", "evidence_update_verify.cpp"};
-  // A call whose answer is used never starts its statement: it follows
-  // `if (`, `=`, `return` or `!`.
   const char* calls[] = {"mbedtls_sha256(", "mbedtls_sha256_starts(", "mbedtls_sha256_update(",
                          "mbedtls_sha256_finish(", "sha256_key_id(", "hash_indices(",
                          "hash_mac(", "d.sha256("};
@@ -1043,7 +1170,7 @@ static void test_sources() {
       for (const char* c : calls) {
         if (body.find(c) == std::string::npos) continue;
         ++seen;
-        CHECK_MSG(body.rfind(c, 0) != 0,
+        CHECK_MSG(!bare_call(body, c),
                   std::string(name) + ":" + std::to_string(line_no) + ": a bare call: " + body);
       }
     }

@@ -370,14 +370,19 @@ static void load_config_from(NvsMainSession& nvs) {
   g_cfg.cooldown_s = (uint16_t)cool;
 
   if (nvs->getBytesLength(NVS_KEY_PUB) == vault_logic::PUBKEY_SIZE) {
-    /* Adopted only with its key id (sweep F364): a key whose id did not
-     * compute stays unadopted this boot, so the vault answers "no key" and
-     * seals nothing rather than stamp headers with a key id nobody can
-     * match. The stored key is left as it is; the next boot tries again. */
-    uint8_t pub[vault_logic::PUBKEY_SIZE];
+    /* Adopted only when all of it read back, and with its key id (sweep
+     * F364): a key that did not read back, or whose id did not compute,
+     * stays unadopted this boot, so the vault answers "no key" and seals
+     * nothing rather than seal to whatever the read buffer held or stamp
+     * headers with a key id nobody can match. The stored key is left as it
+     * is; the next boot tries again. */
+    uint8_t pub[vault_logic::PUBKEY_SIZE] = {};
     uint8_t key_id[vault_logic::KEY_ID_SIZE];
-    nvs->getBytes(NVS_KEY_PUB, pub, vault_logic::PUBKEY_SIZE);
-    if (sha256_key_id(pub, key_id)) {
+    if (nvs->getBytes(NVS_KEY_PUB, pub, vault_logic::PUBKEY_SIZE) !=
+        vault_logic::PUBKEY_SIZE) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
+                 "Vault unlock key not loaded", "key read failed");
+    } else if (sha256_key_id(pub, key_id)) {
       memcpy(g_pubkey, pub, sizeof(g_pubkey));
       memcpy(g_key_id, key_id, sizeof(g_key_id));
       g_has_pubkey = true;

@@ -36,7 +36,10 @@ void sha256_domain(const char* domain,
    * this is the canary library's ESP_IDF_VERSION_MAJOR >= 5 body, step for
    * step: every answer checked, and the output zeroed when one is an error
    * (sweep F364), so it never holds a part-written digest or the stack's
-   * old bytes. The signature stays void because ble_scan.cpp, which calls
+   * old bytes. It was diffed against that body by hand when it was copied;
+   * neither check_mesh_sync.sh nor check_ble_scan_sync.sh covers
+   * mesh_crypto.*, so a change to either copy must be made to both by hand.
+   * The signature stays void because ble_scan.cpp, which calls
    * it, is byte-identical with the canary tree (check_ble_scan_sync.sh),
    * whose sha256_domain() is void. Its callers' inputs are short — ble_scan's
    * hashed beacon id (a 30-byte domain, a 32-byte key and a 6-byte MAC: 68
