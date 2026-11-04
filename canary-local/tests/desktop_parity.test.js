@@ -5536,13 +5536,49 @@ function cSourcesUnder(root) {
 }
 
 // The C/C++ sources the Vision firmware builds from, read off
-// canary-vision.ini rather than typed, so a new env or a new shared TU joins
-// the scan by itself: every source under firmware/projects/canary-vision
-// (src/, include/, secrets/), every include directory an env adds outside
-// firmware/common (its Vision-only config, each env's board pins), and each
-// firmware/common translation unit a build_src_filter compiles. What the
-// scan does NOT read: the headers under firmware/common, which every product
-// shares and which those TUs and the Vision sources include.
+// canary-vision.ini rather than typed, so a new env, a new shared TU or a new
+// library directory joins the scan by itself. A source reaches a Vision build
+// three ways, and the scan reads a superset of each:
+//   - the project itself: every source under firmware/projects/canary-vision
+//     (src/, include/, secrets/);
+//   - an include directory an env adds (-I): every source under one outside
+//     firmware/common (its Vision-only config, each env's board pins), and
+//     every header under one inside it. firmware/common is shared by every
+//     product, so all of its headers are read, not only the ones the Vision
+//     includes (sweep F414): a superset, conservative like the #if 0 rule
+//     below, and no include resolver to get wrong;
+//   - a compiled file outside the project: each translation unit a
+//     build_src_filter names, and every source under each lib_extra_dirs
+//     directory. PlatformIO's dependency finder takes every folder in a
+//     lib_extra_dirs directory as a library and compiles a library's sources
+//     when the build includes one of its headers, which is how
+//     firmware/common/boot/boot_banner.cpp reaches the Vision today (its
+//     library.json puts its include directory at firmware/common, and the
+//     Vision includes boot/boot_banner.h). The Vision's lib_extra_dirs is
+//     firmware/common, so the whole of firmware/common is read.
+// Nothing else is: firmware/canary and the other projects reach no Vision
+// build (no -I, no build_src_filter entry and no lib_extra_dirs names them).
+const C_HEADER = /\.(?:h|hh|hpp|hxx)$/;
+
+// The paths a PlatformIO multi-line key lists, across every section of `ini`
+// that sets it: the `key =` line's own value and its indented continuation
+// lines, comment lines and inline `;` comments dropped.
+function iniListValues(ini, key) {
+  const out = [];
+  const lines = ini.split("\n");
+  lines.forEach((line, i) => {
+    const m = new RegExp(`^${key}\\s*=(.*)$`).exec(line);
+    if (!m) return;
+    const vals = [m[1]];
+    for (let j = i + 1; j < lines.length && /^[ \t]/.test(lines[j]); j++) vals.push(lines[j]);
+    for (const v of vals) {
+      const t = v.replace(/(^|\s);.*$/, "").trim();
+      if (t && !t.startsWith("#")) out.push(t);
+    }
+  });
+  return out;
+}
+
 function visionSources(firmwareRoot) {
   const project = join(firmwareRoot, "projects/canary-vision");
   const common = join(firmwareRoot, "common");
@@ -5550,12 +5586,17 @@ function visionSources(firmwareRoot) {
   const files = new Set(cSourcesUnder(project));
   for (const m of ini.matchAll(/-I\$\{PROJECT_DIR\}\/(\S+)/g)) {
     const dir = resolve(project, m[1]);
-    if (dir === common || dir.startsWith(common + sep)) continue;
-    if (existsSync(dir)) for (const f of cSourcesUnder(dir)) files.add(f);
+    if (!existsSync(dir)) continue;
+    const shared = dir === common || dir.startsWith(common + sep);
+    for (const f of cSourcesUnder(dir)) if (!shared || C_HEADER.test(f)) files.add(f);
   }
   for (const m of ini.matchAll(/^\s*\+<(\.\.\/[^>*]+)>/gm)) {
     const f = resolve(project, "src", m[1]);
     if (C_SOURCE.test(f)) files.add(f);
+  }
+  for (const rel of iniListValues(ini, "lib_extra_dirs")) {
+    const dir = resolve(project, rel);
+    if (existsSync(dir)) for (const f of cSourcesUnder(dir)) files.add(f);
   }
   return [...files].sort();
 }
@@ -5629,7 +5670,7 @@ function sscmaIdCalls(firmwareRoot) {
 
 test("F384: the module-id deny reaches every Vision source, and reads code, not comments or strings", () => {
   // The walk: the project tree, headers included, the Vision-only include
-  // directories and the shared TUs the build compiles.
+  // directories, the shared TUs the build compiles and firmware/common whole.
   const sources = visionSources(FIRMWARE);
   const files = sources.map((f) => relative(FIRMWARE, f).split("\\").join("/"));
   const ini = read(join(FIRMWARE, VISION_INI));
@@ -5641,14 +5682,34 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
                       "boards/esp32-c3/pins/pins.h", ...tus]) {
     assert.ok(files.includes(want), `the scan no longer reads ${want}`);
   }
-  // Every include directory an env adds outside firmware/common exists (a
-  // renamed one would otherwise drop out of the scan in silence), and
-  // nothing under firmware/common is read but the TUs the build compiles.
+  // Every include and library directory an env names exists (a renamed one
+  // would otherwise drop out of the scan in silence).
   for (const m of ini.matchAll(/-I\$\{PROJECT_DIR\}\/(\S+)/g)) {
     assert.ok(existsSync(resolve(VISION_FW, m[1])), `canary-vision.ini adds ${m[1]}, which is not there`);
   }
-  assert.deepStrictEqual(files.filter((f) => f.startsWith("common/")).sort(), [...new Set(tus)].sort(),
-    "the scan reads firmware/common beyond the TUs the Vision compiles");
+  const libDirs = iniListValues(ini, "lib_extra_dirs");
+  assert.ok(libDirs.length >= 4, `canary-vision.ini names ${libDirs.length} lib_extra_dirs`);
+  for (const d of libDirs) assert.ok(existsSync(resolve(VISION_FW, d)), `canary-vision.ini's lib_extra_dirs ${d} is not there`);
+  // firmware/common is read whole (F414): every header, which -I../../common
+  // offers every Vision source, and every source, since it is the Vision's
+  // lib_extra_dirs. The library route is live, not hypothetical:
+  // boot_banner.cpp is in no build_src_filter, and it is compiled for the
+  // Vision because firmware/common/boot is a library whose include
+  // directory is firmware/common and main.cpp includes boot/boot_banner.h.
+  const common = cSourcesUnder(join(FIRMWARE, "common")).map((f) => relative(FIRMWARE, f).split("\\").join("/"));
+  assert.ok(common.filter((f) => C_HEADER.test(f)).length > 100, `firmware/common holds ${common.length} sources`);
+  assert.deepStrictEqual(files.filter((f) => f.startsWith("common/")), [...common].sort(),
+    "the scan must read every source under firmware/common, the Vision's -I and lib_extra_dirs directory");
+  assert.ok(new Set(libDirs.map((d) => resolve(VISION_FW, d))).has(join(FIRMWARE, "common")),
+    "the Vision's lib_extra_dirs no longer names firmware/common: say what the scan reads instead");
+  assert.strictEqual(JSON.parse(read(join(FIRMWARE, "common/boot/library.json"))).build.includeDir, "..");
+  assert.match(read(join(VISION_FW, "src/main.cpp")), /^#include "boot\/boot_banner\.h"$/m,
+    "the Vision no longer includes boot/boot_banner.h: say how boot_banner.cpp reaches it, or that it does not");
+  assert.ok(files.includes("common/boot/boot_banner.cpp"), "the scan no longer reads the library source the Vision links");
+  // Nothing from another product's tree: no -I, build_src_filter entry or
+  // lib_extra_dirs reaches firmware/canary or another project.
+  assert.deepStrictEqual(files.filter((f) => !/^(?:projects\/canary-vision|common|configs\/canary-vision|boards)\//.test(f)), [],
+    "the scan reads a file outside the Vision's own tree, its config, its board pins and firmware/common");
   assert.ok(files.filter((f) => f.startsWith("projects/canary-vision/src/")).length > 5, `the scan reads ${files.length} files`);
   // Where the tree names ID( today (vision_mgr.cpp and its header explain
   // why it is never called), it does so in comments: the code has none.
@@ -5687,6 +5748,17 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
     const qualified = plant(`${P}src/vision/vision_mgr.cpp`, "\nauto planted_qualified = &SSCMA::ID ;\nint q = SSCMA::ID(true);\n");
     const config = plant("configs/canary-vision/default/config.h", "\n#define PLANTED_ID() (AI.ID())\n");
     const shared = plant(tus[0], "\nint planted_shared(SSCMA& m) { return m.ID(); }\n");
+    // F414: a header under firmware/common the Vision includes (wifi_mgr.cpp
+    // reads network/wifi_join_policy.h), and the library source the build
+    // links through lib_extra_dirs. Before F414 the scan read neither.
+    assert.match(read(join(mirror, `${P}src/net/wifi_mgr.cpp`)), /#include "network\/wifi_join_policy\.h"/);
+    const sharedHeader = plant("common/network/wifi_join_policy.h", "\ninline int planted_policy(SSCMA* ai) { return ai->ID(); }\n");
+    const library = plant("common/boot/boot_banner.cpp", "\nint planted_banner() { return AI.ID(); }\n");
+    // And a file no Vision build reaches (firmware/canary is the flagship's
+    // tree: no -I, build_src_filter entry or lib_extra_dirs names it) is not
+    // read, so a call there is not this deny's to find.
+    mkdirSync(join(mirror, "canary/lib/planted"), { recursive: true });
+    writeFileSync(join(mirror, "canary/lib/planted/planted.h"), "inline int planted_flagship() { return AI.ID(); }\n");
     // One digit separator per line: the old scan opened a character literal
     // at it and blanked the rest of that line, the call after it included.
     const separator = plant(`${P}src/main.cpp`, "\nstatic int planted_sep = 1'000; static int planted_after = AI.ID();\n");
@@ -5695,7 +5767,7 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
     plant(`${P}src/main.cpp`, "\n// AI.ID() is never called here\n/* nor AI.ID( */\nstatic const char* k_planted = \"AI.ID()\";\n" +
       "static const char* k_raw = R\"x(AI.ID() and \"quotes\")x\";\nstatic const char k_c = 'I'; // ID(\n" +
       "// a comment that runs on \\\n   AI.ID(); still the comment\n");
-    assert.deepStrictEqual(sscmaIdCalls(mirror).sort(), [arrow, header, main, qualified, config, shared, separator, hexSeparator, prefix].sort(),
+    assert.deepStrictEqual(sscmaIdCalls(mirror).sort(), [arrow, header, main, qualified, config, shared, sharedHeader, library, separator, hexSeparator, prefix].sort(),
       "the scan must find each planted call where it was planted, and nothing in a comment or a string");
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -5734,9 +5806,11 @@ test("Vision module proof: the desktop reads module_ok and the firmware's own bo
   // identifier: no AI.ID() call in any form, in vision_mgr.cpp or in any
   // other source the Vision firmware builds from as canary-vision.ini names
   // them (the project's src/, include/ and secrets/, its config and board
-  // pins, and the firmware/common TUs it compiles; the shared headers under
-  // firmware/common are not read). The F384 test plants calls to prove the
-  // scan reaches each kind of file and reads only code.
+  // pins, and the whole of firmware/common: its shared headers, the TUs a
+  // build_src_filter compiles and the library sources lib_extra_dirs offers
+  // the build, F414). The F384 test plants calls to prove the scan reaches
+  // each kind of file, a shared header and a library source included, and
+  // reads only code.
   assert.ok(!/\bAI\.ID\s*\(/.test(mgr), "vision_mgr.cpp calls AI.ID() again");
   assert.deepStrictEqual(sscmaIdCalls(FIRMWARE), [],
     "the Vision firmware calls the SSCMA module's ID() again — its id is a per-unit identifier this design never reads");
