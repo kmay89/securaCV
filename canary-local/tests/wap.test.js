@@ -112,6 +112,27 @@ test("AP channel, client cap and server ports are the sketch's own (F277)", () =
   assert.strictEqual(data.ap.http_port, num(/[^\w.]config\.server_port\s*=\s*(\d+);/, "the HTTP-only server's port"));
 });
 
+// Sweep F366: the mDNS services' ports were typed in gen_wap.py, so a start
+// that advertised another port left the page green. Each one listed is now
+// the one every mDNS start in the sketch registers (the generator refuses
+// the forms it cannot read; this holds the committed page to the sketch).
+test("each mDNS service and its port is the one every mDNS start registers (F366)", () => {
+  const code = ino.split("\n").filter((l) => !/^\s*(\/\/|\/?\*)/.test(l));
+  const begins = code.filter((l) => /\bMDNS\.begin\(/.test(l)).length;
+  assert.ok(begins >= 1, "no MDNS.begin() in canary_wap.ino");
+  const regs = code.filter((l) => /\bMDNS\.addService\(/.test(l));
+  assert.strictEqual(regs.length, 2 * begins, "each mDNS start registers two services: " + regs.join(" | "));
+  assert.deepStrictEqual(data.ap.mdns_services.map((s) => s.service), ["_http._tcp", "_securacv._tcp"]);
+  const portOf = (tok) => (tok === "HTTPS_PORT" ? data.ap.https_port : Number(tok));
+  for (const s of data.ap.mdns_services) {
+    const name = s.service.slice(1, -"._tcp".length);
+    const mine = regs.map((l) => l.match(/^\s*MDNS\.addService\("([a-z0-9-]+)",\s*"tcp",\s*([1-9]\d*|HTTPS_PORT)\);/))
+      .filter((m) => m && m[1] === name);
+    assert.strictEqual(mine.length, begins, "not every mDNS start registers " + name);
+    for (const m of mine) assert.strictEqual(s.port, portOf(m[2]), s.service + "'s port is not the sketch's");
+  }
+});
+
 test("captive.html is the firmware's CAPTIVE_PORTAL_HTML, verbatim", () => {
   const m = setupPageH.match(/R"HTML\(([\s\S]*)\)HTML"/);
   assert.ok(m, "CAPTIVE_PORTAL_HTML not found");
@@ -231,6 +252,7 @@ test("every MQTT topic example is keyed as the firmware publishes it (sweep A32)
   assert.ok(csiMqttCpp.includes('const char* pl = state ? "ON" : "OFF";'));
   assert.ok(csiMqttCpp.includes('const char* pl = muted ? "muted" : "live";'));
 });
+
 
 test("the egress example is the body csi_mqtt::publish_egress() sends (sweep F149)", () => {
   const t = data.mqtt.topics.find((x) => x.suffix === "egress");

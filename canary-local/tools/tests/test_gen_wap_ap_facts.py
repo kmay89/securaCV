@@ -18,12 +18,24 @@ port_secure and writes it over ssl_config.httpd.server_port, so the old
 reader's anchor, a write to httpd.server_port, bound nothing. A write there
 is now refused, as is any other spelling of port_secure or of the constant.
 
+The mDNS services' ports were typed in gen_wap.py (sweep F366, #1836's
+filing): a start that advertised another port left the page green and
+wrong. They are read now from the MDNS.addService() calls at each of the
+sketch's three mDNS starts, each of which must register exactly the http and
+the securacv service, and the starts must agree. A port it cannot read, a
+call in a form it cannot read, two starts that disagree, a registration
+under a condition it does not evaluate and an mDNS call in another file of
+the sketch are each refused with the file and the line; a registration the
+compiler never sees (in a comment, a string, under #if 0) is not counted,
+and at the sketch's port 80 the page does not move.
+
     python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +46,14 @@ from pathlib import Path
 # The HTTPS config's one port line and the constant it takes (sweep F400).
 PS = "ssl_config.port_secure = HTTPS_PORT;"
 CONST = "static const int   HTTPS_PORT          = 443;"
+# The sketch's mDNS registrations (sweep F366). Its three starts write the
+# same two lines, told apart here by their indentation: the re-announce after
+# a rename (mdns_reannounce), the re-announce once the station has an
+# address, and the boot announce.
+HTTP = 'MDNS.addService("http", "tcp", 80);'
+SECURACV = 'MDNS.addService("securacv", "tcp", 80);'
+START_INDENT = {"rename": "  ", "sta": "          ", "boot": "    "}
+INO_NAME = "canary_wap.ino"
 
 TOOLS = Path(__file__).resolve().parents[1]
 REPO = TOOLS.parents[1]
@@ -305,6 +325,261 @@ class SketchApFacts(unittest.TestCase):
         self.assertIsInstance(got, dict, f"refused: {got}")
         self.assertEqual(got["ap"]["ssid_prefix"], "Canary-")
         self.assertTrue(got["ap"]["ssid_example"].startswith("Canary-wap-"), got["ap"]["ssid_example"])
+
+    # -- mDNS (sweep F366) ------------------------------------------------
+
+    def at(self, start: str, line: str) -> str:
+        """The text of `line` as the named start writes it, newline first."""
+        return f"\n{START_INDENT[start]}{line}"
+
+    def line_no(self, needle: str) -> int:
+        """The 1-based line of the scratch sketch that holds `needle` (once), or is it."""
+        lines = (self.root / INO).read_text(encoding="utf-8").split("\n")
+        hits = [i + 1 for i, ln in enumerate(lines) if ln.strip() == needle]
+        hits = hits or [i + 1 for i, ln in enumerate(lines) if needle in ln]
+        self.assertEqual(len(hits), 1, f"{needle!r} is on lines {hits}")
+        return hits[0]
+
+    def services(self, **ports):
+        want = json.loads(json.dumps(self.base["ap"]["mdns_services"]))
+        for s in want:
+            s["port"] = ports.get(s["service"].split(".")[0].lstrip("_"), s["port"])
+        return want
+
+    def assert_refused_at(self, why: str, needle: str) -> None:
+        """Refused for `why`, naming the sketch and the line that holds `needle`."""
+        line = self.line_no(needle)
+        got = self.generate()
+        self.assertIsInstance(got, str, "generated a page from a sketch it cannot read")
+        self.assertIn(why, got)
+        self.assertRegex(got, rf"\b{re.escape(INO_NAME)}:{line}\b")
+
+    def test_the_committed_mdns_services_are_the_sketchs_at_port_80(self):
+        self.assertEqual([(s["service"], s["port"]) for s in self.base["ap"]["mdns_services"]],
+                         [("_http._tcp", 80), ("_securacv._tcp", 80)])
+
+    def test_each_mdns_port_is_the_one_every_start_registers(self):
+        for svc, line in (("http", HTTP), ("securacv", SECURACV)):
+            with self.subTest(service=svc):
+                try:
+                    self.edit(INO, line, line.replace(" 80);", " 8080);"), count=3)
+                    self.assert_moves(mdns_services=self.services(**{svc: 8080}))
+                finally:
+                    self.tearDown()
+
+    def test_an_mdns_port_spelled_https_port_is_that_constants(self):
+        self.edit(INO, HTTP, HTTP.replace(" 80);", " HTTPS_PORT);"), count=3)
+        self.assert_moves(mdns_services=self.services(http=443))
+
+    def test_an_mdns_port_the_generator_cannot_read_is_refused(self):
+        # Each spelling at one start only, so a reader that skipped it would
+        # see three agreeing starts and answer "equal". 0120 is octal 80 to
+        # the compiler; HTTP_PORT is no constant the generator reads (the
+        # page's http_port is read from the server configs, not a name).
+        for rhs in ("0x50", "HTTP_PORT", "(80)", "80 /* web */", "80u", "080", "0120", "0", "-80", "80 + 0",
+                    "(uint16_t)80", "kHttpPort", "80.0"):
+            with self.subTest(port=rhs):
+                try:
+                    new = HTTP.replace(" 80);", f" {rhs});")
+                    self.edit(INO, self.at("boot", HTTP), self.at("boot", new))
+                    self.assert_refused_at("registers an mDNS service in a form this generator cannot read", new)
+                finally:
+                    self.tearDown()
+
+    def test_an_mdns_call_the_generator_cannot_read_is_refused(self):
+        boot_http = self.at("boot", HTTP)
+        for new, needle in (
+                ('MDNS.addService(String("http"), "tcp", 80);', 'String("http")'),
+                ('MDNS.addService("http", "udp", 80);', '"udp"'),
+                ('MDNS.addService("_http", "_tcp", 80);', '"_http"'),
+                ('MDNS.addService("http", "tcp", 80); MDNS.addService("http", "tcp", 8080);', "8080"),
+                ('MDNS.addService("http", "tcp",\n                    80);', 'MDNS.addService("http", "tcp",'),
+                ('if (true) MDNS.addService("http", "tcp", 80);', "if (true)"),
+                ('/* web */ MDNS.addService("http", "tcp", 80);', "/* web */"),
+                ('MDNS.addService("http", "tcp", 80);  /* web */', "/* web */"),
+                ('/* the http service:\n    */ MDNS.addService("http", "tcp", 80);', "*/ MDNS"),
+                ('mdns.addService("http", "tcp", 80);', "mdns.addService"),
+                ('MDNS.enableArduino(3232);\n    ' + HTTP, "enableArduino"),
+                ('MDNS.enableWorkstation();\n    ' + HTTP, "enableWorkstation"),
+                ('mdns_service_add(nullptr, "_http", "_tcp", 8080, nullptr, 0);\n    ' + HTTP, "mdns_service_add")):
+            with self.subTest(new=new):
+                try:
+                    self.edit(INO, boot_http, f"\n{START_INDENT['boot']}{new}")
+                    self.assert_refused_at("registers an mDNS service in a form this generator cannot read", needle)
+                finally:
+                    self.tearDown()
+
+    def test_an_mdns_port_out_of_range_is_refused(self):
+        for value in ("65536", "99999"):
+            with self.subTest(value=value):
+                try:
+                    new = HTTP.replace(" 80);", f" {value});")
+                    self.edit(INO, self.at("boot", HTTP), self.at("boot", new))
+                    self.assert_refused_at("which is not a TCP port", new)
+                finally:
+                    self.tearDown()
+
+    def test_mdns_starts_that_disagree_are_refused(self):
+        for start in START_INDENT:
+            for svc, line in (("http", HTTP), ("securacv", SECURACV)):
+                with self.subTest(start=start, service=svc):
+                    try:
+                        new = line.replace(" 80);", " 8080);")
+                        self.edit(INO, self.at(start, line), self.at(start, new))
+                        self.assert_refused_at(f"the mDNS starts disagree on the {svc} service's port", new)
+                    finally:
+                        self.tearDown()
+
+    def test_a_start_that_does_not_register_a_service_is_refused(self):
+        # Deleted at any start, or at the boot announce commented out, wrapped
+        # in a block comment or under #if 0: that start no longer advertises
+        # the service, whatever the others do, and the refusal names the
+        # start's MDNS.begin() line (the starts are in START_INDENT's order).
+        begins = [i + 1 for i, ln in enumerate(self.pristine[INO].split("\n"))
+                  if "MDNS.begin(g_device.mdns_hostname)" in ln]
+        self.assertEqual(len(begins), len(START_INDENT), begins)
+        begin = dict(zip(START_INDENT, begins))
+        cases = [(start, "") for start in START_INDENT]
+        cases += [("boot", wrap) for wrap in ("// {}", "/*\n{}\n*/", "#if 0\n{}\n#endif")]
+        for start, wrap in cases:
+            for svc, line in (("http", HTTP), ("securacv", SECURACV)):
+                with self.subTest(start=start, service=svc, wrap=wrap):
+                    try:
+                        self.edit(INO, self.at(start, line),
+                                  f"\n{START_INDENT[start]}" + wrap.format(line) if wrap else "")
+                        got = self.generate()
+                        self.assertIsInstance(got, str, "generated a page from a sketch it cannot read")
+                        self.assertIn(f"{INO_NAME}:{begin[start]}: the mDNS start here registers no {svc} service",
+                                      got)
+                    finally:
+                        self.tearDown()
+
+    def test_a_third_service_or_a_second_registration_is_refused(self):
+        boot_http = self.at("boot", HTTP)
+        for extra, why in (('MDNS.addService("ssh", "tcp", 22);', "registers a 'ssh' service"),
+                           (HTTP.replace(" 80);", " 8080);"), "registers 'http' twice"),
+                           (HTTP + " // the same again", "registers 'http' twice")):
+            with self.subTest(extra=extra):
+                try:
+                    self.edit(INO, boot_http, boot_http + self.at("boot", extra))
+                    self.assert_refused_at(why, extra)
+                finally:
+                    self.tearDown()
+
+    def test_a_registration_the_compiler_never_sees_is_not_counted(self):
+        # A second http line at 8080 in a comment, a log string, or a dead
+        # branch moves nothing; in the #else of an #if 0, which is compiled,
+        # it is counted.
+        boot_http = self.at("boot", HTTP)
+        other = HTTP.replace(" 80);", " 8080);")
+        for wrap in ("// {}", "/*\n    {}\n    */", "#if 0\n    {}\n#endif",
+                     "#if 0\n#if FEATURE_X\n    {}\n#endif\n#endif",
+                     'log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "{}", nullptr);'):
+            body = wrap.format(other.replace('"', '\\"') if wrap.startswith("log_health") else other)
+            with self.subTest(wrap=wrap):
+                try:
+                    self.edit(INO, boot_http, boot_http + f"\n{START_INDENT['boot']}{body}")
+                    self.assertEqual(self.generate(), self.base)
+                finally:
+                    self.tearDown()
+        with self.subTest(branch="#else"):
+            try:
+                self.edit(INO, boot_http, f"\n#if 0\n    {HTTP}\n#else\n    {other}\n#endif")
+                self.assert_refused_at("the mDNS starts disagree on the http service's port", other)
+            finally:
+                self.tearDown()
+
+    def test_a_registration_under_a_condition_not_evaluated_is_refused(self):
+        # The reader evaluates #if 0 and its #else only. Under any other
+        # condition the compiler may drop the line, and the page would list a
+        # service the device does not advertise: refused, naming the line and
+        # the condition's line, for the start's only http line and for the
+        # MDNS.begin() itself.
+        boot_http = self.at("boot", HTTP)
+        for wrap in ("#if FEATURE_MDNS_HTTP\n{}\n#endif", "#ifdef MDNS_HTTP\n{}\n#endif",
+                     "#ifndef NO_MDNS_HTTP\n{}\n#endif", "#if 1\n{}\n#endif",
+                     "#if 0\n#elif FEATURE_X\n{}\n#endif", "#if FEATURE_X\n#else\n{}\n#endif",
+                     "#if FEATURE_X\n#if 0\n#else\n{}\n#endif\n#endif"):
+            with self.subTest(wrap=wrap):
+                try:
+                    self.edit(INO, boot_http, "\n" + wrap.format(boot_http.lstrip("\n")))
+                    lines = (self.root / INO).read_text(encoding="utf-8").split("\n")
+                    line = lines.index(boot_http.lstrip("\n")) + 1
+                    cond = next(n + 1 for n in range(line - 1, -1, -1)
+                                if lines[n].startswith(("#if F", "#ifdef", "#ifndef", "#if 1", "#elif")))
+                    got = self.generate()
+                    self.assertIsInstance(got, str, "generated a page from a sketch it cannot read")
+                    self.assertIn(f"{INO_NAME}:{line}: the sketch starts mDNS or registers a service under a "
+                                  "condition this generator does not evaluate", got)
+                    self.assertIn(f"under line {cond}: ", got)
+                finally:
+                    self.tearDown()
+        with self.subTest(begin="#if FEATURE_MDNS"):
+            begin = "\n  if (MDNS.begin(g_device.mdns_hostname)) {"
+            self.edit(INO, begin, "\n#if FEATURE_MDNS" + begin + "\n#endif")
+            cond = self.line_no("#if FEATURE_MDNS")
+            got = self.generate()
+            self.assertIsInstance(got, str, "generated a page from a sketch it cannot read")
+            self.assertIn(f"{INO_NAME}:{cond + 1}: the sketch starts mDNS or registers a service under a "
+                          f"condition this generator does not evaluate", got)
+            self.assertIn(f"under line {cond}: #if FEATURE_MDNS", got)
+
+    def test_a_fourth_start_is_held_to_the_same_rules(self):
+        # An agreeing fourth start moves nothing (the page's services are
+        # still what the device advertises); one that disagrees or registers
+        # nothing is refused at its line.
+        anchor = "static void mdns_reannounce() {"
+
+        def fourth(body: str) -> str:
+            return ("static void mdns_fourth() {\n  if (MDNS.begin(g_device.mdns_hostname)) {\n"
+                    + body + "  }\n}\n\n" + anchor)
+
+        cases = ((f"    {HTTP}\n    {SECURACV}\n", None, None),
+                 (f"    {HTTP.replace(' 80);', ' 8080);')}\n    {SECURACV}\n",
+                  "the mDNS starts disagree on the http service's port", "8080"),
+                 ("", "registers no http and no securacv service", "static void mdns_fourth() {"))
+        for body, why, needle in cases:
+            with self.subTest(body=body):
+                try:
+                    self.edit(INO, anchor, fourth(body))
+                    if why is None:
+                        self.assertEqual(self.generate(), self.base)
+                    else:
+                        got = self.generate()
+                        self.assertIsInstance(got, str, "generated a page from a sketch it cannot read")
+                        self.assertIn(why, got)
+                        line = self.line_no(needle) + (1 if needle.startswith("static void") else 0)
+                        self.assertRegex(got, rf"\b{re.escape(INO_NAME)}:{line}\b")
+                finally:
+                    self.tearDown()
+
+    def test_a_registration_before_any_start_is_refused(self):
+        anchor = "static void mdns_sync_broker_txt() {"
+        self.edit(INO, anchor, f"static void mdns_early() {{\n  {HTTP}\n}}\n\n{anchor}")
+        got = self.generate()
+        self.assertIsInstance(got, str, "generated a page from a sketch it cannot read")
+        self.assertIn("registers an mDNS service before any MDNS.begin()", got)
+        # The planted line is the first of the file's 2-space http lines.
+        lines = (self.root / INO).read_text(encoding="utf-8").split("\n")
+        self.assertIn(f"{INO_NAME}:{lines.index('  ' + HTTP) + 1}:", got)
+
+    def test_an_mdns_call_in_another_sketch_file_is_refused(self):
+        extra = self.root / SKETCH / "mdns_extra.cpp"
+        for text, refused in (('void mdns_extra() {\n  MDNS.addService("http", "tcp", 8080);\n}\n', True),
+                              ("void mdns_extra() {\n  if (MDNS.begin(\"canary\")) {}\n}\n", True),
+                              ('void mdns_extra() {\n  mdns_service_port_set("_http", "_tcp", 8080);\n}\n', True),
+                              ('// MDNS.addService("http", "tcp", 8080);\nvoid mdns_extra() {}\n', False)):
+            with self.subTest(text=text):
+                try:
+                    extra.write_text(text, encoding="utf-8")
+                    got = self.generate()
+                    if refused:
+                        self.assertIsInstance(got, str, "generated a page from a sketch it cannot read")
+                        self.assertIn("mdns_extra.cpp:2: mDNS is started or a service registered outside", got)
+                    else:
+                        self.assertEqual(got, self.base)
+                finally:
+                    extra.unlink(missing_ok=True)
 
     def test_wap_server_h_is_not_read(self):
         header = self.root / SKETCH / "wap_server.h"
