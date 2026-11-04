@@ -849,6 +849,45 @@ NVSKEY_INC    = $(BUILD_DIR)/nvs_load_key.inc
 NVSKEY_BIN    = $(BUILD_DIR)/test_nvs_load_key
 NVSKEY_FE_BIN = $(BUILD_DIR)/test_nvs_load_key_require_fe
 
+# The flagship's TLS certificate load fails closed (repo sweep F421,
+# test_tls_load_der.cpp): tls_load_der_from_nvs() answers Loaded, Absent
+# (IDF's NVS says neither entry is stored) or Refused (one line, nothing
+# handed back, both buffers zeroed before they are freed), and initTls()
+# generates a certificate only on Absent, so a stored pair that could not be
+# read is never replaced by one whose pin no phone holds. The load and the
+# store are cut verbatim out of securacv_network.cpp, NvsManager's session
+# and blob calls and secure_zero() out of securacv_crypto.cpp, into one .inc,
+# compiled over stubs/nvs_key and stubs/nvs_manager's lock like the NVSKEY
+# suite above. It also reads securacv_network.cpp (initTls(), which needs
+# the whole network stack, is pinned by text) and the canary tree (no other
+# reader or writer of the two entries).
+TLSDER_NET_SRC     = ../canary/lib/securacv_network/src/securacv_network.cpp
+TLSDER_CRYPTO_SIGS = $(NVSLOCK_SIGS)|size_t NvsManager::getBytes(|size_t NvsManager::putBytes(|void secure_zero(
+TLSDER_NET_SIGS    = static KeyLoad tls_load_der_from_nvs(|static bool tls_store_der_to_nvs(
+TLSDER_HDRS        = $(NVSLOCK_HDRS) $(wildcard stubs/nvs_key/*.h)
+TLSDER_INC         = $(BUILD_DIR)/tls_load_der.inc
+TLSDER_BIN         = $(BUILD_DIR)/test_tls_load_der
+
+# The sibling witnesses' identity-key load fails closed (repo sweep F362,
+# test_witness_key_load_projects.cpp): canary-sense, canary-vision and
+# canary-sentinel draw a new key only when IDF's NVS says none is stored,
+# and every other answer (a failed lookup, a wrong length, a short read, a
+# stored zero key) disables signing for the boot and writes nothing.
+# load_or_generate_keypair() and secure_zero() are cut verbatim out of each
+# project's src/witness.cpp, with the four lines declaring the NVS names and
+# the key buffers taken from the same file (the recipe fails unless it finds
+# all four), into one .inc per project, compiled side by side over
+# stubs/nvs_key and canary-sense's canary/log.h. It also reads the three
+# sources (the functions byte-identical, init()'s refusal, one owner of the
+# key's entry).
+WITKEY_PROJECTS = canary-sense canary-vision canary-sentinel
+WITKEY_SRCS     = $(foreach p,$(WITKEY_PROJECTS),../projects/$(p)/src/witness.cpp)
+WITKEY_SIGS     = void secure_zero(|bool load_or_generate_keypair(
+WITKEY_DECLS    = ^(constexpr const char\* (NVS_NAMESPACE|KEY_PRIV) |uint8_t  s_(priv|pub)\[32\] )
+WITKEY_INCS     = $(foreach p,$(WITKEY_PROJECTS),$(BUILD_DIR)/witness_key_load_$(p).inc)
+WITKEY_HDRS     = ../projects/canary-sense/include/canary/log.h $(wildcard stubs/nvs_key/*.h)
+WITKEY_BIN      = $(BUILD_DIR)/test_witness_key_load_projects
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -1464,6 +1503,35 @@ $(NVSKEY_FE_BIN): test_nvs_load_key.cpp $(NVSKEY_INC) $(NVSKEY_HDRS) Makefile | 
 	$(CXX) $(CXXFLAGS) -DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 -I stubs/nvs_key -I stubs/nvs_manager \
 	    -I ../canary/lib/securacv_crypto/src -I ../canary/lib/securacv_witness/src -I ../common \
 	    -I ../canary/include -I $(BUILD_DIR) test_nvs_load_key.cpp -o $@
+
+$(TLSDER_INC): $(NVSLOCK_SRC) $(TLSDER_NET_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(TLSDER_CRYPTO_SIGS)' -f cut_functions.awk $(NVSLOCK_SRC) > $@.tmp && \
+	awk -v 'sigs=$(TLSDER_NET_SIGS)' -f cut_functions.awk $(TLSDER_NET_SRC) >> $@.tmp && \
+	mv $@.tmp $@
+
+$(TLSDER_BIN): test_tls_load_der.cpp $(TLSDER_INC) $(TLSDER_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
+	    -I ../common -I ../canary/include -I $(BUILD_DIR) test_tls_load_der.cpp -o $@
+
+.PHONY: run-tls-load-der
+run-tls-load-der: $(TLSDER_BIN)
+	./$(TLSDER_BIN) $(TLSDER_NET_SRC) $(NVSKEY_READS)
+run: run-tls-load-der
+
+$(BUILD_DIR)/witness_key_load_%.inc: ../projects/%/src/witness.cpp cut_functions.awk Makefile | $(BUILD_DIR)
+	grep -E '$(WITKEY_DECLS)' $< > $@.tmp
+	@test "$$(wc -l < $@.tmp)" -eq 4 || { \
+	  echo "$<: the NVS names and key buffers moved (expected 4 declaration lines)" >&2; exit 1; }
+	awk -v 'sigs=$(WITKEY_SIGS)' -f cut_functions.awk $< >> $@.tmp && mv $@.tmp $@
+
+$(WITKEY_BIN): test_witness_key_load_projects.cpp $(WITKEY_INCS) $(WITKEY_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I ../projects/canary-sense/include -I $(BUILD_DIR) \
+	    test_witness_key_load_projects.cpp -o $@
+
+.PHONY: run-witness-key-load-projects
+run-witness-key-load-projects: $(WITKEY_BIN)
+	./$(WITKEY_BIN) $(WITKEY_SRCS)
+run: run-witness-key-load-projects
 
 $(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_PIO_SRC) > $@.tmp && mv $@.tmp $@

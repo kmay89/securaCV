@@ -103,6 +103,7 @@ static_assert((int)WIFI_AUTH_WPA2_WPA3_PSK == canary::net::ap_security::kAuthWpa
 #if FEATURE_HTTPS && __has_include("esp_https_server.h") && \
     defined(CONFIG_ESP_HTTPS_SERVER_ENABLE) && CONFIG_ESP_HTTPS_SERVER_ENABLE
   #include "esp_https_server.h"
+  #include "nvs.h"  // tls_load_der_from_nvs(): IDF's own answer for "nothing stored" (sweep F421)
   #define SECURACV_HAS_HTTPS_SERVER 1
 #else
   #define SECURACV_HAS_HTTPS_SERVER 0
@@ -1627,34 +1628,99 @@ static void local_addr_of(httpd_req_t* req, char* out, size_t cap) {
 // never see the difference: the iPhone app pins the SHA-256 of the
 // certificate DER (tls_cert_fp), whatever the key type.
 //
-// Every step logs why it stopped, and the reason lands in m_tls_reason so
-// /api/status tls_mode_reason says it. Serial lines never print key bytes.
+// Every step logs why it stopped, and the reason lands in m_tls_reason,
+// which the boot's "[WARN] TLS unavailable (...)" line prints (main.cpp).
+// startHttpServer() then sets m_tls_reason from tls_policy::decide(), so
+// /api/status tls_mode_reason says decide()'s reason, not initTls()'s.
+// Serial lines never print key bytes.
 
 #if SECURACV_HAS_HTTPS_SERVER
-static bool tls_load_der_from_nvs(uint8_t** cert, size_t* cert_len,
-                                  uint8_t** key, size_t* key_len) {
-  NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return false;
-  const size_t clen = nvs.getBytesLength(NVS_KEY_TLS_CERT);
-  const size_t klen = nvs.getBytesLength(NVS_KEY_TLS_KEY);
+// The stored certificate and its key (sweep F421, the canary-wap's F404
+// answer, with the flagship's F360 probe). Absent only when IDF's NVS says
+// neither entry is stored: no namespace, or neither key in it. That is the
+// one answer initTls() makes and stores a new certificate on. Loaded only
+// when both entries are stored and each read answered all its bytes. Every
+// other way the pair goes unread answers Refused, with one line saying why
+// and nothing handed back: NVS failing to say whether an entry is stored,
+// one entry stored without the other (or stored empty), no memory for the
+// pair, a session that did not open, and a read that answered fewer bytes
+// than its lookup (IDF copies a blob's data before its CRC check refuses it
+// and answers 0, so the buffer can hold bytes that read refused: both are
+// zeroed before they are freed). The lengths are asked of IDF, as
+// stored_key_length() asks for the identity key, because Preferences
+// answers 0 alike for an entry never stored and for a lookup that failed.
+// Before, the load answered one false for all of these, and initTls() read
+// every false as "no certificate": a build that can generate one would have
+// made a new certificate and stored it over the one whose pin the phones
+// hold. *cert and *key are null and both lengths 0 unless Loaded.
+static KeyLoad tls_load_der_from_nvs(uint8_t** cert, size_t* cert_len,
+                                     uint8_t** key, size_t* key_len) {
+  *cert = nullptr;
+  *cert_len = 0;
+  *key = nullptr;
+  *key_len = 0;
+  size_t clen = 0, klen = 0;
+  esp_err_t cerr = ESP_OK, kerr = ESP_OK;
+  nvs_handle_t h;
+  const esp_err_t opened = nvs_open(NVS_MAIN_NS, NVS_READONLY, &h);
+  if (opened == ESP_OK) {
+    cerr = nvs_get_blob(h, NVS_KEY_TLS_CERT, nullptr, &clen);
+    kerr = nvs_get_blob(h, NVS_KEY_TLS_KEY, nullptr, &klen);
+    nvs_close(h);
+  } else {
+    cerr = kerr = opened;
+  }
+  if (cerr == ESP_ERR_NVS_NOT_FOUND && kerr == ESP_ERR_NVS_NOT_FOUND) return KeyLoad::Absent;
+  const esp_err_t fault = (cerr != ESP_OK && cerr != ESP_ERR_NVS_NOT_FOUND) ? cerr
+                        : (kerr != ESP_OK && kerr != ESP_ERR_NVS_NOT_FOUND) ? kerr
+                        : ESP_OK;
+  if (fault != ESP_OK) {
+    Serial.printf("[TLS] Certificate not loaded: NVS could not say whether one is stored (%s)\n",
+                  esp_err_to_name(fault));
+    return KeyLoad::Refused;
+  }
+  if (cerr != ESP_OK || kerr != ESP_OK) {
+    Serial.printf("[TLS] Certificate not loaded: the %s is stored without the %s\n",
+                  cerr == ESP_OK ? "certificate" : "key", cerr == ESP_OK ? "key" : "certificate");
+    return KeyLoad::Refused;
+  }
   if (clen == 0 || klen == 0) {
-    nvs.end();
-    return false;
+    Serial.printf("[TLS] Certificate not loaded: the stored pair is empty (%u and %u bytes)\n",
+                  (unsigned)clen, (unsigned)klen);
+    return KeyLoad::Refused;
+  }
+
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) {
+    Serial.println("[TLS] Certificate not loaded: the NVS session did not open");
+    return KeyLoad::Refused;
   }
   uint8_t* c = (uint8_t*)malloc(clen);
   uint8_t* k = (uint8_t*)malloc(klen);
-  bool ok = c && k &&
-            nvs.getBytes(NVS_KEY_TLS_CERT, c, clen) == clen &&
-            nvs.getBytes(NVS_KEY_TLS_KEY, k, klen) == klen;
-  nvs.end();
-  if (!ok) {
-    if (k) { memset(k, 0, klen); free(k); }
+  if (!c || !k) {
+    nvs.end();
     free(c);
-    return false;
+    free(k);
+    Serial.printf("[TLS] Certificate not loaded: no memory for it (%u and %u bytes)\n",
+                  (unsigned)clen, (unsigned)klen);
+    return KeyLoad::Refused;
+  }
+  const size_t cgot = nvs.getBytes(NVS_KEY_TLS_CERT, c, clen);
+  const size_t kgot = nvs.getBytes(NVS_KEY_TLS_KEY, k, klen);
+  nvs.end();
+  if (cgot != clen || kgot != klen) {
+    secure_zero(k, klen);
+    secure_zero(c, clen);
+    free(k);
+    free(c);
+    Serial.printf("[TLS] Certificate not loaded: the stored pair could not be read "
+                  "(%u of %u and %u of %u bytes)\n",
+                  (unsigned)cgot, (unsigned)clen, (unsigned)kgot, (unsigned)klen);
+    return KeyLoad::Refused;
   }
   *cert = c; *cert_len = clen;
   *key = k;  *key_len = klen;
-  return true;
+  return KeyLoad::Loaded;
 }
 
 static bool tls_store_der_to_nvs(const uint8_t* cert, size_t cert_len,
@@ -1786,8 +1852,21 @@ bool ScvNetworkManager::initTls() {
   uint8_t* cert = nullptr;
   uint8_t* key = nullptr;
   size_t cert_len = 0, key_len = 0;
-  if (tls_load_der_from_nvs(&cert, &cert_len, &key, &key_len)) {
+  // The stored certificate first (sweep F421, F404's rule): Loaded serves
+  // it; Refused (one is, or may be, stored and was not read whole) leaves
+  // HTTPS off this boot and makes and stores nothing over it, since phones
+  // may hold its pin, and the next boot that can read it serves it again;
+  // only Absent goes on to make one. A lone entry is refused on every boot,
+  // as on the canary-wap; whether it should be is F420's open decision, for
+  // both trees.
+  const KeyLoad stored = tls_load_der_from_nvs(&cert, &cert_len, &key, &key_len);
+  if (stored == KeyLoad::Loaded) {
     Serial.println("[TLS] Loaded certificate from NVS");
+  } else if (stored != KeyLoad::Absent) {
+    m_tls_reason = "stored certificate unreadable: HTTPS off this boot, nothing stored over it";
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS off this boot: stored certificate not used",
+               "nothing generated or stored over it");
+    return false;
   } else {
 #if SECURACV_HAS_TLS_CERTGEN
     char device_fp[17];
@@ -1807,8 +1886,10 @@ bool ScvNetworkManager::initTls() {
       return false;
     }
     if (!tls_store_der_to_nvs(cert, cert_len, key, key_len)) {
-      // Serve with it this boot anyway; the next boot generates a new one,
-      // which changes the pin — logged so a re-pair is not a mystery.
+      // Serve with it this boot anyway. If neither entry landed, the next
+      // boot generates a new one, which changes the pin; if only the
+      // certificate did, every later boot refuses it as a lone entry (F420)
+      // and stays on HTTP. Logged so a re-pair is not a mystery.
       Serial.println("[TLS] WARNING: certificate not stored; it changes next boot");
       log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS cert not persisted", "NVS write failed");
     }

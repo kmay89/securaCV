@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <nvs.h>          // load_or_generate_keypair(): IDF's own answer for "nothing stored" (sweep F362)
 #include <cstring>
 
 #include <Ed25519.h>
@@ -55,52 +56,93 @@ void secure_zero(void* p, size_t n) {
   while (n--) *vp++ = 0;
 }
 
+// The identity key, fail closed (sweep F362, the flagship's F360 rule):
+// what NVS holds is asked of IDF before Preferences reads it, because
+// Preferences' getBytesLength() answers 0 alike for a key never stored and
+// a lookup that failed. Only IDF's ESP_ERR_NVS_NOT_FOUND (no namespace yet,
+// or no key in it) draws a new key. Every other answer, a stored key of
+// another length, a read that does not return all 32 bytes and a stored key
+// of 32 zero bytes disable signing for this boot and write nothing, the path
+// a failed open already takes: the buffer is scrubbed and the stored entry
+// left as it was, so the next boot that can read it signs with it again.
+// Before, each of those drew a new key and stored it over the old one, which
+// Home Assistant reads as "Fingerprint changed without rotation" and the
+// owner cannot tell from tampering, and the old identity was gone for good.
 bool load_or_generate_keypair() {
+  size_t stored = 0;
+  nvs_handle_t h;
+  esp_err_t probe = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
+  if (probe == ESP_OK) {
+    probe = nvs_get_blob(h, KEY_PRIV, nullptr, &stored);
+    nvs_close(h);
+  }
+  if (probe != ESP_OK && probe != ESP_ERR_NVS_NOT_FOUND) {
+    secure_zero(s_priv, sizeof(s_priv));
+    canary::dbg_serial().printf(
+        "[WITNESS] NVS could not say whether a key is stored (%s) — signing disabled this boot.\n",
+        esp_err_to_name(probe));
+    return false;
+  }
+  const bool absent = (probe == ESP_ERR_NVS_NOT_FOUND);
+  if (!absent && stored != sizeof(s_priv)) {
+    secure_zero(s_priv, sizeof(s_priv));
+    canary::dbg_serial().printf(
+        "[WITNESS] Stored key is %u bytes, not 32 — signing disabled this boot.\n",
+        (unsigned)stored);
+    return false;
+  }
+
   Preferences prefs;
-  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) {
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/!absent)) {
+    secure_zero(s_priv, sizeof(s_priv));
     log_line("WITNESS", "NVS unavailable — signing disabled this boot.");
     return false;
   }
 
-  bool have = false;
-  if (prefs.getBytesLength(KEY_PRIV) == sizeof(s_priv)) {
-    have = (prefs.getBytes(KEY_PRIV, s_priv, sizeof(s_priv)) == sizeof(s_priv));
-  }
-  // An all-zero blob is not a key — regenerate rather than sign with it.
-  if (have) {
-    bool nonzero = false;
-    for (size_t i = 0; i < sizeof(s_priv); i++) {
-      if (s_priv[i] != 0) { nonzero = true; break; }
-    }
-    have = nonzero;
-  }
-
-  if (!have) {
-    // First boot: 32 bytes from the hardware RNG, exactly like the
-    // canary-wap tree's generate_keypair. This runs during witness init, before
-    // WiFi/BT start, so the RNG has no RF entropy source yet — gate the one-time
-    // identity draw with bootloader_random_enable()/_disable() to seed it
-    // properly (ESP-IDF's documented early-entropy pattern). The RF subsystem
-    // seeds the RNG for every later draw.
-    bootloader_random_enable();
-    esp_fill_random(s_priv, sizeof(s_priv));
-    bootloader_random_disable();
-    if (prefs.putBytes(KEY_PRIV, s_priv, sizeof(s_priv)) != sizeof(s_priv)) {
-      // An unpersisted key would rotate on every reboot, and each
-      // rotation reads as a "Fingerprint changed without rotation"
-      // security alert in HA. Unsigned publishes degrade gracefully
-      // there; a flapping identity does not — so fail closed.
-      log_line("WITNESS",
-               "Key persist FAILED — signing disabled (an ephemeral key "
-               "would flap the fingerprint every reboot).");
+  if (!absent) {
+    const size_t got = prefs.getBytes(KEY_PRIV, s_priv, sizeof(s_priv));
+    prefs.end();
+    uint8_t any = 0;
+    for (size_t i = 0; i < sizeof(s_priv); i++) any |= s_priv[i];
+    if (got != sizeof(s_priv) || any == 0) {
+      // A refused read can leave the buffer as it was or partly written.
       secure_zero(s_priv, sizeof(s_priv));
-      prefs.end();
+      if (got != sizeof(s_priv)) {
+        canary::dbg_serial().printf(
+            "[WITNESS] Stored key could not be read (%u of 32 bytes) — signing disabled this boot.\n",
+            (unsigned)got);
+      } else {
+        log_line("WITNESS", "Stored key is 32 zero bytes — signing disabled this boot.");
+      }
       return false;
     }
-    log_line("WITNESS", "Generated new Ed25519 identity (first boot).");
+    Ed25519::derivePublicKey(s_pub, s_priv);
+    return true;
   }
 
+  // First boot: 32 bytes from the hardware RNG, exactly like the
+  // canary-wap tree's generate_keypair. This runs during witness init, before
+  // WiFi/BT start, so the RNG has no RF entropy source yet — gate the one-time
+  // identity draw with bootloader_random_enable()/_disable() to seed it
+  // properly (ESP-IDF's documented early-entropy pattern). The RF subsystem
+  // seeds the RNG for every later draw.
+  bootloader_random_enable();
+  esp_fill_random(s_priv, sizeof(s_priv));
+  bootloader_random_disable();
+  if (prefs.putBytes(KEY_PRIV, s_priv, sizeof(s_priv)) != sizeof(s_priv)) {
+    // An unpersisted key would rotate on every reboot, and each
+    // rotation reads as a "Fingerprint changed without rotation"
+    // security alert in HA. Unsigned publishes degrade gracefully
+    // there; a flapping identity does not — so fail closed.
+    log_line("WITNESS",
+             "Key persist FAILED — signing disabled (an ephemeral key "
+             "would flap the fingerprint every reboot).");
+    secure_zero(s_priv, sizeof(s_priv));
+    prefs.end();
+    return false;
+  }
   prefs.end();
+  log_line("WITNESS", "Generated new Ed25519 identity (first boot).");
   Ed25519::derivePublicKey(s_pub, s_priv);
   return true;
 }
