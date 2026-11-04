@@ -5722,9 +5722,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     // The bonds the paired list shows, in its order (F407). A row's Remove
     // names the row by its index into this list, so no bond's address is
-    // written into the page's markup, and the name and the address are drawn
-    // as text: escapeHtml() leaves quotes as they are, so it could not make
-    // an address safe inside an onclick string.
+    // written into an attribute or the onclick string, and the name and the
+    // address are drawn as text: escapeHtml() leaves quotes as they are, so
+    // it could not make an address safe inside an onclick string.
     let btPairedShown = [];
 
     async function loadBtPairedDevices() {

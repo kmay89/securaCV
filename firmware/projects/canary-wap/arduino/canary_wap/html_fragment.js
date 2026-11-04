@@ -16,12 +16,16 @@
 //   HOSTILE              the text the tests feed every field they draw.
 //
 // It covers what an innerHTML assignment of a page's own markup can hold; it
-// does no foster parenting, no implied end tags and no raw-text elements
-// (script, style, textarea, title). A test that finds one of those in a
-// fragment has already failed on the element itself. When it was written, its
-// reading of every fragment these tests draw, from the pages before and after
-// sweep F296, F401, F405 and F407, matched Chromium's element for element
-// (a local Playwright run; CI runs only the Node suites).
+// does no foster parenting, no implied end tags, no raw-text elements
+// (script, style, textarea, title), no reconstruction of active formatting
+// elements (Chromium reopens an unclosed <b> after a block; this does not)
+// and no SVG attribute-case adjustment (it reads viewBox as viewbox). A test
+// that finds one of those in a fragment has already failed on the element
+// itself. When it was written, its reading of every fragment these tests
+// assert on, from the pages before and after sweep F296, F401, F405 and
+// F407, matched Chromium's element for element (a local Playwright run; CI
+// runs only the Node suites). The one fragment they parse without asserting
+// on its parse, the Fleet sheet's success SVG, differs only in viewBox's case.
 
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
   'source', 'track', 'wbr']);
