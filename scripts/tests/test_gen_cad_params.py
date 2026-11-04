@@ -445,7 +445,7 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
 
 
 class BoardRegistry(unittest.TestCase):
-    def test_committed_lib_parses_nine_rows_and_twenty_seven_facts(self):
+    def test_committed_lib_parses_nine_rows_and_thirty_three_facts(self):
         reg = gcp.parse_board_registry()
         self.assertEqual(reg.path, LIB)
         self.assertEqual(list(reg.rows), ["xiao", "grove_v2", "ov5647", "mr60", "dk_c3",
@@ -471,6 +471,9 @@ class BoardRegistry(unittest.TestCase):
                                            # the XIAO ESP32-S3 Sense camera, off Seeed's model
                                            "brd_xiao_sense_cam_h", "brd_xiao_sense_cam_dx",
                                            "brd_xiao_sense_cam_dy", "brd_xiao_sense_cam_fp",
+                                           # the Sense's seated microSD card, off Seeed's GLB (WAP v0.9.2)
+"brd_xiao_sense_sd_over", "brd_xiao_sense_sd_l", "brd_xiao_sense_sd_w",
+                                           "brd_xiao_sense_sd_dy", "brd_xiao_sense_sd_z0", "brd_xiao_sense_sd_z1",
                                            # the XIAO ESP32-S3's R and B switches, off the vendor GLB (v0.9 doorbell)
                                            "brd_xiao_btn_dx", "brd_xiao_btn_dy", "brd_xiao_btn_h",
                                            "brd_xiao_usb_overhang",
@@ -722,6 +725,9 @@ class ManifestsCarryTheJoin(unittest.TestCase):
         # end-stop and aperture asserts read them, no knob owns them)
         self.assertEqual(facts, ["brd_stack_sock_unmeasured", "brd_ws147_brass_c3",
                                  "brd_ws147_brass_c6", "brd_xiao_sense_cam_fp",
+                                 # the WAP reads the card facts in its fixed arithmetic (the card gate), no knob owns them (v0.9.2)
+                                 "brd_xiao_sense_sd_over", "brd_xiao_sense_sd_l", "brd_xiao_sense_sd_w",
+                                 "brd_xiao_sense_sd_dy", "brd_xiao_sense_sd_z0", "brd_xiao_sense_sd_z1",
                                  # the doorbell cites the XIAO's switch facts by comment (v0.9)
                                  "brd_xiao_btn_dx", "brd_xiao_btn_dy", "brd_xiao_btn_h",
                                  "brd_xiao_usb_overhang",

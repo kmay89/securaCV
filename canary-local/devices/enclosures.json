@@ -1014,7 +1014,7 @@
       },
       {
        "name": "e_camera",
-       "default": "_pre(opt_camera,  true,  false, true)"
+       "default": "wap_e_camera(preset)"
       },
       {
        "name": "e_buzzer",
@@ -1249,7 +1249,7 @@
         0.04,
         0.32
        ],
-       "comment": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
+       "comment": "your slicer's layer height: the face's disc-seat counterbore and the sealed plate's washer pockets get bridge steps this thick (core_bridge_steps)"
       }
      ]
     },
@@ -1637,7 +1637,7 @@
      ]
     },
     {
-     "name": "Quality",
+     "name": "Hidden",
      "note": "",
      "params": [
       {
@@ -1677,6 +1677,11 @@
        "default": "board_l + 2*board_clear"
       },
       {
+       "name": "board_stop_gap",
+       "default": "0.3",
+       "comment": "the board's end stops stand this far off the drawn ends (a real board mics 21.14 against the drawn 21.0: 0.23 a side)"
+      },
+      {
        "name": "batt_zone_l",
        "default": "wap_batt_zone_l(preset)"
       },
@@ -1702,6 +1707,11 @@
       {
        "name": "clip_stack",
        "default": "board_clips ? (clip_clear + clip_t) : 0"
+      },
+      {
+       "name": "gps_rim",
+       "default": "1.2",
+       "comment": "the GPS cradle's rim past the module: base() draws the cradle from it (rrect(gps_l + 2*gps_rim, ...)), so the +X cove assert below reads the drawing"
       },
       {
        "name": "inner_l",
@@ -1753,7 +1763,7 @@
       },
       {
        "name": "board_cx",
-       "default": "-inner_l/2 + max(board_clear + 0.5, floor_cove + tol_slide + brd_xiao_usb_overhang()) + board_l/2"
+       "default": "-inner_l/2 + wap_board_x0(preset) + board_l/2"
       },
       {
        "name": "board_cy",
@@ -1761,8 +1771,8 @@
       },
       {
        "name": "zone0",
-       "default": "-inner_l/2 + board_zone_l + 0.5",
-       "comment": "x where the appended bays begin"
+       "default": "-inner_l/2 + board_zone_l + 0.5 + wap_card_shift(preset)",
+       "comment": "x where the appended bays begin (v0.9.2: they follow the board)"
       },
       {
        "name": "batt_cx",
@@ -2854,7 +2864,7 @@
         0.04,
         0.32
        ],
-       "comment": "your slicer's layer height: the front's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
+       "comment": "your slicer's layer height: the front's disc-seat counterbore and the sealed back's washer pockets get bridge steps this thick (core_bridge_steps)"
       },
       {
        "name": "ledge_w",
@@ -3605,7 +3615,7 @@
       {
        "name": "svc_head_d",
        "default": "9.6",
-       "comment": "the plunger's head Ø: a flat disc in a seat on the back face (the +X one sits 1 mm off a screw seat)"
+       "comment": "the plunger's head Ø: a flat disc in a seat on the back face (the +X one keeps 0.8 off a screw seat)"
       },
       {
        "name": "svc_rim_t",
@@ -4064,7 +4074,7 @@
       {
        "name": "head_floor",
        "default": "2.0",
-       "comment": "solid plastic under every recessed head — the plate screws' web past their gland and the"
+       "comment": "solid plastic under every recessed head: under a plate screw's bearing (its washer's land when sealed) and the wall plate's counterbores"
       }
      ]
     },
@@ -4398,7 +4408,7 @@
         0.04,
         0.32
        ],
-       "comment": "your slicer's layer height: the button's bezel counterbore gets bridge steps this thick (core_bridge_steps)"
+       "comment": "your slicer's layer height: the button's bezel counterbore and the body's washer pockets get bridge steps this thick (core_bridge_steps)"
       },
       {
        "name": "ledge_w",
@@ -4629,6 +4639,25 @@
        "comment": "the bay fence's -X face (the cell side)"
       },
       {
+       "name": "xiao_usb_end_y",
+       "default": "vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang",
+       "comment": "the XIAO's board end (the USB-C shell stands past it)"
+      },
+      {
+       "name": "svc_cy",
+       "default": "xiao_usb_end_y + xiao_btn_dy + svc_dy",
+       "comment": "the plunger axis along Y"
+      },
+      {
+       "name": "svc_seat_d",
+       "default": "svc_head_d + 2*svc_tol",
+       "comment": "the head's seat on the back face"
+      },
+      {
+       "name": "scr_seat_d",
+       "default": "pl_seat_d(screw_size, screw_head, tol_hole, e_gland)"
+      },
+      {
        "name": "spk_boss_h",
        "default": "spk_gasket_t + spk_rim_t + 0.5",
        "comment": "the boss ring stands this far into the cavity"
@@ -4692,7 +4721,7 @@
       },
       {
        "name": "pl_r",
-       "default": "max(0, plate_t - pl_hh(screw_size, screw_head) - pl_gland_raw(screw_size, e_gland) - head_floor)"
+       "default": "max(0, plate_t - pl_hh(screw_size, screw_head) - pl_wh(screw_size, e_gland) - head_floor)"
       },
       {
        "name": "pl_L",
@@ -4808,24 +4837,9 @@
        "default": "xiao_face_hi_z - xiao_btn_h"
       },
       {
-       "name": "xiao_usb_end_y",
-       "default": "vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang",
-       "comment": "the XIAO's board end (the USB-C shell stands past it)"
-      },
-      {
-       "name": "svc_cy",
-       "default": "xiao_usb_end_y + xiao_btn_dy + svc_dy",
-       "comment": "the plunger axis along Y"
-      },
-      {
        "name": "svc_bore_d",
        "default": "svc_stem_d + 2*svc_tol",
        "comment": "the stem slides"
-      },
-      {
-       "name": "svc_seat_d",
-       "default": "svc_head_d + 2*svc_tol",
-       "comment": "the head's seat on the back face"
       },
       {
        "name": "svc_seat_depth",
@@ -4904,6 +4918,11 @@
        "name": "svc_stroke_hi",
        "default": "(svc_cap_hi_z - svc_tip_z) + xiao_btn_travel",
        "comment": "...and at the far end"
+      },
+      {
+       "name": "svc_scr_seat_d",
+       "default": "scr_seat_d",
+       "comment": "a plate screw's seat on the back face (it was a copy of the head-bore-or-gland arithmetic; the washer's pocket outgrew both)"
       },
       {
        "name": "vm_scr_len",
@@ -8269,7 +8288,7 @@
         0.04,
         0.32
        ],
-       "comment": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
+       "comment": "your slicer's layer height: the face's disc-seat counterbore and the sealed back's washer pockets get bridge steps this thick (core_bridge_steps)"
       }
      ]
     },

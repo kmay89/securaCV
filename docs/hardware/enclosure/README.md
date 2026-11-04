@@ -479,7 +479,7 @@ The three committed example presets:
 | **Source** | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) (configurator) |
 | **Example STLs** | [`..._battery_base/lid.stl`](./canary_wap_enclosure_battery_base.stl), [`..._compact_base/lid.stl`](./canary_wap_enclosure_compact_base.stl), [`..._weather_base/lid/gasket.stl`](./canary_wap_enclosure_weather_base.stl) |
 | **Clip test coupon** | [`..._clip_coupon.stl`](./canary_wap_enclosure_clip_coupon.stl) — print first to tune the snap fit |
-| **Fasteners** | **M2** self-tappers through the plate's recessed seats into blind pilots in the shell's post ends — the render's `HARDWARE` line is the count and length: 4 × flat × 10 on the compact and battery builds, 8 × pan × 8 over 8 O-rings on the Outdoor build (four corners + two mid posts per long wall), plus the sun shield's own 4 × flat × 12 into the face. `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`) |
+| **Fasteners** | **M2** self-tappers through the plate's recessed seats into blind pilots in the shell's post ends — the render's `HARDWARE` line is the count and length: 4 × flat × 10 on the compact and battery builds, 8 × pan × 10 over 8 O-rings and their 8 DIN 9021 washers on the Outdoor build (four corners + two mid posts per long wall), plus the sun shield's own 4 × flat × 12 into the face. `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`) |
 
 ## Print tolerances (tune once for your printer)
 
@@ -533,7 +533,19 @@ What `opt_seal = true` adds:
   gasket line, so a bare screw is a drip path down its thread onto the post
   and into the cavity. Every plate screw seat carries an O-ring gland under
   its head (a standard 2 × 1 ring for M2; the weather preset forces
-  `screw_head = "pan"`) and the head squeezes it 25 %.
+  `screw_head = "pan"`) and a **DIN 9021 washer** (2.2 × 7 × 0.8) over the
+  ring. The pan head (Ø4.0) is narrower than the gland, so it is the washer
+  that stops on the printed land round the gland's mouth: the gland's depth
+  (0.769) sets the squeeze — 23 % on a nominal ring, 16–29 % across the
+  ring's tolerance — not the screwdriver (a slicer on a 0.2 mm layer grid
+  prints the gland 0.8 deep: 20 % nominal). A narrower washer (DIN 125-A /
+  ISO 7089 5 mm, DIN 433 4.5 mm) falls into the gland: use the 7 mm one.
+  The head now bears on the washer, not the ring, and the washer's bore
+  (2.2–2.34 on a Ø2 shank) is a gap over the ring's inner face, so the ring
+  must also seal on the shank — which it does the way every under-head
+  O-ring does: water pressure pushes it onto the shank. Wipe a film of
+  silicone grease on the ring and on both faces of the washer before the
+  screw goes in; it fills that gap and lets the ring seat.
 - **USB drip awning** (`usb_hood`): for a case that stands sideways or on a
   desk rather than hanging USB-down — a 45° awning over the opening that
   prints with the wall. Exclusive with the plug recess.
@@ -561,7 +573,8 @@ shell face-down and press the gasket into the groove in its ledge on a thin
 film of silicone grease (the ring is 0.5 mm narrower than its groove, so dry
 it falls out when the shell turns face-up); lower the shell over the plate
 (the plate nests inside its walls, onto the gasket), turn the case over,
-drop an O-ring into each seat's gland, then the 8 screws in two passes (snug
+drop an O-ring into each seat's gland and lay a DIN 9021 washer over it,
+then the 8 screws in two passes (snug
 diagonally, then final quarter-turns) so the squeeze is even.
 
 **Drop resistance:** `batt_hold` (default on) drops two ribs from the lid over
@@ -601,7 +614,7 @@ These dimensions were reconciled against **Seeed's official spec** and a
 |---------|-------|--------|
 | Board cradle + frame | base | always (standoffs + perimeter frame, PCB `standoff_h` off the floor) |
 | **Board snap clips** | base, long edges | `board_clips` — 4 tabs hook over the PCB, **clicks in, no screws** |
-| **USB-C port** | shell, −X wall | always (12 × 6.5 mm, centered on the connector axis; board parked at this wall) |
+| **USB-C port** | shell, −X wall | always (12 × 6.5 mm, centered on the connector axis; board parked at this wall — on a camera build the receptacle's mouth is 2.9 mm behind the inner face since v0.9.2 (the microSD clearance), so a plug's overmold enters 5.9 mm (battery) / 8.7 mm (weather) past the outer face: straight plugs, overmold within 12 × 6.5 for the first 9 mm behind the plug face, no right-angle plugs on the weather build; bench-check CBL1 on a printed lid) |
 | Battery bay + **wire channel** | base | `opt_battery` (lead notch in the ribs: `batt_wire_w`) |
 | GPS module bay | base | `opt_gps` |
 | Antenna bulkhead | shell, +X wall | `opt_antenna` |
@@ -1096,8 +1109,9 @@ strip carrying its own rib notches, so it goes in as a single piece.
 5. Lower the **shell** over the plate (its walls swallow the plate's edge —
    the key slot on the plate meets the rib in the +Y wall, so it only goes
    one way), turn the case over and drive the M2 screws through the plate's
-   recessed seats into the post ends — the Outdoor build seats an O-ring
-   under each pan head first — snug diagonally, then final quarter-turns.
+   recessed seats into the post ends — the Outdoor build seats an O-ring in
+   each seat's gland and a DIN 9021 washer over it first — snug diagonally,
+   then final quarter-turns (the washer lands, so the ring is never crushed).
    Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two
    fingers on the short end of the driver is plenty). The face and the sides
    stay unbroken; the only seam is the hairline around the plate on the back.
@@ -1242,7 +1256,8 @@ pitch, M5 axis):
 
 Same opt-in system as the WAP case (`opt_seal`): perimeter **TPU gasket** in a
 groove in the front shell's internal ledge (the only seam is the plate's, on
-the back face), an O-ring under each of the six plate screws, **flanged USB
+the back face), an O-ring and a DIN 9021 washer under each of the six plate
+screws (M2 × 10 over them), **flanged USB
 plug recess** on the bottom wall, plus two camera-specific items:
 
 - **Rain/glare hood** (`opt_hood`): a ~220° collar over the lens window, open
@@ -1339,7 +1354,8 @@ applied here, and every front STL is re-cut:
    the plate's key slot meets the rib in the +Y wall, so it only goes one
    way), turn it over and drive the short M2 screws through the plate's
    recessed seats into the post ends (4, or 6 with the weather preset's mid
-   posts — an O-ring under each pan head on a sealed build) — the face and
+   posts — an O-ring in each gland and a DIN 9021 washer over it under each
+   pan head on a sealed build, M2 × 10 there) — the face and
    every side stay unbroken — snug diagonally, then final quarter-turns.
 6. Screw the **bracket** to the wall (or a tripod plate via the 1/4-20 nut),
    slot the case prongs into it, set the angle, tighten the M5 thumbscrew.
@@ -1360,7 +1376,7 @@ applied here, and every front STL is re-cut:
 | `cam_barrel_in` | 0.4 | how far the barrel stands into the front's bore; the rest under the disc is focus travel |
 | `cam_fov` / `cam_fov_margin` | 62 / 4 | the lens's diagonal FOV (datasheet) and the margin the hole's cone keeps around it |
 | `bridge_layer` | 0.2 | your slicer's layer height: the disc seat's bridge steps are this thick |
-| `screw_size` / `screw_head` | m2 / pan | fastener from the catalog registry; a sealed plate always rings each head with an O-ring (`head_seal` is gone) |
+| `screw_size` / `screw_head` | m2 / pan | fastener from the catalog registry; a sealed plate always rings each head with an O-ring under a DIN 9021 washer (`head_seal` is gone) |
 | `opt_weep` / `seal_mid_posts` | preset / off | Ø2 drain at the bottom wall (on in `vision_weather`); an extra screw post per long wall for gasket squeeze |
 | `lens_dx/dy` | 0 / −1.7 | Lens center offset from the camera-board center (vendor CAD) |
 | `cam_hole_x/y` / `cam_grid_dy` | 21 / 12.5 / 4.05 | Pi-cam mounting grid, and its center's offset above the carrier's center (vendor CAD) |
@@ -1715,7 +1731,7 @@ cell in on edge (leads toward the well) → plug the right-angle USB-C into
 the XIAO, leg down through the oval → turn the face over and press the
 gasket into the groove in its ledge on a thin film of silicone grease (dry,
 the 1.1 mm ring falls out of its 1.6 mm groove when the face turns back),
-face on (the cradle finds the magnet's pad), 12 × M2 × 10 pan heads with their O-rings
+face on (the cradle finds the magnet's pad), 12 × M2 × 10 pan heads, each over a DIN 9021 washer on an O-ring in its gland
 (black-oxide looks best) → wall plate
 on the frame, cable through its slot, offer the body 8 mm high over the
 lugs, drop it into the collar, drive the security screw up through the
@@ -1745,7 +1761,7 @@ collar.
 | `lug_y` / `lug_mid_y` / `dt_clear` | 41.5 / 6 / 0.2 | where the dovetail lugs park (clear of the cable slot); the pocket fit (dial it on the coupon's POCKET station) |
 | `collar_t` / `collar_tb` / `collar_arm` | 2.4 / 3.5 / 18 | the collar's side returns, bottom wall and how far the returns climb the body |
 | `btn_nut_ac` | 16.2 | the button's panel nut across corners — asserted against the bottom posts |
-| `opt_weep`, `seal_mid_posts` | on / on | drain, mid-wall clamp posts (a sealed plate always takes an O-ring under each screw head) |
+| `opt_weep`, `seal_mid_posts` | on / on | drain, mid-wall clamp posts (a sealed plate always takes an O-ring and a DIN 9021 washer under each screw head) |
 | `usb_exit_*` | 14×10 oval | cable exit size/position, from the MODULE's centerline (guarded against the lug pockets; the wall plate's pass is this plus 4, run 8 mm up the slide) |
 | `sec_screw_d` | 2.2 | security screw — use a Torx/security drive |
 | `opt_vent` | **false** (since v0.9) | the GORE vent cluster on the face. Off, the sealed body breathes through its open Ø2 weep (the assert holds one path or the other). On — a membrane-only path with no open hole — **an adhesive GORE/ePTFE membrane over the cluster (inner face) is REQUIRED**: unmembraned holes defeat the seal. The speaker's mesh is not a path: it fronts a sealed-back driver on a foam ring |
@@ -1805,7 +1821,7 @@ exits the bottom wall at a height DERIVED from the seated stack
 | `radome_t` | 1.5 | radar window thickness; 1.5 ≈ half-wave in PETG/ASA (optimum) — avoid 0.7–1.1 (quarter-wave reflection band) |
 | `rad_win_x/y`, `rad_dx/dy` | 24×24 / 0, 6 | window size/position over the antenna — **measure** |
 | `radar_l/radar_w`, `stack_sock_h`, `xiao_below` | 44×36 / 6.5 / 5.5 | carrier + seated-stack dimensions — **measure** (the XIAO port height follows) |
-| `screw_size` / `screw_head` | m2 / pan | fastener from the catalog registry; O-ring under each head in seal mode |
+| `screw_size` / `screw_head` | m2 / pan | fastener from the catalog registry; O-ring and DIN 9021 washer under each head in seal mode |
 | `lux_dx/dy`, `lp_dx/dy` | — | sensor/LED positions from the board center |
 | `opt_seal`, `mount_style` | off / hinge | same systems as the Vision case |
 | `radar` | `"bha2"` | `"fda2"` = the MR60**FDA2** fall-detection sibling: same carrier family and radome physics, but **ceiling-mount it** (keyholes), 2.4–3.1 m, facing straight down over the fall zone — and re-verify `rad_dx/dy` on that carrier |
@@ -1832,7 +1848,8 @@ exits the bottom wall at a height DERIVED from the seated stack
 5. Lower the **radome shell** over the plate (the walls swallow the plate's
    edge — the key slot meets the rib in the +Y wall, so the window can only
    land over the antenna array), turn it over and drive the 4 × M2 × 8 screws
-   through the plate's recessed seats into the corner post ends — snug
+   (weather mode: 4 × M2 × 10, each over an O-ring in its gland and a DIN 9021
+   washer on top) through the plate's recessed seats into the corner post ends — snug
    diagonally first, then final quarter-turns, never past ~0.3 N·m.
 6. Mount it: slot the hinge prongs into the shared **Vision bracket** and set
    the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind

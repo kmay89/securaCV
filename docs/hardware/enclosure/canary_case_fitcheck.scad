@@ -73,12 +73,22 @@ use <canary_relay_solar.scad>
 /* [What to check] */
 // Each of these renders the two halves in their ASSEMBLED positions and
 // intersects them. EVERY ONE MUST COME OUT EMPTY.
-check = "sense";   // ["sense","vision_indoor","vision_weather","vision_devkit","doorbell","wap_battery","wap_compact","wap_weather","wap_pan","combo","relay"]
+check = "sense";   // ["sense","vision_indoor","vision_weather","vision_devkit","doorbell","wap_battery","wap_compact","wap_weather","wap_pan","wap_card","combo","relay"]
+// "wap_card" (2026-11-03) is not two halves: it is the WAP shell against the
+// Sense's seated microSD card (BOM SD1) swept from below the shell's open end
+// to its seat, over the board's end-stop travel, either handedness — the path
+// the card takes while the shell is lowered over the clipped board. The
+// v0.9.1 camera shells met it 78.2 mm^3 deep (the seated card alone 11.25)
+// and every mesh was clean. Run it on each camera preset (-D preset=...); on
+// the plain-XIAO compact it refuses to render, because a gate with nothing to
+// check would pass
 
 /* [Tuning] */
 seat_lift = 0.1;   // hover the front this far off its seat, so face-on-face contact is not read as interference  // [0.05:0.05:0.5]
 turned    = false; // the CONTROL: seat the lid rotated 180° — with lid_key on this must come out NON-empty
                    // (the lip lands on the key rib). Run it once per family so the gate is known to be able to fail
+card_extra = 0;    // wap_card's CONTROL: lengthen the card's overhang this much — 0.5 must come out NON-empty
+                   // (the tip lands in the ledge cove), so the card gate is known to be able to fail
 
 /* [Hidden] */
 
@@ -94,6 +104,7 @@ else if (check == "wap_battery"
       || check == "wap_compact"
       || check == "wap_weather"
       || check == "wap_pan")             wap_fitcheck(seat_lift, turned);
+else if (check == "wap_card")            wap_card_fitcheck(card_extra);
 else if (check == "combo")               combo_fitcheck(seat_lift, turned);
 else if (check == "relay")               relay_fitcheck(seat_lift, turned);
 else assert(false, str("canary_case_fitcheck: unknown check \"", check, "\""));

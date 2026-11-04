@@ -42,7 +42,7 @@
       "mpn": "USB-C-DATA-1M",
       "mfr": "Generic",
       "usd": 3.5,
-      "notes": "Required for flashing and 5V power",
+      "notes": "Required for flashing and 5V power. Printed enclosure (canary_wap_enclosure, camera builds): a STRAIGHT plug whose overmold stays within 12 x 6.5 mm for the first 9 mm behind the plug face - the receptacle mouth sits 5.9 mm (battery) / 8.7 mm (weather) behind the outer face since v0.9.2 (the microSD clearance); no right-angle plugs on the weather build. Bench-check the cable on a printed lid",
       "orderable": false
      },
      {
@@ -414,7 +414,7 @@
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "Driven through the back plate's recessed seats into the one-piece shell's post ends (the plate nests inside the walls; the only seam is on the back face): 4x flat 10mm on the battery and compact builds; the Outdoor build takes 8x PAN 8mm over O-rings (ORG1) plus 4x flat 12mm for the sun shield into the shell's blind face pilots. Max ~0.3 N-m or the printed posts strip",
+      "notes": "Driven through the back plate's recessed seats into the one-piece shell's post ends (the plate nests inside the walls; the only seam is on the back face): 4x flat 10mm on the battery and compact builds; the Outdoor build takes 8x PAN 10mm over O-rings (ORG1) and their washers (WSH1) plus 4x flat 12mm for the sun shield into the shell's blind face pilots. Max ~0.3 N-m or the printed posts strip",
       "orderable": false
      },
      {
@@ -494,11 +494,11 @@
       "qty": "8",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 MACHINE screws for the heat-set insert builds (screw_insert=true): FLAT head 10mm on the battery and compact builds, PAN head 8mm on the Outdoor build",
+      "desc": "M2 MACHINE screws for the heat-set insert builds (screw_insert=true): FLAT head 10mm on the battery and compact builds, PAN head 10mm on the Outdoor build",
       "mpn": "M2-MACH-MIX",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "In place of SCR3's plate screws when the posts carry INS1 - a self-tapper strips brass: 4x flat 10mm, or 8x pan 8mm over the O-rings. The same lengths as the self-tappers they replace: below the insert the bore opens to Ø2.3, so the screw runs free to its tip",
+      "notes": "In place of SCR3's plate screws when the posts carry INS1 - a self-tapper strips brass: 4x flat 10mm, or 8x pan 10mm over the O-rings and their washers. The same lengths as the self-tappers they replace: below the insert the bore opens to Ø2.3, so the screw runs free to its tip",
       "orderable": false
      },
      {
@@ -510,14 +510,26 @@
       "mpn": "OR-2X1-NBR70",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Outdoor build: one under each of the 8 plate screws' pan heads, in the glands the back seats carry (canary_wap_enclosure e_gland). NBR or silicone 70A",
+      "notes": "Outdoor build: one in each of the 8 glands the back seats carry (canary_wap_enclosure e_gland), under a washer (WSH1) and the plate screw's pan head. NBR or silicone 70A",
+      "orderable": false
+     },
+     {
+      "ref": "WSH1",
+      "qty": "8",
+      "required": false,
+      "category": "Sealing",
+      "desc": "M2 washer 2.2 x 7.0 x 0.8, DIN 9021 large series, A2 or A4 stainless (O-ring head-seal stop)",
+      "mpn": "DIN9021-M2-A2",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "Outdoor build: one over each of the 8 O-rings (ORG1), under the plate screw's pan head: it bears on the printed land round the gland, so the gland's depth (0.769, 23 % squeeze on a nominal ring; a 0.2 mm layer grid prints it 0.80, 20 %) sets the squeeze and a snug screw cannot crush the ring (canary_core_lib pl_seat_cut). A narrower M2 washer (DIN 125-A / ISO 7089 5 mm, DIN 433 4.5 mm) does NOT land - it falls into the gland. E.g. Kraftberg K2.2/D9021-A2 (A2), Würth 0412922 (A4)",
       "orderable": false
      }
     ],
     "required_usd": 25.99,
-    "full_usd": 103.58,
+    "full_usd": 103.98,
     "required_usd_live": 27.9,
-    "full_usd_live": 118.05,
+    "full_usd_live": 118.45,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -531,6 +543,7 @@
       "refs": [
        "SCR3",
        "ORG1",
+       "WSH1",
        "CW1",
        "ADH1",
        "PLUG1",
@@ -539,7 +552,7 @@
        "VENT1",
        "LP1"
       ],
-      "usd": 12.35,
+      "usd": 12.75,
       "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
      }
     ]
@@ -551,7 +564,7 @@
      "Press the PCB straight down between the four end stops at its short ends until the four edge clips snap over it, USB-C toward the wall cutout — no screws needed for the board (the stops locate it along the case, so a plug cannot push it into the camera window). (To remove, gently splay the clips outward and lift.)",
      "Press a 6 mm magnet into the lid pocket (press fit — a drop of CA glue makes it permanent); add a GORE vent into the seat on the face's inner side if sealing; press the light pipe into the LED port.",
      "(weather mode) Glue the clear disc into the camera seat. Turn the shell face-down and press the TPU gasket into the groove in its ledge on a thin film of silicone grease — the printed ring is 0.5 mm narrower than its groove (1.1 in 1.6), so dry it drops out when step 5 turns the shell face-up over the plate.",
-     "Lower the shell over the plate (its walls swallow the plate's edge — the key slot on the plate meets the rib in the +Y wall, so it only goes one way), turn the case over and drive the M2 screws through the plate's recessed seats into the post ends — the Outdoor build seats an O-ring under each pan head first — snug diagonally, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty). The face and the sides stay unbroken; the only seam is the hairline around the plate on the back."
+     "Lower the shell over the plate (its walls swallow the plate's edge — the key slot on the plate meets the rib in the +Y wall, so it only goes one way), turn the case over and drive the M2 screws through the plate's recessed seats into the post ends — the Outdoor build seats an O-ring in each seat's gland and a DIN 9021 washer over it first — snug diagonally, then final quarter-turns (the washer lands, so the ring is never crushed). Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty). The face and the sides stay unbroken; the only seam is the hairline around the plate on the back."
     ]
    },
    "hardware": {
@@ -611,14 +624,20 @@
        {
         "qty": 8,
         "kind": "screw",
-        "spec": "M2 pan x 8 self-tap",
-        "text": "M2 pan x 8 self-tap (plate to the post ends)"
+        "spec": "M2 pan x 10 self-tap",
+        "text": "M2 pan x 10 self-tap (plate to the post ends)"
        },
        {
         "qty": 8,
         "kind": "o-ring",
         "spec": "O-ring 2 ID x 1 CS (under the head)",
         "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 8,
+        "kind": "washer",
+        "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+        "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
        },
        {
         "qty": 1,
@@ -679,8 +698,8 @@
        {
         "qty": 8,
         "kind": "screw",
-        "spec": "M2 pan x 8 machine (into the inserts)",
-        "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
+        "spec": "M2 pan x 10 machine (into the inserts)",
+        "text": "M2 pan x 10 machine (into the inserts) (plate to the post ends)"
        },
        {
         "qty": 8,
@@ -693,6 +712,12 @@
         "kind": "o-ring",
         "spec": "O-ring 2 ID x 1 CS (under the head)",
         "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 8,
+        "kind": "washer",
+        "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+        "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
        },
        {
         "qty": 1,
@@ -743,14 +768,20 @@
        {
         "qty": 8,
         "kind": "screw",
-        "spec": "M2 pan x 8 self-tap",
-        "text": "M2 pan x 8 self-tap (plate to the post ends)"
+        "spec": "M2 pan x 10 self-tap",
+        "text": "M2 pan x 10 self-tap (plate to the post ends)"
        },
        {
         "qty": 8,
         "kind": "o-ring",
         "spec": "O-ring 2 ID x 1 CS (under the head)",
         "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 8,
+        "kind": "washer",
+        "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+        "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
        },
        {
         "qty": 1,
@@ -1084,7 +1115,7 @@
       "qty": "18",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping pan-head screws, mixed lengths: Vision case 4x 4mm (camera posts) + 4x 8mm (back plate to the shell's post ends; 6x on the weather preset); doorbell v0.8 4x 5mm (camera posts) + 2x 4mm (module board posts) + 12x 10mm (back plate, over a 2 mm head floor)",
+      "desc": "M2 self-tapping pan-head screws, mixed lengths: Vision case 4x 4mm (camera posts) + 4x 8mm (back plate to the shell's post ends; 6x 10mm on the weather preset, over its washers); doorbell v0.8 4x 5mm (camera posts) + 2x 4mm (module board posts) + 12x 10mm (back plate, over a 2 mm head floor)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
       "usd": 0.9,
@@ -1180,7 +1211,7 @@
       "qty": "12",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 pan-head MACHINE screws for the heat-set insert builds (screw_insert=true): Vision case 4x 8mm (6x on the weather preset); doorbell 12x 10mm",
+      "desc": "M2 pan-head MACHINE screws for the heat-set insert builds (screw_insert=true): Vision case 4x 8mm (6x 10mm on the weather preset); doorbell 12x 10mm",
       "mpn": "M2-PAN-MACH-MIX",
       "mfr": "Generic",
       "usd": 0.6,
@@ -1298,7 +1329,19 @@
       "mpn": "OR-2X1-NBR70",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "Outdoor Vision and doorbell: one under each back screw's pan head (12 on the v0.8 doorbell; 6 with the mid-span gasket posts), in the glands the sealed back seats carry (e_gland). NBR or silicone 70A",
+      "notes": "Outdoor Vision and doorbell: one in each gland the sealed back seats carry (e_gland), under a washer (WSH1) and the back screw's pan head (12 on the v0.8 doorbell; 6 on the Vision weather preset, with its mid-span gasket posts). NBR or silicone 70A",
+      "orderable": false
+     },
+     {
+      "ref": "WSH1",
+      "qty": "12",
+      "required": false,
+      "category": "Sealing",
+      "desc": "M2 washer 2.2 x 7.0 x 0.8, DIN 9021 large series, A2 or A4 stainless (O-ring head-seal stop)",
+      "mpn": "DIN9021-M2-A2",
+      "mfr": "Generic",
+      "usd": 0.6,
+      "notes": "Outdoor Vision (6) and doorbell (12): one over each O-ring (ORG1), under the back screw's pan head: it bears on the printed land round the gland, so the gland's depth (0.769, 23 % squeeze on a nominal ring; a 0.2 mm layer grid prints it 0.80, 20 %) sets the squeeze and a snug screw cannot crush the ring (canary_core_lib pl_seat_cut). A narrower M2 washer (DIN 125-A / ISO 7089 5 mm, DIN 433 4.5 mm) does NOT land - it falls into the gland. E.g. Kraftberg K2.2/D9021-A2 (A2), Würth 0412922 (A4)",
       "orderable": false
      },
      {
@@ -1459,9 +1502,9 @@
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 96.9,
+    "full_usd": 97.5,
     "required_usd_live": 29.49,
-    "full_usd_live": 108.66,
+    "full_usd_live": 109.26,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -1493,7 +1536,7 @@
      "(xiao host) Seat the XIAO in the module's socket — both USB-C ports must face the same direction; backwards seating feeds power into GPIO and can kill either board (device guide §3). Click the stack into the tall side rails, module up, both ports aligned to the two bottom-wall openings (model port above, firmware port below). (devkit host) Click the Vision AI V2 and the DevKitM-1 into their snap-clip cradles (DevKit USB-C down, aligned to the wall opening); the module's own USB-C faces the middle gap — open the case to reflash models.",
      "Route the camera FPC to the module's CSI connector (and, devkit host, the Grove cable across the middle gap to the DevKit pins).",
      "(weather) Turn the front face-down and press the TPU gasket into the groove in its ledge on a thin film of silicone grease — the printed ring is 0.5 mm narrower than its groove, so dry it drops out when step 5 turns the shell face-up over the plate.",
-     "Lower the shell over the plate (the walls swallow the plate's edge; the plate's key slot meets the rib in the +Y wall, so it only goes one way), turn it over and drive the short M2 screws through the plate's recessed seats into the post ends (4, or 6 with the weather preset's mid posts — an O-ring under each pan head on a sealed build) — the face and every side stay unbroken — snug diagonally, then final quarter-turns.",
+     "Lower the shell over the plate (the walls swallow the plate's edge; the plate's key slot meets the rib in the +Y wall, so it only goes one way), turn it over and drive the short M2 screws through the plate's recessed seats into the post ends (4, or 6 with the weather preset's mid posts — an O-ring in each gland and a DIN 9021 washer over it under each pan head on a sealed build, M2 × 10 there) — the face and every side stay unbroken — snug diagonally, then final quarter-turns.",
      "Screw the bracket to the wall (or a tripod plate via the 1/4-20 nut), slot the case prongs into it, set the angle, tighten the M5 thumbscrew."
     ]
    },
@@ -1536,6 +1579,12 @@
         "kind": "o-ring",
         "spec": "O-ring 2 ID x 1 CS (under the head)",
         "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 12,
+        "kind": "washer",
+        "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+        "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
        },
        {
         "qty": 1,
@@ -1675,6 +1724,12 @@
         "kind": "o-ring",
         "spec": "O-ring 2 ID x 1 CS (under the head)",
         "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 12,
+        "kind": "washer",
+        "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+        "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
        },
        {
         "qty": 1,
@@ -1940,8 +1995,8 @@
        {
         "qty": 6,
         "kind": "screw",
-        "spec": "M2 pan x 8 self-tap",
-        "text": "M2 pan x 8 self-tap (plate to the post ends)"
+        "spec": "M2 pan x 10 self-tap",
+        "text": "M2 pan x 10 self-tap (plate to the post ends)"
        },
        {
         "qty": 4,
@@ -1954,6 +2009,12 @@
         "kind": "o-ring",
         "spec": "O-ring 2 ID x 1 CS (under the head)",
         "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 6,
+        "kind": "washer",
+        "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+        "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
        },
        {
         "qty": 1,
@@ -2092,11 +2153,11 @@
       "qty": "4",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping screw, PAN head, 8mm (printed-enclosure plate)",
+      "desc": "M2 self-tapping screw, PAN head, 8mm; 10mm on the sealed build (printed-enclosure plate)",
       "mpn": "M2X8-ST-PAN",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "For the printed Sense enclosure (canary_sense_enclosure.scad): driven from the back plate's recessed seats into the one-piece shell's post ends (the plate nests inside the walls, so the only seam is on the back face). Max ~0.3 N-m or the printed posts strip",
+      "notes": "For the printed Sense enclosure (canary_sense_enclosure.scad): driven from the back plate's recessed seats into the one-piece shell's post ends (the plate nests inside the walls, so the only seam is on the back face). The sealed build (opt_seal) takes 10mm: its washer (WSH1) lies under each head. Max ~0.3 N-m or the printed posts strip",
       "orderable": false
      },
      {
@@ -2116,7 +2177,7 @@
       "qty": "4",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 MACHINE screw, PAN head, 8mm (into INS1, screw_insert=true)",
+      "desc": "M2 MACHINE screw, PAN head, 8mm; 10mm on the sealed build (into INS1, screw_insert=true)",
       "mpn": "M2X8-MACH-PAN",
       "mfr": "Generic",
       "usd": 0.2,
@@ -2156,7 +2217,19 @@
       "mpn": "OR-2X1-NBR70",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "Sealed build (opt_seal): one under each back screw's pan head, in the glands the back seats carry (e_gland); 6 with seal_mid_posts. NBR or silicone 70A",
+      "notes": "Sealed build (opt_seal): one in each gland the back seats carry (e_gland), under a washer (WSH1) and the back screw's pan head; 6 with seal_mid_posts. NBR or silicone 70A",
+      "orderable": false
+     },
+     {
+      "ref": "WSH1",
+      "qty": "4",
+      "required": false,
+      "category": "Sealing",
+      "desc": "M2 washer 2.2 x 7.0 x 0.8, DIN 9021 large series, A2 or A4 stainless (O-ring head-seal stop)",
+      "mpn": "DIN9021-M2-A2",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "Sealed build (opt_seal): one over each O-ring (ORG1), under the back screw's pan head; 6 with seal_mid_posts: it bears on the printed land round the gland, so the gland's depth (0.769, 23 % squeeze on a nominal ring; a 0.2 mm layer grid prints it 0.80, 20 %) sets the squeeze and a snug screw cannot crush the ring (canary_core_lib pl_seat_cut). A narrower M2 washer (DIN 125-A / ISO 7089 5 mm, DIN 433 4.5 mm) does NOT land - it falls into the gland. E.g. Kraftberg K2.2/D9021-A2 (A2), Würth 0412922 (A4)",
       "orderable": false
      },
      {
@@ -2197,9 +2270,9 @@
      }
     ],
     "required_usd": 36.4,
-    "full_usd": 43.25,
+    "full_usd": 43.45,
     "required_usd_live": 36.4,
-    "full_usd_live": 45.21,
+    "full_usd_live": 45.41,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -2216,9 +2289,10 @@
        "SCR3",
        "SCR4",
        "FIL1",
-       "ORG1"
+       "ORG1",
+       "WSH1"
       ],
-      "usd": 39.8,
+      "usd": 40.0,
       "note": "Printed radome + tamper + keyhole mount; INS1 optional service threads extra"
      }
     ]
@@ -2230,7 +2304,7 @@
      "Click the carrier into the snap rails, antenna face toward the front, until the +Y end stops locate it — the stops are what keep the antenna under the radome window, so push it home against them.",
      "Press the light pipe into the WS2812 port; when sealing, glue a clear disc behind the lux aperture (the BH1750 needs to see room light) and stick a GORE-type membrane over any vent seat.",
      "(weather mode) Turn the radome shell face-down and press the TPU gasket into the groove in its ledge on a thin film of silicone grease — the printed ring is 0.5 mm narrower than its groove, so dry it drops out when step 5 turns the shell face-up over the plate.",
-     "Lower the radome shell over the plate (the walls swallow the plate's edge — the key slot meets the rib in the +Y wall, so the window can only land over the antenna array), turn it over and drive the 4 × M2 × 8 screws through the plate's recessed seats into the corner post ends — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
+     "Lower the radome shell over the plate (the walls swallow the plate's edge — the key slot meets the rib in the +Y wall, so the window can only land over the antenna array), turn it over and drive the 4 × M2 × 8 screws (weather mode: 4 × M2 × 10, each over an O-ring in its gland and a DIN 9021 washer on top) through the plate's recessed seats into the corner post ends — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
      "Mount it: slot the hinge prongs into the shared Vision bracket and set the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind keyholes — ceiling-mount the MR60FDA2 fall build facing straight down."
     ]
    },
@@ -2298,6 +2372,67 @@
         "kind": "insert",
         "spec": "M2 heat-set insert 3.5 OD x 4",
         "text": "M2 heat-set insert 3.5 OD x 4"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "bolt",
+        "spec": "M5 x 25 bolt + nut",
+        "text": "M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)"
+       },
+       {
+        "qty": 4,
+        "kind": "wall-screw",
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
+       }
+      ]
+     },
+     "sense.seal": {
+      "case": "Sense",
+      "scad": "canary_sense_enclosure.scad",
+      "overrides": {
+       "preset": "custom",
+       "opt_seal": "true",
+       "opt_vent": "true",
+       "screw_head": "pan",
+       "part": "back"
+      },
+      "items": [
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 10 self-tap",
+        "text": "M2 pan x 10 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 4,
+        "kind": "o-ring",
+        "spec": "O-ring 2 ID x 1 CS (under the head)",
+        "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 4,
+        "kind": "washer",
+        "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+        "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
+       },
+       {
+        "qty": 1,
+        "kind": "gasket",
+        "spec": "TPU gasket (print part=\"gasket\")",
+        "text": "TPU gasket (print part=\"gasket\")"
+       },
+       {
+        "qty": 1,
+        "kind": "vent",
+        "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+        "text": "Ø12 adhesive ePTFE/GORE vent patch"
        },
        {
         "qty": 1,

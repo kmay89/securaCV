@@ -140,7 +140,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "b304fe3e10bb1d00cb222908401a5f5e1a5a2f31dba1a01a2b50f7c04bdd89ea",
+      "sha256": "d1e219e57a4de7709b5c41981819b3212ef1c0306f9f54761985d5571cc8a045",
       "groups": [
         {
           "name": "What to render",
@@ -698,7 +698,7 @@
               "min": 0.08,
               "step": 0.04,
               "max": 0.32,
-              "desc": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
+              "desc": "your slicer's layer height: the face's disc-seat counterbore and the sealed plate's washer pockets get bridge steps this thick (core_bridge_steps)"
             }
           ]
         },
@@ -1122,7 +1122,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
+          "sha256": "b29b01cf8254b59342abae54331220cdcdf3108b94157ac29f93f6f795492e26"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1138,7 +1138,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
+          "sha256": "753903da969ed1707b1d83869c31f2fb720c4e4ce1fbaf0d222b55cdde3ae9df"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -1234,7 +1234,7 @@
         }
       },
       "units": {},
-      "sha256": "625dca17605104e2f27531a9950b1f83d5b570973efda5be8209b2fdeb014f07",
+      "sha256": "608e68f7ebbad6a4353ffb24c9b5a95c87ead3d9108a6d1d06f9e27147c36beb",
       "groups": [
         {
           "name": "What to render",
@@ -2228,7 +2228,7 @@
               "min": 0.08,
               "step": 0.04,
               "max": 0.32,
-              "desc": "your slicer's layer height: the front's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
+              "desc": "your slicer's layer height: the front's disc-seat counterbore and the sealed back's washer pockets get bridge steps this thick (core_bridge_steps)"
             },
             {
               "name": "span_max",
@@ -2241,7 +2241,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
+          "sha256": "b29b01cf8254b59342abae54331220cdcdf3108b94157ac29f93f6f795492e26"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2257,7 +2257,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
+          "sha256": "753903da969ed1707b1d83869c31f2fb720c4e4ce1fbaf0d222b55cdde3ae9df"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -2342,7 +2342,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "3c060f7351615a74cec5993f602e12963076107a6b5cb1d44d2e83c3531adf2d",
+      "sha256": "cf3f265b0d96be3ecfe7a1734bae6fc18c9ef31ba5e2297f88e1b6c60808c69b",
       "groups": [
         {
           "name": "What to render",
@@ -2772,7 +2772,7 @@
               "name": "svc_head_d",
               "type": "number",
               "default": 9.6,
-              "desc": "the plunger's head Ø: a flat disc in a seat on the back face (the +X one sits 1 mm off a screw seat)"
+              "desc": "the plunger's head Ø: a flat disc in a seat on the back face (the +X one keeps 0.8 off a screw seat)"
             },
             {
               "name": "svc_rim_t",
@@ -3303,7 +3303,7 @@
               "name": "head_floor",
               "type": "number",
               "default": 2.0,
-              "desc": "solid plastic under every recessed head — the plate screws' web past their gland and the"
+              "desc": "solid plastic under every recessed head: under a plate screw's bearing (its washer's land when sealed) and the wall plate's counterbores"
             }
           ]
         },
@@ -3675,7 +3675,7 @@
               "min": 0.08,
               "step": 0.04,
               "max": 0.32,
-              "desc": "your slicer's layer height: the button's bezel counterbore gets bridge steps this thick (core_bridge_steps)"
+              "desc": "your slicer's layer height: the button's bezel counterbore and the body's washer pockets get bridge steps this thick (core_bridge_steps)"
             },
             {
               "name": "cam_cx",
@@ -3700,7 +3700,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
+          "sha256": "b29b01cf8254b59342abae54331220cdcdf3108b94157ac29f93f6f795492e26"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3712,7 +3712,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
+          "sha256": "753903da969ed1707b1d83869c31f2fb720c4e4ce1fbaf0d222b55cdde3ae9df"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -3808,7 +3808,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "f2bd12199b63a1aa9bcfc3138f86cd9d888c86947099c06ca2fbbfa7d2ef2e84",
+      "sha256": "bfd623889b1dec216b9caa2e0c75a264b757375ba31b4e7400e02807b043d74c",
       "groups": [
         {
           "name": "What to render",
@@ -4665,7 +4665,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
+          "sha256": "b29b01cf8254b59342abae54331220cdcdf3108b94157ac29f93f6f795492e26"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4681,7 +4681,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
+          "sha256": "753903da969ed1707b1d83869c31f2fb720c4e4ce1fbaf0d222b55cdde3ae9df"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -5124,7 +5124,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
+          "sha256": "b29b01cf8254b59342abae54331220cdcdf3108b94157ac29f93f6f795492e26"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -5140,7 +5140,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
+          "sha256": "753903da969ed1707b1d83869c31f2fb720c4e4ce1fbaf0d222b55cdde3ae9df"
         },
         {
           "file": "canary_color_lib.scad",

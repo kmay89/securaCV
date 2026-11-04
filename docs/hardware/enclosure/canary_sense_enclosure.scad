@@ -81,6 +81,18 @@
 //              patch had no room in its own seat — the Vision's and the
 //              WAP's, the same day. The window-clearance assert measures the
 //              seat. No default mesh moves.
+//  2026-11-03: the sealed build's O-ringed plate screws get a land
+//              (canary_core_lib pl_seat_cut): the M2 pan head (Ø4.0) was
+//              narrower than its Ø4.3 gland, so nothing but the ring stopped
+//              it. Each sealed seat takes a DIN 9021 washer (2.2 x 7.0 x 0.8,
+//              billed) in a Ø7.6 pocket whose floor is its land, over a
+//              Ø4.673 x 0.769 gland (16.4-28.8 % squeeze across the ring's
+//              section tolerance). The sealed plate had no recess to give —
+//              a pan seat, the gland and the 0.4 web made its 3.15 — so it
+//              thickens to 3.969 with the washer, and the walls with it
+//              (opt_seal only: the sealed back and front are 0.82 deeper),
+//              and its screws grow M2 x 8 -> x 10. The committed (unsealed)
+//              back and front do not move.
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge front, foot chamfer, screw seats, tearbore
@@ -456,6 +468,7 @@ hw_echo("Sense", [
     hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, pl_L, hw_thread), " (plate to the post ends)")),
     screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
     e_gland ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_gland ? hw_item(len(post_xy()), hw_washer(screw_size)) : "",
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     e_vent       ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
     e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
@@ -604,7 +617,7 @@ module back() {
                     edgeclip(radar_cx + s*radar_w/2, radar_cy + dy, s > 0 ? 0 : 180, radar_standoff);
             }
         }
-        // the screws: seats through the plate, pan heads over their glands in seal mode
+        // the screws: seats through the plate, pan heads on their washers over the glands in seal mode
         for (p = post_xy())
             pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
         // the key slot in the plate's edge (the rib is on the shell's bore wall)

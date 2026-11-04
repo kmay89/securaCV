@@ -22,7 +22,7 @@
    "version": null,
    "rev": "r10",
    "recorded": "2026-09-25",
-   "src": "5c82dd69",
+   "src": "2ba2dbf3",
    "geom": {
     "triangles": 1460,
     "volume_mm3": 11908.186,
@@ -1265,7 +1265,7 @@
    "version": null,
    "rev": "r9",
    "recorded": "2026-10-22",
-   "src": "02c06992",
+   "src": "40644f97",
    "geom": {
     "triangles": 4012,
     "volume_mm3": 22322.066,
@@ -2346,13 +2346,13 @@
    "home": "released",
    "file": "docs/hardware/enclosure/canary_vision_doorbell_body.stl",
    "version": null,
-   "rev": "r17",
-   "recorded": "2026-10-22",
-   "src": "621c1500",
+   "rev": "r18",
+   "recorded": "2026-11-03",
+   "src": "6ff2db2b",
    "geom": {
-    "triangles": 11274,
-    "volume_mm3": 44462.873,
-    "area_mm2": 24807.296,
+    "triangles": 13098,
+    "volume_mm3": 43230.115,
+    "area_mm2": 25318.943,
     "bbox_mm": [
      48.7,
      166.4,
@@ -2364,24 +2364,24 @@
      -3.0
     ],
     "centroid_mm": [
-     0.0987,
-     -0.335,
-     1.1267
+     0.1129,
+     -0.2155,
+     1.1937
     ],
     "moments_mm2": [
-     180.7709,
-     2095.101,
-     17.6855
+     177.6848,
+     2079.7608,
+     17.9982
     ],
     "products_mm2": [
-     2.9362,
-     1.4925,
-     -6.322
+     2.5935,
+     1.5007,
+     -6.791
     ],
     "third_mm3": [
-     -6.407,
-     838.648,
-     156.381
+     -1.62,
+     565.527,
+     157.807
     ]
    },
    "history": [
@@ -5462,6 +5462,219 @@
       "note": "the plate's key notch is now cut core_key_d()+0.3 in from the bore wall (it was ledge_w+0.4 either side of the edge, 6.0 into the plate). That closes a 3.4 mm wide window from the back face into the cavity and backs the +Y gasket over the key (+86.7 mm3).",
       "why": "volume_mm3 44376.173 -> 44462.873"
      }
+    },
+    {
+     "rev": "r18",
+     "recorded": "2026-11-03",
+     "version": null,
+     "src": "6ff2db2b",
+     "geom": {
+      "triangles": 13098,
+      "volume_mm3": 43230.115,
+      "area_mm2": 25318.943,
+      "bbox_mm": [
+       48.7,
+       166.4,
+       22.8
+      ],
+      "lo_mm": [
+       -24.35,
+       -83.2,
+       -3.0
+      ],
+      "centroid_mm": [
+       0.1129,
+       -0.2155,
+       1.1937
+      ],
+      "moments_mm2": [
+       177.6848,
+       2079.7608,
+       17.9982
+      ],
+      "products_mm2": [
+       2.5935,
+       1.5007,
+       -6.791
+      ],
+      "third_mm3": [
+       -1.62,
+       565.527,
+       157.807
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -1232.758,
+      "area_mm2": 511.647,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 1824,
+      "knobs": [
+       {
+        "knob": "plate_screw_d",
+        "from": 4.2,
+        "to": 4.8
+       }
+      ],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card",
+       "e36b7341 Enclosures: the cross-family review — hardware vs BOMs, mount and host interfaces, viewers and docs (#1856)"
+      ],
+      "previous": "stl@e6d0bb2",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         12.8,
+         0.35,
+         -3.05,
+         20.4,
+         11.95,
+         2.15
+        ],
+        "cells": 3445
+       },
+       {
+        "kind": "removed",
+        "box": [
+         12.8,
+         -79.25,
+         -3.05,
+         20.4,
+         -71.65,
+         0.95
+        ],
+        "cells": 1670
+       },
+       {
+        "kind": "removed",
+        "box": [
+         12.8,
+         35.15,
+         -3.05,
+         20.4,
+         42.75,
+         0.95
+        ],
+        "cells": 1670
+       },
+       {
+        "kind": "removed",
+        "box": [
+         12.8,
+         69.95,
+         -3.05,
+         20.4,
+         77.55,
+         0.95
+        ],
+        "cells": 1670
+       },
+       {
+        "kind": "removed",
+        "box": [
+         12.8,
+         -55.65,
+         -3.05,
+         20.4,
+         -48.05,
+         0.95
+        ],
+        "cells": 1650
+       },
+       {
+        "kind": "removed",
+        "box": [
+         12.8,
+         -23.65,
+         -3.05,
+         20.4,
+         -16.05,
+         0.95
+        ],
+        "cells": 1650
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -21.6,
+         35.15,
+         -3.05,
+         -14.0,
+         42.75,
+         0.95
+        ],
+        "cells": 1648
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -20.4,
+         -79.25,
+         -3.05,
+         -12.8,
+         -71.65,
+         0.95
+        ],
+        "cells": 1648
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -20.4,
+         69.95,
+         -3.05,
+         -12.8,
+         77.55,
+         0.95
+        ],
+        "cells": 1648
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -21.6,
+         -1.25,
+         -3.05,
+         -14.0,
+         6.35,
+         0.95
+        ],
+        "cells": 1642
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -21.6,
+         -55.65,
+         -3.05,
+         -14.0,
+         -48.05,
+         0.95
+        ],
+        "cells": 1636
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -21.6,
+         -23.65,
+         -3.05,
+         -14.0,
+         -16.05,
+         0.95
+        ],
+        "cells": 1636
+       }
+      ],
+      "note": "the 12 sealed seats get a land: a Ø7.6 washer pocket (DIN 9021 2.2 x 7 x 0.8) over a re-sized Ø4.673 x 0.769 O-ring gland, head_floor 2.0 now measured under the land (recess 0.25 to 0.2); the +X mid post at y 2.5 steps to 8.0 so its pocket keeps 0.85 off the +X service plunger's seat (it would have overlapped it by 0.51)",
+      "why": "triangles 11274 -> 13098"
+     }
     }
    ]
   },
@@ -5473,13 +5686,13 @@
    "home": "released",
    "file": "docs/hardware/enclosure/canary_vision_doorbell_face.stl",
    "version": null,
-   "rev": "r15",
-   "recorded": "2026-10-22",
-   "src": "14c7473d",
+   "rev": "r16",
+   "recorded": "2026-11-03",
+   "src": "d832002d",
    "geom": {
     "triangles": 18844,
-    "volume_mm3": 77163.585,
-    "area_mm2": 45803.858,
+    "volume_mm3": 77164.745,
+    "area_mm2": 45800.871,
     "bbox_mm": [
      51.5,
      169.2,
@@ -5492,23 +5705,23 @@
     ],
     "centroid_mm": [
      -0.0091,
-     -0.0297,
-     10.673
+     -0.0586,
+     10.6731
     ],
     "moments_mm2": [
-     380.1578,
-     2870.6394,
-     62.5508
+     380.1564,
+     2870.9371,
+     62.5503
     ],
     "products_mm2": [
-     -0.4097,
+     -0.8858,
      -0.1114,
-     4.9658
+     4.9
     ],
     "third_mm3": [
-     -5.404,
-     -436.463,
-     145.742
+     -5.402,
+     -190.205,
+     145.727
     ]
    },
    "history": [
@@ -7759,6 +7972,87 @@
       "note": "the weep now leaves the bottom wall straight out on weep_z, core_min_web() above the gasket groove. The old 30° dive crossed the groove into the plate edge, where the seated ring and the plate shut it. The sealed case's drain and pressure path are open again (-8.4 mm3).",
       "why": "triangles 19100 -> 18844"
      }
+    },
+    {
+     "rev": "r16",
+     "recorded": "2026-11-03",
+     "version": null,
+     "src": "d832002d",
+     "geom": {
+      "triangles": 18844,
+      "volume_mm3": 77164.745,
+      "area_mm2": 45800.871,
+      "bbox_mm": [
+       51.5,
+       169.2,
+       29.2
+      ],
+      "lo_mm": [
+       -25.75,
+       -84.6,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.0091,
+       -0.0586,
+       10.6731
+      ],
+      "moments_mm2": [
+       380.1564,
+       2870.9371,
+       62.5503
+      ],
+      "products_mm2": [
+       -0.8858,
+       -0.1114,
+       4.9
+      ],
+      "third_mm3": [
+       -5.402,
+       -190.205,
+       145.727
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 1.16,
+      "area_mm2": -2.987,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [
+       {
+        "knob": "plate_screw_d",
+        "from": 4.2,
+        "to": 4.8
+       }
+      ],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card",
+       "e36b7341 Enclosures: the cross-family review — hardware vs BOMs, mount and host interfaces, viewers and docs (#1856)"
+      ],
+      "previous": "stl@e6d0bb2",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         13.8,
+         -11.05,
+         2.35,
+         19.0,
+         0.55,
+         23.95
+        ],
+        "cells": 12970
+       }
+      ],
+      "note": "the +X mid post and its pilot move y 2.5 to 8.0 with the body's seat (clamp spans 27.8 / 31.1); nothing else moves",
+      "why": "volume_mm3 77163.585 -> 77164.745"
+     }
     }
    ]
   },
@@ -7772,7 +8066,7 @@
    "version": null,
    "rev": "r8",
    "recorded": "2026-10-07",
-   "src": "8fa62c61",
+   "src": "7b135cf9",
    "geom": {
     "triangles": 1488,
     "volume_mm3": 658.024,
@@ -8832,7 +9126,7 @@
    "version": null,
    "rev": "r12",
    "recorded": "2026-10-23",
-   "src": "c500cd8f",
+   "src": "aa01da4a",
    "geom": {
     "triangles": 4356,
     "volume_mm3": 45173.73,
@@ -10724,7 +11018,7 @@
    "version": null,
    "rev": "r12",
    "recorded": "2026-10-23",
-   "src": "033deab0",
+   "src": "ef2c38d8",
    "geom": {
     "triangles": 4492,
     "volume_mm3": 227116.247,
@@ -12687,7 +12981,7 @@
    "version": null,
    "rev": "r1",
    "recorded": "2026-10-07",
-   "src": "7b49ca3a",
+   "src": "6ff91358",
    "geom": {
     "triangles": 3988,
     "volume_mm3": 239.673,
@@ -12780,7 +13074,7 @@
    "version": null,
    "rev": "r1",
    "recorded": "2026-10-05",
-   "src": "019fdb2a",
+   "src": "fe181df9",
    "geom": {
     "triangles": 1290,
     "volume_mm3": 114.02,
@@ -12873,7 +13167,7 @@
    "version": null,
    "rev": "r5",
    "recorded": "2026-10-22",
-   "src": "2269e8f9",
+   "src": "4c4a37cb",
    "geom": {
     "triangles": 6060,
     "volume_mm3": 7675.954,
@@ -14301,7 +14595,7 @@
    "version": null,
    "rev": "r14",
    "recorded": "2026-10-22",
-   "src": "8a2ebff5",
+   "src": "e6a1a70f",
    "geom": {
     "triangles": 2220,
     "volume_mm3": 17304.579,
@@ -16017,7 +16311,7 @@
    "version": null,
    "rev": "r11",
    "recorded": "2026-10-22",
-   "src": "4a975a2b",
+   "src": "b1f450f9",
    "geom": {
     "triangles": 5988,
     "volume_mm3": 28495.171,
@@ -17474,7 +17768,7 @@
    "version": null,
    "rev": "r4",
    "recorded": "2026-09-03",
-   "src": "7540820b",
+   "src": "1337cb8b",
    "geom": {
     "triangles": 964,
     "volume_mm3": 2460.192,
@@ -18289,7 +18583,7 @@
    "version": null,
    "rev": "r13",
    "recorded": "2026-10-22",
-   "src": "dbf83df6",
+   "src": "70d364ab",
    "geom": {
     "triangles": 1468,
     "volume_mm3": 9962.705,
@@ -19838,7 +20132,7 @@
    "version": null,
    "rev": "r11",
    "recorded": "2026-10-22",
-   "src": "8ce246de",
+   "src": "59212c3a",
    "geom": {
     "triangles": 6018,
     "volume_mm3": 24226.474,
@@ -21211,13 +21505,13 @@
    "home": "released",
    "file": "docs/hardware/enclosure/canary_vision_enclosure_xiao_weather_back.stl",
    "version": null,
-   "rev": "r13",
-   "recorded": "2026-10-22",
-   "src": "b655514c",
+   "rev": "r14",
+   "recorded": "2026-11-03",
+   "src": "62df14c2",
    "geom": {
-    "triangles": 4084,
-    "volume_mm3": 18598.424,
-    "area_mm2": 10828.427,
+    "triangles": 4996,
+    "volume_mm3": 17897.862,
+    "area_mm2": 11096.404,
     "bbox_mm": [
      48.0,
      79.0,
@@ -21229,24 +21523,24 @@
      -3.0
     ],
     "centroid_mm": [
-     -0.0085,
-     -0.3409,
-     -0.0086
+     -0.0088,
+     -0.3543,
+     0.0287
     ],
     "moments_mm2": [
-     188.3277,
-     487.7565,
-     6.9974
+     183.79,
+     478.5826,
+     7.1795
     ],
     "products_mm2": [
-     -0.3338,
-     0.0044,
-     -2.8364
+     -0.347,
+     0.0049,
+     -2.9342
     ],
     "third_mm3": [
-     3.819,
-     294.463,
-     54.715
+     3.848,
+     296.242,
+     56.241
     ]
    },
    "history": [
@@ -22984,6 +23278,141 @@
       "note": "the plate's key notch is cut core_key_d() + 0.3 in from the bore wall (PL-3): it ran ledge_w + 1.4 in from the plate's edge, through the plate and past the ledge band — a 3.4 mm hole from the back face into the cavity, inside the gasket line on this sealed build",
       "why": "volume_mm3 18511.724 -> 18598.424"
      }
+    },
+    {
+     "rev": "r14",
+     "recorded": "2026-11-03",
+     "version": null,
+     "src": "62df14c2",
+     "geom": {
+      "triangles": 4996,
+      "volume_mm3": 17897.862,
+      "area_mm2": 11096.404,
+      "bbox_mm": [
+       48.0,
+       79.0,
+       20.58
+      ],
+      "lo_mm": [
+       -24.0,
+       -39.5,
+       -3.0
+      ],
+      "centroid_mm": [
+       -0.0088,
+       -0.3543,
+       0.0287
+      ],
+      "moments_mm2": [
+       183.79,
+       478.5826,
+       7.1795
+      ],
+      "products_mm2": [
+       -0.347,
+       0.0049,
+       -2.9342
+      ],
+      "third_mm3": [
+       3.848,
+       296.242,
+       56.241
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -700.562,
+      "area_mm2": 267.977,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 912,
+      "knobs": [],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card",
+       "e36b7341 Enclosures: the cross-family review — hardware vs BOMs, mount and host interfaces, viewers and docs (#1856)"
+      ],
+      "previous": "stl@e6d0bb2",
+      "regions": [
+       {
+        "kind": "removed",
+        "box": [
+         13.55,
+         -36.75,
+         -3.05,
+         21.15,
+         -29.15,
+         1.75
+        ],
+        "cells": 1840
+       },
+       {
+        "kind": "removed",
+        "box": [
+         13.55,
+         -3.95,
+         -3.05,
+         21.15,
+         3.65,
+         1.75
+        ],
+        "cells": 1840
+       },
+       {
+        "kind": "removed",
+        "box": [
+         13.55,
+         28.85,
+         -3.05,
+         21.15,
+         36.45,
+         1.75
+        ],
+        "cells": 1840
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -21.25,
+         -36.75,
+         -3.05,
+         -13.65,
+         -29.15,
+         1.75
+        ],
+        "cells": 1836
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -21.25,
+         -3.95,
+         -3.05,
+         -13.65,
+         3.65,
+         1.75
+        ],
+        "cells": 1836
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -21.25,
+         28.85,
+         -3.05,
+         -13.65,
+         36.45,
+         1.75
+        ],
+        "cells": 1836
+       }
+      ],
+      "note": "the 6 sealed seats get a land: a Ø7.6 washer pocket (DIN 9021 2.2 x 7 x 0.8) whose floor stops the washer over a re-sized Ø4.673 x 0.769 O-ring gland; recess 1.85 to 1.031, screws M2 x 8 to x 10, bridge steps over each pocket; outline unchanged",
+      "why": "triangles 4084 -> 4996"
+     }
     }
    ]
   },
@@ -22997,13 +23426,13 @@
    "home": "released",
    "file": "docs/hardware/enclosure/canary_vision_enclosure_xiao_weather_front.stl",
    "version": null,
-   "rev": "r13",
-   "recorded": "2026-10-23",
-   "src": "2561ca98",
+   "rev": "r14",
+   "recorded": "2026-11-03",
+   "src": "082196d0",
    "geom": {
     "triangles": 8810,
-    "volume_mm3": 45259.237,
-    "area_mm2": 26244.021,
+    "volume_mm3": 45245.538,
+    "area_mm2": 26279.293,
     "bbox_mm": [
      50.8,
      102.297,
@@ -23016,23 +23445,23 @@
     ],
     "centroid_mm": [
      0.014,
-     -3.8141,
-     11.7688
+     -3.8152,
+     11.7675
     ],
     "moments_mm2": [
-     338.9295,
-     854.9017,
-     65.4362
+     338.9415,
+     854.9389,
+     65.4497
     ],
     "products_mm2": [
-     0.1327,
+     0.1328,
      -0.0864,
-     -16.1161
+     -16.1262
     ],
     "third_mm3": [
-     -12.974,
-     1064.651,
-     98.657
+     -12.978,
+     1065.433,
+     98.929
     ]
    },
    "history": [
@@ -24697,6 +25126,140 @@
       "note": "GORE vent seat Ø12.0 to Ø12.4 (the sealed build's patch had zero clearance in its seat); envelope unchanged",
       "why": "triangles 8798 -> 8810"
      }
+    },
+    {
+     "rev": "r14",
+     "recorded": "2026-11-03",
+     "version": null,
+     "src": "082196d0",
+     "geom": {
+      "triangles": 8810,
+      "volume_mm3": 45245.538,
+      "area_mm2": 26279.293,
+      "bbox_mm": [
+       50.8,
+       102.297,
+       29.76
+      ],
+      "lo_mm": [
+       -25.4,
+       -61.397,
+       0.0
+      ],
+      "centroid_mm": [
+       0.014,
+       -3.8152,
+       11.7675
+      ],
+      "moments_mm2": [
+       338.9415,
+       854.9389,
+       65.4497
+      ],
+      "products_mm2": [
+       0.1328,
+       -0.0864,
+       -16.1262
+      ],
+      "third_mm3": [
+       -12.978,
+       1065.433,
+       98.929
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -13.699,
+      "area_mm2": 35.272,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card"
+      ],
+      "previous": "stl@e36b734",
+      "regions": [
+       {
+        "kind": "removed",
+        "box": [
+         16.55,
+         -33.45,
+         15.55,
+         18.15,
+         -31.85,
+         16.75
+        ],
+        "cells": 36
+       },
+       {
+        "kind": "removed",
+        "box": [
+         16.55,
+         -0.65,
+         15.55,
+         18.15,
+         0.95,
+         16.75
+        ],
+        "cells": 36
+       },
+       {
+        "kind": "removed",
+        "box": [
+         16.55,
+         32.15,
+         15.55,
+         18.15,
+         33.75,
+         16.75
+        ],
+        "cells": 36
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -18.25,
+         -33.45,
+         15.55,
+         -16.65,
+         -31.85,
+         16.75
+        ],
+        "cells": 33
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -18.25,
+         -0.65,
+         15.55,
+         -16.65,
+         0.95,
+         16.75
+        ],
+        "cells": 33
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -18.25,
+         32.15,
+         15.55,
+         -16.65,
+         33.75,
+         16.75
+        ],
+        "cells": 33
+       }
+      ],
+      "note": "the 6 post pilots deepen 7.65 to 8.83 for the M2 x 10 plate screws; nothing else moves",
+      "why": "volume_mm3 45259.237 -> 45245.538"
+     }
     }
    ]
   },
@@ -24712,7 +25275,7 @@
    "version": null,
    "rev": "r6",
    "recorded": "2026-09-25",
-   "src": "4e7790ce",
+   "src": "2b951408",
    "geom": {
     "triangles": 624,
     "volume_mm3": 382.571,
@@ -25403,7 +25966,7 @@
    "version": null,
    "rev": "r1",
    "recorded": "2026-09-08",
-   "src": "0a26d439",
+   "src": "1cce0402",
    "geom": {
     "triangles": 1172,
     "volume_mm3": 643.173,
@@ -25495,9 +26058,9 @@
    "home": "released",
    "file": "docs/hardware/enclosure/canary_wap_enclosure_battery_base.stl",
    "version": null,
-   "rev": "r14",
-   "recorded": "2026-10-22",
-   "src": "612511ef",
+   "rev": "r15",
+   "recorded": "2026-11-03",
+   "src": "e0326bae",
    "geom": {
     "triangles": 2268,
     "volume_mm3": 10953.348,
@@ -25513,22 +26076,22 @@
      -0.2
     ],
     "centroid_mm": [
-     -2.4988,
+     -2.2796,
      -0.0393,
      1.2164
     ],
     "moments_mm2": [
-     902.9533,
+     894.9646,
      146.9183,
      1.2935
     ],
     "products_mm2": [
-     -0.5964,
-     -7.3177,
+     -0.6398,
+     -6.7845,
      -0.0445
     ],
     "third_mm3": [
-     2894.336,
+     2946.263,
      5.325,
      2.754
     ]
@@ -27491,6 +28054,195 @@
       "note": "the plate's key notch is cut core_key_d() + 0.3 in from the bore wall (PL-3): it ran ledge_w + 1.4 in from the plate's edge, through the plate and past the ledge band — a 3.4 mm hole from the back face into the cavity",
       "why": "volume_mm3 10936.144 -> 10953.348"
      }
+    },
+    {
+     "rev": "r15",
+     "recorded": "2026-11-03",
+     "version": null,
+     "src": "e0326bae",
+     "geom": {
+      "triangles": 2268,
+      "volume_mm3": 10953.348,
+      "area_mm2": 11169.281,
+      "bbox_mm": [
+       103.7,
+       43.0,
+       8.1
+      ],
+      "lo_mm": [
+       -51.85,
+       -21.5,
+       -0.2
+      ],
+      "centroid_mm": [
+       -2.2796,
+       -0.0393,
+       1.2164
+      ],
+      "moments_mm2": [
+       894.9646,
+       146.9183,
+       1.2935
+      ],
+      "products_mm2": [
+       -0.6398,
+       -6.7845,
+       -0.0445
+      ],
+      "third_mm3": [
+       2946.263,
+       5.325,
+       2.754
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 0.0,
+      "area_mm2": 0.0,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [
+       {
+        "knob": "tab_hole_d",
+        "from": 3.6,
+        "to": 4.2
+       }
+      ],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card",
+       "e36b7341 Enclosures: the cross-family review — hardware vs BOMs, mount and host interfaces, viewers and docs (#1856)"
+      ],
+      "previous": "stl@e6d0bb2",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -30.3,
+         -18.75,
+         2.15,
+         -23.5,
+         13.65,
+         7.75
+        ],
+        "cells": 4480
+       },
+       {
+        "kind": "moved",
+        "box": [
+         -49.1,
+         -9.95,
+         2.15,
+         -42.3,
+         10.05,
+         7.75
+        ],
+        "cells": 3457
+       },
+       {
+        "kind": "moved",
+        "box": [
+         25.3,
+         -18.75,
+         2.15,
+         28.9,
+         13.65,
+         4.15
+        ],
+        "cells": 2595
+       },
+       {
+        "kind": "moved",
+        "box": [
+         43.7,
+         -9.15,
+         2.15,
+         46.5,
+         9.25,
+         3.35
+        ],
+        "cells": 561
+       },
+       {
+        "kind": "added",
+        "box": [
+         -39.5,
+         8.45,
+         2.15,
+         -37.5,
+         10.05,
+         7.75
+        ],
+        "cells": 220
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -35.1,
+         8.45,
+         2.15,
+         -33.1,
+         10.05,
+         7.75
+        ],
+        "cells": 220
+       },
+       {
+        "kind": "added",
+        "box": [
+         -39.5,
+         -9.95,
+         2.15,
+         -37.5,
+         -8.35,
+         7.75
+        ],
+        "cells": 165
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -35.1,
+         -9.95,
+         2.15,
+         -33.1,
+         -8.35,
+         7.75
+        ],
+        "cells": 165
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -26.7,
+         17.65,
+         2.15,
+         -24.7,
+         18.85,
+         4.15
+        ],
+        "cells": 75
+       },
+       {
+        "kind": "added",
+        "box": [
+         26.5,
+         17.65,
+         2.15,
+         28.5,
+         18.85,
+         4.15
+        ],
+        "cells": 75
+       }
+      ],
+      "note": "the board's standoffs, cradle frame, clips and end stops, the battery bay's ribs and rails and the GPS cradle all sit 1.91 mm further from the USB end (the Sense's seated microSD card, BOM SD1, stood 0.61-0.91 into the shell's -X wall and swept its ledge cove on the way in); keyholes, key slot and outline unchanged",
+      "why": "centroid[x] -2.4988 -> -2.2796"
+     }
     }
    ]
   },
@@ -27503,9 +28255,9 @@
    "home": "released",
    "file": "docs/hardware/enclosure/canary_wap_enclosure_battery_lid.stl",
    "version": null,
-   "rev": "r13",
-   "recorded": "2026-10-23",
-   "src": "6f6541cc",
+   "rev": "r14",
+   "recorded": "2026-11-03",
+   "src": "3280e0d6",
    "geom": {
     "triangles": 4008,
     "volume_mm3": 27411.27,
@@ -27521,22 +28273,22 @@
      0.0
     ],
     "centroid_mm": [
-     0.9002,
+     0.9499,
      0.0675,
      7.3737
     ],
     "moments_mm2": [
-     1215.0175,
+     1216.6654,
      291.6038,
      39.2153
     ],
     "products_mm2": [
-     1.0348,
-     -0.9362,
+     1.1668,
+     -0.7931,
      0.1779
     ],
     "third_mm3": [
-     -1245.741,
+     -1500.459,
      -40.41,
      125.575
     ]
@@ -29379,6 +30131,116 @@
       "note": "the inner-face GORE vent seat opens from Ø12.0 to Ø12.4 (vent_pad_d + 2 x tol_slide: the billed Ø12 patch had zero clearance in its own seat); envelope unchanged",
       "why": "triangles 3996 -> 4008"
      }
+    },
+    {
+     "rev": "r14",
+     "recorded": "2026-11-03",
+     "version": null,
+     "src": "3280e0d6",
+     "geom": {
+      "triangles": 4008,
+      "volume_mm3": 27411.27,
+      "area_mm2": 23284.309,
+      "bbox_mm": [
+       106.5,
+       45.8,
+       21.3
+      ],
+      "lo_mm": [
+       -53.25,
+       -22.9,
+       0.0
+      ],
+      "centroid_mm": [
+       0.9499,
+       0.0675,
+       7.3737
+      ],
+      "moments_mm2": [
+       1216.6654,
+       291.6038,
+       39.2153
+      ],
+      "products_mm2": [
+       1.1668,
+       -0.7931,
+       0.1779
+      ],
+      "third_mm3": [
+       -1500.459,
+       -40.41,
+       125.575
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 0.0,
+      "area_mm2": 0.0,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card"
+      ],
+      "previous": "stl@e36b734",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -13.3,
+         -10.95,
+         1.95,
+         -9.7,
+         17.05,
+         13.15
+        ],
+        "cells": 15680
+       },
+       {
+        "kind": "moved",
+        "box": [
+         11.5,
+         -10.95,
+         1.95,
+         15.1,
+         17.05,
+         13.15
+        ],
+        "cells": 15680
+       },
+       {
+        "kind": "moved",
+        "box": [
+         -42.5,
+         -10.95,
+         -0.05,
+         -24.1,
+         12.65,
+         4.35
+        ],
+        "cells": 3425
+       },
+       {
+        "kind": "added",
+        "box": [
+         -50.5,
+         -5.75,
+         -0.05,
+         -44.1,
+         6.65,
+         1.95
+        ],
+        "cells": 697
+       }
+      ],
+      "note": "the camera window and disc seat, light-pipe bore, GORE seat and vent ring, magnet pocket, lid-rib keep-outs and battery hold-down ribs move 1.91 mm from the USB wall with the board (the microSD card clears the wall and the ledge cove); walls, ledge, USB opening and envelope unchanged",
+      "why": "centroid[x] 0.9002 -> 0.9499"
+     }
     }
    ]
   },
@@ -29392,7 +30254,7 @@
    "version": null,
    "rev": "r5",
    "recorded": "2026-09-03",
-   "src": "77e507aa",
+   "src": "84d40883",
    "geom": {
     "triangles": 164,
     "volume_mm3": 2154.698,
@@ -30217,7 +31079,7 @@
    "version": null,
    "rev": "r14",
    "recorded": "2026-10-22",
-   "src": "f71154f3",
+   "src": "3da7f547",
    "geom": {
     "triangles": 2092,
     "volume_mm3": 3297.979,
@@ -32093,7 +32955,7 @@
    "version": null,
    "rev": "r13",
    "recorded": "2026-10-23",
-   "src": "f15941ca",
+   "src": "a014ff20",
    "geom": {
     "triangles": 2724,
     "volume_mm3": 8036.315,
@@ -34004,7 +34866,7 @@
    "version": null,
    "rev": "r1",
    "recorded": "2026-07-02",
-   "src": "1401e185",
+   "src": "6a47c8a1",
    "geom": {
     "triangles": 296,
     "volume_mm3": 1040.763,
@@ -34096,13 +34958,13 @@
    "home": "released",
    "file": "docs/hardware/enclosure/canary_wap_enclosure_weather_base.stl",
    "version": null,
-   "rev": "r12",
-   "recorded": "2026-10-22",
-   "src": "575c12a9",
+   "rev": "r13",
+   "recorded": "2026-11-03",
+   "src": "e4c2e54a",
    "geom": {
-    "triangles": 5500,
-    "volume_mm3": 28982.58,
-    "area_mm2": 15729.179,
+    "triangles": 6716,
+    "volume_mm3": 28048.497,
+    "area_mm2": 16086.482,
     "bbox_mm": [
      109.3,
      53.4,
@@ -34114,24 +34976,24 @@
      -3.0
     ],
     "centroid_mm": [
-     -0.9506,
-     -0.0238,
-     -0.3055
+     -0.8951,
+     -0.0245,
+     -0.2836
     ],
     "moments_mm2": [
-     971.1813,
-     231.6347,
-     2.7787
+     957.427,
+     225.8684,
+     2.8098
     ],
     "products_mm2": [
-     -0.5777,
-     -4.2011,
-     -0.0311
+     -0.6159,
+     -3.9777,
+     -0.0316
     ],
     "third_mm3": [
-     1308.845,
-     4.716,
-     2.389
+     1339.508,
+     4.448,
+     2.384
     ]
    },
    "history": [
@@ -35733,6 +36595,291 @@
       "note": "the plate's key notch is cut core_key_d() + 0.3 in from the bore wall (PL-3): it ran ledge_w + 1.4 in from the plate's edge, through the plate and past the ledge band — a 3.4 mm hole from the back face into the cavity, inside the gasket line on this sealed build",
       "why": "volume_mm3 28895.88 -> 28982.58"
      }
+    },
+    {
+     "rev": "r13",
+     "recorded": "2026-11-03",
+     "version": null,
+     "src": "e4c2e54a",
+     "geom": {
+      "triangles": 6716,
+      "volume_mm3": 28048.497,
+      "area_mm2": 16086.482,
+      "bbox_mm": [
+       109.3,
+       53.4,
+       10.9
+      ],
+      "lo_mm": [
+       -54.65,
+       -26.7,
+       -3.0
+      ],
+      "centroid_mm": [
+       -0.8951,
+       -0.0245,
+       -0.2836
+      ],
+      "moments_mm2": [
+       957.427,
+       225.8684,
+       2.8098
+      ],
+      "products_mm2": [
+       -0.6159,
+       -3.9777,
+       -0.0316
+      ],
+      "third_mm3": [
+       1339.508,
+       4.448,
+       2.384
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -934.083,
+      "area_mm2": 357.303,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 1216,
+      "knobs": [
+       {
+        "knob": "tab_hole_d",
+        "from": 3.6,
+        "to": 4.2
+       }
+      ],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card",
+       "e36b7341 Enclosures: the cross-family review — hardware vs BOMs, mount and host interfaces, viewers and docs (#1856)"
+      ],
+      "previous": "stl@e6d0bb2",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -30.3,
+         -21.15,
+         2.15,
+         -23.5,
+         13.65,
+         7.75
+        ],
+        "cells": 4660
+       },
+       {
+        "kind": "moved",
+        "box": [
+         -49.1,
+         -9.95,
+         2.15,
+         -42.3,
+         10.05,
+         7.75
+        ],
+        "cells": 3457
+       },
+       {
+        "kind": "moved",
+        "box": [
+         25.3,
+         -21.15,
+         2.15,
+         28.9,
+         13.65,
+         4.15
+        ],
+        "cells": 2775
+       },
+       {
+        "kind": "removed",
+        "box": [
+         12.1,
+         -23.95,
+         -3.05,
+         19.7,
+         -16.35,
+         1.75
+        ],
+        "cells": 1875
+       },
+       {
+        "kind": "removed",
+        "box": [
+         12.1,
+         16.05,
+         -3.05,
+         19.7,
+         23.65,
+         1.75
+        ],
+        "cells": 1875
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -19.9,
+         -23.95,
+         -3.05,
+         -12.3,
+         -16.35,
+         1.75
+        ],
+        "cells": 1854
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -19.9,
+         16.05,
+         -3.05,
+         -12.3,
+         23.65,
+         1.75
+        ],
+        "cells": 1854
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -51.9,
+         -23.95,
+         -3.05,
+         -44.3,
+         -16.35,
+         1.75
+        ],
+        "cells": 1836
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -51.9,
+         16.05,
+         -3.05,
+         -44.3,
+         23.65,
+         1.75
+        ],
+        "cells": 1836
+       },
+       {
+        "kind": "removed",
+        "box": [
+         44.1,
+         -23.95,
+         -3.05,
+         51.7,
+         -16.35,
+         1.75
+        ],
+        "cells": 1830
+       },
+       {
+        "kind": "removed",
+        "box": [
+         44.1,
+         16.05,
+         -3.05,
+         51.7,
+         23.65,
+         1.75
+        ],
+        "cells": 1830
+       },
+       {
+        "kind": "moved",
+        "box": [
+         43.7,
+         -9.15,
+         2.15,
+         46.5,
+         9.25,
+         3.35
+        ],
+        "cells": 561
+       },
+       {
+        "kind": "moved",
+        "box": [
+         -26.7,
+         17.65,
+         2.15,
+         -23.5,
+         21.25,
+         4.15
+        ],
+        "cells": 255
+       },
+       {
+        "kind": "moved",
+        "box": [
+         25.3,
+         17.65,
+         2.15,
+         28.5,
+         21.25,
+         4.15
+        ],
+        "cells": 255
+       },
+       {
+        "kind": "added",
+        "box": [
+         -39.5,
+         8.45,
+         2.15,
+         -37.5,
+         10.05,
+         7.75
+        ],
+        "cells": 220
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -35.1,
+         8.45,
+         2.15,
+         -33.1,
+         10.05,
+         7.75
+        ],
+        "cells": 220
+       },
+       {
+        "kind": "added",
+        "box": [
+         -39.5,
+         -9.95,
+         2.15,
+         -37.5,
+         -8.35,
+         7.75
+        ],
+        "cells": 165
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -35.1,
+         -9.95,
+         2.15,
+         -33.1,
+         -8.35,
+         7.75
+        ],
+        "cells": 165
+       }
+      ],
+      "note": "plate features 1.91 mm further from the USB end with the board (the microSD card); and the 8 sealed seats get a land: a Ø7.6 pocket for a DIN 9021 2.2 x 7 x 0.8 washer whose floor stops the pan head's washer over a Ø4.673 x 0.769 O-ring gland (was a Ø4.6 bore straight onto a Ø4.3 x 0.75 gland the Ø4.0 head fell into); recess 1.85 to 1.031, screws M2 x 8 to x 10, bridge steps over each pocket; keyhole pockets, key slot and outline unchanged",
+      "why": "triangles 5500 -> 6716"
+     }
     }
    ]
   },
@@ -35747,7 +36894,7 @@
    "version": null,
    "rev": "r6",
    "recorded": "2026-09-25",
-   "src": "4ae3b8bf",
+   "src": "a5402595",
    "geom": {
     "triangles": 624,
     "volume_mm3": 500.382,
@@ -36559,13 +37706,13 @@
    "home": "released",
    "file": "docs/hardware/enclosure/canary_wap_enclosure_weather_lid.stl",
    "version": null,
-   "rev": "r13",
-   "recorded": "2026-10-23",
-   "src": "5eb4bdd3",
+   "rev": "r14",
+   "recorded": "2026-11-03",
+   "src": "72d7b30e",
    "geom": {
     "triangles": 6300,
-    "volume_mm3": 47882.348,
-    "area_mm2": 30690.403,
+    "volume_mm3": 47864.083,
+    "area_mm2": 30737.433,
     "bbox_mm": [
      112.1,
      56.2,
@@ -36577,24 +37724,24 @@
      0.0
     ],
     "centroid_mm": [
-     0.8848,
-     0.0389,
-     8.3803
+     0.9137,
+     0.039,
+     8.3794
     ],
     "moments_mm2": [
-     1359.5197,
-     435.2595,
-     40.5433
+     1360.4959,
+     435.2729,
+     40.5568
     ],
     "products_mm2": [
-     0.1809,
-     0.681,
+     0.2574,
+     0.7354,
      0.0409
     ],
     "third_mm3": [
-     -1339.668,
-     -43.111,
-     101.601
+     -1498.384,
+     -43.129,
+     101.741
     ]
    },
    "history": [
@@ -38151,6 +39298,212 @@
       "note": "GORE vent seat Ø12.0 to Ø12.4 (the sealed build's patch had zero clearance in its seat); envelope unchanged",
       "why": "triangles 6288 -> 6300"
      }
+    },
+    {
+     "rev": "r14",
+     "recorded": "2026-11-03",
+     "version": null,
+     "src": "72d7b30e",
+     "geom": {
+      "triangles": 6300,
+      "volume_mm3": 47864.083,
+      "area_mm2": 30737.433,
+      "bbox_mm": [
+       112.1,
+       56.2,
+       24.1
+      ],
+      "lo_mm": [
+       -56.05,
+       -28.1,
+       0.0
+      ],
+      "centroid_mm": [
+       0.9137,
+       0.039,
+       8.3794
+      ],
+      "moments_mm2": [
+       1360.4959,
+       435.2729,
+       40.5568
+      ],
+      "products_mm2": [
+       0.2574,
+       0.7354,
+       0.0409
+      ],
+      "third_mm3": [
+       -1498.384,
+       -43.129,
+       101.741
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -18.265,
+      "area_mm2": 47.03,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card"
+      ],
+      "previous": "stl@e36b734",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -13.3,
+         -10.95,
+         1.95,
+         -9.7,
+         17.05,
+         13.15
+        ],
+        "cells": 15680
+       },
+       {
+        "kind": "moved",
+        "box": [
+         11.5,
+         -10.95,
+         1.95,
+         15.1,
+         17.05,
+         13.15
+        ],
+        "cells": 15680
+       },
+       {
+        "kind": "moved",
+        "box": [
+         -42.5,
+         -10.95,
+         -0.05,
+         -24.1,
+         12.65,
+         4.35
+        ],
+        "cells": 3425
+       },
+       {
+        "kind": "added",
+        "box": [
+         -50.5,
+         -5.75,
+         -0.05,
+         -44.1,
+         6.65,
+         1.95
+        ],
+        "cells": 697
+       },
+       {
+        "kind": "removed",
+        "box": [
+         15.1,
+         -20.95,
+         9.95,
+         16.7,
+         -19.35,
+         11.15
+        ],
+        "cells": 36
+       },
+       {
+        "kind": "removed",
+        "box": [
+         15.1,
+         19.05,
+         9.95,
+         16.7,
+         20.65,
+         11.15
+        ],
+        "cells": 36
+       },
+       {
+        "kind": "removed",
+        "box": [
+         47.1,
+         -20.95,
+         9.95,
+         48.7,
+         -19.35,
+         11.15
+        ],
+        "cells": 36
+       },
+       {
+        "kind": "removed",
+        "box": [
+         47.1,
+         19.05,
+         9.95,
+         48.7,
+         20.65,
+         11.15
+        ],
+        "cells": 36
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -48.9,
+         -20.95,
+         9.95,
+         -47.3,
+         -19.35,
+         11.15
+        ],
+        "cells": 33
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -48.9,
+         19.05,
+         9.95,
+         -47.3,
+         20.65,
+         11.15
+        ],
+        "cells": 33
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -16.9,
+         -20.95,
+         9.95,
+         -15.3,
+         -19.35,
+         11.15
+        ],
+        "cells": 33
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -16.9,
+         19.05,
+         9.95,
+         -15.3,
+         20.65,
+         11.15
+        ],
+        "cells": 33
+       }
+      ],
+      "note": "face features and hold-down ribs 1.91 mm from the USB wall with the board (the microSD card); the 8 post pilots deepen 7.65 to 8.83 for the M2 x 10 (6.47 kept to the shield's pilots); gasket groove, cheeks, ledge, mid posts, plug recess, weep and envelope unchanged",
+      "why": "volume_mm3 47882.348 -> 47864.083"
+     }
     }
    ]
   },
@@ -38163,9 +39516,9 @@
    "home": "released",
    "file": "docs/hardware/enclosure/canary_wap_enclosure_weather_shield.stl",
    "version": null,
-   "rev": "r9",
-   "recorded": "2026-10-22",
-   "src": "0d3a5fbb",
+   "rev": "r10",
+   "recorded": "2026-11-03",
+   "src": "17eb5993",
    "geom": {
     "triangles": 3556,
     "volume_mm3": 20290.313,
@@ -38181,22 +39534,22 @@
      0.0
     ],
     "centroid_mm": [
-     1.276,
+     1.2194,
      0.0409,
      1.3697
     ],
     "moments_mm2": [
-     1282.7552,
+     1287.6629,
      393.4303,
      1.2606
     ],
     "products_mm2": [
-     -1.5262,
-     -0.2166,
+     -1.4458,
+     -0.207,
      -0.0069
     ],
     "third_mm3": [
-     -2477.383,
+     -2581.06,
      -43.275,
      3.848
     ]
@@ -39480,6 +40833,90 @@
       "note": "camera and light-pipe apertures follow the board +1.4 mm",
       "why": "centroid[x] 1.3176 -> 1.276"
      }
+    },
+    {
+     "rev": "r10",
+     "recorded": "2026-11-03",
+     "version": null,
+     "src": "17eb5993",
+     "geom": {
+      "triangles": 3556,
+      "volume_mm3": 20290.313,
+      "area_mm2": 18073.787,
+      "bbox_mm": [
+       124.1,
+       68.2,
+       8.4
+      ],
+      "lo_mm": [
+       -62.05,
+       -34.1,
+       0.0
+      ],
+      "centroid_mm": [
+       1.2194,
+       0.0409,
+       1.3697
+      ],
+      "moments_mm2": [
+       1287.6629,
+       393.4303,
+       1.2606
+      ],
+      "products_mm2": [
+       -1.4458,
+       -0.207,
+       -0.0069
+      ],
+      "third_mm3": [
+       -2581.06,
+       -43.275,
+       3.848
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 0.0,
+      "area_mm2": 0.0,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [],
+      "commits": [],
+      "previous": "stl@e6d0bb2",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -42.5,
+         -13.35,
+         -0.05,
+         -32.5,
+         8.65,
+         2.35
+        ],
+        "cells": 1998
+       },
+       {
+        "kind": "added",
+        "box": [
+         -52.1,
+         -7.35,
+         -0.05,
+         -44.1,
+         8.65,
+         2.35
+        ],
+        "cells": 1176
+       }
+      ],
+      "note": "the camera (Ø16) and light-pipe (Ø8) apertures move 1.91 mm with the board (centers -44.2 to -42.29 and -38.24 to -36.34); outline, standoff tubes and screw seats unchanged",
+      "why": "centroid[x] 1.276 -> 1.2194"
+     }
     }
    ]
   },
@@ -39493,7 +40930,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "e1fdbb60",
+   "src": "e48b2812",
    "geom": {
     "triangles": 2012,
     "volume_mm3": 28166.119,
@@ -39664,7 +41101,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "291d1f74",
+   "src": "1b2f39e2",
    "geom": {
     "triangles": 2156,
     "volume_mm3": 10056.416,
@@ -39835,7 +41272,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "3a89a943",
+   "src": "c4b6eb47",
    "geom": {
     "triangles": 1884,
     "volume_mm3": 12938.163,
@@ -40006,7 +41443,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "90323d51",
+   "src": "7a0112c0",
    "geom": {
     "triangles": 1672,
     "volume_mm3": 2445.476,
@@ -40515,7 +41952,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "c642e582",
+   "src": "e3b9b358",
    "geom": {
     "triangles": 480,
     "volume_mm3": 992.013,
@@ -40609,7 +42046,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "72940261",
+   "src": "a6d41a9d",
    "geom": {
     "triangles": 2808,
     "volume_mm3": 2062.925,
@@ -40703,7 +42140,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "bccce941",
+   "src": "97fd8bfc",
    "geom": {
     "triangles": 4532,
     "volume_mm3": 2336.836,
@@ -40871,7 +42308,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "f7c379c9",
+   "src": "451a730c",
    "geom": {
     "triangles": 2816,
     "volume_mm3": 2279.513,
@@ -40965,7 +42402,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "371875ec",
+   "src": "54aaaf21",
    "geom": {
     "triangles": 1772,
     "volume_mm3": 1453.97,
@@ -41059,7 +42496,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "82211b55",
+   "src": "a71a2c03",
    "geom": {
     "triangles": 2828,
     "volume_mm3": 2965.287,
@@ -41153,7 +42590,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "3b07c404",
+   "src": "656db0ec",
    "geom": {
     "triangles": 4500,
     "volume_mm3": 2315.973,
@@ -41321,7 +42758,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "c2673db6",
+   "src": "4daeb155",
    "geom": {
     "triangles": 4524,
     "volume_mm3": 2197.607,
@@ -41489,7 +42926,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "58008851",
+   "src": "5f4b87f5",
    "geom": {
     "triangles": 2648,
     "volume_mm3": 18.37,
@@ -41583,7 +43020,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "ee7b7df1",
+   "src": "ccac3c7b",
    "geom": {
     "triangles": 888,
     "volume_mm3": 40.327,
@@ -41678,7 +43115,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "db570316",
+   "src": "e7af4eac",
    "geom": {
     "triangles": 456,
     "volume_mm3": 881.273,
@@ -41773,7 +43210,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "8dc26046",
+   "src": "a914a190",
    "geom": {
     "triangles": 2860,
     "volume_mm3": 2036.67,
@@ -41942,7 +43379,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "5be3edb8",
+   "src": "945664f9",
    "geom": {
     "triangles": 2852,
     "volume_mm3": 3059.727,
@@ -42037,7 +43474,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "f92c46d5",
+   "src": "b0d55fdf",
    "geom": {
     "triangles": 4496,
     "volume_mm3": 2453.202,
@@ -42132,7 +43569,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "fd04758c",
+   "src": "29d084e1",
    "geom": {
     "triangles": 4484,
     "volume_mm3": 2301.783,
@@ -42226,7 +43663,7 @@
    "version": "v0.5-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "f9237fa6",
+   "src": "5a95bebb",
    "geom": {
     "triangles": 1864,
     "volume_mm3": 2630.647,
@@ -42439,7 +43876,7 @@
    "version": "v0.5-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "b02197f3",
+   "src": "214e74f9",
    "geom": {
     "triangles": 1432,
     "volume_mm3": 3233.166,
@@ -42534,7 +43971,7 @@
    "version": "v0.5-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "16a7b576",
+   "src": "afb02df0",
    "geom": {
     "triangles": 1896,
     "volume_mm3": 2711.453,
@@ -42629,7 +44066,7 @@
    "version": "v0.5-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "6e7a24a2",
+   "src": "8393035f",
    "geom": {
     "triangles": 1468,
     "volume_mm3": 4143.81,
@@ -42722,7 +44159,7 @@
    "version": "v0.3-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "c2224508",
+   "src": "2f54bab8",
    "geom": {
     "triangles": 2620,
     "volume_mm3": 33828.909,
@@ -42901,7 +44338,7 @@
    "version": "v0.3-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "15ed7541",
+   "src": "60382f42",
    "geom": {
     "triangles": 5408,
     "volume_mm3": 33719.356,
@@ -42995,7 +44432,7 @@
    "version": "v0.3-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "4af2fea2",
+   "src": "1090acba",
    "geom": {
     "triangles": 624,
     "volume_mm3": 523.152,
@@ -43089,7 +44526,7 @@
    "version": "v0.3-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "826609f8",
+   "src": "2a2ed9f2",
    "geom": {
     "triangles": 1140,
     "volume_mm3": 641.544,
@@ -43182,7 +44619,7 @@
    "version": "v0.4-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "ac42c251",
+   "src": "36fccff8",
    "geom": {
     "triangles": 36022,
     "volume_mm3": 28816.856,
@@ -43481,7 +44918,7 @@
    "version": "v0.4-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "25e4310d",
+   "src": "25b24f2a",
    "geom": {
     "triangles": 2716,
     "volume_mm3": 3103.254,
@@ -43574,7 +45011,7 @@
    "version": "v0.4-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "34210203",
+   "src": "c288dde4",
    "geom": {
     "triangles": 28,
     "volume_mm3": 48.239,
@@ -43667,7 +45104,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-22",
-   "src": "a2fcc659",
+   "src": "38fd7a9d",
    "geom": {
     "triangles": 4028,
     "volume_mm3": 30621.233,
@@ -43970,7 +45407,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "76c2530b",
+   "src": "8aae8ec2",
    "geom": {
     "triangles": 2808,
     "volume_mm3": 13137.64,
@@ -44348,7 +45785,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-22",
-   "src": "c9d0e3c0",
+   "src": "791cbee4",
    "geom": {
     "triangles": 1600,
     "volume_mm3": 23382.822,
@@ -44555,7 +45992,7 @@
    "version": "v0.1-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "7f7323ee",
+   "src": "d3d5177e",
    "geom": {
     "triangles": 548,
     "volume_mm3": 63224.339,
@@ -44646,7 +46083,7 @@
    "version": "v0.3-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "b296c7fd",
+   "src": "2c977315",
    "geom": {
     "triangles": 5896,
     "volume_mm3": 65588.008,
@@ -44854,7 +46291,7 @@
    "version": "v0.3-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "92709238",
+   "src": "58b3ac0d",
    "geom": {
     "triangles": 5922,
     "volume_mm3": 52207.522,
@@ -44947,7 +46384,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "c73d162a",
+   "src": "0efbd019",
    "geom": {
     "triangles": 1208,
     "volume_mm3": 305.623,
@@ -45144,7 +46581,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "3fb16745",
+   "src": "2c15f073",
    "geom": {
     "triangles": 5768,
     "volume_mm3": 39621.626,
@@ -45461,7 +46898,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "3434c3b0",
+   "src": "83f55ba7",
    "geom": {
     "triangles": 29224,
     "volume_mm3": 30360.503,
@@ -45670,7 +47107,7 @@
    "version": "v0.1-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "f7adb12e",
+   "src": "1e3e8d31",
    "geom": {
     "triangles": 832,
     "volume_mm3": 433.881,
@@ -45763,7 +47200,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "5aa9aa59",
+   "src": "bb793b61",
    "geom": {
     "triangles": 17284,
     "volume_mm3": 14476.54,
@@ -45960,7 +47397,7 @@
    "version": "v0.4-dev",
    "rev": "r3",
    "recorded": "2026-10-23",
-   "src": "140b8627",
+   "src": "7bc8ed2e",
    "geom": {
     "triangles": 10024,
     "volume_mm3": 37029.442,
@@ -46369,7 +47806,7 @@
    "version": "v0.4-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "baf2166d",
+   "src": "cffa3da8",
    "geom": {
     "triangles": 556,
     "volume_mm3": 286.179,
@@ -47017,7 +48454,7 @@
    "version": "v0.3-dev",
    "rev": "r3",
    "recorded": "2026-10-23",
-   "src": "6f0cd200",
+   "src": "fc4bc45f",
    "geom": {
     "triangles": 3220,
     "volume_mm3": 22617.628,
@@ -47315,7 +48752,7 @@
    "version": "v0.3-dev",
    "rev": "r3",
    "recorded": "2026-10-23",
-   "src": "f827a3b9",
+   "src": "9e1bc466",
    "geom": {
     "triangles": 3348,
     "volume_mm3": 19967.718,
@@ -47613,7 +49050,7 @@
    "version": "v0.3-dev",
    "rev": "r3",
    "recorded": "2026-10-23",
-   "src": "e471c0f2",
+   "src": "50f448a8",
    "geom": {
     "triangles": 3220,
     "volume_mm3": 18820.828,
@@ -47911,7 +49348,7 @@
    "version": "v0.1-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "691a7e0f",
+   "src": "2a9fc9c2",
    "geom": {
     "triangles": 550,
     "volume_mm3": 20081.806,
@@ -48004,7 +49441,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "d203d5f5",
+   "src": "603e0221",
    "geom": {
     "triangles": 5072,
     "volume_mm3": 17076.059,
@@ -48289,7 +49726,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "87b5a123",
+   "src": "77255560",
    "geom": {
     "triangles": 4656,
     "volume_mm3": 18178.777,
@@ -49204,7 +50641,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "01cc0203",
+   "src": "e57c449d",
    "geom": {
     "triangles": 3116,
     "volume_mm3": 14252.472,
@@ -49397,7 +50834,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "1703d9d3",
+   "src": "22337c43",
    "geom": {
     "triangles": 3068,
     "volume_mm3": 4032.11,
@@ -51619,7 +53056,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "a948c750",
+   "src": "97afcc48",
    "geom": {
     "triangles": 2044,
     "volume_mm3": 18478.964,
@@ -51785,13 +53222,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_relay_body.stl",
    "version": "v0.2-dev",
-   "rev": "r2",
-   "recorded": "2026-10-23",
-   "src": "ea0f41be",
+   "rev": "r3",
+   "recorded": "2026-11-03",
+   "src": "169f8fd3",
    "geom": {
-    "triangles": 4704,
-    "volume_mm3": 35678.397,
-    "area_mm2": 23565.909,
+    "triangles": 6224,
+    "volume_mm3": 34798.218,
+    "area_mm2": 23918.225,
     "bbox_mm": [
      92.2,
      102.2,
@@ -51803,24 +53240,24 @@
      -2.0
     ],
     "centroid_mm": [
-     0.1314,
-     -0.5968,
-     0.2954
+     0.1348,
+     -0.6119,
+     0.3145
     ],
     "moments_mm2": [
-     689.6206,
-     876.0306,
-     2.0153
+     675.5252,
+     863.3704,
+     2.0311
     ],
     "products_mm2": [
-     5.5668,
-     0.6945,
-     -1.9694
+     5.7096,
+     0.7095,
+     -2.0075
     ],
     "third_mm3": [
-     -109.248,
-     723.628,
-     2.182
+     -106.313,
+     718.701,
+     2.176
     ]
    },
    "history": [
@@ -51953,6 +53390,188 @@
       "note": "two +Y end stops for the LoRa board. It slid 40.5 mm up its rails under the service-USB plug; travel is now 0.6.",
       "why": "triangles 4672 -> 4704"
      }
+    },
+    {
+     "rev": "r3",
+     "recorded": "2026-11-03",
+     "version": "v0.2-dev",
+     "src": "169f8fd3",
+     "geom": {
+      "triangles": 6224,
+      "volume_mm3": 34798.218,
+      "area_mm2": 23918.225,
+      "bbox_mm": [
+       92.2,
+       102.2,
+       9.4
+      ],
+      "lo_mm": [
+       -46.1,
+       -51.1,
+       -2.0
+      ],
+      "centroid_mm": [
+       0.1348,
+       -0.6119,
+       0.3145
+      ],
+      "moments_mm2": [
+       675.5252,
+       863.3704,
+       2.0311
+      ],
+      "products_mm2": [
+       5.7096,
+       0.7095,
+       -2.0075
+      ],
+      "third_mm3": [
+       -106.313,
+       718.701,
+       2.176
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -880.179,
+      "area_mm2": 352.316,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 1520,
+      "knobs": [],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card"
+      ],
+      "previous": "rendered sources@7cc1ee4",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -46.15,
+         -20.35,
+         -2.05,
+         46.25,
+         -11.15,
+         1.55
+        ],
+        "cells": 5090
+       },
+       {
+        "kind": "moved",
+        "box": [
+         -46.15,
+         10.85,
+         -2.05,
+         46.25,
+         20.05,
+         1.55
+        ],
+        "cells": 4628
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -3.75,
+         -48.35,
+         -2.05,
+         3.85,
+         -40.75,
+         1.55
+        ],
+        "cells": 1402
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -3.75,
+         40.45,
+         -2.05,
+         3.85,
+         48.05,
+         1.55
+        ],
+        "cells": 1402
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -43.35,
+         -48.35,
+         -2.05,
+         -35.75,
+         -40.75,
+         1.55
+        ],
+        "cells": 1392
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -43.35,
+         40.45,
+         -2.05,
+         -35.75,
+         48.05,
+         1.55
+        ],
+        "cells": 1392
+       },
+       {
+        "kind": "removed",
+        "box": [
+         35.45,
+         -48.35,
+         -2.05,
+         43.05,
+         -40.75,
+         1.55
+        ],
+        "cells": 1392
+       },
+       {
+        "kind": "removed",
+        "box": [
+         35.45,
+         40.45,
+         -2.05,
+         43.05,
+         48.05,
+         1.55
+        ],
+        "cells": 1392
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -46.15,
+         -28.35,
+         -2.05,
+         46.25,
+         -27.15,
+         -0.05
+        ],
+        "cells": 1153
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -46.15,
+         27.25,
+         -2.05,
+         46.25,
+         28.45,
+         -0.05
+        ],
+        "cells": 1153
+       }
+      ],
+      "note": "the 10 sealed seats get a land: a Ø7.6 washer pocket (DIN 9021 2.2 x 7 x 0.8) over a re-sized Ø4.673 x 0.769 O-ring gland; recess 0.85 to 0.031, screws x 10; the strap channels step 23.35 to 23.95 off the ±X mid seats' pockets",
+      "why": "triangles 4704 -> 6224"
+     }
     }
    ]
   },
@@ -51966,7 +53585,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "10fb1427",
+   "src": "652d655a",
    "geom": {
     "triangles": 624,
     "volume_mm3": 604.993,
@@ -52057,13 +53676,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_relay_lid.stl",
    "version": "v0.2-dev",
-   "rev": "r2",
-   "recorded": "2026-10-23",
-   "src": "b26273f1",
+   "rev": "r3",
+   "recorded": "2026-11-03",
+   "src": "f3813b54",
    "geom": {
     "triangles": 5724,
-    "volume_mm3": 61702.022,
-    "area_mm2": 39755.448,
+    "volume_mm3": 61679.191,
+    "area_mm2": 39814.235,
     "bbox_mm": [
      95.0,
      106.0,
@@ -52075,24 +53694,24 @@
      0.0
     ],
     "centroid_mm": [
-     0.2854,
-     -0.1174,
-     7.9593
+     0.2855,
+     -0.1175,
+     7.9581
     ],
     "moments_mm2": [
-     1176.1522,
-     1361.1477,
-     42.5654
+     1176.1278,
+     1361.1458,
+     42.5771
     ],
     "products_mm2": [
-     1.6932,
-     0.6913,
-     -1.7233
+     1.6939,
+     0.6919,
+     -1.7241
     ],
     "third_mm3": [
-     -883.365,
-     103.827,
-     122.579
+     -883.671,
+     103.864,
+     122.767
     ]
    },
    "history": [
@@ -52393,6 +54012,284 @@
       "note": "the SMA bulkhead bore gets tearbore_x's teardrop crown (horizontal in the face-down print, DESIGN_RULES §7), and the panel-gland hole goes Ø8.2 -> Ø8.4 (M8 + 2*tol_slide; it was 0.1 a side).",
       "why": "triangles 5752 -> 5724"
      }
+    },
+    {
+     "rev": "r3",
+     "recorded": "2026-11-03",
+     "version": "v0.2-dev",
+     "src": "f3813b54",
+     "geom": {
+      "triangles": 5724,
+      "volume_mm3": 61679.191,
+      "area_mm2": 39814.235,
+      "bbox_mm": [
+       95.0,
+       106.0,
+       23.7
+      ],
+      "lo_mm": [
+       -47.5,
+       -53.5,
+       0.0
+      ],
+      "centroid_mm": [
+       0.2855,
+       -0.1175,
+       7.9581
+      ],
+      "moments_mm2": [
+       1176.1278,
+       1361.1458,
+       42.5771
+      ],
+      "products_mm2": [
+       1.6939,
+       0.6919,
+       -1.7241
+      ],
+      "third_mm3": [
+       -883.671,
+       103.864,
+       122.767
+      ]
+     },
+     "recorded_on": "0a5ce01db641520d09c93a1bf764235b44dfc744",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -22.831,
+      "area_mm2": 58.787,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [],
+      "commits": [
+       "743bea9a Enclosure: the O-ringed plate screws get a washer and a land; the WAP camera builds clear the Sense's microSD card"
+      ],
+      "previous": "rendered sources@7cc1ee4",
+      "regions": [
+       {
+        "kind": "removed",
+        "box": [
+         -40.35,
+         -45.15,
+         10.75,
+         -38.75,
+         -43.55,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -40.35,
+         -15.55,
+         10.75,
+         -38.75,
+         -13.95,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -40.35,
+         14.05,
+         10.75,
+         -38.75,
+         15.65,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -40.35,
+         43.65,
+         10.75,
+         -38.75,
+         45.25,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -0.75,
+         -45.15,
+         10.75,
+         0.85,
+         -43.55,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -0.75,
+         43.65,
+         10.75,
+         0.85,
+         45.25,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "removed",
+        "box": [
+         38.45,
+         -45.15,
+         10.75,
+         40.05,
+         -43.55,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "removed",
+        "box": [
+         38.45,
+         -15.55,
+         10.75,
+         40.05,
+         -13.95,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "removed",
+        "box": [
+         38.45,
+         14.05,
+         10.75,
+         40.05,
+         15.65,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "removed",
+        "box": [
+         38.45,
+         43.65,
+         10.75,
+         40.05,
+         45.25,
+         11.95
+        ],
+        "cells": 39
+       },
+       {
+        "kind": "added",
+        "box": [
+         -47.55,
+         18.85,
+         21.55,
+         -46.35,
+         20.45,
+         23.55
+        ],
+        "cells": 30
+       },
+       {
+        "kind": "added",
+        "box": [
+         46.45,
+         18.85,
+         21.55,
+         47.65,
+         20.45,
+         23.55
+        ],
+        "cells": 28
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -47.55,
+         -28.35,
+         21.55,
+         -46.35,
+         -26.75,
+         23.55
+        ],
+        "cells": 24
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -47.55,
+         26.85,
+         21.55,
+         -46.35,
+         28.45,
+         23.55
+        ],
+        "cells": 24
+       },
+       {
+        "kind": "removed",
+        "box": [
+         46.45,
+         -28.35,
+         21.55,
+         47.65,
+         -26.75,
+         23.55
+        ],
+        "cells": 23
+       },
+       {
+        "kind": "removed",
+        "box": [
+         46.45,
+         26.85,
+         21.55,
+         47.65,
+         28.45,
+         23.55
+        ],
+        "cells": 23
+       },
+       {
+        "kind": "added",
+        "box": [
+         -47.55,
+         -20.35,
+         21.55,
+         -46.35,
+         -18.75,
+         23.55
+        ],
+        "cells": 21
+       },
+       {
+        "kind": "added",
+        "box": [
+         46.45,
+         -20.35,
+         21.55,
+         47.65,
+         -18.75,
+         23.55
+        ],
+        "cells": 19
+       }
+      ],
+      "note": "the 10 post pilots deepen 7.65 to 8.83 for the M2 x 10 plate screws",
+      "why": "volume_mm3 61702.022 -> 61679.191"
+     }
     }
    ]
   },
@@ -52406,7 +54303,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "14eee0e6",
+   "src": "7a6e2d51",
    "geom": {
     "triangles": 1426,
     "volume_mm3": 25567.785,
@@ -52621,7 +54518,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "bcd4692a",
+   "src": "c6665ed3",
    "geom": {
     "triangles": 3212,
     "volume_mm3": 1550.56,
@@ -52799,7 +54696,7 @@
    "version": "v0.1-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "75676437",
+   "src": "f6d82e3a",
    "geom": {
     "triangles": 192,
     "volume_mm3": 134.173,
@@ -52892,7 +54789,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "b3a29547",
+   "src": "d4870e70",
    "geom": {
     "triangles": 1336,
     "volume_mm3": 2277.412,
@@ -53106,7 +55003,7 @@
    "version": "v0.1-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "2c2a51f3",
+   "src": "9cdbefc0",
    "geom": {
     "triangles": 2816,
     "volume_mm3": 14.519,
@@ -53199,7 +55096,7 @@
    "version": "v0.1-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "db6c7b66",
+   "src": "bab09676",
    "geom": {
     "triangles": 3212,
     "volume_mm3": 1536.041,
@@ -53293,7 +55190,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "6e3235c0",
+   "src": "0ea6773e",
    "geom": {
     "triangles": 3212,
     "volume_mm3": 1690.96,
@@ -53472,7 +55369,7 @@
    "version": "v0.1-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "9e463376",
+   "src": "8cb5f46d",
    "geom": {
     "triangles": 192,
     "volume_mm3": 134.173,
@@ -53566,7 +55463,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "f39b0942",
+   "src": "fefd0d91",
    "geom": {
     "triangles": 1336,
     "volume_mm3": 3763.608,
@@ -53804,7 +55701,7 @@
    "version": "v0.1-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "7ca3c4f0",
+   "src": "cc4b5ae8",
    "geom": {
     "triangles": 960,
     "volume_mm3": 5739.704,
@@ -53897,7 +55794,7 @@
    "version": null,
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "b5bde69a",
+   "src": "3fec7c37",
    "geom": {
     "triangles": 6060,
     "volume_mm3": 7675.954,
@@ -53990,7 +55887,7 @@
    "version": "v0.1-dev",
    "rev": "r3",
    "recorded": "2026-10-23",
-   "src": "88856234",
+   "src": "68557887",
    "geom": {
     "triangles": 2372,
     "volume_mm3": 26402.057,
@@ -54287,7 +56184,7 @@
    "version": null,
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "aac5f9d2",
+   "src": "229b58e2",
    "geom": {
     "triangles": 624,
     "volume_mm3": 374.651,
@@ -54380,7 +56277,7 @@
    "version": null,
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "ccbe8e11",
+   "src": "a11ed61f",
    "geom": {
     "triangles": 964,
     "volume_mm3": 2460.192,
@@ -54473,7 +56370,7 @@
    "version": "v0.1-dev",
    "rev": "r3",
    "recorded": "2026-10-23",
-   "src": "3e9bb48c",
+   "src": "339f9d3b",
    "geom": {
     "triangles": 6816,
     "volume_mm3": 79746.967,
@@ -54766,7 +56663,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "158fe0dc",
+   "src": "cc02cfba",
    "geom": {
     "triangles": 38804,
     "volume_mm3": 21848.173,
@@ -54973,7 +56870,7 @@
    "version": "v0.2-dev",
    "rev": "r2",
    "recorded": "2026-10-22",
-   "src": "88f45797",
+   "src": "71bfbc38",
    "geom": {
     "triangles": 3472,
     "volume_mm3": 3994.066,
@@ -55198,7 +57095,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "3371c078",
+   "src": "b72b352c",
    "geom": {
     "triangles": 2400,
     "volume_mm3": 4061.748,
@@ -55291,7 +57188,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "90b10b8e",
+   "src": "b6bff63d",
    "geom": {
     "triangles": 524,
     "volume_mm3": 66029.617,
@@ -55384,7 +57281,7 @@
    "version": "v0.3-dev",
    "rev": "r3",
    "recorded": "2026-10-23",
-   "src": "55d6eb09",
+   "src": "9d09d7c0",
    "geom": {
     "triangles": 2244,
     "volume_mm3": 47040.673,
@@ -55673,7 +57570,7 @@
    "version": "v0.3-dev",
    "rev": "r3",
    "recorded": "2026-10-23",
-   "src": "ab5d054f",
+   "src": "eef31c19",
    "geom": {
     "triangles": 1652,
     "volume_mm3": 10376.777,
@@ -55938,7 +57835,7 @@
    "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-23",
-   "src": "684eb8a4",
+   "src": "e2f9323f",
    "geom": {
     "triangles": 2340,
     "volume_mm3": 20166.712,
@@ -56031,7 +57928,7 @@
    "version": "v0.3-dev",
    "rev": "r2",
    "recorded": "2026-10-22",
-   "src": "2a8fd132",
+   "src": "6816cb3d",
    "geom": {
     "triangles": 3344,
     "volume_mm3": 2267.475,
@@ -56272,7 +58169,7 @@
    "version": "v0.3-dev",
    "rev": "r2",
    "recorded": "2026-10-22",
-   "src": "48b48a4c",
+   "src": "9eed59ac",
    "geom": {
     "triangles": 5012,
     "volume_mm3": 18337.133,
@@ -56453,7 +58350,7 @@
    "version": "v0.3-dev",
    "rev": "r2",
    "recorded": "2026-10-22",
-   "src": "77716d6a",
+   "src": "98ddde2c",
    "geom": {
     "triangles": 3604,
     "volume_mm3": 27907.123,
@@ -56802,7 +58699,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "c0b0eec6",
+   "src": "059f25df",
    "geom": {
     "triangles": 1644,
     "volume_mm3": 15367.052,
@@ -56976,7 +58873,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "47a16c32",
+   "src": "95cd1272",
    "geom": {
     "triangles": 2336,
     "volume_mm3": 14470.404,
@@ -57164,7 +59061,7 @@
    "version": "v0.3-dev",
    "rev": "r7",
    "recorded": "2026-10-23",
-   "src": "fe8a17d0",
+   "src": "f93c88e9",
    "geom": {
     "triangles": 1524,
     "volume_mm3": 33828.855,
@@ -58051,7 +59948,7 @@
    "version": "v0.3-dev",
    "rev": "r6",
    "recorded": "2026-10-22",
-   "src": "3ff4eb9e",
+   "src": "11af5f54",
    "geom": {
     "triangles": 2918,
     "volume_mm3": 33709.372,
@@ -58898,7 +60795,7 @@
    "version": "v0.1-dev",
    "rev": "r5",
    "recorded": "2026-10-22",
-   "src": "71c405dd",
+   "src": "064932e0",
    "geom": {
     "triangles": 2324,
     "volume_mm3": 30618.766,
@@ -59747,7 +61644,7 @@
    "version": "v0.1-dev",
    "rev": "r2",
    "recorded": "2026-10-23",
-   "src": "1b20bd93",
+   "src": "18827643",
    "geom": {
     "triangles": 1536,
     "volume_mm3": 13138.615,
@@ -60188,7 +62085,7 @@
    "version": "v0.1-dev",
    "rev": "r4",
    "recorded": "2026-10-22",
-   "src": "8377768c",
+   "src": "8fea8cc6",
    "geom": {
     "triangles": 952,
     "volume_mm3": 23387.57,
@@ -60697,7 +62594,7 @@
    "version": "v0.1-dev",
    "rev": "r6",
    "recorded": "2026-09-28",
-   "src": "0aa17e89",
+   "src": "bf86fa98",
    "geom": {
     "triangles": 356,
     "volume_mm3": 63223.374,
@@ -61317,7 +63214,7 @@
    "version": "v0.3-dev",
    "rev": "r6",
    "recorded": "2026-10-22",
-   "src": "ee03be66",
+   "src": "664eaaf7",
    "geom": {
     "triangles": 1720,
     "volume_mm3": 2264.68,
@@ -62293,7 +64190,7 @@
    "version": "v0.3-dev",
    "rev": "r5",
    "recorded": "2026-10-22",
-   "src": "5f56fe99",
+   "src": "e39c15d7",
    "geom": {
     "triangles": 2656,
     "volume_mm3": 18314.404,
@@ -63153,7 +65050,7 @@
    "version": "v0.3-dev",
    "rev": "r6",
    "recorded": "2026-10-22",
-   "src": "e94f6187",
+   "src": "8d76f3a2",
    "geom": {
     "triangles": 2000,
     "volume_mm3": 27889.24,
