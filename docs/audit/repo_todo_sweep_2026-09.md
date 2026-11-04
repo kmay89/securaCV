@@ -7062,16 +7062,19 @@ so — see D2 below.)
   `startReceiptCapture` never saw the receipt and ended on its timeout, and
   the wizard said "The Canary didn't answer"; the same stub with the header
   reached the receipt, then stopped at the `OPTIONS /api/v1/info` preflight, a
-  route the WAP does not serve. The recording is in #1919's description, not
-  in `npm test`, which runs no browser. So the SPA now says where a WAP pairs:
+  route the WAP does not serve. That run was a one-off probe: #1919's
+  description summarizes it, nothing in the tree reruns it, and `npm test`
+  runs no browser. So the SPA now says where a WAP pairs:
   its canary-wap card names the SecuraCV iPhone app (from the recovery kit its
   dashboard saves, or through its Bluetooth setup) and Home Assistant over
   MQTT, and no longer "its own dashboard", whose only pairing card leads back
   to this SPA's QR. The QR hint says a WAP's dashboard QR does not pair here,
-  and `discovery.md` (§1 to §4 and its CORS notes), the README,
-  `firmware-integration.md` and `docs/onboarding_multiple_canaries.md` say no
-  firmware serves `/api/v1/info` or reads `X-Canary-Token` (the flagship
-  serves `/api/v1/peers` only) and that the SPA's HTTP pairing is the
+  and `discovery.md` (§1 to §4 and its CORS notes), the README and
+  `firmware-integration.md` say no Canary firmware answers the SPA's
+  pairing (`GET /api/v1/info` with `X-Canary-Token`; `discovery.md` adds
+  that the flagship serves `/api/v1/peers` only),
+  `docs/onboarding_multiple_canaries.md` says the WAP neither serves the
+  route nor reads the header, and each says the SPA's HTTP pairing is the
   reference device-api's. `device-types.test.js` holds the card to facts read
   from the sketch (its CORS helpers resolved, mutations required to fail), and
   `receipt-capture.test.js` holds that the success screen does not deny the
@@ -7153,7 +7156,8 @@ so — see D2 below.)
   app's scanner reads only a display's `WIFI:` QR. And a canary-wap peer in
   the SPA's "Discovered on your network" is still offered "Pair this Canary"
   into the BOOT-tap step, which ends "The Canary didn't answer" against WAP
-  firmware (recorded in headless Chromium). Either this decision makes the WAP
+  firmware (seen in F355's one-off headless Chromium probe, which nothing in
+  the tree reruns). Either this decision makes the WAP
   SPA-pairable (an `Access-Control-Allow-Origin` on the receipt, the SPA's
   token header, `/api/v1/info`), or the card says where a WAP pairs (a
   firmware edit, then `gen_web_assets_gz.py`) and the SPA sends a WAP peer to
@@ -8244,8 +8248,9 @@ so — see D2 below.)
   key fingerprint or genesis head registers no GATT name, exports no witness
   HEAD and mounts no signer; `device_signature.cpp` is untouched. The gate's
   comments name only those four surfaces and list the readers that do not ask
-  yet. Host-tested in `test_wap_sha_fail` (1953 checks; 78 fail on the sketch
-  before this change) under g++, clang++ 18 and ASan/UBSan; the NimBLE paths
+  yet. Host-tested in `test_wap_sha_fail` (1956 checks on #1919's head; 78
+  failed on the sketch before this change, counted on the package's branch)
+  under g++, clang++ 18 and ASan/UBSan; the NimBLE paths
   compile only in CI's ESP32 legs; not run on a device. The other readers of a
   refused identity (the MQTT identity and the boot QR join, mDNS, Improv, the
   Bluetooth and console metadata, the mesh, the hourly chain backup and the
@@ -8279,7 +8284,8 @@ so — see D2 below.)
   source-pin cases fail on the old sketch, and the Loaded and Absent cases are
   guards. The ESP32 compile is CI's; not run on a device, and HTTPS is off on
   stock units until F15. The flagship's `tls_load_der_from_nvs()` has the same
-  one-bool shape (F421).
+  one-bool shape (F421). Outside these suites the canary-wap host suite
+  builds clean only under CI's serial g++ -O2, as it did before (F434).
 - [x] **F405 [code] canary-wap: `GET /api/nearby` writes four bytes of an
   advertised Bluetooth name raw.** `ble_nearby.h` takes a Canary-looking
   name's `device_id_prefix` from `name.substring(4, 8)` (`"SCV-XXXX"`), any
@@ -8333,8 +8339,9 @@ so — see D2 below.)
   a row NVS reads to its full length, at most `MAX_PAIRED_DEVICES` entries,
   and terminates every name in its field, and `load_settings()` uses the saved
   Bluetooth name only when `getBytes()` returns its full length, which takes
-  the note's two dropped counts too. A refused row loads nothing, is wiped,
-  and logs one line short enough for the health log's ring to keep whole (79
+  the note's two dropped counts too. A refused row loads nothing (the
+  in-memory list is wiped; the row stays in NVS until it is rewritten) and
+  logs one line short enough for the health log's ring to keep whole (79
   bytes). The list is then rebuilt from NimBLE's bond store once BLE is up
   (names set to the identity address; the trusted and blocked flags a rebuild
   loses are display-only, never enforced), or, with no bond, replaced once by
@@ -15388,10 +15395,11 @@ so — see D2 below.)
   `CHIRP_CHANNEL 0` and says a Chirp frame starts with `CHIRP_MAGIC` and an
   Opera frame with its version byte (`OPERA_VERSION`, 1) or, before
   membership, its pairing type (8 to 12), and §13.1 says "Same radio channel".
-  `OPERA_MAGIC`, which no firmware defines, is gone from the spec, and so are
-  the two comments that still called it Opera's
-  (`common/chirp/chirp_channel.h`, `test_chirp_protocol_invariants.cpp`);
-  `mesh_network.h`'s comment is corrected.
+  `OPERA_MAGIC`, which no firmware defines, is no longer defined in §12.1
+  (one sentence there records the old block), and the two comments that
+  called it Opera's (`common/chirp/chirp_channel.h`,
+  `test_chirp_protocol_invariants.cpp`) no longer do (the test's names it as
+  what an older §12.1 defined); `mesh_network.h`'s comment is corrected.
   `scripts/tests/test_chirp_spec_tables.py`'s `ChirpSpecChannel` reads the
   constants with a strict reader and fails on the old text. Docs and comments;
   no behavior changes.
@@ -20940,8 +20948,8 @@ so — see D2 below.)
   headers has the shape; A93 (#1919) guards its own default reader but not the
   shared one. Refuse such a value in both readers, with a `c_const_cases.json`
   row. From code, checked with `g++ -E`. Found by A93's review (#1919).
-- [ ] **F430 [code] No item holds the general identifier lint (device-details
-  PR 4).** F384 (#1892, partly done there and in #1916) left the identifier
+- [ ] **F430 [code+decision] No item holds the general identifier lint
+  (device-details PR 4).** F384 (#1892, partly done there and in #1916) left the identifier
   lint to device-details PR 4: a lint over every product's sources that denies
   reading or publishing a per-unit identifier (the Grove Vision AI module's id
   through the SSCMA library's `ID()`, and the classes the design's privacy
@@ -20950,9 +20958,10 @@ so — see D2 below.)
   `docs/design/device_details.md` (F384 cites its privacy review, finding
   P11), is not on main, so the lint's scope (which identifiers, which
   products, where it runs) is written down nowhere a reviewer can read. Land
-  the design or state the scope here, then build it as an unfiltered
-  `scripts/lint_*.py` in `lint.yml` with the F384 deny folded in. From the
-  ledger. Found by F414 (#1919), whose title named the gap.
+  the design or have a maintainer state the scope here (the decision), then
+  build it as an unfiltered `scripts/lint_*.py` in `lint.yml` with the F384
+  deny folded in. From the ledger. Found by F414 (#1919), whose title named
+  the gap.
 - [ ] **F431 [code] The canary's `/api/sensing` answers `rssi_dbm` 0 for a
   window no radio measured.** Since F411 (#1919) the MQTT sensing body leaves
   `rssi_dbm` out unless `sensing_rssi_measured()` says the last CSI window's
@@ -21938,7 +21947,8 @@ so — see D2 below.)
   the boot's `presence_cleared` before the bench connects, and the page's
   retained chain head reads one past `sense.json`'s example (314, not 313), as
   a device's would. Host-tested, and the Chromium Sense probes pass; not
-  bench-tested.
+  bench-tested. The sandbox's stall scene still unplugs the radar for a
+  literal 8000 ms (A125).
 - [x] **A107 [code] Hold the Sense Lab's vitals path to the firmware's own.**
   `canary-local/tests/senselab.test.js` builds its parity pipeline as
   `SensePipeline(cfg, vitals, false)`, so nothing holds `sense-sim.js`'s side
@@ -24267,6 +24277,10 @@ so — see D2 below.)
   narrow it (recognized products plus Arduino-core descriptors, say) in both
   flashers together, with `desktop_parity.test.js`'s A97 rows. Found by A97
   (#1916).
+  *Note (2026-11-04, #1919):* A123 is this rule on the done card: after a
+  restore or a local-file write the browser monitor gets no product, and
+  `requiresLiveReceipt(null)` asks. Decide the two together; A95's render
+  (#1919) pins the two asks and changes with the decision.
 - [ ] **A122 [human] Read what real boards report to the flashers.**
   Everything A96 and A97 (#1916) decide is host-tested against the names in
   `flash.json` and synthetic ones. With boards in hand: which `project_name` a
@@ -24280,8 +24294,10 @@ so — see D2 below.)
   `core.requiresLiveReceipt(null)` is true, so the browser sends `j` twice to
   whatever that image is (a WAP, Sense or display image answers "unknown
   command" twice). It is a read and harmless, and A95 (#1919) pins today's two
-  asks. Decide whether an unknown firmware should be asked. From the A95
-  render. Found by A95 (#1919).
+  asks. It is A121's decision met after a restore: the same
+  `requiresLiveReceipt(null)` rule asks firmware the catalog does not name,
+  so decide the two together, and A95's render rows for the two asks change
+  with them. From the A95 render. Found by A95 (#1919).
 - [ ] **A124 [code] The Sense page's radar lab runs its own vitals mirror,
   held to nothing.** A107 (#1919) held `sense-sim.js`'s `VitalsFSM` (the Sense
   Lab) to `mr60_vitals.cpp`; the radar lab uses `sense-ui.js`'s separate
@@ -24325,7 +24341,7 @@ so — see D2 below.)
   reboot a path that drops the keys and boots unprovisioned. Found by A99
   (#1919).
 - [ ] **A128 [code] The bench's troubleshooting flows name lights most cards
-  do not list.** Six of the seven bench cards are offered steps that name a
+  do not list.** All seven bench cards are offered steps that name a
   light their bench block does not list: the watch (CHG and USER only) 7
   steps, the nightstand-s3 7, the Touch 1.69 9, the AMOLED 2.41 9 and the
   Nightlight 6 (none of those last four lists a light), and each dash 1
@@ -27538,6 +27554,15 @@ major, by theme") — work its themes, then tick here.
   earlier filings by these numbers, apart from the notes it put on the 2.4.18
   and wave 20 lines. The published 2.4.18 release body keeps its numbers.
   Found by the review of #1916's ledger.
+  *Note (2026-11-04, #1919):* #1919 ticked #1836's F361 (the Chirp mute
+  across uptime's wrap, the later filing) under that number, so its cites
+  move with the renumber too: the Chirp bullet of wave 22's CHANGELOG
+  section ("#1836's F361"), `chirp_channel.cpp`'s five F361 comments (one
+  says "#1836's filing"), `test_chirp_commands_wap.cpp`'s "A mute counts
+  across the uptime wrap" header, F416's and F417's "Found by the
+  clock-wrap review of F361", `IMPROVEMENT_ROADMAP.md`'s wave 22 row and
+  section, and F361's own Done paragraph. Read the other F361 cites by
+  subject, as above. #1919 gave no new id twice.
 - [ ] **D18 [decision] The Chirp spec's night rule describes neither the code
   nor §2.5.3.** `spec/chirp_channel_v0.md` §2.5.7's row says "10pm-6am |
   Safety templates only, requires 2 confirmations". The code does neither.
@@ -28097,9 +28122,11 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
 - [ ] **CI22 [code] Run `check_wap_json_answers.py`'s self-test mutations in
   parallel.** The guard's proof grew to 230 mutations with J11 (F405, #1919):
   13m07s of CPU locally with nothing else running, against 9m20s before the
-  wave, about 0.13 s per mutation over a 5 MB sketch, so the cost is the
-  count. On CI it took 9:51 on #1916's PR run but 12:49 on main after #1916
-  merged, at the smaller count (`firmware.yml` run 41770593222), so a slow
+  wave. Each mutation reruns the whole check (about 3.3 s each, across the
+  230 mutations and 10 correct edits); J11's own rule adds about 0.13 s to
+  each run, so the growth is the count. On CI it took
+  9:51 on #1916's PR run but 12:49 on main after #1916 merged, at the
+  smaller count (`firmware.yml` run 41770593222), so a slow
   runner would have landed at about 18 of the `wap-guard-selftests` job's 20
   minutes; #1919 raised that job's timeout to 30 minutes as a stopgap. Run the
   mutations in parallel inside the guard (a process pool), or shard them (a

@@ -40,8 +40,9 @@
   signer; the identity's other readers are named in the code and left to a
   decision (F419). The HTTPS port is one constant, bound as `port_secure`
   (the old write did nothing), and `gen_wap.py` reads it; `devices/wap.json`
-  is byte-identical. None of it is reachable on stock units until F15 turns
-  HTTPS on. **Host-tested** (g++, clang++ 18 and ASan/UBSan; every behavior
+  is byte-identical. The certificate load and the port are not reached on
+  stock units until F15 turns HTTPS on; the identity gate does not wait for
+  it. **Host-tested** (g++, clang++ 18 and ASan/UBSan; every behavior
   test fails on the old code); the ESP32 compiles are CI's; not run on a
   device. Filed: F419-F421, F434.
 - **canary-wap's modules use no SHA-256 they were refused (sweep F364,
@@ -55,8 +56,8 @@
   compiles are CI's; not run on a device. F364 stays open for the Beacon,
   Chirp, mesh, OTA and pseudonym hashes. Filed: F426.
 - **canary-wap Chirp names an all-clear, keeps a mute across the clock's
-  wrap, and its spec says what a Sybil costs (sweep F307, F361, F308,
-  D16).** `GET /api/chirp/recent` names an all-clear chirp's category
+  wrap, and its spec says what a Sybil costs (sweep F307, #1836's F361,
+  F308, D16).** `GET /api/chirp/recent` names an all-clear chirp's category
   instead of "unknown". A mute set near uptime's 49.7-day wrap runs its full
   length instead of ending at once, and a channel never muted reads unmuted
   at any uptime. The spec puts Chirp on the shared radio channel and says how
@@ -107,8 +108,8 @@
   `FEATURE_THERMAL_WATCHDOG` (off on its classic-ESP32 envs) and the
   canary-wap's `sys_monitor.h`; the display, Vision, Sense and Sentinel read
   none. A canary-wap does not answer the Canary Vision SPA's pairing
-  (recorded in headless Chromium against a stub that answers like the
-  sketch), so the SPA and its docs now say a WAP pairs in the iPhone app,
+  (seen in a one-off headless Chromium run against a stub that answers like
+  the sketch), so the SPA and its docs now say a WAP pairs in the iPhone app,
   from its recovery kit or over Bluetooth, and joins Home Assistant over
   MQTT. The pairing flow and CORS are unchanged; whether the WAP should learn
   the SPA's pairing is F357's call. **Host-tested** (a new `scripts/tests`
@@ -148,7 +149,8 @@
   halves that closed by trace are folded into F408 and F411; F15, F261, F297
   and F357 carry dated notes; and 33 items are filed (F416-F434, A123-A128,
   HA57-HA59, C36, D18, D19, CI22, CI23). The nineteen ids D17 tracks still
-  name two items each, and no new pair was found.
+  name two items each, and no new pair was found. `IMPROVEMENT_ROADMAP.md`
+  has a wave 22 row and section.
 
 ### Dependency advisories: zip 9 in both Tauri apps, three ignores retired
 
