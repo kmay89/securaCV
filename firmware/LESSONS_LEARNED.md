@@ -223,11 +223,16 @@
   ignores an empty state on a numeric sensor and keeps the last reading.
 - **Rule:** when a field can be missing, render nothing and let the receiver
   keep what it had, and prove what the receiver does with the real one, not
-  a stub. The canary's own Sensing RSSI renders `default(0)` too (F411, open).
+  a stub. The canary's own Sensing RSSI did the same with a zero no radio
+  measured: its sensing body carried `rssi_dbm: 0` until the first CSI
+  window, and for good on a build without CSI. The body now leaves the key
+  out until a window has been seen, and the row renders `default('')` (F411).
 - **Regression check:** `scripts/tests/test_ha_discovery_wap_render.py` (the
   expected failure is now a plain test) and the real-core
   `tests/ha/test_wap_signal_strength.py`, which shows Home Assistant 2026.5.0
-  and 2026.10.1 keeping the reading and fails on any core warning.
+  and 2026.10.1 keeping the reading and fails on any core warning. For the
+  canary, `scripts/tests/test_ha_discovery_canary_sensing_render.py` and the
+  real-core `tests/ha/test_canary_sensing_rssi.py`.
 - **Date learned:** 2026-11
 
 ---

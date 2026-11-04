@@ -52,7 +52,9 @@ on:
       # the planner's, and its offline-queue keys to the queue's Stats;
       # test_egress_health.py holds Home Assistant's counter names (const.py)
       # to the same structs, to main.cpp's health objects and to the
-      # canary-wap's egress topic body (csi_event_egress.h, csi_mqtt.cpp).
+      # canary-wap's egress topic body (csi_event_egress.h, csi_mqtt.cpp);
+      # the real-core tests/ha/test_canary_sensing_rssi.py announces
+      # securacv_mqtt.cpp's Sensing RSSI and Motion Score rows to a real core.
       - 'firmware/canary/src/main.cpp'
       - 'firmware/canary/src/csi_event_egress.h'
       - 'firmware/canary/src/csi_event_egress.cpp'
@@ -172,7 +174,9 @@ on:
       # the planner's, and its offline-queue keys to the queue's Stats;
       # test_egress_health.py holds Home Assistant's counter names (const.py)
       # to the same structs, to main.cpp's health objects and to the
-      # canary-wap's egress topic body (csi_event_egress.h, csi_mqtt.cpp).
+      # canary-wap's egress topic body (csi_event_egress.h, csi_mqtt.cpp);
+      # the real-core tests/ha/test_canary_sensing_rssi.py announces
+      # securacv_mqtt.cpp's Sensing RSSI and Motion Score rows to a real core.
       - 'firmware/canary/src/main.cpp'
       - 'firmware/canary/src/csi_event_egress.h'
       - 'firmware/canary/src/csi_event_egress.cpp'

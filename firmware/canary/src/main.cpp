@@ -3458,7 +3458,15 @@ static void mqtt_publish_sensing_update() {
   doc["label"]      = sensing_label_name(s.activity_label);
   doc["motion"]     = s.motion_score;
   doc["breathing"]  = s.breathing_score;
-  doc["rssi_dbm"]   = (int)s.rssi_dbm;
+  /* rssi_dbm is a CSI window's mean, and only sensing_feed_csi() sets
+   * it: before the first window (and for good on a build with no CSI)
+   * the snapshot holds sensing_init()'s zero, which no radio measured.
+   * So the key is left out until a window has been seen. The Sensing
+   * RSSI template renders a body without it as nothing, which Home
+   * Assistant ignores on a numeric sensor: unknown before the first
+   * reading, the last reading kept after it, never 0 dBm (sweep F411).
+   * The local /api/sensing route is not this publish. */
+  if (s.windows_seen > 0) doc["rssi_dbm"] = (int)s.rssi_dbm;
   doc["frames_in_window"] = s.frames_in_window;
   doc["channel"]    = s.channel;
   doc["time_bucket"] = s.time_bucket;
