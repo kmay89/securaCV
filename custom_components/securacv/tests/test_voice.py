@@ -7,6 +7,8 @@ signature, "heard" for anything looser, worst news first, and coarse
 """
 from __future__ import annotations
 
+from ..const import EVENT_TYPE_METADATA
+from ..sensor import _SUMMARY_TYPES
 from ..voice import (
     ago_phrase,
     fleet_brief,
@@ -219,6 +221,125 @@ def test_speak_last_event_kernel_fallback_and_none():
         speak_last_event(fleet_brief([], NOW))
         == "No witness events since the hub started listening."
     )
+
+
+# Sweep HA42: a type the dictionary does not list was spoken as its raw id
+# ("daily_summary, within ..."). It is now said in words, capitalized only
+# where it starts the sentence; a listed type is said exactly as before.
+
+
+def _canary_event(event_type):
+    return {
+        "gate": {
+            "last_event": {
+                "event_type": event_type,
+                "received_at": NOW - 60,
+                "trusted": True,
+                "reason": "ok",
+            }
+        }
+    }
+
+
+def test_speak_last_event_says_a_daily_summary_in_words():
+    speech = speak_last_event(fleet_brief([_entry(_canary_event("daily_summary"))], NOW))
+    assert speech == (
+        "Daily summary, within the last ten minutes, from Canary gate. The event "
+        "signature is verified against the device's pinned key."
+    )
+    assert "_" not in speech
+
+
+def test_speak_last_event_says_an_unlisted_kernel_type_in_words():
+    kernel = {"ok": True, "latest_event": {"event_type": "held_summary"}}
+    # Beside a Canary event: mid-sentence, so not capitalized.
+    devices = _canary_event("boundary_crossing_object_large")
+    speech = speak_last_event(fleet_brief([_entry(devices, kernel=kernel)], NOW))
+    assert speech.startswith("Person or vehicle, within the last ten minutes, from Canary gate.")
+    assert speech.endswith(" The kernel log's latest event is held summary.")
+    # Alone: it starts the sentence.
+    speech = speak_last_event(fleet_brief([_entry(kernel=kernel)], NOW))
+    assert speech == "Held summary — the latest event in the kernel log."
+
+
+def test_speak_last_event_names_an_unlisted_type_once_when_both_sources_agree():
+    """The both-sources comparison sets the two labels side by side as said
+    mid-sentence: an unlisted type the Canary and the kernel both report is
+    named once, not twice for the capital that starts the first sentence."""
+    kernel = {"ok": True, "latest_event": {"event_type": "daily_summary"}}
+    speech = speak_last_event(
+        fleet_brief([_entry(_canary_event("daily_summary"), kernel=kernel)], NOW)
+    )
+    assert speech.startswith("Daily summary, ")
+    assert "kernel log's latest" not in speech
+    other = {"ok": True, "latest_event": {"event_type": "held_summary"}}
+    speech = speak_last_event(
+        fleet_brief([_entry(_canary_event("daily_summary"), kernel=other)], NOW)
+    )
+    assert speech.endswith(" The kernel log's latest event is held summary.")
+
+
+def _camel(event_type):
+    """The kernel's spelling of a dictionary id (the Rust enum variant)."""
+    return "".join(part.capitalize() for part in event_type.split("_"))
+
+
+def test_speak_last_event_says_every_listed_type_as_the_dictionary_writes_it():
+    """A listed type is said byte for byte as before HA42: its dictionary
+    label, unchanged at a sentence start and mid-sentence, in the Canary's
+    snake_case and the kernel's CamelCase alike; a missing type is said as
+    the dictionary's "Unknown", as before."""
+    for event_type, meta in EVENT_TYPE_METADATA.items():
+        label = meta["label"]
+        for spelled in (event_type, _camel(event_type)):
+            canary = speak_last_event(fleet_brief([_entry(_canary_event(spelled))], NOW))
+            assert canary.startswith(f"{label}, within the last ten minutes, from Canary gate."), spelled
+            kernel = {"ok": True, "latest_event": {"event_type": spelled}}
+            alone = speak_last_event(fleet_brief([_entry(kernel=kernel)], NOW))
+            assert alone == f"{label} — the latest event in the kernel log.", spelled
+            # Mid-sentence, beside a Canary event of another type.
+            other = "daily_summary"
+            both = speak_last_event(fleet_brief([_entry(_canary_event(other), kernel=kernel)], NOW))
+            assert both.endswith(f" The kernel log's latest event is {label}."), spelled
+            # And beside the same type: named once.
+            same = speak_last_event(
+                fleet_brief([_entry(_canary_event(event_type), kernel=kernel)], NOW)
+            )
+            assert "kernel log's latest" not in same, spelled
+    for missing in (None, "", "   ", 5):
+        speech = speak_last_event(fleet_brief([_entry(_canary_event(missing))], NOW))
+        assert speech.startswith("Unknown, within the last ten minutes,"), missing
+
+
+def test_speak_last_event_says_every_summary_type_in_words():
+    """The Canary's stateless summaries (sensor.py's _SUMMARY_TYPES, the Last
+    event state for a summary row) are not dictionary types: each is said as
+    words, never as its id."""
+    for event_type in _SUMMARY_TYPES:
+        assert event_type not in EVENT_TYPE_METADATA, event_type
+        said = event_type.replace("_", " ")
+        speech = speak_last_event(fleet_brief([_entry(_canary_event(event_type))], NOW))
+        assert speech.startswith(f"{said[:1].upper()}{said[1:]}, within the last ten minutes,"), event_type
+        assert "_" not in speech, event_type
+
+
+def test_speak_last_event_never_says_an_underscore():
+    """Underscore runs read as one space, the ends trimmed; an id of
+    underscores alone names no type and is said as none is ("Unknown")."""
+    for event_type, said in (
+        ("a__b", "A b"),
+        ("_x", "X"),
+        ("x_", "X"),
+        ("___", "Unknown"),
+        ("überwachung_alarm", "Überwachung alarm"),
+        ("GPS_lost", "GPS lost"),
+    ):
+        speech = speak_last_event(fleet_brief([_entry(_canary_event(event_type))], NOW))
+        assert speech.startswith(f"{said}, within the last ten minutes,"), event_type
+        assert "_" not in speech, event_type
+        kernel = {"ok": True, "latest_event": {"event_type": event_type}}
+        alone = speak_last_event(fleet_brief([_entry(kernel=kernel)], NOW))
+        assert alone == f"{said} — the latest event in the kernel log.", event_type
 
 
 def test_whats_up_reads_naturally_all_good():
