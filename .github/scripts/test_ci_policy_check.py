@@ -19,7 +19,8 @@ R11 (no floating `ubuntu-latest` runner) runs from main() on the repo's own
 workflow files, not inside check_workflow, so the synthetic workflows above
 and below may keep saying `runs-on: ubuntu-latest`; its cases pin every place
 a runner can be named, what does not count (comments, step scripts, pinned
-labels), the exemption, and that main() really runs it.
+labels), the exemption, that an exemption whose file no longer names the
+label is refused (by the same reading), and that main() really runs it.
 """
 
 from __future__ import annotations
@@ -570,6 +571,91 @@ class R11FloatingRunner(unittest.TestCase):
         policy = dict(BASE_POLICY, ubuntu_latest_ok=["other.yml"])
         self.assertTrue(self._check(wf, policy))
 
+    # The exemption holds only while the file still names the label. These
+    # bodies name it once each, in a place floating_runners_in() reads...
+    def _still_floating(self) -> dict[str, str]:
+        return {
+            "a bare runs-on": self._job("ubuntu-latest"),
+            "only a matrix include": self._job(
+                "${{ matrix.runner }}",
+                "\n                strategy:\n                  matrix:\n"
+                "                    include:\n"
+                "                      - {arch: amd64, runner: ubuntu-latest}\n"
+                "                      - {arch: aarch64, runner: ubuntu-24.04-arm}"),
+            "only a runs-on expression": self._job(
+                "\"${{ github.event_name == 'push' && 'ubuntu-latest' || 'ubuntu-24.04' }}\""),
+            "only a reusable workflow's caller": """
+                on: {workflow_dispatch: {}}
+                permissions: {contents: read}
+                jobs:
+                  call:
+                    uses: ./.github/workflows/build.yml
+                    with: {runner: ubuntu-latest}
+            """,
+        }
+
+    # ...and these name it nowhere it reads: pinned, only in a comment or a
+    # step script, or a reusable workflow whose runner its caller passes in.
+    def _no_longer_floating(self) -> dict[str, str]:
+        return {
+            "pinned": self._job(self.PINNED),
+            "only a comment": """
+                # Was ubuntu-latest until the 26.04 move.
+                on: {workflow_dispatch: {}}
+                permissions: {contents: read}
+                jobs:
+                  build:
+                    runs-on: ubuntu-24.04  # not ubuntu-latest
+                    timeout-minutes: 5
+                    steps:
+                      - uses: actions/checkout@v7
+            """,
+            "only a step script": self._job(
+                "ubuntu-24.04").replace(
+                "- uses: actions/checkout@v7",
+                "- run: echo \"this used to run on ubuntu-latest\""),
+            "the reusable workflow its caller names it to": """
+                on:
+                  workflow_call:
+                    inputs:
+                      runner: {type: string, required: true}
+                permissions: {contents: read}
+                jobs:
+                  build:
+                    runs-on: ${{ inputs.runner }}
+                    timeout-minutes: 5
+                    steps:
+                      - run: echo hi
+            """,
+        }
+
+    LISTED = dict(BASE_POLICY, ubuntu_latest_ok=["wf.yml"])
+
+    def test_a_listed_file_that_still_floats_passes(self):
+        for case, body in self._still_floating().items():
+            self.assertTrue(self._check(body), case)  # it does float...
+            self.assertEqual(self._check(body, self.LISTED), [], case)
+
+    def test_a_listed_file_that_no_longer_floats_is_a_stale_entry(self):
+        for case, body in self._no_longer_floating().items():
+            self.assertEqual(self._check(body), [], case)  # ...it does not
+            probs = self._check(body, self.LISTED)
+            self.assertEqual(len(probs), 1, (case, probs))
+            self.assertTrue(probs[0].startswith(
+                "wf.yml: R11 — listed in ci-policy.yml ubuntu_latest_ok but "
+                "names no ubuntu-latest"), (case, probs))
+            self.assertIn("delete the entry", probs[0])
+
+    def test_the_stale_entry_rule_agrees_with_floating_runners_in(self):
+        # One reading decides both halves: a listed file passes exactly when
+        # the reading that refuses an unlisted one finds the label in it.
+        bodies = {**self._still_floating(), **self._no_longer_floating()}
+        for case, body in bodies.items():
+            floats = bool(cpc.floating_runners_in(
+                cpc.yaml.safe_load(textwrap.dedent(body))))
+            self.assertEqual(self._check(body, self.LISTED) == [], floats, case)
+            self.assertEqual(bool(self._check(body)), floats, case)
+
     def test_check_workflow_leaves_r11_to_main(self):
         # The synthetic workflows in this file say ubuntu-latest; the rule is
         # scoped to the repo's own files, so check_workflow never reports it.
@@ -606,6 +692,12 @@ class R11FloatingRunner(unittest.TestCase):
         rc, out = self._main_on(self._job("ubuntu-latest"),
                                 "ubuntu_latest_ok: [wf.yml]\n")
         self.assertEqual(rc, 0, out)
+
+    def test_main_refuses_a_stale_exemption(self):
+        rc, out = self._main_on(self._job(self.PINNED),
+                                "ubuntu_latest_ok: [wf.yml]\n")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("wf.yml: R11 — listed in ci-policy.yml ubuntu_latest_ok", out)
 
     def test_the_repo_policy_lists_only_real_workflows(self):
         # A misspelled entry exempts nothing and hides that it was meant to.
