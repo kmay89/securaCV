@@ -178,25 +178,30 @@ test("a definition planted in config.h is refused or reads what the file as comm
 // here by name, where the hand regexes that read them before read a number
 // the compiler does not (0x6, 010, `6 + 1`, the first of two definitions, a
 // commented-out definition above the live one) or found none (`(6)`). A U
-// or L suffix is the same number to the compiler and to the rule.
+// or L suffix is the same number to the compiler and to the rule. The
+// plants respell OPT_PROXIMITY_FAR_PCT's live line from the value it holds,
+// so a retuned knob moves them with it.
 test("the optical knobs are read by read_const's rule, a spelling it refuses refused (sweep A117)", () => {
   for (const name of ["OPT_POSTURE_UPRIGHT_RATIO_X100", "OPT_POSTURE_HORIZONTAL_RATIO_X100",
                       "OPT_PROXIMITY_NEAR_PCT", "OPT_PROXIMITY_FAR_PCT"])
     assert.ok(Number.isSafeInteger(knob(name)) && knob(name) > 0, name);
-  const far = "#define OPT_PROXIMITY_FAR_PCT 6   // <= 6% of frame  -> Far  (else Mid)";
-  assert.ok(opticalH.includes(far), "the line the plants respell");
-  const planted = (line) => opticalH.replace(far, line);
-  const literal = (v) => new RegExp(`^constant OPT_PROXIMITY_FAR_PCT in ${OPTICAL_H} is \`${v.replace(/[()+]/g, "\\$&")}\`, not a plain integer literal`);
+  const NAME = "OPT_PROXIMITY_FAR_PCT", v = knob(NAME);
+  const lines = opticalH.split("\n").filter((l) => new RegExp(`^[ \t]*#[ \t]*define[ \t]+${NAME}(?![A-Za-z0-9_])`).test(l));
+  assert.strictEqual(lines.length, 1, `the line the plants respell: one #define ${NAME} in ${OPTICAL_H}`);
+  const planted = (line) => opticalH.replace(lines[0], () => line);
+  const def = (value) => `#define ${NAME} ${value}`;
+  assert.strictEqual(knob(NAME, planted(def(v + 3))), v + 3, "the plants respell the live definition");
+  const literal = (value) => new RegExp(`^constant ${NAME} in ${OPTICAL_H} is \`${value.replace(/[()+]/g, "\\$&")}\`, not a plain integer literal`);
+  const hex = "0x" + v.toString(16);
   for (const [line, refused] of [
-    ["#define OPT_PROXIMITY_FAR_PCT 0x6", literal("0x6")],
-    ["#define OPT_PROXIMITY_FAR_PCT 010", /a leading 0 is octal in C and C\+\+/],
-    ["#define OPT_PROXIMITY_FAR_PCT (6)", literal("(6)")],
-    ["#define OPT_PROXIMITY_FAR_PCT 6 + 1", literal("6 + 1")],
-    [far + "\n#else\n#define OPT_PROXIMITY_FAR_PCT 9", /is defined 2 times in .*refusing to pick one/],
-  ]) assert.throws(() => knob("OPT_PROXIMITY_FAR_PCT", planted(line)), (e) => refused.test(e.message), line);
-  assert.strictEqual(knob("OPT_PROXIMITY_FAR_PCT", "// #define OPT_PROXIMITY_FAR_PCT 9\n" + opticalH),
-    knob("OPT_PROXIMITY_FAR_PCT"), "a commented-out definition is not code");
-  assert.strictEqual(knob("OPT_PROXIMITY_FAR_PCT", planted("#define OPT_PROXIMITY_FAR_PCT 6u")), 6, "6u is 6");
+    [def(hex), literal(hex)],
+    [def("0" + v), /a leading 0 is octal in C and C\+\+/],
+    [def(`(${v})`), literal(`(${v})`)],
+    [def(`${v} + 1`), literal(`${v} + 1`)],
+    [lines[0] + "\n#else\n" + def(v + 3), /is defined 2 times in .*refusing to pick one/],
+  ]) assert.throws(() => knob(NAME, planted(line)), (e) => refused.test(e.message), line);
+  assert.strictEqual(knob(NAME, `// ${def(v + 3)}\n` + opticalH), v, "a commented-out definition is not code");
+  assert.strictEqual(knob(NAME, planted(def(v + "u"))), v, `${v}u is ${v}`);
 });
 
 test("event vocabulary is exactly the FSM's emit set", () => {
@@ -551,15 +556,19 @@ test("placement presets stay inside the firmware's tunable bounds", () => {
 });
 
 // ── 7. the browser executes the production firmware core ──────────────────
-// The FSM tests below score their boxes 90 and pin their own score floor
-// under it (sweep A116). The seed, config.h's SCORE_MIN and vision.json's
-// detect.score_min, may be retuned anywhere in detect_config.h's bounds (to
-// DETECT_SCORE_MIN_HI, 100), and a test about the FSM must not fail because
-// the floor rose over its boxes: at a seed of 99 six of them did, one by
-// spinning until F369 bounded its loop. The tests about the seed itself
-// stay on it: the pane following the sandbox and VisionSim (whose people
-// score 90 or 84, give or take 3) and the dist's contract (the dist bakes
-// the seed in, so a retune is a rebuild).
+// The firmware-core tests below that score their boxes 90 (the FSM's, and
+// the bbox-to-voxel arithmetic's) configure their own score floor under it
+// (sweep A116): a core nobody configures runs on the seed it was compiled
+// with. The seed, config.h's SCORE_MIN and vision.json's detect.score_min,
+// may be retuned anywhere in detect_config.h's bounds (to
+// DETECT_SCORE_MIN_HI, 100), and a test about the FSM or the pipeline's
+// arithmetic must not fail because the floor rose over its boxes: with the
+// core rebuilt at a seed of 91, seven of them did, one by spinning until
+// F369 bounded its loop. The class-filter test and A42's grid pin floors of
+// their own (70 and 50). The tests about the seed itself stay on it: the
+// pane following the sandbox and VisionSim (whose people score 90 or 84,
+// give or take 3), and the dist's contract (the dist bakes the seed in, so
+// a retune fails there until the dist is rebuilt).
 const FSM_SCORE_MIN = 70;
 
 // The dist's contract holds the seed it was built with to vision.json's, so
@@ -617,6 +626,9 @@ test("firmware wasm: class filter, threshold and highest score", async () => {
 
 test("firmware wasm: bbox-to-voxel integer math and clamps", async () => {
   const core = await firmwareCore();
+  // its boxes score 90: on the seed, a retune over them reads voxel -1/-1
+  // (sweep A116)
+  core.configure({ ...data.detect, score_min: FSM_SCORE_MIN });
   assert.ok(detectionPipelineH.includes("const int64_t col = (px * safe_cols) / FRAME_W;"));
   // center of frame lands center cell
   assert.deepStrictEqual(core.tick(0,
