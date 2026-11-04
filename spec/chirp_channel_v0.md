@@ -536,7 +536,7 @@ chirp_presence = {
   the device's last send, which only a reboot forgot, so after a disable and
   an enable the new session's beacons told any neighbor that heard the old
   one chirp how many minutes ago that was, and linked the two sessions on
-  the wire (§6.4; sweep F363). The send cooldown (§2.5.4) is the device's
+  the wire (§6.4; sweep F415). The send cooldown (§2.5.4) is the device's
   and still counts from its last send.
 - The beacon is unsigned, so a receiver never shows its `emoji` field. The
   canary-wap's nearby list shows the display of the header's `session_id`

@@ -38,7 +38,7 @@
   erases the whole chip, because it reconnects for every command and the
   per-block checks would cost more than they save.
 
-### The Home Assistant app declares its Frigate lists as lists (by the Supervisor's code 0.9.0 cannot start, and a bench check is owed), canary-wap uses nothing it read short and puts no radio text in an answer raw, Chirp's trust rules do what its spec says, the flagship's BOOT tap goes to the one device asking, Home Assistant's diagnostics keep the kernel's host and key out and three contract gaps close, both flashers call a flavorless display a display, and the Lab, the enclosure checks, the Wall's pairing pointers and three hardware facts tell the truth (#1916, wave 21)
+### The Home Assistant app declares its Frigate lists as lists (by the Supervisor's code 0.9.0 cannot start, and a bench check is owed), canary-wap reads its stored token and the Fleet QR's query whole and sends CSI rows and Bluetooth names as JSON, Chirp's trust rules do what its spec says, the flagship's BOOT tap goes to the one device asking, Home Assistant's diagnostics keep the kernel's host and key out and three contract gaps close, both flashers call a flavorless display a display, and the Lab's Vision constant reader, the enclosure checks, the viewer-token pointers and three hardware facts are set straight (#1916, wave 21)
 
 - **Release blocker, Home Assistant app 0.9.0: the two Frigate lists are
   declared as lists, and list options are read whole (sweep HA38, HA39,
@@ -62,33 +62,39 @@
   should check 0.9.0 and this build on HA OS and decide on a patch release
   (HA49).** The app's own CHANGELOG entry sits under `## Unreleased`, which
   `scripts/bump_version.sh` does not rename. Filed: HA49, HA54, HA55.
-- **canary-wap uses nothing it read short (sweep F365, F364 in part, F304).**
-  The stored API token loads only on an exact read of a well-formed token, and
-  provisioning stores a new one only when NVS says none is stored, so a read
-  whose CRC failed no longer replaces the token every client holds; a stored
-  token the WAP cannot read fails provisioning (what a refusal that persists
-  should do is F402). The sketch's SHA-256 helpers answer whether they hashed
-  and zero their output when not, and each of their five callers refuses what
-  the hash was for: a failed key fingerprint or genesis head fails
-  provisioning and stays off BLE discovery, the boot's `[OK]` lines and the
-  self-verify, no chain link or record is made from a failed hash, and a
+- **canary-wap reads its stored token and the Fleet QR's query whole, and its
+  sketch's SHA-256 helpers say when they fail (sweep F365, F364 in part,
+  F304).** The stored API token loads only on an exact read of a well-formed
+  token, and provisioning stores a new one only when NVS says none is stored,
+  so a read whose CRC failed no longer replaces the token every client holds;
+  a stored token the WAP cannot read fails provisioning (what a refusal that
+  persists should do is F402). The sketch's SHA-256 helpers answer whether
+  they hashed and zero their output when not, and each of their five callers
+  refuses what the hash was for: a failed key fingerprint or genesis head
+  fails provisioning and stays off BLE discovery, the boot's `[OK]` lines and
+  the self-verify, no chain link or record is made from a failed hash, and a
   failed certificate fingerprint leaves HTTPS off. The module files are F364's
   next slice. `GET /api/fleet/qr` reads its query and both values whole or
   answers a 400 naming the field, so a 22-symbol password and a 63-character
-  passphrase are no longer cut; the Fleet sheet still shows its own fixed hint
-  for that 400 (F401). **Host-tested** (the real functions cut verbatim from
-  the sketch, under g++, clang++ 18 and ASan/UBSan); the ESP32 compiles are
-  CI's; not bench-tested. Filed: F401-F404.
-- **canary-wap: text from the air reaches no JSON answer raw (sweep F301,
-  F302).** The CSI chokepoint turns `"`, `\` and `{` into `?` too, in both
-  trees, so every event row's card line, MQTT body and REST row is JSON, and
-  the card reader refuses what an older quote could forge. Every Bluetooth
-  name in `GET /api/bluetooth`, its scan results and its paired list goes
-  through `wap_json::shown_text()`, so those answers are strict UTF-8 JSON;
-  rule J10 in `check_wap_json_answers.py` holds it (173 self-test mutations;
-  its docstring lists what it cannot see). **Host-tested only**; the ESP32
-  compiles are CI's. Filed: F405-F408.
-- **canary-wap Chirp's trust rules (sweep F305, F311, F306, F363).** No ACK
+  passphrase with symbols in it are no longer cut; the Fleet sheet still shows
+  its own fixed hint for that 400 (F401). Other reads still drop
+  `getBytes()`'s count: `tls_load_from_nvs()` (F404), the Bluetooth store's
+  loads (F406) and `nvs_load_bytes()` (F363). **Host-tested** (the real
+  functions cut verbatim from the sketch, under g++, clang++ 18 and
+  ASan/UBSan); the ESP32 compiles are CI's; not bench-tested. Filed:
+  F401-F404.
+- **canary-wap: CSI rows and Bluetooth names reach their answers as JSON
+  (sweep F301, F302).** The CSI chokepoint turns `"`, `\` and `{` into `?`
+  too, in both trees, so every event row's card line, MQTT body and REST row
+  is JSON, and the card reader refuses what an older quote could forge. Every
+  Bluetooth name in `GET /api/bluetooth`, its scan results and its paired list
+  goes through `wap_json::shown_text()`, so those answers are strict UTF-8
+  JSON; rule J10 in `check_wap_json_answers.py` holds it (173 self-test
+  mutations; its docstring lists what it cannot see). Other radio text is not
+  covered: `GET /api/nearby` writes four advertised name bytes raw (F405), and
+  the mesh and beacon names are untraced (F408). **Host-tested only**; the
+  ESP32 compiles are CI's. Filed: F405-F408.
+- **canary-wap Chirp's trust rules (sweep F305, F311, F306, F415).** No ACK
   but CONFIRMED dismisses a chirp, and a dismissed chirp takes no
   confirmation. An ACK counts only from a key first seen ten minutes earlier;
   presence beacons are unsigned, so this delays a Sybil and does not price
@@ -122,21 +128,26 @@
   stay critical for good. Five health counters join the redaction set as a
   second net, and no output changes. **Host-tested** in both Home Assistant
   lanes (the real core at 2026.5.0 and 2026.10.1); not run against a live
-  kernel. Carried files: the HACS mirror follows one sync behind. Filed: HA52.
+  kernel. Carried files: the HACS mirror follows one sync behind. Filed: HA52,
+  HA56.
 - **Home Assistant: three contract gaps close (sweep F368, HA48, HA44).** A
   canary-wap's Signal Strength keeps its last reading across a reconnect
   instead of showing 0 dBm, Memory Critical reads a canary-wap's
   `memory_free`, and the `events` publish that creates Last Event, Motion and
   Occupancy is shown by them, once. The contract suite's three strict expected
-  failures are passing tests. **Host- and real-core-tested** (2026.5.0 and
-  2026.10.1); the one-line `csi_mqtt.cpp` change compiles in CI; not
-  bench-tested with a real broker. Filed: F411, HA53.
-- **Lab: the Vision's generator and test read a firmware constant by one
-  strict rule (sweep F369).** `gen_vision.py` and `vision.test.js` read every
-  constant through `read_const` and its JavaScript twin, held to one case
-  table and agreeing on 200,000 fuzzed inputs, so a commented-out or second
-  definition is refused instead of read. `vision.json` and `flash.json` are
-  unchanged. **Host-tested.** Filed: A116, A117.
+  failures are passing tests. **Host-tested**: F368 and HA44 also on the real
+  core (2026.5.0 and 2026.10.1), HA48 in the stub lane only; the one-line
+  `csi_mqtt.cpp` change's compile is CI's; not bench-tested with a real
+  broker. Filed: F411, HA53.
+- **Lab: the Vision's generator and the test's `num()` read a firmware
+  constant by one strict rule (sweep F369).** `gen_vision.py` reads every
+  constant through `read_const`, and `vision.test.js`'s `num()` through its
+  JavaScript twin, both held to one committed case table, so a commented-out
+  or second definition is refused instead of read; a one-off scratch run,
+  not committed, also found the two readers agreeing on 200,000 fuzzed
+  inputs. The test's two `optical_features.h` readers keep their own pattern
+  (A117). `vision.json` and `flash.json` are unchanged. **Host-tested.**
+  Filed: A116, A117.
 - **Enclosure checks that held nothing now hold (sweep C34, C32, C26, C22).**
   The cable gland's bush asserts its own squeezed fill at 90 %, and CI
   requires the out-of-range configs to be refused; the design-language lint
@@ -145,19 +156,23 @@
   own header; and the Sense's screws carry SCR3 in the Lab's Assemble tab.
   OpenSCAD 2021.01's CSG is byte-identical at the defaults, so no mesh moved.
   **Render-checked and host-tested**; not print-validated.
-- **The viewer-token mint step reads the same everywhere (sweep A104, A105).**
-  `examples/witnessd.service` turns on the token files and says how to pair a
-  Wall, the tvOS Wall's Verification footer and `tvos/README.md` give all
-  three mint forms with `--label`, and `docs/frigate_integration.md` points at
-  Settings → Verification. **Host-tested** (`test_witnessd_unit.py`); the tvOS
-  compile is CI's, and nothing renders the footer yet (A119). Filed: A118,
-  A119.
-- **Both flashers call a flavorless display a display, and offer the
-  self-check only where the firmware prints one (sweep A96, A97, F384).**
-  Every surface in both flashers resolves a board's descriptor through the
-  display-aware match, and the WAP, the Sense and the displays get a pointer
-  to the boot log instead of a self-check ask nothing answers. The Vision's
-  module-id deny reads every source its build compiles, code only.
+- **The unit file, the Wall and `tvos/README.md` give the viewer-token mint
+  step (sweep A104, A105).** `examples/witnessd.service` turns on the token
+  files and says how to pair a Wall, the tvOS Wall's Verification footer and
+  `tvos/README.md` give all three mint forms with `--label`, and
+  `docs/frigate_integration.md` points at Settings → Verification. Three
+  pointers elsewhere still lag (A118), and the setup guide's section is
+  A103's. **Host-tested** (`test_witnessd_unit.py`); the tvOS compile is CI's,
+  and nothing renders the footer yet (A119). Filed: A118, A119.
+- **Both flashers call a flavorless display a display, and point the WAP, the
+  Sense and the displays at the boot log instead of the self-check (sweep
+  A96, A97, F384).** Every surface in both flashers resolves a board's
+  descriptor through the display-aware match, and the WAP, the Sense and the
+  displays get a pointer to the boot log instead of a self-check ask nothing
+  answers; firmware the catalog does not name is still asked, now in both
+  flashers (A121). The Vision's module-id deny reads the Vision project, its
+  config and pins, and the six `firmware/common` translation units it
+  compiles, code only, not the shared headers (F414).
   **Host-tested** (`desktop_parity.test.js`); which names real boards report
   is a board check (A122). Filed: A120-A122, F414.
 - **Three hardware facts set straight (sweep D14, C20, F374).** The round
@@ -174,8 +189,9 @@
   tests**; Home Assistant's handling was read from its source, not seen
   running. Filed: HA50, HA51.
 - **The sweep ledger:** 34 items ticked and F364's sketch slice done, W41 and
-  C23 found closed, and the second item filed as F365 (the HTTPS port write)
-  renumbered F400.
+  C23 found closed, and the second items filed as F365 (the HTTPS port write)
+  and F363 (Chirp's beacon age) renumbered F400 and F415. Nineteen more ids
+  name two items each, all from wave 20; D17 tracks them.
 
 
 ## [2.4.19] - 2026-10-30
@@ -841,7 +857,8 @@
   sent` line already reaches the SD card, F364). **Host-tested**
   (`test_chirp_commands_wap.cpp`, eight new tests on the real
   `chirp_channel.cpp`); the compiles are CI's; not bench-tested. Filed:
-  F361-F364.
+  F361-F364 (four numbers given before; F363 of them is now F415, and D17
+  tracks the rest).
 - **canary-wap: the stub server API is gone, and the Lab's WAP page reads its
   AP and port facts from the code the sketch runs (sweep F277).**
   `wap_server.cpp` defined every function `wap_server.h` declared as a stub
@@ -854,7 +871,8 @@
   `httpd_ssl_start()` would overwrite. `devices/wap.json` is unchanged.
   **Host-tested** (a scratch-copy generator unittest, a route-match case, the
   J7 guard and its self-test); the ESP32 compiles are CI's; not run on a
-  device. Filed: F400 (filed as F365, a number already taken), F366.
+  device. Filed: F400 (filed as F365, a number already taken) and F366 (a
+  number #1882 had given first; D17).
 - **canary-wap MQTT contract fixture (sweep F34, its fixture half).** A host
   harness runs the real `csi_mqtt.cpp`, records every publish with its QoS and
   retain flag, and delivers each discovery command word back to check the WAP

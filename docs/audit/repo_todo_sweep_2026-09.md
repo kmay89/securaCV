@@ -7737,6 +7737,10 @@ so — see D2 below.)
   under g++, clang++ 18 and ASan/UBSan; the ESP32 compiles are CI's; not
   bench-tested. A rotation (F353) still owes its own test that a rotated token
   survives a failed read.
+  *Note (2026-11-04, #1916):* this F365 is the one F359's review (#1840)
+  filed. The HTTPS-port item F277's review (#1836) filed under the same
+  number, which the published 2.4.18 release body still calls F365, is
+  F400.
 - [x] **F384 [code] canary-vision's `module_id` is a RAM address, so the
   desktop's live-boot-line proof passes a dead module, and the obvious fix
   would publish a per-unit module id.** Line numbers in this paragraph are
@@ -7815,10 +7819,10 @@ so — see D2 below.)
   the engine's, denies `AI.ID(` in `vision_mgr.cpp`, and holds the
   browser flasher to having no such path. Host-tested; not run on a device.
   *Done (#1916), the deny's reach:* the `AI.ID(` deny in
-  `desktop_parity.test.js` reads every source `canary-vision.ini` builds from
-  (the project, its config and board pins, and the six `firmware/common`
-  translation units it compiles), code only: comments and strings are blanked
-  and numbers read whole. A mutation test proves it on a scratch copy of
+  `desktop_parity.test.js` reads the Vision project, its config and board
+  pins, and the six `firmware/common` translation units `canary-vision.ini`
+  compiles, code only: comments and strings are blanked and numbers read
+  whole. A mutation test proves it on a scratch copy of
   exactly those files; the old deny missed a call planted in a header. The
   general identifier lint leaves this item for device-details PR 4. The deny
   does not read the shared headers under `firmware/common`, so a call hidden
@@ -7857,12 +7861,12 @@ so — see D2 below.)
   health projection. Nothing in today's dump carries them, so no output
   changes. `test_an_identifier_key_is_replaced_wherever_it_lands` seeds all
   five nested in both lanes and fails on the set before. The item's last
-  clause, deriving the set from the generated vocabulary, is re-scoped to
-  device-details PR 3 and leaves this item; note that
-  `docs/design/device_details.md`, the design this item cites (§11, P18, PRs 3
-  and 16), is not on main. Host-tested in both Home Assistant lanes (the stub
-  suite on Python 3.11 and 3.13, the real core at 2026.5.0 and 2026.10.1); not
-  bench-tested.
+  clause, deriving the set from the generated vocabulary (device-details
+  PR 3), leaves this item for HA56, since no other item tracked it; note
+  that `docs/design/device_details.md`, the design this item cites (§11,
+  P18, PRs 3 and 16), is not on main. Host-tested in both Home Assistant
+  lanes (the stub suite on Python 3.11 and 3.13, the real core at 2026.5.0
+  and 2026.10.1); not bench-tested.
 - [x] **F392 [decision] Home Assistant's config-entry diagnostics dump keeps
   half of each Canary's key fingerprint.**
   `async_get_config_entry_diagnostics()` writes each pinned Canary's
@@ -8117,6 +8121,12 @@ so — see D2 below.)
   output stays inside its buffer, its read does not. Set
   `name[MAX_DEVICE_NAME_LEN] = '\0'` for each loaded entry, with a host case.
   From code. Found by F302 (#1916).
+  *Note (2026-11-04, #1916):* the same function drops `getBytes()`'s count
+  (`:1419`) and takes the bond count from the length lookup, and the
+  device-name load drops its count too (`:1384`), so a read IDF refuses after
+  copying (F365's CRC case) loads whatever it copied. Hold both reads to the
+  lookup's length in the same change. From code; found by the review of
+  #1916's ledger.
 - [ ] **F407 [code] canary-wap: the Bluetooth page's paired list writes a
   bond's name and address into HTML unescaped.** `web_ui.h`'s
   `loadBtPairedDevices()` builds `innerHTML` from `${d.name || 'Unknown'}` and
@@ -13439,7 +13449,8 @@ so — see D2 below.)
   the table. `check_wap_loop_commands.py`'s three mutations anchored on the
   old call were re-anchored. Host-tested; the Arduino and PlatformIO compiles
   are CI's; not bench-tested (U1: the two F193 rows in
-  `hardware_verification_checklist.md`). Found here: F361-F364.
+  `hardware_verification_checklist.md`). Found here: F361-F364 (F363 of them
+  is F415 since #1916; D17).
 - [ ] **F361 [code] canary-wap Chirp's mute ends at once when it is set within
   its length of the 49.7-day uptime wrap.** `mute()` stores the deadline
   `g_mute_until_ms = millis() + duration`, and `update()` (`now >=
@@ -13464,7 +13475,7 @@ so — see D2 below.)
   canary-wap's COOLDOWN_TIER_* constants,
   `test_chirp_protocol_invariants.cpp`'s pins of them and that test's counts.
   From the spec and code. Found by F193 (#1836).
-- [x] **F363 [code] canary-wap Chirp's presence beacon tells neighbors how
+- [x] **F415 [code] canary-wap Chirp's presence beacon tells neighbors how
   long ago the previous session chirped.** `send_presence()` sets
   `last_chirp_age_min` from `g_last_chirp_sent_ms`, which only a reboot clears
   (neither `disable()` nor `enable()` touches it), so after a disable and an
@@ -13483,6 +13494,16 @@ so — see D2 below.)
   §3.2 says so. `test_chirp_commands_wap.cpp`'s
   `a_new_session_beacons_no_last_send` fails on main (it says 7). Host-tested;
   not bench-tested.
+  *Renumbered (2026-11-04, #1916):* the number F363 was given twice: F193's
+  review (#1836) filed this item under the number F360's review (#1840) had
+  given the `nvs_load_bytes()` item in the network section (still open). Ids
+  are stable, so that item keeps F363 and this one is F415, as the second
+  F365 became F400. Every cite #1916 wrote for this fix says F415 (its
+  CHANGELOG bullet, `chirp_channel.cpp`, `test_chirp_commands_wap.cpp` and
+  spec §3.2); F193's paragraph above, the 2.4.18 CHANGELOG entry and
+  `IMPROVEMENT_ROADMAP.md` say F415 beside "F361-F364", and the published
+  2.4.18 release body still counts it in "F361-F364". D17 lists the other ids
+  given twice.
 - [ ] **F364 [decision] canary-wap Chirp's `chirp sent` health line keeps a
   lasting record of the owner's chirps on the SD card.** `send_chirp()` logs
   `chirp sent: <template text> (<urgency>, tier N)` at INFO, the default store
@@ -17101,11 +17122,13 @@ so — see D2 below.)
   :337; `HTTPD_SSL_CONFIG_DEFAULT()`'s `port_secure = 443` in
   `esp_https_server.h`, v4.4.7 :135 and v5.1.4 :162); not run on a device.
   Found by F277 (#1836).
-  *Renumbered (2026-11-04, #1916):* this item was filed twice as F365: F277's
-  review (#1836) filed it under the number F359's review (#1840) had given the
-  stored-token item in the network section (done in #1916). Ids are stable, so
-  that item keeps F365 and this one is F400; F277's paragraph above, the
-  2.4.18 CHANGELOG entry and `IMPROVEMENT_ROADMAP.md` now say F400. Still
+  *Renumbered (2026-11-04, #1916):* the number F365 was given twice: F277's
+  review (#1836) filed this item under the number F359's review (#1840) had
+  given the stored-token item in the network section (done in #1916). Ids are
+  stable, so that item keeps F365 and this one is F400; F277's paragraph
+  above, the 2.4.18 CHANGELOG entry and `IMPROVEMENT_ROADMAP.md` now say
+  F400, and the published 2.4.18 release body still says F365. F363's twin
+  is F415 the same way, and D17 lists the other ids given twice. Still
   open: wave 21 left it for the next wave, with `gen_wap.py`, since
   `canary_wap.ino` belonged to F365's package and the dead write does nothing
   on stock units until F15.
@@ -19650,10 +19673,11 @@ so — see D2 below.)
   table, `canary-local/tests/c_const_cases.json` (61 rows, plus 10 planted
   into `config.h`), holds `read_const`, `gen_flash.py`'s Vision defaults,
   `gen_vision.py` (run on a scratch tree) and `num()` to the same value or the
-  same refusal, word for word, and the two readers agree on 200,000 fuzzed
-  inputs. After the review the scanner lexes raw strings, line splices and
-  digit separators as the compiler does, refuses a literal of more than 16
-  digits instead of crashing, and names the file in every refusal.
+  same refusal, word for word; in a one-off scratch run, not committed, the
+  two readers also agreed on 200,000 fuzzed inputs. After the review the
+  scanner lexes raw strings, line splices and digit separators as the
+  compiler does, refuses a literal of more than 16 digits instead of
+  crashing, and names the file in every refusal.
   `vision.json` and `flash.json` are byte-identical to main, and the dist does
   not move. Host-tested. A93 can proceed on `gen_flash.py`.
 - [x] **F374 [code] `test_fleet_selfreport.cpp`'s birth-day comment is off by
@@ -20364,15 +20388,16 @@ so — see D2 below.)
   emsdk) for every display flavor. From code. Found by D14 (#1916).
 - [ ] **F414 [code] The Vision's `AI.ID(` deny does not read the shared
   `firmware/common` headers, and no item holds the general identifier lint.**
-  Since F384 (#1916) `desktop_parity.test.js`'s deny reads every source
-  `canary-vision.ini` builds from, code only, but not the headers under
-  `firmware/common` that every product shares, so a call to the module's id
-  hidden in one of them would pass; code inside `#if 0` is flagged, which is
-  conservative. F384 left the general identifier lint to device-details PR 4,
-  and no ledger item tracks that PR (its design,
-  `docs/design/device_details.md`, is not on main). Read the shared headers
-  the Vision includes, or land the general lint. From code. Found by F384
-  (#1916).
+  Since F384 (#1916) `desktop_parity.test.js`'s deny reads the Vision
+  project, its config and board pins, and the six `firmware/common`
+  translation units `canary-vision.ini` compiles, code only, but not the
+  headers under `firmware/common` those sources include and every product
+  shares, so a call to the module's id hidden in one of them would pass;
+  code inside `#if 0` is flagged, which is conservative. F384 left the
+  general identifier lint to device-details PR 4, and no ledger item tracks
+  that PR (its design, `docs/design/device_details.md`, is not on main). Read
+  the shared headers the Vision includes, or land the general lint. From
+  code. Found by F384 (#1916).
 
 ---
 
@@ -24476,9 +24501,11 @@ so — see D2 below.)
   reading, or a non-finite one (Infinity, `1e400`, which the review found
   raised an `OverflowError` in the first cut), reads off and raises nothing.
   The strict xfail is a plain test, with no-reading and non-finite cases
-  beside it, and the catalog row (`homeassistant_setup.md` and the Hub's
-  `homeassistant.json`) names every family that sends `memory_free`:
-  canary-wap, canary-sense, canary-sentinel, canary-vision and canary-display.
+  beside it, and the per-tamper-type catalog row in `homeassistant_setup.md`
+  names every family that sends `memory_free`: canary-wap, canary-sense,
+  canary-sentinel, canary-vision and canary-display (the Hub's
+  `homeassistant.json` carries only the entity list's shared tamper line,
+  which did not change).
   Host-tested in the stub lane. The Health sensor still reads a health with no
   usable memory field as critical (HA53).
 - [x] **HA30 [code] `docs/homeassistant_setup.md`'s Template Sensor example
@@ -24789,8 +24816,8 @@ so — see D2 below.)
   three tests): the HACS mirror follows after #1802 merges. Found here: F295
   (the canary-wap's own Chirp Channel State entity promises NFPA words) and
   A90 (the Lab's `listening` sample).
-- [ ] **HA49 [human] Check app 0.9.0 and its fix on Home Assistant OS, and
-  decide on a patch release.** 0.9.0's `config.yaml` declares
+- [ ] **HA49 [decision+human] Check app 0.9.0 and its fix on Home Assistant
+  OS, and decide on a patch release.** 0.9.0's `config.yaml` declares
   `frigate.cameras` and `frigate.labels` as `list(str)?`, which is the
   Supervisor's select syntax: a choice whose only allowed value is the word
   `str`. By the Supervisor's own option code (`supervisor/apps/options.py` at
@@ -24866,6 +24893,17 @@ so — see D2 below.)
   by name, so with go2rtc discovery on the primary camera can be a discovered
   one while a camera is configured. Decide the precedence, then hold it with a
   `test_serve_wizard.py` case. From code. Found by HA38 (#1916).
+- [ ] **HA56 [code] Derive the diagnostics redaction set from the generated
+  device-details vocabulary.** F391 named `TO_REDACT`'s identifier keys
+  literally (#1891) and its health keys (#1916), and left its last clause:
+  derive the set from the generated vocabulary, so a key the vocabulary
+  gains is redacted with no edit to `diagnostics.py` (device-details PR 3).
+  No other item tracked that clause, and neither the design it comes from
+  (`docs/design/device_details.md`, §11, P18) nor a generated vocabulary is
+  on main. Land the vocabulary or say where it lives, then read `TO_REDACT`
+  from it and hold the literal keys to it in
+  `test_the_redaction_set_names_every_identifier_class`. Found by the review
+  of #1916's ledger (F391).
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store
@@ -26550,6 +26588,27 @@ major, by theme") — work its themes, then tick here.
   session_pubkey ... Cost is real"), though one device can make any number of
   session keys. Say what holds today, or land F232's signed beacon first.
   Found by F311 (#1916).
+- [ ] **D17 [code] Nineteen ledger ids name two items each.** Wave 20
+  (#1836, 7cc1ee43) filed new items under numbers that PRs merged before it
+  had already given: A111-A114, F366 and F367 (first given by #1882),
+  F350-F357, F359-F362 and F364 (first given by #1837, #1838, #1840, #1848,
+  #1887 or earlier PRs). In every pair #1836's filing is the later one.
+  #1916 renumbered the two twins it touched by the rule its notes state,
+  that the earlier filing keeps the id: F365's became F400 and F363's
+  F415. Give each of #1836's nineteen a new number at the end of its
+  section's range, with a note as F400 and F415 have, and move the cites
+  that mean them: the 2.4.18 CHANGELOG entry's Filed lines (F350-F354,
+  F355, F356-F360, F361-F364, F366, F367 and A111-A114) and the clauses that
+  name them ("the maintainer's call (F356)", "F364" on the `chirp sent`
+  line), `IMPROVEMENT_ROADMAP.md`'s wave 20 section, and this file's own
+  cross references (F193's "Found here", for one). Most cites elsewhere
+  mean the earlier filing and stay (`provisioning_gate.h`'s F354 is the
+  flagship's tap, the HMAC fail tests' F359 and the key-read tests' F360
+  are #1837's, `api_auth.h`'s F361 is the landing-session reboot), so read
+  each by its subject before moving it. #1916's own text cites only the
+  earlier filings by these numbers, apart from the notes it put on the 2.4.18
+  and wave 20 lines. The published 2.4.18 release body keeps its numbers.
+  Found by the review of #1916's ledger.
 
 ---
 

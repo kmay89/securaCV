@@ -1482,7 +1482,7 @@ static bool enable() {
   // key's first beacons told any neighbor that heard the old one how long ago
   // it chirped, to the minute, and linked the two sessions on the wire
   // (spec 2.3: the identity is discarded at a disable; 6.4: no chirp history
-  // across sessions; sweep F363). The cooldown's own timer,
+  // across sessions; sweep F415). The cooldown's own timer,
   // g_cooldown.last_chirp_ms, is the device's and stays (F193, below).
   g_last_chirp_sent_ms = 0;
   if (esp_now_init() != ESP_OK) { /* may be already initialized by mesh_network */ }

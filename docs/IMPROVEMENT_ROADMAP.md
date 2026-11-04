@@ -59,6 +59,7 @@ survived only if a majority could not. The counts:
 | Landed in wave 19 (PR #1802, website securacv_website#228, mirror securacv-homeassistant#29) | an eleventh wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking older open items, from the first sweep's F20, F21, F34 and F36 to wave 17's F290 and F291; it closes none of the rows here, answers row 35's residual (the WAP release rows' core), adds a sentence to row 1 (the root image mints viewer tokens), and changes one clause of §2's Wi-Fi sensing row (F90 and F132 decided). Every job in the three repos that floated on `ubuntu-latest` runs on `ubuntu-24.04` ahead of that label's move to 26.04 on 2026-10-19, with rule R11 holding the monorepo to it, the WAP's release rows build on the sketch's esp32 core 3.3.8 and the LVGL 9 rows on exactly 9.5.0, and a static gate holds the kernel's detector backends behind default-off features (CI11, F247; F21 and F34 in part); the hourly ceiling never refuses a refresh and keeps its last slot for a change of state, and the Tuning Lab's reset removes the row (F90, F132, F82, F122, F127); a PlatformIO Canary in an opera refuses a join, sends one heartbeat after it pairs and after a boot, lists its members from the published view, and the wizard's timeouts say what they found (F136's PlatformIO half, F162, F199, F215); another Canary's beacon or Chirp cannot win the Scout's pairing window (F36 and F20 in part); the 4.3B fieldbus station reads a Modbus exception at once and recovers a bus-off controller, and the wide Join card's reach is held (F291, F290, F155); the Sense's count follows its debounced presence and the Vision's flavor file keeps only what something reads (F131, F182); a Canary's Last event names its summaries and the MQTT test plan says its ids need Home Assistant 2025.10 (HA28, HA29); the root image mints Witness Wall viewer tokens and the release docs say the kernel has never been released (A18 in part, CI10); and the Lab groups enclosure knobs as the builder does (C10, wave 3). The planner found W8, W9 and C1 already done. Nothing in it moves the emulator dist. It files F312-F324, A102-A110, HA40-HA43, C21-C24 and CI17-CI19. Host-tested; the ESP32 compiles, cargo and the image build are CI's; two more carried Home Assistant files change; nothing ran on a bench. See §3, "Landed in wave 19" |
 | Landed after wave 19 (PR #1822, PR #1835 and PR #1832) | F289 and its follow-up, from the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)); they close none of the rows here and change no sentence of §2. #1822 takes canary-wap's provisioning receipt and pairing QR off the landing page's session: the receipt opens to a real bearer, the BOOT tap or a setup-door claim, and the QR to the bearer alone, and the session stays as deliberate LAN posture for the dashboard's own routes (F289). #1835 closes F289's third road: a session alone cannot move the MQTT broker while keeping the stored password (`403 password_needed`; the bearer or the password typed again moves it), and the loop task opens no client from a half-written row (F325). #1832 hardens what that left, in the same bearer-only design: the session cookie is `Secure` over HTTPS and read by its whole name (F326, F327), the route check holds every answer that carries a secret to a bearer-only gate and the broker save to #1835's move gate (F328), a wrong bearer on the receipt is a strike under the lockout, an empty device token takes no bearer and the lockout's `Retry-After` cannot wrap (F329, F331, F332), and the sign-in names no token a cookie-only page never held (F330). It files F333-F349, among them a QR code that moves the broker with the kept password (F333) and the claim and the tap spent by whoever asks first (F342), and records #1802's dependency advisories in the CHANGELOG. Nothing in it moves the emulator dist. Host-tested; the ESP32 compiles are CI's; nothing ran on a device or in a browser. See §3, "Landed after wave 19" |
 | Landed in wave 20 (PR #1836) | a twelfth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking older open items from F34 and F77 to wave 19's F313, with A72 beside it; it closes none of the rows here, and changes one clause of §2's Wi-Fi sensing row and adds two (closed bundles reach the event ring, F77; ambient rows stay off the card and the broker, F105; a planned restart commits open bundles, F92). canary-wap's Bluetooth keeps bonds and shown passkeys to its owner and every tap waits for the boot bring-up (F191, F209, F259, F260); both CSI trees keep ambient rows off the card and the broker, put closed bundles in the event ring and commit open bundles before a planned restart (F105, F77, F92); a mesh pairing CONFIRM is bound to its sender's role on both trees, a wire change that fails closed against older firmware (F94); Chirp's cooldown tiers reset only after 24 quiet hours (F193); the WAP's stub server is gone and the Lab reads its AP and port facts from the sketch (F277); an MQTT contract fixture holds the WAP's bodies and discovery to the Home Assistant integration (F34's fixture half); the flasher reads the Vision's detection defaults from the project config (F313); the dash says which turn it wears (F245); the splash bird clears its bubble and the tail is drawn on LVGL 8.4 (F159, F185, F183); CI holds the native and wasm32 cores to the sources (A50, A58); `build.json` carries each set's hardware (C3's build-sets half); 133 more dev-case knobs get help (C10c-2); and the Witness Wall shows a device's birth day (A72, whose code merged in #1832 and whose website half follows as a site PR). Two packages move the emulator dist (F245; F159 and F185), and CI's pinned-emsdk rebuild has not run on the branch yet. It files F350-F374, A111-A114, HA44-HA48, C25-C34, W40, W41 and D15, among them the maintainer's calls on F94 and pairing v1 (F356) and on C10c-2's two decision commits (C27). Host-tested; the ESP32 and Swift compiles are CI's; nothing ran on a bench. See §3, "Landed in wave 20" |
+| Landed in wave 21 (PR #1916) | a thirteenth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items waves 18 to 20 filed, F342's and the #1840 reviews' finds (F354, F364, F365), the device-details review's F384, F391 and F399, and HA16; it closes none of the rows here and changes no sentence of §2. The Home Assistant app declares its two Frigate lists as lists and reads list options whole: by the Supervisor's own option code 0.9.0 cannot start, which was read from the Supervisor's source and not seen on an install, so a check on HA OS and a patch-release call are owed (HA38, HA39, F321; HA49); canary-wap reads its stored token and the Fleet QR's query whole and its sketch's SHA-256 helpers say when they fail (F365, F364 in part, F304), its CSI rows and Bluetooth names reach their answers as JSON (F301, F302), and Chirp's ACKs, confirmations, relayed TTLs and new-session beacons do what its spec says (F305, F311, F306, F415); the flagship's BOOT tap goes to the one device asking (F354, F322, F358); Home Assistant's diagnostics carry no kernel host, served key or health counter, and three contract gaps the fixture pinned close (F399, F391, F368, HA48, HA44); the Vision's generator and the test's `num()` read a constant by one strict rule (F369); four enclosure checks that held nothing hold (C34, C32, C26, C22); the unit file and the Wall give the viewer-token mint step (A104, A105); both flashers call a flavorless display a display and point the WAP, the Sense and the displays at the boot log (A96, A97, F384); three hardware facts are set straight (D14, C20, F374); and the entity-id docs say what is proven (HA16, A108). The triage found W41 and C23 already done. Nothing in it moves the emulator dist. It files F401-F414, A116-A122, HA49-HA56, C35, D16 and D17, and renumbers the two ids it touched that #1836 had given twice (F365's twin is F400, F363's is F415; D17 lists the other nineteen). Host-tested; the ESP32, Tauri and Swift compiles are CI's; nothing ran on a bench, on a TV or in a running Home Assistant. See §3, "Landed in wave 21" |
 | Landed after wave 19 (the sweep decisions of 2026-10-19; F294 and F324 in #1839) | Items from the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) decided on the maintainer's instruction to fix the remaining open items; they close none of the rows here and change no sentence of §2. canary-wap's one device type is `canary-wap` on every surface: its `DEVICE_TYPE` constant said `canary`, so REST `/api/status` `device_type` and the boot banner contradicted the mDNS `dt`, the MQTT status, `node_status.node` and `/api/fleet`, and now all of them say `canary-wap`: every surface but the literal mDNS and MQTT sites reads the constant, and `gen_figures.mjs --check` holds the constant and those literal sites to one value (F294). The PlatformIO mesh (`[env:full]` only; no released image builds it) heartbeats every 30 s ± 3 s while it runs with an opera, every heartbeat re-arming the deadline, so a quiet, healthy opera reads `ACTIVE` with its members `CONNECTED` instead of `CONNECTING` with them `OFFLINE`, and each member's state, age, RSSI and `peers_online` come from its last verified frame, so junk and replays of frames the receiver has heard, sent from a member's copied address, cannot hold a gone member `CONNECTED`; any genuine frame the receiver did not hear still can, about 90 s each with no fixed bound, among them every heartbeat the member sent while the receiver was off or on another channel (about three times the downtime), the frames heard since the last replay-counter save before a reboot, and a jammer's stock; the counter of a member's first frame that verifies is now persisted as it lands and once more 66 s later if it has moved, so a reboot soon after a pairing, once the member's first frame has landed and its save with it, does not reopen what the member signed before it, unless a radio copying the member's address landed an older frame of the member's first and the reboot falls before the second save lands (66 s after the first, and 66 s more for each refused write), or before the next 5-minute save when the member's own frames were kept out through the 66 s; a reboot before the member's first frame lands, or, when NVS refused that save, before its retry on the member's next verified frame (or, with the member's frames kept out after the refusal, the next 5-minute save) lands, still reopens it (F324, `THREAT_MODEL.md`). No `FIRMWARE_VERSION` bump, and nothing in it moves the emulator dist. Host-tested; the ESP32 compiles are CI's; nothing ran on a device. See §3, "Landed after wave 19" |
 | Still open | 0 in full, 1 in part (21's Parametrize leftovers — the 7" frame's panel record, the render-plan package's selector half and the C6 manifest's `figure`; see row 21 and §4); row 20 carries one new open clause (a signed head for the sealed-log document, without which the Wall's "Verified" cannot say the tail is current or complete). Decisions taken and waiting on the maintainer's confirmation: row 30's version spread and the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, widened to the ten-minute grid; §3, "Landed in wave 4"), both decided on 2026-09-22 and landed in PR #1704; the two wave-5 questions, landed in PR #1703 — the render-plan package's Lab-card half (option B; the selector half, option A, is not built) and `canary-local/devices/registry.json`'s hand-typed `body_mm` (retired and derived; row 21); and, landed in PR #1704, the sidecar's bind (option (3), row 1) and the Wall's viewer token (option (a), row 20) |
 
@@ -1866,12 +1867,13 @@ monorepo and the website. Thirteen pieces:
   F162/F320 text. Host-tested; not bench-tested. Files F356-F360.
 - **Chirp's cooldown tiers (sweep F193).** They reset only after 24 hours with
   no send, across the uptime wrap, and survive a disable; a reboot still
-  clears them, by decision. Host-tested; not bench-tested. Files F361-F364.
+  clears them, by decision. Host-tested; not bench-tested. Files F361-F364
+  (four numbers given before, D17; F363 of them is F415 since #1916).
 - **The WAP's stub server (sweep F277).** `wap_server.cpp` is deleted and
   `wap_server.h` is the route list; `gen_wap.py` reads the AP and port facts
   from the sketch and refuses what it cannot read; `wap.json` does not move.
   Cherry-picked unsquashed, so its first commit alone fails J7. Host-tested.
-  Files F400 (filed as F365) and F366.
+  Files F400 (filed as F365) and F366 (a number #1882 had given first; D17).
 - **The MQTT contract fixture (sweep F34's fixture half).** A host harness
   runs the real `csi_mqtt.cpp`, a pytest replays its record into the
   integration against an emulated broker, and a render test draws every
@@ -1932,6 +1934,110 @@ package moves it. Three cherry-picks conflicted and were resolved:
 THREAT_MODEL against #1833 (F94), `firmware/CONFIG_CHANGES.md` and the Vision
 flavor README against #1833 (F313), and `catalog.json` for C10c-2's skirt
 split. Nothing ran on a bench, on a TV or in a running Home Assistant.
+
+
+### Landed in wave 21
+
+A twenty-first pass on 2026-11-03 (monorepo PR #1916) worked the 2026-09-20
+sweep's backlog
+([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) again,
+taking older open items the planner chose. It closes none of the rows above
+and changes no sentence of §2. Each package was built in its own worktree on
+main's 0a5ce01d (#1902), reviewed adversarially twice and fixed, then
+cherry-picked onto the branch; the triage found W41 and C23 already done.
+Thirteen pieces:
+
+- **canary-wap's short reads (sweep F365, F364's sketch slice, F304).** The
+  stored API token loads only on an exact read of a well-formed token, and
+  provisioning stores one only when NVS says none is stored; the sketch's
+  SHA-256 helpers say when they fail, and each of their five callers refuses
+  what the hash was for; `GET /api/fleet/qr` reads its query whole or answers
+  a 400 naming the field. Other reads still drop `getBytes()`'s count (F404,
+  F406, F363). Host-tested under g++, clang++ 18 and ASan/UBSan; the ESP32
+  compiles are CI's; not bench-tested. Files F401-F404, and renumbers #1836's
+  second F365 to F400.
+- **canary-wap's text chokepoints (sweep F301, F302).** The CSI chokepoint
+  turns `"`, `\` and `{` into `?` in both trees, and every Bluetooth name the
+  Bluetooth routes answer goes through `wap_json::shown_text()`, held by the
+  new rule J10. `GET /api/nearby`'s name bytes and the mesh and beacon names
+  are not covered (F405, F408). Host-tested only. Files F405-F408.
+- **Chirp's trust rules (sweep F305, F311, F306, F415).** Only CONFIRMED
+  dismisses a chirp; an ACK counts only from a key first seen ten minutes
+  earlier, which delays a Sybil and does not price one; relays keep the TTL
+  their origin signed; and a new session beacons no last-send age. The spec
+  follows, its §12.3 held by `test_chirp_spec_tables.py`. Host-tested on the
+  real `chirp_channel.cpp`; not bench-tested on radios. Files F412 and D16,
+  and renumbers #1836's second F363 to F415.
+- **The flagship's BOOT tap (sweep F354, F322, F358).** The receipt and the
+  home-LAN page load share one tap arbiter, as the WAP's receipt has since
+  F342, so a second asker gets `409 tap_contended`, and the dashboard's unlock
+  banner asks before the press; the pairing screen's `opera_exists`, timeout
+  and mismatch hints say what to do. Host-tested (a 240-interleaving sweep
+  over the real tap step); the PlatformIO compiles are CI's; not bench-tested.
+  The docs that still describe the old tap are listed under F20. Files F409
+  and F410.
+- **Home Assistant diagnostics (sweep F399, F391).** The key-mismatch Repairs
+  issue holds only the two fingerprints, an issue the kernel's API contradicts
+  clears at the next check, and five health counters join the redaction set as
+  a second net. Host-tested in both Home Assistant lanes; not run against a
+  live kernel. The HACS mirror follows one sync behind. Files HA52 and HA56
+  (the vocabulary derivation F391 left).
+- **Three Home Assistant contract gaps (sweep F368, HA48, HA44).** Signal
+  Strength keeps its last reading across a reconnect, Memory Critical reads a
+  canary-wap's `memory_free`, and the publish that creates Last Event, Motion
+  and Occupancy is shown by them, once. F368 and HA44 are host- and
+  real-core-tested, HA48 in the stub lane only; the `csi_mqtt.cpp` compile is
+  CI's. Files F411 and HA53.
+- **The Home Assistant app's options (sweep HA38, HA39, F321).** `config.yaml`
+  declares the two Frigate lists as lists, `run.sh` reads list options whole
+  from `/data/options.json`, the wizard and the server spell zone ids by one
+  rule, and the pairing screen's unreadable-poll exits end from a fresh read.
+  By the Supervisor's own option code 0.9.0 cannot start; that was read from
+  its source and checked against a copy of its rules, not seen on an install,
+  so HA49 asks for a check on HA OS and a patch-release call. Host tests on jq
+  1.6 and 1.7 and node; not run in the app image or on a Supervisor. Files
+  HA49, HA54 and HA55.
+- **The Vision's constant reader (sweep F369).** `gen_vision.py` reads every
+  constant through `read_const`, and `vision.test.js`'s `num()` through its
+  JavaScript twin, both held to one committed case table; `vision.json` and
+  `flash.json` do not move. Host-tested. Files A116 and A117.
+- **Enclosure checks (sweep C34, C32, C26, C22).** The cable gland's bush
+  asserts its own squeezed fill and CI requires the out-of-range configs to be
+  refused; the design-language lint refuses a shared help line and a group
+  header that heads nothing; the 1.69's side-cluster knobs file under their
+  own header; and the Sense's screws carry SCR3 (the Vision's screws wait on
+  SCR5's split, as a note on C12 says). The CSG is byte-identical at the
+  defaults. Render-checked and host-tested; not print-validated. Files
+  nothing new.
+- **The viewer-token pointers (sweep A104, A105).**
+  `examples/witnessd.service` turns on the token files and says how to pair a
+  Wall, and the tvOS Wall's Verification footer and `tvos/README.md` give all
+  three mint forms; three pointers elsewhere still lag (A118). Host-tested;
+  the tvOS compile is CI's, and nothing renders the footer (A119). Files A118
+  and A119.
+- **The flashers' product truth (sweep A96, A97, F384).** Both flashers
+  resolve a flavorless display name to a display and point the WAP, the Sense
+  and the displays at the boot log instead of the self-check; firmware the
+  catalog does not name is still asked, now in both (A121). The Vision's
+  `AI.ID(` deny reads the Vision project, its config and pins, and the six
+  `firmware/common` translation units it compiles, not the shared headers
+  (F414). Host-tested (`desktop_parity.test.js`); the Tauri build is CI's.
+  Files A120-A122 and F414.
+- **Entity ids, stated as far as they are proven (sweep HA16, A108).** Both
+  publishers have asked for the documented ids since #1762; the hardware
+  checklist and feature-gaps H1 now say no live install has confirmed them,
+  and the Lab's WAP sandbox says the ids are asked for. Docs and host tests;
+  Home Assistant's handling was read from its source. Files HA50 and HA51.
+- **Three hardware facts (sweep D14, C20, F374).** The round watch's pin map
+  says what BOOT does there, the XIAO ESP32-S3 Sense's GNSS row names no flag
+  the WAP lacks, and a test comment's date is 2026-08-08. Comments and board
+  data; not bench-tested. Files F413 and C35.
+
+No package moves the WASM emulator dist. One cherry-pick conflicted and was
+resolved: `firmware/scripts/check_wap_json_answers.py`, where F304's change to
+rule J9 met F302's new J10. The ledger commit's review filed D17 and HA56 and
+had the CHANGELOG section say only what was proven. Nothing ran on a bench, on
+a TV or in a running Home Assistant.
 
 
 ### The documentation wave

@@ -2207,7 +2207,7 @@ std::vector<uint8_t> presence_ages(size_t from) {
   return out;
 }
 
-// A new session beacons no last send (sweep F363). A presence beacon says
+// A new session beacons no last send (sweep F415). A presence beacon says
 // how many minutes ago this device chirped, and send_presence() counted that
 // from g_last_chirp_sent_ms, which only a reboot cleared. So after a disable
 // and an enable the new session (a new key, session id and emoji, spec 2.3)

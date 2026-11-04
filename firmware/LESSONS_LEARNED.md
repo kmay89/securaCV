@@ -1530,9 +1530,9 @@
 - **What happened:** `GET /api/fleet/qr` read `ssid` and `pass` with
   `httpd_query_key_value()` into 33- and 65-byte buffers, the sizes of the
   decoded values, and percent-decoded them after. Encoded, one byte can take
-  three characters, so a 22-symbol password or a 63-character passphrase was
-  cut before it was decoded and drawn into the pairing QR short, and the
-  answer for `pass` was never checked. A network name whose encoded form
+  three characters, so a 22-symbol password or a 63-character passphrase with
+  symbols in it was cut before it was decoded and drawn into the pairing QR
+  short, and the answer for `pass` was never checked. A network name whose encoded form
   passed 32 characters was answered "ssid is required", and a legal 299-byte
   query "Missing query parameters".
 - **Root cause:** IDF's query reader copies what fits and says so with
