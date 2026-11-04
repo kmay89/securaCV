@@ -175,7 +175,8 @@ try {
   const noteOf = () => page.$$eval("#sandbox .wap-sand-note", (ns) => ns.map((n) => n.textContent));
   const notes = await noteOf();
   if (notes.length !== 1) fail("expected one sandbox id note, got " + notes.length);
-  if (!/default_entity_id/.test(notes[0]) || !/2025\.10 and later gives an entity that id when it first registers it/.test(notes[0]))
+  if (!/default_entity_id/.test(notes[0]) || !/2025\.10 and later tries to give an entity that id when it first registers it/.test(notes[0]) ||
+      !/digits kept/.test(notes[0]))
     fail("sandbox id note does not say what the ids are and when they hold: " + notes[0]);
   const idCards = await page.$$("#sandbox .wap-sand-card");
   let withId = 0;

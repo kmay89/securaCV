@@ -367,18 +367,21 @@ test("every sandbox events row is one a WAP module commits; the WAP has no panic
 // A108 (sweep HA16): the sandbox's Home Assistant lines are the ids the WAP's
 // discovery configs ask for, and the page says when an install shows them:
 // Home Assistant 2025.10 and later applies def_ent_id when it first registers
-// an entity, an entity registered earlier keeps its id across an upgrade,
+// an entity (a _2 on the end when another entity holds that id), an entity
+// registered earlier keeps its id across an upgrade,
 // and an older release, which reads only obj_id, builds the id from the
 // device and entity names. wap.js is a page module (it imports the 3D board
 // lab), so the sentence is read from its source; wap_probe.mjs sees it render.
 const SANDBOX_ID_NOTE =
   "The entity ids above are the ones the WAP's discovery configs ask for (def_ent_id, " +
   "Home Assistant's default_entity_id; <id> is the device id as Home Assistant slugs it: " +
-  "letters lowercased, each run of anything else one underscore). Home Assistant 2025.10 " +
-  "and later gives an entity that id when it first registers it, so a WAP first added on " +
-  "2025.10 or later gets them. An entity it registered earlier keeps the id it has, even " +
-  "across an upgrade to 2025.10, and a release before 2025.10 ignores the key and builds " +
-  "the id from the device and entity names (binary_sensor.canary_<id>_smoke_alarm_heard).";
+  "letters lowercased, digits kept, each run of anything else one underscore, none at " +
+  "either end). Home Assistant 2025.10 and later tries to give an entity that id when it " +
+  "first registers it (with _2 on the end if another entity already holds it), so a WAP " +
+  "first added on 2025.10 or later gets them. An entity it registered earlier keeps the " +
+  "id it has, even across an upgrade to 2025.10, and a release before 2025.10 ignores the " +
+  "key and builds the id from the device and entity names " +
+  "(binary_sensor.canary_<id>_smoke_alarm_heard).";
 
 test("the sandbox says its Home Assistant ids are the ones the WAP asks for, and when they hold", () => {
   const src = read(join(ROOT, "assets/wap.js"));
@@ -414,14 +417,30 @@ test("the sandbox says its Home Assistant ids are the ones the WAP asks for, and
     const own = csiMqttCpp.includes(`"\\"def_ent_id\\":\\"${component}.%s_${objectId}\\","`);
     assert.ok(table || own, `${line}: no discovery config asks for ${component}.<id>_${objectId}`);
   }
+  // the mic switch builds its own config: its def_ent_id's %s is the slug,
+  // the argument right after uniq_id's raw device id
+  const mic = csiMqttCpp.slice(csiMqttCpp.indexOf("bool publish_mic_discovery() {"));
+  const micBody = mic.slice(0, mic.indexOf("\n}\n"));
+  assert.ok(micBody.includes('      "\\"uniq_id\\":\\"canary_%s_mic_mute\\","\n      "\\"def_ent_id\\":\\"switch.%s_mic_mute\\","\n'),
+    "the mic switch's uniq_id and def_ent_id formats");
+  assert.ok(micBody.includes("    \"}\",\n    s_device_id,\n    slug,\n"),
+    "the mic switch's def_ent_id is not filled with the device id slug");
 
   // 3. what the sentence says of the id and of an older release, held to
   // the firmware: the slug rule, def_ent_id alone (no obj_id, sweep HA29),
   // and the fallback the device and entity names give
   const slugFn = csiMqttCpp.slice(csiMqttCpp.indexOf("void device_id_slug(char* out, size_t cap) {"));
+  const rule = SANDBOX_ID_NOTE.match(/<id> is the device id as Home Assistant slugs it: ([^)]*)\)/);
+  assert.ok(rule, "the note no longer says how <id> is slugged");
+  // each clause of the note's rule, beside the line of device_id_slug() it states
+  assert.deepStrictEqual(rule[1].split(", "), ["letters lowercased", "digits kept",
+    "each run of anything else one underscore", "none at either end"]);
   assert.ok(slugFn.includes("if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');"), "letters lowercased");
   assert.ok(slugFn.includes("const bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');"), "digits kept");
   assert.ok(slugFn.includes("if (gap && n + 1 < cap) out[n++] = '_';"), "a run of anything else is one '_'");
+  // none at the start (a gap opens only after a kept character) and none at
+  // the end (a gap is written only before the next kept one)
+  assert.ok(slugFn.includes("      gap = (n > 0);\n      continue;\n"), "none at either end");
   assert.ok(!/\\"obj(ect)?_id\\"/.test(csiMqttCpp), "the WAP sends obj_id: an older release would take the id");
   assert.ok(csiMqttCpp.includes('        "\\"name\\":\\"Canary %s\\","'), "the device name");
   assert.ok(csiMqttCpp.includes('{ "binary_sensor", "smoke_alarm", "Smoke Alarm Heard", '), "the entity name");

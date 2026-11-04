@@ -36,11 +36,13 @@ const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const SANDBOX_ID_NOTE =
   "The entity ids above are the ones the WAP's discovery configs ask for (def_ent_id, " +
   "Home Assistant's default_entity_id; <id> is the device id as Home Assistant slugs it: " +
-  "letters lowercased, each run of anything else one underscore). Home Assistant 2025.10 " +
-  "and later gives an entity that id when it first registers it, so a WAP first added on " +
-  "2025.10 or later gets them. An entity it registered earlier keeps the id it has, even " +
-  "across an upgrade to 2025.10, and a release before 2025.10 ignores the key and builds " +
-  "the id from the device and entity names (binary_sensor.canary_<id>_smoke_alarm_heard).";
+  "letters lowercased, digits kept, each run of anything else one underscore, none at " +
+  "either end). Home Assistant 2025.10 and later tries to give an entity that id when it " +
+  "first registers it (with _2 on the end if another entity already holds it), so a WAP " +
+  "first added on 2025.10 or later gets them. An entity it registered earlier keeps the " +
+  "id it has, even across an upgrade to 2025.10, and a release before 2025.10 ignores the " +
+  "key and builds the id from the device and entity names " +
+  "(binary_sensor.canary_<id>_smoke_alarm_heard).";
 
 // Fire-once-per-phase bus. `ap`/`online`/`mqtt` are lifecycle phases that must
 // only fire a single time (so the retained MQTT snapshot / boot table can't

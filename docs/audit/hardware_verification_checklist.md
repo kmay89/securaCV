@@ -432,9 +432,10 @@ or ticks Beacon frames. Every row below assumes both.
     (XIAO ESP32-S3 Sense: the smoke and CO sensors compile only with
     `FEATURE_ACOUSTIC_EVENTS`), discovery on, on the same broker.
   - Repro: start the bridge and let one event reach a zone (a zone's
-    configs go out with its first event); connect the canary-wap. Open
-    each device under **Settings > Devices & Services** and read its
-    Entities tab.
+    configs go out with its first event); connect the canary-wap. Under
+    **Settings > Devices & Services**, on the Entities tab, filter by each
+    device (the kernel's and the canary-wap's) and read the Entity ID
+    column.
   - Expected (`<zone>` the zone id without its `zone:` prefix as Home
     Assistant slugs it, `zone:back-gate` becoming `back_gate`; `<id>` the
     canary-wap's device id as Home Assistant slugs it, `canary-s3-4dC2`
