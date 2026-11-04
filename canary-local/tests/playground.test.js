@@ -475,7 +475,9 @@ function sayEvtCalls(path) {
 }
 
 // What the station's playground.cpp prints that the sim does not, each with
-// its reason. Kept short on purpose: a line here is a line the Lab cannot show.
+// its reason. Kept short on purpose: a line here is a line the website's
+// /playground (the sim's one page, reached through scripts/carry_to_site.py's
+// playground carry) cannot show.
 const SIM_EXEMPT = new Map([
   ["can tx=fail driver",
     "the controller's install or start refused: the virtual controller always comes up"],
@@ -665,10 +667,30 @@ test("the RS485 row and tile on the glass draw only playground.h's held words", 
 // host stand-ins for the Arduino core and ESP-IDF TWAI, with Arduino.h and
 // the 4.3B pins.h in front of it as a sketch has them. The ESP32 toolchain
 // itself is not run here.
+//
+// Without g++ the compile cannot run, and a gate that skips itself is a gate
+// a runner without the tool passes without compiling anything. So, the shape
+// of VISION_WASM32 in tests/native/wasm32.js: PLAYGROUND_SNIPPETS unset (or
+// empty) skips and says so; PLAYGROUND_SNIPPETS=require fails and names g++;
+// anything else is refused rather than read as one of the two. CI sets
+// `require` on the step that runs this file (the test after this one holds
+// it there).
+function snippetsRequired() {
+  const v = process.env.PLAYGROUND_SNIPPETS;
+  if (v === undefined || v === "") return false;
+  if (v === "require") return true;
+  throw new Error(`PLAYGROUND_SNIPPETS=${v}: expected "require" (fail where g++ is missing) ` +
+    "or nothing (skip there)");
+}
+
 test("every station's code snippet compiles against the host Arduino/TWAI fakes", async (t) => {
+  const required = snippetsRequired();
   const probe = spawnSync("g++", ["--version"], { encoding: "utf8" });
   if (probe.error || probe.status !== 0) {
-    t.skip("g++ not found: the snippet compile is not run");
+    const why = probe.error ? probe.error.message : `g++ --version exited ${probe.status}`;
+    assert.ok(!required, `PLAYGROUND_SNIPPETS=require, and g++ is not found (${why}): ` +
+      "the snippet compile cannot run, so the gate fails here instead of skipping");
+    t.skip(`g++ not found (${why}): the snippet compile is not run; PLAYGROUND_SNIPPETS=require fails here instead`);
     return;
   }
   const pg = playground();
@@ -700,4 +722,40 @@ test("every station's code snippet compiles against the host Arduino/TWAI fakes"
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The require mode above is only a gate when CI turns it on. The variable
+// takes "require" or nothing, never a look-alike, and the page logic job's
+// step that runs this file sets it (read as the runner reads the step,
+// tests/native/ci_steps.js: a comment saying so, or the variable on another
+// step, fails here).
+test("PLAYGROUND_SNIPPETS takes \"require\" or nothing, and CI sets it on the step that runs this file", () => {
+  const saved = process.env.PLAYGROUND_SNIPPETS;
+  try {
+    for (const [v, want] of [[undefined, false], ["", false], ["require", true]]) {
+      if (v === undefined) delete process.env.PLAYGROUND_SNIPPETS;
+      else process.env.PLAYGROUND_SNIPPETS = v;
+      assert.strictEqual(snippetsRequired(), want, String(v));
+    }
+    for (const v of ["1", "true", "required", "Require"]) {
+      process.env.PLAYGROUND_SNIPPETS = v;
+      assert.throws(() => snippetsRequired(), /expected "require" \(fail where g\+\+ is missing\)/, v);
+    }
+  } finally {
+    if (saved === undefined) delete process.env.PLAYGROUND_SNIPPETS;
+    else process.env.PLAYGROUND_SNIPPETS = saved;
+  }
+
+  const ci = require("./native/ci_steps.js");
+  const { steps } = ci.job("logic-tests");
+  const line = "node --test canary-local/tests/playground.test.js";
+  const mine = steps.filter((st) => (st.run || "").split("\n").includes(line));
+  assert.strictEqual(mine.length, 1, "one step of the page logic job runs this file");
+  const [step] = mine;
+  assert.strictEqual(step.env.PLAYGROUND_SNIPPETS, "require",
+    `${step.name}: runs this file without PLAYGROUND_SNIPPETS=require, so a runner without g++ would pass the snippet gate by skipping it`);
+  for (const [k, v] of Object.entries(ci.RECORDER)) {
+    assert.strictEqual(step.env[k], v, `${step.name}: the path-filter recorder's ${k} line`);
+  }
+  assert.ok(!("continue-on-error" in step.keys), "its red stays red (no continue-on-error)");
 });
