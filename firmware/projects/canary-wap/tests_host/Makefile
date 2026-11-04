@@ -1499,6 +1499,45 @@ clean-bt-commands:
 run: run-bt-commands
 clean: clean-bt-commands
 
+# The Beacon set as it loads from NVS and as GET /api/beacon/set answers it
+# (sweep F408): load_beacon_set(), get_beacon_set_size() and
+# get_beacon_set_entry() cut verbatim out of beacon_channel.cpp, and
+# handle_set_list() with the helpers it calls cut verbatim out of
+# beacon_api.h (firmware/tests_host/cut_functions.awk; REPLY_BUF's line
+# starts the cut that carries send_reply(), the function right after it, to
+# its closing brace), over the REAL beacon_wire.h and wap_json_writer.h and
+# stubs/bt's ArduinoJson and esp_http_server stand-ins. An entry NVS did not
+# return whole is left out, every loaded name ends in its field, and the
+# answer is strict JSON with each name as a page shows it. Built with
+# AddressSanitizer.
+BSET_BIN  = test_beacon_set_load
+BSET_SRC  = test_beacon_set_load.cpp
+BSET_CHANNEL_INC = test_beacon_set_load_channel.inc
+BSET_API_INC     = test_beacon_set_load_api.inc
+BSET_CUT  = ../../../tests_host/cut_functions.awk
+CUT_INCS += $(BSET_CHANNEL_INC) $(BSET_API_INC)
+
+$(BSET_CHANNEL_INC): $(SRC_DIR)/beacon_channel.cpp $(BSET_CUT) Makefile
+	awk -v 'sigs=static bool load_beacon_set() {|uint8_t get_beacon_set_size() {|const BeaconSetEntry* get_beacon_set_entry(uint8_t index) {' \
+	  -f $(BSET_CUT) $(SRC_DIR)/beacon_channel.cpp > $@.tmp && mv $@.tmp $@
+
+$(BSET_API_INC): $(SRC_DIR)/beacon_api.h $(BSET_CUT) Makefile
+	awk -v 'sigs=static inline esp_err_t send_json(httpd_req_t* req, const char* json) {|static const size_t REPLY_BUF = 256;|static inline esp_err_t send_error(httpd_req_t* req, const char* err) {|static inline void fp_to_hex(const uint8_t* fp, char* out) {|inline esp_err_t handle_set_list(httpd_req_t* req) {' \
+	  -f $(BSET_CUT) $(SRC_DIR)/beacon_api.h > $@.tmp && mv $@.tmp $@
+
+$(BSET_BIN): $(BSET_SRC) $(BSET_CHANNEL_INC) $(BSET_API_INC)
+	$(CXX) $(CXXFLAGS) -g -Werror -fsanitize=address -fno-omit-frame-pointer -I stubs/bt -I $(SRC_DIR) -I . \
+	  -DBEACON_SET_CHANNEL_INC='"$(BSET_CHANNEL_INC)"' -DBEACON_SET_API_INC='"$(BSET_API_INC)"' -o $@ $(BSET_SRC)
+
+.PHONY: run-beacon-set-load clean-beacon-set-load
+run-beacon-set-load: $(BSET_BIN)
+	$(call run_marked,$(BSET_BIN))
+clean-beacon-set-load:
+	rm -f $(BSET_BIN) $(BSET_CHANNEL_INC) $(BSET_API_INC)
+
+run: run-beacon-set-load
+clean: clean-beacon-set-load
+
 # The BLE provisioning service (the F262 review): the REAL ble_provision.cpp,
 # #included and compiled on the host over stubs/bt (NimBLE, ArduinoJson and
 # FreeRTOS stand-ins) and stubs/ble_prov (WiFi). Every scan list it publishes

@@ -30,6 +30,7 @@
 #include "beacon_channel.h"
 #include "beacon_cancel_policy.h"
 #include "http_body_reader.h"
+#include "wap_json_writer.h"   // shown_text(): a set member's name, as a page shows it (F408)
 #include "api_auth.h"
 #include <ArduinoJson.h>
 #include <string.h>
@@ -175,7 +176,13 @@ inline esp_err_t handle_set_list(httpd_req_t* req) {
     char fp_hex[beacon_channel::DEVICE_FP_SIZE * 2 + 1];
     fp_to_hex(e->fingerprint, fp_hex);
     m["fingerprint"] = fp_hex;
-    m["name"] = e->name;
+    // The member's name as a page shows it (sweep F408): nothing in this
+    // firmware fills it yet, but v0.3's pairing will, from a peer's frame,
+    // and ArduinoJson writes a control byte raw and ill-formed UTF-8 as it
+    // is. Held by check_wap_json_answers.py J10, as the Bluetooth names are.
+    char name[wap_json::replaced_cap(beacon_channel::BEACON_NAME_LEN)];
+    wap_json::shown_text(name, sizeof(name), e->name);
+    m["name"] = name;
     m["paired_at"] = (uint32_t)e->paired_at;
     m["last_selftest"] = (uint32_t)e->last_selftest;
     switch (e->trust_level) {

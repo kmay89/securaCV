@@ -671,6 +671,15 @@ static bool persist_beacon_set() {
   return true;
 }
 
+// Each entry is loaded only as NVS returns it whole (sweep F408): getBytes()
+// answers the bytes it read, short of sizeof(BeaconSetEntry) for a row from
+// another layout that is shorter, 0 for one that is longer (Preferences reads
+// nothing into a buffer it does not fit) and 0 for a read whose data check
+// failed after IDF had copied the bytes; the answer used to be dropped, so
+// the entry kept whatever the buffer then held, and its name was never
+// terminated, which GET /api/beacon/set read past. A refused entry is left
+// zeroed (valid false: every reader of the set skips it), the health log
+// counts them once, and each loaded entry's name ends at its last byte.
 static bool load_beacon_set() {
   if (!flash_encryption_enabled()) {
     g_beacon_set_count = 0;
@@ -680,12 +689,25 @@ static bool load_beacon_set() {
   g_prefs.begin(NVS_NS, true);
   g_beacon_set_count = g_prefs.getUChar(NVS_SET_COUNT, 0);
   if (g_beacon_set_count > MAX_BEACON_SET) g_beacon_set_count = MAX_BEACON_SET;
+  unsigned refused = 0;
   for (uint8_t i = 0; i < g_beacon_set_count; i++) {
     char key[16];
     snprintf(key, sizeof(key), "%s%u", NVS_SET_PREFIX, (unsigned)i);
-    g_prefs.getBytes(key, &g_beacon_set[i], sizeof(BeaconSetEntry));
+    BeaconSetEntry* e = &g_beacon_set[i];
+    if (g_prefs.getBytes(key, e, sizeof(BeaconSetEntry)) != sizeof(BeaconSetEntry)) {
+      memset(e, 0, sizeof(BeaconSetEntry));
+      refused++;
+      continue;
+    }
+    e->name[BEACON_NAME_LEN] = '\0';
   }
   g_prefs.end();
+  if (refused > 0) {
+    char msg[96];
+    snprintf(msg, sizeof(msg), "beacon: %u set entries NVS did not return whole were left out",
+             refused);
+    health_log(SCV_LOG_WARNING, SCV_CAT_STORAGE, msg);
+  }
   return true;
 }
 
