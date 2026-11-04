@@ -1559,6 +1559,14 @@ const char* state_name(ChirpState state);
 // Get category name as string
 const char* category_name(ChirpCategory category);
 
+// A template's category, from the template table (the mapping handle_ack()
+// counts confirmations by): the all-clear templates, 0x80 to 0x82, are
+// CHIRP_CAT_ALL_CLEAR (5). GET /api/chirp/recent took the id's high nibble,
+// 8 for those three, which category_name() answers "unknown" (sweep F307).
+// An id the table lacks also reads CHIRP_CAT_ALL_CLEAR; no stored chirp
+// holds one, since handle_witness() refuses an unknown template.
+ChirpCategory template_category(ChirpTemplate template_id);
+
 // Get urgency name as string
 const char* urgency_name(ChirpUrgency urgency);
 

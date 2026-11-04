@@ -283,10 +283,9 @@ inline esp_err_t handle_chirp_recent(httpd_req_t* req) {
     c["template_text"] = chirp_channel::get_template_text(chirps[i].template_id);
     c["detail"] = chirp_channel::get_detail_text(chirps[i].detail);
 
-    // Category derived from template
-    chirp_channel::ChirpCategory cat = (chirp_channel::ChirpCategory)(
-      (uint8_t)chirps[i].template_id >> 4);  // Category from high nibble
-    c["category"] = chirp_channel::category_name(cat);
+    // The template table's category (sweep F307): the id's high nibble named
+    // an all-clear chirp (0x80-0x82, nibble 8) "unknown".
+    c["category"] = chirp_channel::category_name(chirp_channel::template_category(chirps[i].template_id));
     c["urgency"] = chirp_channel::urgency_name(chirps[i].urgency);
     c["hop_count"] = chirps[i].hop_count;
     c["age_sec"] = (millis() - chirps[i].received_ms) / 1000;

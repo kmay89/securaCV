@@ -1013,6 +1013,107 @@ void test_a_frame_shows_in_the_tables_after_its_pass() {
   std::printf("PASS a_frame_shows_in_the_tables_after_its_pass\n");
 }
 
+// ── The recent route names an all-clear chirp's category (sweep F307) ───
+
+// The category each template's name places it in (mesh_network.h's
+// ranges: authority 0x00-0x0F up to mutual aid 0x40-0x4F, all clear
+// 0x80-0x8F), by a switch with no default: -Wswitch (in -Wall, an error in
+// this build) fails the compile on a TPL_* this list does not place.
+// TPL_INVALID is no template.
+bool named_category(cc::ChirpTemplate t, cc::ChirpCategory* out) {
+  switch (t) {
+    case cc::TPL_AUTH_POLICE_ACTIVITY:
+    case cc::TPL_AUTH_HEAVY_RESPONSE:
+    case cc::TPL_AUTH_ROAD_BLOCKED_LE:
+    case cc::TPL_AUTH_HELICOPTER:
+      *out = cc::CHIRP_CAT_AUTHORITY;
+      return true;
+    case cc::TPL_INFRA_POWER_OUT:
+    case cc::TPL_INFRA_WATER_ISSUE:
+    case cc::TPL_INFRA_GAS_SMELL:
+    case cc::TPL_INFRA_INTERNET_DOWN:
+    case cc::TPL_INFRA_ROAD_CLOSED:
+      *out = cc::CHIRP_CAT_INFRA;
+      return true;
+    case cc::TPL_EMERG_FIRE_VISIBLE:
+    case cc::TPL_EMERG_MEDICAL_SCENE:
+    case cc::TPL_EMERG_MULTIPLE_AMBULANCE:
+    case cc::TPL_EMERG_EVACUATION:
+    case cc::TPL_EMERG_SHELTER_IN_PLACE:
+      *out = cc::CHIRP_CAT_EMERGENCY;
+      return true;
+    case cc::TPL_WX_SEVERE_WARNING:
+    case cc::TPL_WX_TORNADO:
+    case cc::TPL_WX_FLOOD:
+    case cc::TPL_WX_LIGHTNING_CLOSE:
+      *out = cc::CHIRP_CAT_WEATHER;
+      return true;
+    case cc::TPL_AID_WELFARE_CHECK:
+    case cc::TPL_AID_SUPPLIES_NEEDED:
+    case cc::TPL_AID_OFFERING_HELP:
+      *out = cc::CHIRP_CAT_MUTUAL_AID;
+      return true;
+    case cc::TPL_CLR_RESOLVED:
+    case cc::TPL_CLR_SAFE:
+    case cc::TPL_CLR_FALSE_ALARM:
+      *out = cc::CHIRP_CAT_ALL_CLEAR;
+      return true;
+    case cc::TPL_INVALID:
+      return false;
+  }
+  return false;   // an id no enumerator names (0x04, the reserved one, among them)
+}
+
+// GET /api/chirp/recent answered `category` from the template id's high
+// nibble. The all-clear templates are 0x80 to 0x82, nibble 8, while
+// CHIRP_CAT_ALL_CLEAR is 5, so category_name() named every all-clear chirp
+// "unknown" (the dashboard printed it under the chirp). The route now asks
+// template_category(), the template table's mapping handle_ack() counts
+// confirmations by (check_wap_loop_commands.py holds chirp_api.h to that
+// expression; ArduinoJson is not on the host). Every one of the 256 ids:
+// the table holds exactly the enumerators, each in its name's range, and
+// template_category() names that range's category; then a neighbor's
+// signed all-clear chirp, through the real receive path and the published
+// copy, reads "all_clear" by the route's expression.
+void test_the_recent_route_names_every_category() {
+  unsigned placed = 0;
+  for (unsigned id = 0; id < 256; ++id) {
+    const cc::ChirpTemplate t = (cc::ChirpTemplate)id;
+    cc::ChirpCategory want = cc::CHIRP_CAT_AUTHORITY;
+    const bool named = named_category(t, &want);
+    CHECK(cc::is_valid_template(t) == named);
+    if (!named) continue;
+    ++placed;
+    const unsigned range = want == cc::CHIRP_CAT_ALL_CLEAR ? 0x80u : (unsigned)want << 4;
+    CHECK((id & 0xF0u) == range);
+    CHECK(cc::template_category(t) == want);
+    CHECK(std::string(cc::category_name(cc::template_category(t))) != "unknown");
+  }
+  CHECK(placed == cc::TEMPLATE_COUNT && placed == 24);
+  const cc::ChirpTemplate clear[] = {cc::TPL_CLR_RESOLVED, cc::TPL_CLR_SAFE, cc::TPL_CLR_FALSE_ALARM};
+  for (cc::ChirpTemplate t : clear) {
+    CHECK(std::string(cc::category_name(cc::template_category(t))) == "all_clear");
+    // What the route's old derivation answered for it.
+    CHECK(std::string(cc::category_name((cc::ChirpCategory)((uint8_t)t >> 4))) == "unknown");
+  }
+
+  boot();
+  enabled_channel();
+  const Neighbor N = neighbor_of(0x61);
+  deliver(N, presence_of(N));
+  deliver(N, witness_of(N, cc::TPL_CLR_SAFE, cc::CHIRP_URG_INFO, cc::DETAIL_NONE, 0x62));
+  deliver(N, witness_of(N, cc::TPL_WX_FLOOD, cc::CHIRP_URG_CAUTION, cc::DETAIL_NONE, 0x63));
+  cc::update();
+  const cc::RecentTable r = recent_read();
+  CHECK(r.count == 2);
+  const cc::RecentView* chirps = r.chirps;   // the route's names for the copy and its rows
+  CHECK(chirps[0].template_id == cc::TPL_CLR_SAFE && chirps[1].template_id == cc::TPL_WX_FLOOD);
+  CHECK(std::string(cc::category_name(cc::template_category(chirps[0].template_id))) == "all_clear");
+  CHECK(std::string(cc::category_name(cc::template_category(chirps[1].template_id))) == "weather");
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS the_recent_route_names_every_category\n");
+}
+
 // Sweep F213: a presence beacon is unsigned, and handle_presence() copied
 // its 31 emoji bytes into the nearby table as sent, so any device in
 // ESP-NOW range put quotes, control bytes or markup (or 31 bytes with no
@@ -2702,6 +2803,7 @@ const Test kTests[] = {
     {"a_read_right_after_a_post_shows_what_it_did", test_a_read_right_after_a_post_shows_what_it_did},
     {"the_pass_publishes_what_it_changed", test_the_pass_publishes_what_it_changed},
     {"a_frame_shows_in_the_tables_after_its_pass", test_a_frame_shows_in_the_tables_after_its_pass},
+    {"the_recent_route_names_every_category", test_the_recent_route_names_every_category},
     {"a_beacon_emoji_is_its_session_display", test_a_beacon_emoji_is_its_session_display},
     {"every_session_display_is_five_emoji_in_its_field", test_every_session_display_is_five_emoji_in_its_field},
     {"the_prune_shows_in_the_tables", test_the_prune_shows_in_the_tables},

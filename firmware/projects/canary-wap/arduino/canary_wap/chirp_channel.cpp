@@ -1713,6 +1713,8 @@ bool is_night_mode() {
 }
 
 bool is_valid_template(ChirpTemplate template_id) { return find_template(template_id) != nullptr; }
+// The template table's category, as handle_ack() reads it (sweep F307).
+ChirpCategory template_category(ChirpTemplate template_id) { return template_to_category(template_id); }
 const char* get_template_text(ChirpTemplate template_id) {
   const TemplateEntry* entry = find_template(template_id);
   return entry ? entry->text : "unknown alert";
