@@ -1157,6 +1157,34 @@ test("A99: the Lab's bench offers the press beside the strap where the firmware 
   assert.ok(app.includes('for (const t of ["pointerup", "pointerleave", "pointercancel", "lostpointercapture", "keyup", "blur"]) b.addEventListener(t, letGo);'),
     "up, leave, cancel, a lost capture, a key up and a blur each let go");
   assert.ok(app.includes("if (own && bench.releaseBoot(own)) sync();"), "a view lets go of its own press only");
+  // review of A99: a touch is captured to the control it went down on, so its
+  // pointerleave waits for the lift; a finger slid off lets go on the move
+  // that leaves the control's box (the real touch is driven in bench_probe)
+  assert.match(app, /b\.addEventListener\("pointermove", \(ev\) => \{\n\s*if \(!mine\) return;\n\s*const r = b\.getBoundingClientRect\(\);\n\s*if \(ev\.clientX < r\.left \|\| ev\.clientX > r\.right \|\| ev\.clientY < r\.top \|\| ev\.clientY > r\.bottom\) letGo\(\);\n/,
+    "a finger slid off the control lets go there, before it lifts");
+  // ...and another tab replacing the bench lets go as the view goes, not on
+  // the old view's next tick
+  assert.ok(app.includes("    ctx.leaveView = unhook;\n"), "the bench view leaves its release for the tab that replaces it");
+  assert.match(app, /const leave = ctx\.leaveView;\n\s*ctx\.leaveView = null;\n\s*leave\?\.\(\);\n\s*panel\.innerHTML = "";/,
+    "the display sheet's tabs let the old view go before they replace it");
+  // the 10 s hold: the firmware erases its networks, but the bench restarts
+  // the twin from the page's copy of its flash, which no erase reaches, so
+  // the title says it comes back on its home network (bench_probe holds it
+  // past 10 s and reads the serial). Should the twin's erase ever reach that
+  // copy, or a provisioned boot stop seeding the network, this fails first.
+  assert.match(app, /held 10 s the firmware erases its saved networks and screen settings \(the identity stays\) and " \+\n\s*"restarts, but this bench restarts it from the page's copy of its flash, which no erase reaches, so it comes " \+\n\s*"back on its home network\."/,
+    "the press's title says the bench gives the twin its network back after a factory reset");
+  const support = readFileSync(join(ROOT, "emulator/src/emu_support.cpp"), "utf8");
+  for (const fn of ["bool Preferences::remove(const char* key) {", "bool Preferences::clear() {"]) {
+    const at = support.indexOf(fn);
+    assert.ok(at >= 0, `emu_support.cpp still defines ${fn}`);
+    const body = support.slice(at, support.indexOf("\n}\n", at));
+    assert.ok(!body.includes("js_nvs_write"), `${fn} now reaches the page's copy of the flash: the press's title must say a factory reset lasts`);
+  }
+  const shellSrc = readFileSync(join(ROOT, "emulator/web/emu-shell.js"), "utf8");
+  assert.match(shellSrc, /if \(provisioned && !firstMeeting\) \{\n\s*this\._nvsPut\("securacv", "wifi_ssid", HOME_LAN\.ssid\);/,
+    "a provisioned boot seeds the home network: the press's title leans on it");
+  assert.ok(app.includes("booting again with its memory intact"), "the bench's reboot restores the page's copy of the flash");
   assert.ok(app.includes('window.addEventListener("blur", letGo);') && app.includes('document.addEventListener("visibilitychange", hidden);'),
     "a hand that leaves the window or the page lets go");
   assert.match(app, /controls\.append\(usb\.b, bat\.b, sw\.b, bootBtn\.b, \.\.\.\(press \? \[press\.b\] : \[\]\), resetBtn, ff\);/,
@@ -1204,6 +1232,10 @@ test("A101: every card's screen-dark flow offers exactly one download-mode guess
     return out;
   };
   const textOf = (st) => [st.title, st.body, st.onDevice].filter(Boolean).join(" ");
+  // every light any bench block lists, by its label (PWR, CHG, DONE, USER)
+  const labels = [...new Set(registry().devices.flatMap((d) => (d.bench?.leds || []).map((l) => l.label)))];
+  assert.ok(labels.includes("PWR") && labels.length >= 3, `the registry's light labels: ${labels}`);
+  const LIGHTS = new RegExp(`\\b(?:${labels.join("|")})\\b`, "g");
   for (const dev of registry().devices) {
     if (!dev.bench) continue;
     const found = await guesses(dev.bench);
@@ -1222,6 +1254,17 @@ test("A101: every card's screen-dark flow offers exactly one download-mode guess
       assert.ok(st.rom?.some((q) => q.kind === "download"), `${dev.id}: a chip with a download banner gets the guess that quotes it`);
     } else {
       assert.strictEqual(st.romMissing, "download", `${dev.id}: a chip with no download banner gets the guess told without one`);
+    }
+    // review of A101: a guess told without a banner names no light its
+    // board's bench block does not list (the C3's lists none). The banner
+    // guess's "PWR lit", on S3 cards that list no rail light, is older than
+    // A101 and a handup, not held here.
+    if (st.romMissing) {
+      const listed = new Set((dev.bench.leds || []).map((l) => l.label));
+      for (const lab of textOf(st).match(LIGHTS) || [])
+        assert.ok(listed.has(lab), `${dev.id}: its download-mode guess names ${lab}, a light its bench block does not list`);
+      if (!(dev.bench.leds || []).some((l) => l.driver === "rail"))
+        assert.ok(!/power light|power LED/i.test(textOf(st)), `${dev.id}: its download-mode guess names a power light its bench block does not list`);
     }
   }
   // the Nightlight's, whole: no ROM token at all, GPIO9, the bench's own note,
@@ -1251,6 +1294,40 @@ test("A101: every card's screen-dark flow offers exactly one download-mode guess
   const noRom = { ...benchProfile("canary-nightlight") };
   delete noRom.rom;
   assert.strictEqual((await guesses(noRom)).length, 0, "no chip named: no note on the serial, no guess that points to one");
+});
+
+// Review of A101: staged on the Nightlight, its download-mode guess said "the
+// Lab quotes no download-mode banner for this chip" while the glass's shade
+// read "waiting for download", the S3's banner line, hardcoded in app.js for
+// every card. The shade is now the chip's own last download line where its
+// voice holds one, else the bench's words (bench.js downloadShade()); the
+// Chromium half (the shade each card's glass shows) is bench_probe.mjs's.
+test("A101 review: the glass in download mode says its chip's own download line, or the bench's words", async () => {
+  const { ROM_VOICES, downloadShade } = await importBench();
+  assert.strictEqual(typeof downloadShade, "function", "bench.js says what the glass shows in download mode");
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const shade = downloadShade(dev.bench.rom);
+    const line = ROM_VOICES[dev.bench.rom.chip]?.download;
+    if (typeof line === "string") {
+      assert.ok(line.split("\n").includes(shade), `${dev.id}: its glass shows a line of its chip's download banner, not ${JSON.stringify(shade)}`);
+    } else {
+      for (const t of ROM_TOKENS) assert.ok(!shade.includes(t), `${dev.id}: its glass shows ${t}, a line its ${dev.bench.rom.chip} does not print`);
+      assert.strictEqual(shade, "ROM waiting for a flasher", `${dev.id}: the bench's own words`);
+    }
+  }
+  assert.strictEqual(downloadShade(benchProfile("canary-display-watch").rom), "waiting for download", "the S3 keeps its line");
+  assert.strictEqual(downloadShade(benchProfile("canary-nightlight").rom), "ROM waiting for a flasher", "the C3 shows the bench's words");
+  for (const rom of [undefined, null, {}, { chip: "esp32c6", boot_strap: "GPIO9" }])
+    assert.strictEqual(downloadShade(rom), "ROM waiting for a flasher", `no voice, no banner line: ${JSON.stringify(rom)}`);
+  // the sheet shades its glass in its own board's words, nowhere the S3's for all
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  assert.strictEqual((app.match(/setShade\(downloadShade\(rom\)\)/g) || []).length, 1, "app.js's download mode shades the glass from the board's rom");
+  assert.ok(!app.includes("waiting for download"), "app.js shades no glass with the S3's banner line whatever the chip");
+  // and the C3's guess and its glass tell one story: the ROM waits for a flasher
+  const { benchFixesFor } = await importGuides();
+  const nl = benchFixesFor(benchProfile("canary-nightlight")).flatMap((f) => f.steps).find((st) => st.romMissing === "download");
+  assert.match(nl.body, /the ROM waits for a flasher/, "the C3's guess says what its glass shows");
 });
 
 // ── the debug curriculum stages cleanly ─────────────────────────────────

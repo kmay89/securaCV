@@ -115,6 +115,20 @@ export function romBanner(kind, rom) {
     "banner the Lab quotes from Espressif is the power-on one)\n";
 }
 
+/**
+ * The words the glass's shade shows while the ROM sits in download mode on
+ * the board whose bench block's `rom` is given: the last line of its chip's
+ * download banner where the voice holds one (the S3's "waiting for
+ * download"), else the bench's own words, never another chip's banner line
+ * (sweep A101 review: the C3's card said the Lab quotes no download banner
+ * for its chip while its glass showed the S3's).
+ */
+export function downloadShade(rom) {
+  const line = rom && rom.chip ? ROM_VOICES[rom.chip]?.download : null;
+  if (typeof line === "string" && line.trim()) return line.trim().split("\n").pop();
+  return "ROM waiting for a flasher";
+}
+
 // ── The honesty ribbon (sweep A59 review) ───────────────────────────────
 // The bench's ribbon says what is staged and what is real, per board: the
 // chip whose ROM it stages (its bench block's `rom`), which of that chip's

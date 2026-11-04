@@ -17,7 +17,7 @@ import { buildBuildIt } from "./build-it.js";
 import { buildBoardLab } from "./board-lab.js";
 import { buildAssemblyLab } from "./assembly-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
-import { BenchPower, romBanner, benchRibbon, bootPressOffered } from "../emulator/web/bench.js";
+import { BenchPower, romBanner, benchRibbon, bootPressOffered, downloadShade } from "../emulator/web/bench.js";
 import { DEMO, beatsBetween } from "./mode-sim.js";
 import { buildOnboardPhone } from "./onboard-phone.js";
 import {
@@ -621,7 +621,7 @@ async function buildDisplaySheet(ctx, side, stage) {
     const g2d = glass.getContext("2d");
     g2d.fillStyle = "#000";
     g2d.fillRect(0, 0, glass.width, glass.height);
-    setShade("waiting for download");
+    setShade(downloadShade(rom)); // the chip's own last download line, or the bench's words (sweep A101 review)
     serialAppend("\n※ ── reset, BOOT held low ── ※\n\n" + romBanner("download", rom));
   };
   ctx.bench = dev.bench
@@ -711,6 +711,11 @@ async function buildDisplaySheet(ctx, side, stage) {
     b.addEventListener("click", () => {
       for (const t of tabs.children) t.classList.remove("on");
       b.classList.add("on");
+      // the view being replaced lets go of what it holds first (the bench's
+      // BOOT press, sweep A99 review), before its controls leave the page
+      const leave = ctx.leaveView;
+      ctx.leaveView = null;
+      leave?.();
       panel.innerHTML = "";
       panel.append(views[name]());
     });
@@ -1061,9 +1066,16 @@ function benchView(ctx, guideCtx, noteLine) {
   if (bootPressOffered(profile)) {
     const b = el("button", "bench-chip bench-momentary bench-press");
     const does = (bootSpec?.note || "").split("while running: ")[1];
+    // The 10 s hold runs the firmware's factory reset, but the bench restarts
+    // the twin from the page's copy of its flash, which no erase reaches
+    // (emu_support.cpp's Preferences::remove/clear never call js_nvs_write),
+    // so the title says what this bench does, not what a board would
+    // (sweep A99 review; bench_probe.mjs holds it past 10 s to keep it true).
     b.title = "A momentary press on the twin's BOOT button, held for as long as you hold this; the toggle beside it is " +
       `the strap. ${does ? `The running firmware: ${does}. ` : ""}Its reset hold runs too: held 3 s it warns on the ` +
-      "serial, held 10 s it erases the saved networks and screen settings (the identity stays).";
+      "serial; held 10 s the firmware erases its saved networks and screen settings (the identity stays) and " +
+      "restarts, but this bench restarts it from the page's copy of its flash, which no erase reaches, so it comes " +
+      "back on its home network.";
     const st = el("span", "bench-chip-state");
     b.append(el("strong", null, `${bootSpec?.label || "BOOT"} press`), st);
     const down = (ev) => {
@@ -1075,6 +1087,14 @@ function benchView(ctx, guideCtx, noteLine) {
     b.addEventListener("pointerdown", down);
     b.addEventListener("keydown", down);
     for (const t of ["pointerup", "pointerleave", "pointercancel", "lostpointercapture", "keyup", "blur"]) b.addEventListener(t, letGo);
+    // A finger slid off lets go there, as a mouse dragged off does: a touch
+    // is captured to the control it went down on (implicit capture), so its
+    // pointerleave waits for the lift, and only its moves say it has left.
+    b.addEventListener("pointermove", (ev) => {
+      if (!mine) return;
+      const r = b.getBoundingClientRect();
+      if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) letGo();
+    });
     b.addEventListener("contextmenu", (ev) => ev.preventDefault()); // a long touch is a hold, not a menu
     press = { b, st };
   }
@@ -1099,6 +1119,8 @@ function benchView(ctx, guideCtx, noteLine) {
     window.addEventListener("blur", letGo);
     document.addEventListener("visibilitychange", hidden);
     ctx.dispose.push(unhook);
+    // another tab replacing this view lets go at once, not on the next tick
+    ctx.leaveView = unhook;
   }
   const resetBtn = el("button", "bench-chip bench-momentary");
   resetBtn.title = (profile.buttons || []).find((b) => b.id === "reset")?.note || "";

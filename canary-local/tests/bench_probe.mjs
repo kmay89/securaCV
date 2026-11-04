@@ -12,12 +12,15 @@
 // boards whose firmware reads BOOT while it runs, the bench's press control
 // reaches the twin's button (sweep A99): held 3 s on the watch, the firmware
 // says so on its serial, and every press the page makes is released, on the
-// twin it pressed — dragged off, the window left, the page hidden, RESET
-// mid-press, a double press, touch then mouse, the keyboard; no press reaches
-// a ROM in download mode, the dash (whose firmware never reads BOOT) offers
-// none, and a dist without emu_button offers one that cannot press. The
-// Nightlight's screen-dark flow stages its download-mode guess in the
-// bench's own words (sweep A101).
+// twin it pressed — dragged off, a real finger slid off (before it lifts),
+// another tab replacing the bench mid-press, the window left, the page
+// hidden, RESET mid-press, a double press, touch then mouse, the keyboard;
+// held past 10 s the firmware's factory reset runs and the bench restarts
+// the twin on its home network, as the control's title says; no press
+// reaches a ROM in download mode, the dash (whose firmware never reads BOOT)
+// offers none, and a dist without emu_button offers one that cannot press.
+// The Nightlight's screen-dark flow stages its download-mode guess in the
+// bench's own words, and its glass says them too (sweep A101).
 //
 // CI runs this probe on the COMMITTED dist, before the wasm job's in-job
 // rebuild (canary-local.yml), so a step that needs a binding the committed
@@ -199,6 +202,12 @@ const pointAt = (type, pointerType) =>
     b.dispatchEvent(new PointerEvent(t, { bubbles: true, cancelable: true, pointerId: pt === "touch" ? 7 : 1, pointerType: pt, button: 0, isPrimary: true }));
   }, [type, pointerType]);
 const serialCount = async (needle) => (await serial()).split(needle).length - 1;
+// A real touch, through the browser's own input pipeline (review of A99): a
+// touch is captured to the element it went down on, so its pointerleave
+// waits for the lift; pointAt()'s made-up PointerEvents never are.
+const cdp = await page.context().newCDPSession(page);
+const touch = (type, x, y) =>
+  cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1 }] });
 // What the Try it view heard from the twin about turning its glass (A80):
 // "yes", "no", or null if it never heard.
 const turnAnswer = async (who) =>
@@ -394,6 +403,38 @@ await step("a press dragged off the chip", async () => {
   await page.mouse.move(away.x, away.y, { steps: 4 });
   await page.mouse.up();
 }, [1, 0]);
+// a finger slid off the chip: let go as it leaves, before it lifts, as the
+// mouse does (review of A99: it held BOOT until the lift)
+await step("a finger slid off the chip", async () => {
+  const from = (await buttonLog()).length;
+  await touch("touchStart", on.x, on.y);
+  await sleep(120);
+  if ((await pressState()) !== "pressed") await fail(`a real touch on the press control did not press (${await pressState()})`);
+  await touch("touchMove", on.x, (on.y + away.y) / 2);
+  await touch("touchMove", away.x, away.y);
+  await letGoAlready("a finger slid off the chip", from);
+  if ((await pressState()) === "pressed") await fail("a finger slid off the chip: the control still says pressed before the lift");
+  await touch("touchEnd");
+}, [1, 0]);
+// another tab replacing the bench while a finger holds the press: let go as
+// the view goes, not on the old view's next tick (read in the same task as
+// the click, so no timer can have run between them)
+await step("the Wire tab opened while a finger holds the press", async () => {
+  const from = (await buttonLog()).length;
+  await touch("touchStart", on.x, on.y);
+  await sleep(120);
+  if ((await pressState()) !== "pressed") await fail(`a real touch on the press control did not press (${await pressState()})`);
+  const got = await page.evaluate((n) => {
+    [...document.querySelectorAll(".tabs .tab")].find((t) => t.textContent === "Wire").click();
+    return window.__emuButton.slice(n).map(([, d]) => d);
+  }, from);
+  if (JSON.stringify(got) !== "[1,0]")
+    await fail(`the Wire tab replaced the bench while a finger held the press: the twin's button saw ${JSON.stringify(got)} as the view went, not [1,0]`);
+  await touch("touchEnd");
+  await openTab("Bench");
+  await page.waitForSelector(".bench-press", { timeout: 10000 });
+}, [1, 0]);
+await page.waitForFunction(() => !document.querySelector(".bench-press")?.disabled, null, { timeout: 5000 }).catch(() => fail("the press control is not live again"));
 // the window loses focus mid-press (another tab, another app): let go
 await step("a press, then the window left", async () => {
   const from = (await buttonLog()).length;
@@ -483,6 +524,40 @@ await waitSings(watchBoots2);
   const bad = allReleased(log);
   if (bad) await fail(`a twin was left with BOOT pressed: ${bad}`);
   console.log(`bench_probe: ${log.length / 2} presses on the watch's bench, each released on the twin it pressed`);
+}
+// held past 10 s: the firmware runs its factory reset and restarts, and the
+// bench restarts it from the page's copy of its flash (no erase reaches it),
+// so it comes back on its home network: what the control's title says
+// (review of A99: the title promised a lasting erase)
+const RESET_LINE = "[input] BOOT held 10 s -> factory reset (credentials + settings, identity kept)";
+const FORGOT = "[CFG] WiFi credentials forgotten - setup opens on next boot.";
+const resets0 = await serialCount(RESET_LINE);
+await openTab("Bench");
+await page.waitForFunction(() => !document.querySelector(".bench-press")?.disabled, null, { timeout: 10000 }).catch(() => fail("the press control is not live again"));
+{
+  const title = (await pressCtl().getAttribute("title")) || "";
+  if (!title.includes("this bench restarts it from the page's copy of its flash, which no erase reaches, so it comes back on its home network"))
+    await fail(`the press's title does not say what the bench does after the 10 s hold: ${title}`);
+}
+await step("a hold past 10 s", async () => {
+  await page.mouse.move(on.x, on.y);
+  await page.mouse.down();
+  await sleep(11000);   // main.cpp's factory reset fires at 10 s
+  await page.mouse.up();
+}, [1, 0]);
+await openTab("Wire");
+await page
+  .waitForFunction(([reset, forgot]) => {
+    const t = document.querySelector("pre.log")?.textContent || "";
+    const at = t.lastIndexOf(forgot);
+    return t.includes(reset) && at >= 0 && t.indexOf("[WiFi] Connected (emulated).", at) > at && t.indexOf("The canary is singing", at) > at;
+  }, [RESET_LINE, FORGOT], { timeout: 90000 })
+  .catch(async () => fail(`held past 10 s, the serial never said the factory reset and then the twin back on its home network: ${(await serial()).slice(-1500)}`));
+if ((await serialCount(RESET_LINE)) !== resets0 + 1) await fail("held past 10 s, the firmware's factory reset did not run once");
+console.log("bench_probe: held 11 s, the watch's firmware ran its factory reset and the bench restarted it on its home network, as the press's title says");
+{
+  const bad = allReleased(await buttonLog());
+  if (bad) await fail(`a twin was left with BOOT pressed after the 10 s hold: ${bad}`);
 }
 await openTab("Bench");
 
@@ -615,7 +690,9 @@ if (/rides the battery|ride-through/.test(await page.locator(".bench-trouble").t
   const dark2 = page.locator(".bench-trouble .fix", { has: page.locator("summary", { hasText: "Screen dark" }) }).first();
   if (!(await dark2.evaluate((d) => d.open))) await dark2.locator("summary").click();
   await dark2.locator(".fix-step").nth(1).locator("button", { hasText: "show me on the glass" }).click();
-  if ((await shade()) !== "waiting for download") await fail("the Nightlight's download-mode guess did not park its ROM");
+  // its glass says the bench's words, not the S3's banner line (review of
+  // A101: bench.js downloadShade(); the S3 cards keep "waiting for download")
+  if ((await shade()) !== "ROM waiting for a flasher") await fail(`the Nightlight's download-mode guess did not park its ROM in its own words (the glass says ${JSON.stringify(await shade())})`);
   if (!(await pressCtl().isDisabled())) await fail("the Nightlight's press control is live in download mode");
   await openTab("Wire");
   if ((await serialCount("ESP32-C3 ROM: BOOT (GPIO9) was low at reset, so it waits for a flasher")) !== notes0 + 1)
@@ -680,7 +757,7 @@ const nlNotes = await serialCount("ESP32-C3 ROM: BOOT (GPIO9) was low at reset, 
 await openTab("Bench");
 await chip("BOOT").click();
 await chip("RST").click();
-if ((await shade()) !== "waiting for download") await fail("the Nightlight's download mode not shown on the glass");
+if ((await shade()) !== "ROM waiting for a flasher") await fail(`the Nightlight's download mode not shown on the glass in its own words (it says ${JSON.stringify(await shade())})`);
 await openTab("Wire");
 await page
   .waitForFunction(
@@ -743,6 +820,6 @@ if (errors.length) {
   process.exit(1);
 }
 console.log("BENCH_PROBE_OK power-pull, ride-through, brown-down, download-mode all behaved; BOOT pressed for the running firmware " +
-  "and let go on every path; the Nightlight twin booted on its card, USB its only power" +
+  "and let go on every path, held past 10 s as its title says; the Nightlight twin booted on its card, USB its only power" +
   (NL_TURNS ? ", its glass turned from Try it" : ""));
 process.exit(0);
