@@ -2214,6 +2214,92 @@ clean-fleet-qr-query:
 run: run-fleet-qr-query
 clean: clean-fleet-qr-query
 
+# The sketch's modules use no SHA-256 they were refused (sweep F364, the
+# modules' slice; the sketch's own is run-wap-sha-fail above): the vault's
+# ciphertext digest and key id (vault_snapshot.cpp), the USB update drop's
+# image hash (usb_evidence_drive.cpp's dep_sha256() under
+# evidence_update::verify()), the familiar filters' index hash
+# (familiar.cpp), Wi-Fi presence's MAC hash (wifi_presence.h) and
+# mesh_crypto::sha256_domain(). Each helper answers whether every mbedTLS
+# step ran and zeroes its output when one did not, and each caller refuses:
+# no sealed file, ct_hash or key id, no verdict but sha_failed, no learned
+# or matched bit, no counted capture, a zeroed mesh digest. mesh_crypto.cpp
+# is compiled whole and evidence_update_verify.cpp and securacv_ota.cpp's
+# pure subset are linked; the rest is cut verbatim out of the sketch's files
+# — each module's state block by its first and last line (the awk below,
+# which fails unless it finds each exactly once), the functions by
+# firmware/tests_host/cut_functions.awk. Under them: stubs/mesh_net's
+# OpenSSL SHA-256 with its fail knob (unarmed in every other suite), the
+# real X25519 and HKDF of stubs/pair_crypto and the fake SD card
+# (stubs/sd_fake). It also reads the five modules' files and
+# evidence_update_verify.cpp (the sketch directory's path is passed in), so
+# it re-runs on every `make`: no bare call of a SHA step or of the helpers.
+SHAMOD_BIN          = test_wap_sha_fail_modules
+SHAMOD_SRC          = test_wap_sha_fail_modules.cpp
+SHAMOD_LINK         = $(SRC_DIR)/mesh_crypto.cpp $(SRC_DIR)/evidence_update_verify.cpp \
+                      $(SRC_DIR)/securacv_ota.cpp
+SHAMOD_VAULT_STATE  = test_wap_sha_fail_modules_vault_state.inc
+SHAMOD_VAULT        = test_wap_sha_fail_modules_vault.inc
+SHAMOD_FAM_STATE    = test_wap_sha_fail_modules_familiar_state.inc
+SHAMOD_FAM          = test_wap_sha_fail_modules_familiar.inc
+SHAMOD_WP_STATE     = test_wap_sha_fail_modules_presence_state.inc
+SHAMOD_WP           = test_wap_sha_fail_modules_presence.inc
+SHAMOD_USB          = test_wap_sha_fail_modules_usb.inc
+SHAMOD_INCS         = $(SHAMOD_VAULT_STATE) $(SHAMOD_VAULT) $(SHAMOD_FAM_STATE) $(SHAMOD_FAM) \
+                      $(SHAMOD_WP_STATE) $(SHAMOD_WP) $(SHAMOD_USB)
+CUT_INCS           += $(SHAMOD_INCS)
+# A state block: every line from the first line matching `from` to the next
+# matching `to`, behind a #line naming the file, found exactly once.
+SHAMOD_RANGE_AWK    = '$$0 ~ from && !on { s++; on = 1; printf "\#line %d \"%s\"\n", FNR, FILENAME } \
+  on { print } on && $$0 ~ to { e++; on = 0 } \
+  END { if (s != 1 || e != 1 || on) { print FILENAME ": the state block from /" from "/ to /" to "/ found " s + 0 " start(s) and " e + 0 " end(s), expected one of each" > "/dev/stderr"; exit 1 } }'
+
+$(SHAMOD_VAULT_STATE): $(SRC_DIR)/vault_snapshot.cpp Makefile
+	awk -v 'from=^using vault_logic::Trigger;$$' -v 'to=^static SealResult +g_result;' \
+	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/vault_snapshot.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_VAULT): $(SRC_DIR)/vault_snapshot.cpp $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=[[nodiscard]] static bool sha256_key_id(|static bool hex_nibble(|static void fail_result(|static void seal_task(void*) {|static void load_config_from(|bool set_pubkey_hex(|bool has_pubkey() {|void key_id_hex(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/vault_snapshot.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_FAM_STATE): $(SRC_DIR)/familiar.cpp Makefile
+	awk -v 'from=^static const char\\* NVS_KEY_SALT ' -v 'to=^static uint32_t s_total_always_ignored_matches = 0;' \
+	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/familiar.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_FAM): $(SRC_DIR)/familiar.cpp $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static void secure_wipe(|[[nodiscard]] static bool hash_indices(|static inline void bloom_set(|static inline bool bloom_contains(|static uint32_t bloom_popcount(|static void persist_ignore() {|void note_fingerprint(|bool is_ambient(|bool always_ignore(|bool is_always_ignored(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/familiar.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_WP_STATE): $(SRC_DIR)/wifi_presence.h Makefile
+	awk -v 'from=^static const uint32_t BUCKET_DURATION_MS ' -v 'to=^static volatile uint32_t g_isr_drop_count = 0;' \
+	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/wifi_presence.h > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_WP): $(SRC_DIR)/wifi_presence.h $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=[[nodiscard]] static bool hash_mac(|static bool mac_seen(|static void process_queue() {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/wifi_presence.h > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_USB): $(SRC_DIR)/usb_evidence_drive.cpp $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool dep_sha256(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/usb_evidence_drive.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_BIN): $(SHAMOD_SRC) $(SHAMOD_INCS) $(SHAMOD_LINK) arduino_globals.h
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I stubs/sd_fake \
+	  -I $(SRC_DIR) -I . -DSECURACV_OTA_HOST_BUILD \
+	  -DWAP_SHAMOD_VAULT_STATE_INC='"$(SHAMOD_VAULT_STATE)"' -DWAP_SHAMOD_VAULT_INC='"$(SHAMOD_VAULT)"' \
+	  -DWAP_SHAMOD_FAMILIAR_STATE_INC='"$(SHAMOD_FAM_STATE)"' -DWAP_SHAMOD_FAMILIAR_INC='"$(SHAMOD_FAM)"' \
+	  -DWAP_SHAMOD_PRESENCE_STATE_INC='"$(SHAMOD_WP_STATE)"' -DWAP_SHAMOD_PRESENCE_INC='"$(SHAMOD_WP)"' \
+	  -DWAP_SHAMOD_USB_INC='"$(SHAMOD_USB)"' -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -o $@ $(SHAMOD_SRC) $(SHAMOD_LINK) -lcrypto)
+
+.PHONY: run-wap-sha-fail-modules clean-wap-sha-fail-modules
+run-wap-sha-fail-modules: $(SHAMOD_BIN)
+	$(call run_marked,$(SHAMOD_BIN))
+clean-wap-sha-fail-modules:
+	rm -f $(SHAMOD_BIN) $(SHAMOD_INCS)
+
+run: run-wap-sha-fail-modules
+clean: clean-wap-sha-fail-modules
+
 # Every suite compiles the sketch's code after Arduino.h's names (sweep
 # F229): check_arduino_globals.py asks make for every compile of `run` and
 # of the tsan builds (each command of each recipe line, a compile behind
