@@ -147,6 +147,29 @@ export function countBucketOf(n) {
   return n <= 0 ? "0" : n === 1 ? "1" : "2+";
 }
 
+// What the radar lab signs on one tick, by canary-sense main.cpp's
+// drive_fsms rule: presence_detected on a tick that turns Present,
+// presence_cleared on any tick that turns Clear (from Unknown too: the
+// boot's first empty frame, and a radar back from a stall to an empty room,
+// A106), and occupancy_changed on a count move while Present (the FSM
+// reports none on a transition tick, so a visit that returns to an earlier
+// visit's bucket is signed as the firmware signs it). Unknown (a stall) is
+// radar-link health, not a witness event. ev and fsm are makePresenceFSM's;
+// each entry is the event and the fields the lab lays over its events row.
+// tests/sense.test.js plays the native driver's traces through this and
+// requires the firmware's signed events on every tick.
+export function radarLabSigns(ev, fsm) {
+  const out = [];
+  if (ev.stateChanged) {
+    if (fsm.state === "present") out.push(["presence_detected", { presence: "present", occupants: fsm.count, range: fsm.range }]);
+    else if (fsm.state === "clear") out.push(["presence_cleared", { presence: "clear", occupants: "0", range: "unknown" }]);
+  }
+  if (ev.countChanged && fsm.state === "present") {
+    out.push(["occupancy_changed", { presence: "present", occupants: fsm.count, range: fsm.range }]);
+  }
+  return out;
+}
+
 // A JS mirror of the firmware's PresenceFSM (mr60_presence): debounce into
 // Present, timeout into Clear, stall into Unknown — deadline checks first,
 // so a silent radar (frame == null) still drives the stall. Thresholds come
@@ -531,7 +554,7 @@ export function buildRadarLab(data, bus) {
     return { hasTarget: true, count: targets.length, distanceCm: Math.min(...targets) * 100 };
   }
 
-  let lastState = "unknown", lastPub = "—";
+  let lastPub = "—";
   function publish(event, extra) {
     lastPub = event;
     bus.emit("labevent", { event, ...extra });
@@ -557,16 +580,9 @@ export function buildRadarLab(data, bus) {
       const s = fsm.state;
       bus.emit("state", { state: s });
       bus.emit("serial", { text: `[presence] -> ${s}${ev.stalled ? " (radar stall)" : ""}`, kind: ev.stalled ? "warn" : "ok" });
-      if (s === "present") publish("presence_detected", { presence: "present", occupants: fsm.count, range: fsm.range });
-      else if (s === "clear" && lastState === "present") publish("presence_cleared", { presence: "clear", occupants: "0", range: "unknown" });
-      lastState = s;
     }
-    // drive_fsms' gate: a count move while present (the FSM reports none on
-    // a transition tick, so a visit that returns to an earlier visit's
-    // bucket is published as the firmware signs it)
-    if (ev.countChanged && fsm.state === "present") {
-      publish("occupancy_changed", { presence: "present", occupants: fsm.count, range: fsm.range });
-    }
+    // drive_fsms' signing rule, presence_cleared from Unknown included
+    for (const [event, fields] of radarLabSigns(ev, fsm)) publish(event, fields);
     if (vev.changed) {
       bus.emit("serial", { text: `[vitals] breathing ${vfsm.lock === "locked" ? "locked" : "lost"}`, kind: "ok" });
       bus.emit("labvitals", { locked: vfsm.lock === "locked" });

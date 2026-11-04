@@ -178,7 +178,65 @@ function traces(cfg) {
     // false; it moves no bucket, and no target returns before the clear
     stray: [{ reset: 0 }, off(10), ...enter(1000), off(1500), { t: 1550, target: false, count: 2, cm: 0 },
       ...every(1600, 1500 + C, 100, off), off(1500 + C), off(1600 + C)],
+    // a radar slow to speak at boot finds the room empty: its first frame
+    // turns Unknown to Clear, and drive_fsms signs presence_cleared (A106)
+    boot: [{ reset: 0 }, { t: 5 }, { t: S + 10 }, off(S + 20), off(S + 120), ...enter(S + 1000)],
+    // the radar stalls with someone in the room and comes back to it empty,
+    // then stalls over the empty room and comes back again: each return
+    // turns Unknown to Clear and signs presence_cleared, the second with no
+    // presence_detected between (A106)
+    restart: [{ reset: 0 }, off(10), ...enter(1000), { t: 1000 + D + S }, off(1000 + D + S + 50),
+      off(1000 + D + S + 150), { t: 1000 + D + 2 * S + 150 }, off(1000 + D + 2 * S + 200),
+      ...enter(1000 + D + 2 * S + 1000)],
+    // a seeded random walk of the wire (A106's review): visits, one-frame
+    // dropouts, count-pending flags, strays, silences on every window's edge
+    // and Unknown restarts, 10,000 ticks
+    fuzz: fuzz(cfg, 0x5e115e, 10000),
   };
+}
+
+// mulberry32: a small seeded generator, so a failing fuzz trace replays.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// A seeded trace of n ticks: a room whose head count wanders 0 to 3, read
+// at about the radar's cadence, with the edges the FSM decides on hit
+// exactly (a gap of each window, one less and one more), silences past the
+// stall timeout, and a reset now and then (an Unknown restart, as
+// reconfigure() does). Times stay far below 2^31, where the firmware's
+// int32 elapsed() and the ports' subtraction agree.
+function fuzz(cfg, seed, n) {
+  const rand = mulberry32(seed);
+  const pick = (k) => Math.floor(rand() * k);
+  const windows = [cfg.present_debounce_ms, cfg.clear_timeout_ms, cfg.stall_timeout_ms];
+  const out = [{ reset: 0 }];
+  let t = 0, here = 0;
+  for (let i = 0; i < n; i++) {
+    const r = rand();
+    if (r < 0.04) t += windows[pick(3)] + pick(3) - 1;
+    else if (r < 0.05) t += cfg.stall_timeout_ms + pick(2000);
+    else t += 10 + pick(140);
+    if (rand() < 0.0005) { out.push({ reset: t }); continue; }
+    if (rand() < 0.02) here = pick(4);
+    const k = rand();
+    if (k < 0.3) out.push({ t });                                              // a loop with no frame
+    else if (here === 0) {
+      if (k < 0.33) out.push({ t, target: false, count: 1 + pick(2), cm: 0 });  // a count beside a cleared flag
+      else if (k < 0.36) out.push({ t, target: true, count: pick(2), cm: 50 + pick(550) }); // a flicker
+      else out.push({ t, target: false, count: 0, cm: 0 });
+    } else if (k < 0.35) out.push({ t, target: false, count: 0, cm: 0 });     // a one-frame dropout
+    else if (k < 0.45) out.push({ t, target: true, count: 0, cm: 50 + pick(550) }); // the count frame still to land
+    else out.push({ t, target: true, count: here, cm: 50 + pick(550) });
+  }
+  return out;
 }
 
 module.exports = { MAIN_GATES, build, runFirmware, traces };
