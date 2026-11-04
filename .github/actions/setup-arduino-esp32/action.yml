@@ -7,6 +7,21 @@ description: >
   Change how Arduino builds are provisioned HERE, once — not in six
   workflows.
 
+# The cache is two steps, restore before the install and save right after it,
+# never one actions/cache step. A combined step saves in the job's post phase,
+# with whatever ~/.arduino15 holds when the job ENDS. The release jobs call
+# this action three times (3.3.8, 2.0.17, 3.3.10, each exclusive), so on a
+# cold cache all three keys were saved holding the last call's 3.3.10 install,
+# and a later single-core job that restored "core-3.3.8" got 3.3.10 under that
+# name (RELEASE_LESSONS 2026-11-04 (b)). Now each key is saved straight after
+# its own install, only on a miss, and only while ~/.arduino15 holds exactly one
+# esp32:esp32 platform, the one this call asked for. The key carries a schema
+# tag (v2) so no entry saved the old way is ever restored. Edits here run
+# firmware.yml, ram_audit.yml and csi_module_disable_matrix.yml (each lists
+# this directory in its path filter); the three-core release case shows only
+# in a release run. .github/scripts/test_setup_arduino_esp32.py runs these
+# steps' own scripts against a modeled cache and a stand-in arduino-cli.
+
 inputs:
   core-version:
     description: >
@@ -54,28 +69,38 @@ runs:
         CORE_VERSION: ${{ inputs.core-version }}
       run: |
         set -euo pipefail
+        # v2: entries saved before the restore/save split hold whatever the
+        # job installed LAST, under every key it touched; the tag keeps all of
+        # them from being restored.
         if [ -n "$CORE_VERSION" ]; then
-          echo "key=arduino-esp32-${{ runner.os }}-core-$CORE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "key=arduino-esp32-v2-${{ runner.os }}-core-$CORE_VERSION" >> "$GITHUB_OUTPUT"
         else
           # %G/%V = ISO year/week: rotates the "latest" cache weekly.
-          echo "key=arduino-esp32-${{ runner.os }}-core-latest-$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
+          echo "key=arduino-esp32-v2-${{ runner.os }}-core-latest-$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
         fi
 
-    - name: Cache the ESP32 core + toolchain
-      uses: actions/cache@v6
+    - name: Restore the ESP32 core + toolchain
+      id: restore
+      uses: actions/cache/restore@v6
       with:
         # staging/ holds the downloaded archives — dead weight once the
         # tools are extracted, and it roughly doubles the cache entry.
+        # internal/ is where `arduino-cli compile --profile` installs a
+        # profile's own pinned core and libraries: the profile's, not this
+        # key's core. The save step below names the same three lines.
         path: |
           ~/.arduino15
           !~/.arduino15/staging
+          !~/.arduino15/internal
         key: ${{ steps.key.outputs.key }}
 
     - name: Configure Arduino CLI + install the ESP32 core
+      id: install
       shell: bash
       env:
         CORE_VERSION: ${{ inputs.core-version }}
         EXCLUSIVE: ${{ inputs.exclusive-core }}
+        KEY: ${{ steps.key.outputs.key }}
       run: |
         set -euo pipefail
         arduino-cli config init --overwrite
@@ -106,6 +131,40 @@ runs:
             exit 1
           fi
         fi
+        # May this call save ~/.arduino15 under its key? Only when the tree
+        # holds exactly one esp32:esp32 platform, the requested one (any one,
+        # for "latest"). A second call in one job that is NOT exclusive
+        # installs beside the first call's core, and saving that would store
+        # another core's install under this key. (Tools are not checked by
+        # name: `core uninstall` removes the tools no installed platform
+        # still needs.) Not saving costs the next run a download; a mixed
+        # entry would cost it the wrong core.
+        installed=()
+        shopt -s nullglob
+        for d in "$HOME"/.arduino15/packages/esp32/hardware/esp32/*/; do
+          d="${d%/}"; installed+=("${d##*/}")
+        done
+        shopt -u nullglob
+        if [ "${#installed[@]}" -eq 1 ] && { [ -z "$CORE_VERSION" ] || [ "${installed[0]}" = "$CORE_VERSION" ]; }; then
+          echo "save=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::not saving the cache key ${KEY}: ~/.arduino15 holds esp32:esp32 [${installed[*]:-none}], not ${CORE_VERSION:-one latest core} alone, and a key stores only its own core's install (pass exclusive-core: \"true\" when one job installs two cores)."
+          echo "save=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Save the ESP32 core + toolchain (this call's install, on a miss)
+      # Right after the install, not at job end: a later call in the same job
+      # (or a later step: a profile build, a library install) cannot change
+      # what this key stores. A hit is never re-saved (the entry exists and
+      # entries are immutable).
+      if: steps.restore.outputs.cache-hit != 'true' && steps.install.outputs.save == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ~/.arduino15
+          !~/.arduino15/staging
+          !~/.arduino15/internal
+        key: ${{ steps.key.outputs.key }}
 
     - name: Install libraries
       if: inputs.libraries != ''

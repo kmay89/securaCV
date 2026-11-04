@@ -12,6 +12,49 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-04 (b) — Three cores in one release job, and every cache key saved the last one (found by reading; sweep CI19)
+
+- **Symptom:** none reported; it was found by reading. `firmware-release.yml`
+  and `flasher-release.yml` each call `setup-arduino-esp32` three times in
+  one job (core 3.3.8, then 2.0.17, then 3.3.10, each `exclusive-core`). On a
+  cold cache the keys `core-3.3.8` and `core-2.0.17` were both saved holding
+  the 3.3.10 install. A later job that restored `core-3.3.8` without
+  `exclusive-core` (`ram_audit.yml`, `csi_module_disable_matrix.yml`) got
+  3.3.10 under that name, installed 3.3.8 beside it, and an unversioned FQBN
+  takes the newest: the 2026-07-29 (k) failure, arriving through the cache.
+  Whether any live entry was saved that way depends on which job saved it
+  first, which nothing records.
+- **Cause:** the action cached with one `actions/cache` step. Its restore runs
+  in place, but its save runs in the job's POST phase, with whatever the
+  directory holds when the job ends. Three calls make three post saves, each
+  of the final tree. A later step's writes (a `compile --profile` build's own
+  core under `~/.arduino15/internal/`) were saved under the core's key too.
+  And an edit to the action ran none of the PR workflows that use it: their
+  path filters named `firmware/**` and their own files, not
+  `.github/actions/setup-arduino-esp32/**`.
+- **Fix:** the cache is two steps. `actions/cache/restore@v6` (`id: restore`)
+  runs before the install, and `actions/cache/save@v6` runs right after it,
+  only on a miss, and only while `~/.arduino15` holds exactly one
+  `esp32:esp32` platform, the one this call asked for. A call that would
+  save a mixed tree says so in a `::warning::` and skips the save.
+  `staging/` and `internal/` stay out of the entry. The key carries a `v2`
+  tag, so no entry saved the old way is ever restored. `firmware.yml`,
+  `ram_audit.yml` and `csi_module_disable_matrix.yml` list the action's
+  directory in their path filters (push and PR alike, R6).
+  `.github/scripts/test_setup_arduino_esp32.py` runs the action's own step
+  scripts, in order, against a modeled cache and a stand-in arduino-cli: a
+  cold three-core job saves each core under its own key, a warm one saves
+  nothing, and a non-exclusive second core is not saved. The old action
+  fails it, with all three keys holding 3.3.10. The stand-in is not
+  arduino-cli: the restore/save path runs for real on any PR that runs
+  `firmware.yml`, and the three-core case only in a release run.
+- **Applies to:** any composite action that caches a directory it then
+  changes, and any job that calls one twice. Save a key right after the step
+  that fills it, and save only the state that key names. A combined
+  `actions/cache` step is right only when nothing after it in the job writes
+  the cached path. And a shared action is an input of every workflow that
+  runs it: list it in their path filters, or its edit runs nothing.
+
 ## 2026-11-04 — The Home Assistant app declared two lists as a select, which by the Supervisor's own code refuses the app's defaults (0.9.0; found by reading, not yet seen on an install)
 
 - **Symptom:** none seen yet; it was found by reading. 0.9.0's
