@@ -60,6 +60,24 @@
       "value": 120
     },
     {
+      "why": "a #define whose block comment closes on the next line, a // comment after its close",
+      "name": "WAIT_MS",
+      "text": "#define WAIT_MS 30 /* thirty\n */ // ms\n",
+      "value": 30
+    },
+    {
+      "why": "a `/*` inside a string literal opens no comment, so the next line's `*/` closes none (F429)",
+      "name": "WAIT_MS",
+      "text": "#define WAIT_GLOB \"wait/*\"\n#define WAIT_MS 30\n// */ * 1000\n",
+      "value": 30
+    },
+    {
+      "why": "a `/*` inside a // comment opens no block comment (F429)",
+      "name": "WAIT_MS",
+      "text": "#define WAIT_MS 30 // was /* thirty\nstatic constexpr int K = 2; // */ * 1000\n",
+      "value": 30
+    },
+    {
       "why": "CRLF line endings",
       "name": "LOST_MS",
       "text": "static constexpr int SCORE_MIN = 70;\r\n#define LOST_MS 1500\r\n",
@@ -328,6 +346,42 @@
       "name": "HELD_MS",
       "text": "#define HELD_MS 1500 \\\n  + 10\n",
       "refused": "constant HELD_MS in {where} is `1500 \\`, not a plain integer literal; refusing to read a number out of it"
+    },
+    {
+      "why": "a #define that runs into a block comment closed on a later line, code after its close (g++ -E gives 30 * 1000; both readers read 30 before F429)",
+      "name": "WAIT_MS",
+      "text": "#define WAIT_MS 30 /* thirty\n */ * 1000\n",
+      "refused": "constant WAIT_MS in {where} runs into a block comment closed on a later line, and the #define goes on past the comment (`* 1000`); refusing to read a number out of it"
+    },
+    {
+      "why": "the same over CRLF line endings",
+      "name": "WAIT_MS",
+      "text": "#define WAIT_MS 30 /* thirty\r\n */ * 1000\r\n",
+      "refused": "constant WAIT_MS in {where} runs into a block comment closed on a later line, and the #define goes on past the comment (`* 1000`); refusing to read a number out of it"
+    },
+    {
+      "why": "two block comments over lines, code after the second's close (g++ -E gives 30 * 1000)",
+      "name": "WAIT_MS",
+      "text": "#define WAIT_MS 30 /* a\n */ /* b\n */ * 1000\n",
+      "refused": "constant WAIT_MS in {where} runs into a block comment closed on a later line, and the #define goes on past the comment (`* 1000`); refusing to read a number out of it"
+    },
+    {
+      "why": "code and then a // comment after the close",
+      "name": "WAIT_MS",
+      "text": "#define WAIT_MS 30 /* a\n */ * 1000 // ms\n",
+      "refused": "constant WAIT_MS in {where} runs into a block comment closed on a later line, and the #define goes on past the comment (`* 1000`); refusing to read a number out of it"
+    },
+    {
+      "why": "the whole value after a block comment closed on a later line (g++ -E gives 30, which this reader does not spell, so it refuses)",
+      "name": "WAIT_MS",
+      "text": "#define WAIT_MS /* thirty\n */ 30\n",
+      "refused": "constant WAIT_MS in {where} runs into a block comment closed on a later line, and the #define goes on past the comment (`30`); refusing to read a number out of it"
+    },
+    {
+      "why": "a block comment closed on the #define's own line, code after it (g++ -E gives 30 * 1000)",
+      "name": "WAIT_MS",
+      "text": "#define WAIT_MS 30 /* thirty */ * 1000\n",
+      "refused": "constant WAIT_MS in {where} is `30   * 1000`, not a plain integer literal; refusing to read a number out of it"
     },
     {
       "why": "a digit separator",

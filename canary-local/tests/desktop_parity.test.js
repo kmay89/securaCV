@@ -4365,9 +4365,10 @@ function a93Chain(sections, name) {
 // it. Otherwise the header's default, read by c_const.js's rule, which must
 // sit directly in `#ifndef MACRO` (or `#if !defined(MACRO)`) under nothing
 // but an include guard. 1 or 0, nothing else. An #undef of the macro in the
-// header, a #define whose logical line runs past its physical one, and a
-// guard read on its logical line that is not the #ifndef one are errors too
-// (the A93 review): the compiler's #if would read something else.
+// header, a #define whose logical line runs past its physical one (which
+// readConst refuses itself since F429), and a guard read on its logical line
+// that is not the #ifndef one are errors too (the A93 review): the
+// compiler's #if would read something else.
 function a93FeatureValue(projectDir, config, env, macro) {
   const named = new RegExp(`${macro}(?![A-Za-z0-9_])`);
   const strict = new RegExp(`(?:^|\\s)(-D${macro}(?:=\\d+)?)(?=\\s|$)`, "g");
@@ -4595,7 +4596,10 @@ test("A86: every product's monitor chips are commands its own firmware answers, 
     // on the next line with code after it is read whole, as the compiler does.
     assert.match(value("-DFEATURE_X=1", guarded(1).replace("#endif\n#endif\n", "#endif\n#undef FEATURE_X\n#endif\n")).error || "",
       /#undefs FEATURE_X/);
-    assert.match(value("-DOTHER=1", guarded("1 /* a note\n */ + 1")).error || "", /runs past its line \(#define FEATURE_X 1 \+ 1\)/);
+    // c_const.js refuses that #define itself since F429, before this
+    // oracle's own logical-line check is reached.
+    assert.match(value("-DOTHER=1", guarded("1 /* a note\n */ + 1")).error || "",
+      /runs into a block comment closed on a later line, and the #define goes on past the comment \(`\+ 1`\)/);
     assert.match(value("-DFEATURE_X=0", guarded(1).replace("#ifndef FEATURE_X\n", "#if !defined(FEATURE_X) /* a note\n */ || 1\n")).error || "",
       /not the #ifndef default/);
     assert.deepStrictEqual(value("-DOTHER=1", guarded("1 /* a note\n    that ends here */").replace("#ifndef FEATURE_X\n", "#ifndef FEATURE_X /* a\n */\n")),

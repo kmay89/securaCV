@@ -2931,8 +2931,9 @@ def header_default(header: Path, macro: str, where: str) -> int | None:
     refused. So is an `#undef MACRO` anywhere in the header (after it the
     macro is undefined, 0 to `#if`, whatever the env or the default said),
     and a `#define` whose logical line runs past its physical one (a block
-    comment closed on the next line, with code after it: read_const reads
-    the first line only). Directives are read on their logical lines
+    comment closed on the next line, with code after it), which read_const
+    itself refuses since F429; the check below stays, held to this reader's
+    own logical lines. Directives are read on their logical lines
     (pp_directives), so a guard continued by a comment is read whole."""
     text = read(header)
     stripped = _c_strip(text)
@@ -2959,8 +2960,8 @@ def header_default(header: Path, macro: str, where: str) -> int | None:
         elif re.fullmatch(rf"#[ \t]*define[ \t]+{name}(?![A-Za-z0-9_]).*", d):
             if d != " ".join(lines[i].split()):
                 die(f"{where}: {rel} line {i + 1} defines {macro} as `{d}`, a logical line that runs "
-                    f"past its physical one (a comment closed on a later line, code after it), and the "
-                    f"value is read off the first line only; refusing to read it")
+                    f"past its physical one (a comment closed on a later line, code after it); "
+                    f"refusing to read it")
             guard = re.compile(rf"#[ \t]*ifndef[ \t]+{name}|#[ \t]*if[ \t]+![ \t]*defined[ \t]*"
                                rf"(?:\([ \t]*{name}[ \t]*\)|[ \t]+{name})")
             ok = bool(stack) and stack[-1][2] is None and bool(guard.fullmatch(stack[-1][1]))
