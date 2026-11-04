@@ -228,6 +228,28 @@ class FeatureClaimsHeldToTheirTree(unittest.TestCase):
         self.assertIn("product canary.dev: env 'dev-nope' is not an [env:dev-nope] of the canary "
                       "tree's PlatformIO config (its platformio.ini and extra_configs)", _claims(matrix))
 
+    def test_a_lane_whose_tree_is_not_in_flavors_json_is_named_not_crashed_on(self):
+        # Review of C36: the first version looked the lane's tree up in the
+        # suite's flavor_dirs and raised KeyError('canary-nope') out of the
+        # lint, losing every other problem it had collected; section 1 names
+        # the flavor, and this names the claims it leaves unchecked. A null
+        # `flavor` reads as the id, as the suite's own board_envs reads it.
+        matrix, _flavors, _manifests = _tree()
+        for flavor, tree in (("canary-nope", "canary-nope"), (None, "canary-esp32cam")):
+            with self.subTest(flavor=flavor):
+                m = copy.deepcopy(matrix)
+                _lane(m, "canary-esp32cam")["flavor"] = flavor
+                self.assertEqual(_claims(m), [
+                    f"product canary-esp32cam: builds the '{tree}' tree, which flavors.json does "
+                    f"not list — its feature claims cannot be held to any tree"])
+        # The other lanes' problems are still collected beside it.
+        m = copy.deepcopy(matrix)
+        _lane(m, "canary-esp32cam")["flavor"] = "canary-nope"
+        _lane(m, "canary-sense")["build"]["features"].append("battery")
+        errors = _claims(m)
+        self.assertEqual(len(errors), 2, errors)
+        self.assertTrue(errors[1].startswith("product canary-sense: lists 'battery'"), errors)
+
     def test_the_tree_reader_is_the_thermal_suites_own(self):
         # One definition of a tree and of a die-temperature read.
         self.assertEqual(Path(lbm.tree_suite().__file__).resolve(),

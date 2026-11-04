@@ -96,7 +96,7 @@ def lanes(prod: dict):
 
 
 def feature_flag_errors(matrix: dict, tree_facts, env_flags, aliases=None,
-                        unmapped=None) -> list[str]:
+                        unmapped=None, trees=None) -> list[str]:
     """Each lane's feature claims, held to the tree that lane builds.
 
     For every feature a lane lists, the flag is the one its tree spells it
@@ -107,14 +107,24 @@ def feature_flag_errors(matrix: dict, tree_facts, env_flags, aliases=None,
     lane's env exists in its tree's PlatformIO config. A claim in `unmapped`
     is held to the negative direction only, with the catalog's flag; the
     table must stay true (claimed by a lane, unspelled in its tree), and an
-    alias no lane uses is refused, so neither table rots."""
+    alias no lane uses is refused, so neither table rots. `trees` is the
+    trees there are (flavors.json's products; the suite's flavor_dirs by
+    default): a lane whose tree is not one is named, its claims unchecked,
+    where the first version looked it up and crashed."""
     aliases = FLAG_ALIASES if aliases is None else aliases
     unmapped = UNMAPPED if unmapped is None else unmapped
+    trees = frozenset(tree_suite().flavor_dirs() if trees is None else trees)
     catalog = matrix.get("featureCatalog", {})
     errors: list[str] = []
     claimed: set[tuple[str, str]] = set()
     for prod in matrix.get("products", []):
-        tree = prod.get("flavor", prod["id"])
+        # The lane's tree as the suite's own board_envs reads it: its
+        # `flavor`, else (absent or null) its id.
+        tree = prod.get("flavor") or prod["id"]
+        if tree not in trees:
+            errors.append(f"product {prod['id']}: builds the '{tree}' tree, which flavors.json "
+                          f"does not list — its feature claims cannot be held to any tree")
+            continue
         for where, env, feats in lanes(prod):
             flags = env_flags(tree, env) if env else None
             if env and flags is None:
