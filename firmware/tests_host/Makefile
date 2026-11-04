@@ -888,6 +888,24 @@ WITKEY_INCS     = $(foreach p,$(WITKEY_PROJECTS),$(BUILD_DIR)/witness_key_load_$
 WITKEY_HDRS     = ../projects/canary-sense/include/canary/log.h $(wildcard stubs/nvs_key/*.h)
 WITKEY_BIN      = $(BUILD_DIR)/test_witness_key_load_projects
 
+# The camera's thermal step (repo sweep F432, test_camera_thermal.cpp):
+# securacv_camera's camera_thermal.h, the miss counter, fail-safe throttle,
+# 70/80 C hysteresis and frame delay CameraManager::checkThermal() calls,
+# linked with the host build of securacv_thermal.cpp, the shared
+# die-temperature provider, whose thermal_sensor_present() is false off the
+# S3, S2 and C3. A chip with no sensor never throttles and reads as no
+# sensor, three misses throttle once, and a stream's reset clears the count.
+# Built twice: as the host, and with -DCONFIG_IDF_TARGET_ESP32=1, the
+# classic ESP32 of env:esp32cam. It also reads the camera and provider
+# sources (checkThermal() reads only through the step).
+CAMTHERM_DIR  = ../canary/lib/securacv_camera/src
+CAMTHERM_PROV = ../canary/lib/securacv_thermal/src
+CAMTHERM_READS = $(CAMTHERM_DIR)/securacv_camera.cpp $(CAMTHERM_DIR)/securacv_camera.h \
+                 $(CAMTHERM_DIR)/camera_thermal.h $(CAMTHERM_PROV)/securacv_thermal.cpp
+CAMTHERM_BIN  = $(BUILD_DIR)/test_camera_thermal
+CAMTHERM_BINS = $(CAMTHERM_BIN) $(CAMTHERM_BIN)_esp32
+$(CAMTHERM_BIN)_esp32: CAMTHERM_FLAGS = -DCONFIG_IDF_TARGET_ESP32=1
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -1532,6 +1550,16 @@ $(WITKEY_BIN): test_witness_key_load_projects.cpp $(WITKEY_INCS) $(WITKEY_HDRS) 
 run-witness-key-load-projects: $(WITKEY_BIN)
 	./$(WITKEY_BIN) $(WITKEY_SRCS)
 run: run-witness-key-load-projects
+
+$(CAMTHERM_BINS): test_camera_thermal.cpp $(CAMTHERM_READS) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(CAMTHERM_FLAGS) -I $(CAMTHERM_DIR) -I $(CAMTHERM_PROV) \
+	    -I ../canary/include test_camera_thermal.cpp $(CAMTHERM_PROV)/securacv_thermal.cpp -o $@)
+
+.PHONY: run-camera-thermal
+run-camera-thermal: $(CAMTHERM_BINS)
+	./$(CAMTHERM_BIN) $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32 $(CAMTHERM_READS)
+run: run-camera-thermal
 
 $(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_PIO_SRC) > $@.tmp && mv $@.tmp $@

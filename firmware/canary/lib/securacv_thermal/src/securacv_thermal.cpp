@@ -107,3 +107,7 @@ extern "C" bool thermal_read_die_c(float* out_c) {
 }
 
 #endif
+
+extern "C" bool thermal_sensor_present(void) {
+  return SECURACV_HAVE_TSENS != 0;
+}

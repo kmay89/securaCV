@@ -4867,7 +4867,12 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   doc["breathing"] = s.breathing_score;
   doc["label"]     = sensing_label_name(s.activity_label);
 
-  doc["rssi_dbm"] = (int)s.rssi_dbm;
+  // rssi_dbm only for a window whose mean was taken over a frame (sweep
+  // F431, the MQTT body's F411 rule in main.cpp): before the first window,
+  // and after one that heard nothing or only frames below the noise floor,
+  // the snapshot holds a zero no radio measured. The page reads a body
+  // without the key as no reading: "--" and an empty gauge.
+  if (sensing_rssi_measured(&s)) doc["rssi_dbm"] = (int)s.rssi_dbm;
   doc["rssi_std"] = (int)s.rssi_std;
   doc["frames_in_window"] = s.frames_in_window;
   doc["dropped_estimate"] = s.dropped_estimate;

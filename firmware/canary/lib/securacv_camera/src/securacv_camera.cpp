@@ -86,8 +86,7 @@ CameraManager::CameraManager()
     m_initialized(false), m_peek_active(false), m_framesize(FRAMESIZE_VGA),
     m_frame_delay_ms(40), m_user_frame_delay_ms(40),
     m_metrics{}, m_metrics_mux(portMUX_INITIALIZER_UNLOCKED),
-    m_thermal_state(THERMAL_NORMAL), m_die_temp_c(0),
-    m_last_thermal_check_ms(0), m_thermal_fail_count(0),
+    m_thermal(camera_thermal::initial()), m_last_thermal_check_ms(0),
     m_last_good_frame_ms(0), m_freeze_count(0) {}
 
 // Build a camera_config_t with all pin/clock fields populated. Critically
@@ -324,7 +323,7 @@ void CameraManager::resetMetrics() {
   m_metrics.fps_window_start = now;
   portEXIT_CRITICAL(&m_metrics_mux);
   m_last_good_frame_ms = now;
-  m_thermal_state = THERMAL_NORMAL;
+  camera_thermal::reset(m_thermal);  // the state and the miss count (F432)
   m_frame_delay_ms = m_user_frame_delay_ms;
   m_last_thermal_check_ms = 0;
 }
@@ -359,7 +358,7 @@ void CameraManager::setFrameDelay(uint32_t ms) {
   if (ms < 20)  ms = 20;
   if (ms > 500) ms = 500;
   m_user_frame_delay_ms = ms;
-  if (m_thermal_state == THERMAL_NORMAL) {
+  if (m_thermal.state == THERMAL_NORMAL) {
     m_frame_delay_ms = ms;
   }
 }
@@ -689,71 +688,34 @@ void CameraManager::checkThermal() {
   if (now - m_last_thermal_check_ms < THERMAL_CHECK_INTERVAL_MS) return;
   m_last_thermal_check_ms = now;
 
-  ThermalState prev = m_thermal_state;
-
-  float temp_c = 0.0f;
-  if (!thermal_read_die_c(&temp_c)) {
-    /* One or two misses keep the last state (transient mutex timeout).
-     * At THERMAL_FAIL_SAFE_COUNT consecutive misses the actuator is
-     * blind on the hottest peripheral — fail safe to THROTTLED (the
-     * cost is frame rate only) and surface it once per episode,
-     * never silently. Normal hysteresis resumes on the next good read. */
-    if (m_thermal_fail_count < THERMAL_FAIL_SAFE_COUNT) {
-      m_thermal_fail_count++;
-      if (m_thermal_fail_count == THERMAL_FAIL_SAFE_COUNT) {
-        Serial.println("[CAMERA] Thermal sensor read failing — fail-safe throttle");
-        log_health(LOG_LEVEL_ERROR, LOG_CAT_SENSOR,
-                   "Camera thermal sensor read failing", "fail-safe throttle");
-        if (m_thermal_state == THERMAL_NORMAL) {
-          m_thermal_state = THERMAL_THROTTLED;
-        }
-      }
-    }
-  } else {
-    if (m_thermal_fail_count >= THERMAL_FAIL_SAFE_COUNT) {
-      log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
-                 "Camera thermal sensor recovered", nullptr);
-    }
-    m_thermal_fail_count = 0;
-    m_die_temp_c = (int8_t)temp_c;
-
-    if (m_thermal_state == THERMAL_PAUSED) {
-      if (m_die_temp_c < THERMAL_PAUSE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
-        m_thermal_state = THERMAL_THROTTLED;
-      }
-    } else if (m_thermal_state == THERMAL_THROTTLED) {
-      if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
-        m_thermal_state = THERMAL_PAUSED;
-      } else if (m_die_temp_c < THERMAL_THROTTLE_TEMP_C - THERMAL_RECOVER_MARGIN_C) {
-        m_thermal_state = THERMAL_NORMAL;
-      }
-    } else {
-      if (m_die_temp_c >= THERMAL_PAUSE_TEMP_C) {
-        m_thermal_state = THERMAL_PAUSED;
-      } else if (m_die_temp_c >= THERMAL_THROTTLE_TEMP_C) {
-        m_thermal_state = THERMAL_THROTTLED;
-      }
-    }
+  /* The step (camera_thermal.h, host-tested): on a chip with no die sensor
+   * (the classic ESP32) it reads nothing, counts no miss and never
+   * throttles (sweep F432). Otherwise one or two misses keep the last state
+   * (transient mutex timeout). At THERMAL_FAIL_SAFE_COUNT consecutive
+   * misses the actuator is blind on the hottest peripheral — fail safe to
+   * THROTTLED (the cost is frame rate only) and surface it once per
+   * episode, never silently. Normal hysteresis resumes on the next good
+   * read. */
+  const camera_thermal::Step step = camera_thermal::check(m_thermal, camera_thermal::DieSensor{});
+  if (step.fail_safe) {
+    Serial.println("[CAMERA] Thermal sensor read failing — fail-safe throttle");
+    log_health(LOG_LEVEL_ERROR, LOG_CAT_SENSOR,
+               "Camera thermal sensor read failing", "fail-safe throttle");
+  }
+  if (step.recovered) {
+    log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
+               "Camera thermal sensor recovered", nullptr);
   }
 
-  if (m_thermal_state == THERMAL_PAUSED) {
-    m_frame_delay_ms = 500;
-  } else if (m_thermal_state == THERMAL_THROTTLED) {
-    uint32_t throttled = m_user_frame_delay_ms * 3;
-    if (throttled < 120) throttled = 120;
-    if (throttled > 500) throttled = 500;
-    m_frame_delay_ms = throttled;
-  } else {
-    m_frame_delay_ms = m_user_frame_delay_ms;
-  }
+  m_frame_delay_ms = camera_thermal::frame_delay_ms(m_thermal.state, m_user_frame_delay_ms);
 
-  if (prev != m_thermal_state) {
+  if (step.changed) {
     const char* states[] = {"normal", "throttled", "paused"};
     Serial.printf("[CAMERA] Thermal: %s (die=%d°C)\n",
-                  states[m_thermal_state], m_die_temp_c);
-    log_health(m_thermal_state == THERMAL_NORMAL ? LOG_LEVEL_INFO : LOG_LEVEL_WARNING,
+                  states[m_thermal.state], m_thermal.die_temp_c);
+    log_health(m_thermal.state == THERMAL_NORMAL ? LOG_LEVEL_INFO : LOG_LEVEL_WARNING,
                LOG_CAT_SENSOR, "Camera thermal state change",
-               states[m_thermal_state]);
+               states[m_thermal.state]);
   }
 }
 
