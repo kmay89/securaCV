@@ -16,6 +16,17 @@ committed file, exactly like gen_senselab.py / gen_wap.py):
     snippets are line-for-line ports of that project's playground.cpp
     drivers. tests/playground.test.js re-checks the prose against the
     firmware source and the PG1 grammar against playground-sim.js.
+  * Each station's `stimulus` rows are the controls a page draws for it, and
+    its `faults` rows (same shape) the bus answering badly: a Modbus
+    exception, a CAN bus-off and its recovery, a frame no node acknowledges.
+    They are a separate key because the website's /playground draws every
+    `stimulus` row as a button and dispatches each action in its own
+    `_poke` switch, which ignores an action it does not know: rows it cannot
+    dispatch yet would be buttons that do nothing. A page draws `faults`
+    once it dispatches them. tests/playground.test.js drives every row's
+    action through playground-sim.js and holds each station's `expect`
+    strings to what the sim then prints, and holds every PG1 body the
+    firmware station prints to one the sim can print.
 
 The board body is a schematic procedural stand-in sized from Waveshare's
 published outline (NOT vendor CAD) — the same honesty split wiring.json
@@ -240,35 +251,64 @@ def main() -> None:
         "namespace mb = canary::io::modbus;\n\n"
         "void rs485_probe() {\n"
         "  Serial1.begin(9600, SERIAL_8N1, RS485_PIN_RX, RS485_PIN_TX);\n"
-        "  uint8_t req[8];\n"
+        "  uint8_t req[mb::MAX_ADU];\n"
         "  size_t n = mb::build_read_holding(1, 0, 1, req, sizeof(req));\n"
+        "  while (Serial1.available()) Serial1.read();      // drop stale bytes\n"
         "  Serial1.write(req, n); Serial1.flush();          // A/B, auto-dir\n"
-        "  uint8_t resp[16]; size_t got = 0;\n"
+        "  const size_t want = mb::read_response_len(1);    // 7: one register\n"
+        "  uint8_t resp[mb::MAX_ADU]; size_t got = 0;\n"
         "  uint32_t deadline = millis() + 300;\n"
-        "  while (got < 7 && (int32_t)(deadline - millis()) > 0)\n"
-        "    while (Serial1.available()) resp[got++] = Serial1.read();\n"
+        "  // An exception is 5 bytes (fn | 0x80, code): stop on it, too.\n"
+        "  while (got < want && !mb::exception_complete(resp, got, 1, mb::FN_READ_HOLDING) &&\n"
+        "         (int32_t)(deadline - millis()) > 0)\n"
+        "    while (Serial1.available() && got < sizeof(resp)) resp[got++] = Serial1.read();\n"
         "  uint16_t reg[1];\n"
-        "  if (mb::parse_registers(resp, got, 1, mb::FN_READ_HOLDING, reg, 1) == 1)\n"
+        "  if (mb::exception_complete(resp, got, 1, mb::FN_READ_HOLDING))  // refused:\n"
+        "    Serial.printf(\"slave 1 exception %u\\n\",  // 2 = illegal data address\n"
+        "                  mb::decode_exception(resp, mb::EXCEPTION_LEN));\n"
+        "  else if (got >= want &&\n"
+        "           mb::parse_registers(resp, got, 1, mb::FN_READ_HOLDING, reg, 1) == 1)\n"
         "    Serial.printf(\"slave 1 reg0 = %u\\n\", reg[0]);\n"
+        "  else\n"
+        "    Serial.printf(\"slave 1: no reply\\n\");\n"
         "}"
     )
 
     can_code = (
-        "// CAN · TWAI — send one test frame; received frames are drained.\n"
+        "// CAN · TWAI — send one test frame; received frames are drained, and\n"
+        "// after each drain one step of the bus-off recovery runs (never a send).\n"
         "// Uses the pure core canary/io/can_frame.h + ESP-IDF TWAI.\n"
+        "#include <Arduino.h>\n"
         "#include <driver/twai.h>\n\n"
+        "static bool s_recovering = false;   // a recovery initiated, not restarted\n\n"
         "void can_begin() {\n"
-        "  auto g = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_PIN_TX,\n"
-        "                                       (gpio_num_t)CAN_PIN_RX, TWAI_MODE_NORMAL);\n"
-        "  auto t = TWAI_TIMING_CONFIG_500KBITS();\n"
-        "  auto f = TWAI_FILTER_CONFIG_ACCEPT_ALL();\n"
+        "  twai_general_config_t g = TWAI_GENERAL_CONFIG_DEFAULT(\n"
+        "      (gpio_num_t)CAN_PIN_TX, (gpio_num_t)CAN_PIN_RX, TWAI_MODE_NORMAL);\n"
+        "  twai_timing_config_t t = TWAI_TIMING_CONFIG_500KBITS();\n"
+        "  twai_filter_config_t f = TWAI_FILTER_CONFIG_ACCEPT_ALL();\n"
         "  twai_driver_install(&g, &t, &f); twai_start();   // H/L, 500 kbit/s\n"
         "}\n"
         "void can_send() {\n"
         "  twai_message_t m = {};\n"
         "  m.identifier = 0x100; m.data_length_code = 8;\n"
         "  for (int i = 0; i < 8; i++) m.data[i] = 0xC0 + i;\n"
-        "  twai_transmit(&m, pdMS_TO_TICKS(50));\n"
+        "  if (twai_transmit(&m, pdMS_TO_TICKS(50)) == ESP_OK) return;\n"
+        "  twai_status_info_t st = {};\n"
+        "  bool bus_off = twai_get_status_info(&st) == ESP_OK &&\n"
+        "      (st.state == TWAI_STATE_BUS_OFF || st.state == TWAI_STATE_RECOVERING ||\n"
+        "       (st.state == TWAI_STATE_STOPPED && s_recovering));\n"
+        "  Serial.printf(\"%s\\n\", bus_off ? \"tx=fail bus=off (recovering)\"\n"
+        "                               : \"tx=fail (bus quiet? need another node/ack)\");\n"
+        "}\n"
+        "// The inline twin of canary::io::can_recover(), every 100 ms after the drain.\n"
+        "void can_recover() {\n"
+        "  twai_status_info_t st = {};\n"
+        "  if (twai_get_status_info(&st) != ESP_OK) return;\n"
+        "  if (st.state == TWAI_STATE_BUS_OFF && !s_recovering) {\n"
+        "    if (twai_initiate_recovery() == ESP_OK) s_recovering = true;  // once per bus-off\n"
+        "  } else if (st.state == TWAI_STATE_STOPPED && s_recovering) {\n"
+        "    if (twai_start() == ESP_OK) s_recovering = false;             // back on the bus\n"
+        "  }\n"
         "}"
     )
 
@@ -304,6 +344,7 @@ def main() -> None:
             "code": {"DI0": di_code("DI0"), "DI1": di_code("DI1")},
             "stimulus": [{"id": "press", "label": "Press", "action": "di:on"},
                          {"id": "release", "label": "Release", "action": "di:off"}],
+            "faults": [],
             "expect": ["state=active count=", "state=clear held_ms="],
         },
         {
@@ -324,6 +365,7 @@ def main() -> None:
             "code": {"DI1": di_code("DI1"), "DI0": di_code("DI0")},
             "stimulus": [{"id": "trip", "label": "Trip (magnet / motion)", "action": "di:on"},
                          {"id": "clear", "label": "Clear", "action": "di:off"}],
+            "faults": [],
             "expect": ["state=active count=", "state=clear held_ms="],
         },
         {
@@ -343,6 +385,7 @@ def main() -> None:
             "code": {"DO0": do_code("DO0"), "DO1": do_code("DO1")},
             "stimulus": [{"id": "pulse", "label": "PULSE 1.5s", "action": "do:pulse"},
                          {"id": "latch", "label": "LATCH 30s", "action": "do:latch"}],
+            "faults": [],
             "expect": ["out=on", "out=off"],
         },
         {
@@ -360,6 +403,7 @@ def main() -> None:
             "code": {"DO1": do_code("DO1"), "DO0": do_code("DO0")},
             "stimulus": [{"id": "pulse", "label": "PULSE 1.5s", "action": "do:pulse"},
                          {"id": "latch", "label": "LATCH 30s", "action": "do:latch"}],
+            "faults": [],
             "expect": ["out=on", "out=off"],
         },
         {
@@ -381,6 +425,7 @@ def main() -> None:
             "code": {"VEML7700 · 0x10": light_code, "BH1750 · 0x5C": light_code},
             "stimulus": [{"id": "bright", "label": "Uncover (bright)", "action": "light:bright"},
                          {"id": "dark", "label": "Cover (dark)", "action": "light:dark"}],
+            "faults": [],
             "expect": ["attached=0x10", "attached=0x5C"],
         },
         {
@@ -402,6 +447,7 @@ def main() -> None:
             "stimulus": [{"id": "near", "label": "Object near (trip)", "action": "tof:near"},
                          {"id": "far", "label": "Object far (clear)", "action": "tof:far"},
                          {"id": "cycle", "label": "Cycle trip", "action": "tof:cycle"}],
+            "faults": [],
             "expect": ["trip=1 mm=", "trip_mm="],
         },
         {
@@ -424,6 +470,7 @@ def main() -> None:
             "stimulus": [{"id": "touch", "label": "Touch pad", "action": "pad:touch"},
                          {"id": "release", "label": "Release", "action": "pad:release"},
                          {"id": "preset", "label": "Cycle sensitivity", "action": "pad:preset"}],
+            "faults": [],
             "expect": ["pads=0x", "preset="],
         },
         {
@@ -441,11 +488,15 @@ def main() -> None:
                 "2. Match the line: 9600 8N1 here (Modbus RTU).\n"
                 "3. 120 ohm terminators on long runs, both ends.\n"
                 "PROBE reads holding register 0 of slave 1 and shows\n"
-                "the value. Shares GPIO44/43 with the USB console."),
+                "the value. Shares GPIO44/43 with the USB console.\n"
+                "An exception (exc 2 = illegal data address) is the\n"
+                "slave refusing the register: check it, not A/B."),
             "code": {"rs485": rs485_code},
             "stimulus": [{"id": "probe", "label": "Probe (read reg 0)", "action": "rs485:probe"},
                          {"id": "quiet", "label": "No device", "action": "rs485:quiet"}],
-            "expect": ["slave=1 reg=0 val=", "reply=none"],
+            "faults": [{"id": "exception", "label": "Slave refuses (exception 2)",
+                        "action": "rs485:exception"}],
+            "expect": ["slave=1 reg=0 val=", "reply=none", "slave=1 exception=2"],
         },
         {
             "id": "can", "title": "CAN bus", "where": "H/L",
@@ -466,7 +517,11 @@ def main() -> None:
             "code": {"can": can_code},
             "stimulus": [{"id": "send", "label": "Send test frame", "action": "can:send"},
                          {"id": "rx", "label": "Node replies", "action": "can:rx"}],
-            "expect": ["tx id=", "rx id="],
+            "faults": [{"id": "busoff", "label": "Bus-off (wiring fault)", "action": "can:busoff"},
+                       {"id": "noack", "label": "No other node (no ack)", "action": "can:noack"}],
+            "expect": ["tx id=", "rx id=", "tx=fail bus=off (recovering)",
+                       "bus=off recovery=started", "bus=on recovered",
+                       "tx=fail (bus quiet? need another node/ack)"],
         },
         {
             "id": "census", "title": "I2C census", "where": "bus",
@@ -482,6 +537,7 @@ def main() -> None:
                 "backlight/touch - re-strap it before wiring."),
             "code": {"bus": census_code},
             "stimulus": [{"id": "scan", "label": "Scan bus", "action": "bus:scan"}],
+            "faults": [],
             "expect": ["i2c="],
         },
     ]
