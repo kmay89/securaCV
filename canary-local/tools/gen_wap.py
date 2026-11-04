@@ -970,7 +970,7 @@ TOPICS = [
     {"suffix": "mesh", "retained": True, "cadence": "~30 s",
      "payload": '{"airtime_pct_x100":40,"channel":6,"locked_to_sta":true,"locked_to_ap":false,"fallback":false,"routine_allowed":18,"routine_denied":0,"urgent_sends":0}'},
     {"suffix": "chirp", "retained": True, "cadence": "~30 s",
-     "payload": '{"state":"listening"}', "note": "state is the lowercase chirp enum"},
+     "payload": '{"state":"active"}', "note": "state is the lowercase chirp enum"},
     {"suffix": "beacon", "retained": True, "cadence": "~30 s",
      "payload": '{"state":"Normal","beacon_airtime_pct_x100":0,"active_template":"","beacon_sends":0,"beacon_set_size":2,"trouble_mask":0}',
      "note": "state is NFPA-capitalized"},
@@ -992,7 +992,21 @@ if list(_egress_example.keys()) != EGRESS_KEYS:
 if list(_egress_example["planner"].keys()) != EGRESS_PLANNER_KEYS:
     die(f"MQTT egress: example planner keys {list(_egress_example['planner'])} are not the firmware's "
         f"{EGRESS_PLANNER_KEYS}")
-must(FW / "chirp_channel.cpp", 'case CHIRP_LISTENING:    return "listening";', "chirp state word")
+# The chirp example's word is one the canary-wap's channel publishes (sweep
+# A90): the sketch sends state_name() of get_status().state, and enable()
+# goes from initializing straight to active; nothing on the WAP sets
+# CHIRP_LISTENING, so the old example, "listening", was a word state_name()
+# has and the device never sends. The example is state_name()'s word for
+# CHIRP_ACTIVE, which a code line of chirp_channel.cpp enters; wap.test.js
+# holds it to every state chirp_channel.cpp can show.
+CHIRP_CPP = FW / "chirp_channel.cpp"
+must(CHIRP_CPP, 'case CHIRP_ACTIVE:       return "active";', "chirp state word")
+if json.loads(next(t for t in TOPICS if t["suffix"] == "chirp")["payload"]) != {"state": "active"}:
+    die('MQTT chirp: the example is not {"state":"active"}, the word state_name() gives the state checked here')
+if not any(_live and re.search(r"\bset_state\(CHIRP_ACTIVE\)", _bare)
+           for _n, _ln, _code, _bare, _live, _unread in _scan_lines(read(CHIRP_CPP))):
+    die(f"{CHIRP_CPP.relative_to(REPO)}: no code line sets CHIRP_ACTIVE: the chirp example's state is one "
+        f"the canary-wap no longer enters; pick one it does (sweep A90)")
 must(FW / "beacon_channel.cpp", 'case BEACON_STATE_NORMAL:      return "Normal";', "beacon state word")
 SUBSCRIBED = [
     {"suffix": "update/cmd", "payload": '"install"'},

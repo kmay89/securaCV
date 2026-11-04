@@ -253,6 +253,30 @@ test("every MQTT topic example is keyed as the firmware publishes it (sweep A32)
   assert.ok(csiMqttCpp.includes('const char* pl = muted ? "muted" : "live";'));
 });
 
+// Sweep A90: the chirp example said "listening", a word state_name() has and
+// no canary-wap sends: enable() goes from initializing straight to active,
+// and nothing on the WAP sets CHIRP_LISTENING. The example's word is held to
+// the states chirp_channel.cpp can show: one set_state() enters, the one the
+// channel starts in, or the one shown_state() reads over an active channel
+// whose cooldown runs (what get_status() reports, and the sketch publishes).
+const chirpCpp = read(join(FW, "chirp_channel.cpp"));
+test("the chirp example's state is a word the WAP's channel shows (sweep A90)", () => {
+  const words = new Map([...fnBody(chirpCpp, "const char* state_name(ChirpState state) {")
+    .matchAll(/case (CHIRP_[A-Z_]+):\s*return "([a-z_]+)";/g)].map((m) => [m[2], m[1]]));
+  assert.ok(words.size >= 5, "state_name() parsed thin: " + [...words.keys()]);
+  const code = chirpCpp.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/.*$/gm, "");
+  const shown = new Set([
+    ...[...code.matchAll(/\bset_state\((CHIRP_[A-Z_]+)\)/g)].map((m) => m[1]),
+    ...[...code.matchAll(/static ChirpState g_state = (CHIRP_[A-Z_]+);/g)].map((m) => m[1]),
+    ...[...fnBody(code, "static ChirpState shown_state(").matchAll(/\?\s*(CHIRP_[A-Z_]+)\s*:/g)].map((m) => m[1]),
+  ]);
+  assert.ok(shown.has("CHIRP_ACTIVE") && shown.has("CHIRP_DISABLED"), "chirp_channel.cpp parsed thin: " + [...shown]);
+  const state = JSON.parse(data.mqtt.topics.find((t) => t.suffix === "chirp").payload).state;
+  assert.ok(words.has(state),
+    "the chirp example's state " + JSON.stringify(state) + " is not a word state_name() returns");
+  assert.ok(shown.has(words.get(state)), "the chirp example says " + JSON.stringify(state) + ", but chirp_channel.cpp "
+    + "never enters " + words.get(state) + " (it shows " + [...shown].sort().join(", ") + ")");
+});
 
 test("the egress example is the body csi_mqtt::publish_egress() sends (sweep F149)", () => {
   const t = data.mqtt.topics.find((x) => x.suffix === "egress");
