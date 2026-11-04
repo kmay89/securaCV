@@ -1,6 +1,22 @@
 # Changelog
 
 ## [Unreleased]
+### Dependency advisories: zip 9 in both Tauri apps, three ignores retired
+
+- **The scheduled Dependency Audit of 2026-11-02 went red on `zip` 4.6.1
+  (RUSTSEC-2026-0429, 7.5 high: `extract` aborts the process on a symlink
+  entry with a large declared size) in the Flasher's and the Lab's lockfiles
+  (`desktop/src-tauri`, `desktop-lab/src-tauri`).** The crate came from
+  `tauri-plugin-updater` 2.14.0 alone, Windows-only, on the same
+  signed-archive-only path `SECURITY.md` Group 4 analyzes; Dependabot's own
+  security updates for it failed twice (2026-10-29, 2026-10-30) because no
+  4.x release is fixed. `tauri-plugin-updater` 2.14.1 requires `zip ^9`, so
+  both lockfiles take the updater bump and `zip` 9.2.2, and the three
+  Group 4 ignores (RUSTSEC-2026-0367 to -0369) leave `.cargo/audit.toml`
+  as that file promised they would once an updater 2.x took zip 9.
+  `cargo audit` reads one entry now, Group 3's `rsa`. Lockfile bumps and the
+  record; `cargo audit` and `cargo deny` are CI's.
+
 ### Flashing says how long it will take, shows it's alive, and spends far less time on blank flash
 
 - **The safety copy skips blank flash (browser flasher).** It used to read
