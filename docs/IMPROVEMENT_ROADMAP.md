@@ -281,7 +281,7 @@ write-mode run of the new generator over it prints "nothing to write".
   is, with its disagreement recorded (the Dash: 113.7 × 73.6 × 16 there,
   118 × 79 × 38.9 in `figures.json`, `dims_source: board-cad`) — retired in
   PR #1703 (maintainer to confirm), the Dash figure now measured off its assembled case (row 21).
-- **One lesson, kept** (`CLAUDE.md`, "Generated files"): the review round
+- **One lesson, kept** (`docs/GENERATED_FILES.md`): the review round
   found the generator's checker answering "the file already says it" for a
   value it could not spell as a Customizer literal — an exponent-form
   number, NaN, a string holding a comment opener — so a wrong manifest

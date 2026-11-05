@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./canary-local/emulator/dist/**)",
+      "Read(./boards/vendor/**)",
+      "Read(./**/*.glb)",
+      "Read(./**/*.stl)",
+      "Read(./**/*.3mf)",
+      "Read(./**/*.step.gz)",
+      "Read(./**/*.icns)",
+      "Read(./firmware/projects/canary-wap/arduino/canary_wap/web_assets_gz.h)",
+      "Read(./docs/audit/repo_todo_sweep_2026-09.md)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/read_guard.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/session_brief.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+# Read by ripgrep (and so by every agent's Grep), not by git. Generated output
+# and dumps stay out of a search unless asked for by name:
+#   rg --no-ignore -g revisions.json <pattern>
+canary-local/emulator/dist/
+canary-local/boards/*.glb
+boards/vendor/
+*.stl
+*.3mf
+*.glb
+*.step.gz
+*.icns
+# generated from web_ui.h / csi_dashboard_html.h / companion_pwa.h
+firmware/projects/canary-wap/arduino/canary_wap/web_assets_gz.h
+# generated from the canary-display PlatformIO tree (setup.sh regen)
+firmware/projects/canary-display/arduino/canary_display/
+# catalogs the generators write (1.2 MB and 0.5 MB)
+canary-local/devices/revisions.json
+canary-local/devices/enclosures.json
+# archives: a 1.8 MB audit dump and the 0.9 MB changelog
+docs/audit/repo_todo_sweep_2026-09.md
+CHANGELOG.md
+Cargo.lock
+package-lock.json

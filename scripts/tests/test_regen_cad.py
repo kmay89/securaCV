@@ -5,7 +5,7 @@ What is pinned and why (nothing is executed: subprocess.run and shutil.which
 are replaced for every test, and a recorder keeps what WOULD have run):
   • the STEPS order is exactly the derived order — a change to it is a
     deliberate edit of this test, because a step run out of order fails with
-    a message that names the wrong cause (CLAUDE.md, "the rebuild is
+    a message that names the wrong cause (docs/GENERATED_FILES.md, "the rebuild is
     upstream of the catalog generators");
   • every step maps to a check form: the argv for the ten that have one,
     the regenerate-compare-restore form for gen_enclosures.py (which has no
