@@ -1936,8 +1936,18 @@ static bool load_opera_config(bool* member_slots_without_opera) {
   size_t id_len = g_prefs.getBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
   size_t secret_len = g_prefs.getBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
   String name = g_prefs.getString(NVS_FLEET_NAME, "");
-  strncpy(g_opera_config.opera_name, name.c_str(), MAX_OPERA_NAME_LEN);
-  g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
+  // A name stored before the rule (sweep F303; opera_name_storable()) is
+  // read back clean, in RAM: each control byte as a space
+  // (device_name_rule::scrub_stored(), as the device name's load does), and
+  // each piece that is not whole UTF-8 (a character the old pair/start cut
+  // at its 32nd byte) as U+FFFD, the text cut on a character to fit. A
+  // well-formed name reads back as it was stored. The NVS row keeps its old
+  // bytes until the next rename or pairing writes the name again.
+  char stored[MAX_OPERA_NAME_LEN + 1];
+  strncpy(stored, name.c_str(), MAX_OPERA_NAME_LEN);
+  stored[MAX_OPERA_NAME_LEN] = '\0';
+  (void)device_name_rule::scrub_stored(stored);
+  (void)wap_json::shown_text(g_opera_config.opera_name, sizeof(g_opera_config.opera_name), stored);
   g_opera_config.configured = (id_len == OPERA_ID_SIZE && secret_len == OPERA_SECRET_SIZE);
   // An all-zero id or secret is no opera (sweep F113): what a leave on
   // firmware from before F113 stored (persist_opera_config). Taken as
@@ -2409,11 +2419,38 @@ void update() {
   // ACKed or the timeout expires.
   maybe_finalize_rekey();
 
-  // Check pairing timeout
+  // Check pairing timeout. Logged, as every other end of a pairing is (sweep
+  // F359: fail_pairing(), a CONFIRM that did not match, an unanswered
+  // COMPLETE), so the owner learns why the code on the screen led nowhere.
+  // Whether this side's owner confirmed is read first, since cancel_pairing()
+  // wipes the session. Only a session that showed its code can hold a
+  // confirm (confirm_pairing() refuses before). An initiator whose owner and
+  // joiner both confirmed has completed in initiator_step() above, so one
+  // that confirmed and times out never had the joiner's CONFIRM, and a joiner
+  // that confirmed never had the COMPLETE. The line says what this side
+  // knows: nothing came back after its owner confirmed. Why is one of three
+  // things it cannot tell apart, so it names none as the cause: the other
+  // owner never confirmed; the other Canary runs pairing firmware from
+  // before F75/F94 and did not answer as this one expects; or every copy was
+  // lost on the air (the initiator then holds the member and logs an
+  // unanswered COMPLETE, so the other Canary's log says which: the detail
+  // points there). Written as message and detail through log_health(): the
+  // ring keeps 79 bytes of a message and 47 of a detail (HealthLogRingEntry),
+  // and GET /api/logs, the dashboard and the BLE log read the ring, so one
+  // longer line reached the owner cut before its reason (the F359 review);
+  // Serial and the /HEALTH file carry both fields whole.
+  // test_mesh_liveness_wap.cpp and test_opera_name_wap.cpp hold the words
+  // and that both fields reach GET /api/logs whole.
   if ((g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN ||
        g_mesh_state == MESH_PAIRING_CONFIRM) &&
       now - g_pairing.started_ms > PAIRING_TIMEOUT_MS) {
+    const bool confirmed_here = g_pairing.code_confirmed;
     cancel_pairing();
+    log_health(SCV_LOG_WARNING, SCV_CAT_MESH,
+               confirmed_here
+                   ? "opera: pairing timed out; code confirmed here, no answer from the other Canary"
+                   : "opera: pairing timed out",
+               confirmed_here ? "check its log; older firmware? update both" : nullptr);
   }
 
   // Send periodic heartbeat — while MESH_CONNECTING too (sweep F76). It
@@ -2812,6 +2849,9 @@ const OperaConfig* get_opera_config() {
 }
 
 static bool set_opera_name(const char* name) {
+  // The route refuses such a name first, in words (sweep F303); this is the
+  // setter's own test, so no other caller can store one.
+  if (!opera_name_storable(name)) return false;
   strncpy(g_opera_config.opera_name, name, MAX_OPERA_NAME_LEN);
   g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
   return persist_opera_config();
@@ -2851,6 +2891,12 @@ static bool leave_opera() {
 static bool start_pairing_initiator(const char* opera_name) {
   if (g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN) {
     return false;  // Already pairing
+  }
+  // A name given is held to the rule before anything starts (sweep F303;
+  // the route refuses it first, in words): it was stored cut at 32 bytes,
+  // inside a character if one stood there. None given keeps the default.
+  if (opera_name != nullptr && !opera_name_storable(opera_name)) {
+    return false;
   }
 
   memset(&g_pairing, 0, sizeof(g_pairing));

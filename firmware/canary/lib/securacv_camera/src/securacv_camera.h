@@ -39,17 +39,13 @@ struct PeekMetrics {
 // THERMAL STATE
 // ════════════════════════════════════════════════════════════════════════════
 
-enum ThermalState : uint8_t {
-  THERMAL_NORMAL    = 0,
-  THERMAL_THROTTLED = 1,
-  THERMAL_PAUSED    = 2
-};
-
-/* THERMAL_THROTTLE_TEMP_C / THERMAL_PAUSE_TEMP_C / THERMAL_RECOVER_MARGIN_C
+/* ThermalState, THERMAL_FAIL_SAFE_COUNT and the step checkThermal() takes
+ * live in camera_thermal.h (pure, host-tested, sweep F432).
+ * THERMAL_THROTTLE_TEMP_C / THERMAL_PAUSE_TEMP_C / THERMAL_RECOVER_MARGIN_C
  * come from canary_config.h (single source, shared with the thermal
  * watchdog's shadow classifier). */
+#include "camera_thermal.h"
 #define THERMAL_CHECK_INTERVAL_MS  5000
-#define THERMAL_FAIL_SAFE_COUNT    3     // consecutive read failures before fail-safe throttle
 #define FREEZE_TIMEOUT_MS          10000
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -115,9 +111,13 @@ public:
 
   // Thermal management — call periodically during streaming
   void checkThermal();
-  ThermalState getThermalState() const { return m_thermal_state; }
-  int8_t getDieTempC() const { return m_die_temp_c; }
-  bool getThermalSensorOk() const { return m_thermal_fail_count < THERMAL_FAIL_SAFE_COUNT; }
+  ThermalState getThermalState() const { return m_thermal.state; }
+  int8_t getDieTempC() const { return m_thermal.die_temp_c; }
+  // False on a chip with no die sensor (the classic ESP32: there is nothing
+  // to vouch for), and from the fail-safe miss until a good read (F432).
+  bool getThermalSensorOk() const {
+    return camera_thermal::sensor_ok(m_thermal, thermal_sensor_present());
+  }
 
   // Freeze detection — call when frame capture fails
   bool checkFreeze(uint32_t now_ms);
@@ -162,11 +162,9 @@ private:
   PeekMetrics m_metrics;
   portMUX_TYPE m_metrics_mux;
 
-  // Thermal state
-  ThermalState m_thermal_state;
-  int8_t m_die_temp_c;
+  // Thermal state (camera_thermal.h's step owns it)
+  camera_thermal::Tracker m_thermal;
   uint32_t m_last_thermal_check_ms;
-  uint8_t m_thermal_fail_count;
 
   // Freeze detection
   uint32_t m_last_good_frame_ms;

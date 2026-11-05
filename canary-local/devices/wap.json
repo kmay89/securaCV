@@ -544,7 +544,7 @@
         "suffix": "chirp",
         "retained": true,
         "cadence": "~30 s",
-        "payload": "{\"state\":\"listening\"}",
+        "payload": "{\"state\":\"active\"}",
         "note": "state is the lowercase chirp enum"
       },
       {

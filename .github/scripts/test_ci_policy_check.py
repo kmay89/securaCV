@@ -21,6 +21,8 @@ and below may keep saying `runs-on: ubuntu-latest`; its cases pin every place
 a runner can be named, what does not count (comments, step scripts, pinned
 labels), the exemption, that an exemption whose file no longer names the
 label is refused (by the same reading), and that main() really runs it.
+Last, CI.md's rule table is held to the rules this checker's docstring names:
+one row each, in numeric order, so a new rule cannot live only in the checker.
 """
 
 from __future__ import annotations
@@ -713,6 +715,45 @@ class R11FloatingRunner(unittest.TestCase):
         for name in policy.get("ubuntu_latest_ok") or []:
             self.assertTrue(
                 os.path.exists(os.path.join(cpc.WORKFLOWS_DIR, name)), name)
+
+
+class CIMdNamesEveryRule(unittest.TestCase):
+    """.github/CI.md's rule table is where a contributor reads the rules; the
+    checker's module docstring is where the rules are enforced. R11 lived only
+    in the second for a month (sweep CI23), so a rule the checker names with
+    no table row, a row for a rule the checker does not name, or a table out
+    of numeric order (R10 sat above R9) fails here."""
+
+    DOC_RULE_RE = cpc.re.compile(r"^  (R\d+)\s", cpc.re.MULTILINE)
+    ROW_RE = cpc.re.compile(r"^\| (R\d+) \|", cpc.re.MULTILINE)
+
+    def _rows(self) -> list[str]:
+        with open(os.path.join(cpc.REPO_ROOT, ".github", "CI.md"),
+                  encoding="utf-8") as f:
+            return self.ROW_RE.findall(f.read())
+
+    def test_the_docstring_reading_sees_the_rules(self):
+        # Guards the reading itself: an indentation change that hid every
+        # rule from DOC_RULE_RE would make the comparison below vacuous.
+        rules = self.DOC_RULE_RE.findall(cpc.__doc__ or "")
+        self.assertEqual(rules[:3], ["R1", "R2", "R3"], rules)
+        self.assertGreaterEqual(len(rules), 11, rules)
+
+    def test_every_rule_the_checker_names_has_a_row(self):
+        rules = self.DOC_RULE_RE.findall(cpc.__doc__ or "")
+        rows = self._rows()
+        missing = [r for r in rules if r not in rows]
+        self.assertEqual(missing, [], "rules ci_policy_check.py's docstring "
+                         "names with no row in .github/CI.md's table")
+        extra = [r for r in rows if r not in rules]
+        self.assertEqual(extra, [], "CI.md rows for rules the checker's "
+                         "docstring does not name")
+        self.assertEqual(len(rows), len(set(rows)), f"a rule has two rows: {rows}")
+
+    def test_the_table_is_in_rule_order(self):
+        rows = self._rows()
+        self.assertEqual(rows, sorted(rows, key=lambda r: int(r[1:])),
+                         "CI.md's rule table is out of numeric order")
 
 
 if __name__ == "__main__":

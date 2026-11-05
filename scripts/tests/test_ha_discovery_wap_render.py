@@ -35,7 +35,17 @@ client through a unit's life). It holds:
     state has its trigger;
   * Signal Strength renders nothing on a status without rssi (the connect
     burst's and the last will), so Home Assistant keeps the last reading
-    (sweep F368; it read 0 dBm after every connect before).
+    (sweep F368; it read 0 dBm after every connect before);
+  * Chirp Channel State shows publish_chirp_state()'s own word for no state
+    ("unknown", read from csi_mqtt.cpp) on a body without one, and the
+    comments that describe what the chirp topic carries (csi_mqtt.cpp's
+    discovery entry and publish_chirp_state(), csi_mqtt.h's declaration,
+    the sketch's one call) name only words chirp_channel::state_name() can
+    return, cite spec/chirp_channel_v0.md's states section (§7.1), and name
+    none of the words only Beacon sends (sweep F295: they promised the four
+    NFPA-72 words, Normal | Trouble | Alarm | Supervisory, which Chirp never
+    sends, cited the spec's Changelog, and the template defaulted to
+    Normal).
 
 The vocabularies are read from the module sources; a reader that cannot find
 one refuses by name. The two bodies the sketch builds (the update state and
@@ -183,6 +193,76 @@ def acoustic_words() -> set[str]:
     if not m:
         raise AssertionError("securacv_audio.cpp's event_name() moved; re-read its words")
     return set(re.findall(r'return "(\w+)";', m.group(1)))
+
+
+def _function_body(source: str, signature: str, name: str) -> str:
+    m = re.search(r"\n" + re.escape(signature) + r"\s*\{(.*?)\n\}\n", _source(source), re.S)
+    if not m:
+        raise AssertionError(f"{name} moved; re-read it")
+    return m.group(1)
+
+
+def chirp_fallback() -> str:
+    """publish_chirp_state()'s word for a NULL state, from csi_mqtt.cpp."""
+    body = _function_body("csi_mqtt.cpp", "void publish_chirp_state(const char* state_name)",
+                          "csi_mqtt.cpp's publish_chirp_state()")
+    m = re.search(r'state_name \? state_name : "(\w+)"', body)
+    if not m:
+        raise AssertionError("publish_chirp_state()'s NULL fallback moved; re-read it")
+    return m.group(1)
+
+
+def state_name_words(source: str, signature: str) -> set[str]:
+    """Every word a state_name() returns, its default included."""
+    body = _function_body(source, signature, f"{source}'s state_name()")
+    words = set(re.findall(r'return "(\w+)";', body))
+    if not words:
+        raise AssertionError(f"{source}'s state_name() returns no word it can read")
+    return words
+
+
+def chirp_words() -> set[str]:
+    return state_name_words("chirp_channel.cpp", "const char* state_name(ChirpState state)")
+
+
+def beacon_words() -> set[str]:
+    return state_name_words("beacon_channel.cpp", "const char* state_name(BeaconState state)")
+
+
+def _comment_text(code: str) -> str:
+    """The comments in `code`, block and line, joined."""
+    return "\n".join(m.group(0) for m in re.finditer(r"/\*.*?\*/|//[^\n]*", code, re.S))
+
+
+def chirp_comments() -> dict[str, str]:
+    """The comments that say what the chirp topic carries, by where they are."""
+    out: dict[str, str] = {}
+    cpp = _source("csi_mqtt.cpp")
+    at = cpp.find('{ "sensor", "chirp_state"')
+    if at < 0:
+        raise AssertionError("csi_mqtt.cpp's chirp_state entry moved; re-read it")
+    out["csi_mqtt.cpp's chirp_state entry"] = _comment_text(cpp[cpp.rindex("},", 0, at) + 2:at])
+    out["csi_mqtt.cpp's publish_chirp_state()"] = _comment_text(_function_body(
+        "csi_mqtt.cpp", "void publish_chirp_state(const char* state_name)", "publish_chirp_state()"))
+    h = _source("csi_mqtt.h")
+    at = h.find("void publish_chirp_state(")
+    start = h.rfind("/**", 0, at)
+    if at < 0 or start < 0 or not h[start:at].rstrip().endswith("*/"):
+        raise AssertionError("csi_mqtt.h's publish_chirp_state() comment moved; re-read it")
+    out["csi_mqtt.h's publish_chirp_state()"] = h[start:at]
+    ino = _source("canary_wap.ino")
+    calls = [m.start() for m in re.finditer(r"csi_mqtt::publish_chirp_state\(", ino)]
+    if len(calls) != 1:
+        raise AssertionError(f"canary_wap.ino calls publish_chirp_state() {len(calls)} times; re-read it")
+    lines = ino[:calls[0]].split("\n")[:-1]
+    above: list[str] = []
+    while lines and lines[-1].strip().startswith("//"):
+        above.insert(0, lines.pop())
+    out["canary_wap.ino's publish_chirp_state() call"] = "\n".join(above)
+    for where, text in out.items():
+        if not text.strip():
+            raise AssertionError(f"{where} has no comment left to read; re-read it")
+    return out
 
 
 class _Record(unittest.TestCase):
@@ -381,6 +461,39 @@ class WapDiscoveryRenders(_Record):
             seen.add(bool(want))
             self.assertEqual(render(cfg["val_tpl"], body), (want, []), body)
         self.assertEqual(seen, {True, False}, "the record holds a status with rssi and one without")
+
+
+class ChirpStateWords(_Record):
+    """Sweep F295: what the canary-wap's Chirp Channel State shows, and what its
+    comments say it shows, are the words the firmware sends."""
+
+    def test_a_body_without_a_state_shows_the_bodys_own_fallback(self):
+        _, cfg = self.configs()["chirp_state"]
+        fallback = chirp_fallback()
+        self.assertIn(fallback, chirp_words(), "state_name()'s own default is the same word")
+        self.assertEqual(render(cfg["val_tpl"], "{}"), (fallback, []))
+        for word in sorted(chirp_words()):
+            with self.subTest(word=word):
+                self.assertEqual(render(cfg["val_tpl"], json.dumps({"state": word})), (word, []))
+
+    def test_the_comments_name_only_words_the_firmware_sends(self):
+        sent = chirp_words() | {chirp_fallback()}
+        beacon_only = beacon_words() - sent
+        self.assertTrue({"Normal", "Trouble", "Alarm", "Supervisory"} <= beacon_only, beacon_only)
+        spec = (REPO / "spec" / "chirp_channel_v0.md").read_text(encoding="utf-8")
+        self.assertIn("### 7.1 Chirp Channel States", spec, "the spec's states section moved")
+        for where, text in chirp_comments().items():
+            with self.subTest(comment=where):
+                named = set(re.findall(r"\b\w+\b", text))
+                self.assertEqual(named & beacon_only, set(),
+                                 f"{where} names a word only Beacon sends")
+                for listed in re.findall(r"\b\w+(?:\s*\|\s*\w+)+", text):
+                    words = {w.strip() for w in listed.split("|")}
+                    self.assertLessEqual(words, sent, f"{where} lists {listed!r}")
+                self.assertLessEqual(set(re.findall(r'"(\w+)"', text)), sent,
+                                     f"{where} quotes a word state_name() cannot return")
+                self.assertEqual(set(re.findall(r"§\s*([\d.]+\d)", text)), {"7.1"},
+                                 f"{where} cites the spec's states section, and only it")
 
 
 if __name__ == "__main__":

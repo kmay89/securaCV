@@ -849,6 +849,79 @@ NVSKEY_INC    = $(BUILD_DIR)/nvs_load_key.inc
 NVSKEY_BIN    = $(BUILD_DIR)/test_nvs_load_key
 NVSKEY_FE_BIN = $(BUILD_DIR)/test_nvs_load_key_require_fe
 
+# The flagship's TLS certificate load fails closed (repo sweep F421,
+# test_tls_load_der.cpp): tls_load_der_from_nvs() answers Loaded, Absent
+# (IDF's NVS says neither entry is stored) or Refused (one line, nothing
+# handed back, both buffers zeroed before they are freed), and initTls()
+# generates a certificate only on Absent, so a stored pair that could not be
+# read is never replaced by one whose pin no phone holds. The load and the
+# store are cut verbatim out of securacv_network.cpp, NvsManager's session
+# and blob calls and secure_zero() out of securacv_crypto.cpp, into one .inc,
+# compiled over stubs/nvs_key and stubs/nvs_manager's lock like the NVSKEY
+# suite above. It also reads securacv_network.cpp (initTls(), which needs
+# the whole network stack, is pinned by text) and the canary tree (no other
+# reader or writer of the two entries).
+TLSDER_NET_SRC     = ../canary/lib/securacv_network/src/securacv_network.cpp
+TLSDER_CRYPTO_SIGS = $(NVSLOCK_SIGS)|size_t NvsManager::getBytes(|size_t NvsManager::putBytes(|void secure_zero(
+TLSDER_NET_SIGS    = static KeyLoad tls_load_der_from_nvs(|static bool tls_store_der_to_nvs(
+TLSDER_HDRS        = $(NVSLOCK_HDRS) $(wildcard stubs/nvs_key/*.h)
+TLSDER_INC         = $(BUILD_DIR)/tls_load_der.inc
+TLSDER_BIN         = $(BUILD_DIR)/test_tls_load_der
+
+# The sibling witnesses' identity-key load fails closed (repo sweep F362,
+# test_witness_key_load_projects.cpp): canary-sense, canary-vision and
+# canary-sentinel draw a new key only when IDF's NVS says none is stored,
+# and every other answer (a failed lookup, a wrong length, a short read, a
+# stored zero key) disables signing for the boot and writes nothing.
+# load_or_generate_keypair() and secure_zero() are cut verbatim out of each
+# project's src/witness.cpp, with the four lines declaring the NVS names and
+# the key buffers taken from the same file (the recipe fails unless it finds
+# all four), into one .inc per project, compiled side by side over
+# stubs/nvs_key and canary-sense's canary/log.h. It also reads the three
+# sources (the functions byte-identical, init()'s refusal, one owner of the
+# key's entry).
+WITKEY_PROJECTS = canary-sense canary-vision canary-sentinel
+WITKEY_SRCS     = $(foreach p,$(WITKEY_PROJECTS),../projects/$(p)/src/witness.cpp)
+WITKEY_SIGS     = void secure_zero(|bool load_or_generate_keypair(
+WITKEY_DECLS    = ^(constexpr const char\* (NVS_NAMESPACE|KEY_PRIV) |uint8_t  s_(priv|pub)\[32\] )
+WITKEY_INCS     = $(foreach p,$(WITKEY_PROJECTS),$(BUILD_DIR)/witness_key_load_$(p).inc)
+WITKEY_HDRS     = ../projects/canary-sense/include/canary/log.h $(wildcard stubs/nvs_key/*.h)
+WITKEY_BIN      = $(BUILD_DIR)/test_witness_key_load_projects
+
+# The camera's thermal step (repo sweep F432, test_camera_thermal.cpp):
+# securacv_camera's camera_thermal.h, the miss counter, fail-safe throttle,
+# 70/80 C hysteresis and frame delay CameraManager::checkThermal() calls,
+# linked with securacv_thermal.cpp, the shared die-temperature provider,
+# built as is once per chip target over stubs/idf_tsens: the classic ESP32
+# of env:esp32cam (no sensor), and the ESP32-S3 on ESP-IDF 4.4.7 (the stock
+# units' Arduino 2.0.17 core, driver/temp_sensor.h) and on ESP-IDF 5.5.4
+# ([env:full]'s core 3, driver/temperature_sensor.h), each with the
+# sdkconfig.h that names the target, the esp_idf_version.h that picks the
+# driver, and a fake of that driver the suite drives. The provider's
+# thermal_sensor_present() is false on the classic ESP32 and true on the
+# S3, where the reads go through the driver. The provider installs the
+# driver once and never retries a failed install, so the S3 binaries run
+# three times, in a mode each: --tsens=ok, install-fails and enable-fails.
+# A chip with no sensor never throttles and reads as no sensor, three
+# misses throttle once, a stream's reset clears the count, and a driver
+# that will not start fails safe on every stream. It also reads the camera
+# and provider sources (checkThermal() reads only through the step; the
+# provider includes sdkconfig.h before it tests the target: IDF defines
+# CONFIG_IDF_TARGET_* there and nowhere on the command line, and without
+# that include the S3 compiled the sensorless stub too).
+CAMTHERM_DIR   = ../canary/lib/securacv_camera/src
+CAMTHERM_PROV  = ../canary/lib/securacv_thermal/src
+CAMTHERM_STUBS = stubs/idf_tsens
+CAMTHERM_READS = $(CAMTHERM_DIR)/securacv_camera.cpp $(CAMTHERM_DIR)/securacv_camera.h \
+                 $(CAMTHERM_DIR)/camera_thermal.h $(CAMTHERM_PROV)/securacv_thermal.cpp
+CAMTHERM_HDRS  = $(wildcard $(CAMTHERM_STUBS)/*/*.h $(CAMTHERM_STUBS)/*/*/*.h)
+CAMTHERM_BIN   = $(BUILD_DIR)/test_camera_thermal
+CAMTHERM_TARGETS = esp32 esp32s3_idf4 esp32s3_idf5
+CAMTHERM_BINS  = $(foreach t,$(CAMTHERM_TARGETS),$(CAMTHERM_BIN)_$(t))
+$(CAMTHERM_BIN)_esp32: CAMTHERM_TARGET = esp32
+$(CAMTHERM_BIN)_esp32s3_idf4: CAMTHERM_TARGET = esp32s3_idf4
+$(CAMTHERM_BIN)_esp32s3_idf5: CAMTHERM_TARGET = esp32s3_idf5
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -1464,6 +1537,51 @@ $(NVSKEY_FE_BIN): test_nvs_load_key.cpp $(NVSKEY_INC) $(NVSKEY_HDRS) Makefile | 
 	$(CXX) $(CXXFLAGS) -DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 -I stubs/nvs_key -I stubs/nvs_manager \
 	    -I ../canary/lib/securacv_crypto/src -I ../canary/lib/securacv_witness/src -I ../common \
 	    -I ../canary/include -I $(BUILD_DIR) test_nvs_load_key.cpp -o $@
+
+$(TLSDER_INC): $(NVSLOCK_SRC) $(TLSDER_NET_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(TLSDER_CRYPTO_SIGS)' -f cut_functions.awk $(NVSLOCK_SRC) > $@.tmp && \
+	awk -v 'sigs=$(TLSDER_NET_SIGS)' -f cut_functions.awk $(TLSDER_NET_SRC) >> $@.tmp && \
+	mv $@.tmp $@
+
+$(TLSDER_BIN): test_tls_load_der.cpp $(TLSDER_INC) $(TLSDER_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
+	    -I ../common -I ../canary/include -I $(BUILD_DIR) test_tls_load_der.cpp -o $@
+
+.PHONY: run-tls-load-der
+run-tls-load-der: $(TLSDER_BIN)
+	./$(TLSDER_BIN) $(TLSDER_NET_SRC) $(NVSKEY_READS)
+run: run-tls-load-der
+
+$(BUILD_DIR)/witness_key_load_%.inc: ../projects/%/src/witness.cpp cut_functions.awk Makefile | $(BUILD_DIR)
+	grep -E '$(WITKEY_DECLS)' $< > $@.tmp
+	@test "$$(wc -l < $@.tmp)" -eq 4 || { \
+	  echo "$<: the NVS names and key buffers moved (expected 4 declaration lines)" >&2; exit 1; }
+	awk -v 'sigs=$(WITKEY_SIGS)' -f cut_functions.awk $< >> $@.tmp && mv $@.tmp $@
+
+$(WITKEY_BIN): test_witness_key_load_projects.cpp $(WITKEY_INCS) $(WITKEY_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I ../projects/canary-sense/include -I $(BUILD_DIR) \
+	    test_witness_key_load_projects.cpp -o $@
+
+.PHONY: run-witness-key-load-projects
+run-witness-key-load-projects: $(WITKEY_BIN)
+	./$(WITKEY_BIN) $(WITKEY_SRCS)
+run: run-witness-key-load-projects
+
+$(CAMTHERM_BINS): test_camera_thermal.cpp $(CAMTHERM_READS) $(CAMTHERM_HDRS) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(CAMTHERM_STUBS)/$(CAMTHERM_TARGET) -I $(CAMTHERM_STUBS)/common \
+	    -I $(CAMTHERM_DIR) -I $(CAMTHERM_PROV) -I ../canary/include \
+	    test_camera_thermal.cpp $(CAMTHERM_PROV)/securacv_thermal.cpp -o $@)
+
+.PHONY: run-camera-thermal
+run-camera-thermal: $(CAMTHERM_BINS)
+	./$(CAMTHERM_BIN)_esp32 $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf4 --tsens=ok $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf4 --tsens=install-fails $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf4 --tsens=enable-fails $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf5 --tsens=ok $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf5 --tsens=install-fails $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf5 --tsens=enable-fails $(CAMTHERM_READS)
+run: run-camera-thermal
 
 $(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_PIO_SRC) > $@.tmp && mv $@.tmp $@

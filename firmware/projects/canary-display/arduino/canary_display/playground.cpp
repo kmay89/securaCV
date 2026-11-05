@@ -370,7 +370,8 @@ void action_tof_cycle_trip() {
 // thing: Serial1 at RS485_BAUD_DEFAULT 8N1 on RS485_PIN_RX/TX, one read of
 // holding register 0 of slave 1 with a 300 ms reply window that ends when the
 // reply is in (seven bytes, or the five of a CRC-good exception, which the
-// station names: "slave=1 exception=<code>"), stale bytes drained first;
+// station names: "slave=1 exception=<code>", and keeps in last_exc for the
+// glass until the next probe), stale bytes drained first;
 // TWAI in normal mode at 500 kbit/s with an accept-all filter, one 0x100 test
 // frame with a 50 ms queue wait (sent only on a SEND tap; one refused while
 // the controller is bus-off says "tx=fail bus=off (recovering)"), up to 8
@@ -513,18 +514,24 @@ void action_rs485_probe() {
     r = mb::parse_registers(resp, got, 1, mb::FN_READ_HOLDING, regs, 1);
   }
 #endif
+  // last_exc follows the latest probe alone (F317): set by an exception,
+  // cleared by a good reply and by no reply, so the glass names a refusal
+  // only while it is the last thing the slave said.
   if (r == 1) {
     g.rs485.replies++;
     g.rs485.last_val = regs[0];
     g.rs485.last_ok = true;
+    g.rs485.last_exc = -1;
     say_evt("rs485", "slave=1 reg=0 val=%u crc=ok", (unsigned)regs[0]);
   } else if (r == (int)mb::ERR_EXCEPTION) {
     // The slave answered, with a Modbus exception (2 is an illegal data
     // address): say which, so a bench can tell a refusal from a dead line.
     g.rs485.last_ok = false;
+    g.rs485.last_exc = exc;
     say_evt("rs485", "slave=1 exception=%u", (unsigned)exc);
   } else {
     g.rs485.last_ok = false;
+    g.rs485.last_exc = -1;
     say_evt("rs485", "slave=1 reply=none");
   }
 }

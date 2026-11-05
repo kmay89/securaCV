@@ -11,11 +11,17 @@ must have a lane here, by id or by `flavor`), and against the device manifests
 (every product lane resolves to ONE devices/<slug>/device.json, and every
 manifest's board.envs is a real [env:NAME] of its family's PlatformIO project
 — the resolution and the ini reader are shared with lint_device_manifests.py
-through scripts/_device_join.py, so the two lints cannot disagree). It is a
-cheap grep-style check (no PlatformIO), run in .github/workflows/lint.yml.
+through scripts/_device_join.py, so the two lints cannot disagree). Each
+product's feature claims are held to its own tree (section 2a-bis): the flag
+the tree spells the feature with (featureCatalog's, or FLAG_ALIASES') must be
+#define'd there, and a reading must be under it (thermal: a die-temperature
+read), read by the sweep-C35 suite's tree reader. It is a cheap grep-style
+check (no PlatformIO), run in .github/workflows/lint.yml.
 
 Exit non-zero on any drift, printing every problem.
 """
+import functools
+import importlib.util
 import json
 import re
 import sys
@@ -29,6 +35,134 @@ from _device_join import (
 )
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# ── each tree's spelling of a feature (section 2a-bis) ───────────────────────
+# featureCatalog's `flag` is the canary tree's spelling. A tree that spells a
+# feature its own way says so here, keyed (tree, feature), the tree being the
+# flavors.json product whose sources a lane builds (its `flavor`, else its id).
+FLAG_ALIASES = {
+    # The canary-wap reads die temperature in sys_monitor.h, under
+    # FEATURE_SYS_MONITOR (1 in the FULL and DEV profiles build_config.h
+    # defines; canary-wap-default names FULL).
+    ("canary-wap", "thermal"): "FEATURE_SYS_MONITOR",
+}
+
+# A feature that is a reading: its flag must also guard the read itself, in
+# the tree, as the sweep-C35 suite holds boards.json's thermal notes.
+READINGS = {"thermal": "a die-temperature read"}
+
+# The claims whose tree spells the feature with no flag this lint has mapped:
+# the catalog's spelling is #define'd nowhere in that tree, and no alias says
+# what it is instead, so these rest on the negative direction alone (no env
+# that builds the lane sets the catalog's flag to 0). Each entry must still be
+# claimed by a lane and still be unspelled in its tree, or the lint says to
+# drop it; mapping one is an alias above, or dropping the claim.
+UNMAPPED = {
+    ("canary-wap", "selftest"),
+    ("canary-wap", "csi"),
+    ("canary-wap", "gps"),
+    ("canary-vision", "selftest"),
+    ("canary-sense", "selftest"),
+    ("canary-display", "selftest"),
+}
+
+_TREE_SUITE = ROOT / "scripts" / "tests" / "test_board_thermal_notes.py"
+
+
+@functools.lru_cache(maxsize=None)
+def tree_suite():
+    """scripts/tests/test_board_thermal_notes.py (sweep C35), for its reader of
+    a product's tree: tree_facts(product) is (the FEATURE_* flags #define'd
+    in the tree, the flags whose `#if` encloses a die-temperature read, whether
+    the tree reads die temperature at all), and env_flags(product, env) the
+    FEATURE_* -D values an env compiles with, through `extends`, `${...}` and
+    build_unflags. One definition of a tree, of a die-temperature read and of
+    an env's flags, so this lint and that suite cannot disagree about them."""
+    spec = importlib.util.spec_from_file_location("_board_thermal_tree", _TREE_SUITE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return module
+
+
+def lanes(prod: dict):
+    """(where, env, features) for each buildable lane of a matrix product: its
+    levels, or its one build."""
+    if prod.get("hasLevels"):
+        for lvl, b in (prod.get("levels") or {}).items():
+            yield f"product {prod['id']}.{lvl}", b.get("env"), b.get("features", [])
+    else:
+        b = prod.get("build") or {}
+        yield f"product {prod['id']}", b.get("env"), b.get("features", [])
+
+
+def feature_flag_errors(matrix: dict, tree_facts, env_flags, aliases=None,
+                        unmapped=None, trees=None) -> list[str]:
+    """Each lane's feature claims, held to the tree that lane builds.
+
+    For every feature a lane lists, the flag is the one its tree spells it
+    with (`aliases`, else featureCatalog's). Positive direction: the flag is
+    #define'd in the tree's sources (`tree_facts`), and a reading (READINGS)
+    has an `#if` on it enclosing the read. Negative direction: no env that
+    builds the lane sets it to 0 (`env_flags`, `extends` resolved), and the
+    lane's env exists in its tree's PlatformIO config. A claim in `unmapped`
+    is held to the negative direction only, with the catalog's flag; the
+    table must stay true (claimed by a lane, unspelled in its tree), and an
+    alias no lane uses is refused, so neither table rots. `trees` is the
+    trees there are (flavors.json's products; the suite's flavor_dirs by
+    default): a lane whose tree is not one is named, its claims unchecked,
+    where the first version looked it up and crashed."""
+    aliases = FLAG_ALIASES if aliases is None else aliases
+    unmapped = UNMAPPED if unmapped is None else unmapped
+    trees = frozenset(tree_suite().flavor_dirs() if trees is None else trees)
+    catalog = matrix.get("featureCatalog", {})
+    errors: list[str] = []
+    claimed: set[tuple[str, str]] = set()
+    for prod in matrix.get("products", []):
+        # The lane's tree as the suite's own board_envs reads it: its
+        # `flavor`, else (absent or null) its id.
+        tree = prod.get("flavor") or prod["id"]
+        if tree not in trees:
+            errors.append(f"product {prod['id']}: builds the '{tree}' tree, which flavors.json "
+                          f"does not list — its feature claims cannot be held to any tree")
+            continue
+        for where, env, feats in lanes(prod):
+            flags = env_flags(tree, env) if env else None
+            if env and flags is None:
+                errors.append(f"{where}: env '{env}' is not an [env:{env}] of the {tree} tree's "
+                              f"PlatformIO config (its platformio.ini and extra_configs)")
+            for feat in feats:
+                if feat not in catalog:
+                    continue  # check_features names it
+                claimed.add((tree, feat))
+                flag = aliases.get((tree, feat), catalog[feat].get("flag"))
+                if not flag:
+                    continue
+                if (flags or {}).get(flag) == "0":
+                    errors.append(f"{where}: lists '{feat}', but [env:{env}] builds the {tree} tree "
+                                  f"with -D{flag}=0 — the build does not have it")
+                if (tree, feat) in unmapped:
+                    continue
+                defined, gauges, _reads = tree_facts(tree)
+                if flag not in defined:
+                    errors.append(f"{where}: lists '{feat}' as {flag}, but no source in the {tree} "
+                                  f"tree #defines {flag} — the tree spells it some other way (map "
+                                  f"it in FLAG_ALIASES) or does not have it (drop the claim)")
+                elif feat in READINGS and flag not in gauges:
+                    errors.append(f"{where}: lists '{feat}' as {flag}, but no #if {flag} in the "
+                                  f"{tree} tree encloses {READINGS[feat]}")
+    for tree, feat in sorted(unmapped):
+        flag = catalog.get(feat, {}).get("flag")
+        if (tree, feat) not in claimed:
+            errors.append(f"UNMAPPED lists ({tree!r}, {feat!r}), which no lane claims — drop it")
+        elif (tree, feat) in aliases:
+            errors.append(f"({tree!r}, {feat!r}) is both in UNMAPPED and in FLAG_ALIASES — "
+                          f"drop it from UNMAPPED")
+        elif flag and flag in tree_facts(tree)[0]:
+            errors.append(f"UNMAPPED lists ({tree!r}, {feat!r}), but the {tree} tree #defines "
+                          f"{flag} — the claim can be held to it; drop it from UNMAPPED")
+    for tree, feat in sorted(set(aliases) - claimed):
+        errors.append(f"FLAG_ALIASES maps ({tree!r}, {feat!r}), which no lane claims — drop it")
+    return errors
 
 
 def env_sections(ini_text):
@@ -221,53 +355,31 @@ def collect(root: Path = ROOT) -> list[str]:
                         err(f"product {p['id']} (flow={p['flow']}) must not list "
                             f"'{banned}' — it's a serial/vision board with no BLE radio in use")
 
-    # ── 2a-bis. a product must not advertise a feature its OWN env turns off ──
+    # ── 2a-bis. a product's feature claim is held to its OWN tree's flag ─────
     # The matrix exists to answer "which build includes which feature", so a
-    # tile claiming a feature the env compiles out is the exact lie it is for.
-    # Checks only flags the env sets EXPLICITLY to 0 (no `extends` resolution),
-    # which is sound in one direction: no false positives, and it catches the
-    # real mistake — copying a feature list from the flagship onto a board
-    # whose posture is deliberately smaller.
+    # tile claiming a feature the build does not have is the exact lie it is
+    # for. featureCatalog's `flag` names are the canary tree's spellings, and
+    # the other trees name the same capability differently (the canary-wap's
+    # die-temperature reader is FEATURE_SYS_MONITOR), so each claim is held to
+    # the flag its own tree spells it with (FLAG_ALIASES above), in both
+    # directions: the flag is #define'd in that tree (a reading, thermal,
+    # also guards the read itself), and no env that builds the lane sets it
+    # to 0. A tree is the sweep-C35 suite's: the flavor's directory, the
+    # firmware/common headers it includes and the sources beside them, and
+    # the common sources its build_src_filter names. That gap is how
+    # canary-sense advertised a battery gauge and a die-temp sensor it has
+    # neither of (fixed 2026-09-05), and how featureCatalog.thermal named
+    # FEATURE_DIAGNOSTICS, the canary's self-test flag (sweep C36).
     #
-    # Envs live in two places: firmware/canary/platformio.ini (the canary tree's
-    # dev/release/full/board lanes) and firmware/envs/platformio/*.ini (every
-    # other product's env — canary-wap, -vision, -sense, -display). Both are
-    # read, so no product's env is skipped as "not ours".
-    #
-    # KNOWN GAP, stated so nobody assumes otherwise: this proves only the
-    # NEGATIVE direction. A feature no build enables anywhere still passes,
-    # because featureCatalog's `flag` names are canary-tree spellings and the
-    # other trees name the same capability differently — canary-wap's die-temp
-    # / self-test flag is FEATURE_SYS_MONITOR, not the catalog's
-    # FEATURE_DIAGNOSTICS — so "the flag never appears in this project" is not
-    # evidence of absence. That gap is how canary-sense advertised a battery
-    # gauge and a die-temp sensor it has neither of (fixed 2026-09-05); closing
-    # it properly needs a per-tree flag alias table, not a wider grep.
-    extra_env_sections = {}
-    for extra_ini in sorted((fw / "envs" / "platformio").glob("*.ini")):
-        for name, body in env_sections(extra_ini.read_text()).items():
-            # Only env tables; [common]/[env] base tables would collide with
-            # canary/platformio.ini's, which section 1 above depends on.
-            if name.startswith("env:"):
-                extra_env_sections.setdefault(name, body)
-
-    for p in matrix.get("products", []):
-        env_name = p.get("build", {}).get("env")
-        if not env_name or p.get("hasLevels"):
-            continue
-        body = sections.get(f"env:{env_name}", extra_env_sections.get(f"env:{env_name}"))
-        if body is None:
-            err(f"product {p['id']}: build.env '{env_name}' is not defined in "
-                f"firmware/canary/platformio.ini or firmware/envs/platformio/*.ini")
-            continue
-        # build_unflags lists `-DFEATURE_X=1` to REMOVE an inherited flag; only
-        # the build_flags half states what this env compiles.
-        flags_body = body.split("build_flags", 1)[1] if "build_flags" in body else ""
-        for feat in p["build"].get("features", []):
-            flag = catalog.get(feat, {}).get("flag")
-            if flag and flag_set(flags_body, flag) == 0:
-                err(f"product {p['id']}: lists '{feat}' but [env:{env_name}] "
-                    f"sets -D{flag}=0 — the build does not have it")
+    # KNOWN GAP, stated so nobody assumes otherwise: the claims UNMAPPED
+    # lists (the canary-wap's selftest, csi and gps; the Vision's, the
+    # Sense's and the display's selftest) have no spelling mapped in their
+    # tree, so they still rest on the negative direction alone. A flag an env
+    # leaves unset is held to being #define'd in its tree, not to its default
+    # being on, and a build profile a sketch header chooses (the canary-wap's
+    # build_config.h) is not modeled: only an env's -D flags are.
+    for e in feature_flag_errors(matrix, tree_suite().tree_facts, tree_suite().env_flags):
+        err(e)
 
     # ── 2b. flasher deep-link can't rot: every product must resolve to a real
     #        flasher catalog product (both files live in this repo). ───────────

@@ -60,7 +60,7 @@ mdns_service:  _securacv._tcp, port 80
 
 mDNS registration is logged at boot: `mDNS registered: canary-a3f7.local`
 
-The `network.mdns_enabled` config flag controls whether the device participates in mDNS. When disabled, the device is only reachable by direct IP.
+The `network.mdns_enabled` config flag controls whether the device participates in mDNS. When disabled, the device is only reachable by direct IP, and the SPA reaches a device by IP only from that device's own address (§3).
 
 ### 2. Peer List API
 
@@ -97,7 +97,13 @@ No firmware in this monorepo serves `GET /api/v1/info` or reads `X-Canary-Token`
 
 The SPA prefers `mdns_hostname` over `ip` when constructing the peer's
 `base_url` because IPs change over DHCP leases but mDNS names don't. The
-field is optional; clients fall back to `ip` when absent.
+field is optional; clients fall back to `ip` when absent, and a peer listed
+with only an `ip` is not reachable from the SPA this server serves. The
+server's CSP `connect-src` is `'self' http://*.local`: CSP cannot name an IP range, so a
+request to `http://192.168.1.103` is refused by the browser before it is
+sent ([security.md](security.md#security-headers)), and to the page that
+looks like an unreachable device (the fetch rejects with the same
+`TypeError`). Such a peer has to be added by its `.local` name (§3).
 
 The peer list is read-only. There is no endpoint to add or remove peers via the API. Peers are discovered by the device itself through mDNS and stored in device state.
 
@@ -107,10 +113,10 @@ The peer list is read-only. There is no endpoint to add or remove peers via the 
 
 The SPA allows the user to manually add a device by entering:
 
-- **Device address:** mDNS hostname (e.g., `canary-a3f7.local`) or LAN IP (e.g., `192.168.1.47`)
+- **Device address:** mDNS hostname (e.g., `canary-a3f7.local`). The form also takes a LAN IP (e.g., `192.168.1.47`), but the SPA reaches an IP only when it is the address the SPA itself was opened from.
 - **API token:** The device's `X-Canary-Token` value
 
-The SPA validates that the entered address resolves to a private-network IP (RFC 1918 or `.local`) before making any request. Public internet addresses are rejected.
+The SPA checks that the entered address is a private-network one (an RFC 1918, link-local, loopback or IPv6 unique-local address, or a `.local` name) before making any request, and rejects public internet addresses. The browser then holds every request to the CSP the server sends with the SPA, whose `connect-src` is `'self' http://*.local` ([security.md](security.md#security-headers)): a `.local` name on port 80 is let through, and an IP that is not the SPA's own origin is refused before the request is sent, though it passed the SPA's own check. Enter a device by its `.local` name.
 
 After entry, the SPA calls `GET /api/v1/info` with the provided token to verify connectivity and retrieve device metadata. That is the reference device-api's contract: a canary-wap's address and token fail here, since the WAP serves no `/api/v1/info` and reads no `X-Canary-Token` (§2).
 
@@ -130,7 +136,7 @@ During physical provisioning (first-time setup), each device generates a JSON pr
 
 Alternative field names `host` (for `base_url`) and `api_token` (for `token`) are also accepted.
 
-The SPA parses the receipt, validates the URL is a private-network address, and tests the connection before saving. A canary-wap's receipt (its recovery kit, or the QR its dashboard shows) fails that test the way §3's entry does; the kit belongs in the SecuraCV iPhone app.
+The SPA parses the receipt, validates the URL is a private-network address, and tests the connection before saving; a receipt whose `base_url` is an IP fails that test under the CSP the way §3's IP entry does. A canary-wap's receipt (its recovery kit, or the QR its dashboard shows) fails that test the way §3's entry does; the kit belongs in the SecuraCV iPhone app.
 
 ---
 
@@ -166,6 +172,6 @@ Tokens never leave the browser. They are sent only to the corresponding device's
 
 When the SPA is served from one device (e.g., `canary-a3f7.local`) and makes cross-origin requests to a peer (e.g., `canary-b1c2.local`), CORS applies. The target device does **not** allowlist peers: being in a peer list grants no cross-origin access (a compromised peer could otherwise pivot across the mesh). Instead, the target answers CORS only for its own origin and for origins enrolled by trust-on-pair — plus any private-network origin for the BOOT-gated `/api/provisioning-receipt` endpoint only (see [security.md](security.md), D3).
 
-So for the SPA served from device A to reach device B's API, device B must be paired *from that SPA* once: a physical BOOT-button press on B releases its provisioning receipt to the SPA's origin, and B records that origin as durably allowed from then on.
+So for the SPA served from device A to reach device B's API, device B must be paired *from that SPA* once: a physical BOOT-button press on B releases its provisioning receipt to the SPA's origin, and B records that origin as durably allowed from then on. CSP comes before CORS: the SPA addresses B by its `.local` name, since the CSP A serves with the SPA refuses B's IP before the request is sent (§2, [security.md](security.md#security-headers)).
 
 This is the reference device-api's CORS. The canary-wap firmware sends no `Access-Control-Allow-Origin` on its receipt route's 403, 409 or receipt, and keeps no list of paired origins, which is part of why it is not paired from this SPA (§2).

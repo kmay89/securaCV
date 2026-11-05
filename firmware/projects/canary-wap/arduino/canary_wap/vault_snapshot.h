@@ -55,11 +55,24 @@ vault_logic::Decision request_capture(vault_logic::Trigger t,
  * vault_logic::KEEP_FILES entries. */
 void poll_completion();
 
+/* What set_pubkey_hex() did with a key (sweep F426). It answered one false
+ * for a key that is not 64 hex characters and for a well-formed key the
+ * device could not keep, and POST /api/vault/key answered both as "not the
+ * 64-hex key", so an owner who pasted the right key was told it was the
+ * wrong shape. */
+enum class KeySet : uint8_t {
+  Stored,     /* the key is the registered one now, in NVS and in RAM */
+  Malformed,  /* NULL, or not exactly 64 hex characters: nothing was tried */
+  NotSaved,   /* 64 hex characters the device could not keep: its key id did
+               * not compute, or NVS did not open or refused the write. Logged;
+               * nothing changed (the key registered before, if any, stays) */
+};
+
 /* Key management. set_pubkey_hex expects exactly 64 lowercase/uppercase hex
  * chars (32-byte X25519 public key); persists to NVS and computes the
  * 8-byte key id. clear_pubkey wipes the key AND forces every trigger off
  * (a vault without a recipient must not arm). */
-bool set_pubkey_hex(const char* hex64);
+KeySet set_pubkey_hex(const char* hex64);
 void clear_pubkey();
 bool has_pubkey();
 /* First 16 hex chars of SHA-256(pubkey); out[17]; "" when no key. */

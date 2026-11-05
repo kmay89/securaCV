@@ -17,12 +17,18 @@ on:
       - 'firmware/projects/canary-wap/**'
       - 'firmware/common/csi/**'
       - '.github/workflows/csi_module_disable_matrix.yml'
+      # The Arduino CLI + ESP32 core setup every leg runs: an edit to the
+      # action alone must run them.
+      - '.github/actions/setup-arduino-esp32/**'
   pull_request:
     branches: [main]
     paths:
       - 'firmware/projects/canary-wap/**'
       - 'firmware/common/csi/**'
       - '.github/workflows/csi_module_disable_matrix.yml'
+      # The Arduino CLI + ESP32 core setup every leg runs: an edit to the
+      # action alone must run them.
+      - '.github/actions/setup-arduino-esp32/**'
 
 concurrency:
   # PRs collapse per branch; each main commit gets its own group, so a burst

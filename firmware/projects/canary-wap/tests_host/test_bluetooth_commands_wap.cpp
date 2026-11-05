@@ -118,6 +118,15 @@
 // terminated; now each loads only as NVS returns it whole, and every
 // loaded name ends in its field.
 //
+// And sweep F425 and F353. A Canary's advertised name carries its prefix
+// in uppercase and its chirp and beacon in lowercase, so one Canary heard
+// both ways took two GET /api/nearby slots; the name's digits are now
+// folded to lowercase. And the paired list's one-time rebuild from the bond
+// store listed every bond with no entry, a Just Works bond that escaped
+// F191's delete among them; it now reads each such bond's PEER_SEC record
+// (ble_store_read_peer_sec(), modeled in the stand-in) and leaves one whose
+// record says unauthenticated unlisted, in the store, where F209 counts it.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
@@ -470,6 +479,10 @@ void boot(bool bring_up = true, bool wipe = true) {
   host_sim::scan = NimBLEScan();
   if (wipe) host_sim::bonds.clear();       // NimBLE's bond store is in NVS too
   if (wipe) host_sim::bond_irks.clear();
+  if (wipe) host_sim::peer_secs.clear();   // the bonds' PEER_SEC records (F353), in NVS too
+  host_sim::peer_sec_read_fails = 0;       // F353: the store reads, until a test says it fails
+  host_sim::peer_sec_reads.clear();
+  host_sim::peer_sec_bad_keys = 0;
   host_sim::bonds_deleted.clear();
   host_sim::bonds_busy.clear();
   host_sim::before_unpair = nullptr;
@@ -3929,7 +3942,7 @@ void test_an_old_paired_list_is_rebuilt_from_the_bond_store() {
   CHECK(bc::g_paired_devices[2].security == bc::SEC_BONDED);
   CHECK(host_sim::main_nvs.count("bt_paired_id") == 1);
   CHECK(host_sim::main_nvs["bt_paired"].size() == 3 * sizeof(bc::PairedDevice));
-  CHECK(health_detail("Paired list rebuilt from the bond store") == "1 kept, 2 added, 2 dropped");
+  CHECK(health_detail("Paired list rebuilt from the bond store") == "1 kept, 2 added, 2 dropped, 0 unconfirmed");
 
   // Remove the phone by the identity GET /paired prints: its bond goes.
   bc::Command remove = cmd_of(bc::BT_CMD_PAIRED_REMOVE);
@@ -5437,6 +5450,7 @@ void test_a_refused_paired_row_with_no_bond_is_replaced_once() {
   save_paired_row(row.data(), row.size());
   host_sim::bonds.clear();                         // and NimBLE keeps no bond
   host_sim::bond_irks.clear();
+  host_sim::peer_secs.clear();   // and its PEER_SEC records (F353)
   size_t refused = 0;
   for (int b = 0; b < 3; b++) {
     if (b > 0) boot(/*bring_up=*/false, /*wipe=*/false);
@@ -5502,23 +5516,25 @@ void test_a_cleared_list_stays_cleared_after_a_reboot() {
 // ── A nearby Canary's name prefix (sweep F405) ─────────────────────────
 
 // nearby_prefix_from_name() (ble_nearby_prefix.h): the four bytes after the
-// name prefix, only when all four are ASCII hex digits, upper or lower case
-// as advertised. A quote, a backslash, a control byte, a byte past 0x7f
-// (UTF-8 too), `<!--`, a NUL inside the four, a name too short and one
+// name prefix, only when all four are ASCII hex digits, folded to lowercase
+// as the chirp's and the beacon's "%02x" writes them (sweep F425; F405 kept
+// the advertised case). A quote, a backslash, a control byte, a byte past
+// 0x7f (UTF-8 too), `<!--`, a NUL inside the four, a name too short and one
 // without the prefix are refused, with `out` emptied. Every byte value at
 // each of the four places, the other three hex: the 22 hex digits pass,
-// nothing else. The old scan's substring copy took every one of these
-// names it was long enough for.
+// each as its lowercase digit, nothing else. The old scan's substring copy
+// took every one of these names it was long enough for.
 void test_a_nearby_name_prefix_is_hex_or_refused() {
   struct Case {
     std::string name;
     const char* prefix;   // nullptr: refused
   };
   const Case cases[] = {
-      {"SCV-ABCD", "ABCD"},
+      {"SCV-ABCD", "abcd"},
       {"SCV-abcd", "abcd"},
-      {"SCV-09fF", "09fF"},
-      {"SCV-ABCDEF", "ABCD"},
+      {"SCV-09fF", "09ff"},
+      {"SCV-ABCDEF", "abcd"},
+      {"SCV-7E01", "7e01"},
       {"SCV-1234\"<!--", "1234"},   // past the four: never read, as before
       {"SCV-<!--", nullptr},
       {"SCV-12\"4", nullptr},
@@ -5551,7 +5567,9 @@ void test_a_nearby_name_prefix_is_hex_or_refused() {
       char out[5];
       if (ble_nearby::nearby_prefix_from_name(name.data(), name.size(), BLE_DEVICE_NAME_PREFIX, out)) {
         ++taken;
-        CHECK(isxdigit((int)b) && std::memcmp(out, name.data() + 4, 4) == 0 && out[4] == '\0');
+        std::string lower = name.substr(4, 4);
+        lower[at] = (char)tolower((int)b);
+        CHECK(isxdigit((int)b) && std::memcmp(out, lower.data(), 4) == 0 && out[4] == '\0');
       }
     }
     CHECK(taken == 22);
@@ -5566,10 +5584,11 @@ void test_a_nearby_name_prefix_is_hex_or_refused() {
 // UUID, and GET /api/nearby's answer (buildNearbyJson(), the hand-built
 // String) is read after each one. A name whose four bytes are not all hex
 // digits is counted as a non-Canary and listed nowhere; a hex one is listed
-// under its own four bytes; an advert that carries a fleet-link beacon or a
-// chirp is listed under the prefix that data carries, whatever its name
-// says. Every answer is strict JSON, and every listed prefix is four hex
-// digits. (Before, `SCV-12"4` made the answer one JSON.parse refuses.)
+// under its four digits, lowercase (F425); an advert that carries a
+// fleet-link beacon or a chirp is listed under the prefix that data
+// carries, whatever its name says. Every answer is strict JSON, and every
+// listed prefix is four hex digits. (Before, `SCV-12"4` made the answer one
+// JSON.parse refuses.)
 std::string nearby_answer(json_strict::Value* v) {
   const std::string body = ble_nearby::buildNearbyJson().c_str();
   if (!strict_json(body, v)) std::fprintf(stderr, "GET /api/nearby: %s\n", body.c_str());
@@ -5604,7 +5623,7 @@ void test_a_hostile_nearby_name_never_reaches_the_answer() {
       {"SCV-\x01" "bcd", "", nullptr},
       {"SCV-\xC3\xA9" "ab", "", nullptr},
       {"SCV-abc", "", nullptr},
-      {"SCV-ABCDEF", "", "ABCD"},
+      {"SCV-ABCDEF", "", "abcd"},
       {"SCV-<!--", beacon_mfg, "3c5a"},
       {"SCV-12\"4", chirp_mfg, "7e01"},
   };
@@ -5659,6 +5678,100 @@ void test_a_hostile_nearby_name_never_reaches_the_answer() {
   CHECK(ble_nearby::g_nonCanaryCount == non_canary + 1);
   ble_nearby::g_nearbyMutex = nullptr;
   std::printf("PASS a_hostile_nearby_name_never_reaches_the_answer\n");
+}
+
+// One Canary heard every way it advertises (sweep F425): its name as
+// ble_manager.h builds it ("SCV-" and the last four of hex_to_str()'s
+// uppercase key fingerprint, 'SCV-7E01'), its chirp (device id 7e 01, at
+// the payload's [13..14]), its fleet-link beacon (fp2 7e 01) and the same
+// name in lowercase, in every one of the 24 orders, each advert with the
+// SecuraCV service UUID as the real scan callback hears it. GET
+// /api/nearby lists it once after every advert, and as '7e01' each time;
+// every order fills one slot, discovers one Canary and keeps the four RSSI
+// readings in that slot. A name with a digit that is not hex ('SCV-7G01', 'SCV-7g01') is
+// still a non-Canary and never reaches the answer. Before, the name's
+// uppercase prefix and the chirp's and the beacon's lowercase "%02x" took
+// two slots under strncmp(): 'SCV-7E01' then the chirp listed '7E01' and
+// '7e01'.
+void test_one_canary_heard_by_name_chirp_and_beacon_takes_one_slot() {
+  static HostSemaphore nearby_mutex;
+  uint8_t beacon[FLEET_BEACON_MFG_LEN] = {0xFF, 0xFF};
+  fleet_beacon_build(beacon + 2, 0, 80, 90, 1234, 0x7e, 0x01);
+  uint8_t chirp[CHIRP_PAYLOAD_SIZE + 2] = {0xFF, 0xFF, CHIRP_HEARTBEAT};
+  chirp[CHIRP_PAYLOAD_SIZE] = 0x7e;
+  chirp[CHIRP_PAYLOAD_SIZE + 1] = 0x01;
+  struct Advert {
+    const char* what;
+    std::string name;
+    std::string mfg;
+  };
+  const Advert adverts[] = {
+      {"name", "SCV-7E01", ""},
+      {"chirp", "SCV-7E01", std::string(reinterpret_cast<const char*>(chirp), sizeof chirp)},
+      {"beacon", "SCV-7E01", std::string(reinterpret_cast<const char*>(beacon), sizeof beacon)},
+      {"lowercase name", "SCV-7e01", ""},
+  };
+  auto hear = [](const std::string& name, const std::string& mfg) {
+    NimBLEAdvertisedDevice adv;
+    adv.name = name;
+    adv.mfg = mfg;
+    adv.services.push_back(NimBLEUUID(SCV_SERVICE_UUID));
+    NimBLEScanCallbacks* cb = &ble_nearby::g_scanCallbacks;
+    host_sim::task = "nimble";
+    cb->onResult(&adv);
+    host_sim::task = "loop";
+  };
+  // The one Canary GET /api/nearby lists, and the prefix it lists it under.
+  auto listed_once = [](const std::string& order) {
+    json_strict::Value v;
+    const std::string body = nearby_answer(&v);
+    const json_strict::Value* canaries = v.get("canaries");
+    const bool once = canaries != nullptr && canaries->kind == json_strict::Value::Array &&
+                      canaries->items.size() == 1;
+    if (!once) std::fprintf(stderr, "heard %s; GET /api/nearby: %s\n", order.c_str(), body.c_str());
+    CHECK(once);
+    const json_strict::Value* p = canaries->items[0].get("device_id_prefix");
+    CHECK(p != nullptr && p->kind == json_strict::Value::String);
+    return p->text;
+  };
+  size_t order[] = {0, 1, 2, 3};
+  unsigned orders = 0;
+  do {
+    memset(ble_nearby::g_nearbyCanaries, 0, sizeof ble_nearby::g_nearbyCanaries);
+    ble_nearby::g_nonCanaryCount = 0;
+    ble_nearby::g_beaconsReceived = 0;
+    ble_nearby::g_chirpsReceived = 0;
+    ble_nearby::g_canariesDiscovered = 0;
+    ble_nearby::g_nearbyMutex = &nearby_mutex;
+    std::string heard;
+    std::vector<std::string> prefixes;
+    for (const size_t i : order) {
+      heard += heard.empty() ? adverts[i].what : std::string(", then ") + adverts[i].what;
+      hear(adverts[i].name, adverts[i].mfg);
+      prefixes.push_back(listed_once(heard));
+    }
+    for (const std::string& p : prefixes) {
+      if (p != "7e01") std::fprintf(stderr, "heard %s; listed as %s\n", heard.c_str(), p.c_str());
+      CHECK(p == "7e01");
+    }
+    unsigned used = 0;
+    for (const NearbyCanary& c : ble_nearby::g_nearbyCanaries) {
+      if (!c.active) continue;
+      ++used;
+      CHECK(std::strcmp(c.deviceIdPrefix, "7e01") == 0 && c.rssiCount == 4);
+    }
+    CHECK(used == 1 && ble_nearby::g_canariesDiscovered == 1 && ble_nearby::g_nonCanaryCount == 0);
+    CHECK(ble_nearby::g_chirpsReceived == 1 && ble_nearby::g_beaconsReceived == 1);
+    // Not hex: no Canary, and the one listed stays the only one.
+    hear("SCV-7G01", "");
+    hear("SCV-7g01", "");
+    CHECK(ble_nearby::g_nonCanaryCount == 2 && ble_nearby::g_canariesDiscovered == 1);
+    CHECK(listed_once(heard + ", then SCV-7G01 and SCV-7g01") == "7e01");
+    ++orders;
+  } while (std::next_permutation(std::begin(order), std::end(order)));
+  CHECK(orders == 24);
+  ble_nearby::g_nearbyMutex = nullptr;
+  std::printf("PASS one_canary_heard_by_name_chirp_and_beacon_takes_one_slot\n");
 }
 
 // ── What a late bring-up left out (sweep F260) ──────────────────────────
@@ -5992,8 +6105,9 @@ const char* const kLockout =
 // DisplayOnly or NoInputNoOutput initiator, or a legacy DisplayYesNo one,
 // against this side's DISPLAY_YESNO): the pairing starts (the store's check
 // at its Pairing Request), NimBLE stores the bond (with the phone's IRK when
-// it uses private addresses) and reports the link encrypted and bonded but
-// not authenticated. False when the store refused the pairing at its start.
+// it uses private addresses; its record unauthenticated, F353) and reports
+// the link encrypted and bonded but not authenticated. False when the store
+// refused the pairing at its start.
 bool just_works_through_stack(NimBLEConnInfo& phone, bool irk) {
   host_sim::server->peers = {phone.getConnHandle()};
   host_sim::server->link_up(phone);
@@ -6005,7 +6119,7 @@ bool just_works_through_stack(NimBLEConnInfo& phone, bool irk) {
     loop_pass();
     return false;
   }
-  on_nimble([&] { (void)host_sim::persist_bond(phone.getIdAddress(), irk); });
+  on_nimble([&] { (void)host_sim::persist_bond(phone.getIdAddress(), irk, /*authenticated=*/false); });
   phone.encrypted = phone.bonded = true;
   phone.authenticated = false;
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
@@ -6342,7 +6456,7 @@ void test_a_just_works_bond_beside_the_recorded_link_drops_its_own() {
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), b); });
   loop_pass();
   CHECK(bc::g_connection_handle == 8);
-  host_sim::store_bond(a.getIdAddress(), /*irk=*/false);
+  host_sim::store_bond(a.getIdAddress(), /*irk=*/false, /*authenticated=*/false);
   a.encrypted = a.bonded = true;
   a.authenticated = false;
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(a); });
@@ -6439,7 +6553,7 @@ void test_the_bond_count_follows_a_dropped_report_and_a_refused_pairing() {
     int rc = -1;
     on_nimble([&] { rc = host_sim::pairing_starts(s.getConnHandle()); });
     CHECK(rc == 0);
-    on_nimble([&] { (void)host_sim::persist_bond(s.getIdAddress(), /*irk=*/false); });
+    on_nimble([&] { (void)host_sim::persist_bond(s.getIdAddress(), /*irk=*/false, /*authenticated=*/false); });
     s.encrypted = s.bonded = true;
     on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(s); });
     host_sim::server->link_down(s.getConnHandle());
@@ -6503,7 +6617,7 @@ void test_a_bond_whose_report_never_came_goes_from_the_stacks_record() {
   int rc = -1;
   on_nimble([&] { rc = host_sim::pairing_starts(s.getConnHandle()); });
   CHECK(rc == 0);
-  on_nimble([&] { (void)host_sim::persist_bond(s.getIdAddress(), /*irk=*/true); });
+  on_nimble([&] { (void)host_sim::persist_bond(s.getIdAddress(), /*irk=*/true, /*authenticated=*/false); });
   s.encrypted = s.bonded = true;
   s.authenticated = false;
   host_sim::server->link_up(s);                                // the stack's record of the link
@@ -6568,7 +6682,7 @@ void test_a_bond_whose_report_never_came_goes_from_the_stacks_record() {
   host_sim::server->peers = {153};
   host_sim::server->link_up(early);
   on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), early); });
-  on_nimble([&] { (void)host_sim::persist_bond(early.getIdAddress(), /*irk=*/false); });
+  on_nimble([&] { (void)host_sim::persist_bond(early.getIdAddress(), /*irk=*/false, /*authenticated=*/false); });
   early.encrypted = early.bonded = true;
   host_sim::server->link_up(early);
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(early); });
@@ -6627,6 +6741,7 @@ void test_a_bond_the_stack_kept_is_asked_again_each_minute() {
   link_ends(first);
   host_sim::bonds.clear();                                      // the stack's repeat-pairing delete
   host_sim::bond_irks.clear();
+  host_sim::peer_secs.clear();   // and its PEER_SEC records (F353)
   CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
   NimBLEConnInfo mine = rpa_phone(162, 0x62);
   CHECK(pair_through_stack(mine, /*irk=*/true));
@@ -6673,6 +6788,7 @@ void test_a_listed_phone_that_pairs_again_by_just_works_leaves_the_list() {
   CHECK(bc::g_paired_count == 1 && host_sim::main_nvs["bt_paired"].size() == sizeof(bc::PairedDevice));
   link_ends(mine);
   host_sim::bonds.clear();                                      // the stack's repeat-pairing delete
+  host_sim::peer_secs.clear();   // and its PEER_SEC records (F353)
   NimBLEConnInfo jw = public_phone(171, 0x70);
   CHECK(just_works_through_stack(jw, /*irk=*/false));
   CHECK(host_sim::bonds.empty() && bc::g_paired_count == 0 && health_says(kUnauthDeleted) == 1);
@@ -6690,6 +6806,7 @@ void test_a_listed_phone_that_pairs_again_by_just_works_leaves_the_list() {
   link_ends(again);
   host_sim::bonds.clear();
   host_sim::bond_irks.clear();
+  host_sim::peer_secs.clear();   // and its PEER_SEC records (F353)
   host_sim::before_unpair = [] { host_sim::advertising.start(); };
   NimBLEConnInfo jw2 = rpa_phone(173, 0x73);
   CHECK(just_works_through_stack(jw2, /*irk=*/true));
@@ -6701,6 +6818,179 @@ void test_a_listed_phone_that_pairs_again_by_just_works_leaves_the_list() {
   CHECK(host_sim::bonds.empty() && health_says(kRetried) == 1 && bc::g_paired_count == 0);
   CHECK(host_sim::main_nvs["bt_paired"].empty());
   std::printf("PASS a_listed_phone_that_pairs_again_by_just_works_leaves_the_list\n");
+}
+
+// ── The rebuild lists only bonds an owner confirmed (sweep F353) ────────
+
+const char* const kRebuilt = "Paired list rebuilt from the bond store";
+
+// The stand-in's PEER_SEC record of `peer`, or nullptr.
+ble_store_value_sec* peer_sec_of(const NimBLEAddress& peer) {
+  for (ble_store_value_sec& r : host_sim::peer_secs) {
+    if (host_sim::same_addr(r.peer_addr, *peer.getBase())) return &r;
+  }
+  return nullptr;
+}
+
+// A unit whose paired list was never saved by identity (no owner has paired
+// over BLE since F172, or a row F406 refused) rebuilds the list from the
+// bond store the first time the loop task holds the stack. A Just Works bond
+// that escaped F191's delete (the device rebooted after NimBLE stored it and
+// before the loop task applied its report) was listed there as bonded: a
+// phone nobody confirmed on the owner's list, and a bond F209's unlisted
+// count and lockout line never named. Now the rebuild reads each unlisted
+// bond's PEER_SEC record (ble_store_read_peer_sec(), on the loop task, keyed
+// by the identity getBondedAddress() gave: a random static one here) and
+// leaves a bond whose record says unauthenticated out of the list and in the
+// store. F209 counts it unlisted, the full store's lockout line names it,
+// the next boot does not rebuild again, and Clear all removes it. The
+// owner's two confirmed bonds are listed as before.
+void test_an_unauthenticated_bond_is_left_out_of_the_rebuild() {
+  boot(/*bring_up=*/false);
+  const uint8_t owner_addr[6] = {0x00, 0x1A, 0x7D, 0xDA, 0x71, 0x31};
+  const NimBLEAddress owner(owner_addr, 0);                    // a passkey the owner confirmed
+  const uint8_t stranger_addr[6] = {0xD3, 0x53, 0x00, 0x11, 0x22, 0x33};
+  const NimBLEAddress stranger(stranger_addr, 1);              // Just Works, a random static identity
+  const uint8_t tablet_addr[6] = {0x00, 0x1A, 0x7D, 0xDA, 0x71, 0x32};
+  const NimBLEAddress tablet(tablet_addr, 0);                  // confirmed too
+  host_sim::store_bond(owner, /*irk=*/false, /*authenticated=*/true);
+  host_sim::store_bond(stranger, /*irk=*/false, /*authenticated=*/false);
+  host_sim::store_bond(tablet, /*irk=*/false, /*authenticated=*/true);
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  if (bc::g_paired_count != 2) {
+    std::fprintf(stderr, "listed %u:", (unsigned)bc::g_paired_count);
+    for (const std::string& n : paired_answer_names()) std::fprintf(stderr, " %s", n.c_str());
+    std::fprintf(stderr, " (%s)\n", health_detail(kRebuilt).c_str());
+  }
+  CHECK(bc::g_initialized && bc::g_paired_by_identity && bc::g_paired_count == 2);
+  CHECK(memcmp(bc::g_paired_devices[0].address, owner.getBase()->val, 6) == 0);
+  CHECK(memcmp(bc::g_paired_devices[1].address, tablet.getBase()->val, 6) == 0);
+  CHECK(bc::g_paired_devices[0].security == bc::SEC_BONDED && bc::g_paired_devices[1].security == bc::SEC_BONDED);
+  CHECK((paired_answer_names() == std::vector<std::string>{owner.toString(), tablet.toString()}));
+  CHECK(host_sim::main_nvs["bt_paired"].size() == 2 * sizeof(bc::PairedDevice));
+  // In the store still: the rebuild deletes no bond.
+  CHECK(NimBLEDevice::isBonded(stranger) && host_sim::bonds.size() == 3 && host_sim::bonds_deleted.empty());
+  CHECK(host_sim::count("bond_delete") == 0 && peer_sec_of(stranger) != nullptr);
+  CHECK(health_detail(kRebuilt) == "0 kept, 2 added, 0 dropped, 1 unconfirmed");
+  CHECK(fits_health_ring(kRebuilt, health_detail(kRebuilt)) && !health_names(stranger.toString()));
+  // One read per bond with no entry, each on the loop task, each key an
+  // address the store's assert takes (public or random).
+  CHECK(host_sim::peer_sec_reads == std::vector<std::string>(3, "loop") && host_sim::peer_sec_bad_keys == 0);
+  // F209: counted unlisted, and named by the full store's lockout line.
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 1);
+  CHECK(health_says(kLockout) == 1 && health_detail(kLockout) == "1 of 3 bonds unlisted");
+
+  // Once: the list was saved by identity, so the next boot reads no record
+  // and lists the bond no more.
+  boot(/*bring_up=*/true, /*wipe=*/false);
+  CHECK(bc::g_paired_count == 2 && health_says(kRebuilt) == 0 && host_sim::peer_sec_reads.empty());
+  CHECK(NimBLEDevice::isBonded(stranger));
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 1);
+
+  // Clear all deletes it with the rest.
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIRED_CLEAR)).r.ok);
+  CHECK(host_sim::bonds.empty() && host_sim::peer_secs.empty() && bc::g_paired_count == 0);
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 0 && st.bonds_unlisted == 0);
+  std::printf("PASS an_unauthenticated_bond_is_left_out_of_the_rebuild\n");
+}
+
+// What the rebuild does with each answer the store's read can give, one
+// unlisted bond (a random static identity) at a time: a record that says
+// authenticated, or that the read cannot give (no record: BLE_HS_ENOENT; a
+// read that fails: BLE_HS_ENOTSUP; a record under the same six bytes as a
+// public address, another peer's; a record with no LTK, whose
+// `authenticated` NimBLE never wrote), is listed as before F353. Only a
+// record with an LTK and `authenticated` 0 is left out. An entry the saved
+// list holds keeps it, unread, whatever its record says. And a bond whose
+// identity reads all zero (the key BLE_ADDR_ANY, which would read the
+// store's first record, here another bond's unauthenticated one) is listed
+// as before rather than judged by that record. No case deletes a bond.
+void test_a_bond_record_the_rebuild_cannot_read_is_listed_as_before() {
+  const uint8_t stranger_addr[6] = {0xD3, 0x53, 0x00, 0x11, 0x22, 0x44};
+  const NimBLEAddress stranger(stranger_addr, 1);
+  const NimBLEAddress public_twin(stranger_addr, 0);
+  struct Case {
+    const char* what;
+    std::function<void()> store;   // what the store holds, and how it reads
+    unsigned listed;               // entries the rebuild lists
+    unsigned unconfirmed;          // bonds it leaves out
+    unsigned reads;                // records it reads
+  };
+  const Case cases[] = {
+      {"an unauthenticated record", [&] { host_sim::store_bond(stranger, false, /*authenticated=*/false); }, 0, 1, 1},
+      {"an authenticated record", [&] { host_sim::store_bond(stranger, false, /*authenticated=*/true); }, 1, 0, 1},
+      {"no record (BLE_HS_ENOENT)", [&] { host_sim::bonds = {stranger}; }, 1, 0, 1},
+      {"a read that fails (BLE_HS_ENOTSUP)",
+       [&] {
+         host_sim::store_bond(stranger, false, /*authenticated=*/false);
+         host_sim::peer_sec_read_fails = BLE_HS_ENOTSUP;
+       },
+       1, 0, 1},
+      {"a record under the public address of the same bytes",
+       [&] {
+         host_sim::store_bond(public_twin, false, /*authenticated=*/false);
+         host_sim::bonds = {stranger};
+       },
+       1, 0, 1},
+      {"a record with no LTK",
+       [&] {
+         host_sim::store_bond(stranger, false, /*authenticated=*/false);
+         peer_sec_of(stranger)->ltk_present = 0;
+       },
+       1, 0, 1},
+      {"an entry the saved list holds",
+       [&] {
+         host_sim::store_bond(stranger, false, /*authenticated=*/false);
+         bc::PairedDevice old;
+         memset(&old, 0, sizeof old);
+         memcpy(old.address, stranger.getBase()->val, 6);
+         strcpy(old.name, "saved by the owner");
+         old.security = bc::SEC_BONDED;
+         const uint8_t* raw = reinterpret_cast<const uint8_t*>(&old);
+         host_sim::main_nvs["bt_paired"].assign(raw, raw + sizeof old);
+       },
+       1, 0, 0},
+      {"an all-zero identity beside another's unauthenticated record",
+       [&] {
+         host_sim::store_bond(stranger, false, /*authenticated=*/false);
+         host_sim::bonds.insert(host_sim::bonds.begin(), NimBLEAddress());
+       },
+       1, 1, 1},
+  };
+  for (const Case& c : cases) {
+    boot(/*bring_up=*/false);
+    c.store();
+    const size_t held = host_sim::bonds.size();
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    loop_pass();
+    const std::string detail = health_detail(kRebuilt);
+    const bool ok = bc::g_paired_by_identity && bc::g_paired_count == c.listed &&
+                    host_sim::peer_sec_reads.size() == c.reads && host_sim::bonds.size() == held &&
+                    host_sim::bonds_deleted.empty();
+    if (!ok) {
+      std::fprintf(stderr, "%s: %u listed, %zu read, %zu of %zu bonds, %s\n", c.what, (unsigned)bc::g_paired_count,
+                   host_sim::peer_sec_reads.size(), host_sim::bonds.size(), held, detail.c_str());
+    }
+    CHECK(ok);
+    const std::string tail = ", " + std::to_string(c.unconfirmed) + " unconfirmed";
+    CHECK(detail.size() > tail.size() && detail.compare(detail.size() - tail.size(), tail.size(), tail) == 0);
+    CHECK(fits_health_ring(kRebuilt, detail));
+    for (const std::string& t : host_sim::peer_sec_reads) CHECK(t == "loop");
+    CHECK(host_sim::peer_sec_bad_keys == 0);
+    bc::BluetoothStatus st;
+    bc::read_status(&st);
+    CHECK(st.bonds_held == held && st.bonds_unlisted == held - c.listed);
+  }
+  std::printf("PASS a_bond_record_the_rebuild_cannot_read_is_listed_as_before\n");
 }
 
 struct Test {
@@ -6923,6 +7213,8 @@ const Test kTests[] = {
     {"a_cleared_list_stays_cleared_after_a_reboot", test_a_cleared_list_stays_cleared_after_a_reboot},
     {"a_nearby_name_prefix_is_hex_or_refused", test_a_nearby_name_prefix_is_hex_or_refused},
     {"a_hostile_nearby_name_never_reaches_the_answer", test_a_hostile_nearby_name_never_reaches_the_answer},
+    {"one_canary_heard_by_name_chirp_and_beacon_takes_one_slot",
+     test_one_canary_heard_by_name_chirp_and_beacon_takes_one_slot},
     {"a_passkey_outside_pairing_mode_is_shown_nowhere", test_a_passkey_outside_pairing_mode_is_shown_nowhere},
     {"an_unauthenticated_bond_is_deleted_and_its_link_dropped",
      test_an_unauthenticated_bond_is_deleted_and_its_link_dropped},
@@ -6940,6 +7232,9 @@ const Test kTests[] = {
     {"a_bond_the_stack_kept_is_asked_again_each_minute", test_a_bond_the_stack_kept_is_asked_again_each_minute},
     {"a_listed_phone_that_pairs_again_by_just_works_leaves_the_list",
      test_a_listed_phone_that_pairs_again_by_just_works_leaves_the_list},
+    {"an_unauthenticated_bond_is_left_out_of_the_rebuild", test_an_unauthenticated_bond_is_left_out_of_the_rebuild},
+    {"a_bond_record_the_rebuild_cannot_read_is_listed_as_before",
+     test_a_bond_record_the_rebuild_cannot_read_is_listed_as_before},
     {"a_bluetooth_name_reaches_every_answer_as_shown", test_a_bluetooth_name_reaches_every_answer_as_shown},
 };
 

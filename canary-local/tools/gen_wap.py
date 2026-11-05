@@ -16,7 +16,8 @@ as `gen_homeassistant.py` / `gen_boards.py`.
 Sources of truth (all in-repo, deterministic, offline):
   firmware/projects/canary-wap/arduino/canary_wap/
       canary_wap.ino        version/identity, AP ssid+password, AP channel/clients,
-                            each server's port, boot log, routes
+                            each server's port, each mDNS service's port, boot
+                            log, routes
       onboarding_fsm.h      the SSID prefix and node type word, the AP grace
       setup_wizard.h        NVS keys, setup timeout, DNS port, device-name cap
       setup_page_html.h     CAPTIVE_PORTAL_HTML  (rendered verbatim)
@@ -207,17 +208,29 @@ if not _SOFTAP or not all(re.search(r"WiFi\.softAP\([^()]*,\s*AP_CHANNEL,\s*fals
 # static_assert(HTTPS_PORT == 443): HTTPD_SSL_CONFIG_DEFAULT() binds 443 too.
 
 
-def _code_lines(text: str) -> list:
-    """Each line of `text` that holds code: not wholly comment, not under #if 0.
+# One lexeme at a time: a string or character literal (to its closing quote,
+# or the line's end), a comment opener, or a run of anything else.
+_LEXEME = re.compile(r'"(?:\\.?|[^"\\])*"?|\'(?:\\.?|[^\'\\])*\'?|//|/\*|[^"\'/]+|/')
 
+
+def _scan_lines(text: str) -> list:
+    """Each line of `text` as (number, line, code, bare, live, unread).
+
+    `code` is the line with its comments taken out, `bare` the same with each
+    string and character literal emptied (so a call named inside a log string
+    is not a call), and `live` is False under #if 0. `unread` is the line of
+    the innermost open conditional this scanner does not evaluate (any #if
+    but #if 0, an #ifdef, an #ifndef, an #elif and what follows it), or None.
     String and character literals are read as literals, so "/*" in a route
     pattern opens no comment.
     """
-    kept = []
+    rows = []
     in_block = False
     dead = []  # one entry per open #if: True while that branch is #if 0's
-    for line in text.splitlines():
+    unread = []  # one entry per open #if: its line while its branch is not known
+    for number, line in enumerate(text.splitlines(), 1):
         code = []
+        bare = []
         i = 0
         while i < len(line):
             if in_block:
@@ -226,40 +239,48 @@ def _code_lines(text: str) -> list:
                     break
                 in_block, i = False, end + 2
                 code.append(" ")
+                bare.append(" ")
                 continue
-            ch = line[i]
-            if ch in "\"'":
-                j = i + 1
-                while j < len(line) and line[j] != ch:
-                    j += 2 if line[j] == "\\" else 1
-                code.append(line[i:j + 1])
-                i = j + 1
-            elif line.startswith("//", i):
+            lexeme = _LEXEME.match(line, i).group()
+            if lexeme == "//":
                 break
-            elif line.startswith("/*", i):
+            if lexeme == "/*":
                 in_block, i = True, i + 2
                 code.append(" ")
-            else:
-                code.append(ch)
-                i += 1
+                bare.append(" ")
+                continue
+            code.append(lexeme)
+            bare.append(lexeme[0] * 2 if lexeme[0] in "\"'" else lexeme)
+            i += len(lexeme)
         stripped = "".join(code).strip()
         directive = re.match(r"#\s*(if|ifdef|ifndef|else|elif|endif)\b\s*(.*)", stripped)
         if directive:
             word, arg = directive.group(1), directive.group(2).strip()
             if word.startswith("if"):
                 dead.append(word == "if" and arg == "0")
+                unread.append(None if dead[-1] else f"{number}: {stripped}")
             elif word == "endif":
                 if dead:
                     dead.pop()
+                    unread.pop()
             elif dead:
                 dead[-1] = False  # #else or #elif: that branch is not #if 0's
-        if stripped and not any(dead) and not line.lstrip().startswith(("//", "*", "/*")):
-            kept.append(line)
-    return kept
+                if word == "elif":
+                    unread[-1] = f"{number}: {stripped}"  # nor is it known: X is not evaluated
+        rows.append((number, line, stripped, "".join(bare).strip(), not any(dead),
+                     next((u for u in reversed(unread) if u), None)))
+    return rows
+
+
+def _code_lines(text: str) -> list:
+    """Each line of `text` that holds code: not wholly comment, not under #if 0."""
+    return [line for _, line, code, _, live, _ in _scan_lines(text)
+            if code and live and not line.lstrip().startswith(("//", "*", "/*"))]
 
 
 _INO_CODE = _code_lines(read(INO))
-_PORT_DIGITS = r"([1-9]\d{0,4})"  # a decimal literal: no sign, suffix or leading zero
+_PORT_LITERAL = r"[1-9]\d{0,4}"  # a decimal literal: no sign, suffix or leading zero
+_PORT_DIGITS = f"({_PORT_LITERAL})"
 _PORT_WRITE = re.compile(r"\s*(redirect_config\.server_port|config\.server_port)\s*=\s*" + _PORT_DIGITS +
                          r"\s*;\s*(?://.*)?")
 _PORT_SECURE_WRITE = re.compile(r"\s*ssl_config\.port_secure\s*=\s*HTTPS_PORT\s*;\s*(?://.*)?")
@@ -330,6 +351,118 @@ _HTTP_PORTS = {k: v for k, v in _PORTS.items() if k in ("redirect_config.server_
 if len(_HTTP_PORTS) != 2 or len(set(_HTTP_PORTS.values())) != 1:
     die(f"expected one port for the port-80 redirect server and the HTTP-only fallback, got {_HTTP_PORTS}")
 HTTP_PORT = _HTTP_PORTS["config.server_port"]
+
+# mDNS (sweep F366, #1836's filing): each service the page lists, and its
+# port, is read from the sketch's MDNS.addService() calls; the ports were
+# typed here, so a start that advertised another port left the page green
+# and wrong. The sketch starts mDNS in three places today (the boot
+# announce, the re-announce once the station gets an address, the
+# re-announce after a rename). Each start must register exactly the http
+# and the securacv service, each once, each on its own line as
+# MDNS.addService("<service>", "tcp", <port>); with the port a decimal
+# literal or the HTTPS_PORT constant read above, and the starts must agree.
+# A registration belongs to the MDNS.begin() line above it, in the file's
+# order. Every line that names a start or a service call in its code (not
+# in a comment or a string, not under #if 0) is read, and each of these is
+# refused with the file and the line, never skipped: a preprocessor line
+# that names one (a macro this reader does not expand, so it is refused as
+# a macro, not read as a start or a registration), a line that names a
+# service call this reader never reads (MDNS.enableArduino() and
+# enableWorkstation(), IDF's own mdns_service_*; a definition by such a
+# name is refused by the same words, since it is still not a registration
+# this reader can count), an addService call in any other form, one before
+# any MDNS.begin(), a third service, a service registered twice, a start
+# that registers none, two starts that disagree on a port, a start or a
+# registration under a condition this reader does not evaluate (#if X,
+# #ifdef, #elif: the compiler may drop it, and the page would list a service
+# the device does not advertise), and an mDNS call in any other file of the
+# sketch, which this reader does not read. The TXT records the page lists
+# are typed here, not read.
+_INO_REL = INO.relative_to(REPO)
+_MDNS_BEGIN = re.compile(r"\bMDNS\s*\.\s*begin\s*\(")
+# In the sketch any call named addService is read, whatever it is called on
+# (an alias of MDNS is not skipped), and any line naming one of the other
+# service calls, as a call or a definition, is refused; in its other files,
+# an MDNS start or service call, or one of IDF's own mdns_* service calls,
+# is refused.
+_MDNS_ADD = re.compile(r"\baddService\s*\(")
+_MDNS_OTHER = re.compile(r"\b(enableArduino|enableWorkstation|mdns_service_\w+)\s*\(")
+_MDNS_ELSEWHERE = re.compile(r"\bMDNS\s*\.\s*(?:begin|addService|enableArduino|enableWorkstation)\s*\("
+                             r"|\bmdns_(?:init|service_\w+)\s*\(")
+_MDNS_PORT_NAMES = {"HTTPS_PORT": HTTPS_PORT}
+_MDNS_SERVICE = re.compile(r'\s*MDNS\.addService\("([a-z][a-z0-9-]*)",\s*"tcp",\s*('
+                           + "|".join([_PORT_LITERAL, *_MDNS_PORT_NAMES]) + r")\);\s*(?://.*)?")
+_MDNS_WANT = ("http", "securacv")
+_MDNS_STARTS: list = []  # (the MDNS.begin() line, {service: (port, line)})
+for _n, _ln, _code, _bare, _live, _unread in _scan_lines(read(INO)):
+    if not _live or not _code:
+        continue
+    _begins, _adds, _other = _MDNS_BEGIN.search(_bare), _MDNS_ADD.search(_bare), _MDNS_OTHER.search(_bare)
+    if not (_begins or _adds or _other):
+        continue
+    if _code.startswith("#"):
+        # A #define naming a start or a call is no start and no call: the
+        # reader does not expand macros, so it refuses the line as a macro
+        # rather than count it (and then misname what it counted).
+        die(f"{_INO_REL}:{_n}: a preprocessor line names an mDNS start or service call ({_ln.strip()!r}): "
+            f"this generator does not expand macros; call MDNS.begin() and MDNS.addService() directly, "
+            f"outside any #define")
+    if _unread:
+        die(f"{_INO_REL}:{_n}: the sketch starts mDNS or registers a service under a condition this "
+            f"generator does not evaluate ({_ln.strip()!r}, under line {_unread}): start mDNS and register "
+            f"its services outside any #if but #if 0, or teach gen_wap.py the condition")
+    if _other:
+        die(f"{_INO_REL}:{_n}: the sketch names {_other.group(1)}(), an mDNS service call this generator "
+            f"does not read ({_ln.strip()!r}): register each service as MDNS.addService(\"<service>\", "
+            f"\"tcp\", <port>); on its own line, or teach gen_wap.py the call")
+    if _begins:
+        _MDNS_STARTS.append((_n, {}))
+    if not _adds:
+        continue
+    _m = _MDNS_SERVICE.fullmatch(_ln)
+    if not _m:
+        die(f"{_INO_REL}:{_n}: the sketch registers an mDNS service in a form this generator cannot read "
+            f"({_ln.strip()!r}): write it on its own line as MDNS.addService(\"<service>\", \"tcp\", <digits>); "
+            f"(or HTTPS_PORT for the port), or teach gen_wap.py the new form")
+    if not _MDNS_STARTS:
+        die(f"{_INO_REL}:{_n}: the sketch registers an mDNS service before any MDNS.begin() "
+            f"({_ln.strip()!r}): this generator reads each start's services below its MDNS.begin() line")
+    _svc = _m.group(1)
+    _begin, _services = _MDNS_STARTS[-1]
+    if _svc not in _MDNS_WANT:
+        die(f"{_INO_REL}:{_n}: the mDNS start at line {_begin} registers a {_svc!r} service: "
+            f"the page lists exactly {', '.join(_MDNS_WANT)}")
+    if _svc in _services:
+        die(f"{_INO_REL}:{_n}: the mDNS start at line {_begin} registers {_svc!r} twice "
+            f"(also at line {_services[_svc][1]}): register each service once per start")
+    _port_text = _m.group(2)
+    _services[_svc] = (_MDNS_PORT_NAMES[_port_text] if _port_text in _MDNS_PORT_NAMES
+                       else _port(_port_text, f"{_INO_REL}:{_n}: the {_svc} service's mDNS port"), _n)
+if not _MDNS_STARTS:
+    die(f"{_INO_REL}: no MDNS.begin() in the sketch: the page's mDNS services are read from its starts")
+MDNS_PORTS: dict = {}
+for _begin, _services in _MDNS_STARTS:
+    _missing = [s for s in _MDNS_WANT if s not in _services]
+    if _missing:
+        die(f"{_INO_REL}:{_begin}: the mDNS start here registers no {' and no '.join(_missing)} service: "
+            f"each start must register exactly {', '.join(_MDNS_WANT)}")
+    for _svc, (_p, _n) in _services.items():
+        _first = MDNS_PORTS.setdefault(_svc, (_p, _n))
+        if _first[0] != _p:
+            die(f"{_INO_REL}:{_n}: the mDNS starts disagree on the {_svc} service's port: "
+                f"{INO.name}:{_first[1]} says {_first[0]}, {INO.name}:{_n} says {_p}")
+for _path in sorted(FW.rglob("*")):
+    if _path == INO or _path.suffix not in (".ino", ".cpp", ".c", ".h", ".hpp"):
+        continue
+    _text = _path.read_text(encoding="utf-8", errors="replace")
+    if "MDNS" not in _text and "mdns_" not in _text:
+        continue
+    for _n, _ln, _code, _bare, _live, _unread in _scan_lines(_text):
+        if _live and _MDNS_ELSEWHERE.search(_bare):
+            die(f"{_path.relative_to(REPO)}:{_n}: mDNS is started or a service registered outside "
+                f"{INO.name} ({_ln.strip()!r}): this generator reads the services from {INO.name} only")
+MDNS_HTTP_PORT = MDNS_PORTS["http"][0]
+MDNS_SECURACV_PORT = MDNS_PORTS["securacv"][0]
 DEVICE_NAME_MAX = int(grab(SETUP_WIZARD_H, r"DEVICE_NAME_MAX\s*=\s*(\d+)", "DEVICE_NAME_MAX"))
 DNS_PORT = int(grab(SETUP_WIZARD_H, r"DNS_PORT\s*=\s*(\d+)", "DNS_PORT"))
 NVS_NS = grab(SETUP_WIZARD_H, r'prefs\.begin\("([a-z]+)"', "NVS namespace")
@@ -447,8 +580,8 @@ AP = {
     "mdns": ["canary.local", "canary-<name>.local", "canary-<4 hex>.local"],
     "mdns_example": EX_MDNS,
     "mdns_services": [
-        {"service": "_http._tcp", "port": 80},
-        {"service": "_securacv._tcp", "port": 80,
+        {"service": "_http._tcp", "port": MDNS_HTTP_PORT},
+        {"service": "_securacv._tcp", "port": MDNS_SECURACV_PORT,
          "txt": ["device_id", "fw", "host", "name", "model", "dt=canary-wap", "role=witness"]},
     ],
     "nvs_namespace": NVS_NS,
@@ -859,7 +992,7 @@ TOPICS = [
     {"suffix": "mesh", "retained": True, "cadence": "~30 s",
      "payload": '{"airtime_pct_x100":40,"channel":6,"locked_to_sta":true,"locked_to_ap":false,"fallback":false,"routine_allowed":18,"routine_denied":0,"urgent_sends":0}'},
     {"suffix": "chirp", "retained": True, "cadence": "~30 s",
-     "payload": '{"state":"listening"}', "note": "state is the lowercase chirp enum"},
+     "payload": '{"state":"active"}', "note": "state is the lowercase chirp enum"},
     {"suffix": "beacon", "retained": True, "cadence": "~30 s",
      "payload": '{"state":"Normal","beacon_airtime_pct_x100":0,"active_template":"","beacon_sends":0,"beacon_set_size":2,"trouble_mask":0}',
      "note": "state is NFPA-capitalized"},
@@ -881,7 +1014,21 @@ if list(_egress_example.keys()) != EGRESS_KEYS:
 if list(_egress_example["planner"].keys()) != EGRESS_PLANNER_KEYS:
     die(f"MQTT egress: example planner keys {list(_egress_example['planner'])} are not the firmware's "
         f"{EGRESS_PLANNER_KEYS}")
-must(FW / "chirp_channel.cpp", 'case CHIRP_LISTENING:    return "listening";', "chirp state word")
+# The chirp example's word is one the canary-wap's channel publishes (sweep
+# A90): the sketch sends state_name() of get_status().state, and enable()
+# goes from initializing straight to active; nothing on the WAP sets
+# CHIRP_LISTENING, so the old example, "listening", was a word state_name()
+# has and the device never sends. The example is state_name()'s word for
+# CHIRP_ACTIVE, which a code line of chirp_channel.cpp enters; wap.test.js
+# holds it to every state chirp_channel.cpp can show.
+CHIRP_CPP = FW / "chirp_channel.cpp"
+must(CHIRP_CPP, 'case CHIRP_ACTIVE:       return "active";', "chirp state word")
+if json.loads(next(t for t in TOPICS if t["suffix"] == "chirp")["payload"]) != {"state": "active"}:
+    die('MQTT chirp: the example is not {"state":"active"}, the word state_name() gives the state checked here')
+if not any(_live and re.search(r"\bset_state\(CHIRP_ACTIVE\)", _bare)
+           for _n, _ln, _code, _bare, _live, _unread in _scan_lines(read(CHIRP_CPP))):
+    die(f"{CHIRP_CPP.relative_to(REPO)}: no code line sets CHIRP_ACTIVE: the chirp example's state is one "
+        f"the canary-wap no longer enters; pick one it does (sweep A90)")
 must(FW / "beacon_channel.cpp", 'case BEACON_STATE_NORMAL:      return "Normal";', "beacon state word")
 SUBSCRIBED = [
     {"suffix": "update/cmd", "payload": '"install"'},

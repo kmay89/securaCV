@@ -34,6 +34,26 @@ const egressH = read(join(FW, "csi_event_egress.h"));
 const companionH = read(join(FW, "companion_pwa.h"));
 const doc = read(join(REPO, "docs/getting_started_canary.md"));
 
+// A code line of the sketch: not a comment line, and not under #if 0. The
+// generator reads the sketch the same way (gen_wap.py's _code_lines), so a
+// dead registration or port write it does not count is not held against the
+// page here either; a line under any other #if is read as written, as there.
+const codeLines = (text) => {
+  const lines = [];
+  const dead = []; // one entry per open #if: true while that branch is #if 0's
+  for (const line of text.split("\n")) {
+    const directive = line.match(/^\s*#\s*(if|ifdef|ifndef|else|elif|endif)\b(.*)$/);
+    if (directive) {
+      const arg = directive[2].replace(/\/\*.*?\*\//g, "").replace(/\/\/.*$/, "").trim();
+      if (directive[1].startsWith("if")) dead.push(directive[1] === "if" && arg === "0");
+      else if (directive[1] === "endif") dead.pop();
+      else if (dead.length) dead[dead.length - 1] = false; // #else, #elif: not #if 0's branch
+    }
+    if (!dead.includes(true) && !/^\s*(\/\/|\/?\*)/.test(line)) lines.push(line);
+  }
+  return lines;
+};
+
 // ── 1. shape + sanity floors ───────────────────────────────────────────────
 test("wap.json has every section the page requires", () => {
   for (const k of ["device", "ap", "captive", "routes", "wizard", "serial", "mqtt", "sensing", "sandbox", "docs"])
@@ -103,13 +123,35 @@ test("AP channel, client cap and server ports are the sketch's own (F277)", () =
   // it over httpd.server_port, so the sketch writes no httpd.server_port
   // (sweep F400).
   assert.strictEqual(data.ap.https_port, num(/static const int\s+HTTPS_PORT\s*=\s*(\d+);/, "HTTPS_PORT"));
-  const code = ino.split("\n").filter((l) => !/^\s*(\/\/|\/?\*)/.test(l));
+  const code = codeLines(ino);
   assert.strictEqual(code.filter((l) => /^\s*ssl_config\.port_secure\s*=\s*HTTPS_PORT;/.test(l)).length, 1,
     "the HTTPS server's port is not one ssl_config.port_secure = HTTPS_PORT; write");
   assert.deepStrictEqual(code.filter((l) => /\bhttpd\.server_port\b/.test(l)), [],
     "the sketch writes ssl_config.httpd.server_port, which httpd_ssl_start() overwrites");
   assert.strictEqual(data.ap.http_port, num(/redirect_config\.server_port\s*=\s*(\d+);/, "the port-80 redirect server's port"));
   assert.strictEqual(data.ap.http_port, num(/[^\w.]config\.server_port\s*=\s*(\d+);/, "the HTTP-only server's port"));
+});
+
+// Sweep F366: the mDNS services' ports were typed in gen_wap.py, so a start
+// that advertised another port left the page green. Each one listed is now
+// the one every mDNS start in the sketch registers (the generator refuses
+// the forms it cannot read; this holds the committed page to the sketch,
+// reading the same code lines the generator counts, #if 0 excluded).
+test("each mDNS service and its port is the one every mDNS start registers (F366)", () => {
+  const code = codeLines(ino);
+  const begins = code.filter((l) => /\bMDNS\.begin\(/.test(l)).length;
+  assert.ok(begins >= 1, "no MDNS.begin() in canary_wap.ino");
+  const regs = code.filter((l) => /\bMDNS\.addService\(/.test(l));
+  assert.strictEqual(regs.length, 2 * begins, "each mDNS start registers two services: " + regs.join(" | "));
+  assert.deepStrictEqual(data.ap.mdns_services.map((s) => s.service), ["_http._tcp", "_securacv._tcp"]);
+  const portOf = (tok) => (tok === "HTTPS_PORT" ? data.ap.https_port : Number(tok));
+  for (const s of data.ap.mdns_services) {
+    const name = s.service.slice(1, -"._tcp".length);
+    const mine = regs.map((l) => l.match(/^\s*MDNS\.addService\("([a-z0-9-]+)",\s*"tcp",\s*([1-9]\d*|HTTPS_PORT)\);/))
+      .filter((m) => m && m[1] === name);
+    assert.strictEqual(mine.length, begins, "not every mDNS start registers " + name);
+    for (const m of mine) assert.strictEqual(s.port, portOf(m[2]), s.service + "'s port is not the sketch's");
+  }
 });
 
 test("captive.html is the firmware's CAPTIVE_PORTAL_HTML, verbatim", () => {
@@ -230,6 +272,31 @@ test("every MQTT topic example is keyed as the firmware publishes it (sweep A32)
   // the bare strings are csi_mqtt.cpp's own
   assert.ok(csiMqttCpp.includes('const char* pl = state ? "ON" : "OFF";'));
   assert.ok(csiMqttCpp.includes('const char* pl = muted ? "muted" : "live";'));
+});
+
+// Sweep A90: the chirp example said "listening", a word state_name() has and
+// no canary-wap sends: enable() goes from initializing straight to active,
+// and nothing on the WAP sets CHIRP_LISTENING. The example's word is held to
+// the states chirp_channel.cpp can show: one set_state() enters, the one the
+// channel starts in, or the one shown_state() reads over an active channel
+// whose cooldown runs (what get_status() reports, and the sketch publishes).
+const chirpCpp = read(join(FW, "chirp_channel.cpp"));
+test("the chirp example's state is a word the WAP's channel shows (sweep A90)", () => {
+  const words = new Map([...fnBody(chirpCpp, "const char* state_name(ChirpState state) {")
+    .matchAll(/case (CHIRP_[A-Z_]+):\s*return "([a-z_]+)";/g)].map((m) => [m[2], m[1]]));
+  assert.ok(words.size >= 5, "state_name() parsed thin: " + [...words.keys()]);
+  const code = chirpCpp.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/.*$/gm, "");
+  const shown = new Set([
+    ...[...code.matchAll(/\bset_state\((CHIRP_[A-Z_]+)\)/g)].map((m) => m[1]),
+    ...[...code.matchAll(/static ChirpState g_state = (CHIRP_[A-Z_]+);/g)].map((m) => m[1]),
+    ...[...fnBody(code, "static ChirpState shown_state(").matchAll(/\?\s*(CHIRP_[A-Z_]+)\s*:/g)].map((m) => m[1]),
+  ]);
+  assert.ok(shown.has("CHIRP_ACTIVE") && shown.has("CHIRP_DISABLED"), "chirp_channel.cpp parsed thin: " + [...shown]);
+  const state = JSON.parse(data.mqtt.topics.find((t) => t.suffix === "chirp").payload).state;
+  assert.ok(words.has(state),
+    "the chirp example's state " + JSON.stringify(state) + " is not a word state_name() returns");
+  assert.ok(shown.has(words.get(state)), "the chirp example says " + JSON.stringify(state) + ", but chirp_channel.cpp "
+    + "never enters " + words.get(state) + " (it shows " + [...shown].sort().join(", ") + ")");
 });
 
 test("the egress example is the body csi_mqtt::publish_egress() sends (sweep F149)", () => {

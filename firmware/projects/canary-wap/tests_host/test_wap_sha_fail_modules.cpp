@@ -104,6 +104,7 @@
 #include "familiar.h"
 #include "evidence_update_verify.h"
 #include "mesh_crypto.h"
+#include "json_strict.h"     // the route's answers, read as JSON.parse reads them
 
 #ifndef WAP_SHAMOD_VAULT_STATE_INC
 #error "WAP_SHAMOD_VAULT_STATE_INC must name the cut of vault_snapshot.cpp's state (the Makefile passes it)"
@@ -125,6 +126,9 @@
 #endif
 #ifndef WAP_SHAMOD_USB_INC
 #error "WAP_SHAMOD_USB_INC must name the cut of usb_evidence_drive.cpp's dep_sha256() (the Makefile passes it)"
+#endif
+#ifndef WAP_SHAMOD_VAULT_KEY_INC
+#error "WAP_SHAMOD_VAULT_KEY_INC must name the cut of canary_wap.ino's handle_vault_key_set() (the Makefile passes it)"
 #endif
 #ifndef WAP_SKETCH_DIR
 #error "WAP_SKETCH_DIR must name the sketch directory (the Makefile passes it)"
@@ -344,7 +348,15 @@ struct FakePrefs {
     std::memcpy(buf, it->second.data(), it->second.size());
     return it->second.size();
   }
+  // A put NVS refuses (sweep F426): Preferences::putBytes() answers 0 and
+  // the stored blob stays as it was. Counted apart from the writes.
+  bool put_fails = false;
+  int refused_puts = 0;
   size_t putBytes(const char* k, const void* buf, size_t len) {
+    if (put_fails) {
+      ++refused_puts;
+      return 0;
+    }
     ++writes;
     blobs[k].assign(static_cast<const uint8_t*>(buf), static_cast<const uint8_t*>(buf) + len);
     return len;
@@ -365,17 +377,52 @@ struct FakePrefs {
   }
 };
 static FakePrefs g_nvs;
+// A session that does not open (sweep F426): nvs_open() failed, as
+// NvsManager::begin() answers it.
+static bool g_nvs_open_fails = false;
 class NvsMainSession {
  public:
   explicit NvsMainSession(bool /*read_only*/) {}
-  bool isOpen() const { return true; }
+  bool isOpen() const { return !g_nvs_open_fails; }
   FakePrefs* operator->() { return &g_nvs; }
 };
+
+#include "vault_snapshot.h"   // KeySet, set_pubkey_hex()'s answer (sweep F426)
 
 namespace vault_snapshot {
 #include WAP_SHAMOD_VAULT_STATE_INC
 #include WAP_SHAMOD_VAULT_INC
 }  // namespace vault_snapshot
+
+// POST /api/vault/key's handler, handle_vault_key_set(), cut verbatim out of
+// canary_wap.ino (sweep F426), over the vault functions above and
+// stand-ins for what it names: esp_http_server's one body read, the
+// sketch's http_send_json() (the bytes it sends), g_health's request count
+// and ArduinoJson (arduinojson_tree.h, which writes as ArduinoJson does).
+#ifndef ESP_OK
+typedef int esp_err_t;
+#define ESP_OK 0
+#endif
+struct httpd_req_t {
+  std::string body;   // what the client sent
+  std::string resp;   // what the handler answered
+  int sends = 0;
+};
+static int httpd_req_recv(httpd_req_t* r, char* buf, size_t len) {
+  const size_t n = std::min(len, r->body.size());
+  std::memcpy(buf, r->body.data(), n);
+  return (int)n;
+}
+static esp_err_t http_send_json(httpd_req_t* req, const char* json) {
+  req->resp = json ? json : "";
+  ++req->sends;
+  return ESP_OK;
+}
+static struct {
+  uint32_t http_requests;
+} g_health;
+#include "arduinojson_tree.h"
+#include WAP_SHAMOD_VAULT_KEY_INC
 
 // ════════════════════════════════════════════════════════════════════════════
 // familiar.cpp's world
@@ -493,6 +540,7 @@ static void vault_reset() {
   using namespace vault_snapshot;
   stub_sha256::disarm();
   g_nvs = FakePrefs();
+  g_nvs_open_fails = false;
   g_log.clear();
   SD.files.clear();
   SD.dirs.clear();
@@ -682,20 +730,20 @@ static void test_vault_key_id() {
   {
     vault_reset();
     stub_sha256::arm();
-    CHECK(set_pubkey_hex(hex(kOtherPub, 32).c_str()));
+    CHECK(set_pubkey_hex(hex(kOtherPub, 32).c_str()) == KeySet::Stored);
     CHECK(has_pubkey());
   }
   for (Out o : {Out::Scribble, Out::Untouched, Out::Digest}) {
     const std::string label = std::string("vault key register, one-shot fails, ") + out_name(o);
     vault_reset();
     stub_sha256::arm();
-    CHECK(set_pubkey_hex(hex(kOtherPub, 32).c_str()));
+    CHECK(set_pubkey_hex(hex(kOtherPub, 32).c_str()) == KeySet::Stored);
     const int writes_before = g_nvs.writes;
     const std::vector<uint8_t> stored_before = g_nvs.blobs["vault_pub"];
     stub_sha256::arm(Step::OneShot, 0, 0, o);
-    const bool ok = set_pubkey_hex(hex(kOperatorPub, 32).c_str());
+    const KeySet set = set_pubkey_hex(hex(kOperatorPub, 32).c_str());
     CHECK_MSG(stub_sha256::fired, label);
-    CHECK_MSG(!ok, label + ": set_pubkey_hex answers false");
+    CHECK_MSG(set == KeySet::NotSaved, label + ": set_pubkey_hex answers NotSaved (the device's refusal)");
     CHECK_MSG(g_nvs.writes == writes_before && g_nvs.blobs["vault_pub"] == stored_before,
               label + ": nothing was written to NVS");
     CHECK_MSG(has_pubkey() && std::memcmp(g_pubkey, kOtherPub, 32) == 0,
@@ -705,6 +753,162 @@ static void test_vault_key_id() {
     CHECK_MSG(std::string(kid) == key_id_of(kOtherPub), label + ": with its own key id");
     CHECK_MSG(log_has("Vault unlock key refused"), label + ": the refusal is logged");
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// POST /api/vault/key says which refusal it was (sweep F426)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// set_pubkey_hex() answered one false for a key that is not 64 hex
+// characters and for a well-formed key the device could not keep (its key
+// id did not compute, NVS did not open, or NVS refused the write), and the
+// route answered every false with the shape text, so an owner who pasted
+// the right key read that it was the wrong shape. Now the route answers the
+// device's refusal in its own words, saying nothing changed, and the key
+// registered before stays the one, in RAM and NVS. The page shows the
+// answer's error as it is (web_ui.h's registerVaultKey(), unchanged).
+
+static const char* const kShapeText =
+    "pubkey must be the 64-hex X25519 public key printed by unseal_snapshot.py gen-key";
+static const char* const kNotSavedText =
+    "The device could not save this key (its key id did not compute, or storage refused the "
+    "write). Nothing changed. Try again, and check the health log if it repeats.";
+
+// POST /api/vault/key with `body`; its answer, parsed under JSON.parse's rules.
+static json_strict::Value post_vault_key(const std::string& body, const std::string& label) {
+  httpd_req_t req;
+  req.body = body;
+  handle_vault_key_set(&req);
+  CHECK_MSG(req.sends == 1, label + ": one answer");
+  json_strict::Value v;
+  CHECK_MSG(json_strict::parse(req.resp, &v), label + ": the answer parses: " + req.resp);
+  return v;
+}
+
+static std::string error_of(const json_strict::Value& v) {
+  const json_strict::Value* ok = v.get("ok");
+  const json_strict::Value* e = v.get("error");
+  if (ok == nullptr || ok->kind != json_strict::Value::Bool || ok->b) return "(ok is not false)";
+  return e != nullptr && e->kind == json_strict::Value::String ? e->text : "(no error)";
+}
+
+static std::string key_body(const std::string& hex64) { return "{\"pubkey\":\"" + hex64 + "\"}"; }
+
+// The key registered before a refused post: kOtherPub, in RAM and NVS.
+static void register_other_key() {
+  using namespace vault_snapshot;
+  vault_reset();
+  stub_sha256::arm();
+  const json_strict::Value v = post_vault_key(key_body(hex(kOtherPub, 32)), "register the first key");
+  const json_strict::Value* ok = v.get("ok");
+  const json_strict::Value* kid = v.get("key_id");
+  CHECK_MSG(ok != nullptr && ok->kind == json_strict::Value::Bool && ok->b, "the first key is registered");
+  CHECK_MSG(kid != nullptr && kid->text == key_id_of(kOtherPub), "with its key id");
+  g_log.clear();
+}
+
+static void check_other_key_kept(const std::string& label) {
+  using namespace vault_snapshot;
+  CHECK_MSG(has_pubkey() && std::memcmp(g_pubkey, kOtherPub, 32) == 0,
+            label + ": the key registered before is still the one in RAM");
+  char kid[17] = {0};
+  key_id_hex(kid);
+  CHECK_MSG(std::string(kid) == key_id_of(kOtherPub), label + ": with its own key id");
+  const std::vector<uint8_t> stored(kOtherPub, kOtherPub + 32);
+  CHECK_MSG(g_nvs.blobs.count("vault_pub") == 1 && g_nvs.blobs["vault_pub"] == stored,
+            label + ": and in NVS");
+}
+
+static void test_vault_key_route() {
+  using namespace vault_snapshot;
+
+  // A well-formed key the device could not keep: the key id did not compute
+  // (each way the one-shot can leave its output), NVS refused the write, or
+  // NVS did not open. Each answers the device's refusal, not the shape text.
+  struct DeviceSide {
+    const char* name;
+    Out out;          // the hash's failure, when this case fails it
+    bool hash_fails;
+    bool put_fails;
+    bool open_fails;
+    const char* logged;
+  };
+  const DeviceSide cases[] = {
+      {"the key id hash fails, 0xA5 left", Out::Scribble, true, false, false,
+       "Vault unlock key refused|key id hash failed"},
+      {"the key id hash fails, output untouched", Out::Untouched, true, false, false,
+       "Vault unlock key refused|key id hash failed"},
+      {"the key id hash fails, true digest left", Out::Digest, true, false, false,
+       "Vault unlock key refused|key id hash failed"},
+      {"NVS refuses the write", Out::Scribble, false, true, false,
+       "Vault unlock key refused|NVS refused the write"},
+      {"NVS does not open", Out::Scribble, false, false, true, "Vault unlock key refused|NVS did not open"},
+  };
+  for (const DeviceSide& c : cases) {
+    const std::string label = std::string("vault key route, ") + c.name;
+    register_other_key();
+    const int writes_before = g_nvs.writes;
+    if (c.hash_fails) stub_sha256::arm(Step::OneShot, 0, 0, c.out);
+    else stub_sha256::arm();
+    g_nvs.put_fails = c.put_fails;
+    g_nvs_open_fails = c.open_fails;
+    const json_strict::Value v = post_vault_key(key_body(hex(kOperatorPub, 32)), label);
+    g_nvs.put_fails = false;
+    g_nvs_open_fails = false;
+    if (c.hash_fails) CHECK_MSG(stub_sha256::fired, label + ": the armed hash was reached");
+    else CHECK_MSG(stub_sha256::hashes == 1 && !stub_sha256::fired, label + ": the key id computed");
+    const std::string err = error_of(v);
+    CHECK_MSG(err == kNotSavedText, label + ": answers the device's refusal, not the shape text: " + err);
+    CHECK_MSG(err.find("Nothing changed") != std::string::npos, label + ": and says nothing changed");
+    CHECK_MSG(v.get("key_id") == nullptr, label + ": no key id is answered");
+    CHECK_MSG(g_nvs.writes == writes_before, label + ": nothing was written to NVS");
+    if (c.put_fails) CHECK_MSG(g_nvs.refused_puts == 1, label + ": the one put was tried and refused");
+    else CHECK_MSG(g_nvs.refused_puts == 0, label + ": no put was tried");
+    check_other_key_kept(label);
+    CHECK_MSG(log_has(c.logged), label + ": the health log says why (" + c.logged + ")");
+  }
+
+  // Not a 64-hex key: the shape text, as before, and nothing is tried.
+  const struct {
+    const char* name;
+    std::string body;
+  } shapes[] = {
+      {"63 hex characters", key_body(hex(kOperatorPub, 32).substr(0, 63))},
+      {"65 hex characters", key_body(hex(kOperatorPub, 32) + "0")},
+      {"64 characters, one not hex", key_body(hex(kOperatorPub, 32).substr(0, 63) + "g")},
+      {"no pubkey", "{\"key\":\"" + hex(kOperatorPub, 32) + "\"}"},
+      {"a pubkey that is not a string", "{\"pubkey\":12}"},
+  };
+  for (const auto& c : shapes) {
+    const std::string label = std::string("vault key route, ") + c.name;
+    register_other_key();
+    const int writes_before = g_nvs.writes;
+    stub_sha256::arm();
+    const json_strict::Value v = post_vault_key(c.body, label);
+    const std::string err = error_of(v);
+    CHECK_MSG(err == kShapeText, label + ": answers the shape text: " + err);
+    CHECK_MSG(stub_sha256::hashes == 0, label + ": nothing was hashed");
+    CHECK_MSG(g_nvs.writes == writes_before && g_nvs.refused_puts == 0, label + ": nothing was written");
+    check_other_key_kept(label);
+    CHECK_MSG(!log_has("Vault unlock key refused"), label + ": no device refusal is logged");
+  }
+
+  // A key the device keeps: ok, its key id, in RAM and NVS.
+  {
+    const std::string label = "vault key route, a key the device keeps";
+    register_other_key();
+    stub_sha256::arm();
+    const json_strict::Value v = post_vault_key(key_body(hex(kOperatorPub, 32)), label);
+    const json_strict::Value* ok = v.get("ok");
+    const json_strict::Value* kid = v.get("key_id");
+    CHECK_MSG(ok != nullptr && ok->kind == json_strict::Value::Bool && ok->b, label + ": ok");
+    CHECK_MSG(kid != nullptr && kid->text == key_id_of(kOperatorPub), label + ": its key id");
+    CHECK_MSG(has_pubkey() && std::memcmp(g_pubkey, kOperatorPub, 32) == 0, label + ": in RAM");
+    const std::vector<uint8_t> stored(kOperatorPub, kOperatorPub + 32);
+    CHECK_MSG(g_nvs.blobs["vault_pub"] == stored, label + ": in NVS");
+    CHECK_MSG(log_has("Vault unlock key registered"), label + ": logged");
+  }
+  stub_sha256::disarm();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1183,6 +1387,7 @@ int main() {
   test_vault_seal_ok();
   test_vault_seal_refused();
   test_vault_key_id();
+  test_vault_key_route();
   test_evidence_verify();
   test_familiar();
   test_presence();

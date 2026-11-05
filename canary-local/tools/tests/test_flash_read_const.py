@@ -16,6 +16,15 @@ separator end each where the compiler ends it), takes a name defined exactly
 once, and reads a plain decimal literal (U/L suffixes allowed, no leading
 zero, at most 2^53 - 1) that ends the #define's line or the constexpr's
 statement. Anything else is refused by name, file and the text it found.
+A #define whose line runs into a block comment closed on a later line goes
+on there, as it does for the compiler: `#define WAIT_MS 30 /* thirty` over
+` */ * 1000` read 30 where g++ -E gives `30 * 1000`, and is now refused by
+that reason (sweep F429); the rows whose name is a macro to g++ are held to
+g++ -E itself, here. A #define whose `#` does not begin its line as the
+compiler reads it (code before it, on the same physical line or across such
+a comment: `#define Y 1 /* a` over ` */ #define X 30`) read 30 where g++
+defines no X, and is refused by that reason (the review of F429); those rows
+are held to g++ -E seeing no macro.
 
 The rule lived in gen_flash.py (sweep F313). gen_vision.py read the same
 constants with its own `NAME\\s*=\\s*(\\d+)` (no word boundary, no comment
@@ -103,6 +112,31 @@ def planted(text: str, row: dict) -> str:
 
 def refusal(row: dict, where: str) -> str:
     return row["refused"].replace("{where}", where)
+
+
+# F429's refusal, a #define whose line runs into a block comment that closes
+# on a later line with code after it (c_const.js throws the same words).
+RUNS_ON = "runs into a block comment closed on a later line"
+# The review's refusal, a #define whose `#` does not begin its line as the
+# compiler reads it (code before it, on the same physical line or across a
+# block comment closed on a later line): no directive, so no macro.
+NO_DIRECTIVE = "so the compiler reads no directive there"
+
+
+def preprocessed(gxx: str, text: str, name: str) -> str | None:
+    """What g++ -E substitutes for `name` after `text`, or None when the
+    compiler sees no macro of that name."""
+    probe = (f"{text}\n#ifdef {name}\nheld_value = {name};\n#else\n"
+             "held_value = not_a_macro;\n#endif\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "consts.h"
+        src.write_text(probe, encoding="utf-8", newline="")
+        out = subprocess.run([gxx, "-E", "-P", "-x", "c++", str(src)],
+                             capture_output=True, text=True, check=True).stdout
+    said = re.findall(r"^held_value = (.*);$", out, re.M)
+    if len(said) != 1:
+        raise AssertionError(f"g++ -E gave no one substitution for {name}: {out!r}")
+    return None if said[0] == "not_a_macro" else " ".join(said[0].split())
 
 
 class ReadConst(unittest.TestCase):
@@ -244,9 +278,48 @@ class SharedCases(unittest.TestCase):
     def test_the_rows_cover_each_kind_of_verdict(self):
         said = " ".join(r.get("refused", "") for r in CASES["cases"])
         for reason in ("not found", "is defined 2 times", "not a plain integer literal;",
-                       "(a leading 0 is octal", "past 2^53 - 1", "is not a C identifier"):
+                       "(a leading 0 is octal", "past 2^53 - 1", "is not a C identifier",
+                       RUNS_ON, NO_DIRECTIVE):
             self.assertIn(reason, said)
         self.assertTrue(any("value" in r for r in CASES["cases"]))
+
+    def test_a_macro_row_reads_what_the_compiler_reads(self):
+        # Sweep F429: `#define WAIT_MS 30 /* thirty` over ` */ * 1000` read 30
+        # where the compiler reads `30 * 1000`. Every row whose name is a
+        # macro to g++ is held to g++ -E: a row the table reads is the
+        # literal the compiler substitutes, and a row refused for running
+        # into a block comment quotes code the compiler does take as more of
+        # the value, and a row refused because its `#` does not begin the
+        # line names a macro the compiler does not define. (Rows refused for
+        # other reasons are refusals of what the compiler reads too, by the
+        # reasons above, but for the one known limit the table names, a
+        # block comment closed on a later line between #define and the name,
+        # not found here and defined by the compiler; constexpr rows are no
+        # macro to it, and are left to the cases above.)
+        gxx = shutil.which("g++")
+        if not gxx:
+            self.skipTest("no g++ on PATH to preprocess the rows with")
+        held = 0
+        for row in CASES["cases"]:
+            refused = row.get("refused", "")
+            if "value" not in row and RUNS_ON not in refused and NO_DIRECTIVE not in refused:
+                continue
+            with self.subTest(why=row["why"]):
+                got = preprocessed(gxx, row["text"], row["name"])
+                if NO_DIRECTIVE in refused:
+                    held += 1
+                    self.assertIsNone(got, f"g++ -E defines {row['name']} as `{got}`, so the "
+                                           "row's reason (no directive there) is false")
+                    continue
+                if got is None:  # a constexpr, or a #define hidden in a comment or literal
+                    continue
+                held += 1
+                if "value" in row:
+                    self.assertRegex(got, rf"^{row['value']}[uUlL]*$")
+                else:
+                    after = re.search(r"\(`(.*)`\);", row["refused"]).group(1)
+                    self.assertIn(after, got)
+        self.assertGreaterEqual(held, 10, "the rows held to the compiler parsed thin")
 
 
 VISION_PROJECT = gf.REPO / "firmware/projects/canary-vision/include/canary/config.h"

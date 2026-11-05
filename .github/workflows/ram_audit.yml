@@ -34,6 +34,9 @@ on:
       - 'firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/airtime_governor.cpp'
+      # The Arduino CLI + ESP32 core setup this audit runs: an edit to the
+      # action alone must run it.
+      - '.github/actions/setup-arduino-esp32/**'
 
 permissions:
   contents: read

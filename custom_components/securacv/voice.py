@@ -42,7 +42,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .const import event_type_metadata, normalize_event_type
+from .const import event_type_metadata
 
 # Verify-dict reasons (async_record_verify) that mean "publishes without a
 # checkable signature" rather than "signature failed".
@@ -124,16 +124,59 @@ _WEATHER_SPEECH = {
 
 
 def _spoken_label(event_type: Any) -> str:
-    """A speakable, lowercase-leading label for an event type.
+    """A speakable label for an event type, as said mid-sentence.
 
-    Uses the dictionary label when one exists; an event type with no
-    metadata entry (e.g. the acoustic alarm grammars) falls back to its
-    own name with underscores read as spaces — never spoken raw.
+    A type the dictionary lists says its label with the first letter
+    lowered ("tamper detected"), as no type at all does ("unknown"); a label
+    that opens on an acronym (two capitals) keeps them. A type it does not
+    list (the acoustic alarm grammars, the tamper kinds,
+    the summaries) says its own id in words exactly as the last-event
+    answer does mid-sentence (_said_label; sweep HA58): every run of
+    underscores one space, the kernel's CamelCase split into words, and the
+    id's own capitals kept, so `GPS_lost` is "GPS lost", not "gPS lost",
+    and `HeldSummary` is "held summary", not "heldSummary". An id of
+    underscores alone names no type and is said as none is.
     """
     label = event_type_metadata(event_type if isinstance(event_type, str) else None)["label"]
     if label == event_type:
-        label = label.replace("_", " ")
+        if _id_words(label):
+            return _said_label(event_type)
+        label = event_type_metadata(None)["label"]
+    if label[:1].isupper() and label[1:2].isupper():
+        return label
     return label[:1].lower() + label[1:]
+
+
+def _id_words(event_type: str) -> str:
+    """An event id the dictionary does not list, in words ("" for none).
+
+    A Canary's snake_case id has each run of underscores (and of spaces)
+    read as one space and keeps its own capitals, and so does an id with no
+    lowercase letter at all (`GPS`). Only a CamelCase id, the kernel's
+    enum spelling, is split into words before each capital that starts
+    one, with each word lowered unless it is an acronym, a run of two or
+    more capitals: `HeldSummary` is "held summary", as its snake_case twin
+    held_summary is, and `GPSLost` is "GPS lost". For an id with no run of
+    capitals the split is normalize_event_type's fold (the way the
+    dictionary looks a type up), so the kernel's spelling and the Canary's
+    of one type are said alike.
+    """
+    if "_" in event_type or not any(ch.islower() for ch in event_type) or event_type.islower():
+        return " ".join(event_type.replace("_", " ").split())
+    text = ""
+    for i, ch in enumerate(event_type):
+        if i and ch.isupper():
+            before = event_type[i - 1]
+            after = event_type[i + 1 : i + 2]
+            # A word starts at a capital, except inside a run of capitals,
+            # where only the last one starts a word, and only before a
+            # lowercase letter ("GPSLost": "GPS", "Lost").
+            if not before.isupper() or after.islower():
+                text += " "
+        text += ch
+    return " ".join(
+        word if len(word) > 1 and word.isupper() else word.lower() for word in text.split()
+    )
 
 
 def _said_label(event_type: Any, *, sentence_start: bool = False) -> str:
@@ -142,20 +185,19 @@ def _said_label(event_type: Any, *, sentence_start: bool = False) -> str:
     A type the dictionary lists says its label exactly as written ("Tamper
     detected", mid-sentence too, as it always has); so does no type at all
     (the dictionary's "Unknown"). A type it does not list says its own id
-    in words, never an underscore (sweep HA42: it was spoken raw,
-    "daily_summary, within ..."): a Canary's snake_case id with each run of
-    underscores read as one space, and the kernel's CamelCase variant
-    (``HeldSummary``, from a kernel newer than this integration) first
-    folded the way the dictionary looks it up (normalize_event_type), so
-    the two spellings of one type are said alike, "held summary". The first
-    letter is raised (to its titlecase) only where it starts the sentence;
-    mid-sentence a snake_case id keeps its own capitals.
+    in words (_id_words), never an underscore (sweep HA42: it was spoken
+    raw, "daily_summary, within ..."): a Canary's snake_case id with each
+    run of underscores read as one space, and the kernel's CamelCase variant
+    (``HeldSummary``, from a kernel newer than this integration) split into
+    words the way the dictionary folds it, so the two spellings of one type
+    are said alike, "held summary". The first letter is raised (to its
+    titlecase) only where it starts the sentence; mid-sentence an id keeps
+    its own capitals, an acronym's among them ("GPS lost").
     """
     label = event_type_metadata(event_type)["label"]
     if label != event_type:
         return label
-    text = label if "_" in label or label.islower() else (normalize_event_type(label) or "")
-    words = " ".join(text.replace("_", " ").split())
+    words = _id_words(label)
     if not words:
         # Underscores and nothing else name no type: said as none is.
         return event_type_metadata(None)["label"]
@@ -492,10 +534,13 @@ def _speak_whats_up_night(brief: dict[str, Any]) -> str:
     # "nothing else is out of place", which would be a false all-clear
     # spoken over a smoke alarm.
     if canary and _snake(canary.get("event_type")) in _ALERT_EVENT_TYPES:
-        label = _spoken_label(canary.get("event_type"))
+        # It starts the sentence: the label as the last-event answer opens
+        # with it, the first letter of an unlisted id raised to its
+        # titlecase, as _said_label raises it (sweep HA58).
+        label = _said_label(canary.get("event_type"), sentence_start=True)
         when = ago_phrase(brief["now"] - canary["received_at"])
         return (
-            f"{label[:1].upper() + label[1:]}, {when}, from the "
+            f"{label}, {when}, from the "
             f"{_spoken_name(canary['device_id'])} Canary."
             + _night_trust_clause(canary)
         )

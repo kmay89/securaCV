@@ -42,8 +42,10 @@ and without a second "drift-gated" hint line, `sys.exit(str)` vs
       suffixes allowed, no leading zero, which C reads as octal, at most
       2^53 - 1, the largest integer a browser reads exactly out of the JSON
       the generators write) that ends the #define's line or the constexpr's
-      statement. Anything else is refused by die(), naming the constant, the
-      file and the reason, rather than read as its first number. `read` is
+      statement (a block comment that runs onto a later line does not end
+      the #define's line: code after its close is refused, F429). Anything
+      else is refused by die(), naming the constant, the file and the
+      reason, rather than read as its first number. `read` is
       the caller's own reader (a path in, its text out), so a generator
       keeps its cache and its missing-source message and a test can serve a
       header that is not on disk. gen_flash.py (the flasher catalog's Vision
@@ -171,14 +173,27 @@ _C_OCTAL = re.compile(r"0[0-9]+[uUlL]*")
 _JS_SAFE_MAX = 2**53 - 1
 
 
-def _blank_c(text: str, keep_literals: bool) -> str:
+def _blank_c(text: str, keep_literals: bool,
+             runs_on: dict[int, int] | None = None) -> str:
     """`text` with every comment blanked (its newlines kept, so a line number
     still names its line), every number kept, and every literal kept or,
-    without `keep_literals`, masked."""
+    without `keep_literals`, masked. Given `runs_on`, each block comment that
+    holds a newline is entered in it: the offset its blank starts at in the
+    result, mapped to the offset that blank ends at. Those newlines are the
+    comment's, not the line's: a #define goes on past them, where the
+    compiler takes the line the comment closes on as more of it."""
+    shrunk = 0  # how much shorter the result is than `text`, so far
+
     def blank(m: re.Match) -> str:
+        nonlocal shrunk
         token = m.group(0)
         if token[0] == "/":
-            return "\n" * token.count("\n") or " "
+            out = "\n" * token.count("\n") or " "
+            if runs_on is not None and token[1] == "*" and out[0] == "\n":
+                at = m.start() - shrunk
+                runs_on[at] = at + len(out)
+            shrunk += len(token) - len(out)
+            return out
         if token[0] in "0123456789.":
             return token
         # Masked to quote marks (newlines kept), the literal keeps its
@@ -187,6 +202,50 @@ def _blank_c(text: str, keep_literals: bool) -> str:
         # where the literal does.
         return token if keep_literals else re.sub(r"[^\n]", '"', token)
     return _C_TOKEN.sub(blank, text)
+
+
+def _past_comments(code: str, shape: str, end: int, runs_on: dict[int, int]) -> str:
+    """What a #define's line goes on with after the block comments it runs
+    into, from `end`, where its value stops in `shape` (the first newline
+    there, or the end of the text). Each block comment `runs_on` holds that
+    starts there is stepped over to the next newline, again and again, and
+    what lies between is cut from `code` at the same span, its edge
+    whitespace stripped; the pieces are joined by a space. Empty when the
+    value's line ends for real, or only blanks follow each comment's close."""
+    pieces = []
+    while end in runs_on:
+        start = runs_on[end]
+        found = shape.find("\n", start)
+        end = len(shape) if found < 0 else found
+        piece = code[start:end].strip(" \t\n\r\f\v")
+        if piece:
+            pieces.append(piece)
+    return " ".join(pieces)
+
+
+def _line_before(code: str, shape: str, at: int,
+                 runs_on: dict[int, int]) -> tuple[str, bool]:
+    """What the line `at` sits on says before it, as the compiler reads the
+    line: from the newline that ends a line for real (each newline a block
+    comment left in `shape`, one of `runs_on`'s spans, is stepped back over)
+    or the start of the text, cut from `code` at the same span with its
+    whitespace runs collapsed to one space; and whether such a comment lies
+    between that and `at`. Empty when only blanks and comments come before
+    `at` on its line, which is where a directive may begin."""
+    start = at
+    while start > 0:
+        newline = shape.rfind("\n", 0, start)
+        if newline < 0:
+            start = 0
+            break
+        span = next((s for s, e in runs_on.items() if s <= newline < e), None)
+        if span is None:
+            start = newline + 1
+            break
+        start = span
+    last = start + len(shape[start:at].rstrip(" \t\n\r\f\v"))
+    before = re.sub(r"[ \t\n\r\f\v]+", " ", code[start:last]).strip(" ")
+    return before, any(last <= s < at for s in runs_on)
 
 
 def _where(path: Path) -> str:
@@ -207,8 +266,22 @@ def read_const(path: Path, name: str, read: Callable[[Path], str]) -> int:
     continues a line comment or a literal, a raw string runs to its own
     delimiter, and a digit separator (`1'000`) does not open a character
     literal. The preprocessor is not run, and a splice outside a comment or
-    a literal is not undone (a #define continued onto the next line is
-    refused, as below). The name is a whole word and must be defined exactly
+    a literal is not undone (a #define continued onto the next line by a
+    backslash is refused, as below). A #define's line ends at the first
+    newline outside a comment, as the compiler ends it, so one whose line
+    runs into a block comment closed on a later line goes on there: code
+    after the comment's close is more of the value, and is refused by its
+    own reason (`#define WAIT_MS 30 /* thirty` over ` */ * 1000` is
+    `30 * 1000` to the compiler, never 30), while only blanks or a comment
+    after the close leave the value as the first line spells it. A #define
+    is a directive only where its `#` begins the line as the compiler reads
+    it, so one with code before it on that line, on the same physical line
+    or on the tail of a line that runs into such a comment (`#define Y 1 /*
+    a` over ` */ #define X 30` defines no X), is refused by that reason. One
+    with such a comment between `#define` and the name is not found at all
+    (the definition pattern does not cross the comment's newline; the
+    compiler defines it): a safe verdict whose reason is not the compiler's,
+    a known limit. The name is a whole word and must be defined exactly
     once: two definitions (an `#if`/`#else` pair, an `#undef` and a
     redefinition) leave the preprocessor to pick one, which a regex cannot
     do. The value must be a plain decimal literal (a U/L suffix allowed, no
@@ -226,7 +299,8 @@ def read_const(path: Path, name: str, read: Callable[[Path], str]) -> int:
     code = _blank_c(text, keep_literals=True)
     # Definitions are found where literals are masked and the value is cut
     # from the code at the same span, so a refusal quotes what the file says.
-    shape = _blank_c(text, keep_literals=False)
+    runs_on: dict[int, int] = {}
+    shape = _blank_c(text, keep_literals=False, runs_on=runs_on)
     sp = _C_SPACE
     found = list(re.finditer(
         rf"#define[ \t]+{name}[ \t]+(?P<define>[^\n]*)"
@@ -241,6 +315,23 @@ def read_const(path: Path, name: str, read: Callable[[Path], str]) -> int:
     m = found[0]
     group = "define" if m.group("define") is not None else "constexpr"
     value = code[m.start(group):m.end(group)].strip(" \t\n\r\f\v")
+    if group == "define":
+        # A directive's `#` begins its line as the compiler reads it: after
+        # code on that line, across a block comment closed on a later line
+        # or not, `#define` is tokens of something else and defines nothing.
+        before, crossed = _line_before(code, shape, m.start(), runs_on)
+        if before:
+            across = ", across a block comment closed on a later line" if crossed else ""
+            die(f"constant {name} in {where} has `{before}` before its #define on the line"
+                f"{across}, so the compiler reads no directive there; refusing to read a number "
+                "out of it")
+    # The #define's value stops at a newline in `shape`; one a block comment
+    # left there is not the end of its line (a constexpr's runs to its `;`).
+    after = _past_comments(code, shape, m.end(group), runs_on) if group == "define" else ""
+    if after:
+        die(f"constant {name} in {where} runs into a block comment closed on a later line, "
+            f"and the #define goes on past the comment (`{after}`); refusing to read a "
+            "number out of it")
     literal = _C_DECIMAL.fullmatch(value)
     if not literal:
         octal = " (a leading 0 is octal in C and C++)" if _C_OCTAL.fullmatch(value) else ""

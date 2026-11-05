@@ -132,7 +132,9 @@ const StationMeta META[ST_COUNT] = {
      "2. Match the line: 9600 8N1 here (Modbus RTU).\n"
      "3. 120 ohm terminators on long runs, both ends.\n"
      "PROBE reads holding register 0 of slave 1 and shows\n"
-     "the value. Shares GPIO44/43 with the USB console.",
+     "the value. Shares GPIO44/43 with the USB console.\n"
+     "An exception (exc 2 = illegal data address) is the\n"
+     "slave refusing the register: check it, not A/B.",
      "PROBE", nullptr},
     {"CAN bus", "H/L",
      "CAN 2.0 / TWAI - the vehicle & automation bus. Two\n"
@@ -354,16 +356,16 @@ void update_tracker(const PgState& g) {
       case ROW_VOUT:
         set_row(r, LV_SYMBOL_WARNING, c_warn(), "5V dflt • check!", c_warn());
         break;
-      case ROW_RS485:
-        if (g.rs485.replies) {
-          snprintf(b, sizeof(b), "RTU • reg0=%u", (unsigned)g.rs485.last_val);
-          set_row(r, LV_SYMBOL_OK, c_ok(), b, c_ok());
-        } else {
-          set_row(r, LV_SYMBOL_MINUS, g.rs485.polls ? c_warn() : c_faint(),
-                  g.rs485.polls ? "no reply • check A/B" : "Modbus • tap to probe",
-                  g.rs485.polls ? c_warn() : c_faint());
-        }
+      case ROW_RS485: {
+        // The words are playground.h's rs485_row_words(), which the fieldbus
+        // glue test holds to every probe outcome (F317).
+        const Rs485Look look = rs485_row_words(g.rs485, b, sizeof(b));
+        const lv_color_t c = look == RS485_LOOK_OK     ? c_ok()
+                             : look == RS485_LOOK_WARN ? c_warn()
+                                                       : c_faint();
+        set_row(r, look == RS485_LOOK_OK ? LV_SYMBOL_OK : LV_SYMBOL_MINUS, c, b, c);
         break;
+      }
       case ROW_CAN:
         if (g.can.rx) {
           snprintf(b, sizeof(b), "CAN • rx=%lu", (unsigned long)g.can.rx);
@@ -460,17 +462,17 @@ void card_value(int st, const PgState& g, char* out, size_t cap,
         *sub = "not attached";
       }
       break;
-    case ST_RS485:
-      if (g.rs485.last_ok) {
-        snprintf(out, cap, "%u", (unsigned)g.rs485.last_val);
-        *sub = "reg0 • slave 1";
-        *col = c_ok();
-      } else {
-        snprintf(out, cap, "%s", g.rs485.polls ? "?" : "-");
-        *sub = g.rs485.polls ? "no reply" : "tap to probe";
-        *col = g.rs485.polls ? c_warn() : c_text();
-      }
+    case ST_RS485: {
+      // playground.h's rs485_tile_words(), held by the fieldbus glue test.
+      static char rs485_sub[24];
+      const Rs485Look look =
+          rs485_tile_words(g.rs485, out, cap, rs485_sub, sizeof(rs485_sub));
+      *sub = rs485_sub;
+      *col = look == RS485_LOOK_OK     ? c_ok()
+             : look == RS485_LOOK_WARN ? c_warn()
+                                       : c_text();
       break;
+    }
     case ST_CAN:
       if (g.can.rx) {
         snprintf(out, cap, "%lu", (unsigned long)g.can.rx);

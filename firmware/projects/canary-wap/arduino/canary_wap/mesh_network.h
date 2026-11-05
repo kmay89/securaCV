@@ -29,6 +29,8 @@
 #include "mesh_channel_hop.h"   // CHANNEL_LOCK wire format + HopTracker (PR 4b)
 #include "mesh_hub_election.h"  // HUB_ELECTION wire format + HubMonitor (PR 4c)
 #include "loop_command_ring.h"  // F96, F111: owner commands handed to the loop task
+#include "device_name_rule.h"   // F303: the Opera name's bound and its words
+#include "wap_json_writer.h"    // F303: the Opera name is UTF-8 a strict reader takes
 #include <string.h>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -580,6 +582,39 @@ inline Command make_command(CommandType type) {
   cmd.type = type;
   return cmd;
 }
+
+// The name an owner gives the opera (sweep F303): 1 to MAX_OPERA_NAME_LEN
+// bytes, none below 0x20 (device_name_rule::storable(), the device name's
+// test at this bound), of well-formed UTF-8 (each character whole, as a
+// strict reader reads it: wap_json::shown_piece() shows none as U+FFFD).
+// GET /api/mesh writes the name through ArduinoJson 7.4.1, which writes a
+// control byte raw (JSON.parse refuses it) and every other byte as it is,
+// and "Opera name changed" logged it raw too. POST /api/mesh/name tested
+// only the length, and POST /api/mesh/pair/start nothing, cutting a longer
+// name at 32 bytes, inside a character if one stood there. Both routes now
+// refuse such a name in opera_name_refusal()'s words, set_opera_name() and
+// start_pairing_initiator() hold it to the same test, and a name stored
+// before the rule is read back clean (load_opera_config()). DEL (0x7f) is
+// kept, as the device name keeps it: JSON carries it raw.
+inline bool opera_name_storable(const char* name) {
+  if (!device_name_rule::storable(name, MAX_OPERA_NAME_LEN)) return false;
+  for (const unsigned char* p = (const unsigned char*)name; *p;) {
+    const unsigned char* shown;
+    size_t span;
+    (void)wap_json::shown_piece(p, &shown, &span);
+    if (shown != p) return false;   // a reader shows U+FFFD here: not whole UTF-8
+    p += span;
+  }
+  return true;
+}
+
+// What both routes answer a name opera_name_storable() refuses: the rule in
+// words, its bound held to MAX_OPERA_NAME_LEN at compile time.
+constexpr const char* opera_name_refusal() {
+  return "Invalid Opera name: 1 to 32 bytes of well-formed UTF-8, no byte below 0x20";
+}
+static_assert(device_name_rule::states_bound(opera_name_refusal(), MAX_OPERA_NAME_LEN),
+              "opera_name_refusal() states MAX_OPERA_NAME_LEN");
 
 static const size_t   COMMAND_SLOTS   = 4;
 static const uint32_t COMMAND_WAIT_MS = 2000;   // for the loop task to start it

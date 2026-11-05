@@ -12,6 +12,186 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-04 (d) — "Releases carry the project's SBOMs", and none of them named a crate the app ships (found by reading; sweep CI20)
+
+- **Symptom:** none reported; it was found by reading. Since 2026-10-09 every
+  Flasher and Lab release carried the three SBOMs `sbom.yml` builds: the
+  witness kernel's crates (`sbom-rust.cdx.json`), canary-vision's npm
+  packages (`sbom-node.cdx.json`) and the firmware. No release carried a
+  document listing the app's own crates (tauri, rustls, the flash engine) or
+  its npm tree. Both apps' release notes said the releases carried "the
+  project's SBOMs", which a reader takes to mean the app's.
+- **Cause:** `sbom.yml` took only a `tag` and described the repository's
+  first products. The app publishers that began calling it on 2026-10-09
+  passed their tag and nothing else, so nothing described the apps.
+- **Fix:** `sbom.yml` takes an optional `app` (flasher: `desktop/`, lab:
+  `desktop-lab/`, one `DESKTOP_APPS` table) and builds two more documents
+  for it: `sbom-<app>-rust.cdx.json` (`cargo cyclonedx --target all` in
+  `src-tauri`; a rewritten `Cargo.lock` fails the step) and `sbom-<app>-node.cdx.json`
+  (`cdxgen -t node` after `npm ci --ignore-scripts`). The gate refuses an
+  app document that is empty, has no components, names another subject
+  than the app's own crate or npm package, or lacks tauri (the crate; the
+  `@tauri-apps/cli` package). The attach step uploads exactly the files the
+  gate passed. Both app publishers pass `app:`. A tag with an app's prefix
+  implies it, so a human's UI publish of a Lab draft gets the Lab's
+  documents too. A run with no tag builds both, so a PR proves both steps.
+  `test_release_plan.py`'s `AppReleasesCarryTheAppsOwnSboms` holds the
+  callers, the table against `release-targets.yml`, and the app-picking
+  step's cases. Both release notes lines now name the three documents those
+  releases carried. `--target all` is load-bearing: cargo-cyclonedx resolves
+  for the host target by default and the job runs on Linux, so the first
+  version's Flasher document held 450 of its lockfile's 604 crates and none
+  of the macOS-only ones the universal `.dmg` links (security-framework,
+  core-foundation, objc2, the keyring backend `Cargo.toml` adds on macOS) —
+  a document that described the Linux build under the release's name. Built
+  here with cargo-cyclonedx 0.5.9 and cdxgen 12.9.0: the Flasher's Rust
+  document names `securacv-flasher` with 604 components, every package its
+  lockfile holds (tauri 2.12.5, flash-engine, hub-core, hub-io,
+  security-framework, windows-sys), the Lab's `securacv-lab` with 560, and
+  each npm document its package with `@tauri-apps/cli` 2.12.3.
+- **Applies to:** any compliance artifact a release attaches. Name the
+  documents a release carries, not "the project's", and gate each one on its
+  subject, not only its format: a well-formed bill of materials for the
+  wrong product is still a false record. And a resolver that defaults to the
+  machine it runs on describes that machine: when the release ships for
+  more platforms than the runner is, say so to the tool (`--target all`) and
+  check the document against the lockfile, not against "it has components".
+
+## 2026-11-04 (c) — The AppImage bundler downloaded its tools unpinned, one from a moving tag, and so did the runtime inside every AppImage (found by reading; sweep CI21)
+
+- **Symptom:** none reported; it was found by reading. Every Linux build of
+  the Flasher (`desktop-flasher-release.yml`) and the Lab
+  (`desktop-release.yml`) bundled its `.AppImage` with tools fetched on the
+  release runner with no hash check, and two of them from `continuous`
+  releases that move. On 2026-11-04 the plugin's `continuous` asset hashed
+  `49d6a171…` and its newest dated release `992d502a…`; the runtime's
+  `continuous` hashed `617aa773…` and its dated `20251108` `2fca8b44…`. So
+  two builds of one tag could ship different bytes, and a replaced asset
+  would have shipped with no diff to point at.
+- **Cause:** tauri-bundler's `prepare_tools()`
+  (`crates/tauri-bundler/src/bundle/linux/appimage/linuxdeploy.rs`, the same
+  file at `@tauri-apps/cli` 2.12.3 and 2.12.4) downloads `AppRun-x86_64`,
+  `linuxdeploy-07333c6-x86_64.AppImage` and
+  `linuxdeploy-plugin-appimage.AppImage` into `~/.cache/tauri` when they are
+  missing, the last from linuxdeploy-plugin-appimage's `continuous` release.
+  The appimagetool inside linuxdeploy-07333c6 and inside the plugin (read out
+  of their squashfs images, not run) then downloads the AppImage runtime from
+  type2-runtime's `continuous` release unless `LDAI_RUNTIME_FILE` names one.
+  The runtime is the code at the front of every shipped `.AppImage`, the part
+  that runs when a person opens it. The 2026-09-03 lockfile pinned the CLI
+  that does the bundling; nothing pinned what it downloads.
+- **Fix:** `.github/actions/pin-appimage-tools` downloads the four files from
+  dated releases (`apprun-old`, `linuxdeploy-07333c6`, the plugin's
+  `1-alpha-20250213-1`, the runtime's `20251108`) and checks each against
+  the sha256 in its `pins.txt`. A mismatch fails the step before the bundle
+  runs. It marks the files executable, places them under the names
+  `prepare_tools()` looks for (each download there is skipped when the file
+  exists), and exports `LDAI_RUNTIME_FILE`. Both release workflows run it
+  immediately before every `tauri-action` step, under that step's `if:`. With
+  `mode: verify` it runs again immediately after. It checks that linuxdeploy
+  carries the bundler's own mark (`prepare_tools()` zeroes its bytes 8-10, so
+  the bundler read THIS directory), that the other files are unchanged, and
+  that every built `.AppImage` starts with the pinned runtime's GNU Build ID.
+  `.github/scripts/test_pin_appimage_tools.py` holds the table to the
+  bundler's names and to dated URLs. It holds both lockfiles' CLI (and its
+  `cli-linux-x64-gnu` binary) to the versions the names were read at, so a
+  CLI bump fails until someone re-reads `linuxdeploy.rs` at the new tag. It
+  also runs `pin.sh` offline with a stand-in curl, and checks both workflows'
+  wiring. Pinning the plugin and the runtime moves both from "whatever
+  `continuous` is today" to a dated release upstream tagged. That is a
+  change in what ships, made on purpose.
+- **Not yet proven:** a real `tauri build` here. The verify step proves it on
+  the build-only dispatches (`desktop-flasher-release.yml` with `dry_run`,
+  `desktop-release.yml` with `publish` unchecked) and on every release after.
+  verify runs after `tauri-action` has uploaded, so on a publish run its
+  failure arrives after the installers are on the release. It fails the build
+  job, so the Flasher's finalize job does not run and the updater pointer does
+  not move. The Lab's release is a draft until someone publishes it.
+- **Applies to:** every bundler that fetches its own helpers at build time
+  (tauri's NSIS and WiX tools on Windows are the same shape, if a Windows leg
+  is ever added). Pinning the tool that builds the bundle (2026-09-03) is
+  half the job. Read what that tool downloads, and pin each download by hash
+  from a dated source. Then prove after the build that the bundle used the
+  pinned files, since "placed first, so used" is a reading of someone else's
+  code.
+
+## 2026-11-04 (b) — Three cores in one release job, and every cache key saved the last one (found by reading; sweep CI19)
+
+- **Symptom:** none reported; it was found by reading. `firmware-release.yml`
+  and `flasher-release.yml` each call `setup-arduino-esp32` three times in
+  one job (core 3.3.8, then 2.0.17, then 3.3.10, each `exclusive-core`). On a
+  cold cache the keys `core-3.3.8` and `core-2.0.17` were both saved holding
+  the 3.3.10 install. A later job that restored `core-3.3.8` without
+  `exclusive-core` (`ram_audit.yml`, `csi_module_disable_matrix.yml`) got
+  3.3.10 under that name, installed 3.3.8 beside it, and an unversioned FQBN
+  takes the newest: the 2026-07-29 (k) failure, arriving through the cache.
+  Whether any live entry was saved that way depends on which job saved it
+  first, which nothing records.
+- **Cause:** the action cached with one `actions/cache` step. Its restore runs
+  in place, but its save runs in the job's POST phase, with whatever the
+  directory holds when the job ends. Three calls make three post saves, each
+  of the final tree. A later step's writes (a `compile --profile` build's own
+  core under `~/.arduino15/internal/`) were saved under the core's key too.
+  And an edit to the action ran none of the PR workflows that use it: their
+  path filters named `firmware/**` and their own files, not
+  `.github/actions/setup-arduino-esp32/**`.
+- **Fix:** the cache is two steps. `actions/cache/restore@v6` (`id: restore`)
+  runs before the install, and `actions/cache/save@v6` runs right after it,
+  only on a miss, and only while `~/.arduino15` holds exactly one
+  `esp32:esp32` platform, the one this call asked for. A call that would
+  save a mixed tree says so in a `::warning::` and skips the save.
+  `staging/` and `internal/` stay out of the entry. The key carries a `v2`
+  tag, so no entry saved the old way is ever restored. `firmware.yml`,
+  `ram_audit.yml` and `csi_module_disable_matrix.yml` list the action's
+  directory in their path filters (push and PR alike, R6).
+  `.github/scripts/test_setup_arduino_esp32.py` runs the action's own step
+  scripts, in order, against a modeled cache and a stand-in arduino-cli: a
+  cold three-core job saves each core under its own key, a warm one saves
+  nothing, and a non-exclusive second core is not saved. The old action
+  fails it, with all three keys holding 3.3.10. The stand-in is not
+  arduino-cli: the restore/save path runs for real on any PR that runs
+  `firmware.yml`, and the three-core case only in a release run.
+- **Two more, found in review of that fix.** (1) An exclusive call used to
+  `core uninstall esp32:esp32` AFTER its restore. The restore layers the
+  key's entry over the previous call's core, and that uninstall removes only
+  the NEWEST version (the CLI refuses a version on `core uninstall`,
+  `internal/cli/core/uninstall.go`; the service picks the greatest installed
+  release, `package_manager.go` `GetInstalledPlatformRelease`). On a warm
+  row that was the core just restored whenever it was the newest on the
+  tree: the first release row (3.3.8, alone) and the third (3.3.10 over
+  2.0.17) downloaded their core again on every warm run — the original
+  action paid the same, so the exclusive rows never had a warm cache — and
+  the third ended holding both and the save guard warned about a mixed tree,
+  with a hint to pass the `exclusive-core` it already had. Now an exclusive call clears the esp32
+  packager tree (`rm -rf ~/.arduino15/packages/esp32`: its platforms and its
+  tools) BEFORE its restore, and nothing uninstalls after it: a hit is
+  exactly this call's core, a miss downloads it once, and the warning is left
+  for the one case it names, a non-exclusive second call. The test's warm
+  three-core job now asserts no download, one platform after each call and
+  no warning; the first fix fails it on the first row. (2) `firmware.yml`'s
+  display 3.x legs compile through a `sketch.yaml` profile, and arduino-cli
+  installs a profile's platform, tools and libraries under
+  `~/.arduino15/internal/<id>/` (`profiles.go`, `ProfilesCacheDir`). The
+  old post-phase save had stored that under the shared `core-3.3.10` key
+  whenever a display leg saved it first; the split save never does, so each
+  3.x leg downloaded the profile core again every run. The leg now restores
+  `~/.arduino15/internal` under its own key (`arduino-profile-<os>-<flavor>-
+  core3-<hash of sketch.yaml>`) in one combined `actions/cache` step right
+  before the profile build — the one writer after it, writing exactly what
+  the key names. A test reads the step off `firmware.yml`. Neither is
+  proven on a runner yet: the wave PR's `firmware.yml` run shows the profile
+  cache (cold, then warm on the next push), and a release run the warm
+  three-core rows.
+- **Applies to:** any composite action that caches a directory it then
+  changes, and any job that calls one twice. Save a key right after the step
+  that fills it, and save only the state that key names. A combined
+  `actions/cache` step is right only when the one thing that writes the
+  cached path after it is what the key names. When a step must undo a
+  restore's layering, do it before the restore, not after: a tool's
+  "remove the installed one" picks a version by its own rule. And a shared
+  action is an input of every workflow that runs it: list it in their path
+  filters, or its edit runs nothing.
+
 ## 2026-11-04 — The Home Assistant app declared two lists as a select, which by the Supervisor's own code refuses the app's defaults (0.9.0; found by reading, not yet seen on an install)
 
 - **Symptom:** none seen yet; it was found by reading. 0.9.0's

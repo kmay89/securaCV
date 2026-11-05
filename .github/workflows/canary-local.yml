@@ -564,6 +564,12 @@ jobs:
           PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
           NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
           PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+          # playground.test.js compiles every bring-up snippet the website's
+          # /playground shows with g++ against the display's host fakes; without
+          # the variable a runner that has no g++ skips that compile and passes.
+          # `require` makes the missing tool a failure that names it (the test
+          # pins this line), as VISION_WASM32=require does for the wasm32 step.
+          PLAYGROUND_SNIPPETS: require
         run: |
           node --test canary-local/tests/canary_local.test.js
           node --test canary-local/tests/build_line.test.js

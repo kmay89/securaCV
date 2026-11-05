@@ -1,6 +1,6 @@
 /*
  * SecuraCV Canary — the device prefix a nearby Canary's name carries
- * (sweep F405)
+ * (sweeps F405 and F425)
  *
  * ble_nearby.h counts an advert that carries the SecuraCV service UUID as a
  * Canary. When that advert carries neither a chirp nor a fleet-link beacon,
@@ -15,12 +15,21 @@
  * JSON.parse refuses.
  *
  * nearby_prefix_from_name() takes the four bytes only when all four are
- * ASCII hex digits (0-9, a-f, A-F, as advertised: a genuine name is
- * uppercase, a chirp's or a beacon's prefix lowercase); any other name
- * yields nothing, and the scan counts the advert as a non-Canary as it
- * always did for a name without the prefix. So every byte that reaches
- * deviceIdPrefix is a hex digit, whichever path wrote it: the chirp and the
- * beacon parsers print theirs with "%02x".
+ * ASCII hex digits (0-9, a-f, A-F); any other name yields nothing, and the
+ * scan counts the advert as a non-Canary as it always did for a name
+ * without the prefix. So every byte that reaches deviceIdPrefix is a hex
+ * digit, whichever path wrote it: the chirp and the beacon parsers print
+ * theirs with "%02x".
+ *
+ * And the digits it takes are folded to lowercase (sweep F425), so a
+ * Canary has one spelling of its prefix whichever advert was heard. A
+ * genuine name is uppercase (hex_to_str() in canary_wap.ino writes the key
+ * fingerprint with "0123456789ABCDEF"), while the chirp and the beacon
+ * carry the same two fingerprint bytes that their parsers print with
+ * "%02x", lowercase. findCanarySlot() compares with strncmp(), so one
+ * Canary heard by name and then by chirp or beacon took two slots and was
+ * listed twice in GET /api/nearby. The fold comes after the hex gate and
+ * maps A-F to a-f only, so the output is still hex digits alone.
  *
  * Header-only and pure (no Arduino, no NimBLE), so the host suite drives it
  * directly (tests_host/test_bluetooth_commands_wap.cpp), and
@@ -46,13 +55,19 @@ inline bool prefix_hex_digit(char c) {
   return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
+// A hex digit as "%02x" writes it: A-F folded to a-f, every other byte as
+// it is. Called only on a byte prefix_hex_digit() took.
+inline char prefix_hex_lower(char c) {
+  return (c >= 'A' && c <= 'F') ? (char)(c - 'A' + 'a') : c;
+}
+
 // The device prefix of an advertised name of `len` bytes (embedded NULs
 // counted: NimBLE hands the name over as a std::string): the four bytes
-// right after `want` (BLE_DEVICE_NAME_PREFIX), into out[0..3] with out[4] =
-// '\0', when the name starts with `want` and those four bytes are all ASCII
-// hex digits. Bytes after them are not read, as the scan never read them.
-// Otherwise returns false with out[0] = '\0'. `out` holds at least
-// kNamePrefixDigits + 1 bytes.
+// right after `want` (BLE_DEVICE_NAME_PREFIX), folded to lowercase (F425),
+// into out[0..3] with out[4] = '\0', when the name starts with `want` and
+// those four bytes are all ASCII hex digits. Bytes after them are not read,
+// as the scan never read them. Otherwise returns false with out[0] = '\0'.
+// `out` holds at least kNamePrefixDigits + 1 bytes.
 inline bool nearby_prefix_from_name(const char* name, size_t len, const char* want, char* out) {
   out[0] = '\0';
   if (name == nullptr || want == nullptr) return false;
@@ -61,7 +76,7 @@ inline bool nearby_prefix_from_name(const char* name, size_t len, const char* wa
   for (size_t k = 0; k < kNamePrefixDigits; ++k) {
     if (!prefix_hex_digit(name[w + k])) return false;
   }
-  memcpy(out, name + w, kNamePrefixDigits);
+  for (size_t k = 0; k < kNamePrefixDigits; ++k) out[k] = prefix_hex_lower(name[w + k]);
   out[kNamePrefixDigits] = '\0';
   return true;
 }

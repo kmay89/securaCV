@@ -47,6 +47,11 @@ on:
       # test_dev_channel.py holds dev_channel.py's version order to the
       # device's own securacv_version_compare cases, read from here.
       - 'firmware/common/ota/test_ota_logic.cpp'
+      # test_pin_appimage_tools.py holds each app's locked tauri CLI to the
+      # versions pin-appimage-tools' file names were read at, so a CLI bump
+      # (a Dependabot lockfile PR) runs it.
+      - 'desktop/package-lock.json'
+      - 'desktop-lab/package-lock.json'
   pull_request:
     branches: [main]
     paths:
@@ -83,6 +88,11 @@ on:
       # test_dev_channel.py holds dev_channel.py's version order to the
       # device's own securacv_version_compare cases, read from here.
       - 'firmware/common/ota/test_ota_logic.cpp'
+      # test_pin_appimage_tools.py holds each app's locked tauri CLI to the
+      # versions pin-appimage-tools' file names were read at, so a CLI bump
+      # (a Dependabot lockfile PR) runs it.
+      - 'desktop/package-lock.json'
+      - 'desktop-lab/package-lock.json'
 
 permissions:
   contents: read

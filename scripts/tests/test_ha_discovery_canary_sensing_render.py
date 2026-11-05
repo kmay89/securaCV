@@ -30,7 +30,10 @@ at its jinja2 pin). It holds:
     nothing, with no template warning either way;
   * main.cpp writes rssi_dbm in exactly one place, under
     sensing_rssi_measured() (a text pin: main.cpp is not host-compiled,
-    firmware/canary's PlatformIO build is CI's);
+    firmware/canary's PlatformIO build is CI's), and so does the local
+    GET /api/sensing route in securacv_network.cpp, the dashboard's Sensing
+    panel's one source (sweep F431: it wrote the window's unmeasured 0,
+    which the page's gauge drew at full strength beside "--");
   * every other entity announced on the sensing topic renders the same with
     and without rssi_dbm, so the key's absence moves nothing else; the body
     the test renders carries every key main.cpp writes, read from it.
@@ -61,6 +64,7 @@ REPO = Path(__file__).resolve().parents[2]
 CANARY = REPO / "firmware" / "canary"
 MQTT_CPP = CANARY / "lib" / "securacv_mqtt" / "src" / "securacv_mqtt.cpp"
 MAIN_CPP = CANARY / "src" / "main.cpp"
+NETWORK_CPP = CANARY / "lib" / "securacv_network" / "src" / "securacv_network.cpp"
 
 _LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
@@ -199,6 +203,26 @@ class SensingRssiRenderTest(unittest.TestCase):
         self.assertEqual(
             writes, ['if (sensing_rssi_measured(&s)) doc["rssi_dbm"] = (int)s.rssi_dbm;'],
             "main.cpp writes rssi_dbm other than once, under sensing_rssi_measured()",
+        )
+
+    def test_the_sensing_route_writes_rssi_dbm_only_for_a_measured_window(self):
+        """Sweep F431, the same text pin on the local route: GET /api/sensing
+        (securacv_network.cpp's handle_sensing(), not host-compiled either)
+        writes rssi_dbm once, under sensing_rssi_measured(), and nothing else
+        in the file writes the key. The dashboard reads a body without it as
+        no reading ("--" and an empty gauge); with the unmeasured 0 its gauge
+        drew (0 + 90) * 100 / 60, clamped to a full arc."""
+        src = NETWORK_CPP.read_text(encoding="utf-8")
+        route = function_body(src, "static esp_err_t handle_sensing(httpd_req_t* req)")
+        writes = [line.strip() for line in route.splitlines() if '"rssi_dbm"' in line]
+        self.assertEqual(
+            writes, ['if (sensing_rssi_measured(&s)) doc["rssi_dbm"] = (int)s.rssi_dbm;'],
+            "GET /api/sensing writes rssi_dbm other than once, under sensing_rssi_measured()",
+        )
+        code = [line for line in src.splitlines() if not line.lstrip().startswith(("//", "*", "/*"))]
+        self.assertEqual(
+            [line.strip() for line in code if '"rssi_dbm"' in line], writes,
+            "securacv_network.cpp writes rssi_dbm outside handle_sensing()'s measured-window write",
         )
 
     def test_the_bodies_here_carry_every_key_main_cpp_writes(self):

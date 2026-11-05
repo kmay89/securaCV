@@ -3465,9 +3465,17 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
        the right token on both.
     4. From A, after the `Retry-After` step 3 named: the right token on
        `/api/status`.
-    5. Repeat step 2 from A. Then, inside the backoff it arms (about 32 s),
-       short-tap BOOT and reload A's dashboard tab; at once, from A, the
-       right token on `/api/status` with `-D -`.
+    5. Repeat step 2 from A. Then, inside the backoff it arms (about 32 s):
+       on A's dashboard tab click **Unlock with a BOOT tap** (its window from
+       step 1 closed long ago), wait for its line to say "Now short-tap BOOT
+       on the Canary…", short-tap BOOT, and do not reload. As soon as the
+       banner is gone, from A, the right token on `/api/status` with `-D -`.
+       Then the other grant a tap serves, a page load after the press
+       (`page_token_inject()`): close A's dashboard tab first (it now holds
+       the right token, and its polls would clear A's count, as step 6
+       says), repeat step 2 from A, and inside the backoff it arms short-tap
+       BOOT and, within the tap's 30 s, open `http://canary.local/` in a new
+       tab; at once, from A, the right token on `/api/status` with `-D -`.
     6. Close A's dashboard tab, or navigate it away from the unit: since
        step 5 it holds the right token, and each of its polls (every 2 s) is
        a right bearer that clears A's count, so this step's strikes would
@@ -3482,8 +3490,11 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
     this change nearly all of them were `429`: the host suite's replay of
     this cadence, run over the code before it, refuses all 60 calls of its
     first 5 minutes and 119 of 120 over ten), and A's own calls in its
-    Network panel are `401`, never `429`. A's wrong bearers on the receipt
-    are `403` `physical_confirmation_required`, each one a strike. In step 3
+    Network panel are `401`, never `429`, but for the unlock banner's asks
+    in its first minute (sweep F354), which carry no credential and are
+    `403` `physical_confirmation_required` on `/api/provisioning-receipt`.
+    A's wrong bearers on the receipt are `403`
+    `physical_confirmation_required`, each one a strike. In step 3
     A's right token is `429` with a `Retry-After` of at most `61` on
     `/api/status`, and `403` `physical_confirmation_required` on the receipt
     (the page's "tap BOOT": a held bearer is not compared and reads as none);
@@ -3493,12 +3504,19 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
     A's wrong bearers on the receipt armed nothing, so A's right token in
     step 3 was `200`, and a wrong bearer on `/api/status` held B too. If B is
     ever `429` because of A, the peer read fell back to one bucket: check
-    `request_peer_ipv4()`'s dual-stack `::ffff:a.b.c.d` path. In step 5 the
-    reloaded page carries the token (no unlock banner), the console prints
-    `[AUTH] page token handed to one page load on a BOOT tap. Gate closed.`,
+    `request_peer_ipv4()`'s dual-stack `::ffff:a.b.c.d` path. In step 5,
+    while A's backoff runs, the banner's asks are `403`
+    `physical_confirmation_required` (the receipt route never answers
+    `429`), so its line says to press; after the tap the page unlocks where
+    it stands, with no new document request in the Network panel (the
+    banner's own ask took the tap: one `200` on `/api/provisioning-receipt`),
+    the console prints `[AUTH] Provisioning receipt served. Gate closed.`,
     and A's `/api/status` right after it is `200` without waiting out the
-    `Retry-After`: the tap ended A's backoff. In step 6 the receipt is `200`
-    (a held bearer reads as none, so the tap serves it), and A's
+    `Retry-After`: the tap ended A's backoff. After the second tap the new
+    tab's page carries the token (no unlock banner), the console prints
+    `[AUTH] page token handed to one page load on a BOOT tap. Gate closed.`,
+    and A's `/api/status` is `200` at once again. In step 6 the receipt is
+    `200` (a held bearer reads as none, so the tap serves it), and A's
     `/api/status` right after it is `200` too. Before F341, A's call after
     the tap was `429` until the backoff ran out. In step 7 the first call
     that carries `cv_wrong` is `403` `{"error":"forbidden"}`, and the
@@ -3515,6 +3533,76 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
     `docs/audit/repro/F341/flagship-page/`; step 6:
     `docs/audit/repro/F341/flagship-receipt/`; step 7:
     `docs/audit/repro/F340/refused-token/`).
+
+## Flagship (`firmware/canary`): the BOOT tap goes to one asker, and the dashboard asks first (F354, F409) — on-device verification
+
+Code: `provisioning_gate_take()` and `handle_provisioning_receipt()` in
+`firmware/canary/lib/securacv_network/src/securacv_network.cpp`, on
+`firmware/common/network/provisioning_gate.h` (`tap_arbitrate()`,
+`TAP_LOOKBACK_MS`); the unlock banner's `startTapPoll()` and
+`tapPollTick()` in `securacv_webui.cpp`. Host-tested
+(`firmware/tests_host/test_provisioning_gate.cpp`: the arbiter;
+`test_securacv_auth.cpp`: the `409 tap_contended` body against the WAP's;
+`test_canary_provisioning_banner.test.js`: the dashboard's own poll run
+against the firmware's tap step cut verbatim into `tap_step_oracle.cpp`,
+where the owner's page and a host polling the receipt never get two
+receipts and the host never gets one, a `200` unlocks with no reload, a
+`409` stops the poll, and the poll keeps asking while the tab is hidden);
+the compile is CI's; nothing here ran on a device or in a browser. Not run.
+Owner: U1.
+
+- [ ] **Flagship: the banner says when to press, the one asker is unlocked where it stands, and a second asker closes the tap, in a shown tab and a hidden one (F354, F409)**
+  - Setup: a `firmware/canary` unit on this firmware, set up and joined to
+    the home Wi-Fi, over plain HTTP (as in the F340 row above); host A, a
+    laptop with a browser and its developer tools; host B, a second
+    computer with `curl` (a second address: a loop on A itself is A's own
+    address and never contends); both on IPv4; nothing else asking for
+    `/api/provisioning-receipt`; the serial console open, and the API token
+    at hand for `/api/logs`.
+  - Repro:
+    1. On A, open `http://canary.local/` (or the unit's IP) without a BOOT
+       tap, in one tab, with the Network panel open. Wait for the banner's
+       line to say "Now short-tap BOOT on the Canary. Listening for the
+       tap: …", then short-tap BOOT. Do not reload.
+    2. Reload A's tab (the token lives in the page only, so the reload
+       locks it again). On B, start `while :; do curl -s -o /dev/null -w
+       '%{http_code}\n' http://canary.local/api/provisioning-receipt; sleep
+       2; done`. Once A's line says "Now short-tap BOOT…" and B has printed
+       a few `403`s, short-tap BOOT. Stop B 30 s after the tap.
+    3. Wait 10 s, reload A's tab, and once its line says "Now short-tap
+       BOOT…", open a new tab in the same window, so the dashboard's tab is
+       hidden; short-tap BOOT, wait 5 s, and switch back.
+    4. Reload A's dashboard tab, start B's loop again, and once A's line
+       says "Now short-tap BOOT…" and B has printed a few `403`s, hide A's
+       tab as in step 3; short-tap BOOT, wait 5 s, switch back, and stop B
+       30 s after the tap.
+  - Expected:
+    - Before each tap, until the Canary has answered the page's first ask,
+      the line reads "Asking the Canary first. Don't press BOOT yet…". The
+      banner's window is one minute: a tap that does not come in it ends
+      with "Didn't see a tap. Click Unlock with a BOOT tap, and short-tap
+      BOOT when this line says to.", and the button opens a new one.
+    - Step 1: within about 2 s of the tap (the banner's next ask) the banner
+      is gone and the panels fill, with no new document request in the
+      Network panel; the panel shows `403`s on `/api/provisioning-receipt`
+      and then exactly one `200`; the console prints `[AUTH] Provisioning
+      receipt served. Gate closed.` once, and `/api/logs` has one
+      "Provisioning receipt served" line for the tap.
+    - Step 2: A's line says "Another device on your network asked for this
+      Canary's token during the same BOOT tap…", the page stays locked and
+      stops asking, and its last receipt ask is a `409` whose body starts
+      `{"error":"tap_contended"`; B prints `403`s, then `409`s (until about
+      10 s after A's page stopped asking, then `403`s again), and never
+      `200`; the console prints one `[AUTH] BOOT tap closed: two addresses
+      asked for it (… and …)` line, naming A's and B's addresses, and no
+      "receipt served" line; `/api/logs` has one "BOOT tap closed: two
+      devices asked for it" line, naming no address.
+    - Step 3: the page is unlocked when you switch back, with the one `200`
+      and the one console line of step 1: the hidden tab kept asking.
+    - Step 4: as step 2 — the hidden tab's last ask is the `409`, its line
+      says another device asked, and B never prints `200`.
+  - Artifact: `docs/audit/repro/F409/` (the four steps' Network panel
+    exports, B's output and the console).
 
 ## canary-wap: after setup the API token alone moves the network over HTTP, re-keys the vault, confirms a pairing and, the firmware install aside, reboots the unit (F334, F345, F333, F335, F346, F361) — on-device verification
 

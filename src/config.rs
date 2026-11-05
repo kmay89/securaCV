@@ -42,9 +42,17 @@ const DEFAULT_DETECT_CONFIDENCE: f32 = 0.5;
 // Default location for the tract object-detection model, populated by
 // scripts/fetch_detection_model.sh. Used when detect.backend=tract and detect.tract_model is
 // unset, so operators only set the backend after fetching the model — no manual path needed.
+// The file there is held to DEFAULT_TRACT_MODEL_SHA256 below.
 // HOST-ONLY: this model runs in tract on a Pi/x86 host, not on the ESP32-S3 (which uses the
 // Grove Vision AI V2 board). See scripts/fetch_detection_model.sh.
 const DEFAULT_TRACT_MODEL: &str = "vendor/models/tinyyolov2-8.onnx";
+/// The SHA-256 `scripts/fetch_detection_model.sh` pins the default tract model to (its
+/// `MODEL_SHA256`; the unit test `default_tract_model_pin_is_the_fetch_scripts` reads the script
+/// and holds the two equal). When nothing names a model, witnessd reads the default file once,
+/// refuses it unless those bytes hash to this, and builds the backend from the same bytes: see
+/// [`TractModelFile`].
+pub const DEFAULT_TRACT_MODEL_SHA256: &str =
+    "583fb7fdc948435ceac9fa82efc7708701efe8382a859a3dd46526b155f5f2ae";
 // Default post-processing format for the tract model. The bundled model is tiny-YOLOv2, whose
 // raw grid output is decoded + NMS'd on the host; set to "postnms" for models that already
 // emit final boxes.
@@ -230,6 +238,22 @@ struct WitnessdConfigFile {
     storage_health: Option<StorageHealthConfigFile>,
 }
 
+/// What `witness_api` reads from `WITNESS_CONFIG`: the same file `witnessd` is started with, so
+/// the operator subcommands (the viewer-token mint above all) run against the kernel's own
+/// config. The keys it uses are typed exactly as `witnessd` types them (the same
+/// `ApiConfigFile`, `ZoneConfigFile` and `RetentionConfigFile`, each `deny_unknown_fields`), so
+/// a misspelled key or a value of the wrong type in a block it reads is refused here as there;
+/// the value checks `witnessd` makes on keys only it uses (`[zones] module_zone_id`,
+/// `[retention] check_interval_seconds`) stay `witnessd`'s to make, since `witness_api` never
+/// reads those keys (the unit test `a_value_only_witnessd_checks_is_witnessds_to_refuse` states
+/// that boundary). Every block only `witnessd` reads is
+/// accepted and skipped: `IgnoredAny` takes any value without looking inside it, so a
+/// misspelled key inside `[rtsp]`, or a `detect` that is not a table at all, passes here and is
+/// `witnessd`'s to refuse when it loads the same file. A top-level key neither binary knows is
+/// still refused (`deny_unknown_fields`), and the unit test
+/// `both_binaries_take_the_same_top_level_keys` holds this struct's keys to
+/// `WitnessdConfigFile`'s, so a block added there cannot make `witness_api` refuse the file
+/// again.
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct WitnessApiConfigFile {
@@ -238,6 +262,27 @@ struct WitnessApiConfigFile {
     api: Option<ApiConfigFile>,
     zones: Option<ZoneConfigFile>,
     retention: Option<RetentionConfigFile>,
+    // witnessd-only blocks: accepted so the file parses, never read.
+    #[allow(dead_code)]
+    ingest: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    rtsp: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    file: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    v4l2: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    esp32: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    detect: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    health: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    storage: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    clock: Option<serde::de::IgnoredAny>,
+    #[allow(dead_code)]
+    storage_health: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -566,6 +611,197 @@ impl DetectSettings {
             .clone()
             .unwrap_or_else(|| PathBuf::from(DEFAULT_TRACT_MODEL))
     }
+
+    /// Read the tract model witnessd builds its backend from: the default file held to
+    /// [`DEFAULT_TRACT_MODEL_SHA256`] when nothing names a model, or the configured one as given.
+    /// Either is read once, whole, and the backend is built from the bytes read. See
+    /// [`TractModelFile`] for what each kind guarantees.
+    pub fn tract_model_file(&self) -> Result<TractModelFile> {
+        self.tract_model_file_with_default(
+            Path::new(DEFAULT_TRACT_MODEL),
+            DEFAULT_TRACT_MODEL_SHA256,
+        )
+    }
+
+    /// [`tract_model_file`](Self::tract_model_file) with the default location and its pin given,
+    /// so a test can stand a file in for the default without writing into `vendor/models/` (the
+    /// real default is relative to witnessd's working directory).
+    pub fn tract_model_file_with_default(
+        &self,
+        default_path: &Path,
+        default_sha256: &str,
+    ) -> Result<TractModelFile> {
+        match &self.tract_model {
+            Some(path) => {
+                if path.as_os_str().is_empty() {
+                    return Err(anyhow!("detect.tract_model must not be empty"));
+                }
+                // Read once, like the default: the sha256 witnessd logs is of the bytes the
+                // backend is built from (TractModelFile::bytes), not of a file tract reopens.
+                let bytes = std::fs::read(path).map_err(|e| {
+                    anyhow!(
+                        "failed to read the configured tract model {}: {}",
+                        path.display(),
+                        e
+                    )
+                })?;
+                let sha256 = sha256_hex(&bytes);
+                let matches_pin = sha256 == default_sha256;
+                Ok(TractModelFile {
+                    path: path.clone(),
+                    sha256,
+                    bytes,
+                    pinned: false,
+                    matches_pin,
+                })
+            }
+            None => {
+                // One open, one read: these bytes are hashed here and are the bytes the backend
+                // is built from (TractModelFile::bytes), so the file is never opened again and
+                // nothing can swap it between the check and the load.
+                let bytes = std::fs::read(default_path).map_err(|e| {
+                    anyhow!(
+                        "failed to read the default tract model {} ({}): run \
+                         scripts/fetch_detection_model.sh to fetch and verify it, or set \
+                         detect.tract_model (or WITNESS_TRACT_MODEL) to a model of your own",
+                        default_path.display(),
+                        e
+                    )
+                })?;
+                let sha256 = sha256_hex(&bytes);
+                if sha256 != default_sha256 {
+                    return Err(anyhow!(
+                        "refusing the default tract model {}: its sha256 is {}, not the {} \
+                         scripts/fetch_detection_model.sh pins, so it is not the model that \
+                         script fetched (it was replaced or corrupted on disk). Run \
+                         scripts/fetch_detection_model.sh to restore the verified model, or, \
+                         to run a model of your own, name it with detect.tract_model (or \
+                         WITNESS_TRACT_MODEL): a configured model loads as given and its \
+                         sha256 is logged at startup",
+                        default_path.display(),
+                        sha256,
+                        default_sha256
+                    ));
+                }
+                Ok(TractModelFile {
+                    path: default_path.to_path_buf(),
+                    sha256,
+                    bytes,
+                    pinned: true,
+                    matches_pin: true,
+                })
+            }
+        }
+    }
+}
+
+/// The tract model file witnessd builds its backend from, read by
+/// [`DetectSettings::tract_model_file`]. Whichever kind, it was opened once and read whole,
+/// [`sha256`](Self::sha256) is of the bytes read, and the backend is built from those same
+/// bytes ([`bytes`](Self::bytes)), never by opening the path again: the hash witnessd logs is
+/// of the model that runs, and a file swapped after the read does not reach the backend. A
+/// symlink is followed by that one open: its target's bytes are what is hashed and built. Two
+/// kinds, by whether anything named the file:
+///
+/// * **Pinned default.** Neither `detect.tract_model` nor `WITNESS_TRACT_MODEL` names a model
+///   (an empty `WITNESS_TRACT_MODEL` names none), so it is the file
+///   `scripts/fetch_detection_model.sh` writes. Its SHA-256 matched
+///   [`DEFAULT_TRACT_MODEL_SHA256`] (a mismatch is refused before this exists). The pin covers
+///   these bytes only, so the backend is built with no model directory: a model that keeps its
+///   weights in files beside it (ONNX external data) is refused there rather than read unhashed.
+/// * **Configured.** The operator named a model, which is the operator's choice: it loads as
+///   given, not held to the pin ([`matches_pin`](Self::matches_pin) says whether it happens to
+///   be the pinned model, which the startup line reports). That holds when the configured path
+///   is the default path too: naming the file opts out of the pin. Weights such a model keeps
+///   in files beside it are read by tract from the model's directory when the backend is
+///   built, as a model loaded by path would read them; they are not hashed, so `sha256`
+///   describes the model file alone.
+///
+/// The boundary: the pin catches a default model file that was swapped or corrupted after the
+/// fetch. It does not stop an account that can edit the config (it can name any model) or the
+/// binary (it can change the pin).
+pub struct TractModelFile {
+    path: PathBuf,
+    sha256: String,
+    /// The bytes read, the ones `sha256` is of: what the backend is built from.
+    bytes: Vec<u8>,
+    /// The pinned default, held to `DEFAULT_TRACT_MODEL_SHA256`; `false` for a configured model.
+    pinned: bool,
+    /// Whether `sha256` is the pin (always, for the pinned default).
+    matches_pin: bool,
+}
+
+impl std::fmt::Debug for TractModelFile {
+    /// The bytes are a model (tens of megabytes): their count, not their contents.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TractModelFile")
+            .field("path", &self.path)
+            .field("sha256", &self.sha256)
+            .field("bytes", &format_args!("{} bytes", self.bytes.len()))
+            .field("pinned", &self.pinned)
+            .field("matches_pin", &self.matches_pin)
+            .finish()
+    }
+}
+
+impl TractModelFile {
+    /// The file that was read.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Lowercase hex SHA-256 of the bytes read ([`bytes`](Self::bytes)).
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    /// Whether the file's SHA-256 is [`DEFAULT_TRACT_MODEL_SHA256`] (always true for the pinned
+    /// default; for a configured model, what the startup line reports).
+    pub fn matches_pin(&self) -> bool {
+        self.matches_pin
+    }
+
+    /// The bytes read, the ones [`sha256`](Self::sha256) is of: what the backend is built from,
+    /// for the pinned default and a configured model alike.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Whether this is the pinned default (nothing named a model, and the bytes matched the
+    /// pin) rather than a model the operator named.
+    pub fn is_pinned_default(&self) -> bool {
+        self.pinned
+    }
+
+    /// The line witnessd logs at startup for this model.
+    pub fn startup_line(&self) -> String {
+        if self.pinned {
+            format!(
+                "tract model {}: sha256 {}, the pinned default (scripts/fetch_detection_model.sh), \
+                 checked at load and built from the bytes checked",
+                self.path.display(),
+                self.sha256
+            )
+        } else {
+            format!(
+                "tract model {}: sha256 {}, named by detect.tract_model or WITNESS_TRACT_MODEL \
+                 and loaded as given from the bytes hashed, not held to a pin ({} the pinned \
+                 default model)",
+                self.path.display(),
+                self.sha256,
+                if self.matches_pin {
+                    "it is"
+                } else {
+                    "it is not"
+                }
+            )
+        }
+    }
+}
+
+/// Lowercase hex SHA-256 of bytes in hand.
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes))
 }
 
 #[derive(Debug, Clone)]
@@ -1065,8 +1301,9 @@ impl WitnessdConfig {
         }
         if self.detect.backend == DetectBackendPreference::Tract {
             // tract_model is optional: when unset it defaults to DEFAULT_TRACT_MODEL (populated by
-            // scripts/fetch_detection_model.sh). Only an explicitly-empty path is invalid; a missing
-            // model file surfaces a clear load error from the tract backend at startup.
+            // scripts/fetch_detection_model.sh), held to DEFAULT_TRACT_MODEL_SHA256 at startup
+            // (DetectSettings::tract_model_file). Only an explicitly-empty path is invalid; a
+            // missing or unpinned default is refused at startup with an error naming the script.
             if let Some(path) = &self.detect.tract_model {
                 if path.as_os_str().is_empty() {
                     return Err(anyhow!(
@@ -1811,5 +2048,437 @@ skew_tolerance_s = 10
         write_file(&path, &raw);
         read_config_file::<WitnessdConfigFile>(&path)
             .expect("shipped example config must parse under deny_unknown_fields");
+    }
+
+    // ── witness_api reads a witnessd file (sweep A103) ─────────────────────
+
+    /// The field names a `#[derive(Deserialize)]` struct declares: the `fields` list serde
+    /// hands `deserialize_struct`, captured by a deserializer that refuses right after, so
+    /// nothing is built.
+    fn declared_fields<T: for<'de> Deserialize<'de>>() -> &'static [&'static str] {
+        struct Capture(Option<&'static [&'static str]>);
+        impl<'de> serde::Deserializer<'de> for &mut Capture {
+            type Error = serde::de::value::Error;
+            fn deserialize_any<V: serde::de::Visitor<'de>>(
+                self,
+                _visitor: V,
+            ) -> Result<V::Value, Self::Error> {
+                Err(serde::de::Error::custom("only a struct is read"))
+            }
+            fn deserialize_struct<V: serde::de::Visitor<'de>>(
+                self,
+                _name: &'static str,
+                fields: &'static [&'static str],
+                _visitor: V,
+            ) -> Result<V::Value, Self::Error> {
+                self.0 = Some(fields);
+                Err(serde::de::Error::custom("fields captured"))
+            }
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+                byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map enum
+                identifier ignored_any
+            }
+        }
+        let mut capture = Capture(None);
+        let _ = T::deserialize(&mut capture);
+        capture.0.expect("the type deserializes as a struct")
+    }
+
+    fn parse_witness_api(toml_str: &str) -> Result<WitnessApiConfigFile> {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("witness.toml");
+        write_file(&path, toml_str);
+        read_config_file::<WitnessApiConfigFile>(&path)
+    }
+
+    /// docs/rtsp_setup.md's "Create `witness.toml`" example, read from the doc itself.
+    fn rtsp_setup_example() -> String {
+        let doc =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rtsp_setup.md"))
+                .expect("read docs/rtsp_setup.md");
+        let at = doc
+            .find("Create `witness.toml`:")
+            .expect("docs/rtsp_setup.md still says \"Create `witness.toml`:\"");
+        let open = at + doc[at..].find("```toml\n").expect("a toml block follows") + 8;
+        let close = open + doc[open..].find("```").expect("the toml block closes");
+        let example = doc[open..close].to_string();
+        assert!(
+            example.contains("[rtsp]"),
+            "the example is a witnessd file: {example}"
+        );
+        example
+    }
+
+    #[test]
+    fn witness_api_reads_the_rtsp_setup_example() {
+        let example = rtsp_setup_example();
+        parse_witnessd(&example).expect("the example is a witnessd config");
+        let file = parse_witness_api(&example).expect("witness_api must accept the same file");
+        let config = WitnessApiConfig::from_file(file).expect("witness_api config");
+        // The shared [zones] block still reaches witness_api.
+        assert_eq!(config.sensitive_zones, vec!["zone:front_door".to_string()]);
+    }
+
+    #[test]
+    fn witness_api_reads_the_full_shipped_witnessd_file() {
+        let raw =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
+                .expect("read config.example.toml");
+        let daemon = parse_witnessd(&raw).expect("the shipped example is a witnessd config");
+        // It is a full file: every witnessd-only block is in it.
+        for (name, present) in [
+            ("ingest", daemon.ingest.is_some()),
+            ("rtsp", daemon.rtsp.is_some()),
+            ("file", daemon.file.is_some()),
+            ("v4l2", daemon.v4l2.is_some()),
+            ("esp32", daemon.esp32.is_some()),
+            ("detect", daemon.detect.is_some()),
+            ("health", daemon.health.is_some()),
+            ("storage", daemon.storage.is_some()),
+            ("clock", daemon.clock.is_some()),
+            ("storage_health", daemon.storage_health.is_some()),
+        ] {
+            assert!(present, "config.example.toml has no [{name}] block");
+        }
+        let file = parse_witness_api(&raw).expect("witness_api must accept the full witnessd file");
+        let api = WitnessApiConfig::from_file(file).expect("witness_api config");
+        let daemon = WitnessdConfig::from_file(daemon).expect("witnessd config");
+        // The keys both binaries read come out the same.
+        assert_eq!(api.db_path, daemon.db_path);
+        assert_eq!(api.ruleset_id, daemon.ruleset_id);
+        assert_eq!(api.api_addr, daemon.api_addr);
+        assert_eq!(api.sensitive_zones, daemon.zones.sensitive_zones);
+        assert_eq!(api.retention, daemon.retention);
+    }
+
+    #[test]
+    fn the_shared_api_block_reaches_witness_api_from_a_witnessd_file() {
+        let file = parse_witness_api(
+            "db_path = \"/data/witness.db\"\nruleset_id = \"ruleset:v9\"\n\
+             [api]\naddr = \"0.0.0.0:8799\"\ntoken_path = \"/data/api_token\"\n\
+             viewer_token_path = \"/secrets/viewers.json\"\n\
+             paired_token_path = \"/secrets/paired.json\"\n\
+             pairing_code_path = \"/secrets/code\"\nrate_limit_per_minute = 30\n\
+             [rtsp]\nurl = \"rtsp://camera/stream\"\nwidth = 640\nheight = 480\n\
+             [detect]\nbackend = \"tract\"\ntract_model = \"/models/x.onnx\"\n\
+             [retention]\nseconds = 3600\n",
+        )
+        .expect("a witnessd file with a full [api] block");
+        let config = WitnessApiConfig::from_file(file).expect("witness_api config");
+        assert_eq!(config.db_path, "/data/witness.db");
+        assert_eq!(config.ruleset_id, "ruleset:v9");
+        assert_eq!(config.api_addr, "0.0.0.0:8799");
+        assert_eq!(
+            config.api_token_path,
+            Some(PathBuf::from("/data/api_token"))
+        );
+        assert_eq!(
+            config.api_viewer_token_path,
+            Some(PathBuf::from("/secrets/viewers.json"))
+        );
+        assert_eq!(config.api_rate_limit_per_minute, 30);
+        let pairing = config.api_access.pairing_paths().expect("pairing paths");
+        assert_eq!(pairing.tokens_path, PathBuf::from("/secrets/paired.json"));
+        assert_eq!(pairing.code_path, PathBuf::from("/secrets/code"));
+        assert_eq!(config.retention, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn witness_api_still_refuses_a_key_neither_binary_knows() {
+        // A misspelled top-level key, and one inside the [api] block witness_api reads.
+        for (bad, key) in [
+            (
+                "db_pth = \"witness.db\"\n[rtsp]\nurl = \"rtsp://c/s\"\n",
+                "db_pth",
+            ),
+            (
+                "[rtsp]\nurl = \"rtsp://c/s\"\n[api]\ntoken_pth = \"/data/t\"\n",
+                "token_pth",
+            ),
+            ("[zones]\nsensitve = [\"zone:a\"]\n", "sensitve"),
+            ("[retention]\nsecond = 60\n", "second"),
+        ] {
+            let err = parse_witness_api(bad).expect_err("an unknown key must fail witness_api");
+            assert!(err.to_string().contains(key), "{key}: {err}");
+            let err = parse_witnessd(bad).expect_err("and witnessd");
+            assert!(err.to_string().contains(key), "{key}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_mistake_inside_a_witnessd_only_block_is_witnessds_to_refuse() {
+        // IgnoredAny takes any value without looking inside it: a misspelled key inside
+        // [rtsp], or a detect that is not a table, passes witness_api, which reads neither,
+        // and witnessd, which reads both, refuses the same file.
+        for (bad, what) in [
+            ("[rtsp]\nurll = \"rtsp://c/s\"\n", "urll"),
+            ("detect = 5\n", "detect"),
+            ("[[storage]]\nmin_free_mb = 1\n", "storage"),
+        ] {
+            parse_witness_api(bad)
+                .unwrap_or_else(|e| panic!("witness_api skips {what}, but refused it: {e}"));
+            let err = parse_witnessd(bad).expect_err("witnessd refuses it");
+            assert!(err.to_string().contains(what), "{what}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_value_only_witnessd_checks_is_witnessds_to_refuse() {
+        // The shared blocks are typed as witnessd types them, so a misspelled key or a wrong
+        // type fails both binaries (the tests above). A value check witnessd makes on a key
+        // only it reads is not made here: witness_api never reads the key, so the file loads
+        // for it and witnessd refuses the same file.
+        for (file, what, refusal) in [
+            (
+                "[zones]\nmodule_zone_id = \"BAD ID!\"\n",
+                "zones.module_zone_id",
+                "zone_id",
+            ),
+            (
+                "[retention]\nseconds = 60\ncheck_interval_seconds = 0\n",
+                "retention.check_interval_seconds",
+                "check_interval_seconds",
+            ),
+        ] {
+            let file_for_api = parse_witness_api(file)
+                .unwrap_or_else(|e| panic!("witness_api does not read {what}, yet refused: {e}"));
+            let mut api = WitnessApiConfig::from_file(file_for_api)
+                .unwrap_or_else(|e| panic!("witness_api does not check {what}, yet refused: {e}"));
+            api.validate()
+                .unwrap_or_else(|e| panic!("witness_api does not check {what}, yet refused: {e}"));
+            let mut daemon = WitnessdConfig::from_file(parse_witnessd(file).expect("well-formed"))
+                .expect("the shape is fine; the value is validate's to refuse");
+            let err = daemon.validate().expect_err("witnessd checks the value");
+            assert!(err.to_string().contains(refusal), "{what}: {err}");
+        }
+    }
+
+    #[test]
+    fn both_binaries_take_the_same_top_level_keys() {
+        let mut daemon = declared_fields::<WitnessdConfigFile>().to_vec();
+        let mut api = declared_fields::<WitnessApiConfigFile>().to_vec();
+        daemon.sort_unstable();
+        api.sort_unstable();
+        assert_eq!(
+            api, daemon,
+            "WitnessApiConfigFile must accept every top-level key WitnessdConfigFile does (as \
+             IgnoredAny when witness_api does not read it) and no other, or witness_api refuses \
+             the kernel's own config file"
+        );
+        // The capture reads real field lists, not an empty one.
+        assert!(daemon.contains(&"rtsp") && daemon.contains(&"api"));
+    }
+
+    // ── The default tract model's pin (sweep A102) ─────────────────────────
+
+    fn detect_with_model(tract_model: Option<PathBuf>) -> DetectSettings {
+        DetectSettings {
+            backend: DetectBackendPreference::Tract,
+            tract_model,
+            tract_format: TractFormat::Yolov2,
+            confidence_threshold: DEFAULT_DETECT_CONFIDENCE,
+        }
+    }
+
+    #[test]
+    fn default_tract_model_pin_is_the_fetch_scripts() {
+        let script = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/scripts/fetch_detection_model.sh"
+        ))
+        .expect("read scripts/fetch_detection_model.sh");
+        let assigned = |name: &str| -> String {
+            let prefix = format!("{name}=");
+            let values: Vec<&str> = script
+                .lines()
+                .filter_map(|line| line.strip_prefix(prefix.as_str()))
+                .collect();
+            assert_eq!(
+                values.len(),
+                1,
+                "one {name}= line in the script: {values:?}"
+            );
+            values[0].trim_matches('"').to_string()
+        };
+        assert_eq!(
+            assigned("MODEL_SHA256"),
+            DEFAULT_TRACT_MODEL_SHA256,
+            "scripts/fetch_detection_model.sh's MODEL_SHA256 and src/config.rs's \
+             DEFAULT_TRACT_MODEL_SHA256 change together"
+        );
+        assert!(
+            DEFAULT_TRACT_MODEL_SHA256.len() == 64
+                && DEFAULT_TRACT_MODEL_SHA256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "the pin is 64 lowercase hex, the form the load-time check compares"
+        );
+        // The pin names the file the script writes.
+        let dir = assigned("MODEL_DIR");
+        let written = assigned("MODEL_PATH").replace("${MODEL_DIR}", &dir);
+        assert_eq!(
+            written.strip_prefix("${REPO_ROOT}/"),
+            Some(DEFAULT_TRACT_MODEL),
+            "the script writes {written}"
+        );
+    }
+
+    #[test]
+    fn an_unset_tract_model_is_the_default_read_once_and_held_to_the_pin() {
+        let dir = tempdir().expect("temp dir");
+        let default = dir.path().join("default.onnx");
+        write_file(&default, "the pinned model");
+        let pin = sha256_hex(b"the pinned model");
+        let model = detect_with_model(None)
+            .tract_model_file_with_default(&default, &pin)
+            .expect("the pinned bytes load");
+        assert_eq!(model.path(), default.as_path());
+        assert_eq!(model.sha256(), pin);
+        assert!(model.matches_pin());
+        assert!(model.is_pinned_default());
+        assert_eq!(model.bytes(), b"the pinned model");
+        let line = model.startup_line();
+        assert!(
+            line.contains(&pin) && line.contains("pinned default"),
+            "{line}"
+        );
+        // The bytes in hand are the bytes hashed: a swap after the read does not reach them.
+        write_file(&default, "a swapped model");
+        assert_eq!(model.bytes(), b"the pinned model");
+    }
+
+    #[test]
+    fn a_default_tract_model_that_is_not_the_pinned_one_is_refused() {
+        let dir = tempdir().expect("temp dir");
+        let default = dir.path().join("default.onnx");
+        write_file(&default, "the pinned modem");
+        let pin = sha256_hex(b"the pinned model");
+        let err = detect_with_model(None)
+            .tract_model_file_with_default(&default, &pin)
+            .expect_err("a one-byte change is refused");
+        let msg = err.to_string();
+        for needle in [
+            default.display().to_string(),
+            sha256_hex(b"the pinned modem"),
+            pin,
+            "scripts/fetch_detection_model.sh".to_string(),
+            "detect.tract_model".to_string(),
+            "WITNESS_TRACT_MODEL".to_string(),
+        ] {
+            assert!(msg.contains(&needle), "the refusal names {needle}: {msg}");
+        }
+        // The real pin refuses it too.
+        assert!(detect_with_model(None)
+            .tract_model_file_with_default(&default, DEFAULT_TRACT_MODEL_SHA256)
+            .is_err());
+    }
+
+    #[test]
+    fn a_missing_default_tract_model_names_the_fetch_script() {
+        let dir = tempdir().expect("temp dir");
+        let default = dir.path().join("absent.onnx");
+        let err = detect_with_model(None)
+            .tract_model_file_with_default(&default, DEFAULT_TRACT_MODEL_SHA256)
+            .expect_err("no file, no model");
+        let msg = err.to_string();
+        assert!(msg.contains(&default.display().to_string()), "{msg}");
+        assert!(msg.contains("scripts/fetch_detection_model.sh"), "{msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_at_the_default_path_is_held_to_its_targets_bytes() {
+        let dir = tempdir().expect("temp dir");
+        let good = dir.path().join("good.onnx");
+        let bad = dir.path().join("bad.onnx");
+        write_file(&good, "the pinned model");
+        write_file(&bad, "another model");
+        let pin = sha256_hex(b"the pinned model");
+        let default = dir.path().join("default.onnx");
+        std::os::unix::fs::symlink(&bad, &default).expect("symlink");
+        assert!(detect_with_model(None)
+            .tract_model_file_with_default(&default, &pin)
+            .is_err());
+        std::fs::remove_file(&default).expect("unlink");
+        std::os::unix::fs::symlink(&good, &default).expect("symlink");
+        let model = detect_with_model(None)
+            .tract_model_file_with_default(&default, &pin)
+            .expect("a link to the pinned bytes loads them");
+        assert_eq!(model.bytes(), b"the pinned model");
+    }
+
+    #[test]
+    fn a_configured_tract_model_loads_as_given_and_reports_its_hash() {
+        let dir = tempdir().expect("temp dir");
+        let default = dir.path().join("default.onnx");
+        let custom = dir.path().join("custom.onnx");
+        write_file(&custom, "an operator's model");
+        let pin = sha256_hex(b"the pinned model");
+        // The default location is not read at all (here it does not exist).
+        let model = detect_with_model(Some(custom.clone()))
+            .tract_model_file_with_default(&default, &pin)
+            .expect("a configured model is the operator's choice");
+        assert_eq!(model.path(), custom.as_path());
+        assert_eq!(model.sha256(), sha256_hex(b"an operator's model"));
+        assert!(!model.matches_pin());
+        assert!(!model.is_pinned_default());
+        assert_eq!(
+            model.bytes(),
+            b"an operator's model",
+            "a configured model is read once too: these are the bytes the backend is built from"
+        );
+        // Swapped after the read, the bytes in hand (and the hash logged) are still the model's.
+        write_file(&custom, "a swapped model");
+        assert_eq!(model.bytes(), b"an operator's model");
+        assert_eq!(model.sha256(), sha256_hex(b"an operator's model"));
+        let line = model.startup_line();
+        for needle in [
+            custom.display().to_string(),
+            sha256_hex(b"an operator's model"),
+            "loaded as given from the bytes hashed".to_string(),
+            "it is not the pinned default model".to_string(),
+        ] {
+            assert!(
+                line.contains(&needle),
+                "the startup line names {needle}: {line}"
+            );
+        }
+        // Naming the default path itself is configuring it: as given, and the line says
+        // whether the file there is the pinned model.
+        write_file(&default, "another model");
+        let named = detect_with_model(Some(default.clone()))
+            .tract_model_file_with_default(&default, &pin)
+            .expect("named, the default path loads as given");
+        assert!(!named.is_pinned_default());
+        assert_eq!(named.bytes(), b"another model");
+        assert!(named
+            .startup_line()
+            .contains("it is not the pinned default model"));
+        write_file(&default, "the pinned model");
+        let named = detect_with_model(Some(default.clone()))
+            .tract_model_file_with_default(&default, &pin)
+            .expect("named and matching");
+        assert!(named.matches_pin());
+        assert!(named
+            .startup_line()
+            .contains("it is the pinned default model"));
+    }
+
+    #[test]
+    fn an_empty_or_unreadable_configured_tract_model_is_refused() {
+        let dir = tempdir().expect("temp dir");
+        let err = detect_with_model(Some(PathBuf::new()))
+            .tract_model_file_with_default(&dir.path().join("d"), DEFAULT_TRACT_MODEL_SHA256)
+            .expect_err("an empty path names nothing");
+        assert!(err.to_string().contains("must not be empty"), "{err}");
+        let absent = dir.path().join("absent.onnx");
+        let err = detect_with_model(Some(absent.clone()))
+            .tract_model_file_with_default(&dir.path().join("d"), DEFAULT_TRACT_MODEL_SHA256)
+            .expect_err("a configured file that is not there");
+        assert!(
+            err.to_string().contains(&absent.display().to_string()),
+            "{err}"
+        );
     }
 }

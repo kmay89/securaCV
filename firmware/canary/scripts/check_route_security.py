@@ -1453,11 +1453,12 @@ SECRET_LOCAL_USES = {
             "ssl.prvtkey_pem = m_tls_key_der;",
         )),
     (_NET, "tls_load_der_from_nvs"): (
-        "reads the certificate and its key back from NVS into the buffers it is handed",
+        "asks IDF whether the certificate and its key are stored, and reads them back from "
+        "NVS into the buffers it is handed (F421: Loaded, Absent or Refused)",
         (
-            "const size_t klen = nvs.getBytesLength(NVS_KEY_TLS_KEY);",
-            "bool ok = c && k && nvs.getBytes(NVS_KEY_TLS_CERT, c, clen) == clen && "
-            "nvs.getBytes(NVS_KEY_TLS_KEY, k, klen) == klen;",
+            "[within if (opened == ESP_OK) {] kerr = nvs_get_blob(h, NVS_KEY_TLS_KEY, nullptr, "
+            "&klen);",
+            "const size_t kgot = nvs.getBytes(NVS_KEY_TLS_KEY, k, klen);",
         )),
     (_NET, "tls_store_der_to_nvs"): (
         "persists the certificate and its key to NVS",

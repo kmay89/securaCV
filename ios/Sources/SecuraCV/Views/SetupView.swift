@@ -68,7 +68,7 @@ struct SetupView: View {
                         Label("Hub login for your Canaries: \(login.username)", systemImage: "key.horizontal")
                         BrokerPasswordCopyButton(password: login.password)
                     } footer: {
-                        Text("Minted on this phone when the hub was finished, kept in its Keychain. A camera or radar Canary still takes it through the Flasher's MQTT fields: copy it here and paste it there (Universal Clipboard carries it to your Mac). The copy clears after two minutes.")
+                        Text("Minted on this phone when the hub was finished, kept in its Keychain. A camera or radar Canary takes it from the setup card over Bluetooth once it joins your Wi-Fi. If the card says it could not, copy it here and paste it into the Flasher's MQTT fields (Universal Clipboard carries it to your Mac). The copy clears after two minutes.")
                     }
                 }
                 if let wifi = householdWiFi {
@@ -169,11 +169,15 @@ struct SetupStepSection<Control: View>: View {
 
 /// The hub's Canary login, one tap from the clipboard and gone after two
 /// minutes, instead of printed on screen for retyping. (A camera or radar
-/// Canary still needs it in the Flasher's MQTT fields: this phone has no
-/// channel to hand it over yet.) NOT `.localOnly`: the Flasher runs on a
-/// computer, and Universal Clipboard — the person's own devices, nothing
-/// else — is how a copy here becomes a paste there. A local-only copy had
-/// nowhere useful to go.
+/// Canary takes its hub from this phone after its join, over the Bluetooth
+/// door's HUB write: `ImprovWire.hubHandoff`, read back as
+/// `ImprovWire.HubHandoffStatus`, magic_pairing.md §3.6. The copy is for a
+/// unit that could not take it — older firmware, a hub address or login
+/// longer than the door takes, or a refusal: the endings
+/// `NearbySetupLogic.hubEnding` sends to the Flasher's MQTT fields.) NOT
+/// `.localOnly`: the Flasher runs on a computer, and Universal Clipboard —
+/// the person's own devices, nothing else — is how a copy here becomes a
+/// paste there. A local-only copy had nowhere useful to go.
 struct BrokerPasswordCopyButton: View {
     let password: String
     @State private var copied = false

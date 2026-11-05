@@ -28,8 +28,8 @@
     },
     "thermal": {
       "label": "Thermal / die temp",
-      "flag": "FEATURE_DIAGNOSTICS",
-      "note": "Die temperature + passive watchdog."
+      "flag": "FEATURE_THERMAL_WATCHDOG",
+      "note": "Die temperature, observed passively; only the camera's own thermal guard acts on it."
     },
     "battery": {
       "label": "Battery",

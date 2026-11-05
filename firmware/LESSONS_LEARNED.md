@@ -242,6 +242,37 @@
   real-core `tests/ha/test_canary_sensing_rssi.py`.
 - **Date learned:** 2026-11
 
+### A line for the owner is a contract with the field that carries it, and it says only what its writer knows (canary-wap, F359)
+- **What happened:** the pairing timeout's new log line was drafted as one
+  175-byte sentence naming a cause ("the other Canary did not finish; its
+  owner may not have confirmed, or it runs older pairing firmware"). Two
+  reviews showed it false in a case the branch's own comment named (the
+  joiner's COMPLETE lost on the air: the other Canary had finished) and cut
+  at 79 bytes on every surface an owner reads: `HealthLogRingEntry::message`
+  is 80 bytes and `health_log()` forwards no detail, so `GET /api/logs`, the
+  dashboard and the BLE log would have shown the first 79 bytes, on a
+  character. Three older pairing lines already reach the owner that way
+  (sweep F445).
+- **Root cause:** the line was written for the serial monitor, which carries
+  it whole, and the owner's surfaces were not read for their widths; and it
+  reported what the writer inferred, not what it observed.
+- **Fix:** `update()` logs through `log_health()` as a message that states
+  this side's facts ("opera: pairing timed out; code confirmed here, no
+  answer from the other Canary", 78 bytes) and a detail that points at the
+  log that can say why ("check its log; older firmware? update both", 42
+  bytes), or "opera: pairing timed out" alone. `test_mesh_liveness_wap.cpp`
+  pins each case (both roles confirmed, neither, no partner, the lost
+  COMPLETE, a completed pairing that logs neither) and
+  `test_opera_name_wap.cpp` holds both fields reaching `GET /api/logs`
+  whole (#1920).
+- **Rule:** before a line is written for the owner, read the width of every
+  field it crosses (the ring's 80 and 48 bytes) and pin that it arrives
+  whole; and a line names a cause only when this side can know it,
+  otherwise it names the place that can.
+- **Regression check:** `make -C firmware/projects/canary-wap/tests_host
+  run-mesh-liveness run-opera-name`.
+- **Date learned:** 2026-11
+
 ---
 
 ## A driver library's init table is a PANEL personality, not a chip default
@@ -646,6 +677,44 @@
   branch it took. A green compile with the feature compiled out is not
   evidence for the feature.
 - **Date learned:** 2026-10
+
+### A chip-target `#if` before `sdkconfig.h` is included takes the fallback on every chip (canary, F432)
+- **What happened:** `securacv_thermal.cpp` chose its die-temperature
+  provider with `#if defined(CONFIG_IDF_TARGET_ESP32S3)` (and the IDF
+  version) before any include had reached `sdkconfig.h`, so
+  `SECURACV_HAVE_TSENS` was 0 on the ESP32-S3 as on the classic ESP32, and
+  every stock unit ran the sensorless stub: each `thermal_read_die_c()` was
+  a miss, the camera's thermal guard throttled the first PEEK stream after
+  three misses on every unit (sweep F432 had read the classic ESP32 as the
+  only case), the thermal watchdog logged "Thermal sensor not responding",
+  the self-test's temperature check failed and health carried no `temp_c`.
+  Found by the review of F432 (#1920), which ran `g++ -E` over the pinned
+  build's defines and read the macro's value instead of believing the
+  branch.
+- **Root cause:** a macro a header defines is undefined until that header
+  is included, and `#if defined(X)` on an undefined macro is false, not an
+  error. The fallback branch compiled cleanly everywhere and looked like a
+  designed posture ("conservatively, not blind" on the dashboard): the shape
+  of the `__has_include` lesson above, with a different macro.
+- **Fix:** `securacv_thermal.cpp` includes `<sdkconfig.h>` first,
+  unconditionally, not under `__has_include`: a build where the header is out
+  of reach must fail loudly, since taking the stub silently was this bug.
+  `test_camera_thermal.cpp` compiles the provider once per chip target over
+  `tests_host/stubs/idf_tsens` (esp32; the S3 on IDF 4.4.7 and 5.5.4, each
+  with the `sdkconfig.h` that names the target and a fake driver whose calls
+  match the pinned headers, in three driver modes), and a source pin holds
+  the include before the target test. The S3's TSENS branch compiles in CI
+  for the first time, and its first real readings reach five consumers with
+  no bench behind them (sweep F438).
+- **Rule:** a target or version macro is tested only after the header that
+  defines it is included, and a provider that says a chip has no sensor is
+  checked with the preprocessor, not believed. A lint over `firmware/` for
+  the first `#if` on `CONFIG_IDF_TARGET_*` or `ESP_IDF_VERSION` is sweep
+  F442.
+- **Regression check:** `make -C firmware/tests_host run`
+  (`test_camera_thermal`, three targets); on the old provider the S3 builds
+  fail 25 of 407 checks.
+- **Date learned:** 2026-11
 
 ---
 
@@ -1263,6 +1332,18 @@
   exists in both places must be compared, not chosen. If a check's operands
   can't differ (a zero-length compare, a constant), it is decoration; prove
   it can fail.
+- **Seen again (2026-11, Chirp, sweep F309, #1920):** Chirp's replay filter
+  took a witness's header nonce before the signature check, for the cost
+  argument that caching first saves a signature check per replayed junk
+  frame. It saved nothing: a flooder sends a fresh nonce per frame and
+  reaches the hash and the Ed25519 verify either way, and caching first let a
+  frame that fails its signature carry a heard chirp's nonce and keep the
+  real chirp out of a receiver it had not reached. The nonce now enters the
+  filter only after both signature checks (`test_chirp_security.cpp`,
+  `c9_a_forged_nonce_does_not_block_the_chirp`). The key is still the nonce
+  alone, so a frame signed under any key with a heard nonce still pre-empts
+  (sweep F435): the Beacon's answer above, a key only the real frame can
+  carry, is the open half.
 - **Regression check:** `tests_host/test_beacon_origination.cpp` mirrors the
   whole receive pipeline and fails on the pre-fix logic for each of the
   four; `test_beacon_solo_origination.cpp` pins that the solo path answers
@@ -4117,6 +4198,37 @@
   end at their TTLs and are not valid again 2^32 ms + 5 s after issue).
   Host-tested; the wraps cannot be bench-tested.
 - **Date learned:** 2026-10
+
+### A victim picked by the smallest stamp is the wrong one after the wrap, and a row that outlives 2^32 ms reads young under any rule (canary-wap Chirp, F416)
+- **What happened:** the per-key witness rate table (32 rows) evicted the
+  row with the smallest `window_start_ms` and cleared rows only at boot.
+  After the uptime wrap the rows written before it held the largest stamps,
+  so they were never the victim: two keys taking turns evicted each other out
+  of the rows written since and passed the 4-an-hour limit for up to 49.7
+  days (a host probe: 12 of 12 witnesses where 4 belong). The priority heap
+  broke an urgency tie on the raw stamps too.
+- **Root cause:** "oldest" was read off the stamp, where only the age `now -
+  stamp` orders rows across the wrap. The first fix took the age and was
+  still wrong one way, caught by the review's test: a table left idle for
+  2^32 ms gave up a live window, because a row that lives longer than 2^32
+  ms reads young again whatever the rule (the F347 lesson above, in a table
+  instead of a slot).
+- **Fix:** the victim is a row whose hour has run out, else the row with the
+  largest unsigned age; the heap tie goes to the largest `now -
+  received_ms`; and `update()` prunes every rate row whose window is older
+  than `PUBKEY_RATE_WINDOW_MS` on each loop pass, so no row lives long enough
+  for its age to wrap. `test_chirp_security.cpp` replays the probe (4 of 12),
+  holds every key to 4 per sliding hour with live rows from before the wrap
+  and the victim's after it, and keeps the idle table's live window; the
+  review's 30-schedule differential against an ideal limiter (a scratch
+  probe, not committed) gave 0 mismatches on the fixed tree (#1920).
+- **Rule:** an order between stamps is an order between ages, and an age is
+  only as good as the sweep that retires rows before 2^32 ms; test the policy
+  with rows from before the wrap and with a table that idles across one.
+- **Regression check:** `make -C firmware/projects/canary-wap/tests_host run`
+  (`test_chirp_security`'s c14 cases fail on the old table and on the
+  age-only cut).
+- **Date learned:** 2026-11
 
 ### A setup-window grant outlived setup, and a pasted token passed on the cookie beside it (canary-wap, F334, F335, F345, F346, F361)
 - **What happened:** after first-boot setup any host on a WAP's home network

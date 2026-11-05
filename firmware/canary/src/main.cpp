@@ -3467,7 +3467,8 @@ static void mqtt_publish_sensing_update() {
    * RSSI template renders a body without it as nothing, which Home
    * Assistant ignores on a numeric sensor: unknown before the first
    * reading, the last reading kept after it, and no unmeasured 0 dBm
-   * (sweep F411). The local /api/sensing route is not this publish. */
+   * (sweep F411). The local /api/sensing route applies the same rule
+   * (sweep F431). */
   if (sensing_rssi_measured(&s)) doc["rssi_dbm"] = (int)s.rssi_dbm;
   doc["frames_in_window"] = s.frames_in_window;
   doc["channel"]    = s.channel;

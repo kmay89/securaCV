@@ -292,7 +292,11 @@
         "name": "Chain Length"
       },
       "last_event": {
-        "name": "Last Event"
+        "name": "Last Event",
+        "state": {
+          "daily_summary": "Daily summary",
+          "held_summary": "Quiet Hours summary"
+        }
       },
       "health_status": {
         "name": "Health"

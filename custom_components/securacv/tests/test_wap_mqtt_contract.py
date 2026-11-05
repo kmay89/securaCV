@@ -1151,12 +1151,23 @@ _MEMORY_READINGS = [
     ("-1", '"memory_free": -1', "healthy", None, False),
     ("-0.5", '"memory_free": -0.5', "healthy", None, False),
     ("string -1", '"free_heap": "-1"', "healthy", None, False),
-    # A reading: a number in either key, memory_free first. A numeric string
-    # reads as its number, as the battery's does.
+    # A string int() reads only through its digit separator (50 bytes, which
+    # would read critical): a unit publishes a number, never a spelling.
+    ("string 5_0", '"memory_free": "5_0"', "healthy", None, False),
+    # A finite number past 64 bits: Home Assistant's JSON writer refuses the
+    # integer in a state attribute (TypeError from State.as_dict_json, which
+    # fails the recorder and every websocket subscription on the entity), so
+    # it is no reading rather than one the core cannot carry (sweep HA57; a
+    # row here once pinned 2**64 as a reading).
+    ("2**64", f'"memory_free": {2**64}', "healthy", None, False),
+    ("1e300", '"memory_free": 1e300', "healthy", None, False),
+    # A reading: a number in either key, memory_free first. A string of
+    # digits reads as its number, as the battery's does, and the largest
+    # integer the core carries reads as sent.
     ("1024", '"memory_free": 1024', "healthy", 1024, True),
     ("1023", '"memory_free": 1023', "critical", 1023, True),
     ("0", '"memory_free": 0', "critical", 0, True),
-    ("2**64", f'"memory_free": {2**64}', "healthy", 2**64, False),
+    ("2**64-1", f'"memory_free": {2**64 - 1}', "healthy", 2**64 - 1, False),
     ("string 1024", '"memory_free": "1024"', "healthy", 1024, True),
     ("string 1023", '"memory_free": "1023"', "critical", 1023, True),
     ("free_heap only, low", '"free_heap": 512', "critical", 512, True),
@@ -1204,6 +1215,117 @@ def test_the_health_sensor_reads_only_a_memory_number_as_low_memory(
     assert type(attrs["memory_free_bytes"]) is type(attribute), body
     assert attrs["battery_percent"] == 100
     assert _value(memory, "is_on") is memory_on, body
+
+
+# What a battery key can say on a unit whose battery is present and
+# discharging (the record's unit in trouble, with plenty of memory), as the
+# broker hands the text over, and what the Health sensor reads from it: its
+# state and its battery_percent attribute. The Health sensor reads critical
+# below CRITICAL_BATTERY_THRESHOLD_PERCENT (10) and warning below
+# WARNING_BATTERY_THRESHOLD_PERCENT (25); no reading is the no-battery
+# reading, healthy with a battery_percent of 100, as an absent key always was.
+_BATTERY_READINGS = [
+    # No reading: not a state of charge a unit's uint8_t can hold, a string
+    # int() reads only through its digit separator, or a finite number past
+    # 64 bits, which Home Assistant's JSON writer refuses in an attribute.
+    ("null", "healthy", 100),
+    ("true", "healthy", 100),
+    ("false", "healthy", 100),
+    ("NaN", "healthy", 100),
+    ("Infinity", "healthy", 100),
+    ("-Infinity", "healthy", 100),
+    ("1e400", "healthy", 100),
+    ("-1", "healthy", 100),
+    ("-0.5", "healthy", 100),
+    ('"-1"', "healthy", 100),
+    ('"junk"', "healthy", 100),
+    ('"5_0"', "healthy", 100),
+    ("1e300", "healthy", 100),
+    ("18446744073709551616", "healthy", 100),
+    # A reading, truncated toward zero; minus zero is zero. Above 100 reads
+    # as sent, up to the largest integer Home Assistant carries.
+    ("-0.0", "critical", 0),
+    ("0", "critical", 0),
+    ("8", "critical", 8),
+    ("9.9", "critical", 9),
+    ("10", "warning", 10),
+    ("24", "warning", 24),
+    ("25", "healthy", 25),
+    ("50.9", "healthy", 50),
+    ('"50"', "healthy", 50),
+    ("100", "healthy", 100),
+    ("101", "healthy", 101),
+    ("18446744073709551615", "healthy", 18446744073709551615),
+]
+
+
+@pytest.mark.parametrize("key", ["battery", "battery_soc"])
+@pytest.mark.parametrize(
+    ("spelled", "state", "attribute"),
+    _BATTERY_READINGS,
+    ids=[case[0] for case in _BATTERY_READINGS],
+)
+def test_the_health_sensor_reads_only_a_battery_number_as_a_charge(
+    record, monkeypatch, key, spelled, state, attribute
+):
+    """Sweep HA57: battery_percent did `int(value)` under TypeError and
+    ValueError only, so a planted `Infinity` or `1e400` raised OverflowError
+    out of the Health callback (the stub broker runs callbacks unguarded, so
+    the raise fails here), a `true` read as 1 % and critical, and `false` or
+    a negative charge read as critical too. A battery key's value is now read
+    as the memory keys' are, under the canary-wap's `battery` and under
+    firmware/canary's `battery_soc` alike (read with battery_present true).
+    Each body follows one that reads the other way, so the state shown is the
+    one this body set."""
+    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    health = wap.entity("health_status")
+    memory = wap.entity("tamper_memory_critical")
+    topic = _topic(record, "health")
+    low = _one(record, "trouble", "health")
+    assert (low["battery"], low["battery_present"], low["charge_state"]) == (8, True, "discharging")
+    gone = ("battery", "battery_soc", "battery_present", "memory_free", "free_heap")
+    rest = json.dumps({k: v for k, v in low.items() if k not in gone})[1:-1]
+    rest += ', "battery_present": true, "memory_free": 182000'
+    before = f'"{key}": 50' if state != "healthy" else f'"{key}": 8'
+    wap.broker.publish(topic, "{" + rest + ", " + before + "}", True)
+    assert _value(health, "native_value") != state, before
+    body = "{" + rest + f', "{key}": {spelled}' + "}"
+    wap.broker.publish(topic, body, True)
+    assert _value(health, "native_value") == state, body
+    attrs = _attrs(health)
+    assert attrs["battery_percent"] == attribute, body
+    assert type(attrs["battery_percent"]) is int, body
+    assert attrs["battery_present"] is True
+    assert attrs["memory_free_bytes"] == 182000
+    assert _value(memory, "is_on") is False, "the battery is not the memory"
+
+
+def test_the_health_sensor_reads_battery_soc_past_a_battery_with_no_number(record, monkeypatch):
+    """A `battery` that holds no number is read past like an absent one, so
+    battery_soc is the reading beside it when battery_present is true, and
+    is not trusted without it (an older firmware/canary sends 0 on USB)."""
+    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    health = wap.entity("health_status")
+    topic = _topic(record, "health")
+    low = _one(record, "trouble", "health")
+    gone = ("battery", "battery_soc", "battery_present", "memory_free", "free_heap")
+    rest = json.dumps({k: v for k, v in low.items() if k not in gone})[1:-1]
+    rest += ', "memory_free": 182000'
+    for spelled, state, attribute in (
+        ('"battery_present": true, "battery": true, "battery_soc": 8', "critical", 8),
+        ('"battery_present": true, "battery": Infinity, "battery_soc": 50', "healthy", 50),
+        ('"battery_present": true, "battery": -1, "battery_soc": 0', "critical", 0),
+        ('"battery": true, "battery_soc": 0', "healthy", 100),
+        ('"battery_present": true, "battery": 50, "battery_soc": 8', "healthy", 50),
+        ('"battery_present": false, "battery": 8, "battery_soc": 8', "healthy", 100),
+        ('"battery_present": true, "battery": 8', "critical", 8),
+        ('"battery_present": true, "battery": 1e400, "battery_soc": 1e400', "healthy", 100),
+    ):
+        # Each body reads otherwise than the one before it, state or attribute.
+        body = "{" + rest + ", " + spelled + "}"
+        wap.broker.publish(topic, body, True)
+        assert _value(health, "native_value") == state, body
+        assert _attrs(health)["battery_percent"] == attribute, body
 
 
 # ─── what the record shows is wrong today ──────────────────────────────

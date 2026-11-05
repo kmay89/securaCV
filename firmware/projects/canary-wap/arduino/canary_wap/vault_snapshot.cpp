@@ -496,44 +496,55 @@ void poll_completion() {
   __atomic_store_n(&g_worker_busy, false, __ATOMIC_RELEASE);
 }
 
-bool set_pubkey_hex(const char* hex64) {
-  if (!hex64) return false;
+KeySet set_pubkey_hex(const char* hex64) {
+  if (!hex64) return KeySet::Malformed;
   /* Exact-length gate before any indexed access. (hex_nibble would reject
    * the terminating NUL and short-circuit anyway, but the explicit check
    * makes the bound obvious and rejects overlong input up front.) */
-  if (strlen(hex64) != 2 * vault_logic::PUBKEY_SIZE) return false;
+  if (strlen(hex64) != 2 * vault_logic::PUBKEY_SIZE) return KeySet::Malformed;
   uint8_t pub[vault_logic::PUBKEY_SIZE];
   for (size_t i = 0; i < vault_logic::PUBKEY_SIZE; i++) {
     uint8_t hi, lo;
     if (!hex_nibble(hex64[2 * i], &hi) || !hex_nibble(hex64[2 * i + 1], &lo)) {
-      return false;
+      return KeySet::Malformed;
     }
     pub[i] = (uint8_t)((hi << 4) | lo);
   }
 
-  /* The key id first (sweep F364): a key whose id did not compute is
+  /* From here the key is well formed, and a refusal is the device's (sweep
+   * F426): NotSaved, each with a health-log line, since the route's answer
+   * tells the owner to look there if it repeats.
+   *
+   * The key id first (sweep F364): a key whose id did not compute is
    * refused before anything is stored, so the key registered before it,
    * if any, and its id stay as they were. */
   uint8_t key_id[vault_logic::KEY_ID_SIZE];
   if (!sha256_key_id(pub, key_id)) {
     log_health(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
                "Vault unlock key refused", "key id hash failed");
-    return false;
+    return KeySet::NotSaved;
   }
 
+  /* Then NVS: RAM changes only after the write landed, so a refused open
+   * or put leaves the key registered before, and its id, as they were. */
+  bool opened = false;
   bool stored = false;
   {
     NvsMainSession nvs(false);
-    if (!nvs.isOpen()) return false;
-    stored = nvs->putBytes(NVS_KEY_PUB, pub, sizeof(pub)) == sizeof(pub);
+    opened = nvs.isOpen();
+    if (opened) stored = nvs->putBytes(NVS_KEY_PUB, pub, sizeof(pub)) == sizeof(pub);
   }
-  if (!stored) return false;
+  if (!stored) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE, "Vault unlock key refused",
+               opened ? "NVS refused the write" : "NVS did not open");
+    return KeySet::NotSaved;
+  }
 
   memcpy(g_pubkey, pub, sizeof(g_pubkey));
   memcpy(g_key_id, key_id, sizeof(g_key_id));
   g_has_pubkey = true;
   log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Vault unlock key registered", nullptr);
-  return true;
+  return KeySet::Stored;
 }
 
 void clear_pubkey() {

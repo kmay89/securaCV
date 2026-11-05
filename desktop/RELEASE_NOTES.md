@@ -204,8 +204,10 @@ before and after you flash it.**
   a hub address typed with stray spaces now connects.
 - Under the hood: the flash engine is a shared, separately tested crate (the
   Lab runs the same one); rustls 0.23.45 (RUSTSEC-2026-0285), mdns-sd
-  0.21.4, Tauri CLI 2.12.0; releases carry the project's SBOMs and build on
-  Node 22.
+  0.21.4, Tauri CLI 2.12.0; releases build on Node 22 and carry three SBOMs:
+  `sbom-rust.cdx.json` (the witness kernel's crates), `sbom-node.cdx.json`
+  (canary-vision's npm packages) and `sbom-firmware.cdx.json`. None of them
+  lists this app's own crates or npm packages.
 
 ## 0.11.9 — 2026-09-03
 

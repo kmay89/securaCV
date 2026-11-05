@@ -1,8 +1,10 @@
 'use strict';
 
 // What a browser makes of an innerHTML string, for the page tests beside this
-// file (web_ui_logic.test.js, dashboard_gates.test.js). Test support only: the
-// sketch compiles none of it, and nothing here is served.
+// file (web_ui_logic.test.js, dashboard_gates.test.js) and the flagship
+// dashboard's (firmware/tests_host/test_canary_dashboard_gates.test.js, sweep
+// F422). Test support only: the sketch compiles none of it, and nothing here
+// is served.
 //
 //   parseFragment(html)  the HTML tokenizer's data, tag, attribute, comment and
 //                        character-reference states (WHATWG HTML 13.2.5), and
@@ -182,7 +184,10 @@ function textElement() {
 // page that writes it into innerHTML: an element with a handler, a quote that
 // would close an attribute, a script string, an already-escaped name, a name
 // far past any field's size, and a comment opener (which takes the rest of a
-// list with it).
+// list with it). And since sweep F422 and F423: a trailing backslash (it
+// escapes the quote that would close a string spliced into an onclick), a
+// script end tag, a script URL, U+2028 (it ended a string literal before
+// ES2019) and a 300-character name.
 const HOSTILE = Object.freeze([
   '<img src=x onerror=alert(1)>',
   '"><svg onload=x>',
@@ -190,6 +195,11 @@ const HOSTILE = Object.freeze([
   '&lt;b&gt;',
   'N'.repeat(4096),
   "aa:bb'\"<!--",
+  'Phone\\',
+  '</script><script>alert(1)</script>',
+  'javascript:alert(1)',
+  'a\u2028b',
+  'N'.repeat(300),
 ]);
 
 module.exports = { parseFragment, textElement, shape, attr, HOSTILE };

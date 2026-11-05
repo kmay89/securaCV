@@ -380,8 +380,10 @@ fetch script writes, so you only set the backend:
 ```toml
 [detect]
 backend = "tract"
-# tract_model = "vendor/models/tinyyolov2-8.onnx"  # default (host-only; runs in tract on Pi/x86,
-#                                                  # NOT on the ESP32-S3 — that uses Grove Vision AI V2)
+# tract_model = "/path/to/your/model.onnx"  # leave unset to load the pinned vendor/models/tinyyolov2-8.onnx;
+#                                           # naming any path, even that one, loads it as given and skips the pin
+#                                           # (host-only: tract runs on Pi/x86, NOT on the ESP32-S3, which uses
+#                                           # Grove Vision AI V2)
 # tract_format = "yolov2"  # default; "postnms" for models that already emit final boxes
 confidence = 0.5    # minimum detection confidence, 0.0–1.0 (default 0.5)
 
@@ -393,6 +395,22 @@ height = 320
 Build with the feature and run: `cargo run --release --features backend-tract --bin witnessd`.
 If `backend=tract` but no model is found at the resolved path, witnessd fails fast with a clear
 load error naming the expected file.
+
+**The default model is checked at every start.** When neither `detect.tract_model` nor
+`WITNESS_TRACT_MODEL` names a model (an empty `WITNESS_TRACT_MODEL` names none), witnessd reads
+`vendor/models/tinyyolov2-8.onnx` once, hashes it, and refuses to start unless it matches the
+SHA-256 the fetch script pins; the backend is then built from the bytes it hashed, so the file
+is not opened a second time. A refusal names the file, both hashes and the two ways out: run
+`bash scripts/fetch_detection_model.sh` again to restore the verified model, or name a model of
+your own. A model you name (in `detect.tract_model` or `WITNESS_TRACT_MODEL`, including the
+default path itself) is your choice: it loads as given, read once like the default and built
+from the bytes read, and witnessd logs its path, the SHA-256 of those bytes and whether they
+match the pin at startup, so the hash logged is the model that runs. (Weights a model keeps in
+separate files beside it, ONNX external data, are read from its directory by tract and are not
+hashed; the pinned default is refused if it keeps any, since the pin covers the model file
+alone.) What this guards: a default model file replaced or corrupted on disk after you fetched
+it. What it does not: an account that can edit the config (it can name any model) or replace
+the `witnessd` binary (it can change the pin).
 
 Environment overrides: `WITNESS_DETECT_BACKEND=tract`,
 `WITNESS_TRACT_MODEL=/absolute/path/to/model.onnx`,

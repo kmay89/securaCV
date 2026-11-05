@@ -616,7 +616,7 @@ says online; the **Online** sensor stays available to report offline.
    Sensors:
    - **Witness Count** — total witness records created (`witness_count`; signed `counts` topic)
    - **Chain Length** — hash-chain length, with `latest_hash` and `algorithm` (`chain_length`; signed `chain` topic)
-   - **Last Event** — latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28), every other stateless row `unknown`; the event that creates it (a device's first on the topic) is shown too, verified and replay-gated like any other (HA44) (`last_event`; signed `events` topic)
+   - **Last Event** — latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28; an entities card shows them as Daily summary and Quiet Hours summary, the timeline card's words, HA41), every other stateless row `unknown`; the event that creates it (a device's first on the topic) is shown too, verified and replay-gated like any other (HA44) (`last_event`; signed `events` topic)
    - **Health** — `healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version, and the committed-event egress's counters (`csi_event_egress`, `offline_queue`) as attributes when the firmware sends them (`health_status`; `health` and `egress` topics, unsigned)
    - **GPS Fix** — GPS fix status, with satellites and HDOP (`gps_fix`; `health` topic, unsigned)
    - **SD Wear Estimate** — estimated SD-card wear percent, only when the firmware reports its `sd` object (`sd_wear`; `health` topic, unsigned; diagnostic)
@@ -2016,8 +2016,18 @@ witness_api mint-viewer-token --label "living room tv" --base-url http://192.168
 witness_api revoke-viewer-token <token_id>
 ```
 
+That is the host form. In the kernel's root image it is the same binary
+inside the container, `docker exec <container> witness_api mint-viewer-token --label "living room tv"`,
+walked step by step in
+[container.md](container.md#mint-a-witness-wall-viewer-token); the Docker
+sidecar wraps it as
+`docker exec securacv entrypoint.sh mint-viewer-token --label "living room tv"`
+(see [frigate_integration.md](frigate_integration.md)).
+
 The command runs with the same `WITNESS_CONFIG` and `DEVICE_KEY_SEED` as
-the serving kernel. Its stdout is one JSON line, the pairing receipt, and
+the serving kernel; a config file written for `witnessd` is read for the
+keys the two share, and its `[rtsp]`, `[detect]` and other daemon-only
+blocks are skipped. Its stdout is one JSON line, the pairing receipt, and
 the only copy of the token that will ever exist: the kernel keeps its
 sha256 in the viewer-token file — `api.viewer_token_path` /
 `WITNESS_API_VIEWER_TOKEN_PATH`, defaulting to `viewer_tokens.json` beside
@@ -2025,10 +2035,10 @@ sha256 in the viewer-token file — `api.viewer_token_path` /
 or a revoke takes effect without a restart. The receipt carries the
 kernel's current verifying key, which the Wall pins at pairing: its
 "Verified" then means Ed25519 signatures checked against that pinned key,
-not whatever key the hub serves today. The Docker sidecar wraps both
-commands (`docker exec securacv entrypoint.sh mint-viewer-token …`,
-see [frigate_integration.md](frigate_integration.md)); the Home Assistant
-app reads the file but has no control that mints one yet.
+not whatever key the hub serves today. The sidecar wraps the revoke the
+same way (`docker exec securacv entrypoint.sh revoke-viewer-token <token_id>`);
+the Home Assistant app reads the file but has no control that mints one
+yet.
 
 ### Endpoints
 

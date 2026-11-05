@@ -12,7 +12,8 @@
 //   test_fieldbus_glue_can     FEATURE_DEVMODE + CAN    (canary-display-dash-can)
 // Every build plays the same station scenarios and is held to ONE wire trace:
 // the request bytes, the UART and TWAI configuration, the reply window, the
-// test frame, the drain and the PG1 lines. The two driver builds also check
+// test frame, the drain and the PG1 lines, and to what the RS485 row and tile
+// on the glass then say (playground.h's words, F317). The two driver builds also check
 // that the station went through canary::io (the driver's own state is up
 // after a tap, and its bring-up line is on the console once), and drive the
 // driver's API directly: argument refusals, return codes, frame packing both
@@ -203,9 +204,39 @@ static void slave_answers(uint8_t slave, const std::vector<uint16_t>& values, ui
 
 static uint64_t now_ms() { return fake::now_us / 1000; }
 
+// ── What the glass says (F317) ──────────────────────────────────────────────
+// playground_ui.cpp draws the RS485 row and tile with playground.h's
+// rs485_row_words() / rs485_tile_words() (test_playground_glass.cpp holds the
+// real glass to them); these hold their words and looks to the state each
+// scenario leaves, in every build.
+
+static void expect_glass(const char* row, pg::Rs485Look row_look, const char* val,
+                         const char* sub, pg::Rs485Look tile_look) {
+  const pg::Rs485State& s = pg::state().rs485;
+  char r[48], v[32], u[24];
+  const pg::Rs485Look rl = pg::rs485_row_words(s, r, sizeof(r));
+  const pg::Rs485Look tl = pg::rs485_tile_words(s, v, sizeof(v), u, sizeof(u));
+  const bool ok = std::string(r) == row && rl == row_look && std::string(v) == val &&
+                  std::string(u) == sub && tl == tile_look;
+  if (!ok) {
+    std::printf("    (glass: row \"%s\" look %d, tile \"%s\" / \"%s\" look %d)\n", r, (int)rl,
+                v, u, (int)tl);
+  }
+  CHECK(std::string(r) == row);
+  CHECK(rl == row_look);
+  CHECK(std::string(v) == val);
+  CHECK(std::string(u) == sub);
+  CHECK(tl == tile_look);
+}
+
 // ── RS-485 station scenarios (every build) ──────────────────────────────────
 
 static void rs485_probe_reads_register() {
+  // Before any probe: nothing named, the row and tile invite a tap.
+  CHECK(pg::state().rs485.last_exc == -1);
+  expect_glass("Modbus • tap to probe", pg::RS485_LOOK_IDLE, "-", "tap to probe",
+               pg::RS485_LOOK_IDLE);
+
   slave_answers(1, {0x1234}, 20);
   pg::action_rs485_probe();
   CHECK(Serial1.begins == 1);
@@ -226,6 +257,8 @@ static void rs485_probe_reads_register() {
   CHECK(s.replies == 1);
   CHECK(s.last_val == 0x1234);
   CHECK(s.last_ok);
+  CHECK(s.last_exc == -1);
+  expect_glass("RTU • reg0=4660", pg::RS485_LOOK_OK, "4660", "reg0 • slave 1", pg::RS485_LOOK_OK);
 
   // A second tap: the UART is not brought up again, the same frame goes out.
   slave_answers(1, {0x0001}, 5);
@@ -259,7 +292,9 @@ static void rs485_quiet_bus_waits_the_window() {
   CHECK(e.size() == 1 && e[0] == "rs485 slave=1 reply=none");
   const auto& s = pg::state().rs485;
   CHECK(s.polls == 1 && s.replies == 0 && !s.last_ok);
+  CHECK(s.last_exc == -1);
   CHECK(Serial1.tx == kProbeRequest);
+  expect_glass("no reply • check A/B", pg::RS485_LOOK_WARN, "?", "no reply", pg::RS485_LOOK_WARN);
 }
 
 static void rs485_reply_inside_window() {
@@ -352,6 +387,11 @@ static void rs485_exception_returns_at_once() {
   const auto& s = pg::state().rs485;
   CHECK(s.polls == 1 && s.replies == 0 && !s.last_ok);
   CHECK(Serial1.tx == kProbeRequest);
+  // F317: the station keeps the code, and the glass names the refusal where
+  // it used to say "no reply • check A/B".
+  CHECK(s.last_exc == 2);
+  expect_glass("exc 2 • check register", pg::RS485_LOOK_WARN, "?", "exception 2",
+               pg::RS485_LOOK_WARN);
 
   // Another code, arriving a byte at a time: the wait ends on the fifth.
   Serial1.on_frame = [](const std::vector<uint8_t>&) {
@@ -365,24 +405,31 @@ static void rs485_exception_returns_at_once() {
   CHECK(took1 < 30);
   e = evts();
   CHECK(e.size() == 2 && e[1] == "rs485 slave=1 exception=4");
+  CHECK(s.last_exc == 4);
+  expect_glass("exc 4 • check register", pg::RS485_LOOK_WARN, "?", "exception 4",
+               pg::RS485_LOOK_WARN);
 
-  // A good read after an exception reads as it always did.
+  // A good read after an exception reads as it always did, and clears it.
   slave_answers(1, {0x0007}, 5);
   pg::action_rs485_probe();
   e = evts();
   CHECK(e.size() == 3 && e[2] == "rs485 slave=1 reg=0 val=7 crc=ok");
   CHECK(s.polls == 3 && s.replies == 1 && s.last_ok && s.last_val == 7);
+  CHECK(s.last_exc == -1);
+  expect_glass("RTU • reg0=7", pg::RS485_LOOK_OK, "7", "reg0 • slave 1", pg::RS485_LOOK_OK);
 }
 
 // An exception after a good read takes the good read's mark off: the tile is
 // drawn from last_ok, and a slave that read 7 and then refused the register has
 // not just answered. The value and the reply count stay as the good read left
-// them.
+// them, and the row, which showed the good read's value, names the exception
+// instead while it is the latest answer (F317).
 static void rs485_exception_after_a_good_read() {
   slave_answers(1, {0x0007}, 5);
   pg::action_rs485_probe();
   const auto& s = pg::state().rs485;
   CHECK(s.polls == 1 && s.replies == 1 && s.last_ok && s.last_val == 7);
+  CHECK(s.last_exc == -1);
   Serial1.on_frame = [](const std::vector<uint8_t>&) {
     Serial1.inject(with_crc({0x01, 0x83, 0x02}), 10);
   };
@@ -390,6 +437,68 @@ static void rs485_exception_after_a_good_read() {
   const auto e = evts();
   CHECK(e.size() == 2 && e[1] == "rs485 slave=1 exception=2");
   CHECK(s.polls == 2 && s.replies == 1 && !s.last_ok && s.last_val == 7);
+  CHECK(s.last_exc == 2);
+  expect_glass("exc 2 • check register", pg::RS485_LOOK_WARN, "?", "exception 2",
+               pg::RS485_LOOK_WARN);
+}
+
+// The exception is the latest answer only until the next probe: a quiet bus
+// after it is no reply again, on the console and on the glass, whether or not
+// a good read came before (the row then shows that read's value, as it did
+// before F317 after any no-reply).
+static void rs485_exception_cleared_by_no_reply() {
+  Serial1.on_frame = [](const std::vector<uint8_t>&) {
+    Serial1.inject(with_crc({0x01, 0x83, 0x02}), 10);
+  };
+  pg::action_rs485_probe();
+  const auto& s = pg::state().rs485;
+  CHECK(s.last_exc == 2);
+  Serial1.on_frame = nullptr;  // the slave goes quiet
+  pg::action_rs485_probe();
+  auto e = evts();
+  CHECK(e.size() == 2 && e[1] == "rs485 slave=1 reply=none");
+  CHECK(s.polls == 2 && s.replies == 0 && !s.last_ok);
+  CHECK(s.last_exc == -1);
+  expect_glass("no reply • check A/B", pg::RS485_LOOK_WARN, "?", "no reply", pg::RS485_LOOK_WARN);
+
+  slave_answers(1, {0x0007}, 5);
+  pg::action_rs485_probe();
+  Serial1.on_frame = [](const std::vector<uint8_t>&) {
+    Serial1.inject(with_crc({0x01, 0x83, 0x03}), 10);
+  };
+  pg::action_rs485_probe();
+  CHECK(s.last_exc == 3);
+  Serial1.on_frame = nullptr;
+  pg::action_rs485_probe();
+  e = evts();
+  CHECK(e.size() == 5 && e[4] == "rs485 slave=1 reply=none");
+  CHECK(s.polls == 5 && s.replies == 1 && !s.last_ok && s.last_val == 7);
+  CHECK(s.last_exc == -1);
+  expect_glass("RTU • reg0=7", pg::RS485_LOOK_OK, "?", "no reply", pg::RS485_LOOK_WARN);
+}
+
+// Every byte is a code on the wire, 0 too: a CRC-good exception carrying 0 is
+// named on the console ("exception=0"), so the glass names it as well, which
+// is why "none" is -1 and not 0.
+static void rs485_exception_code_zero_is_named() {
+  Serial1.on_frame = [](const std::vector<uint8_t>&) {
+    Serial1.inject(with_crc({0x01, 0x83, 0x00}), 10);
+  };
+  pg::action_rs485_probe();
+  const auto e = evts();
+  CHECK(e.size() == 1 && e[0] == "rs485 slave=1 exception=0");
+  CHECK(pg::state().rs485.last_exc == 0);
+  expect_glass("exc 0 • check register", pg::RS485_LOOK_WARN, "?", "exception 0",
+               pg::RS485_LOOK_WARN);
+
+  // And the widest code still fits the row's buffer whole.
+  Serial1.on_frame = [](const std::vector<uint8_t>&) {
+    Serial1.inject(with_crc({0x01, 0x83, 0xFF}), 10);
+  };
+  pg::action_rs485_probe();
+  CHECK(pg::state().rs485.last_exc == 255);
+  expect_glass("exc 255 • check register", pg::RS485_LOOK_WARN, "?", "exception 255",
+               pg::RS485_LOOK_WARN);
 }
 
 // The first five bytes decide: an exception that arrives in one burst with
@@ -410,6 +519,7 @@ static void rs485_exception_with_bytes_behind_it() {
   CHECK(took < 15);
   auto e = evts();
   CHECK(e.size() == 1 && e[0] == "rs485 slave=1 exception=2");
+  CHECK(pg::state().rs485.last_exc == 2);
 
   // Followed by a whole good reply in the same burst: still the exception.
   Serial1.on_frame = [](const std::vector<uint8_t>&) {
@@ -427,6 +537,7 @@ static void rs485_exception_with_bytes_behind_it() {
   CHECK(e.size() == 2 && e[1] == "rs485 slave=1 exception=3");
   const auto& s = pg::state().rs485;
   CHECK(s.polls == 2 && s.replies == 0 && !s.last_ok);
+  CHECK(s.last_exc == 3);
 }
 
 // An exception that is not whole and good is not one: it waits out the window
@@ -464,9 +575,11 @@ static void rs485_bad_exceptions_wait_the_window() {
     CHECK(waited < 303);
     const auto e = evts();
     CHECK(e.size() == n && e.back() == "rs485 slave=1 reply=none");
+    CHECK(pg::state().rs485.last_exc == -1);  // not one, so nothing named
   }
   const auto& s = pg::state().rs485;
   CHECK(s.polls == n && s.replies == 0 && !s.last_ok);
+  expect_glass("no reply • check A/B", pg::RS485_LOOK_WARN, "?", "no reply", pg::RS485_LOOK_WARN);
 }
 
 // A normal reply is never taken for an exception, even one whose first five
@@ -493,6 +606,7 @@ static void rs485_normal_reply_is_not_an_exception() {
   CHECK(e.size() == 1 && e[0] == want);
   const auto& s = pg::state().rs485;
   CHECK(s.replies == 1 && s.last_ok && s.last_val == value);
+  CHECK(s.last_exc == -1);
 }
 
 // ── CAN station scenarios (every build) ─────────────────────────────────────
@@ -1156,7 +1270,9 @@ int main() {
   fails += run("rs485 stale bytes drained before the request", rs485_stale_bytes_drained_first);
   fails += run("rs485 full-length bad reply is no reply at once", rs485_bad_replies_are_no_reply);
   fails += run("rs485 exception returns at once and is named", rs485_exception_returns_at_once);
-  fails += run("rs485 exception after a good read clears last_ok", rs485_exception_after_a_good_read);
+  fails += run("rs485 exception after a good read clears last_ok and is named", rs485_exception_after_a_good_read);
+  fails += run("rs485 exception is cleared by a no-reply probe", rs485_exception_cleared_by_no_reply);
+  fails += run("rs485 exception code 0 is named, 255 fits the row", rs485_exception_code_zero_is_named);
   fails += run("rs485 exception with bytes behind it is the exception", rs485_exception_with_bytes_behind_it);
   fails += run("rs485 bad, cut-short or foreign exception waits the window", rs485_bad_exceptions_wait_the_window);
   fails += run("rs485 normal reply with a CRC-good head is not an exception", rs485_normal_reply_is_not_an_exception);

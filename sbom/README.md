@@ -2,20 +2,30 @@
 
 This directory holds the Software Bill of Materials (SBOM) story for SecuraCV:
 how each document is produced, and — for the firmware — the committed document
-itself. The output format is **CycloneDX 1.5 JSON**.
+itself. Every document is **CycloneDX JSON**. The firmware document is held to
+the **1.5** schema, strictly, by `lint.yml` and by `sbom.yml`'s gate; the
+`cargo-cyclonedx` and `cdxgen` documents are at the spec version each tool
+writes (1.3 and 1.7 with the tool versions of 2026-11-04), and the gate holds
+them to their format tag, subject and contents, not to a schema.
 
-## The three documents
+## The documents
 
 | Ecosystem | File | How it is produced |
 |-----------|------|--------------------|
 | Rust (kernel) | `sbom-rust.cdx.json` | `cargo-cyclonedx`, in `.github/workflows/sbom.yml` |
 | Node.js (device-api, SPA) | `sbom-node.cdx.json` | `@cyclonedx/cdxgen`, in `sbom.yml` |
 | C/C++ (ESP32 firmware) | [`sbom-firmware.cdx.json`](sbom-firmware.cdx.json) | **generated and committed** by [`scripts/gen_firmware_sbom.py`](../scripts/gen_firmware_sbom.py); byte-gated on every PR |
+| Rust (the Flasher / the Lab) | `sbom-flasher-rust.cdx.json`, `sbom-lab-rust.cdx.json` | `cargo-cyclonedx --target all` in `desktop/src-tauri` / `desktop-lab/src-tauri`, in `sbom.yml`: the app's crate graph for every target it is built for (the lockfile — the macOS-only crates the universal `.dmg` links are in it, not only the Linux runner's resolution), its path-linked crates included |
+| Node.js (the Flasher / the Lab) | `sbom-flasher-node.cdx.json`, `sbom-lab-node.cdx.json` | `@cyclonedx/cdxgen` on `desktop/` / `desktop-lab/` after `npm ci`, in `sbom.yml`: the npm tree the app's lockfile installs (today the Tauri CLI that builds it) |
 
-The Rust and Node documents are produced fresh by `sbom.yml` on every push to
-`main` that touches a dependency manifest, on pull requests, and on every
-published release (where all three are attached as release assets). They are
-not committed.
+The first three are on every release. A Flasher release (`flasher-v*`) adds
+the Flasher's two documents and a Lab release (`app-v*`) the Lab's two;
+`sbom.yml`'s gate refuses an app document that is empty or whose subject is
+not that app's own crate or npm package. Everything but the firmware document
+is produced fresh by `sbom.yml` on every push to `main` that touches a
+dependency manifest, on pull requests (which build both apps' documents), and
+for every published release, where they are attached as release assets. They
+are not committed.
 
 ## The firmware SBOM
 
@@ -155,10 +165,12 @@ Tests: `scripts/tests/test_gen_firmware_sbom.py`.
 
 ## Retrieving the SBOMs
 
-All three are attached as build artifacts on each `sbom.yml` run, and as
-release assets on every release cut from October 2026 on (firmware-release.yml,
-desktop-flasher-release.yml, lab-publish.yml and release.yml call `sbom.yml`
-once their release is published). Earlier releases mostly carry none — only
+All of them are attached as build artifacts on each `sbom.yml` run. The
+three project documents are release assets on every release cut from October
+2026 on: firmware-release.yml, desktop-flasher-release.yml, lab-publish.yml
+and release.yml call `sbom.yml` once their release is published. An app's own
+two documents are on its releases cut after sweep CI20 added them (November
+2026); earlier app releases carry the three only. Earlier releases mostly carry none — only
 `app-v0.1.0`, `flasher-v0.1.4` and `app-v0.2.2` did — and re-running
 `sbom.yml` for one of those tags fails by design: the tagged tree predates
 the generator, and an SBOM must describe the tree it ships with.

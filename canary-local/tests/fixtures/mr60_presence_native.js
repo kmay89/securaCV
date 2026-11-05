@@ -2,7 +2,8 @@
 // PresenceFSM, built natively, for the Lab's two Sense ports to be held to.
 //
 // sense.test.js (assets/sense-ui.js's radar lab) and senselab.test.js
-// (assets/sense-sim.js's Sense Lab) each port mr60_presence.cpp to JS. This
+// (assets/sense-sim.js's Sense Lab) each port mr60_presence.cpp to JS, and
+// since A124 the radar lab runs sense-sim.js's port of mr60_vitals.cpp. This
 // builds the real file with the host's g++ (or $CXX) beside the small trace
 // driver below, so a test can play one trace of frames through the firmware
 // and through its port and compare every tick (sweep F131: the occupancy
@@ -196,16 +197,43 @@ function build() {
       throw new Error(`${f} now branches on CANARY_SENSE_VITALS: build the presence-only driver apart`);
     }
   }
-  const dir = fs.mkdtempSync(join(os.tmpdir(), "securacv-mr60-presence-"));
+  built = { bin: compile(cxx, MR60, "securacv-mr60-presence-") };
+  return built;
+}
+
+// The driver beside the MR60 sources in `src`, built into a scratch dir
+// removed at exit; the binary's path.
+function compile(cxx, src, prefix) {
+  const dir = fs.mkdtempSync(join(os.tmpdir(), prefix));
   process.once("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(join(dir, "driver.cpp"), DRIVER);
   const bin = join(dir, "mr60_presence_driver");
-  const args = ["-std=c++17", "-O1", "-Wall", "-Wextra", "-Werror", "-DCANARY_SENSE_VITALS", "-I", MR60,
-    join(dir, "driver.cpp"), join(MR60, "mr60_presence.cpp"), join(MR60, "mr60_vitals.cpp"), "-o", bin];
+  const args = ["-std=c++17", "-O1", "-Wall", "-Wextra", "-Werror", "-DCANARY_SENSE_VITALS", "-I", src,
+    join(dir, "driver.cpp"), join(src, "mr60_presence.cpp"), join(src, "mr60_vitals.cpp"), "-o", bin];
   const r = spawnSync(cxx, args, { encoding: "utf8" });
   if (r.status !== 0) throw new Error(`${cxx} could not build mr60_presence.cpp and mr60_vitals.cpp:\n${cxx} ${args.join(" ")}\n${r.stderr}`);
-  built = { bin };
-  return built;
+  return bin;
+}
+
+// A planted firmware change, for a test to show its compare catches one
+// (sweep A124): the same driver over a scratch copy of the MR60 sources with
+// each swap [file, from, to, count = 1] made, `from` found exactly `count`
+// times in `file` (so a moved anchor fails loudly, never plants nothing).
+// { bin } for runFirmware's last argument, or { skip } as build() gives it.
+function buildMutant(swaps) {
+  const b = build();
+  if (b.skip) return b;
+  const cxx = process.env.CXX || "g++";
+  const src = fs.mkdtempSync(join(os.tmpdir(), "securacv-mr60-mutant-src-"));
+  process.once("exit", () => fs.rmSync(src, { recursive: true, force: true }));
+  for (const f of fs.readdirSync(MR60)) if (/\.(h|cpp)$/.test(f)) fs.copyFileSync(join(MR60, f), join(src, f));
+  for (const [file, from, to, count = 1] of swaps) {
+    const text = fs.readFileSync(join(src, file), "utf8");
+    const n = text.split(from).length - 1;
+    if (n !== count) throw new Error(`mutant anchor found ${n} times (want ${count}) in ${file}: ${JSON.stringify(from)}`);
+    fs.writeFileSync(join(src, file), text.split(from).join(to));
+  }
+  return { bin: compile(cxx, src, "securacv-mr60-mutant-") };
 }
 
 // A trace is a list of ticks: { reset: t }, { t } (no frame),
@@ -214,9 +242,9 @@ function build() {
 // heart_rate). cfg is the firmware's PresenceConfig by its field names;
 // vcfg, when given, its VitalsConfig, and the run is the wellbeing build's.
 // Returns one row per tick that is not a reset, each with a `vitals` record
-// when vcfg is given.
-function runFirmware(cfg, trace, vcfg) {
-  const b = build();
+// when vcfg is given. bin, when given, is a buildMutant() build's.
+function runFirmware(cfg, trace, vcfg, bin) {
+  const b = bin ? { bin } : build();
   if (b.skip) throw new Error(b.skip);
   const lines = trace.map((k) => ("reset" in k ? `R ${k.reset}`
     : "target" in k ? `P ${k.t} ${k.target ? 1 : 0} ${k.count} ${k.cm}`
@@ -393,4 +421,4 @@ function vitalsTraces(cfg, vcfg) {
   };
 }
 
-module.exports = { MAIN_GATES, VITALS_GATES, build, runFirmware, traces, vitalsTraces, fuzz };
+module.exports = { MAIN_GATES, VITALS_GATES, build, buildMutant, runFirmware, traces, vitalsTraces, fuzz };

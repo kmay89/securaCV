@@ -5,8 +5,10 @@ with snprintf() are measured and escaped (F212), every other JSON text spelled
 with printf is held or recorded (F227), the device name holds no byte
 ArduinoJson would write raw (F226), neither does any SSID a JSON text
 carries (F262), no Bluetooth device's name reaches an ArduinoJson value
-as it is (F302), and neither does a Beacon set member's (F408), and every
-append onto a String takes text JSON keeps whole (F405).
+as it is (F302), and neither does a Beacon set member's (F408), every
+append onto a String takes text JSON keeps whole (F405), and every
+health-log line reaches the ring GET /api/logs reads through one scrub
+(F303).
 
 ArduinoJson's `serializeJson(doc, char_array)` and its sized form
 `serializeJson(doc, buf, n)` write at most the buffer's size and add the
@@ -338,6 +340,49 @@ J11. Every append onto a String in the sketch is text JSON keeps whole
     function, which the host suite holds instead. Host-tested in
     test_bluetooth_commands_wap.cpp (the helper, and the scan's callback
     and the answer it builds, over hostile names).
+J12. Every health-log line reaches the ring through one scrub (F303). GET
+    /api/logs writes each entry's text through ArduinoJson 7.4.1, which
+    writes a control byte raw and every other byte as it is, and
+    log_health() is handed text a person or a radio supplied (an Opera
+    name, an SSID, a file name); it copied message and detail with
+    strncpy(), raw and cut at a byte count, inside a character too. The
+    ring (`g_health_log_ring` of `HealthLogRingEntry`) lives in
+    canary_wap.ino, and no other file names either. Its text fields are
+    every char array of the struct (`message`, `detail`), derived, never
+    typed. log_health() writes each exactly once, by
+    `wap_json::shown_text(E.f, sizeof(E.f), f)`: E the body's
+    `HealthLogRingEntry& E = g_health_log_ring[...]`, f its own parameter
+    of the field's name (each control byte JSON forbids raw and each piece
+    that is not whole UTF-8 as U+FFFD, cut on a character). Every other
+    mention of an entry's text field, in any function of the sketch,
+    through a `HealthLogRingEntry` local or parameter (any declarator, by
+    the struct's name or any `using`/`typedef` alias of it), an `auto` or
+    `decltype()` taken from the ring or from one of those (a pointer's
+    `[i]` too), `g_health_log_ring[...]` or `->`, is a read: inside
+    `sizeof()`; a later argument of a copy, printf or `wap_json::` call,
+    or any argument of a compare, length, search or print call; an
+    element read (`E.f[0]`, not assigned, changed or addressed); or the
+    whole value of an ArduinoJson subscript (`x["k"] = E.f;`) or of a
+    `const char*` local. Nothing writes an entry whole: no copy, fill or
+    printf call takes the ring or an entry as its destination, no entry is
+    assigned (`E = `, `*E = `, `g_health_log_ring[i] = `), and
+    `g_health_log_ring` itself is assigned only a zeroing allocation
+    (`csi_large_calloc(`, `calloc(`) or `nullptr`. A held entry leaves its
+    function only as a read: its address taken outside `sizeof()`, or the
+    entry itself handed to a call that is not a listed reader, returned or
+    otherwise used bare, is refused, and so is a second file-scope
+    declarator of the struct (the ring is the one), since either is a way
+    into the ring no function's own text shows (the F303 review: a
+    pointer kept in a file-scope global, a `using` alias, a `void*`
+    helper). What J12 cannot see: a write through a pointer it did not
+    see taken (a byte offset computed into the ring, a `char*` handed in
+    from outside the sketch, a type a template computes over
+    `decltype()`), or a struct copy made elsewhere and copied back by
+    bytes. Host-tested
+    in tests_host/test_opera_name_wap.cpp (log_health(), log_health_ssid()
+    and health_log() cut verbatim, GET /api/logs parsed strictly on
+    control bytes, bytes that are not UTF-8 and text cut at each field's
+    cap).
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
@@ -4382,6 +4427,209 @@ def check_string_appends(files: dict[str, str], idx: Index) -> list[str]:
     return errors
 
 
+# ── J12: every health-log line reaches the ring through one scrub (F303) ──
+
+RING_STRUCT = "HealthLogRingEntry"
+RING_ARRAY = "g_health_log_ring"
+RING_WRITER = "log_health"
+RING_SCRUB = "wap_json::shown_text"
+# Calls whose later arguments are read, never written (a destination is the first), and calls
+# that read every argument.
+RING_SOURCES = re.compile(r"(?:wap_json::\w+|strn?cpy|strlcpy|strn?cat|strlcat|memcpy|memmove|v?s?n?printf)")
+RING_READERS = re.compile(r"(?:strn?cmp|strn?casecmp|strn?len|strstr|strchr|strrchr|memcmp|printf|\w+\.printf|"
+                          r"wap_json::shows_as|wap_json::string_len)")
+# Calls that write their first argument.
+RING_FILLERS = (r"(?:strn?cpy|strlcpy|strn?cat|strlcat|memcpy|memmove|memset|v?s?n?printf|"
+                r"wap_json\s*::\s*\w+|\w+\s*\.\s*readBytes)")
+
+
+def ring_call_at(code: str, lo: int, at: int) -> tuple[str, int] | None:
+    """The call whose argument list holds code[at] (searched back to `lo`), as (its callee as spelled,
+    the argument's index), or None outside every call's parentheses."""
+    depth, i = 0, at - 1
+    while i >= lo:
+        c = code[i]
+        if c in ")]}":
+            depth += 1
+        elif c in "([{":
+            if depth == 0:
+                if c != "(":
+                    return None
+                m = re.search(r"((?:[A-Za-z_]\w*\s*(?:::|\.)\s*)*[A-Za-z_]\w*)\s*$", code[lo:i])
+                if not m:
+                    return None
+                return re.sub(r"\s+", "", m.group(1)), len(split_top(code[i + 1:at])) - 1
+            depth -= 1
+        i -= 1
+    return None
+
+
+def ring_bracket_end(code: str, open_at: int) -> int:
+    """Index of the ']' closing the '[' at `open_at`, or -1."""
+    depth = 0
+    for j in range(open_at, len(code)):
+        if code[j] == "[":
+            depth += 1
+        elif code[j] == "]":
+            depth -= 1
+            if depth == 0:
+                return j
+        elif code[j] in ";{}":
+            return -1
+    return -1
+
+
+def check_log_ring(files: dict[str, str], idx: Index) -> list[str]:
+    """J12: the health log's ring takes text only through log_health()'s scrub (F303)."""
+    errors: list[str] = []
+    for name, src in files.items():
+        if name != INO and re.search(r"\b(?:%s|%s)\b" % (RING_STRUCT, RING_ARRAY), blank_comments_and_strings(src)):
+            errors.append(f"{name}: names {RING_STRUCT} or {RING_ARRAY}, the health log's ring, which only "
+                          f"canary_wap.ino may hold (J12)")
+    structs = [st for st in idx.structs.get(RING_STRUCT, []) if st.ns == ()]
+    if len(structs) != 1:
+        return errors + [f"{INO}: struct {RING_STRUCT} found {len(structs)} time(s), expected once (J12)"]
+    fields = sorted(n for n, (t, dims) in structs[0].fields.items() if dims and re.search(r"\bchar\b", t))
+    if not fields:
+        return errors + [f"{INO}: {RING_STRUCT} keeps no text field this rule can read (J12)"]
+    writers = [f for f in idx.fns.get(RING_WRITER, []) if f.file == INO and f.body]
+    if len(writers) != 1:
+        return errors + [f"{INO}: {RING_WRITER}() defined {len(writers)} time(s), expected once (J12)"]
+    writer = writers[0]
+    params = [re.sub(r"\s*=.*$", "", p).split()[-1].lstrip("*&") for p in split_top(writer.params) if p.split()]
+    code = blank_comments_and_strings(files[INO])
+    kept = blank_comments_only(files[INO])
+
+    def line_of(at: int) -> int:
+        return code.count("\n", 0, at) + 1
+
+    # The struct's names: itself and every `using`/`typedef` alias of it, an alias of an alias too
+    # (the F303 review). An alias in another file names the struct and is refused above.
+    aliases = {RING_STRUCT}
+    while True:
+        alt = "|".join(re.escape(a) for a in aliases)
+        found = set(re.findall(r"\busing\s+(\w+)\s*=\s*(?:const\s+)?(?:%s)\b" % alt, code))
+        found |= set(re.findall(r"\btypedef\s+(?:const\s+)?(?:%s)\b[\s*&]*(\w+)\s*;" % alt, code))
+        if found <= aliases:
+            break
+        aliases |= found
+    struct_alt = "(?:%s)" % "|".join(re.escape(a) for a in sorted(aliases))
+    # What precedes a name in its own declaration: the struct by any name, `auto`, or `decltype()`.
+    declared = re.compile(r"(?:\b%s|\bauto|\bdecltype\s*\([^()]*\))\s*(?:const\s*)?[&*]?\s*$" % struct_alt)
+
+    # The struct's one file-scope instance is the ring. A second one (a pointer kept across calls,
+    # a scratch entry, a member of another struct) is a way into the ring that no function's own
+    # text shows, so it is refused rather than followed (the F303 review).
+    for m in re.finditer(r"\b%s\s*(?:const\s*)?[&*]?\s*(\w+)\s*(?:=|;|\[|\{)" % struct_alt, code):
+        if m.group(1) == RING_ARRAY or fn_containing(idx, INO, m.start()) is not None:
+            continue
+        if re.search(r"\btypedef\b[^;]*$", code[:m.start()]):
+            continue
+        errors.append(f"{INO}:{line_of(m.start())}: {kept[m.start():m.end()].strip()}: a {RING_STRUCT} at file "
+                      f"scope other than the ring, a way into it no function's text shows (J12)")
+
+    ring_fns = [f for fs in idx.fns.values() for f in fs if f.file == INO and f.body]
+    scrubs: dict[str, int] = {f: 0 for f in fields}
+    field_alt = "|".join(re.escape(f) for f in fields)
+    for fn in ring_fns:
+        lo, hi = fn.body
+        body = code[lo:hi]
+        # The entries this function holds: a local or parameter of the struct by any of its names
+        # (any declarator), or an `auto` or `decltype()` taken from the ring or from one of those.
+        held = set(re.findall(r"\b%s\s*(?:const\s*)?[&*]?\s*(\w+)" % struct_alt, fn.params + "\n" + body))
+        while True:
+            names = "|".join(re.escape(h) for h in held | {RING_ARRAY})
+            more = set(re.findall(r"\bauto\s*(?:const\s*)?[&*]?\s*(\w+)\s*=\s*[&*]?\s*(?:%s)\b" % names, body))
+            more |= set(re.findall(r"\bdecltype\s*\([^()]*\b(?:%s)\b[^()]*\)\s*(?:const\s*)?[&*]?\s*(\w+)" % names,
+                                   body))
+            more -= {"operator", RING_ARRAY}
+            if more <= held:
+                break
+            held |= more
+        held -= {"operator", RING_ARRAY}
+        bases = [r"\b%s\s*\[[^\]\[;]*\]\s*(?:\.|->)" % RING_ARRAY, r"\b%s\s*->" % RING_ARRAY]
+        bases += [r"(?<![\w.>])%s\s*(?:\[[^\]\[;]*\]\s*)?(?:\.|->)" % re.escape(h) for h in held]
+        mention = re.compile(r"(?:%s)\s*(%s)\b" % ("|".join(bases), field_alt))
+        for m in mention.finditer(code, lo, hi):
+            at, end, fld = m.start(), m.end(), m.group(1)
+            where = f"{INO}:{line_of(at)}: {fn.name}(): {kept[at:end].strip()}"
+            call = ring_call_at(code, lo, at)
+            if call is not None and call[0] == "sizeof":
+                continue
+            if call is not None and ((call[1] >= 1 and RING_SOURCES.fullmatch(call[0]))
+                                     or RING_READERS.fullmatch(call[0])):
+                continue                                    # a source argument, read
+            if call is not None and call[1] == 0 and fn is writer and call[0] == RING_SCRUB.replace(" ", ""):
+                open_at = code.rindex("(", lo, at)
+                close = matching_paren(code, open_at)
+                args = split_top(code[open_at + 1:close])
+                base = re.sub(r"\s+", "", m.group(0))[:-len(fld)]
+                if (len(args) == 3 and re.sub(r"\s+", "", args[0]) == base + fld
+                        and re.sub(r"\s+", "", args[1]) == f"sizeof({base}{fld})"
+                        and args[2].strip() == fld and fld in params
+                        and re.search(r"\b%s\s*&\s*%s\s*=\s*%s\s*\[" % (RING_STRUCT, re.escape(base.rstrip(".->")),
+                                                                     RING_ARRAY), body)):
+                    scrubs[fld] += 1
+                    continue
+                errors.append(f"{where}: {RING_SCRUB}() into the ring is spelled `{RING_SCRUB}(E.{fld}, "
+                              f"sizeof(E.{fld}), {fld})` with E the entry taken from {RING_ARRAY}[...] (J12)")
+                continue
+            after = code[end:hi]
+            if re.match(r"\s*\[", after):
+                close = ring_bracket_end(code, end + after.index("["))
+                tail = code[close + 1:hi] if close > 0 else ""
+                if close > 0 and not re.match(r"\s*(?:[-+*/%&|^]?=(?!=)|\+\+|--)", tail) \
+                        and not re.search(r"(?:\+\+|--|(?<!&)&)\s*$", code[lo:at]):
+                    continue                                # an element read
+            before = kept[lo:at]
+            if re.match(r"\s*;", after) and (re.search(r'\[\s*"[^"\\\n]*"\s*\]\s*=\s*$', before)
+                                             or re.search(r"\bconst\s+char\s*\*\s*\w+\s*=\s*$", before)):
+                continue                                    # an ArduinoJson value, or a const char* to it
+            errors.append(f"{where}: a ring entry's text written, or handed where it can be, other than by "
+                          f"{RING_WRITER}()'s {RING_SCRUB}() (J12, F303): every line reaches the ring scrubbed")
+        # Nothing writes an entry whole.
+        whole = [r"&?\s*%s\b(?:\s*\[[^\]\[;]*\])?" % RING_ARRAY]
+        whole += [r"&\s*%s\b" % re.escape(h) for h in held]
+        whole += [r"(?<![\w.>&])%s\s*[,)]" % re.escape(h) for h in held]
+        for m in re.finditer(r"(?<![\w:.>])%s\s*\(\s*(?:\([^()]*\)\s*)?(?:%s)" % (RING_FILLERS, "|".join(whole)),
+                             code[lo:hi]):
+            errors.append(f"{INO}:{line_of(lo + m.start())}: {fn.name}(): {kept[lo + m.start():lo + m.end()].strip()}"
+                          f": a ring entry written whole (J12)")
+        for h in held:
+            for m in re.finditer(r"(?:(?<![\w.>])|\*\s*)%s\s*=(?!=)" % re.escape(h), body):
+                if declared.search(body[:m.start()]) is None:
+                    errors.append(f"{INO}:{line_of(lo + m.start())}: {fn.name}(): {h} assigned: a ring entry "
+                                  f"written whole (J12)")
+        # A held entry leaves the function only as a read. Its address taken (outside sizeof()), or
+        # the entry itself handed to a call that is not a listed reader, returned, cast or used bare
+        # any other way, is refused: what takes it can write it where this rule does not look (the
+        # F303 review: `g_zz_last = &entry;`, `zz_fill(&entry, ...)`).
+        for h in held:
+            for m in re.finditer(r"(?<![\w.>])(&\s*)?%s\b(?!\s*(?:\.|->|\[))" % re.escape(h), body):
+                at = lo + m.start()
+                if declared.search(body[:m.start()]):
+                    continue                                # its own declaration
+                if m.group(1) is None and re.match(r"\s*=(?!=)", body[m.end():]):
+                    continue                                # an assignment, judged above
+                call = ring_call_at(code, lo, at)
+                if call is not None and (call[0] == "sizeof" or RING_READERS.fullmatch(call[0])):
+                    continue
+                errors.append(f"{INO}:{line_of(at)}: {fn.name}(): {kept[at:lo + m.end()].strip()}: a ring entry's "
+                              f"address taken, or the entry handed whole, where this rule cannot follow it (J12)")
+        for m in re.finditer(r"\b%s\s*\[[^\]\[;]*\]\s*=(?!=)" % RING_ARRAY, body):
+            errors.append(f"{INO}:{line_of(lo + m.start())}: {fn.name}(): a ring entry assigned (J12)")
+        for m in re.finditer(r"(?<![\w.>])%s\s*=(?!=)" % RING_ARRAY, body):
+            rhs = body[m.end():statement_end(body, m.end())]
+            if not re.search(r"\b\w*calloc\s*\(", rhs) and rhs.strip() not in ("nullptr", "NULL"):
+                errors.append(f"{INO}:{line_of(lo + m.start())}: {fn.name}(): {RING_ARRAY} assigned other than a "
+                              f"zeroed allocation or nullptr (J12)")
+    for fld, n in scrubs.items():
+        if n != 1:
+            errors.append(f"{INO}: {RING_WRITER}() writes the ring's {fld} through {RING_SCRUB}() {n} time(s), "
+                          f"expected once (J12, F303)")
+    return errors
+
+
 def fn_calls_outside_def(idx: Index, name: str, src: str, fn: str) -> bool:
     """True when `src` calls `fn` somewhere other than its own definition."""
     code = blank_comments_and_strings(src)
@@ -4422,6 +4670,7 @@ def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
     errors += check_ssid_posts(files, idx)
     errors += check_bt_names(files, idx)
     errors += check_string_appends(files, idx)
+    errors += check_log_ring(files, idx)
     printf_errors, printfs = check_printf_answers(files, idx)
     errors += printf_errors
     errors += check_recorded_json_texts(files, idx, {(pf.file, pf.line) for pf in printfs})
@@ -4474,6 +4723,13 @@ BLE_CONFIG = f"{SKETCH}/ble_config.h"
 BT_SCAN_NAME = ('    char name[wap_json::replaced_cap(bluetooth_channel::MAX_DEVICE_NAME_LEN)];\n'
                 '    wap_json::shown_text(name, sizeof(name), devices[i].name);\n'
                 '    dev["name"] = name;\n    dev["rssi"] = devices[i].rssi;')
+
+# J12's: log_health()'s two scrubs, and the ack lines the mutations write beside.
+RING_MSG_SCRUB = "  wap_json::shown_text(entry.message, sizeof(entry.message), message);\n"
+RING_DET_SCRUB = "  wap_json::shown_text(entry.detail, sizeof(entry.detail), detail);\n"
+RING_ACK = "      entry.ack_status = new_status;\n"
+RING_ACK_ALL = "      entry.ack_status = ACK_STATUS_ACKNOWLEDGED;\n"
+RING_DECL = "static HealthLogRingEntry* g_health_log_ring = nullptr;\n"
 
 def both(first: Mutation, second: Mutation) -> Mutation:
     def mutate(files: dict[str, str]) -> dict[str, str]:
@@ -5303,6 +5559,49 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("a String through a pointer concatenates a scanned device's name",
      add_file(f"{SKETCH}/zz_ptr.h", "inline void zz_list(String* out, const bluetooth_channel::ScannedDevice& d) {\n"
               "  out->concat(d.name);\n}\n")),
+    # J12 (F303): every health-log line reaches the ring through log_health()'s scrub.
+    ("log_health() copies the message into the ring with strncpy() again",
+     raw_in(INO, RING_MSG_SCRUB, "  strncpy(entry.message, message ? message : \"\", sizeof(entry.message) - 1);\n"
+            "  entry.message[sizeof(entry.message) - 1] = '\\0';\n")),
+    ("log_health() copies the detail over its scrub",
+     raw_in(INO, RING_DET_SCRUB, RING_DET_SCRUB + "  if (detail) strncpy(entry.detail, detail, sizeof(entry.detail) - 1);\n")),
+    ("log_health() scrubs the detail with replaced_text(), which keeps bytes that are not UTF-8",
+     raw_in(INO, RING_DET_SCRUB, RING_DET_SCRUB.replace("shown_text", "replaced_text"))),
+    ("log_health() stores the detail in the message's field",
+     raw_in(INO, RING_MSG_SCRUB, RING_MSG_SCRUB.replace("), message);", "), detail);"))),
+    ("log_health() scrubs the detail through a pointer to the field",
+     raw_in(INO, RING_DET_SCRUB, "  char* zz = entry.detail;\n  wap_json::shown_text(zz, sizeof(entry.detail), detail);\n")),
+    ("a caller writes a line's detail into the ring itself",
+     raw_in(INO, RING_ACK, RING_ACK + "      snprintf(entry.detail, sizeof(entry.detail), \"%s\", reason);\n")),
+    ("a caller scrubs text into the ring outside log_health()",
+     raw_in(INO, RING_ACK, RING_ACK + "      wap_json::shown_text(entry.detail, sizeof(entry.detail), reason);\n")),
+    ("a caller writes one byte of a stored message",
+     raw_in(INO, RING_ACK, RING_ACK + "      entry.message[0] = reason[0];\n")),
+    ("a caller copies a whole entry over the ring's first",
+     raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      memcpy(&g_health_log_ring[0], &entry, sizeof(entry));\n")),
+    ("a caller assigns a ring entry",
+     raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      g_health_log_ring[0] = entry;\n")),
+    ("another file names the ring",
+     add_file(f"{SKETCH}/zz_ring.h", "struct HealthLogRingEntry;\nextern HealthLogRingEntry* g_health_log_ring;\n")),
+    # J12, the F303 review: ways into the ring that no function's own text shows.
+    ("a file-scope pointer to an entry, taken from the ring and written through in one caller",
+     both(raw_in(INO, RING_DECL, RING_DECL + "static HealthLogRingEntry* g_zz = nullptr;\n"),
+          raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      g_zz = &g_health_log_ring[i];\n"
+                 "      strncpy(g_zz->message, \"raw\", 4);\n"))),
+    ("log_health() keeps the entry's address in a file-scope pointer, which a caller writes through",
+     both(raw_in(INO, RING_DECL, RING_DECL + "static HealthLogRingEntry* g_zz_last = nullptr;\n"),
+          both(raw_in(INO, RING_DET_SCRUB, RING_DET_SCRUB + "  g_zz_last = &entry;\n"),
+               raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      if (g_zz_last) strncpy(g_zz_last->detail, \"raw\", 4);\n")))),
+    ("a caller writes a stored message through a `using` alias of the entry",
+     both(raw_in(INO, RING_DECL, RING_DECL + "using ZzEntry = HealthLogRingEntry;\n"),
+          raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      ZzEntry& zz = g_health_log_ring[i];\n"
+                 "      strncpy(zz.message, \"raw\", 4);\n"))),
+    ("a caller writes a stored message through decltype() of the ring",
+     raw_in(INO, RING_ACK_ALL, RING_ACK_ALL + "      decltype(g_health_log_ring[i])& zz = g_health_log_ring[i];\n"
+            "      zz.message[0] = 'r';\n")),
+    ("log_health() hands the entry's address to a helper taking void*, which writes it",
+     both(raw_in(INO, RING_DECL, RING_DECL + "static void zz_fill(void* p, const char* t) { memcpy(p, t, 4); }\n"),
+          raw_in(INO, RING_DET_SCRUB, RING_DET_SCRUB + "  zz_fill(&entry, message);\n"))),
 ]
 
 
@@ -5344,6 +5643,15 @@ ACCEPTED: list[tuple[str, Mutation]] = [
      raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                if (*prefix == '\\0') g_nonCanaryCount++;\n")),
     ("a String initialized in parentheses appends literals",
      add_file(f"{SKETCH}/zz_paren_ok.h", "inline String zz_list() {\n  String json(\"{\");\n  json += \"}\";\n  return json;\n}\n")),
+    # J12 (F303): reads of a stored line pass.
+    ("a reader compares a stored message and tests its detail's first byte",
+     raw_in(INO, RING_ACK, RING_ACK + "      if (strncmp(entry.message, reason, 3) == 0 && entry.detail[0] == '\\0') "
+            "entry.ack_status = new_status;\n")),
+    ("a reader takes a const char* to a stored detail",
+     raw_in(INO, RING_ACK, RING_ACK + "      const char* zz = entry.detail;\n      (void)zz;\n")),
+    ("a reader takes sizeof an entry and memcmp()s two stored messages",
+     raw_in(INO, RING_ACK, RING_ACK + "      if (sizeof(entry) > 1 && memcmp(entry.message, g_health_log_ring[0].message, 1) == 0) "
+            "entry.ack_status = new_status;\n")),
 ]
 
 
@@ -5406,7 +5714,7 @@ def main(argv: list[str]) -> int:
           f"recorded); every Bluetooth device's and Beacon set member's name an answer carries written through "
           f"shown_text() ({len(BT_POSTED_TEXT)} posted strings recorded); every append onto a String held to "
           f"text JSON keeps whole ({len(JSON_APPEND_VOCAB)} vocabulary functions, {len(HEX_WRITERS)} hex writer "
-          f"recorded) "
+          f"recorded); every health-log line stored through log_health()'s one scrub "
           + ("(self-test skipped)." if "--no-self-test" in argv
              else f"({len(MUTATIONS)} mutations refused, {len(ACCEPTED)} correct edits passed)."))
     return 0

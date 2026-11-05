@@ -328,3 +328,38 @@ async def test_kernel_device_identifiers_merge_an_url_keyed_device(
     assert device.id == old.id
     assert device.identifiers == {(DOMAIN, KERNEL_URL), (DOMAIN, f"kernel_{KERNEL_DEVICE_ID}")}
     assert device.name == "SecuraCV"
+
+
+async def test_the_health_sensor_writes_only_a_reading_the_core_can_carry(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
+) -> None:
+    """A battery or memory key holding a finite number past 64 bits (JSON
+    `1e300`, or the integer 2**64) is no reading (sweep HA57): the core's
+    JSON writer refuses such an integer in a state attribute (TypeError
+    "Integer exceeds 64-bit range" from State.as_dict_json), so one written
+    into the Health sensor failed the recorder and every websocket
+    subscription on the entity, downstream of the callback that read it.
+    The sensor reads healthy with the no-reading attributes, and its state
+    serializes as the recorder and the websocket serialize one; the
+    largest integer the core carries still reads as sent."""
+    await setup_kernel_entry(enable_mqtt=True)
+    fire(hass, f"securacv/{CANARY}/status", STATUS, retain=True)
+    health = f'{{"public_key": "{CANARY_KEY}", "battery_present": true, "battery": 1e300, "memory_free": 1e300}}'
+    fire(hass, f"securacv/{CANARY}/health", health, retain=True)
+    await hass.async_block_till_done()
+    fire(hass, f"securacv/{CANARY}/health", health, retain=True)
+    await hass.async_block_till_done()
+    for raw in ("1e300", str(2**64)):
+        fire(hass, f"securacv/{CANARY}/health", health.replace("1e300", raw))
+        await hass.async_block_till_done()
+        state = hass.states.get("sensor.kitchen_cam_health")
+        assert state is not None and state.state == "healthy", raw
+        assert state.attributes["battery_percent"] == 100, raw
+        assert state.attributes["memory_free_bytes"] is None, raw
+        carried = json.loads(state.as_dict_json)["attributes"]
+        assert (carried["battery_percent"], carried["memory_free_bytes"]) == (100, None), raw
+    fire(hass, f"securacv/{CANARY}/health", health.replace("1e300", str(2**64 - 1)))
+    await hass.async_block_till_done()
+    state = hass.states.get("sensor.kitchen_cam_health")
+    assert state is not None and state.attributes["memory_free_bytes"] == 2**64 - 1
+    assert json.loads(state.as_dict_json)["attributes"]["battery_percent"] == 2**64 - 1

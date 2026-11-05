@@ -472,10 +472,13 @@ class GatedChips(VocabCase):
         self.make(cfg=SYNTH_CFG.replace("#endif\n#endif\n", "#endif\n#undef FEATURE_X\n#endif\n"))
         self.assertIn("has `#undef FEATURE_X`; after it FEATURE_X is undefined", self.refusal(SYNTH, "on"))
         self.assertIn("has `#undef FEATURE_X`", self.refusal(SYNTH, "plain"))
+        # The shared reader refuses this one itself since F429, before
+        # header_default's own logical-line check is reached.
         self.make(cfg=SYNTH_CFG.replace("FEATURE_X 1   // on unless the env says otherwise",
                                         "FEATURE_X 1   /* on unless\n */ + 1"))
-        self.assertIn("defines FEATURE_X as `#define FEATURE_X 1 + 1`, a logical line that runs past",
-                      self.refusal(SYNTH, "plain"))
+        self.assertIn("constant FEATURE_X in ", self.refusal(SYNTH, "plain"))
+        self.assertIn(" runs into a block comment closed on a later line, and the #define goes on "
+                      "past the comment (`+ 1`)", self.refusal(SYNTH, "plain"))
         self.make(cfg=SYNTH_CFG.replace("#ifndef FEATURE_X\n", "#if !defined(FEATURE_X) /* a note\n */ || 1\n"))
         self.assertIn("inside `#ifndef SYNTH_CFG_H` and `#if !defined(FEATURE_X) || 1`", self.refusal(SYNTH, "on"))
         for touch in ("#undef FEATURE_X", "#define FEATURE_X 0", "#  define FEATURE_X /* a note\n */ 0"):
