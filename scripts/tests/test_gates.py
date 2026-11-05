@@ -53,6 +53,37 @@ jobs:
 FILTERED = "on:\n  pull_request:\n    paths: ['src/**']\njobs:\n  f:\n    steps:\n      - run: python3 -c 'print(1)'\n"
 IGNORED = "on:\n  pull_request:\n    paths-ignore: ['docs/**']\njobs:\n  i:\n    steps:\n      - run: node -e '0'\n"
 NOPR = "on:\n  push:\njobs:\n  p:\n    steps:\n      - run: python3 -c 'print(1)'\n"
+DEFAULTS = """
+on:
+  pull_request:
+defaults:
+  run:
+    working-directory: sub
+jobs:
+  inherits:
+    steps:
+      - name: workflow default
+        run: python3 -c "import os,sys; sys.exit(0 if os.path.basename(os.getcwd())=='sub' else 5)"
+  overrides:
+    defaults:
+      run: { working-directory: sub2 }
+    steps:
+      - name: job default
+        run: python3 -c "import os,sys; sys.exit(0 if os.path.basename(os.getcwd())=='sub2' else 5)"
+      - name: step wins
+        working-directory: sub
+        run: python3 -c "import os,sys; sys.exit(0 if os.path.basename(os.getcwd())=='sub' else 5)"
+      - name: expression
+        working-directory: ${{ matrix.dir }}
+        run: python3 -c 'print(1)'
+  twins:
+    steps:
+      - name: plain probe
+        run: python3 -c 'print(42)'
+      - name: native probe
+        env: { LAB_CORES: native }
+        run: python3 -c 'print(42)'
+"""
 FAILING = ("on:\n  pull_request:\njobs:\n  z:\n    steps:\n      - name: boom\n        run: |\n"
            "          pip install needed-thing\n"
            "          python3 -c 'import sys; print(\"why it broke\"); sys.exit(3)'\n")
@@ -113,6 +144,21 @@ class Gates(unittest.TestCase):
         self.assertIn("| why it broke", out)
         self.assertIn("installs skipped here, run it once if that is what failed: pip install needed-thing", out)
         self.assertIn("4 of 5 fast gates passed; 1 FAILED: boom", out)
+
+    def test_working_directory_follows_github_precedence_and_env_keeps_twins_apart(self):
+        (self.wf / "always.yml").unlink()
+        (self.wf / "defaults.yml").write_text(DEFAULTS)
+        (self.root / "sub2").mkdir()
+        wf = mod.Workflow(self.wf / "defaults.yml")
+        self.assertEqual([(s.name, s.cwd, s.kind) for s in wf.steps], [
+            ("workflow default", "sub", "fast"), ("job default", "sub2", "fast"), ("step wins", "sub", "fast"),
+            ("expression", "${{ matrix.dir }}", "manual"),
+            ("plain probe", "sub", "fast"), ("native probe", "sub", "fast")])  # twins inherit the workflow default
+        self.assertIn("expression", wf.steps[3].why)
+        rc, out, _ = self.run_main("--paths", "x", "--run")
+        self.assertEqual(rc, 0, out)  # each step ran where its scope says, or it would have exited 5
+        self.assertIn("ok   defaults.yml › twins › plain probe", out)
+        self.assertIn("ok   defaults.yml › twins › native probe", out)  # same command, different env: both run
 
     def test_identical_commands_run_once(self):
         (self.wf / "dupe.yml").write_text(ALWAYS.replace("name: Always", "name: Dupe"))

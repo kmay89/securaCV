@@ -54,12 +54,14 @@ NOT_HERE = re.compile(
 class Step:
     __slots__ = ("workflow", "job", "name", "lines", "cwd", "env", "kind", "why")
 
-    def __init__(self, workflow: str, job: str, step: dict):
+    def __init__(self, workflow: str, job: str, step: dict, default_cwd: str = ""):
         self.workflow, self.job = workflow, job
         self.name = str(step.get("name") or step.get("run", "").strip().splitlines()[0])[:70]
         self.lines = [ln.rstrip() for ln in str(step.get("run", "")).strip().splitlines()
                       if ln.strip() and not ln.strip().startswith("#")]
-        self.cwd = str(step.get("working-directory") or "").strip("/")
+        # GitHub's precedence: the step's working-directory, else the job's
+        # defaults.run, else the workflow's defaults.run, else the checkout.
+        self.cwd = str(step.get("working-directory") or default_cwd or "").strip("/")
         self.env = {k: str(v) for k, v in (step.get("env") or {}).items()
                     if "${{" not in str(v)}
         self.kind, self.why = self._classify(step)
@@ -67,6 +69,8 @@ class Step:
     def _classify(self, step: dict) -> tuple[str, str]:
         if step.get("if"):
             return "manual", "has an if: condition"
+        if "${{" in self.cwd:
+            return "manual", "working-directory is an expression"
         body = [ln.strip() for ln in self.lines if not INSTALL_LINE.match(ln.strip())]
         if not body:
             return "manual", "nothing to run after its install lines"
@@ -88,8 +92,11 @@ class Step:
         return [ln.strip() for ln in self.lines if INSTALL_LINE.match(ln.strip())]
 
     @property
-    def key(self) -> tuple[str, str]:
-        return (self.cwd, self.command)
+    def key(self) -> tuple:
+        """What makes two steps the same gate: the command, where it runs, the
+        environment it sees and whether it runs here — the same probe with
+        LAB_CORES=native is a different gate."""
+        return (self.cwd, self.command, tuple(sorted(self.env.items())), self.kind)
 
 
 class Workflow:
@@ -102,7 +109,8 @@ class Workflow:
         self.name = str(self.doc.get("name") or path.stem)
         self.pr = "pull_request" in triggers_of(self.doc)
         self.filter = pr_filter(self.doc)
-        self.steps = [Step(path.name, str(job), s)
+        wf_cwd = default_cwd(self.doc)
+        self.steps = [Step(path.name, str(job), s, default_cwd(spec) or wf_cwd)
                       for job, spec in (self.doc.get("jobs") or {}).items()
                       if isinstance(spec, dict)
                       for s in (spec.get("steps") or []) if isinstance(s, dict) and "run" in s]
@@ -119,6 +127,12 @@ class Workflow:
             return None
         return ("not ignored: " if self.filter.ignore else "matches: ") + hits[0] + (
             f" (+{len(hits) - 1})" if len(hits) > 1 else "")
+
+
+def default_cwd(scope: dict) -> str:
+    """`defaults.run.working-directory` at a workflow or job scope, or ""."""
+    run = ((scope.get("defaults") or {}).get("run") or {}) if isinstance(scope, dict) else {}
+    return str(run.get("working-directory") or "") if isinstance(run, dict) else ""
 
 
 def refuse(msg: str) -> None:
