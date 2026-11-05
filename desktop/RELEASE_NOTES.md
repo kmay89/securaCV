@@ -17,6 +17,24 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.12.5 — 2026-11-05
+
+**Shorter words everywhere, same features.** The app said too much, and
+new users had to read past it to find the next step.
+
+- **Every screen is shorter.** Step headings, checkbox labels, notes under
+  the fields, status lines, verdicts and the hub's finish-line steps now say
+  what you need and stop. Nothing was removed: every control, check and
+  receipt is where it was.
+- **Long explanations fold away.** The cold-start brief, the maintenance
+  key, what Pi-hole records and how to set up a hub screen each sit behind a
+  one-line summary you can open when you want them.
+- **Advanced reads as optional.** Its sections have one-line titles and a
+  sentence or two each, so Safety copy, Dev channel, Local file, Health
+  check and Rescue are easy to tell apart.
+- **Plainer menus and dropdowns.** The nav says *About*, the serial console
+  speed says *default*, and the Explore tab's cards carry one line each.
+
 ## 0.12.4 — 2026-10-30
 
 **The 2.4.19 firmware catalog is baked in, so a Canary Glance AMOLED on a
