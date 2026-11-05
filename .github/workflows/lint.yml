@@ -319,6 +319,13 @@ jobs:
         # rule (says "flock", widens the raw-frame accessor) that AGENTS.md
         # forbids.
         run: python3 scripts/gen_agent_entrypoints.py --check
+      - name: Agent context budget — what loads at session start stays small
+        # The root CLAUDE.md (and its @import, AGENTS.md) is loaded into every
+        # agent session before the first prompt; a tree's AGENTS.md and a
+        # `paths:`-scoped rule load only when a file there is touched. This
+        # caps both, so a rule for one tree lands in that tree's brief and the
+        # root does not grow back into the 55 KB it was.
+        run: python3 scripts/agent_context_budget.py --check
       - name: Build matrix matches platformio.ini + config.h
         run: python3 scripts/lint_build_matrix.py
       - name: Device manifests join the seven device schemas

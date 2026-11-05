@@ -1,5 +1,7 @@
 # Canary — 3D-Printable Enclosures
 
+> Working here with an AI assistant? [`AGENTS.md`](AGENTS.md) beside this file is the short brief: the three rules, the chain as one command, and where this README's sections are.
+
 Printable housings, mounts and workshop tools for every SecuraCV **Canary**
 witness device. Everything is a parametric [OpenSCAD](https://openscad.org)
 "configurator": open a `.scad`, tick the options that match *your* hardware,

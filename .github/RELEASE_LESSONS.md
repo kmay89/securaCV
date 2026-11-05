@@ -7,7 +7,8 @@ a real failure we paid for once — the point is to never pay for it twice, on
 any platform.
 
 > **For AI agents:** this file is the canonical home for build/release lessons.
-> It is pointed to from `AGENTS.md` and `CLAUDE.md` so it surfaces each session.
+> `.github/AGENTS.md` points here, and an agent greps this file for its target
+> rather than reading all of it.
 > When a release/packaging bug is fixed, **append a dated entry here** in the
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.

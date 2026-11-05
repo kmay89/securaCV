@@ -68,7 +68,7 @@ when the figure headers moved, the dist must be rebuilt (Actions ->
 6.0.3 exactly, which most machines cannot install) and pulled BEFORE steps
 12–13 run. The script regenerates the sketch mirror, prints exactly that,
 and exits 3 (not a failure: a resume point). `--from gen_flash` finishes
-the chain once the dist is back. CLAUDE.md's four dist-retrigger symptoms
+the chain once the dist is back. docs/GENERATED_FILES.md's four dist-retrigger symptoms
 apply and are printed at the stop.
 
 --check. Every step is run in its CHECK form and the first failure is named
@@ -417,7 +417,7 @@ def stop_message(moved: list[str]) -> str:
         f"    3. python3 scripts/regen_cad.py --from {RESUME_AFTER_DIST}   "
         f"# steps {STEP_NAMES.index(RESUME_AFTER_DIST) + 1}–{len(STEPS)}",
         "",
-        "  CLAUDE.md's four dist-retrigger symptoms apply to that push (\"Generated files\"):",
+        "  docs/GENERATED_FILES.md's four dist-retrigger symptoms apply to that push:",
         "    - the bot's push does not retrigger CI (default GITHUB_TOKEN) — re-running the failed job",
         "      checks out the ORIGINAL commit, so push again yourself instead;",
         "    - that push must touch a path canary-local.yml / firmware.yml watch, or the PR sits at",

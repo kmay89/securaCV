@@ -215,6 +215,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 <summary><strong>Developing on it</strong> — contributing code and keeping CI green</summary>
 
 - [CI](ci.md) — what runs, what gates
+- [Generated files](GENERATED_FILES.md) — the forty-odd committed generator outputs CI byte-checks: which edit moves which file, the chains whose order matters, and the emulator dist whose generator is a compiler
 - [Benchmarks](BENCHMARKS.md) — the harness that measures the kernel's hot paths on demand, and the rule that no number it prints is ever committed
 - [Feature flags](feature-flags.md) · [logging](logging.md) · [CLI UI conventions](cli_ui.md)
 - [Flight rules](FLIGHT_RULES.md) — the engineering constitution

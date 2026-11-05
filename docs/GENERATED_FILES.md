@@ -1,0 +1,252 @@
+# Generated files — which edit moves which committed output, and in what order
+
+Forty-odd committed files are generator output that CI regenerates and
+byte-diffs. This page is the account of them: how to derive the list, which
+edits move which file, the chains whose order matters, and the emulator dist,
+whose generator is a compiler. It moved here from `CLAUDE.md` so that an agent
+loads it when a generator input is touched (`.claude/rules/generated.md`)
+rather than in every session. The enclosure chain is run, in order, by
+`python3 scripts/regen_cad.py`.
+
+
+Committed generators whose output CI regenerates and byte-diffs. Editing a
+source without re-running the right one leaves a gate to find it, and the
+failure is often nowhere near the edit: a one-word spelling fix in
+`canary-local/tools/hub_seed_apply.py` changed its bytes, which broke a
+**sha256 pin** cross-checked by a Rust unit test in `desktop/hub-io`
+(`test (hub-io)` went red, three layers away from the change).
+
+Don't try to remember the list — derive it:
+
+```sh
+grep -rhoE "python3 [a-zA-Z0-9_/.-]*gen_[a-zA-Z0-9_]+\.py|node [a-zA-Z0-9_/.-]*(gen_[a-zA-Z0-9_]+|make-[a-z-]+)\.mjs" \
+  .github/workflows/*.yml | sort -u
+```
+
+(The digit class and the `gen_*.mjs` branch are load-bearing: without them
+the recipe missed `gen_witness_page_v1.py` and every node generator here —
+`gen_figures.mjs`, `gen_device_glbs.mjs` among them. A gate whose script is
+not named `gen_*` is not found by any name pattern — `viewer/build.mjs
+--check` and `eval/datasets/sample/generate.py --check` are two — so
+`grep -rhoE "[a-zA-Z0-9_/.-]+\.(py|mjs) [^|;&]*--check"
+.github/workflows/*.yml | sort -u` is the cross-check.)
+
+One is new and bites on every CAD edit: `gen_revisions.py` writes
+`canary-local/devices/revisions.json` (each part's `rN`, its mesh fingerprint,
+what moved and the regions the viewers tint) from the rendered STLs, and its
+`--check` — in lint.yml for the committed STLs, in enclosure.yml after
+render.sh for the dev renders too — refuses a part whose shape moved
+unrecorded. It is step 4 of `regen_cad.py`, right after `render`; a
+comment-only edit does not move it, a re-render of the same design does not
+move it, a post moved 1 mm inside the envelope does.
+
+The ones that bite most often: `gen_stamp.py` and `gen_builder_manifest.py`
+(any enclosure `.scad`), `gen_enclosures.py` (catalog JSON),
+`gen_agent_entrypoints.py` (any AGENTS.md edit — six vendor files),
+`gen_hub_provision_bundle.py` (anything it embeds and pins by hash),
+`gen_apple_home_docs.py` (any `homekit_projection` change in the dictionary —
+the Apple Home quickstart's signal table is a privacy promise, so a stale one
+is a false statement rather than merely old), and `gen_cad_params.py` (any
+`cad.params` edit in `devices/<slug>/device.json`, or a `.scad` edit that
+bypasses the manifest: it **writes** the manifest-owned board knobs into the
+case file — the literal token on the knob's own line — and `--check` proves
+the file still says them, in `lint.yml`, in `enclosure.yml` and through
+`scripts/lint_device_manifests.py`; a board fact is a reference into
+`canary_board_lib.scad`'s registry, so correcting a board dimension is an
+edit to the registry, never to the literal by hand).
+
+Two of them are chained, and the order matters: `gen_csp.py` (every Lab page's
+Content-Security-Policy, from one policy table) hashes the firmware's captive
+page as `wap.html` embeds it, and it reads that page from
+`canary-local/devices/wap.json`. So a change to the captive-portal HTML is
+`gen_wap.py` **then** `gen_csp.py`; running only the first leaves
+`gen_csp.py --check` red with a message that names the second. The display's
+first-boot portal is the same pair: `fleet.html` frames
+`firmware/projects/canary-display/src/net/provision.cpp`'s `PORTAL_HTML`, so a
+change to it is `gen_display_portal.py` **then** `gen_csp.py` — and, since the
+emulator compiles `provision.cpp`, a dist rebuild too.
+
+**The recipe above misses one more, and it can't find it:** the WASM
+emulator's `canary-local/emulator/dist/*.js` is generated and committed like
+the rest, but its generator is a compiler and its *inputs are firmware
+sources*. There is no `gen_*.py` or `make-*.mjs` to grep for. So an ordinary
+C++ edit can leave `dist/` stale, and `canary-local.yml`'s "Dist drift check"
+fails on a file you never opened.
+
+Which edits move it is not obvious either — it depends on what
+`canary-local/emulator/build.sh` actually compiles, which is `src/main.cpp`,
+the LVGL faces and `care/`/`fleet/`/`trust`, **not** the `net/` layer:
+
+- editing `common/color/look_engine.cpp` → `dist/` changes (the color engine
+  is in the render path);
+- editing `common/fleet_selfreport/fleet_selfreport.h` → `dist/` does **not**
+  change, even though `net/glass_web.cpp` includes it, because that file is
+  never compiled into the emulator.
+- editing `common/network/wifi_join_policy.h` → `dist/` **changes**, for every
+  flavor, even though its firmware consumer `src/net/wifi_mgr.cpp` is not
+  compiled: the emulator's own `canary-local/emulator/src/emu_net.cpp`
+  includes that header directly and runs its Wi-Fi retry through it
+  (`scripts/lint_wifi_join_policy.py` requires exactly that, so the preview
+  cannot drift from the glass). The same goes for the `WIFI_RETRY_*` /
+  `WIFI_OUTAGE_REBOOT_MS` constants in `canary-display/include/canary/config.h`,
+  which `emu_net.cpp` feeds to the policy. Rule of thumb: everything under
+  `canary-local/emulator/src/` and `shim/` is dist by definition.
+- editing `src/net/provision.cpp` or `common/network/provision_core.h` →
+  `dist/` **changes**, for every display flavor: the first-boot SoftAP +
+  captive portal compiles verbatim (the page's phone walks it). A
+  `PORTAL_HTML` edit also moves `gen_display_portal.py` → `gen_csp.py`.
+- **bumping the firmware VERSION → `dist/` changes**, for every flavor, even
+  if you touched no other line. `build.sh` compiles `src/net/mqtt_mgr.cpp`
+  (which embeds `CANARY_FW_VERSION`) and stamps `fw_version` into each
+  `dist/*.meta.json` from `include/canary/version.h`. So a release commit is
+  always a dist commit. `src/runtime_config.cpp` and `src/glass_settings.cpp`
+  are compiled too — the `net/` exclusion is specifically `glass_web.cpp` and
+  `discovery.cpp`, not the whole layer.
+
+**THE REBUILD IS UPSTREAM OF THE CATALOG GENERATORS — order matters.**
+`gen_flash.py` embeds each artifact's `fw_version` (read from
+`dist/*.meta.json`) into `flash.json`. So running the generators BEFORE
+dispatching the emulator rebuild bakes in the old stamp, and the rebuild then
+moves `meta.json` out from under it. The catalog goes stale in the same push
+that fixed the dist, and it fails as *"generated flash catalog stale — a
+board's chip changed"*, which names a cause that has nothing to do with what
+happened. Right order, every time:
+
+```
+bump/edit → ./setup.sh regen → dispatch the dist rebuild → pull it
+          → run the gen_*.py catalogs → commit
+```
+
+**A CAD or `cad.params` edit is the same order with more links in front of
+it, and one command runs them:** `python3 scripts/regen_cad.py --previews
+<dir>` (`--check` runs every step's check form and names the first stale
+one; `--from <step>` resumes; `--list` prints the steps). The order is derived
+from what each generator *reads*, and it is this — stated here once, so the
+prose and the script cannot disagree:
+
+```
+devices/<slug>/device.json cad.params
+  → gen_cad_params.py            (the knob into the .scad — a one-line diff; --dry-run shows it first)
+  → lint_design_lang.py          (the literal-knob canon still holds)
+  → render.sh --no-png           (the STLs; OpenSCAD 2021.01)
+  → gen_assembled_dims.py        (assembled envelopes, measured off the fit-checked unions)
+  → gen_hardware.py              (each preset's HARDWARE echo + lid-rib headroom → hardware.json; BOM join)
+  → gen_assembly_poses.py        (each case's seated datums → the Lab benches' poses in assembly.json)
+  → gen_enclosures.py            (enclosures / catalog / build / workshop .json — catalog.json is
+                                  figure evidence, so it is current BEFORE the figures read it)
+  → gen_figures.mjs              (figures.json, the SVGs, fleet_figures.h / _art.h, FleetFigures.swift)
+  → gen_device_glbs.mjs          (the two flashers' models)
+  → firmware/projects/canary-display/setup.sh regen   (only when fleet_figures*.h moved) — then STOP
+  → dispatch the dist rebuild → pull it
+  → gen_flash.py → gen_builder_manifest.py [--site <website-checkout>]
+      (with --site it also carries the website's upstream-contract.json BACK as
+       canary-local/devices/site_contract.json — the runtime paths the site fetches from
+       this tree; scripts/tests/test_site_contract.py holds every one to the tree)
+  → gen_print_files.py --site <website-checkout>   (only with --site: the in-development
+       cases' print-ready STLs + print/print-files.json — version, commit, the .scad's
+       sha256, each file's sha256 — into the website; its --check and the website's
+       tests/print-files.test.mjs both fail on a case edited after its last render)
+  → gen_stamp.py --check, gen_mark_svg.py --check (report-only; a STAMP_REV bump is a human's call)
+  → in the website repo, after the carry: its make-*-glb.mjs (the AR models re-read cad-dims.json)
+```
+
+Two things about that list that the old prose had wrong. `./setup.sh regen`
+is `firmware/projects/canary-display/setup.sh` (`regen)` at :381), the
+display project's Arduino sketch mirror — it *copies* `gen_figures.mjs`'s
+outputs (`fleet_figures.h` and `fleet_figures_art.h`, setup.sh:129-130) into
+the sketch, so it runs **after** the figures generator, never before it. And
+the STL link has no `--check` form: OpenSCAD's STL bytes are not
+deterministic, so nothing byte-gates them — the two steps after it gate the
+bounding boxes and seams, and `enclosure.yml` re-renders and greps the log.
+There is no Actions button that renders STLs and pushes them back; the
+"Enclosure CAD" workflow names the drift, it does not fix it.
+
+**A generator that cannot spell a value must refuse, not pass.** The review
+of `gen_cad_params.py` found its own checker answering "the file already
+says it" for a value it had no Customizer-literal spelling for — a number
+whose `repr` is exponent form (`0.00005` against a file literal `0.6`), NaN,
+infinity, a string holding `//` or `/*` (a comment opener to the parser) —
+so a wrong manifest passed `--check` and a write wrote nothing, green all
+the way. A `--check` is the writer's own reader; when the writer cannot
+spell a value, the reader is the last thing that should say "equal". Every
+such value is now refused by manifest, knob and reason before anything
+renders (and a two-statement line is refused whatever the statements — the
+first version counted only the knobs the parser accepted from it). When you
+write a generator with a check form, enumerate what the write path cannot
+express and make the check fail on it, not fall through.
+
+**Two different gates catch a stale dist, and only one of them is the drift
+check.** `canary-local.yml`'s "Dist drift check" compares the BUNDLE bytes and
+deliberately ignores `meta.json` (it carries the git stamp — the merge-base
+with `origin/main`, see `build.sh`). The version
+stamp is caught somewhere else entirely — `canary_local.test.js` ("artifact fw
+(x) matches registry train (y)") and `vision.test.js` ("Vision generated data
+is stale against its firmware core") — which run in the **page logic tests**
+job. So a version bump goes red in a job whose name says nothing about the
+emulator, and reading only the drift check will tell you the dist is fine.
+
+**A stale dist no longer stops you proving the sources.** The page tests that
+drive a WebAssembly core (`vision.test.js`, `eyes.test.js`, `audio.test.js`)
+run on the committed dist by default; `LAB_CORES=native node --test
+canary-local/tests/vision.test.js canary-local/tests/eyes.test.js
+canary-local/tests/audio.test.js` builds the Vision and audio cores with g++
+from the sources `build.sh` hands em++ (no emsdk) and runs the same tests on
+them. The page logic tests job runs both, the native step even when the dist
+step failed: native green and dist red after a core change means the sources
+are right and the dist needs the rebuild below. A native pass proves the
+sources, not the bytes; the dist is still what ships. Under the same variable
+`native_cores.test.js` drives each native core next to its dist, call for
+call, on fixed scenarios: a difference is a stale dist or an input where
+64-bit g++ and wasm32 clang disagree, and agreement says nothing about inputs
+those scenarios never send. The Chromium probes that drive those two cores
+(`vision_probe.mjs`, `eyes_probe.mjs`, `audio_probe.mjs`) take the same
+variable: their server answers the core's dist URL with a stand-in that
+forwards each call to the native build over synchronous same-origin requests,
+the page served as committed, and the wasm job runs each probe both ways. The
+native step runs whenever its own dist step ran, red or green; an earlier red
+step in the job (the onboard probe on a stale display dist, say) skips both.
+A native probe pass makes the same claim as a native test pass. The display
+flavors have no native stand-in; they boot only in Chromium.
+`vision_wasm32.test.js` needs neither `LAB_CORES` nor the dist: it builds the
+Vision detection pipeline (`detection_pipeline.h`) for wasm32 with the host's
+clang and wasm-ld, freestanding, beside a g++ build, and holds the two to each
+other on the host suite's extreme-box grid. So a box product taken in a 32-bit
+`long`, which every 64-bit build passes, shows from the sources before any
+rebuild. Without clang or wasm-ld it skips and names the tool; CI sets
+`VISION_WASM32=require`. It is the host's clang, not emscripten's, and not the
+dist. See `canary-local/tests/native/README.md`.
+
+Fixing it needs emsdk **6.0.3** exactly, which most working environments can't
+install. Don't fight that — use **Actions → "Rebuild emulator dist (pinned
+emsdk)"**, dispatched on your branch: it rebuilds where the toolchain lives and
+pushes the bytes back. Two things to know before you rely on it:
+
+1. **It pushes to the branch it was dispatched on.** Dispatch it on `main` and
+   it commits to `main`; prefer a feature branch.
+2. **Its push does not retrigger CI** (default `GITHUB_TOKEN`), so the PR
+   keeps showing the old failure until you push again yourself. Re-running
+   the failed job does *not* work — a re-run checks out the original commit,
+   which still has the stale `dist/`.
+3. **That push must touch a path the workflow watches, or nothing runs.**
+   "One ordinary push" is not enough and this bullet used to say it was.
+   `canary-local.yml` (the job that fails, "firmware → wasm → boots in a
+   browser") filters on `firmware/projects/canary-display/**`,
+   `firmware/common/**`, `firmware/envs/**` and friends; `firmware.yml`
+   filters on `firmware/**`. A docs-only commit at the repo root matches
+   neither, so the PR sits at **zero** check runs — which looks like CI is
+   still queued, not like it never started. If you have nothing real to
+   change under those paths, say so and hand the PR over red rather than
+   inventing a no-op commit; a reviewer can re-run from a merge commit.
+4. **And the bot's push can park the whole PR behind an approval gate.**
+   Bullet 2 undersells this: the push does not *silently* do nothing — it
+   creates a full set of runs whose `triggering_actor` is
+   `github-actions[bot]`, and GitHub parks those at
+   `conclusion: action_required`, meaning "waiting for a human to press
+   Approve". Until someone with write access clears them in the PR's
+   checks panel, pushing again does not help. So the two symptoms look
+   identical from the API (`state: pending`, zero check runs on the head
+   commit) but have opposite fixes: **zero runs anywhere** on the branch is
+   the path-filter problem above, and **runs sitting at `action_required`**
+   is a human-approval problem no commit of yours can solve. Check which
+   before you push a third time. (Both happened in #1536, in that order.)
+

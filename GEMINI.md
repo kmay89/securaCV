@@ -31,12 +31,12 @@ hardware, not by who is speaking: voice commands to the hub entering through a
 dedicated voice satellite — never a Canary, which structurally cannot feed a
 speech pipeline — with push-to-talk as the blessed default. Wake-word listening
 is an explicit owner opt-in on that satellite and is honestly a `won't`, not a
-`can't`: a false wake transiently transcribes a few seconds of room audio,
-which is why command transcripts are never retained, sealed, or exported. The
-full five-rule contract is in `docs/research/whisper_local_voice.md`. `ObjectClass`
-is `Person | Vehicle | Animal | Package` (plus `Unknown`, for a detection the
-backend could not class) — never `Face` or `LicensePlate`. This
-is Invariant II (`spec/invariants.md`) and it is a rejected PR, not a config flag.
+`can't`, which is why command transcripts are never retained, sealed, or
+exported; the five-rule contract is `docs/research/whisper_local_voice.md`.
+`ObjectClass` is `Person | Vehicle | Animal | Package` (plus `Unknown`, for a
+detection the backend could not class) — never `Face` or `LicensePlate`. This
+is Invariant II (`spec/invariants.md`) and it is a rejected PR, not a config
+flag.
 
 **2. Never widen the raw-frame escape hatch.** `RawFrame.data` stays private: no
 public getter, no `Clone`, no `AsRef<[u8]>`. The only path to raw bytes is
@@ -46,43 +46,30 @@ approval.
 **3. Say "fleet," never "flock."** A group of Canaries is a **fleet**. "Flock" is
 off-limits in user-facing copy, device UI strings, product and bundle names, code
 identifiers, and comments — a company called Flock soured the word. The **only**
-exception is the Unix `flock(2)` syscall, which is a real API name; do not rename
-it. Use "fleet" (already established across the firmware, e.g. `fleet_model.h`)
-or plain "your Canaries" / "the devices."
+exception is the Unix `flock(2)` syscall, a real API name; do not rename it.
+`scripts/lint_fleet_word.py` fails the build.
 
-**3b. US spellings, always.** Write `color`, `center`, `meter`, `behavior`,
-`analyze`, `gray`, `license`, `labeled`, `canceled`, `optimize`, `recognize`,
-`catalog` — never the British forms of those words. This covers user-facing
-copy, device UI strings, docs, comments and code identifiers alike, and
-`scripts/lint_spelling.py` fails the build on any of them.
-
-**The banned forms are enumerated ONCE, in that script's regex — read them
-there, and do not repeat them in prose here.** This paragraph used to spell
-them out as "write X, not Y", and the first repo-wide sweep duly rewrote its
-own rule: the "not Y" column came back as a list of the *correct* spellings,
-so the rule forbade exactly what it required. A regex in a linter is the one
-place a sweep has no reason to touch.
-
-Not ours to respell: SPDX tags and license filenames, third-party API and CSS
-identifiers already spelled a particular way, and quoted external text. And
-some words only *look* British to a substring match — `analysis`, `emphasis`,
-`parameter`, `diameter`, `characteristic`, `realistic`, `optimistic`,
-`initialism` are all correct. The linter's `ALLOW` list names them and
-self-tests that the ban pattern never starts matching them; that check earned
-itself on its first run, when `colou?r` matched `colored`.
+**3b. US spellings, always.** Write `color`, `center`, `behavior`, `analyze`,
+`license`, `catalog` — never the British forms — in copy, device UI strings,
+docs, comments and code identifiers alike. `scripts/lint_spelling.py` fails
+the build; **the banned forms are enumerated once, in its regex, and never
+repeated in prose** (a sweep once rewrote the rule that spelled them out into
+its own opposite). Words that only *look* British to a substring match
+(`analysis`, `parameter`, `characteristic`, …) are in its `ALLOW` list. Not
+ours to respell: SPDX tags, third-party identifiers, quoted external text.
 
 **4. Don't oversell, and don't overclaim.** "Verified" means *an Ed25519
 signature checked against a pinned key* — nothing looser. No performance claim
-without a benchmark. Describe `DetectorBackend` as an audit boundary that must be
-audited, not as something that "cryptographically enforces" anything. Where a
-guarantee isn't structural yet, say so out loud.
+without a benchmark, and no benchmark number committed to the tree
+(`scripts/lint_bench_rows.py`). Describe `DetectorBackend` as an audit boundary
+that must be audited, not as something that "cryptographically enforces"
+anything. Where a guarantee isn't structural yet, say so out loud.
 
 **5. Vocabulary changes start in the dictionary.** Event types, failure types,
 attestation tiers, claim kinds and modalities are duplicated as constants across
-Rust, Python, JS, firmware C++ and Swift (the Apple apps' `EventVocabulary`).
-`spec/witness_dictionary.json` is the single source of truth and
-`scripts/lint_dictionary_sync.py` fails CI on any drift. Edit the dictionary
-first, then every copy the linter names.
+Rust, Python, JS, firmware C++ and Swift. `spec/witness_dictionary.json` is the
+single source of truth and `scripts/lint_dictionary_sync.py` fails CI on any
+drift. Edit the dictionary first, then every copy the linter names.
 
 **6. A new doc gets a home on the map in the same commit.**
 `scripts/lint_docs_index.py` fails the build if a doc under `docs/` isn't
@@ -95,74 +82,58 @@ the users keep the vague version.
 
 **8. Beacon and Chirp have their own hard invariants** — two-pubkey co-signing,
 no automatic origination, no PII on the wire, no impersonation of official
-alerts, ephemeral session keys. If you touch `firmware/projects/canary-wap/`
-beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
+alerts, ephemeral session keys. They are stated in full in
+`firmware/projects/canary-wap/AGENTS.md`; read it before touching beacon or
+chirp code.
 
 ## Before you commit
 
-- `cargo test`, `cargo clippy` (no warnings), `cargo doc` (no warnings)
-- `python3 scripts/lint_docs_index.py` if you touched anything under `docs/`
-- `python3 scripts/lint_dictionary_sync.py` if you touched a vocabulary
-- `python3 scripts/gen_agent_entrypoints.py` if you edited this brief
-- Changed a board knob? Change it in `devices/<slug>/device.json`
-  `cad.params` (or the board-registry row it references) and run
-  `python3 docs/hardware/enclosure/gen_cad_params.py`; the `.scad` follows,
-  and `python3 scripts/regen_cad.py --previews <dir>` runs everything
-  downstream of it in order (walls, tolerances and selectors stay in the
-  file; how-to: `devices/README.md`)
-- Changed an enclosure `.scad`? Attach PNG previews of every affected part
-  for the requester — the change must be seeable, not just readable
-  (recipe: `docs/hardware/enclosure/README.md`, "Preview renders")
-- Changed an enclosure `.scad` and re-rendered? Record the part revisions:
-  `python3 docs/hardware/enclosure/gen_revisions.py` (after `render.sh`;
-  `--note "…"` for words) bumps `rN` for every part whose printed shape
-  moved and writes what moved — knobs, deltas, the regions the viewers
-  tint — into `canary-local/devices/revisions.json`; `--check` in lint.yml
-  and enclosure.yml refuses a part that moved unrecorded
-- Changed a builder-curated `.scad`, one of its `use<>` libraries, or the
-  fleet figures? Refresh the website's carried copies too:
-  `docs/hardware/enclosure/gen_builder_manifest.py --site <website-checkout>`
-  (`--site <website-checkout> --check` says whether the carry is current
-  without writing; the site pins them by sha256; its weekly "Update
-  everything" carry job catches a forgotten refresh, but a week is a long
-  time to serve stale CAD)
-- Changed `firmware/build_matrix.json`, a kernel-status tile in
-  `tools/gen_kernel_status.py`, `viewer/verify_core.js`, an envelope
-  fixture, `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`
-  (the Wall's parseFleet replays it), `canary-local/devices/playground.json`
-  or `canary-local/assets/{playground,mode}-sim.js`? Same idea, other tool:
-  `python3 scripts/carry_to_site.py --site <website-checkout>` stamps the
-  /checkup build matrix, the landing page's kernel-status grid, the
-  Witness Wall's vendored verifier and the Test bench's and Modes page's
-  playground files (the same weekly job runs it). Published a Lab or
-  Flasher release? Its `--only downloads` carry moves the /download buttons
-  to the newest published `app-v*` / `flasher-v*` tags (`--check` asks first)
-- Touched an input of the firmware SBOM — `firmware/flavors.json`, a
-  `platformio.ini` (or a file its `extra_configs` reads), a
-  `library.json` / `library.properties`, a sketch's `sketch.yaml` profile
-  pins, a workflow's `esp32:esp32` core-version row, or `FIRMWARE_VERSION`
-  (every version bump)? `python3 scripts/gen_firmware_sbom.py` and commit
-  `sbom/sbom-firmware.cdx.json` — CI runs `--check --validate` and refuses a
-  tree whose two Arduino core axes disagree
+- `cargo test`, `cargo clippy` (no warnings), `cargo doc` (no warnings), and
+  `cargo test --no-default-features`, when `src/` moved.
+- `python3 scripts/lint_docs_index.py` if you touched anything under `docs/`;
+  `python3 scripts/lint_dictionary_sync.py` if you touched a vocabulary;
+  `python3 scripts/gen_agent_entrypoints.py` if you edited this brief.
+- Edited an input of a generated file (a `.scad`, a device manifest, a
+  catalog JSON, the firmware version, a portal page)? `docs/GENERATED_FILES.md`
+  names the generator and the order. For anything CAD,
+  `python3 scripts/regen_cad.py --previews <dir>` runs the whole chain, and
+  every `.scad` change ships PNG previews of every affected part to the
+  requester (`docs/hardware/enclosure/AGENTS.md`).
+- Touched an input of the firmware SBOM (`firmware/flavors.json`, a
+  `platformio.ini`, a library manifest, a `sketch.yaml` pin, a core-version
+  row, the firmware version)? `python3 scripts/gen_firmware_sbom.py`, commit
+  `sbom/sbom-firmware.cdx.json`.
+- Changed something the website carries (the build matrix, a kernel-status
+  tile, `viewer/verify_core.js`, the fleet figures, a builder `.scad`)?
+  `python3 scripts/carry_to_site.py --site <checkout>` or
+  `docs/hardware/enclosure/gen_builder_manifest.py --site <checkout>`;
+  `--check` says whether the carry is current.
 - Commit format: `<type>(<scope>): <description>` — `feat`, `fix`, `docs`,
-  `test`, `refactor`, `chore`
+  `test`, `refactor`, `chore`.
 
 ---
 
 ## The rest of the brief
 
-This file carries the non-negotiables only. The full brief — the repo map, the
-"where do I look for X" index, the CI gates, the detection-backend audit rules,
-the code style, and the Beacon/Chirp channel invariants — lives in
-[`AGENTS.md`](AGENTS.md). Read it before any non-trivial change.
+This file carries the non-negotiables only. The repo map ("where do I look for
+X") and the CI gates are in [`AGENTS.md`](AGENTS.md). The rules for one
+tree live in that tree, in its own `AGENTS.md`, and apply when you work there:
+[`src/`](src/AGENTS.md) (the kernel: invariants in code, backend audit,
+dependencies), [`firmware/`](firmware/AGENTS.md) (which copy is the source,
+host tests), [`firmware/projects/canary-wap/`](firmware/projects/canary-wap/AGENTS.md)
+(the Beacon and Chirp invariants), [`firmware/projects/canary-display/`](firmware/projects/canary-display/AGENTS.md)
+(the emulator dist), [`canary-local/`](canary-local/AGENTS.md) (the Lab),
+[`docs/hardware/enclosure/`](docs/hardware/enclosure/AGENTS.md) (CAD) and
+[`.github/`](.github/AGENTS.md) (workflows and releases).
 
 Also worth having open:
 
-- [`docs/GLOSSARY.md`](docs/GLOSSARY.md) — every proper noun in the project,
-  defined once. Read this before answering a question about what something is.
-- [`docs/FAQ.md`](docs/FAQ.md) — the questions users actually ask, answered.
+- [`docs/GENERATED_FILES.md`](docs/GENERATED_FILES.md) — which edit moves
+  which committed generator output, and in what order.
 - [`docs/README.md`](docs/README.md) — the CI-enforced map of every doc.
 - [`docs/CONSOLIDATION.md`](docs/CONSOLIDATION.md) — which similarly-named
   directory is the real one.
 - [`docs/FLIGHT_RULES.md`](docs/FLIGHT_RULES.md) — the engineering
   constitution.
+- [`docs/GLOSSARY.md`](docs/GLOSSARY.md) and [`docs/FAQ.md`](docs/FAQ.md)
+  — for answering a person's question about what something is.

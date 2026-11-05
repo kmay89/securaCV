@@ -74,7 +74,7 @@ Witness Wall** is the Apple TV app that polls `GET /api/fleet`.
 | canary-ota (`firmware/projects/canary-ota/`) | ❌ every column — an ESP-IDF teaching harness with the older SHA-256-only engine; no CI job compiles it and it has no onboarding. Left as it was, by design (`firmware/VARIANT_POLICY.md`). |
 | canary-companion, canary-tincan | not applicable — Phase-0 pure cores with no runtime, no network stack and no env; their host tests still pass (`make -C firmware/projects/<p>/tests_host`). |
 | canary-fence-guard | not applicable — a concept whose `main_stub.cpp` refuses to compile. |
-| the emulator (`canary-local/emulator/`) | inherits the display row: it compiles `provision.cpp`, `runtime_config.cpp` and `main.cpp`, which all changed, so the committed `dist/` was rebuilt from this tree by Actions → "Rebuild emulator dist (pinned emsdk)" before the merge (`CLAUDE.md`, "Generated files"); the dist drift check and the page logic tests hold it to the sources. |
+| the emulator (`canary-local/emulator/`) | inherits the display row: it compiles `provision.cpp`, `runtime_config.cpp` and `main.cpp`, which all changed, so the committed `dist/` was rebuilt from this tree by Actions → "Rebuild emulator dist (pinned emsdk)" before the merge (`docs/GENERATED_FILES.md`); the dist drift check and the page logic tests hold it to the sources. |
 
 ### Footnotes — every ⚠️ and ❌, with its reason
 
