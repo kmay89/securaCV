@@ -4218,7 +4218,7 @@ MUST_PASS_IN = [
     ('docs/design/magic_pairing.md',
      'full erase in either flasher, whose factory image starts NVS over, replaces'),
     ('desktop/src/index.html',
-     'not its identity: every install starts the settings region over,'),
+     'every install starts the settings region over, so the board comes up with a new identity key either way.'),
     ('firmware/projects/canary-sense/include/canary/witness.h',
      '// OTA installs and a PlatformIO upload (which leaves NVS alone); an install'),
     ('firmware/projects/canary-vision/include/canary/witness.h',
@@ -4592,13 +4592,12 @@ MUST_PASS_IN = [
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
      "/// to its bearer, to a WAP's setup-door claim, or after a short BOOT tap. This"),
     ('desktop/src/app.js',
-     'it was probably reflashed elsewhere, or, on an all-rounder Canary, reset with its 10-second BOOT hold'),
+     'it was probably reflashed elsewhere or reset with the 10-second BOOT hold. Reflash here to mint a fresh one.'),
     ('desktop/src/app.js',
-     "a reflash mints a new one, and an all-rounder Canary's 10-second BOOT reset drops it"),
+     'a reflash or a 10-second BOOT reset replaces it.'),
     ('desktop/src/app.js',
-     '"region over; the full erase also wipes the partitions an install never writes " +\n'
-     '      "(the second firmware slot, the file system), where a previous firmware may have " +\n'
-     '      "left stale data. Reconnect and tick first contact.",'),
+     '"A clean install usually clears this: reconnect, tick the full wipe, and " +\n'
+     '      "flash again.",'),
     ('canary-local/assets/flash-core.js',
      '"region over; the full erase also wipes the partitions an install never writes " +\n'
      '      "(the second firmware slot, the file system), where a previous firmware may have " +\n'
@@ -4959,9 +4958,8 @@ MUST_PASS_IN = [
      '// stays the slug written during provisioning (kept across OTA updates and the\n'
      '// 10 s hold; an install in either flasher can change it); here it just becomes the'),
     ('desktop/src/index.html',
-     '                reachable, and writes nothing. This app’s window has no Bluetooth of its\n'
-     '                own, so the check runs in the browser Lab in Chrome or Edge on this computer\n'
-     '                (the iPhone app does not read a WAP’s console today).</p>'),
+     '                This window has no Bluetooth of its own, so the check runs in the browser Lab in\n'
+     '                Chrome or Edge on this computer.</p>'),
     ('canary-local/tests/desktop_parity.test.js',
      '  assert.match(reassure, /if \\(nativeShell\\) \\{[\\s\\S]*?in Chrome or Edge on this computer[\\s\\S]*?\\} else \\{[\\s\\S]*?phaseBluetoothCheck/,\n'
      '    "the Lab app\'s Bluetooth entry must point to where the check runs, and only the browser opens it in-page");'),
