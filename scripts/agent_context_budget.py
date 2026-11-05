@@ -10,7 +10,10 @@ first prompt; Codex and the rest load AGENTS.md the same way. On 2026-11-03
 that was 55 KB (~14,000 tokens), 68% of it a narrative about generated files
 that only a CAD or emulator task needs. A tree's AGENTS.md / CLAUDE.md, a
 `paths:`-scoped rule, a skill body and a subagent definition load only when
-touched or invoked, so the cure is to move a rule to where it applies. This
+touched or invoked, so the cure is to move a rule to where it applies (a
+tree's one-line CLAUDE.md imports the AGENTS.md beside it, because a root
+CLAUDE.md turns off Claude Code's own AGENTS.md discovery; the pair is
+measured as one load). This
 gate is what keeps it there: a rule for one tree goes in that tree's brief, a
 story about why goes in docs/, and the root does not grow back.
 
@@ -105,10 +108,14 @@ def inventory(root: Path) -> list[tuple[str, Path, int]]:
         rows.append(("start", p, BUDGET_START))
     for rule in walk(root / ".claude" / "rules", "*.md"):
         rows.append(("touch" if has_paths_scope(rule) else "start", rule, BUDGET_LAZY if has_paths_scope(rule) else BUDGET_START))
-    for name in ("AGENTS.md", "CLAUDE.md"):
-        for p in walk(root, name):
-            if p.parent != root and ".claude" not in p.parts:
-                rows.append(("touch", p, BUDGET_LAZY))
+    imported: set[Path] = set()
+    for p in walk(root, "CLAUDE.md"):
+        if p.parent != root and ".claude" not in p.parts:
+            imported.update(q.resolve() for q in imports_of(p))
+            rows.append(("touch", p, BUDGET_LAZY))
+    for p in walk(root, "AGENTS.md"):
+        if p.parent != root and ".claude" not in p.parts and p.resolve() not in imported:
+            rows.append(("touch", p, BUDGET_LAZY))  # read by Codex and friends; by Claude only via a sibling CLAUDE.md
     for p in walk(root / ".claude" / "skills", "SKILL.md"):
         rows.append(("invoke", p, BUDGET_LAZY))
     for p in walk(root / ".claude" / "agents", "*.md"):
@@ -122,7 +129,7 @@ def report(root: Path) -> tuple[list[str], list[str]]:
     failures: list[str] = []
     start_total = 0
     for when, p, budget in rows:
-        size = p.stat().st_size
+        size = p.stat().st_size + (sum(q.stat().st_size for q in imports_of(p)) if when == "touch" and p.name == "CLAUDE.md" else 0)
         if when == "start":
             start_total += size
         over = when != "start" and size > budget

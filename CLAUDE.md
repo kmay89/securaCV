@@ -4,9 +4,10 @@
 
 That import is the whole brief and all a session carries (a tool that does not
 expand `@` imports reads `AGENTS.md` first). Everything else loads by need: a tree's
-`AGENTS.md` when you touch a file in it, a rule in `.claude/rules/` when you
-touch a file its `paths:` match. Open one directly when the task is about that
-area.
+brief when you touch a file in it (its one-line `CLAUDE.md` imports the
+`AGENTS.md` beside it, since a root `CLAUDE.md` turns off Claude Code's own
+`AGENTS.md` discovery), a rule in `.claude/rules/` when you touch a file its
+`paths:` match. Open one directly when the task is about that area.
 
 | Working on | Rules load from |
 |---|---|

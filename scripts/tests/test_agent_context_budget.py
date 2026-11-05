@@ -49,10 +49,21 @@ class Budget(unittest.TestCase):
 
     def test_under_budget_passes(self):
         write(self.root, "src/AGENTS.md", 500)
+        write(self.root, "src/CLAUDE.md", 11, "@AGENTS.md\n")
         write(self.root, ".claude/rules/scoped.md", 500, "---\npaths:\n  - 'src/**'\n---\n")
         rc, out, _ = self.run_main("--check")
         self.assertEqual(rc, 0, out)
         self.assertIn("touch", out)
+
+    def test_a_nested_claude_md_and_its_import_are_one_load(self):
+        write(self.root, "src/AGENTS.md", mod.BUDGET_LAZY - 100)
+        write(self.root, "src/CLAUDE.md", 11, "@AGENTS.md\n")
+        rows = [(w, p.name) for w, p, _ in mod.inventory(self.root) if w == "touch"]
+        self.assertEqual(rows, [("touch", "CLAUDE.md")])  # the imported AGENTS.md is not a second row
+        write(self.root, "src/AGENTS.md", mod.BUDGET_LAZY + 100)
+        rc, _, err = self.run_main("--check")
+        self.assertEqual(rc, 1)
+        self.assertIn("src/CLAUDE.md", err)  # the pair is over, measured together
 
     def test_a_fat_nested_brief_fails_check(self):
         write(self.root, "firmware/AGENTS.md", mod.BUDGET_LAZY + 1)
