@@ -38,8 +38,65 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Which of the five languages does this PR actually touch? A scripts-only or
+  # docs-plus-YAML PR used to pay for all five legs — the Rust leg alone is
+  # ~17 minutes, on a PR whose every other check finished in six — because
+  # the trigger's paths-ignore can only say "not docs", not "which language".
+  # On a push to main and on the weekly schedule every leg still runs, so the
+  # branch's full set of analyses stays current and a PR's skipped leg costs
+  # at most an informational "configurations present on main were not found"
+  # note on its check. If the compare cannot be read, or the PR changed more
+  # files than the API lists, every leg runs: the gate fails open, never
+  # closed.
+  changes:
+    name: Languages the diff touches
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      languages: ${{ steps.pick.outputs.languages }}
+    steps:
+      - name: Pick the languages
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          all='["actions","c-cpp","javascript-typescript","python","rust"]'
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "languages=$all" >> "$GITHUB_OUTPUT"; echo "not a PR: every leg"; exit 0
+          fi
+          # The compare API lists at most 3000 changed files; past that, or on
+          # any error, run everything rather than guess.
+          if ! files=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${BASE}...${HEAD}" --jq '.files[].filename'); then
+            echo "languages=$all" >> "$GITHUB_OUTPUT"; echo "compare failed: every leg"; exit 0
+          fi
+          if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then
+            echo "languages=$all" >> "$GITHUB_OUTPUT"; echo "too many files to be sure: every leg"; exit 0
+          fi
+          langs=""
+          while IFS= read -r f; do
+            case "$f" in
+              .github/workflows/codeql.yml) langs="actions c-cpp javascript-typescript python rust" ;;
+              .github/workflows/*|.github/actions/*) langs="$langs actions" ;;
+              *.rs|Cargo.toml|Cargo.lock|*/Cargo.toml|*/Cargo.lock) langs="$langs rust" ;;
+              *.c|*.cc|*.cpp|*.cxx|*.h|*.hpp|*.hh|*.ino) langs="$langs c-cpp" ;;
+              *.js|*.mjs|*.cjs|*.ts|*.tsx|*.html) langs="$langs javascript-typescript" ;;
+              *.py) langs="$langs python" ;;
+            esac
+          done <<< "$files"
+          json=$(printf '%s\n' $langs | grep . | sort -u | jq -R . | jq -sc .)
+          [ -n "$json" ] || json='[]'
+          echo "languages=$json" >> "$GITHUB_OUTPUT"
+          echo "PR touches: $json"
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.languages), matrix.language)
     # Runner size impacts CodeQL analysis time. To learn more, please see:
     #   - https://gh.io/recommended-hardware-resources-for-running-codeql
     #   - https://gh.io/supported-runners-and-hardware-resources
