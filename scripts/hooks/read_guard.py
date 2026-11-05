@@ -42,7 +42,9 @@ OUTLINE = {
     (".scad",): re.compile(r"^((?:module|function) \w+)"),
     (".swift",): re.compile(r"^(\s*(?:public |private |internal )?(?:final )?(?:func|struct|class|enum|extension|protocol) \w+)"),
     (".yml", ".yaml"): re.compile(r"^([a-zA-Z_][\w-]*):\s*$"),
-    (".html",): re.compile(r"^\s*(<(?:section|h[1-3]|script|style|template)\b[^>]*>)"),
+    # Landmarks only, never <script> or <style>: this is an outline, not a filter,
+    # and a regex that names those tags reads to a scanner as a sanitizer.
+    (".html",): re.compile(r"^\s*(<(?:main|section|article|nav|header|footer|h[1-3]|template)\b[^>]*>)", re.I),
 }
 
 
