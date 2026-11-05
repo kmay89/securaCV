@@ -56,6 +56,7 @@ jobs:
       contents: read
     outputs:
       languages: ${{ steps.pick.outputs.languages }}
+      matrix: ${{ steps.pick.outputs.matrix }}
     steps:
       - name: Pick the languages
         id: pick
@@ -65,17 +66,28 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          all='["actions","c-cpp","javascript-typescript","python","rust"]'
+          # Emits two outputs: `languages`, a JSON list, and `matrix`, the
+          # strategy the analyze job expands (one leg per language, build-mode
+          # none), so a language the diff does not touch has no job at all.
+          emit() {
+            langs=$(printf '%s\n' "$1" | tr ' ' '\n' | grep . | sort -u)
+            {
+              echo "languages=$(printf '%s\n' "$langs" | grep . | jq -R . | jq -sc .)"
+              echo "matrix=$(printf '%s\n' "$langs" | grep . | jq -R '{language: ., "build-mode": "none"}' | jq -sc '{include: .}')"
+            } >> "$GITHUB_OUTPUT"
+            echo "legs: $langs"
+          }
+          all="actions c-cpp javascript-typescript python rust"
           if [ "$EVENT" != "pull_request" ]; then
-            echo "languages=$all" >> "$GITHUB_OUTPUT"; echo "not a PR: every leg"; exit 0
+            emit "$all"; echo "(not a PR: every leg)"; exit 0
           fi
           # The compare API lists at most 3000 changed files; past that, or on
           # any error, run everything rather than guess.
           if ! files=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${BASE}...${HEAD}" --jq '.files[].filename'); then
-            echo "languages=$all" >> "$GITHUB_OUTPUT"; echo "compare failed: every leg"; exit 0
+            emit "$all"; echo "(compare failed: every leg)"; exit 0
           fi
           if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then
-            echo "languages=$all" >> "$GITHUB_OUTPUT"; echo "too many files to be sure: every leg"; exit 0
+            emit "$all"; echo "(too many files to be sure: every leg)"; exit 0
           fi
           langs=""
           while IFS= read -r f; do
@@ -88,15 +100,15 @@ jobs:
               *.py) langs="$langs python" ;;
             esac
           done <<< "$files"
-          json=$(printf '%s\n' $langs | grep . | sort -u | jq -R . | jq -sc .)
-          [ -n "$json" ] || json='[]'
-          echo "languages=$json" >> "$GITHUB_OUTPUT"
-          echo "PR touches: $json"
+          emit "$langs"
 
   analyze:
     name: Analyze (${{ matrix.language }})
     needs: changes
-    if: contains(fromJSON(needs.changes.outputs.languages), matrix.language)
+    # A job-level if cannot see the matrix, so the matrix itself is the gate:
+    # the changes job hands over only the touched languages, and an empty
+    # list skips the job outright.
+    if: needs.changes.outputs.languages != '[]'
     # Runner size impacts CodeQL analysis time. To learn more, please see:
     #   - https://gh.io/recommended-hardware-resources-for-running-codeql
     #   - https://gh.io/supported-runners-and-hardware-resources
@@ -117,18 +129,10 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        include:
-        - language: actions
-          build-mode: none
-        - language: c-cpp
-          build-mode: none
-        - language: javascript-typescript
-          build-mode: none
-        - language: python
-          build-mode: none
-        - language: rust
-          build-mode: none
+      # The five legs — actions, c-cpp, javascript-typescript, python, rust,
+      # each build-mode none — are listed in the changes job above and arrive
+      # here as {include: [{language, build-mode}, …]}.
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
         # Use `c-cpp` to analyze code written in C, C++ or both
         # Use 'java-kotlin' to analyze code written in Java, Kotlin or both
