@@ -6,6 +6,8 @@ without expanding data access paths.
 ## What runs — the gate families
 
 There are ~50 workflows under [`.github/workflows/`](../.github/workflows/).
+`python3 scripts/gates.py` says which of them a diff triggers, derived from their
+path filters, and `--run` runs the scripted steps here.
 This page indexes them by family and details one (container builds) below;
 the per-gate detail for the rest lives next to each gate.
 

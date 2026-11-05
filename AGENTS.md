@@ -123,6 +123,10 @@ chirp code.
 
 ## Before you commit
 
+- `python3 scripts/gates.py --run` runs every fast gate your diff trips — derived
+  from the workflows' path filters and steps, never from a list — and `--all`
+  names the toolchain steps CI will run that you cannot run here. Paste its
+  summary into the PR's "Checks run" section.
 - `cargo test`, `cargo clippy` (no warnings), `cargo doc` (no warnings), and
   `cargo test --no-default-features`, when `src/` moved.
 - `python3 scripts/lint_docs_index.py` if you touched anything under `docs/`;
@@ -183,7 +187,8 @@ chirp code.
 
 ## CI gates you will trip
 
-These run on every PR. Run the relevant one locally before you push.
+`python3 scripts/gates.py` says which of these a diff trips, and `--run` runs
+the scripted ones. The table is the ones that bite most.
 
 | Gate | What it enforces |
 |---|---|
