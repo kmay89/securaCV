@@ -798,27 +798,33 @@ def test_hassio_discovery_creates_both_entry(monkeypatch):
     assert data[CONF_SETUP_MODE] == SETUP_MODE_BOTH
 
 
-def test_hassio_discovery_legacy_payload_asks_the_kernel_who_it_is(monkeypatch):
-    """A two-key payload (the old app): identity is read BEFORE the unique_id."""
+def test_hassio_discovery_legacy_payload_asks_the_kernel_who_it_is_on_confirm(monkeypatch):
+    """A two-key payload (the old app): nothing is read before the click;
+    the identity is read AT confirm and the unique_id follows it."""
     probes = fake_probe(monkeypatch, PROBE)
     flow = make_flow()
     result = drive(flow.async_step_hassio({"config": {"host": "10.0.0.7", "port": 8799}}))
     assert result["type"] == "form"
     assert result["step_id"] == "hassio_confirm"
-    assert flow.unique_id == UNIQUE_ID
-    assert probes[0][CONF_TOKEN_FILE] == DEFAULT_TOKEN_FILE
+    assert flow.unique_id is None
+    assert probes == [], "a Supervisor payload is never probed before the person confirms"
 
     result = drive(flow.async_step_hassio_confirm({}))
+    assert probes[0][CONF_TOKEN_FILE] == DEFAULT_TOKEN_FILE
+    assert flow.unique_id == UNIQUE_ID
     assert result["type"] == "create_entry"
     assert result["data"][CONF_URL] == "http://10.0.0.7:8799"
     assert result["data"][CONF_KERNEL_DEVICE_ID] == DEVICE_ID
 
 
-def test_hassio_discovery_legacy_payload_with_an_unreachable_kernel_aborts(monkeypatch):
+def test_hassio_discovery_legacy_payload_with_an_unreachable_kernel_stays_on_the_form(monkeypatch):
     fake_probe(monkeypatch, CannotConnect())
     flow = make_flow()
     result = drive(flow.async_step_hassio({"config": {"host": "10.0.0.7", "port": 8799}}))
-    assert result["type"] == "abort" and result["reason"] == "cannot_connect"
+    assert result["type"] == "form" and result["step_id"] == "hassio_confirm"
+    result = drive(flow.async_step_hassio_confirm({}))
+    assert result["type"] == "form" and result["step_id"] == "hassio_confirm"
+    assert result["errors"] == {"base": "cannot_connect"}
 
 
 def test_hassio_confirm_reports_an_unreadable_token_file(monkeypatch):
@@ -830,28 +836,104 @@ def test_hassio_confirm_reports_an_unreadable_token_file(monkeypatch):
     assert result["errors"] == {"base": "invalid_auth"}
 
 
-def test_hassio_discovery_updates_a_kernel_keyed_entry_and_reloads_it():
-    """A rediscovered app (new hostname) updates the entry through the base
-    class: data changed → reload scheduled → abort. No update listener."""
+def test_hassio_discovery_names_only_the_apps_token_file():
+    """The payload is any app's to post. One naming another file would
+    have Home Assistant read it and send it as a bearer to the discovered
+    host, so it is refused before anything is read or shown."""
+    for token_file in ("/config/secrets.yaml", "/config/api_token/../secrets.yaml",
+                       "/addon_configs/other/api_token", "/etc/shadow", "api_token"):
+        flow = make_flow()
+        result = drive(flow.async_step_hassio({"config": {**HASSIO_CONFIG, "token_file": token_file}}))
+        assert result["type"] == "abort" and result["reason"] == "invalid_discovery_info", token_file
+        assert flow._hassio is None
+    # The app's own file, named or omitted, is the one that is accepted.
+    for payload in ({**HASSIO_CONFIG, "token_file": DEFAULT_TOKEN_FILE}, {**HASSIO_CONFIG, "token_file": None}):
+        flow = make_flow()
+        result = drive(flow.async_step_hassio({"config": payload}))
+        assert result["type"] == "form" and result["step_id"] == "hassio_confirm"
+        assert flow._hassio[CONF_TOKEN_FILE] == DEFAULT_TOKEN_FILE
+
+
+def test_hassio_discovery_takes_a_bare_host_and_a_real_port_only():
+    for host, port in (("evil.example/api?x=", 8799), ("user@host", 8799), ("host:1", 8799),
+                       ("", 8799), (None, 8799), ("ok-host", "x"), ("ok-host", 0), ("ok-host", 70000)):
+        flow = make_flow()
+        result = drive(flow.async_step_hassio({"config": {**HASSIO_CONFIG, "host": host, "port": port}}))
+        assert result["type"] == "abort" and result["reason"] == "invalid_discovery_info", (host, port)
+    flow = make_flow()
+    result = drive(flow.async_step_hassio({"config": {**HASSIO_CONFIG, "host": "10.0.0.7", "port": "8799"}}))
+    assert result["type"] == "form" and flow._hassio[CONF_URL] == "http://10.0.0.7:8799"
+
+
+def test_hassio_discovery_moves_a_kernel_keyed_entry_only_after_its_own_credentials_confirm_the_key(monkeypatch):
+    """A rediscovered app (new hostname) is a confirm card, not a silent
+    rewrite. On the click the new URL is probed with the ENTRY's
+    credentials — never the payload's — and the entry moves and reloads
+    only when the answer carries the pinned key. No update listener."""
+    probes = fake_probe(monkeypatch, PROBE)
     existing = make_entry(
-        {CONF_URL: "http://old-host:8799", CONF_TOKEN: "", CONF_TOKEN_FILE: DEFAULT_TOKEN_FILE,
+        {CONF_URL: "http://old-host:8799", CONF_TOKEN: "entry-token", CONF_TOKEN_FILE: "/config/entry_api_token",
          CONF_ENABLE_MQTT: True, CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX,
-         CONF_SETUP_MODE: SETUP_MODE_BOTH, CONF_KERNEL_DEVICE_ID: DEVICE_ID},
+         CONF_SETUP_MODE: SETUP_MODE_BOTH, CONF_KERNEL_DEVICE_ID: DEVICE_ID,
+         CONF_KERNEL_VERIFYING_KEY: KEY},
         unique_id=UNIQUE_ID,
     )
     flow = make_flow(entries=[existing])
     result = drive(flow.async_step_hassio(SimpleNamespace(
         config={**HASSIO_CONFIG, "host": "new-host"}, name="SecuraCV", slug="s", uuid="u")))
+    assert result["type"] == "form" and result["step_id"] == "hassio_confirm"
+    assert probes == [] and existing.data[CONF_URL] == "http://old-host:8799"
+
+    result = drive(flow.async_step_hassio_confirm({}))
+    assert probes == [{CONF_URL: "http://new-host:8799", CONF_TOKEN: "entry-token",
+                       CONF_TOKEN_FILE: "/config/entry_api_token"}]
     assert result["type"] == "abort"
     assert result["reason"] == "already_configured"
     assert existing.data[CONF_URL] == "http://new-host:8799"
+    assert existing.data[CONF_TOKEN_FILE] == DEFAULT_TOKEN_FILE
     assert existing.data[CONF_MQTT_TOPIC_PREFIX] == "witness"
+    assert existing.data[CONF_KERNEL_VERIFYING_KEY] == KEY
     # Existing MQTT settings survive the update.
     assert existing.data[CONF_MQTT_PREFIX] == DEFAULT_MQTT_PREFIX
-    assert flow._test_reloads == ["entry-1"]
+    assert flow.hass.config_entries.reloads == ["entry-1"]
 
 
-def test_hassio_discovery_identical_rediscovery_does_not_reload():
+def test_hassio_discovery_leaves_an_entry_alone_when_the_new_url_does_not_hold_its_key(monkeypatch):
+    """Whatever answers at the discovered URL with a different key is not
+    this entry's kernel: the fingerprints are shown, nothing is written,
+    nothing reloads."""
+    fake_probe(monkeypatch, KernelProbe(DEVICE_ID, OTHER_KEY, "2.4.16"))
+    before = {CONF_URL: "http://old-host:8799", CONF_TOKEN: "", CONF_TOKEN_FILE: DEFAULT_TOKEN_FILE,
+              CONF_ENABLE_MQTT: True, CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX, CONF_SETUP_MODE: SETUP_MODE_BOTH,
+              CONF_KERNEL_DEVICE_ID: DEVICE_ID, CONF_KERNEL_VERIFYING_KEY: KEY}
+    existing = make_entry(before, unique_id=UNIQUE_ID)
+    flow = make_flow(entries=[existing])
+    drive(flow.async_step_hassio({"config": {**HASSIO_CONFIG, "host": "new-host"}}))
+    result = drive(flow.async_step_hassio_confirm({}))
+    assert result["type"] == "abort" and result["reason"] == "announce_key_mismatch"
+    assert result["description_placeholders"] == {
+        "pinned_fingerprint": kernel_key_fingerprint(KEY),
+        "received_fingerprint": kernel_key_fingerprint(OTHER_KEY),
+    }
+    assert existing.data == before
+    assert flow.hass.config_entries.reloads == [] and flow.hass.config_entries.updates == []
+
+
+def test_hassio_discovery_leaves_an_entry_alone_when_the_new_url_is_another_kernel(monkeypatch):
+    fake_probe(monkeypatch, KernelProbe("pwk_ffffffff", KEY, "2.4.16"))
+    before = {CONF_URL: "http://old-host:8799", CONF_TOKEN: "", CONF_TOKEN_FILE: DEFAULT_TOKEN_FILE,
+              CONF_KERNEL_DEVICE_ID: DEVICE_ID, CONF_KERNEL_VERIFYING_KEY: KEY,
+              CONF_ENABLE_MQTT: True, CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX, CONF_SETUP_MODE: SETUP_MODE_BOTH}
+    existing = make_entry(before, unique_id=UNIQUE_ID)
+    flow = make_flow(entries=[existing])
+    drive(flow.async_step_hassio({"config": {**HASSIO_CONFIG, "host": "new-host"}}))
+    result = drive(flow.async_step_hassio_confirm({}))
+    assert result["type"] == "abort" and result["reason"] == "wrong_kernel"
+    assert existing.data == before and flow.hass.config_entries.reloads == []
+
+
+def test_hassio_discovery_identical_rediscovery_does_not_reload(monkeypatch):
+    probes = fake_probe(monkeypatch, PROBE)
     existing = make_entry(
         {CONF_URL: "http://d0491a67-privacy-witness-kernel:8799", CONF_TOKEN_FILE: DEFAULT_TOKEN_FILE,
          CONF_MQTT_TOPIC_PREFIX: "witness", CONF_KERNEL_DEVICE_ID: DEVICE_ID,
@@ -860,48 +942,52 @@ def test_hassio_discovery_identical_rediscovery_does_not_reload():
     )
     flow = make_flow(entries=[existing])
     result = drive(flow.async_step_hassio({"config": dict(HASSIO_CONFIG)}))
-    assert result["reason"] == "already_configured"
-    assert flow._test_reloads == []
+    assert result["type"] == "abort" and result["reason"] == "already_configured"
+    assert flow.hass.config_entries.reloads == [] and probes == []
 
 
 def test_hassio_discovery_adopts_a_legacy_keyed_entry(monkeypatch):
     """An entry keyed on the URL by an older version is moved to the kernel
-    id, updated and reloaded — the base class cannot see it, so the step does."""
-    fake_probe(monkeypatch, PROBE)
+    id, updated and reloaded on the click — after the new URL answered the
+    entry's own credentials — since the base class cannot see it."""
+    probes = fake_probe(monkeypatch, PROBE)
     existing = make_entry(
-        {CONF_URL: "http://old-host:8799", CONF_TOKEN: "", CONF_ENABLE_MQTT: True,
-         CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX, CONF_SETUP_MODE: SETUP_MODE_BOTH},
+        {CONF_URL: "http://old-host:8799", CONF_TOKEN: "", CONF_TOKEN_FILE: DEFAULT_TOKEN_FILE,
+         CONF_ENABLE_MQTT: True, CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX, CONF_SETUP_MODE: SETUP_MODE_BOTH},
         unique_id="http://old-host:8799",
     )
     flow = make_flow(entries=[existing])
     result = drive(flow.async_step_hassio(SimpleNamespace(
         config={**HASSIO_CONFIG, "host": "new-host"}, name="SecuraCV", slug="s", uuid="u")))
+    assert result["type"] == "form" and result["step_id"] == "hassio_confirm"
+    result = drive(flow.async_step_hassio_confirm({}))
+    assert probes[0][CONF_URL] == "http://new-host:8799"
     assert result["type"] == "abort"
     assert result["reason"] == "already_configured"
     assert existing.unique_id == UNIQUE_ID
     assert existing.data[CONF_URL] == "http://new-host:8799"
     assert existing.data[CONF_KERNEL_DEVICE_ID] == DEVICE_ID
+    assert existing.data[CONF_KERNEL_VERIFYING_KEY] == KEY
     assert existing.data[CONF_AUTH_MODE] == AUTH_MODE_TOKEN_FILE
     assert existing.data[CONF_MQTT_PREFIX] == DEFAULT_MQTT_PREFIX
     assert flow.hass.config_entries.reloads == ["entry-1"]
 
 
-def test_hassio_discovery_legacy_payload_updates_a_legacy_entry_when_identity_is_unreadable(monkeypatch):
-    """Both sides legacy and the kernel not identifiable yet: the entry still
-    follows the new URL and reloads, and migrates itself when identity answers."""
+def test_hassio_discovery_legacy_payload_never_moves_a_legacy_entry_blind(monkeypatch):
+    """Both sides legacy and the kernel not identifiable: the entry used to
+    follow the new URL on the payload's word alone. Now it stays put until
+    the discovered URL answers its credentials."""
     fake_probe(monkeypatch, CannotConnect())
-    existing = make_entry(
-        {CONF_URL: "http://old-host:8799", CONF_TOKEN: "", CONF_ENABLE_MQTT: True,
-         CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX, CONF_SETUP_MODE: SETUP_MODE_BOTH},
-        unique_id="hassio",
-    )
+    before = {CONF_URL: "http://old-host:8799", CONF_TOKEN: "", CONF_ENABLE_MQTT: True,
+              CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX, CONF_SETUP_MODE: SETUP_MODE_BOTH}
+    existing = make_entry(before, unique_id="hassio")
     flow = make_flow(entries=[existing])
     result = drive(flow.async_step_hassio({"config": {"host": "new-host", "port": 8799}}))
-    assert result["reason"] == "already_configured"
-    assert existing.unique_id == "hassio"
-    assert existing.data[CONF_URL] == "http://new-host:8799"
-    assert existing.data[CONF_SETUP_MODE] == SETUP_MODE_BOTH
-    assert flow.hass.config_entries.reloads == ["entry-1"]
+    assert result["type"] == "form" and result["step_id"] == "hassio_confirm"
+    result = drive(flow.async_step_hassio_confirm({}))
+    assert result["type"] == "form" and result["errors"] == {"base": "cannot_connect"}
+    assert existing.unique_id == "hassio" and existing.data == before
+    assert flow.hass.config_entries.reloads == []
 
 
 def test_hassio_discovery_promotes_mqtt_only_entry(monkeypatch):
@@ -931,6 +1017,54 @@ def test_hassio_discovery_missing_host_aborts():
     result = drive(flow.async_step_hassio({"config": {"port": 8799}}))
     assert result["type"] == "abort"
     assert result["reason"] == "invalid_discovery_info"
+
+
+# ---------------------------------------------------------------------------
+# A plain-http kernel URL off-box: the form says the token crosses the LAN
+# ---------------------------------------------------------------------------
+
+
+def test_plaintext_url_warning_names_only_http_to_another_host():
+    warn = config_flow.plaintext_url_warning
+    assert warn(DEFAULT_KERNEL_URL) == ""
+    assert warn("http://d0491a67-privacy-witness-kernel:8799") == ""
+    assert warn("http://localhost:8799") == "" and warn("http://127.0.0.1:8799") == ""
+    assert warn("https://192.168.1.20:8799") == ""
+    assert warn(None) == "" and warn("") == "" and warn("not a url") == ""
+    assert warn("http://192.168.1.20:8799") == config_flow.PLAINTEXT_WARNING
+    assert warn("http://nas.local:8799/") == config_flow.PLAINTEXT_WARNING
+    assert "unencrypted" in config_flow.PLAINTEXT_WARNING
+
+
+def test_the_kernel_form_warns_about_a_plaintext_url_and_does_not_block(monkeypatch):
+    flow = make_flow()
+    result = drive(flow.async_step_kernel(None))
+    assert result["description_placeholders"]["plaintext_warning"] == ""
+    # A plain-http LAN URL that could not be reached: the rebuilt form warns.
+    fake_probe(monkeypatch, CannotConnect())
+    result = drive(flow.async_step_kernel({CONF_URL: "http://192.168.1.20:8799", CONF_TOKEN: "t"}))
+    assert result["type"] == "form" and result["errors"] == {"base": "cannot_connect"}
+    assert result["description_placeholders"]["plaintext_warning"] == config_flow.PLAINTEXT_WARNING
+    # The same URL reaching a kernel is accepted: a warning, never a refusal.
+    fake_probe(monkeypatch, PROBE)
+    result = drive(flow.async_step_kernel({CONF_URL: "http://192.168.1.20:8799", CONF_TOKEN: "t"}))
+    assert result["type"] == "create_entry"
+
+
+def test_the_pair_and_token_file_forms_carry_the_plaintext_placeholder(monkeypatch):
+    flow = make_flow()
+    flow._pair_url = "http://192.168.1.20:8799"
+    result = drive(flow.async_step_pair(None))
+    assert result["description_placeholders"]["plaintext_warning"] == config_flow.PLAINTEXT_WARNING
+    flow = make_flow()
+    result = drive(flow.async_step_token_file(None))
+    assert result["description_placeholders"]["plaintext_warning"] == ""
+    fake_probe(monkeypatch, CannotConnect())
+    result = drive(flow.async_step_token_file({CONF_URL: "http://nas.local:8799", CONF_TOKEN_FILE: DEFAULT_TOKEN_FILE}))
+    assert result["description_placeholders"]["plaintext_warning"] == config_flow.PLAINTEXT_WARNING
+    strings = json.loads((Path(config_flow.__file__).resolve().parent / "strings.json").read_text(encoding="utf-8"))
+    for step in ("kernel", "both", "pair", "token_file", "reauth_confirm", "reconfigure"):
+        assert "{plaintext_warning}" in strings["config"]["step"][step]["description"], step
 
 
 # ---------------------------------------------------------------------------

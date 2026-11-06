@@ -34,7 +34,8 @@ server. A week of them is enough.
 - **People.** Everyone listed still works here, with the role they need?
 - **Your account.** The Health page says when the oldest owner password
   turns a year old; rotate before it does. A new authenticator is set up on
-  the same page, and the old one works until the new one has been seen.
+  the same page (your password to begin, a code from the old one and the new
+  to confirm), and the old one works until that confirmation.
 - **Backups.** The Health rows for the nightly copy, the off-site copy and
   the restore drill are green; `backoffice restore --offsite` into a scratch
   directory once a quarter is the only proof that matters.

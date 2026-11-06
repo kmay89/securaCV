@@ -31,7 +31,7 @@ where
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
-    use libseccomp::{ScmpAction, ScmpFilterContext, ScmpSyscall};
+    use libseccomp::{ScmpAction, ScmpArgCompare, ScmpCompareOp, ScmpFilterContext, ScmpSyscall};
 
     const DENY_SYSCALLS: &[&str] = &[
         "open",
@@ -107,6 +107,36 @@ mod linux {
         "kill",
         "tkill",
         "tgkill",
+        // The three signal syscalls above were denied, but a signal reaches
+        // the daemon just as well through the queueing variants: with the
+        // same uid, `rt_sigqueueinfo(getppid(), SIGKILL, ..)` from the child
+        // stops the witness outright. Same uid also means any SysV segment
+        // or queue the daemon could reach, the child could too.
+        "rt_sigqueueinfo",
+        "rt_tgsigqueueinfo",
+        "shmget",
+        "shmat",
+        "shmdt",
+        "msgget",
+        "msgsnd",
+        "msgrcv",
+        "semget",
+        // Path-existence oracles that need no open(): a watch on a path
+        // answers whether it exists.
+        "inotify_init1",
+        "inotify_add_watch",
+        "fanotify_init",
+        "fanotify_mark",
+        // Namespace and mount surgery, none of it detection work.
+        "unshare",
+        "setns",
+        "mount",
+        "umount2",
+        "pivot_root",
+        "chroot",
+        // The batched socket calls bypass the single-message denials above.
+        "sendmmsg",
+        "recvmmsg",
     ];
 
     /// Newer filesystem/network escape hatches that bypass the classic
@@ -130,7 +160,27 @@ mod linux {
         "fsconfig",
         "fsmount",
         "move_mount",
+        // A grandchild could hold the result pipe open forever (a hung
+        // ingest) or outlive the reaper. `clone` is filtered by flags below
+        // (threads stay allowed for tract); these have no thread form.
+        "fork",
+        "vfork",
+        "pidfd_send_signal",
+        "inotify_init",
+        "uselib",
     ];
+
+    /// Longest a child may burn CPU before the kernel ends it (`RLIMIT_CPU`,
+    /// SIGXCPU then SIGKILL). Detection on a Pi is seconds per frame at worst;
+    /// a module spinning for longer is wedged or hostile.
+    const CHILD_CPU_SECONDS: u64 = 30;
+
+    /// Longest the parent waits for the child's reply before killing it. A
+    /// `detect()` that never returns used to block the single ingest thread
+    /// in a blocking `read(2)` forever: the witness stopped witnessing and
+    /// sealed no gap record. Wall-clock, so a child blocked (not spinning)
+    /// is bounded too.
+    const CHILD_REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
     extern "C" {
         fn fork() -> c_int;
@@ -166,6 +216,26 @@ mod linux {
                 let _ = ctx.add_rule(ScmpAction::Errno(libc::EPERM), syscall);
             }
         }
+        // Processes, not threads: `clone` without CLONE_THREAD is a fork by
+        // another name, so it is refused by flag; a thread (what tract's
+        // inference pool creates) keeps working. `clone3` takes its flags
+        // through a struct the filter cannot inspect, so it answers ENOSYS —
+        // glibc then falls back to `clone`, which the flag rule sees. (EPERM
+        // would not trigger that fallback and would break thread creation.)
+        let clone = ScmpSyscall::from_name("clone").context("sandbox: unknown syscall clone")?;
+        ctx.add_rule_conditional(
+            ScmpAction::Errno(libc::EPERM),
+            clone,
+            &[ScmpArgCompare::new(
+                0,
+                ScmpCompareOp::MaskedEqual(libc::CLONE_THREAD as u64),
+                0,
+            )],
+        )
+        .context("sandbox: failed to filter clone")?;
+        if let Ok(clone3) = ScmpSyscall::from_name("clone3") {
+            let _ = ctx.add_rule(ScmpAction::Errno(libc::ENOSYS), clone3);
+        }
         // The prior filter killed on arch mismatch; libseccomp binds the filter
         // to the native architecture, preserving intent without hardcoding AUDIT_ARCH_*.
         ctx.load().context("sandbox: seccomp load failed")?;
@@ -173,9 +243,36 @@ mod linux {
         Ok(())
     }
 
-    fn read_exact(fd: c_int, buf: &mut [u8]) -> Result<()> {
+    /// `read(2)` the whole buffer, giving up at `deadline`: `poll(2)` bounds
+    /// each wait, so a child that never replies (or replies one byte at a
+    /// time) cannot hold the ingest thread past the budget.
+    fn read_exact(fd: c_int, buf: &mut [u8], deadline: std::time::Instant) -> Result<()> {
         let mut offset = 0;
         while offset < buf.len() {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(anyhow!(
+                    "sandbox: child did not reply within {:?}; killed",
+                    CHILD_REPLY_TIMEOUT
+                ));
+            }
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let wait_ms = remaining.as_millis().min(i32::MAX as u128) as c_int;
+            let ready = unsafe { libc::poll(&mut pfd, 1, wait_ms) };
+            if ready < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(anyhow!(err)).context("sandbox: poll on result pipe failed");
+            }
+            if ready == 0 {
+                continue; // deadline check at the top of the loop
+            }
             let rc = unsafe {
                 read(
                     fd,
@@ -277,6 +374,30 @@ mod linux {
                 close(fds[0]);
                 // Prevent core dumps that could leak inherited key material.
                 libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
+                // Die with the thread that forked us: a child must never
+                // outlive the reaper that bounds it.
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0);
+                // The std streams are the daemon's log sink (journald, a
+                // container collector): `write(2)` stays allowed for the
+                // result pipe, so stdout/stderr were a second channel out
+                // of the sandbox. Point all three at /dev/null before the
+                // filter (open is denied after it).
+                let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC);
+                if devnull >= 0 {
+                    for fd in 0..3 {
+                        libc::dup2(devnull, fd);
+                    }
+                    if devnull > 2 {
+                        libc::close(devnull);
+                    }
+                }
+                // A module that spins forever is ended by the kernel, not
+                // waited on by the daemon.
+                let cpu = libc::rlimit {
+                    rlim_cur: CHILD_CPU_SECONDS,
+                    rlim_max: CHILD_CPU_SECONDS + 5,
+                };
+                libc::setrlimit(libc::RLIMIT_CPU, &cpu);
                 // Drop every inherited descriptor except std streams and the
                 // result-pipe write end. The parent holds the SQLCipher DB
                 // handle, MQTT/broker sockets, and config fds; the seccomp
@@ -353,8 +474,9 @@ mod linux {
         // 16 MiB is generous for any serialized sandbox response.
         const MAX_SANDBOX_PAYLOAD: u64 = 16 * 1024 * 1024;
 
+        let deadline = std::time::Instant::now() + CHILD_REPLY_TIMEOUT;
         let mut len_bytes = [0u8; 8];
-        read_exact(child.read_fd, &mut len_bytes)?;
+        read_exact(child.read_fd, &mut len_bytes, deadline)?;
         let len = u64::from_le_bytes(len_bytes);
         if len > MAX_SANDBOX_PAYLOAD {
             return Err(anyhow!(
@@ -365,7 +487,7 @@ mod linux {
         }
         let len = len as usize;
         let mut payload = vec![0u8; len];
-        read_exact(child.read_fd, &mut payload)?;
+        read_exact(child.read_fd, &mut payload, deadline)?;
         child.finish();
 
         let response: SandboxResponse<T> =
@@ -427,8 +549,18 @@ mod tests {
             );
         }
         // Eight failed children, zero leaked read-ends (read_dir itself
-        // opens one fd transiently, so allow that much slack).
-        let after = open_fds();
+        // opens one fd transiently, so allow that much slack). The count is
+        // process-wide and the other tests in this binary run beside this
+        // one, opening pipes and sockets of their own for a moment, so a
+        // single sample can read high on a slow runner; a leaked read end
+        // never goes away, a neighbor's descriptor does, so sample until
+        // the count settles or a bounded wait runs out.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut after = open_fds();
+        while after > before + 1 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            after = open_fds();
+        }
         assert!(
             after <= before + 1,
             "fd leak: {before} before, {after} after"

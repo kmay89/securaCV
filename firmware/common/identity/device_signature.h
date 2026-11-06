@@ -37,6 +37,8 @@
  *   securacv-canary-sig|v1|sense|<device_id>|<seq>|<event>|<presence>|
  *                                <occupants>|<range>|<bucket_uptime_s>
  *   securacv-canary-sig|v1|whoami|<device_id>|<nonce_hex>
+ *   securacv-canary-sig|v1|seal|<device_id>|<nonce_hex>|<client_pub_hex>|
+ *                                <device_pub_hex>
  *   securacv-canary-sig|v1|sentinel|<device_id>|<seq>|<event>|<level>|
  *                                <confidence>|<anomaly>|<occupancy>|<range>|
  *                                <modality_bits>|<bucket_uptime_s>
@@ -227,6 +229,26 @@ bool sign_whoami(const char* nonce_hex,
                  char*       sig_hex_out,
                  size_t      sig_cap);
 
+/* The sealed-credential handshake's signature (the WAP's api_seal.h,
+ * GET /api/device/seal): the identity key signs the whole transcript of one
+ * X25519 exchange — this device's id, the caller's nonce, the caller's
+ * ephemeral public key and the ephemeral public key this device just made —
+ * so a verifier holding the pinned fingerprint knows the key it is about to
+ * seal a credential under was agreed with THIS device and nothing in
+ * between swapped either half. That is what the whoami proof above lacks: a
+ * relay can forward a signature over a nonce, but a credential sealed under
+ * a key the relay does not hold is useless to it.
+ *
+ * Both public keys are 64 lowercase hex chars and the nonce passes
+ * whoami_nonce_ok(); anything else is refused unsigned, so the key never
+ * signs attacker-shaped bytes. sig_cap must be >= SIG_HEX_CAP; the
+ * signature is 128 hex chars, as sign_whoami()'s. */
+bool sign_seal(const char* nonce_hex,
+               const char* client_pub_hex,
+               const char* device_pub_hex,
+               char*       sig_hex_out,
+               size_t      sig_cap);
+
 /* Identity accessors — both return pointers into module-local storage
  * with static lifetime. Callers must not free. fingerprint_hex is the
  * 16-char hex of the pubkey fingerprint; pubkey_hex is the 64-char hex
@@ -296,6 +318,17 @@ size_t build_whoami_canonical(const char*   nonce_hex,
                               const char*   device_id,
                               char*         out,
                               size_t        cap);
+
+size_t build_seal_canonical(const char*   nonce_hex,
+                            const char*   client_pub_hex,
+                            const char*   device_pub_hex,
+                            const char*   device_id,
+                            char*         out,
+                            size_t        cap);
+
+/* The seal handshake's key gate: exactly 64 lowercase hex chars (one X25519
+ * public key), so the seal canonical is deterministic. */
+bool seal_pub_hex_ok(const char* pub_hex);
 
 /* Test-only: the nonce gate the HTTP handler applies before signing —
  * 16-64 chars, lowercase hex only, so the proof canonical is

@@ -30,9 +30,11 @@ changed. No update listener exists anywhere in the package.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import re
 from collections.abc import Mapping
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -124,6 +126,50 @@ ANNOUNCE_LISTEN_SECONDS = 5.0
 # quickstart compose names its container `securacv`.
 FALLBACK_SIDECAR_HOST = "securacv"
 PAIRING_CODE_RE = re.compile(rf"^\d{{{PAIRING_CODE_LENGTH}}}$")
+
+# Supervisor discovery (contract C6) is a payload any app on the system can
+# post. The only token file it may name is the one the SecuraCV app writes:
+# any other path would have Home Assistant read that file and send its
+# contents as a bearer to the discovered host.
+HASSIO_TOKEN_FILES = frozenset({DEFAULT_TOKEN_FILE})
+# The discovered host is spliced into a URL: a bare hostname or address,
+# nothing that could carry a path, a credential or a query along with it.
+HASSIO_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$")
+
+# A kernel URL that is plain http:// to another host sends the token with
+# every request in clear. The app's own hostname (the Supervisor's internal
+# network) and loopback are not "another host"; everything else gets this
+# sentence on the form — a warning, never a refusal (the sidecar is reached
+# over the LAN by design, and a reverse proxy is the person's call).
+PLAINTEXT_SAFE_HOSTS = frozenset({"localhost", urlsplit(DEFAULT_KERNEL_URL).hostname or ""})
+PLAINTEXT_SAFE_SUFFIX = "-privacy-witness-kernel"
+PLAINTEXT_WARNING = (
+    "This URL is plain http:// to another host, so the token Home Assistant "
+    "presents crosses your network unencrypted on every request. Use https:// "
+    "(a reverse proxy in front of the kernel) if that network is not yours alone."
+)
+
+
+def plaintext_url_warning(url: Any) -> str:
+    """The `plaintext_warning` placeholder for a form showing `url`: the
+    sentence when it is http:// off-box, otherwise empty."""
+    if not isinstance(url, str):
+        return ""
+    parsed = urlsplit(url.strip())
+    if parsed.scheme.lower() != "http":
+        return ""
+    try:
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return ""
+    if not host or host in PLAINTEXT_SAFE_HOSTS or host.endswith(PLAINTEXT_SAFE_SUFFIX):
+        return ""
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return ""
+    except ValueError:
+        pass
+    return PLAINTEXT_WARNING
 
 
 class CannotConnect(Exception):
@@ -698,6 +744,11 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id=step_id,
             data_schema=_kernel_schema(user_input, include_prefix=enable_mqtt),
             errors=errors,
+            description_placeholders={
+                "plaintext_warning": plaintext_url_warning(
+                    (user_input or {}).get(CONF_URL, DEFAULT_KERNEL_URL)
+                ),
+            },
         )
 
     async def async_step_kernel(
@@ -888,7 +939,10 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
-            description_placeholders=self._kernel_placeholders(self._flow_entry()),
+            description_placeholders={
+                **self._kernel_placeholders(self._flow_entry()),
+                "plaintext_warning": plaintext_url_warning(self._pair_url_default()),
+            },
         )
 
     async def _async_revoke_quietly(self, url: str, result: PairResult) -> None:
@@ -1047,7 +1101,10 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id=step_id,
             data_schema=_kernel_schema(values, include_prefix=False),
             errors=errors,
-            description_placeholders=self._kernel_placeholders(entry),
+            description_placeholders={
+                **self._kernel_placeholders(entry),
+                "plaintext_warning": plaintext_url_warning(values.get(CONF_URL)),
+            },
         )
 
     async def async_step_token_file(
@@ -1118,14 +1175,41 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     # ── Supervisor discovery (the app) ───────────────────────────────
 
+    def _kernel_entry(self, unique_id: str) -> ConfigEntry | None:
+        """The entry keyed `unique_id`, if any."""
+        for entry in self._async_current_entries():
+            if getattr(entry, "unique_id", None) == unique_id:
+                return entry
+        return None
+
+    def _hassio_updates(self) -> dict[str, Any]:
+        """What a rediscovery may change on an existing entry: where the
+        kernel is, which file holds its token, the bridge's prefix."""
+        info = self._hassio or {}
+        return {key: info[key] for key in (CONF_URL, CONF_TOKEN_FILE, CONF_MQTT_TOPIC_PREFIX)}
+
+    def _hassio_moves(self, entry: ConfigEntry) -> bool:
+        """True when the discovery payload differs from what `entry` holds."""
+        data = getattr(entry, "data", None) or {}
+        return any(data.get(key) != value for key, value in self._hassio_updates().items())
+
     async def async_step_hassio(self, discovery_info: Any) -> ConfigFlowResult:
         """Handle Supervisor add-on discovery (contract C6).
 
         The app POSTs discovery service "securacv" with config {host, port,
         token_file, mqtt_topic_prefix, device_id}. Accept the HassioServiceInfo
         defensively (attribute-style or plain dict) so older cores and test
-        stubs both work. A legacy app that omits `device_id` is asked for
-        its identity through the token file before the unique_id is set.
+        stubs both work.
+
+        The payload is untrusted — any app on the system can post one — so
+        this step reads nothing and sends nothing. It may name only the
+        token file the SecuraCV app writes (`HASSIO_TOKEN_FILES`); the host
+        must be a bare hostname; every probe waits for the person's click in
+        `hassio_confirm`, where an entry that already exists is moved only
+        after the kernel at the new URL has answered /api/identity with the
+        entry's OWN credentials and the key the entry pinned. A legacy app
+        that omits `device_id` is identified there, before the unique_id is
+        set. A rediscovery that changes nothing aborts here, silently.
         """
         config = getattr(discovery_info, "config", None)
         if config is None and isinstance(discovery_info, dict):
@@ -1136,11 +1220,26 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="invalid_discovery_info")
 
         host = config.get("host")
-        port = config.get("port")
-        if not host or not port:
+        if not isinstance(host, str) or HASSIO_HOST_RE.fullmatch(host) is None:
+            return self.async_abort(reason="invalid_discovery_info")
+        raw_port = config.get("port")
+        if raw_port is None or isinstance(raw_port, bool):
+            return self.async_abort(reason="invalid_discovery_info")
+        try:
+            port = int(raw_port)
+        except (TypeError, ValueError):
+            return self.async_abort(reason="invalid_discovery_info")
+        if not 1 <= port <= 65535:
+            return self.async_abort(reason="invalid_discovery_info")
+        token_file = config.get("token_file") or DEFAULT_TOKEN_FILE
+        if token_file not in HASSIO_TOKEN_FILES:
+            _LOGGER.warning(
+                "ignoring Supervisor discovery naming token file %r (only %s is ever read)",
+                token_file,
+                DEFAULT_TOKEN_FILE,
+            )
             return self.async_abort(reason="invalid_discovery_info")
         url = f"http://{host}:{port}"
-        token_file = str(config.get("token_file") or DEFAULT_TOKEN_FILE)
         topic_prefix = str(config.get("mqtt_topic_prefix") or DEFAULT_MQTT_TOPIC_PREFIX)
         device_id = config.get("device_id")
 
@@ -1151,17 +1250,7 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.context["title_placeholders"] = {"name": "app"}
         self._hassio_name = str(name)
 
-        probe: KernelProbe | None = None
-        if not valid_kernel_device_id(device_id):
-            try:
-                probe = await _async_probe_kernel(
-                    self.hass, {CONF_URL: url, CONF_TOKEN: "", CONF_TOKEN_FILE: token_file}
-                )
-            except (CannotConnect, InvalidAuth, IdentityUnavailable):
-                probe = None
-            device_id = probe.device_id if probe is not None else None
-
-        hassio_data = {
+        self._hassio = {
             CONF_URL: url,
             CONF_TOKEN: "",
             CONF_TOKEN_FILE: token_file,
@@ -1170,62 +1259,63 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_ENABLE_MQTT: True,
             CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX,
             CONF_SETUP_MODE: SETUP_MODE_BOTH,
+            CONF_KERNEL_DEVICE_ID: str(device_id) if valid_kernel_device_id(device_id) else None,
         }
-
-        if device_id is None:
-            # Neither the payload nor the kernel could say which kernel this
-            # is. An entry that exists can at least follow the new URL
-            # (legacy keyed, so the base class cannot do it for us).
-            legacy = self._legacy_kernel_entry()
-            if legacy is not None:
-                merged = {**(getattr(legacy, "data", None) or {}), **hassio_data}
-                self.hass.config_entries.async_update_entry(legacy, data=merged)
-                self.hass.config_entries.async_schedule_reload(legacy.entry_id)
+        if self._hassio[CONF_KERNEL_DEVICE_ID] is not None:
+            existing = await self.async_set_unique_id(f"kernel_{device_id}")
+            if existing is not None and not self._hassio_moves(existing):
+                # The same kernel where it already is: nothing to do, no card.
                 return self.async_abort(reason="already_configured")
-            return self.async_abort(reason="cannot_connect")
-
-        self._hassio = {**hassio_data, CONF_KERNEL_DEVICE_ID: device_id, "probe": probe}
-        await self.async_set_unique_id(f"kernel_{device_id}")
-        self._abort_if_unique_id_configured(
-            updates={
-                CONF_URL: url,
-                CONF_TOKEN_FILE: token_file,
-                CONF_MQTT_TOPIC_PREFIX: topic_prefix,
-                CONF_KERNEL_DEVICE_ID: device_id,
-            },
-            reload_on_update=True,
-        )
-        legacy = self._legacy_kernel_entry()
-        if legacy is not None:
-            # Keyed on the URL or `hassio` by an older version: adopt the
-            # identity now so the base class handles the next discovery.
-            data = {**hassio_data, CONF_KERNEL_DEVICE_ID: device_id}
-            if probe is not None and not (getattr(legacy, "data", None) or {}).get(
-                CONF_KERNEL_VERIFYING_KEY
-            ):
-                data[CONF_KERNEL_VERIFYING_KEY] = probe.verifying_key
-                data[CONF_KERNEL_KEY_PINNED_BUCKET_START] = _bucket_start_now()
-            return self._async_promote_entry(legacy, data)
         return await self.async_step_hassio_confirm()
 
     async def async_step_hassio_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Zero-input confirmation for Supervisor add-on discovery."""
+        """Zero-input confirmation for Supervisor add-on discovery.
+
+        The one place the discovered URL is touched, and only on the click.
+        A new kernel is probed with the app's token file and created. An
+        entry that exists — keyed on this kernel, or the legacy way — is
+        probed at the discovered URL with the credentials IT holds, never
+        the payload's, and moved only when the answer carries the key it
+        pinned and the id it was made for; otherwise nothing changes.
+        """
         info = self._hassio
         if info is None:
             return self.async_abort(reason="invalid_discovery_info")
         errors: dict[str, str] = {}
         if user_input is not None:
-            probe: KernelProbe | None = info.get("probe")
-            if probe is None:
-                try:
-                    probe = await _async_probe_kernel(self.hass, info)
-                except InvalidAuth:
-                    errors["base"] = "invalid_auth"
-                except (CannotConnect, IdentityUnavailable):
-                    errors["base"] = "cannot_connect"
+            device_id = info.get(CONF_KERNEL_DEVICE_ID)
+            entry = self._kernel_entry(f"kernel_{device_id}") if device_id else None
+            if entry is None:
+                entry = self._legacy_kernel_entry()
+            if entry is not None:
+                entry_data = getattr(entry, "data", None) or {}
+                probe_data = {
+                    CONF_URL: info[CONF_URL],
+                    CONF_TOKEN: entry_data.get(CONF_TOKEN, ""),
+                    CONF_TOKEN_FILE: entry_data.get(CONF_TOKEN_FILE),
+                }
+            else:
+                probe_data = info
+            probe: KernelProbe | None = None
+            try:
+                probe = await _async_probe_kernel(self.hass, probe_data)
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except (CannotConnect, IdentityUnavailable):
+                errors["base"] = "cannot_connect"
             if probe is not None:
+                if device_id is not None and probe.device_id != device_id:
+                    return self.async_abort(reason="wrong_kernel")
+                if entry is None:
+                    # A legacy payload: the identity just read says which
+                    # entry, if any, this discovery is about.
+                    entry = self._kernel_entry(f"kernel_{probe.device_id}")
+                if entry is not None:
+                    return self._async_move_entry(entry, probe)
+                await self.async_set_unique_id(f"kernel_{probe.device_id}")
+                self._abort_if_unique_id_configured()
                 return await self._async_create_or_promote(
                     _kernel_entry_data(
                         url=info[CONF_URL],
@@ -1248,6 +1338,52 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "url": info[CONF_URL],
             },
         )
+
+    @callback
+    def _async_move_entry(self, entry: ConfigEntry, probe: KernelProbe) -> ConfigFlowResult:
+        """Point an existing entry at the discovered URL — the same kernel only.
+
+        `probe` is what the discovered URL answered to the entry's own
+        credentials. It must carry the key the entry pinned (a different key
+        is `announce_key_mismatch`: nothing changes, the fingerprints are
+        shown) and the id the entry was made for (`wrong_kernel`). An entry
+        still keyed the pre-v3 way adopts the identity now; one without a
+        pin pins the key it just saw.
+        """
+        data = getattr(entry, "data", None) or {}
+        pinned = normalize_kernel_key(data.get(CONF_KERNEL_VERIFYING_KEY))
+        if pinned is not None and pinned != probe.verifying_key:
+            _LOGGER.warning(
+                "Supervisor discovery for entry %s answered with a key that is not the pinned "
+                "one; the entry was left as it was",
+                getattr(entry, "entry_id", None),
+            )
+            return self.async_abort(
+                reason="announce_key_mismatch",
+                description_placeholders={
+                    "pinned_fingerprint": kernel_key_fingerprint(pinned),
+                    "received_fingerprint": kernel_key_fingerprint(probe.verifying_key),
+                },
+            )
+        configured = data.get(CONF_KERNEL_DEVICE_ID)
+        if configured and configured != probe.device_id:
+            return self.async_abort(reason="wrong_kernel")
+        updates = {**self._hassio_updates(), CONF_KERNEL_DEVICE_ID: probe.device_id}
+        if pinned is None:
+            updates[CONF_KERNEL_VERIFYING_KEY] = probe.verifying_key
+            updates[CONF_KERNEL_KEY_PINNED_BUCKET_START] = _bucket_start_now()
+        unique_id = getattr(entry, "unique_id", None) or ""
+        if not unique_id.startswith("kernel_"):
+            # Keyed on the URL or `hassio` by an older version: adopt the
+            # identity and the kernel fields now so the base class handles
+            # the next discovery.
+            hassio_data = {k: v for k, v in (self._hassio or {}).items() if k != CONF_KERNEL_DEVICE_ID}
+            return self._async_promote_entry(entry, {**hassio_data, **updates})
+        self.hass.config_entries.async_update_entry(entry, data={**data, **updates})
+        entry_id = getattr(entry, "entry_id", None)
+        if isinstance(entry_id, str):
+            self.hass.config_entries.async_schedule_reload(entry_id)
+        return self.async_abort(reason="already_configured")
 
 
 # =============================================================================

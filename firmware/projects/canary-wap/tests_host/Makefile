@@ -1250,6 +1250,31 @@ clean-pair-crypto:
 run: run-pair-crypto
 clean: clean-pair-crypto
 
+# The sealed bearer (api_seal.h, seal_api.h, api_auth.h's Sealed branch): the
+# REAL api_seal.h over real X25519 / HKDF-SHA256 (stubs/pair_crypto), SHA-256
+# and ChaCha20-Poly1305 (stubs/mesh_net), the real device_signature.cpp's
+# canonical and gates, and the REAL api_auth.h over stubs/receipt_grant's
+# request, against reference vectors the Flasher's Rust client pins too. Also
+# reads the sketch's text (its paths are passed in, so the pins fail closed):
+# the route, the handler's calls, the hook, the gates' one reader.
+APISEAL_BIN = test_api_seal
+APISEAL_SRC = test_api_seal.cpp
+
+$(APISEAL_BIN): $(APISEAL_SRC) $(SRC_DIR)/api_seal.h $(SRC_DIR)/seal_api.h $(SRC_DIR)/api_auth.h $(SRC_DIR)/device_signature.cpp $(SRC_DIR)/device_signature.h $(SRC_DIR)/canary_wap.ino arduino_globals.h stubs/pair_crypto/Curve25519.h stubs/pair_crypto/mbedtls/md.h stubs/pair_crypto/mbedtls/hkdf.h stubs/mesh_net/ChaChaPoly.h stubs/mesh_net/mbedtls/sha256.h $(wildcard stubs/receipt_grant/*.h)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-function -Wno-ignored-qualifiers \
+	  -I stubs/receipt_grant -I stubs/pair_crypto -I stubs/mesh_net -I $(SRC_DIR) -I . \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -DSEAL_API_H='"$(abspath $(SRC_DIR))/seal_api.h"' \
+	  -DAPI_AUTH_H='"$(abspath $(SRC_DIR))/api_auth.h"' -o $@ $(APISEAL_SRC) $(SRC_DIR)/device_signature.cpp -lcrypto)
+
+.PHONY: run-api-seal clean-api-seal
+run-api-seal: $(APISEAL_BIN)
+	$(call run_marked,$(APISEAL_BIN))
+clean-api-seal:
+	rm -f $(APISEAL_BIN)
+
+run: run-api-seal
+clean: clean-api-seal
+
 # F33 part 6: the spec §5.6 REVOCATION_GRACE_MS deny-list. mesh_revocation is
 # the PlatformIO tree's module, staged byte-identical (check_mesh_sync.sh);
 # its behavior suite runs here against the STAGED copy, and

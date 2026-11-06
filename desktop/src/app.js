@@ -100,7 +100,7 @@ const state = {
   efuseScan: null,   // { port, chip, scan } from the security-fuse read — per board, never inherited
   monitoring: false,
   devChannel: false, // fetch fw-dev-latest instead of the pinned stable release
-  localFile: null,   // { path, name, size, sha256, esp_magic } picked under Advanced
+  localFile: null,   // { handle, name, size, sha256, esp_magic } picked under Advanced
   update: null,      // pending self-update, if any
   announcedUpdate: null, // last update version logged, so routine re-checks stay quiet
   // "Ask it for its self-check" ran since the last write: whatever manifest
@@ -117,7 +117,11 @@ const state = {
 // ── session memory ───────────────────────────────────────────────────────────
 // A tiny, local, non-secret memory so the app makes sense session after
 // session. It never stores a Wi-Fi or MQTT *password* — only the harmless
-// facts that make jumping back in seamless.
+// facts that make jumping back in seamless. (`prefs.secrets` is the one
+// exception, and a closed one: older builds kept passwords there when the
+// platform had no OS store. It is still READ, so nothing saved then is lost
+// and the adoption pass can move it into a store that appears, but nothing
+// is written to it any more — secretStore.set refuses instead.)
 const PREFS_KEY = "securacv.lab.prefs.v2";
 const prefs = loadPrefs();
 
@@ -272,12 +276,14 @@ const secretStore = {
         return false;
       }
     }
-    // No OS store on this platform — the prefs file IS the advertised
-    // destination here (the consent note names it).
-    prefs.secrets = prefs.secrets || {};
-    prefs.secrets[key] = value;
-    this.track(key, true);
-    return true;
+    // No OS store on this platform. The prefs file used to be the fallback
+    // destination — a WebView localStorage blob any script in the webview
+    // can read, holding Wi-Fi keys, broker passwords, device tokens and the
+    // hub login in the clear. So a secret is stored NOWHERE here: the
+    // consent note says so (profileNoteRefresh), only the non-secret fields
+    // are remembered, and the token card tells the owner to copy the key.
+    logEvent("warn", "No password store on this computer — not saving " + key.split(":")[0] + " credential.");
+    return false;
   },
   async get(key) {
     await this.init();
@@ -331,6 +337,11 @@ const secretStore = {
 // flasher's mintApiToken (flash-core.js): reject bytes >= 248 (248 = 62*4),
 // modulo below that is exactly uniform.
 const TOKEN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+// How the key travels after the flash, said once on the token card. The
+// browser flasher's done card says it in the same words (flash-core.js
+// SEALED_KEY_NOTE; desktop_parity.test.js holds the two equal): the fleet
+// book never sends the key in the clear (fleet.rs, seal.rs).
+const SEALED_KEY_NOTE = "From the Flasher's fleet book this key never travels in the clear: Identify and over-the-air updates seal it to the board's own identity key (an X25519 exchange signed by its Ed25519 key), so another device on your network answering to this board's name, or relaying to the real one, cannot read it. A board whose firmware predates the sealed exchange is asked to update once over USB first.";
 function mintApiToken() {
   for (;;) {
     const bytes = crypto.getRandomValues(new Uint8Array(96));
@@ -733,13 +744,20 @@ let lastBookKey = null;
 function profileNoteRefresh() {
   const note = $("prov-remember-note");
   if (!note) return;
+  // Without an OS store there is no place a password may go (secretStore.set
+  // refuses), so the note promises only what is kept: the non-secret fields.
+  const noStore = secretStore.backend === "none";
   note.textContent = $("prov-remember").checked
-    ? `Passwords go to ${secretStore.where()}; the rest stays in this app.`
+    ? (noStore
+      ? "No password store on this computer, so passwords aren't saved — Wi-Fi name, broker and the rest stay in this app."
+      : `Passwords go to ${secretStore.where()}; the rest stays in this app.`)
     : "Nothing is saved.";
   const hubNote = $("hub-remember-note");
   if (hubNote) {
     hubNote.textContent = $("hub-remember").checked
-      ? `Passwords go to ${secretStore.where()}.`
+      ? (noStore
+        ? "No password store on this computer, so the Wi-Fi password and the login aren't saved — only the names."
+        : `Passwords go to ${secretStore.where()}.`)
       : "";
   }
 }
@@ -783,7 +801,9 @@ async function profileAutofill() {
 // flash itself is unaffected, but "remembered" must never be assumed.
 function profileSaveFromFlash(p) {
   try {
-    if (!$("prov-remember").checked || !p) return;
+    // No OS store: there is nowhere a password may go (secretStore.set
+    // refuses), and the consent note already said so — nothing to attempt.
+    if (!$("prov-remember").checked || !p || secretStore.backend === "none") return;
     const saves = [];
     if (p.wifiSsid) saves.push(secretStore.set(secretStore.key("wifi", p.wifiSsid), p.wifiPass || ""));
     if (p.mqttHost && p.mqttPass) {
@@ -1392,11 +1412,20 @@ const fleetBook = {
   webPorts: {},
   probedAt: {},      // deviceId → last probe attempt (retry sparsely)
   // book key → the device's answer to a fresh challenge, SHOWN and never
-  // gating. See whoami.rs: the proof is relay-able, so it says which key
-  // answered, not who holds the socket. Gating a token on it would trade
-  // an honest "unverified" for false confidence.
+  // gating by itself: a badge can be minutes old, and the proof is
+  // relay-able (whoami.rs), so it says which key answered, not who holds
+  // the socket. What protects the key is not a check on who answers but
+  // how the key travels: fleet_device_call sends it only sealed under a
+  // session agreed with the recorded identity key (seal.rs; the firmware's
+  // api_seal.h), so whoever is at the address gets a ciphertext (deviceCall
+  // below hands it the id + fingerprint the handshake is checked against).
   proof: {},
   proofAt: {},       // book key → last challenge (re-ask sparsely)
+  // book key + address → the person said yes to a changed address this
+  // session (addressTrusted). Session-only: the book keeps pairedAddr, the
+  // address the device first proved itself at, and a different one is asked
+  // about again next launch unless it was confirmed into the book.
+  addrOk: {},
   lastScanAt: 0,
   hubUp: null,       // last hub_probe_hub answer (null = never asked)
   opBusy: {},        // book key → an identify/update is running
@@ -1428,6 +1457,13 @@ const fleetBook = {
       // address follow the DEVICE (it may have updated itself), and last-seen
       // becomes a real timestamp instead of a guess.
       const book = bookAll();
+      // What is folded in is DISPLAY: the address a row shows is whatever
+      // the network last said, because any host on it can announce a
+      // device_id with its own address. A token never goes to that address
+      // in the clear — deviceCall below seals it to the recorded identity
+      // key, so a host that is not the device gets nothing it can read —
+      // and a changed address is still confirmed by hand (addressTrusted)
+      // before anything is sent there at all.
       for (const entry of Object.values(book)) {
         const s = entry.deviceId && this.sightings[entry.deviceId];
         if (!s) continue;
@@ -1488,26 +1524,30 @@ const fleetBook = {
       const base = this.baseFor(e);
       if (!base) continue;
       if (this.proofAt[e.key] && now - this.proofAt[e.key] < 10 * 60 * 1000) continue;
-      this.proofAt[e.key] = now;
-      try {
-        const r = await invoke("device_whoami", {
-          base,
-          deviceId: e.deviceId,
-          expectedFp: e.pubkeyFp || "",
-        });
-        if (!r || !r.proof) continue;
-        this.proof[e.key] = r;
-        // Trust on first sight: record the fingerprint the first time a
-        // device proves itself, so a LATER change shows up as wrong-key.
-        if (r.proof === "answered" && !e.pubkeyFp && r.seenFp) {
-          bookUpsert({ mac: e.mac, deviceId: e.deviceId, pubkeyFp: r.seenFp });
-        }
-        if (r.proof === "wrong-key") {
-          logEvent("warn", `${e.name || e.deviceId}: ${r.detail}`);
-        }
-      } catch (_) { /* unreachable or refused — absence of proof, not disproof */ }
+      await this.probeIdentityFor(e, base);
     }
     this.renderSoon();
+  },
+  async probeIdentityFor(e, base) {
+    this.proofAt[e.key] = Date.now();
+    try {
+      const r = await invoke("device_whoami", {
+        base,
+        deviceId: e.deviceId,
+        expectedFp: e.pubkeyFp || "",
+      });
+      if (!r || !r.proof) return;
+      this.proof[e.key] = r;
+      // Trust on first sight: record the fingerprint the first time a
+      // device proves itself, so a LATER change shows up as wrong-key —
+      // and so the token gate (deviceCall) has a key to check against.
+      if (r.proof === "answered" && !e.pubkeyFp && r.seenFp) {
+        bookUpsert({ mac: e.mac, deviceId: e.deviceId, pubkeyFp: r.seenFp });
+      }
+      if (r.proof === "wrong-key") {
+        logEvent("warn", `${e.name || e.deviceId}: ${r.detail}`);
+      }
+    } catch (_) { /* unreachable or refused — absence of proof, not disproof */ }
   },
   schedule() {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
@@ -1566,6 +1606,58 @@ const fleetBook = {
   tokenKey(entry) {
     return secretStore.key("canary", entry.mac || entry.deviceId, "token");
   },
+  // The address (ip or host) a base points at, for the paired-address record.
+  addrOf(base) {
+    return String(base || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  },
+  // Is `base` an address this device may be trusted at? The first address a
+  // device proves itself at is recorded as its paired address (pairedAddr,
+  // in the book). A later announcement from a DIFFERENT address is the
+  // attack shape — a host on the LAN announcing a victim's device_id with
+  // its own address — and also what a DHCP lease change looks like, so a
+  // human decides: a native confirm names both addresses, and only a yes
+  // moves the pairing. The sealed handshake still runs after this: a yes
+  // here never hands the key to whatever answers there.
+  async addressTrusted(entry, base) {
+    const addr = this.addrOf(base);
+    if (!entry.pairedAddr || entry.pairedAddr === addr) return true;
+    if (this.addrOk[entry.key + "|" + addr]) return true;
+    const who = entry.name || entry.deviceId;
+    const text = `${who} used to answer at ${entry.pairedAddr} and now announces itself at ${addr}.\n\n` +
+      "A new address can be your router handing out another one — or a different device on " +
+      "your network using this Canary's name. Trust the new address? The key still only goes sealed to this Canary's own identity.";
+    let ok = false;
+    try {
+      ok = await window.__TAURI__.dialog.confirm(text, { title: "This Canary moved", kind: "warning" });
+    } catch (_) {
+      ok = window.confirm(text);
+    }
+    if (ok) {
+      this.addrOk[entry.key + "|" + addr] = true;
+      entry.pairedAddr = addr;
+      savePrefs();
+    }
+    return ok;
+  },
+  // One authenticated call to a device, with everything the Rust side needs
+  // to seal: the device id and the fingerprint the book recorded, which the
+  // handshake's signature is checked against before a session key exists
+  // (once per device + address, and again when the device says the session
+  // is gone). The key then rides only sealed under that session, never as a
+  // plain bearer, and there is no fallback: firmware without the handshake
+  // is told to update once over USB. No fingerprint yet means no call: ask
+  // for the badge first (probeIdentityFor), which records it on first
+  // sight. The first address that passes becomes the pairing.
+  async deviceCall(entry, base, token, action) {
+    if (!entry.pubkeyFp) await this.probeIdentityFor(entry, base);
+    const r = await invoke("fleet_device_call", {
+      base, token, action,
+      deviceId: entry.deviceId,
+      expectedFp: entry.pubkeyFp || "",
+    });
+    if (!entry.pairedAddr) { entry.pairedAddr = this.addrOf(base); savePrefs(); }
+    return r;
+  },
 
   async identify(entry) {
     const key = entry.key;
@@ -1576,12 +1668,13 @@ const fleetBook = {
       const token = await secretStore.get(this.tokenKey(entry));
       const base = this.baseFor(entry);
       if (!token || !base) { this.note(key, token ? "It isn't answering right now." : this.noTokenNote()); return; }
-      const r = await invoke("fleet_device_call", { base, token, action: "identify" });
+      if (!(await this.addressTrusted(entry, base))) { this.note(key, "Not sent — the new address wasn't trusted."); return; }
+      const r = await this.deviceCall(entry, base, token, "identify");
       if (r.httpStatus === 401) this.note(key, this.staleTokenNote());
       else if (r.httpStatus === 404) this.note(key, "This firmware doesn't have an identify signal yet.");
-      else this.note(key, "✓ Watch for the blink.");
+      else this.note(key, "✓ Watch for the blink. (The key went sealed to its identity.)");
     } catch (e) {
-      this.note(key, "Couldn't reach it: " + e);
+      this.note(key, this.callNote(e));
     } finally {
       this.opBusy[key] = false;
       this.renderSoon();
@@ -1604,14 +1697,19 @@ const fleetBook = {
       const token = await secretStore.get(this.tokenKey(entry));
       const base = this.baseFor(entry);
       if (!token || !base) { this.note(key, token ? "It isn't answering right now." : this.noTokenNote()); return; }
+      if (!(await this.addressTrusted(entry, base))) { this.note(key, "Not sent — the new address wasn't trusted."); return; }
       this.note(key, "Starting the update — the board downloads and checks it itself…");
       let started = false;
       let lostSocket = false;
       for (let attempt = 0; attempt < 4 && !started; attempt++) {
         if (attempt) await new Promise((r) => setTimeout(r, 5000));
         let inst = null;
-        try { inst = await invoke("fleet_device_call", { base, token, action: "ota-install" }); }
-        catch (_) {
+        try { inst = await this.deviceCall(entry, base, token, "ota-install"); }
+        catch (e) {
+          // The Rust gate's refusals (an unproven or wrong key at this
+          // address, no recorded fingerprint) are answers, not a lost
+          // socket: say them and stop.
+          if (/not sending its credential|fingerprint/.test(String(e))) { this.note(key, String(e)); return; }
           // The install call can outlive its own socket (the board can get
           // to rebooting) — treat transport loss as "watch the status".
           lostSocket = true;
@@ -1632,7 +1730,7 @@ const fleetBook = {
       while (Date.now() - t0 < 5 * 60 * 1000) {
         await new Promise((r) => setTimeout(r, 3000));
         let st = null;
-        try { st = await invoke("fleet_device_call", { base, token, action: "ota-status" }); }
+        try { st = await this.deviceCall(entry, base, token, "ota-status"); }
         catch (_) { sawActivity = true; this.note(key, "Rebooting into the new build…"); continue; }
         const b = (st && st.body) || {};
         const stateName = String(b.state || "").toUpperCase();
@@ -1666,13 +1764,20 @@ const fleetBook = {
       }
       this.note(key, "Still working — the board finishes on its own; check back in a minute.");
     } catch (e) {
-      this.note(key, "Couldn't start the update: " + e);
+      this.note(key, this.callNote(e));
     } finally {
       this.opBusy[key] = false;
       this.renderSoon();
     }
   },
 
+  // A refusal from fleet_device_call is already a sentence that says the key
+  // stayed here (seal.rs Refusal::detail, the handshake's own words); a
+  // transport failure or an internal one is not, and gets the prefix.
+  callNote(e) {
+    const s = String(e);
+    return /^[A-Z]/.test(s) ? s : "Couldn't reach it: " + s;
+  },
   noTokenNote() {
     return "No stored key for this board. Reflash it once with this app and one is minted and kept.";
   },
@@ -1733,15 +1838,17 @@ const fleetBook = {
           : e.fw && train && !fwBehind(e.fw, train)
             ? `<span class="fb-badge ok">up to date</span>`
             : "";
-      // The identity proof, SHOWN and never gating. A relay can forward a
-      // genuine device's answer, so this says who answered, not who is
-      // holding the socket — see whoami.rs and the fleet-book doc. The one
-      // loud case is wrong-key: a different identity answering for this
-      // device id is worth interrupting for.
+      // The identity proof, SHOWN and never gating by itself: the badge may
+      // be minutes old, and a relay can forward a genuine device's answer,
+      // so it says who answered, not who is holding the socket — see
+      // whoami.rs and the fleet-book doc. (The key itself only ever goes
+      // sealed to this identity, in fleet_device_call.) The one loud case
+      // is wrong-key: a different identity answering for this device id is
+      // worth interrupting for.
       const pr = this.proof[e.key];
       const proofBadge = !pr ? ""
         : pr.proof === "answered"
-          ? `<span class="fb-badge proof" title="Signed a fresh challenge with the key recorded at flash time. A relay could forward a real device's answer, so this doesn't prove the address.">identity answered</span>`
+          ? `<span class="fb-badge proof" title="Signed a fresh challenge with the key recorded at flash time. A relay could forward a real device's answer, so this doesn't prove the address — which is why Identify and Update send the key only sealed to this identity, and a changed address is confirmed by hand.">identity answered</span>`
           : pr.proof === "wrong-key"
             ? `<span class="fb-badge bad" title="${esc(pr.detail || "")}">different key answered</span>`
             : pr.proof === "bad-signature"
@@ -3969,8 +4076,13 @@ function renderTokenOnce(apiToken) {
   if (!apiToken) { box.classList.add("hidden"); box.innerHTML = ""; return; }
   box.innerHTML =
     `<b>This board's local API key — shown once.</b> ` +
-    `<span class="muted">Kept in ${esc(secretStore.where())} for the fleet book. ` +
-    `Copy it if you want it elsewhere; a reflash or a 10-second BOOT reset replaces it.</span>` +
+    (secretStore.backend === "none"
+      ? `<span class="muted">Not kept — this computer has no password store, so copy it now; ` +
+        `the fleet book can't identify or update this board without it. ` +
+        `A reflash or a 10-second BOOT reset replaces it.</span>`
+      : `<span class="muted">Kept in ${esc(secretStore.where())} for the fleet book. ` +
+        `Copy it if you want it elsewhere; a reflash or a 10-second BOOT reset replaces it.</span>`) +
+    ` <span class="muted">${esc(SEALED_KEY_NOTE)}</span>` +
     `<span class="token-row"><code>${esc(apiToken)}</code>` +
     `<button type="button" class="btn btn-ghost btn-small" id="token-copy">Copy</button></span>`;
   box.classList.remove("hidden");
@@ -4686,20 +4798,19 @@ async function onRescueRestore() {
   const port = state.port, chip = state.chip, flashBytes = state.flashBytes;
   state.busy = true;
   rescueButtons(false);
-  let path = null;
+  // The OS open panel is raised from Rust (pick_local_file), which answers
+  // an opaque handle for the chosen file; write_local_image takes that
+  // handle, never a path, so nothing in the webview can name a file.
+  let picked = null;
   try {
-    path = await window.__TAURI__.dialog.open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: "Firmware image or backup", extensions: ["bin"] }],
-    });
+    picked = await invoke("pick_local_file", { kind: "restore" });
   } catch (e) {
     setStatus("rescue-result", String(e), "err");
     cancelRescue();
     return;
   }
-  if (!path) { cancelRescue(); return; }
-  const name = String(path).split(/[\\/]/).pop();
+  if (!picked) { cancelRescue(); return; }
+  const name = picked.name;
   let ok = false;
   try {
     ok = await window.__TAURI__.dialog.confirm(
@@ -4714,7 +4825,7 @@ async function onRescueRestore() {
     noteBoardWritten(); // the image going on is not the one the passport read
     await invoke("write_local_image", {
       port,
-      path,
+      handle: picked.handle,
       flashSize: flashBytes || null, // optional fit-check; the shape guard runs regardless
       baud: flashBaud(),
     });
@@ -4948,25 +5059,24 @@ async function onSaveHealthReport(r) {
 }
 
 async function onPickLocalFile() {
-  let path = null;
+  // The OS open panel is raised from Rust (pick_local_file) and answers an
+  // opaque handle; inspect_local_file and flash_local_file take the handle,
+  // never a path, so nothing in the webview can name a file of its own.
+  let picked = null;
   try {
-    path = await window.__TAURI__.dialog.open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: "Factory firmware image", extensions: ["bin"] }],
-    });
+    picked = await invoke("pick_local_file", { kind: "factory" });
   } catch (e) {
     setStatus("local-result", String(e), "err");
     return;
   }
-  if (!path) return;
+  if (!picked) return;
   setStatus("local-result", "");
   $("local-name").textContent = "reading…";
   try {
     // Size + SHA-256 are computed and SHOWN before anything is written, so
     // the confirm is over a named, fingerprinted file — never a blind path.
-    const info = await invoke("inspect_local_file", { path });
-    state.localFile = { path, name: String(path).split(/[\\/]/).pop(), ...info };
+    const info = await invoke("inspect_local_file", { handle: picked.handle });
+    state.localFile = { handle: picked.handle, name: picked.name, ...info };
     $("local-name").textContent = state.localFile.name;
     $("local-size").textContent = state.localFile.size.toLocaleString() + " B";
     $("local-sha").textContent = state.localFile.sha256;
@@ -5048,7 +5158,7 @@ async function onFlashLocalFile() {
     const receipt = await invoke("flash_local_file", {
       port: state.port,
       baud: state.catalog.flash_baud || 921600,
-      path: file.path,
+      handle: file.handle,
       expectedSize: file.size,
       expectedSha256: file.sha256,
       detectedChip: state.chip,
@@ -7553,6 +7663,9 @@ function hubSaveSettings() {
         display: $("hub-provision-display").checked,
       })
     );
+    // The passwords, only where an OS store exists to hold them: without
+    // one secretStore.set refuses, and the note beside the box says so.
+    if (secretStore.backend === "none") return;
     const ssid = $("hub-ssid").value.trim();
     if (ssid && $("hub-pass").value) {
       secretStore.set(secretStore.key("wifi", ssid), $("hub-pass").value);
@@ -7698,6 +7811,8 @@ function hubStartFirstBoot() {
     }
     if (up) {
       hubStopFirstBoot(true);
+      // The first address the hub answered at, for the change warning.
+      try { await hubResolveAndNote(host, null); } catch (_) {}
       $("hub-fb-dot").className = "dot connected";
       const openBtn = $("hub-fb-open");
       openBtn.classList.remove("hidden");
@@ -7764,12 +7879,54 @@ function hubPreparingLine() {
   );
 }
 
+// The address a hub name answered at the first time it was reached, kept per
+// name so a later answer from somewhere else can be pointed out. Home
+// Assistant mints its own identity on the hub's first boot (nothing this app
+// could stamp at flash time), so the address is the only continuity there
+// is — recorded at the first successful probe, shown and confirmed before
+// the login is ever sent (hub_onboard raises the native dialog).
+const HUB_FIRST_IP_KEY = "securacv.hub.first-ip";
+function hubFirstIps() {
+  try { return JSON.parse(localStorage.getItem(HUB_FIRST_IP_KEY)) || {}; } catch (_) { return {}; }
+}
+function hubRememberIp(host, ip) {
+  try {
+    const all = hubFirstIps();
+    if (!ip || all[host]) return;
+    all[host] = ip;
+    localStorage.setItem(HUB_FIRST_IP_KEY, JSON.stringify(all));
+  } catch (_) { /* memory is a nicety */ }
+}
+// Resolve the hub through the same gate every hub call applies and say where
+// it is; the first success per name is recorded for the change warning.
+async function hubResolveAndNote(host, statusEl) {
+  const ip = await invoke("hub_resolve_hub", { host });
+  const first = hubFirstIps()[host];
+  if (!first) hubRememberIp(host, ip);
+  if (statusEl && first && first !== ip) {
+    statusEl.textContent = `${host} answers at ${ip} now — it was ${first} before. You'll be asked before the login is sent.`;
+  }
+  return { ip, first: first || null };
+}
+
 async function hubRunOnboarding(statusEl, hostOverride) {
   const acct = hub.pendingAccount;
   if (!acct || !acct.password) return null;
   // Unlike the ssh path, onboarding wants the web port — the backend adds
   // :8123 itself when a cleaned host doesn't carry one.
   const host = hubCleanHost(hostOverride) || HUB_HOST;
+  // Where the name points right now, shown before anything is sent, and
+  // handed to the backend as the address the person saw: it re-resolves,
+  // refuses a different answer, and asks in a native dialog (naming the
+  // previous address when it changed) before the login crosses the LAN.
+  let resolved = null;
+  try { resolved = await hubResolveAndNote(host, statusEl); }
+  catch (e) {
+    hub.onboardNote = "Couldn't work out where " + host + " is on your network (" + e + "). " +
+      "Open the hub; its wizard asks for the same details.";
+    statusEl.textContent = hub.onboardNote;
+    return null;
+  }
   // The watch only hands over once /api/onboarding answers, so these retries
   // cover Core's own hiccups right after it comes up (a restart while it
   // finishes installing itself), not the landing page — hence a longer,
@@ -7782,6 +7939,8 @@ async function hubRunOnboarding(statusEl, hostOverride) {
         name: acct.name,
         username: acct.username,
         password: acct.password,
+        expectedIp: resolved.ip,
+        previousIp: resolved.first,
       });
       // Any report is a definitive answer from the hub — the password's job
       // is done either way, so drop it from memory now. The username stays:

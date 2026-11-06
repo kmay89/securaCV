@@ -26,15 +26,19 @@
 #include <stdio.h>
 
 // ============================================================================
-// SECURITY: Compile-time guard against cert-skip in release builds
+// SECURITY: Compile-time guard against the hostname-check skip in release builds
 // ============================================================================
-// SECURACV_OTA_SKIP_CERT_VERIFY disables TLS certificate verification,
-// enabling MITM attacks on OTA downloads. It MUST only be used in
-// development builds with self-signed certs and mock_ota_server.py.
-#if defined(SECURACV_OTA_SKIP_CERT_VERIFY) && \
+// SECURACV_OTA_SKIP_CN_CHECK skips the TLS certificate's common-name
+// (hostname) check only (esp_http_client's skip_cert_common_name_check);
+// the chain is still verified against the bundle or the pinned
+// server_cert_pem. That lets a dev build fetch from mock_ota_server.py
+// under a certificate issued for another name, and lets a release be served
+// by any host holding a certificate the configured trust accepts, which is
+// why it MUST only be set in development builds.
+#if defined(SECURACV_OTA_SKIP_CN_CHECK) && \
     !(defined(SECURACV_DEBUG_BUILD) || defined(SECURACV_BUILD_DEV))
-  #error "SECURACV_OTA_SKIP_CERT_VERIFY is set in a non-dev build. " \
-         "This disables TLS certificate verification and MUST NOT be used in " \
+  #error "SECURACV_OTA_SKIP_CN_CHECK is set in a non-dev build. " \
+         "It skips the TLS hostname check and MUST NOT be used in " \
          "release/production firmware."
 #endif
 
@@ -346,7 +350,9 @@ bool securacv_ota_board_ok(const securacv_ota_manifest_t *m,
                            const char *build_board, const char *build_chip)
 {
     if (m == NULL) return false;
-    if (m->manifest_version != 2) return true;
+    // The fields decide, not manifest_version: a v1 manifest with a board
+    // never passes securacv_ota_manifest_from_fields(), and one built any
+    // other way is held to what it names rather than waved through.
     if (m->board[0] != '\0' && build_board != NULL && build_board[0] != '\0' &&
         strcmp(m->board, build_board) != 0) {
         return false;
@@ -356,6 +362,14 @@ bool securacv_ota_board_ok(const securacv_ota_manifest_t *m,
         return false;
     }
     return true;
+}
+
+bool securacv_ota_manifest_version_ok(uint8_t manifest_version, uint8_t floor)
+{
+    // 0 is "absent" in a manifest (the parsers read it as 1) and "none" as a
+    // floor; neither side of the compare is a wildcard past that.
+    const uint8_t have = manifest_version == 0 ? 1 : manifest_version;
+    return floor == 0 || have >= floor;
 }
 
 // ── Manifest fields → struct: whole or refused (host-tested) ─────────────────
@@ -521,6 +535,7 @@ const char *securacv_ota_error_str(securacv_ota_error_t error)
         case SECURACV_OTA_ERR_MANIFEST_SIG:      return "Manifest signature missing or invalid";
         case SECURACV_OTA_ERR_MIN_VERSION:       return "Running version below the manifest's min_version";
         case SECURACV_OTA_ERR_BOARD_MISMATCH:    return "Manifest is for another board or chip";
+        case SECURACV_OTA_ERR_MANIFEST_DOWNGRADE: return "Manifest format older than this device's floor";
         default:                                 return "Unknown error";
     }
 }
@@ -589,6 +604,8 @@ const char *securacv_ota_friendly_error(securacv_ota_error_t error)
             return "This update needs an earlier update installed first. Install the previous release, then try again.";
         case SECURACV_OTA_ERR_BOARD_MISMATCH:
             return "That update is for a different kind of Canary, so it was not installed.";
+        case SECURACV_OTA_ERR_MANIFEST_DOWNGRADE:
+            return "That update does not say which kind of Canary it is for, and this Canary now requires that, so it was not installed.";
         default:
             return "Something went wrong with the update. Your Canary is still on its current software.";
     }
@@ -806,6 +823,7 @@ static securacv_ota_dwell_t s_dwell = {false, false, 0};
 
 #define NVS_NAMESPACE        "securacv_ota"
 #define NVS_KEY_MIN_VERSION  "min_ver"
+#define NVS_KEY_MANIFEST_FLOOR "man_floor"   /* manifest_version floor: 2 once a v2 manifest verified */
 #define NVS_KEY_MANIFEST_URL "manifest_url"
 #define NVS_KEY_AUTO_UPDATE  "auto_upd"
 #define NVS_KEY_HTTP_LOCAL   "http_local"
@@ -1034,6 +1052,30 @@ esp_err_t securacv_ota_get_min_version(char *buf, size_t buf_len)
     esp_err_t err = nvs_load_min_version(buf, buf_len);
     if (err != ESP_OK) buf[0] = '\0';
     return err;
+}
+
+uint8_t securacv_ota_get_manifest_version_floor(void)
+{
+    return nvs_load_u8(NVS_KEY_MANIFEST_FLOOR, 0);
+}
+
+/**
+ * @brief Raise the manifest-version floor to @p manifest_version (if higher).
+ *
+ * The second monotonic floor, beside the version floor: once a signed
+ * manifest_version 2 manifest (board and chip under the release key) has
+ * verified here, a v1 manifest — signed too, but binding no hardware — is
+ * refused for good. Raised the moment the manifest signature verifies, not
+ * on confirm: it blocks a format, never a version, so a rollback of the
+ * image cannot strand the device below it.
+ */
+static void ota_raise_manifest_floor_to(uint8_t manifest_version)
+{
+    if (manifest_version < 2) return;
+    if (nvs_load_u8(NVS_KEY_MANIFEST_FLOOR, 0) >= manifest_version) return;
+    if (nvs_store_u8(NVS_KEY_MANIFEST_FLOOR, manifest_version) == ESP_OK) {
+        ESP_LOGI(TAG, "NVS manifest_version floor raised to %u", (unsigned)manifest_version);
+    }
 }
 
 /** True while this boot's image is still awaiting self-test confirmation. */
@@ -1796,7 +1838,7 @@ static esp_err_t ota_fetch_manifest_once(const char *url, bool *not_modified)
         http_config.crt_bundle_attach = scv_crt_bundle_attach;
     }
 
-#ifdef SECURACV_OTA_SKIP_CERT_VERIFY
+#ifdef SECURACV_OTA_SKIP_CN_CHECK
     http_config.skip_cert_common_name_check = true;
 #endif
 
@@ -1961,6 +2003,21 @@ static esp_err_t ota_parse_manifest(const char *json_data)
         return ESP_FAIL;
     }
 
+    // The manifest-version floor: once a v2 manifest (board and chip signed)
+    // has verified here, a v1 manifest binds no hardware and is refused —
+    // a validly signed older format replayed from a mirror would otherwise
+    // take the hardware binding back.
+    {
+        const uint8_t floor = securacv_ota_get_manifest_version_floor();
+        if (!securacv_ota_manifest_version_ok(s_ctx.manifest.manifest_version, floor)) {
+            ESP_LOGE(TAG, "SECURITY: manifest_version %u is below this device's floor %u - refused",
+                     (unsigned)s_ctx.manifest.manifest_version, (unsigned)floor);
+            memset(&s_ctx.manifest, 0, sizeof(s_ctx.manifest));
+            ota_set_error(SECURACV_OTA_ERR_MANIFEST_DOWNGRADE);
+            return ESP_FAIL;
+        }
+    }
+
     // Manifest signature: nothing in this manifest — not the version shown
     // in Home Assistant, not the release notes, not the download URL — is
     // trusted until the metadata itself verifies against the release key.
@@ -1979,6 +2036,8 @@ static esp_err_t ota_parse_manifest(const char *json_data)
             ota_set_error(SECURACV_OTA_ERR_MANIFEST_SIG);
             return ESP_FAIL;
         }
+        // A signed v2 manifest verified: from here on this device takes no v1.
+        ota_raise_manifest_floor_to(s_ctx.manifest.manifest_version);
     }
 
     s_ctx.manifest_valid = true;
@@ -2033,7 +2092,7 @@ static esp_err_t ota_download_and_flash(void)
         http_config.crt_bundle_attach = scv_crt_bundle_attach;
     }
 
-#ifdef SECURACV_OTA_SKIP_CERT_VERIFY
+#ifdef SECURACV_OTA_SKIP_CN_CHECK
     http_config.skip_cert_common_name_check = true;
 #endif
 

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
 import { upsertContact, requestConsent, confirmConsent, unsubscribe, segment, segmentCount, audienceStats, markBounced, canMarket, setContactTags, SEGMENTS } from '../src/modules/contacts.mjs';
 import { renderHtml, buildMessage, sendOutbox } from '../src/modules/mail.mjs';
+import { enqueue } from '../src/modules/mail.mjs';
 import { createCampaign, updateCampaign, scheduleCampaign, sendDueCampaigns, sendTest, previewHtml, campaignReport, queueCampaign, duplicateCampaign } from '../src/modules/campaigns.mjs';
 import { seedAutomations, runAutomations, listAutomations, automationReport, upsertAutomation, setAutomationEnabled } from '../src/modules/automations.mjs';
 import { recordOrder, transition } from '../src/modules/orders.mjs';
@@ -100,13 +101,22 @@ test('automations: enrolled once per thing, sent after the delay, skipped withou
 
 test('a bounce names the address and suppresses it; the newsletter form double-opts-in; a sealed off-site copy round-trips through the drill', async () => {
   const db = testDb(); const cfg = testCfg();
-  optIn(db, 'gone@example.test', 'Gone');
-  const r = ingestEmail(db, { from: 'Mail Delivery Subsystem <mailer-daemon@relay.example.test>', subject: 'Undeliverable: October from the bench', text: 'Your message to gone@example.test could not be delivered.\n550 5.1.1 User unknown', messageId: '<dsn1@relay.example.test>' }, { cfg });
-  assert.equal(r.ignored, 'bounce'); assert.deepEqual(r.bounced, ['gone@example.test']); assert.ok(db.get('SELECT bounced_at FROM contacts WHERE email = \'gone@example.test\'').bounced_at); assert.equal(db.get('SELECT COUNT(*) AS n FROM tickets').n, 0, 'a bounce is not a ticket');
+  optIn(db, 'gone@example.test', 'Gone'); optIn(db, 'fine@example.test', 'Fine');
+  // a DSN counts only when it names a mail we sent, and suppresses only the address that mail went to
+  const sent = enqueue(db, { to: 'gone@example.test', subject: 'October from the bench', text: 'x', kind: 'campaign', ref: 'campaign:oct' }); db.run('UPDATE mail_outbox SET message_id = ?, status = \'sent\' WHERE id = ?', '<oct-1@errer.test>', sent.id);
+  const r0 = ingestEmail(db, { from: 'Mail Delivery Subsystem <mailer-daemon@relay.example.test>', subject: 'Undeliverable: October from the bench', text: 'Your message to gone@example.test and fine@example.test could not be delivered.\n550 5.1.1 User unknown', messageId: '<dsn0@relay.example.test>' }, { cfg });
+  assert.equal(r0.ignored, 'bounce'); assert.deepEqual(r0.bounced, [], 'a bounce that names no mail of ours suppresses nobody'); assert.equal(db.get('SELECT bounced_at FROM contacts WHERE email = \'gone@example.test\'').bounced_at, null);
+  const r = ingestEmail(db, { from: 'Mail Delivery Subsystem <mailer-daemon@relay.example.test>', subject: 'Undeliverable: October from the bench', text: 'Your message to gone@example.test and fine@example.test could not be delivered.\n550 5.1.1 User unknown', messageId: '<dsn1@relay.example.test>', inReplyTo: '<oct-1@errer.test>' }, { cfg });
+  assert.equal(r.ignored, 'bounce'); assert.deepEqual(r.bounced, ['gone@example.test']); assert.equal(db.get('SELECT bounced_at FROM contacts WHERE email = \'fine@example.test\'').bounced_at, null, 'an address merely written in the body is not bounced');
+  const r2 = ingestEmail(db, { from: 'postmaster@relay.example.test', subject: 'Delivery Status Notification (Failure)', text: 'The original message id was <oct-1@errer.test>', messageId: '<dsn2@relay.example.test>' }, { cfg });
+  assert.deepEqual(r2.bounced, ['gone@example.test'], 'our id in the body counts too'); assert.ok(!JSON.parse(db.get("SELECT detail FROM audit_log WHERE action = 'contact.bounce' ORDER BY id DESC LIMIT 1").detail).email, 'the audit row names the contact id, never the address'); assert.ok(db.get('SELECT bounced_at FROM contacts WHERE email = \'gone@example.test\'').bounced_at); assert.equal(db.get('SELECT COUNT(*) AS n FROM tickets').n, 0, 'a bounce is not a ticket');
   const totpSecret = setupOperator(db, 'audience-test-pw-1'); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
   try {
     const f = await fetch(base + '/forms/newsletter', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'new@example.test', name: 'New' }) });
-    assert.equal((await f.json()).newsletter, 'confirmation mail sent'); assert.ok(db.get('SELECT consent_token FROM contacts WHERE email = \'new@example.test\'').consent_token); assert.equal(db.get('SELECT consent_marketing FROM contacts WHERE email = \'new@example.test\'').consent_marketing, 0);
+    assert.equal((await f.json()).newsletter, 'confirmation mail sent'); const tok1 = db.get('SELECT consent_token FROM contacts WHERE email = \'new@example.test\'').consent_token; assert.ok(tok1); assert.equal(db.get('SELECT consent_marketing FROM contacts WHERE email = \'new@example.test\'').consent_marketing, 0);
+    // the form again inside the hour: no second confirmation mail, and the token in the first one still stands
+    const f2 = await fetch(base + '/forms/newsletter', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'new@example.test' }) }); assert.equal(f2.status, 200);
+    assert.equal(db.get("SELECT COUNT(*) AS n FROM mail_outbox WHERE to_addr = 'new@example.test' AND ref LIKE 'consent:%'").n, 1, 'one confirmation per address per hour'); assert.equal(db.get('SELECT consent_token FROM contacts WHERE email = \'new@example.test\'').consent_token, tok1, 'the token is not rotated');
     // security: the door
     const login = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ password: 'audience-test-pw-1', code: totp(totpSecret) }), redirect: 'manual' });
     const cookie = login.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions').csrf;

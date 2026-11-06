@@ -116,9 +116,11 @@ pub struct ApiAccessSettings {
     /// issued code lives (600 s unless `issue-pairing-code --ttl-secs`
     /// says otherwise for one code).
     pub pairing_ttl_secs: u64,
-    /// `api.fleet_rollcall` / `WITNESS_API_FLEET_ROLLCALL`: `full` (the
-    /// kernel plus every Canary the bridge heard) or `self` (the kernel's
-    /// own row only — what a sidecar with a published port serves).
+    /// `api.fleet_rollcall` / `WITNESS_API_FLEET_ROLLCALL`: `self` (the
+    /// default: the kernel's own row only — what a sidecar with a published
+    /// port serves) or `full` (the kernel plus every Canary the bridge
+    /// heard, wellbeing words included; the Witness Wall's setting, for a
+    /// LAN you trust, since the route takes no token).
     pub fleet_rollcall: crate::api::FleetRollcall,
 }
 
@@ -128,7 +130,7 @@ impl Default for ApiAccessSettings {
             paired_token_path: None,
             pairing_code_path: None,
             pairing_ttl_secs: crate::api::pairing::DEFAULT_PAIRING_TTL_SECS,
-            fleet_rollcall: crate::api::FleetRollcall::Full,
+            fleet_rollcall: crate::api::FleetRollcall::SelfOnly,
         }
     }
 }
@@ -1703,7 +1705,7 @@ mod tests {
         // Unnamed, both sit beside the capability token; no token path, no
         // default, no pairing.
         let mut access = ApiAccessSettings::default();
-        assert_eq!(access.fleet_rollcall, crate::api::FleetRollcall::Full);
+        assert_eq!(access.fleet_rollcall, crate::api::FleetRollcall::SelfOnly);
         assert_eq!(
             access.pairing_ttl_secs,
             crate::api::pairing::DEFAULT_PAIRING_TTL_SECS

@@ -11,8 +11,9 @@ description: >
 # "6.1.19"` and its `extras` pins in its own `with:` block, so the freeze the
 # 2026-09-04 RELEASE_LESSONS entry prescribes is still read in the workflow
 # that holds the signing key, and a bump there is still a deliberate,
-# reviewable maintainer action. This action only decides HOW the install
-# happens, never WHAT version.
+# reviewable maintainer action. This action decides HOW the install happens;
+# the one version it names is the default a caller gets when it names none,
+# the same pin the release jobs pass — never "whatever PyPI has today".
 
 inputs:
   python-version:
@@ -27,13 +28,13 @@ inputs:
     default: "3.11"
   platformio-version:
     description: >
-      Exact PlatformIO version, e.g. "6.1.19". Empty means
-      `pip install --upgrade platformio` — the newest release on PyPI, which
-      is what the CI build jobs have always done. Release workflows MUST pin:
-      those jobs hold the OTA signing key and a PyPI install runs package
-      code on the runner (.github/RELEASE_LESSONS.md, 2026-09-04).
+      Exact PlatformIO version, e.g. "6.1.19". Always a pin: a PyPI install
+      runs package code on the runner, so no job — a build job any more than
+      a release job holding the OTA signing key (.github/RELEASE_LESSONS.md,
+      2026-09-04) — takes whatever release PyPI has today. The default is
+      the version the release workflows pass; an empty value is refused.
     required: false
-    default: ""
+    default: "6.1.19"
   extras:
     description: >
       Extra pip requirement specs, whitespace- or newline-separated and
@@ -94,9 +95,9 @@ runs:
         # Split the extras on whitespace/newlines into one argv — no eval, no
         # quoting rules for callers to get wrong.
         read -r -a extra_specs <<< "${EXTRAS//$'\n'/ }"
-        if [ -n "$PIO_VERSION" ]; then
-          pip install "platformio==${PIO_VERSION}" "${extra_specs[@]}"
-        else
-          pip install --upgrade platformio "${extra_specs[@]}"
+        if [ -z "$PIO_VERSION" ]; then
+          echo "::error title=setup-platformio::platformio-version is empty; pass an exact version (the default is a pin)"
+          exit 1
         fi
+        pip install "platformio==${PIO_VERSION}" "${extra_specs[@]}"
         pio --version

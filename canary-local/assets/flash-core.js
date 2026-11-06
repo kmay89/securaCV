@@ -304,12 +304,18 @@ export function isRealPubkey(pubkeyHex) {
 //   "verify"            — real key + signature present → must verify (refuse on fail)
 //   "require-signature" — real key, official manifest, NO signature → refuse
 //   "checksum-only"     — no key yet (pre-ceremony), or a self-hosted manifest
-//                         the user explicitly pointed at (?manifest=)
+//                         the user explicitly pointed at (?manifest=) AND then
+//                         explicitly accepted as unsigned (unsignedAccepted).
+//                         A ?manifest= link alone never lowers the bar: a link
+//                         is something anyone can hand someone, and a loopback
+//                         manifest can be served by whatever else runs on the
+//                         machine — so the downgrade needs the person's own
+//                         click on the confirm card, naming the origin.
 // Local files (Advanced) never reach here — they're fingerprinted, not verified.
-export function imageVerificationPolicy({ keyReal, hasSignature, selfHosted }) {
+export function imageVerificationPolicy({ keyReal, hasSignature, selfHosted, unsignedAccepted = false }) {
   if (!keyReal) return "checksum-only";
   if (hasSignature) return "verify";
-  return selfHosted ? "checksum-only" : "require-signature";
+  return selfHosted && unsignedAccepted ? "checksum-only" : "require-signature";
 }
 
 // Verify a firmware image's Ed25519 release signature against the pinned public
@@ -581,6 +587,12 @@ export function parseNvs(bytes, allowBlobKeys = []) {
 // The firmware's own NVS map (canary_wap.ino): namespace "securacv" holds the
 // witness-chain fast-boot cache. Chain head is the only blob we ever read out.
 export const WITNESS_NVS_NAMESPACE = "securacv";
+
+// How the minted API key travels after the flash, said once on the done
+// card's token panel. The desktop Flasher's token card says it in the same
+// words (app.js SEALED_KEY_NOTE; desktop_parity.test.js holds the two
+// equal): its fleet book never sends the key in the clear.
+export const SEALED_KEY_NOTE = "From the Flasher's fleet book this key never travels in the clear: Identify and over-the-air updates seal it to the board's own identity key (an X25519 exchange signed by its Ed25519 key), so another device on your network answering to this board's name, or relaying to the real one, cannot read it. A board whose firmware predates the sealed exchange is asked to update once over USB first.";
 export const WITNESS_CHAIN_BLOB_KEY = "chain";
 
 export function witnessSummary(items) {

@@ -1453,7 +1453,7 @@ impl RawMediaBoundary {
 
 // -------------------- Sealed Log --------------------
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct KernelConfig {
     pub db_path: String,
     pub ruleset_id: String,
@@ -1462,9 +1462,31 @@ pub struct KernelConfig {
     /// default retention; pruning will write checkpoints
     pub retention: Duration,
     /// Device signing seed (required at runtime; must not be the MVP placeholder).
+    /// Zeroized when the config is dropped, and never printed by `Debug`.
     pub device_key_seed: String,
     /// Zone policy for suppressing sensitive areas.
     pub zone_policy: ZonePolicy,
+}
+
+impl std::fmt::Debug for KernelConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KernelConfig")
+            .field("db_path", &self.db_path)
+            .field("ruleset_id", &self.ruleset_id)
+            .field("ruleset_hash", &hex::encode(self.ruleset_hash))
+            .field("kernel_version", &self.kernel_version)
+            .field("retention", &self.retention)
+            .field("device_key_seed", &"<redacted>")
+            .field("zone_policy", &self.zone_policy)
+            .finish()
+    }
+}
+
+impl Drop for KernelConfig {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.device_key_seed.zeroize();
+    }
 }
 
 impl KernelConfig {
@@ -3932,7 +3954,8 @@ pub(crate) fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
     }
     let mut key_bytes = [0u8; 32];
     key_bytes.copy_from_slice(bytes);
-    VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
+    crate::crypto::signatures::verifying_key_strict(&key_bytes)
+        .map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
 }
 
 #[cfg(feature = "pqc-signatures")]
@@ -4670,6 +4693,12 @@ pub fn select_module_backend(
 pub trait Module {
     fn descriptor(&self) -> ModuleDescriptor;
 
+    /// The zone ids this module may name in a candidate. The sandbox runtime
+    /// admits a candidate only for a zone declared here (fail closed: a
+    /// module that declares none emits nothing), so the child's `zone_id`
+    /// string can never carry free text into the sealed log.
+    fn declared_zone_ids(&self) -> Vec<String>;
+
     fn process(
         &mut self,
         view: &InferenceView<'_>,
@@ -4743,6 +4772,10 @@ impl Module for ZoneCrossingModule {
             requested_capabilities: &[],
             supported_backends: ZONE_CROSSING_BACKENDS,
         }
+    }
+
+    fn declared_zone_ids(&self) -> Vec<String> {
+        vec![self.zone_id.clone()]
     }
 
     fn process(
@@ -5082,7 +5115,7 @@ mod tests {
 
     #[test]
     fn sealed_log_document_reanchors_at_the_newest_rotation() -> Result<()> {
-        use ed25519_dalek::{Signature, Verifier};
+        use ed25519_dalek::Signature;
 
         let (mut kernel, cfg) = setup_test_kernel()?;
         seal_one_event(&mut kernel, &cfg, "zone:a")?;
@@ -5153,7 +5186,7 @@ mod tests {
                 &stored,
             );
             new_key
-                .verify(&signing_hash, &Signature::from_bytes(&signature))
+                .verify_strict(&signing_hash, &Signature::from_bytes(&signature))
                 .map_err(|e| anyhow!("signature at index {idx}: {e}"))?;
             expected_prev = stored;
         }
@@ -7515,7 +7548,7 @@ mod tests {
     const ROT_THIRD_SEED: &str = "devkey:rotate:third:33333333333333333";
 
     fn verify_chain_from_genesis(conn: &Connection, genesis_pub: &[u8; 32]) -> Result<u64> {
-        let genesis_key = ed25519_dalek::VerifyingKey::from_bytes(genesis_pub)?;
+        let genesis_key = crate::crypto::signatures::verifying_key_strict(genesis_pub)?;
         crate::verify::verify_events_with(
             conn,
             &genesis_key,
@@ -8081,6 +8114,97 @@ mod tests {
             |_| {},
         )?;
         assert!(report.chain_valid, "{:?}", report.error);
+        Ok(())
+    }
+
+    #[test]
+    fn retention_ages_rows_by_the_signed_bucket_not_the_created_at_column() -> Result<()> {
+        // An actor with a database handle but no signing key stamps live
+        // rows as ancient. The pass must not sign a checkpoint over their
+        // deletion: age comes from the signed bucket, so nothing is pruned.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        kernel
+            .conn
+            .execute("UPDATE sealed_events SET created_at = 0 WHERE id <= 2", [])?;
+
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(86_400))?;
+
+        assert_eq!(sealed_event_hashes(&kernel)?.len(), 3, "live rows stay");
+        assert!(checkpoint_rows(&kernel)?.is_empty(), "no checkpoint signed");
+        Ok(())
+    }
+
+    #[test]
+    fn retention_prunes_by_the_signed_bucket_when_created_at_is_newer() -> Result<()> {
+        // The other direction: a stamp forged NEWER than the signed bucket
+        // (or a legacy row whose column was the wall clock, not the bucket)
+        // cannot keep an expired row alive past retention either.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now - 3 * 86_400)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        kernel.conn.execute(
+            "UPDATE sealed_events SET created_at = ?1 WHERE id = 1",
+            params![now as i64],
+        )?;
+
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(86_400))?;
+
+        assert_eq!(
+            sealed_event_hashes(&kernel)?
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert_eq!(checkpoint_rows(&kernel)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn retention_refuses_a_prefix_whose_payload_was_rewritten() -> Result<()> {
+        // The payload itself is rewritten to carry an old bucket, with its
+        // own entry hash recomputed so the row is self-consistent. The next
+        // row's prev_hash no longer links, so the pass refuses and prunes
+        // nothing — a chain break is reported, never checkpointed over.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        let (payload, prev): (String, Vec<u8>) = kernel.conn.query_row(
+            "SELECT payload_json, prev_hash FROM sealed_events WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut record = SealedLogRecord::deserialize_compat(&payload)?;
+        if let SealedLogRecord::Failure(f) = &mut record {
+            f.time_bucket.start_epoch_s = now - 3 * 86_400;
+        } else {
+            panic!("row 1 is a failure record");
+        }
+        let forged = serde_json::to_string(&record)?;
+        let prev: [u8; 32] = prev.try_into().expect("32-byte prev_hash");
+        let forged_hash = hash_entry(&prev, forged.as_bytes());
+        kernel.conn.execute(
+            "UPDATE sealed_events SET payload_json = ?1, entry_hash = ?2, created_at = ?3 WHERE id = 1",
+            params![forged, forged_hash.to_vec(), (now - 3 * 86_400) as i64],
+        )?;
+
+        let err = kernel
+            .enforce_retention_with_checkpoint(Duration::from_secs(86_400))
+            .expect_err("a rewritten prefix refuses the pass");
+        assert!(
+            err.to_string()
+                .contains(crate::storage::RETENTION_CHAIN_BREAK),
+            "{err}"
+        );
+        assert_eq!(sealed_event_hashes(&kernel)?.len(), 3, "nothing pruned");
+        assert!(checkpoint_rows(&kernel)?.is_empty(), "nothing checkpointed");
         Ok(())
     }
 

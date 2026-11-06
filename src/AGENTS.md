@@ -20,10 +20,15 @@ normative text is `spec/invariants.md`; this is what it means in this code.
 `DetectorBackend` is an **audit boundary** backed by process isolation, not a
 proof. In `witnessd`, `detect()` runs in a forked, seccomp-restricted child
 (`module_runtime::execute_sandboxed`, `src/module_runtime/sandbox.rs`) that
-denies the filesystem, the network, `execve`, `ptrace` and `process_vm_*`.
-The sandbox is a denylist and assumes an uncompromised host
-(`docs/root_paradox.md`): write "must be audited", never "cryptographically
-enforces".
+denies the filesystem, the network, `execve`, `ptrace`, `process_vm_*`,
+signals, SysV IPC and process creation, runs under a CPU limit and a reply
+deadline, and whose only output — the candidate list — is rebuilt by the
+parent from what it already knows (`admit_candidates`: declared zone ids,
+allowed types, the frame's bucket, a parent-minted token). The child is a
+fork of a parent that holds the signing key; a module declares its zone ids
+(`Module::declared_zone_ids`) or emits nothing. The sandbox is a denylist and
+assumes an uncompromised host (`docs/root_paradox.md`): write "must be
+audited", never "cryptographically enforces".
 
 - Capabilities in v1: `Motion`, `ObjectDetection`, `Classification`. No
   segmentation, pose, depth or optical flow.

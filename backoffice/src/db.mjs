@@ -41,8 +41,13 @@ export function loadAuditKey(path, given = null) {
   writeFileSync(file, k + '\n', { mode: 0o600 }); try { chmodSync(file, 0o600); } catch { /* not every filesystem */ }
   return { key: Buffer.from(k), source: file, created: true };
 }
-// One row's mark: HMAC-SHA256 over its fields and the previous mark. Stated once; integrity.mjs verifies with the same function.
-export const auditMac = (key, row, prev) => createHmac('sha256', key).update([row.at, row.actor, row.action, row.entity ?? '', row.entity_id ?? '', row.detail ?? '', prev ?? ''].join('\u001f')).digest('base64url');
+// One row's mark: HMAC-SHA256 over its id, its fields and the previous mark, as one JSON array — so a row cannot
+// be moved to another id, and a field that holds a separator cannot be read as two fields. Stated once;
+// integrity.mjs verifies with the same function. Rows marked before 016_hashed_ids.sql was applied (the same build) were marked without the id, the fields
+// joined on U+001F (auditMacV1); the verifier accepts that mark on any row, and nothing is lost by it: a JSON
+// text never holds a raw U+001F and the joined form always holds six, so no row verifies under both.
+export const auditMac = (key, row, prev) => createHmac('sha256', key).update(JSON.stringify([row.id, row.at, row.actor, row.action, row.entity ?? '', row.entity_id ?? '', row.detail ?? '', prev ?? ''])).digest('base64url');
+export const auditMacV1 = (key, row, prev) => createHmac('sha256', key).update([row.at, row.actor, row.action, row.entity ?? '', row.entity_id ?? '', row.detail ?? '', prev ?? ''].join('\u001f')).digest('base64url');
 export const CHAIN_GENESIS = 'genesis';
 
 // Migrations are forward-only and additive by rule (migrations/README.md). Two guards make a deploy that
@@ -126,12 +131,13 @@ function wrap(db, { auditKey = { key: randomBytes(32), source: 'memory' } } = {}
     // under the key outside the database. The head is read and the row written inside one immediate transaction
     // (a savepoint when a caller's transaction already holds the lock), so the CLI writing beside serve cannot
     // read the same head and fork the chain; SQLite serializes the two writers, and the second reads the first's row.
+    // The id is chosen here (the last one plus one, under the same lock) because it is part of the mark.
     audit: (actor, action, entity = null, entityId = null, detail = null) => api.tx(() => {
-      const row = { at: nowIso(), actor: actor === 'web' ? currentActor('web') : actor, action, entity, entity_id: entityId == null ? null : String(entityId), detail: detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)) };
-      const last = api.get('SELECT mac FROM audit_log ORDER BY id DESC LIMIT 1');
+      const last = api.get('SELECT id, mac FROM audit_log ORDER BY id DESC LIMIT 1');
       const prev = last ? (last.mac || CHAIN_GENESIS) : CHAIN_GENESIS;   // rows from before the chain began end at 'genesis' too
-      return api.run('INSERT INTO audit_log (at, actor, action, entity, entity_id, detail, prev, mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        row.at, row.actor, row.action, row.entity, row.entity_id, row.detail, prev, auditMac(auditKey.key, row, prev));
+      const row = { id: Math.max(last?.id ?? 0, 0) + 1, at: nowIso(), actor: actor === 'web' ? currentActor('web') : actor, action, entity, entity_id: entityId == null ? null : String(entityId), detail: detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)) };
+      return api.run('INSERT INTO audit_log (id, at, actor, action, entity, entity_id, detail, prev, mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        row.id, row.at, row.actor, row.action, row.entity, row.entity_id, row.detail, prev, auditMac(auditKey.key, row, prev));
     }),
     auditKey,
     close: () => db.close(),

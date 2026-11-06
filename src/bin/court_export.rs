@@ -62,6 +62,15 @@ struct Args {
         value_name = "HEX"
     )]
     db_key: Option<String>,
+    /// The device's genesis public key (64 hex chars), obtained OUT OF BAND
+    /// (the pairing receipt, the operator's record), to confirm the identity
+    /// the database and bundle claim. Without it the kit is self-consistent
+    /// under the key the database names, and says so.
+    #[arg(long, value_name = "HEX", conflicts_with = "public_key_file")]
+    public_key: Option<String>,
+    /// Same as `--public-key`, read from a file.
+    #[arg(long, value_name = "FILE")]
+    public_key_file: Option<String>,
     /// UI mode for stderr progress (auto|plain|pretty)
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
@@ -117,7 +126,7 @@ fn open_db(args: &Args) -> Result<Connection> {
         (None, Some(seed)) => Some(seed.clone()),
         (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
             eprintln!("court_export: database key from the {}", found.source);
-            found.seed
+            found.seed.to_string()
         }),
     };
     let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
@@ -168,7 +177,11 @@ fn open_db(args: &Args) -> Result<Connection> {
 /// colliding entry hashes — the identity and signature checks below are what
 /// tie the row to the bundle's signer. Returns the receipt's 1-based ORDINAL
 /// position in the chain (counted from genesis) and the chain length.
-fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(i64, i64)> {
+fn locate_receipt_in_chain(
+    conn: &Connection,
+    bundle: &ExportBundle,
+    trusted_genesis: Option<&ed25519_dalek::VerifyingKey>,
+) -> Result<(i64, i64)> {
     // The database's pinned device identity must BE the bundle's signer.
     let db_device_key = witness_kernel::device_public_key_from_db(conn)
         .map_err(|e| anyhow!("could not read the database's device identity: {}", e))?;
@@ -176,7 +189,23 @@ fn locate_receipt_in_chain(conn: &Connection, bundle: &ExportBundle) -> Result<(
     // pins the genesis anchor. After a key rotation those legitimately differ,
     // so custody is "the bundle's signer belongs to this database's validated
     // key lineage", not bytewise equality with genesis.
-    let lineage_keys = verify_helpers::lineage_verifying_keys(conn, &db_device_key)?;
+    //
+    // The lineage is anchored at the key supplied out of band when there is
+    // one: a database rewritten under a fresh key carries that key as its
+    // own identity, so anchoring at the database's word would confirm the
+    // rewrite. The database's identity must then itself sit in the trusted
+    // lineage.
+    let anchor = trusted_genesis.copied().unwrap_or(db_device_key);
+    let lineage_keys = verify_helpers::lineage_verifying_keys(conn, &anchor)?;
+    if trusted_genesis.is_some()
+        && !lineage_keys
+            .iter()
+            .any(|key| key.to_bytes() == db_device_key.to_bytes())
+    {
+        return Err(anyhow!(
+            "custody break: the database's device identity is not in the lineage of the              public key supplied with --public-key — this is not that device's database.              Refusing to package."
+        ));
+    }
     if !lineage_keys
         .iter()
         .any(|key| key.to_bytes() == bundle.device_public_key)
@@ -467,9 +496,14 @@ fn main() -> Result<()> {
         let _stage = ui.stage("Open database");
         open_db(&args)?
     };
+    let trusted_genesis = match (args.public_key.as_deref(), args.public_key_file.as_deref()) {
+        (None, None) => None,
+        (hex, file) => Some(verify_helpers::load_verifying_key(&conn, hex, file)?),
+    };
+    let identity_verified = trusted_genesis.is_some();
     let (chain_position, chain_length) = {
         let _stage = ui.stage("Locate receipt in chain");
-        locate_receipt_in_chain(&conn, &bundle)?
+        locate_receipt_in_chain(&conn, &bundle, trusted_genesis.as_ref())?
     };
 
     // ── 3. Assemble the kit ──────────────────────────────────────────────
@@ -565,6 +599,7 @@ fn main() -> Result<()> {
             auth_mode_label(receipt.auth_mode),
             chain_position,
             chain_length,
+            identity_verified,
             &anchors,
         )?;
         write_verification(
@@ -587,11 +622,19 @@ fn main() -> Result<()> {
             receipt.auth_mode,
             anchored,
             receipt_anchored,
+            identity_verified,
             &anchors,
         )?;
     }
 
     println!("Court disclosure kit assembled: {}", kit.display());
+    if identity_verified {
+        println!("  identity:  confirmed against the public key supplied out of band");
+    } else {
+        println!(
+            "  identity:  NOT independently confirmed — the device key came from the              database under review; rerun with --public-key to confirm it"
+        );
+    }
     println!("  evidence:  evidence/{}", bundle_file_name);
     println!("  digest:    sha256 {}", bundle_hex);
     println!(
@@ -749,8 +792,18 @@ fn write_custody_record(
     auth_label: &str,
     chain_position: i64,
     chain_length: i64,
+    identity_verified: bool,
     anchors: &[KitAnchor],
 ) -> Result<()> {
+    let identity = if identity_verified {
+        "confirmed: the device public key was supplied out of band at packaging time \
+         and the database's identity and the bundle's signer both sit in its lineage"
+    } else {
+        "NOT independently confirmed: the device public key was read from the database \
+         under review, so every signature check below is self-consistent under the key \
+         the database names — a key supplied out of band (`court_export --public-key`) \
+         is what turns self-consistency into a confirmed identity"
+    };
     let mut anchor_rows = String::new();
     if anchors.is_empty() {
         anchor_rows.push_str("(none recorded)\n");
@@ -817,6 +870,7 @@ fn write_custody_record(
          | Authorization | {auth} |\n\
          | Ruleset in force (hash) | `{ruleset}` |\n\
          | Device public key (Ed25519) | `{device_key}` |\n\
+         | Device identity | {identity} |\n\
          \n\
          ## Chain of custody (digital)\n\
          \n\
@@ -850,6 +904,7 @@ fn write_custody_record(
         auth = auth_label,
         ruleset = ruleset_hash_hex,
         device_key = device_key_hex,
+        identity = identity,
         entry_hash = entry_hash_hex,
         pos = chain_position,
         len = chain_length,
@@ -1059,6 +1114,7 @@ fn write_manifest(
     auth_mode: Option<ExportAuthMode>,
     anchored: bool,
     receipt_anchored: bool,
+    identity_verified: bool,
     anchors: &[KitAnchor],
 ) -> Result<()> {
     // Enumerate every file the kit contains (the manifest itself excluded) and
@@ -1108,6 +1164,7 @@ fn write_manifest(
             "device_public_key": device_key_hex,
             "auth_mode": auth_mode,
         },
+        "identity_verified": identity_verified,
         "anchored": anchored,
         "anchor_count": anchors.len(),
         "receipt_anchored": receipt_anchored,

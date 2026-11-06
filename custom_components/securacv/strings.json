@@ -26,7 +26,7 @@
       },
       "pair": {
         "title": "Pair with the SecuraCV sidecar",
-        "description": "On the Docker host run `docker exec securacv pair` and enter the 6-digit code it prints (valid 10 minutes). The kernel key fingerprint it prints beside the code must read `{fingerprint}` (kernel `{device_id}`). Home Assistant keeps its own paired key afterwards; revoke it any time with `docker exec securacv unpair` followed by the token id (`unpair` alone lists them).",
+        "description": "On the Docker host run `docker exec securacv pair` and enter the 6-digit code it prints (valid 10 minutes). The kernel key fingerprint it prints beside the code must read `{fingerprint}` (kernel `{device_id}`). Home Assistant keeps its own paired key afterwards; revoke it any time with `docker exec securacv unpair` followed by the token id (`unpair` alone lists them).\n\n{plaintext_warning}",
         "data": {
           "url": "Kernel URL",
           "pairing_code": "Pairing code"
@@ -38,7 +38,7 @@
       },
       "token_file": {
         "title": "Witness Kernel token file",
-        "description": "This kernel hands out its rotating token through a file Home Assistant can read (the app writes /config/api_token). Enter the kernel URL and the token file path, or a static token for a kernel whose file Home Assistant cannot read.",
+        "description": "This kernel hands out its rotating token through a file Home Assistant can read (the app writes /config/api_token). Enter the kernel URL and the token file path, or a static token for a kernel whose file Home Assistant cannot read.\n\n{plaintext_warning}",
         "data": {
           "url": "Kernel URL",
           "token_file": "API token file (recommended)",
@@ -66,7 +66,7 @@
       },
       "kernel": {
         "title": "Witness Kernel Connection",
-        "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel.\n\nThe kernel runs as a Home Assistant app, Docker container, or standalone service. The kernel rotates its API token every 10 minutes, so prefer the token file (the app writes it to /config/api_token); use a static token only for kernels whose token file Home Assistant cannot read. A Docker sidecar is better added through its announcement (Settings → Devices & Services → SecuraCV discovered), which pairs with a 6-digit code instead.",
+        "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel.\n\nThe kernel runs as a Home Assistant app, Docker container, or standalone service. The kernel rotates its API token every 10 minutes, so prefer the token file (the app writes it to /config/api_token); use a static token only for kernels whose token file Home Assistant cannot read. A Docker sidecar is better added through its announcement (Settings → Devices & Services → SecuraCV discovered), which pairs with a 6-digit code instead.\n\n{plaintext_warning}",
         "data": {
           "url": "Kernel URL",
           "token_file": "API token file (recommended)",
@@ -84,7 +84,7 @@
       },
       "both": {
         "title": "MQTT + Kernel Connection",
-        "description": "Configure both MQTT for Canary devices and HTTP for the Witness Kernel. The kernel rotates its API token every 10 minutes, so prefer the token file (the app writes it to /config/api_token).",
+        "description": "Configure both MQTT for Canary devices and HTTP for the Witness Kernel. The kernel rotates its API token every 10 minutes, so prefer the token file (the app writes it to /config/api_token).\n\n{plaintext_warning}",
         "data": {
           "url": "Kernel URL",
           "token_file": "API token file (recommended)",
@@ -104,7 +104,7 @@
       },
       "reauth_confirm": {
         "title": "Re-authenticate SecuraCV",
-        "description": "The witness kernel rejected Home Assistant's credential. For a paired sidecar, run `docker exec securacv pair` on the Docker host and enter the new 6-digit code; for the app, check the token file path. The entry stays bound to the same kernel (fingerprint `{fingerprint}`).",
+        "description": "The witness kernel rejected Home Assistant's credential. For a paired sidecar, run `docker exec securacv pair` on the Docker host and enter the new 6-digit code; for the app, check the token file path. The entry stays bound to the same kernel (fingerprint `{fingerprint}`).\n\n{plaintext_warning}",
         "data": {
           "url": "Kernel URL",
           "pairing_code": "Pairing code",
@@ -124,7 +124,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure SecuraCV",
-        "description": "Change where Home Assistant reaches this witness kernel, how it authenticates, or the prefix its MQTT bridge publishes under. The entry stays bound to the same kernel (fingerprint `{fingerprint}`); a different kernel is a new entry.",
+        "description": "Change where Home Assistant reaches this witness kernel, how it authenticates, or the prefix its MQTT bridge publishes under. The entry stays bound to the same kernel (fingerprint `{fingerprint}`); a different kernel is a new entry.\n\n{plaintext_warning}",
         "data": {
           "url": "Kernel URL",
           "pairing_code": "Pairing code",

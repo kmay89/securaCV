@@ -348,7 +348,12 @@ fn open_request<O: BreakGlassOps>(
         "reason": request.context.as_ref().map(|c| c.reason_code.clone()),
         "case_ref": request.context.as_ref().and_then(|c| c.case_ref.clone()),
     });
-    let request_hash = session.open(request);
+    let Some(request_hash) = session.open(request) else {
+        // The same envelope, purpose and bucket were unsealed already: the
+        // approvals that ceremony collected would verify again, so the
+        // request does not reopen inside its bucket.
+        return HttpReply::error(409, "request_already_redeemed");
+    };
     let mut reply = echo;
     reply["request_hash"] = json!(hex::encode(request_hash));
     reply["needed"] = json!(policy.n);
@@ -449,8 +454,10 @@ fn unseal<O: BreakGlassOps>(
     };
     match ops.authorize_unseal(&request, session.approvals(), now_bucket, output_dir) {
         Ok(path) => {
-            // Single-use: the request is consumed once unsealed.
-            session.close();
+            // Single-use: the request is consumed once unsealed, and its
+            // hash is remembered so the same approvals cannot be replayed
+            // through a re-opened request inside the same bucket.
+            session.redeem();
             HttpReply::json(
                 200,
                 json!({

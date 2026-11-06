@@ -133,6 +133,7 @@
 #include "meta_daily_summary.h"  // meta_daily_summary_set_clock — the 23:55 summary's clock (F121)
 #include "nvs_store.h"
 #include "api_auth.h"
+#include "http_body_reader.h"   // a request body read whole, or refused (/api/ota/config)
 #include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
                                      // auto-generated prototype for
                                      // wifi_change_authorize()
@@ -174,6 +175,7 @@
 #include "host_guard.h"          // pure, host-tested: does the Host name THIS device (staged copy of firmware/common/network/, check_improv_sync.sh; F344)
 #include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
+#include "seal_api.h"            // GET /api/device/seal and api_auth.h's Sealed-header hook (api_seal.h)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
@@ -10617,6 +10619,15 @@ static void register_api_routes(httpd_handle_t server) {
                                   .handler = device_identity_api::handle_enroll_html };
   httpd_register_uri_handler(server, &enroll_html_uri);
 
+  // The sealed bearer's handshake (api_seal.h, seal_api.h): the same public
+  // card plus an ephemeral X25519 key the identity key signs, so a client
+  // holding the pinned fingerprint can send the token sealed to THIS device
+  // and never in the clear. Unauthenticated like the card; no secret in the
+  // answer. The Flasher's fleet book opens one per device per quarter hour.
+  httpd_uri_t seal_uri = { .uri = "/api/device/seal", .method = HTTP_GET,
+                           .handler = seal_api::handle_seal };
+  httpd_register_uri_handler(server, &seal_uri);
+
   // Companion PWA (Web Bluetooth phone-side console). Three static assets,
   // no auth — the page itself is just HTML/JS/manifest; the BLE
   // characteristics it talks to enforce READ_ENC + READ_AUTHEN, so a
@@ -12995,38 +13006,63 @@ static esp_err_t handle_ota_install(httpd_req_t* req) {
 // POST /api/ota/config — persist update settings (NVS). Body (all fields
 // optional): {"manifest_url": "...", "auto_update": bool,
 // "local_http_allowed": bool}. An empty manifest_url clears the override.
+//
+// The body is read whole or refused (http_body_reader.h: one httpd_req_recv
+// is one socket read, so a body in two segments used to parse cut and a body
+// past the buffer was cut at it and parsed anyway), and the request is
+// all-or-nothing: every field is parsed and checked first, then every one is
+// stored. Before, local_http_allowed was stored and THEN the URL refused, so
+// a refused request still changed a setting; and a field of the wrong type
+// was skipped without a word.
 static esp_err_t handle_ota_config(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   g_health.http_requests++;
 
   char body[512];
-  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (recv <= 0) {
-    return http_send_error(req, 400, "empty_body");
-  }
-  body[recv] = '\0';
+  size_t len = 0;
+  const http_body::Result read = http_body::read_all(
+      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
+      req->content_len, body, sizeof(body), HTTPD_SOCK_ERR_TIMEOUT, 3, &len);
+  if (read == http_body::TOO_LARGE) return http_send_error(req, 400, "body_too_large");
+  if (read == http_body::READ_FAILED) return http_send_error(req, 400, "body_read_failed");
+  if (len == 0) return http_send_error(req, 400, "empty_body");
 
   JsonDocument input;
-  if (deserializeJson(input, body) != DeserializationError::Ok) {
+  if (deserializeJson(input, body, len) != DeserializationError::Ok || !input.is<JsonObjectConst>()) {
     return http_send_error(req, 400, "invalid_json");
   }
 
-  // Order matters: apply the local-http opt-in first so a manifest_url
-  // pointing at a LAN server in the same request validates correctly.
-  if (input["local_http_allowed"].is<bool>()) {
-    securacv_ota_set_local_http_allowed(input["local_http_allowed"].as<bool>());
+  // Parse: a field that is present but not of its type is refused, never
+  // skipped or defaulted.
+  const bool has_local = !input["local_http_allowed"].isNull();
+  const bool has_url   = !input["manifest_url"].isNull();
+  const bool has_auto  = !input["auto_update"].isNull();
+  if ((has_local && !input["local_http_allowed"].is<bool>()) ||
+      (has_url && !input["manifest_url"].is<const char*>()) ||
+      (has_auto && !input["auto_update"].is<bool>())) {
+    return http_send_error(req, 400, "invalid_field");
+  }
+  const bool local = has_local ? input["local_http_allowed"].as<bool>() : securacv_ota_get_local_http_allowed();
+  const char* url  = has_url ? input["manifest_url"].as<const char*>() : nullptr;
+  const bool enabled = has_auto && input["auto_update"].as<bool>();
+
+  // Check: the URL against the local-http opt-in this same request sets (or
+  // the stored one), before anything is written.
+  if (url && url[0] != '\0' && !securacv_ota_url_allowed(url, local)) {
+    return http_send_error(req, 400, "url_rejected");
   }
 
-  if (input["manifest_url"].is<const char*>()) {
-    const char* url = input["manifest_url"].as<const char*>();
-    if (securacv_ota_set_manifest_url(url) != ESP_OK) {
-      return http_send_error(req, 400, "url_rejected");
-    }
+  // Apply, in the order the engine's own re-check needs (the opt-in first, so
+  // securacv_ota_set_manifest_url() sees it). A store that fails leaves the
+  // request answered as failed, with what was stored before it still in place.
+  if (has_local && securacv_ota_set_local_http_allowed(local) != ESP_OK) {
+    return http_send_error(req, 500, "store_failed");
   }
-
-  if (input["auto_update"].is<bool>()) {
-    const bool enabled = input["auto_update"].as<bool>();
-    securacv_ota_set_auto_update(enabled);
+  if (has_url && securacv_ota_set_manifest_url(url) != ESP_OK) {
+    return http_send_error(req, 500, "store_failed");
+  }
+  if (has_auto) {
+    if (securacv_ota_set_auto_update(enabled) != ESP_OK) return http_send_error(req, 500, "store_failed");
     csi_mqtt::set_update_auto_state(enabled);   // the loop task publishes it (F106)
   }
 

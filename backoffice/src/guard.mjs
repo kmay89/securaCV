@@ -28,6 +28,26 @@ export function netOf(ip) {
   if (v === 6) { const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(s); if (m) return netOf(m[1]); const x = expand6(s); return x ? `${x.split(':').slice(0, 3).join(':')}::/48` : '-'; }
   return '-';
 }
+// --- the memory a per-address control keeps. A map past `max` keys sheds what is stale first, then its oldest
+// half — never everything: a flood that filled the table used to reset every lock and every count at once, and
+// the next guess from the flooder's own address started from zero. A touched key is re-inserted, so the map's
+// order is age.
+export function trimMap(map, { max = 10_000, stale = () => false } = {}) {
+  if (map.size <= max) return;
+  for (const [k, v] of map) if (stale(v)) map.delete(k);
+  let drop = map.size - (max >> 1);
+  for (const k of map.keys()) { if (drop-- <= 0) break; map.delete(k); }
+}
+// The unit a per-address control (the limiter, the lockout, the watch) counts by: a v4 address as it is, a v6
+// address as its /64 — the allocation one subscriber holds, so a guesser cannot walk 2^64 fresh addresses past
+// an eight-try lock. A prefixed key (`login:<address>`) keeps its prefix; a key that is not an address (an email,
+// an order number) is left as it is.
+export function limiterKey(key) {
+  const s = String(key ?? ''); if (isIP(s)) return net64(s);
+  const i = s.indexOf(':'); if (i < 0) return s;
+  const rest = s.slice(i + 1); return isIP(rest) ? `${s.slice(0, i)}:${net64(rest)}` : s;
+}
+const net64 = (s) => { if (isIP(s) === 4) return s; const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(s); if (m) return m[1]; const x = expand6(s); return x ? `${x.split(':').slice(0, 4).join(':')}::/64` : s; };
 
 // C0 controls (but a newline and a tab), the delete, soft hyphen, the Arabic letter mark, the Mongolian vowel
 // separator, zero-width and joiner characters, line and paragraph separators, every bidi embedding, override and
@@ -74,18 +94,20 @@ export class Watch {
     this.limit = limit; this.windowMs = windowMs; this.blockMs = blockMs; this.misses = new Map(); this.blocks = new Map(); this.db = db;
     if (db) { try { for (const r of db.all('SELECT ip, until FROM guard_blocks WHERE until > ?', new Date().toISOString())) this.blocks.set(r.ip, Date.parse(r.until)); db.run('DELETE FROM guard_blocks WHERE until <= ?', new Date().toISOString()); } catch { /* before the table exists */ } }
   }
-  miss(ip, now = Date.now()) {
-    const arr = (this.misses.get(ip) || []).filter(t => now - t < this.windowMs); arr.push(now); this.misses.set(ip, arr);
-    if (this.misses.size > 10_000) this.misses.clear();
+  // Keyed by limiterKey: a v6 scanner is one /64, and that is what guard_blocks and the Health page name.
+  miss(ipIn, now = Date.now()) {
+    const ip = limiterKey(ipIn);
+    const arr = (this.misses.get(ip) || []).filter(t => now - t < this.windowMs); arr.push(now); this.misses.delete(ip); this.misses.set(ip, arr);
+    trimMap(this.misses, { stale: a => now - a[a.length - 1] >= this.windowMs });
     if (arr.length >= this.limit && !this.blocks.has(ip)) { this.block(ip, now, 'scanner'); return true; }   // true: a block just began
     return false;
   }
-  block(ip, now = Date.now(), reason = 'scanner', ms = this.blockMs) {
-    const until = now + ms; this.blocks.set(ip, until);
+  block(ipIn, now = Date.now(), reason = 'scanner', ms = this.blockMs) {
+    const ip = limiterKey(ipIn); const until = now + ms; this.blocks.set(ip, until);
     if (this.db) { try { this.db.run('INSERT INTO guard_blocks (ip, until, reason, at) VALUES (?, ?, ?, ?) ON CONFLICT(ip) DO UPDATE SET until = excluded.until, reason = excluded.reason, at = excluded.at', ip, new Date(until).toISOString(), reason, new Date(now).toISOString()); } catch { /* the block still holds in memory */ } }
     return until;
   }
-  blocked(ip, now = Date.now()) { const until = this.blocks.get(ip); if (until == null) return false; if (until <= now) { this.blocks.delete(ip); this.misses.delete(ip); if (this.db) { try { this.db.run('DELETE FROM guard_blocks WHERE ip = ?', ip); } catch { /* gone */ } } return false; } return true; }
+  blocked(ipIn, now = Date.now()) { const ip = limiterKey(ipIn); const until = this.blocks.get(ip); if (until == null) return false; if (until <= now) { this.blocks.delete(ip); this.misses.delete(ip); if (this.db) { try { this.db.run('DELETE FROM guard_blocks WHERE ip = ?', ip); } catch { /* gone */ } } return false; } return true; }
   list(now = Date.now()) { return [...this.blocks].filter(([, u]) => u > now).map(([ip, until]) => ({ ip, until: new Date(until).toISOString() })); }
   clear() { this.misses.clear(); this.blocks.clear(); if (this.db) { try { this.db.run('DELETE FROM guard_blocks'); } catch { /* gone */ } } }
 }

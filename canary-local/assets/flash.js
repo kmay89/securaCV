@@ -76,6 +76,7 @@ const state = {
   // a URL-only dev channel is unreachable there (see onDevChannelToggle).
   devChannel: false,
   manifestOverride: false, // a ?manifest= self-hosted URL is in force
+  manifestOverrideOrigin: "", // …and where it points, named on every card that reads it
   advancedOpen: false,     // keep Advanced open across a picker re-render
   // Customs, for a board we've never met (see intake.js). `heldBoot` is what
   // the user told us on the connect card, not something we measured — on a
@@ -3364,6 +3365,7 @@ function activeManifestUrl() {
   // URL, never user-supplied — and the default is the stable release.
   const override = core.manifestOverrideUrl(location.search, location.origin);
   state.manifestOverride = !!override;
+  state.manifestOverrideOrigin = override ? new URL(override).origin : "";
   if (override) { state.devChannel = false; return override; }
   return state.devChannel ? core.DEV_FLASH_MANIFEST_URL : state.catalog.manifest_url;
 }
@@ -3489,7 +3491,7 @@ function refreshManifestState() {
   // Manifest present. Note when it's a self-hosted override, not the release.
   if (state.manifestOverride) {
     const note = el("p", "flash-note flash-note-soft");
-    note.textContent = "Using a self-hosted firmware manifest from this page’s address bar, not the official signed release.";
+    note.textContent = `Using a self-hosted firmware manifest from ${state.manifestOverrideOrigin} (this page’s ?manifest= address), not the official signed release.`;
     banner.append(note);
   }
   if (state.devChannel) {
@@ -3695,11 +3697,40 @@ function phaseConfirm(product, entry) {
     hasSignature: !!entry.signature,
     selfHosted: !!state.manifestOverride,
   });
+  // An unsigned image from a ?manifest= override is the one install that
+  // asks for the person's own say-so: the pinned release key can't vouch for
+  // it, so only its SHA-256 can be checked, and only once they accept that.
+  const unsignedOverride = state.manifestOverride && vpolicy === "require-signature";
   sum.append(fact("Verified by",
     vpolicy === "verify" ? "Ed25519 signature + SHA-256 · chip MD5 after"
+      : unsignedOverride ? "⚠ SHA-256 only — unsigned, self-hosted manifest (accept below, or it is refused)"
       : vpolicy === "require-signature" ? "⚠ unsigned build — this will be refused"
         : "SHA-256 before · chip MD5 after"));
+  if (state.manifestOverride) sum.append(fact("Manifest", `self-hosted · ${state.manifestOverrideOrigin}`));
   box.append(sum);
+
+  let unsignedOk = null;
+  if (unsignedOverride) {
+    const warn = el("div", "flash-reassure flash-forced-erase");
+    const line = el("p");
+    line.append(el("span", "flash-shield", "⚠"));
+    line.append(document.createTextNode(
+      `This image comes from an unsigned, self-hosted manifest at ${state.manifestOverrideOrigin}, ` +
+      "not the official signed release. A SecuraCV release signing key is in force, and this " +
+      "manifest carries no signature for the image — so the only check possible is the " +
+      "manifest's own SHA-256, which proves the download matched what that server said, " +
+      "not who built it. Nothing is written until you say so here."));
+    warn.append(line);
+    const lab = el("label", "flash-erase");
+    unsignedOk = el("input");
+    unsignedOk.type = "checkbox";
+    unsignedOk.id = "flash-unsigned-ok";
+    lab.append(unsignedOk);
+    lab.append(el("span", null,
+      ` I trust ${state.manifestOverrideOrigin} and want this unsigned image installed with only its SHA-256 checked.`));
+    warn.append(lab);
+    box.append(warn);
+  }
 
   // The verdict, in plain words: what this install IS for this board.
   const verdict = installVerdictFor(product, entry.version);
@@ -3790,6 +3821,10 @@ function phaseConfirm(product, entry) {
 
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
+  if (unsignedOk) {
+    go.disabled = true;
+    unsignedOk.addEventListener("change", () => { go.disabled = !unsignedOk.checked; });
+  }
   go.addEventListener("click", () => {
     // Double-click guard: a second pass would re-read the now-cleared
     // password field and remember an empty one over the real network.
@@ -3807,6 +3842,7 @@ function phaseConfirm(product, entry) {
     // The forced first-contact erase clears what the board arrived with,
     // proportionally; the Advanced box is a request for the whole-chip erase.
     startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi, mqtt, autoUpdate,
+      unsignedAccepted: !!(unsignedOk && unsignedOk.checked),
       eraseKind: forcedErase && !askedFullErase ? "first-contact" : null,
       detect: dialSel ? dialSel.values : null,
       detectPreset: dialSel ? dialSel.presetTitle : null,
@@ -4587,13 +4623,19 @@ async function startFlash(opts) {
       // present" would let a tampered manifest strip the signature and re-point
       // an updated SHA-256 at a malicious image — the exact substitution this
       // check exists to stop. (imageVerificationPolicy encodes the fail-closed
-      // rule; checksum-only is reserved for pre-key and self-hosted manifests.)
+      // rule; checksum-only is reserved for pre-key manifests and for a
+      // self-hosted one the person accepted as unsigned on the confirm card.)
       const policy = core.imageVerificationPolicy({
         keyReal: core.isRealPubkey(state.catalog.release_pubkey),
         hasSignature: !!opts.entry.signature,
         selfHosted: !!state.manifestOverride,
+        unsignedAccepted: !!opts.unsignedAccepted,
       });
-      if (policy === "require-signature") {
+      if (policy === "require-signature" && state.manifestOverride) {
+        throw new Error(`The self-hosted manifest at ${state.manifestOverrideOrigin} carries no Ed25519 ` +
+          "signature for this image, and a SecuraCV signing key is in force — refusing to flash it " +
+          "without your say-so on the confirm card. Nothing was written.");
+      } else if (policy === "require-signature") {
         throw new Error("This official release is missing its Ed25519 signature, but a " +
           "signing key is in force — refusing to flash it. A stripped signature can mean " +
           "a tampered release manifest. Nothing was written.");
@@ -4615,7 +4657,9 @@ async function startFlash(opts) {
       // never looks.
       const placed = core.bootloaderPlacement(bytes, state.chip);
       if (!placed.ok) throw new Error(placed.reason);
-      journey.done("check", sigVerified ? "signature ✓" : "SHA-256 ✓");
+      journey.done("check", sigVerified ? "signature ✓"
+        : state.manifestOverride && opts.unsignedAccepted ? `SHA-256 only · unsigned, ${state.manifestOverrideOrigin}`
+          : "SHA-256 ✓");
     }
     imageBytesRef.bytes = bytes;
     state.lastImage = bytes; // lets the done card replay the tour with real hex
@@ -5109,6 +5153,7 @@ function phaseDone(opts) {
       "(an all-rounder Canary's 10-second BOOT reset drops it for one the board derives from its own key). " +
       "Copy it now if you'll want it:");
     t.append(p);
+    t.append(el("p", "muted", core.SEALED_KEY_NOTE));
     const row = el("div", "flash-token-row");
     const codeEl = el("code", "flash-token-code", opts.apiToken);
     row.append(codeEl);

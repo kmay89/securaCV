@@ -26,10 +26,13 @@ set -euo pipefail
 #                         main, saying so, when the release lookup fails.
 #   SECURACV_TARBALL_SHA256
 #                         expected SHA-256 of the downloaded archive; when
-#                         set, a mismatch aborts before anything is extracted
-#                         (GitHub source tarballs are not byte-stable across
-#                         time, so pin the hash you verified, not one from a
-#                         list — there is none to publish)
+#                         set, a mismatch aborts before anything is extracted.
+#                         A release tag needs no pin: the release publishes
+#                         its own source archive beside sha256sums.txt and
+#                         the installer checks that line, always. The pin is
+#                         for a branch install, where the archive is GitHub's
+#                         generated tarball — not byte-stable across time, so
+#                         pin the hash you verified, not one from a list.
 #   SECURACV_TARBALL      path to a local .tar.gz of the repo instead of
 #                         downloading (used by the test suite)
 #   SECURACV_WITH         space-separated optional plan features, e.g.
@@ -116,6 +119,19 @@ ONBOARD_PY=""
 cleanup() { [ -n "$WORKDIR" ] && rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
+# The SHA-256 of a file, or a plain refusal when nothing here can compute one
+# (an archive whose hash cannot be checked is never extracted on the strength
+# of a lookup that could not run).
+tarball_sha256() {
+  if have sha256sum; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif have shasum; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    die "Neither sha256sum nor shasum is available to check the source archive's hash."
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Shared: fetch the repo source archive ONCE and extract all of it.
 # Both paths (HA OS and Docker) consume files from it — the curated Frigate
@@ -150,29 +166,64 @@ fetch_source() {
         log_warn "Could not resolve the latest release tag from GitHub; installing from branch main instead."
       fi
     fi
-    TARBALL_URL="https://api.github.com/repos/${GITHUB_ORG}/${GITHUB_REPO}/tarball/${SECURACV_BRANCH}"
-    log_info "Downloading ${GITHUB_ORG}/${GITHUB_REPO} (ref ${SECURACV_BRANCH}) — one archive covers every file this install needs."
     # Temp-file-then-move: a partial download can never masquerade as a
     # complete archive.
     local part="${tarball}.part"
-    if ! curl -fsSL "$TARBALL_URL" -o "$part"; then
-      die "Download failed (${TARBALL_URL}). Check network connectivity to github.com and that ref '${SECURACV_BRANCH}' exists. Nothing on this machine was changed."
+    # A release tag publishes its own source archive (release.yml: `git
+    # archive` of the tag's commit) beside sha256sums.txt and a provenance
+    # attestation. That is the archive a release installs from, and its
+    # checksum line is checked without being asked. A branch has no such
+    # archive, and neither does a release cut before releases carried one:
+    # those fall back to GitHub's generated tarball, which nothing published
+    # can verify — said out loud, with SECURACV_TARBALL_SHA256 as the pin.
+    local release_base="" source_asset=""
+    if [[ "$SECURACV_BRANCH" =~ ^v?[0-9]+\.[0-9]+ ]]; then
+      release_base="https://github.com/${GITHUB_ORG}/${GITHUB_REPO}/releases/download/${SECURACV_BRANCH}"
+      source_asset="securacv-source-${SECURACV_BRANCH}.tar.gz"
+      log_info "Downloading the ${SECURACV_BRANCH} release's source archive — one archive covers every file this install needs."
+      if curl -fsSL "${release_base}/${source_asset}" -o "$part"; then
+        TARBALL_URL="${release_base}/${source_asset}"
+      else
+        rm -f "$part"
+        source_asset=""
+        log_warn "Release ${SECURACV_BRANCH} publishes no source archive of its own (it was cut before releases carried one), so there is no published checksum to hold the download to; using GitHub's generated tarball instead. Set SECURACV_TARBALL_SHA256 to pin a hash you verified."
+      fi
+    fi
+    if [ -z "$source_asset" ]; then
+      TARBALL_URL="https://api.github.com/repos/${GITHUB_ORG}/${GITHUB_REPO}/tarball/${SECURACV_BRANCH}"
+      log_info "Downloading ${GITHUB_ORG}/${GITHUB_REPO} (ref ${SECURACV_BRANCH}) — one archive covers every file this install needs."
+      if ! curl -fsSL "$TARBALL_URL" -o "$part"; then
+        die "Download failed (${TARBALL_URL}). Check network connectivity to github.com and that ref '${SECURACV_BRANCH}' exists. Nothing on this machine was changed."
+      fi
     fi
     mv "$part" "$tarball"
     log_ok "Downloaded source archive"
+
+    # The release's checksum line is mandatory: no sha256sums.txt, no line
+    # for the archive, or a different hash all stop here, before extraction.
+    if [ -n "$source_asset" ]; then
+      local sums="${WORKDIR}/sha256sums.txt" want=""
+      if ! curl -fsSL "${release_base}/sha256sums.txt" -o "$sums"; then
+        die "Release ${SECURACV_BRANCH} publishes ${source_asset} but its sha256sums.txt could not be downloaded; refusing to extract an archive nothing verifies. Re-run to retry, or set SECURACV_TARBALL_SHA256 to a hash you verified yourself."
+      fi
+      want="$(grep -E "^[0-9a-f]{64}[[:space:]]+\*?${source_asset}\$" "$sums" | head -n1 | cut -d' ' -f1 || true)"
+      if [ -z "$want" ]; then
+        die "Release ${SECURACV_BRANCH}'s sha256sums.txt has no line for ${source_asset}; refusing to extract an archive nothing verifies."
+      fi
+      local got=""
+      got="$(tarball_sha256 "$tarball")"
+      if [ "$got" != "$want" ]; then
+        die "Source archive SHA-256 mismatch: the release publishes ${want}, the download is ${got}. Refusing to extract it."
+      fi
+      log_ok "Source archive SHA-256 matches the release's sha256sums.txt"
+    fi
   fi
 
   # An operator who verified an archive can pin its hash; a mismatch stops
   # here, before extraction, with nothing on the machine changed.
   if [ -n "${SECURACV_TARBALL_SHA256:-}" ]; then
     local got=""
-    if have sha256sum; then
-      got="$(sha256sum "$tarball" | cut -d' ' -f1)"
-    elif have shasum; then
-      got="$(shasum -a 256 "$tarball" | cut -d' ' -f1)"
-    else
-      die "SECURACV_TARBALL_SHA256 is set but neither sha256sum nor shasum is available to check it."
-    fi
+    got="$(tarball_sha256 "$tarball")"
     if [ "$got" != "$SECURACV_TARBALL_SHA256" ]; then
       die "Source archive SHA-256 mismatch: expected ${SECURACV_TARBALL_SHA256}, got ${got}. Refusing to extract it."
     fi

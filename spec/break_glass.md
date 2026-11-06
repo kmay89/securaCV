@@ -110,7 +110,11 @@ how v2 vault envelopes protect their per-object DEK:
 
 - `classical`: master-key wrap only
 - `pq`: ML-KEM (FIPS 203) encapsulation + KDF-derived DEK
-- `hybrid`: both classical wrap and ML-KEM
+- `hybrid`: both classical wrap and ML-KEM — the DEK is derived from the
+  ML-KEM shared secret *and* a master-key-wrapped classical secret, so an
+  envelope opens with both or not at all (`kem_alg: hybrid-ml-kem-768`;
+  envelopes written as `ml-kem-768` with a wrap of the DEK itself are the
+  earlier either-secret shape and remain readable)
 
 If `vault.crypto_mode` is omitted, it defaults to `classical`.
 

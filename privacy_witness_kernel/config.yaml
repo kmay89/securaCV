@@ -130,6 +130,11 @@ options:
   # Hours between automatic sealed-log verifications (0 disables). Hourly
   # keeps "Verified" current; the integration verifies on its own as well.
   verify_interval_hours: 1
+  # What GET /api/fleet, the roll-call the Apple TV Witness Wall reads,
+  # serves: "self" (this kernel's own row) or "full" (every Canary the
+  # publisher has heard, with its coarse per-room wellbeing words). The
+  # route takes no token, so "full" is an opt-in — the Wall needs it.
+  fleet_rollcall: "self"
   # Let the app place the SecuraCV integration it carries into
   # /config/custom_components when you click "Install the integration" on
   # the wizard's done screen, and keep its own copy updated on app start
@@ -175,11 +180,15 @@ schema:
     password: password?
     topic_prefix: str?
     discovery_prefix: str?
-  device_key_seed: str
+  # `password`: the Supervisor masks it in the Configuration tab and its
+  # logs. The seed itself still lives where it always did (/config, in the
+  # kernel's config); moving it is a data migration, tracked separately.
+  device_key_seed: password?
   retention_days: int(1,365)
   time_bucket_minutes: int(5,60)
   log_level: list(debug|info|warn|error)
   verify_interval_hours: int(0,168)?
+  fleet_rollcall: list(self|full)?
   install_integration: bool?
 
 # Environment variables passed to the add-on

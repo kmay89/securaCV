@@ -232,6 +232,52 @@ void test_source_cancel_body_adapter() {
          "an integer is classified only when it fits int32_t (a float or bool is FIELD_OTHER)");
 }
 
+// Every route that changes Beacon state takes the bearer alone
+// (docs/security/SECURITY_MODEL.md's bearer-only list, THREAT_MODEL.md): a
+// session the landing page mints for any LAN host, on each of two WAPs, was a
+// dual-signed ALERT no human sent. The gates are templates esp_http_server
+// calls, so the pin is the source: every HTTP_POST registration names
+// bcn_bearer_gated, every HTTP_GET bcn_auth_gated, the bearer gate runs
+// api_auth_check_bearer, and neither is open when no token was registered
+// (the `tok && !check` shape that let a null token through).
+void test_source_writes_take_the_bearer() {
+  using namespace beacon_source_scan;
+  bool ok = false;
+  const std::string src = read_source(BEACON_API_H, &ok);
+  EXPECT(ok, "beacon_api.h is readable (source pin fails closed)");
+  if (!ok) return;
+  const std::string stripped = strip_comments(src);
+  const std::string code = squeeze(stripped);
+  size_t posts = 0, gets = 0, wrong = 0;
+  const std::string reg = "register_api_handler(server,";
+  for (size_t at = code.find(reg); at != std::string::npos; at = code.find(reg, at + 1)) {
+    const size_t end = code.find(");", at);
+    if (end == std::string::npos) { wrong++; break; }
+    const std::string call = code.substr(at, end - at);
+    if (call.find(",HTTP_POST,") != std::string::npos) {
+      posts++;
+      if (call.find(",HTTP_POST,bcn_bearer_gated<") == std::string::npos) wrong++;
+    } else if (call.find(",HTTP_GET,") != std::string::npos) {
+      gets++;
+      if (call.find(",HTTP_GET,bcn_auth_gated<") == std::string::npos) wrong++;
+    } else {
+      wrong++;
+    }
+  }
+  EXPECT(posts == 12 && gets == 4, "the sixteen routes of spec/beacon_channel_v0.md section 10 are registered (12 POST, 4 GET)");
+  EXPECT(wrong == 0, "every POST is bcn_bearer_gated and every GET bcn_auth_gated");
+  const std::string bearer = squeeze(function_body(stripped, "bcn_bearer_gated"));
+  const std::string session = squeeze(function_body(stripped, "bcn_auth_gated"));
+  EXPECT(!bearer.empty() && !session.empty(), "both gates are defined");
+  EXPECT(bearer.find("if(!api_auth_check_bearer(req,tok?tok:\"\"))returnESP_OK;") != std::string::npos,
+         "the bearer gate takes the bearer alone, and refuses when no token was registered");
+  EXPECT(bearer.find("api_auth_check(") == std::string::npos, "and never the session check");
+  EXPECT(session.find("if(!api_auth_check(req,tok?tok:\"\"))returnESP_OK;") != std::string::npos,
+         "the read gate refuses when no token was registered");
+  EXPECT(bearer.find("tok&&") == std::string::npos && session.find("tok&&") == std::string::npos,
+         "neither gate is open for a null token");
+}
+
 // ── Refusal order ───────────────────────────────────────────────────────────
 
 void test_refusal_order() {
@@ -577,6 +623,7 @@ int main() {
   test_reason_maps_to_all_clear_template();
   test_cancel_request_body();
   test_source_cancel_body_adapter();
+  test_source_writes_take_the_bearer();
   test_dual_cancel_canonical();
   test_solo_cancel_canonical();
   test_refusal_order();

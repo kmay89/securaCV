@@ -60,7 +60,8 @@ static const char *TAG = "main";
  * This certificate is used to verify TLS connections to operacanary.com
  * and most HTTPS servers using Let's Encrypt certificates.
  *
- * For development with self-signed certificates, use SECURACV_OTA_SKIP_CERT_VERIFY.
+ * For development against mock_ota_server.py, SECURACV_OTA_SKIP_CN_CHECK skips
+ * the certificate hostname check (the chain is still verified).
  */
 static const char server_root_ca_pem[] =
     "-----BEGIN CERTIFICATE-----\n"
@@ -343,7 +344,7 @@ void app_main(void)
     ota_config.manifest_url = "https://operacanary.com/api/v1/firmware/manifest.json";
 #endif
 
-#ifndef SECURACV_OTA_SKIP_CERT_VERIFY
+#ifndef SECURACV_OTA_SKIP_CN_CHECK
     ota_config.server_cert_pem = server_root_ca_pem;
 #endif
 

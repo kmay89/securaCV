@@ -123,6 +123,10 @@ day to day:
 - `retention_days`: how long sealed events stay.
 - `verify_interval_hours`: how often the kernel re-walks its own chain
   (hourly by default; the integration verifies independently).
+- `fleet_rollcall`: what `GET /api/fleet` serves — `self` (this kernel's own
+  row, the default) or `full` (every Canary, with its coarse per-room
+  wellbeing words). The Apple TV Witness Wall needs `full`; it is an opt-in
+  because that route takes no token.
 - `install_integration`: see above.
 
 The 8799 port mapping ships disabled: the integration reaches the kernel over

@@ -587,6 +587,17 @@ with `POST /api/ota/config`, or the MQTT update entity's Install or
 auto-update switch, sent from whatever broker the bridge points at, which a
 session may re-point with a password typed), which installs only a newer
 signed image.
+A client that holds the device's pinned identity fingerprint may send the
+bearer sealed instead of plain: `GET /api/device/seal` agrees a session key
+over X25519 under the identity key's signature, and `Authorization: Sealed
+<sid>.<seq>.<hex>` carries the token under that key, bound to the method,
+the path and a counter (`api_seal.h`; both bearer gates open it before the
+same constant-time compare, under the same lockout). The desktop Flasher's
+fleet book sends the token no other way, so a host that answers to a
+Canary's name on the LAN, or relays to it, never reads the token; the
+plain `Bearer` form stays accepted for every other client, so for them
+the LAN posture above is unchanged (host-tested, not bench-tested).
+
 These routes take the bearer, never the session (`api_auth_check_bearer()`,
 except the receipt, which takes the accounted `api_auth_bearer_grant()`
 beside its own BOOT tap and setup-door claim; `api_auth.h` points here for
@@ -597,6 +608,10 @@ the list):
 - `POST /api/bluetooth/pair/confirm`, a lasting bond to the authenticated
   characteristics, the Wi-Fi credentials write among them, and
   `POST /api/mesh/pair/confirm`, an opera's secret (F346);
+- every Beacon write, `POST /api/beacon/*` (pair, revoke, originate, cosign,
+  cancel, silence, self-test; behind `FEATURE_BEACON_CHANNEL`, off): a
+  session on each of two WAPs was a dual-signed life-safety ALERT no human
+  sent;
 - `POST /api/wifi/disconnect` and `/api/wifi/forget` in every mode, first-boot
   setup included, and after first-boot setup `POST /api/wifi/connect` and
   `/api/wifi/ap-only`, each on every interface, the recovery portal's SoftAP

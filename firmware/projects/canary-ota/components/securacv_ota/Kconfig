@@ -62,14 +62,15 @@ menu "SecuraCV OTA Configuration"
             Size of the buffer used for downloading firmware chunks.
             Larger buffers may improve download speed but use more RAM.
 
-    config SECURACV_OTA_SKIP_CERT_VERIFY
-        bool "Skip TLS certificate verification (INSECURE)"
+    config SECURACV_OTA_SKIP_CN_CHECK
+        bool "Skip the TLS certificate hostname (CN) check (INSECURE)"
         default n
         help
             WARNING: This is for development/testing only!
-            If enabled, the OTA client will not verify the TLS
-            certificate of the manifest or firmware download servers.
-            NEVER enable this in production firmware.
+            If enabled, the OTA client still verifies the certificate
+            chain of the manifest and firmware download servers but
+            not that the certificate was issued for the host it is
+            talking to. NEVER enable this in production firmware.
 
     config SECURACV_OTA_ENABLE_SIGNATURE_VERIFY
         bool "Enable firmware signature verification"

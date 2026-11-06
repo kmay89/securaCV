@@ -8,3 +8,8 @@
 /spec/ @kmay89
 /kernel/ @kmay89
 /src/ @kmay89
+# The automation that builds, releases and gates everything above, and the
+# agent configuration and hooks that shape what an assistant does here.
+/.github/ @kmay89
+/.claude/ @kmay89
+/scripts/hooks/ @kmay89

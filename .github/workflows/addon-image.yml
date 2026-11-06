@@ -49,9 +49,11 @@ on:
       - ".dockerignore"
       - ".github/workflows/addon-image.yml"
 
+# contents: read for every job; packages: write only on the job that pushes
+# (and read on the probe). A pull_request run never pushes, and a fork's
+# token is read-only regardless.
 permissions:
   contents: read
-  packages: write
 
 # Cancel superseded PR validation builds only. Never cancel main/tag runs:
 # those push multi-tag images to GHCR, and killing one mid-publish could
@@ -66,6 +68,12 @@ jobs:
   build:
     name: build (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    # The one job that pushes (on main / tags; `push:` below gates it). The
+    # same job validates a PR, so the write scope is this job's, not the
+    # workflow's; splitting validate from publish would rebuild the crate.
+    permissions:
+      contents: read
+      packages: write
     # Native builds: amd64 has taken ~12 minutes with a warm layer cache, and
     # the arm runner is the same class of machine. 60 is the circuit breaker
     # (R2: 2-3x healthy, with headroom for a cold cache) — tighten once a few
@@ -156,6 +164,11 @@ jobs:
           file: privacy_witness_kernel/Dockerfile
           platforms: ${{ matrix.platform }}
           push: ${{ github.event_name != 'pull_request' }}
+          # Stays off: the Supervisor pulls the per-arch tag config.yaml names,
+          # and verify_published_image.sh probes it as a plain manifest; an
+          # attestation turns the tag into an index, a shape change that is
+          # release-tested before it ships (tracked; the sidecar and the
+          # backoffice image carry provenance already).
           provenance: false
           # Persist buildx layers across runs (scoped per arch so the amd64 and
           # aarch64 caches don't clobber each other). Combined with cargo-chef in the
@@ -187,6 +200,9 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -194,8 +210,8 @@ jobs:
           python-version-file: pyproject.toml
       - name: Verify published images are publicly pullable
         env:
-          # The top-level packages:write includes read; the token only ever
-          # fetches manifests here. It is what lets the script tell PRIVATE
+          # packages: read on this job; the token only ever fetches
+          # manifests here. It is what lets the script tell PRIVATE
           # (pushed, visibility never flipped) from NOT PUSHED.
           GHCR_PROBE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_PROBE_USER: ${{ github.actor }}
