@@ -166,6 +166,61 @@ test("the Home follows the native updater's journal, in the updater's own words"
   assert.match(appJs, /updateState\.listeners\.add\(\(\) => fleet\.emit\(\)\)/, "a changed update state must redraw the Home and the strip");
 });
 
+test("the shortcuts reach the shell from inside a framed bench", async () => {
+  // Focus is in the frame after any click on a bench, and a frame's keydowns
+  // never reach the parent document — so without the forward, ⌘K and the
+  // rest worked only until the first click. lab-nav.js forwards the chords
+  // the shell owns; the shell takes them from the bench on screen only.
+  const navJs = read(join(CANARY, "assets/lab-nav.js"));
+  assert.match(navJs, /window\.parent\.postMessage\(\{ source: "scv-lab", type: "key", key, shiftKey: e\.shiftKey, typing \}, location\.origin\)/,
+    "lab-nav.js must forward the chord — key, shift, typing — and nothing read from its document");
+  assert.match(navJs, /forwardShortcuts\(\);/, "lab-nav.js must install the forward in embedded mode");
+  const listener = appJs.slice(appJs.indexOf('d.type !== "key"') - 400);
+  assert.match(listener.slice(0, 400), /e\.origin !== location\.origin/, "the shell must reject other origins before reading a forwarded key");
+  assert.match(listener, /e\.source !== frame\.contentWindow/, "only the bench actually on screen may forward a key");
+  // The chord set is the same on both sides: every key handleShortcut() acts
+  // on is one the frame forwards, and the frame forwards nothing else.
+  const chords = /const SHELL_CHORDS = \/\^\[(.+?)\]\$\/;/.exec(navJs);
+  assert.ok(chords, "lab-nav.js lost SHELL_CHORDS");
+  const forwarded = new RegExp("^[" + chords[1] + "]$");
+  for (const k of ["k", "r", ",", "[", "]", "1", "6"]) assert.ok(forwarded.test(k), `the frame does not forward ⌘${k}`);
+  assert.ok(!forwarded.test("h"), "⌘H alone must not be forwarded (only ⇧H is the shell's)");
+  globalThis.window = {};
+  const app = await import(pathToFileURL(join(CANARY, "assets/lab-app.js")).href);
+  const calls = [];
+  const ctx = { focusSearch: () => calls.push("search"), navigate: (v) => calls.push("nav:" + v), reloadBench: () => calls.push("reload"),
+    stages: () => [{ id: "choose" }, { id: "build" }], firstOf: (s) => ({ slug: s.id + "-1" }), goBench: (s) => calls.push("bench:" + s), step: (d) => calls.push("step:" + d) };
+  assert.strictEqual(app.handleShortcut(ctx, { key: "K" }), true);
+  assert.strictEqual(app.handleShortcut(ctx, { key: "h", shiftKey: true }), true);
+  assert.strictEqual(app.handleShortcut(ctx, { key: "h" }), false, "⌘H without shift is not a chord");
+  assert.strictEqual(app.handleShortcut(ctx, { key: "2" }), true);
+  assert.strictEqual(app.handleShortcut(ctx, { key: "2", typing: true }), false, "a digit while typing is text");
+  assert.strictEqual(app.handleShortcut(ctx, { key: "]", typing: true }), false);
+  assert.strictEqual(app.handleShortcut(ctx, { key: "]" }), true);
+  assert.strictEqual(app.handleShortcut(ctx, { key: "r", typing: true }), true, "⌘R reloads the bench even from a field");
+  assert.deepStrictEqual(calls, ["search", "nav:dashboard", "bench:build-1", "step:1", "reload"]);
+  assert.match(settingsJs, /They work anywhere in the app, inside a bench too/, "Settings must stop saying the shortcuts fail inside a bench");
+});
+
+test("the Home's setup list reads only what the app can observe", () => {
+  // The "flashed" step reads the Flash bench's own memory, under the key
+  // flash.js writes when an install completed and its bytes matched.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const key = /const INSTALL_TIMES_KEY = "([^"]+)"/.exec(flashJs);
+  assert.ok(key, "flash.js lost INSTALL_TIMES_KEY");
+  assert.match(appJs, new RegExp(`const FLASH_MEMORY_KEY = "${key[1].replace(/\./g, "\\.")}"`),
+    "lab-app.js reads the flasher's memory under a different key than flash.js writes");
+  assert.doesNotMatch(appJs, /setItem\(FLASH_MEMORY_KEY/, "the Home must never write the flasher's memory");
+  // Every step is gated on the capability its observation needs.
+  const steps = appJs.slice(appJs.indexOf("export function setupSteps"), appJs.indexOf("const setupHidden"));
+  assert.match(steps, /id: "plug"[\s\S]*?show: CAPS\.serial_list/, "the USB step needs serial_list");
+  assert.match(steps, /id: "flash"[\s\S]*?show: CAPS\.serial/, "the flash step needs serial");
+  assert.match(steps, /id: "boot"[\s\S]*?show: CAPS\.mdns/, "the first-boot step is observed over mDNS");
+  assert.match(steps, /id: "hub"[\s\S]*?show: CAPS\.discovery/, "the hub step needs discovery");
+  // Forgetting on-device memory also brings a hidden list back.
+  assert.match(appJs, /KEYS\.benches, KEYS\.setupHidden\]/, "forgetEverything() must clear the setup list's keys");
+});
+
 test("CI runs this gate", () => {
   const yml = read(join(ROOT, ".github/workflows/canary-local.yml"));
   assert.match(yml, /node --test canary-local\/tests\/lab_app\.test\.js/, "add this file to the page logic tests job");

@@ -210,7 +210,9 @@ function stageRow(stage, curEntry, done) {
   const benches = stage.tracks ? stage.tracks.flatMap(t => t.benches) : (stage.benches || []);
   for (const b of benches) {
     const sel = curEntry && curEntry.bench.slug === b.slug;
-    kids.append(h("button", { class: "item" + (sel ? " sel" : ""), onclick: () => navigate(b.slug) },
+    // The manifest's one line rides the title: a hover reads it, and the
+    // sidebar search matches on it, so "usb" finds Flash over USB's bench.
+    kids.append(h("button", { class: "item" + (sel ? " sel" : ""), title: b.desc || null, onclick: () => navigate(b.slug) },
       h("span", { class: "lb", html: benchLabel(b) }),
       h("span", { class: "meta" }, b.real ? h("span", { class: "rf", title: "boots real firmware" }) : null),
     ));
@@ -249,7 +251,8 @@ function renderSidebar(view, entry) {
       h("b", { html: 'canary<span class="dot">.</span>local <small>/ the lab</small>' })),
     h("label", { class: "side-search" },
       h("span", { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>' }),
-      h("input", { type: "search", placeholder: "Search benches…", oninput: onSearch, "aria-label": "Search benches" })),
+      h("input", { type: "search", placeholder: "Search the Lab…", oninput: onSearch, onkeydown: onSearchKey, "aria-label": "Search the Lab" }),
+      appViews() ? h("kbd", { class: "sk", "aria-hidden": "true" }, "⌘K") : null),
     h("div", { class: "side-scroll" },
       // The app's own destinations first: its Home, the fleet it can hear, and
       // the one thing most people open it to do. Off-app none of these exist.
@@ -300,13 +303,47 @@ const navLink = (href, icoHtml, label, external) =>
     external ? h("span", { class: "ext", "aria-hidden": "true", html:
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg>' }) : null);
 
+/* Search covers every destination the sidebar lists — the app's own views,
+   the references, every bench and depth, with the manifest's one-line
+   description searched too — not only the benches under the stages. While a
+   query is typed, every stage unfolds to its hits and the ones with none
+   fold away; Enter opens the first hit; Escape clears. An empty query puts
+   the sidebar back exactly as navigate() built it. */
 function onSearch(e) {
   const q = e.target.value.trim().toLowerCase();
-  document.querySelectorAll(".side-scroll .children .item").forEach(it => {
-    const hit = !q || it.textContent.toLowerCase().includes(q);
+  const scroll = document.querySelector(".side-scroll");
+  if (!scroll) return;
+  if (!q) {
+    renderSidebar(currentView(), CUR);
+    const i = document.querySelector(".side-search input");
+    if (i) i.focus();
+    return;
+  }
+  let hits = 0;
+  for (const it of scroll.querySelectorAll(".item:not([aria-expanded])")) {
+    const hit = (it.textContent + " " + (it.title || "")).toLowerCase().includes(q);
     it.style.display = hit ? "" : "none";
-    if (q && hit) it.closest(".children")?.removeAttribute("hidden");
-  });
+    if (hit) { hits++; it.closest(".children")?.removeAttribute("hidden"); }
+  }
+  for (const row of scroll.querySelectorAll(".item[aria-expanded]")) {
+    const kids = row.nextElementSibling;
+    const any = !!kids && [...kids.querySelectorAll(".item")].some((it) => it.style.display !== "none");
+    row.style.display = any ? "" : "none";
+    if (kids) kids.hidden = !any;
+  }
+  scroll.querySelectorAll(".side-sec").forEach((s) => { s.style.display = "none"; });
+  let none = scroll.querySelector(".side-none");
+  if (!hits) {
+    if (!none) scroll.append(none = h("div", { class: "side-none" }));
+    none.textContent = "Nothing in the Lab matches “" + e.target.value.trim() + "”.";
+  } else if (none) none.remove();
+}
+function onSearchKey(e) {
+  if (e.key === "Escape") { e.target.value = ""; onSearch(e); e.target.blur(); return; }
+  if (e.key !== "Enter") return;
+  const first = [...document.querySelectorAll(".side-scroll .item:not([aria-expanded])")]
+    .find((it) => it.style.display !== "none" && !it.closest(".children[hidden]"));
+  if (first) { e.preventDefault(); first.click(); }
 }
 
 /* ---- topbar (phone) ---- */
@@ -363,7 +400,7 @@ function renderContent(view, entry) {
   // here rather than with `.content:has(.bench-wrap)` because the app supports
   // macOS back to 10.15 (tauri.conf.json), whose WebView predates :has() — the
   // selector would silently no-op there and leave the bench in a 1020px column.
-  c.classList.toggle("content-full", view === "bench");
+  c.classList.toggle("content-full", view === "bench" || view === "start");
   // On a phone the depth strip scrolls sideways rather than clipping labels,
   // so the tab you are actually on can start off-screen. Bring it into the
   // strip after the paint that put it there.
@@ -394,13 +431,20 @@ function benchView(entry) {
   const idx = ROUTE.indexOf(entry);
   const prev = ROUTE[idx - 1], next = ROUTE[idx + 1];
 
+  // The way onward is named, not just pointed at: "Next: First boot" on a
+  // wide window (the label folds to the arrow below 1100px), so walking the
+  // line needs no guessing about what the › leads to.
   const step = (e, label, glyph, cls) =>
     e ? h("button", { class: "stepper " + cls, title: `${label}: ${e.bench.noun}`,
           "aria-label": `${label}: ${e.bench.noun}`, onclick: () => navigate(e.bench.slug) },
+        cls === "next" ? h("span", { class: "sl" }, "Next: " + e.bench.noun) : null,
         h("span", { html: ARROW(glyph) }))
       : h("button", { class: "stepper " + cls, disabled: true, "aria-hidden": "true" },
           h("span", { html: ARROW(glyph) }));
 
+  // What this bench is, in the manifest's one line (a depth's own line when
+  // it has one), so nobody has to read the page's hero to find out.
+  const desc = (depth && depth.desc) || bench.desc || "";
   const bar = h("header", { class: "bench-bar" },
     h("div", { class: "bb-where" },
       h("div", { class: "crumbs" },
@@ -408,7 +452,8 @@ function benchView(entry) {
         track ? [h("span", { class: "sep" }, "›"), track.label.replace(" path", "")] : null),
       h("div", { class: "bb-title" },
         h("h1", {}, bench.noun),
-        real ? h("span", { class: "badge" }, "Real firmware") : null)),
+        real ? h("span", { class: "badge" }, "Real firmware") : null),
+      desc ? h("div", { class: "bb-desc", title: desc }, desc) : null),
     // Depths are how one bench teaches at two levels (overview vs. deep lab).
     // Kept as a segmented control because switching should feel like changing
     // channel on the same bench, not like navigating somewhere else.
@@ -438,11 +483,31 @@ function benchView(entry) {
             h("span", { html: ARROW("M7 17L17 7M9 7h8v8") }))),
   );
 
-  // The bench, live. Same-origin, so it inherits the app's theme and the
-  // permissions it needs — serial for the flasher, camera for the eyes bench,
-  // microphone for the acoustic ones — which a bare iframe would withhold.
+  return h("div", { class: "bench-wrap" },
+    bar,
+    // A stage with tracks is a choice, so the choice is a control: one chip
+    // per sense, the current one lit, each a click to that track's bench.
+    // The manifest's optionsNote (a paragraph) stays the room's caption.
+    stage.tracks
+      ? h("div", { class: "trackbar", role: "group", "aria-label": "Pick a sense" },
+          h("span", { class: "tk" }, "Pick the sense your Canary carries:"),
+          ...stage.tracks.map((t) => h("button", { class: "tchip" + (t === track ? " on" : ""), style: `--ac:${t.accent}`,
+              "aria-pressed": t === track ? "true" : "false", onclick: () => navigate(t.benches[0].slug) },
+            h("b", {}, t.label), h("span", {}, t.benches[0].noun))),
+          h("span", { class: "tk tail" }, "The line runs straight on to Home."))
+      : stage.fork
+        ? h("div", { class: "forknote" }, "✦ " + (stage.optionsNote || "Options at this stage — pick the sense your Canary carries."))
+        : null,
+    benchFrame(src, bench.noun),
+  );
+}
+
+// The bench, live. Same-origin, so it inherits the app's theme and the
+// permissions it needs — serial for the flasher, camera for the eyes bench,
+// microphone for the acoustic ones — which a bare iframe would withhold.
+function benchFrame(src, title) {
   const frame = h("iframe", {
-    class: "bench-frame", src, title: bench.noun, loading: "eager",
+    class: "bench-frame", src, title, loading: "eager",
     allow: "serial; camera; microphone; usb; bluetooth; clipboard-write",
   });
   // Second line of defense, and the one that does not depend on the frame
@@ -460,14 +525,7 @@ function benchView(entry) {
     frame.dataset.at = file;
     followFramed(here);
   });
-
-  return h("div", { class: "bench-wrap" },
-    bar,
-    (stage.options || stage.fork)
-      ? h("div", { class: "forknote" }, "✦ " + (stage.optionsNote || "Options at this stage — pick the sense your Canary carries. The line runs straight on to Home."))
-      : null,
-    frame,
-  );
+  return frame;
 }
 const linkNav = (slug) => (e) => { e.preventDefault(); navigate(slug); };
 
@@ -555,15 +613,35 @@ function overviewView() {
   );
 }
 
+/* The guided thread, framed like a bench. It used to be a card with an "Open
+   the setup guide" link that left the shell — in the app that meant the
+   sidebar, the strip and the shortcuts all vanished a click into the one
+   path a new person is most likely to take. Now the guide fills the pane
+   under the same slim bar, and its links hand up to the shell like any
+   bench's (PAGE_ROUTE knows start.html). */
 function startView() {
   const o = M.onramp;
-  return h("div", { class: "hero-o" },
-    h("h1", {}, "Get started"),
-    h("p", {}, o.desc),
-    h("div", { class: "actions" },
-      h("a", { class: "btn primary", href: o.lab }, "Open the setup guide"),
-      h("button", { class: "btn ghost", onclick: () => navigate(firstOf(M.stages[0]).slug) }, "Or walk the build line →")),
-  );
+  const first = firstOf(M.stages[0]);
+  const bar = h("header", { class: "bench-bar" },
+    h("div", { class: "bb-where" },
+      h("div", { class: "crumbs" }, h("b", {}, "The guided thread"), h("span", { class: "sep" }, "›"), "stages 1 – 5"),
+      h("div", { class: "bb-title" }, h("h1", {}, o.noun)),
+      h("div", { class: "bb-desc", title: o.desc }, o.desc)),
+    h("div", { class: "bb-go" },
+      h("button", { class: "stepper next", title: "Or walk the build line from stage 1: " + first.noun,
+          "aria-label": "Walk the build line: " + first.noun, onclick: () => navigate(first.slug) },
+        h("span", { class: "sl" }, "Or walk the build line"),
+        h("span", { html: ARROW("M9 6l6 6-6 6") })),
+      appViews()
+        ? h("button", { class: "stepper out", title: "Reload the guide (⌘R)", "aria-label": "Reload the guide",
+            onclick: () => APP_CTX.reloadBench() },
+            h("span", { html: ARROW("M20 12a8 8 0 11-2.3-5.7M20 4v5h-5") }))
+        : null,
+      IN_APP ? null
+        : h("a", { class: "stepper out", href: o.lab, target: "_blank", rel: "noopener",
+            title: "Open the guide in its own tab", "aria-label": "Open in a new tab" },
+            h("span", { html: ARROW("M7 17L17 7M9 7h8v8") }))));
+  return h("div", { class: "bench-wrap" }, bar, benchFrame(o.lab, o.noun));
 }
 
 function allView() {
