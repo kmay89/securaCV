@@ -100,10 +100,14 @@ const KEYS = {
   benches: "scv-lab-benches",  // every bench ever opened, by slug
   setupHidden: "scv-lab-setup-hidden",
 };
-// Written by the Flash bench (assets/flash.js INSTALL_TIMES_KEY) when an
-// install completed and its bytes matched — read here, never written, as
-// the one honest sign that a board was flashed from this computer.
+// The Flash bench's own memory of a finished install, read here and never
+// written: the browser flasher's install times (assets/flash.js
+// INSTALL_TIMES_KEY, kept once the write matched) and the native bench's
+// last flash (assets/flash-native.js FLASHED_KEY, kept once the flash
+// command returned its receipt). The desktop app always mounts the native
+// bench, so without the second key this step could never be done there.
 const FLASH_MEMORY_KEY = "canary.flash.installTimes.v1";
+const FLASHED_KEY = "scv-lab-flashed";
 const load = (k, fallback) => { try { return JSON.parse(localStorage.getItem(k)) ?? fallback; } catch { return fallback; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode: not remembered */ } };
 
@@ -117,7 +121,12 @@ export const lastBench = () => load(KEYS.last, null);
 export const benchesOpened = () => new Set(load(KEYS.benches, []));
 export const kernelAddress = () => { try { return localStorage.getItem(KEYS.kernel) || ""; } catch { return ""; } };
 export const welcomed = () => !!load(KEYS.welcomed, false);
-export const flashedHere = () => { try { return Object.keys(JSON.parse(localStorage.getItem(FLASH_MEMORY_KEY) || "{}")).length > 0; } catch { return false; } };
+export const flashedHere = () => {
+  try {
+    if (localStorage.getItem(FLASHED_KEY)) return true;
+    return Object.keys(JSON.parse(localStorage.getItem(FLASH_MEMORY_KEY) || "{}")).length > 0;
+  } catch { return false; }
+};
 export function forgetEverything() {
   for (const k of [KEYS.seen, KEYS.last, KEYS.welcomed, KEYS.progress, KEYS.benches, KEYS.setupHidden]) { try { localStorage.removeItem(k); } catch {} }
 }
@@ -370,7 +379,9 @@ export function setupSteps() {
       sub: fleet.ports.length ? usb.head + " on " + fleet.ports[0].name : "Use a USB-C data cable; a charge-only cable shows nothing.",
       go: CAPS.serial ? ["flash", "Flash a board"] : null, show: CAPS.serial_list },
     { id: "flash", title: "Put signed firmware on it", done: flashedHere(),
-      sub: "The Flash bench backs the board up, writes the image and checks every byte.",
+      // Only what both benches do: the native bench (the desktop app's)
+      // takes no backup first, so none is promised here.
+      sub: "The Flash bench offers only firmware built for the board's chip, checked against the signed release before a byte is written.",
       go: ["flash", "Flash a board"], show: CAPS.serial },
     { id: "boot", title: "First boot: name it, join your Wi-Fi", done: heard,
       sub: heard ? "A Canary has announced itself on your network." : "Power it up and it hands you a setup network. First boot walks you through it.",

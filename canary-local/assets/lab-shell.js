@@ -29,6 +29,7 @@ let M, ROUTE = [], BY_SLUG = new Map(), PAGE_ROUTE = new Map(), SITE_BY_SLUG = n
 let depthSel = {}; // benchSlug -> depth index
 let CUR = null;    // the bench entry on screen, for the step shortcuts
 let CUR_VIEW = "overview";
+let SHORTCUTS_ON = false;   // set once installShortcuts() ran: framed benches are told to forward
 
 /* ---- tiny hyperscript ---- */
 function h(tag, attrs, ...kids) {
@@ -518,6 +519,12 @@ function benchFrame(src, title) {
   // `dataset.at` is written BEFORE the resync so this can never re-enter.
   frame.dataset.at = src;
   frame.addEventListener("load", () => {
+    // Where this shell takes the keyboard (the app), tell the framed page so
+    // it forwards the chords; on the website it stays silent and the frame
+    // leaves the browser's own shortcuts alone (lab-nav.js forwardShortcuts).
+    if (SHORTCUTS_ON) {
+      try { frame.contentWindow.postMessage({ source: "scv-lab-shell", type: "shortcuts" }, location.origin); } catch { /* not ours */ }
+    }
     let here;
     try { here = frame.contentWindow.location.href; } catch { return; } // same-origin, but never assume
     const file = here.split("#")[0].split("?")[0].split("/").pop();
@@ -785,6 +792,7 @@ async function boot() {
       if (document.querySelector(".side")) renderSidebar(currentView(), CUR);
     });
     installShortcuts(APP_CTX);
+    SHORTCUTS_ON = true;
   }
   arrive();
   // The status strip under every view: what is plugged in, who is on the

@@ -175,6 +175,17 @@ test("the shortcuts reach the shell from inside a framed bench", async () => {
   assert.match(navJs, /window\.parent\.postMessage\(\{ source: "scv-lab", type: "key", key, shiftKey: e\.shiftKey, typing \}, location\.origin\)/,
     "lab-nav.js must forward the chord — key, shift, typing — and nothing read from its document");
   assert.match(navJs, /forwardShortcuts\(\);/, "lab-nav.js must install the forward in embedded mode");
+  // Codex on #1929: the website's shell installs no receiver, so a frame
+  // that forwarded unconditionally canceled real browser shortcuts (⌘R,
+  // ⌘K, ⌘1–6) for nothing. The frame forwards only once the shell says it
+  // listens, and the shell says so only where it installed the handler.
+  const fwd = navJs.slice(navJs.indexOf("function forwardShortcuts("));
+  assert.match(fwd.slice(0, 400), /d\.source === "scv-lab-shell" && d\.type === "shortcuts"\) armed = true/,
+    "the frame must arm forwarding only on the shell's own message");
+  assert.match(fwd, /if \(!armed\) return;/, "an unarmed frame must leave every chord to the browser");
+  assert.match(shellJs, /if \(SHORTCUTS_ON\) \{[\s\S]{0,200}type: "shortcuts" \}, location\.origin\)/,
+    "the shell must arm a framed bench only where it installed the shortcuts");
+  assert.match(shellJs, /installShortcuts\(APP_CTX\);\n\s+SHORTCUTS_ON = true;/, "SHORTCUTS_ON must follow installShortcuts()");
   const listener = appJs.slice(appJs.indexOf('d.type !== "key"') - 400);
   assert.match(listener.slice(0, 400), /e\.origin !== location\.origin/, "the shell must reject other origins before reading a forwarded key");
   assert.match(listener, /e\.source !== frame\.contentWindow/, "only the bench actually on screen may forward a key");
@@ -212,12 +223,29 @@ test("the Home's setup list reads only what the app can observe", () => {
   assert.ok(mine, "lab-app.js lost FLASH_MEMORY_KEY");
   assert.strictEqual(mine[1], key[1], "lab-app.js reads the flasher's memory under a different key than flash.js writes");
   assert.doesNotMatch(appJs, /setItem\(FLASH_MEMORY_KEY/, "the Home must never write the flasher's memory");
+  // Codex on #1929: the desktop app always mounts the native bench, which
+  // never wrote the browser flasher's install times — so the step could not
+  // be done where it was shown. The native bench records its own success,
+  // under the key the Home reads, once the flash command has returned.
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const nativeKey = /const FLASHED_KEY = "([^"]+)"/.exec(nativeJs);
+  const homeKey = /const FLASHED_KEY = "([^"]+)"/.exec(appJs);
+  assert.ok(nativeKey && homeKey, "FLASHED_KEY must be declared in both flash-native.js and lab-app.js");
+  assert.strictEqual(homeKey[1], nativeKey[1], "the Home reads the native flash record under a different key than flash-native.js writes");
+  assert.match(nativeJs, /invoke\("flash", \{[\s\S]*?\}\), line\);\n\s+fill\.style\.width = "100%";\n\s+try \{ localStorage\.setItem\(FLASHED_KEY/,
+    "flash-native.js must record the flash right after the flash command returned, before anything else can throw");
+  assert.doesNotMatch(appJs, /setItem\(FLASHED_KEY/, "the Home must never write the native flash record");
+  assert.match(appJs, /if \(localStorage\.getItem\(FLASHED_KEY\)\) return true;/, "flashedHere() must read the native record");
   // Every step is gated on the capability its observation needs.
   const steps = appJs.slice(appJs.indexOf("export function setupSteps"), appJs.indexOf("const setupHidden"));
   assert.match(steps, /id: "plug"[\s\S]*?show: CAPS\.serial_list/, "the USB step needs serial_list");
   assert.match(steps, /id: "flash"[\s\S]*?show: CAPS\.serial/, "the flash step needs serial");
   assert.match(steps, /id: "boot"[\s\S]*?show: CAPS\.mdns/, "the first-boot step is observed over mDNS");
   assert.match(steps, /id: "hub"[\s\S]*?show: CAPS\.discovery/, "the hub step needs discovery");
+  // The step's words promise only what both benches do: the native bench
+  // takes no safety copy (backupPath: ""), so no "backs up" here.
+  assert.match(nativeJs, /backupPath: "",/, "flash-native.js now takes a backup — the setup step may say so again");
+  assert.doesNotMatch(steps, /back(s|ed)? (it |the board )?up|safety copy/i, "the setup step must not promise a backup the native bench does not take");
   // Forgetting on-device memory also brings a hidden list back.
   assert.match(appJs, /KEYS\.benches, KEYS\.setupHidden\]/, "forgetEverything() must clear the setup list's keys");
 });

@@ -133,10 +133,24 @@ function handOffLocalLinks() {
    frame forwards the chords the shell owns (lab-app.js handleShortcut() is
    the one list) and takes the browser default off them. What crosses is the
    key, the shift state and whether the person was typing — never a target,
-   never anything read from this document. The shell acts, or ignores it. */
+   never anything read from this document. The shell acts, or ignores it.
+
+   Armed only by the shell: the website's shell installs no receiver (the
+   shortcuts are the app's), and a frame that took ⌘R or ⌘K off the browser
+   there would be canceling real browser shortcuts for nothing. So nothing
+   is forwarded, and no default is touched, until the shell that framed this
+   page says it listens (a "shortcuts" message from the parent, same origin,
+   sent after the frame loads). */
 const SHELL_CHORDS = /^[kr,[\]1-6]$/;   // plus ⇧H; the shell's handleShortcut() has the same set
 function forwardShortcuts() {
+  let armed = false;
+  window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin || e.source !== window.parent) return;
+    const d = e.data;
+    if (d && d.source === "scv-lab-shell" && d.type === "shortcuts") armed = true;
+  });
   document.addEventListener("keydown", (e) => {
+    if (!armed) return;
     const mod = e.metaKey || e.ctrlKey;
     if (!mod || e.altKey) return;
     const key = e.key.toLowerCase();

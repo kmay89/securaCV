@@ -36,6 +36,12 @@ const invoke = (cmd, args) => tauri().core.invoke(cmd, args);
 const listen = (evt, cb) =>
   tauri().event ? tauri().event.listen(evt, cb) : Promise.resolve(() => {});
 
+// The Lab app's Home ticks its "put signed firmware on it" step from this:
+// written once the flash command has returned its receipt, read by
+// assets/lab-app.js (FLASHED_KEY there, held equal by lab_app.test.js), and
+// never anything more than when, which product and which version.
+const FLASHED_KEY = "scv-lab-flashed";
+
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -626,6 +632,8 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
         backupPath: "",
       }), line);
       fill.style.width = "100%";
+      try { localStorage.setItem(FLASHED_KEY, JSON.stringify({ at: Date.now(), product: product.id, version: receipt.version })); }
+      catch { /* private mode: the Home's step stays open */ }
       await renderReceipt(product, receipt);
     } catch (e) {
       const c = classifyFlashError(e);
