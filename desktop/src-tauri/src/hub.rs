@@ -23,6 +23,7 @@ use hub_io::account::{mint_owner_store, OwnerAccount};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -384,6 +385,13 @@ pub fn hub_pi_boot_stop(state: tauri::State<'_, PiUsbState>) -> Result<(), Strin
 /// decompress → authorize → write → read-back → Wi-Fi seed → eject. Progress
 /// streams over `hub:progress` ({stage, done, total}) and human lines over
 /// `hub:log`; the Wi-Fi values themselves are never logged.
+///
+/// `confirmed` is the frontend's word that a human approved the write — and
+/// a script injected into the webview has the same word. So a native dialog
+/// naming the disk asks again from HERE, before any work, and the raw-disk
+/// write happens only after a real hand said yes (the same shape as
+/// `saved_wifi_password` in lib.rs). The webview's confirm stays: it is
+/// what `authorize_write` records, and two yeses cost one extra click.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn hub_flash(
@@ -396,6 +404,40 @@ pub async fn hub_flash(
     account: Option<HubAccount>,
     provision: Option<bool>,
 ) -> Result<HubReceipt, String> {
+    if !confirmed {
+        return Err("the write wasn't confirmed".to_string());
+    }
+    let prompt_app = app.clone();
+    let prompt_disk = disk_path.clone();
+    let prompt_board = board_id.clone();
+    let approved = tauri::async_runtime::spawn_blocking(move || {
+        // Name the disk the way the picker did (model + path), so the person
+        // confirms a thing they recognize and not a /dev node.
+        let label = enumerate()
+            .ok()
+            .and_then(|disks| disks.into_iter().find(|d| d.path == prompt_disk))
+            .map(|d| format!("{} ({})", d.model, d.path))
+            .unwrap_or_else(|| prompt_disk.clone());
+        prompt_app
+            .dialog()
+            .message(format!(
+                "Erase {label} and write the {prompt_board} Home Assistant hub image to it?\n\n\
+                 Everything on that disk is erased first. This cannot be undone — \
+                 make sure it is the card or drive you mean."
+            ))
+            .title("Erase and write this disk?")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Erase and write".into(),
+                "Cancel".into(),
+            ))
+            .blocking_show()
+    })
+    .await
+    .map_err(|e| format!("couldn't ask: {e}"))?;
+    if !approved {
+        return Err("not written — the disk stays as it is".to_string());
+    }
     let cancel = hub_io::CancelToken::default();
     {
         let mut guard = state.0.lock().map_err(|_| "hub flash state poisoned")?;
@@ -555,6 +597,60 @@ fn local_hub_host(host: &str) -> Result<String, String> {
     Ok(host.to_string())
 }
 
+/// A hub host resolved and judged: the name gate (`local_hub_host`) passed,
+/// the OS resolver answered, and every answer was on this network
+/// (`fleet::resolve_local`). `pinned` is what hub-io dials: the address
+/// itself (`ip:port`) when the answer is IPv4, so the HTTP client never
+/// resolves the name a second time and the owner's credentials go exactly
+/// where the check looked. An IPv6-only answer is dialed by name — hub-io's
+/// host rule has no bracket form yet — so it is gated but not pinned.
+struct PinnedHub {
+    /// The host string hub-io connects to.
+    pinned: String,
+    /// The address the hub answers at, for the UI to show and compare.
+    ip: String,
+}
+
+async fn pinned_hub_host(host: &str) -> Result<PinnedHub, String> {
+    let host = local_hub_host(host)?;
+    let (bare, port) = match host.rsplit_once(':') {
+        Some((name, port))
+            if !name.contains(':')
+                && !port.is_empty()
+                && port.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            (name.to_string(), Some(port.to_string()))
+        }
+        _ => (host.clone(), None),
+    };
+    let addrs = crate::fleet::resolve_local(&bare).await?;
+    // IPv4 first: the LAN case, and the one form hub-io can take as a literal.
+    let ip = addrs
+        .iter()
+        .map(|a| a.ip())
+        .find(|ip| ip.is_ipv4())
+        .or_else(|| addrs.first().map(|a| a.ip()))
+        .ok_or_else(|| format!("{bare} didn't resolve to any address"))?;
+    let pinned = if ip.is_ipv4() {
+        format!("{ip}:{}", port.as_deref().unwrap_or("8123"))
+    } else {
+        host
+    };
+    Ok(PinnedHub {
+        pinned,
+        ip: ip.to_string(),
+    })
+}
+
+/// The address a hub name answers at right now, after the same gate every
+/// hub call applies. The UI shows it beside the first-boot watch, records
+/// the one the first successful probe used, and hands it back to
+/// [`hub_onboard`] as the address the person saw.
+#[tauri::command]
+pub async fn hub_resolve_hub(host: String) -> Result<String, String> {
+    Ok(pinned_hub_host(&host).await?.ip)
+}
+
 /// Where the hub is in its first boot: `"offline"`, `"preparing"` or
 /// `"ready"` (`hub_io::onboarding::HubProbe`). Three states on purpose —
 /// HAOS answers HTTP with a "Preparing Home Assistant" page for the minutes
@@ -563,12 +659,14 @@ fn local_hub_host(host: &str) -> Result<String, String> {
 /// and the self-setup run at a page that could answer neither, so they gave
 /// up and the person met the setup wizard. Only `"ready"` means Home
 /// Assistant's own onboarding API is answering, which is the one thing the
-/// companions need. Host rules: a bare `hostname[:port]`, never a URL.
+/// companions need. Host rules: a bare `hostname[:port]`, never a URL, and
+/// resolved + pinned before the probe (`pinned_hub_host`); a name that does
+/// not resolve yet is an `Err`, which the watch reads as offline.
 #[tauri::command]
 pub async fn hub_probe_hub(host: String) -> Result<String, String> {
-    let host = local_hub_host(&host)?;
+    let hub = pinned_hub_host(&host).await?;
     tauri::async_runtime::spawn_blocking(move || {
-        hub_io::onboarding::probe_hub(&host).map(|p| p.name().to_string())
+        hub_io::onboarding::probe_hub(&hub.pinned).map(|p| p.name().to_string())
     })
     .await
     .map_err(|e| format!("hub probe worker failed: {e}"))?
@@ -596,15 +694,71 @@ pub struct OnboardReport {
 /// any stumble is always safe. Narration streams over `hub:headless-log`;
 /// the password never appears in logs or events. Host rules match
 /// [`hub_probe_hub`]: a bare `hostname[:port]`, never a URL.
+///
+/// The owner's login crosses the LAN in plain http to whatever the name
+/// resolves to, and `homeassistant.local` is an mDNS name any host on the
+/// network can answer. So: the name is resolved and pinned
+/// (`pinned_hub_host`), the address must be the one the UI showed
+/// (`expected_ip`), and a native dialog names host and address — with a
+/// warning when `previous_ip`, the address the first successful probe
+/// used, differs — before a byte of the login is sent. Home Assistant stamps
+/// no identity we could pin at flash time (its `uuid` is minted on the
+/// hub's first boot), so the address is the only continuity there is; it is
+/// shown rather than assumed.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn hub_onboard(
     app: AppHandle,
     host: String,
     name: String,
     username: String,
     password: String,
+    expected_ip: String,
+    previous_ip: Option<String>,
 ) -> Result<OnboardReport, String> {
-    let host = local_hub_host(&host)?;
+    let hub = pinned_hub_host(&host).await?;
+    if hub.ip != expected_ip.trim() {
+        return Err(format!(
+            "{host} now answers at {} (it was {expected_ip} a moment ago) — not sending the login; try again",
+            hub.ip
+        ));
+    }
+    let shown_host = local_hub_host(&host)?;
+    let prompt_app = app.clone();
+    let prompt_ip = hub.ip.clone();
+    let approved = tauri::async_runtime::spawn_blocking(move || {
+        let mut message = format!(
+            "Create the Home Assistant owner account on {shown_host}?\n\n\
+             It answers at {prompt_ip}. The login you typed (name, username and password) \
+             is sent to that address over plain http on your own network."
+        );
+        match previous_ip.as_deref().map(str::trim) {
+            Some(prev) if !prev.is_empty() && prev != prompt_ip => message.push_str(&format!(
+                "\n\n\u{26a0} Last time this hub answered at {prev}. A new address can be your router \
+                 handing out another one \u{2014} or a different device answering to the hub's name. \
+                 Continue only if you expect the change."
+            )),
+            _ => {}
+        }
+        prompt_app
+            .dialog()
+            .message(message)
+            .title("Create the hub account?")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Create account".into(),
+                "Not now".into(),
+            ))
+            .blocking_show()
+    })
+    .await
+    .map_err(|e| format!("couldn't ask: {e}"))?;
+    if !approved {
+        return Err(
+            "not sent — the account stays uncreated; open the hub's own setup page instead"
+                .to_string(),
+        );
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let log = |line: String| {
             let _ = app.emit("hub:headless-log", line);
@@ -614,7 +768,7 @@ pub async fn hub_onboard(
             username: &username,
             password: &password,
         };
-        let out = hub_io::onboarding::complete_onboarding(&host, &login, &log)?;
+        let out = hub_io::onboarding::complete_onboarding(&hub.pinned, &login, &log)?;
         Ok(OnboardReport {
             ok: out.ok(),
             created_user: out.created_user,
@@ -1131,6 +1285,20 @@ fn hub_flash_blocking(
 // What lives here is the thin I/O edge: a keypair on disk, a spawned `ssh`,
 // and lines streamed to the UI.
 
+/// OpenSSH's own tools. Absolute on macOS, where Apple ships them in one
+/// place: a helper spawned by bare name is found through PATH, which the
+/// launching shell owns, and these two touch the maintenance key. On Linux
+/// their directory differs across distros (/usr/bin on most, elsewhere on
+/// some), so the bare name through PATH is the only portable lookup.
+#[cfg(target_os = "macos")]
+const SSH_KEYGEN: &str = "/usr/bin/ssh-keygen";
+#[cfg(not(target_os = "macos"))]
+const SSH_KEYGEN: &str = "ssh-keygen";
+#[cfg(target_os = "macos")]
+const SSH: &str = "/usr/bin/ssh";
+#[cfg(not(target_os = "macos"))]
+const SSH: &str = "ssh";
+
 /// Where the maintenance keypair and the hubs' host keys live: the app's own
 /// data dir, never the user's `~/.ssh`.
 fn ssh_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -1155,7 +1323,7 @@ fn ensure_maintenance_key(app: &AppHandle) -> Result<String, String> {
         // A half-pair (crash mid-mint) would make ssh-keygen prompt; clear it.
         let _ = std::fs::remove_file(&key);
         let _ = std::fs::remove_file(&pubkey);
-        let out = std::process::Command::new("ssh-keygen")
+        let out = std::process::Command::new(SSH_KEYGEN)
             .args(["-q", "-t", "ed25519", "-N", "", "-C", "securacv-flasher"])
             .arg("-f")
             .arg(&key)
@@ -1374,7 +1542,7 @@ fn hub_headless_blocking(
 /// remote runner never prints any.
 fn run_ssh(log: &dyn Fn(String), args: &[String]) -> Result<(i32, String), String> {
     use std::io::BufRead;
-    let mut child = std::process::Command::new("ssh")
+    let mut child = std::process::Command::new(SSH)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())

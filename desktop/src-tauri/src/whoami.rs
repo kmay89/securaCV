@@ -8,21 +8,27 @@
 //! for a Canary that has left the network, or a peer on a segment that
 //! cannot talk to it.
 //!
-//! It is **not channel binding**, and nothing here may be used as
-//! authorization. A hostile peer on the same LAN can spoof the mDNS record,
-//! relay our nonce to the genuine device's (deliberately unauthenticated)
-//! endpoint, and hand the signature back as its own; the verification below
-//! would succeed against that peer's socket. Since such a peer is already on
-//! the LAN — the precondition that let it spoof at all — relaying costs it
-//! nothing.
+//! It is **not channel binding**. A hostile peer on the same LAN can spoof
+//! the mDNS record, relay our nonce to the genuine device's (deliberately
+//! unauthenticated) endpoint, and hand the signature back as its own; the
+//! verification below succeeds against that peer's socket. Since such a
+//! peer is already on the LAN — the precondition that let it spoof at all —
+//! relaying costs it nothing more than reachability to the real board.
 //!
-//! So the fleet book shows this result and **gates nothing on it**. Making a
-//! valid proof the condition for attaching a bearer token would authenticate
-//! the key while saying nothing about the socket receiving the credential,
-//! which is worse than today's honest "unverified": false confidence beats
-//! no confidence only in the wrong direction. Closing that gap requires the
-//! token exchange itself to be authenticated to the device key, which is an
-//! open design decision — see docs/flasher_profiles_fleet_book.md.
+//! So this is used in two ways, and the fleet book keeps them apart:
+//!
+//! * The identity badge (`device_whoami`) is SHOWN, and on first sight
+//!   records the fingerprint; a cached badge gates nothing.
+//! * Before a bearer token goes to a (device_id, address) pair for the
+//!   first time in a session, `fleet_device_call` runs a FRESH challenge
+//!   and refuses unless the answer verifies against the recorded
+//!   fingerprint (fleet.rs `gate_need` / `admit`). That stops the cheap
+//!   attack — a peer announcing a victim's device_id with its own address
+//!   and collecting the token on the next click — but not a relay, which
+//!   is why the frontend also asks a human before trusting an address that
+//!   differs from the one the device first proved itself at. Closing the
+//!   gap for good needs the token exchange itself bound to the device key,
+//!   an open design decision — see docs/flasher_profiles_fleet_book.md.
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};

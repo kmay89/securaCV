@@ -44,6 +44,7 @@ use flash_engine::{health, port_hint, release, rescue};
 use host::TauriHost;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
@@ -121,7 +122,9 @@ fn current_ssid() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         for iface in ["en0", "en1"] {
-            if let Ok(out) = std::process::Command::new("networksetup")
+            // Absolute: a helper spawned by bare name is found through PATH,
+            // which the launching shell owns. Apple ships this one here.
+            if let Ok(out) = std::process::Command::new("/usr/sbin/networksetup")
                 .args(["-getairportnetwork", iface])
                 .output()
             {
@@ -140,6 +143,9 @@ fn current_ssid() -> Option<String> {
     }
     #[cfg(target_os = "linux")]
     {
+        // Bare names on purpose: iwgetid and nmcli live in /sbin, /usr/sbin
+        // or /usr/bin depending on the distro, so PATH is the only portable
+        // lookup. Neither carries a secret; current_ssid is a prefill.
         if let Ok(out) = std::process::Command::new("iwgetid").arg("-r").output() {
             let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !name.is_empty() {
@@ -210,7 +216,9 @@ async fn saved_wifi_password(app: AppHandle, ssid: String) -> Result<String, Str
 fn read_saved_wifi_password(ssid: String) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let out = std::process::Command::new("security")
+        // Absolute (see current_ssid): this one hands back a password, so
+        // it must be Apple's binary and not whatever PATH finds first.
+        let out = std::process::Command::new("/usr/bin/security")
             .args([
                 "find-generic-password",
                 "-D",
@@ -234,6 +242,8 @@ fn read_saved_wifi_password(ssid: String) -> Result<String, String> {
     }
     #[cfg(target_os = "linux")]
     {
+        // Bare name: nmcli's directory differs across distros (see
+        // current_ssid), so PATH is the only portable lookup.
         let out = std::process::Command::new("nmcli")
             .args([
                 "-s",
@@ -334,15 +344,16 @@ async fn witness_discover(bases: Vec<String>) -> Result<Value, String> {
                 .to_string(),
         );
     }
-    let client = reqwest::Client::builder()
-        .user_agent("SecuraCV-Flasher")
-        .timeout(std::time::Duration::from_secs(2))
-        // Same local-first transport policy as fleet.rs's device calls: the
-        // URL is gated, the connection needs .no_proxy() too.
-        .no_proxy()
-        .build()
-        .map_err(|e| e.to_string())?;
     for base in &bases {
+        // One pinned client per base (fleet.rs pinned_client): the name is
+        // resolved, every address judged local, and the connection pinned to
+        // those addresses. A name that resolves off the LAN is skipped like
+        // any other candidate that failed the gate.
+        let Ok(client) =
+            fleet::pinned_client(base, "SecuraCV-Flasher", std::time::Duration::from_secs(2)).await
+        else {
+            continue;
+        };
         let url = format!("{}/api/fleet", base.trim_end_matches('/'));
         if let Ok(resp) = client.get(&url).send().await {
             if resp.status().is_success() {
@@ -405,8 +416,125 @@ pub struct LocalFileInfo {
     esp_magic: bool,
 }
 
+// ── files the webview may name: by handle, never by path ───────────────────
+// inspect_local_file, flash_local_file and write_local_image used to take any
+// absolute path the webview sent, and a script injected into the webview has
+// the same `invoke` the app's own code has. Now the OS open panel is raised
+// from HERE (pick_local_file), the path it answers is validated and kept in
+// a per-session map, and the three commands take the opaque handle — so the
+// webview can name a file the user just chose, and nothing else.
+
+/// The files picked through the OS open panel this session, by handle.
+#[derive(Default)]
+pub struct ChosenFiles(std::sync::Mutex<HashMap<String, std::path::PathBuf>>);
+
+/// What the picker hands the UI: the handle to pass back, the name to show.
+#[derive(Serialize)]
+pub struct ChosenFile {
+    handle: String,
+    name: String,
+}
+
+/// The checks a picked path passes before a handle is minted for it: it
+/// resolves (symlinks followed, so a link can't dress a device or a
+/// directory up as a file) to a regular file, and that file is not under
+/// the app's own data dir — the staged images, the safety-copy backups,
+/// the launch record and the maintenance key all live there, and none of
+/// them is what "pick a file" means. Pure over two paths, so it is tested.
+pub(crate) fn chosen_file_ok(
+    path: &std::path::Path,
+    app_data: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("the chosen path must be absolute".into());
+    }
+    let resolved = path
+        .canonicalize()
+        .map_err(|e| format!("couldn't open that file: {e}"))?;
+    let meta = std::fs::metadata(&resolved).map_err(|e| format!("couldn't read that file: {e}"))?;
+    if !meta.is_file() {
+        return Err("that isn't a regular file".into());
+    }
+    if let Some(data) = app_data.and_then(|d| d.canonicalize().ok()) {
+        if resolved.starts_with(&data) {
+            return Err(
+                "that file belongs to this app's own data folder — pick one of yours".into(),
+            );
+        }
+    }
+    Ok(resolved)
+}
+
+/// Raise the OS open panel for a `.bin` and hand back a handle for it. `kind`
+/// picks the panel's wording: `factory` (the Advanced local-file install) or
+/// `restore` (the rescue bench's write). `None` when the user canceled.
 #[tauri::command]
-async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
+async fn pick_local_file(
+    app: AppHandle,
+    files: tauri::State<'_, ChosenFiles>,
+    kind: String,
+) -> Result<Option<ChosenFile>, String> {
+    let (title, filter) = match kind.as_str() {
+        "factory" => ("Choose a factory firmware image", "Factory firmware image"),
+        "restore" => (
+            "Choose a firmware image or backup",
+            "Firmware image or backup",
+        ),
+        _ => return Err(format!("unknown file picker {kind:?}")),
+    };
+    let app_data = app.path().app_data_dir().ok();
+    let picker = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        picker
+            .dialog()
+            .file()
+            .set_title(title)
+            .add_filter(filter, &["bin"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("couldn't open the file panel: {e}"))?;
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|e| format!("the panel answered something that isn't a file path: {e}"))?;
+    let resolved = chosen_file_ok(&path, app_data.as_deref())?;
+    let name = resolved
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "local file".to_string());
+    let mut raw = [0u8; 16];
+    getrandom::fill(&mut raw).map_err(|e| format!("no system randomness: {e}"))?;
+    let handle: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    files
+        .0
+        .lock()
+        .map_err(|_| "chosen-file table poisoned")?
+        .insert(handle.clone(), resolved);
+    Ok(Some(ChosenFile { handle, name }))
+}
+
+/// The path behind a handle the picker minted this session.
+fn chosen_path(files: &ChosenFiles, handle: &str) -> Result<std::path::PathBuf, String> {
+    files
+        .0
+        .lock()
+        .map_err(|_| "chosen-file table poisoned")?
+        .get(handle)
+        .cloned()
+        .ok_or_else(|| {
+            "pick the file again — this app only writes a file chosen in its own panel".to_string()
+        })
+}
+
+#[tauri::command]
+async fn inspect_local_file(
+    files: tauri::State<'_, ChosenFiles>,
+    handle: String,
+) -> Result<LocalFileInfo, String> {
+    let path = chosen_path(&files, &handle)?;
     let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read that file: {e}"))?;
     check_local_image(&bytes)?;
     Ok(LocalFileInfo {
@@ -423,17 +551,22 @@ async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
 /// all the receipt claims. `expected_size`/`expected_sha256` are the values
 /// inspect_local_file showed and the user confirmed — the file is re-read and
 /// re-hashed here, so a file that changed on disk between the two calls is
-/// refused rather than silently written. `detected_chip` is the chip the
+/// refused rather than silently written. `handle` names a file the OS panel
+/// answered (pick_local_file) — never a path. `detected_chip` is the chip the
 /// frontend read: the image must carry that chip's bootloader where its ROM
 /// loads it (check_bootloader_offset, the catalog path's gate too). The write
 /// mechanics are identical to flash(): private staged temp file,
 /// `write-bin 0x0` via the bundled espflash, `flash:log` streaming.
+// The argument list is the frontend's invoke contract; the file handle made
+// it eight.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn flash_local_file(
     app: AppHandle,
+    files: tauri::State<'_, ChosenFiles>,
     port: String,
     baud: u32,
-    path: String,
+    handle: String,
     expected_size: u64,
     expected_sha256: String,
     detected_chip: String,
@@ -442,7 +575,8 @@ async fn flash_local_file(
         let _ = app.emit("flash:log", line);
     };
 
-    let file_name = std::path::Path::new(&path)
+    let path = chosen_path(&files, &handle)?;
+    let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "local file".to_string());
@@ -841,14 +975,18 @@ async fn backup_flash(
 /// in the same words. A genuine full-flash backup carries that table, so it
 /// passes; only an app-only file is turned away. The flash-size fit is then
 /// checked against THIS chip, mirroring the browser's restore validation.
+/// `handle` names a file the OS panel answered (pick_local_file), never a path.
 #[tauri::command]
 async fn write_local_image(
     app: AppHandle,
+    files: tauri::State<'_, ChosenFiles>,
     port: String,
-    path: String,
+    handle: String,
     flash_size: Option<u64>,
     baud: u32,
 ) -> Result<(), String> {
+    let path = chosen_path(&files, &handle)?;
+    let path = path.to_string_lossy().to_string();
     // A firmware image is at most one chip's flash (≤ 32 MiB), so read it once —
     // the same bounded read `flash_local_file` does — and run the offset-0 guard
     // before anything is written. espflash re-reads the path when it writes.
@@ -1377,6 +1515,8 @@ pub fn run() {
         .manage(hub::PiUsbState::default())
         .manage(hub::HubFlashState::default())
         .manage(hub::HeadlessState::default())
+        .manage(fleet::ProvenState::default())
+        .manage(ChosenFiles::default())
         // On launch, reclaim anything a crash or pulled plug orphaned (a
         // ~2.5 GB raw staging image, a half-finished .partial download). Off
         // the main thread so it never delays the window. Orphaned *processes*
@@ -1466,6 +1606,7 @@ pub fn run() {
             fetch_manifest,
             witness_discover,
             flash,
+            pick_local_file,
             inspect_local_file,
             flash_local_file,
             flash_vision_module,
@@ -1476,6 +1617,7 @@ pub fn run() {
             hub::hub_flash_cancel,
             hub::hub_preflight,
             hub::hub_probe_hub,
+            hub::hub_resolve_hub,
             hub::hub_onboard,
             hub::hub_headless_setup,
             hub::hub_headless_available,
@@ -1589,7 +1731,67 @@ mod catalog_derivation_tests {
 
 #[cfg(test)]
 mod webview_boundary_tests {
-    use super::{validated_backup_path, validated_save_path};
+    use super::{chosen_file_ok, validated_backup_path, validated_save_path};
+
+    #[test]
+    fn a_picked_file_is_a_regular_file_outside_the_apps_own_folder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_data = dir.path().join("app-data");
+        std::fs::create_dir_all(app_data.join("backups")).unwrap();
+        let mine = dir.path().join("firmware.bin");
+        std::fs::write(&mine, b"\xE9hello").unwrap();
+
+        let ok = chosen_file_ok(&mine, Some(&app_data)).expect("the user's own file");
+        assert_eq!(ok, mine.canonicalize().unwrap());
+        // No app data dir known (a path lookup failed): the file check alone.
+        assert!(chosen_file_ok(&mine, None).is_ok());
+
+        // Not a file: a directory, a missing path, a relative path.
+        assert!(
+            chosen_file_ok(dir.path(), Some(&app_data)).is_err(),
+            "a directory"
+        );
+        assert!(
+            chosen_file_ok(&dir.path().join("nope.bin"), Some(&app_data)).is_err(),
+            "missing"
+        );
+        assert!(
+            chosen_file_ok(std::path::Path::new("firmware.bin"), Some(&app_data)).is_err(),
+            "relative"
+        );
+
+        // The app's own files are not "a file of yours": a safety-copy backup
+        // (the identity key and Wi-Fi in cleartext) must not be writable to
+        // a board by a script that guessed its name.
+        let backup = app_data.join("backups/canary-abc-backup.bin");
+        std::fs::write(&backup, b"backup").unwrap();
+        assert!(chosen_file_ok(&backup, Some(&app_data)).is_err());
+        // ...and `..` can't walk back out of the refusal.
+        let sneaky = app_data.join("backups/../backups/canary-abc-backup.bin");
+        assert!(chosen_file_ok(&sneaky, Some(&app_data)).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_judged_by_what_it_points_at() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_data = dir.path().join("app-data");
+        std::fs::create_dir_all(&app_data).unwrap();
+        let secret = app_data.join("launch.json");
+        std::fs::write(&secret, b"{}").unwrap();
+        let link = dir.path().join("innocent.bin");
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+        assert!(
+            chosen_file_ok(&link, Some(&app_data)).is_err(),
+            "a link into app data"
+        );
+        let to_dir = dir.path().join("dir.bin");
+        std::os::unix::fs::symlink(&app_data, &to_dir).unwrap();
+        assert!(
+            chosen_file_ok(&to_dir, Some(&app_data)).is_err(),
+            "a link to a directory"
+        );
+    }
 
     #[test]
     fn backup_paths_are_validated_not_trusted() {
