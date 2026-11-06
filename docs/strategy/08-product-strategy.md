@@ -47,7 +47,10 @@ and the whitepaper.)
   [README](../../README.md) and [`AGENTS.md`](../../AGENTS.md)), so a backend must
   be trusted/audited until process isolation lands. Even so, a competitor whose
   business *is* your footage cannot follow this architecture.
-- **No subscription, ever**, in a market trained to resent subscriptions.
+- **No subscription, ever**, in a market trained to resent subscriptions — none
+  for the software or the data path; support hours and attestation are the only
+  recurring lines ([21](21-licensing-structure-for-institutions.md),
+  [26](26-industrial-pro-cam-services-channel.md)) and both are optional.
 - **Two tailwinds at our back:** rising privacy concern and the collapsing
   trustworthiness of raw video. We are one of the only players selling
   *authenticatable, tamper-evident* perception to humans, not enterprises.
@@ -77,9 +80,10 @@ and the whitepaper.)
 - **Visible integrity, always.** Surface the verified badge and chain status
   proudly. The one thing every other camera *can't* say is "this record can't be
   edited — even by us." Show it on every event.
-- **The constraints, sold as the point.** Coarse time, no faces, 24-hour memory:
-  reframe each as a promise — *"It can't be turned into a tool to spy on you, even
-  by us."* Never apologize for the model; it **is** the value.
+- **The constraints, sold as the point.** Coarse time, no faces, a short memory
+  (configurable; seven days by default, matching the kernel): reframe each as a
+  promise — *"It can't be turned into a tool to spy on you, even by us."* Never
+  apologize for the model; it **is** the value.
 - **Proof that travels.** A one-tap, court-grade signed export bundle + a free
   standalone verifier turns the moat into something a non-engineer can *use* under
   stress.
