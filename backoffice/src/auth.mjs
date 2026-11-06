@@ -3,21 +3,57 @@
 // CSRF token, and a name every action is written down under. Invitations
 // are links; nobody ever receives a password from someone else. Bearer
 // tokens for the API/CLI are separate and owner-made.
-import { scryptSync, randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto';
+import { scrypt, scryptSync, randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto';
 import { netOf } from './guard.mjs';
 import { nowIso } from './db.mjs';
 import { token, safeEqual } from './http.mjs';
 
-export function hashPassword(pw, salt = randomBytes(16)) {
-  const key = scryptSync(String(pw), salt, 32, { N: 16384, r: 8, p: 1 });
-  return `scrypt$${salt.toString('base64')}$${key.toString('base64')}`;
+// --- the KDF: scrypt, run off the event loop. `crypto.scrypt` hands the work to libuv's
+// threadpool, so a burst of logins or bearer calls never stalls the Stripe webhook, the
+// store, /healthz (the container's health check) or the admin: the request pipeline awaits
+// each verification. A lane caps how many derivations run at once (the rest wait in order,
+// the loop free meanwhile): one password at a time, since each holds 128 MiB while it runs
+// and the demo lives on a 512 MB box; two token checks (4 MiB each), so two of the pool's
+// four threads stay free for DNS and the file system. The sync forms exist for the CLI
+// (`backoffice setup`) and the demo seed, which run before the server listens — never for
+// a request.
+// Costs: passwords N=2^17, r=8, p=1 (OWASP's floor for scrypt); API tokens N=2^12 (the same
+// KDF, a lighter cost: a token is 256 random bits, not a phrase anyone chose). A hash says its
+// own cost (`$scrypt$ln=17,r=8,p=1$<salt>$<key>`, the PHC string format), so the cost can rise
+// again without a migration; a hash from before 0.9.0 (`scrypt$<salt>$<key>`, N=2^14) still
+// verifies and is re-hashed at the current cost on the next successful login. The Health page
+// counts the ones still waiting.
+export const PASSWORD_SCRYPT = { N: 2 ** 17, r: 8, p: 1 };
+const LEGACY_PASSWORD_SCRYPT = { N: 2 ** 14, r: 8, p: 1 };
+const TOKEN_SCRYPT = { N: 2 ** 12, r: 8, p: 1 };
+const lane = (width) => { let running = 0; const waiting = []; const next = () => { running--; if (waiting.length) waiting.shift()(); }; return (job) => new Promise((resolve, reject) => { const run = () => { running++; job().then(resolve, reject).finally(next); }; running < width ? run() : waiting.push(run); }); };
+const PASSWORD_LANE = lane(1), TOKEN_LANE = lane(2);
+const scryptOpts = ({ N, r, p }) => ({ N, r, p, maxmem: 256 * N * r });   // twice what the derivation needs (128·N·r); a bound, not an allocation
+const kdf = (secret, salt, params) => new Promise((resolve, reject) => { try { scrypt(String(secret), salt, 32, scryptOpts(params), (err, key) => err ? reject(err) : resolve(key)); } catch (err) { reject(err); } });
+const formatHash = ({ N, r, p }, salt, key) => `$scrypt$ln=${Math.log2(N)},r=${r},p=${p}$${salt.toString('base64')}$${key.toString('base64')}`;
+// The cost, salt and key a stored hash carries; null for anything that is not one of ours. A bare
+// `scrypt$<salt>$<key>` from before the cost was written down is read at `legacy` (the password's old
+// cost unless the caller says otherwise). The cost is bounded (2^10 ≤ N ≤ 2^20, r ≤ 8, p ≤ 16): a row
+// edited to say ln=40 is refused, not derived.
+export function parseHash(stored, legacy = LEGACY_PASSWORD_SCRYPT) {
+  const s = String(stored || ''); const f = s.split('$');
+  if (s.startsWith('$scrypt$') && f.length === 5) {
+    const o = Object.fromEntries(f[2].split(',').map(kv => kv.split('='))); const ln = Number(o.ln), r = Number(o.r), p = Number(o.p);
+    if (!Number.isInteger(ln) || ln < 10 || ln > 20 || !Number.isInteger(r) || r < 1 || r > 8 || !Number.isInteger(p) || p < 1 || p > 16 || !f[3] || !f[4]) return null;
+    return { N: 2 ** ln, r, p, salt: f[3], key: f[4] };
+  }
+  if (s.startsWith('scrypt$') && f.length === 3 && f[1] && f[2]) return { ...legacy, salt: f[1], key: f[2] };
+  return null;
 }
-export function verifyPassword(pw, stored) {
-  if (!stored) return false;
-  const [, salt, key] = stored.split('$');
-  const got = scryptSync(String(pw), Buffer.from(salt, 'base64'), 32, { N: 16384, r: 8, p: 1 });
-  const want = Buffer.from(key, 'base64');
-  return got.length === want.length && timingSafeEqual(got, want);
+const sameCost = (h, c) => !!h && h.N === c.N && h.r === c.r && h.p === c.p;
+// Whether a stored password hash is at today's cost; false for a hash from before, or none.
+export const passwordHashCurrent = (stored) => sameCost(parseHash(stored), PASSWORD_SCRYPT);
+const match = (got, stored) => { const want = Buffer.from(stored, 'base64'); return got.length === want.length && timingSafeEqual(got, want); };
+export const hashPasswordSync = (pw, salt = randomBytes(16)) => formatHash(PASSWORD_SCRYPT, salt, scryptSync(String(pw), salt, 32, scryptOpts(PASSWORD_SCRYPT)));
+export const hashPassword = (pw, salt = randomBytes(16)) => PASSWORD_LANE(async () => formatHash(PASSWORD_SCRYPT, salt, await kdf(pw, salt, PASSWORD_SCRYPT)));
+export async function verifyPassword(pw, stored) {
+  const h = parseHash(stored); if (!h) return false;
+  return match(await PASSWORD_LANE(() => kdf(pw, Buffer.from(h.salt, 'base64'), h)), h.key);
 }
 
 // --- TOTP (SHA-1, 6 digits, 30 s), base32 secrets as every authenticator app expects.
@@ -95,11 +131,12 @@ export function carryLegacyOperator(db, { email = 'owner@localhost', name = 'Ope
   return userByEmail(db, email);
 }
 // First run (and `backoffice setup --force`): the owner, with a fresh authenticator. Returns the TOTP secret for the QR.
+// Sync (the hash is derived on this thread): it runs from the CLI, before anything listens.
 export function setupOperator(db, password, { email = null, name = 'Operator', actor = 'cli' } = {}) {
   if (String(password).length < 12) throw new Error('use at least 12 characters');
   const secret = base32Encode(randomBytes(20)); const em = normEmail(email || 'owner@localhost'); const now = nowIso();
   db.run(`INSERT INTO users (email, name, role, status, password_hash, totp_secret, password_set_at, created_at) VALUES (?, ?, 'owner', 'active', ?, ?, ?, ?)
-    ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = 'owner', status = 'active', password_hash = excluded.password_hash, totp_secret = excluded.totp_secret, totp_pending = NULL, password_set_at = excluded.password_set_at, invite_token = NULL, failed_logins = 0, locked_until = NULL`, em, name, hashPassword(password), secret, now, now);
+    ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = 'owner', status = 'active', password_hash = excluded.password_hash, totp_secret = excluded.totp_secret, totp_pending = NULL, password_set_at = excluded.password_set_at, invite_token = NULL, failed_logins = 0, locked_until = NULL`, em, name, hashPasswordSync(password), secret, now, now);
   db.setSetting('auth:password', 'users'); db.setSetting('auth:password_set_at', now);
   db.audit(actor, 'auth.setup', 'user', em);
   return secret;
@@ -118,10 +155,11 @@ export function inviteUser(db, { email, name, role = 'ops', actor = 'web', hours
 }
 export const inviteFor = (db, tok) => { const u = db.get(`SELECT ${PUBLIC} FROM users WHERE invite_token = ? AND status = 'invited'`, String(tok || '')); return u && u.invite_expires_at > nowIso() ? u : null; };
 // Step one of accepting: the person's own password. Step two (confirmTotp) proves the authenticator before the account opens.
-export function acceptInvite(db, tok, password) {
+export async function acceptInvite(db, tok, password) {
   const u = inviteFor(db, tok); if (!u) throw new Error('this invitation is not valid any more — ask for a new one'); if (String(password).length < 12) throw new Error('use at least 12 characters');
-  const secret = base32Encode(randomBytes(20));
-  db.run('UPDATE users SET password_hash = ?, totp_pending = ?, password_set_at = ? WHERE id = ?', hashPassword(password), secret, nowIso(), u.id);
+  const secret = base32Encode(randomBytes(20)); const hash = await hashPassword(password);
+  if (!inviteFor(db, tok)) throw new Error('this invitation is not valid any more — ask for a new one');   // withdrawn while the hash was derived
+  db.run('UPDATE users SET password_hash = ?, totp_pending = ?, password_set_at = ? WHERE id = ?', hash, secret, nowIso(), u.id);
   db.audit(u.email, 'user.accept', 'user', u.email); return { ...u, totp_pending: secret };
 }
 // A code from the pending secret makes it the real one; for an invitee that also opens the account and burns the link.
@@ -133,10 +171,10 @@ export function confirmTotp(db, userId, code) {
 }
 export const pendingTotp = (db, userId) => secretRow(db, userId)?.totp_pending || null;
 export function beginTotpRotation(db, userId) { const secret = base32Encode(randomBytes(20)); db.run('UPDATE users SET totp_pending = ? WHERE id = ?', secret, userId); return secret; }
-export function changePassword(db, userId, current, next) {
-  const r = secretRow(db, userId); if (!r) throw new Error('no such person'); if (!verifyPassword(current, r.password_hash)) throw new Error('the current password is wrong');
+export async function changePassword(db, userId, current, next) {
+  const r = secretRow(db, userId); if (!r) throw new Error('no such person'); if (!(await verifyPassword(current, r.password_hash))) throw new Error('the current password is wrong');
   if (String(next).length < 12) throw new Error('use at least 12 characters'); if (next === current) throw new Error('that is the same password');
-  db.run('UPDATE users SET password_hash = ?, password_set_at = ? WHERE id = ?', hashPassword(next), nowIso(), userId); db.audit(r.email, 'auth.password', 'user', r.email); return true;
+  db.run('UPDATE users SET password_hash = ?, password_set_at = ? WHERE id = ?', await hashPassword(next), nowIso(), userId); db.audit(r.email, 'auth.password', 'user', r.email); return true;
 }
 export function setRole(db, userId, role, { actor = 'web' } = {}) {
   const u = userById(db, userId); if (!u) throw new Error('no such person'); if (!ROLES.includes(role)) throw new Error('unknown role');
@@ -165,9 +203,11 @@ export function removeUser(db, userId, { actor = 'web' } = {}) {
 // lock time in the users table stay as a record (the people page shows them); a restart clears
 // the locks themselves, and the key carries the email so a fresh database's first person does not
 // inherit a lock armed against a previous one. A password check is run even for an unknown email, so the answer
-// takes the same time either way and the list of emails cannot be read off the clock.
+// takes the same time either way and the list of emails cannot be read off the clock. The dummy is derived at
+// today's cost, once, the first time it is needed (a person whose hash is still at the old cost answers faster
+// until their next login re-hashes it; the Health page counts them).
 const LOCKS = new Map();
-const DUMMY_HASH = hashPassword('the same work for a name nobody has');
+let dummy = null; const dummyHash = () => (dummy ??= hashPassword('the same work for a name nobody has'));
 const lockKey = (u, ip) => `${u.id}:${u.email}|${ip || '-'}`;
 export function lockState(user, ip, now = Date.now()) { const k = lockKey(user, ip); const l = LOCKS.get(k); if (l && l.until && l.until <= now) { LOCKS.delete(k); return null; } return l || null; }
 export const clearLocks = () => LOCKS.clear();
@@ -189,15 +229,32 @@ function openSession(db, r, { sessionHours, now, ip, step, via = 'password' }) {
   db.audit(r.email, via === 'link' ? 'auth.link.login' : 'auth.login', 'user', r.email, { ip, via });
   return { id, csrf, expires_at: exp, user_id: r.id, email: r.email, name: r.name, role: r.role, via };
 }
-export function login(db, { email = '', password, code }, { sessionHours = 12, ip = null, now = Date.now() } = {}) {
+// Async: the password is verified off the event loop (see the KDF note at the top). The lock, the replay rule,
+// the dummy check and the audit rows are the same as they ever were; the loop is free while scrypt runs.
+// `admit` is the caller's last word, asked after the waits and before the session opens (the pipeline asks its
+// per-address lockout again there); false refuses without a session and without spending the code, audited as a locked login.
+export async function login(db, { email = '', password, code }, { sessionHours = 12, ip = null, now = Date.now(), admit = () => true } = {}) {
   const em = normEmail(email);
   const r = em ? db.get('SELECT * FROM users WHERE email = ?', em) : (() => { const rows = db.all("SELECT * FROM users WHERE status = 'active' AND password_hash IS NOT NULL LIMIT 2"); return rows.length === 1 ? rows[0] : null; })();
   const fail = (why) => { if (!r) db.audit('web', 'auth.login.failed', 'user', em || null, { ip, why }); return recordFailure(db, r, ip, now, why); };
-  if (!r || r.status !== 'active' || !r.password_hash || !r.totp_secret) { verifyPassword(String(password || ''), DUMMY_HASH); return fail(!r ? (em ? 'unknown' : 'email required') : r.status); }
+  if (!r || r.status !== 'active' || !r.password_hash || !r.totp_secret) { await verifyPassword(String(password || ''), await dummyHash()); return fail(!r ? (em ? 'unknown' : 'email required') : r.status); }
   if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
-  if (!verifyPassword(password, r.password_hash)) return fail('password');
-  const step = verifyTotp(r.totp_secret, code, { time: now, lastStep: r.totp_last_step ?? null });
+  if (!(await verifyPassword(password, r.password_hash))) return fail('password');
+  // The password is proven. A hash from before today's cost is derived now, before the final checks, so that
+  // no wait follows them; it is written only on a full login, and only if the row still holds the hash that
+  // was checked (a password changed in another session meanwhile is not overwritten).
+  const upgrade = passwordHashCurrent(r.password_hash) ? null : await hashPassword(password);
+  // After the waits, what was true at arrival is read again, because the loop no longer serializes logins:
+  // the lock (eight wrong tries queued ahead of this one may have armed it), the caller's own lock, the
+  // person's status (disabled meanwhile), and the step the replay rule compares against (a login that
+  // finished during the wait wrote it — two requests carrying one code yield one session, as before).
+  if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
+  if (!admit()) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
+  const live = db.get('SELECT status, totp_secret, totp_last_step FROM users WHERE id = ?', r.id);
+  if (!live || live.status !== 'active' || !live.totp_secret) return fail(live ? live.status : 'unknown');
+  const step = verifyTotp(live.totp_secret, code, { time: now, lastStep: live.totp_last_step ?? null });
   if (!step) return fail('code');
+  if (upgrade) db.run('UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?', upgrade, r.id, r.password_hash);
   return openSession(db, r, { sessionHours, now, ip, step });
 }
 
@@ -238,13 +295,13 @@ export const endOtherSessions = (db, userId, keep) => db.run('DELETE FROM sessio
 
 // --- API tokens: `bo_<id>.<secret>`. The id finds the row; the secret is
 // verified against a scrypt hash (the same KDF as the password, a lighter
-// cost: ~10 ms per API call). A copy of the table verifies nothing.
-const TOKEN_SCRYPT = { N: 4096, r: 8, p: 1 };
-const tokenHash = (secret, salt = randomBytes(16)) => `scrypt$${salt.toString('base64')}$${scryptSync(String(secret), salt, 32, TOKEN_SCRYPT).toString('base64')}`;
-function tokenVerify(secret, stored) {
-  const [, salt, key] = String(stored || '').split('$'); if (!salt || !key) return false;
-  const got = scryptSync(String(secret), Buffer.from(salt, 'base64'), 32, TOKEN_SCRYPT); const want = Buffer.from(key, 'base64');
-  return got.length === want.length && timingSafeEqual(got, want);
+// cost, off the loop like the password: TOKEN_SCRYPT at the top). A copy of
+// the table verifies nothing. The hash carries its cost like a password's;
+// a row from before (`scrypt$…`, the same N=2^12) is read as that cost.
+const tokenHash = (secret, salt = randomBytes(16)) => formatHash(TOKEN_SCRYPT, salt, scryptSync(String(secret), salt, 32, scryptOpts(TOKEN_SCRYPT)));
+async function tokenVerify(secret, stored) {
+  const h = parseHash(stored, TOKEN_SCRYPT); if (!h) return false;
+  return match(await TOKEN_LANE(() => kdf(secret, Buffer.from(h.salt, 'base64'), h)), h.key);
 }
 // scope 'ro' is read-only: GET only, for a dashboard or a monitor that must never change anything.
 export function createApiToken(db, name, { scope = 'rw' } = {}) {
@@ -254,10 +311,11 @@ export function createApiToken(db, name, { scope = 'rw' } = {}) {
   db.audit('cli', 'auth.token.create', 'api_token', name, { scope });
   return `bo_${id}.${secret}`;
 }
-export function apiTokenFor(db, bearer) {
+export async function apiTokenFor(db, bearer) {
   const m = /^bo_([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(String(bearer || '')); if (!m) return null;
   const row = db.get('SELECT * FROM api_tokens WHERE token_id = ?', m[1]);
-  if (!row || !tokenVerify(m[2], row.token_hash)) return null;
+  if (!row || !(await tokenVerify(m[2], row.token_hash))) return null;
+  if (!db.get('SELECT 1 FROM api_tokens WHERE id = ?', row.id)) return null;   // revoked while the secret was being checked
   db.run('UPDATE api_tokens SET last_used_at = ? WHERE id = ?', nowIso(), row.id);
   return row;
 }
