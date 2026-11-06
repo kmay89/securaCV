@@ -938,7 +938,8 @@ test("the credential is sealed to the device key: both flashers say so, the Rust
   assert.match(devSig,
     /seal\|%s\|%s\|%s\|%s",\s*\n?\s*SIG_PREFIX, SCHEMA_V,\s*\n?\s*device_id[^\n]*\n\s*nonce_hex[^\n]*\n\s*client_pub_hex[^\n]*\n\s*device_pub_hex/,
     "firmware must sign device_id, nonce, client key, device key in that order");
-  assert.ok(sealRs.includes('"securacv-canary-sig|v1|seal|{device_id}|{nonce}|{client_pub_hex}|{device_pub_hex}"'),
+  // (`freshness` is the Rust's name for the nonce slot: seal_canonical says why.)
+  assert.ok(sealRs.includes('"securacv-canary-sig|v1|seal|{device_id}|{freshness}|{client_pub_hex}|{device_pub_hex}"'),
     "seal.rs canonical drifted from the firmware's");
   // ...the HKDF info string, the Authorization scheme, the plaintext cap.
   const info = /constexpr const char INFO\[\]\s*=\s*"([^"]+)";/.exec(apiSeal);
