@@ -329,3 +329,48 @@ same change.
   installs Docker from the apt repository with the key fingerprint checked.
   The website's `social-record` workflow validates the issue-derived post id
   and passes it through `env`.
+
+## Firmware (`firmware/`)
+
+- **The peer protocol's reboot branch re-opened the replay window.** Any
+  captured frame with a lower uptime than the peer's current one passed as
+  "the peer rebooted", reset the sequence counter, and took the frame's
+  source as the peer's address — so a LAN host could re-inject old
+  events, stale heartbeats and election inputs, and redirect the
+  coordinator-bound unicast to itself. Frames now carry a per-boot random
+  `boot_id` (the formerly reserved header byte, under the HMAC tag); a new
+  boot is taken only inside a small sequence and uptime window, once per
+  30 s per peer, and provisionally until a second in-order frame confirms
+  it; the address is taken only from a frame that advanced a counter the
+  row already held. `docs/TRUST_MODEL.md` states exactly what holds and the
+  residuals (a captured pair of a boot's first frames the receiver never
+  saw; a sender with no `boot_id`). `firmware/common/network/peer_protocol.h`,
+  `peer_link.cpp`.
+- **Beacon writes were gated by the landing-page session any LAN host can
+  mint.** With two WAPs an attacker could drive `originate` on one and
+  `cosign` on the other and obtain a genuinely dual-signed life-safety
+  alert with no human (latent: the channel defaults off). All twelve
+  mutating Beacon routes take the bearer; a null token refuses instead of
+  passing. `canary-wap/.../beacon_api.h`, `docs/security/THREAT_MODEL.md`.
+- `/api/ota/config` reads its body through the shared bounded reader and
+  applies all-or-nothing. A v1 OTA manifest no longer bypasses the board
+  check, and a persisted manifest-version floor refuses v1 once a signed v2
+  has been accepted (`SECURACV_OTA_ERR_MANIFEST_DOWNGRADE`); the USB
+  drop-file and BLE OTA paths get the stricter board check and keep their
+  own policy for the floor. `SECURACV_OTA_SKIP_CERT_VERIFY` is renamed
+  `SECURACV_OTA_SKIP_CN_CHECK`, which is what it does.
+
+## Still standing, across trees
+
+- The detector sandbox child still holds the signing key (admission bounds
+  the channel; a key-less worker is the fix).
+- `/api/fleet` in `full` mode still serves broker-forgeable wellbeing words;
+  signing the firmware's `state` publish would let `full` be served safely.
+- The desktop challenge gate is not channel binding; a relay to a reachable
+  genuine board still works.
+- The add-on's device seed lives in `/config`; moving it is a data migration.
+- The backoffice runs `scrypt` on the event loop; the IMAP client flags a
+  message seen while fetching.
+- The site's inline styles keep `style-src 'unsafe-inline'`.
+- `reference_v1`'s witness pre-image is not injective; the break-glass token
+  ledger is an unsigned table.

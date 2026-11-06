@@ -420,7 +420,9 @@ MODULE_TOKEN_COPIES = {
                      "decl": ("const char* (*s_api_token_provider)() = nullptr;",),
                      "read": ("handle_config_get", "handle_config_post", "handle_test")},
     "audible_chirp_api.h": _gated_module("auth_gated"),
-    "beacon_api.h": _gated_module("bcn_auth_gated"),
+    # bcn_bearer_gated: every Beacon write (the POSTs), the bearer alone —
+    # a session on each of two WAPs was a dual-signed ALERT no human sent.
+    "beacon_api.h": _gated_module("bcn_auth_gated", "bcn_bearer_gated"),
     # bt_bearer_gated: the bond's confirm, the bearer alone (F346); the
     # status route reads the copy only to ask the bearer gate whether a
     # Passkey Entry's digits may ride.
