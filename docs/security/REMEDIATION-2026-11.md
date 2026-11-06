@@ -281,14 +281,23 @@ same change.
 - **A LAN host could collect a device's bearer by announcing its
   `device_id`.** The fleet book re-pointed a device at whatever address an
   mDNS announcement named, and the next Identify or Update sent the stored
-  token there over http. The bearer now waits for a fresh nonce challenge
-  answered under the fingerprint pinned in the book; the proven
-  `(device_id, address)` pair is remembered for the session; a device that
-  turns up at a different address than the one it was first proven at is
-  confirmed through a native dialog. This is not channel binding (a relay
-  to the reachable genuine board still works); binding the token exchange
-  to the device key stays open. `desktop/src-tauri/src/fleet.rs`,
-  `desktop/src/app.js`.
+  token there over http. The bearer never travels in the clear now: before
+  a token goes to a `(device_id, address)` pair the app agrees a session key
+  with the device over X25519, the device signs the whole transcript with
+  the Ed25519 identity key the book pinned at flash time, and the token
+  rides only sealed under that key (`Authorization: Sealed`, ChaCha20-
+  Poly1305, bound to the method, the path and a counter). A host that
+  announces the device's name gets a ciphertext it cannot open; a relay to
+  the reachable genuine board gets one request it cannot read, replay or
+  redirect. There is no plain-bearer fallback: firmware without the
+  handshake is told to update once over USB. The identity badge stays
+  shown-only, and a device that turns up at a different address than the
+  one it was first proven at is still confirmed through a native dialog.
+  Both flashers' token cards say how the key travels, in the same words.
+  `desktop/src-tauri/src/seal.rs`, `fleet.rs`, `desktop/src/app.js`,
+  `canary-local/assets/flash-core.js`; the firmware side below. **Still
+  open:** the request body and the answer are not sealed, and the phone
+  app, the dashboard and Home Assistant still send the plain bearer.
 - **`host_is_local` was a name check.** Single-label names and
   `.lan`/`.internal`/`.home.arpa` resolved through unicast DNS and the
   answer was never checked, so a hostile resolver could send a bearer off
@@ -338,6 +347,20 @@ same change.
 
 ## Firmware (`firmware/`)
 
+- **The local API's bearer could only be sent in the clear.** canary-wap
+  gains the sealed bearer: `GET /api/device/seal?nonce=&client_pub=` (no
+  token; the enroll card plus an ephemeral X25519 key the identity key
+  signs over the transcript), a four-slot session table with a 15-minute
+  TTL and a per-session counter, and an `Authorization: Sealed
+  <sid>.<seq>.<hex>` form that both bearer gates in `api_auth.h` open
+  through one reader before the usual constant-time compare, under the
+  same per-address lockout; a seal that does not open answers 401 with a
+  word (`no_session`, `expired`, `replay`, `bad_tag`, `bad_format`,
+  `unsupported`) so a client knows whether a new handshake helps. Host-
+  tested over real X25519 / HKDF / ChaCha20-Poly1305 against reference
+  vectors the Flasher's Rust client pins too (`tests_host/test_api_seal.cpp`).
+  `api_seal.h`, `seal_api.h`, `api_auth.h`, `device_signature.{h,cpp}`
+  (the `seal` canonical and `sign_seal`, in both copies).
 - **The peer protocol's reboot branch re-opened the replay window.** Any
   captured frame with a lower uptime than the peer's current one passed as
   "the peer rebooted", reset the sequence counter, and took the frame's

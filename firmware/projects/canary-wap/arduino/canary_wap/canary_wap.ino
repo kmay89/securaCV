@@ -175,6 +175,7 @@
 #include "host_guard.h"          // pure, host-tested: does the Host name THIS device (staged copy of firmware/common/network/, check_improv_sync.sh; F344)
 #include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
+#include "seal_api.h"            // GET /api/device/seal and api_auth.h's Sealed-header hook (api_seal.h)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
@@ -10617,6 +10618,15 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_uri_t enroll_html_uri = { .uri = "/enroll", .method = HTTP_GET,
                                   .handler = device_identity_api::handle_enroll_html };
   httpd_register_uri_handler(server, &enroll_html_uri);
+
+  // The sealed bearer's handshake (api_seal.h, seal_api.h): the same public
+  // card plus an ephemeral X25519 key the identity key signs, so a client
+  // holding the pinned fingerprint can send the token sealed to THIS device
+  // and never in the clear. Unauthenticated like the card; no secret in the
+  // answer. The Flasher's fleet book opens one per device per quarter hour.
+  httpd_uri_t seal_uri = { .uri = "/api/device/seal", .method = HTTP_GET,
+                           .handler = seal_api::handle_seal };
+  httpd_register_uri_handler(server, &seal_uri);
 
   // Companion PWA (Web Bluetooth phone-side console). Three static assets,
   // no auth — the page itself is just HTML/JS/manifest; the BLE
