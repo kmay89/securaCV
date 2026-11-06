@@ -3654,6 +3654,23 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     }
 
     fn redeem_token_locked(&mut self, token: &break_glass::BreakGlassToken) -> Result<[u8; 32]> {
+        // Validate before recording anything. A token file only re-parses
+        // for shape, so a file with an altered bucket or nonce reaches here
+        // looking like a token; recording its redemption would append a
+        // signed row the verifier then rejects (and witnessd would boot into
+        // safe mode on). The device signature binds nonce, envelope, ruleset,
+        // bucket and receipt hash, the bucket must be live, and the grant it
+        // names must re-derive its quorum — the same gate the unseal runs.
+        let envelope_id = token.vault_envelope_id().to_string();
+        let ruleset_hash = token.ruleset_hash();
+        break_glass::BreakGlass::assert_token_valid(
+            token,
+            &envelope_id,
+            ruleset_hash,
+            TimeBucket::now(600)?,
+            &self.device_verifying_key(),
+            |hash| self.break_glass_receipt_outcome(&envelope_id, ruleset_hash, hash),
+        )?;
         // Burn first: the unsigned table is the fast gate every older caller
         // still consults, and it is written before the signed row so a crash
         // between the two leaves the nonce burned (the verifier then names
@@ -6763,6 +6780,59 @@ mod tests {
         assert!(error.contains("no burn row"), "{error}");
         // (The export gate's own refusal of the same replay is covered in
         // tests/export_events_authorized.rs, with a token for that envelope.)
+        Ok(())
+    }
+
+    #[test]
+    fn tampered_token_file_is_refused_before_anything_is_recorded() -> Result<()> {
+        // A token FILE re-parses for shape only. One with an altered bucket
+        // or a made-up nonce pointing at a real grant must be refused before
+        // the burn and the signed row — otherwise it would poison the chain
+        // with a redemption the verifier rejects, and the real token's own
+        // redemption would then read as a second spend of the grant.
+        let (mut kernel, _cfg, token, _granted_hash) = kernel_with_granted_token("vault:1")?;
+        let file = BreakGlassTokenFile::from_token(&token)?;
+
+        let mut stale = file.clone();
+        stale.expires_bucket.start_epoch_s += 600;
+        let stale = stale.into_token()?;
+        let err = kernel.redeem_token_durably(&stale).unwrap_err().to_string();
+        assert!(
+            err.contains("expired") || err.contains("signature"),
+            "{err}"
+        );
+
+        let mut forged_nonce = file.clone();
+        forged_nonce.token_nonce = hex::encode([0x42u8; 32]);
+        let forged_nonce = forged_nonce.into_token()?;
+        let err = kernel
+            .redeem_token_durably(&forged_nonce)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("signature"), "{err}");
+
+        // Nothing was recorded: no burn, no row, and the chain is still green.
+        let burned: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM consumed_break_glass_tokens",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(burned, 0);
+        let rows: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM break_glass_receipts", [], |r| {
+                    r.get(0)
+                })?;
+        assert_eq!(rows, 1);
+        let report = kernel.verify_sealed_log()?;
+        assert!(report.chain_valid, "{:?}", report.error);
+
+        // The genuine token still redeems once.
+        kernel.redeem_token_durably(&token)?;
+        let report = kernel.verify_sealed_log()?;
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.break_glass_redeemed, 1);
         Ok(())
     }
 

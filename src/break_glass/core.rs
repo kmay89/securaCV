@@ -862,6 +862,11 @@ impl BreakGlassReceipt {
         if token.token_nonce() == [0u8; 32] {
             return Err(anyhow!("break-glass token nonce invalid"));
         }
+        if token.expires_bucket() != granted.time_bucket {
+            return Err(anyhow!(
+                "token bucket is not the bucket its Granted receipt was issued in"
+            ));
+        }
         Ok(Self {
             vault_envelope_id: granted.vault_envelope_id.clone(),
             request_hash: granted.request_hash,
