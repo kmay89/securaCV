@@ -4693,7 +4693,7 @@ MUST_PASS_IN = [
     ('canary-vision/docs/discovery.md',
      '  device_id=canary-a3f7      # device identifier (kept across OTA updates and the 10 s hold; an install in either flasher can change it)'),
     ('spec/beacon_channel_v0.md',
-     'All endpoints take `api_auth_check()`: a bearer, or the dashboard session cookie, which the landing page mints for any host on the network (F346). So do `/api/mesh/*` and `/api/bluetooth/*`, but for their two pair confirms (`POST /api/mesh/pair/confirm` and `POST /api/bluetooth/pair/confirm`), which take the bearer alone since F346 (`api_auth_check_bearer()`); `/api/beacon/pair/confirm` still takes `api_auth_check()`, behind `FEATURE_BEACON_CHANNEL` (off).'),
+     "The reads (`GET`) take `api_auth_check()`: a bearer, or the dashboard session cookie, which the landing page mints for any host on the network (F346). Every `POST` takes the bearer alone (`api_auth_check_bearer()`, `beacon_api.h`'s `bcn_bearer_gated`), as the mesh and Bluetooth pair confirms do since F346: a session must not originate, cosign, cancel or silence an alert, pair or revoke a set member, or run the self-test — with two WAPs on one LAN a session-gated originate and cosign would be a dual-signed ALERT no human sent. Neither gate is open when no token was registered. Hold-to-send actions also require the UI's hold timestamp."),
     ('spec/canary_mesh_network_v0.md',
      'encryption, at the cost of persisting nothing on any released board: no tier\n'
      "turns flash encryption on today, a Phase 2 board included, so a household's\n"
@@ -4853,19 +4853,9 @@ MUST_PASS_IN = [
      ' * (tests.cpp), which removes its test slot. Default role for any new\n'
      ' * pairing is ROLE_GUEST.'),
     ('firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.h',
-     ' * from canary_wap.ino, every route behind the bcn_auth_gated trampoline,\n'
-     ' * which runs api_auth_check: the bearer or a landing session any host on\n'
-     ' * the network can mint (ledger F346). The /api/mesh and /api/bluetooth\n'
-     ' * routes take the same gate but for their two pair confirms, which take\n'
-     ' * the bearer alone since F346; /api/beacon/pair/confirm is not one of\n'
-     ' * them.'),
+     ' * from canary_wap.ino: the reads behind the bcn_auth_gated trampoline,\n * which runs api_auth_check (the bearer or a landing session any host on\n * the network can mint, ledger F346), and every POST (pairing, revocation,\n * origination, cosign, cancel, silence, self-test) behind bcn_bearer_gated,\n * the bearer alone, the way the /api/mesh and /api/bluetooth pair confirms\n * are since F346. The runtime'),
     ('firmware/projects/canary-wap/arduino/canary_wap/beacon_api.h',
-     ' * Auth-gated from day one (see spec/beacon_channel_v0.md §10 and\n'
-     ' * docs/audit/mesh_and_chirp_audit_v1.md C12 closure for Chirp). Every route\n'
-     ' * is wrapped in the bcn_auth_gated trampoline, which runs api_auth_check:\n'
-     ' * the bearer, or a landing-page session any host on the network can mint\n'
-     ' * (ledger F346), gets a successful response. Mirrors the pattern\n'
-     ' * established in bluetooth_api.h (#437) and household_api.h (#438).'),
+     ' * Auth-gated from day one (see spec/beacon_channel_v0.md §10 and\n * docs/audit/mesh_and_chirp_audit_v1.md C12 closure for Chirp). The reads\n * (GET) are wrapped in the bcn_auth_gated trampoline, which runs\n * api_auth_check: the bearer, or a landing-page session any host on the\n * network can mint (ledger F346). Every route that changes Beacon state (the\n * POSTs: pairing, revocation, origination, cosign, cancel, silence, the\n * self-test) is wrapped in bcn_bearer_gated, the bearer alone\n * (api_auth_check_bearer), the way the Bluetooth and mesh pair confirms are:\n * with two WAPs on one LAN a session-gated originate + cosign would let any\n * LAN host raise a genuinely dual-signed ALERT with no human at either\n * device. Neither trampoline is open when no token was registered. Mirrors'),
     ("firmware/projects/canary-wap/tests_host/test_bluetooth_commands_wap.cpp",
      "// never saw the link or the bond. Now both go through the dispatcher: the // passkey reaches the channel and waits for a confirm over REST (the bearer // alone since F346: the_bond_confirm_takes_the_bearer drives that route), // which answers it once, yes, on the loop task; the bond // reaches the paired list, and Opera still counts the link up and down."),
     ('firmware/tests_host/test_provisioning_gate.cpp',
