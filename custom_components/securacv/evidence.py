@@ -166,6 +166,58 @@ def www_dir() -> Path:
     return Path(__file__).parent / "www"
 
 
+STATEMENT_FALLBACK = (
+    "SecuraCV witness statement\n==========================\n\n"
+    "The statement for export {export_id} could not be written by the Home "
+    "Assistant integration {version} ({reason}). The sealed file {bundle} in this "
+    "zip is unaffected and is the evidence; open evidence_viewer.html and drop the "
+    "zip onto it to check it. Project: https://github.com/kmay89/securaCV\n"
+)
+
+
+def statement_or_fallback(
+    *,
+    bundle_bytes: bytes,
+    bundle_filename: str,
+    window_hours: int,
+    export_id: str,
+    exported_at: datetime,
+    kernel_device_id: str | None,
+    fingerprint: str | None,
+    chain_state: str,
+    integration_version: str,
+    local: LocalClock | None,
+) -> str:
+    """The witness statement, or a short note in its place.
+
+    A reading of the evidence must never cost the owner the evidence: if the
+    renderer raises on a bundle shape nobody foresaw, the pack still lands
+    with its bundle, viewer, README and key, and this member says what did
+    not happen. The failure is logged with its traceback.
+    """
+    try:
+        return witness_statement_text(
+            bundle_bytes=bundle_bytes,
+            bundle_filename=bundle_filename,
+            window_hours=window_hours,
+            export_id=export_id,
+            exported_at=exported_at,
+            kernel_device_id=kernel_device_id,
+            fingerprint=fingerprint,
+            chain_state=chain_state,
+            integration_version=integration_version,
+            **({"local": local} if local is not None else {}),
+        )
+    except Exception as err:  # noqa: BLE001 - the evidence outranks the reading
+        _LOGGER.exception("Witness statement for export %s could not be written", export_id)
+        return STATEMENT_FALLBACK.format(
+            export_id=export_id,
+            version=integration_version,
+            reason=type(err).__name__,
+            bundle=bundle_filename,
+        )
+
+
 def integration_version_string() -> str:
     """The integration's own version, as manifest.json states it."""
     try:
@@ -332,7 +384,7 @@ def compose_export(
                     zf.writestr(EVIDENCE_ZIP_KEY, witness_key_text(verifying_key, kernel_device_id))
                 zf.writestr(
                     EVIDENCE_ZIP_STATEMENT,
-                    witness_statement_text(
+                    statement_or_fallback(
                         bundle_bytes=download.content,
                         bundle_filename=download.filename,
                         window_hours=window_hours,
@@ -346,7 +398,7 @@ def compose_export(
                         ),
                         chain_state=chain_state,
                         integration_version=integration_version or integration_version_string(),
-                        **({"local": local} if local is not None else {}),
+                        local=local,
                     ),
                 )
         os.chmod(tmp_name, FILE_MODE)

@@ -4,8 +4,10 @@
 sealed bundle in it is the evidence and the offline viewer is the checker;
 neither tells a person who has never seen SecuraCV what the record says.
 This module writes that page: what the witness recorded in the window, by
-kind, by zone and window by window; what the record proves; what it does
-not prove; and how to check it. Every number is read from the bundle's
+kind, by zone and window by window; what the record proves (the export
+receipt the witness key signed over these bytes — the per-event seal-time
+signatures live in the device's own log, which the bundle does not carry,
+and the statement says so); what it does not prove; and how to check it. Every number is read from the bundle's
 ``artifact`` (the coarse, human-readable view the kernel exports, spec
 ``evidence_envelope.md`` §5) — nothing is computed from the ledgers, nothing
 is sharper than a ten-minute window, and nothing is written that the sealed
@@ -22,6 +24,7 @@ import hashlib
 import json
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -95,33 +98,69 @@ def _bucket_size(obj: Any) -> int:
     return int(size)
 
 
-def read_artifact(bundle_bytes: bytes) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+@dataclass(frozen=True)
+class ArtifactReading:
+    """What this version could read out of the bundle's artifact.
+
+    ``readable`` is False when the bytes did not parse to a bundle holding an
+    artifact; ``complete`` is False when a collection of a shape this version
+    does not know (an ``events`` that is not a list, a batch that is not an
+    object) was skipped. The statement names both cases instead of calling
+    a file it could not read an empty window.
+    """
+
+    events: list[dict[str, Any]]
+    failures: list[dict[str, Any]]
+    readable: bool
+    complete: bool
+
+
+def _items(obj: Any, key: str) -> tuple[list[Any], bool]:
+    """`obj[key]` as a list, and whether it was one (absent counts as empty)."""
+    value = obj.get(key) if isinstance(obj, dict) else None
+    if value is None:
+        return [], True
+    if isinstance(value, list):
+        return value, True
+    return [], False
+
+
+def read_artifact(bundle_bytes: bytes) -> ArtifactReading:
     """The bundle's events and failure records, flattened, each with its window.
 
-    Returns ``(events, failures)``; each item carries ``start`` (epoch
-    seconds, or None when the bucket has no readable window) and ``size``.
-    A bundle this version cannot read yields two empty lists — the statement
-    then says so instead of guessing.
+    Each item carries ``start`` (epoch seconds, or None when neither it nor
+    its bucket has a readable window) and ``size``. Never raises: a shape
+    this version cannot read is skipped and reported through ``complete``.
     """
     try:
         bundle = json.loads(bundle_bytes)
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        return [], []
+        return ArtifactReading([], [], readable=False, complete=False)
     artifact = bundle.get("artifact") if isinstance(bundle, dict) else None
     if not isinstance(artifact, dict):
-        return [], []
+        return ArtifactReading([], [], readable=False, complete=False)
     events: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
-    for batch in artifact.get("batches") or []:
+    complete = True
+    batches, ok = _items(artifact, "batches")
+    complete &= ok
+    for batch in batches:
         if not isinstance(batch, dict):
+            complete = False
             continue
-        for bucket in batch.get("buckets") or []:
+        buckets, ok = _items(batch, "buckets")
+        complete &= ok
+        for bucket in buckets:
             if not isinstance(bucket, dict):
+                complete = False
                 continue
             bucket_start = _bucket_start(bucket)
             bucket_size = _bucket_size(bucket)
-            for event in bucket.get("events") or []:
+            bucket_events, ok = _items(bucket, "events")
+            complete &= ok
+            for event in bucket_events:
                 if not isinstance(event, dict):
+                    complete = False
                     continue
                 start = _bucket_start(event)
                 events.append(
@@ -132,8 +171,11 @@ def read_artifact(bundle_bytes: bytes) -> tuple[list[dict[str, Any]], list[dict[
                         "size": _bucket_size(event) if start is not None else bucket_size,
                     }
                 )
-            for failure in bucket.get("failures") or []:
+            bucket_failures, ok = _items(bucket, "failures")
+            complete &= ok
+            for failure in bucket_failures:
                 if not isinstance(failure, dict):
+                    complete = False
                     continue
                 start = _bucket_start(failure)
                 failures.append(
@@ -143,19 +185,27 @@ def read_artifact(bundle_bytes: bytes) -> tuple[list[dict[str, Any]], list[dict[
                         "size": _bucket_size(failure) if start is not None else bucket_size,
                     }
                 )
-    return events, failures
+    return ArtifactReading(events, failures, readable=True, complete=complete)
+
+
+def _zone(moment: datetime) -> str:
+    """The zone label of one converted time (EDT in July, EST in January)."""
+    return moment.tzname() or "UTC"
+
+
+def _stamp(moment: datetime, day: bool) -> str:
+    return moment.strftime("%Y-%m-%d %H:%M" if day else "%H:%M")
 
 
 def _window(start: int | None, size: int, local: LocalClock) -> str:
-    """`2026-11-05 02:10 to 02:20` in the caller's clock; `unknown window` without one."""
+    """`2026-11-05 02:10 to 02:20 EST` in the caller's clock, the label taken
+    from the window's own start time; `unknown window` without one."""
     if start is None:
         return "unknown window"
     begin = local(start)
     end = local(start + size)
-    day = begin.strftime("%Y-%m-%d")
-    if end.strftime("%Y-%m-%d") == day:
-        return f"{day} {begin.strftime('%H:%M')} to {end.strftime('%H:%M')}"
-    return f"{day} {begin.strftime('%H:%M')} to {end.strftime('%Y-%m-%d %H:%M')}"
+    same_day = end.strftime("%Y-%m-%d") == begin.strftime("%Y-%m-%d")
+    return f"{_stamp(begin, True)} to {_stamp(end, not same_day)} {_zone(begin)}"
 
 
 def _plural(count: int, one: str, many: str | None = None) -> str:
@@ -184,8 +234,8 @@ def witness_statement_text(
     local: LocalClock = _utc,
 ) -> str:
     """The statement, as text with Unix newlines (the zip member's bytes)."""
-    events, failures = read_artifact(bundle_bytes)
-    zone_name = local(0).tzname() or "UTC"
+    reading = read_artifact(bundle_bytes)
+    events, failures = reading.events, reading.failures
     lines: list[str] = []
     out = lines.append
 
@@ -214,7 +264,14 @@ def witness_statement_text(
     out("What the witness recorded")
     out("-------------------------")
     out("")
-    if not events and not failures:
+    if not reading.readable:
+        out(
+            f"This version of the integration ({integration_version}) could not read "
+            f"{bundle_filename}, so nothing here summarizes it. That says nothing about "
+            "the file: the checker reads it directly, and a newer integration may "
+            "read it. Ask the owner for a fresh export if the checker rejects it too."
+        )
+    elif not events and not failures and reading.complete:
         out(
             f"No events were sealed in this window ({bundle_filename} carries none). "
             "That is not proof nothing happened: it means the witness sealed nothing "
@@ -222,15 +279,23 @@ def witness_statement_text(
             "warning the checker shows)."
         )
     else:
+        if not reading.complete:
+            out(
+                f"Parts of {bundle_filename} are in a shape this version of the "
+                f"integration ({integration_version}) does not know and were skipped "
+                "below; the checker reads the whole file. The counts here are a lower "
+                "bound, not the record."
+            )
+            out("")
         starts = [e["start"] for e in events if e["start"] is not None]
         windows = {(e["start"], e["size"]) for e in events if e["start"] is not None}
         if starts:
-            first = min(starts)
+            first = local(min(starts))
             last_start, last_size = max(windows, key=lambda w: w[0] + w[1])
+            last = local(last_start + last_size)
             span = (
                 f" in {_plural(len(windows), 'ten-minute window')} between "
-                f"{_window(first, 0, local).split(' to ')[0]} and "
-                f"{_window(last_start, last_size, local).split(' to ')[-1]} ({zone_name})"
+                f"{_stamp(first, True)} {_zone(first)} and {_stamp(last, True)} {_zone(last)}"
             )
         else:
             span = ""
@@ -243,7 +308,10 @@ def witness_statement_text(
             out("By zone:")
             lines.extend(_counts_block(Counter(zone_words(e["zone_id"]) for e in events)))
             out("")
-            out(f"Window by window ({zone_name}; windows are deliberately ten minutes wide):")
+            out(
+                "Window by window (in the owner's time zone, each window labeled with "
+                "its own; windows are deliberately ten minutes wide):"
+            )
             rows: Counter[tuple[int | None, int, str, str]] = Counter(
                 (e["start"], e["size"], zone_words(e["zone_id"]), event_words(e["event_type"]))
                 for e in events
@@ -277,13 +345,20 @@ def witness_statement_text(
     out("----------------")
     out("")
     out(
-        "- Each line above is a claim the kernel sealed at the time it was made, "
-        "signed with the witness key and chained to the claim before it."
+        "- This file is what the witness exported. At export time the witness key "
+        "signed a receipt over the exact bytes of the record above, and that "
+        "receipt is chained to the witness's earlier export receipts. The checker "
+        "re-derives the hash and the signature: a record changed after export (an "
+        "event added, removed, edited or reordered) fails the hash, and a receipt "
+        "not made with the witness key fails the signature. Tamper-evident: "
+        "interference becomes visible; it is not prevented."
     )
     out(
-        "- Any change to the sealed file after it was exported, an event added, "
-        "removed, edited or reordered, makes verification fail. The record is "
-        "tamper-evident: interference becomes visible; it is not prevented."
+        "- The events were sealed into the witness's own signed, hash-chained log "
+        "at the time they were made. That log is not inside this zip: the chain "
+        "state line above is Home Assistant's walk of it against the pinned key, "
+        "and the owner's court-export kit carries the log itself. This file "
+        "proves the export; the log proves the sealing."
     )
     out(
         "- The times are deliberate ten-minute windows. The kernel never records a "
@@ -330,7 +405,7 @@ def witness_statement_text(
     )
     out(
         "2. Read the verdict at the top. 'Verified' with 'authorship confirmed' is "
-        "the full result. 'Self-attested' means the chain is intact but the key "
+        "the full result. 'Self-attested' means the export checks out but the key "
         "traveled inside the record: ask the owner for the fingerprint above by "
         "another channel, compare, then paste the key from WITNESS_KEY.txt into "
         "the expected-key field and check again."

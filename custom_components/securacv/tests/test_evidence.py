@@ -167,6 +167,41 @@ def test_a_viewer_or_readme_w5_has_not_shipped_is_left_out_not_fatal(tmp_path):
         ]
 
 
+def test_a_statement_that_cannot_be_written_never_costs_the_pack(tmp_path, monkeypatch):
+    """A reading of the evidence must never cost the owner the evidence: when
+    the renderer raises on a shape nobody foresaw, the pack still lands with
+    the bundle, the key and a short note in the statement's place."""
+    def boom(**_kwargs):
+        raise RuntimeError("a shape nobody foresaw")
+
+    monkeypatch.setattr(evidence, "witness_statement_text", boom)
+    composed = _compose(tmp_path / "ev", "0badf00d", 1700000400)
+    with zipfile.ZipFile(tmp_path / "ev" / composed.record.file) as zf:
+        assert sorted(zf.namelist()) == [
+            "WITNESS_KEY.txt", "WITNESS_STATEMENT.txt", "securacv-events-1700000400.json",
+        ]
+        assert zf.read("securacv-events-1700000400.json") == BUNDLE
+        note = zf.read("WITNESS_STATEMENT.txt").decode()
+        assert note.startswith("SecuraCV witness statement\n")
+        assert "The statement for export 0badf00d could not be written" in note
+        assert "(RuntimeError)" in note
+        assert "securacv-events-1700000400.json in this zip is unaffected" in note
+    assert composed.record.events == 3, "the index row is still counted from the bundle"
+
+
+def test_a_bundle_shape_the_statement_does_not_know_still_exports(tmp_path):
+    """Codex P2: `{"events": 3}` used to raise TypeError inside the zip write
+    and unlink the temp file; now it is a partial statement and the pack lands."""
+    odd = BundleDownload(
+        filename="securacv-events-1700000400.json",
+        content=json.dumps({"artifact": {"batches": [{"buckets": [{"events": 3}]}]}}).encode(),
+    )
+    composed = _compose(tmp_path / "ev", "0ddba11c", 1700000400, download=odd)
+    with zipfile.ZipFile(tmp_path / "ev" / composed.record.file) as zf:
+        assert zf.read("securacv-events-1700000400.json") == odd.content
+        assert "Parts of securacv-events-1700000400.json are in a shape" in zf.read("WITNESS_STATEMENT.txt").decode()
+
+
 def test_a_symlinked_destination_is_refused(tmp_path):
     real = tmp_path / "elsewhere"
     real.mkdir()
