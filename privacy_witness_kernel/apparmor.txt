@@ -21,7 +21,11 @@
 #   /config/witness_config.json    the kernel config the setup renders
 #   /config/api_token (+ temp)     the rotating capability token
 #   /config/fleet_peers.json (+ temp)  the roll-call the publisher keeps
-#   /config/.securacv/**           the device key, wizard preferences
+#   /data/device_key               the device key seed (wizard-written,
+#        setup-read; the setup moves the pre-move /config copy here)
+#   /config/.securacv/**           wizard preferences, and the device key
+#        copy earlier releases kept there, which the setup removes once the
+#        /data copy is verified
 #   /config/custom_components/securacv/**  the carried integration (D15),
 #        plus its atomic-rename siblings /config/custom_components/.securacv.*
 #   /config/blueprints/automation/securacv/**  the bundled blueprints
@@ -91,6 +95,13 @@ profile privacy_witness_kernel flags=(attach_disconnected,mediate_deleted) {
   /config/ r,
   /config/api_token r,
   /config/witness_config.json rw,
+  # The one-time device key move (run_lib.sh migrate_device_key_file) holds
+  # the seed against the sealed log with log_verify --lineage, which runs
+  # under this profile (inherited, like every /usr/local/bin tool the setup
+  # calls) and opens the database the way every kernel process does (SQLite
+  # WAL: the -wal and -shm files beside it).
+  /config/witness.db rwk,
+  /config/witness.db-* rwk,
   /config/.securacv/ rw,
   /config/.securacv/** rw,
   /config/blueprints/ rw,
@@ -293,6 +304,8 @@ profile privacy_witness_kernel flags=(attach_disconnected,mediate_deleted) {
 
     /data/ r,
     /data/** r,
+    # The device key seed the wizard writes (serve_wizard.py DEVICE_KEY_FILE).
+    /data/device_key rw,
     /config/ r,
     /config/api_token r,
     /config/.securacv/ rw,

@@ -60,9 +60,11 @@ product is the same from there on.
    exports are self-contained, nothing is lost by exporting first). What to
    seal: every tracked object (default), or only Frigate alerts. The daily
    digest and its time.
-4. **Confirm.** The device signing key: generated once, stored at
-   `/config/.securacv/device_key` (in your Home Assistant backups). Back it
-   up. Re-running the wizard keeps it.
+4. **Confirm.** The device signing key: generated once, shown once, kept in
+   the app's own data (`/data/device_key` inside the app — not under
+   `/config`, so the File editor, Samba and SSH apps cannot read it and a
+   configuration-only backup does not carry it; a backup that includes the
+   app does). Save it somewhere safe. Re-running the wizard keeps it.
 5. **Done.** What actually happened — Frigate config written or left alone,
    digest automation created or honestly skipped and why — and the one next
    step in Home Assistant.
@@ -102,7 +104,7 @@ the tree and the marker goes with it), or delete
 | What | Where |
 |---|---|
 | The sealed witness log | `/config/witness.db` |
-| The device signing key | `/config/.securacv/device_key` (0600; back it up) |
+| The device signing key | `/data/device_key` inside the app (0600; the Configuration tab's `device_key_seed` shows it — a key the app generated itself is recorded there on the next start — back it up from there). Earlier releases kept it at `/config/.securacv/device_key`, where every backup and every file-sharing app reached it: the first start after the update moves it, checks it against the sealed log, removes the `/config` copy and says so in the log. In standalone mode the kernel also keeps the seed beside the log, at `/config/witness.ed25519.seed`; that copy is still there (a kernel behavior, tracked separately) |
 | The rotating API token the integration reads | `/config/api_token` |
 | The Frigate camera config the wizard writes (no Frigate yet) | `/addon_configs/ccab4aaf_frigate/config.yml`, never over an existing one (`config.yml.new` beside it) |
 | The bundled blueprints | `/config/blueprints/automation/securacv/` (an edited copy is never overwritten) |
@@ -153,13 +155,17 @@ strategy: Settings → Dashboards → Add dashboard → SecuraCV.
 - **Revoke Home Assistant's access:** the integration reads the rotating
   token file; removing the SecuraCV integration entry in Home Assistant ends
   its access, and the kernel rotates the token every ten minutes regardless.
-- **Uninstall the app:** Settings → Apps → SecuraCV → Uninstall. The witness
-  log, the device key and the token stay under `/config` (they are yours and
-  part of your backups); delete `/config/witness.db*`, `/config/.securacv`,
-  `/config/api_token`, `/config/fleet_peers.json` and
-  `/config/witness_config.json` if you want them gone. The integration copy
-  under `/config/custom_components/securacv` and the blueprints stay too —
-  remove them the same way if you no longer want them.
+- **Uninstall the app:** Settings → Apps → SecuraCV → Uninstall. Uninstalling
+  removes the app's own data, **the device key with it** — and the sealed log
+  cannot be opened or verified without that key. Export first, or copy the
+  seed from the Configuration tab (`device_key_seed`), if you may want the
+  log or a replacement device later. The witness log and the token stay under
+  `/config` (they are yours and part of your backups); delete
+  `/config/witness.db*`, `/config/.securacv`, `/config/api_token`,
+  `/config/fleet_peers.json` and `/config/witness_config.json` if you want
+  them gone. The integration copy under `/config/custom_components/securacv`
+  and the blueprints stay too — remove them the same way if you no longer
+  want them.
 - **Export first** (the panel's *Download my events*, or the integration's
   *Export evidence*): the bundle verifies offline without the kernel.
 
@@ -170,8 +176,9 @@ the `/addons/<slug>/info` reads the preflight needs, the discovery endpoint,
 and Home Assistant's own API (for the one restart you click and the digest
 automation). A custom AppArmor profile confines each process to the paths
 listed above. The panel answers only the Supervisor's ingress proxy and its
-own loopback. Secrets never reach the browser: `/api/status` masks the device
-key and every broker password. The kernel's data endpoints require the
+own loopback. The device key lives in the app's own data, which no other app
+and no configuration backup reaches. Secrets never reach the browser:
+`/api/status` masks the device key and every broker password. The kernel's data endpoints require the
 rotating token; only `/health` and the fleet roll-call `GET /api/fleet` answer
 without it. The sealed log holds coarse claims only — see the repository's
 `spec/invariants.md`.
