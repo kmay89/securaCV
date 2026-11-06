@@ -305,6 +305,7 @@ impl std::fmt::Debug for Session {
 
 impl Session {
     /// Tests and vectors.
+    #[cfg(test)]
     pub fn from_parts(sid: &str, key: [u8; 32], seq: u32) -> Self {
         Self {
             sid: sid.to_string(),
