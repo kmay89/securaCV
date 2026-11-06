@@ -29,8 +29,10 @@
 //! ```
 
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -593,6 +595,9 @@ fn main() -> Result<()> {
     };
     let kernel = witness_kernel::Kernel::open(&kernel_cfg)?;
     log::info!("Kernel opened: {}", file.db_path);
+    // One broker policy for every adapter: where a broker may be and how a
+    // TLS one is verified. A misconfigured CA or key fails here, at start.
+    let mqtt_security = Arc::new(MqttSecurity::from_file(&file)?);
 
     let host_cfg = AdapterHostConfig {
         bucket_size_secs: file.bucket_size_secs,
