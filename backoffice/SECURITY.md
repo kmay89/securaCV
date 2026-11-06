@@ -8,7 +8,11 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
 ## The door
 
 - **People, each with their own door.** Every person has a password (scrypt,
-  N=16384) and an authenticator (TOTP, RFC 6238, SHA-1, 30 s, ±1 step).
+  N=2^17, r=8, p=1 — OWASP's floor; the hash records its cost, so a hash
+  from before 0.9.0 at N=2^14 still verifies and is re-hashed at today's
+  cost on that person's next successful login, and the Health page counts
+  the ones still waiting) and an authenticator (TOTP, RFC 6238, SHA-1, 30 s,
+  ±1 step).
   Both, every time. Nobody is ever handed a password: an owner creates an
   invitation, which is a link that works once and for 48 hours; the person
   chooses their own password and scans their own authenticator, and the
@@ -38,8 +42,15 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   keeps the count and the time as a record, so the People page can say
   "locked out". Every attempt, locked or not, is in the audit log with its
   address; the Health page counts the last 24 hours and names anyone locked
-  out. An unknown email runs the same password work as a known one, so the
-  answer takes the same time either way.
+  out. An unknown email runs the same password work as a known one (at
+  today's cost), so the answer takes the same time either way.
+- **The door never holds the house up.** Password and token hashes are
+  derived off the event loop (`crypto.scrypt` on the thread pool, one
+  password at a time and two tokens, the rest waiting in order), so a burst
+  of logins or bearer calls slows logins, not the Stripe webhook, the store,
+  `/healthz` or the admin. A person disabled, a token revoked or a code
+  spent while a check was in flight is refused when it lands: the row is
+  read again after the wait.
 - **A code is good for one login.** The 30-second step an authenticator
   code matched is remembered per person; the same code presented again, at
   or before that step, is refused. A code read over a shoulder or off a
@@ -59,8 +70,9 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   Caddy on the same box or network; add a CIDR or an address, or set it
   empty when nothing sits in front). A forged header from the open internet
   never moves the count onto somebody else.
-- **API tokens.** `bo_<id>.<secret>`; the secret is scrypt-hashed, so a copy
-  of the table verifies nothing. A token can be read-only (`--read-only`,
+- **API tokens.** `bo_<id>.<secret>`; the secret is scrypt-hashed (N=2^12:
+  256 random bits need less stretching than a phrase), so a copy of the
+  table verifies nothing. A token can be read-only (`--read-only`,
   or the Scope choice on Settings): GET only, for a dashboard or a monitor.
   Revocation is immediate.
 - **Rotation.** Each person changes their own password on *Your account*

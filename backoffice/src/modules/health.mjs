@@ -9,7 +9,7 @@ import { lastVerify, chainHead, securityText, securitySummary, nodeSupport } fro
 import { taxVerdict } from './nexus.mjs';
 import { statfsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { hasOperator } from '../auth.mjs';
+import { hasOperator, passwordHashCurrent, PASSWORD_SCRYPT } from '../auth.mjs';
 import { listBackups, offsiteConfigured, offsiteEncrypted } from './backup.mjs';
 import { trialBalance } from './ledger.mjs';
 import { listProbes } from './status.mjs';
@@ -79,6 +79,9 @@ export function doctor(db, cfg) {
   const fails24 = db.get('SELECT COUNT(*) AS n FROM audit_log WHERE action = \'auth.login.failed\' AND at >= ?', new Date(Date.now() - 86400000).toISOString()).n;
   add('logins', 'Failed logins, 24 h', fails24 <= 20, `${fails24}${fails24 ? ` · last from ${(() => { try { return JSON.parse(db.get('SELECT detail FROM audit_log WHERE action = \'auth.login.failed\' ORDER BY id DESC LIMIT 1')?.detail || '{}').ip || '?'; } catch { return '?'; } })()}` : ''} · lockout after 8 in 15 min per address`, 'read the audit log; if it is you, use `backoffice code`; if not, the lockout is already holding');
   const pwAge = hoursSince(db.get("SELECT MIN(password_set_at) AS t FROM users WHERE role = 'owner' AND status = 'active'")?.t); add('password_age', 'Oldest owner password', pwAge == null ? null : pwAge < 365 * 24, pwAge == null ? 'set before this check existed' : fmtH(pwAge), 'change it on /me (Your account)');
+  // a hash from before the cost rose is brought up on that person's next successful login; this row says who is still waiting (a note, never a failure)
+  const hashed = db.all("SELECT email, password_hash FROM users WHERE status = 'active' AND password_hash IS NOT NULL"); const oldCost = hashed.filter(u => !passwordHashCurrent(u.password_hash));
+  add('password_cost', `Password hashes at the current cost (scrypt N=2^${Math.log2(PASSWORD_SCRYPT.N)})`, !hashed.length ? null : oldCost.length ? null : true, !hashed.length ? 'nobody has a password yet' : oldCost.length ? `${oldCost.length} of ${hashed.length} still at the old cost — re-hashed on their next sign-in: ${oldCost.map(u => u.email).join(', ')}` : `all ${hashed.length}`, 'nothing to do by hand: each sign-in re-hashes that person; someone who never signs in again can be re-invited');
   const rwTokens = db.all('SELECT name, last_used_at FROM api_tokens WHERE scope = \'rw\''); add('tokens', 'API tokens that can write', null, rwTokens.length ? rwTokens.map(t => `${t.name}${t.last_used_at ? '' : ' (never used)'}`).join(', ') : 'none', 'revoke what is not used; a dashboard needs only a read-only token');
   // data & its proofs
   const integrity = db.get('PRAGMA integrity_check').integrity_check;

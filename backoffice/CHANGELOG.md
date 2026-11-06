@@ -7,6 +7,21 @@ the package version, so neither moves without the other.
 
 ## 0.9.0
 
+- **The door never holds the house up.** Password and API-token verification
+  run off the event loop (`crypto.scrypt`, one password at a time, two
+  tokens), so a burst of logins or bearer calls no longer stalls the Stripe
+  webhook, `/store/checkout`, `/healthz` or the admin. The password cost
+  rises to scrypt N=2^17 (OWASP); every hash now records its cost
+  (`$scrypt$ln=17,r=8,p=1$…`), a hash from before verifies as it did and is
+  re-hashed on that person's next successful login, and the doctor's
+  *Password hashes at the current cost* row names who is still waiting (a
+  note, never a failure). The lockout, the one-login-per-code rule, the
+  same-work-for-an-unknown-email answer and the audit rows are unchanged;
+  the person's row is read again after the wait, so a disable or a spent
+  code during a check still refuses. `login`, `changePassword`,
+  `acceptInvite`, `verifyPassword`, `hashPassword` and `apiTokenFor` return
+  promises; `setupOperator` and the demo seed keep a sync hash
+  (`hashPasswordSync`) for the CLI and boot.
 - **Away mode.** One date the whole company reads (Settings → Away,
   `backoffice away 2026-12-01 [--note '…']`, `--back`). While it stands, the
   batch cadence counts from the morning you are back: the store's catalog
