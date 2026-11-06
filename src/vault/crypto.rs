@@ -1022,7 +1022,7 @@ mod tests {
         // Neither the master key alone nor the KEM keypair alone opens a
         // hybrid envelope: the wrap holds a classical secret, not the DEK,
         // and the DEK derivation takes both.
-        let key = [42u8; 32];
+        let key = random_dek(); // a fresh master key, never a fixture that could be mistaken for one
         let kp = KemKeypair::generate();
         let envelope = seal_v2(
             "test-hybrid",
@@ -1038,7 +1038,7 @@ mod tests {
             "master key alone"
         );
         assert!(
-            decrypt_v2(&envelope, &[7u8; 32], Some(&kp)).is_err(),
+            decrypt_v2(&envelope, &random_dek(), Some(&kp)).is_err(),
             "KEM keypair with the wrong master key"
         );
         assert!(
@@ -1065,7 +1065,7 @@ mod tests {
         // An envelope written before the hybrid fix: `ml-kem-768` plus a
         // wrap of the DEK itself. It must keep opening (with either secret,
         // as it always did) so an existing vault stays readable.
-        let key = [42u8; 32];
+        let key = random_dek();
         let kp = KemKeypair::generate();
         let mut envelope = seal_v2(
             "legacy",
@@ -1082,14 +1082,14 @@ mod tests {
         envelope.classical_wrap = Some(wrap_dek(&key, "legacy", &[4u8; 32], &dek).unwrap());
         assert_eq!(decrypt_v2(&envelope, &key, None).unwrap(), b"old");
         assert_eq!(
-            decrypt_v2(&envelope, &[9u8; 32], Some(&kp)).unwrap(),
+            decrypt_v2(&envelope, &random_dek(), Some(&kp)).unwrap(),
             b"old"
         );
     }
 
     #[test]
     fn decrypt_v2_refuses_an_unknown_aead_or_kem_label() {
-        let key = [42u8; 32];
+        let key = random_dek();
         let envelope = seal_v2(
             "alg",
             [1u8; 32],
