@@ -5153,6 +5153,7 @@ function phaseDone(opts) {
       "(an all-rounder Canary's 10-second BOOT reset drops it for one the board derives from its own key). " +
       "Copy it now if you'll want it:");
     t.append(p);
+    t.append(el("p", "muted", core.SEALED_KEY_NOTE));
     const row = el("div", "flash-token-row");
     const codeEl = el("code", "flash-token-code", opts.apiToken);
     row.append(codeEl);

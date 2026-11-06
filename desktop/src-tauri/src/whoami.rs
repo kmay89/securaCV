@@ -15,20 +15,19 @@
 //! peer is already on the LAN — the precondition that let it spoof at all —
 //! relaying costs it nothing more than reachability to the real board.
 //!
-//! So this is used in two ways, and the fleet book keeps them apart:
+//! So the fleet book uses it in two ways, and keeps them apart:
 //!
 //! * The identity badge (`device_whoami`) is SHOWN, and on first sight
 //!   records the fingerprint; a cached badge gates nothing.
-//! * Before a bearer token goes to a (device_id, address) pair for the
-//!   first time in a session, `fleet_device_call` runs a FRESH challenge
-//!   and refuses unless the answer verifies against the recorded
-//!   fingerprint (fleet.rs `gate_need` / `admit`). That stops the cheap
-//!   attack — a peer announcing a victim's device_id with its own address
-//!   and collecting the token on the next click — but not a relay, which
-//!   is why the frontend also asks a human before trusting an address that
-//!   differs from the one the device first proved itself at. Closing the
-//!   gap for good needs the token exchange itself bound to the device key,
-//!   an open design decision — see docs/flasher_profiles_fleet_book.md.
+//! * The fingerprint it records is what the sealed-bearer handshake
+//!   (seal.rs) checks the device's signature against. The token exchange
+//!   itself is bound to the device key there: a session key agreed over
+//!   X25519 under that signature, and the token sent only sealed under it
+//!   (`fleet_device_call`). A relay can still forward the handshake and a
+//!   sealed request; it cannot read the token. `check_signature` below is
+//!   the one verifier both uses share. The frontend also asks a human
+//!   before sending anything to an address that differs from the one the
+//!   device first proved itself at — see docs/flasher_profiles_fleet_book.md.
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
@@ -135,6 +134,24 @@ pub fn check_answer(
     if !nonce_ok(nonce) {
         return Proof::Unavailable("we minted a malformed nonce".into());
     }
+    check_signature(
+        whoami_canonical(device_id, nonce).as_bytes(),
+        pubkey_hex,
+        sig_hex,
+        expected_fp,
+    )
+}
+
+/// The verifier under `check_answer`, over any message this device's key
+/// signs for us: the whoami canonical, or the sealed-bearer handshake's
+/// transcript (seal.rs). The caller composes the message from what IT
+/// expected, never from what the answer claims.
+pub fn check_signature(
+    message: &[u8],
+    pubkey_hex: &str,
+    sig_hex: &str,
+    expected_fp: &str,
+) -> Proof {
     let Some(pubkey) = decode_hex(pubkey_hex).filter(|k| k.len() == 32) else {
         return Proof::Unavailable("device sent no usable public key".into());
     };
@@ -147,11 +164,7 @@ pub fn check_answer(
     };
     let sig_bytes: [u8; 64] = sig[..].try_into().expect("checked length");
     let signature = Signature::from_bytes(&sig_bytes);
-    let canonical = whoami_canonical(device_id, nonce);
-    if verifying_key
-        .verify(canonical.as_bytes(), &signature)
-        .is_err()
-    {
+    if verifying_key.verify(message, &signature).is_err() {
         return Proof::BadSignature;
     }
     // The signature is good. Now: is it the RIGHT key? Verifying a signature

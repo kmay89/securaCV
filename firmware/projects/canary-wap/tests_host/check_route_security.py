@@ -168,6 +168,10 @@ PUBLIC_ALLOWLIST = {
     # Device identity is deliberately public (pubkey + fingerprint).
     ("GET", "/api/device/enroll"): "public device identity (pubkey/fingerprint)",
     ("GET", "/enroll"): "human-readable enroll page for the same data",
+    ("GET", "/api/device/seal"): "the sealed bearer's handshake (api_seal.h): the public "
+        "identity card, a fresh ephemeral X25519 key and the identity key's signature over "
+        "them; no secret is read or answered (the token it later carries is opened by "
+        "api_auth.h's gates, under the lockout)",
     ("GET", "/api/device-info"): "non-sensitive metadata; advertises auth_required",
     # Wizard pre-credential surface: the SoftAP password is the boundary.
     ("GET", "/api/wifi"): "wizard status poll before any token exists (documented)",

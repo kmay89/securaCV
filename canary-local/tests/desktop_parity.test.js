@@ -870,6 +870,141 @@ test("the identity challenge is shown, never used as authorization", () => {
     "the no-gating rule must be stated where the next reader will change it");
 });
 
+test("the credential is sealed to the device key: both flashers say so, the Rust seals, the firmware unseals, nothing falls back", async () => {
+  // The relay gap the identity challenge above leaves open is closed by how
+  // the key TRAVELS, not by checking harder who answers: fleet_device_call
+  // agrees a session key with the device over X25519, signed by the Ed25519
+  // key the book pinned, and sends the token only sealed under it
+  // (desktop/src-tauri/src/seal.rs; the firmware's api_seal.h). Two ends,
+  // two languages, one wire: every name, string and byte the two must agree
+  // on is pinned here to the firmware's own source, and the reference
+  // vectors the C++ suite and the Rust tests carry are held equal — a drift
+  // fails as "no seal" at runtime, which reads like old firmware forever.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const fleetRs = read(join(ROOT, "desktop/src-tauri/src/fleet.rs"));
+  const sealRs = read(join(ROOT, "desktop/src-tauri/src/seal.rs"));
+  const libRsSrc = read(join(ROOT, "desktop/src-tauri/src/lib.rs"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const WAP = join(ROOT, "firmware/projects/canary-wap");
+  const wapIno = read(join(WAP, "arduino/canary_wap/canary_wap.ino"));
+  const sealApi = read(join(WAP, "arduino/canary_wap/seal_api.h"));
+  const apiSeal = read(join(WAP, "arduino/canary_wap/api_seal.h"));
+  const apiAuth = read(join(WAP, "arduino/canary_wap/api_auth.h"));
+  const devSig = read(join(WAP, "arduino/canary_wap/device_signature.cpp"));
+  const hostTest = read(join(WAP, "tests_host/test_api_seal.cpp"));
+  const makefile = read(join(WAP, "tests_host/Makefile"));
+
+  // 1. The diagnostic, in both flashers, in the same words (root rule 7):
+  //    the token card on the desktop, the done card's token panel in the
+  //    browser. The desktop keeps its own copy (no shared UI code), so the
+  //    two strings are compared, not the import.
+  const desktopNote = /const SEALED_KEY_NOTE = "((?:[^"\\]|\\.)*)";/.exec(appJs);
+  assert.ok(desktopNote, "desktop app.js lost SEALED_KEY_NOTE");
+  const browserNote = /export const SEALED_KEY_NOTE = "((?:[^"\\]|\\.)*)";/.exec(flashCore);
+  assert.ok(browserNote, "flash-core.js lost SEALED_KEY_NOTE");
+  assert.strictEqual(JSON.parse(`"${desktopNote[1]}"`), JSON.parse(`"${browserNote[1]}"`),
+    "the two flashers explain the sealed key in different words");
+  assert.match(appJs, /esc\(SEALED_KEY_NOTE\)/, "the desktop token card must show the note");
+  assert.match(flashJs, /el\("p", "muted", core\.SEALED_KEY_NOTE\)/, "the browser done card must show the note");
+  assert.match(JSON.parse(`"${desktopNote[1]}"`), /sealed|seal it/, "the note must say the key is sealed");
+  assert.match(JSON.parse(`"${desktopNote[1]}"`), /update once over USB/, "the note must say what old firmware is asked to do");
+
+  // 2. The route: registered by the firmware, called by the Rust, public by
+  //    the route-security allowlist (the handshake carries no secret).
+  const route = /\.uri = "([^"]+)", \.method = HTTP_GET,\s*\n?\s*\.handler = seal_api::handle_seal/.exec(wapIno);
+  assert.ok(route, "canary_wap.ino no longer registers the seal handshake on seal_api::handle_seal");
+  assert.ok(sealRs.includes(`pub const ROUTE: &str = "${route[1]}";`), `seal.rs must call the route the firmware registers (${route[1]})`);
+  assert.match(fleetRs, /crate::seal::ROUTE,\s*\n?\s*hs\.query\(\)/, "fleet.rs must build the handshake URL from seal.rs's ROUTE and the handshake's query");
+  const routeSecurity = read(join(WAP, "tests_host/check_route_security.py"));
+  assert.ok(routeSecurity.includes(`("GET", "${route[1]}")`), "the handshake must be on the route-security allowlist with its reason");
+  assert.match(wapIno, /#include "seal_api\.h"/, "canary_wap.ino must include seal_api.h");
+
+  // 3. The query the Rust sends is the one the handler reads.
+  for (const key of ["nonce", "client_pub"]) {
+    assert.ok(sealApi.includes(`"${key}"`), `seal_api.h no longer reads ?${key}=`);
+    assert.ok(sealRs.includes(`${key}=`), `seal.rs no longer sends ${key}=`);
+  }
+  // 4. The answer's fields the Rust reads are the ones the firmware writes.
+  for (const field of ["pubkey_hex", "sid", "device_pub_hex", "sig_hex"]) {
+    assert.ok(apiSeal.includes(`\\"${field}\\":`), `api_seal.h does not emit a field named ${field}`);
+    assert.ok(fleetRs.includes(`"${field}"`), `fleet.rs must read the firmware's field name ${field}`);
+  }
+  assert.ok(apiSeal.includes(',\\"seal\\":{') && fleetRs.includes('body.get("seal")'), "the seal object's name");
+
+  // 5. The canonical the device signs: kind, field order (device_id, nonce,
+  //    the client's key, then the device's) and the Rust's one literal.
+  assert.match(devSig, /"%s\|v%d\|seal\|%s\|%s\|%s\|%s"/, "firmware seal canonical shape moved");
+  assert.match(devSig,
+    /seal\|%s\|%s\|%s\|%s",\s*\n?\s*SIG_PREFIX, SCHEMA_V,\s*\n?\s*device_id[^\n]*\n\s*nonce_hex[^\n]*\n\s*client_pub_hex[^\n]*\n\s*device_pub_hex/,
+    "firmware must sign device_id, nonce, client key, device key in that order");
+  assert.ok(sealRs.includes('"securacv-canary-sig|v1|seal|{device_id}|{nonce}|{client_pub_hex}|{device_pub_hex}"'),
+    "seal.rs canonical drifted from the firmware's");
+  // ...the HKDF info string, the Authorization scheme, the plaintext cap.
+  const info = /constexpr const char INFO\[\]\s*=\s*"([^"]+)";/.exec(apiSeal);
+  assert.ok(info, "api_seal.h lost INFO");
+  assert.ok(sealRs.includes(`pub const INFO: &[u8] = b"${info[1]}";`), "seal.rs HKDF info drifted");
+  const scheme = /constexpr const char SCHEME\[\] = "([^"]+)";/.exec(apiSeal);
+  assert.ok(scheme, "api_seal.h lost SCHEME");
+  assert.ok(sealRs.includes(`pub const SCHEME: &str = "${scheme[1]}";`), "seal.rs scheme drifted");
+  assert.ok(apiAuth.includes(`strncmp(auth_buf, "${scheme[1]}", 7)`), "api_auth.h must read the same scheme");
+  const cap = /constexpr size_t\s+TOKEN_CAP = (\d+);/.exec(apiSeal);
+  assert.ok(cap && sealRs.includes(`pub const TOKEN_CAP: usize = ${cap[1]};`), "the plaintext cap drifted");
+  // ...and the 401 words: every word the firmware's gate sends is one the
+  //    Rust reads, and the three that ask for a new session are the same.
+  for (const w of ["no_session", "expired", "replay", "unsupported", "bad_tag", "bad_format"]) {
+    assert.ok(apiAuth.includes(`\\"seal\\":\\"${w}\\"`), `api_auth.h no longer answers seal=${w}`);
+  }
+  for (const w of ["no_session", "expired", "replay", "unsupported"]) {
+    assert.ok(sealRs.includes(`"${w}"`), `seal.rs no longer reads seal=${w}`);
+  }
+  assert.match(sealRs, /\(401, "no_session"\) \| \(401, "expired"\) \| \(401, "replay"\) => OnRefused::Rehandshake/,
+    "the words that reopen a session");
+
+  // 6. The reference vectors: the C++ suite and the Rust tests carry the
+  //    same bytes (computed by a third implementation), so the two ends
+  //    agree on every byte or a test says which one moved.
+  // A C++ literal may be split over adjacent string pieces; join them.
+  const cxx = (name) => {
+    const m = new RegExp(`const char\\* const ${name}\\s*=((?:\\s*"[^"]*")+);`).exec(hostTest);
+    assert.ok(m, `test_api_seal.cpp lost ${name}`);
+    return [...m[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]).join("");
+  };
+  const rust = (name) => {
+    const m = new RegExp(`const ${name}: &str = "([^"]+)";`).exec(sealRs);
+    assert.ok(m, `seal.rs tests lost ${name}`);
+    return m[1];
+  };
+  for (const name of ["DEVICE_ID", "NONCE", "CLIENT_PUB", "DEVICE_PUB", "CANONICAL", "KEY", "SID", "TOKEN"]) {
+    assert.strictEqual(rust(name), cxx(name), `vector ${name} differs between seal.rs and test_api_seal.cpp`);
+  }
+  for (const name of ["SEALED_IDENTIFY_1", "SEALED_STATUS_2"]) {
+    assert.strictEqual(rust(name), scheme[1] + cxx(name), `vector ${name} differs (the Rust carries the scheme)`);
+  }
+
+  // 7. No plain bearer leaves fleet.rs, ever: the token is sealed or not
+  //    sent, the handshake is checked against the recorded fingerprint, and
+  //    the session cache is the app's managed state.
+  const fleetCode = fleetRs.replace(/\/\/.*$/gm, "");
+  assert.doesNotMatch(fleetCode, /bearer_auth\(|"Bearer /, "fleet.rs must never send a plain bearer");
+  assert.match(fleetCode, /seal_need\(&token, &device_id, &expected_fp\)\?/, "fleet.rs must refuse a token with no fingerprint to seal to");
+  assert.match(fleetCode, /hs\.accept\(device_id, expected_fp, &answer\)/, "fleet.rs must check the handshake against the recorded fingerprint");
+  assert.match(fleetCode, /reqwest::header::AUTHORIZATION, header/, "fleet.rs must send the sealed header");
+  assert.match(libRsSrc, /\.manage\(fleet::SealState::default\(\)\)/, "lib.rs must manage the session cache");
+  assert.match(libRsSrc, /^mod seal;/m, "lib.rs must declare the seal module");
+  assert.match(appJs, /invoke\("fleet_device_call", \{\s*\n?\s*base, token, action,\s*\n?\s*deviceId: entry\.deviceId,\s*\n?\s*expectedFp: entry\.pubkeyFp/,
+    "app.js must hand fleet_device_call the id and fingerprint the handshake is checked against");
+  assert.match(appJs, /callNote\(e\)/, "the fleet book must show the handshake's own refusal sentence");
+
+  // 8. The firmware's side is host-tested, and the suite is wired in.
+  assert.match(makefile, /^run: run-api-seal$/m, "the WAP host Makefile must run the sealed-bearer suite");
+  assert.match(makefile, /\$\(APISEAL_BIN\): \$\(APISEAL_SRC\) \$\(SRC_DIR\)\/api_seal\.h \$\(SRC_DIR\)\/seal_api\.h \$\(SRC_DIR\)\/api_auth\.h/,
+    "the suite must depend on the three firmware files it covers");
+  assert.match(hostTest, /api_auth_check_bearer\(&r, TOKEN\)/, "the suite must drive the REAL gate with a sealed header");
+  // The Lab app stays without device calls (the lockstep test above holds
+  // that), and the browser flasher makes none: the diagnostic is the card.
+});
+
 test("device API token: both flashers mint the same credential shape and seed the same keys", async () => {
   // The credential that makes the desktop fleet book (and any future browser
   // surface) able to talk to a board it flashed: "cv_" + 32 base62 chars,

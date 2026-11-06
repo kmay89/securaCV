@@ -14,6 +14,8 @@
  *   (api_auth_bearer_valid(), constant_time_compare()) are called from this
  *   header alone (check_route_security.py holds that)
  * - Token redaction for safe logging
+ * - The sealed bearer (api_seal.h): a `Sealed` header's token is opened by
+ *   api_seal_open() and then compared like a plain one, by both gates
  *
  * Usage with esp_http_server (ESP-IDF native):
  *   In any handler:
@@ -52,6 +54,18 @@
 // bond, an opera's secret). SECURITY_MODEL.md keeps the list. Their other
 // grants (the BOOT tap, the setup-door claim) are the handlers' own.
 extern bool cv_session_validate(httpd_req_t* req) __attribute__((weak));
+
+// The sealed bearer (api_seal.h): an `Authorization: Sealed <sid>.<seq>.<hex>`
+// header carries the token sealed under a per-session key the client agreed
+// with this device's identity key, so a host that answers to this device's
+// name, or relays to it, cannot read the token. This hook opens such a
+// header into token_out (false, with `reason` one of api_seal::reason()'s
+// words, otherwise); the token it yields is then compared exactly as a plain
+// bearer is, under the same lockout, by the two gates below. Defined once,
+// in seal_api.h (included by canary_wap.ino). Weak, like cv_session_validate:
+// a build or a harness without it takes a Sealed header as no credential.
+extern bool api_seal_open(httpd_req_t* req, const char* value, char* token_out, size_t token_cap,
+                          const char** reason) __attribute__((weak));
 
 // The source a request's wrong bearers are counted against (sweep F343): the
 // host-order IPv4 of the request's socket peer, never a request header, or 0
@@ -194,6 +208,41 @@ static void api_auth_send_lockout(httpd_req_t* req) {
   httpd_resp_sendstr(req, body);
 }
 
+// The Authorization header a gate may hold (a plain bearer is at most the
+// token's 35 bytes; a Sealed value, api_seal::VALUE_CAP, is under 200).
+#define API_AUTH_HEADER_CAP 224
+
+// The credential an Authorization header presents, into token[cap]: the
+// text after "Bearer " (trimmed), or the token a "Sealed " header opens
+// through api_seal_open(). False for any other scheme, a Sealed header a
+// build without the hook cannot open, or one the hook refuses; then
+// `seal_reason` names the hook's word (NULL for a header that was never a
+// seal), so api_auth_check_bearer() can tell the client to open a new
+// session. The one place the scheme is read, for both gates below.
+static bool api_auth_presented_token(httpd_req_t* req, char* auth_buf, char* token, size_t cap,
+                                     const char** seal_reason) {
+  if (seal_reason) *seal_reason = nullptr;
+  token[0] = '\0';
+  if (strncmp(auth_buf, "Sealed ", 7) == 0) {
+    const char* value = auth_buf + 7;
+    while (*value == ' ') value++;
+    const char* why = "unsupported";
+    if (api_seal_open && api_seal_open(req, value, token, cap, &why)) return true;
+    token[0] = '\0';
+    if (seal_reason) *seal_reason = why;
+    return false;
+  }
+  if (strncmp(auth_buf, "Bearer ", 7) != 0) return false;
+  const char* presented = auth_buf + 7;
+  while (*presented == ' ') presented++;
+  size_t len = strlen(presented);
+  while (len > 0 && presented[len - 1] == ' ') len--;
+  if (len + 1 > cap) return false;
+  memcpy(token, presented, len);
+  token[len] = '\0';
+  return true;
+}
+
 // Returns true if authenticated, false if response already sent (401/403/429).
 // The caller should return ESP_OK immediately if this returns false.
 //
@@ -233,7 +282,7 @@ static bool api_auth_check_bearer(httpd_req_t* req, const char* expected_token) 
     return false;
   }
 
-  char auth_buf[128];
+  char auth_buf[API_AUTH_HEADER_CAP];
   if (auth_len >= sizeof(auth_buf)) {
     auth_record_failure(req);
     httpd_resp_set_status(req, "401 Unauthorized");
@@ -244,22 +293,30 @@ static bool api_auth_check_bearer(httpd_req_t* req, const char* expected_token) 
 
   httpd_req_get_hdr_value_str(req, "Authorization", auth_buf, sizeof(auth_buf));
 
-  // ── Validate Bearer prefix ──
-  if (strncmp(auth_buf, "Bearer ", 7) != 0) {
+  // ── The credential: a Bearer token, or the token a Sealed header opens ──
+  char token[API_AUTH_HEADER_CAP];
+  const char* seal_reason = nullptr;
+  if (!api_auth_presented_token(req, auth_buf, token, sizeof(token), &seal_reason)) {
     auth_record_failure(req);
     httpd_resp_set_status(req, "401 Unauthorized");
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, "{\"error\":\"unauthorized\",\"hint\":\"Use 'Bearer <token>' format\"}");
+    if (seal_reason) {
+      // A seal this device could not open: the word says whether a new
+      // handshake would help (no_session, expired, replay) or not. One
+      // fixed text per word (api_seal::reason()'s), never the word spliced.
+      httpd_resp_sendstr(req,
+          strcmp(seal_reason, "no_session") == 0 ? "{\"error\":\"unauthorized\",\"seal\":\"no_session\"}"
+        : strcmp(seal_reason, "expired") == 0    ? "{\"error\":\"unauthorized\",\"seal\":\"expired\"}"
+        : strcmp(seal_reason, "replay") == 0     ? "{\"error\":\"unauthorized\",\"seal\":\"replay\"}"
+        : strcmp(seal_reason, "bad_tag") == 0    ? "{\"error\":\"unauthorized\",\"seal\":\"bad_tag\"}"
+        : strcmp(seal_reason, "unsupported") == 0 ? "{\"error\":\"unauthorized\",\"seal\":\"unsupported\"}"
+        :                                           "{\"error\":\"unauthorized\",\"seal\":\"bad_format\"}");
+    } else {
+      httpd_resp_sendstr(req, "{\"error\":\"unauthorized\",\"hint\":\"Use 'Bearer <token>' format\"}");
+    }
     return false;
   }
-
-  // ── Extract token (skip "Bearer ") ──
-  const char* token = auth_buf + 7;
-
-  // Trim leading/trailing whitespace
-  while (*token == ' ') token++;
-  size_t token_len = strlen(token);
-  while (token_len > 0 && token[token_len - 1] == ' ') token_len--;
+  const size_t token_len = strlen(token);
 
   // An empty device token is no token: no header matches it (a zero-length
   // compare would take a bare "Bearer ").
@@ -321,16 +378,13 @@ static bool api_auth_bearer_valid(httpd_req_t* req, const char* expected_token) 
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) return false;
 
-  char auth_buf[128];
+  char auth_buf[API_AUTH_HEADER_CAP];
   if (auth_len >= sizeof(auth_buf)) return false;
   httpd_req_get_hdr_value_str(req, "Authorization", auth_buf, sizeof(auth_buf));
 
-  if (strncmp(auth_buf, "Bearer ", 7) != 0) return false;
-
-  const char* token = auth_buf + 7;
-  while (*token == ' ') token++;
-  size_t token_len = strlen(token);
-  while (token_len > 0 && token[token_len - 1] == ' ') token_len--;
+  char token[API_AUTH_HEADER_CAP];
+  if (!api_auth_presented_token(req, auth_buf, token, sizeof(token), nullptr)) return false;
+  const size_t token_len = strlen(token);
 
   size_t expected_len = strlen(expected_token);
   if (token_len != expected_len) return false;
