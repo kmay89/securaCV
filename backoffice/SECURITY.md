@@ -48,9 +48,11 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   derived off the event loop (`crypto.scrypt` on the thread pool, one
   password at a time and two tokens, the rest waiting in order), so a burst
   of logins or bearer calls slows logins, not the Stripe webhook, the store,
-  `/healthz` or the admin. A person disabled, a token revoked or a code
-  spent while a check was in flight is refused when it lands: the row is
-  read again after the wait.
+  `/healthz` or the admin. What was true when a request arrived is read
+  again after the wait, before anything opens: a person disabled, a token
+  revoked, a code spent by a login that finished meanwhile, or either
+  lockout armed by failures queued ahead, refuses the request when it
+  lands.
 - **A code is good for one login.** The 30-second step an authenticator
   code matched is remembered per person; the same code presented again, at
   or before that step, is refused. A code read over a shoulder or off a

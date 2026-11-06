@@ -17,8 +17,9 @@ the package version, so neither moves without the other.
   *Password hashes at the current cost* row names who is still waiting (a
   note, never a failure). The lockout, the one-login-per-code rule, the
   same-work-for-an-unknown-email answer and the audit rows are unchanged;
-  the person's row is read again after the wait, so a disable or a spent
-  code during a check still refuses. `login`, `changePassword`,
+  the person's row and both locks are read again after the wait, so a
+  disable, a spent code or a lockout armed by failures queued ahead still
+  refuses before a session opens. `login`, `changePassword`,
   `acceptInvite`, `verifyPassword`, `hashPassword` and `apiTokenFor` return
   promises; `setupOperator` and the demo seed keep a sync hash
   (`hashPasswordSync`) for the CLI and boot.

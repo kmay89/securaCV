@@ -90,9 +90,30 @@ test('a password hash at the old cost is re-hashed on the next successful login,
   const later = Date.now() + 30_000; assert.ok(await login(db, { email: 'o@errer.test', password: 'a very long password', code: totp(secret, { time: later }) }, { now: later }), 'and the re-hashed password logs in');
 });
 
-test('one code, two logins at once: the replay rule holds across the wait', async () => {
-  const db = testDb(); const secret = setupOperator(db, 'a very long password', { email: 'o@errer.test', name: 'O' }); const code = totp(secret);
-  const both = await Promise.all([0, 1].map(() => login(db, { email: 'o@errer.test', password: 'a very long password', code })));
+test('one code, two logins at once: the replay rule holds across the wait, with a current hash and with one being upgraded', async () => {
+  const db = testDb(); const secret = setupOperator(db, 'a very long password', { email: 'o@errer.test', name: 'O' }); const id = userByEmail(db, 'o@errer.test').id;
+  const both = await Promise.all([0, 1].map(() => login(db, { email: 'o@errer.test', password: 'a very long password', code: totp(secret) })));
   assert.equal(both.filter(Boolean).length, 1, 'the second read the step the first wrote');
   assert.equal(db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'auth.login.failed'").n, 1);
+  // a hash at the old cost adds a derivation to the path; it runs before the final checks, so the second login still reads what the first wrote
+  db.run('UPDATE users SET password_hash = ? WHERE id = ?', legacyHash('a very long password'), id); const now = Date.now() + 60_000;
+  const legacy = await Promise.all([0, 1].map(() => login(db, { email: 'o@errer.test', password: 'a very long password', code: totp(secret, { time: now }) }, { now })));
+  assert.equal(legacy.filter(Boolean).length, 1, 'one session, not two');
+  assert.ok(passwordHashCurrent(db.get('SELECT password_hash FROM users WHERE id = ?', id).password_hash), 'and the hash was brought up');
+  assert.equal(db.get("SELECT COUNT(*) AS n FROM sessions").n, 2);
+});
+
+test('a lock armed by failures queued ahead refuses the login that lands after them, and the caller has a last word before a session opens', async () => {
+  const db = testDb(); const secret = setupOperator(db, 'a very long password', { email: 'o@errer.test', name: 'O' }); const ip = '203.0.113.9';
+  // eight wrong tries and the right one, all at once: the right one's derivation is queued last, and by then the pair is locked
+  const nine = await Promise.all([...Array(8).fill(null).map(() => login(db, { email: 'o@errer.test', password: 'wrong wrong wrong', code: '000000' }, { ip })), login(db, { email: 'o@errer.test', password: 'a very long password', code: totp(secret) }, { ip })]);
+  assert.ok(nine.every(s => s === null), 'none got in'); assert.equal(db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'auth.login.failed'").n, 8);
+  assert.equal(db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'auth.login.locked'").n, 1, 'the ninth was refused as locked, after its wait'); assert.ok(userByEmail(db, 'o@errer.test').locked_until, 'and the lock stands');
+  assert.equal(db.get('SELECT COUNT(*) AS n FROM sessions').n, 0);
+  // the lock is per address: the same person from another one gets in, and the code was not spent by the refusal
+  assert.ok(await login(db, { email: 'o@errer.test', password: 'a very long password', code: totp(secret) }, { ip: '198.51.100.2' }));
+  // the caller's last word (the pipeline's per-address lockout, asked again after the wait): a refusal opens nothing and spends nothing
+  const later = Date.now() + 30_000; const code = totp(secret, { time: later });
+  assert.equal(await login(db, { email: 'o@errer.test', password: 'a very long password', code }, { ip: '198.51.100.2', now: later, admit: () => false }), null);
+  assert.equal(db.get('SELECT COUNT(*) AS n FROM sessions').n, 1); assert.ok(await login(db, { email: 'o@errer.test', password: 'a very long password', code }, { ip: '198.51.100.2', now: later }), 'the same code still works: it was never accepted');
 });

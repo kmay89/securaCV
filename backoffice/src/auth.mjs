@@ -231,23 +231,30 @@ function openSession(db, r, { sessionHours, now, ip, step, via = 'password' }) {
 }
 // Async: the password is verified off the event loop (see the KDF note at the top). The lock, the replay rule,
 // the dummy check and the audit rows are the same as they ever were; the loop is free while scrypt runs.
-export async function login(db, { email = '', password, code }, { sessionHours = 12, ip = null, now = Date.now() } = {}) {
+// `admit` is the caller's last word, asked after the waits and before the session opens (the pipeline asks its
+// per-address lockout again there); false refuses without a session and without spending the code, audited as a locked login.
+export async function login(db, { email = '', password, code }, { sessionHours = 12, ip = null, now = Date.now(), admit = () => true } = {}) {
   const em = normEmail(email);
   const r = em ? db.get('SELECT * FROM users WHERE email = ?', em) : (() => { const rows = db.all("SELECT * FROM users WHERE status = 'active' AND password_hash IS NOT NULL LIMIT 2"); return rows.length === 1 ? rows[0] : null; })();
   const fail = (why) => { if (!r) db.audit('web', 'auth.login.failed', 'user', em || null, { ip, why }); return recordFailure(db, r, ip, now, why); };
   if (!r || r.status !== 'active' || !r.password_hash || !r.totp_secret) { await verifyPassword(String(password || ''), await dummyHash()); return fail(!r ? (em ? 'unknown' : 'email required') : r.status); }
   if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
   if (!(await verifyPassword(password, r.password_hash))) return fail('password');
-  // The row again, after the wait: a person disabled meanwhile is refused as before, and the replay rule
-  // reads the step a login that finished during the wait accepted — two requests carrying one code were
-  // serialized on the loop before; now the second reads what the first wrote.
+  // The password is proven. A hash from before today's cost is derived now, before the final checks, so that
+  // no wait follows them; it is written only on a full login, and only if the row still holds the hash that
+  // was checked (a password changed in another session meanwhile is not overwritten).
+  const upgrade = passwordHashCurrent(r.password_hash) ? null : await hashPassword(password);
+  // After the waits, what was true at arrival is read again, because the loop no longer serializes logins:
+  // the lock (eight wrong tries queued ahead of this one may have armed it), the caller's own lock, the
+  // person's status (disabled meanwhile), and the step the replay rule compares against (a login that
+  // finished during the wait wrote it — two requests carrying one code yield one session, as before).
+  if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
+  if (!admit()) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
   const live = db.get('SELECT status, totp_secret, totp_last_step FROM users WHERE id = ?', r.id);
   if (!live || live.status !== 'active' || !live.totp_secret) return fail(live ? live.status : 'unknown');
   const step = verifyTotp(live.totp_secret, code, { time: now, lastStep: live.totp_last_step ?? null });
   if (!step) return fail('code');
-  // A hash from before today's cost is brought up to it now, with the password just proven — only if the row
-  // still holds the hash that was checked (a password changed in another session meanwhile is not overwritten).
-  if (!passwordHashCurrent(r.password_hash)) db.run('UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?', await hashPassword(password), r.id, r.password_hash);
+  if (upgrade) db.run('UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?', upgrade, r.id, r.password_hash);
   return openSession(db, r, { sessionHours, now, ip, step });
 }
 

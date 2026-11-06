@@ -143,6 +143,21 @@ test('lockout per person, password change, a new authenticator confirmed before 
   } finally { await b.close(); }
 });
 
+test('over HTTP: eight wrong codes in flight and the right login behind them — the address lock, read again after the wait, answers 429 and opens nothing', async () => {
+  const b = await boot();
+  try {
+    const post = (code) => fetch(b.base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email: 'owner@errer.test', password: 'owner password 1234', code }) });
+    const bad = Array(8).fill(null).map(() => post('000000'));
+    await new Promise(r => setTimeout(r, 50));   // the eight are queued at the KDF (one derivation at a time); the right one arrives while they wait, before any lock exists
+    const good = await post(totp(b.secret)); const bads = await Promise.all(bad);
+    assert.ok(bads.every(r => r.status === 303 && r.headers.get('location') === '/login?err=1'), 'eight failures, each a plain refusal');
+    assert.equal(good.status, 429, 'the right login landed after the eighth failure: refused as locked'); assert.equal(good.headers.get('set-cookie'), null);
+    assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions').n, 0, 'no session was opened');
+    assert.equal(b.db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'auth.login.locked'").n, 1);
+    b.app.lockout.clear('127.0.0.1'); clearLocks(); b.fresh(); assert.ok(await b.signIn('owner@errer.test', 'owner password 1234', totp(b.secret)), 'once the locks lift, the person gets in');
+  } finally { await b.close(); }
+});
+
 test('the operator from before people existed is carried over as the first owner, once; the demo seeds one of each role', async () => {
   const db = testDb();
   db.setSetting('auth:password', hashPasswordSync('legacy operator pw 1')); db.setSetting('auth:totp', base32Encode(Buffer.from('12345678901234567890'))); db.setSetting('auth:password_set_at', '2026-01-01T00:00:00.000Z');
