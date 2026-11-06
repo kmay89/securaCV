@@ -332,10 +332,15 @@ pub struct ApiConfig {
 /// What the open `/api/fleet` read discloses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FleetRollcall {
-    /// The kernel's row plus every peer the bridge heard.
-    #[default]
+    /// The kernel's row plus every peer the bridge heard — including the
+    /// per-room wellbeing words (`presence`, `occupants`, `breathing`) a
+    /// peer publishes on its unsigned `state` topic. Opt in for a Witness
+    /// Wall on a trusted LAN; the route is unauthenticated.
     Full,
-    /// The kernel's row alone.
+    /// The kernel's row alone (the default): nothing on `/api/fleet` that a
+    /// broker client could forge about a room, and nothing about who is
+    /// home for a LAN host without a token to read.
+    #[default]
     SelfOnly,
 }
 
@@ -1206,9 +1211,11 @@ fn handle_connection(
         // every networked Canary answers (tvos/discovery/DISCOVERY.md) — the
         // Witness Wall and the Flasher's post-flash discovery read it from a
         // browser on another origin, so it carries CORS and answers the
-        // preflight. It says nothing an observer on the LAN could not already
-        // see (the kernel is up; its own chain verdict, if one was computed);
-        // no event, zone, or key material — those stay behind the token.
+        // preflight. By default (`self`) it says nothing an observer on the
+        // LAN could not already see (the kernel is up; its own chain verdict,
+        // if one was computed); no event, zone, or key material — those stay
+        // behind the token. `full` adds every peer's row, wellbeing words
+        // included, and is the operator's opt-in for a Witness Wall.
         ("OPTIONS", "/api/fleet") => {
             let cors = fleet_cors_headers(request.headers.get("origin").map(String::as_str));
             let cors: Vec<(&str, &str)> = cors.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -2468,17 +2475,34 @@ mod tests {
     }
 
     fn seal_event(kernel: &mut Kernel, cfg: &KernelConfig, zone: &str) -> Result<()> {
+        seal_event_aged(kernel, cfg, zone, 0)
+    }
+
+    /// Seals an event whose SIGNED time bucket lies `age_s` seconds in the
+    /// past: retention ages rows by the signed bucket, so a test that wants
+    /// an expired row seals one, never rewrites the `created_at` column.
+    fn seal_event_aged(
+        kernel: &mut Kernel,
+        cfg: &KernelConfig,
+        zone: &str,
+        age_s: u64,
+    ) -> Result<()> {
         let desc = ModuleDescriptor {
             id: "test_module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
             requested_capabilities: &[],
             supported_backends: &[InferenceBackend::Stub],
         };
+        let now = TimeBucket::now(600)?;
+        let time_bucket = TimeBucket {
+            start_epoch_s: now.start_epoch_s.saturating_sub(age_s) / 600 * 600,
+            size_s: 600,
+        };
         kernel.append_event_checked(
             &desc,
             CandidateEvent {
                 event_type: EventType::BoundaryCrossingObjectLarge,
-                time_bucket: TimeBucket::now(600)?,
+                time_bucket,
                 zone_id: zone.to_string(),
                 confidence: 0.5,
                 correlation_token: None,
@@ -2612,11 +2636,11 @@ mod tests {
     /// the stored chain. Returns how many entries verified before the walk
     /// stopped.
     fn walk_with_kernel_hashing(doc: &SealedLogDocument) -> Result<u64> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        use ed25519_dalek::Signature;
         let key_bytes: [u8; 32] = hex::decode(&doc.verifying_key)?
             .try_into()
             .map_err(|_| anyhow!("verifying_key is not 32 bytes"))?;
-        let key = VerifyingKey::from_bytes(&key_bytes)?;
+        let key = crate::crypto::signatures::verifying_key_strict(&key_bytes)?;
         let mut expected_prev: [u8; 32] = match &doc.checkpoint_head {
             Some(head) => hex::decode(head)?
                 .try_into()
@@ -2642,7 +2666,7 @@ mod tests {
                 .map_err(|_| anyhow!("signature is not 64 bytes"))?;
             let signing_hash = domain_separated_hash(DOMAIN_SEALED_LOG_ENTRY, &stored_hash);
             if key
-                .verify(&signing_hash, &Signature::from_bytes(&signature))
+                .verify_strict(&signing_hash, &Signature::from_bytes(&signature))
                 .is_err()
             {
                 break;
@@ -3361,14 +3385,10 @@ mod tests {
     #[test]
     fn sealed_log_tail_is_checkpoint_anchored_and_bounded() -> Result<()> {
         let api = SealedLogTestApi::spawn(|kernel, cfg| {
-            seal_event(kernel, cfg, "zone:a")?;
-            seal_event(kernel, cfg, "zone:b")?;
-            // Age the sealed rows past retention (created_at is bookkeeping,
-            // not part of the hashed payload), then checkpoint-and-prune.
-            kernel.conn.execute(
-                "UPDATE sealed_events SET created_at = created_at - 86400",
-                [],
-            )?;
+            // Two rows sealed a day ago (by their signed bucket), then
+            // checkpoint-and-prune under a one-hour retention.
+            seal_event_aged(kernel, cfg, "zone:a", 86_400)?;
+            seal_event_aged(kernel, cfg, "zone:b", 86_400)?;
             kernel.enforce_retention_with_checkpoint(std::time::Duration::from_secs(3600))?;
             seal_event(kernel, cfg, "zone:c")
         })?;

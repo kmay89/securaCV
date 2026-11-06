@@ -423,7 +423,7 @@ fn run_inner(
 }
 
 fn verifying_key_from_bytes(bytes: &[u8; 32]) -> Result<VerifyingKey> {
-    VerifyingKey::from_bytes(bytes).map_err(|e| anyhow::anyhow!("invalid verifying key: {}", e))
+    crate::crypto::signatures::verifying_key_strict(bytes).map_err(|e| anyhow::anyhow!("invalid verifying key: {}", e))
 }
 
 #[cfg(test)]
@@ -474,15 +474,26 @@ mod tests {
     }
 
     fn write_test_event(kernel: &mut Kernel) {
+        write_test_event_aged(kernel, 0)
+    }
+
+    /// Seals an event whose SIGNED bucket is `age_s` in the past — the only
+    /// honest way to put an expired row in front of the pruner, which ages
+    /// rows by the signed bucket and not by the `created_at` column.
+    fn write_test_event_aged(kernel: &mut Kernel, age_s: u64) {
         let module = ModuleDescriptor {
             id: "test-module",
             allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
             requested_capabilities: &[],
             supported_backends: &[InferenceBackend::Stub],
         };
+        let now = TimeBucket::now(600).expect("bucket");
         let cand = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectLarge,
-            time_bucket: TimeBucket::now(600).expect("bucket"),
+            time_bucket: TimeBucket {
+                start_epoch_s: now.start_epoch_s.saturating_sub(age_s) / 600 * 600,
+                size_s: 600,
+            },
             zone_id: "zone:test".to_string(),
             confidence: 0.9,
             correlation_token: None,
@@ -839,8 +850,8 @@ mod tests {
         // the prune for a wipe.
         let db = TempDb::new();
         let mut kernel = open_kernel(db.path());
-        write_test_event(&mut kernel);
-        write_test_event(&mut kernel);
+        write_test_event_aged(&mut kernel, 86_400);
+        write_test_event_aged(&mut kernel, 86_400);
 
         // The mark the writer would have signed at the current tip.
         let sk = signing_key_from_seed(TEST_SEED).unwrap();
@@ -853,12 +864,8 @@ mod tests {
         )
         .unwrap();
 
-        // Age every event into the past and prune them all — writes a signed
+        // Every event was sealed a day ago; prune them all — writes a signed
         // checkpoint and empties the table (the case that used to false-fail).
-        kernel
-            .conn
-            .execute("UPDATE sealed_events SET created_at = 1", [])
-            .unwrap();
         kernel
             .enforce_retention_with_checkpoint(std::time::Duration::from_secs(1))
             .unwrap();
@@ -895,8 +902,8 @@ mod tests {
     fn prune_everything_under_a_mark(
         kernel: &mut Kernel,
     ) -> (crate::HighWaterMark, [u8; 32], ed25519_dalek::SigningKey) {
-        write_test_event(kernel);
-        write_test_event(kernel);
+        write_test_event_aged(kernel, 86_400);
+        write_test_event_aged(kernel, 86_400);
         let sk = signing_key_from_seed(TEST_SEED).unwrap();
         let (newest_id, head) = crate::log::high_water_mark::read_live_head(&kernel.conn).unwrap();
         let mark = crate::HighWaterMark::sign(
@@ -916,10 +923,6 @@ mod tests {
             .unwrap();
         let mut older_head = [0u8; 32];
         older_head.copy_from_slice(&first_hash);
-        kernel
-            .conn
-            .execute("UPDATE sealed_events SET created_at = 1", [])
-            .unwrap();
         kernel
             .enforce_retention_with_checkpoint(std::time::Duration::from_secs(1))
             .unwrap();

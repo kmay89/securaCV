@@ -485,7 +485,19 @@ fn write_token_file(path: &Path, token: &str) -> Result<()> {
 /// Per-IP auth failure lockout with exponential backoff, mirroring the event
 /// API server's firmware-aligned constants.
 struct Lockout {
-    entries: HashMap<IpAddr, (u32, u32, u64)>, // failures, lockouts, locked_until_ms
+    entries: HashMap<IpAddr, LockoutEntry>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LockoutEntry {
+    /// Failures in the current streak (reset when a lockout starts).
+    failures: u32,
+    /// Lockouts so far (the backoff exponent).
+    lockouts: u32,
+    /// Locked until this wall-clock instant, ms since the epoch.
+    until_ms: u64,
+    /// When the streak last grew; a stale streak is dropped by `prune`.
+    last_fail_ms: u64,
 }
 
 impl Lockout {
@@ -502,20 +514,28 @@ impl Lockout {
             .as_millis() as u64
     }
 
+    /// Longest a lockout lasts, and how long an unfinished streak is
+    /// remembered: a single failure from an address pinned its entry
+    /// forever before, so 4096 addresses (one IPv6 /64 is plenty) filled
+    /// the table once and every address after them was never locked out.
+    const CAP_MS: u64 = 300_000;
+
     fn locked(&self, ip: &IpAddr) -> Option<u64> {
-        self.entries.get(ip).and_then(|&(_, _, until)| {
+        self.entries.get(ip).and_then(|entry| {
             let now = Self::now_ms();
-            (until > now).then(|| (until - now).div_ceil(1000))
+            (entry.until_ms > now).then(|| (entry.until_ms - now).div_ceil(1000))
         })
     }
 
     /// Drop entries that are fully settled — neither currently locked nor
-    /// mid-streak — so the table cannot accumulate one dead entry per source
-    /// IP that ever failed once.
+    /// in a streak that grew within the cap — so the table cannot hold one
+    /// dead entry per source address that ever failed once.
     fn prune(&mut self) {
         let now = Self::now_ms();
-        self.entries
-            .retain(|_, &mut (attempts, _, until)| attempts > 0 || until > now);
+        self.entries.retain(|_, entry| {
+            entry.until_ms > now
+                || (entry.failures > 0 && now.saturating_sub(entry.last_fail_ms) < Self::CAP_MS)
+        });
     }
 
     fn fail(&mut self, ip: IpAddr) {
@@ -525,22 +545,30 @@ impl Lockout {
         const MAX_ENTRIES: usize = 4096;
         const MAX_ATTEMPTS: u32 = 5;
         const BASE_MS: u64 = 2_000;
-        const CAP_MS: u64 = 300_000;
         self.prune();
         if !self.entries.contains_key(&ip) && self.entries.len() >= MAX_ENTRIES {
-            // The table is full of live lockouts. Don't grow it; a not-yet-
-            // tracked IP simply isn't rate-limited this round (the pre-existing
-            // behavior for any untracked IP), which never wrongly locks a
-            // legitimate peer.
-            return;
+            // Full of live entries: evict the one that expires soonest (the
+            // event API's tracker does the same) so a new address is still
+            // tracked, instead of leaving every new address unlimited.
+            if let Some(victim) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, e)| (e.until_ms, e.last_fail_ms))
+                .map(|(ip, _)| *ip)
+            {
+                self.entries.remove(&victim);
+            }
         }
-        let entry = self.entries.entry(ip).or_insert((0, 0, 0));
-        entry.0 += 1;
-        if entry.0 >= MAX_ATTEMPTS {
-            entry.1 += 1;
-            let backoff = BASE_MS.saturating_mul(2u64.saturating_pow(entry.1.saturating_sub(1)));
-            entry.2 = Self::now_ms() + backoff.min(CAP_MS);
-            entry.0 = 0;
+        let now = Self::now_ms();
+        let entry = self.entries.entry(ip).or_default();
+        entry.failures += 1;
+        entry.last_fail_ms = now;
+        if entry.failures >= MAX_ATTEMPTS {
+            entry.lockouts += 1;
+            let backoff =
+                BASE_MS.saturating_mul(2u64.saturating_pow(entry.lockouts.saturating_sub(1)));
+            entry.until_ms = now + backoff.min(Self::CAP_MS);
+            entry.failures = 0;
         }
     }
 

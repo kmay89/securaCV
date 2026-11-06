@@ -18,7 +18,7 @@
 //! and the pinned key.
 
 use anyhow::{anyhow, Result};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 
 /// Prefix of the signed message.
 pub const ANNOUNCE_SIG_PREFIX: &[u8] = b"securacv-announce|v1|";
@@ -37,6 +37,8 @@ pub enum AnnounceBodyRefusal {
     NotAnObject,
     CarriesSig,
     NamesAnotherKernel,
+    /// The payload carries a field outside the announce contract.
+    UnknownField,
 }
 
 impl AnnounceBodyRefusal {
@@ -47,9 +49,34 @@ impl AnnounceBodyRefusal {
             Self::NamesAnotherKernel => {
                 "announce payload must name this kernel (device_id and verifying_key)"
             }
+            Self::UnknownField => {
+                "announce payload carries a field the announce contract does not define"
+            }
         }
     }
 }
+
+/// The top-level fields an announce may carry (`AnnouncePayload` in the
+/// bridge, `kernel_trust.py` in the integration). The kernel signs the
+/// bytes it is handed, so a field outside the contract would be signed
+/// too — and a holder of the capability token could then obtain the
+/// device's signature over anything shaped like JSON.
+const ANNOUNCE_FIELDS: &[&str] = &[
+    "v",
+    "device_id",
+    "kernel_version",
+    "verifying_key",
+    "api",
+    "pairing",
+    "mqtt_topic_prefix",
+    "discovery_prefix",
+    "availability_topic",
+    "announced_bucket_start",
+    "announced_bucket_size",
+];
+
+/// The fields of the `api` object.
+const ANNOUNCE_API_FIELDS: &[&str] = &["scheme", "bind", "port", "host"];
 
 /// Whether `body` is an announce this kernel will put its name to: a JSON
 /// object, no `sig` of its own, and `device_id`/`verifying_key` equal to
@@ -72,6 +99,15 @@ pub fn check_announce_body(
     if !names_self {
         return Err(AnnounceBodyRefusal::NamesAnotherKernel);
     }
+    if object.keys().any(|k| !ANNOUNCE_FIELDS.contains(&k.as_str())) {
+        return Err(AnnounceBodyRefusal::UnknownField);
+    }
+    if let Some(api) = object.get("api") {
+        let api = api.as_object().ok_or(AnnounceBodyRefusal::UnknownField)?;
+        if api.keys().any(|k| !ANNOUNCE_API_FIELDS.contains(&k.as_str())) {
+            return Err(AnnounceBodyRefusal::UnknownField);
+        }
+    }
     Ok(())
 }
 
@@ -87,7 +123,7 @@ pub fn verify_announce(
     let sig_bytes: [u8; 64] = raw
         .try_into()
         .map_err(|_| anyhow!("announce sig is not 64 bytes"))?;
-    key.verify(
+    key.verify_strict(
         &announce_message(payload_without_sig),
         &Signature::from_bytes(&sig_bytes),
     )

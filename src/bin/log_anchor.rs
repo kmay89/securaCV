@@ -200,7 +200,7 @@ fn open(args: &Args, mode: OpenMode) -> Result<Connection> {
         (None, Some(seed)) => Some(seed.clone()),
         (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
             eprintln!("log_anchor: database key from the {}", found.source);
-            found.seed
+            found.seed.to_string()
         }),
     };
     let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {

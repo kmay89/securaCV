@@ -560,7 +560,7 @@ where
                     ),
                 ));
             }
-            let new_key = VerifyingKey::from_bytes(&rotation.new_public_key).map_err(|e| {
+            let new_key = crate::crypto::signatures::verifying_key_strict(&rotation.new_public_key).map_err(|e| {
                 fail(
                     FailedLedger::SealedEvents,
                     Some(id),
@@ -1166,7 +1166,7 @@ pub(crate) fn verify_receipt_quorum(
         // Distinct message for an unusable key; the signature check itself is
         // domain-separated (verify_approval rejects a bare-hash or
         // cross-context signature), matching how authorize now signs.
-        VerifyingKey::from_bytes(&trustee.public_key)
+        crate::crypto::signatures::verifying_key_strict(&trustee.public_key)
             .map_err(|_| anyhow!("invalid public key for trustee {}", trustee.id.0))?;
         if !verify_approval(
             &trustee.public_key,

@@ -94,7 +94,7 @@ fn main() -> Result<()> {
         // Log where the identity came from (the environment, or which seed
         // file) so an operator can find it; the seed value is never logged.
         log::info!("device key seed: {}", resolved.source);
-        resolved.seed
+        resolved.seed.to_string()
     };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&config.ruleset_id);
 
@@ -1775,21 +1775,22 @@ mod tests {
         use witness_kernel::config::ApiAccessSettings;
 
         // Defaults: no token path means no pairing files, and the roll-call
-        // is the Witness Wall's `full`.
+        // is the kernel's own row (`self`) — the Witness Wall's `full` is an
+        // opt-in, since the route takes no token.
         let api = api_config_from(&test_config()).expect("api config");
         assert_eq!(api.pairing, None);
-        assert_eq!(api.fleet_rollcall, FleetRollcall::Full);
+        assert_eq!(api.fleet_rollcall, FleetRollcall::SelfOnly);
 
         // What the config says is what the served API gets: the two pairing
         // files (`POST /api/pair` redeems the code, the bearer set it
-        // appends to) and the `self` roll-call — the keys `witness_api`
+        // appends to) and the `full` roll-call — the keys `witness_api`
         // wires, so a witnessd-served API honors them the same way.
         let mut config = test_config();
         config.api_token_path = Some(PathBuf::from("/data/api_token"));
         config.api_access = ApiAccessSettings {
             paired_token_path: Some(PathBuf::from("/data/paired_tokens.json")),
             pairing_code_path: Some(PathBuf::from("/data/pairing_code")),
-            fleet_rollcall: FleetRollcall::SelfOnly,
+            fleet_rollcall: FleetRollcall::Full,
             ..ApiAccessSettings::default()
         };
         let api = api_config_from(&config).expect("api config");
@@ -1800,7 +1801,7 @@ mod tests {
                 tokens_path: PathBuf::from("/data/paired_tokens.json"),
             })
         );
-        assert_eq!(api.fleet_rollcall, FleetRollcall::SelfOnly);
+        assert_eq!(api.fleet_rollcall, FleetRollcall::Full);
         assert_eq!(
             api.token_path.as_deref(),
             Some(std::path::Path::new("/data/api_token"))

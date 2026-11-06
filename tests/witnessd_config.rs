@@ -38,12 +38,14 @@ fn api_access_env_round_trips_and_defaults_beside_the_token() {
     clear_env();
     std::env::set_var("WITNESS_RTSP_URL", "rtsp://camera-1");
 
-    // Defaults: full roll-call, 600 s codes, pairing files beside the token.
+    // Defaults: the kernel's own row only (`full` is the Witness Wall's
+    // opt-in — the route takes no token), 600 s codes, pairing files beside
+    // the token.
     std::env::set_var("WITNESS_API_TOKEN_PATH", "/data/api_token");
     let cfg = WitnessdConfig::load().expect("load config");
     assert_eq!(
         cfg.api_access.fleet_rollcall,
-        witness_kernel::api::FleetRollcall::Full
+        witness_kernel::api::FleetRollcall::SelfOnly
     );
     assert_eq!(cfg.api_access.pairing_ttl_secs, 600);
     assert_eq!(

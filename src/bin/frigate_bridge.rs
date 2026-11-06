@@ -822,7 +822,7 @@ fn main() -> Result<()> {
         let resolved =
             witness_kernel::crypto::resolve_device_seed(&args.db_path, env_seed.as_deref())?;
         log::info!("device key seed: {}", resolved.source);
-        resolved.seed
+        resolved.seed.to_string()
     };
     let device_id = args
         .ha_device_id
@@ -1507,6 +1507,53 @@ mod tests {
             Duration::from_secs(3600),
             FrigateMode::Events,
         );
+        // A row sealed two hours ago by its SIGNED bucket (retention ages
+        // rows by the signed bucket, never the `created_at` column), then
+        // a live event behind it.
+        let now = TimeBucket::now_10min().expect("bucket").start_epoch_s;
+        bridge
+            .kernel
+            .append_failure_event(
+                FailureType::PowerLoss,
+                TimeBucket {
+                    start_epoch_s: (now - 7200) / 600 * 600,
+                    size_s: 600,
+                },
+                Some("expired row".to_string()),
+                &bridge.cfg.kernel_version,
+                &bridge.cfg.ruleset_id,
+                bridge.cfg.ruleset_hash,
+            )
+            .expect("seal the expired row");
+        bridge.process_message(PERSON_NEW.as_bytes()).expect("seal");
+        assert_eq!(count_records(&bridge, "failure"), 1);
+        assert_eq!(count_records(&bridge, "event"), 1);
+        let checkpoints = |bridge: &Bridge| -> i64 {
+            bridge
+                .kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM checkpoints", [], |r| r.get(0))
+                .expect("count checkpoints")
+        };
+
+        // The pass prunes the expired prefix (the failure row) behind a
+        // checkpoint and keeps the live event.
+        bridge.retention_pass();
+        assert_eq!(count_records(&bridge, "failure"), 0);
+        assert_eq!(count_records(&bridge, "event"), 1);
+        assert_eq!(checkpoints(&bridge), 1);
+        assert_eq!(bridge.counters.failures_recorded, 0);
+    }
+
+    #[test]
+    fn retention_pass_inside_retention_prunes_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("witness.db");
+        let mut bridge = test_bridge(
+            db_path.to_str().expect("utf8").to_string(),
+            Duration::from_secs(3600),
+            FrigateMode::Events,
+        );
         bridge.process_message(PERSON_NEW.as_bytes()).expect("seal");
         assert_eq!(count_records(&bridge, "event"), 1);
         // A pass inside retention prunes nothing and writes no checkpoint.
@@ -1520,21 +1567,6 @@ mod tests {
                 .expect("count checkpoints")
         };
         assert_eq!(checkpoints(&bridge), 0);
-
-        // Age the row past retention. Retention ages rows by their sealed
-        // `created_at` (the coarse bucket start, a plain column outside the
-        // hash), which is how the store's own tests age rows too.
-        bridge
-            .kernel
-            .conn
-            .execute(
-                "UPDATE sealed_events SET created_at = created_at - 7200",
-                [],
-            )
-            .expect("age the row");
-        bridge.retention_pass();
-        assert_eq!(count_records(&bridge, "event"), 0);
-        assert_eq!(checkpoints(&bridge), 1);
         assert_eq!(bridge.counters.failures_recorded, 0);
     }
 }

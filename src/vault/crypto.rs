@@ -13,7 +13,17 @@ use crate::vault::format::{read_slice, read_u32, EnvelopeV1, EnvelopeV2};
 
 pub const AEAD_ALG_CHACHA20POLY1305: &str = "chacha20poly1305";
 pub const KEM_ALG_ML_KEM_768: &str = "ml-kem-768";
+/// A true hybrid: the DEK is derived from the ML-KEM shared secret AND a
+/// classical secret wrapped under the master key, so opening the envelope
+/// needs both. Envelopes stamped the bare `ml-kem-768` with a
+/// `classical_wrap` are the earlier shape, where either secret alone
+/// opened the envelope (an OR, no stronger than its weaker half); they
+/// still decrypt, and are never written again.
+pub const KEM_ALG_HYBRID_ML_KEM_768: &str = "hybrid-ml-kem-768";
 pub const KEM_ALG_NONE: &str = "none";
+
+/// Domain tag of the hybrid DEK derivation.
+const HYBRID_DEK_TAG: &[u8] = b"securacv:vault:hybrid-dek:v1";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -178,11 +188,53 @@ pub fn decrypt_v2(
 ) -> Result<Vec<u8>> {
     let aad = envelope.aad.clone();
 
+    // The header names the algorithms but is outside the AAD; refuse any
+    // other spelling before a byte is decrypted, so a future second AEAD or
+    // KEM is never selectable by an at-rest edit of the header.
+    if envelope.aead_alg != AEAD_ALG_CHACHA20POLY1305 {
+        return Err(anyhow!(
+            "vault envelope names AEAD {:?}; only {AEAD_ALG_CHACHA20POLY1305} is supported",
+            envelope.aead_alg
+        ));
+    }
+    if !matches!(
+        envelope.kem_alg.as_str(),
+        KEM_ALG_NONE | KEM_ALG_ML_KEM_768 | KEM_ALG_HYBRID_ML_KEM_768
+    ) {
+        return Err(anyhow!(
+            "vault envelope names KEM {:?}; not a supported scheme",
+            envelope.kem_alg
+        ));
+    }
+
     if envelope.ciphertext.len() < 16 {
         return Err(anyhow!("vault ciphertext truncated"));
     }
     let tag_offset = envelope.ciphertext.len() - 16;
     let tag = &envelope.ciphertext[tag_offset..];
+
+    // A hybrid envelope opens with BOTH secrets or not at all: the KEM
+    // shared secret and the master-key-wrapped classical secret feed one
+    // derivation, and there is no fallback to either half.
+    if envelope.kem_alg == KEM_ALG_HYBRID_ML_KEM_768 {
+        let kp = kem_keypair.ok_or_else(|| anyhow!("vault KEM keypair missing for hybrid envelope"))?;
+        let wrap = envelope
+            .classical_wrap
+            .as_ref()
+            .ok_or_else(|| anyhow!("vault hybrid envelope carries no classical wrap"))?;
+        let mut shared_secret = kem_decapsulate(kp, &envelope.kem_ct)?;
+        let mut classical_secret = unwrap_dek(master_key, &envelope.aad, wrap)?;
+        let dek_guard = DekGuard(kdf_dek_hybrid(
+            &shared_secret,
+            &classical_secret,
+            &envelope.kdf_info,
+        ));
+        shared_secret.zeroize();
+        classical_secret.zeroize();
+        let mut ciphertext = envelope.ciphertext[..tag_offset].to_vec();
+        decrypt_payload(&dek_guard.0, &envelope.nonce, &aad, &mut ciphertext, tag)?;
+        return Ok(ciphertext);
+    }
 
     // Try KEM-based decryption first. ML-KEM-768 uses implicit rejection
     // (FO transform), so decapsulating a legacy Kyber768 ciphertext returns
@@ -467,7 +519,7 @@ fn derive_dek(
                 classical_wrap: Some(wrap),
             })
         }
-        VaultCryptoMode::Pq | VaultCryptoMode::Hybrid => {
+        VaultCryptoMode::Pq => {
             let kem_keypair =
                 kem_keypair.ok_or_else(|| anyhow!("vault KEM keypair missing for PQ mode"))?;
             let (kem_ct, mut shared_secret) = kem_encapsulate(kem_keypair)?;
@@ -479,17 +531,36 @@ fn derive_dek(
             // The KEM shared secret is spent; scrub it so the raw secret does
             // not linger in the heap allocation after the DEK is derived.
             shared_secret.zeroize();
-            let classical_wrap = if matches!(mode, VaultCryptoMode::Hybrid) {
-                Some(wrap_dek(master_key, envelope_id, ruleset_hash, &dek)?)
-            } else {
-                None
-            };
             Ok(DerivedDek {
                 dek,
                 kem_alg: KEM_ALG_ML_KEM_768.to_string(),
                 kem_ct,
                 kdf_info,
-                classical_wrap,
+                classical_wrap: None,
+            })
+        }
+        VaultCryptoMode::Hybrid => {
+            // Two independent secrets, one DEK. The master key wraps a fresh
+            // classical secret (not the DEK), so the wrap alone opens
+            // nothing; the KEM shared secret alone derives nothing either.
+            let kem_keypair =
+                kem_keypair.ok_or_else(|| anyhow!("vault KEM keypair missing for hybrid mode"))?;
+            let (kem_ct, mut shared_secret) = kem_encapsulate(kem_keypair)?;
+            let mut kdf_info = vec![0u8; 32];
+            SysRng
+                .try_fill_bytes(&mut kdf_info[..])
+                .expect("OS RNG unavailable");
+            let mut classical_secret = random_dek();
+            let wrap = wrap_dek(master_key, envelope_id, ruleset_hash, &classical_secret)?;
+            let dek = kdf_dek_hybrid(&shared_secret, &classical_secret, &kdf_info);
+            shared_secret.zeroize();
+            classical_secret.zeroize();
+            Ok(DerivedDek {
+                dek,
+                kem_alg: KEM_ALG_HYBRID_ML_KEM_768.to_string(),
+                kem_ct,
+                kdf_info,
+                classical_wrap: Some(wrap),
             })
         }
     }
@@ -506,6 +577,20 @@ fn random_dek() -> [u8; 32] {
 fn kdf_dek(shared_secret: &[u8], kdf_info: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(shared_secret);
+    hasher.update(kdf_info);
+    hasher.finalize().into()
+}
+
+/// The hybrid DEK: a domain-tagged, length-prefixed hash over the KEM shared
+/// secret, the classical secret and the per-envelope info. Either secret
+/// missing or wrong yields a different key, so the AEAD tag fails.
+fn kdf_dek_hybrid(shared_secret: &[u8], classical_secret: &[u8; 32], kdf_info: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(HYBRID_DEK_TAG);
+    hasher.update((shared_secret.len() as u32).to_le_bytes());
+    hasher.update(shared_secret);
+    hasher.update(classical_secret);
+    hasher.update((kdf_info.len() as u32).to_le_bytes());
     hasher.update(kdf_info);
     hasher.finalize().into()
 }
@@ -926,5 +1011,74 @@ mod tests {
         .unwrap();
         let decrypted_hybrid = decrypt_v2(&envelope_hybrid, &key, Some(&kp)).unwrap();
         assert_eq!(decrypted_hybrid, clear);
+        assert_eq!(envelope_hybrid.kem_alg, KEM_ALG_HYBRID_ML_KEM_768);
+        assert!(envelope_hybrid.classical_wrap.is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "pqc-vault")]
+    fn hybrid_needs_both_secrets() {
+        // Neither the master key alone nor the KEM keypair alone opens a
+        // hybrid envelope: the wrap holds a classical secret, not the DEK,
+        // and the DEK derivation takes both.
+        let key = [42u8; 32];
+        let kp = KemKeypair::generate();
+        let envelope = seal_v2(
+            "test-hybrid",
+            [4u8; 32],
+            b"pq payload",
+            VaultCryptoMode::Hybrid,
+            &key,
+            Some(&kp),
+        )
+        .unwrap();
+        assert!(decrypt_v2(&envelope, &key, None).is_err(), "master key alone");
+        assert!(
+            decrypt_v2(&envelope, &[7u8; 32], Some(&kp)).is_err(),
+            "KEM keypair with the wrong master key"
+        );
+        assert!(
+            decrypt_v2(&envelope, &key, Some(&KemKeypair::generate())).is_err(),
+            "master key with the wrong KEM keypair"
+        );
+        let mut stripped = envelope.clone();
+        stripped.classical_wrap = None;
+        assert!(decrypt_v2(&stripped, &key, Some(&kp)).is_err(), "wrap removed");
+        let mut relabeled = envelope.clone();
+        relabeled.kem_alg = KEM_ALG_ML_KEM_768.to_string();
+        assert!(
+            decrypt_v2(&relabeled, &key, Some(&kp)).is_err(),
+            "relabeled as the OR shape, the wrap is not a DEK and the KEM DEK is not the hybrid DEK"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "pqc-vault")]
+    fn legacy_or_shaped_envelope_still_opens_with_either_secret() {
+        // An envelope written before the hybrid fix: `ml-kem-768` plus a
+        // wrap of the DEK itself. It must keep opening (with either secret,
+        // as it always did) so an existing vault stays readable.
+        let key = [42u8; 32];
+        let kp = KemKeypair::generate();
+        let mut envelope = seal_v2("legacy", [4u8; 32], b"old", VaultCryptoMode::Pq, &key, Some(&kp))
+            .unwrap();
+        let mut shared = kem_decapsulate(&kp, &envelope.kem_ct).unwrap();
+        let dek = kdf_dek(&shared, &envelope.kdf_info);
+        shared.zeroize();
+        envelope.classical_wrap = Some(wrap_dek(&key, "legacy", &[4u8; 32], &dek).unwrap());
+        assert_eq!(decrypt_v2(&envelope, &key, None).unwrap(), b"old");
+        assert_eq!(decrypt_v2(&envelope, &[9u8; 32], Some(&kp)).unwrap(), b"old");
+    }
+
+    #[test]
+    fn decrypt_v2_refuses_an_unknown_aead_or_kem_label() {
+        let key = [42u8; 32];
+        let envelope = seal_v2("alg", [1u8; 32], b"x", VaultCryptoMode::Classical, &key, None).unwrap();
+        let mut other_aead = envelope.clone();
+        other_aead.aead_alg = "aes-256-gcm".to_string();
+        assert!(decrypt_v2(&other_aead, &key, None).is_err());
+        let mut other_kem = envelope;
+        other_kem.kem_alg = "kyber768".to_string();
+        assert!(decrypt_v2(&other_kem, &key, None).is_err());
     }
 }

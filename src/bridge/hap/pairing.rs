@@ -244,9 +244,9 @@ impl AccessoryIdentity {
 
 /// Verify an Ed25519 signature, treating every failure as one error.
 fn verify_signature(ltpk: &[u8; 32], msg: &[u8], sig: &[u8]) -> Result<(), PairError> {
-    let key = VerifyingKey::from_bytes(ltpk).map_err(|_| PairError::Authentication)?;
+    let key = crate::crypto::signatures::verifying_key_strict(ltpk).map_err(|_| PairError::Authentication)?;
     let sig: [u8; 64] = sig.try_into().map_err(|_| PairError::Authentication)?;
-    key.verify(msg, &ed25519_dalek::Signature::from_bytes(&sig))
+    key.verify_strict(msg, &ed25519_dalek::Signature::from_bytes(&sig))
         .map_err(|_| PairError::Authentication)
 }
 

@@ -52,8 +52,8 @@ const AGE_FLOOR_STEP_TOLERANCE: Duration = Duration::from_secs(30);
 /// A lower bound on the age of the rows this process appended, kept on the
 /// **monotonic** clock so a wall-clock step cannot shorten it.
 ///
-/// Retention ages events by their sealed `created_at`, which is wall-clock
-/// time at the moment of sealing. A host whose clock steps forward (an RTC-less
+/// Retention ages events by the signed time bucket in their payload, which is
+/// wall-clock time at the moment of sealing. A host whose clock steps forward (an RTC-less
 /// Pi taking its first NTP sync after boot; an operator correcting a clock
 /// that was years behind) suddenly finds every row it sealed minutes ago
 /// "older than retention" and prunes them. The monotonic clock cannot be
@@ -132,7 +132,7 @@ impl MonotonicAgeFloor {
 /// The highest rowid a retention pass may prune, given the wall-clock prefix
 /// bound and the monotonic floor. `None` means "no bound from that side".
 ///
-/// - `first_kept`: the smallest rowid whose `created_at` is still inside
+/// - `first_kept`: the smallest rowid whose signed time bucket is still inside
 ///   retention. Everything **before** it is expired by the wall clock; the
 ///   pruned range is a prefix of the chain, so a row that is older by id but
 ///   younger by stamp (a clock regression between two appends) stops the
@@ -266,7 +266,10 @@ impl SqliteSealedLogStore {
         Ok(())
     }
 
-    fn last_chain_head(&self) -> Result<[u8; 32]> {
+    /// The head the latest checkpoint signed — what the first live row's
+    /// `prev_hash` links to — or `None` when the log has never been pruned
+    /// (the first row then links to the genesis hash, all zeros).
+    fn latest_checkpoint_head(&self) -> Result<Option<[u8; 32]>> {
         let mut stmt = self
             .conn
             .prepare("SELECT chain_head_hash FROM checkpoints ORDER BY id DESC LIMIT 1")?;
@@ -278,7 +281,14 @@ impl SqliteSealedLogStore {
             }
             let mut out = [0u8; 32];
             out.copy_from_slice(&bytes);
-            return Ok(out);
+            return Ok(Some(out));
+        }
+        Ok(None)
+    }
+
+    fn last_chain_head(&self) -> Result<[u8; 32]> {
+        if let Some(head) = self.latest_checkpoint_head()? {
+            return Ok(head);
         }
 
         let mut stmt = self
@@ -466,6 +476,80 @@ fn write_checkpoint(
     Ok(())
 }
 
+/// Error prefix of a retention pass that refused to prune because the
+/// expired prefix no longer hash-links: a row's stored `entry_hash` is not
+/// `SHA256(prev_hash || payload)`, or its `prev_hash` is not the hash before
+/// it. The daemon seals the refusal as a storage failure (`witnessd` reports
+/// every retention error), so a rewritten prefix leaves a record instead of
+/// a device-signed checkpoint over it.
+pub const RETENTION_CHAIN_BREAK: &str = "CONFORMANCE_RETENTION_CHAIN_BREAK";
+
+/// Walks the sealed log from its chain start and returns the id of the first
+/// row whose SIGNED time bucket is inside retention (`>= cutoff`), i.e. the
+/// first row the prune must keep — `None` when every row is expired.
+///
+/// Every row visited (the expired prefix and the first kept row) has its hash
+/// link re-derived against `chain_start`, the latest checkpoint head or the
+/// genesis hash; a broken link is an `Err` prefixed [`RETENTION_CHAIN_BREAK`]
+/// and the caller prunes nothing. The `created_at` column is read only to
+/// report a disagreement with the signed bucket — it never decides age.
+fn expired_prefix_end(conn: &Connection, chain_start: [u8; 32], cutoff: i64) -> Result<Option<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, created_at, payload_json, prev_hash, entry_hash FROM sealed_events ORDER BY id ASC",
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut expected_prev = chain_start;
+    let mut stamp_mismatches = 0u64;
+    while let Some(row) = rows.next()? {
+        let id: i64 = row.get(0)?;
+        let created_at: i64 = row.get(1)?;
+        let payload: String = row.get(2)?;
+        let prev_hash = blob32(row.get::<_, Vec<u8>>(3)?, "prev_hash")?;
+        let entry_hash = blob32(row.get::<_, Vec<u8>>(4)?, "entry_hash")?;
+        if prev_hash != expected_prev {
+            return Err(anyhow!(
+                "{RETENTION_CHAIN_BREAK}: row {id} prev_hash does not match the hash before it; \
+                 retention pass refused, nothing pruned"
+            ));
+        }
+        if hash_entry(&prev_hash, payload.as_bytes()) != entry_hash {
+            return Err(anyhow!(
+                "{RETENTION_CHAIN_BREAK}: row {id} entry_hash is not the hash of its payload; \
+                 retention pass refused, nothing pruned"
+            ));
+        }
+        let record = SealedLogRecord::deserialize_compat(&payload).map_err(|e| {
+            anyhow!("{RETENTION_CHAIN_BREAK}: row {id} payload does not decode ({e}); retention pass refused")
+        })?;
+        let signed_start = i64::try_from(record.time_bucket().start_epoch_s)
+            .map_err(|_| anyhow!("row {id}: signed time bucket exceeds i64 range"))?;
+        if signed_start != created_at {
+            stamp_mismatches += 1;
+        }
+        if signed_start >= cutoff {
+            if stamp_mismatches > 0 {
+                log::warn!(
+                    "retention: {stamp_mismatches} row(s) carry a created_at stamp that disagrees \
+                     with the signed time bucket; the signed bucket decided their age"
+                );
+            }
+            return Ok(Some(id));
+        }
+        expected_prev = entry_hash;
+    }
+    if stamp_mismatches > 0 {
+        log::warn!(
+            "retention: {stamp_mismatches} row(s) carry a created_at stamp that disagrees \
+             with the signed time bucket; the signed bucket decided their age"
+        );
+    }
+    Ok(None)
+}
+
+fn blob32(bytes: Vec<u8>, what: &str) -> Result<[u8; 32]> {
+    <[u8; 32]>::try_from(bytes).map_err(|_| anyhow!("corrupt sealed log: {what} size"))
+}
+
 impl SealedLogStore for SqliteSealedLogStore {
     fn append_record(
         &mut self,
@@ -576,11 +660,18 @@ impl SealedLogStore for SqliteSealedLogStore {
             // monotonic floor then caps the prefix at the oldest row this process
             // appended less than `retention` ago, so a forward clock step cannot
             // expire rows that were sealed minutes ago (`MonotonicAgeFloor`).
-            let first_kept: Option<i64> = store.conn.query_row(
-                "SELECT MIN(id) FROM sealed_events WHERE created_at >= ?1",
-                params![cutoff],
-                |r| r.get(0),
-            )?;
+            //
+            // The age of a row is read from its SIGNED payload (the record's
+            // time bucket), never from the bare `created_at` column: that
+            // column is covered by neither the entry hash nor the signature,
+            // so an actor with a database handle but no signing key could
+            // stamp live rows as ancient and have this very pass sign a
+            // checkpoint over their deletion — evidence laundered as
+            // retention. The scan also re-derives every hash link through
+            // the first kept row, so a payload rewritten to look old (which
+            // breaks the chain) refuses the pass instead of being pruned.
+            let chain_start = store.latest_checkpoint_head()?.unwrap_or([0u8; 32]);
+            let first_kept = expired_prefix_end(&store.conn, chain_start, cutoff)?;
             let upper = prune_upper_bound(first_kept, mono_floor);
             let mut stmt = match upper {
             Some(upper) if upper < 1 => return Ok(()),
@@ -711,7 +802,6 @@ impl SealedLogStore for SqliteSealedLogStore {
 struct InMemorySealedEventEntry {
     /// Monotone 1-based id, never reused after a prune (mirrors AUTOINCREMENT).
     id: i64,
-    created_at: i64,
     payload_json: String,
     entry_hash: [u8; 32],
 }
@@ -756,8 +846,6 @@ impl SealedLogStore for InMemorySealedLogStore {
         record: &SealedLogRecord,
         _signature_keys: &SignatureKeys<'_>,
     ) -> Result<()> {
-        let created_at = i64::try_from(record.time_bucket().start_epoch_s)
-            .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
         let prev_hash = self.last_event_hash_or_checkpoint_head()?;
         let payload_json = serde_json::to_string(record)?;
         let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
@@ -765,7 +853,6 @@ impl SealedLogStore for InMemorySealedLogStore {
         let id = self.next_id;
         self.events.push(InMemorySealedEventEntry {
             id,
-            created_at,
             payload_json,
             entry_hash,
         });
@@ -782,12 +869,18 @@ impl SealedLogStore for InMemorySealedLogStore {
         let now = now_s()? as i64;
         let cutoff = now - retention.as_secs() as i64;
 
-        // Same two-clock prefix rule as the SQLite store above.
-        let first_kept = self
-            .events
-            .iter()
-            .find(|entry| entry.created_at >= cutoff)
-            .map(|entry| entry.id);
+        // Same two-clock prefix rule as the SQLite store above, and the same
+        // source of age: the signed payload's time bucket, not `created_at`.
+        let mut first_kept = None;
+        for entry in &self.events {
+            let record = SealedLogRecord::deserialize_compat(&entry.payload_json)?;
+            let signed_start = i64::try_from(record.time_bucket().start_epoch_s)
+                .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
+            if signed_start >= cutoff {
+                first_kept = Some(entry.id);
+                break;
+            }
+        }
         let mono_floor =
             self.age_floor
                 .protected_from(retention, Instant::now(), SystemTime::now());
@@ -859,7 +952,7 @@ mod age_floor_tests {
     #[test]
     fn agreeing_clocks_never_vouch() {
         // No step: the stamps are trustworthy, the floor stays out of the way
-        // (this is what lets a test age rows by rewriting `created_at`).
+        // (this is what lets a test age rows by sealing an old bucket).
         let base = Instant::now();
         let wall = SystemTime::now();
         let floor = floor_with_one_sample(base, wall);

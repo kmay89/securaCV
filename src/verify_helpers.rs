@@ -39,7 +39,7 @@ pub fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
         ));
     }
     key_bytes.copy_from_slice(&bytes);
-    VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
+    crate::crypto::signatures::verifying_key_strict(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
 #[cfg(feature = "pqc-signatures")]
@@ -128,7 +128,7 @@ pub fn lineage_verifying_keys(
     lineage
         .iter()
         .map(|epoch| {
-            VerifyingKey::from_bytes(&epoch.public_key)
+            crate::crypto::signatures::verifying_key_strict(&epoch.public_key)
                 .map_err(|e| anyhow!("invalid lineage verifying key: {}", e))
         })
         .collect()

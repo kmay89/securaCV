@@ -172,7 +172,7 @@ fn main() -> Result<()> {
     // mint an identity because it was pointed at the wrong path.
     let device_key_seed =
         witness_kernel::crypto::find_device_seed(&args.db_path, args.device_key_seed.as_deref())?
-            .map(|found| found.seed)
+            .map(|found| found.seed.to_string())
             .ok_or_else(|| {
                 anyhow!(
             "DEVICE_KEY_SEED must be set (or the seed file witnessd keeps beside {} must exist)",

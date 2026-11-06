@@ -61,6 +61,12 @@ pub struct SensorRoute {
     pub kind: ClaimKind,
     /// Raw zone label (the host sanitizes/prefixes it).
     pub zone_label: String,
+    /// Let a payload's `zone` field replace `zone_label`. Off by default:
+    /// the broker is a trust boundary, and a client there could otherwise
+    /// write sixty-four characters of its choosing into the signed log as
+    /// an adapter-attested zone. On, the payload names the zone; the
+    /// contract's zone regex still applies downstream.
+    pub allow_zone_override: bool,
     /// Drop messages whose parsed confidence is below this floor.
     pub min_confidence: f32,
     /// When true, only `state: on`/truthy payloads emit a claim (e.g. contact "opened").
@@ -93,6 +99,7 @@ impl SensorRoute {
             topic: topic.into(),
             kind,
             zone_label: zone_label.into(),
+            allow_zone_override: false,
             min_confidence: 0.0,
             require_truthy_state: false,
             numeric_min: None,
@@ -226,10 +233,10 @@ fn route_one(route: &SensorRoute, payload: &[u8]) -> Option<Claim> {
         return None;
     }
 
-    let zone_label = parsed
-        .zone
-        .clone()
-        .unwrap_or_else(|| route.zone_label.clone());
+    let zone_label = match (&parsed.zone, route.allow_zone_override) {
+        (Some(zone), true) => zone.clone(),
+        _ => route.zone_label.clone(),
+    };
     let mut claim = Claim::new(route.kind, zone_label, confidence);
     if let Some(att) = route.attestation {
         claim = claim.with_attestation(att);
@@ -562,12 +569,23 @@ mod tests {
     }
 
     #[test]
-    fn payload_zone_override_wins() {
+    fn payload_zone_is_ignored_unless_the_route_allows_it() {
         let (adapter, _tx) = MqttSensorAdapter::new(vec![SensorRoute::new(
             "s/pir",
             ClaimKind::PresenceInRestrictedZone,
             "default_zone",
         )]);
+        let claim = adapter
+            .message_to_claim("s/pir", br#"{"zone":"server_room"}"#)
+            .expect("claim");
+        assert_eq!(claim.zone_label, "default_zone", "the operator's label stands");
+    }
+
+    #[test]
+    fn payload_zone_override_wins_when_the_route_allows_it() {
+        let mut route = SensorRoute::new("s/pir", ClaimKind::PresenceInRestrictedZone, "default_zone");
+        route.allow_zone_override = true;
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
         let claim = adapter
             .message_to_claim("s/pir", br#"{"zone":"server_room"}"#)
             .expect("claim");

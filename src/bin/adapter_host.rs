@@ -44,6 +44,9 @@ use witness_kernel::adapter::can_bus::{self, CanBusAdapter, CanRoute};
 use witness_kernel::adapter::frigate::{FrigateAdapter, FrigateFilter};
 use witness_kernel::adapter::meshtastic::{self, MeshNode, MeshtasticAdapter};
 use witness_kernel::adapter::mqtt_sensor::{MqttSensorAdapter, SensorRoute};
+use witness_kernel::transport::{
+    parse_mqtt_endpoint, validate_loopback_addr, MqttEndpoint, TlsBackend, TlsConfig, TlsMaterials,
+};
 use witness_kernel::Attestation;
 
 /// Set by the SIGHUP handler; the run loop drains it to reload the config.
@@ -145,8 +148,67 @@ struct FileConfig {
     /// Optional `host:port` for the read-only adapter stats/health endpoint.
     #[serde(default)]
     stats_addr: Option<String>,
+    /// Let an adapter's `mqtt_broker_addr` name a broker that is not on
+    /// loopback. Off, every broker must be local (the bridges' rule): a
+    /// broker across the LAN takes the shared login in clear unless the
+    /// address is `mqtts://` or `ssl://`, in which case the TLS settings
+    /// below apply.
+    #[serde(default)]
+    allow_remote_mqtt: bool,
+    /// PEM CA bundle for `mqtts://` brokers (system roots when unset).
+    #[serde(default)]
+    mqtt_tls_ca_path: Option<PathBuf>,
+    /// PEM client certificate for mutual TLS (needs the CA and the key).
+    #[serde(default)]
+    mqtt_tls_client_cert_path: Option<PathBuf>,
+    /// PEM client key for mutual TLS.
+    #[serde(default)]
+    mqtt_tls_client_key_path: Option<PathBuf>,
     #[serde(default)]
     adapter: Vec<AdapterCfg>,
+}
+
+/// How every adapter's broker connection is bounded: where a broker may
+/// be, and how a TLS one is verified. Built once from the file.
+struct MqttSecurity {
+    allow_remote: bool,
+    tls: TlsConfig,
+}
+
+impl MqttSecurity {
+    fn from_file(file: &FileConfig) -> Result<Self> {
+        let materials = TlsMaterials::load(
+            file.mqtt_tls_ca_path.as_ref(),
+            file.mqtt_tls_client_cert_path.as_ref(),
+            file.mqtt_tls_client_key_path.as_ref(),
+        )?;
+        Ok(Self {
+            allow_remote: file.allow_remote_mqtt,
+            tls: TlsConfig {
+                backend: TlsBackend::Classic,
+                materials,
+            },
+        })
+    }
+
+    /// Resolve an adapter's broker address, refusing a non-loopback broker
+    /// unless `allow_remote_mqtt` says so, and warning when a remote broker
+    /// is reached in clear.
+    fn endpoint(&self, broker_addr: &str) -> Result<MqttEndpoint> {
+        let endpoint = parse_mqtt_endpoint(broker_addr, false)?;
+        if !self.allow_remote {
+            validate_loopback_addr(&endpoint, broker_addr).with_context(|| {
+                "set allow_remote_mqtt = true (and prefer an mqtts:// address) to reach a broker \
+                 that is not on this host"
+            })?;
+        } else if !endpoint.use_tls {
+            log::warn!(
+                "mqtt broker {broker_addr} is not on loopback and not TLS: the broker login and \
+                 every sensor payload cross the network in clear"
+            );
+        }
+        Ok(endpoint)
+    }
 }
 
 fn default_webhook_addr() -> String {
@@ -381,6 +443,10 @@ struct RouteCfg {
     min_confidence: f32,
     #[serde(default)]
     require_truthy_state: bool,
+    /// Let the payload's `zone` field replace `zone` above (off by default:
+    /// a broker client could otherwise name the zone the log records).
+    #[serde(default)]
+    allow_zone_override: bool,
     #[serde(default)]
     numeric_min: Option<f32>,
     /// Read the gating state from this JSON field instead of `state` (for multiplexed
@@ -465,6 +531,7 @@ fn build_routes(routes: &[RouteCfg]) -> Result<Vec<SensorRoute>> {
             let mut route = SensorRoute::new(r.topic.clone(), kind, r.zone.clone());
             route.min_confidence = r.min_confidence;
             route.require_truthy_state = r.require_truthy_state;
+            route.allow_zone_override = r.allow_zone_override;
             route.numeric_min = r.numeric_min;
             route.state_field = r.state_field.clone();
             route.state_equals = r.state_equals.clone();
@@ -512,7 +579,7 @@ fn main() -> Result<()> {
         let resolved =
             witness_kernel::crypto::resolve_device_seed(&file.db_path, env_seed.as_deref())?;
         log::info!("device key seed: {}", resolved.source);
-        resolved.seed
+        resolved.seed.to_string()
     };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&file.ruleset_id);
     let kernel_cfg = KernelConfig {
@@ -563,11 +630,12 @@ fn main() -> Result<()> {
                 spawn_mqtt_forwarder(
                     format!("adapter_host_frigate_{idx}"),
                     fc.mqtt_broker_addr,
+                    &mqtt_security,
                     fc.mqtt_username,
                     fc.mqtt_password,
                     vec![fc.topic],
                     tx,
-                );
+                )?;
                 host.register(adapter);
                 log::info!("registered frigate adapter #{idx} (sandbox={})", fc.sandbox);
             }
@@ -600,11 +668,12 @@ fn main() -> Result<()> {
                 spawn_mqtt_forwarder(
                     format!("adapter_host_sensor_{idx}"),
                     mc.mqtt_broker_addr,
+                    &mqtt_security,
                     mc.mqtt_username,
                     mc.mqtt_password,
                     topics,
                     tx,
-                );
+                )?;
                 host.register(adapter);
                 log::info!(
                     "registered mqtt_sensor adapter #{idx} (sandbox={})",
@@ -758,11 +827,12 @@ fn main() -> Result<()> {
                 spawn_mqtt_forwarder(
                     format!("adapter_host_ble_{idx}"),
                     bc.mqtt_broker_addr,
+                    &mqtt_security,
                     bc.mqtt_username,
                     bc.mqtt_password,
                     vec![bc.topic],
                     tx,
-                );
+                )?;
                 host.register(adapter);
                 log::info!(
                     "registered ble_presence adapter #{idx} (sandbox={})",
@@ -784,11 +854,12 @@ fn main() -> Result<()> {
                 spawn_mqtt_forwarder(
                     format!("adapter_host_meshtastic_{idx}"),
                     mc.mqtt_broker_addr,
+                    &mqtt_security,
                     mc.mqtt_username,
                     mc.mqtt_password,
                     vec![mc.topic],
                     tx,
-                );
+                )?;
                 host.register(adapter);
                 log::info!(
                     "registered meshtastic adapter #{idx} (sandbox={})",
@@ -869,15 +940,19 @@ fn main() -> Result<()> {
 fn spawn_mqtt_forwarder(
     client_id: String,
     broker_addr: String,
+    security: &Arc<MqttSecurity>,
     username: Option<String>,
     password: Option<String>,
     topics: Vec<String>,
     tx: Sender<(String, Vec<u8>)>,
-) {
+) -> Result<()> {
+    let endpoint = security.endpoint(&broker_addr)?;
+    let security = Arc::clone(security);
     thread::spawn(move || loop {
         match connect(
             &client_id,
-            &broker_addr,
+            &endpoint,
+            &security,
             username.as_deref(),
             password.as_deref(),
         ) {
@@ -914,32 +989,26 @@ fn spawn_mqtt_forwarder(
         }
         thread::sleep(Duration::from_secs(3));
     });
+    Ok(())
 }
 
 fn connect(
     client_id: &str,
-    broker_addr: &str,
+    endpoint: &MqttEndpoint,
+    security: &MqttSecurity,
     username: Option<&str>,
     password: Option<&str>,
 ) -> Result<(Client, rumqttc::Connection)> {
-    let (host, port) = broker_addr
-        .rsplit_once(':')
-        .ok_or_else(|| anyhow!("broker addr must be host:port, got {broker_addr}"))?;
-    let port: u16 = port.parse().context("parsing broker port")?;
-    // Strip IPv6 brackets (e.g. "[::1]") for the loopback check and the rumqttc host.
-    let host = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host);
-    if host != "127.0.0.1" && host != "localhost" && host != "::1" {
-        log::warn!("connecting to non-loopback broker {host}; ensure the network is trusted");
-    }
-    let mut options = MqttOptions::new(client_id, (host, port));
+    let mut options = MqttOptions::new(client_id, (endpoint.host.as_str(), endpoint.port));
     options.set_keep_alive(60);
     options.set_clean_start(true);
     if let Some(user) = username {
         options.set_credentials(user, password.unwrap_or_default().to_string());
     }
+    // Plain TCP on loopback, TLS (rustls, webpki roots or the configured
+    // CA, optional client certificate) for an `mqtts://` endpoint — the
+    // same transport the bridges build, never an insecure-verify mode.
+    options.set_transport(security.tls.build_transport(endpoint)?);
     let (client, connection) = rumqttc::ClientBuilder::new(options).capacity(10).build();
     Ok((client, connection))
 }
@@ -971,8 +1040,9 @@ fn spawn_socketcan_reader(iface: String, tx: Sender<can_bus::CanFrame>) {
                     }
                     // SAFETY: `buf` is exactly `size_of::<can_frame>()` bytes, just filled by a
                     // full `read()` from a CAN_RAW socket, which only ever delivers whole frames.
+                    // `buf` is a byte array with no alignment promise, so the read is unaligned.
                     let frame: libc::can_frame =
-                        unsafe { std::ptr::read(buf.as_ptr() as *const libc::can_frame) };
+                        unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const libc::can_frame) };
                     if frame.can_id & libc::CAN_ERR_FLAG != 0 {
                         continue; // bus error frame, not vehicle data
                     }
