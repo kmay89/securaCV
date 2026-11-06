@@ -1688,8 +1688,10 @@ mod tests {
         let (mut kernel, policy, token, granted_hash) = kernel_with_granted_token()?;
         kernel.redeem_token_durably(&token)?;
         // Same grant, a different nonce: a grant mints exactly one token.
+        let mut other_nonce = [0u8; 32];
+        rand::fill(&mut other_nonce[..]);
         let mut other = crate::BreakGlassToken::test_token_with(
-            [9u8; 32],
+            other_nonce,
             token.expires_bucket(),
             "vault:1",
             token.ruleset_hash(),
@@ -1700,7 +1702,7 @@ mod tests {
         kernel.append_break_glass_receipt(&row, &[])?;
         kernel.conn.execute(
             "INSERT INTO consumed_break_glass_tokens(token_nonce, consumed_at) VALUES (?1, 1)",
-            rusqlite::params![[9u8; 32].to_vec()],
+            rusqlite::params![other_nonce.to_vec()],
         )?;
         let err = walk(&kernel, &policy).unwrap_err();
         let detail = redemption_failure(&err);

@@ -6661,6 +6661,14 @@ mod tests {
         Ok(())
     }
 
+    /// A fresh nonce for a token a test forges or mints beside the real one:
+    /// random like the kernel's own, never a literal.
+    fn random_test_nonce() -> [u8; 32] {
+        let mut nonce = [0u8; 32];
+        rand::fill(&mut nonce[..]);
+        nonce
+    }
+
     /// A kernel with a 1-of-1 quorum and one Granted, device-signed token for
     /// `envelope`, exactly as `break_glass authorize` leaves them.
     fn kernel_with_granted_token(
@@ -6803,7 +6811,7 @@ mod tests {
         );
 
         let mut forged_nonce = file.clone();
-        forged_nonce.token_nonce = hex::encode([0x42u8; 32]);
+        forged_nonce.token_nonce = hex::encode(random_test_nonce());
         let forged_nonce = forged_nonce.into_token()?;
         let err = kernel
             .redeem_token_durably(&forged_nonce)
@@ -6843,7 +6851,7 @@ mod tests {
         // redeemed — and the burn is rolled back with the failed append, so
         // the refusal leaves no half-recorded redemption.
         let mut stray = break_glass::BreakGlassToken::test_token_with(
-            [7u8; 32],
+            random_test_nonce(),
             token.expires_bucket(),
             "vault:1",
             token.ruleset_hash(),
