@@ -246,12 +246,15 @@ final class SetupPortalClient: ObservableObject {
     /// iOS's answer to the join, in the portal's plain vocabulary. Pure, so
     /// SetupPortalTests can hand it each error iOS defines.
     nonisolated static func joinOutcome(_ error: Error) -> SetupPortal.HotspotJoinOutcome {
-        // NEHotspotConfigurationError is an NS_ERROR_ENUM: the bridged
-        // struct carries the domain, `.code` the case.
-        guard let hotspot = error as? NEHotspotConfigurationError else {
+        // NEHotspotConfigurationError is a plain NS_ENUM (no bridged error
+        // struct, no `.code` — the CI compiler said so): the domain is on
+        // the NSError, the case is its code.
+        let ns = error as NSError
+        guard ns.domain == NEHotspotConfigurationErrorDomain,
+              let code = NEHotspotConfigurationError(rawValue: ns.code) else {
             return .other(error.localizedDescription)
         }
-        switch hotspot.code {
+        switch code {
         case .alreadyAssociated: return .alreadyOn
         case .userDenied: return .canceled
         case .invalidWPAPassphrase, .invalidWEPPassphrase: return .badKey

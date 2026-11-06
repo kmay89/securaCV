@@ -197,7 +197,7 @@ final class SetupPortalTests: XCTestCase {
     }
 
     func testEveryErrorIOSDefinesIsFoldedIntoThoseWords() {
-        func folded(_ code: NEHotspotConfigurationError.Code) -> SetupPortal.HotspotJoinOutcome {
+        func folded(_ code: NEHotspotConfigurationError) -> SetupPortal.HotspotJoinOutcome {
             SetupPortalClient.joinOutcome(NSError(domain: NEHotspotConfigurationErrorDomain, code: code.rawValue))
         }
         XCTAssertEqual(folded(.alreadyAssociated), .alreadyOn)
@@ -206,7 +206,7 @@ final class SetupPortalTests: XCTestCase {
         XCTAssertEqual(folded(.invalidWEPPassphrase), .badKey)
         XCTAssertEqual(folded(.applicationIsNotInForeground), .notInForeground)
         XCTAssertEqual(folded(.pending), .pending)
-        for code in [NEHotspotConfigurationError.Code.invalid, .invalidSSID, .internal, .systemConfiguration, .unknown] {
+        for code in [NEHotspotConfigurationError.invalid, .invalidSSID, .internal, .systemConfiguration, .unknown] {
             if case .other = folded(code) {} else { XCTFail("\(code) is relayed as iOS said it") }
         }
         if case .other = SetupPortalClient.joinOutcome(URLError(.timedOut)) {} else {
