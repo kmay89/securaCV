@@ -111,6 +111,7 @@ fn main() -> Result<()> {
                     "sealed_events": report.sealed_events,
                     "break_glass_granted": report.break_glass_granted,
                     "break_glass_denied": report.break_glass_denied,
+                    "break_glass_redeemed": report.break_glass_redeemed,
                     "export_receipts": report.export_receipts,
                     "pq_checked": report.pq_checked,
                     "warnings": report.warnings,
@@ -132,8 +133,10 @@ fn main() -> Result<()> {
                 println!("  digest:         {}", envelope.whole_envelope_digest);
                 println!("  sealed events:  {}", report.sealed_events);
                 println!(
-                    "  break-glass:    {} granted, {} denied",
-                    report.break_glass_granted, report.break_glass_denied
+                    "  break-glass:    {} granted, {} denied, {} redeemed",
+                    report.break_glass_granted,
+                    report.break_glass_denied,
+                    report.break_glass_redeemed
                 );
                 println!("  export receipts:{}", report.export_receipts);
                 println!("  pq checked:     {}", report.pq_checked);

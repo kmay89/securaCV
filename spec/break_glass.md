@@ -239,7 +239,8 @@ specified output directory (default: `vault/unsealed`) with restricted file
 permissions.
 
 ```bash
-break_glass unseal \
+DEVICE_KEY_SEED=devkey:your-seed \
+  break_glass unseal \
   --envelope envelope_id \
   --token /path/to/break_glass.token \
   --db witness.db \
@@ -247,6 +248,40 @@ break_glass unseal \
   --vault-path vault/envelopes \
   --output-dir vault/unsealed
 ```
+
+`unseal` needs the device key seed, not only the database key: redeeming a
+token writes a device-signed receipt (below), so a holder of the database key
+alone cannot redeem one.
+
+### Redemption — single use, recorded twice
+
+A token is spent exactly once, and the spending is recorded **before any
+cleartext exists**, in one transaction, in this order:
+
+1. **Burn.** The token's nonce is inserted into the unsigned
+   `consumed_break_glass_tokens` table. A nonce already there, or already
+   shown redeemed by the receipt chain, is refused.
+2. **Receipt.** A `TokenRedeemed { nonce, receipt_entry_hash }` row is
+   appended to the `break_glass_receipts` chain, device-signed under the
+   receipt domain and hash-linked like every other receipt. It restates the
+   `Granted` receipt it redeems — envelope, ruleset, request hash, policy
+   commitment and the grant's bucket — names no trustee and carries no
+   approvals: consent was given once, on the grant.
+
+The burn table alone was the open item in the 2026-11 pass: it is unsigned,
+so an actor with a database handle and no signing key could delete the row
+and present the token again while its bucket was still live. The signed row
+closes that — the gate refuses any nonce the chain already shows redeemed,
+whatever the unsigned table says — and the verifier (below) treats a burn
+without a row, or a row without a burn, as a failure, not a quiet pass.
+
+Honest scope note: a redemption row at the chain **tail** can be dropped
+together with its burn row without breaking any hash in the middle. The
+ledger walk cannot see that; the anchored receipt head (`log_anchor`,
+`BreakGlassReceiptHead`) can, which is why the head is anchored at ceremony
+close. Inside the host-trust boundary this remains a procedural control
+(`docs/root_paradox.md`); it is now a signed record rather than an unsigned
+one.
 
 ## Auditing receipts
 
@@ -262,7 +297,30 @@ because every receipt this build writes records both, so that shape is
 either an older build's token or a re-signed row with the consent-bound
 context stripped. Either way the remedy is to re-authorize.
 
+Every walk of the chain — `break_glass receipts`, `log_verify`, the boot
+verification in `witnessd`, and the evidence-envelope verifier — also checks
+token redemptions, and fails (`FailureKind::TokenRedemption`) when:
+
+- one nonce is redeemed twice, or one `Granted` receipt is redeemed by two
+  nonces (a grant mints exactly one token);
+- a `TokenRedeemed` row names a receipt hash that is not an earlier
+  `Granted` receipt, restates that grant's envelope, ruleset or request hash
+  wrongly, is stamped outside the grant's bucket, or carries approvals or
+  named trustees;
+- on a live database, a nonce is burned in `consumed_break_glass_tokens`
+  with no signed redemption row behind it — a token the ledger shows was
+  spent by a build that wrote no redemption rows, or whose row was removed
+  from the chain tail — or a redemption row has no burn row (the two are
+  written together, so a missing burn row was deleted).
+
+An evidence envelope carries the chain but not the burn table, so the last
+rule runs only against the database itself. A database unsealed by a build
+before redemption rows existed carries burned nonces no row explains; the
+verifier names each one. The redeemed count is reported beside the granted
+and denied counts.
+
 `break_glass receipts --verbose` additionally prints each receipt's
 deterministic human-readable record — printed name, UTC time, and the
 meaning of every signature (the 21 CFR 11.50 triad) — so the same receipt
-renders as the same record on every tool.
+renders as the same record on every tool. A redemption row renders as
+`TOKEN REDEEMED`, naming the nonce and the grant it spent.

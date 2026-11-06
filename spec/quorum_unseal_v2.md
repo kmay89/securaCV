@@ -216,7 +216,15 @@ recovery):
 ### 3.5 Token semantics and cooling-off
 
 - Tokens are **single-use** (durably consumed at the unseal gate —
-  implemented) and bucket-bounded as in v1.
+  implemented) and bucket-bounded as in v1. Redemption is recorded twice,
+  burn first: the nonce goes into the unsigned anti-replay table, then a
+  device-signed `TokenRedeemed { nonce, receipt_entry_hash }` row is appended
+  to the receipt chain, restating the `Granted` receipt it spends — so a
+  deleted burn row does not reopen a token, and every chain walk fails on a
+  nonce redeemed twice or a burn with no signed row behind it
+  (`break_glass.md`, "Redemption"). What the walk cannot see — a redemption
+  row dropped from the chain **tail** with its burn row — is what anchoring
+  the receipt head (§3.4) is for.
 - v2 adds a default-on **`not_before` delay** (default 24 h) between
   authorization and unseal, with:
   - notification of **all m trustees** (signers and non-signers) over their
