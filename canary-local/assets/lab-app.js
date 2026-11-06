@@ -362,7 +362,7 @@ function kernelLine() {
    (so it joined Wi-Fi), a hub answering, the Wall opened. The first step not
    yet done is the one with the button. A step a build cannot observe is not
    listed — nothing here claims what it cannot see. */
-export function setupSteps(ctx) {
+export function setupSteps() {
   const heard = fleet.devices().some((r) => r.source !== "kernel");
   const usb = usbLine();
   return [
@@ -386,7 +386,7 @@ export function setupSteps(ctx) {
 const setupHidden = () => !!load(KEYS.setupHidden, false);
 
 function setupCard(ctx, onChange) {
-  const steps = setupSteps(ctx);
+  const steps = setupSteps();
   const done = steps.filter((s) => s.done).length;
   const hide = () => { save(KEYS.setupHidden, true); onChange(); };
   const head = h("div", { class: "dash-sec-head" },
