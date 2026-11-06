@@ -1688,8 +1688,7 @@ mod tests {
         let (mut kernel, policy, token, granted_hash) = kernel_with_granted_token()?;
         kernel.redeem_token_durably(&token)?;
         // Same grant, a different nonce: a grant mints exactly one token.
-        let mut other_nonce = [0u8; 32];
-        rand::fill(&mut other_nonce[..]);
+        let other_nonce = rand::random::<[u8; 32]>();
         let mut other = crate::BreakGlassToken::test_token_with(
             other_nonce,
             token.expires_bucket(),

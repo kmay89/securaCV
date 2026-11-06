@@ -6662,11 +6662,10 @@ mod tests {
     }
 
     /// A fresh nonce for a token a test forges or mints beside the real one:
-    /// random like the kernel's own, never a literal.
+    /// random like the kernel's own, never a literal (not even a zeroed
+    /// array that is filled afterwards, which a scanner reads as a constant).
     fn random_test_nonce() -> [u8; 32] {
-        let mut nonce = [0u8; 32];
-        rand::fill(&mut nonce[..]);
-        nonce
+        rand::random::<[u8; 32]>()
     }
 
     /// A kernel with a 1-of-1 quorum and one Granted, device-signed token for
