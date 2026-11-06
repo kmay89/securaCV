@@ -158,8 +158,11 @@ struct CanaryFamilySetupView: View {
         .onChange(of: portalChoice) { _, choice in matchPassword(to: choice.isEmpty ? homeSSID : choice) }
         .onChange(of: portal.phase) { _, phase in
             guard phase == .done else { return }
-            let ssid = effectiveSSID
-            if HouseholdWiFiStore.shouldRemember(toggleOn: remember, joined: true, ssid: ssid) {
+            // Remember only a network THIS phone handed over: a join
+            // finished on the Canary's own page (iOS's captive pop-up) names
+            // no network here, and the typed fields may be a different one.
+            if let ssid = portal.handedSSID,
+               HouseholdWiFiStore.shouldRemember(toggleOn: remember, joined: true, ssid: ssid) {
                 try? HouseholdWiFiStore.save(HouseholdWiFi(ssid: ssid, password: homePassword, savedAt: Date()))
                 remembered = HouseholdWiFiStore.load()
             }
@@ -331,6 +334,15 @@ struct CanaryFamilySetupView: View {
             .disabled(effectiveSSID.isEmpty || portalBusy)
         }
         portalPhaseLine
+        if portal.phase == .reachingPortal || (portal.onSetupNetwork && portal.phase != .done) {
+            // iOS may open the Canary's page in its own pop-up the moment
+            // the phone is on the setup network; say what both ways out do
+            // (SetupPortal.captivePopupNote — the client watches /status
+            // meanwhile, so a join finished there lands here as done).
+            Text(SetupPortal.captivePopupNote)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder private var portalPhaseLine: some View {
@@ -350,7 +362,11 @@ struct CanaryFamilySetupView: View {
                 }
             }
         case .done:
-            Label("It's on \(effectiveSSID) — its own verdict. Its setup network goes away now, and this phone is back on your Wi-Fi.", systemImage: "checkmark.circle")
+            // Named only when this phone sent the name; a join finished on
+            // the Canary's own page is still its verdict, without the name.
+            Label(portal.handedSSID.map {
+                "It's on \($0) — its own verdict. Its setup network goes away now, and this phone is back on your Wi-Fi."
+            } ?? SetupPortal.joinedElsewhereLine, systemImage: "checkmark.circle")
                 .foregroundStyle(Theme.color(.calm))
         case .failed(let why):
             Label(why, systemImage: "exclamationmark.triangle")
@@ -359,6 +375,12 @@ struct CanaryFamilySetupView: View {
             if portal.onSetupNetwork {
                 Text("Fix it above and tap Join again — the phone is still on its setup network.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            // 192.168.4.1 is a local address: with Local Network off for
+            // this app the page never answers, and the browse already knows
+            // when that is the cause — say it, with the way to Settings.
+            if let advice = store.localNetworkAdvice {
+                RadioAdviceRow(advice: advice)
             }
         }
     }

@@ -268,6 +268,10 @@ final class FleetStore: ObservableObject {
         if hasRealFleet { localNetworkWanted = true }
         startRadiosIfConsented()
         WatchLink.shared.activate(store: self)
+        // A Canary's setup network this app joined and never let go of (a
+        // walkthrough the app was killed in the middle of) is forgotten
+        // here, so the phone never drifts back onto SecuraCV-… by itself.
+        SetupPortalClient.forgetLingeringSetupNetworks()
         // Permission timing: a returning user with a paired fleet expects
         // alerts, so ask at launch. A brand-new user gets asked at the
         // moment alerts first matter (their first Test Alert) — never as an

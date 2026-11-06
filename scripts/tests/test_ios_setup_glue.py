@@ -177,5 +177,77 @@ class TheOverlayReadsTheFlag(unittest.TestCase):
                       "a card held behind the sheet must come back when it closes")
 
 
+class TheSetupNetworkIsLetGoByTheClientNeverByIOS(unittest.TestCase):
+    """The display's path and the no-Bluetooth fallback join SecuraCV-… from
+    inside the app (SetupPortalClient). The client decides when the phone
+    leaves that network, not `joinOnce`: a joinOnce network is dropped when
+    the app leaves the foreground, and the one thing a person does in the
+    middle of this step is leave for the Wi-Fi password. The pure halves
+    (SetupPortal.HotspotJoinOutcome) have XCTests; this pins the glue."""
+
+    def setUp(self):
+        self.text = masked("ios/Sources/SecuraCV/Transport/SetupPortalClient.swift")
+        spans = [s for s in L.type_spans(self.text) if s.kind == "class" and s.name == "SetupPortalClient"]
+        self.assertEqual(len(spans), 1, "one SetupPortalClient")
+        self.span = spans[0]
+
+    def _body(self, name: str) -> str:
+        return flat(func_body(self.text, self.span.open, self.span.close, name))
+
+    def test_the_join_is_not_join_once(self):
+        self.assertIn("config.joinOnce = false", self._body("connect"))
+        self.assertNotIn("joinOnce = true", flat(self.text))
+
+    def test_the_client_forgets_the_network_it_joined(self):
+        finish = self._body("finish")
+        self.assertIn("NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)", finish)
+        connect = self._body("connect")
+        # No page answered: the phone leaves the network before it says so.
+        waited = connect.find("waitForPortal(")
+        self.assertGreater(waited, 0)
+        left = connect.find("finish()", waited)
+        failed = connect.find("phase = .failed(", waited)
+        self.assertGreater(left, waited, "a join with no page behind it is left")
+        self.assertLess(left, failed, "left before the failure is shown")
+
+    def test_iOSs_own_answer_is_folded_not_relayed_raw(self):
+        connect = self._body("connect")
+        self.assertIn("Self.joinOutcome(error)", connect)
+        self.assertIn("outcome.advice(ssid: setupSSID)", connect)
+        self.assertNotIn("error.localizedDescription", connect,
+                         "the one place iOS's words are relayed is HotspotJoinOutcome.other")
+
+    def test_a_join_finished_elsewhere_is_noticed_while_the_person_decides(self):
+        connect = self._body("connect")
+        self.assertIn("phase = .ready startReadyWatch()", connect, "the watch starts the moment the list is up")
+        for name in ("hand", "finish"):
+            self.assertIn("stopReadyWatch()", self._body(name), f"{name} ends the watch")
+        watch = self._body("watchWhileReady")
+        self.assertIn("if state == .success", watch)
+        self.assertIn("phase = .done finish()", watch)
+        hand = self._body("hand")
+        self.assertIn("handedSSID = homeSSID", hand, "only a network this phone posted is named")
+        self.assertNotIn("handedSSID = homeSSID", watch)
+
+    def test_launch_forgets_what_an_earlier_run_left(self):
+        sweep = self._body("forgetLingeringSetupNetworks")
+        self.assertIn("getConfiguredSSIDs", sweep)
+        self.assertIn("where SetupPortal.isSetupNetwork(ssid)", sweep, "only the setup-network shapes")
+        self.assertIn("removeConfiguration(forSSID: ssid)", sweep)
+        store = masked("ios/Sources/SecuraCV/App/FleetStore.swift")
+        spans = [s for s in L.type_spans(store) if s.kind == "class" and s.name == "FleetStore"]
+        self.assertEqual(len(spans), 1)
+        on_appear = flat(func_body(store, spans[0].open, spans[0].close, "onAppear"))
+        self.assertIn("SetupPortalClient.forgetLingeringSetupNetworks()", on_appear)
+
+    def test_the_view_remembers_and_names_only_what_this_phone_handed_over(self):
+        view = flat(masked("ios/Sources/SecuraCV/Views/CanarySetupView.swift"))
+        self.assertIn("if let ssid = portal.handedSSID, HouseholdWiFiStore.shouldRemember(", view)
+        self.assertNotIn("let ssid = effectiveSSID", view)
+        self.assertIn("portal.handedSSID.map {", view)
+        self.assertIn("?? SetupPortal.joinedElsewhereLine", view)
+        self.assertIn("Text(SetupPortal.captivePopupNote)", view)
+
+
 if __name__ == "__main__":
     unittest.main()
