@@ -432,7 +432,10 @@ one-header change instead of a per-board copy-paste.
     envelope, or anyone on the broker), one signed under another key, a
     replay or an older capture sets no words and clears none; the bridge
     simply leaves what the real device last said to age out on the window
-    above. The bound is the chain's: a captured publish buys at most one
+    above. Words a bridge older than this requirement stored (they carry
+    no verified pair in the summary file) are served by nobody after the
+    upgrade: the kernel projects none, and the bridge forgets them on its
+    first write. The bound is the chain's: a captured publish buys at most one
     window per pair the bridge itself missed, never a standing claim. A
     retained `state` advances the pair (so the broker's own retained head
     cannot be replayed live later) but is history, not a reading. Only the

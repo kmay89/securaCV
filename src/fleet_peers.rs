@@ -643,13 +643,25 @@ pub struct PeerTable {
 impl PeerTable {
     /// Rehydrate from a previously written summary so pins survive a bridge
     /// restart ("a reboot must not re-TOFU", as the display's pin store puts
-    /// it). Records with an invalid id are dropped, never trusted.
+    /// it). Records with an invalid id are dropped, never trusted. Wellbeing
+    /// words that carry no verified [`StateMark`] were taken by a bridge
+    /// older than the signature requirement, from a `state` nobody signed:
+    /// they are forgotten here, so an upgrade never serves what the old
+    /// bridge could not vouch for, not even for one window.
     pub fn from_summary(summary: PeerSummaryFile) -> Self {
         let peers = summary
             .peers
             .into_iter()
             .filter(|p| device_id_ok(&p.device_id))
-            .map(|p| (p.device_id.clone(), p))
+            .map(|mut p| {
+                if p.last_verified_state.is_none() {
+                    p.presence = None;
+                    p.occupants = None;
+                    p.breathing = None;
+                    p.wellbeing_epoch_s = None;
+                }
+                (p.device_id.clone(), p)
+            })
             .collect();
         Self {
             peers,
@@ -883,7 +895,11 @@ pub fn fleet_rows(summary: &PeerSummaryFile, now: u64) -> Vec<FleetRow> {
             let chain = (peer.chain == CHAIN_OK || peer.chain == CHAIN_DEGRADED)
                 .then(|| peer.chain.clone());
             let product = peer.device_type.as_deref().and_then(clean_product);
-            let wellbeing = online && peer.wellbeing_fresh(now);
+            // Words are served only beside the mark that proves a signed
+            // `state` set them: a file written by a bridge older than the
+            // signature requirement holds words no signature vouched for.
+            let wellbeing =
+                online && peer.wellbeing_fresh(now) && peer.last_verified_state.is_some();
             FleetRow {
                 name,
                 online,
@@ -2205,6 +2221,10 @@ mod tests {
         dirty.occupants = Some("many".to_string());
         dirty.breathing = Some(true);
         dirty.wellbeing_epoch_s = Some(NOW);
+        dirty.last_verified_state = Some(StateMark {
+            chain_length: 1,
+            seq: 1,
+        });
         dirty.last_signed_epoch_s = Some(NOW);
         dirty.chain = CHAIN_OK.to_string();
         let mut peers = vec![dirty];
@@ -2233,6 +2253,42 @@ mod tests {
         assert!(row.online);
         assert!(row.presence.is_none() && row.occupants.is_none());
         assert_eq!(row.breathing, Some(true));
+    }
+
+    #[test]
+    fn words_a_pre_signature_bridge_stored_are_served_by_nobody_after_the_upgrade() {
+        // A summary written before the `state` signature requirement: fresh
+        // words beside a proven-online row, and no verified mark — because
+        // the bridge that wrote them never checked one.
+        let mut old = PeerRecord::new("bedroom", NOW);
+        old.presence = Some("present".to_string());
+        old.occupants = Some("2+".to_string());
+        old.breathing = Some(true);
+        old.wellbeing_epoch_s = Some(NOW);
+        old.last_signed_epoch_s = Some(NOW);
+        old.last_verified_length = Some(3);
+        old.chain = CHAIN_OK.to_string();
+        let summary = PeerSummaryFile {
+            schema: FLEET_PEERS_SCHEMA.to_string(),
+            written_at_epoch_s: NOW,
+            peers: vec![old],
+        };
+        // The kernel, reading that file as it stands: online, no words.
+        let rows = fleet_rows(&summary, NOW + 1);
+        assert!(rows[0].online);
+        assert!(
+            rows[0].presence.is_none()
+                && rows[0].occupants.is_none()
+                && rows[0].breathing.is_none(),
+            "unvouched words served: {rows:?}"
+        );
+        // The upgraded bridge, rehydrating it: the words are forgotten with
+        // the file's next write, the pin and the proof are kept.
+        let table = PeerTable::from_summary(summary);
+        let rec = &table.summary(NOW + 2).peers[0];
+        assert!(rec.presence.is_none() && rec.wellbeing_epoch_s.is_none());
+        assert_eq!(rec.last_verified_length, Some(3));
+        assert!(rec.proven());
     }
 
     #[test]
