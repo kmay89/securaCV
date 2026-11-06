@@ -1222,8 +1222,11 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         host = config.get("host")
         if not isinstance(host, str) or HASSIO_HOST_RE.fullmatch(host) is None:
             return self.async_abort(reason="invalid_discovery_info")
+        raw_port = config.get("port")
+        if raw_port is None or isinstance(raw_port, bool):
+            return self.async_abort(reason="invalid_discovery_info")
         try:
-            port = int(config.get("port"))
+            port = int(raw_port)
         except (TypeError, ValueError):
             return self.async_abort(reason="invalid_discovery_info")
         if not 1 <= port <= 65535:
@@ -1377,7 +1380,9 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             hassio_data = {k: v for k, v in (self._hassio or {}).items() if k != CONF_KERNEL_DEVICE_ID}
             return self._async_promote_entry(entry, {**hassio_data, **updates})
         self.hass.config_entries.async_update_entry(entry, data={**data, **updates})
-        self.hass.config_entries.async_schedule_reload(getattr(entry, "entry_id", None))
+        entry_id = getattr(entry, "entry_id", None)
+        if isinstance(entry_id, str):
+            self.hass.config_entries.async_schedule_reload(entry_id)
         return self.async_abort(reason="already_configured")
 
 
