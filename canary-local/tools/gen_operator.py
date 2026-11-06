@@ -99,7 +99,7 @@ must(CLI_RS, "the master key is plaintext on disk", "doctor honesty warning")
 
 # drill runs in a throwaway sandbox and burns its token single-use
 must(CLI_RS, "Nothing real is touched", "drill sandbox promise")
-must(CLI_RS, "consume_break_glass_token_durably", "drill burns the token single-use")
+must(CLI_RS, "redeem_token_durably(&unseal_token)", "drill burns the token single-use")
 
 # the committed policy always goes through validate() (Invariant V)
 must(CLI_RS, "set_break_glass_policy", "commit path")
