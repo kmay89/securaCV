@@ -512,6 +512,49 @@ def restart_addon() -> None:
     _supervisor_request("POST", "/addons/self/restart")
 
 
+def record_device_key_seed_option(seed: str) -> str:
+    """Record a seed the setup resolved from the key file in the
+    `device_key_seed` option, so the Configuration tab shows it.
+
+    The wizard writes the option itself; an install configured by hand with
+    the option left empty gets its seed generated into the key file alone
+    (run_lib.sh resolve_device_key_seed), and once that file lives in the
+    app's own /data nothing in Home Assistant can read it back. The option
+    is where the docs send people to copy the key from, so the setup step
+    calls this after the seed resolves. Only an empty or placeholder option
+    is written, over the options as they are (POST /addons/self/options
+    replaces them whole); an option already holding a seed is left alone,
+    whatever it says — the setup's resolution order made it the identity in
+    use. Returns "recorded" or "already-set"; never prints or logs the seed.
+    """
+    seed = (seed or "").strip()
+    if not seed:
+        raise ValueError("no seed to record")
+    options = dict(get_addon_options() or {})
+    current = str(options.get("device_key_seed", "") or "").strip()
+    if current and current != "devkey:mvp":
+        return "already-set"
+    options["device_key_seed"] = seed
+    set_addon_options(options)
+    return "recorded"
+
+
+def _record_device_key_seed_cli() -> int:
+    """`serve_wizard.py record-device-key-seed`: the seed comes in the
+    environment (DEVICE_KEY_SEED), never on argv; stdout is the one-word
+    verdict, and a failure prints only its kind — a Supervisor error body
+    could echo the request, so it is never printed."""
+    seed = os.environ.get("DEVICE_KEY_SEED", "")
+    try:
+        verdict = record_device_key_seed_option(seed)
+    except Exception as exc:  # noqa: BLE001 — the kind alone, never the body
+        detail = getattr(exc, "code", None) or type(exc).__name__
+        sys.stdout.write(f"failed {detail}\n")
+        return 1
+    sys.stdout.write(f"{verdict}\n")
+    return 0
+
+
 def _discover_mqtt() -> dict:
     """Query the Supervisor services API for the shared MQTT broker.
 
@@ -1827,4 +1870,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "record-device-key-seed":
+        sys.exit(_record_device_key_seed_cli())
     main()

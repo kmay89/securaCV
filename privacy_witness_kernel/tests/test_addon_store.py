@@ -647,6 +647,18 @@ def test_run_sh_moves_the_device_key_out_of_config_before_reading_it():
     assert not re.search(r"bashio::log\.\w+ .*DEVICE_KEY_SEED", code)
     assert not re.search(r"bashio::log\.\w+ .*key_move", code)
     assert "exit 1" in RUN_SH[RUN_SH.index(move):RUN_SH.index("First-run detection")]
+    # A seed the key file supplied is recorded in the option (the Configuration
+    # tab is where the docs send people to copy it from): after the seed
+    # resolves, only when the option was empty, through the panel's Supervisor
+    # client with the seed in that child's environment and never on argv.
+    record = 'DEVICE_KEY_SEED="$DEVICE_KEY_SEED" /usr/bin/python3 /usr/local/bin/serve_wizard.py record-device-key-seed'
+    assert RUN_SH.count(record) == 1
+    assert RUN_SH.index('resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE"') < RUN_SH.index(record)
+    assert RUN_SH.index(record) < RUN_SH.index('DEVICE_ID=$(ha_device_id')
+    assert 'OPTION_DEVICE_KEY_SEED="$DEVICE_KEY_SEED"' in RUN_SH
+    assert RUN_SH.index('OPTION_DEVICE_KEY_SEED="$DEVICE_KEY_SEED"') < RUN_SH.index('resolve_device_key_seed "$DEVICE_KEY_SEED"')
+    assert '[ -z "$OPTION_DEVICE_KEY_SEED" ] || [ "$OPTION_DEVICE_KEY_SEED" = "devkey:mvp" ]' in RUN_SH
+    assert not re.search(r"serve_wizard\.py record-device-key-seed[^\n]*\$DEVICE_KEY_SEED", RUN_SH)
     # The token the integration reads did not move with it.
     const = (REPO / "custom_components" / "securacv" / "const.py").read_text()
     assert 'DEFAULT_TOKEN_FILE = "/config/api_token"' in const

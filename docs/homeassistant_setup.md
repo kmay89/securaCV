@@ -1470,7 +1470,10 @@ signatures can no longer be verified.
 
 The seed the kernel's identity derives from is kept in the app's own data,
 `/data/device_key` inside the app's container (mode 0600), and in the app's
-`device_key_seed` option. Nothing else on your Home Assistant reaches that
+`device_key_seed` option (the Configuration tab): the wizard writes the
+option, and a key the app generated itself, or carried over from `/config`,
+is recorded there on the next start, so the option is always where to copy
+it from. Nothing else on your Home Assistant reaches that
 directory: the File editor, Samba and SSH apps cannot read it, and a backup
 of Home Assistant's configuration alone does not carry it. A backup that
 **includes the SecuraCV app** does carry it (the app's data and options are

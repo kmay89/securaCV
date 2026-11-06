@@ -9,7 +9,9 @@
   own data (`/data/device_key`), which only this app's processes open and
   which a configuration-only backup does not carry (a backup that includes
   the app does; uninstalling the app removes it, so export or copy the seed
-  from the Configuration tab first). On the first start after the update an
+  from the Configuration tab first; a key the app generated itself is now
+  recorded in the `device_key_seed` option on start, so that tab always
+  shows it). On the first start after the update an
   existing `/config` copy is moved: copied byte-for-byte, held against the
   sealed log with the kernel's own verifier (the seed must open the log and
   derive its key), and only then removed, with one line in the log. A key

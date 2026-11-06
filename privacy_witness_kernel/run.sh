@@ -145,6 +145,9 @@ fi
 # factory defaults.
 # ============================================================================
 DEVICE_KEY_SEED=$(bashio::config 'device_key_seed' || echo "")
+# What the option said before the key file or a fresh seed stood in for it:
+# the recorder below writes the option only when this is empty.
+OPTION_DEVICE_KEY_SEED="$DEVICE_KEY_SEED"
 MODE=$(bashio::config 'mode')
 
 # The cameras list is read whole (run_lib.sh opt_list): bashio prints an
@@ -183,6 +186,23 @@ DEVICE_KEY_SEED=$(resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE")
 if [ -z "$DEVICE_KEY_SEED" ]; then
     bashio::log.error "Failed to resolve or generate a device key seed."
     exit 1
+fi
+
+# A seed the key file supplied (wizard-written, generated just now, or
+# moved from /config above) is recorded in the device_key_seed option when
+# that option is empty, so the Configuration tab shows it: that is where the
+# docs send people to copy the key from, and once the file is in /data
+# nothing else in Home Assistant can read it. The panel's own Supervisor
+# client does the write (serve_wizard.py record-device-key-seed), with the
+# seed in that one child's environment, never on argv; its output is a
+# fixed word. A refused write is a warning, never a stopped start.
+if [ -z "$OPTION_DEVICE_KEY_SEED" ] || [ "$OPTION_DEVICE_KEY_SEED" = "devkey:mvp" ]; then
+    if record=$(DEVICE_KEY_SEED="$DEVICE_KEY_SEED" /usr/bin/python3 /usr/local/bin/serve_wizard.py record-device-key-seed 2>/dev/null) \
+        && [ "$record" = "recorded" ]; then
+        bashio::log.info "Device key: recorded in the device_key_seed option (Configuration tab) — copy it from there for a backup; the file copy stays in the app's data (${DEVICE_KEY_FILE})."
+    elif [ "${record:-}" != "already-set" ]; then
+        bashio::log.warning "Device key: could not record it in the device_key_seed option (${record:-the Supervisor did not answer}); it is in the app's data only (${DEVICE_KEY_FILE}). Re-run the setup wizard from the panel to record it, or restart the app to try again."
+    fi
 fi
 
 # The public device id every producer shares (run_lib.sh ha_device_id):
