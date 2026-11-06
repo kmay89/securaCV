@@ -800,6 +800,11 @@
       "content": "Hash chain state"
     },
     {
+      "topic": "securacv/{device_id}/state",
+      "direction": "Device \u2192 HA",
+      "content": "canary-sense: the retained room snapshot; its presence/occupants/breathing words carry a `state`-kind signature (`chain_length`, `seq`, `sig`) the kernel's fleet roll-call verifies \u2014 the readings beside them are unsigned"
+    },
+    {
       "topic": "securacv/{device_id}/tamper",
       "direction": "Device \u2192 HA",
       "content": "Tamper alerts (immediate)"

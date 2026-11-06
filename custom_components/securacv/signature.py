@@ -127,6 +127,31 @@ def build_sentinel_event_canonical(
     ).encode("utf-8")
 
 
+def build_state_canonical(
+    device_id: str,
+    chain_length: int,
+    seq: int,
+    presence: str,
+    occupants: str,
+    breathing: str,
+) -> bytes:
+    """canary-sense wellbeing snapshot canonical (v1 `state` kind).
+
+    Locked against `firmware/common/identity/device_signature.cpp`
+    (build_state_canonical) and the kernel's `src/fleet_peers.rs`. Carries
+    the three coarse words the fleet roll-call serves — presence
+    unknown/clear/present, occupants 0/1/2+, breathing `true`/`false` or
+    `unknown` on a build with no breathing channel — behind a freshness
+    pair a verifier must require to advance strictly: the device's
+    witness-chain length when it spoke (NVS-persisted, so monotonic across
+    reboots) and its per-boot count of state publishes. The readings beside
+    the words on the wire (range, lux, BPM) are not signed."""
+    return (
+        f"{SIG_PREFIX}|v{SCHEMA_V}|state|{device_id}|{chain_length}|{seq}|"
+        f"{presence}|{occupants}|{breathing}"
+    ).encode("utf-8")
+
+
 def _verify_raw(
     pubkey_bytes: bytes, canonical: bytes, sig_b64url: str
 ) -> bool:
@@ -416,6 +441,64 @@ def verify_sentinel_event(
         return TrustVerdict(
             trusted=False, reason="unsigned",
             detail=f"Sentinel event payload has a non-integer scalar field: {err}",
+        )
+    return _verify_with_kind(trust_store, device_id, payload, canonical)
+
+
+def state_breathing_word(payload: dict[str, Any]) -> Optional[str]:
+    """The canonical's breathing slot for a `state` payload: `true`/`false`
+    from `breathing_locked`, `unknown` when the key is absent or null (a
+    build with no breathing channel), and None — not signable — for any
+    other value."""
+    locked = payload.get("breathing_locked")
+    if locked is None:
+        return "unknown"
+    if locked is True:
+        return "true"
+    if locked is False:
+        return "false"
+    return None
+
+
+def verify_state(
+    trust_store: TrustStore, device_id: str, payload: dict[str, Any]
+) -> TrustVerdict:
+    """Verify a canary-sense `state` (wellbeing snapshot) publish. Required
+    fields on the canonical: chain_length, seq, presence_state, occupants;
+    breathing_locked is optional (absent spells `unknown`). Missing fields
+    degrade to unsigned (graceful), same policy as the other verifiers.
+
+    Freshness is the caller's: a verdict here says the pinned key signed
+    these words with this (chain_length, seq) pair, not that the pair is
+    newer than the last one seen — a consumer that serves the words must
+    keep the last verified pair per device and accept only a strictly
+    greater one, as the kernel's fleet roll-call does."""
+    required = ("chain_length", "seq", "presence_state", "occupants")
+    if not all(k in payload for k in required):
+        return TrustVerdict(
+            trusted=False,
+            reason="unsigned",
+            detail=f"State payload missing required fields: {required}",
+        )
+    breathing = state_breathing_word(payload)
+    if breathing is None:
+        return TrustVerdict(
+            trusted=False, reason="unsigned",
+            detail="State payload `breathing_locked` is not a boolean",
+        )
+    try:
+        canonical = build_state_canonical(
+            device_id=device_id,
+            chain_length=_canonical_uint(payload["chain_length"]),
+            seq=_canonical_uint(payload["seq"]),
+            presence=str(payload["presence_state"]),
+            occupants=str(payload["occupants"]),
+            breathing=breathing,
+        )
+    except (TypeError, ValueError) as err:
+        return TrustVerdict(
+            trusted=False, reason="unsigned",
+            detail=f"State payload has a non-integer scalar field: {err}",
         )
     return _verify_with_kind(trust_store, device_id, payload, canonical)
 

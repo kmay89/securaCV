@@ -177,6 +177,21 @@ void test_b64url_output_truncation_is_safe() {
 
 /* ââ whoami presence proof: canonical + the nonce gate âââââââââââ */
 
+void test_state_canonical_known_input() {
+  /* The `state` wellbeing kind, against the STAGED copy: the same golden
+   * vector firmware/tests_host/test_device_signature_common.cpp locks for
+   * the canonical copy (STATE_GOLDEN), so the two copies can never drift
+   * apart on these bytes — the kernel's fleet roll-call verifies them. */
+  char out[256];
+  const size_t n = device_signature::build_state_canonical(
+      /*chain_length=*/12, /*seq=*/3, "present", "1", "true",
+      /*device_id=*/"sense01", out, sizeof(out));
+  check(n > 0, "build_state_canonical wrote something");
+  check_eq(std::string(out, n),
+           "securacv-canary-sig|v1|state|sense01|12|3|present|1|true",
+           "state canonical matches the shared golden vector");
+}
+
 void test_whoami_canonical_known_input() {
   /* The Flasher's Rust verifier rebuilds this exact byte sequence before
    * checking the device's Ed25519 sig over it â a drift here silently
@@ -237,6 +252,7 @@ int main() {
   test_b64url_known_vectors();
   test_b64url_url_safe_alphabet();
   test_b64url_output_truncation_is_safe();
+  test_state_canonical_known_input();
   test_whoami_canonical_known_input();
   test_whoami_nonce_gate();
   test_whoami_sign_refuses_bad_nonce_even_direct();

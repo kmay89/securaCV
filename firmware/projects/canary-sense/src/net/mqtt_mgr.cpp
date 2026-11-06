@@ -323,6 +323,49 @@ void publish_state_retained(const Topics& topics, const SenseSnapshot& s) {
   if (s.lux < 0) snprintf(lux_val, sizeof(lux_val), "null");
   else           snprintf(lux_val, sizeof(lux_val), "%.1f", (double)s.lux);
 
+  // The wellbeing words are signed under the device key over the v1 `state`
+  // canonical (identity/device_signature.h), so the kernel's fleet roll-call
+  // can take them from this device and nobody else on the broker: the
+  // freshness pair is the NVS-persisted chain length (monotonic across
+  // reboots) and a per-boot count of these publishes, which the verifier
+  // requires to advance strictly — a captured publish replayed later, or an
+  // older one, proves nothing new. Only the three coarse words are signed;
+  // range, lux and the BPM numbers beside them stay unsigned and are never
+  // read by the roll-call. A keyless boot publishes the same body with no
+  // envelope, and the roll-call then serves no words for this room.
+  static uint32_t s_state_seq = 0;
+  const char* breathing_word =
+#ifdef CANARY_SENSE_VITALS
+      s.breathing_locked ? "true" : "false";
+#else
+      "unknown";
+#endif
+  // The envelope is at most 185 bytes with the widest counters; 224 keeps
+  // the fail-closed branch below a real guard, never the common path.
+  char sig_env[224] = "";
+  if (canary::witness::ready()) {
+    const uint32_t chain_length = canary::witness::chain_length();
+    const uint32_t seq = s_state_seq + 1;
+    char sig_b64[device_signature::SIG_B64URL_CAP] = "";
+    if (device_signature::sign_state(chain_length, seq, s.presence,
+                                     s.occupants, breathing_word,
+                                     sig_b64, sizeof(sig_b64))) {
+      const int en = snprintf(sig_env, sizeof(sig_env),
+          ",\"v\":%d,\"chain_length\":%lu,\"seq\":%lu,"
+          "\"alg\":\"%s\",\"fp\":\"%s\",\"sig\":\"%s\"",
+          device_signature::SCHEMA_V,
+          (unsigned long)chain_length, (unsigned long)seq,
+          device_signature::ALG_NAME,
+          device_signature::fingerprint_hex(),
+          sig_b64);
+      if (en <= 0 || (size_t)en >= sizeof(sig_env)) {
+        sig_env[0] = '\0';  // fail closed: an unsigned body, never a cut one
+      } else {
+        s_state_seq = seq;   // the counter moves only with a signature on the wire
+      }
+    }
+  }
+
 #ifdef CANARY_SENSE_VITALS
   // BPM numerics are only meaningful while the breathing lock holds; publish
   // null otherwise so the P1 entities read unknown instead of a stale value.
@@ -336,8 +379,8 @@ void publish_state_retained(const Topics& topics, const SenseSnapshot& s) {
   }
 #endif
 
-  char msg[768];
-  snprintf(msg, sizeof(msg),
+  char msg[1024];
+  const int n = snprintf(msg, sizeof(msg),
            "{"
            "\"device_id\":\"%s\","
            "\"device_type\":\"%s\","
@@ -356,6 +399,7 @@ void publish_state_retained(const Topics& topics, const SenseSnapshot& s) {
            "\"last_event\":\"%s\","
            "\"uptime_s\":%lu,"
            "\"ts_ms\":%lu"
+           "%s"
            "}",
            canary::cfg::get().device_id, DEVICE_TYPE,
            s.present ? "true" : "false",
@@ -372,7 +416,9 @@ void publish_state_retained(const Topics& topics, const SenseSnapshot& s) {
 #endif
            s.last_event ? s.last_event : "boot",
            (unsigned long)s.uptime_s,
-           (unsigned long)s.ts_ms);
+           (unsigned long)s.ts_ms,
+           sig_env);
+  if (n <= 0 || (size_t)n >= sizeof(msg)) return;  // never a truncated body
 
   publish_checked("STATE", topics.state, msg, true);
 }
