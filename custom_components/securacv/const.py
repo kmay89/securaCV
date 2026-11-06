@@ -146,6 +146,10 @@ EVIDENCE_README_SOURCE = "evidence-README.txt"
 EVIDENCE_ZIP_VIEWER = "evidence_viewer.html"
 EVIDENCE_ZIP_README = "README.txt"
 EVIDENCE_ZIP_KEY = "WITNESS_KEY.txt"
+# The pack read out in plain language (witness_statement.py): what the
+# witness recorded in the window, what that proves, what it does not, how to
+# check it. A reading of the bundle, never evidence; the viewer ignores it.
+EVIDENCE_ZIP_STATEMENT = "WITNESS_STATEMENT.txt"
 # The kernel's bundle download must stay bounded: one coarse log is small.
 EXPORT_BUNDLE_MAX_BYTES = 64 * 1024 * 1024
 
