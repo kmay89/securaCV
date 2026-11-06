@@ -52,6 +52,44 @@ describe('envelope verification parity', () => {
     assert.ok(report.checks.some((c) => /artifact bound/i.test(c)), 'artifact-binding check should run');
   });
 
+  // Without a trusted key the envelope's own provenance key is the only
+  // thing the signatures were checked against — the verdict is self-attested
+  // authorship, and the result must say so, exactly as verifyExportBundle does.
+  it('without a trusted key, authorship is self-attested and the report says so', async () => {
+    const report = await V.verifyEnvelope(loadFixture('valid_envelope.json'));
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.authorship, 'envelope');
+    assert.equal(report.device_public_key, loadFixture('valid_envelope.json').provenance.device_public_key);
+    assert.ok(report.warnings.some((w) => /self-attested/.test(w)), 'the self-attested note must be present');
+    assert.ok(report.checks.some((c) => /under the device key named in the envelope/.test(c)));
+  });
+
+  it('confirms authorship when the matching trusted key is supplied', async () => {
+    const envelope = loadFixture('valid_envelope.json');
+    const report = await V.verifyEnvelope(envelope, { trustedDeviceKeyHex: envelope.provenance.device_public_key.toUpperCase() });
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.authorship, 'trusted');
+    assert.ok(!report.warnings.some((w) => /self-attested/.test(w)));
+    assert.ok(report.checks.some((c) => /matches the trusted key you supplied/.test(c)));
+    assert.ok(report.checks.some((c) => /authorship confirmed against your trusted key/.test(c)));
+  });
+
+  it('rejects a non-matching trusted key before any signature is checked', async () => {
+    const report = await V.verifyEnvelope(loadFixture('valid_envelope.json'), { trustedDeviceKeyHex: '00'.repeat(32) });
+    assert.equal(report.ok, false);
+    assert.equal(report.status, 'compromised');
+    assert.match(report.error, /device key mismatch/);
+    assert.ok(!report.checks.some((c) => /signatures valid/.test(c)), 'no signature verdict may be reached under a key the caller did not trust');
+  });
+
+  it('refuses a malformed trusted key rather than ignoring it', async () => {
+    for (const bad of ['zz'.repeat(32), 'abcd']) {
+      const report = await V.verifyEnvelope(loadFixture('valid_envelope.json'), { trustedDeviceKeyHex: bad });
+      assert.equal(report.ok, false, `accepted trusted key ${bad}`);
+      assert.match(report.error, /supplied device key/);
+    }
+  });
+
   it('rejects a tampered artifact even when the digest is recomputed (P1)', async () => {
     const envelope = loadFixture('valid_envelope.json');
     // Doctor the human-readable artifact (swap a zone) and refresh the digest so the only thing

@@ -304,12 +304,18 @@ export function isRealPubkey(pubkeyHex) {
 //   "verify"            — real key + signature present → must verify (refuse on fail)
 //   "require-signature" — real key, official manifest, NO signature → refuse
 //   "checksum-only"     — no key yet (pre-ceremony), or a self-hosted manifest
-//                         the user explicitly pointed at (?manifest=)
+//                         the user explicitly pointed at (?manifest=) AND then
+//                         explicitly accepted as unsigned (unsignedAccepted).
+//                         A ?manifest= link alone never lowers the bar: a link
+//                         is something anyone can hand someone, and a loopback
+//                         manifest can be served by whatever else runs on the
+//                         machine — so the downgrade needs the person's own
+//                         click on the confirm card, naming the origin.
 // Local files (Advanced) never reach here — they're fingerprinted, not verified.
-export function imageVerificationPolicy({ keyReal, hasSignature, selfHosted }) {
+export function imageVerificationPolicy({ keyReal, hasSignature, selfHosted, unsignedAccepted = false }) {
   if (!keyReal) return "checksum-only";
   if (hasSignature) return "verify";
-  return selfHosted ? "checksum-only" : "require-signature";
+  return selfHosted && unsignedAccepted ? "checksum-only" : "require-signature";
 }
 
 // Verify a firmware image's Ed25519 release signature against the pinned public

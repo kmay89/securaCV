@@ -335,6 +335,42 @@ test("manifestOverrideUrl: same-origin and loopback allowed, LAN/public refused"
 });
 
 // ── byte glue for esptool-js (must survive high bytes) ──────────────────────
+test("imageVerificationPolicy: a ?manifest= override never lowers the bar on its own", async () => {
+  const { imageVerificationPolicy } = await core();
+  // Pre-ceremony (placeholder key): checksum-only everywhere, as before.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: false, selfHosted: true }), "checksum-only");
+  // A real key: a signed image is verified wherever its manifest lives.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: true, selfHosted: true }), "verify");
+  // A real key and an unsigned image: refused from the official manifest, and
+  // ALSO from a self-hosted one — a ?manifest=http://127.0.0.1:… link used to
+  // downgrade a Lab with a pinned key to checksum-only silently.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false }), "require-signature");
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "require-signature");
+  // Only the person's explicit acceptance of the unsigned, self-hosted
+  // manifest brings checksum-only back — and never for the official one.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true, unsignedAccepted: true }), "checksum-only");
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false, unsignedAccepted: true }), "require-signature");
+});
+
+test("flash.js asks for that acceptance on the confirm card, naming the override's origin", () => {
+  const src = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  // The origin is remembered beside the override flag and shown wherever the override is.
+  assert.match(src, /state\.manifestOverrideOrigin = override \? new URL\(override\)\.origin : ""/);
+  assert.match(src, /fact\("Manifest", `self-hosted · \$\{state\.manifestOverrideOrigin\}`\)/, "the install card names the override origin");
+  assert.match(src, /Using a self-hosted firmware manifest from \$\{state\.manifestOverrideOrigin\}/, "so does the manifest banner");
+  // The consent is a deliberate click on the confirm card, in loud words, and the install button waits for it.
+  assert.match(src, /unsigned, self-hosted manifest at \$\{state\.manifestOverrideOrigin\}/);
+  assert.match(src, /unsignedOk\.id = "flash-unsigned-ok"/);
+  assert.match(src, /go\.disabled = !unsignedOk\.checked/, "Install stays disabled until the box is ticked");
+  assert.match(src, /unsignedAccepted: !!\(unsignedOk && unsignedOk\.checked\)/, "and only that click reaches the policy");
+  // The policy at flash time reads the acceptance, and refuses without it.
+  assert.match(src, /unsignedAccepted: !!opts\.unsignedAccepted/);
+  assert.match(src, /policy === "require-signature" && state\.manifestOverride/);
+  assert.match(src, /carries no Ed25519 [\s\S]{0,120}refusing to flash it/);
+  // What was actually checked is said in those words on the journey, not "signature".
+  assert.match(src, /`SHA-256 only · unsigned, \$\{state\.manifestOverrideOrigin\}`/);
+});
+
 test("bytes <-> binary string round-trips including 0x00/0x80/0xFF", async () => {
   const { bytesToBinaryString, binaryStringToBytes, hex } = await core();
   const src = new Uint8Array([0x00, 0x01, 0x7f, 0x80, 0xfe, 0xff, 0xe9, 0x55]);
@@ -2012,8 +2048,10 @@ test("imageVerificationPolicy: fail-closed once a real key is pinned", async () 
   assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: true, selfHosted: false }), "verify");
   // Real key + official manifest + NO signature → REFUSE (the P1 hole).
   assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false }), "require-signature");
-  // Real key + self-hosted manifest without a signature → user opted in → checksum-only.
-  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "checksum-only");
+  // Real key + self-hosted manifest without a signature → still REFUSED: a
+  // ?manifest= link is not the user's opt-in (the matrix above holds the one
+  // thing that is, the confirm card's own acceptance).
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "require-signature");
   // No key yet (pre-ceremony) → checksum-only regardless.
   assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: false, selfHosted: false }), "checksum-only");
   assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: true, selfHosted: false }), "checksum-only");
