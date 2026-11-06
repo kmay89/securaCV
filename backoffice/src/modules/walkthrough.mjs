@@ -33,6 +33,7 @@ import { doctor } from './health.mjs';
 import { customerStats } from './contacts.mjs';
 import { createCheckout, estimateForZip, storefrontCatalog } from './storefront.mjs';
 import { normalize } from './catalog.mjs';
+import { setAway, clearAway, awayState, todayIn, partsOf } from './away.mjs';
 
 // The one customer. A placeholder name on a reserved domain, like everything in the demo.
 export const FIRST = { email: 'first.customer@customer.example.test', name: 'First Customer', line1: '1 Example Lane', city: 'Madison', state: 'WI', zip: '53703' };
@@ -126,6 +127,27 @@ export const STEPS = [
       const after = ticketByNumber(db, state.ticket); const mail = db.get('SELECT subject FROM mail_outbox WHERE to_addr = ? AND subject LIKE ? ORDER BY id DESC LIMIT 1', FIRST.email, `%${state.ticket}%`);
       return { facts: { ticket: state.ticket, status: after.status, mail: mail?.subject || '(none)' }, links: [['The ticket', `/tickets/${t.id}`]],
         checks: [check('the ticket waits on the customer', after.status === 'waiting_on_customer', after.status), check('the reply is queued to the customer', !!mail)] };
+    } },
+
+  { id: 'away', title: 'A week away', tell: 'The operator sets the day they are back. The store\'s catalog and the ZIP estimate move to the first batch after that day; a question that arrives meanwhile is answered with the date and its SLA clock starts on the return; "I\'m back" puts the store on its normal cadence again. Every step is in the audit log.',
+    run: async ({ db, cfg }) => {
+      const before = storefrontCatalog(db, DEMO_CATALOG, { cfg });
+      const today = todayIn(cfg.tz); const t = partsOf(today); const back = new Date(Date.UTC(t.y, t.m - 1, t.d + 8)).toISOString().slice(0, 10);
+      const away = setAway(db, { until: back, note: 'Back from the show' }, { actor: 'web', cfg });
+      const cat = storefrontCatalog(db, DEMO_CATALOG, { cfg }); const est = estimateForZip(FIRST.zip, { cfg, db });
+      // a question while away, through the same website form; its acknowledgment is held to the hourly cap, so the clock is what we check
+      const r = await fetch(`${localBase(cfg)}/forms/contact`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: FIRST.email, name: FIRST.name, subject: 'Can I add a second door later?', message: 'Thinking ahead.\n\n(the first customer, synthetic)' }) });
+      const tk = db.get('SELECT id, number, sla_due_at FROM tickets ORDER BY id DESC LIMIT 1');
+      reply(db, tk.id, 'Yes — any time; the hub takes up to eight. Back next week.\n\n(synthetic reply)', { cfg: silent(cfg), actor: 'web', close: true });
+      const cleared = clearAway(db, { actor: 'web', cfg }); const after = storefrontCatalog(db, DEMO_CATALOG, { cfg });
+      const audit = db.all("SELECT action FROM audit_log WHERE action IN ('away.set', 'away.clear') ORDER BY id").map(a => a.action);
+      return { facts: { back_on: back, store_while_away: cat.ships.label, estimate_while_away: est.label, ticket: tk?.number, sla_due_at: tk?.sla_due_at, store_after: after.ships.label },
+        links: [['Settings → Away', '/settings#away'], ['Home', '/'], ['Health', '/health'], ['Audit log', '/audit']],
+        checks: [check('the date was taken', away.on && away.until === back, away.until), check('the catalog carries it for the site', cat.away?.until === back && cat.away.note === 'Back from the show', JSON.stringify(cat.away)),
+          check('the store ships after the return, not before', cat.ships.ships_on > back && /^Back /.test(cat.ships.label), cat.ships.label), check('the estimate before paying agrees with the catalog', est.ships.ships_on === cat.ships.ships_on, `${est.ships.ships_on} vs ${cat.ships.ships_on}`),
+          check('the question was taken', r.status < 300 && !!tk, String(r.status)), check('its SLA clock starts on the return', tk && tk.sla_due_at >= away.resume_at, `${tk?.sla_due_at} vs ${away.resume_at}`),
+          check('"I\'m back" ends it', !cleared.on && !after.away, JSON.stringify(after.away)), check('the store is on its normal cadence again', after.ships.ships_on === before.ships.ships_on && /^Order by /.test(after.ships.label), after.ships.label),
+          check('both ends are in the audit log', audit.join(',') === 'away.set,away.clear', audit.join(','))] };
     } },
 
   { id: 'news', title: 'They ask for news: double opt-in', tell: 'The website\'s newsletter form records the ask and mails a confirmation link; nothing marketing goes out until that link is clicked. Then it is.',

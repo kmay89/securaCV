@@ -43,6 +43,8 @@ import { pollTracking } from '../src/modules/shipping.mjs';
 import { editItems } from '../src/modules/orders.mjs';
 import { remindInvoice } from '../src/modules/invoices.mjs';
 import { orderStatusUrl } from '../src/modules/delivery.mjs';
+import { awayState, setAway, clearAway } from '../src/modules/away.mjs';
+import { nextShipDate } from '../src/modules/storefront.mjs';
 import { join } from 'node:path';
 
 const [cmd = 'help', ...rest] = process.argv.slice(2);
@@ -72,6 +74,7 @@ const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
   doctor                                   the health checklist (exit 1 when a check fails) — same list as /health and the digest
   verify [--anchor <id:mac>]              prove the audit chain (every row the one that was written, in order) and print the last 24 h; exit 1 on a break
   lockdown [--why '…']                     every session ended, every API token revoked, every sign-in link spent — "I think I have been breached"
+  away [YYYY-MM-DD [--note '…']] | away --back   the day you are back: the store, the acknowledgments and the SLA clock follow it; no date prints where it stands
   version                                  which build this is (package version, commit, date) and which environment
   backup [--no-offsite]                    a checked copy (opened, integrity, books balanced), then off-site when BACKUP_S3_* is set
   backup check <file> [--live]            prove a copy boots; --live also compares row counts with the running database
@@ -248,6 +251,11 @@ const main = async () => {
       out(''); out(securityText(db, cfg, { hours: Number(flags.hours || 24) }));
       if (!v.ok || !pf.ok) process.exitCode = 1;
       return;
+    }
+    case 'away': {
+      if (flags.back) { const a = clearAway(db, { actor: 'cli', cfg }); return out(a.until ? 'still away (the date is in the future?)' : 'back — the store is on its normal cadence'); }
+      if (args[0]) { const a = setAway(db, { until: args[0], note: flags.note || '' }, { actor: 'cli', cfg }); return out(`away until ${a.until_label} (${a.days_left} d) — the store says "${nextShipDate(new Date(), { tz: cfg.tz, closeDay: cfg.batchCloseDay, closeHour: cfg.batchCloseHour, shipDay: cfg.batchShipDay, awayUntil: a.until }).label}"`); }
+      const a = awayState(db, cfg); return out(a.on ? `away until ${a.until_label} (${a.days_left} d)${a.note ? ` · "${a.note}"` : ''} — the store says "${nextShipDate(new Date(), { tz: cfg.tz, closeDay: cfg.batchCloseDay, closeHour: cfg.batchCloseHour, shipDay: cfg.batchShipDay, awayUntil: a.until }).label}"` : 'not away');
     }
     case 'lockdown': { const r = lockdown(db, { actor: 'cli', why: flags.why || '' }); return out(`locked down: ${r.sessions} sessions ended, ${r.tokens.length} API tokens revoked (${r.tokens.join(', ') || 'none'}), ${r.links} sign-in links spent — sign in again with password + authenticator`); }
     case 'doctor': {

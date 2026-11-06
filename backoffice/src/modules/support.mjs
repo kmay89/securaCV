@@ -7,6 +7,7 @@ import { token } from '../http.mjs';
 import { upsertContact, validEmail, markBounced } from './contacts.mjs';
 import { enqueue, fill } from './mail.mjs';
 import { sanitize } from '../guard.mjs';
+import { slaDueAt, ackWhen } from './away.mjs';
 
 export const STATUSES = ['open', 'waiting_on_customer', 'waiting_on_us', 'closed'];
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
@@ -32,7 +33,7 @@ export function openTicket(db, { email, name = null, subject, body, kind = null,
   return db.tx(() => {
     const number = db.nextNumber('T'); const tt = token(4).toLowerCase().replace(/[^a-z0-9]/g, 'x').slice(0, 6).padEnd(6, 'x');
     const now = nowIso();
-    const sla = new Date(Date.now() + (cfg.slaHours || 24) * 3600_000).toISOString();
+    const sla = slaDueAt(db, cfg);   // the usual hours from now — or, while the operator is away, from the morning they are back (away.mjs)
     const r = db.run(`INSERT INTO tickets (number, contact_id, subject, status, priority, channel, kind, created_at, updated_at, sla_due_at, thread_token)
       VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`, number, contact?.id ?? null, String(subject || '(no subject)').slice(0, 200), priority || guess.priority, channel, kind || guess.kind, now, now, sla, tt);
     const id = r.lastInsertRowid;
@@ -41,7 +42,7 @@ export function openTicket(db, { email, name = null, subject, body, kind = null,
     // loop would otherwise make this server the one flooding them.
     const ackedLately = contact?.email && db.get("SELECT id FROM mail_outbox WHERE to_addr = ? AND kind = 'support' AND ref LIKE 'ticket:%' AND created_at >= ?", contact.email, new Date(Date.now() - 3600_000).toISOString());
     if (autoAck && contact?.email && !ackedLately) enqueue(db, { to: contact.email, subject: `[${number} ${tt}] Re: ${subject}`, kind: 'support', ref: `ticket:${number}`,
-      headers: inReplyToHeaders(messageId), text: fill(ACK_TPL, { name: contact.name || 'there', number, company: cfg.company || 'Errer Labs', hours: cfg.slaHours || 24 }) });
+      headers: inReplyToHeaders(messageId), text: fill(ACK_TPL, { name: contact.name || 'there', number, company: cfg.company || 'Errer Labs', when: ackWhen(db, cfg) }) });
     db.audit('system', 'ticket.open', 'ticket', number, { kind: kind || guess.kind, channel });
     return ticketById(db, id);
   });
@@ -236,7 +237,7 @@ export const slaBreaches = (db) => db.all('SELECT t.*, c.email FROM tickets t LE
 
 const ACK_TPL = `Hi {{name}},
 
-Got it — this is ticket {{number}}. A person (not a bot) reads every one; you'll hear back within {{hours}} hours, usually sooner. Keep the ticket number in the subject and replies land in the same thread.
+Got it — this is ticket {{number}}. A person (not a bot) reads every one; {{when}} Keep the ticket number in the subject and replies land in the same thread.
 
 — {{company}}
 `;

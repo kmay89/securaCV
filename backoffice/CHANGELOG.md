@@ -5,6 +5,41 @@ the build hash on `/healthz`, the Health page and `backoffice version` is the co
 CI stamped into the image. `tests/environment.test.mjs` holds the top entry here to
 the package version, so neither moves without the other.
 
+## 0.9.0
+
+- **Away mode.** One date the whole company reads (Settings → Away,
+  `backoffice away 2026-12-01 [--note '…']`, `--back`). While it stands, the
+  batch cadence counts from the morning you are back: the store's catalog
+  (`/store/catalog` now carries `away`), the ZIP estimate, the Checkout
+  Session's shipping option and the promise written on every webhook order
+  say the first batch after that day ("Back Mon, Dec 1 · ships Tue, Dec 9").
+  A date once shown is kept: the Checkout Session's `ships_on` rides its
+  metadata into the webhook's promise, and the thanks page reads the
+  order's stored promise (`estimateForShipDate`), so setting or clearing
+  away mode moves new purchases only.
+  A ticket opened meanwhile is acknowledged with the date and its SLA clock
+  starts at 9 am (operator time) on the return day; the `sla` job defers an
+  alarm whose clock ran out before that morning and reports how many it
+  held. Home wears a strip with the days to go, what the store is saying,
+  the tickets waiting and the one button; the doctor has an *Away* row (never
+  a failure); the digest carries it. It ends by itself that morning — the
+  date is compared, not a flag — or on "I'm back"; both ends are audit rows.
+  A walkthrough step (`away`) runs it on the demo page and in the test.
+  `src/modules/away.mjs`, `tests/away.test.mjs`, `MAINTENANCE.md` "Before you
+  go away".
+- **The mail domain, as receivers read it.** A `maildns` job (every six
+  hours) looks up the SPF record, the DMARC record and its policy, and the MX
+  of the `MAIL_FROM` (else `SUPPORT_ADDR`) domain; the doctor's *Mail domain*
+  row fails when one is missing and says which record to add, with a note on
+  `+all` and `p=none`. DKIM is the relay's key and is named, not checked. No
+  Health page waits on DNS: the row reads the job's last answer.
+  `src/modules/maildns.mjs`, `tests/maildomain.test.mjs`.
+- **`/.well-known/security.txt`** (and `/security.txt`) on the backoffice,
+  RFC 9116: the support address (the helpdesk files "security" as urgent),
+  an `Expires` inside a year, the canonical URL, the site's policy page. A
+  404 until `SUPPORT_ADDR` is set; a customer-facing path for
+  `ADMIN_ALLOW_CIDRS`.
+
 ## 0.8.0
 
 - **The audit log is a chain.** Every row carries the previous row's mark
