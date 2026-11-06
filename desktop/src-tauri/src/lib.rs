@@ -24,6 +24,7 @@ mod fleet;
 mod host;
 mod hub;
 mod launch_guard;
+mod seal;
 mod secret_store;
 mod serial_monitor;
 mod sscma;
@@ -1515,7 +1516,7 @@ pub fn run() {
         .manage(hub::PiUsbState::default())
         .manage(hub::HubFlashState::default())
         .manage(hub::HeadlessState::default())
-        .manage(fleet::ProvenState::default())
+        .manage(fleet::SealState::default())
         .manage(ChosenFiles::default())
         // On launch, reclaim anything a crash or pulled plug orphaned (a
         // ~2.5 GB raw staging image, a half-finished .partial download). Off

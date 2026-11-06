@@ -337,6 +337,11 @@ const secretStore = {
 // flasher's mintApiToken (flash-core.js): reject bytes >= 248 (248 = 62*4),
 // modulo below that is exactly uniform.
 const TOKEN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+// How the key travels after the flash, said once on the token card. The
+// browser flasher's done card says it in the same words (flash-core.js
+// SEALED_KEY_NOTE; desktop_parity.test.js holds the two equal): the fleet
+// book never sends the key in the clear (fleet.rs, seal.rs).
+const SEALED_KEY_NOTE = "From the Flasher's fleet book this key never travels in the clear: Identify and over-the-air updates seal it to the board's own identity key (an X25519 exchange signed by its Ed25519 key), so another device on your network answering to this board's name, or relaying to the real one, cannot read it. A board whose firmware predates the sealed exchange is asked to update once over USB first.";
 function mintApiToken() {
   for (;;) {
     const bytes = crypto.getRandomValues(new Uint8Array(96));
@@ -1409,10 +1414,11 @@ const fleetBook = {
   // book key → the device's answer to a fresh challenge, SHOWN and never
   // gating by itself: a badge can be minutes old, and the proof is
   // relay-able (whoami.rs), so it says which key answered, not who holds
-  // the socket. The gate that matters runs in Rust at call time —
-  // fleet_device_call makes the device at THAT address answer a FRESH
-  // challenge with the recorded key before a token is attached (deviceCall
-  // below hands it the id + fingerprint to check against).
+  // the socket. What protects the key is not a check on who answers but
+  // how the key travels: fleet_device_call sends it only sealed under a
+  // session agreed with the recorded identity key (seal.rs; the firmware's
+  // api_seal.h), so whoever is at the address gets a ciphertext (deviceCall
+  // below hands it the id + fingerprint the handshake is checked against).
   proof: {},
   proofAt: {},       // book key → last challenge (re-ask sparsely)
   // book key + address → the person said yes to a changed address this
@@ -1453,10 +1459,11 @@ const fleetBook = {
       const book = bookAll();
       // What is folded in is DISPLAY: the address a row shows is whatever
       // the network last said, because any host on it can announce a
-      // device_id with its own address. A token never follows that address
-      // on the announcement's word — deviceCall below makes the device at
-      // it prove its key first, and a changed address is confirmed by hand
-      // (addressTrusted) before it is ever trusted.
+      // device_id with its own address. A token never goes to that address
+      // in the clear — deviceCall below seals it to the recorded identity
+      // key, so a host that is not the device gets nothing it can read —
+      // and a changed address is still confirmed by hand (addressTrusted)
+      // before anything is sent there at all.
       for (const entry of Object.values(book)) {
         const s = entry.deviceId && this.sightings[entry.deviceId];
         if (!s) continue;
@@ -1609,7 +1616,8 @@ const fleetBook = {
   // attack shape — a host on the LAN announcing a victim's device_id with
   // its own address — and also what a DHCP lease change looks like, so a
   // human decides: a native confirm names both addresses, and only a yes
-  // moves the pairing. The Rust challenge still runs after this.
+  // moves the pairing. The sealed handshake still runs after this: a yes
+  // here never hands the key to whatever answers there.
   async addressTrusted(entry, base) {
     const addr = this.addrOf(base);
     if (!entry.pairedAddr || entry.pairedAddr === addr) return true;
@@ -1617,7 +1625,7 @@ const fleetBook = {
     const who = entry.name || entry.deviceId;
     const text = `${who} used to answer at ${entry.pairedAddr} and now announces itself at ${addr}.\n\n` +
       "A new address can be your router handing out another one — or a different device on " +
-      "your network using this Canary's name. Trust the new address? Its key is still checked first.";
+      "your network using this Canary's name. Trust the new address? The key still only goes sealed to this Canary's own identity.";
     let ok = false;
     try {
       ok = await window.__TAURI__.dialog.confirm(text, { title: "This Canary moved", kind: "warning" });
@@ -1631,12 +1639,15 @@ const fleetBook = {
     }
     return ok;
   },
-  // One authenticated call to a device, with everything the Rust gate needs
-  // to refuse: the device id and the fingerprint the book recorded, which
-  // fleet_device_call checks a FRESH challenge against before the token is
-  // attached (once per device + address per session). No fingerprint yet
-  // means no call: ask for the badge first (probeIdentityFor), which records
-  // it on first sight. The first address that passes becomes the pairing.
+  // One authenticated call to a device, with everything the Rust side needs
+  // to seal: the device id and the fingerprint the book recorded, which the
+  // handshake's signature is checked against before a session key exists
+  // (once per device + address, and again when the device says the session
+  // is gone). The key then rides only sealed under that session, never as a
+  // plain bearer, and there is no fallback: firmware without the handshake
+  // is told to update once over USB. No fingerprint yet means no call: ask
+  // for the badge first (probeIdentityFor), which records it on first
+  // sight. The first address that passes becomes the pairing.
   async deviceCall(entry, base, token, action) {
     if (!entry.pubkeyFp) await this.probeIdentityFor(entry, base);
     const r = await invoke("fleet_device_call", {
@@ -1661,9 +1672,9 @@ const fleetBook = {
       const r = await this.deviceCall(entry, base, token, "identify");
       if (r.httpStatus === 401) this.note(key, this.staleTokenNote());
       else if (r.httpStatus === 404) this.note(key, "This firmware doesn't have an identify signal yet.");
-      else this.note(key, "✓ Watch for the blink.");
+      else this.note(key, "✓ Watch for the blink. (The key went sealed to its identity.)");
     } catch (e) {
-      this.note(key, "Couldn't reach it: " + e);
+      this.note(key, this.callNote(e));
     } finally {
       this.opBusy[key] = false;
       this.renderSoon();
@@ -1753,13 +1764,20 @@ const fleetBook = {
       }
       this.note(key, "Still working — the board finishes on its own; check back in a minute.");
     } catch (e) {
-      this.note(key, "Couldn't start the update: " + e);
+      this.note(key, this.callNote(e));
     } finally {
       this.opBusy[key] = false;
       this.renderSoon();
     }
   },
 
+  // A refusal from fleet_device_call is already a sentence that says the key
+  // stayed here (seal.rs Refusal::detail, the handshake's own words); a
+  // transport failure or an internal one is not, and gets the prefix.
+  callNote(e) {
+    const s = String(e);
+    return /^[A-Z]/.test(s) ? s : "Couldn't reach it: " + s;
+  },
   noTokenNote() {
     return "No stored key for this board. Reflash it once with this app and one is minted and kept.";
   },
@@ -1823,14 +1841,14 @@ const fleetBook = {
       // The identity proof, SHOWN and never gating by itself: the badge may
       // be minutes old, and a relay can forward a genuine device's answer,
       // so it says who answered, not who is holding the socket — see
-      // whoami.rs and the fleet-book doc. (The token gate is Rust's own
-      // fresh challenge at call time, in fleet_device_call.) The one loud
-      // case is wrong-key: a different identity answering for this device
-      // id is worth interrupting for.
+      // whoami.rs and the fleet-book doc. (The key itself only ever goes
+      // sealed to this identity, in fleet_device_call.) The one loud case
+      // is wrong-key: a different identity answering for this device id is
+      // worth interrupting for.
       const pr = this.proof[e.key];
       const proofBadge = !pr ? ""
         : pr.proof === "answered"
-          ? `<span class="fb-badge proof" title="Signed a fresh challenge with the key recorded at flash time. A relay could forward a real device's answer, so this doesn't prove the address — Identify and Update run their own challenge first, and a changed address is confirmed by hand.">identity answered</span>`
+          ? `<span class="fb-badge proof" title="Signed a fresh challenge with the key recorded at flash time. A relay could forward a real device's answer, so this doesn't prove the address — which is why Identify and Update send the key only sealed to this identity, and a changed address is confirmed by hand.">identity answered</span>`
           : pr.proof === "wrong-key"
             ? `<span class="fb-badge bad" title="${esc(pr.detail || "")}">different key answered</span>`
             : pr.proof === "bad-signature"
@@ -4064,6 +4082,7 @@ function renderTokenOnce(apiToken) {
         `A reflash or a 10-second BOOT reset replaces it.</span>`
       : `<span class="muted">Kept in ${esc(secretStore.where())} for the fleet book. ` +
         `Copy it if you want it elsewhere; a reflash or a 10-second BOOT reset replaces it.</span>`) +
+    ` <span class="muted">${esc(SEALED_KEY_NOTE)}</span>` +
     `<span class="token-row"><code>${esc(apiToken)}</code>` +
     `<button type="button" class="btn btn-ghost btn-small" id="token-copy">Copy</button></span>`;
   box.classList.remove("hidden");

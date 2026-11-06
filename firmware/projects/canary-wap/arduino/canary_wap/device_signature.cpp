@@ -300,6 +300,38 @@ size_t build_whoami_canonical(const char*   nonce_hex,
   return (size_t)n;
 }
 
+size_t build_seal_canonical(const char*   nonce_hex,
+                            const char*   client_pub_hex,
+                            const char*   device_pub_hex,
+                            const char*   device_id,
+                            char*         out,
+                            size_t        cap) {
+  if (!out || cap == 0) return 0;
+  int n = snprintf(out, cap, "%s|v%d|seal|%s|%s|%s|%s",
+                   SIG_PREFIX, SCHEMA_V,
+                   device_id      ? device_id      : "",
+                   nonce_hex      ? nonce_hex      : "",
+                   client_pub_hex ? client_pub_hex : "",
+                   device_pub_hex ? device_pub_hex : "");
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
+}
+
+bool seal_pub_hex_ok(const char* pub_hex) {
+  if (!pub_hex) return false;
+  size_t len = 0;
+  while (pub_hex[len]) {
+    const char c = pub_hex[len];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    len++;
+    if (len > 64) return false;
+  }
+  return len == 64;
+}
+
 bool whoami_nonce_ok(const char* nonce_hex) {
   if (!nonce_hex) return false;
   size_t len = 0;
@@ -408,6 +440,39 @@ bool sign_whoami(const char* nonce_hex,
 #else
   /* Host build: the canonical + nonce gate are tested directly; the full
    * sign/verify round-trip is exercised by the Flasher's Rust verifier. */
+  sig_hex_out[0] = '\0';
+  return false;
+#endif
+}
+
+bool sign_seal(const char* nonce_hex,
+               const char* client_pub_hex,
+               const char* device_pub_hex,
+               char*       sig_hex_out,
+               size_t      sig_cap) {
+  if (!s_ready || !sig_hex_out || sig_cap < SIG_HEX_CAP) return false;
+  /* Every field gated here too, whatever the handler checked: this key
+   * signs only a transcript of the fixed shape. */
+  if (!whoami_nonce_ok(nonce_hex) || !seal_pub_hex_ok(client_pub_hex) ||
+      !seal_pub_hex_ok(device_pub_hex)) {
+    return false;
+  }
+  /* prefix 19 + "|v1|seal|" 9 + device_id 48 + 3 separators + nonce 64 +
+   * two keys of 64 + NUL = 272 at most. */
+  char canon[320];
+  size_t n = build_seal_canonical(nonce_hex, client_pub_hex, device_pub_hex,
+                                  s_device_id, canon, sizeof(canon));
+  if (n == 0) return false;
+#ifdef ARDUINO
+  uint8_t sig_bin[64] = {};
+  Ed25519::sign(sig_bin, s_priv, s_pub,
+                reinterpret_cast<const uint8_t*>(canon), n);
+  hex_encode(sig_bin, sizeof(sig_bin), sig_hex_out, sig_cap);
+  return true;
+#else
+  /* Host build: the canonical and both gates are tested directly
+   * (tests_host/test_api_seal.cpp); the signature is checked end to end by
+   * the Flasher's Rust verifier against the same reference vectors. */
   sig_hex_out[0] = '\0';
   return false;
 #endif
