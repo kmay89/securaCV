@@ -97,19 +97,38 @@ const KEYS = {
   welcomed: "scv-lab-welcomed",
   kernel: "scv-kernel",        // the typed kernel address (witness-host.js reads the same key)
   progress: "scv-lab-progress",
+  benches: "scv-lab-benches",  // every bench ever opened, by slug
+  setupHidden: "scv-lab-setup-hidden",
 };
+// The Flash bench's own memory of a finished install, read here and never
+// written: the browser flasher's install times (assets/flash.js
+// INSTALL_TIMES_KEY, kept once the write matched) and the native bench's
+// last flash (assets/flash-native.js FLASHED_KEY, kept once the flash
+// command returned its receipt). The desktop app always mounts the native
+// bench, so without the second key this step could never be done there.
+const FLASH_MEMORY_KEY = "canary.flash.installTimes.v1";
+const FLASHED_KEY = "scv-lab-flashed";
 const load = (k, fallback) => { try { return JSON.parse(localStorage.getItem(k)) ?? fallback; } catch { return fallback; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode: not remembered */ } };
 
 export function rememberBench(entry) {
   if (!entry) return;
   save(KEYS.last, { slug: entry.bench.slug, noun: entry.bench.noun, stage: entry.stage.name, n: entry.stage.n, at: Date.now() });
+  const opened = benchesOpened();
+  if (!opened.has(entry.bench.slug)) { opened.add(entry.bench.slug); save(KEYS.benches, [...opened]); }
 }
 export const lastBench = () => load(KEYS.last, null);
+export const benchesOpened = () => new Set(load(KEYS.benches, []));
 export const kernelAddress = () => { try { return localStorage.getItem(KEYS.kernel) || ""; } catch { return ""; } };
 export const welcomed = () => !!load(KEYS.welcomed, false);
+export const flashedHere = () => {
+  try {
+    if (localStorage.getItem(FLASHED_KEY)) return true;
+    return Object.keys(JSON.parse(localStorage.getItem(FLASH_MEMORY_KEY) || "{}")).length > 0;
+  } catch { return false; }
+};
 export function forgetEverything() {
-  for (const k of [KEYS.seen, KEYS.last, KEYS.welcomed, KEYS.progress]) { try { localStorage.removeItem(k); } catch {} }
+  for (const k of [KEYS.seen, KEYS.last, KEYS.welcomed, KEYS.progress, KEYS.benches, KEYS.setupHidden]) { try { localStorage.removeItem(k); } catch {} }
 }
 
 /* ---- words ---- */
@@ -345,6 +364,64 @@ function kernelLine() {
   return kernelAddress() ? "No hub answering at " + kernelAddress().replace(/^https?:\/\//, "") : "No hub answering yet";
 }
 
+/* ---- the setup path, as the app can see it ----
+   Five steps from a bare board to a fleet on the wall, each one answered by
+   something this app observes rather than something you tick: a port
+   listed, an install the Flash bench remembered, a Canary announcing itself
+   (so it joined Wi-Fi), a hub answering, the Wall opened. The first step not
+   yet done is the one with the button. A step a build cannot observe is not
+   listed — nothing here claims what it cannot see. */
+export function setupSteps() {
+  const heard = fleet.devices().some((r) => r.source !== "kernel");
+  const usb = usbLine();
+  return [
+    { id: "plug", title: "Plug a board in over USB", done: fleet.ports.length > 0,
+      sub: fleet.ports.length ? usb.head + " on " + fleet.ports[0].name : "Use a USB-C data cable; a charge-only cable shows nothing.",
+      go: CAPS.serial ? ["flash", "Flash a board"] : null, show: CAPS.serial_list },
+    { id: "flash", title: "Put signed firmware on it", done: flashedHere(),
+      // Only what both benches do: the native bench (the desktop app's)
+      // takes no backup first, so none is promised here.
+      sub: "The Flash bench offers only firmware built for the board's chip, checked against the signed release before a byte is written.",
+      go: ["flash", "Flash a board"], show: CAPS.serial },
+    { id: "boot", title: "First boot: name it, join your Wi-Fi", done: heard,
+      sub: heard ? "A Canary has announced itself on your network." : "Power it up and it hands you a setup network. First boot walks you through it.",
+      go: ["first-boot", "First boot"], show: CAPS.mdns },
+    { id: "hub", title: "Give it a hub", done: !!fleet.kernel,
+      sub: fleet.kernel ? kernelLine() : "A hub keeps the whole fleet's record. Not at canary.local? Type its address on Your fleet.",
+      go: ["hub", "Set up the hub"], show: CAPS.discovery },
+    { id: "wall", title: "Watch the wall", done: benchesOpened().has("witness-wall"),
+      sub: "Your fleet's record on one screen, with the Canaries the app found.",
+      go: ["witness-wall", "Watch the wall"], show: true },
+  ].filter((s) => s.show);
+}
+const setupHidden = () => !!load(KEYS.setupHidden, false);
+
+function setupCard(ctx, onChange) {
+  const steps = setupSteps();
+  const done = steps.filter((s) => s.done).length;
+  const hide = () => { save(KEYS.setupHidden, true); onChange(); };
+  const head = h("div", { class: "dash-sec-head" },
+    h("h2", {}, "Set up a Canary"),
+    h("span", { class: "muted" }, done + " of " + steps.length + " done"),
+    h("button", { class: "link", onclick: hide, title: "Hide this list; Updates & about can bring it back" }, "Hide"));
+  if (done === steps.length) {
+    return h("section", { class: "dash-sec setup" }, head,
+      h("p", { class: "set-lede" }, "Every step done. The fleet is yours to watch; the build line below goes deeper."));
+  }
+  let current = true;
+  const rows = steps.map((s, i) => {
+    const state = s.done ? "done" : current ? "now" : "later";
+    if (!s.done) current = false;
+    return h("li", { class: "step " + state },
+      h("span", { class: "step-n", "aria-hidden": "true" }, s.done ? h("span", { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>' }) : String(i + 1)),
+      h("div", { class: "step-main" },
+        h("div", { class: "step-t" }, s.title, s.done ? h("span", { class: "step-ok" }, "done") : null),
+        h("div", { class: "step-s" }, s.sub)),
+      s.go && !s.done ? h("button", { class: "btn small " + (state === "now" ? "primary" : "ghost"), onclick: () => ctx.goBench(s.go[0]) }, s.go[1]) : null);
+  });
+  return h("section", { class: "dash-sec setup" }, head, h("ol", { class: "steps" }, ...rows));
+}
+
 /* ---- Home ---- */
 export function dashboardView(ctx) {
   const root = h("div", { class: "dash" });
@@ -390,6 +467,7 @@ export function dashboardView(ctx) {
       h("p", { class: "verb" }, "What's plugged in, what's on your network, and where you left off."),
       welcomed() ? null : welcomeCard(ctx, () => render()),
       h("div", { class: "dash-grid" }, netCard, usbCard, appCard),
+      setupHidden() ? null : setupCard(ctx, () => render()),
       last ? h("section", { class: "dash-sec" },
         h("h2", {}, "Pick up where you left off"),
         h("button", { class: "resume-card", onclick: () => ctx.navigate(last.slug) },
@@ -440,8 +518,8 @@ function welcomeCard(ctx, onDone) {
 /* ---- Your fleet ---- */
 export function devicesView(ctx) {
   const root = h("div", { class: "devices" });
-  const addr = h("input", { type: "url", class: "kaddr", placeholder: "http://192.168.1.40:8099", value: kernelAddress(),
-    "aria-label": "Kernel address", spellcheck: "false", autocomplete: "off" });
+  const addr = h("input", { type: "url", class: "kaddr", id: "kaddr", placeholder: "http://192.168.1.40:8099", value: kernelAddress(),
+    spellcheck: "false", autocomplete: "off" });
   const saveAddr = async () => {
     const v = addr.value.trim();
     if (v && !/^https?:\/\/[^\s/]+/i.test(v)) { note.textContent = "Type the address as http://host or http://host:port."; return; }
@@ -463,8 +541,9 @@ export function devicesView(ctx) {
         : "Every Canary that announces itself on your network lands here, with its firmware and address."),
       devices.length ? h("div", { class: "dv-list" }, ...devices.map((r) => deviceRow(r, ctx))) : emptyFleet(ctx),
       h("section", { class: "dash-sec" },
-        h("h2", {}, "Hub and kernel"),
-        h("p", { class: "set-lede" }, kernelLine() || "A hub's kernel answers for the whole fleet. Type its address if it isn't found at canary.local."),
+        h("h2", {}, "Your hub"),
+        h("p", { class: "set-lede" }, kernelLine() || "A hub keeps the record for the whole fleet and answers for every Canary on it. The app looks for one at canary.local; type its address if it lives elsewhere."),
+        h("label", { class: "kaddr-label", for: "kaddr" }, "Hub address"),
         h("div", { class: "kaddr-row" }, addr, h("button", { class: "btn ghost", onclick: saveAddr }, "Save"), note),
         h("div", { class: "actions" },
           h("button", { class: "btn ghost", onclick: () => ctx.goBench("witness-wall") }, ico(I.wall), "Watch the wall"),
@@ -513,18 +592,39 @@ export const SHORTCUTS = [
   ["⌘ R", "Reload the bench you are on"],
   ["⌘ ,", "Settings"],
 ];
+/** One chord, one answer — the same for a key pressed in the shell's own
+    document and for one a framed bench forwarded (lab-nav.js). `typing`
+    is whether a text field had focus: a digit or a bracket there is
+    their own text. Returns whether the chord was taken. */
+export function handleShortcut(ctx, { key, shiftKey = false, typing = false }) {
+  const k = String(key || "").toLowerCase();
+  if (k === "k") { ctx.focusSearch(); return true; }
+  if (k === "h" && shiftKey) { ctx.navigate("dashboard"); return true; }
+  if (k === ",") { if (SETTINGS_AVAILABLE) ctx.navigate("settings"); return true; }
+  if (k === "r") { ctx.reloadBench(); return true; }
+  if (typing) return false;
+  if (/^[1-6]$/.test(k) && !shiftKey) { const s = ctx.stages()[Number(k) - 1]; if (s) ctx.goBench(ctx.firstOf(s).slug); return true; }
+  if (k === "[" || k === "]") { ctx.step(k === "]" ? 1 : -1); return true; }
+  return false;
+}
 export function installShortcuts(ctx) {
   window.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
     if (!mod || e.altKey) return;
-    const k = e.key.toLowerCase();
-    const typing = /^(input|textarea|select)$/i.test((e.target && e.target.tagName) || "");
-    if (k === "k") { e.preventDefault(); ctx.focusSearch(); return; }
-    if (k === "h" && e.shiftKey) { e.preventDefault(); ctx.navigate("dashboard"); return; }
-    if (k === "," ) { e.preventDefault(); if (SETTINGS_AVAILABLE) ctx.navigate("settings"); return; }
-    if (k === "r") { e.preventDefault(); ctx.reloadBench(); return; }
-    if (typing) return;
-    if (/^[1-6]$/.test(k) && !e.shiftKey) { const s = ctx.stages()[Number(k) - 1]; if (s) { e.preventDefault(); ctx.goBench(ctx.firstOf(s).slug); } return; }
-    if (k === "[" || k === "]") { e.preventDefault(); ctx.step(k === "]" ? 1 : -1); }
+    const t = e.target;
+    const typing = !!t && (/^(input|textarea|select)$/i.test(t.tagName || "") || t.isContentEditable === true);
+    if (handleShortcut(ctx, { key: e.key, shiftKey: e.shiftKey, typing })) e.preventDefault();
+  });
+  // The same chords, pressed inside a framed bench: focus is in the frame
+  // after any click there, and its keydowns never reach this document, so
+  // lab-nav.js forwards them. Only from the bench actually on screen, same
+  // origin, and only the key itself — one character, nothing to echo.
+  window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin) return;
+    const d = e.data;
+    if (!d || d.source !== "scv-lab" || d.type !== "key") return;
+    const frame = document.querySelector(".bench-frame");
+    if (!frame || e.source !== frame.contentWindow) return;
+    handleShortcut(ctx, { key: String(d.key || "").slice(0, 1), shiftKey: d.shiftKey === true, typing: d.typing === true });
   });
 }

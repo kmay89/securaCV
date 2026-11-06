@@ -16,6 +16,38 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.4.1 — 2026-11-06
+
+**Every workflow is easier to follow: a setup list on the Home that ticks
+itself, a bar that says what each bench is and names the next one, shortcuts
+that work inside a bench, and a search that finds everything.**
+
+- **Set up a Canary.** Five steps on the Home — plug a board in, flash it,
+  first boot, give it a hub, watch the wall — each answered by something
+  the app observes (a port listed, an install the Flash bench remembered,
+  a Canary announcing itself, a hub answering, the Wall opened), never by a
+  box you tick. The first step not yet done carries the button. *Hide* puts
+  it away; forgetting on-device memory brings it back.
+- **The bench bar explains itself.** Under every bench's name, the one line
+  that says what it is; on a wide window the › is *Next: First boot*
+  instead of an arrow to guess at.
+- **Pick a sense.** Stage 4's long options note is three chips — Camera,
+  Radar, Sound — the current one lit, each a click to that bench.
+- **Get started stays in the app.** The guided thread opens inside the
+  shell like any bench; it used to be a link that left the sidebar, the
+  strip and the shortcuts behind.
+- **Shortcuts work inside a bench.** Focus lands in the bench after any
+  click there, and until now that silenced ⌘K and the rest. A framed bench
+  now hands the chords up. ⌘1–6 and the brackets stay yours while you are
+  typing in a field.
+- **Search the Lab.** The sidebar search covers the app's own views, the
+  references, every bench and depth, and the descriptions too; stages fold
+  to their hits; Enter opens the first; Escape clears; a miss says so.
+- **Less to scroll past.** A bench framed by the shell drops its bird and
+  big title — the bar already names it — so the tool starts higher.
+- **Plainer words on Your fleet.** *Your hub* and a labeled *Hub address*
+  instead of *Hub and kernel* and an unlabeled field.
+
 ## 0.4.0 — 2026-11-06
 
 **The app opens on a Home of its own: what is plugged in, who is on your

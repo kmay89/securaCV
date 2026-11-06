@@ -2142,3 +2142,14 @@ button.ghost.small.bench-ff { font-size: 12px; }
 .scv-bar .scv-sep { color: var(--faint); }
 .scv-bar .scv-where { margin-left: auto; color: var(--faint); font-weight: 500; }
 @media (max-width: 560px) { .scv-bar .scv-where { display: none; } }
+
+/* ── framed by the Lab shell (lab-nav.js sets .scv-embedded) ──
+   The shell's bar already names the bench and says what it is, so the
+   page's own hero — bird, 44px title, lede, links — repeated it a screen
+   tall and pushed the bench itself below the fold. Keep the lede (it is the
+   long form) and the links (they hand up to the shell); lose the mark and
+   most of the air. */
+.scv-embedded #hero { padding-top: 24px; }
+.scv-embedded #hero .mark { display: none; }
+.scv-embedded #hero h1 { font-size: 30px; margin-top: 0; }
+.scv-embedded #hero .lede { margin-top: 10px; font-size: 15px; }
