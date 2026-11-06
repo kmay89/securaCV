@@ -25,7 +25,7 @@ import { actorStore, nowIso } from './db.mjs';
 import { registerUsers } from './admin_users.mjs';
 import { loadCatalog, loadShipping } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
-import { storefrontCatalog, estimateForZip, createCheckout, sessionStatus, StoreError, oversoldLines } from './modules/storefront.mjs';
+import { storefrontCatalog, estimateForZip, estimateForShipDate, createCheckout, sessionStatus, StoreError, oversoldLines } from './modules/storefront.mjs';
 import { recordOrder, refund, orderByNumber, transition, updateShipping, listOrders, timeline, addNote, addEvent, setTags, batches, statusCounts } from './modules/orders.mjs';
 import { listCustomers, contactById, customerStats, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate as evaluateDiscount } from './modules/discounts.mjs';
@@ -421,7 +421,9 @@ export async function applyStripeEvent(app, m, event = null) {
     if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || timedFetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
     if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || timedFetch }); } catch { /* the id stays */ } }
     // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying, written on the order as its promise.
-    const est = estimateForZip(m.ship?.zip || m.ship_zip, { cfg, db });
+    // A site checkout carries the ship date it showed (metadata.ships_on, createCheckout) and that date is kept, whatever the cadence or the away
+    // date says by the time the webhook lands; a Payment Link or an import has none and is promised the cadence of now.
+    const est = estimateForShipDate(m.ships_on, m.ship?.zip || m.ship_zip, { cfg, state: m.ship?.state || m.ship_state }) || estimateForZip(m.ship?.zip || m.ship_zip, { cfg, db });
     const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe', promise: { ship_on: est.ships.ships_on, arrive_by: est.delivers?.latest || null } });
     if (created && order.email && order.items.length) { const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
       enqueue(db, { to: order.email, subject: `We have your ${cfg.product || 'SecuraCV'} order ${order.number}`, kind: 'transactional', ref: `order:${order.number}`, contactId: order.contact_id,

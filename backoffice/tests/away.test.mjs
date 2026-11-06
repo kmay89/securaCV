@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { awayState, setAway, clearAway, slaDueAt, ackWhen, awayUntilFor } from '../src/modules/away.mjs';
-import { nextShipDate, estimateForZip, storefrontCatalog, createCheckout, sessionStatus } from '../src/modules/storefront.mjs';
+import { nextShipDate, estimateForZip, estimateForShipDate, storefrontCatalog, createCheckout, sessionStatus } from '../src/modules/storefront.mjs';
 import { openTicket, slaBreaches } from '../src/modules/support.mjs';
 import { recordOrder } from '../src/modules/orders.mjs';
 import { orderPromise } from '../src/modules/promise.mjs';
@@ -11,6 +11,7 @@ import { doctor, digestText } from '../src/modules/health.mjs';
 import { runJob } from '../src/jobs.mjs';
 import { openExceptions } from '../src/modules/exceptions.mjs';
 import { createApp, applyStripeEvent } from '../src/server.mjs';
+import { eventToOrder } from '../src/modules/stripe.mjs';
 import { setupOperator, totp } from '../src/auth.mjs';
 import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
 
@@ -73,11 +74,36 @@ test('the store follows it: the catalog, the estimate, the Checkout Session Stri
   const o = db.get('SELECT * FROM orders WHERE external_id = ?', 'cs_test_away1'); assert.ok(o); assert.equal(o.promised_ship_on, '2026-11-10');
   assert.equal(orderPromise(o, cfg).ship_on, '2026-11-10');
   const mail = db.get("SELECT body_text FROM mail_outbox WHERE ref = ? ORDER BY id DESC LIMIT 1", `order:${o.number}`); assert.match(mail.body_text, /Tue, Nov 10/);
-  const st = sessionStatus(db, cfg, 'cs_test_away1', { now: NOW }); assert.equal(st.ships.ships_on, '2026-11-10');
-  // back early: the next catalog is on the normal cadence; the order keeps the promise it was made
+  const st = sessionStatus(db, cfg, 'cs_test_away1', { now: NOW }); assert.equal(st.ships.ships_on, '2026-11-10'); assert.equal(st.ships.closes_label, 'Sunday, Nov 8'); assert.equal(st.delivers.latest, o.promised_arrive_by);
+  // back early: the next catalog is on the normal cadence; the order keeps the promise it was made, on its page and on the thanks page
   clearAway(db, { cfg, now: NOW.getTime() });
   assert.equal(storefrontCatalog(db, cat, { now: NOW, cfg }).ships.ships_on, '2026-10-27'); assert.equal(storefrontCatalog(db, cat, { now: NOW, cfg }).away, null);
   assert.equal(orderPromise(db.get('SELECT * FROM orders WHERE external_id = ?', 'cs_test_away1'), cfg).ship_on, '2026-11-10', 'the promise is stored on the order, not recomputed');
+  assert.equal(sessionStatus(db, cfg, 'cs_test_away1', { now: NOW }).ships.ships_on, '2026-11-10', 'the thanks page repeats the stored promise, not the cadence of the moment');
+  // a session opened while away whose webhook lands after "I'm back" keeps the date the shopper saw (metadata.ships_on); the reverse too
+  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away2', line_items_present: true, ships_on: '2026-11-10' }) });
+  const o2 = db.get('SELECT * FROM orders WHERE external_id = ?', 'cs_test_away2'); assert.equal(o2.promised_ship_on, '2026-11-10');
+  assert.match(db.get("SELECT body_text FROM mail_outbox WHERE ref = ? ORDER BY id DESC LIMIT 1", `order:${o2.number}`).body_text, /Tue, Nov 10/);
+  setAway(db, { until: '2026-11-02' }, { cfg, now: NOW.getTime() });
+  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away3', line_items_present: true, ships_on: '2026-10-27' }) });
+  assert.equal(db.get('SELECT promised_ship_on FROM orders WHERE external_id = ?', 'cs_test_away3').promised_ship_on, '2026-10-27', 'a purchase made before the trip is not postponed by it');
+  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away4', line_items_present: true, ships_on: 'next week' }) });
+  assert.equal(db.get('SELECT promised_ship_on FROM orders WHERE external_id = ?', 'cs_test_away4').promised_ship_on, '2026-11-10', 'no usable date from the session (a Payment Link): the cadence of now, away included');
+  // the mapping carries the date from the session's metadata, and only a date
+  assert.equal(eventToOrder({ type: 'checkout.session.completed', data: { object: { id: 'cs_x', payment_status: 'paid', metadata: { ships_on: '2026-11-10' }, line_items: { data: [] } } } }).ships_on, '2026-11-10');
+  assert.equal(eventToOrder({ type: 'checkout.session.completed', data: { object: { id: 'cs_y', payment_status: 'paid', metadata: { ships_on: 'soon' }, line_items: { data: [] } } } }).ships_on, null);
+});
+
+test('estimateForShipDate: a date already promised, read back in the live estimate\'s shape — the close before it, the window from it, never away', () => {
+  const cfg = testCfg(boston);
+  const e = estimateForShipDate('2026-11-10', '53703', { cfg });
+  assert.equal(e.ships.closes_on, '2026-11-08'); assert.equal(e.ships.closes_label, 'Sunday, Nov 8'); assert.equal(e.ships.ships_label, 'Tue, Nov 10'); assert.equal(e.ships.label, 'Ships Tue, Nov 10'); assert.equal(e.ships.away, null);
+  assert.equal(e.state, 'WI'); assert.equal(e.basis, 'promise'); assert.ok(e.delivers.earliest > '2026-11-10'); assert.match(e.label, /^Ships Tue, Nov 10 · arrives /);
+  assert.deepEqual(e.delivers, estimateForZip('53703', { now: new Date('2026-11-03T12:00:00Z'), cfg }).delivers, 'the same window the live estimate gives for that ship day');
+  // a ship day on the close day closes a week before; a Friday-close cadence counts back to Friday
+  assert.equal(estimateForShipDate('2026-11-08', '53703', { cfg }).ships.closes_on, '2026-11-01');
+  assert.equal(estimateForShipDate('2026-11-09', '53703', { cfg: testCfg({ ...boston, batchCloseDay: 5, batchCloseHour: 17 }) }).ships.closes_on, '2026-11-06');
+  for (const bad of [null, '', 'soon', '2026-02-30']) assert.equal(estimateForShipDate(bad, '53703', { cfg }), null);
 });
 
 test('support follows it: the acknowledgment names the date, the SLA clock starts the morning of the return, and the SLA job raises nothing about a wait the customer was told about', async () => {

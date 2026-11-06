@@ -56,6 +56,7 @@ export function eventToOrder(event) {
       ship: { line1: addr.line1 || '', line2: addr.line2 || '', city: addr.city || '', state: addr.state || '', zip: addr.postal_code || '', country: addr.country || 'US' },
       items, paid_at: new Date((o.created || Date.now() / 1000) * 1000).toISOString(),
       recovered_from: o.recovered_from?.checkout_session_id || null,   // the expired session this one reopened, if any
+      ships_on: /^\d{4}-\d{2}-\d{2}$/.test(o.metadata?.ships_on || '') ? o.metadata.ships_on : null,   // the ship date the site showed at checkout (createCheckout); the webhook keeps it
     };
   }
   if (type === 'charge.dispute.created' || type === 'charge.dispute.closed' || type === 'charge.dispute.updated') {

@@ -85,6 +85,23 @@ export function estimateForZip(zip, { now = new Date(), cfg = {}, db = null, awa
     label: d ? `${ships.label} · arrives ${d.label}` : ships.label, basis: 'estimate' };
 }
 
+// A promise already made — the Checkout Session's `ships_on`, an order's `promised_ship_on` — read back
+// in the shape of the live estimate, so the webhook and the thanks page repeat the date the shopper saw
+// and never re-decide it (the cadence or the away date may have moved since). The close is the cadence's
+// close day before that ship day; the arrival window is the same bands, counted from that day.
+export function estimateForShipDate(shipsOn, zip, { cfg = {}, state = null } = {}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(shipsOn || ''))) return null;
+  const [y, m, d] = shipsOn.split('-').map(Number); const ship = plusDays({ y, m, d }, 0);
+  if (ship.y !== y || ship.m !== m || ship.d !== d) return null;
+  const closeDay = cfg.batchCloseDay ?? 0, closeHour = cfg.batchCloseHour ?? 23;
+  let back = (ship.weekday - closeDay + 7) % 7; if (back === 0) back = 7; const close = plusDays(ship, -back);
+  const st = state || stateForZip(zip);
+  const dl = estimateDelivery(new Date(`${shipsOn}T16:00:00Z`), st, { fromState: cfg.shipFromState, carrier: 'USPS' });
+  const ships = { closes_on: ymd(close), closes_weekday: DAYS[closeDay], closes_hour: closeHour, ships_on: shipsOn, ships_weekday: DAYS[ship.weekday], label: `Ships ${dayLabel(ship)}`, ships_label: dayLabel(ship), closes_label: `${DAYS[closeDay]}, ${MONTHS[close.m - 1]} ${close.d}`, tz: cfg.tz || currentTz(), away: null };
+  return { zip: zip ? String(zip).trim().slice(0, 10) : null, state: st, ships, delivers: dl ? { min_days: dl.min_days, max_days: dl.max_days, earliest: dl.earliest, latest: dl.latest, label: dl.label } : null, carrier: 'USPS Ground Advantage',
+    label: dl ? `${ships.label} · arrives ${dl.label}` : ships.label, basis: 'promise' };
+}
+
 // How many of a SKU this batch can still take: the batch cap in store.json minus what this batch
 // has sold (this ISO week in the operator's zone), and never more than the shelf can build once
 // the orders already paid but not yet packed have taken their parts (packing is what consumes
@@ -193,11 +210,13 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
 }
 
 // The thanks page: the order the webhook recorded for that session, or "not yet" (Stripe's webhook
-// can land a few seconds after the redirect; the page asks again).
+// can land a few seconds after the redirect; the page asks again). The dates are the order's own
+// promise (promise.mjs), never the cadence of the moment: an away date set or cleared since must not
+// move what this customer was told. Only an order from before the promise column is estimated live.
 export function sessionStatus(db, cfg, sessionId, { now = new Date() } = {}) {
   if (!/^cs_[A-Za-z0-9_]{8,}$/.test(String(sessionId || ''))) throw new StoreError(400, 'that is not a checkout session id');
   const o = orderByNumber(db, sessionId); if (!o) return { pending: true };
-  const est = estimateForZip(o.ship_zip, { now, cfg, db });
+  const est = estimateForShipDate(o.promised_ship_on, o.ship_zip, { cfg, state: o.ship_state }) || estimateForZip(o.ship_zip, { now, cfg, db });
   return { pending: false, order: o.number, status: o.status, items: o.items.map(i => ({ sku: i.sku, name: i.name, qty: i.qty })), total_cents: o.total_cents, ships: est.ships, delivers: est.delivers, status_url: cfg.secret ? orderStatusUrl(cfg, o) : null };
 }
 

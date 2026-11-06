@@ -13,6 +13,10 @@ the package version, so neither moves without the other.
   (`/store/catalog` now carries `away`), the ZIP estimate, the Checkout
   Session's shipping option and the promise written on every webhook order
   say the first batch after that day ("Back Mon, Dec 1 · ships Tue, Dec 9").
+  A date once shown is kept: the Checkout Session's `ships_on` rides its
+  metadata into the webhook's promise, and the thanks page reads the
+  order's stored promise (`estimateForShipDate`), so setting or clearing
+  away mode moves new purchases only.
   A ticket opened meanwhile is acknowledged with the date and its SLA clock
   starts at 9 am (operator time) on the return day; the `sla` job defers an
   alarm whose clock ran out before that morning and reports how many it
