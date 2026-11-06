@@ -988,7 +988,8 @@ test("the credential is sealed to the device key: both flashers say so, the Rust
   //    the session cache is the app's managed state.
   const fleetCode = fleetRs.replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(fleetCode, /bearer_auth\(|"Bearer /, "fleet.rs must never send a plain bearer");
-  assert.match(fleetCode, /seal_need\(&token, &device_id, &expected_fp\)\?/, "fleet.rs must refuse a token with no fingerprint to seal to");
+  assert.match(fleetCode, /match crate::seal::seal_need\(&token, &device_id, &expected_fp\) \{\s*Ok\(sealed\) => sealed,\s*Err\(detail\) => return Ok\(refused\(detail\)\),/,
+    "fleet.rs must refuse a token with no fingerprint to seal to, as `refused`, never thrown");
   assert.match(fleetCode, /hs\.accept\(device_id, expected_fp, &answer\)/, "fleet.rs must check the handshake against the recorded fingerprint");
   assert.match(fleetCode, /reqwest::header::AUTHORIZATION, header/, "fleet.rs must send the sealed header");
   assert.match(libRsSrc, /\.manage\(fleet::SealState::default\(\)\)/, "lib.rs must manage the session cache");

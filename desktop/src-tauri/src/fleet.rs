@@ -440,7 +440,14 @@ pub async fn fleet_device_call(
     }
     let device_id = device_id.unwrap_or_default();
     let expected_fp = expected_fp.unwrap_or_default();
-    let sealed = crate::seal::seal_need(&token, &device_id, &expected_fp)?;
+    // The preflight refusals (a token with no device id, or no recorded
+    // fingerprint to seal it to) are answers too, carried as `refused` like
+    // the handshake's, never thrown: a throw is a lost socket to the OTA
+    // loop, which would then narrate a reboot for an install never sent.
+    let sealed = match crate::seal::seal_need(&token, &device_id, &expected_fp) {
+        Ok(sealed) => sealed,
+        Err(detail) => return Ok(refused(detail)),
+    };
     let url = format!("{}{}", base.trim_end_matches('/'), path);
     // Installs make the device fetch + verify a whole image; its HTTP answer
     // can lag or the socket can drop at the reboot. Generous but bounded —
