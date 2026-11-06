@@ -413,11 +413,46 @@ void test_api_auth_gates_open_a_sealed_header() {
   check(!api_auth_check_bearer(&r3, TOKEN), "a sealed wrong token is refused");
   check_eq(r3.status, "403 Forbidden", "as 403");
   g_auth_table = {};
-  // An unknown session: 401 no_session, so the client opens a new one.
+  // An unknown session: 401 no_session, so the client opens a new one —
+  // and NO strike, or the re-handshake and retry the 401 asks for would
+  // meet the 2 s backoff as a 429 (the board just rebooted, or the session
+  // aged out; nothing about the token was tried).
   httpd_req_t r4;
   r4.req_hdrs["Authorization"] = "Sealed 0000000000000000.1." + std::string(70 + 32, '0');
   check(!api_auth_check_bearer(&r4, TOKEN), "an unknown session is refused");
   check_eq(r4.resp, "{\"error\":\"unauthorized\",\"seal\":\"no_session\"}", "with no_session");
+  check(!canary::net::auth_backoff::locked(g_auth_table, auth_request_source(&r4), millis()),
+        "a stale session is no strike");
+  // An expired one, likewise: open a session, age it out, name it.
+  api_seal::g_table = fresh();
+  check(api_seal::open_session(api_seal::g_table, DEVICE_ID, NONCE, CLIENT_PUB, fill_22, 0, o) == api_seal::Open::OK, "open");
+  stub_grant::now_ms = 1 + api_seal::TTL_MS;
+  httpd_req_t r4b;
+  r4b.req_hdrs["Authorization"] = std::string("Sealed ") + SEALED_IDENTIFY_1;
+  check(!api_auth_check_bearer(&r4b, TOKEN), "an expired session is refused");
+  check_eq(r4b.resp, "{\"error\":\"unauthorized\",\"seal\":\"expired\"}", "with expired");
+  check(!canary::net::auth_backoff::locked(g_auth_table, auth_request_source(&r4b), millis()),
+        "an expired session is no strike");
+  stub_grant::now_ms = 0;
+  // ...so the retry after a fresh handshake is served at once.
+  api_seal::g_table = fresh();
+  check(api_seal::open_session(api_seal::g_table, DEVICE_ID, NONCE, CLIENT_PUB, fill_22, 0, o) == api_seal::Open::OK, "open again");
+  httpd_req_t r4c;
+  r4c.req_hdrs["Authorization"] = std::string("Sealed ") + SEALED_IDENTIFY_1;
+  check(api_auth_check_bearer(&r4c, TOKEN), "the retry after the new handshake is admitted, not 429");
+  // A tampered seal on a live session IS a strike, as any wrong credential.
+  std::string tampered = SEALED_STATUS_2;
+  tampered.back() = tampered.back() == 'a' ? 'b' : 'a';
+  g_method = "GET";
+  g_uri = "/api/ota/status";
+  httpd_req_t r4d;
+  r4d.req_hdrs["Authorization"] = "Sealed " + tampered;
+  check(!api_auth_check_bearer(&r4d, TOKEN), "a tampered seal is refused");
+  check_eq(r4d.resp, "{\"error\":\"unauthorized\",\"seal\":\"bad_tag\"}", "with bad_tag");
+  check(canary::net::auth_backoff::locked(g_auth_table, auth_request_source(&r4d), millis()),
+        "and it is one strike");
+  g_method = "POST";
+  g_uri = "/api/identify";
   g_auth_table = {};
   // A plain bearer still works, and a wrong scheme still gets its hint.
   httpd_req_t r5;

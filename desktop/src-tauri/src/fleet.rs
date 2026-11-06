@@ -336,15 +336,25 @@ fn action_route(action: &str) -> Option<(reqwest::Method, &'static str)> {
 #[derive(Default)]
 pub struct SealState(std::sync::Mutex<HashMap<(String, String), crate::seal::Session>>);
 
+/// What a handshake came to: a session, or the device's answer judged and
+/// refused. A refusal is an ANSWER the row shows (the handshake's own
+/// sentence, which always says the token stayed here), carried back to the
+/// frontend as `refused` on the call's result rather than thrown, so the
+/// OTA loop never mistakes it for a lost socket. Only a transport failure
+/// is an `Err`.
+enum Handshake {
+    Session(crate::seal::Session),
+    Refused(String),
+}
+
 /// The handshake, judged: `GET /api/device/seal?nonce=&client_pub=` at
 /// `base`, the answer checked against the recorded fingerprint, a session
-/// derived. Every `Err` is a sentence for the row's note, and every one of
-/// them means the token stayed here.
+/// derived.
 async fn seal_handshake(
     base: &str,
     device_id: &str,
     expected_fp: &str,
-) -> Result<crate::seal::Session, String> {
+) -> Result<Handshake, String> {
     let hs = crate::seal::Handshake::new()?;
     // The route and field names below are the FIRMWARE's (seal_api.h,
     // api_seal::write_answer), pinned by canary-local/tests/desktop_parity.test.js
@@ -364,16 +374,23 @@ async fn seal_handshake(
         .map_err(|e| format!("Couldn't reach the device: {e}"))?;
     let status = resp.status().as_u16();
     if status == 404 {
-        return Err(crate::seal::Refusal::Unsupported("no handshake route".into()).detail());
-    }
-    if status != 200 {
-        return Err(format!(
-            "The device answered the handshake with HTTP {status}. The stored key wasn't sent."
+        return Ok(Handshake::Refused(
+            crate::seal::Refusal::Unsupported("no handshake route".into()).detail(),
         ));
     }
-    let body: Value = resp.json().await.map_err(|e| {
-        format!("The device's handshake answer wasn't JSON ({e}). The stored key wasn't sent.")
-    })?;
+    if status != 200 {
+        return Ok(Handshake::Refused(format!(
+            "The device answered the handshake with HTTP {status}. The stored key wasn't sent."
+        )));
+    }
+    let body: Value = match resp.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Handshake::Refused(format!(
+                "The device's handshake answer wasn't JSON ({e}). The stored key wasn't sent."
+            )))
+        }
+    };
     let field = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let seal = body.get("seal").cloned().unwrap_or(Value::Null);
     let answer = crate::seal::Answer {
@@ -383,13 +400,23 @@ async fn seal_handshake(
         sig_hex: field(&seal, "sig_hex"),
     };
     // Bind to the device_id WE expected, not the one the answer claims.
-    hs.accept(device_id, expected_fp, &answer)
-        .map_err(|r| r.detail())
+    Ok(match hs.accept(device_id, expected_fp, &answer) {
+        Ok(session) => Handshake::Session(session),
+        Err(r) => Handshake::Refused(r.detail()),
+    })
 }
 
-/// Call one device-API action. Returns `{ httpStatus, body, sealed }` — a
-/// 401 or 403 is an ANSWER (the stored token isn't this device's), not a
-/// transport error, so the UI can say the right thing.
+/// The call's result when the handshake refused: no HTTP exchange carried
+/// the token, and `refused` is the sentence for the row.
+fn refused(detail: String) -> Value {
+    json!({ "httpStatus": 0, "body": Value::Null, "sealed": true, "refused": detail })
+}
+
+/// Call one device-API action. Returns `{ httpStatus, body, sealed }`, or
+/// `{ httpStatus: 0, refused }` when the handshake refused to seal the
+/// token to what answered — a 401 or 403 and a refusal are ANSWERS (the
+/// stored token isn't this device's; the device isn't the one the book
+/// knows), not transport errors, so the UI can say the right thing.
 ///
 /// With a non-empty `token`, `device_id` and `expected_fp` (the fingerprint
 /// the fleet book recorded) are required, and the token is sent only sealed
@@ -413,7 +440,14 @@ pub async fn fleet_device_call(
     }
     let device_id = device_id.unwrap_or_default();
     let expected_fp = expected_fp.unwrap_or_default();
-    let sealed = crate::seal::seal_need(&token, &device_id, &expected_fp)?;
+    // The preflight refusals (a token with no device id, or no recorded
+    // fingerprint to seal it to) are answers too, carried as `refused` like
+    // the handshake's, never thrown: a throw is a lost socket to the OTA
+    // loop, which would then narrate a reboot for an install never sent.
+    let sealed = match crate::seal::seal_need(&token, &device_id, &expected_fp) {
+        Ok(sealed) => sealed,
+        Err(detail) => return Ok(refused(detail)),
+    };
     let url = format!("{}{}", base.trim_end_matches('/'), path);
     // Installs make the device fetch + verify a whole image; its HTTP answer
     // can lag or the socket can drop at the reboot. Generous but bounded —
@@ -441,7 +475,10 @@ pub async fn fleet_device_call(
                 .map_err(|_| "session cache poisoned")?
                 .contains_key(&pair);
             if !held {
-                let fresh = seal_handshake(&base, &device_id, &expected_fp).await?;
+                let fresh = match seal_handshake(&base, &device_id, &expected_fp).await? {
+                    Handshake::Session(s) => s,
+                    Handshake::Refused(detail) => return Ok(refused(detail)),
+                };
                 state
                     .0
                     .lock()
@@ -480,10 +517,12 @@ pub async fn fleet_device_call(
                         .lock()
                         .map_err(|_| "session cache poisoned")?
                         .remove(&pair);
-                    return Err(crate::seal::Refusal::Unsupported(
-                        "its gate cannot open a sealed credential".into(),
-                    )
-                    .detail());
+                    return Ok(refused(
+                        crate::seal::Refusal::Unsupported(
+                            "its gate cannot open a sealed credential".into(),
+                        )
+                        .detail(),
+                    ));
                 }
                 _ => {}
             }
