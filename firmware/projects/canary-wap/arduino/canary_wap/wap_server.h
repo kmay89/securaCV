@@ -74,6 +74,8 @@
  *
  * ── Device, chain, records ──
  * GET    /api/device/enroll               - Public key card, JSON (public)
+ * GET    /api/device/seal                 - Sealed-bearer handshake: the card plus an ephemeral X25519
+ *                                           key the identity key signs (api_seal.h; public, no secret)
  * GET    /api/device-info                 - Non-sensitive device metadata (public)
  * GET    /api/provisioning-receipt        - Provisioning receipt (physical BOOT button or Bearer token)
  * GET    /api/pairing-qr                  - SVG QR of the pairing receipt (carries the API token)
