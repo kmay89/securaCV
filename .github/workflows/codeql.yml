@@ -38,8 +38,77 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Which of the five languages does this PR actually touch? A scripts-only or
+  # docs-plus-YAML PR used to pay for all five legs — the Rust leg alone is
+  # ~17 minutes, on a PR whose every other check finished in six — because
+  # the trigger's paths-ignore can only say "not docs", not "which language".
+  # On a push to main and on the weekly schedule every leg still runs, so the
+  # branch's full set of analyses stays current and a PR's skipped leg costs
+  # at most an informational "configurations present on main were not found"
+  # note on its check. If the compare cannot be read, or the PR changed more
+  # files than the API lists, every leg runs: the gate fails open, never
+  # closed.
+  changes:
+    name: Languages the diff touches
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      languages: ${{ steps.pick.outputs.languages }}
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - name: Pick the languages
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Emits two outputs: `languages`, a JSON list, and `matrix`, the
+          # strategy the analyze job expands (one leg per language, build-mode
+          # none), so a language the diff does not touch has no job at all.
+          emit() {
+            langs=$(printf '%s\n' "$1" | tr ' ' '\n' | grep . | sort -u)
+            {
+              echo "languages=$(printf '%s\n' "$langs" | grep . | jq -R . | jq -sc .)"
+              echo "matrix=$(printf '%s\n' "$langs" | grep . | jq -R '{language: ., "build-mode": "none"}' | jq -sc '{include: .}')"
+            } >> "$GITHUB_OUTPUT"
+            echo "legs: $langs"
+          }
+          all="actions c-cpp javascript-typescript python rust"
+          if [ "$EVENT" != "pull_request" ]; then
+            emit "$all"; echo "(not a PR: every leg)"; exit 0
+          fi
+          # The compare API lists at most 3000 changed files; past that, or on
+          # any error, run everything rather than guess.
+          if ! files=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${BASE}...${HEAD}" --jq '.files[].filename'); then
+            emit "$all"; echo "(compare failed: every leg)"; exit 0
+          fi
+          if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then
+            emit "$all"; echo "(too many files to be sure: every leg)"; exit 0
+          fi
+          langs=""
+          while IFS= read -r f; do
+            case "$f" in
+              .github/workflows/codeql.yml) langs="actions c-cpp javascript-typescript python rust" ;;
+              .github/workflows/*|.github/actions/*) langs="$langs actions" ;;
+              *.rs|Cargo.toml|Cargo.lock|*/Cargo.toml|*/Cargo.lock) langs="$langs rust" ;;
+              *.c|*.cc|*.cpp|*.cxx|*.h|*.hpp|*.hh|*.ino) langs="$langs c-cpp" ;;
+              *.js|*.mjs|*.cjs|*.ts|*.tsx|*.html) langs="$langs javascript-typescript" ;;
+              *.py) langs="$langs python" ;;
+            esac
+          done <<< "$files"
+          emit "$langs"
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: changes
+    # A job-level if cannot see the matrix, so the matrix itself is the gate:
+    # the changes job hands over only the touched languages, and an empty
+    # list skips the job outright.
+    if: needs.changes.outputs.languages != '[]'
     # Runner size impacts CodeQL analysis time. To learn more, please see:
     #   - https://gh.io/recommended-hardware-resources-for-running-codeql
     #   - https://gh.io/supported-runners-and-hardware-resources
@@ -60,18 +129,10 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        include:
-        - language: actions
-          build-mode: none
-        - language: c-cpp
-          build-mode: none
-        - language: javascript-typescript
-          build-mode: none
-        - language: python
-          build-mode: none
-        - language: rust
-          build-mode: none
+      # The five legs — actions, c-cpp, javascript-typescript, python, rust,
+      # each build-mode none — are listed in the changes job above and arrive
+      # here as {include: [{language, build-mode}, …]}.
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
         # Use `c-cpp` to analyze code written in C, C++ or both
         # Use 'java-kotlin' to analyze code written in Java, Kotlin or both

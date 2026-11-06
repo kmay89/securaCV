@@ -12,6 +12,8 @@ Loads when you touch a file here; the root `AGENTS.md` still applies.
   `scripts/test_release_plan.py`.
 - Display env lists in a matrix are derived from `firmware/flavors.json`
   (`firmware/scripts/flavor_envs.py --check-workflows`), never typed.
+- CodeQL on a PR analyzes only the languages the diff touches (its `changes`
+  job reads the compare); a push to main and the weekly schedule analyze all five.
 - `python3 scripts/gates.py --paths <file>` says which workflows a path
   triggers; check it after editing a `paths:` filter.
 - A filtered workflow's tests may read only files inside its `paths:` filter
