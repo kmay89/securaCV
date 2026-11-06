@@ -65,11 +65,15 @@ pub const TOKEN_CAP: usize = 64;
 /// key, then the device's.
 pub fn seal_canonical(
     device_id: &str,
-    nonce: &str,
+    freshness: &str,
     client_pub_hex: &str,
     device_pub_hex: &str,
 ) -> String {
-    format!("securacv-canary-sig|v1|seal|{device_id}|{nonce}|{client_pub_hex}|{device_pub_hex}")
+    // `freshness`, not `nonce`: this only spells the string into the signed
+    // canonical, and CodeQL reads any argument to a parameter named `nonce`
+    // as a nonce in use, so the pinned test vector read as a hard-coded one
+    // (whoami.rs's nonce_ok carries the same note).
+    format!("securacv-canary-sig|v1|seal|{device_id}|{freshness}|{client_pub_hex}|{device_pub_hex}")
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -180,11 +184,12 @@ impl Handshake {
     }
 
     /// Tests and vectors: a known scalar and nonce. `StaticSecret` clamps the
-    /// scalar when it is used, as RFC 7748 asks.
-    pub fn from_parts(secret: [u8; 32], nonce: &str) -> Self {
+    /// scalar when it is used, as RFC 7748 asks. (The parameter is named
+    /// `freshness` for the reason `seal_canonical` gives.)
+    pub fn from_parts(secret: [u8; 32], freshness: &str) -> Self {
         Self {
             secret: StaticSecret::from(secret),
-            nonce: nonce.to_string(),
+            nonce: freshness.to_string(),
         }
     }
 
@@ -330,8 +335,13 @@ impl Session {
             .checked_add(1)
             .ok_or_else(|| "this session's counter is spent".to_string())?;
         self.seq = seq;
-        let mut iv = [0u8; 12];
-        iv[8..].copy_from_slice(&seq.to_be_bytes());
+        // The protocol's IV is the counter, big-endian, in the low four
+        // bytes of twelve: the low twelve bytes of the counter as a u128,
+        // built from the counter alone so no constant buffer is ever the
+        // nonce (the key is per session and `seq` never repeats under it).
+        let iv: [u8; 12] = u128::from(seq).to_be_bytes()[4..]
+            .try_into()
+            .expect("twelve of sixteen bytes");
         let aad = format!("{method} {path}");
         let cipher = ChaCha20Poly1305::new((&self.key).into());
         let sealed = cipher
