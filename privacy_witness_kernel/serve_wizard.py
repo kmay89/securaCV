@@ -46,7 +46,16 @@ INGRESS_PORT = int(os.environ.get("INGRESS_PORT", "8788"))
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN", "")
 SUPERVISOR_URL = "http://supervisor"
 WIZARD_DIR = Path("/usr/local/share/securacv-wizard")
-DEVICE_KEY_FILE = Path("/config/.securacv/device_key")
+# The device key seed file, in the app's own /data: only this app's processes
+# open it, no Home Assistant configuration backup carries it, and the Samba,
+# SSH and File editor apps cannot export it. Earlier releases kept it at
+# LEGACY_DEVICE_KEY_FILE under /config, where every backup and every file-
+# sharing app reached it; the setup step (run.sh) moves that copy here,
+# verified against the sealed log, on the first start after the change. The
+# wizard reads the legacy copy only as a fallback, so a save after a failed
+# move keeps the identity instead of minting a new one; it never writes it.
+DEVICE_KEY_FILE = Path("/data/device_key")
+LEGACY_DEVICE_KEY_FILE = Path("/config/.securacv/device_key")
 API_TOKEN_FILE = Path("/config/api_token")
 KERNEL_API_URL = "http://127.0.0.1:8799"
 # run.sh (the s6 setup step) creates this marker once the add-on is
@@ -501,6 +510,49 @@ def set_addon_options(options: dict) -> None:
 
 def restart_addon() -> None:
     _supervisor_request("POST", "/addons/self/restart")
+
+
+def record_device_key_seed_option(seed: str) -> str:
+    """Record a seed the setup resolved from the key file in the
+    `device_key_seed` option, so the Configuration tab shows it.
+
+    The wizard writes the option itself; an install configured by hand with
+    the option left empty gets its seed generated into the key file alone
+    (run_lib.sh resolve_device_key_seed), and once that file lives in the
+    app's own /data nothing in Home Assistant can read it back. The option
+    is where the docs send people to copy the key from, so the setup step
+    calls this after the seed resolves. Only an empty or placeholder option
+    is written, over the options as they are (POST /addons/self/options
+    replaces them whole); an option already holding a seed is left alone,
+    whatever it says — the setup's resolution order made it the identity in
+    use. Returns "recorded" or "already-set"; never prints or logs the seed.
+    """
+    seed = (seed or "").strip()
+    if not seed:
+        raise ValueError("no seed to record")
+    options = dict(get_addon_options() or {})
+    current = str(options.get("device_key_seed", "") or "").strip()
+    if current and current != "devkey:mvp":
+        return "already-set"
+    options["device_key_seed"] = seed
+    set_addon_options(options)
+    return "recorded"
+
+
+def _record_device_key_seed_cli() -> int:
+    """`serve_wizard.py record-device-key-seed`: the seed comes in the
+    environment (DEVICE_KEY_SEED), never on argv; stdout is the one-word
+    verdict, and a failure prints only its kind — a Supervisor error body
+    could echo the request, so it is never printed."""
+    seed = os.environ.get("DEVICE_KEY_SEED", "")
+    try:
+        verdict = record_device_key_seed_option(seed)
+    except Exception as exc:  # noqa: BLE001 — the kind alone, never the body
+        detail = getattr(exc, "code", None) or type(exc).__name__
+        sys.stdout.write(f"failed {detail}\n")
+        return 1
+    sys.stdout.write(f"{verdict}\n")
+    return 0
 
 
 def _discover_mqtt() -> dict:
@@ -1266,8 +1318,9 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             # Check if setup is complete
             key_seed = opts.get("device_key_seed", "")
             configured = bool(key_seed and key_seed != "devkey:mvp")
-            # Try reading device key from file too
-            if not configured and DEVICE_KEY_FILE.exists():
+            # Try reading device key from file too (the legacy /config copy
+            # counts: a failed move must not re-run the wizard as a first run)
+            if not configured and (DEVICE_KEY_FILE.exists() or LEGACY_DEVICE_KEY_FILE.exists()):
                 configured = True
             public = _public_status_options(opts)
             # Never return the raw options: they carry device_key_seed and MQTT
@@ -1329,6 +1382,8 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             existing_seed = ""
             if DEVICE_KEY_FILE.exists():
                 existing_seed = DEVICE_KEY_FILE.read_text().strip()
+            elif LEGACY_DEVICE_KEY_FILE.exists():
+                existing_seed = LEGACY_DEVICE_KEY_FILE.read_text().strip()
 
             if not device_key_seed:
                 if existing_seed:
@@ -1348,9 +1403,11 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                         ),
                     }
 
-            # Persist device key to file for the install script's backing-up
-            # message. Created 0600 from the start — write-then-chmod would
-            # leave a umask-dependent window where the key is world-readable.
+            # Persist the device key to the app's own /data (the setup step
+            # reads it when the option is empty). Created 0600 from the start
+            # — write-then-chmod would leave a umask-dependent window where
+            # the key is world-readable. The legacy /config copy, if one is
+            # still there, is the setup step's to verify and remove.
             DEVICE_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(
                 DEVICE_KEY_FILE,
@@ -1813,4 +1870,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "record-device-key-seed":
+        sys.exit(_record_device_key_seed_cli())
     main()

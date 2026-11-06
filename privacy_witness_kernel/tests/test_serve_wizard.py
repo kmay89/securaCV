@@ -391,6 +391,7 @@ def save_env(monkeypatch, tmp_path):
     device key file under tmp_path."""
     captured: dict = {}
     monkeypatch.setattr(serve_wizard, "DEVICE_KEY_FILE", tmp_path / "device_key")
+    monkeypatch.setattr(serve_wizard, "LEGACY_DEVICE_KEY_FILE", tmp_path / "legacy" / "device_key")
     # Keep the save hermetic: wizard prefs land in tmp_path, never /config.
     monkeypatch.setattr(
         serve_wizard, "WIZARD_PREFS_FILE", tmp_path / "wizard_prefs.json"
@@ -460,6 +461,81 @@ def test_save_generates_and_persists_device_key(save_env, monkeypatch, tmp_path)
     assert len(seed) == 64
     assert seed == save_env["options"]["device_key_seed"]
     assert (key_file.stat().st_mode & 0o777) == 0o600
+
+
+def test_save_reuses_a_legacy_config_key_but_writes_only_the_data_one(save_env):
+    """Before the move the key sat under /config. A save that finds no
+    /data key but a legacy one keeps that identity (it never mints a new
+    seed over an existing log) and writes it to the /data file alone — the
+    legacy copy is the setup step's to verify and remove, so the wizard
+    leaves it exactly as it was."""
+    legacy = serve_wizard.LEGACY_DEVICE_KEY_FILE
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("c0ffee" * 10 + "feed\n")
+    before = legacy.stat()
+    handler = _bare_handler()
+    result = handler._handle_save({"mode": "frigate", "cameras": []})
+    assert result["ok"] is True, result
+    assert save_env["options"]["device_key_seed"] == "c0ffee" * 10 + "feed"
+    assert serve_wizard.DEVICE_KEY_FILE.read_text().strip() == "c0ffee" * 10 + "feed"
+    assert legacy.read_text() == "c0ffee" * 10 + "feed\n"
+    assert legacy.stat().st_mtime_ns == before.st_mtime_ns
+    assert result["device_key_file"] == str(serve_wizard.DEVICE_KEY_FILE)
+    # With a /data key present the legacy file is not consulted at all.
+    legacy.write_text("d00d" * 16 + "\n")
+    again = handler._handle_save({"mode": "frigate", "cameras": []})
+    assert again["ok"] is True
+    assert save_env["options"]["device_key_seed"] == "c0ffee" * 10 + "feed"
+
+
+def test_record_device_key_seed_option_fills_only_an_empty_option(monkeypatch):
+    """The setup records a file-resolved seed in the option so the
+    Configuration tab shows it; an option already holding a seed is the
+    identity in use and is never overwritten. The other options ride along
+    untouched, since the Supervisor replaces them whole."""
+    sent: list = []
+    current = {"mode": "frigate", "device_key_seed": "", "retention_days": 30,
+               "frigate": {"mqtt_password": "hunter2"}}
+    monkeypatch.setattr(serve_wizard, "get_addon_options", lambda: dict(current))
+    monkeypatch.setattr(serve_wizard, "set_addon_options", lambda o: sent.append(o))
+    seed = "ab" * 32
+    assert serve_wizard.record_device_key_seed_option(seed) == "recorded"
+    assert sent == [{"mode": "frigate", "device_key_seed": seed, "retention_days": 30,
+                     "frigate": {"mqtt_password": "hunter2"}}]
+    sent.clear()
+    current["device_key_seed"] = "devkey:mvp"
+    assert serve_wizard.record_device_key_seed_option(seed) == "recorded"
+    assert sent[0]["device_key_seed"] == seed
+    sent.clear()
+    current["device_key_seed"] = "cd" * 32
+    assert serve_wizard.record_device_key_seed_option(seed) == "already-set"
+    assert sent == []
+    with pytest.raises(ValueError):
+        serve_wizard.record_device_key_seed_option("  ")
+
+
+def test_record_device_key_seed_cli_reads_the_environment_and_never_prints_it(monkeypatch, capsys):
+    seed = "ef" * 32
+    monkeypatch.setenv("DEVICE_KEY_SEED", seed)
+    monkeypatch.setattr(serve_wizard, "get_addon_options", lambda: {"device_key_seed": ""})
+    monkeypatch.setattr(serve_wizard, "set_addon_options", lambda o: None)
+    assert serve_wizard._record_device_key_seed_cli() == 0
+    assert capsys.readouterr().out == "recorded\n"
+
+    def refuse(_options):
+        raise RuntimeError(f"Supervisor said no to {seed}")
+    monkeypatch.setattr(serve_wizard, "set_addon_options", refuse)
+    assert serve_wizard._record_device_key_seed_cli() == 1
+    out = capsys.readouterr().out
+    assert out == "failed RuntimeError\n" and seed not in out
+
+    monkeypatch.delenv("DEVICE_KEY_SEED")
+    assert serve_wizard._record_device_key_seed_cli() == 1
+    assert capsys.readouterr().out == "failed ValueError\n"
+    # The entry point dispatches on the one subcommand, before the server.
+    source = (Path(serve_wizard.__file__)).read_text()
+    assert 'sys.argv[1] == "record-device-key-seed"' in source
+    assert source.index('"record-device-key-seed"') < source.rindex("main()")
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +881,7 @@ def test_public_status_options_drops_secrets():
 def test_handle_status_never_returns_seed(monkeypatch):
     monkeypatch.setattr(serve_wizard, "get_addon_options", lambda: _SECRET_OPTS)
     monkeypatch.setattr(serve_wizard, "DEVICE_KEY_FILE", Path("/nonexistent/key"))
+    monkeypatch.setattr(serve_wizard, "LEGACY_DEVICE_KEY_FILE", Path("/nonexistent/legacy/key"))
     monkeypatch.setattr(serve_wizard, "_supervisor_request", lambda *a, **k: ["mqtt"])
     handler = _bare_handler()
     result = handler._handle_status()
