@@ -363,3 +363,105 @@ button{font:inherit;color:inherit;cursor:pointer;}
 .item .ext{margin-left:auto;flex:none;opacity:.45;}
 .item .ext svg{width:11px;height:11px;display:block;}
 .item:hover .ext{opacity:.8;}
+
+/* ===== the app's own views (lab-app.js: Home, Your fleet, the status strip) =====
+   Rendered only inside the desktop app, where native_capabilities() reports
+   ports to list or a network to hear; the website never builds them. */
+.dash .verb,.devices .verb{margin:4px 0 18px;}
+.dash-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}
+.dcard{position:relative;text-align:left;border:1px solid var(--sep);background:var(--surface);border-radius:14px;padding:16px 18px 14px;
+  box-shadow:var(--shadow);display:flex;flex-direction:column;gap:4px;min-height:118px;
+  transition:transform .3s cubic-bezier(.18,1.25,.4,1),border-color .2s ease;}
+.dcard:hover{transform:translateY(-3px);border-color:var(--brand);}
+.dc-top{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
+.dc-top .ic,.qcard .ic,.wpath .ic,.fchip .ic,.btn .ic{display:inline-grid;place-items:center;width:16px;height:16px;flex:none;}
+.dc-top .ic svg,.qcard .ic svg,.wpath .ic svg,.fchip .ic svg,.btn .ic svg{width:16px;height:16px;display:block;}
+.dc-big{font-size:17px;font-weight:660;letter-spacing:-.02em;margin-top:6px;line-height:1.25;}
+.dc-sub{font-size:12.5px;color:var(--text-2);line-height:1.45;}
+.dc-go{position:absolute;right:14px;top:14px;color:var(--brand);opacity:0;transform:translateX(-6px);transition:opacity .25s,transform .3s cubic-bezier(.2,1.4,.4,1);}
+.dc-go svg{width:16px;height:16px;display:block;}
+.dcard:hover .dc-go,.resume-card:hover .dc-go{opacity:1;transform:none;}
+
+.dash-sec{margin-top:28px;}
+.dash-sec h2,.devices .dash-sec h2{font-size:15px;font-weight:660;letter-spacing:-.01em;margin:0 0 10px;}
+.dash-sec-head{display:flex;align-items:baseline;gap:12px;}
+.dash-sec-head .link{margin-left:auto;}
+.link{background:none;border:0;padding:0;color:var(--brand);font-size:13px;font-weight:600;cursor:pointer;}
+.link:hover{text-decoration:underline;}
+
+.resume-card{position:relative;display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:1px solid var(--sep);
+  background:var(--surface);border-radius:12px;padding:12px 16px;box-shadow:var(--shadow);}
+.resume-card:hover{border-color:var(--brand);}
+.rc-stage{font-family:var(--mono);font-size:11.5px;color:var(--muted);flex:none;}
+.rc-noun{font-weight:640;font-size:14.5px;}
+.rc-when{margin-left:auto;margin-right:28px;font-size:12px;color:var(--muted);}
+
+.dv-list{border:1px solid var(--sep);border-radius:12px;background:var(--surface);overflow:hidden;}
+.dv-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-top:1px solid var(--sep);}
+.dv-row:first-child{border-top:0;}
+.dv-dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--rail);}
+.dv-dot.on{background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent);}
+.dv-dot.off{background:var(--canary);}
+.dv-main{min-width:0;flex:1;}
+.dv-name{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-weight:620;font-size:14px;}
+.dv-sub{font-size:12px;color:var(--text-2);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dv-tag{font-size:10.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:1px 7px;border-radius:5px;
+  background:var(--bg-alt);color:var(--text-2);border:1px solid var(--sep);}
+.dv-tag.warn{background:color-mix(in srgb,var(--canary-strong) 16%,transparent);color:var(--canary);border-color:color-mix(in srgb,var(--canary-strong) 40%,transparent);}
+.dv-tag.up{background:var(--sel-soft);color:var(--brand);border-color:color-mix(in srgb,var(--brand) 30%,transparent);}
+.dv-presence{font-size:12px;color:var(--muted);white-space:nowrap;flex:none;}
+.dv-presence.on{color:var(--good);font-weight:600;}
+.dv-actions{display:flex;gap:6px;flex:none;}
+.btn.small{font-size:12.5px;padding:5px 11px;border-radius:8px;}
+.dv-empty{border:1px dashed var(--sep-strong);border-radius:12px;padding:18px;color:var(--text-2);font-size:13.5px;}
+.dv-empty p{margin:0;}
+.dv-empty .actions{margin-top:12px;}
+
+.quick-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;}
+.qcard{display:flex;flex-direction:column;gap:3px;text-align:left;border:1px solid var(--sep);background:var(--surface);border-radius:12px;padding:12px 14px;}
+.qcard:hover{border-color:var(--brand);}
+.qcard .ic{color:var(--brand);margin-bottom:4px;}
+.qcard b{font-size:13.5px;}
+.qcard span:not(.ic){font-size:12px;color:var(--text-2);}
+
+.line-chips{display:flex;flex-wrap:wrap;gap:8px;}
+.lchip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--sep);background:var(--surface);border-radius:999px;padding:5px 12px 5px 5px;font-size:13px;}
+.lchip:hover{border-color:var(--ac,var(--brand));}
+.lchip .n{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:700;background:var(--ac,var(--brand));color:#fff;}
+.lchip.done .n{background:var(--good);}
+.lchip small{color:var(--muted);}
+
+.welcome{border:1px solid color-mix(in srgb,var(--canary-strong) 40%,transparent);background:color-mix(in srgb,var(--canary-strong) 9%,var(--surface));
+  border-radius:14px;padding:14px 16px 16px;margin-bottom:18px;}
+.w-head{display:flex;align-items:center;gap:12px;}
+.w-head b{font-size:15px;}
+.w-head .link{margin-left:auto;}
+.welcome p{margin:4px 0 12px;font-size:13.5px;color:var(--text-2);}
+.w-paths{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;}
+.wpath{display:flex;flex-direction:column;gap:3px;text-align:left;border:1px solid var(--sep);background:var(--surface);border-radius:12px;padding:12px 14px;}
+.wpath:hover{border-color:var(--brand);}
+.wpath .ic{color:var(--brand);margin-bottom:3px;}
+.wpath b{font-size:13.5px;}
+.wpath span:not(.ic){font-size:12px;color:var(--text-2);}
+
+.dash-foot{margin-top:26px;font-size:12px;color:var(--muted);max-width:70ch;}
+
+.scan-pill{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--sep);border-radius:999px;padding:2px 9px;}
+.scan-pill.live{color:var(--good);border-color:color-mix(in srgb,var(--good) 40%,transparent);}
+.kaddr-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.kaddr{flex:1 1 260px;max-width:420px;border:1px solid var(--sep-strong);border-radius:9px;padding:8px 11px;font:inherit;font-family:var(--mono);font-size:12.5px;
+  background:var(--surface);color:var(--text);}
+.set-kbd{grid-template-columns:auto 1fr;}
+.set-kbd kbd{font-family:var(--mono);font-size:11.5px;border:1px solid var(--sep-strong);border-bottom-width:2px;border-radius:6px;padding:1px 7px;background:var(--bg-alt);}
+.set-kbd dd{font-family:var(--sans);font-size:13px;color:var(--text-2);}
+
+.item .cnt-badge{font-family:var(--mono);font-size:10.5px;font-weight:700;color:#fff;background:var(--good);border-radius:999px;padding:1px 6px;}
+
+/* The status strip: one line under every view, each chip a live fact and a
+   place to go. Hidden on phones with the rest of .foot. */
+.app-foot{position:sticky;bottom:0;z-index:5;padding:7px 14px;gap:6px;align-items:center;background:var(--side);flex-wrap:wrap;}
+.fchip{display:inline-flex;align-items:center;gap:6px;border:1px solid transparent;background:transparent;border-radius:999px;padding:3px 10px 3px 7px;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap;}
+.fchip:hover{background:var(--hover);color:var(--text);}
+.fchip.on{color:var(--good);}
+.fchip.up{color:var(--brand);font-weight:700;}

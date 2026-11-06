@@ -3,6 +3,8 @@
    No build step; pure ES module. Progress is remembered on-device only. */
 
 import { SETTINGS_AVAILABLE, probeSettings, settingsView } from "./lab-settings.js";
+import { probeApp, appViews, dashboardView, devicesView, statusStrip, installShortcuts,
+  fleet, rememberBench, APP_INFO } from "./lab-app.js";
 
 const MANIFEST_URL = "build-line.json";
 const SITE_ORIGIN = "https://securacv.com";
@@ -25,6 +27,8 @@ const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 
 let M, ROUTE = [], BY_SLUG = new Map(), PAGE_ROUTE = new Map(), SITE_BY_SLUG = new Map();
 let depthSel = {}; // benchSlug -> depth index
+let CUR = null;    // the bench entry on screen, for the step shortcuts
+let CUR_VIEW = "overview";
 
 /* ---- tiny hyperscript ---- */
 function h(tag, attrs, ...kids) {
@@ -145,6 +149,9 @@ function arrive() {
   const raw = location.hash.slice(1);
   const site = siteRoute(raw);
   if (site) goToSite(site, true);
+  // The app opens on its Home (what is plugged in, what is on the network,
+  // where you were); the website keeps the Overview — the isometric room.
+  else if (!raw && appViews()) navigate("dashboard", false);
   else navigate(routeId(raw), false);
 }
 
@@ -162,9 +169,16 @@ function navigate(id, push = true) {
     id === "all" ? "all" :
     id === "family" ? "family" :
     id === "settings" ? "settings" :
+    id === "dashboard" ? "dashboard" :
+    id === "devices" ? "devices" :
     BY_SLUG.has(id) ? "bench" : "overview";
   const entry = view === "bench" ? BY_SLUG.get(id) : null;
-  if (entry) markVisited(entry.stage.id);
+  if (entry) { markVisited(entry.stage.id); rememberBench(entry); }
+  CUR = entry;
+  CUR_VIEW = view;
+  // The fleet poller listens often while a view shows its answers, and only
+  // for the status strip under any other view.
+  fleet.setActive(view === "dashboard" || view === "devices");
 
   renderContent(view, entry);
   renderSidebar(view, entry);   // reflect selection + expansion
@@ -224,6 +238,9 @@ function benchLabel(b) {
   return b.kind === "chooser" || /·/.test(noun) ? noun : noun;
 }
 
+// Which view is on screen, so a sidebar re-render for a fleet change keeps
+// the selection navigate() made (the app's Home sets no hash).
+const currentView = () => CUR_VIEW;
 function renderSidebar(view, entry) {
   const done = visited();
   const side = h("nav", { class: "side", "aria-label": "Lab contents" },
@@ -234,7 +251,12 @@ function renderSidebar(view, entry) {
       h("span", { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>' }),
       h("input", { type: "search", placeholder: "Search benches…", oninput: onSearch, "aria-label": "Search benches" })),
     h("div", { class: "side-scroll" },
-      navItem("overview", view === "overview", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 9l9-6 9 6v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 21V12h6v9"/></svg>', "Overview — the workshop"),
+      // The app's own destinations first: its Home, the fleet it can hear, and
+      // the one thing most people open it to do. Off-app none of these exist.
+      appViews() ? navItem("dashboard", view === "dashboard", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 11l9-7 9 7"/><path d="M5 10v9h14v-9"/></svg>', "Home") : null,
+      appViews() ? navItem("devices", view === "devices", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>', "Your fleet", fleetBadge()) : null,
+      appViews() && BY_SLUG.has("flash") ? navItem("flash", entry && entry.bench.slug === "flash", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2L4.5 13H11l-1 9 8.5-11H12z" fill="currentColor" stroke="none"/></svg>', "Flash a board") : null,
+      navItem("overview", view === "overview", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 9l9-6 9 6v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 21V12h6v9"/></svg>', appViews() ? "Workshop map" : "Overview — the workshop"),
       navItem("start", view === "start", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5 3l14 9-14 9z"/></svg>', "Get started"),
       h("div", { class: "side-sec" }, "The build line"),
       ...M.stages.map(s => stageRow(s, entry, done.has(s.id))),
@@ -258,9 +280,16 @@ function renderSidebar(view, entry) {
   const old = document.querySelector(".side");
   if (old) old.replaceWith(side); else document.querySelector(".shell").prepend(side);
 }
-const navItem = (id, sel, icoHtml, label) =>
+const navItem = (id, sel, icoHtml, label, meta) =>
   h("button", { class: "item" + (sel ? " sel" : ""), onclick: () => navigate(id) },
-    h("span", { html: icoHtml }), h("span", { class: "lb" }, label));
+    h("span", { html: icoHtml }), h("span", { class: "lb" }, label), meta || null);
+// "3" beside Your fleet: how many Canaries are online right now, from the
+// same poller the Home and the status strip read. Re-rendered with the
+// sidebar; the strip is the live one.
+function fleetBadge() {
+  const n = fleet.onlineCount();
+  return n ? h("span", { class: "meta" }, h("span", { class: "cnt-badge", title: n + " online" }, String(n))) : null;
+}
 // `external` marks a link off this origin. In the app, lab-nav.js's capture-
 // phase handler sends those to the OS browser so the window never leaves the
 // bundled Lab; on the website the target is what opens a new tab.
@@ -285,7 +314,11 @@ function renderTopbar(view, entry) {
   let bar = document.querySelector(".topbar");
   const title = view === "bench" ? entry.bench.noun : view === "start" ? "Get started"
     : view === "all" ? "All benches" : view === "family" ? "SecuraCV everywhere"
-    : view === "settings" ? "Updates & about" : "The Lab";
+    : view === "settings" ? "Updates & about"
+    : view === "dashboard" ? "Home" : view === "devices" ? "Your fleet" : "The Lab";
+  // The app's window title follows the view (Tauri mirrors document.title);
+  // the website keeps the page's own.
+  if (appViews()) document.title = (view === "overview" ? "Workshop map" : title) + " — SecuraCV Lab";
   const content = [
     h("button", { class: "back", hidden: view === "overview", onclick: () => navigate("overview") },
       h("span", { html: "‹" }), " Lab"),
@@ -315,11 +348,16 @@ function renderTabbar(entry) {
 function renderContent(view, entry) {
   let c = document.querySelector(".content");
   if (!c) { c = h("main", { class: "content" }); document.querySelector(".main").append(c); }
+  // A live view (Home, Your fleet) subscribed to the fleet poller; tell it
+  // it is leaving so the subscription goes with it.
+  for (const n of c.children) n.dispatchEvent(new Event("scv:leave"));
   if (view === "overview") c.replaceChildren(overviewView());
   else if (view === "start") c.replaceChildren(startView());
   else if (view === "all") c.replaceChildren(allView());
   else if (view === "family") c.replaceChildren(familyView());
   else if (view === "settings") c.replaceChildren(settingsView());
+  else if (view === "dashboard") c.replaceChildren(dashboardView(APP_CTX));
+  else if (view === "devices") c.replaceChildren(devicesView(APP_CTX));
   else c.replaceChildren(benchView(entry));
   // A bench fills the window; the reading views keep their measure. Toggled
   // here rather than with `.content:has(.bench-wrap)` because the app supports
@@ -383,6 +421,13 @@ function benchView(entry) {
     h("div", { class: "bb-go" },
       step(prev, "Previous", "M15 6l-6 6 6 6", "prev"),
       step(next, "Next", "M9 6l6 6-6 6", "next"),
+      // App only: the window has no browser chrome, so a bench that wedged
+      // (a board unplugged mid-read, say) had no reload button anywhere.
+      appViews()
+        ? h("button", { class: "stepper out", title: "Reload this bench (⌘R)", "aria-label": "Reload this bench",
+            onclick: () => APP_CTX.reloadBench() },
+            h("span", { html: ARROW("M20 12a8 8 0 11-2.3-5.7M20 4v5h-5") }))
+        : null,
       // Website only. A new tab is a real place in a browser; in the app the
       // window IS the Lab, and a `target="_blank"` there would ask Tauri for a
       // second webview that no capability grants — the button would sit there
@@ -598,6 +643,28 @@ function birdSVG() {
     '<svg class="bird" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="36" r="17" fill="#FFD44F"/><circle cx="41" cy="24" r="10" fill="#FFD44F"/><circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/><path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/><ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/></svg>' });
 }
 
+/* ---- the app's hooks into this shell (lab-app.js views and shortcuts) ---- */
+const APP_CTX = {
+  navigate,
+  // A bench by slug; an unknown slug lands on the Overview through routeId.
+  goBench: (slug) => navigate(routeId(slug)),
+  stages: () => M.stages,
+  firstOf,
+  visited,
+  appInfo: () => APP_INFO,
+  focusSearch: () => { const i = document.querySelector(".side-search input"); if (i) { i.focus(); i.select(); } },
+  reloadBench: () => {
+    const f = document.querySelector(".bench-frame");
+    if (!f) return;
+    try { f.contentWindow.location.reload(); } catch { f.src = f.src; }
+  },
+  step: (dir) => {
+    if (!CUR) { navigate(firstOf(M.stages[0]).slug); return; }
+    const e = ROUTE[ROUTE.indexOf(CUR) + dir];
+    if (e) navigate(e.bench.slug);
+  },
+};
+
 /* ---- boot ---- */
 async function boot() {
   const root = document.getElementById("lab-shell");
@@ -619,11 +686,32 @@ async function boot() {
   // answer rather than a stale default. Resolves false on the website and on
   // iOS/iPadOS (App Store updates), true only on the desktop app.
   await probeSettings();
-  VALID_IDS = ["overview", "start", "all", "family", ...(SETTINGS_AVAILABLE ? ["settings"] : []), ...ROUTE.map((e) => e.bench.slug)];
+  // …and whether it has native reach (ports, mDNS, a kernel poll): only then
+  // do the app's Home and fleet views exist as routes.
+  await probeApp();
+  VALID_IDS = ["overview", "start", "all", "family", ...(SETTINGS_AVAILABLE ? ["settings"] : []), ...(appViews() ? ["dashboard", "devices"] : []), ...ROUTE.map((e) => e.bench.slug)];
   root.removeAttribute("data-loading");
   const shell = h("div", { class: "shell" }, h("div", { class: "main" }));
   root.replaceChildren(shell);
+  if (appViews()) {
+    fleet.start();
+    // The sidebar's online badge follows the poller — rebuilt only when the
+    // count moved, and never under a search in progress (a rebuild would
+    // drop the filter and the focus).
+    let shownOnline = -1;
+    fleet.subscribe(() => {
+      const n = fleet.onlineCount();
+      const q = document.querySelector(".side-search input");
+      if (n === shownOnline || document.hidden || (q && (q.value || document.activeElement === q))) return;
+      shownOnline = n;
+      if (document.querySelector(".side")) renderSidebar(currentView(), CUR);
+    });
+    installShortcuts(APP_CTX);
+  }
   arrive();
+  // The status strip under every view: what is plugged in, who is on the
+  // network, which build this is — the app's always-on answer.
+  if (appViews()) document.querySelector(".main").append(statusStrip(APP_CTX));
   window.addEventListener("hashchange", arrive);
   // The embedded isometric room (Overview) posts a slug when a station's tool is
   // tapped; route it through the same allowlist sanitizer before navigating.
