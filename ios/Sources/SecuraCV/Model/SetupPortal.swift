@@ -188,6 +188,81 @@ enum SetupPortal {
         return "A Wi-Fi password is at most 64 characters."
     }
 
+    // MARK: - iOS's own part of the join, in plain words
+
+    /// How iOS answered the ask to join the setup network
+    /// (`NEHotspotConfigurationManager.apply`), folded from
+    /// NEHotspotConfigurationError by the client so the words live here,
+    /// pure and pinned. Each case that is not "on it" names what happened
+    /// and what to do — a bare `localizedDescription` ("The operation
+    /// couldn't be completed") taught nobody anything.
+    enum HotspotJoinOutcome: Equatable, Sendable {
+        /// iOS joined it.
+        case joined
+        /// iOS was already on it (`alreadyAssociated`): on it.
+        case alreadyOn
+        /// The person tapped Cancel on iOS's "Join Wi-Fi network?" prompt
+        /// (`userDenied`) — not a wrong key, not a missing Canary.
+        case canceled
+        /// iOS refused the key before trying (`invalidWPAPassphrase`): a
+        /// WPA key is 8 to 63 characters.
+        case badKey
+        /// iOS joins only for an app on screen (`applicationIsNotInForeground`).
+        case notInForeground
+        /// An earlier join for this app is still in flight (`pending`).
+        case pending
+        /// Anything else iOS said, relayed with its words.
+        case other(String)
+
+        /// On the setup network, one way or another.
+        var isOn: Bool { self == .joined || self == .alreadyOn }
+
+        /// What the screen says — nil when the phone is on the network.
+        func advice(ssid: String) -> String? {
+            switch self {
+            case .joined, .alreadyOn:
+                return nil
+            case .canceled:
+                return "iOS asked to join \(ssid) and Cancel was tapped — tap Join its setup network again when you're ready."
+            case .badKey:
+                return "iOS won't try that key: a Wi-Fi key is 8 to 63 characters. Check it against the glass, or the Flasher's [SETUP] line."
+            case .notInForeground:
+                return "SecuraCV has to be on screen while iOS joins — come back to it and tap Join its setup network again."
+            case .pending:
+                return "iOS is still joining a network for SecuraCV — give it a moment, then tap Join its setup network again."
+            case .other(let said):
+                let detail = said.trimmingCharacters(in: .whitespacesAndNewlines)
+                return "iOS couldn't join \(ssid)" + (detail.isEmpty ? "." : ": \(detail)")
+                    + " Check the key, and that the Canary is powered on and nearby."
+            }
+        }
+    }
+
+    /// Under the join while the phone is on the setup network: iOS may open
+    /// the Canary's own page in its captive-network pop-up (the firmware
+    /// answers Apple's probe with a redirect so a phone that joined from
+    /// Settings gets the page by itself; the probe cannot tell that join
+    /// from this one). Both ways out are said: finish there — the client
+    /// watches `/status` meanwhile, so this screen notices — or close it and
+    /// carry on here. Closing it with Cancel must be followed by Use Without
+    /// Internet; Use Other Network leaves the setup network.
+    static let captivePopupNote =
+        "If iOS opens the Canary's own page in a pop-up, you can finish there — this screen notices — or tap Cancel, then Use Without Internet, and carry on here."
+
+    /// The done line when the Canary joined without this phone sending the
+    /// network (its own page in the pop-up, another phone): the verdict is
+    /// still the device's, but the name was never typed here.
+    static let joinedElsewhereLine =
+        "It's on your Wi-Fi — its own verdict, from its own page. Its setup network goes away now, and this phone is back on your Wi-Fi."
+
+    /// When the setup network stopped answering while the list was on
+    /// screen (SetupPortalClient.watchWhileReady): the firmware takes it
+    /// down 1.6 s after the first client reads `success`, so a join
+    /// finished on the Canary's own page can end this way — or the Canary
+    /// was unplugged. Both are said, and the next step is pointed at.
+    static let portalGoneLine =
+        "The Canary's setup network went away before this phone read its verdict. If its own page said it joined, it shows up on the Fleet tab shortly — the last step below picks it out. Otherwise power it off and on and start again."
+
     /// Where the device stands with the join, from `/status`.
     enum JoinState: Equatable, Sendable {
         case idle, connecting, success

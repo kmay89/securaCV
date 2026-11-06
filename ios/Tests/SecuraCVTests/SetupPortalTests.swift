@@ -5,6 +5,7 @@
 // /status vocabulary, and the WIFI: QR grammar a display draws.
 
 import XCTest
+import NetworkExtension
 @testable import SecuraCV
 
 final class SetupPortalTests: XCTestCase {
@@ -168,6 +169,69 @@ final class SetupPortalTests: XCTestCase {
             XCTAssertFalse(words.lowercased().contains("create"), words)
             XCTAssertFalse(words.lowercased().contains("choose"), words)
             XCTAssertFalse(words.contains("at least"), words)
+        }
+    }
+
+    // MARK: - iOS's own answer to the join
+
+    func testIOSsAnswerToTheJoinGetsPlainWords() {
+        typealias Outcome = SetupPortal.HotspotJoinOutcome
+        XCTAssertTrue(Outcome.joined.isOn)
+        XCTAssertTrue(Outcome.alreadyOn.isOn, "already associated is on it")
+        XCTAssertNil(Outcome.joined.advice(ssid: "SecuraCV-A1B2"))
+        XCTAssertNil(Outcome.alreadyOn.advice(ssid: "SecuraCV-A1B2"))
+        for outcome in [Outcome.canceled, .badKey, .notInForeground, .pending, .other("x"), .other("")] {
+            XCTAssertFalse(outcome.isOn)
+            let words = outcome.advice(ssid: "SecuraCV-A1B2")
+            XCTAssertNotNil(words)
+            XCTAssertTrue(words?.hasSuffix(".") ?? false, words ?? "")
+        }
+        XCTAssertTrue(Outcome.canceled.advice(ssid: "SecuraCV-A1B2")?.contains("Cancel") ?? false,
+                      "a Cancel on iOS's prompt is not a wrong key and not a missing Canary")
+        XCTAssertTrue(Outcome.badKey.advice(ssid: "x")?.contains("8 to 63") ?? false, "iOS's own bound, named")
+        XCTAssertTrue(Outcome.notInForeground.advice(ssid: "x")?.contains("on screen") ?? false)
+        XCTAssertEqual(Outcome.other("Boom.").advice(ssid: "SecuraCV-A1B2"),
+                       "iOS couldn't join SecuraCV-A1B2: Boom. Check the key, and that the Canary is powered on and nearby.")
+        XCTAssertEqual(Outcome.other("  ").advice(ssid: "SecuraCV-A1B2"),
+                       "iOS couldn't join SecuraCV-A1B2. Check the key, and that the Canary is powered on and nearby.")
+    }
+
+    func testEveryErrorIOSDefinesIsFoldedIntoThoseWords() {
+        func folded(_ code: NEHotspotConfigurationError) -> SetupPortal.HotspotJoinOutcome {
+            SetupPortalClient.joinOutcome(NSError(domain: NEHotspotConfigurationErrorDomain, code: code.rawValue))
+        }
+        XCTAssertEqual(folded(.alreadyAssociated), .alreadyOn)
+        XCTAssertEqual(folded(.userDenied), .canceled)
+        XCTAssertEqual(folded(.invalidWPAPassphrase), .badKey)
+        XCTAssertEqual(folded(.invalidWEPPassphrase), .badKey)
+        XCTAssertEqual(folded(.applicationIsNotInForeground), .notInForeground)
+        XCTAssertEqual(folded(.pending), .pending)
+        for code in [NEHotspotConfigurationError.invalid, .invalidSSID, .internal, .systemConfiguration, .unknown] {
+            if case .other = folded(code) {} else { XCTFail("\(code) is relayed as iOS said it") }
+        }
+        if case .other = SetupPortalClient.joinOutcome(URLError(.timedOut)) {} else {
+            XCTFail("another domain is relayed as said")
+        }
+    }
+
+    func testThePopUpAndTheUnnamedVerdictAreSaidInFull() {
+        // iOS may open the Canary's page in its captive pop-up the moment the
+        // phone is on the setup network; both ways out are named, and the
+        // safe way to close it is the exact iOS wording.
+        XCTAssertTrue(SetupPortal.captivePopupNote.contains("Use Without Internet"))
+        XCTAssertTrue(SetupPortal.captivePopupNote.contains("this screen notices"),
+                      "the client watches /status meanwhile")
+        XCTAssertTrue(SetupPortal.joinedElsewhereLine.contains("its own verdict"))
+        // The setup network goes down 1.6 s after the first client reads
+        // success (onboarding_fsm.h ap_hold_after_ack_ms), so a join finished
+        // in the pop-up can vanish between two polls: the line says where to
+        // look, and what to do if it was not a join at all.
+        XCTAssertTrue(SetupPortal.portalGoneLine.contains("Fleet tab"))
+        XCTAssertTrue(SetupPortal.portalGoneLine.contains("power it off and on"))
+        XCTAssertEqual(SetupPortalClient.silentPollsBeforeGone, 3)
+        XCTAssertFalse(SetupPortal.joinedElsewhereLine.contains("\\("), "no network name to interpolate: it was never typed here")
+        for s in [SetupPortal.captivePopupNote, SetupPortal.joinedElsewhereLine, SetupPortal.portalGoneLine] {
+            XCTAssertTrue(s.hasSuffix("."), s)
         }
     }
 }

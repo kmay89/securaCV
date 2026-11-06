@@ -465,7 +465,29 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
   the Canary can see, posts the pick to `/join`, and shows the device's
   `/status` verdict with the tip its own page would give and a retry that
   needs no new prompt (`Model/SetupPortal.swift`,
-  `Transport/SetupPortalClient.swift`). A brand-new WAP's fallback is its
+  `Transport/SetupPortalClient.swift`). The phone keeps that network itself,
+  not with `joinOnce`: a joinOnce network is dropped when the app leaves the
+  foreground, and leaving for the Passwords app is the one thing a person
+  does in the middle of this step. The client forgets the network on the
+  verdict, on a failure, or when the screen closes, and at launch it removes
+  any `SecuraCV-` configuration an earlier, killed run left behind
+  (`forgetLingeringSetupNetworks`). iOS may still open the Canary's own page
+  in its captive pop-up the moment the phone is on the network — the
+  firmware answers Apple's probe with a redirect so a Settings join gets the
+  page, and the probe cannot tell the two joins apart — so the screen says
+  what both ways out do (finish there, or Cancel → Use Without Internet),
+  and the client watches `/status` while the person decides: a join finished
+  in the pop-up lands here as done, its network unnamed and unremembered,
+  since this phone never sent it. That watch beats once a second, because
+  both firmware portals take the setup network down 1.6 s after the FIRST
+  client to read `success` (the pop-up's page counts), and three polls
+  answered by nobody end the step in words that point at the
+  watch-it-appear step. Closing the screen ends every step still in flight
+  (`finish()` moves a generation that `connect` and `hand` check after each
+  await), so a dismissed walkthrough never comes back as a watcher. iOS's own refusals — Cancel on its prompt,
+  a key outside 8–63 characters, the app not in front — are said in those
+  words (`SetupPortal.HotspotJoinOutcome`), never as a bare
+  `localizedDescription`. A brand-new WAP's fallback is its
   own setup page, which the walkthrough explains and the person drives (the
   bonded Bluetooth step it used to show could never list a device: a new
   WAP does not advertise that console). A Sense or Vision's hub link rides

@@ -273,7 +273,7 @@ enum SetupGuide {
                 id: "join",
                 title: "Hand it your Wi-Fi",
                 short: "This phone joins its setup network, lists the Wi-Fi it can see, and hands yours over.",
-                body: "This phone joins the Canary's setup network itself — iOS asks once — asks the Canary which networks it can see, and posts the one you pick to the Canary's own setup page, then watches it join. The device stores the credentials only once it is actually connected, and tears its setup network down after. Your password goes only to the Canary, over its setup network.",
+                body: "This phone joins the Canary's setup network itself — iOS asks once, and the first time also for Local Network, which is how this phone reaches the Canary's page — asks the Canary which networks it can see, and posts the one you pick to the Canary's own setup page, then watches it join. Leave for the Passwords app to fetch your Wi-Fi password and come back; the phone stays on the setup network until the verdict, and lets it go then. If iOS opens the Canary's page in a pop-up of its own, finish there if you like — this phone notices — or tap Cancel, then Use Without Internet, and carry on here. The device stores the credentials only once it is actually connected, and tears its setup network down after. Your password goes only to the Canary, over its setup network.",
                 action: .joinSetupNetwork))
         case .ownPage:
             steps.append(SetupStep(

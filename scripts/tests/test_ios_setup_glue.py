@@ -177,5 +177,111 @@ class TheOverlayReadsTheFlag(unittest.TestCase):
                       "a card held behind the sheet must come back when it closes")
 
 
+class TheSetupNetworkIsLetGoByTheClientNeverByIOS(unittest.TestCase):
+    """The display's path and the no-Bluetooth fallback join SecuraCV-… from
+    inside the app (SetupPortalClient). The client decides when the phone
+    leaves that network, not `joinOnce`: a joinOnce network is dropped when
+    the app leaves the foreground, and the one thing a person does in the
+    middle of this step is leave for the Wi-Fi password. The pure halves
+    (SetupPortal.HotspotJoinOutcome) have XCTests; this pins the glue."""
+
+    def setUp(self):
+        self.text = masked("ios/Sources/SecuraCV/Transport/SetupPortalClient.swift")
+        spans = [s for s in L.type_spans(self.text) if s.kind == "class" and s.name == "SetupPortalClient"]
+        self.assertEqual(len(spans), 1, "one SetupPortalClient")
+        self.span = spans[0]
+
+    def _body(self, name: str) -> str:
+        return flat(func_body(self.text, self.span.open, self.span.close, name))
+
+    def test_the_join_is_not_join_once(self):
+        self.assertIn("config.joinOnce = false", self._body("connect"))
+        self.assertNotIn("joinOnce = true", flat(self.text))
+
+    def test_the_client_forgets_the_network_it_joined(self):
+        finish = self._body("finish")
+        self.assertIn("NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)", finish)
+        connect = self._body("connect")
+        # No page answered: the phone leaves the network before it says so.
+        waited = connect.find("waitForPortal(")
+        self.assertGreater(waited, 0)
+        left = connect.find("finish()", waited)
+        failed = connect.find("phase = .failed(", waited)
+        self.assertGreater(left, waited, "a join with no page behind it is left")
+        self.assertLess(left, failed, "left before the failure is shown")
+
+    def test_iOSs_own_answer_is_folded_not_relayed_raw(self):
+        connect = self._body("connect")
+        self.assertIn("Self.joinOutcome(error)", connect)
+        self.assertIn("outcome.advice(ssid: setupSSID)", connect)
+        self.assertNotIn("error.localizedDescription", connect,
+                         "the one place iOS's words are relayed is HotspotJoinOutcome.other")
+
+    def test_a_join_finished_elsewhere_is_noticed_while_the_person_decides(self):
+        connect = self._body("connect")
+        self.assertIn("guard gen == generation else { return } networks = listed phase = .ready startReadyWatch()",
+                      connect, "the watch starts the moment the list is up — and only for a live connect")
+        for name in ("hand", "finish"):
+            self.assertIn("stopReadyWatch()", self._body(name), f"{name} ends the watch")
+        watch = self._body("watchWhileReady")
+        self.assertIn("case .success?: phase = .done finish() return", watch)
+        hand = self._body("hand")
+        self.assertIn("handedSSID = homeSSID", hand, "only a network this phone posted is named")
+        self.assertNotIn("handedSSID = homeSSID", watch)
+
+    def test_the_watch_beats_the_firmwares_hold_and_names_a_vanished_portal(self):
+        # onboarding_fsm.h takes the setup network down ap_hold_after_ack_ms
+        # (1.6 s) after the FIRST client reads success — the page in iOS's
+        # pop-up counts — so the watch polls every second and treats a portal
+        # that stops answering as the end of the step, said in words.
+        watch = self._body("watchWhileReady")
+        self.assertIn("Task.sleep(for: .seconds(1))", watch)
+        self.assertNotIn(".seconds(3)", watch)
+        self.assertIn("case nil: silentPolls += 1 if silentPolls >= Self.silentPollsBeforeGone { finish() "
+                      "phase = .failed(SetupPortal.portalGoneLine) return }", watch)
+        self.assertIn("default: silentPolls = 0", watch, "one dropped answer is not the end")
+        self.assertRegex(flat(self.text), r"static let silentPollsBeforeGone = [2-5]\b")
+
+    def test_a_closed_screen_ends_every_step_in_flight(self):
+        # connect() and hand() are unstructured work the view cannot cancel;
+        # finish() moves the generation and each stops at its next await.
+        finish = self._body("finish")
+        self.assertTrue(finish.startswith("{ generation += 1 stopReadyWatch()"), finish[:60])
+        connect = self._body("connect")
+        self.assertIn("generation += 1 let gen = generation", connect)
+        self.assertGreaterEqual(connect.count("guard gen == generation else {"), 3,
+                                "after the iOS join, after the page answered, after the list")
+        # A join iOS finished after the screen closed is let go, not kept.
+        self.assertIn("guard gen == generation else { if outcome.isOn { "
+                      "NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: setupSSID) } return }", connect)
+        self.assertIn("waitForPortal(seconds: 25, gen: gen)", connect)
+        self.assertIn("scan(seconds: 10, gen: gen)", connect)
+        hand = self._body("hand")
+        self.assertIn("let gen = generation", hand)
+        self.assertGreaterEqual(hand.count("guard gen == generation else { return }"), 3,
+                                "after the post, after every status read, before the timeout verdict")
+        for name in ("scan", "waitForPortal"):
+            self.assertIn("while Date() < deadline, gen == generation {", self._body(name), name)
+
+    def test_launch_forgets_what_an_earlier_run_left(self):
+        sweep = self._body("forgetLingeringSetupNetworks")
+        self.assertIn("getConfiguredSSIDs", sweep)
+        self.assertIn("where SetupPortal.isSetupNetwork(ssid)", sweep, "only the setup-network shapes")
+        self.assertIn("removeConfiguration(forSSID: ssid)", sweep)
+        store = masked("ios/Sources/SecuraCV/App/FleetStore.swift")
+        spans = [s for s in L.type_spans(store) if s.kind == "class" and s.name == "FleetStore"]
+        self.assertEqual(len(spans), 1)
+        on_appear = flat(func_body(store, spans[0].open, spans[0].close, "onAppear"))
+        self.assertIn("SetupPortalClient.forgetLingeringSetupNetworks()", on_appear)
+
+    def test_the_view_remembers_and_names_only_what_this_phone_handed_over(self):
+        view = flat(masked("ios/Sources/SecuraCV/Views/CanarySetupView.swift"))
+        self.assertIn("if let ssid = portal.handedSSID, HouseholdWiFiStore.shouldRemember(", view)
+        self.assertNotIn("let ssid = effectiveSSID", view)
+        self.assertIn("portal.handedSSID.map {", view)
+        self.assertIn("?? SetupPortal.joinedElsewhereLine", view)
+        self.assertIn("Text(SetupPortal.captivePopupNote)", view)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -182,6 +182,24 @@ final class SetupGuideTests: XCTestCase {
         }
     }
 
+    func testTheJoinStepSaysWhatIOSWillAskAndWhatItsPopUpMeans() {
+        // The setup-network path (a display, or a Sense or Vision with no
+        // card): the second system prompt is named, leaving the app does not
+        // cost the network, and iOS's captive pop-up has a said way out.
+        for family in [CanaryFamily.display, .vision, .sense] {
+            guard let join = SetupGuide.canary(family).first(where: { $0.id == "join" }) else {
+                XCTFail("\(family.rawValue): no join step"); continue
+            }
+            XCTAssertEqual(join.action, .joinSetupNetwork, family.rawValue)
+            let body = join.body
+            XCTAssertTrue(body.contains("Local Network"), "\(family.rawValue): the second prompt, named")
+            XCTAssertTrue(body.contains("stays on the setup network"), "\(family.rawValue): leaving the app keeps the network")
+            XCTAssertTrue(body.contains("Use Without Internet"), "\(family.rawValue): the pop-up's safe way out")
+            XCTAssertTrue(body.contains("this phone notices"), "\(family.rawValue): finishing in the pop-up still lands here")
+        }
+        XCTAssertNil(SetupGuide.canary(.wap).first { $0.id == "join" }, "a WAP drives its own page")
+    }
+
     func testADisplayIsFlashedFromAComputerNeverThePhone() {
         let steps = SetupGuide.canary(.display)
         let flash = steps.first { $0.id == "flash" }
