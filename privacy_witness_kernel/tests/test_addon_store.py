@@ -503,8 +503,19 @@ def test_apparmor_rules_name_the_literals_the_sources_spell():
 
 def test_dockerfile_uses_the_official_pinned_base_selected_by_targetarch():
     assert "ARG TARGETARCH" in DOCKERFILE
-    assert "FROM ghcr.io/home-assistant/amd64-base:3.18 AS runtime-amd64" in DOCKERFILE
-    assert "FROM ghcr.io/home-assistant/aarch64-base:3.18 AS runtime-arm64" in DOCKERFILE
+    # Pinned by digest as well as tag: the tag says which base, the digest
+    # says which bytes, so a re-tagged upstream image cannot change the
+    # add-on's runtime under a release.
+    assert re.search(
+        r"^FROM ghcr\.io/home-assistant/amd64-base:3\.18@sha256:[0-9a-f]{64} AS runtime-amd64$",
+        DOCKERFILE,
+        re.M,
+    )
+    assert re.search(
+        r"^FROM ghcr\.io/home-assistant/aarch64-base:3\.18@sha256:[0-9a-f]{64} AS runtime-arm64$",
+        DOCKERFILE,
+        re.M,
+    )
     assert "FROM runtime-${TARGETARCH}" in DOCKERFILE
     assert "hassio-addons/base" not in DOCKERFILE
     assert "BUILD_FROM" not in DOCKERFILE

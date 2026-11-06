@@ -148,6 +148,11 @@ EVIDENCE_ZIP_README = "README.txt"
 EVIDENCE_ZIP_KEY = "WITNESS_KEY.txt"
 # The kernel's bundle download must stay bounded: one coarse log is small.
 EXPORT_BUNDLE_MAX_BYTES = 64 * 1024 * 1024
+# Every other kernel answer is a JSON document of a few KB (an identity, a
+# status, a sealed-log page); a kernel — or whatever answers at its URL —
+# that sends more than this is not speaking the contract, and the body is
+# refused before it is decoded.
+API_JSON_MAX_BYTES = 4 * 1024 * 1024
 
 # The kernel's 10-minute time bucket: every "at" the integration records is a
 # bucket start, never an event-precise epoch (coarse time, invariant III).

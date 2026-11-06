@@ -7,10 +7,27 @@
 # audit.yml, so CI runs `cargo deny check bans licenses sources` here and
 # leaves the advisory DB to cargo-audit. Run locally with:
 #   cargo deny check bans licenses sources
+# The [advisories] section below is for a local `cargo deny check` (all
+# checks): it states the policy cargo-audit applies instead of leaving it to
+# cargo-deny's defaults, so the two gates never disagree.
 
 [graph]
 # Check the platforms we actually ship (Linux daemon + tooling).
 all-features = true
+
+[advisories]
+# Section version 2: every advisory that names a vulnerability is an error
+# — there is no severity threshold and no lower level for one; a reviewed
+# exception is listed under `ignore` with its reason, never waved through.
+# An unmaintained crate is an error when the workspace depends on it
+# directly, and not for the transitive long tail cargo-audit only warns
+# about; a yanked version warns, as cargo-audit does. The database is the
+# one cargo-audit reads.
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+unmaintained = "workspace"
+yanked = "warn"
+ignore = []
 
 [licenses]
 version = 2

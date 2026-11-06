@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, TypeGuard
 
 from homeassistant.components import mqtt
 from homeassistant.components.event import EventEntity
@@ -68,6 +68,20 @@ PARALLEL_UPDATES = 0
 WITNESS_UNIQUE_ID_INFIX = "_witness_"
 TAMPER_EVENTS_KEY = "tamper_events"
 VERIFICATION_EVENTS_KEY = "verification_events"
+
+# Untrusted-feed hardening, the counterpart of mqtt_payload's DEVICE_ID_RE:
+# a witness event's `zone_id` is a local zone label (`zone:front_door`), and
+# every distinct one mints a persistent entity. What a zone label can look
+# like, and how many zones one kernel may name, are bounded here so that a
+# feed that is not the kernel's cannot fill the entity registry.
+ZONE_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_:. -]{0,63}$")
+MAX_WITNESS_ZONES = 64
+
+
+def valid_zone_id(zone_id: Any) -> TypeGuard[str]:
+    """True iff `zone_id` is a zone label the kernel could have sealed."""
+    # fullmatch, not match: `$` would accept a trailing newline.
+    return isinstance(zone_id, str) and ZONE_ID_RE.fullmatch(zone_id) is not None
 
 
 def zone_slug(zone_id: str) -> str:
@@ -173,6 +187,11 @@ class WitnessEventManager:
             slug = unique_id[len(prefix):]
             if not slug or slug in self.entities:
                 continue
+            if len(self.entities) >= MAX_WITNESS_ZONES:
+                _LOGGER.warning(
+                    "witness zone cap (%d) reached; not restoring %s", MAX_WITNESS_ZONES, unique_id
+                )
+                continue
             label = getattr(registered, "original_name", None)
             entity = SecuraCVWitnessEventEntity(
                 self.coordinator,
@@ -191,7 +210,8 @@ class WitnessEventManager:
         if not isinstance(event, dict):
             return
         zone_id = event.get("zone_id")
-        if not isinstance(zone_id, str) or not zone_id:
+        if not valid_zone_id(zone_id):
+            _LOGGER.debug("ignoring witness event with an invalid zone id %r", zone_id)
             return
         if normalize_event_type(event.get("event_type")) not in WITNESS_EVENT_TYPES:
             _LOGGER.debug("ignoring witness event with unknown type %r", event.get("event_type"))
@@ -199,6 +219,13 @@ class WitnessEventManager:
         slug = zone_slug(zone_id)
         entity = self.entities.get(slug)
         if entity is None:
+            if len(self.entities) >= MAX_WITNESS_ZONES:
+                _LOGGER.warning(
+                    "witness zone cap (%d) reached; ignoring events for new zone %r",
+                    MAX_WITNESS_ZONES,
+                    zone_id,
+                )
+                return
             entity = SecuraCVWitnessEventEntity(
                 self.coordinator, self.entry, slug, zone_label(zone_id), initial_event=event
             )

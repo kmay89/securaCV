@@ -1814,7 +1814,9 @@ that is how Home Assistant pairs — and the roll-call there serves **only the
 kernel's own row** unless you set `SECURACV_FLEET_ROLLCALL=1` in the compose
 file (`WITNESS_API_FLEET_ROLLCALL=full`): who is home is yours to opt into,
 never a side effect of pairing. `GET /api/identity` reports the mode as
-`fleet_rollcall`.
+`fleet_rollcall`. The **app** has the same switch as its `fleet_rollcall`
+option: `self` by default, because the route takes no token; set it to
+`full` for the Witness Wall.
 
 `online` on that roll-call is not a liveness proof: it means a signed chain
 publish verified against the pinned key within the last 180 s, no more —
