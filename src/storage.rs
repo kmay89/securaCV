@@ -391,22 +391,52 @@ pub fn ensure_columns(
         validate_sql_column_type(column_type, "column type")?;
     }
 
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
-    let existing_columns: HashSet<String> = stmt
-        .query_map([], |row| row.get(1))?
-        .collect::<std::result::Result<Vec<String>, _>>()?
-        .into_iter()
-        .collect();
+    // Check-then-alter is a race between two processes opening the same
+    // fresh database (the sidecar starts `witness_api` and `frigate_bridge`
+    // together): both read the column as missing, the second ALTER fails
+    // with "duplicate column name" and that process exits. An IMMEDIATE
+    // transaction serializes the two (the busy timeout waits out the other
+    // side's), the check runs inside it, and a duplicate that still slips
+    // through — a connection with no busy timeout — is the state we wanted.
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let outcome = ensure_columns_locked(conn, table, columns_to_add);
+    match outcome {
+        Ok(()) => conn.execute_batch("COMMIT")?,
+        Err(_) => {
+            let _ = conn.execute_batch("ROLLBACK");
+        }
+    }
+    outcome
+}
+
+fn ensure_columns_locked(
+    conn: &Connection,
+    table: &str,
+    columns_to_add: &[(&str, &str)],
+) -> Result<()> {
+    let existing_columns: HashSet<String> = {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+        let columns = stmt
+            .query_map([], |row| row.get(1))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        columns.into_iter().collect()
+    };
 
     for (column, column_type) in columns_to_add {
         if !existing_columns.contains(*column) {
-            conn.execute(
-                &format!(
-                    "ALTER TABLE {} ADD COLUMN {} {}",
-                    table, column, column_type
-                ),
-                [],
-            )?;
+            let alter = format!(
+                "ALTER TABLE {} ADD COLUMN {} {}",
+                table, column, column_type
+            );
+            if let Err(err) = conn.execute(&alter, []) {
+                let duplicate = err
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains("duplicate column name");
+                if !duplicate {
+                    return Err(err.into());
+                }
+            }
         }
     }
     Ok(())
@@ -938,6 +968,72 @@ impl SealedLogStore for InMemorySealedLogStore {
             out.push(record);
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod ensure_columns_tests {
+    use super::*;
+
+    /// Two processes opening the same fresh database add the same column at
+    /// the same moment (the sidecar starts `witness_api` and `frigate_bridge`
+    /// together). Both must succeed and the column must exist once: before
+    /// the IMMEDIATE transaction and the duplicate tolerance, the loser of
+    /// the check-then-alter race exited with "duplicate column name".
+    #[test]
+    fn concurrent_column_adds_both_succeed() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("race.db");
+        let setup = Connection::open(&path)?;
+        setup.execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY);")?;
+        drop(setup);
+
+        for round in 0..8 {
+            let column = format!("c{round}");
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let workers: Vec<_> = (0..2)
+                .map(|_| {
+                    let path = path.clone();
+                    let column = column.clone();
+                    let barrier = std::sync::Arc::clone(&barrier);
+                    std::thread::spawn(move || -> Result<()> {
+                        let conn = Connection::open(&path)?;
+                        conn.busy_timeout(Duration::from_secs(5))?;
+                        barrier.wait();
+                        ensure_columns(&conn, "t", &[(column.as_str(), "TEXT")])
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().expect("worker thread")?;
+            }
+            let check = Connection::open(&path)?;
+            let mut stmt = check.prepare("PRAGMA table_info(t)")?;
+            let names: Vec<String> = stmt
+                .query_map([], |row| row.get(1))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            assert_eq!(
+                names.iter().filter(|n| **n == column).count(),
+                1,
+                "round {round}: column added exactly once"
+            );
+        }
+        Ok(())
+    }
+
+    /// A second add of a column that already exists is a no-op, not an error.
+    #[test]
+    fn existing_column_is_left_alone() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY, c TEXT);")?;
+        ensure_columns(&conn, "t", &[("c", "TEXT"), ("d", "BLOB")])?;
+        ensure_columns(&conn, "t", &[("c", "TEXT"), ("d", "BLOB")])?;
+        let mut stmt = conn.prepare("PRAGMA table_info(t)")?;
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert_eq!(names, vec!["id", "c", "d"]);
+        Ok(())
     }
 }
 

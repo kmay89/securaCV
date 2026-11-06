@@ -195,3 +195,137 @@ same change.
   work for an unknown address as for a known one.
 - **Still open:** `scrypt` runs synchronously on the event loop for every
   login and API-token check; a worker or `crypto.scrypt` is the fix.
+
+## Backoffice — the inbox and the public surface (`backoffice/`)
+
+- **Two quadratic parsers in inbound mail froze the process.** A bounce
+  scan ran an address regex over the whole body (300 KB took 44 s of CPU;
+  the cap is 8 MB) and `htmlToText` lower-cased the whole document once per
+  tag. One mail to the support inbox stalled the Stripe webhook, checkout,
+  the health probe and the admin. Both are linear and run on the capped
+  text. `src/modules/support.mjs`.
+- **One crafted mail lost the rest of its batch.** Every fetched message
+  was flagged seen before parsing, MIME nesting was unbounded (3,800 levels
+  overflowed the stack), and one exception ended the loop. Nesting is
+  capped at ten; each message is ingested on its own, and a failure files
+  an exception naming it. `src/jobs.mjs`, `src/modules/support.mjs`.
+- **Anyone could bounce any customer.** A mail whose `From` said
+  `postmaster` marked every address in its body bounced, suppressing all
+  campaign, automation and recovery mail to them. A DSN now counts only
+  when it references one of our own outbox ids, and only for that address.
+- **Third-party inboxes could be bombed** through the consent request
+  (every call sent a mail and rotated the token) and cart recovery (one
+  mail per expired Checkout session, no per-address cap) — SECURITY.md said
+  they could not. Consent mail is one per address per hour; recovery mail
+  one per address per day and only for a known contact; checkout is
+  limited per email. `src/modules/campaigns.mjs`, `recovery.mjs`,
+  `server.mjs`.
+- **Status probes were an SSRF oracle from the ops role.** The hostname was
+  checked once at save time as a string; IPv6-mapped literals passed,
+  redirects were followed, bodies were unbounded. Every run resolves the
+  host and refuses private, loopback, link-local, mapped, NAT64 and ULA
+  answers; redirects are the result, not followed; reads are capped at
+  2 MiB, as is every other outbound read. `src/modules/status.mjs`,
+  `src/net.mjs`.
+- **"Forget this person" left the address behind** in checkout sessions,
+  invoices, warranty claims, shipped/canceled timeline lines, exception
+  bodies and audit detail. The transaction blanks them all, the export
+  shows them, and addresses are no longer written into the immutable
+  audit chain or timeline text at the source. `src/modules/privacy.mjs`.
+- `/store/session/:id` no longer hands out the signed order-status link;
+  confirm and unsubscribe act on `POST`, not on a link scanner's `GET`; the
+  waitlist quantity is an integer; the form-origin acknowledgement carries a
+  fixed subject and no unverified name; mail threading matches only our
+  own message ids and files a stranger's reply as a flagged note; Stripe's
+  timestamp must be finite.
+- **Stated, not fixed:** the IMAP client still flags a message seen while
+  fetching; the per-message exception row is what makes a loss visible. A
+  first-time shopper with no contact row no longer receives cart-recovery
+  mail — a product decision, stated in SECURITY.md.
+
+## Website, evidence viewer and Lab (`viewer/`, `canary-local/`, the site)
+
+- **"Verified" meant "signed by the key the record names."** The evidence
+  viewer verified an envelope against `provenance.device_public_key` from
+  the envelope itself; the Witness Wall page did the same over plain http
+  and printed "Record verified here on this device". `verifyEnvelope` takes
+  a trusted key the way the bundle path already did; without one the
+  headline is *self-consistent (identity not confirmed)*. The Wall pins the
+  hub's key on first use, shows its fingerprint, verifies against the pin
+  after, and alarms on a change. `viewer/verify_core.js`,
+  `viewer/template.html`, the site's `tv/app.js`.
+- **The viewer had no Content-Security-Policy** — the one page whose job is
+  to render hostile input had no second line of defense. The build emits
+  hashed script and style sources, refuses inline style attributes, and a
+  behavioral test feeds every string field a hostile element.
+  `viewer/build.mjs`.
+- **`figures.html` rendered fork-authored SVG as `innerHTML`** for a
+  `?ref=` the API could not resolve. The ref must resolve to a branch or
+  tag, and the SVG goes through an element and attribute allow-list.
+- The emulator badged real fleets "chain ✓" without checking anything;
+  live tiles say *presence only*. The Lab flasher no longer drops silently
+  to checksum-only for a loopback manifest override; it asks, naming the
+  origin. `?src=` and `?kernel=` are honored only for local origins.
+- **Stated, not fixed:** the site's `style-src 'unsafe-inline'` is what
+  turns a text spoof into a full-page overlay; hashing every page's style
+  block is a separate project.
+
+## Desktop Flasher and Lab app (`desktop/`, `desktop-lab/`)
+
+- **A LAN host could collect a device's bearer by announcing its
+  `device_id`.** The fleet book re-pointed a device at whatever address an
+  mDNS announcement named, and the next Identify or Update sent the stored
+  token there over http. The bearer now waits for a fresh nonce challenge
+  answered under the fingerprint pinned in the book; the proven
+  `(device_id, address)` pair is remembered for the session; a device that
+  turns up at a different address than the one it was first proven at is
+  confirmed through a native dialog. This is not channel binding (a relay
+  to the reachable genuine board still works); binding the token exchange
+  to the device key stays open. `desktop/src-tauri/src/fleet.rs`,
+  `desktop/src/app.js`.
+- **`host_is_local` was a name check.** Single-label names and
+  `.lan`/`.internal`/`.home.arpa` resolved through unicast DNS and the
+  answer was never checked, so a hostile resolver could send a bearer off
+  the LAN. Every resolved address must be private, loopback or link-local
+  and the client is pinned to those addresses; the Lab app and the hub
+  onboarding path use the same gate, and onboarding shows the resolved
+  address and warns when the hub answered elsewhere before.
+- **Three commands took any absolute path from the webview.** They take an
+  opaque handle from a Rust-side picker that refuses non-regular files and
+  anything under the app's own data directory. The raw-disk write raises a
+  native confirm beside the JS one. Without an OS secret store, passwords
+  and tokens are no longer written to `localStorage`.
+
+## Home Assistant integration, add-on and CI (`custom_components/`, `privacy_witness_kernel/`, `.github/`)
+
+- **Supervisor discovery could read a file and move an entry.** The
+  discovery step took `host`, `port` and `token_file` verbatim from the
+  payload, read the first bytes of that path and sent them as a bearer to
+  that host before any confirmation, and re-pointed an existing entry with
+  no identity check. The token file must be the add-on's own; nothing is
+  read or sent before the confirm step; an existing entry moves only when
+  `/api/identity` at the discovered URL, asked with the entry's own
+  credential, answers with the pinned key and device id. A signed challenge
+  for discovery moves is the stronger follow-up. `config_flow.py`.
+- Every JSON answer from the hub is read under a 4 MiB cap (only the bundle
+  download was). Hub-supplied zone ids are validated and capped at 64
+  entities per entry. The pairing forms say when the URL is plain http to a
+  host that is not the add-on.
+- The add-on's `device_key_seed` is a password option; it gains
+  `fleet_rollcall` for the kernel's new default. The seed's location in
+  `/config` (inside every backup and every file-sharing add-on) is a data
+  migration and stays open.
+- **Supply chain.** The add-on image pins its bases by digest and verifies
+  `rustup-init` and `cargo-chef` by sha256 (no more `curl | sh`);
+  `packages: write` is scoped to publish jobs; the sidecar and backoffice
+  images carry provenance and an SBOM (the add-on image's shape is pulled
+  per-arch by the Supervisor and is release-tested first); emsdk is checked
+  out at a pinned commit, PlatformIO at a pinned version; CODEOWNERS covers
+  `.github`, `.claude` and `scripts/hooks`; dependency review fails on
+  moderate; `deny.toml` declares its advisory policy. The release packages a
+  source tarball under the existing checksum and attestation globs so
+  `install.sh` can require its line in `sha256sums.txt` (a release cut
+  before this change falls back with a loud warning). `cloud-init`
+  installs Docker from the apt repository with the key fingerprint checked.
+  The website's `social-record` workflow validates the issue-derived post id
+  and passes it through `env`.

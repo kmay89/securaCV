@@ -218,13 +218,15 @@ describe('a hostile bundle renders as text, never as markup', () => {
 
 describe('the headline a pass earns', () => {
   const SELF = 'Self-consistent — signed by the key it names (identity not confirmed)';
+  // Every regex metacharacter, not only the parentheses the headline happens to carry.
+  const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   it('without a trusted key an envelope is self-consistent, never "Verified"', async () => {
     const page = loadPage();
     await page.process(loadJson('envelope/valid_envelope.json'), 'sample');
     await settle();
     const report = page.byId.get('report').innerHTML;
-    assert.match(report, new RegExp(SELF.replace(/[()]/g, '\\$&')));
+    assert.match(report, new RegExp(escapeRegExp(SELF)));
     assert.doesNotMatch(report, /Verified —/, 'a pass under the file\'s own key is not "Verified"');
     assert.match(report, /authorship is self-attested, not confirmed/, 'the explainer must say what self-consistent means');
     assert.match(report, /reads “self-consistent”, not “verified”/);
@@ -257,7 +259,7 @@ describe('the headline a pass earns', () => {
     const blank = loadPage();
     await blank.process(bundle, 'sample');
     await settle();
-    assert.match(blank.byId.get('report').innerHTML, new RegExp(SELF.replace(/[()]/g, '\\$&')));
+    assert.match(blank.byId.get('report').innerHTML, new RegExp(escapeRegExp(SELF)));
     assert.doesNotMatch(blank.byId.get('report').innerHTML, /Verified —/);
 
     const keyed = loadPage();

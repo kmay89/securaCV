@@ -183,7 +183,7 @@ export function clientIp(req) {
 const forwardedHop = (s) => {
   let h = String(s).trim();
   const b = /^\[([^\]]+)\](?::\d+)?$/.exec(h); if (b) h = b[1];
-  h = h.replace(/%.*$/, '');
+  const zone = h.indexOf('%'); if (zone >= 0) h = h.slice(0, zone);
   const p = /^(\d+\.\d+\.\d+\.\d+):\d+$/.exec(h); if (p) h = p[1];
   return isIP(h) ? h : null;
 };
