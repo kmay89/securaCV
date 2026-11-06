@@ -53,7 +53,7 @@ ${c.query.get('invite') ? `<div class="card"><div class="k">The invitation link<
 <div>${pending ? `<div class="box card"><b>New authenticator — scan it, then confirm with a code</b>${authenticatorBlock(u.email, pending)}${form('/me/totp/confirm', c.csrf, field('code', 'A code from the new authenticator', { required: true }), { submit: 'Confirm and switch', cls: '' })}<p class="muted">Your old authenticator keeps working until you confirm.</p></div>` : `<div class="card"><div class="k">Authenticator</div><p>Set up. Lost the phone? ${button('/me/totp', c.csrf, 'Set up a new one', { quiet: true })} — the old one keeps working until the new one is confirmed with a code.</p></div>`}
 <div class="card" style="margin-top:.8rem"><div class="k">Sessions</div><p>${sessions.length} open (this one included). ${sessions.length > 1 ? button('/me/sessions/end', c.csrf, 'Log out everywhere else', { quiet: true }) : ''}</p></div></div></div>`);
   });
-  router.post('/me/password', (c) => { changePassword(db, c.user.id, c.body.current, c.body.next); back(c, '/me', 'password changed'); });
+  router.post('/me/password', async (c) => { await changePassword(db, c.user.id, c.body.current, c.body.next); back(c, '/me', 'password changed'); });
   router.post('/me/totp', (c) => { beginTotpRotation(db, c.user.id); back(c, '/me', 'scan the new code, then confirm it'); });
   router.post('/me/totp/confirm', (c) => { if (!confirmTotp(db, c.user.id, c.body.code)) throw new HttpError(400, 'that code did not match the new authenticator — try the next one'); back(c, '/me', 'authenticator switched'); });
   router.post('/me/sessions/end', (c) => { const n = endOtherSessions(db, c.user.id, c.session.id); back(c, '/me', `${n} other session${n === 1 ? '' : 's'} ended`); });
@@ -66,10 +66,10 @@ ${c.query.get('invite') ? `<div class="card"><div class="k">The invitation link<
     if (pending) return html(c.res, invitePage('Almost there', `<p>Hi ${e(u.name.split(' ')[0])}. Your password is set. Now the authenticator: it is the second thing every login asks for.</p>${authenticatorBlock(u.email, pending)}<form method="post" action="/invite/${e(c.params.token)}/confirm" class="box">${field('code', 'Enter a code from the app to prove it is set up', { required: true })}<div style="margin-top:.8rem"><button>Open my account</button></div></form>`));
     html(c.res, invitePage(`Welcome, ${u.name.split(' ')[0]}`, `<p>${e(u.invited_by || 'An owner')} invited you to the ${e(cfg.company || 'Errer Labs')} backoffice as <b>${e(u.role)}</b> (${e(ROLE_TEXT[u.role])}).</p><p>You sign in as <b>${e(u.email)}</b>. Choose a password nobody else knows; the next step sets up your authenticator app.</p>${c.query.get('err') ? `<div class="flash err">${e(c.query.get('err'))}</div>` : ''}<form method="post" action="/invite/${e(c.params.token)}" class="box">${field('password', 'Password (12 characters or more)', { type: 'password', required: true })}${field('again', 'The same password again', { type: 'password', required: true })}<div style="margin-top:.8rem"><button>Set password and continue</button></div></form>`));
   });
-  router.post('/invite/:token', (c) => {
+  router.post('/invite/:token', async (c) => {
     if (!inviteFor(db, c.params.token)) throw new HttpError(404, 'this invitation is not valid any more');
     if (c.body.password !== c.body.again) return redirect(c.res, `/invite/${encodeURIComponent(c.params.token)}?err=${encodeURIComponent('the two passwords differ')}`);
-    try { acceptInvite(db, c.params.token, c.body.password); } catch (err) { return redirect(c.res, `/invite/${encodeURIComponent(c.params.token)}?err=${encodeURIComponent(err.message)}`); }
+    try { await acceptInvite(db, c.params.token, c.body.password); } catch (err) { return redirect(c.res, `/invite/${encodeURIComponent(c.params.token)}?err=${encodeURIComponent(err.message)}`); }
     redirect(c.res, `/invite/${encodeURIComponent(c.params.token)}`);
   }, { public: true, csrf: false });
   router.post('/invite/:token/confirm', (c) => {
