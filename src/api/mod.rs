@@ -2811,9 +2811,11 @@ mod tests {
     }
 
     /// A summary the bridge could have written: one peer proven present by a
-    /// signed publish 30 s ago with a fresh room reading, one heard only over
-    /// unsigned heartbeats, both carrying the bridge's private bookkeeping
-    /// (the pinned key) that must never be served.
+    /// signed publish 30 s ago with a fresh room reading the device signed
+    /// (the verified `state` mark beside it is what lets the words be
+    /// served), one heard only over unsigned heartbeats, both carrying the
+    /// bridge's private bookkeeping (the pinned key) that must never be
+    /// served.
     fn planted_peer_summary(now: u64) -> crate::fleet_peers::PeerSummaryFile {
         let json = serde_json::json!({
             "schema": crate::fleet_peers::FLEET_PEERS_SCHEMA,
@@ -2830,7 +2832,8 @@ mod tests {
                     "presence": "present",
                     "occupants": "1",
                     "breathing": true,
-                    "wellbeing_epoch_s": now - 10
+                    "wellbeing_epoch_s": now - 10,
+                    "last_verified_state": {"chain_length": 3, "seq": 1}
                 },
                 {
                     "device_id": "canary-wap-porch",
