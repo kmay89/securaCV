@@ -35,7 +35,7 @@
 //! against a real controller can. Where that distinction matters it is
 //! called out rather than papered over.
 
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 use rand::rngs::SysRng;
 use rand::TryRng;
 use sha2::Sha512;

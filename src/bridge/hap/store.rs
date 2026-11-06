@@ -104,6 +104,7 @@ impl PersistedState {
             setup_id: random_setup_id()?,
             seed: hex::encode(seed),
             config_number: 1,
+            setup_attempts: 0,
             fleet_hash: String::new(),
             pairings: Vec::new(),
         })
@@ -356,7 +357,7 @@ mod tests {
                 admin: true,
             })
             .expect("add");
-        state.absorb(&store, 4);
+        state.absorb(&store, 4, 0);
         save(&path, &state).expect("saves");
 
         let reloaded = load(&path).expect("loads").expect("present");
