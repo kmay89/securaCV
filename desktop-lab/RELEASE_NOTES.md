@@ -16,6 +16,40 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.4.0 — 2026-11-06
+
+**The app opens on a Home of its own: what is plugged in, who is on your
+network, and the bench you were on — with a fleet page, a status strip,
+keyboard shortcuts and a first-run welcome.**
+
+- **Home.** Three live cards: *On your network* (how many Canaries are
+  online, and whether a hub's kernel is answering), *Over USB* (the board
+  plugged into this computer, one click from the Flash bench) and *This
+  app* (version, firmware train, whether an update is ready). Under them:
+  pick up where you left off, your fleet at a glance, six things to do,
+  and the build line. The isometric room is still there as *Workshop map*.
+- **Your fleet.** Every Canary the app has heard announce itself, with its
+  model, firmware and address; the hub's own rows beside them. A board on
+  older firmware than this app carries is marked *update to 2.4.x*, with a
+  Flash button where the app can flash. A board that goes quiet reads
+  *last heard*, never offline: presence is what the network said. The
+  kernel address is set here, and the menu bar companion and the Witness
+  Wall use the same one.
+- **A status strip under every bench:** online count, the USB board, the
+  hub, and the build — each a click to where it is handled.
+- **Keyboard shortcuts:** ⌘K search, ⌘1–6 jump to a stage, ⌘[ and ⌘]
+  previous and next bench, ⌘R reload the bench, ⌘, Settings, ⌘⇧H Home
+  (Ctrl on Linux). Listed under Updates & about.
+- **A welcome on first run** with three ways in: a board to flash,
+  Canaries already running, or just exploring.
+- **Settings** gains the shortcut list, a link to the fleet page, and a
+  button that forgets the app's on-device memory (progress, the last bench,
+  the Canaries heard).
+- Nothing new leaves this computer: discovery is the same mDNS browse and
+  kernel poll the Witness Wall bench already ran, and the words stay coarse
+  (online, offline, last heard, hub down, chain not ok). The website Lab is
+  unchanged.
+
 ## 0.3.4 — 2026-10-30
 
 **The 2.4.19 firmware catalog is baked in, so a Canary Glance AMOLED on a

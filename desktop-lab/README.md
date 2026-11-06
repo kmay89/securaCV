@@ -46,6 +46,17 @@ Native earns its keep for the things a browser can't do well:
   pairing: "verified" means a chain walked against a key pinned at pairing,
   and the Lab holds no such key yet. *(Phase 2.)*
 
+- **A Home of its own** — the app opens on what is plugged in over USB,
+  who is on your network (the mDNS browse and the kernel poll above, read
+  every 15 s while the page is open) and the bench you were on; a **Your
+  fleet** page lists every Canary heard with its firmware and address, marks
+  a board behind the firmware this build carries, and holds the kernel
+  address the Witness Wall and the menu bar companion use too; a status
+  strip under every bench; keyboard shortcuts (⌘K, ⌘1–6, ⌘[ ⌘], ⌘R, ⌘,).
+  All of it is `canary-local/assets/lab-app.js`, rendered only where
+  `native_capabilities` reports something to show, so the website Lab
+  never grows a Home that answers "—" (`canary-local/tests/lab_app.test.js`).
+
 Tauri gives us all of that from **one frontend** shared with the website: a
 ~5 MB signed binary on the OS WebView, minimal attack surface (Rust) — a
 better fit for a privacy brand than a 100 MB Chromium bundle.

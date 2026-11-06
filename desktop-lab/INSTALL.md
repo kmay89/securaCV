@@ -152,6 +152,28 @@ This is the same rule the SecuraCV Flasher ships.
 
 ---
 
+## Home, your fleet, and the keyboard
+
+The app opens on **Home**: what is plugged in over USB (one click from the
+Flash bench), how many Canaries are online and whether a hub's kernel is
+answering, and the bench you were on last time. **Your fleet** lists every
+Canary the app has heard announce itself on your network — model, firmware,
+address, and *update to 2.4.x* where a board runs older firmware than this
+build carries — beside the rows a hub reports. A board that goes quiet reads
+*last heard*, never offline: presence is what the network said, and nothing
+here is verified (the Lab holds no pairing key yet). Type a hub's address
+there if it isn't found at `canary.local`; the Witness Wall and the menu bar
+companion use the same one. A strip under every bench shows the same four
+facts.
+
+Shortcuts (Ctrl on Linux): ⌘K search, ⌘⇧H Home, ⌘1–6 a stage of the build
+line, ⌘[ and ⌘] previous and next bench, ⌘R reload the bench, ⌘, Settings.
+They work while the Lab's own frame has focus, not inside a bench's page.
+Everything the app remembers — progress, the last bench, the Canaries heard —
+stays on this computer; **Updates & about** has a button that forgets it.
+
+---
+
 ## The menu bar companion
 
 While the Lab runs it keeps a small fleet icon in the menu bar (macOS) or

@@ -32,6 +32,12 @@
    never built against a stale answer. */
 export let SETTINGS_AVAILABLE = false;
 
+/** The last answer from the release channel, for the app's Home and status
+    strip to read without asking again (every ask is journaled). */
+export const updateState = { checked: false, update: null, failed: null };
+
+import { SHORTCUTS, forgetEverything, appViews } from "./lab-app.js";
+
 /** Ask the native shell whether this build can actually self-update.
     Safe to call anywhere — resolves false off-app and on mobile. */
 export async function probeSettings() {
@@ -135,9 +141,34 @@ export function settingsView() {
   const logBox = h("div", { class: "set-log" }, h("div", { class: "set-log-row" }, h("span", { class: "muted" }, "Reading the update journal…")));
   const pathNote = h("p", { class: "set-path" });
 
+  // On-device memory: which stages you visited, the bench you were on, the
+  // Canaries heard, the welcome card. Nothing here ever left this computer.
+  const resetNote = h("span", { class: "muted" });
+  const resetBtn = h("button", { class: "btn ghost", onclick: () => {
+    forgetEverything();
+    resetNote.textContent = "Forgotten. The sidebar's checkmarks, the fleet memory and the welcome card start over on the next view.";
+  } }, "Forget my progress and fleet memory");
+
   root.append(
     h("section", { class: "set-sec" }, h("h2", {}, "This build"), specs),
     h("section", { class: "set-sec" }, h("h2", {}, "Updates"), updateBox),
+    appViews() ? h("section", { class: "set-sec" },
+      h("h2", {}, "Fleet and network"),
+      h("p", { class: "set-lede" },
+        "The app listens for Canaries announcing themselves on your network and asks a hub's kernel for its fleet report. " +
+        "The kernel address lives on the fleet page, beside the devices it answers for."),
+      h("div", { class: "actions" },
+        h("a", { class: "btn ghost", href: "#devices" }, "Open Your fleet"))) : null,
+    appViews() ? h("section", { class: "set-sec" },
+      h("h2", {}, "Keyboard shortcuts"),
+      h("dl", { class: "set-specs set-kbd" },
+        ...SHORTCUTS.flatMap(([keys, what]) => [h("dt", {}, h("kbd", {}, keys)), h("dd", {}, what)])),
+      h("p", { class: "set-lede" }, "On Linux, Ctrl stands in for ⌘. Shortcuts work while the Lab's own frame has focus, not inside a bench's page.")) : null,
+    h("section", { class: "set-sec" },
+      h("h2", {}, "On-device memory"),
+      h("p", { class: "set-lede" },
+        "Progress, the bench you were on, the Canaries heard and the welcome card are kept on this computer only."),
+      h("div", { class: "kaddr-row" }, resetBtn, resetNote)),
     h("section", { class: "set-sec" },
       h("h2", {}, "Update log"),
       h("p", { class: "set-lede" },
@@ -210,6 +241,9 @@ async function runCheck(ui, info) {
   let update = null, failed = null;
   try { update = await invoke("check_update"); }
   catch (e) { failed = String(e); }
+  updateState.checked = !failed;
+  updateState.update = update || null;
+  updateState.failed = failed;
   await refreshLog(ui);   // the check itself was just journaled
 
   const checkBtn = (label) =>
