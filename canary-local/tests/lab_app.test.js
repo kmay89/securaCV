@@ -208,8 +208,9 @@ test("the Home's setup list reads only what the app can observe", () => {
   const flashJs = read(join(CANARY, "assets/flash.js"));
   const key = /const INSTALL_TIMES_KEY = "([^"]+)"/.exec(flashJs);
   assert.ok(key, "flash.js lost INSTALL_TIMES_KEY");
-  assert.match(appJs, new RegExp(`const FLASH_MEMORY_KEY = "${key[1].replace(/\./g, "\\.")}"`),
-    "lab-app.js reads the flasher's memory under a different key than flash.js writes");
+  const mine = /const FLASH_MEMORY_KEY = "([^"]+)"/.exec(appJs);
+  assert.ok(mine, "lab-app.js lost FLASH_MEMORY_KEY");
+  assert.strictEqual(mine[1], key[1], "lab-app.js reads the flasher's memory under a different key than flash.js writes");
   assert.doesNotMatch(appJs, /setItem\(FLASH_MEMORY_KEY/, "the Home must never write the flasher's memory");
   // Every step is gated on the capability its observation needs.
   const steps = appJs.slice(appJs.indexOf("export function setupSteps"), appJs.indexOf("const setupHidden"));
