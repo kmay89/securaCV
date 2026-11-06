@@ -33,8 +33,48 @@
 export let SETTINGS_AVAILABLE = false;
 
 /** The last answer from the release channel, for the app's Home and status
-    strip to read without asking again (every ask is journaled). */
-export const updateState = { checked: false, update: null, failed: null };
+    strip to read without asking again (every ask is journaled). Written by
+    the panel's own check AND by every journal line the native updater emits
+    (`update:log`, self_update.rs), so the routine check that runs with no
+    panel open moves it too — a found update, a "Later", a current build. */
+export const updateState = { checked: false, update: null, failed: null, listeners: new Set() };
+
+/* The journal's own vocabulary (self_update.rs `journal(...)` calls), read
+   back as state. Only the lines that settle the question move it; a
+   download or install line leaves it where it was. */
+const JOURNAL_READY = /\bv(\S+) is ready \(running v(\S+)\)/;
+const JOURNAL_CURRENT = /checked — v\S+ is current/;
+const JOURNAL_FAILED = /update check (unavailable|failed)/;
+export function noteJournalLine(line) {
+  const msg = String(line || "").replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z\s+/, "");
+  let m;
+  if ((m = JOURNAL_READY.exec(msg))) {
+    updateState.update = { version: m[1], current_version: m[2] };
+    updateState.checked = true; updateState.failed = null;
+  } else if (JOURNAL_CURRENT.test(msg)) {
+    updateState.update = null; updateState.checked = true; updateState.failed = null;
+  } else if (JOURNAL_FAILED.test(msg)) {
+    updateState.failed = msg; updateState.checked = false;
+  } else {
+    return false;
+  }
+  for (const fn of updateState.listeners) { try { fn(updateState); } catch {} }
+  return true;
+}
+
+/** Follow the native updater from launch: seed from the newest journal line
+    that settled the question, then every line it emits from here on. Called
+    once by the app shell where self-update exists; off-app it does nothing. */
+let watching = false;
+export async function watchUpdates() {
+  if (watching || !SETTINGS_AVAILABLE) return;
+  watching = true;
+  try {
+    const lines = (await invoke("read_update_journal")) || [];   // newest first
+    for (const l of lines) if (noteJournalLine(l)) break;
+  } catch { /* no journal yet */ }
+  listen("update:log", (ev) => { if (typeof ev.payload === "string") noteJournalLine(ev.payload); });
+}
 
 import { SHORTCUTS, forgetEverything, appViews } from "./lab-app.js";
 
@@ -244,6 +284,7 @@ async function runCheck(ui, info) {
   updateState.checked = !failed;
   updateState.update = update || null;
   updateState.failed = failed;
+  for (const fn of updateState.listeners) { try { fn(updateState); } catch {} }
   await refreshLog(ui);   // the check itself was just journaled
 
   const checkBtn = (label) =>

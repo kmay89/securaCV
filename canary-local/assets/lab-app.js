@@ -26,7 +26,7 @@
    Every invoke() here names a command desktop-lab/src-tauri/src/lib.rs
    registers (canary-local/tests/lab_bundle.test.js holds both directions). */
 
-import { SETTINGS_AVAILABLE, updateState } from "./lab-settings.js";
+import { SETTINGS_AVAILABLE, updateState, watchUpdates } from "./lab-settings.js";
 
 export const IN_APP = !!(window.__TAURI__ && window.__TAURI__.core);
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
@@ -44,6 +44,10 @@ export async function probeApp() {
   try { Object.assign(CAPS, (await invoke("native_capabilities")) || {}); } catch { /* no seam: nothing lights */ }
   try { Object.assign(APP_INFO, (await invoke("app_info")) || {}); } catch { /* shown as — */ }
   CAPS.probed = true;
+  // The Home and the strip show the updater's last word; follow it from here
+  // (the routine check runs with no Settings panel open) and redraw on change.
+  watchUpdates().catch(() => {});
+  updateState.listeners.add(() => fleet.emit());
   return CAPS;
 }
 

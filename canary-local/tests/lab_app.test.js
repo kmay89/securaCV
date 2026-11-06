@@ -136,6 +136,34 @@ test("the helpers answer like the Flasher's fleet book", async () => {
   assert.match(app.presenceWord({ online: null, heardAt: Date.now() - 5 * 60e3 }), /^last heard 5 min ago$/);
   // The well-known bases, with no typed address under the stub.
   assert.deepStrictEqual(app.kernelBases(), ["http://canary.local:8099", "http://canary.local:8799", "http://canary.local"]);
+  // The journal read back as state, line by line as self_update.rs writes it.
+  const settings = await import(pathToFileURL(join(CANARY, "assets/lab-settings.js")).href);
+  const st = settings.updateState;
+  assert.strictEqual(settings.noteJournalLine("2026-11-06 04:00:00Z v0.4.1 is ready (running v0.4.0)"), true);
+  assert.deepStrictEqual({ v: st.update && st.update.version, c: st.checked, f: st.failed }, { v: "0.4.1", c: true, f: null });
+  assert.strictEqual(settings.noteJournalLine("2026-11-06 04:00:05Z v0.4.1 offered — user chose later"), false, "a Later keeps the update ready");
+  assert.strictEqual(st.update.version, "0.4.1");
+  assert.strictEqual(settings.noteJournalLine("2026-11-06 10:00:00Z checked — v0.4.1 is current"), true);
+  assert.deepStrictEqual({ v: st.update, c: st.checked }, { v: null, c: true });
+  assert.strictEqual(settings.noteJournalLine("2026-11-06 16:00:00Z update check unavailable: offline"), true);
+  assert.deepStrictEqual({ c: st.checked, f: st.failed }, { c: false, f: "update check unavailable: offline" });
+  assert.strictEqual(settings.noteJournalLine("2026-11-06 16:00:01Z downloading v0.4.1…"), false);
+});
+
+test("the Home follows the native updater's journal, in the updater's own words", () => {
+  // Codex on #1925: updateState had one writer, the Settings panel's check,
+  // so a routine check that found an update with no panel open left the Home
+  // saying "up to date". The journal is the updater's record; the frontend
+  // reads it back in the exact vocabulary self_update.rs writes.
+  const rs = read(join(ROOT, "desktop-lab/src-tauri/src/self_update.rs"));
+  assert.match(rs, /"v\{version\} is ready \(running v\{\}\)"/, "self_update.rs changed its 'ready' line — update JOURNAL_READY");
+  assert.match(rs, /"checked — v\{\} is current"/, "self_update.rs changed its 'current' line — update JOURNAL_CURRENT");
+  assert.match(rs, /"update check unavailable: \{e\}"/, "self_update.rs changed its 'unavailable' line — update JOURNAL_FAILED");
+  assert.match(settingsJs, /listen\("update:log", \(ev\) => \{ if \(typeof ev\.payload === "string"\) noteJournalLine\(ev\.payload\); \}\)/,
+    "watchUpdates() must follow every journal line the updater emits");
+  assert.match(settingsJs, /invoke\("read_update_journal"\)/, "watchUpdates() must seed from the journal on launch");
+  assert.match(appJs, /watchUpdates\(\)\.catch/, "probeApp() must start the watch where self-update exists");
+  assert.match(appJs, /updateState\.listeners\.add\(\(\) => fleet\.emit\(\)\)/, "a changed update state must redraw the Home and the strip");
 });
 
 test("CI runs this gate", () => {
