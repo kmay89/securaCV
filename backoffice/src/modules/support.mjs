@@ -41,8 +41,11 @@ export function openTicket(db, { email, name = null, subject, body, kind = null,
     // One acknowledgement per address per hour: a form or a mailbox fed someone else's address in a
     // loop would otherwise make this server the one flooding them.
     const ackedLately = contact?.email && db.get("SELECT id FROM mail_outbox WHERE to_addr = ? AND kind = 'support' AND ref LIKE 'ticket:%' AND created_at >= ?", contact.email, new Date(Date.now() - 3600_000).toISOString());
-    if (autoAck && contact?.email && !ackedLately) enqueue(db, { to: contact.email, subject: `[${number} ${tt}] Re: ${subject}`, kind: 'support', ref: `ticket:${number}`,
-      headers: inReplyToHeaders(messageId), text: fill(ACK_TPL, { name: contact.name || 'there', number, company: cfg.company || 'Errer Labs', when: ackWhen(db, cfg) }) });
+    // A form on the website carries whatever name and subject the sender typed, to whatever address they typed: the
+    // acknowledgement it earns has a fixed subject and no name, so the form cannot be used to relay a line to a stranger.
+    const fromForm = channel === 'form';
+    if (autoAck && contact?.email && !ackedLately) enqueue(db, { to: contact.email, subject: fromForm ? `[${number} ${tt}] We got your message` : `[${number} ${tt}] Re: ${subject}`, kind: 'support', ref: `ticket:${number}`,
+      headers: inReplyToHeaders(messageId), text: fill(ACK_TPL, { name: fromForm ? 'there' : contact.name || 'there', number, company: cfg.company || 'Errer Labs', when: ackWhen(db, cfg) }) });
     db.audit('system', 'ticket.open', 'ticket', number, { kind: kind || guess.kind, channel });
     return ticketById(db, id);
   });
@@ -101,31 +104,52 @@ export function update(db, ticketId, { kind, priority, labels }) {
   return ticketById(db, ticketId);
 }
 
+// A body is read up to this many characters, before anything scans it: a 2 MB letter is a 20 k ticket, never
+// 44 s of regex. The same cap sanitize() applies on the way into the table.
+export const BODY_MAX = 20_000;
+// The bracketed tokens of a text — "<id@host>" written plainly or as id@host — found by one linear split, never by a
+// regex over the whole body; at most `max` tokens are looked at.
+const bracketed = (text, { max = 5000 } = {}) => { const out = []; for (const tok of String(text).split(/[\s<>()[\],;:"']+/, max)) if (tok.includes('@') && tok.length <= 500) out.push(`<${tok}>`); return out; };
+// A delivery status notification counts only when it names a mail WE sent: our Message-ID in In-Reply-To, References,
+// an Original-Message-ID header or the body — and the address it suppresses is the one that mail went to, never an
+// address merely written in the body. A handful per DSN; a bounce written to say "every address bounced" says nothing.
+function bouncedAddresses(db, mail, text) {
+  const ids = new Set([mail.inReplyTo, ...(mail.references || []), ...bracketed(`${mail.headers?.['original-message-id'] || ''} ${mail.headers?.['x-original-message-id'] || ''}`), ...bracketed(text)].map(messageIdOrNull).filter(Boolean));
+  const out = [];
+  for (const id of [...ids].slice(0, 50)) { const m = db.get('SELECT to_addr FROM mail_outbox WHERE message_id = ?', id); const a = m?.to_addr?.toLowerCase(); if (a && !out.includes(a)) out.push(a); if (out.length >= 5) break; }
+  return out;
+}
+
 // Inbound mail → the right ticket. Order of matching: thread token in the
 // subject, then In-Reply-To / References against our outbound ids, then a
 // new ticket. Bounces and auto-replies are filed as notes, never answered.
 export function ingestEmail(db, mail, { cfg = {} } = {}) {
   const from = mail.from || ''; const email = (from.match(/<([^>]+)>/) || [, from])[1].trim();
   const name = (from.match(/^\s*"?([^"<]+?)"?\s*</) || [])[1] || null;
+  const text = String(mail.text || '').slice(0, BODY_MAX);
   const isAuto = /auto-?reply|automatic reply|out of office|mailer-daemon|postmaster|delivery status|undeliverable/i.test(`${mail.subject} ${from} ${mail.headers?.['auto-submitted'] || ''}`) || /^(auto-generated|auto-replied)/i.test(mail.headers?.['auto-submitted'] || '');
-  // A bounce (a delivery status notification) names the address that failed: it is suppressed from marketing mail from here on.
+  // A bounce (a delivery status notification) names a mail of ours that failed: its address is suppressed from marketing mail from here on.
   const isBounce = /mailer-daemon|postmaster|delivery status|undeliverable|delivery has failed|could not be delivered/i.test(`${mail.subject} ${from}`);
   const bounced = [];
-  if (isBounce) { const seen = new Set(); for (const [, addr] of String(mail.text || '').matchAll(/([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g)) { const a = addr.toLowerCase(); if (seen.has(a) || a === email.toLowerCase() || /mailer-daemon|postmaster/.test(a)) continue; seen.add(a); if (markBounced(db, a, { reason: mail.subject || 'bounce' })) bounced.push(a); } }
+  if (isBounce) for (const a of bouncedAddresses(db, mail, text)) { if (a !== email.toLowerCase() && markBounced(db, a, { reason: mail.subject || 'bounce' })) bounced.push(a); }
   const tok = (mail.subject || '').match(TOKEN_RE);
   let t = tok ? db.get('SELECT * FROM tickets WHERE number = ? AND thread_token = ?', tok[1].toUpperCase(), tok[2].toLowerCase()) : null;
   if (!t) {
-    const refs = [mail.inReplyTo, ...(mail.references || [])].filter(Boolean);
-    for (const r of refs) { const m = db.get('SELECT ticket_id FROM ticket_messages WHERE message_id = ?', r) || db.get('SELECT ref FROM mail_outbox WHERE message_id = ?', r); if (m?.ticket_id) { t = db.get('SELECT * FROM tickets WHERE id = ?', m.ticket_id); break; } if (m?.ref?.startsWith('ticket:')) { t = db.get('SELECT * FROM tickets WHERE number = ?', m.ref.slice(7)); break; } }
+    // Only OUR Message-IDs thread a mail: a sender-chosen id on an earlier inbound mail is theirs to repeat, and must not file a stranger's mail on a customer's ticket.
+    const refs = [mail.inReplyTo, ...(mail.references || [])].map(messageIdOrNull).filter(Boolean);
+    for (const r of refs) { const m = db.get("SELECT ref FROM mail_outbox WHERE message_id = ? AND ref LIKE 'ticket:%'", r); if (m) { t = db.get('SELECT * FROM tickets WHERE number = ?', m.ref.slice(7)); if (t) break; } }
   }
   if (t) {
-    const added = addMessage(db, t.id, { direction: isAuto ? 'note' : 'in', from_addr: email, body: (isAuto ? '[auto-reply] ' : '') + (mail.text || ''), message_id: mail.messageId || null, in_reply_to: mail.inReplyTo || null, slaHours: cfg.slaHours || 24 });
-    if (added && !isAuto && mail.attachments?.length) saveAttachments(db, added.id, mail.attachments);
-    return { ticket: ticketById(db, t.id), created: false, duplicate: !added, attachments: added && mail.attachments ? mail.attachments.length : 0 };
+    // A mail from an address other than the ticket's contact (a forwarded thread, a guessed token) is filed as a flagged note, never as the customer's own word.
+    const owner = t.contact_id ? db.get('SELECT email FROM contacts WHERE id = ?', t.contact_id)?.email : null;
+    const stranger = !!owner && owner !== email.toLowerCase();
+    const added = addMessage(db, t.id, { direction: isAuto || stranger ? 'note' : 'in', from_addr: email, body: (isAuto ? '[auto-reply] ' : stranger ? "[from another address than the ticket's contact] " : '') + text, message_id: mail.messageId || null, in_reply_to: mail.inReplyTo || null, slaHours: cfg.slaHours || 24 });
+    if (added && !isAuto && !stranger && mail.attachments?.length) saveAttachments(db, added.id, mail.attachments);
+    return { ticket: ticketById(db, t.id), created: false, duplicate: !added, stranger: stranger || undefined, attachments: added && !stranger && mail.attachments ? mail.attachments.length : 0 };
   }
   if (isAuto) return { ticket: null, created: false, ignored: isBounce ? 'bounce' : 'auto-reply', bounced };
   if (mail.messageId && db.get('SELECT id FROM ticket_messages WHERE message_id = ?', mail.messageId)) return { ticket: null, created: false, duplicate: true };
-  const ticket = openTicket(db, { email, name, subject: mail.subject || '(no subject)', body: mail.text || '', channel: 'email', cfg, messageId: mail.messageId || null, inReplyTo: mail.inReplyTo || null, fromAddr: email });
+  const ticket = openTicket(db, { email, name, subject: mail.subject || '(no subject)', body: text, channel: 'email', cfg, messageId: mail.messageId || null, inReplyTo: mail.inReplyTo || null, fromAddr: email });
   if (mail.attachments?.length) saveAttachments(db, ticket.messages[0].id, mail.attachments);
   return { ticket, created: true, attachments: mail.attachments?.length || 0 };
 }
@@ -141,20 +165,23 @@ export function parseEmail(raw) {
   const text = extractText(body, ct, headers['content-transfer-encoding'] || '7bit');
   const refs = (headers.references || '').match(/<[^>]+>/g) || [];
   return { headers, from: decodeWords(headers.from || ''), to: decodeWords(headers.to || ''), subject: decodeWords(headers.subject || ''), messageId: (headers['message-id'] || '').trim() || null,
-    inReplyTo: ((headers['in-reply-to'] || '').match(/<[^>]+>/) || [])[0] || null, references: refs, date: headers.date || null, text: text.trim(), attachments: extractAttachments(body, ct) };
+    inReplyTo: ((headers['in-reply-to'] || '').match(/<[^>]+>/) || [])[0] || null, references: refs, date: headers.date || null, text: text.trim().slice(0, BODY_MAX), attachments: extractAttachments(body, ct) };
 }
 // Photos of a warped lid, a PDF of a purchase order: the parts a person attached, kept with the message.
 // Images, PDFs and text only; 5 MB each, five per mail; anything else is named in the text and dropped.
 export const ATTACHMENT_TYPES = /^(image\/(png|jpeg|gif|webp|heic)|application\/pdf|text\/plain|text\/csv)$/i;
-export function extractAttachments(body, ct, { max = 5, maxBytes = 5 * 1024 * 1024, out = [] } = {}) {
-  const type = ct.split(';')[0].trim().toLowerCase(); if (!type.startsWith('multipart/') || out.length >= max) return out;
+// Multiparts nest (a forwarded mail inside a signed one inside an alternative), but not thousands deep: past this
+// a part is read as opaque text, so a crafted mail cannot recurse the parser off the stack.
+export const MIME_DEPTH = 10;
+export function extractAttachments(body, ct, { max = 5, maxBytes = 5 * 1024 * 1024, out = [], depth = 0 } = {}) {
+  const type = ct.split(';')[0].trim().toLowerCase(); if (!type.startsWith('multipart/') || out.length >= max || depth >= MIME_DEPTH) return out;
   const boundary = (ct.match(/boundary="?([^";]+)"?/i) || [])[1]; if (!boundary) return out;
   const parts = body.split(new RegExp(`(?:\\r?\\n)?--${boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:--)?(?:\\r?\\n|$)`)).slice(1).filter(p => p.trim());
   for (const p of parts) {
     if (out.length >= max) break;
     const sep = p.indexOf('\r\n\r\n') >= 0 ? '\r\n\r\n' : '\n\n'; const i = p.indexOf(sep); const h = parseHeaders(i < 0 ? p : p.slice(0, i)); const b = i < 0 ? '' : p.slice(i + sep.length);
     const pct = h['content-type'] || 'text/plain'; const ptype = pct.split(';')[0].trim().toLowerCase();
-    if (ptype.startsWith('multipart/')) { extractAttachments(b, pct, { max, maxBytes, out }); continue; }
+    if (ptype.startsWith('multipart/')) { extractAttachments(b, pct, { max, maxBytes, out, depth: depth + 1 }); continue; }
     const disp = h['content-disposition'] || ''; const filename = decodeWords(((disp.match(/filename\*?="?([^";]+)"?/i) || pct.match(/name="?([^";]+)"?/i) || [])[1] || '').replace(/^UTF-8''/i, '')).trim();
     if (!/attachment/i.test(disp) && !filename) continue; if (!ATTACHMENT_TYPES.test(ptype)) continue;
     const cte = (h['content-transfer-encoding'] || '7bit').toLowerCase().trim();
@@ -189,21 +216,21 @@ function decodeBody(body, cte, cs) {
   if (e === 'quoted-printable') return decodeCharset(Buffer.from(body.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))), 'latin1'), cs);
   return decodeCharset(Buffer.from(body, 'latin1'), cs);
 }
-function extractText(body, ct, cte) {
+function extractText(body, ct, cte, depth = 0) {
   const type = ct.split(';')[0].trim().toLowerCase();
   const cs = (ct.match(/charset="?([^";\s]+)"?/i) || [, 'utf-8'])[1];
-  if (type.startsWith('multipart/')) {
+  if (type.startsWith('multipart/') && depth < MIME_DEPTH) {
     const boundary = (ct.match(/boundary="?([^";]+)"?/i) || [])[1]; if (!boundary) return '';
     const parts = body.split(new RegExp(`(?:\\r?\\n)?--${boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:--)?(?:\\r?\\n|$)`)).slice(1).filter(p => p.trim());
     const parsed = parts.map(p => { const sep = p.indexOf('\r\n\r\n') >= 0 ? '\r\n\r\n' : '\n\n'; const i = p.indexOf(sep); const h = parseHeaders(i < 0 ? p : p.slice(0, i)); return { h, b: i < 0 ? '' : p.slice(i + sep.length) }; });
     const plain = parsed.find(p => (p.h['content-type'] || 'text/plain').toLowerCase().startsWith('text/plain'));
-    if (plain) return extractText(plain.b, plain.h['content-type'] || 'text/plain', plain.h['content-transfer-encoding'] || '7bit');
-    for (const p of parsed) { const t = extractText(p.b, p.h['content-type'] || 'text/plain', p.h['content-transfer-encoding'] || '7bit'); if (t.trim()) return t; }
+    if (plain) return extractText(plain.b, plain.h['content-type'] || 'text/plain', plain.h['content-transfer-encoding'] || '7bit', depth + 1);
+    for (const p of parsed) { const t = extractText(p.b, p.h['content-type'] || 'text/plain', p.h['content-transfer-encoding'] || '7bit', depth + 1); if (t.trim()) return t; }
     return '';
   }
   const decoded = decodeBody(body, cte, cs).replace(/\r\n/g, '\n');
   if (type === 'text/html') return htmlToText(decoded);
-  if (type.startsWith('text/')) return decoded;
+  if (type.startsWith('text/') || type.startsWith('multipart/')) return decoded;   // a multipart too deep to open is its raw text
   return '';
 }
 
@@ -211,6 +238,7 @@ function extractText(body, ct, cte) {
 // always HTML-escaped on output. A character walk, so there is no tag regex
 // to get half right; script/style bodies are dropped, block ends become
 // newlines, entities are decoded exactly once at the end.
+const CLOSE_TAG = { script: /<\/script/ig, style: /<\/style/ig };   // searched forward from the open tag, so 20 k script tags cost one walk, not 20 k lowercased copies of the document
 export function htmlToText(html) {
   let out = '', i = 0; const n = html.length;
   while (i < n) {
@@ -219,7 +247,7 @@ export function htmlToText(html) {
     const tag = html.slice(i + 1, close).trim().toLowerCase();
     const name = tag.replace(/^\//, '').split(/[\s/]/)[0];
     if ((name === 'script' || name === 'style') && !tag.startsWith('/')) {
-      const end = html.toLowerCase().indexOf('</' + name, close); i = end < 0 ? n : html.indexOf('>', end) + 1 || n; continue;
+      const re = CLOSE_TAG[name]; re.lastIndex = close; const end = re.exec(html)?.index ?? -1; i = end < 0 ? n : html.indexOf('>', end) + 1 || n; continue;
     }
     if (name === 'br' || tag === '/p' || tag === '/div' || tag === '/li' || tag === '/tr' || /^\/h[1-6]$/.test(tag)) out += '\n';
     i = close + 1;

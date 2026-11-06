@@ -4,7 +4,7 @@
 // recognize is an error, never a guess (the same rule fulfill.mjs keeps).
 import { readFileSync } from 'node:fs';
 import { normalizeShipping } from './packing.mjs';
-import { timedFetch } from '../net.mjs';
+import { timedFetch, readJsonCapped } from '../net.mjs';
 
 let cache = { at: 0, data: null, from: null };
 
@@ -15,7 +15,7 @@ export async function loadCatalog(cfg, { force = false, fetchImpl = timedFetch }
   if (/^https?:\/\//.test(src)) {
     const r = await fetchImpl(src, { headers: { accept: 'application/json' } });
     if (!r.ok) throw new Error(`catalog fetch ${r.status} from ${src}`);
-    json = await r.json();
+    json = await readJsonCapped(r);
   } else json = JSON.parse(readFileSync(src, 'utf8'));
   const data = normalize(json);
   cache = { at: Date.now(), data, from: src };
@@ -34,7 +34,7 @@ export async function loadShipping(cfg, { force = false, fetchImpl = timedFetch 
   if (!force && shipCache.data && shipCache.from === src && Date.now() - shipCache.at < 10 * 60_000) return shipCache.data;
   try {
     let json;
-    if (/^https?:\/\//.test(src)) { const r = await fetchImpl(src, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`shipping fetch ${r.status} from ${src}`); json = await r.json(); }
+    if (/^https?:\/\//.test(src)) { const r = await fetchImpl(src, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`shipping fetch ${r.status} from ${src}`); json = await readJsonCapped(r); }
     else json = JSON.parse(readFileSync(src, 'utf8'));
     const data = normalizeShipping(json);
     shipCache = { at: Date.now(), data, from: src, error: null, failed_at: 0 };

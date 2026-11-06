@@ -10,6 +10,7 @@ test('webhook signature: good, tampered, wrong secret, stale', () => {
   assert.ok(!verifyStripeSignature(body + ' ', h, 'whsec_a', { now: t + 10 }), 'tampered body');
   assert.ok(!verifyStripeSignature(body, h, 'whsec_b', { now: t + 10 }), 'wrong secret');
   assert.ok(!verifyStripeSignature(body, h, 'whsec_a', { now: t + 1000 }), 'outside tolerance (replay)');
+  assert.ok(!verifyStripeSignature(body, h.replace(/^t=\d+/, 't=x'), 'whsec_a', { now: t + 10 }), 'a timestamp that is not a number is not inside the tolerance');
   assert.ok(!verifyStripeSignature(body, '', 'whsec_a'));
   assert.ok(!verifyStripeSignature(body, h, ''));
 });

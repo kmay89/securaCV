@@ -35,7 +35,7 @@ import { search } from './modules/search.mjs';
 import { upsertSubscription, postSubscriptionPayment } from './modules/subscriptions.mjs';
 import { postPayout, profitAndLoss, postExpense } from './modules/ledger.mjs';
 import { payoutFee } from './modules/reconcile.mjs';
-import { confirmConsent, unsubscribe, upsertContact, joinWaitlist, validEmail, searchContacts } from './modules/contacts.mjs';
+import { confirmConsent, unsubscribe, upsertContact, joinWaitlist, validEmail, searchContacts, byConsentToken, byUnsubscribeToken } from './modules/contacts.mjs';
 import { sendConsentRequest } from './modules/campaigns.mjs';
 import { openTicket, listTickets, ticketByNumber, reply as ticketReply, ingestEmail } from './modules/support.mjs';
 import { publicStatus, listIncidents } from './modules/status.mjs';
@@ -107,9 +107,15 @@ export function createApp({ db, cfg }) {
   };
   router.get('/.well-known/security.txt', securityTxt, { public: true });
   router.get('/security.txt', securityTxt, { public: true });
-  router.get('/confirm/:token', (c) => { const ok = confirmConsent(db, c.params.token); html(c.res, plain(cfg, ok ? 'Confirmed' : 'Link expired', ok ? `Thanks — ${e(ok.email)} is confirmed for occasional news. One-click unsubscribe is in every mail.` : 'That confirmation link is not valid any more. Sign up again if you still want the news.'), ok ? 200 : 404); });
-  const unsub = (c) => { const r = unsubscribe(db, c.params.token); html(c.res, plain(cfg, r ? 'Unsubscribed' : 'Unknown link', r ? `${e(r.email)} will not get another newsletter. Order and support mail still arrives — those are about things you asked for.` : 'That unsubscribe link is not one we issued.'), r ? 200 : 404); };
-  router.get('/u/:token', unsub); router.post('/u/:token', unsub, { public: true });
+  // A link in a mail is opened by scanners and previews before the person is: a GET only asks, and the button's
+  // POST acts. (The RFC 8058 one-click unsubscribe is a POST already, and still is.)
+  const askPage = (title, bodyHtml, action, button) => layout({ title, body: `<p>${bodyHtml}</p><form method="post" action="${e(action)}"><button>${e(button)}</button></form><p><a href="${e(cfg.siteOrigin)}">← back to ${e(cfg.product || 'the site')}</a></p>`, company: cfg.company, nav: false, demo: cfg.demo });
+  const expired = () => plain(cfg, 'Link expired', 'That confirmation link is not valid any more. Sign up again if you still want the news.');
+  router.get('/confirm/:token', (c) => { const ct = byConsentToken(db, c.params.token); html(c.res, ct ? askPage('Confirm', `Confirm ${e(ct.email)} for occasional news? One-click unsubscribe is in every mail.`, `/confirm/${encodeURIComponent(c.params.token)}`, 'Yes, confirm') : expired(), ct ? 200 : 404); });
+  router.post('/confirm/:token', (c) => { const ok = confirmConsent(db, c.params.token); html(c.res, ok ? plain(cfg, 'Confirmed', `Thanks — ${e(ok.email)} is confirmed for occasional news. One-click unsubscribe is in every mail.`) : expired(), ok ? 200 : 404); }, { public: true });
+  const unknown = () => plain(cfg, 'Unknown link', 'That unsubscribe link is not one we issued.');
+  router.get('/u/:token', (c) => { const ct = byUnsubscribeToken(db, c.params.token); html(c.res, ct ? askPage('Unsubscribe', `Unsubscribe ${e(ct.email)} from the newsletter? Order and support mail still arrives — those are about things you asked for.`, `/u/${encodeURIComponent(c.params.token)}`, 'Unsubscribe') : unknown(), ct ? 200 : 404); });
+  router.post('/u/:token', (c) => { const r = unsubscribe(db, c.params.token); html(c.res, r ? plain(cfg, 'Unsubscribed', `${e(r.email)} will not get another newsletter. Order and support mail still arrives — those are about things you asked for.`) : unknown(), r ? 200 : 404); }, { public: true });
   router.get('/i/:number/:token', (c) => {
     const inv = invoiceByNumber(db, c.params.number);
     if (!inv || !safeEqual(invoiceToken(cfg.secret, inv.number), c.params.token)) throw new HttpError(404, 'no such invoice');
@@ -179,7 +185,7 @@ export function createApp({ db, cfg }) {
     if (kind === 'waitlist') {
       const sku = String(b.sku || '').trim().slice(0, 60); if (!sku) throw new HttpError(400, 'sku required');
       const contact = upsertContact(db, { email, name: b.name || null, source: 'waitlist' });
-      joinWaitlist(db, contact.id, sku, b.qty);
+      joinWaitlist(db, contact.id, sku, int(b.qty, { name: 'qty', min: 1, max: 50, fallback: 1 }));
       if (b.newsletter && !contact.consent_marketing) sendConsentRequest(db, contact.id, cfg);
       out = { ok: true, waitlist: sku };
     } else if (kind === 'newsletter') {
@@ -206,12 +212,14 @@ export function createApp({ db, cfg }) {
   router.get('/store/estimate', store(async (c) => { json(c.res, estimateForZip(c.query.get('zip') || '', { cfg, db }), 200, { ...corsHeaders(cfg), 'Cache-Control': 'public, max-age=300' }); }), { public: true });
   router.post('/store/checkout', store(async (c) => {
     if (!app.limiter.allow(`store:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
+    // and per address: a cart opened in someone else's name is a Stripe page, and later a recovery mail, in their inbox
+    const em = String(c.body?.email || '').trim().toLowerCase(); if (em && !app.formLimiter.allow(`store:${em}`)) throw new HttpError(429, 'that address has opened enough checkouts for now — try again in ten minutes');
     if (cfg.demo) throw new HttpError(503, 'the demo takes no payments — the site falls back to its own cart');
     const cat = await app.catalog().catch(() => null); if (!cat) throw new HttpError(503, 'the catalog is not loaded');
     const r = await createCheckout(db, cfg, cat, { items: c.body?.items, zip: c.body?.zip, email: c.body?.email }, { fetchImpl: app.fetchImpl || timedFetch });
     json(c.res, { url: r.url, id: r.id, ships: r.ships, delivers: r.delivers }, 200, corsHeaders(cfg));
   }), { public: true });
-  router.get('/store/session/:id', store(async (c) => { json(c.res, sessionStatus(db, cfg, c.params.id), 200, { ...corsHeaders(cfg), 'Cache-Control': 'private, no-store' }); }), { public: true });
+  router.get('/store/session/:id', store(async (c) => { if (!app.limiter.allow(`session:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down'); json(c.res, sessionStatus(db, cfg, c.params.id), 200, { ...corsHeaders(cfg), 'Cache-Control': 'private, no-store' }); }), { public: true });
   for (const p of ['/store/catalog', '/store/estimate', '/store/checkout', '/store/session/:id']) router.add('OPTIONS', p, (c) => { c.res.writeHead(204, corsHeaders(cfg)); c.res.end(); }, { public: true });
 
   // ---------- auth
@@ -335,7 +343,8 @@ export function createApp({ db, cfg }) {
       // A browser says where a request came from; a state change from another site is refused before the body is read.
       const site = req.headers['sec-fetch-site'];
       // The admin is one origin; a sibling host (the website, a future subdomain) has no business writing here, so same-site is not enough.
-      if (site && !['same-origin', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && !route.opts.public) throw new HttpError(403, 'cross-site request refused');
+      // The door's POSTs (/login, /login/link, /login/link/:token) are public so the form needs no session, and refused all the same: a login a browser was made to perform from another site is a login forgery.
+      if (site && !['same-origin', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && (!route.opts.public || /^\/login(\/|$)/.test(url.pathname))) throw new HttpError(403, 'cross-site request refused');
       const ip = clientIp(req);
       // ADMIN_ALLOW_CIDRS: the admin (and its door) exist only for these networks; a customer's page, the store, the webhook and the status page are for everyone.
       const forCustomers = ['/healthz', '/status', '/status.json', '/robots.txt', '/security.txt', '/.well-known/security.txt'].includes(url.pathname) || /^\/(o|u|i|confirm)\//.test(url.pathname);

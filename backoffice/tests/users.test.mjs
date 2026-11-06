@@ -20,7 +20,7 @@ async function boot(cfgOver = {}) {
   const secret = setupOperator(db, 'owner password 1234', { email: 'owner@errer.test', name: 'Olive Owner' });
   // a code is good for one login per person; a test that signs the same person in twice in one 30 s step starts a fresh step first (the replay rule has its own test in auth.test.mjs)
   const fresh = () => db.run('UPDATE users SET totp_last_step = NULL');
-  const signIn = async (email, password, code) => { fresh(); const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email, password, code }) }); const sc = r.headers.get('set-cookie'); if (!sc || r.headers.get('location') !== '/') return null; const cookie = sc.split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf; return { cookie, csrf }; };
+  const signIn = async (email, password, code) => { fresh(); const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email, password, code }) }); const sc = r.headers.get('set-cookie'); if (!sc || r.headers.get('location') !== '/') return null; const cookie = sc.split(';')[0]; const csrf = sessionFor(db, cookie.split('=')[1]).csrf; return { cookie, csrf }; };
   const as = (s) => ({ get: (p) => fetch(base + p, { headers: { cookie: s.cookie }, redirect: 'manual' }), post: (p, body = {}) => fetch(base + p, { method: 'POST', redirect: 'manual', headers: { cookie: s.cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: form({ _csrf: s.csrf, ...body }) }) });
   return { db, cfg, app, base, secret, signIn, as, fresh, close: async () => { await app.close(); db.close(); } };
 }
@@ -47,9 +47,10 @@ test('invite → password → authenticator → open: the link works once, for 4
     const owner = await b.signIn('owner@errer.test', 'owner password 1234', totp(b.secret)); assert.ok(owner);
     assert.throws(() => inviteUser(b.db, { email: 'not an email', name: 'X' }), /valid email/); assert.throws(() => inviteUser(b.db, { email: 'a@b.co', name: 'X', role: 'god' }), /role is one of/); assert.throws(() => inviteUser(b.db, { email: 'owner@errer.test', name: 'X' }), /already a person/);
     // over HTTP, as the owner: the page shows the link once; the mail is queued when there is a relay (none here)
-    let r = await b.as(owner).post('/users/invite', { name: 'Pat Packer', email: 'Pat@Errer.test', role: 'ops' }); assert.equal(r.status, 303); const tok = new URL(r.headers.get('location'), b.base).searchParams.get('invite'); assert.ok(tok);
+    let r = await b.as(owner).post('/users/invite', { name: 'Pat Packer', email: 'Pat@Errer.test', role: 'ops' }); assert.equal(r.status, 200, 'the link is in the answer to the click, not in a redirect URL'); const tok = /\/invite\/([A-Za-z0-9_-]+)</.exec(await r.text())?.[1]; assert.ok(tok);
     const u = userByEmail(b.db, 'pat@errer.test'); assert.equal(u.status, 'invited'); assert.equal(u.role, 'ops'); assert.equal(u.invited_by, 'owner@errer.test'); assert.equal(u.password_set_at, null);
-    assert.equal((await b.as(owner).get('/users')).status, 200); assert.ok((await (await b.as(owner).get(`/users?invite=${tok}`)).text()).includes(`/invite/${tok}`));
+    assert.equal((await b.as(owner).get('/users')).status, 200); assert.ok(!(await (await b.as(owner).get(`/users?invite=${tok}`)).text()).includes(`/invite/${tok}`), 'and never again from a query string');
+    assert.equal(b.db.get('SELECT COUNT(*) AS n FROM users WHERE invite_token = ?', tok).n, 0, 'the row holds the hash, not the link');
     assert.equal(b.db.get('SELECT COUNT(*) AS n FROM mail_outbox WHERE ref = ?', 'invite:pat@errer.test').n, 0, 'no relay configured: the link is handed over by the owner');
     // the person, no session: the page opens; a short password is refused; the two must match
     r = await fetch(`${b.base}/invite/${tok}`); assert.equal(r.status, 200); assert.ok((await r.text()).includes('pat@errer.test')); assert.equal((await fetch(`${b.base}/invite/nope`)).status, 404);
@@ -132,13 +133,17 @@ test('lockout per person, password change, a new authenticator confirmed before 
     assert.throws(() => changePassword(b.db, me.id, 'nope', 'a brand new password 9'), /current password is wrong/); assert.throws(() => changePassword(b.db, me.id, 'owner password 1234', 'short'), /12 characters/);
     let r = await b.as(s).post('/me/password', { current: 'owner password 1234', next: 'a brand new password 9' }); assert.equal(r.status, 303);
     b.fresh(); assert.equal(login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(b.secret) }), null); assert.ok(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(b.secret) }));
-    r = await b.as(s).post('/me/totp'); assert.equal(r.status, 303); const next = pendingTotp(b.db, me.id); assert.ok(next && next !== b.secret);
+    r = await b.as(s).post('/me/totp'); assert.equal(r.status, 400, 'a new authenticator is not begun on a session alone'); assert.match((await r.json()).error, /current password/); assert.equal(pendingTotp(b.db, me.id), null);
+    r = await b.as(s).post('/me/totp', { current: 'a brand new password 9' }); assert.equal(r.status, 303); const next = pendingTotp(b.db, me.id); assert.ok(next && next !== b.secret);
     b.fresh(); assert.ok(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(b.secret) }), 'the old authenticator works until the new one is confirmed');
     assert.ok((await (await b.as(s).get('/me')).text()).includes(next), 'the new secret and its QR are on the page');
-    r = await b.as(s).post('/me/totp/confirm', { code: '000000' }); assert.equal(r.status, 400);
-    r = await b.as(s).post('/me/totp/confirm', { code: totp(next) }); assert.equal(r.status, 303);
+    b.fresh(); r = await b.as(s).post('/me/totp/confirm', { code: totp(next) }); assert.equal(r.status, 400, 'the new code alone does not confirm'); assert.match((await r.json()).error, /current authenticator/);
+    r = await b.as(s).post('/me/totp/confirm', { current_code: totp(b.secret), code: '000000' }); assert.equal(r.status, 400); assert.match((await r.json()).error, /new authenticator/);
+    b.fresh(); r = await b.as(s).post('/me/totp/confirm', { current_code: totp(b.secret), code: totp(next) }); assert.equal(r.status, 303);
     b.fresh(); assert.equal(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(b.secret) }), null, 'the old one is gone'); assert.ok(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(next) }));
-    assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.id).n, 5); r = await b.as(s).post('/me/sessions/end'); assert.equal(r.status, 303); assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.id).n, 1); assert.equal((await b.as(s).get('/me')).status, 200, 'this one stays');
+    const rot = b.db.all("SELECT action, detail FROM audit_log WHERE action IN ('auth.totp.begin', 'auth.totp', 'auth.totp.failed', 'auth.password.failed') ORDER BY id").map(r => `${r.action}@${JSON.parse(r.detail).ip}`); assert.deepEqual(rot, ['auth.password.failed@null', 'auth.password.failed@127.0.0.1', 'auth.totp.begin@127.0.0.1', 'auth.totp.failed@127.0.0.1', 'auth.totp@127.0.0.1'], 'every step of the rotation is written down with its address (the first row is the direct changePassword call above, no request behind it)');
+    assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.id).n, 5); r = await b.as(s).post('/me/sessions/end'); assert.equal(r.status, 400, 'ending the other sessions asks for the password'); assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.id).n, 5);
+    r = await b.as(s).post('/me/sessions/end', { current: 'a brand new password 9' }); assert.equal(r.status, 303); assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.id).n, 1); assert.equal((await b.as(s).get('/me')).status, 200, 'this one stays');
     const h = doctor(b.db, b.cfg); const by = Object.fromEntries(h.checks.map(c => [c.key, c])); assert.ok(by.operator.ok); assert.match(by.operator.detail, /1 owner/); assert.ok(by.password_age.ok); assert.ok(by.invites.ok);
   } finally { await b.close(); }
 });

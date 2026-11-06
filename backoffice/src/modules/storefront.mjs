@@ -14,12 +14,12 @@
 // the batch cadence (BATCH_CLOSE_DAY / BATCH_SHIP_DAY in OPERATOR_TZ); the arrival window is the
 // same estimate the order page and the tracking mail use after shipping (delivery.mjs), counted
 // from the ship date — one method, before and after the sale.
-import { estimateDelivery, orderStatusUrl } from './delivery.mjs';
+import { estimateDelivery } from './delivery.mjs';
 import { weekLabel, orderByNumber } from './orders.mjs';
 import { buildable } from './inventory.mjs';
 import { currentTz } from '../render.mjs';
 import { isOn } from '../flags.mjs';
-import { timedFetch } from '../net.mjs';
+import { timedFetch, readJsonCapped } from '../net.mjs';
 import { recordSession } from './recovery.mjs';
 import { listingState } from './listing.mjs';
 import { awayState, awayUntilFor } from './away.mjs';
@@ -202,7 +202,7 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
     ...(email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? { customer_email: email } : {}),
   };
   const r = await fetchImpl('https://api.stripe.com/v1/checkout/sessions', { method: 'POST', headers: { authorization: `Bearer ${cfg.stripeApiKey}`, 'content-type': 'application/x-www-form-urlencoded', 'idempotency-key': `cart-${now.getTime()}-${Math.random().toString(36).slice(2, 10)}` }, body: formEncode(session) });
-  const body = await r.json().catch(() => ({}));
+  const body = await readJsonCapped(r).catch(() => ({}));
   if (!r.ok || !body.url) { db.audit('public', 'store.checkout.failed', 'stripe', body?.error?.type || String(r.status), { message: String(body?.error?.message || '').slice(0, 200) }); throw new StoreError(502, 'the payment page could not be opened — nothing was charged; try again in a moment'); }
   db.audit('public', 'store.checkout', 'stripe', body.id, { lines: lines.map(l => `${l.qty}x ${l.sku}`), zip: est.state, ships_on: est.ships.ships_on });
   recordSession(db, { id: body.id, amount_cents: lines.reduce((s, l) => s + l.qty * l.unit_cents, 0) + (catalog.shipping_flat_cents || 0), lines: lines.map(l => `${l.qty}x ${l.sku}`).join(', '), state: est.state, email: email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null, created_at: now.toISOString() });
@@ -213,11 +213,13 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
 // can land a few seconds after the redirect; the page asks again). The dates are the order's own
 // promise (promise.mjs), never the cadence of the moment: an away date set or cleared since must not
 // move what this customer was told. Only an order from before the promise column is estimated live.
+// The order's own page (a signed link) is in the confirmation mail, never here: a session id travels in
+// a URL, through referrers and histories, and must open no more than the thanks page shows.
 export function sessionStatus(db, cfg, sessionId, { now = new Date() } = {}) {
   if (!/^cs_[A-Za-z0-9_]{8,}$/.test(String(sessionId || ''))) throw new StoreError(400, 'that is not a checkout session id');
   const o = orderByNumber(db, sessionId); if (!o) return { pending: true };
   const est = estimateForShipDate(o.promised_ship_on, o.ship_zip, { cfg, state: o.ship_state }) || estimateForZip(o.ship_zip, { now, cfg, db });
-  return { pending: false, order: o.number, status: o.status, items: o.items.map(i => ({ sku: i.sku, name: i.name, qty: i.qty })), total_cents: o.total_cents, ships: est.ships, delivers: est.delivers, status_url: cfg.secret ? orderStatusUrl(cfg, o) : null };
+  return { pending: false, order: o.number, items: o.items.map(i => ({ sku: i.sku, name: i.name, qty: i.qty })), ships: est.ships, delivers: est.delivers };
 }
 
 export class StoreError extends Error { constructor(status, message) { super(message); this.status = status; } }

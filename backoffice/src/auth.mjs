@@ -4,7 +4,7 @@
 // are links; nobody ever receives a password from someone else. Bearer
 // tokens for the API/CLI are separate and owner-made.
 import { scryptSync, randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto';
-import { netOf } from './guard.mjs';
+import { netOf, limiterKey, trimMap, sanitize } from './guard.mjs';
 import { nowIso } from './db.mjs';
 import { token, safeEqual } from './http.mjs';
 
@@ -64,14 +64,17 @@ export const ROLE_TEXT = {
 };
 // Id segments match any one segment, never only digits: the handler coerces whatever the
 // router decoded (`%31`, `+1`), so the rule must refuse by position, not by spelling.
-const OWNER_ONLY = /^\/(settings|users|books|books\.csv|api\/books|api\/jobs|api\/exceptions|api\/flags|settings\.json)(\/|$|\?)|^\/contacts\/[^/]+\/(forget|export\.json)(\/|$)|^\/api\/customers\/[^/]+\/(forget|export)(\/|$)/;
+// The API mirrors the pages: /api/users is /users, /api/exceptions is /exceptions (ops), running a backup is a
+// job (owner) while reading the list of them is not.
+const OWNER_ONLY = /^\/(settings|users|books|books\.csv|api\/books|api\/jobs|api\/users|api\/flags|settings\.json|health\/external)(\/|$|\?)|^\/contacts\/[^/]+\/(forget|export\.json)(\/|$)|^\/api\/customers\/[^/]+\/(forget|export)(\/|$)/;
+const OWNER_WRITES = /^\/api\/backups(\/|$)/;
 const SUPPORT_WRITES = /^\/(tickets|canned|warranty|waitlist|contacts\/(new|[^/]+\/(tags|notes|consent)))(\/|$)|^\/orders\/[^/]+\/(note|tags)\/?$|^\/api\/(tickets|mail\/ingest|customers\/[^/]+\/tags|orders\/[^/]+\/(note|tags))(\/|$)/;
 // The path is checked decoded (what the handler will see), and a path that does not decode is refused.
 export function can(role, method, rawPath) {
   let path; try { path = decodeURIComponent(String(rawPath)); } catch { return false; }
   if (role === 'owner') return true;
   if (!ROLES.includes(role)) return false;
-  if (OWNER_ONLY.test(path)) return false;
+  if (OWNER_ONLY.test(path) || (method !== 'GET' && method !== 'HEAD' && OWNER_WRITES.test(path))) return false;
   if (/^\/(me|logout)(\/|$)/.test(path)) return true;
   if (role === 'ops') return true;
   if (method === 'GET' || method === 'HEAD') return true;
@@ -79,7 +82,10 @@ export function can(role, method, rawPath) {
 }
 
 // --- people
-const normEmail = (s) => String(s || '').trim().toLowerCase();
+// An email as typed by anyone, the login form included: scrubbed of what sanitize() removes, no whitespace, at
+// most 254 characters (RFC 5321's path) — it is written into the chained audit log as given, so it is bounded first.
+const normEmail = (s) => sanitize(String(s || '').trim().toLowerCase(), { max: 254 }).replace(/\s+/g, '');
+const sha = (s) => createHash('sha256').update(String(s)).digest('base64url');
 const PUBLIC = 'id, email, name, role, status, password_set_at, last_login_at, failed_logins, locked_until, invited_by, created_at, invite_expires_at';
 export const listUsers = (db) => db.all(`SELECT ${PUBLIC}, invite_token IS NOT NULL AS has_invite FROM users ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'ops' THEN 1 WHEN 'support' THEN 2 ELSE 3 END, name`);
 export const userById = (db, id) => db.get(`SELECT ${PUBLIC} FROM users WHERE id = ?`, id);
@@ -110,13 +116,13 @@ export const hasOperator = (db) => db.get("SELECT COUNT(*) AS n FROM users WHERE
 export function inviteUser(db, { email, name, role = 'ops', actor = 'web', hours = 48 }) {
   const em = normEmail(email); if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) throw new Error('a valid email is required'); if (!name?.trim()) throw new Error('a name is required'); if (!ROLES.includes(role)) throw new Error(`role is one of ${ROLES.join(', ')}`);
   const existing = userByEmail(db, em); if (existing && existing.status === 'active') throw new Error(`${em} is already a person here`);
-  const tok = token(24); const exp = new Date(Date.now() + hours * 3600000).toISOString();
-  if (existing) db.run('UPDATE users SET name = ?, role = ?, status = \'invited\', invite_token = ?, invite_expires_at = ?, invited_by = ?, password_hash = NULL, totp_secret = NULL, totp_pending = NULL WHERE id = ?', name.trim(), role, tok, exp, actor, existing.id);
-  else db.run('INSERT INTO users (email, name, role, status, invite_token, invite_expires_at, invited_by, created_at) VALUES (?, ?, ?, \'invited\', ?, ?, ?, ?)', em, name.trim(), role, tok, exp, actor, nowIso());
+  const tok = token(24); const exp = new Date(Date.now() + hours * 3600000).toISOString();   // stored as its SHA-256: a copy of the table opens no invitation
+  if (existing) db.run('UPDATE users SET name = ?, role = ?, status = \'invited\', invite_token = ?, invite_expires_at = ?, invited_by = ?, password_hash = NULL, totp_secret = NULL, totp_pending = NULL WHERE id = ?', name.trim(), role, sha(tok), exp, actor, existing.id);
+  else db.run('INSERT INTO users (email, name, role, status, invite_token, invite_expires_at, invited_by, created_at) VALUES (?, ?, ?, \'invited\', ?, ?, ?, ?)', em, name.trim(), role, sha(tok), exp, actor, nowIso());
   db.audit(actor, existing ? 'user.reinvite' : 'user.invite', 'user', em, { role, expires_at: exp });
   return { ...userByEmail(db, em), invite_token: tok };
 }
-export const inviteFor = (db, tok) => { const u = db.get(`SELECT ${PUBLIC} FROM users WHERE invite_token = ? AND status = 'invited'`, String(tok || '')); return u && u.invite_expires_at > nowIso() ? u : null; };
+export const inviteFor = (db, tok) => { const u = db.get(`SELECT ${PUBLIC} FROM users WHERE invite_token = ? AND status = 'invited'`, sha(String(tok || ''))); return u && u.invite_expires_at > nowIso() ? u : null; };
 // Step one of accepting: the person's own password. Step two (confirmTotp) proves the authenticator before the account opens.
 export function acceptInvite(db, tok, password) {
   const u = inviteFor(db, tok); if (!u) throw new Error('this invitation is not valid any more — ask for a new one'); if (String(password).length < 12) throw new Error('use at least 12 characters');
@@ -125,16 +131,30 @@ export function acceptInvite(db, tok, password) {
   db.audit(u.email, 'user.accept', 'user', u.email); return { ...u, totp_pending: secret };
 }
 // A code from the pending secret makes it the real one; for an invitee that also opens the account and burns the link.
-export function confirmTotp(db, userId, code) {
+// A person who already has an authenticator proves it too (`current`, a code from the old one, under the same
+// one-login rule as the door): a stolen session alone does not swap the second factor for the thief's.
+export function confirmTotp(db, userId, code, { current = '', ip = null } = {}) {
   const r = secretRow(db, userId); if (!r?.totp_pending) throw new Error('nothing to confirm');
+  let step = null;
+  if (r.totp_secret) { step = verifyTotp(r.totp_secret, current, { lastStep: r.totp_last_step ?? null }); if (!step) { db.audit(r.email, 'auth.totp.failed', 'user', r.email, { ip, why: 'current' }); throw new Error('the code from your current authenticator did not match (one already used to sign in does not count — wait for the next)'); } }
   if (!verifyTotp(r.totp_pending, code)) return false;
-  db.run('UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, status = CASE WHEN status = \'invited\' THEN \'active\' ELSE status END, invite_token = NULL, invite_expires_at = NULL WHERE id = ?', userId);
-  db.audit(r.email, r.status === 'invited' ? 'user.activate' : 'auth.totp', 'user', r.email); return true;
+  db.run('UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, totp_last_step = COALESCE(?, totp_last_step), status = CASE WHEN status = \'invited\' THEN \'active\' ELSE status END, invite_token = NULL, invite_expires_at = NULL WHERE id = ?', step, userId);
+  db.audit(r.email, r.status === 'invited' ? 'user.activate' : 'auth.totp', 'user', r.email, { ip }); return true;
 }
 export const pendingTotp = (db, userId) => secretRow(db, userId)?.totp_pending || null;
-export function beginTotpRotation(db, userId) { const secret = base32Encode(randomBytes(20)); db.run('UPDATE users SET totp_pending = ? WHERE id = ?', secret, userId); return secret; }
-export function changePassword(db, userId, current, next) {
-  const r = secretRow(db, userId); if (!r) throw new Error('no such person'); if (!verifyPassword(current, r.password_hash)) throw new Error('the current password is wrong');
+// The person's own password again, for what a live session alone must not do: begin a new authenticator, end
+// the other sessions. A wrong one is written down with its address.
+export function checkPassword(db, userId, password, { ip = null } = {}) {
+  const r = secretRow(db, userId); if (!r) throw new Error('no such person');
+  if (!verifyPassword(String(password || ''), r.password_hash)) { db.audit(r.email, 'auth.password.failed', 'user', r.email, { ip }); throw new Error('the current password is wrong'); }
+  return r;
+}
+export function beginTotpRotation(db, userId, password, { ip = null } = {}) {
+  const r = checkPassword(db, userId, password, { ip }); const secret = base32Encode(randomBytes(20));
+  db.run('UPDATE users SET totp_pending = ? WHERE id = ?', secret, userId); db.audit(r.email, 'auth.totp.begin', 'user', r.email, { ip }); return secret;
+}
+export function changePassword(db, userId, current, next, { ip = null } = {}) {
+  const r = checkPassword(db, userId, current, { ip });
   if (String(next).length < 12) throw new Error('use at least 12 characters'); if (next === current) throw new Error('that is the same password');
   db.run('UPDATE users SET password_hash = ?, password_set_at = ? WHERE id = ?', hashPassword(next), nowIso(), userId); db.audit(r.email, 'auth.password', 'user', r.email); return true;
 }
@@ -168,22 +188,22 @@ export function removeUser(db, userId, { actor = 'web' } = {}) {
 // takes the same time either way and the list of emails cannot be read off the clock.
 const LOCKS = new Map();
 const DUMMY_HASH = hashPassword('the same work for a name nobody has');
-const lockKey = (u, ip) => `${u.id}:${u.email}|${ip || '-'}`;
+const lockKey = (u, ip) => `${u.id}:${u.email}|${limiterKey(ip || '-')}`;
 export function lockState(user, ip, now = Date.now()) { const k = lockKey(user, ip); const l = LOCKS.get(k); if (l && l.until && l.until <= now) { LOCKS.delete(k); return null; } return l || null; }
 export const clearLocks = () => LOCKS.clear();
 // A wrong try, counted against the person for this address (eight lock the pair for fifteen minutes) and in the audit log.
 function recordFailure(db, r, ip, now, why, via = 'password') {
   if (r) {
     db.run('UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ?', r.id);
-    const l = lockState(r, ip, now) || { n: 0, until: null }; l.n++; if (l.n >= 8) { l.until = now + 15 * 60_000; db.run('UPDATE users SET locked_until = ? WHERE id = ?', new Date(l.until).toISOString(), r.id); } LOCKS.set(lockKey(r, ip), l);
-    if (LOCKS.size > 10_000) for (const [kk, v] of LOCKS) if (!v.until || v.until <= now) LOCKS.delete(kk);
+    const l = lockState(r, ip, now) || { n: 0, until: null }; l.n++; l.at = now; if (l.n >= 8) { l.until = now + 15 * 60_000; db.run('UPDATE users SET locked_until = ? WHERE id = ?', new Date(l.until).toISOString(), r.id); } LOCKS.delete(lockKey(r, ip)); LOCKS.set(lockKey(r, ip), l);
+    trimMap(LOCKS, { stale: v => (v.until || v.at + 15 * 60_000) <= now });
   }
   db.audit('web', via === 'link' ? 'auth.link.failed' : 'auth.login.failed', 'user', r?.email || null, { ip, why }); return null;
 }
 // The session itself: a new random id, the person's record brought current, the audit row with the address.
 function openSession(db, r, { sessionHours, now, ip, step, via = 'password' }) {
-  const id = token(32); const csrf = token(24); const exp = new Date(now + sessionHours * 3600_000).toISOString();
-  db.run('INSERT INTO sessions (id, created_at, expires_at, csrf, user_id, net) VALUES (?, ?, ?, ?, ?, ?)', id, nowIso(), exp, csrf, r.id, netOf(ip));
+  const id = token(32); const csrf = token(24); const exp = new Date(now + sessionHours * 3600_000).toISOString();   // the cookie carries id; the row its SHA-256
+  db.run('INSERT INTO sessions (id, created_at, expires_at, csrf, user_id, net) VALUES (?, ?, ?, ?, ?, ?)', sha(id), nowIso(), exp, csrf, r.id, netOf(ip));
   LOCKS.delete(lockKey(r, ip));
   db.run('DELETE FROM sessions WHERE expires_at < ?', nowIso()); db.run('UPDATE users SET last_login_at = ?, failed_logins = 0, locked_until = NULL, totp_last_step = ? WHERE id = ?', nowIso(), step, r.id);
   db.audit(r.email, via === 'link' ? 'auth.link.login' : 'auth.login', 'user', r.email, { ip, via });
@@ -202,17 +222,18 @@ export function login(db, { email = '', password, code }, { sessionHours = 12, i
 }
 
 // ---- the sign-in link: stands in for the password, never for the authenticator ----
-// Asked for by email. The answer is the same whether the address is a person here or not (nothing to enumerate);
-// a person gets a mail with a link good for a few minutes, once, and the browser that asked gets a nonce cookie
-// the link checks — so a link read out of a mailbox somewhere else opens nothing. Both are stored hashed.
-const sha = (s) => createHash('sha256').update(String(s)).digest('base64url');
+// Asked for by email. The answer is the same whether the address is a person here or not (nothing to enumerate),
+// and so is the work: an unknown address writes and unwrites a link row inside one transaction, so the clock
+// says nothing either. A person gets a mail with a link good for a few minutes, once, and the browser that
+// asked gets a nonce cookie the link checks — so a link read out of a mailbox somewhere else opens nothing.
+// Both are stored hashed.
 export function requestSignInLink(db, email, { ip = null, now = Date.now(), minutes = 15 } = {}) {
-  const em = normEmail(email); const nonce = token(24);
+  const em = normEmail(email); const nonce = token(24); const t = token(32); const id = token(12);
   const r = em ? db.get("SELECT * FROM users WHERE email = ? AND status = 'active' AND totp_secret IS NOT NULL", em) : null;
   db.run('DELETE FROM login_links WHERE expires_at < ?', new Date(now).toISOString());
-  if (!r) { db.audit('web', 'auth.link.requested', 'user', em || null, { ip, known: false }); return { nonce, token: null, user: null, minutes }; }
-  const t = token(32);
-  db.run('INSERT INTO login_links (id, user_id, token_hash, nonce_hash, created_at, expires_at, ip) VALUES (?, ?, ?, ?, ?, ?, ?)', token(12), r.id, sha(t), sha(nonce), new Date(now).toISOString(), new Date(now + minutes * 60_000).toISOString(), ip);
+  const write = (userId) => db.run('INSERT INTO login_links (id, user_id, token_hash, nonce_hash, created_at, expires_at, ip) VALUES (?, ?, ?, ?, ?, ?, ?)', id, userId, sha(t), sha(nonce), new Date(now).toISOString(), new Date(now + minutes * 60_000).toISOString(), ip);
+  if (!r) { db.tx(() => { write(0); db.run('DELETE FROM login_links WHERE id = ?', id); }); db.audit('web', 'auth.link.requested', 'user', em || null, { ip, known: false }); return { nonce, token: null, user: null, minutes }; }
+  write(r.id);
   db.audit('web', 'auth.link.requested', 'user', r.email, { ip, known: true });
   return { nonce, token: t, user: { id: r.id, email: r.email, name: r.name }, minutes };
 }
@@ -231,7 +252,8 @@ export function loginWithLink(db, { token: t, code, nonce }, { sessionHours = 12
   db.run('UPDATE login_links SET used_at = ? WHERE id = ?', new Date(now).toISOString(), row.id);
   return openSession(db, r, { sessionHours, now, ip, step, via: 'link' });
 }
-export const sessionFor = (db, id) => id ? db.get("SELECT s.*, u.email, u.name, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'", id, nowIso()) : null;
+// `id` is the cookie's; the row's id is its hash (what sessionFor returns, and what logout and endOtherSessions take).
+export const sessionFor = (db, id) => id ? db.get("SELECT s.*, u.email, u.name, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'", sha(id), nowIso()) : null;
 export const logout = (db, id) => db.run('DELETE FROM sessions WHERE id = ?', id);
 export const sessionsFor = (db, userId) => db.all('SELECT id, created_at, expires_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC', userId);
 export const endOtherSessions = (db, userId, keep) => db.run('DELETE FROM sessions WHERE user_id = ? AND id != ?', userId, keep).changes;
