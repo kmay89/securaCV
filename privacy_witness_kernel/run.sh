@@ -44,7 +44,16 @@ TOKEN_FILE="/config/api_token"
 # is why the bridge writes it 0600. Both kernel config blocks below and the
 # bridge's argv read this one variable, so they can never name two files.
 FLEET_PEERS_FILE="/config/fleet_peers.json"
-DEVICE_KEY_FILE="/config/.securacv/device_key"
+# The device key seed file: the wizard writes it, resolve_device_key_seed
+# reads or generates it. It lives in /data, the app's own directory, which
+# only this app's processes can open. It used to sit under /config, which
+# every Home Assistant backup carries and the Samba, SSH and File editor
+# apps (root, all of them) export whole — a 0600 mode protects nothing
+# there, and anyone holding a backup could forge the sealed log's identity.
+# The one-time move below (run_lib.sh migrate_device_key_file) carries an
+# existing /config copy over, verified, and removes it.
+DEVICE_KEY_FILE="/data/device_key"
+LEGACY_DEVICE_KEY_FILE="/config/.securacv/device_key"
 INGRESS_PORT="${INGRESS_PORT:-8788}"
 RUN_DIR="/run/securacv"
 SETUP_FILE="$RUN_DIR/setup.sh"
@@ -99,6 +108,35 @@ else
 fi
 
 # ============================================================================
+# The device key seed leaves /config (one-time). An existing
+# /config/.securacv/device_key is copied to /data/device_key (0600, byte-
+# checked), held against the sealed log with the kernel's own verifier
+# (log_verify --lineage: the seed must open the log and derive its genesis
+# or a later epoch's key), and only then removed; with no log yet, the byte
+# check is the whole proof. The seed itself is never logged — the verdicts
+# are two fixed words. A key the log refuses stays in both places with a
+# warning: the services will say the same at open, and nothing a person
+# might need is deleted on the way to that message.
+# ============================================================================
+if [ -s "$LEGACY_DEVICE_KEY_FILE" ]; then
+    if key_move=$(migrate_device_key_file "$LEGACY_DEVICE_KEY_FILE" "$DEVICE_KEY_FILE" "$DB_PATH"); then
+        case "$key_move" in
+            "moved verified")
+                bashio::log.info "Device key: moved from ${LEGACY_DEVICE_KEY_FILE} to ${DEVICE_KEY_FILE} (the app's private data); the sealed log accepts it, and the copy under /config is removed. Back it up from the Configuration tab (device_key_seed), not from /config." ;;
+            "moved no-log")
+                bashio::log.info "Device key: moved from ${LEGACY_DEVICE_KEY_FILE} to ${DEVICE_KEY_FILE} (the app's private data; byte-identical, no sealed log yet to hold it against); the copy under /config is removed." ;;
+            "kept unverified")
+                bashio::log.warning "Device key: ${DEVICE_KEY_FILE} holds the key from ${LEGACY_DEVICE_KEY_FILE}, but the sealed log at ${DB_PATH} does not accept it, so the /config copy is kept. If the services open the log, delete that copy by hand; if they do not, the key and the log come from different installs." ;;
+            "kept differs")
+                bashio::log.warning "Device key: ${DEVICE_KEY_FILE} is in use and ${LEGACY_DEVICE_KEY_FILE} holds a different key (a restored backup?). Nothing was changed; remove the /config copy by hand once you are sure it is not needed." ;;
+        esac
+    else
+        bashio::log.error "Device key: could not copy ${LEGACY_DEVICE_KEY_FILE} to ${DEVICE_KEY_FILE} (nothing was removed). Check the app's data volume (/data) for space and errors, then restart."
+        exit 1
+    fi
+fi
+
+# ============================================================================
 # First-run detection: the device key is auto-generated, so its absence no
 # longer marks a fresh install. The app is considered configured when the
 # user has made any deliberate choice: a key (option or wizard-written file),
@@ -137,8 +175,10 @@ if [ "$CONFIGURED" != "true" ]; then
 fi
 
 # Resolve the device key: option → wizard-written key file → auto-generate
-# and persist (0600). /config is captured by HA backups; the panel reminds
-# the user to back the key up.
+# and persist (0600) under /data, the app's own directory: not in a Home
+# Assistant configuration backup, not visible to the file-sharing apps. A
+# backup that includes this app carries it; the panel reminds the user to
+# back the key up. The value is never logged.
 DEVICE_KEY_SEED=$(resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE")
 if [ -z "$DEVICE_KEY_SEED" ]; then
     bashio::log.error "Failed to resolve or generate a device key seed."

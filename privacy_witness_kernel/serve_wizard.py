@@ -46,7 +46,16 @@ INGRESS_PORT = int(os.environ.get("INGRESS_PORT", "8788"))
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN", "")
 SUPERVISOR_URL = "http://supervisor"
 WIZARD_DIR = Path("/usr/local/share/securacv-wizard")
-DEVICE_KEY_FILE = Path("/config/.securacv/device_key")
+# The device key seed file, in the app's own /data: only this app's processes
+# open it, no Home Assistant configuration backup carries it, and the Samba,
+# SSH and File editor apps cannot export it. Earlier releases kept it at
+# LEGACY_DEVICE_KEY_FILE under /config, where every backup and every file-
+# sharing app reached it; the setup step (run.sh) moves that copy here,
+# verified against the sealed log, on the first start after the change. The
+# wizard reads the legacy copy only as a fallback, so a save after a failed
+# move keeps the identity instead of minting a new one; it never writes it.
+DEVICE_KEY_FILE = Path("/data/device_key")
+LEGACY_DEVICE_KEY_FILE = Path("/config/.securacv/device_key")
 API_TOKEN_FILE = Path("/config/api_token")
 KERNEL_API_URL = "http://127.0.0.1:8799"
 # run.sh (the s6 setup step) creates this marker once the add-on is
@@ -1266,8 +1275,9 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             # Check if setup is complete
             key_seed = opts.get("device_key_seed", "")
             configured = bool(key_seed and key_seed != "devkey:mvp")
-            # Try reading device key from file too
-            if not configured and DEVICE_KEY_FILE.exists():
+            # Try reading device key from file too (the legacy /config copy
+            # counts: a failed move must not re-run the wizard as a first run)
+            if not configured and (DEVICE_KEY_FILE.exists() or LEGACY_DEVICE_KEY_FILE.exists()):
                 configured = True
             public = _public_status_options(opts)
             # Never return the raw options: they carry device_key_seed and MQTT
@@ -1329,6 +1339,8 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             existing_seed = ""
             if DEVICE_KEY_FILE.exists():
                 existing_seed = DEVICE_KEY_FILE.read_text().strip()
+            elif LEGACY_DEVICE_KEY_FILE.exists():
+                existing_seed = LEGACY_DEVICE_KEY_FILE.read_text().strip()
 
             if not device_key_seed:
                 if existing_seed:
@@ -1348,9 +1360,11 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                         ),
                     }
 
-            # Persist device key to file for the install script's backing-up
-            # message. Created 0600 from the start — write-then-chmod would
-            # leave a umask-dependent window where the key is world-readable.
+            # Persist the device key to the app's own /data (the setup step
+            # reads it when the option is empty). Created 0600 from the start
+            # — write-then-chmod would leave a umask-dependent window where
+            # the key is world-readable. The legacy /config copy, if one is
+            # still there, is the setup step's to verify and remove.
             DEVICE_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(
                 DEVICE_KEY_FILE,

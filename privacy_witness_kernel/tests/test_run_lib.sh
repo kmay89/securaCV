@@ -250,6 +250,113 @@ assert_eq "600" "$PERMS" "seed: persisted key file is 0600"
 assert_eq "$GENERATED" "$(resolve_device_key_seed "" "$KEY_FILE")" \
     "seed: second call returns the same persisted seed"
 
+# ---- migrate_device_key_file -----------------------------------------------
+# The one-time move of the seed file out of /config. The verifier is a stub
+# log_verify (LOG_VERIFY_BIN) that records how it was called and accepts the
+# seed named in $ACCEPT_SEED: the real one derives the database key and walks
+# the lineage, which no host test can do without the kernel binaries.
+MIG="$TMPDIR_TEST/migrate"
+OLD_KEY="$MIG/config/.securacv/device_key"
+NEW_KEY="$MIG/data/device_key"
+MIG_DB="$MIG/config/witness.db"
+STUB_LOG="$MIG/verify.log"
+mkdir -p "$MIG/bin" "$MIG/config/.securacv" "$MIG/data"
+cat > "$MIG/bin/log_verify" <<'STUB'
+#!/usr/bin/env bash
+# argv and the seed's presence in the environment, never its value
+printf 'argv:%s env:%s\n' "$*" "${DEVICE_KEY_SEED:+set}" >> "$STUB_LOG"
+[ "${DEVICE_KEY_SEED:-}" = "${ACCEPT_SEED:-}" ]
+STUB
+chmod +x "$MIG/bin/log_verify"
+export LOG_VERIFY_BIN="$MIG/bin/log_verify" STUB_LOG
+SEED_A="a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+SEED_B="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+# no legacy file: nothing happens, nothing printed
+rm -f "$OLD_KEY" "$NEW_KEY"
+assert_eq "" "$(migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB")" \
+    "key move: no legacy file prints nothing"
+[ ! -e "$NEW_KEY" ] || { echo "FAIL: key move: created a key from nothing" >&2; FAILURES=$((FAILURES+1)); }
+
+# legacy file, no log yet: moved on the byte check alone, 0600, legacy gone
+printf '%s\n' "$SEED_A" > "$OLD_KEY"
+chmod 644 "$OLD_KEY"
+rm -f "$MIG_DB"
+assert_eq "moved no-log" "$(migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB")" \
+    "key move: with no sealed log the byte-identical copy is the proof"
+assert_eq "$SEED_A" "$(head -n1 "$NEW_KEY")" "key move: the new file holds the seed"
+assert_eq "600" "$(stat -c '%a' "$NEW_KEY" 2>/dev/null || stat -f '%Lp' "$NEW_KEY")" \
+    "key move: the new file is 0600 whatever the legacy mode was"
+[ ! -e "$OLD_KEY" ] || { echo "FAIL: key move: legacy copy not removed" >&2; FAILURES=$((FAILURES+1)); }
+[ ! -e "$MIG/verify.log" ] || { echo "FAIL: key move: verifier called with no log" >&2; FAILURES=$((FAILURES+1)); }
+for leftover in "$MIG"/data/*.tmp.*; do
+    [ -e "$leftover" ] && { echo "FAIL: key move: temp file left behind: $leftover" >&2; FAILURES=$((FAILURES+1)); }
+done
+
+# legacy file and a log that accepts the seed: verified, legacy gone; the
+# verifier saw the seed in its environment only, never on argv
+rm -f "$NEW_KEY"
+printf '%s\n' "$SEED_A" > "$OLD_KEY"
+printf 'not really sqlite\n' > "$MIG_DB"
+ACCEPT_SEED="$SEED_A"; export ACCEPT_SEED
+assert_eq "moved verified" "$(migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB")" \
+    "key move: the log accepts the seed, the legacy copy is removed"
+[ ! -e "$OLD_KEY" ] || { echo "FAIL: key move: legacy copy not removed after verification" >&2; FAILURES=$((FAILURES+1)); }
+assert_eq "argv:--db $MIG_DB --lineage --ui plain env:set" "$(cat "$STUB_LOG")" \
+    "key move: the verifier gets --lineage on the log and the seed in its environment, not on argv"
+case "$(cat "$STUB_LOG")" in
+    *"$SEED_A"*) echo "FAIL: key move: the seed reached the verifier's argv" >&2; FAILURES=$((FAILURES+1)) ;;
+    *) echo "ok: key move: the seed is not on the verifier's argv" ;;
+esac
+
+# legacy file the log refuses: copied, but kept in both places
+rm -f "$NEW_KEY" "$STUB_LOG"
+printf '%s\n' "$SEED_B" > "$OLD_KEY"
+assert_eq "kept unverified" "$(migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB")" \
+    "key move: a seed the log refuses is kept under /config too"
+[ -s "$OLD_KEY" ] || { echo "FAIL: key move: a refused legacy copy was removed" >&2; FAILURES=$((FAILURES+1)); }
+assert_eq "$SEED_B" "$(head -n1 "$NEW_KEY")" "key move: the refused seed is still the one the app will read"
+# ...and the next start, with both files identical, holds it to the log again
+assert_eq "kept unverified" "$(migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB")" \
+    "key move: identical copies are re-verified, not trusted"
+ACCEPT_SEED="$SEED_B"
+assert_eq "moved verified" "$(migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB")" \
+    "key move: once the log accepts it, the identical legacy copy goes"
+[ ! -e "$OLD_KEY" ] || { echo "FAIL: key move: identical legacy copy not removed" >&2; FAILURES=$((FAILURES+1)); }
+
+# the new file is in use and a restored backup brings back a different key
+printf '%s\n' "$SEED_A" > "$OLD_KEY"
+ACCEPT_SEED="$SEED_A"
+assert_eq "kept differs" "$(migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB")" \
+    "key move: a differing legacy copy changes nothing"
+assert_eq "$SEED_B" "$(head -n1 "$NEW_KEY")" "key move: the key in use is untouched"
+[ -s "$OLD_KEY" ] || { echo "FAIL: key move: differing legacy copy removed" >&2; FAILURES=$((FAILURES+1)); }
+
+# no verifier installed: unverified, nothing removed
+rm -f "$NEW_KEY"
+LOG_VERIFY_BIN="$MIG/bin/missing"
+assert_eq "kept unverified" "$(migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB")" \
+    "key move: with no verifier the legacy copy is kept"
+if [ ! -s "$OLD_KEY" ] || [ ! -s "$NEW_KEY" ]; then
+    echo "FAIL: key move: both copies must exist without a verifier" >&2; FAILURES=$((FAILURES+1))
+fi
+LOG_VERIFY_BIN="$MIG/bin/log_verify"
+
+# the copy cannot be written: failed, legacy untouched, no partial file
+rm -f "$NEW_KEY"
+chmod 500 "$MIG/data"
+if [ "$(id -u)" = "0" ]; then
+    echo "skip: key move: copy failure case needs an unprivileged user (root ignores modes)"
+else
+    assert_eq "failed copy" "$(migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB" || true)" \
+        "key move: an unwritable destination fails the move"
+    migrate_device_key_file "$OLD_KEY" "$NEW_KEY" "$MIG_DB" > /dev/null 2>&1 \
+        && { echo "FAIL: key move: failed copy must return 1" >&2; FAILURES=$((FAILURES+1)); }
+    [ -s "$OLD_KEY" ] || { echo "FAIL: key move: legacy copy touched by a failed move" >&2; FAILURES=$((FAILURES+1)); }
+fi
+chmod 700 "$MIG/data"
+unset LOG_VERIFY_BIN ACCEPT_SEED STUB_LOG
+
 # ---- install_blueprints ----------------------------------------------------
 # The image carries the blueprints; the app places them under
 # /config/blueprints/automation/securacv without ever overwriting a copy the

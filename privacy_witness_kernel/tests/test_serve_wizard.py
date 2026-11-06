@@ -391,6 +391,7 @@ def save_env(monkeypatch, tmp_path):
     device key file under tmp_path."""
     captured: dict = {}
     monkeypatch.setattr(serve_wizard, "DEVICE_KEY_FILE", tmp_path / "device_key")
+    monkeypatch.setattr(serve_wizard, "LEGACY_DEVICE_KEY_FILE", tmp_path / "legacy" / "device_key")
     # Keep the save hermetic: wizard prefs land in tmp_path, never /config.
     monkeypatch.setattr(
         serve_wizard, "WIZARD_PREFS_FILE", tmp_path / "wizard_prefs.json"
@@ -460,6 +461,31 @@ def test_save_generates_and_persists_device_key(save_env, monkeypatch, tmp_path)
     assert len(seed) == 64
     assert seed == save_env["options"]["device_key_seed"]
     assert (key_file.stat().st_mode & 0o777) == 0o600
+
+
+def test_save_reuses_a_legacy_config_key_but_writes_only_the_data_one(save_env):
+    """Before the move the key sat under /config. A save that finds no
+    /data key but a legacy one keeps that identity (it never mints a new
+    seed over an existing log) and writes it to the /data file alone — the
+    legacy copy is the setup step's to verify and remove, so the wizard
+    leaves it exactly as it was."""
+    legacy = serve_wizard.LEGACY_DEVICE_KEY_FILE
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("c0ffee" * 10 + "feed\n")
+    before = legacy.stat()
+    handler = _bare_handler()
+    result = handler._handle_save({"mode": "frigate", "cameras": []})
+    assert result["ok"] is True, result
+    assert save_env["options"]["device_key_seed"] == "c0ffee" * 10 + "feed"
+    assert serve_wizard.DEVICE_KEY_FILE.read_text().strip() == "c0ffee" * 10 + "feed"
+    assert legacy.read_text() == "c0ffee" * 10 + "feed\n"
+    assert legacy.stat().st_mtime_ns == before.st_mtime_ns
+    assert result["device_key_file"] == str(serve_wizard.DEVICE_KEY_FILE)
+    # With a /data key present the legacy file is not consulted at all.
+    legacy.write_text("d00d" * 16 + "\n")
+    again = handler._handle_save({"mode": "frigate", "cameras": []})
+    assert again["ok"] is True
+    assert save_env["options"]["device_key_seed"] == "c0ffee" * 10 + "feed"
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +831,7 @@ def test_public_status_options_drops_secrets():
 def test_handle_status_never_returns_seed(monkeypatch):
     monkeypatch.setattr(serve_wizard, "get_addon_options", lambda: _SECRET_OPTS)
     monkeypatch.setattr(serve_wizard, "DEVICE_KEY_FILE", Path("/nonexistent/key"))
+    monkeypatch.setattr(serve_wizard, "LEGACY_DEVICE_KEY_FILE", Path("/nonexistent/legacy/key"))
     monkeypatch.setattr(serve_wizard, "_supervisor_request", lambda *a, **k: ["mqtt"])
     handler = _bare_handler()
     result = handler._handle_status()

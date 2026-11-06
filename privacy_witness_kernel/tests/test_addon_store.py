@@ -257,6 +257,7 @@ def test_the_wizard_saves_pass_the_supervisor_check(payload, monkeypatch, tmp_pa
     wizard = _load_serve_wizard()
     sent: dict = {}
     monkeypatch.setattr(wizard, "DEVICE_KEY_FILE", tmp_path / "device_key")
+    monkeypatch.setattr(wizard, "LEGACY_DEVICE_KEY_FILE", tmp_path / "legacy" / "device_key")
     monkeypatch.setattr(wizard, "WIZARD_PREFS_FILE", tmp_path / "wizard_prefs.json")
     monkeypatch.setattr(wizard, "get_addon_options", lambda: json.loads(json.dumps(CONFIG["options"])))
     monkeypatch.setattr(wizard, "set_addon_options", lambda options: sent.update(options=options))
@@ -450,6 +451,7 @@ REQUIRED_FILE_RULES = {
         "/config/fleet_peers.json.tmp": "rw",
     },
     "panel": {
+        "/data/device_key": "rw",
         "/config/api_token": "r",
         "/config/.securacv/**": "rw",
         "/config/frigate.yml": "rw",
@@ -468,6 +470,37 @@ def test_apparmor_names_every_file_each_process_opens(profile):
         assert path in rules, f"{profile}: no rule for {path} (the process opens it)"
         missing = set(needed) - set(rules[path])
         assert not missing, f"{profile}: {path} needs {needed!r}, has {rules[path]!r}"
+
+
+def _setup_profile_block():
+    """The top-level profile's own rules: from its header to the first child."""
+    start = APPARMOR.index(f"profile {CONFIG['slug']} ")
+    end = APPARMOR.index("\n  profile ", start)
+    return APPARMOR[start:end]
+
+
+def test_apparmor_the_device_key_lives_in_data_and_the_setup_can_verify_it():
+    """The seed file is the app's own (/data/device_key: the wizard writes
+    it, the setup reads it); the setup's one-time move out of /config holds
+    the seed against the sealed log with log_verify --lineage, which runs
+    inherited under the top-level profile and opens the database as every
+    kernel process does. No child profile but the panel names the key file,
+    and nothing names the legacy path by itself (the panel's
+    /config/.securacv/** covers the copy the move removes)."""
+    setup = _file_rules(_setup_profile_block())
+    assert setup["/data/**"] == "rw"
+    assert "r" in setup["/config/witness.db"] and "k" in setup["/config/witness.db"]
+    assert "r" in setup["/config/witness.db-*"] and "k" in setup["/config/witness.db-*"]
+    assert setup["/config/.securacv/**"] == "rw"  # the move deletes the legacy copy
+    assert _file_rules(_profile_block("panel"))["/data/device_key"] == "rw"
+    for name in ("witness_api", "witnessd", "frigate_bridge", "event_mqtt_bridge"):
+        assert "/data/device_key" not in _file_rules(_profile_block(name)), name
+    assert "/config/.securacv/device_key" not in APPARMOR
+    assert 'DEVICE_KEY_FILE="/data/device_key"' in RUN_SH
+    assert 'LEGACY_DEVICE_KEY_FILE="/config/.securacv/device_key"' in RUN_SH
+    wizard = (ADDON / "serve_wizard.py").read_text()
+    assert 'DEVICE_KEY_FILE = Path("/data/device_key")' in wizard
+    assert 'LEGACY_DEVICE_KEY_FILE = Path("/config/.securacv/device_key")' in wizard
 
 
 def test_apparmor_the_seed_file_is_created_by_witnessd_alone():
@@ -598,6 +631,28 @@ def test_run_sh_computes_the_device_id_before_anything_announces_it():
     assert RUN_SH.index('DEVICE_ID=$(ha_device_id') < RUN_SH.index("PUBLISHER_CMD_ARRAY=(")
 
 
+def test_run_sh_moves_the_device_key_out_of_config_before_reading_it():
+    """The one-time move runs before the first-run gate and before the seed
+    resolves, names the sealed log for the verification, and its verdicts
+    are matched as fixed words: the seed itself is never logged. A copy that
+    cannot be written stops the start (the app must not mint a new identity
+    over a key it could not carry over)."""
+    move = 'migrate_device_key_file "$LEGACY_DEVICE_KEY_FILE" "$DEVICE_KEY_FILE" "$DB_PATH"'
+    assert RUN_SH.count(move) == 1
+    assert RUN_SH.index(move) < RUN_SH.index('elif [ -s "$DEVICE_KEY_FILE" ]; then')
+    assert RUN_SH.index(move) < RUN_SH.index('resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE"')
+    for verdict in ('"moved verified")', '"moved no-log")', '"kept unverified")', '"kept differs")'):
+        assert verdict in RUN_SH, verdict
+    code = "\n".join(line for line in RUN_SH.splitlines() if not line.lstrip().startswith("#"))
+    assert not re.search(r"bashio::log\.\w+ .*DEVICE_KEY_SEED", code)
+    assert not re.search(r"bashio::log\.\w+ .*key_move", code)
+    assert "exit 1" in RUN_SH[RUN_SH.index(move):RUN_SH.index("First-run detection")]
+    # The token the integration reads did not move with it.
+    const = (REPO / "custom_components" / "securacv" / "const.py").read_text()
+    assert 'DEFAULT_TOKEN_FILE = "/config/api_token"' in const
+    assert 'TOKEN_FILE="/config/api_token"' in RUN_SH
+
+
 def test_run_sh_passes_the_c1_announce_flags_to_the_publisher():
     for flag in ("--announce-api-bind all", "--announce-pairing token_file",
                  '--announce-api-host "$ADDON_HOST"', '--ha-device-id "$DEVICE_ID"'):
@@ -646,9 +701,17 @@ def test_docs_cover_the_journeys_the_carry_disclosure_revocation_and_migration()
         "Revoking and uninstalling", "sensor.pwk_last_event", "sensor.securacv_last_event",
         "binary_sensor.securacv_chain_valid", "event.securacv_<zone>",
         "Settings → Dashboards → Add dashboard → SecuraCV",
+        # The device key: where it is, what a backup holds, what uninstall does.
+        "`/data/device_key` inside the app", "the device key with it",
+        "moves it, checks it against the sealed log",
     ):
         assert needle in docs, needle
     assert "appears automatically via MQTT discovery" not in docs
+    # Nothing user-facing still sends people to the /config copy for a backup.
+    for text in (docs, re.sub(r"\s+", " ", (ADDON / "wizard" / "index.html").read_text()),
+                 re.sub(r"\s+", " ", (ADDON / "translations" / "en.yaml").read_text())):
+        assert "stored at `/config/.securacv/device_key`" not in text
+        assert "included in Home Assistant backups" not in text
 
 
 def test_changelog_has_an_entry_for_this_version():

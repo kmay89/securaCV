@@ -1,6 +1,22 @@
 <!-- The Supervisor shows this file on the app's page after an update. Newest first. -->
 ## Unreleased
 
+- **The device key leaves `/config`.** The seed the sealed log's identity
+  derives from was kept at `/config/.securacv/device_key`, mode 0600 — which
+  protects nothing there: every Home Assistant backup carries `/config`, and
+  the Samba, SSH and File editor apps (all root) export it whole, so anyone
+  holding a backup could forge the log's identity. It now lives in the app's
+  own data (`/data/device_key`), which only this app's processes open and
+  which a configuration-only backup does not carry (a backup that includes
+  the app does; uninstalling the app removes it, so export or copy the seed
+  from the Configuration tab first). On the first start after the update an
+  existing `/config` copy is moved: copied byte-for-byte, held against the
+  sealed log with the kernel's own verifier (the seed must open the log and
+  derive its key), and only then removed, with one line in the log. A key
+  the log refuses is kept in both places and the log says why. The API token
+  the integration reads stays at `/config/api_token`. In standalone mode the
+  kernel still keeps the seed beside the log at `/config/witness.ed25519.seed`;
+  that copy is a kernel behavior and is tracked separately.
 - **The two Frigate lists are declared as lists.** The options schema gave
   `frigate.cameras` and `frigate.labels` the Supervisor's select syntax,
   which takes one word from a fixed set (here only the word `str`), never a
