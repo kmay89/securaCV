@@ -549,8 +549,18 @@ mod tests {
             );
         }
         // Eight failed children, zero leaked read-ends (read_dir itself
-        // opens one fd transiently, so allow that much slack).
-        let after = open_fds();
+        // opens one fd transiently, so allow that much slack). The count is
+        // process-wide and the other tests in this binary run beside this
+        // one, opening pipes and sockets of their own for a moment, so a
+        // single sample can read high on a slow runner; a leaked read end
+        // never goes away, a neighbor's descriptor does, so sample until
+        // the count settles or a bounded wait runs out.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut after = open_fds();
+        while after > before + 1 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            after = open_fds();
+        }
         assert!(
             after <= before + 1,
             "fd leak: {before} before, {after} after"
