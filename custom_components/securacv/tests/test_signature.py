@@ -29,11 +29,13 @@ from ..signature import (
     build_event_canonical,
     build_sense_event_canonical,
     build_sentinel_event_canonical,
+    build_state_canonical,
     verify_chain,
     verify_counts,
     verify_event,
     verify_sense_event,
     verify_sentinel_event,
+    verify_state,
 )
 from homeassistant.core import HomeAssistant
 
@@ -702,3 +704,124 @@ def test_verify_counts_wrong_schema_version():
     verdict = verify_counts(ts, "canary-1", payload)
     assert verdict.trusted is False
     assert verdict.reason == "mismatch"
+
+
+# ─── canary-sense: the `state` wellbeing kind ──────────────────────────
+
+# The golden vector, shared byte-for-byte with the firmware host test
+# (firmware/tests_host/test_device_signature_common.cpp, STATE_GOLDEN) and
+# the kernel's fleet roll-call test (src/fleet_peers.rs, STATE_GOLDEN).
+# Deterministic Ed25519 under the fixed test key makes the signature a
+# golden value too.
+STATE_GOLDEN = b"securacv-canary-sig|v1|state|sense01|12|3|present|1|true"
+STATE_GOLDEN_SIG = (
+    "McxqbRv5TCU4YWBcDlS1EXcDeiQ7UEGZ88O3zySgQVZaEam6AjKJ-eVuG5fvhhnhC954a7"
+    "DEOimTfQP8uvb8Ag"
+)
+
+
+def _state_payload(**overrides):
+    payload = {
+        "device_id": "sense01",
+        "device_type": "canary-sense",
+        "presence": True,
+        "presence_state": "present",
+        "occupants": "1",
+        "range": "near",
+        "radar_ok": True,
+        "frame_errors": 0,
+        "lux": 138.0,
+        "breathing_locked": True,
+        "breath_bpm": 14,
+        "heart_bpm": 61,
+        "last_event": "presence_detected",
+        "uptime_s": 4200,
+        "ts_ms": 4200000,
+        "v": 1,
+        "chain_length": 12,
+        "seq": 3,
+        "alg": "ed25519",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_state_canonical_is_the_golden_vector():
+    assert build_state_canonical("sense01", 12, 3, "present", "1", "true") == STATE_GOLDEN
+
+
+def test_state_golden_vector_is_the_firmware_one():
+    if not _FIRMWARE_VECTOR_TEST.exists():
+        pytest.skip("firmware host test not present (HACS mirror checkout)")
+    text = _FIRMWARE_VECTOR_TEST.read_text(encoding="utf-8")
+    assert f'"{STATE_GOLDEN.decode()}"' in text
+
+
+def test_state_golden_signature_verifies_under_the_test_key():
+    priv, pub = _make_keypair()
+    assert pub.hex() == SENTINEL_GOLDEN_PUB
+    assert _b64url_nopad(priv.sign(STATE_GOLDEN)) == STATE_GOLDEN_SIG
+
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    _pin(ts, "sense01", pub)
+    payload = _state_payload(fp=ts.get("sense01").fingerprint_hex, sig=STATE_GOLDEN_SIG)
+    verdict = verify_state(ts, "sense01", payload)
+    assert verdict.trusted is True
+    assert verdict.reason == "ok"
+
+
+def test_state_words_edited_after_signing_fail():
+    """The readings beside the words are not signed; the words and the
+    freshness pair are, so editing any of them on the broker breaks it."""
+    priv, pub = _make_keypair()
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    _pin(ts, "sense01", pub)
+    fp = ts.get("sense01").fingerprint_hex
+    base = _state_payload(fp=fp, sig=STATE_GOLDEN_SIG)
+    # Unsigned readings may change freely.
+    assert verify_state(ts, "sense01", {**base, "lux": 2.0, "range": "far"}).trusted
+    for edit in (
+        {"presence_state": "clear"},
+        {"occupants": "2+"},
+        {"breathing_locked": False},
+        {"seq": 4},
+        {"chain_length": 13},
+    ):
+        verdict = verify_state(ts, "sense01", {**base, **edit})
+        assert verdict.trusted is False, edit
+        assert verdict.reason == "mismatch", edit
+    # A payload with no envelope is unsigned, never a mismatch.
+    unsigned = {k: v for k, v in base.items() if k not in ("sig", "fp", "alg")}
+    assert verify_state(ts, "sense01", unsigned).reason == "unsigned"
+    # A non-boolean breathing_locked is not a signable body.
+    verdict = verify_state(ts, "sense01", {**base, "breathing_locked": "yes"})
+    assert verdict.trusted is False
+    assert verdict.reason == "unsigned"
+
+
+def test_state_without_breathing_channel_signs_unknown():
+    """A build with no breathing channel omits `breathing_locked`; the
+    canonical spells that slot `unknown`, and adding the key on the broker
+    breaks the signature."""
+    priv, pub = _make_keypair()
+    canonical = build_state_canonical("hall", 40, 1, "clear", "0", "unknown")
+    assert canonical == b"securacv-canary-sig|v1|state|hall|40|1|clear|0|unknown"
+    sig = _b64url_nopad(priv.sign(canonical))
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    _pin(ts, "hall", pub)
+    fp = ts.get("hall").fingerprint_hex
+    payload = _state_payload(
+        device_id="hall", presence=False, presence_state="clear", occupants="0",
+        chain_length=40, seq=1, fp=fp, sig=sig,
+    )
+    for key in ("breathing_locked", "breath_bpm", "heart_bpm"):
+        payload.pop(key)
+    assert verify_state(ts, "hall", payload).trusted is True
+    assert verify_state(ts, "hall", {**payload, "breathing_locked": None}).trusted is True
+    assert verify_state(ts, "hall", {**payload, "breathing_locked": True}).reason == "mismatch"

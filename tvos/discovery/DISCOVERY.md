@@ -327,7 +327,8 @@ one-header change instead of a per-board copy-paste.
     the first `health` it sees per device id (trust on first use, as the
     display's NVS pin store does; here the pin lives in the summary file and
     survives a bridge restart with it), verifies the Ed25519 signature on
-    every `chain` publish against that pin, and writes that summary file
+    every `chain` and every `state` publish against that pin, and writes
+    that summary file
     (`securacv/fleet_peers/v1`) with an atomic rename. The kernel reads that
     file on every request and projects it through an allowlist
     (`src/fleet_peers.rs`, `fleet_rows`): the file is local bookkeeping and
@@ -384,7 +385,9 @@ one-header change instead of a per-board copy-paste.
     nothing drives it from the bridge yet. Because Canaries sign on each
     record they seal rather than on a timer, a quiet Canary honestly reads
     `online: false`, which this contract defines as "not claimed present",
-    never as "claimed absent".
+    never as "claimed absent". The same boundary holds for the room words:
+    their signature (below) proves who said them, and the freshness pair
+    bounds a replay; neither proves the device is still there.
   - `chain` is `"ok"` when the last signed chain publish verified against
     the pin, `"degraded"` when the last one did not — or when a second key
     that a `health` announced has actually **signed** for the id, which is
@@ -415,9 +418,29 @@ one-header change instead of a per-board copy-paste.
     Canaries, not the ghosts' rows.
   - The wellbeing words (`presence`, `occupants`, `breathing`) ride on a
     peer's row only while it is proven online **and** the reading is fresh
-    (a live `state` publish within the same window); a retained `state` is
-    history, not a reading. Only the contract's words cross — an unknown
-    word is dropped at the bridge, never republished. `seeing` has no MQTT
+    (a live `state` publish within the same window) **and the reading is
+    the device's own**: the `state` topic is as broker-writable as the
+    heartbeats, so the bridge takes the three words only from a publish
+    whose Ed25519 signature verifies against the same pinned key as the
+    chain, over the `state` canonical
+    (`securacv-canary-sig|v1|state|<id>|<chain_length>|<seq>|<presence>|<occupants>|<breathing>`,
+    signed by `firmware/common/identity/device_signature.cpp` on a
+    canary-sense and rebuilt by `src/fleet_peers.rs`), and only when its
+    freshness pair — the device's chain length when it spoke, then its
+    per-boot publish counter — is strictly past the last pair the bridge
+    verified for that id. An unsigned `state` (firmware older than the
+    envelope, or anyone on the broker), one signed under another key, a
+    replay or an older capture sets no words and clears none; the bridge
+    simply leaves what the real device last said to age out on the window
+    above. The bound is the chain's: a captured publish buys at most one
+    window per pair the bridge itself missed, never a standing claim. A
+    retained `state` advances the pair (so the broker's own retained head
+    cannot be replayed live later) but is history, not a reading. Only the
+    contract's words cross — an unknown word, even a signed one, is dropped
+    at the bridge, never republished; everything finer beside the words on
+    that topic (range, lux, BPM) is unsigned and never read. A display's
+    glass still paints `state` as it hears it, unsigned; only the kernel's
+    roll-call holds the words to the signature. `seeing` has no MQTT
     producer yet, same as on firmware.
   - Pinned to the shared vector: the kernel's two-row bytes (itself plus one
     Canary) are the `input` of a vector in

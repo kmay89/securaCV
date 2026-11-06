@@ -284,6 +284,30 @@ size_t build_sentinel_canonical(uint32_t    seq,
   return (size_t)n;
 }
 
+size_t build_state_canonical(uint32_t    chain_length,
+                             uint32_t    seq,
+                             const char* presence,
+                             const char* occupants,
+                             const char* breathing,
+                             const char* device_id,
+                             char*       out,
+                             size_t      cap) {
+  if (!out || cap == 0) return 0;
+  int n = snprintf(out, cap, "%s|v%d|state|%s|%lu|%lu|%s|%s|%s",
+                   SIG_PREFIX, SCHEMA_V,
+                   device_id ? device_id : "",
+                   (unsigned long)chain_length,
+                   (unsigned long)seq,
+                   presence ? presence : "",
+                   occupants ? occupants : "",
+                   breathing ? breathing : "");
+  if (n <= 0 || (size_t)n >= cap) {
+    out[0] = '\0';
+    return 0;
+  }
+  return (size_t)n;
+}
+
 size_t build_whoami_canonical(const char*   nonce_hex,
                               const char*   device_id,
                               char*         out,
@@ -385,6 +409,21 @@ bool sign_sentinel(uint32_t    seq,
                                       anomaly, occupancy, range,
                                       modality_bits, bucket_uptime_s,
                                       s_device_id, canon, sizeof(canon));
+  if (n == 0) return false;
+  return sign_and_encode(canon, n, sig_b64url_out, sig_cap);
+}
+
+bool sign_state(uint32_t    chain_length,
+                uint32_t    seq,
+                const char* presence,
+                const char* occupants,
+                const char* breathing,
+                char*       sig_b64url_out,
+                size_t      sig_cap) {
+  char canon[256];
+  size_t n = build_state_canonical(chain_length, seq, presence, occupants,
+                                   breathing, s_device_id,
+                                   canon, sizeof(canon));
   if (n == 0) return false;
   return sign_and_encode(canon, n, sig_b64url_out, sig_cap);
 }

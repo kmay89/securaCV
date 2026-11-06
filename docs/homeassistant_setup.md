@@ -987,6 +987,7 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/egress` | Device → HA | canary-wap only: its committed-event egress counters, right after each health publish, naming that health's `firmware_version` and `uptime` (retained) |
 | `securacv/{device_id}/events` | Device → HA | Witness record events |
 | `securacv/{device_id}/chain` | Device → HA | Hash chain state |
+| `securacv/{device_id}/state` | Device → HA | canary-sense: the retained room snapshot; its presence/occupants/breathing words carry a `state`-kind signature (`chain_length`, `seq`, `sig`) the kernel's fleet roll-call verifies — the readings beside them are unsigned |
 | `securacv/{device_id}/tamper` | Device → HA | Tamper alerts (immediate) |
 | `securacv/{device_id}/availability` | Device → HA | Online/offline (LWT, retained) |
 | `securacv/{device_id}/update/state` | Device → HA | Firmware update entity state (retained) |
@@ -1825,7 +1826,20 @@ never a side effect of pairing. `GET /api/identity` reports the mode as
 `online` on that roll-call is not a liveness proof: it means a signed chain
 publish verified against the pinned key within the last 180 s, no more —
 the exact wording is in
-[`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md).
+[`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md). The
+presence/occupants/breathing words on a row are held to the same key: a
+canary-sense signs them on its `state` publish (the `state` kind of the
+device-signature canonical, with the device's chain length and a per-boot
+publish counter as the freshness pair), and the bridge serves words only
+from a publish that verifies against the pin with a pair newer than the
+last it saw. A `state` published on the broker by anyone else — or by
+firmware older than the envelope, which still carries the words but no
+signature — sets nothing on the roll-call, and the integration's own
+entities keep reading that topic exactly as before (unsigned, as the
+entity list above says). Turning the roll-call on (`full`) is therefore
+safe against a broker client inventing a room's wellbeing under a real
+device id; what it still cannot do is prove the device is present, and
+the sidecar's default stays `self`.
 
 ---
 
