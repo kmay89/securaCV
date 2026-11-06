@@ -370,8 +370,11 @@
   <div class="info-box warn" style="margin-top:20px">
     <strong id="key-title">Your device signing key</strong>
     <div id="key-display" class="key-box">Generating…</div>
-    <span id="key-note">Back this up — it's stored at <code>/config/.securacv/device_key</code>.
-    Losing it means losing the ability to verify your witness log.</span>
+    <span id="key-note">Save this somewhere safe now. It is kept in the app's own data
+    (<code>/data/device_key</code> inside the app), not under <code>/config</code>: the File
+    editor, Samba and SSH apps cannot see it and a configuration-only backup does not carry it;
+    a backup that includes the SecuraCV app does. Losing it means losing the ability to verify
+    your witness log.</span>
   </div>
 
   <div id="start-error" class="info-box red hidden"></div>
@@ -576,9 +579,11 @@
 
   <div class="info-box warn">
     <strong>Back up your device key.</strong>
-    It is stored in <code>/config/.securacv/device_key</code> (included in
-    Home Assistant backups). Without it, sealed-log signatures cannot be
-    re-derived on a replacement device.
+    It is kept in the app's own data (<code>/data/device_key</code> inside the
+    app), outside <code>/config</code>: a backup that includes the SecuraCV app
+    carries it; a configuration-only backup, the File editor, Samba and SSH do
+    not. The Configuration tab's <code>device_key_seed</code> shows it. Without
+    it, sealed-log signatures cannot be re-derived on a replacement device.
   </div>
 
   <div class="btn-row">
@@ -1066,7 +1071,7 @@ function renderSummary() {
     document.getElementById("key-title").textContent = "Your device signing key is kept";
     keyDisplay.textContent = "existing key — unchanged";
     document.getElementById("key-note").textContent =
-      "The sealed log stays bound to the key at /config/.securacv/device_key; re-running the wizard never replaces it.";
+      "The sealed log stays bound to the key in the app's own data (/data/device_key); re-running the wizard never replaces it.";
   } else {
     if (!deviceKeySeed) deviceKeySeed = generateHex(32);
     keyDisplay.textContent = deviceKeySeed;

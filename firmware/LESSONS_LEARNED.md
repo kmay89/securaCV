@@ -5176,6 +5176,34 @@
   a manifest to every field it names whatever its version.
 - **Regression check:** `common/ota/test_ota_logic.cpp`
   (`test_manifest_v2_message_and_rules`).
+
+### A signature on one topic does not cover the next topic over
+
+- **What happened:** The kernel's fleet roll-call (`src/fleet_peers.rs`)
+  verified a Canary's `chain` publish against its pinned key and then took
+  the room's `presence` / `occupants` / `breathing` words from the same
+  device id's `state` publish — which nothing signed. Any client with
+  broker publish rights could put a wellbeing of its choosing on a real,
+  verified-online Canary's row, and the only honest remedy was to default
+  the served roll-call to the kernel's own row.
+- **Root cause:** "Verified" was true of the chain and read as true of the
+  row. Every topic that feeds a served claim needs its own signature, or
+  its words are the broker's, not the device's.
+- **Fix:** A `state` kind of the device-signature canonical
+  (`securacv-canary-sig|v1|state|<id>|<chain_length>|<seq>|<presence>|<occupants>|<breathing>`,
+  `device_signature::sign_state`), published by canary-sense in the same
+  envelope shape as `chain`, with the NVS-persisted chain length and a
+  per-boot publish counter as the freshness pair; the bridge takes words
+  only from a live publish that verifies under the pin with a pair strictly
+  past the last one it verified, and leaves the words alone otherwise.
+  Only the three words are signed: range, lux and BPM beside them are not
+  read by the roll-call and stay unsigned.
+- **Regression check:** `firmware/tests_host/test_device_signature_common.cpp`
+  and the canary-wap copy's `test_device_signature.cpp` pin the golden
+  canonical; `cargo test fleet_peers` proves an unsigned, foreign-key,
+  edited, replayed or older `state` sets nothing; the HA pytest rebuilds
+  the same bytes; `scripts/lint_dictionary_sync.py` refuses a signed kind
+  the dictionary does not list.
 - **Date learned:** 2026-11
 
 ## How to Add an Entry

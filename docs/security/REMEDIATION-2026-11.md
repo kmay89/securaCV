@@ -49,7 +49,13 @@ unless the line says otherwise.
   which refuses a small-order point (under such a key `(R = identity, s = 0)`
   verifies for every message), and every signature check is
   `verify_strict`. `src/crypto/signatures.rs` and every former
-  `VerifyingKey::from_bytes` / `.verify(` site.
+  `VerifyingKey::from_bytes` / `.verify(` site, the fleet `state` publish
+  verifier that landed alongside included.
+- **Vault nonces are born random.** The three AEAD nonces in
+  `src/vault/crypto.rs` were zero-filled buffers that the OS RNG overwrote a
+  line later; `fresh_nonce()` now draws every byte as the array is built, so
+  no constant nonce ever exists for a dropped fill call (or a static
+  analyzer) to find.
 - **`court_export` pinned the key it was verifying.** The kit's custody
   record described a pinned-key verification while the key came from the
   database under review. `--public-key` / `--public-key-file` now anchor the

@@ -61,9 +61,10 @@ MQTT-only; start at the [Canary walkthrough](#manual-walkthrough-canary-via-mqtt
    no Supervisor role and cannot install, start or stop other apps. You
    choose how long to keep sealed events (7 days, 30 days, 1 year), what to
    seal (every tracked object, or only Frigate alerts) and whether you want
-   the daily digest. The device signing key is generated once and kept at
-   `/config/.securacv/device_key`, inside your Home Assistant backups —
-   back it up.
+   the daily digest. The device signing key is generated once, shown once,
+   and kept in the app's own data (`/data/device_key` inside the app, not
+   under `/config`) — save it somewhere safe; see
+   [the device key and your backups](#the-device-key-and-your-backups).
 3. The done screen's one primary button is **Install the integration and
    restart Home Assistant**. It copies the integration the app carries into
    `/config/custom_components/securacv`, marks the copy as the app's own,
@@ -828,9 +829,15 @@ and writes **one zip** —
 `<config>/securacv/evidence` (directory `0700`, files `0600`, never under
 `www/`), holding the kernel's bundle verbatim
 (`securacv-events-<bucket>.json`), `evidence_viewer.html` (the offline
-checker), `README.txt` (the recipient's recipe) and `WITNESS_KEY.txt`
-(`verifying_key=…`, `fingerprint=…`, `kernel=…`). Nothing is added to,
-removed from or re-serialized in the bundle. A persistent notification,
+checker), `README.txt` (the recipient's recipe), `WITNESS_KEY.txt`
+(`verifying_key=…`, `fingerprint=…`, `kernel=…`) and `WITNESS_STATEMENT.txt`
+(the export read out in plain language for whoever receives it: the sealed
+events by kind, zone and ten-minute window in the owner's time zone, the
+kernel's own failure records in the window, what the record proves, what it
+does not — no pixels, no identity, no precise second, no proof of whose
+hand held the key — and how to check it; a reading of the bundle, never
+evidence, and the checker ignores it). Nothing is added to, removed from
+or re-serialized in the bundle. A persistent notification,
 **SecuraCV evidence export ready**, reads *"Evidence pack ready — last 24
 hours, 17 sealed events, chain verified ✓. Download the evidence pack (link
 valid 24 hours; also under Media → SecuraCV evidence). Send the whole zip to
@@ -981,6 +988,7 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/egress` | Device → HA | canary-wap only: its committed-event egress counters, right after each health publish, naming that health's `firmware_version` and `uptime` (retained) |
 | `securacv/{device_id}/events` | Device → HA | Witness record events |
 | `securacv/{device_id}/chain` | Device → HA | Hash chain state |
+| `securacv/{device_id}/state` | Device → HA | canary-sense: the retained room snapshot; its presence/occupants/breathing words carry a `state`-kind signature (`chain_length`, `seq`, `sig`) the kernel's fleet roll-call verifies — the readings beside them are unsigned |
 | `securacv/{device_id}/tamper` | Device → HA | Tamper alerts (immediate) |
 | `securacv/{device_id}/availability` | Device → HA | Online/offline (LWT, retained) |
 | `securacv/{device_id}/update/state` | Device → HA | Firmware update entity state (retained) |
@@ -1220,7 +1228,9 @@ minutes it reports *SecuraCV can't reach the witness kernel* until you
 delete it. The app's own uninstall leaves `/config/witness.db*`,
 `/config/.securacv`, `/config/api_token` and the carried
 `/config/custom_components/securacv` in place — they are yours and part of
-your backups; the app's [documentation tab](../privacy_witness_kernel/DOCS.md#revoking-and-uninstalling)
+your backups — but removes the app's own data, the device key with it
+([the device key and your backups](#the-device-key-and-your-backups));
+the app's [documentation tab](../privacy_witness_kernel/DOCS.md#revoking-and-uninstalling)
 lists what to delete by hand. A HACS install is removed from HACS as usual
 after the entry is deleted. A Canary that left the fleet can be deleted
 from its device page; one still reporting, or still pinned, comes back on
@@ -1457,6 +1467,37 @@ Supervisor role). Nothing to type.
 Back up the device key once the kernel is running: if it is lost, old event
 signatures can no longer be verified.
 
+#### The device key and your backups
+
+The seed the kernel's identity derives from is kept in the app's own data,
+`/data/device_key` inside the app's container (mode 0600), and in the app's
+`device_key_seed` option (the Configuration tab): the wizard writes the
+option, and a key the app generated itself, or carried over from `/config`,
+is recorded there on the next start, so the option is always where to copy
+it from. Nothing else on your Home Assistant reaches that
+directory: the File editor, Samba and SSH apps cannot read it, and a backup
+of Home Assistant's configuration alone does not carry it. A backup that
+**includes the SecuraCV app** does carry it (the app's data and options are
+part of that backup) — treat such a backup as holding the key. Uninstalling
+the app deletes its data, the key with it: export first, or copy the seed
+from the Configuration tab, if you may want the log or a replacement device
+later.
+
+Earlier releases kept the key at `/config/.securacv/device_key`, inside
+every backup and readable by every file-sharing app, where the 0600 mode
+protected nothing. The first start after the update moves it: the file is
+copied byte-for-byte into the app's data, held against the sealed log with
+the kernel's own verifier (the seed must open the log and derive its key),
+and only then removed from `/config`; the app's log says so in one line. A
+key the log does not accept is kept in both places and the log says why.
+The rotating API token the integration reads is unchanged at
+`/config/api_token`.
+
+Not moved yet: in **standalone** mode the kernel itself keeps the seed
+beside the log at `/config/witness.ed25519.seed`, so a standalone install's
+`/config` still holds it. That is a kernel behavior, tracked separately;
+Frigate mode (the wizard's default) has no such copy.
+
 #### Advanced: manual configuration (optional)
 
 Skip the wizard only if you need a specific identity or a hand-tuned config —
@@ -1552,8 +1593,9 @@ cp -r privacy_witness_kernel /addons/privacy_witness_kernel
 
 The device key is a secret that establishes your device's cryptographic
 identity. You don't need to create one — the app generates a key on first
-start and persists it. Supply your own seed only when you want a specific
-identity (for instance, restoring from backup):
+start and keeps it in its own data ([where, and what your backups
+hold](#the-device-key-and-your-backups)). Supply your own seed only when
+you want a specific identity (for instance, restoring from backup):
 
 ```bash
 openssl rand -hex 32
@@ -1808,6 +1850,8 @@ still needs from you, and why:
   wellbeing words the Wall shows — a restore therefore keeps that trust
   instead of re-pinning every device. The file is written `0600`, and
   `/api/fleet` serves the roll-call's coarse words only, never the keys.
+  **The device key is not**, on purpose too: it lives in the app's own data,
+  not under `/config` ([the device key and your backups](#the-device-key-and-your-backups)).
 
 On the **Docker sidecar** the port is published from the first start —
 that is how Home Assistant pairs — and the roll-call there serves **only the
@@ -1821,7 +1865,20 @@ option: `self` by default, because the route takes no token; set it to
 `online` on that roll-call is not a liveness proof: it means a signed chain
 publish verified against the pinned key within the last 180 s, no more —
 the exact wording is in
-[`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md).
+[`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md). The
+presence/occupants/breathing words on a row are held to the same key: a
+canary-sense signs them on its `state` publish (the `state` kind of the
+device-signature canonical, with the device's chain length and a per-boot
+publish counter as the freshness pair), and the bridge serves words only
+from a publish that verifies against the pin with a pair newer than the
+last it saw. A `state` published on the broker by anyone else — or by
+firmware older than the envelope, which still carries the words but no
+signature — sets nothing on the roll-call, and the integration's own
+entities keep reading that topic exactly as before (unsigned, as the
+entity list above says). Turning the roll-call on (`full`) is therefore
+safe against a broker client inventing a room's wellbeing under a real
+device id; what it still cannot do is prove the device is present, and
+the sidecar's default stays `self`.
 
 ---
 

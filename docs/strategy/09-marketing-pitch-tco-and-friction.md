@@ -10,8 +10,14 @@
 ## 1. The pitch, in one breath
 
 **Every other camera bills you monthly to keep your footage on their servers. SecuraCV costs
-$0/month forever, keeps footage on your hardware where it auto-deletes in 24 hours, and is the
-only one that can *prove* — cryptographically — that nobody edited the record.**
+$0/month forever, keeps everything on your hardware where the record auto-deletes after a short,
+configurable window (seven days by default), and is the only one whose record is
+*tamper-evident* — any edit after sealing fails verification against the owner's pinned key.**
+
+(Two limits, stated not hidden — the Promise Card in
+[13-black-box-evidence-model.md](13-black-box-evidence-model.md) §4, P3 and P7: a seized
+device gives up its key, so whoever holds it can forge; and a lone device cannot prove it
+showed everyone the same history until mesh co-signing ships.)
 
 Per persona (see [04-user-stories.md](04-user-stories.md)):
 
@@ -19,7 +25,7 @@ Per persona (see [04-user-stories.md](04-user-stories.md)):
   a tamper-evident witness log and a verified-✓ timeline — $0/month, nothing leaves your LAN."*
 - **Marcus (needs proof that holds):** *"A record your landlord, an abuser, or a deepfake
   challenge can't quietly rewrite — and that can't be turned into surveillance of you."*
-- **The Chen family (mainstream, horizon):** *"A security camera with a 24-hour memory. No
+- **The Chen family (mainstream, horizon):** *"A security camera with a one-week memory. No
   subscription, no cloud, no archive of your kids."*
 
 ## 2. Lifetime cost: the math, shown

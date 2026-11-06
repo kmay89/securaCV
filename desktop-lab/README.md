@@ -51,8 +51,11 @@ Native earns its keep for the things a browser can't do well:
   every 15 s while the page is open) and the bench you were on; a **Your
   fleet** page lists every Canary heard with its firmware and address, marks
   a board behind the firmware this build carries, and holds the kernel
-  address the Witness Wall and the menu bar companion use too; a status
-  strip under every bench; keyboard shortcuts (⌘K, ⌘1–6, ⌘[ ⌘], ⌘R, ⌘,).
+  address the Witness Wall and the menu bar companion use too; a **Set up
+  a Canary** list whose five steps are ticked by what the app observes (a
+  port, a remembered install, an mDNS announcement, a hub answering, the
+  Wall opened); a status strip under every bench; keyboard shortcuts (⌘K,
+  ⌘1–6, ⌘[ ⌘], ⌘R, ⌘,) that a framed bench hands up to the shell.
   All of it is `canary-local/assets/lab-app.js`, rendered only where
   `native_capabilities` reports something to show, so the website Lab
   never grows a Home that answers "—" (`canary-local/tests/lab_app.test.js`).

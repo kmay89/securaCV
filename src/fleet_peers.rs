@@ -59,6 +59,25 @@
 //! challenge would use the firmware's `whoami` canonical, which nothing here
 //! drives yet.
 //!
+//! **The wellbeing words are signed too, or they are not words.** The
+//! `state` topic is as broker-writable as the heartbeats, so a peer with
+//! publish rights could once put a room's `presence`/`occupants`/`breathing`
+//! on a real Canary's row while the real Canary kept signing its chain. A
+//! canary-sense now signs those three words under its device key over the
+//! `state` canonical (`securacv-canary-sig|v1|state|<id>|<chain_length>|
+//! <seq>|<presence>|<occupants>|<breathing>`, built by
+//! `firmware/common/identity/device_signature.cpp`), and
+//! [`PeerTable::observe`] takes them only from a LIVE `state` publish whose
+//! signature verifies under the pinned key AND whose freshness pair — the
+//! device's chain length when it spoke, then its per-boot publish counter —
+//! is strictly past the last pair this bridge verified for the id
+//! ([`PeerRecord::last_verified_state`]). An unsigned `state`, one under
+//! another key, a replay, or an older publish leaves the words as they were
+//! (so they age out of [`fleet_rows`] on the usual clock); it never sets
+//! them, and never clears what the real device said. The same bound as the
+//! chain applies: a captured publish buys at most one window per pair the
+//! bridge itself missed, never a standing claim.
+//!
 //! The pin is TOFU, not pairing: "chain: ok" means the last chain publish
 //! verified against the first key this bridge ever saw for that device id,
 //! which is weaker than a key pinned at pairing and is described that way in
@@ -134,9 +153,10 @@ pub const FLEET_PEERS_MAX_FILE_BYTES: u64 = 256 * 1024;
 /// are deliberately absent — the bridge is the kernel's egress and must not
 /// become a consumer of witness traffic. What it does consume is the coarse
 /// roll-call: `state` for the contract's wellbeing WORDS (never the readings
-/// beside them), `health` for the device's public key (stored locally, never
-/// projected), and `chain`, the one signed publish the display verifies too,
-/// so presence is proven the same way on both.
+/// beside them, and only under the device's signature), `health` for the
+/// device's public key (stored locally, never projected), and `chain`, the
+/// signed publish the display verifies too, so presence is proven the same
+/// way on both.
 pub const FLEET_PEER_TOPIC_FILTERS: &[&str] = &[
     "securacv/+/availability",
     "securacv/+/status",
@@ -204,7 +224,8 @@ pub struct PeerRecord {
     /// persisted: `health` is retained and arrives again after a restart.
     #[serde(skip)]
     announced_key_hex: Option<String>,
-    /// Coarse room words from a LIVE `state` publish: `"clear"`/`"present"`.
+    /// Coarse room words from a LIVE `state` publish that verified under
+    /// the pin with a fresh [`StateMark`]: `"clear"`/`"present"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub presence: Option<String>,
     /// `"0"` / `"1"` / `"2+"`, same source and freshness as `presence`.
@@ -213,15 +234,34 @@ pub struct PeerRecord {
     /// `breathing_locked` from the same publish.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub breathing: Option<bool>,
-    /// When the wellbeing words above were last heard live; they are served
-    /// only while this is within [`FLEET_PEER_RECENT_SECS`].
+    /// When the wellbeing words above were last heard live and verified;
+    /// they are served only while this is within [`FLEET_PEER_RECENT_SECS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wellbeing_epoch_s: Option<u64>,
+    /// The freshness pair of the last `state` publish that verified against
+    /// the pin, retained or live. A publish at or below it is a replay — or
+    /// an older capture — and sets no words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_verified_state: Option<StateMark>,
     /// A `chain` publish that arrived before the pin (retained-delivery order
     /// is arbitrary), held so the pin can evaluate it when it lands. Not
     /// persisted: after a restart the pin is already on disk.
     #[serde(skip)]
     pending_chain: Option<PendingChain>,
+}
+
+/// The freshness pair a signed `state` publish carries, in the order it is
+/// compared: the device's witness-chain length when it spoke (NVS-persisted
+/// on the device, so it survives a reboot) and its per-boot count of state
+/// publishes. Lexicographic order, which `Ord` derives from the field order,
+/// is the contract: a reboot restarts `seq` but never lowers `chain_length`,
+/// and a chain advance carries the pair past anything heard before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct StateMark {
+    /// The device's chain length at the publish.
+    pub chain_length: u64,
+    /// The device's per-boot state publish counter.
+    pub seq: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,6 +291,7 @@ impl PeerRecord {
             occupants: None,
             breathing: None,
             wellbeing_epoch_s: None,
+            last_verified_state: None,
             pending_chain: None,
         }
     }
@@ -281,6 +322,44 @@ impl PeerRecord {
             }
             None => false,
         }
+    }
+
+    /// Take the wellbeing words from a `state` publish, or leave them: only
+    /// a signature that verifies under the pin over the words as published,
+    /// with a [`StateMark`] strictly past the last one verified, sets
+    /// anything. The words themselves are then held to the contract's
+    /// vocabulary; a signed word outside it is dropped, not republished.
+    /// A `retained` publish advances the mark (so the broker's retained
+    /// head cannot be replayed live later) but is history, not a reading.
+    /// Under `pin_conflict` nothing is claimed for the id.
+    fn evaluate_state(&mut self, publish: &StatePublish<'_>, retained: bool, now: u64) {
+        if self.pin_conflict {
+            return;
+        }
+        let Some(pinned) = self.pinned_key_hex.as_deref().and_then(decode_key_hex) else {
+            return;
+        };
+        if !verify_state_signature(&self.device_id, publish, &pinned) {
+            return;
+        }
+        if !self
+            .last_verified_state
+            .is_none_or(|seen| publish.mark > seen)
+        {
+            return;
+        }
+        self.last_verified_state = Some(publish.mark);
+        if retained {
+            return;
+        }
+        self.presence = presence_word(publish.presence);
+        self.occupants = occupants_word(publish.occupants);
+        self.breathing = match publish.breathing {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        };
+        self.wellbeing_epoch_s = Some(now);
     }
 
     fn wellbeing_fresh(&self, now: u64) -> bool {
@@ -564,13 +643,25 @@ pub struct PeerTable {
 impl PeerTable {
     /// Rehydrate from a previously written summary so pins survive a bridge
     /// restart ("a reboot must not re-TOFU", as the display's pin store puts
-    /// it). Records with an invalid id are dropped, never trusted.
+    /// it). Records with an invalid id are dropped, never trusted. Wellbeing
+    /// words that carry no verified [`StateMark`] were taken by a bridge
+    /// older than the signature requirement, from a `state` nobody signed:
+    /// they are forgotten here, so an upgrade never serves what the old
+    /// bridge could not vouch for, not even for one window.
     pub fn from_summary(summary: PeerSummaryFile) -> Self {
         let peers = summary
             .peers
             .into_iter()
             .filter(|p| device_id_ok(&p.device_id))
-            .map(|p| (p.device_id.clone(), p))
+            .map(|mut p| {
+                if p.last_verified_state.is_none() {
+                    p.presence = None;
+                    p.occupants = None;
+                    p.breathing = None;
+                    p.wellbeing_epoch_s = None;
+                }
+                (p.device_id.clone(), p)
+            })
             .collect();
         Self {
             peers,
@@ -722,24 +813,13 @@ impl PeerTable {
                 if let Some(dt) = doc.get("device_type").and_then(|v| v.as_str()) {
                     rec.device_type = clean_product(dt);
                 }
-                if retained {
-                    // A replayed room claim is history, not a reading.
-                    return true;
-                }
-                let presence = doc
-                    .get("presence_state")
-                    .and_then(|v| v.as_str())
-                    .and_then(presence_word);
-                let occupants = doc
-                    .get("occupants")
-                    .and_then(|v| v.as_str())
-                    .and_then(occupants_word);
-                let breathing = doc.get("breathing_locked").and_then(|v| v.as_bool());
-                if presence.is_some() || occupants.is_some() || breathing.is_some() {
-                    rec.presence = presence;
-                    rec.occupants = occupants;
-                    rec.breathing = breathing;
-                    rec.wellbeing_epoch_s = Some(now);
+                // The words are read exactly as the device signed them —
+                // the canonical is rebuilt from these strings — and only
+                // then held to the contract's vocabulary. An unsigned
+                // `state` (older firmware, or anyone on the broker) sets
+                // nothing: `state_publish` is `None` without a signature.
+                if let Some(publish) = state_publish(&doc) {
+                    rec.evaluate_state(&publish, retained, now);
                 }
             }
             "meta" => {
@@ -815,7 +895,11 @@ pub fn fleet_rows(summary: &PeerSummaryFile, now: u64) -> Vec<FleetRow> {
             let chain = (peer.chain == CHAIN_OK || peer.chain == CHAIN_DEGRADED)
                 .then(|| peer.chain.clone());
             let product = peer.device_type.as_deref().and_then(clean_product);
-            let wellbeing = online && peer.wellbeing_fresh(now);
+            // Words are served only beside the mark that proves a signed
+            // `state` set them: a file written by a bridge older than the
+            // signature requirement holds words no signature vouched for.
+            let wellbeing =
+                online && peer.wellbeing_fresh(now) && peer.last_verified_state.is_some();
             FleetRow {
                 name,
                 online,
@@ -875,6 +959,97 @@ pub fn verify_chain_signature(
 
 fn chain_canonical(device_id: &str, length: u64, latest_hash_hex: &str) -> String {
     format!("{SIG_PREFIX}|v{SCHEMA_V}|chain|{device_id}|{length}|{latest_hash_hex}")
+}
+
+/// A `state` publish's signed part, as the device published it: the three
+/// words verbatim (the canonical is rebuilt from them, so they are not
+/// cleaned first), the freshness pair, and the signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatePublish<'a> {
+    /// The freshness pair (`chain_length`, `seq`).
+    pub mark: StateMark,
+    /// `presence_state` as published: `unknown`/`clear`/`present`.
+    pub presence: &'a str,
+    /// `occupants` as published: `0`/`1`/`2+`.
+    pub occupants: &'a str,
+    /// `breathing_locked` as a canonical word: `true`/`false`, or `unknown`
+    /// when the key is absent (a build with no breathing channel).
+    pub breathing: &'a str,
+    /// The base64url signature, unpadded.
+    pub sig_b64url: &'a str,
+}
+
+/// The signed part of a parsed `state` document, or `None` when it carries
+/// no signature or no freshness pair — an unsigned publish is never a
+/// reading, whatever words it holds. A word that could not have been
+/// signed (longer than the vocabulary, or carrying the canonical's own
+/// separator) is refused here rather than handed to the verifier.
+fn state_publish(doc: &serde_json::Value) -> Option<StatePublish<'_>> {
+    let sig_b64url = doc.get("sig")?.as_str()?;
+    let chain_length = doc.get("chain_length")?.as_u64()?;
+    let seq = doc.get("seq")?.as_u64()?;
+    let word = |key: &str| -> Option<&str> {
+        let w = doc.get(key)?.as_str()?;
+        (w.len() <= 16 && w.bytes().all(|b| b.is_ascii_graphic() && b != b'|')).then_some(w)
+    };
+    let presence = word("presence_state")?;
+    let occupants = word("occupants")?;
+    let breathing = match doc.get("breathing_locked") {
+        None | Some(serde_json::Value::Null) => "unknown",
+        Some(serde_json::Value::Bool(true)) => "true",
+        Some(serde_json::Value::Bool(false)) => "false",
+        Some(_) => return None,
+    };
+    Some(StatePublish {
+        mark: StateMark { chain_length, seq },
+        presence,
+        occupants,
+        breathing,
+        sig_b64url,
+    })
+}
+
+/// Verify a Canary's `state` publish against a pinned key: Ed25519 over the
+/// locked canonical `securacv-canary-sig|v1|state|<device_id>|<chain_length>|
+/// <seq>|<presence>|<occupants>|<breathing>` — the bytes
+/// `device_signature::build_state_canonical` signs on the device and
+/// `signature.py` rebuilds in Home Assistant.
+pub fn verify_state_signature(
+    device_id: &str,
+    publish: &StatePublish<'_>,
+    pinned: &[u8; 32],
+) -> bool {
+    let canonical = state_canonical(
+        device_id,
+        publish.mark,
+        publish.presence,
+        publish.occupants,
+        publish.breathing,
+    );
+    let Some(sig) = b64url_decode_nopad(publish.sig_b64url) else {
+        return false;
+    };
+    let Ok(sig): Result<[u8; 64], _> = sig.try_into() else {
+        return false;
+    };
+    let Ok(key) = crate::crypto::signatures::verifying_key_strict(pinned) else {
+        return false;
+    };
+    key.verify_strict(canonical.as_bytes(), &Signature::from_bytes(&sig))
+        .is_ok()
+}
+
+fn state_canonical(
+    device_id: &str,
+    mark: StateMark,
+    presence: &str,
+    occupants: &str,
+    breathing: &str,
+) -> String {
+    let StateMark { chain_length, seq } = mark;
+    format!(
+        "{SIG_PREFIX}|v{SCHEMA_V}|state|{device_id}|{chain_length}|{seq}|{presence}|{occupants}|{breathing}"
+    )
 }
 
 /// `securacv/<device_id>/<suffix…>` → `(device_id, suffix)`. The fleet-wide
@@ -1046,6 +1221,69 @@ mod tests {
             .into_bytes()
     }
 
+    /// A canary-sense `state` body as the firmware publishes it: the
+    /// readings beside the words, and the signed envelope over the words
+    /// and the freshness pair. `breathing` is `None` for a build with no
+    /// breathing channel (the key is absent, the canonical says `unknown`).
+    fn signed_state(
+        key: &SigningKey,
+        device_id: &str,
+        mark: (u64, u64),
+        presence: &str,
+        occupants: &str,
+        breathing: Option<bool>,
+    ) -> Vec<u8> {
+        let mark = StateMark {
+            chain_length: mark.0,
+            seq: mark.1,
+        };
+        let word = match breathing {
+            Some(true) => "true",
+            Some(false) => "false",
+            None => "unknown",
+        };
+        let sig = key.sign(state_canonical(device_id, mark, presence, occupants, word).as_bytes());
+        let mut doc = serde_json::json!({
+            "device_id": device_id,
+            "device_type": "canary-sense",
+            "presence": presence == "present",
+            "presence_state": presence,
+            "occupants": occupants,
+            "range": "near",
+            "radar_ok": true,
+            "frame_errors": 0,
+            "lux": 138.0,
+            "last_event": "presence_detected",
+            "uptime_s": 4200,
+            "ts_ms": 4200000,
+            "v": 1,
+            "chain_length": mark.chain_length,
+            "seq": mark.seq,
+            "alg": "ed25519",
+            "fp": "0123456789abcdef",
+            "sig": b64url_encode_nopad(&sig.to_bytes()),
+        });
+        if let Some(locked) = breathing {
+            doc["breathing_locked"] = serde_json::Value::Bool(locked);
+            doc["breath_bpm"] = serde_json::json!(14);
+            doc["heart_bpm"] = serde_json::json!(61);
+        }
+        doc.to_string().into_bytes()
+    }
+
+    /// The `state` golden vector, shared byte-for-byte with
+    /// `firmware/tests_host/test_device_signature_common.cpp` (STATE_GOLDEN)
+    /// and `custom_components/securacv/tests/test_signature.py`.
+    const STATE_GOLDEN: &str = "securacv-canary-sig|v1|state|sense01|12|3|present|1|true";
+    /// Ed25519 is deterministic: the signature over STATE_GOLDEN under the
+    /// pytest's fixed key (seed 0x42) is a golden value too, so a verifier
+    /// here, in Python and on a device that accepts it rebuilds the same
+    /// bytes.
+    const STATE_GOLDEN_PUB: &str =
+        "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12";
+    const STATE_GOLDEN_SIG: &str =
+        "McxqbRv5TCU4YWBcDlS1EXcDeiQ7UEGZ88O3zySgQVZaEam6AjKJ-eVuG5fvhhnhC954a7DEOimTfQP8uvb8Ag";
+
     #[test]
     fn b64url_round_trips_and_rejects_junk() {
         for len in 0..70 {
@@ -1208,15 +1446,378 @@ mod tests {
     }
 
     #[test]
+    fn state_canonical_is_the_shared_golden_vector_and_verifies_under_its_key() {
+        let mark = StateMark {
+            chain_length: 12,
+            seq: 3,
+        };
+        assert_eq!(
+            state_canonical("sense01", mark, "present", "1", "true"),
+            STATE_GOLDEN
+        );
+        let key = SigningKey::from_bytes(&[0x42u8; 32]);
+        let pinned = key.verifying_key().to_bytes();
+        assert_eq!(hex::encode(pinned), STATE_GOLDEN_PUB);
+        assert_eq!(
+            b64url_encode_nopad(&key.sign(STATE_GOLDEN.as_bytes()).to_bytes()),
+            STATE_GOLDEN_SIG
+        );
+        let publish = StatePublish {
+            mark,
+            presence: "present",
+            occupants: "1",
+            breathing: "true",
+            sig_b64url: STATE_GOLDEN_SIG,
+        };
+        assert!(verify_state_signature("sense01", &publish, &pinned));
+        // Any field moved → the canonical moves → the signature fails.
+        for (edited, what) in [
+            (
+                StatePublish {
+                    presence: "clear",
+                    ..publish.clone()
+                },
+                "presence",
+            ),
+            (
+                StatePublish {
+                    occupants: "2+",
+                    ..publish.clone()
+                },
+                "occupants",
+            ),
+            (
+                StatePublish {
+                    breathing: "false",
+                    ..publish.clone()
+                },
+                "breathing",
+            ),
+            (
+                StatePublish {
+                    mark: StateMark {
+                        chain_length: 12,
+                        seq: 4,
+                    },
+                    ..publish.clone()
+                },
+                "seq",
+            ),
+            (
+                StatePublish {
+                    mark: StateMark {
+                        chain_length: 13,
+                        seq: 3,
+                    },
+                    ..publish.clone()
+                },
+                "chain_length",
+            ),
+            (
+                StatePublish {
+                    sig_b64url: &STATE_GOLDEN_SIG[..40],
+                    ..publish.clone()
+                },
+                "a truncated signature",
+            ),
+        ] {
+            assert!(
+                !verify_state_signature("sense01", &edited, &pinned),
+                "{what} edited after signing still verified"
+            );
+        }
+        assert!(!verify_state_signature("sense02", &publish, &pinned));
+        let other = SigningKey::from_bytes(&[9u8; 32])
+            .verifying_key()
+            .to_bytes();
+        assert!(!verify_state_signature("sense01", &publish, &other));
+        // The firmware host test carries the same literal: neither side can
+        // move it alone.
+        let firmware_test = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/firmware/tests_host/test_device_signature_common.cpp"
+        );
+        if let Ok(text) = std::fs::read_to_string(firmware_test) {
+            assert!(
+                text.contains(&format!("\"{STATE_GOLDEN}\"")),
+                "the firmware host test no longer pins STATE_GOLDEN"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unsigned_or_foreign_state_sets_no_wellbeing_words() {
+        let key = signer();
+        let impostor = SigningKey::from_bytes(&[3u8; 32]);
+        let mut table = PeerTable::default();
+        table.observe("securacv/bedroom/health", &health(&key), false, NOW);
+        table.observe(
+            "securacv/bedroom/chain",
+            &signed_chain(&key, "bedroom", 3),
+            false,
+            NOW + 1,
+        );
+        assert!(fleet_rows(&table.summary(NOW + 1), NOW + 1)[0].online);
+        // The pre-signature body: words, no envelope. Anyone on the broker
+        // can publish it under a real id, so it is not a reading.
+        let unsigned = br#"{"device_type":"canary-sense","presence_state":"present","occupants":"2+","breathing_locked":true,"range":"near","lux":138.0}"#;
+        table.observe("securacv/bedroom/state", unsigned, false, NOW + 2);
+        let rows = fleet_rows(&table.summary(NOW + 2), NOW + 2);
+        assert!(rows[0].online);
+        assert!(
+            rows[0].presence.is_none()
+                && rows[0].occupants.is_none()
+                && rows[0].breathing.is_none(),
+            "an unsigned state was served: {rows:?}"
+        );
+        // Signed, but by a key that is not the pin.
+        table.observe(
+            "securacv/bedroom/state",
+            &signed_state(&impostor, "bedroom", (3, 1), "present", "2+", Some(true)),
+            false,
+            NOW + 3,
+        );
+        let rows = fleet_rows(&table.summary(NOW + 3), NOW + 3);
+        assert!(
+            rows[0].presence.is_none(),
+            "a foreign signature was served: {rows:?}"
+        );
+        assert!(table.summary(NOW + 3).peers[0]
+            .last_verified_state
+            .is_none());
+        // A signature over different words than the body carries (the
+        // words edited on the broker after signing).
+        let mut edited: serde_json::Value = serde_json::from_slice(&signed_state(
+            &key,
+            "bedroom",
+            (3, 1),
+            "clear",
+            "0",
+            Some(false),
+        ))
+        .expect("json");
+        edited["presence_state"] = "present".into();
+        edited["occupants"] = "2+".into();
+        table.observe(
+            "securacv/bedroom/state",
+            edited.to_string().as_bytes(),
+            false,
+            NOW + 4,
+        );
+        assert!(fleet_rows(&table.summary(NOW + 4), NOW + 4)[0]
+            .presence
+            .is_none());
+        // The real device's words land; an unsigned publish after them
+        // neither changes nor clears them.
+        table.observe(
+            "securacv/bedroom/state",
+            &signed_state(&key, "bedroom", (3, 1), "clear", "0", Some(false)),
+            false,
+            NOW + 5,
+        );
+        let rows = fleet_rows(&table.summary(NOW + 5), NOW + 5);
+        assert_eq!(rows[0].presence.as_deref(), Some("clear"));
+        assert_eq!(rows[0].occupants.as_deref(), Some("0"));
+        assert_eq!(rows[0].breathing, Some(false));
+        table.observe("securacv/bedroom/state", unsigned, false, NOW + 6);
+        let rows = fleet_rows(&table.summary(NOW + 6), NOW + 6);
+        assert_eq!(rows[0].presence.as_deref(), Some("clear"));
+        assert_eq!(rows[0].occupants.as_deref(), Some("0"));
+        // A state signed by the pinned key for an id in sticky conflict
+        // claims nothing either.
+        table.observe(
+            "securacv/bedroom/health",
+            &health(&impostor),
+            false,
+            NOW + 7,
+        );
+        table.observe(
+            "securacv/bedroom/chain",
+            &signed_chain(&impostor, "bedroom", 4),
+            false,
+            NOW + 8,
+        );
+        assert!(table.summary(NOW + 8).peers[0].pin_conflict);
+        table.observe(
+            "securacv/bedroom/state",
+            &signed_state(&key, "bedroom", (4, 1), "present", "1", Some(true)),
+            false,
+            NOW + 9,
+        );
+        let rec = &table.summary(NOW + 9).peers[0];
+        assert_eq!(
+            rec.last_verified_state,
+            Some(StateMark {
+                chain_length: 3,
+                seq: 1
+            })
+        );
+        assert_eq!(
+            rec.presence.as_deref(),
+            Some("clear"),
+            "no claim under a conflict"
+        );
+    }
+
+    #[test]
+    fn a_replayed_or_older_signed_state_sets_nothing_and_a_reboot_is_not_a_replay() {
+        let key = signer();
+        let mut table = PeerTable::default();
+        table.observe("securacv/bedroom/health", &health(&key), true, NOW);
+        // The broker's retained snapshot: it moves the mark (so the same
+        // bytes cannot be replayed live later) but is history, not a reading.
+        let retained = signed_state(&key, "bedroom", (5, 7), "present", "1", Some(true));
+        table.observe("securacv/bedroom/state", &retained, true, NOW + 1);
+        let rec = &table.summary(NOW + 1).peers[0];
+        assert_eq!(
+            rec.last_verified_state,
+            Some(StateMark {
+                chain_length: 5,
+                seq: 7
+            })
+        );
+        assert!(rec.presence.is_none() && rec.wellbeing_epoch_s.is_none());
+        table.observe(
+            "securacv/bedroom/chain",
+            &signed_chain(&key, "bedroom", 5),
+            false,
+            NOW + 2,
+        );
+        assert!(fleet_rows(&table.summary(NOW + 2), NOW + 2)[0].online);
+        // The retained bytes arriving LIVE — a capture from anyone on the
+        // broker — set nothing.
+        table.observe("securacv/bedroom/state", &retained, false, NOW + 3);
+        assert!(fleet_rows(&table.summary(NOW + 3), NOW + 3)[0]
+            .presence
+            .is_none());
+        // Nor does an older publish (same chain length, lower seq).
+        table.observe(
+            "securacv/bedroom/state",
+            &signed_state(&key, "bedroom", (5, 6), "present", "2+", Some(true)),
+            false,
+            NOW + 4,
+        );
+        assert!(fleet_rows(&table.summary(NOW + 4), NOW + 4)[0]
+            .presence
+            .is_none());
+        // The next genuine publish does.
+        table.observe(
+            "securacv/bedroom/state",
+            &signed_state(&key, "bedroom", (5, 8), "present", "1", Some(true)),
+            false,
+            NOW + 5,
+        );
+        let rows = fleet_rows(&table.summary(NOW + 5), NOW + 5);
+        assert_eq!(rows[0].presence.as_deref(), Some("present"));
+        assert_eq!(rows[0].occupants.as_deref(), Some("1"));
+        assert_eq!(rows[0].breathing, Some(true));
+        // Replaying THAT a week later holds nothing open: the mark does not
+        // advance, so the words it carried age out on the usual clock.
+        let week = NOW + 7 * 24 * 3600;
+        table.observe(
+            "securacv/bedroom/state",
+            &signed_state(&key, "bedroom", (5, 8), "present", "1", Some(true)),
+            false,
+            week,
+        );
+        table.observe(
+            "securacv/bedroom/chain",
+            &signed_chain(&key, "bedroom", 6),
+            false,
+            week,
+        );
+        let rows = fleet_rows(&table.summary(week), week);
+        assert!(rows[0].online);
+        assert!(
+            rows[0].presence.is_none(),
+            "a replay is not a reading: {rows:?}"
+        );
+        // The device rebooted: its chain length is persisted (6 now), its
+        // publish counter restarted at 1. The pair (6, 1) is past (5, 8),
+        // so the first words after the reboot land.
+        table.observe(
+            "securacv/bedroom/state",
+            &signed_state(&key, "bedroom", (6, 1), "clear", "0", Some(false)),
+            false,
+            week + 1,
+        );
+        let rows = fleet_rows(&table.summary(week + 1), week + 1);
+        assert_eq!(rows[0].presence.as_deref(), Some("clear"));
+        assert_eq!(rows[0].breathing, Some(false));
+        // The mark survives the file, so a bridge restart cannot be fed the
+        // pre-reboot capture either.
+        let mut rehydrated = PeerTable::from_summary(table.summary(week + 1));
+        rehydrated.observe(
+            "securacv/bedroom/state",
+            &signed_state(&key, "bedroom", (5, 8), "present", "1", Some(true)),
+            false,
+            week + 2,
+        );
+        assert_eq!(
+            rehydrated.summary(week + 2).peers[0].presence.as_deref(),
+            Some("clear")
+        );
+    }
+
+    #[test]
+    fn a_build_without_a_breathing_channel_signs_unknown_and_serves_no_breathing() {
+        let key = signer();
+        let mut table = PeerTable::default();
+        table.observe("securacv/hall/health", &health(&key), false, NOW);
+        table.observe(
+            "securacv/hall/chain",
+            &signed_chain(&key, "hall", 2),
+            false,
+            NOW + 1,
+        );
+        table.observe(
+            "securacv/hall/state",
+            &signed_state(&key, "hall", (2, 1), "present", "2+", None),
+            false,
+            NOW + 2,
+        );
+        let rows = fleet_rows(&table.summary(NOW + 2), NOW + 2);
+        assert_eq!(rows[0].presence.as_deref(), Some("present"));
+        assert_eq!(rows[0].occupants.as_deref(), Some("2+"));
+        assert!(rows[0].breathing.is_none());
+        // Adding a `breathing_locked` to that body on the broker breaks the
+        // signature (the canonical said `unknown`).
+        let mut doc: serde_json::Value =
+            serde_json::from_slice(&signed_state(&key, "hall", (2, 2), "present", "2+", None))
+                .expect("json");
+        doc["breathing_locked"] = true.into();
+        table.observe(
+            "securacv/hall/state",
+            doc.to_string().as_bytes(),
+            false,
+            NOW + 3,
+        );
+        let rows = fleet_rows(&table.summary(NOW + 3), NOW + 3);
+        assert!(rows[0].breathing.is_none());
+        assert_eq!(
+            table.summary(NOW + 3).peers[0].last_verified_state,
+            Some(StateMark {
+                chain_length: 2,
+                seq: 1
+            })
+        );
+    }
+
+    #[test]
     fn wellbeing_words_ride_only_on_a_proven_row_and_only_while_fresh() {
         let key = signer();
         let mut table = PeerTable::default();
         table.observe("securacv/bedroom/health", &health(&key), false, NOW);
-        let state = br#"{"device_type":"canary-sense","presence_state":"present","occupants":"1","breathing_locked":true,"range":"near","lux":138.0,"bpm":14}"#;
+        let state = signed_state(&key, "bedroom", (3, 1), "present", "1", Some(true));
         // Retained: history, so no reading is taken.
-        table.observe("securacv/bedroom/state", state, true, NOW + 1);
+        table.observe("securacv/bedroom/state", &state, true, NOW + 1);
         // Live, but the row is not proven online: heard, not served.
-        table.observe("securacv/bedroom/state", state, false, NOW + 2);
+        table.observe(
+            "securacv/bedroom/state",
+            &signed_state(&key, "bedroom", (3, 2), "present", "1", Some(true)),
+            false,
+            NOW + 2,
+        );
         let rows = fleet_rows(&table.summary(NOW + 2), NOW + 2);
         assert!(!rows[0].online);
         assert!(rows[0].presence.is_none(), "{rows:?}");
@@ -1233,7 +1834,18 @@ mod tests {
         assert_eq!(rows[0].occupants.as_deref(), Some("1"));
         assert_eq!(rows[0].breathing, Some(true));
         let text = serde_json::to_string(&rows[0]).expect("a row serializes");
-        for finer in ["range", "lux", "bpm", "rssi", "public_key", "pinned", "fp"] {
+        for finer in [
+            "range",
+            "lux",
+            "bpm",
+            "rssi",
+            "public_key",
+            "pinned",
+            "fp",
+            "sig",
+            "seq",
+            "chain_length",
+        ] {
             assert!(!text.contains(finer), "{finer} leaked: {text}");
         }
         // The reading ages out before the presence proof does? No — both use
@@ -1253,13 +1865,42 @@ mod tests {
 
     #[test]
     fn unknown_words_are_not_republished() {
+        let key = signer();
         let mut table = PeerTable::default();
-        let state =
-            br#"{"presence_state":"levitating","occupants":"many","breathing_locked":"yes"}"#;
-        table.observe("securacv/k/state", state, false, NOW);
+        table.observe("securacv/k/health", &health(&key), false, NOW);
+        // Signed by the real key, so they verify — and still are not words.
+        table.observe(
+            "securacv/k/state",
+            &signed_state(&key, "k", (1, 1), "levitating", "many", Some(true)),
+            false,
+            NOW,
+        );
         let rec = &table.summary(NOW).peers[0];
-        assert!(rec.presence.is_none() && rec.occupants.is_none() && rec.breathing.is_none());
-        assert!(rec.wellbeing_epoch_s.is_none());
+        assert!(rec.presence.is_none() && rec.occupants.is_none());
+        assert_eq!(rec.breathing, Some(true));
+        assert_eq!(
+            rec.last_verified_state,
+            Some(StateMark {
+                chain_length: 1,
+                seq: 1
+            })
+        );
+        // A `breathing_locked` that is not a boolean is not a signable body.
+        let state = br#"{"presence_state":"present","occupants":"1","breathing_locked":"yes","chain_length":1,"seq":2,"sig":"AA"}"#;
+        table.observe("securacv/k/state", state, false, NOW + 1);
+        assert_eq!(
+            table.summary(NOW + 1).peers[0].last_verified_state,
+            Some(StateMark {
+                chain_length: 1,
+                seq: 1
+            })
+        );
+        // A word the canonical could not carry (its own separator) is refused
+        // before any verifier sees it; an unknown word that verifies is
+        // dropped at projection too.
+        let state =
+            br#"{"presence_state":"pre|sent","occupants":"1","chain_length":1,"seq":3,"sig":"AA"}"#;
+        assert!(state_publish(&serde_json::from_slice(state).unwrap()).is_none());
     }
 
     #[test]
@@ -1580,6 +2221,10 @@ mod tests {
         dirty.occupants = Some("many".to_string());
         dirty.breathing = Some(true);
         dirty.wellbeing_epoch_s = Some(NOW);
+        dirty.last_verified_state = Some(StateMark {
+            chain_length: 1,
+            seq: 1,
+        });
         dirty.last_signed_epoch_s = Some(NOW);
         dirty.chain = CHAIN_OK.to_string();
         let mut peers = vec![dirty];
@@ -1608,6 +2253,42 @@ mod tests {
         assert!(row.online);
         assert!(row.presence.is_none() && row.occupants.is_none());
         assert_eq!(row.breathing, Some(true));
+    }
+
+    #[test]
+    fn words_a_pre_signature_bridge_stored_are_served_by_nobody_after_the_upgrade() {
+        // A summary written before the `state` signature requirement: fresh
+        // words beside a proven-online row, and no verified mark — because
+        // the bridge that wrote them never checked one.
+        let mut old = PeerRecord::new("bedroom", NOW);
+        old.presence = Some("present".to_string());
+        old.occupants = Some("2+".to_string());
+        old.breathing = Some(true);
+        old.wellbeing_epoch_s = Some(NOW);
+        old.last_signed_epoch_s = Some(NOW);
+        old.last_verified_length = Some(3);
+        old.chain = CHAIN_OK.to_string();
+        let summary = PeerSummaryFile {
+            schema: FLEET_PEERS_SCHEMA.to_string(),
+            written_at_epoch_s: NOW,
+            peers: vec![old],
+        };
+        // The kernel, reading that file as it stands: online, no words.
+        let rows = fleet_rows(&summary, NOW + 1);
+        assert!(rows[0].online);
+        assert!(
+            rows[0].presence.is_none()
+                && rows[0].occupants.is_none()
+                && rows[0].breathing.is_none(),
+            "unvouched words served: {rows:?}"
+        );
+        // The upgraded bridge, rehydrating it: the words are forgotten with
+        // the file's next write, the pin and the proof are kept.
+        let table = PeerTable::from_summary(summary);
+        let rec = &table.summary(NOW + 2).peers[0];
+        assert!(rec.presence.is_none() && rec.wellbeing_epoch_s.is_none());
+        assert_eq!(rec.last_verified_length, Some(3));
+        assert!(rec.proven());
     }
 
     #[test]

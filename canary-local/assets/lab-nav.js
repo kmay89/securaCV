@@ -126,6 +126,45 @@ function handOffLocalLinks() {
   }, true);
 }
 
+/* ---- embedded: the shell's shortcuts work from inside a bench too ----
+   Keyboard focus lands in the frame the moment a bench is clicked, and a
+   keydown inside a frame never reaches the parent document — so ⌘K and the
+   rest worked only until the first click, which is to say almost never. The
+   frame forwards the chords the shell owns (lab-app.js handleShortcut() is
+   the one list) and takes the browser default off them. What crosses is the
+   key, the shift state and whether the person was typing — never a target,
+   never anything read from this document. The shell acts, or ignores it.
+
+   Armed only by the shell: the website's shell installs no receiver (the
+   shortcuts are the app's), and a frame that took ⌘R or ⌘K off the browser
+   there would be canceling real browser shortcuts for nothing. So nothing
+   is forwarded, and no default is touched, until the shell that framed this
+   page says it listens (a "shortcuts" message from the parent, same origin,
+   sent after the frame loads). */
+const SHELL_CHORDS = /^[kr,[\]1-6]$/;   // plus ⇧H; the shell's handleShortcut() has the same set
+function forwardShortcuts() {
+  let armed = false;
+  window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin || e.source !== window.parent) return;
+    const d = e.data;
+    if (d && d.source === "scv-lab-shell" && d.type === "shortcuts") armed = true;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!armed) return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if (key === "h" ? !e.shiftKey : !SHELL_CHORDS.test(key)) return;
+    const t = e.target;
+    const typing = !!t && (/^(input|textarea|select)$/i.test(t.tagName || "") || t.isContentEditable === true);
+    // A digit or a bracket while typing is the person's own text; the shell
+    // applies the same rule, so the default is left alone here too.
+    if (typing && /^[[\]1-6]$/.test(key)) return;
+    e.preventDefault();
+    window.parent.postMessage({ source: "scv-lab", type: "key", key, shiftKey: e.shiftKey, typing }, location.origin);
+  }, true);
+}
+
 /* ---- progress (shared with the shell's sidebar checkmarks) ---- */
 function markVisited(stageId) {
   try {
@@ -241,6 +280,7 @@ async function boot() {
     bar.hidden = true;
     bar.style.setProperty("display", "none", "important");
     handOffLocalLinks();
+    forwardShortcuts();
     return;
   }
 

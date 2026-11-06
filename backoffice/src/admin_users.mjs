@@ -56,11 +56,12 @@ ${invite ? `<div class="card"><div class="k">The invitation link</div><pre style
 <div class="card" style="margin-top:.8rem"><div class="k">Sessions</div><p>${sessions.length} open (this one included).</p>${sessions.length > 1 ? form('/me/sessions/end', c.csrf, field('current', 'Your password', { type: 'password', required: true }), { submit: 'Log out everywhere else', cls: '' }) : ''}</div></div></div>`);
   });
   // What a live session alone must not do asks for the password again (checkPassword): a stolen cookie is a
-  // session, not the person. The address rides on every audit row the rotation writes.
-  router.post('/me/password', (c) => { changePassword(db, c.user.id, c.body.current, c.body.next, { ip: clientIp(c.req) }); back(c, '/me', 'password changed'); });
-  router.post('/me/totp', (c) => { beginTotpRotation(db, c.user.id, c.body.current, { ip: clientIp(c.req) }); back(c, '/me', 'scan the new code, then confirm it'); });
+  // session, not the person. The address rides on every audit row the rotation writes. The KDF runs off the
+  // event loop, so these handlers await it.
+  router.post('/me/password', async (c) => { await changePassword(db, c.user.id, c.body.current, c.body.next, { ip: clientIp(c.req) }); back(c, '/me', 'password changed'); });
+  router.post('/me/totp', async (c) => { await beginTotpRotation(db, c.user.id, c.body.current, { ip: clientIp(c.req) }); back(c, '/me', 'scan the new code, then confirm it'); });
   router.post('/me/totp/confirm', (c) => { if (!confirmTotp(db, c.user.id, c.body.code, { current: c.body.current_code, ip: clientIp(c.req) })) throw new HttpError(400, 'that code did not match the new authenticator — try the next one'); back(c, '/me', 'authenticator switched'); });
-  router.post('/me/sessions/end', (c) => { checkPassword(db, c.user.id, c.body.current, { ip: clientIp(c.req) }); const n = endOtherSessions(db, c.user.id, c.session.id); back(c, '/me', `${n} other session${n === 1 ? '' : 's'} ended`); });
+  router.post('/me/sessions/end', async (c) => { await checkPassword(db, c.user.id, c.body.current, { ip: clientIp(c.req) }); const n = endOtherSessions(db, c.user.id, c.session.id); back(c, '/me', `${n} other session${n === 1 ? '' : 's'} ended`); });
 
   // ---------- accepting an invitation (public, token-gated; no session until the account is open)
   const invitePage = (title, body) => layout({ title, body, company: cfg.company, nav: false, demo: cfg.demo });
@@ -70,10 +71,10 @@ ${invite ? `<div class="card"><div class="k">The invitation link</div><pre style
     if (pending) return html(c.res, invitePage('Almost there', `<p>Hi ${e(u.name.split(' ')[0])}. Your password is set. Now the authenticator: it is the second thing every login asks for.</p>${authenticatorBlock(u.email, pending)}<form method="post" action="/invite/${e(c.params.token)}/confirm" class="box">${field('code', 'Enter a code from the app to prove it is set up', { required: true })}<div style="margin-top:.8rem"><button>Open my account</button></div></form>`));
     html(c.res, invitePage(`Welcome, ${u.name.split(' ')[0]}`, `<p>${e(u.invited_by || 'An owner')} invited you to the ${e(cfg.company || 'Errer Labs')} backoffice as <b>${e(u.role)}</b> (${e(ROLE_TEXT[u.role])}).</p><p>You sign in as <b>${e(u.email)}</b>. Choose a password nobody else knows; the next step sets up your authenticator app.</p>${c.query.get('err') ? `<div class="flash err">${e(c.query.get('err'))}</div>` : ''}<form method="post" action="/invite/${e(c.params.token)}" class="box">${field('password', 'Password (12 characters or more)', { type: 'password', required: true })}${field('again', 'The same password again', { type: 'password', required: true })}<div style="margin-top:.8rem"><button>Set password and continue</button></div></form>`));
   });
-  router.post('/invite/:token', (c) => {
+  router.post('/invite/:token', async (c) => {
     if (!inviteFor(db, c.params.token)) throw new HttpError(404, 'this invitation is not valid any more');
     if (c.body.password !== c.body.again) return redirect(c.res, `/invite/${encodeURIComponent(c.params.token)}?err=${encodeURIComponent('the two passwords differ')}`);
-    try { acceptInvite(db, c.params.token, c.body.password); } catch (err) { return redirect(c.res, `/invite/${encodeURIComponent(c.params.token)}?err=${encodeURIComponent(err.message)}`); }
+    try { await acceptInvite(db, c.params.token, c.body.password); } catch (err) { return redirect(c.res, `/invite/${encodeURIComponent(c.params.token)}?err=${encodeURIComponent(err.message)}`); }
     redirect(c.res, `/invite/${encodeURIComponent(c.params.token)}`);
   }, { public: true, csrf: false });
   router.post('/invite/:token/confirm', (c) => {

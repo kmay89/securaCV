@@ -94,10 +94,7 @@ pub fn seal_v1(
     clear: &[u8],
     master_key: &[u8; 32],
 ) -> Result<EnvelopeV1> {
-    let mut nonce = [0u8; 12];
-    SysRng
-        .try_fill_bytes(&mut nonce[..])
-        .expect("OS RNG unavailable");
+    let nonce = fresh_nonce();
     let mut ciphertext = clear.to_vec();
     let tag = encrypt_in_place(
         master_key,
@@ -156,10 +153,7 @@ pub fn seal_v2(
     // otherwise linger on the stack un-zeroized).
     derived.dek.zeroize();
 
-    let mut nonce = vec![0u8; 12];
-    SysRng
-        .try_fill_bytes(&mut nonce[..])
-        .expect("OS RNG unavailable");
+    let nonce = fresh_nonce().to_vec();
     let mut ciphertext = clear.to_vec();
     let tag = encrypt_payload(&dek_guard.0, &nonce, &aad, &mut ciphertext)?;
 
@@ -353,6 +347,15 @@ fn keyguard_kek(
 fn random_bytes<const N: usize>() -> [u8; N] {
     let mut rng = SysRng;
     std::array::from_fn(|_| (rng.try_next_u32().expect("OS RNG unavailable") & 0xff) as u8)
+}
+
+/// A fresh 96-bit AEAD nonce, every byte drawn from the OS RNG as the array
+/// is built. There is no zero-filled buffer that is later overwritten: the
+/// nonce never exists in a constant state, so a reader (or a static
+/// analyzer) cannot mistake it for a hard-coded value, and a refactor that
+/// drops the fill call cannot silently leave zeros behind.
+fn fresh_nonce() -> [u8; 12] {
+    random_bytes::<12>()
 }
 
 /// Wrap a 32-byte master key under an Argon2id KEK derived from `passphrase`,
@@ -602,10 +605,7 @@ fn wrap_dek(
     ruleset_hash: &[u8; 32],
     dek: &[u8; 32],
 ) -> Result<Vec<u8>> {
-    let mut nonce = [0u8; 12];
-    SysRng
-        .try_fill_bytes(&mut nonce[..])
-        .expect("OS RNG unavailable");
+    let nonce = fresh_nonce();
     let mut ciphertext = dek.to_vec();
     let aad = wrap_aad(envelope_id, ruleset_hash);
     let tag = encrypt_payload(master_key, &nonce, &aad, &mut ciphertext)?;

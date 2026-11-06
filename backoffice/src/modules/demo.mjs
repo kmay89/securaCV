@@ -28,7 +28,7 @@ import { raise } from './exceptions.mjs';
 import { signStripePayload } from './stripe.mjs';
 import { createPo, markOrdered, receivePo, draftReorder } from './purchasing.mjs';
 import { saveAttachments } from './support.mjs';
-import { hashPassword } from '../auth.mjs';
+import { hashPasswordSync } from '../auth.mjs';
 import { deflateSync } from 'node:zlib';
 
 // A real, tiny PNG (a flat color with a darker band), so an attachment renders in the browser without any file on disk.
@@ -386,7 +386,7 @@ export async function seedDemo(db, cfg) {
 
 // The demo people: the owner from the login page, one of each other role, and one invitation still open. Same password, same authenticator, by design; ids survive a reseed so sessions do.
 export function seedDemoUsers(db) {
-  const hash = hashPassword(DEMO_PASSWORD); const now = nowIso();
+  const hash = hashPasswordSync(DEMO_PASSWORD); const now = nowIso();   // sync: the seed runs before the server listens
   for (const u of DEMO_USERS) db.run(`INSERT INTO users (email, name, role, status, password_hash, totp_secret, password_set_at, created_at, invited_by) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
     ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = excluded.role, status = 'active', password_hash = excluded.password_hash, totp_secret = excluded.totp_secret, totp_pending = NULL, invite_token = NULL, failed_logins = 0, locked_until = NULL`, u.email, u.name, u.role, hash, DEMO_TOTP_SECRET, daysAgo(40), daysAgo(40), u.role === 'owner' ? null : 'demo@errer.example.test');
   db.run("INSERT INTO users (email, name, role, status, invite_token, invite_expires_at, invited_by, created_at) VALUES ('auditor@example-accounting.example.test', 'Auditor Stub', 'viewer', 'invited', ?, ?, 'demo@errer.example.test', ?) ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = 'viewer', status = 'invited', invite_token = excluded.invite_token, invite_expires_at = excluded.invite_expires_at, invited_by = excluded.invited_by, password_hash = NULL, totp_secret = NULL, totp_pending = NULL, failed_logins = 0, locked_until = NULL", 'demo-invite-' + Math.random().toString(36).slice(2, 12), new Date(Date.now() + 40 * 3600000).toISOString(), daysAgo(0, 8));

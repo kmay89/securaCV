@@ -229,7 +229,10 @@ export function createApp({ db, cfg }) {
     if (!app.limiter.allow(`login:${ip}`)) throw new HttpError(429, 'slow down');
     // Eight wrong attempts in fifteen minutes and this address waits the window out; the audit log keeps every attempt.
     if (app.lockout.locked(ip)) { db.audit('web', 'auth.login.locked', 'session', null, { ip }); throw new HttpError(429, 'too many failed logins from this address — try again in fifteen minutes'); }
-    const s = login(db, { email: c.body.email, password: c.body.password, code: c.body.code }, { sessionHours: cfg.sessionHours, ip });
+    // scrypt runs off the loop (the webhook, the store and /healthz are answered meanwhile), so the address lock is asked again
+    // before the session opens: eight failures queued ahead of this request may have armed it. A refusal then is the 429 above (login wrote the audit row).
+    const s = await login(db, { email: c.body.email, password: c.body.password, code: c.body.code }, { sessionHours: cfg.sessionHours, ip, admit: () => !app.lockout.locked(ip) });
+    if (!s && app.lockout.locked(ip)) throw new HttpError(429, 'too many failed logins from this address — try again in fifteen minutes');
     if (!s) { app.lockout.fail(ip); if (app.lockout.locked(ip)) await lockedOut(ip); return redirect(c.res, '/login?err=1'); }
     app.lockout.clear(ip); await signedIn(s, ip);
     redirect(c.res, '/', { 'Set-Cookie': cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }) });
@@ -359,7 +362,7 @@ export function createApp({ db, cfg }) {
       // A scanner (sixty misses in ten minutes) waits ten minutes; a person with a session, and the public endpoints, never do.
       if (!session && !route.opts.public && !forCustomers && watch.blocked(ip)) throw new HttpError(429, 'too many requests from this address — try again in ten minutes');
       const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-      const tokenRow = url.pathname.startsWith('/api') ? apiTokenFor(db, bearer) : null;
+      const tokenRow = url.pathname.startsWith('/api') ? await apiTokenFor(db, bearer) : null;   // the secret's scrypt runs off the loop
       c = { req, res, url, params: route.params, query: url.searchParams, session, user: session ? { id: session.user_id, email: session.email, name: session.name, role: session.role } : null, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? session.email : 'public', app, db, cfg, body: {}, raw: null };
       if (req.method === 'POST' || req.method === 'PUT') { c.raw = await readBody(req); if (!route.opts.raw) c.body = parseBody(c.raw, req.headers['content-type'] || ''); }
       if (!route.opts.public && !url.pathname.startsWith('/login') && !['/healthz', '/status', '/status.json'].includes(url.pathname) && !url.pathname.startsWith('/confirm/') && !url.pathname.startsWith('/u/') && !url.pathname.startsWith('/i/') && !url.pathname.startsWith('/o/') && !url.pathname.startsWith('/invite/')) {

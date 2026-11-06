@@ -833,7 +833,10 @@ set `SECURACV_FLEET_ROLLCALL=1`: who is home is yours to opt into, never a
 side effect of pairing. And "online" there is a verified, chain-advancing
 signature seen within three minutes — stronger than a heartbeat, but not a
 liveness proof against someone who can publish on your MQTT broker
-(`tvos/discovery/DISCOVERY.md` spells out the difference).
+(`tvos/discovery/DISCOVERY.md` spells out the difference). The room words
+on a row are signed by the device as well (the `state` kind), so a broker
+client cannot author a real Canary's wellbeing; it can only replay what
+the device itself last said, and only once per freshness pair.
 
 ### Home Assistant pairing and what crosses your network
 

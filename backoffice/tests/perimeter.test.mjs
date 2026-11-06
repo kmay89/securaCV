@@ -94,10 +94,10 @@ test('the chain walks from the lowest id and names one below 1; the mark covers 
   assert.notEqual(auditMacV1(k2, old.get('SELECT * FROM audit_log WHERE id = 3'), old.get('SELECT mac FROM audit_log WHERE id = 2').mac), old.get('SELECT mac FROM audit_log WHERE id = 3').mac, 'the new row is marked the new way');
 });
 
-test('an email typed at the door is scrubbed and capped before the chain writes it down; a stranger\'s link request leaves no row and the same audit row', () => {
+test('an email typed at the door is scrubbed and capped before the chain writes it down; a stranger\'s link request leaves no row and the same audit row', async () => {
   const db = testDb(); setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'O' });
   const long = 'a'.repeat(5000) + '‮​@example.test';
-  assert.equal(login(db, { email: long, password: 'x', code: '000000' }), null);
+  assert.equal(await login(db, { email: long, password: 'x', code: '000000' }), null);
   const row = db.get("SELECT entity_id FROM audit_log WHERE action = 'auth.login.failed' AND entity_id IS NOT NULL ORDER BY id DESC LIMIT 1");
   assert.ok(row.entity_id.length <= 254 && !/[‮​]/.test(row.entity_id), `${row.entity_id.length} chars`);
   const r = requestSignInLink(db, long, { ip: '203.0.113.5' }); assert.equal(r.token, null);
@@ -107,17 +107,17 @@ test('an email typed at the door is scrubbed and capped before the chain writes 
   clearLocks();
 });
 
-test('a new authenticator needs the password to begin and a code from each to confirm; migration 016 ends the clear sessions and invitations from before', () => {
+test('a new authenticator needs the password to begin and a code from each to confirm; migration 016 ends the clear sessions and invitations from before', async () => {
   const db = testDb(); const secret = setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'O' }); const me = userByEmail(db, 'o@errer.test');
-  assert.throws(() => beginTotpRotation(db, me.id, 'nope', { ip: '203.0.113.5' }), /current password/); assert.equal(pendingTotp(db, me.id), null);
+  await assert.rejects(() => beginTotpRotation(db, me.id, 'nope', { ip: '203.0.113.5' }), /current password/); assert.equal(pendingTotp(db, me.id), null);
   assert.equal(JSON.parse(db.get("SELECT detail FROM audit_log WHERE action = 'auth.password.failed'").detail).ip, '203.0.113.5');
-  const next = beginTotpRotation(db, me.id, 'owner password 1234', { ip: '203.0.113.5' }); assert.ok(next);
+  const next = await beginTotpRotation(db, me.id, 'owner password 1234', { ip: '203.0.113.5' }); assert.ok(next);
   assert.throws(() => confirmTotp(db, me.id, totp(next)), /current authenticator/); assert.throws(() => confirmTotp(db, me.id, totp(next), { current: '000000' }), /current authenticator/);
   assert.equal(confirmTotp(db, me.id, '000000', { current: totp(secret) }), false, 'the current code alone does not switch either');
   db.run('UPDATE users SET totp_last_step = NULL'); assert.equal(confirmTotp(db, me.id, totp(next), { current: totp(secret), ip: '203.0.113.5' }), true);
   assert.equal(JSON.parse(db.get("SELECT detail FROM audit_log WHERE action = 'auth.totp'").detail).ip, '203.0.113.5');
-  assert.equal(login(db, { email: 'o@errer.test', password: 'owner password 1234', code: totp(secret, { time: Date.now() + 60_000 }) }, { now: Date.now() + 60_000 }), null, 'the old authenticator is gone');
-  assert.ok(login(db, { email: 'o@errer.test', password: 'owner password 1234', code: totp(next, { time: Date.now() + 60_000 }) }, { now: Date.now() + 60_000 }));
+  assert.equal(await login(db, { email: 'o@errer.test', password: 'owner password 1234', code: totp(secret, { time: Date.now() + 60_000 }) }, { now: Date.now() + 60_000 }), null, 'the old authenticator is gone');
+  assert.ok(await login(db, { email: 'o@errer.test', password: 'owner password 1234', code: totp(next, { time: Date.now() + 60_000 }) }, { now: Date.now() + 60_000 }));
   clearLocks();
   // the migration
   const DIR = fileURLToPath(new URL('../src/migrations', import.meta.url)); const work = mkdtempSync(join(tmpdir(), 'bo-016-')); const before = join(work, 'm'); mkdirSync(before);

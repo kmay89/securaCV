@@ -186,7 +186,7 @@ export function settingsView() {
   const resetNote = h("span", { class: "muted" });
   const resetBtn = h("button", { class: "btn ghost", onclick: () => {
     forgetEverything();
-    resetNote.textContent = "Forgotten. The sidebar's checkmarks, the fleet memory and the welcome card start over on the next view.";
+    resetNote.textContent = "Forgotten. The sidebar's checkmarks, the fleet memory, the welcome card and the setup list start over on the next view.";
   } }, "Forget my progress and fleet memory");
 
   root.append(
@@ -203,11 +203,11 @@ export function settingsView() {
       h("h2", {}, "Keyboard shortcuts"),
       h("dl", { class: "set-specs set-kbd" },
         ...SHORTCUTS.flatMap(([keys, what]) => [h("dt", {}, h("kbd", {}, keys)), h("dd", {}, what)])),
-      h("p", { class: "set-lede" }, "On Linux, Ctrl stands in for ⌘. Shortcuts work while the Lab's own frame has focus, not inside a bench's page.")) : null,
+      h("p", { class: "set-lede" }, "On Linux, Ctrl stands in for ⌘. They work anywhere in the app, inside a bench too — except ⌘1–6 and the brackets while you are typing in a field.")) : null,
     h("section", { class: "set-sec" },
       h("h2", {}, "On-device memory"),
       h("p", { class: "set-lede" },
-        "Progress, the bench you were on, the Canaries heard and the welcome card are kept on this computer only."),
+        "Progress, the bench you were on, the Canaries heard, the welcome card and the Home's setup list are kept on this computer only. Forgetting brings a hidden setup list back."),
       h("div", { class: "kaddr-row" }, resetBtn, resetNote)),
     h("section", { class: "set-sec" },
       h("h2", {}, "Update log"),

@@ -35,6 +35,8 @@ exported.
 Files in this zip:
   securacv-events-<window>.json  the sealed export, byte for byte as the kernel wrote it
   evidence_viewer.html           the offline checker (open it; it needs nothing else)
+  WITNESS_STATEMENT.txt          the export read out in plain language: what was
+                                 recorded, what that proves, what it does not
   WITNESS_KEY.txt                the owner's witness key and its fingerprint
   README.txt                     this note
 

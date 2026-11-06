@@ -45,8 +45,9 @@ configuration:
     name: Device key seed
     description: >-
       The secret the kernel's signing key derives from. Leave empty: the app
-      generates one on first start and keeps it in
-      /config/.securacv/device_key (included in Home Assistant backups).
+      generates one on first start and keeps it in its own data
+      (/data/device_key inside the app, outside /config: a backup that
+      includes this app carries it, a configuration-only backup does not).
       Changing it orphans the existing witness log.
   retention_days:
     name: Keep sealed events for (days)

@@ -95,8 +95,18 @@ def test_the_pack_is_private_atomic_and_holds_the_contract_s_members(tmp_path):
     with zipfile.ZipFile(zip_path) as zf:
         assert sorted(zf.namelist()) == sorted([
             "securacv-events-1700000400.json", "evidence_viewer.html", "README.txt", "WITNESS_KEY.txt",
+            "WITNESS_STATEMENT.txt",
         ])
         assert zf.read("securacv-events-1700000400.json") == BUNDLE, "the bundle, verbatim"
+        statement = zf.read("WITNESS_STATEMENT.txt").decode()
+        assert statement.startswith("SecuraCV witness statement\n")
+        assert "Export deadbeef, made " in statement and "covering the last 24 hours before it." in statement
+        assert "Witness: kernel pwk_1a2b3c4d." in statement
+        assert f"Witness key fingerprint: {kernel_key_fingerprint(KEY)} " in statement
+        assert "Chain state when exported: not verified yet (" in statement, "the default when no walk is passed"
+        assert "3 sealed events" in statement, "read from the artifact, like record.events"
+        assert "as a reading of securacv-events-1700000400.json (SHA-256 " in statement
+        assert "integration 0.9.0 " in statement or "integration unknown " not in statement
         assert zf.read("evidence_viewer.html") == b"<html>viewer</html>"
         assert zf.read("README.txt") == b"Open evidence_viewer.html offline.\n"
         assert zf.read("WITNESS_KEY.txt").decode() == (
@@ -139,7 +149,8 @@ def test_the_viewer_s_zip_core_reads_the_pack_the_integration_writes(tmp_path):
     assert out["memberName"] == "securacv-events-1700000400.json"
     assert out["text"].encode("utf-8") == BUNDLE, "the bundle, byte for byte"
     assert sorted(out["members"]) == sorted(
-        ["securacv-events-1700000400.json", "evidence_viewer.html", "README.txt", "WITNESS_KEY.txt"]
+        ["securacv-events-1700000400.json", "evidence_viewer.html", "README.txt", "WITNESS_KEY.txt",
+         "WITNESS_STATEMENT.txt"]
     )
     assert out["witnessKey"]["verifying_key"] == KEY
     assert out["witnessKey"]["fingerprint"] == kernel_key_fingerprint(KEY)
@@ -149,7 +160,46 @@ def test_a_viewer_or_readme_w5_has_not_shipped_is_left_out_not_fatal(tmp_path):
     composed = _compose(tmp_path / "ev", "cafebabe", 1700000400,
                         viewer_source=tmp_path / "missing.html", readme_source=None)
     with zipfile.ZipFile(tmp_path / "ev" / composed.record.file) as zf:
-        assert sorted(zf.namelist()) == ["WITNESS_KEY.txt", "securacv-events-1700000400.json"]
+        # The statement is written from the bundle itself, so it never depends
+        # on a file W5 ships; it is in every pack.
+        assert sorted(zf.namelist()) == [
+            "WITNESS_KEY.txt", "WITNESS_STATEMENT.txt", "securacv-events-1700000400.json",
+        ]
+
+
+def test_a_statement_that_cannot_be_written_never_costs_the_pack(tmp_path, monkeypatch):
+    """A reading of the evidence must never cost the owner the evidence: when
+    the renderer raises on a shape nobody foresaw, the pack still lands with
+    the bundle, the key and a short note in the statement's place."""
+    def boom(**_kwargs):
+        raise RuntimeError("a shape nobody foresaw")
+
+    monkeypatch.setattr(evidence, "witness_statement_text", boom)
+    composed = _compose(tmp_path / "ev", "0badf00d", 1700000400)
+    with zipfile.ZipFile(tmp_path / "ev" / composed.record.file) as zf:
+        assert sorted(zf.namelist()) == [
+            "WITNESS_KEY.txt", "WITNESS_STATEMENT.txt", "securacv-events-1700000400.json",
+        ]
+        assert zf.read("securacv-events-1700000400.json") == BUNDLE
+        note = zf.read("WITNESS_STATEMENT.txt").decode()
+        assert note.startswith("SecuraCV witness statement\n")
+        assert "The statement for export 0badf00d could not be written" in note
+        assert "(RuntimeError)" in note
+        assert "securacv-events-1700000400.json in this zip is unaffected" in note
+    assert composed.record.events == 3, "the index row is still counted from the bundle"
+
+
+def test_a_bundle_shape_the_statement_does_not_know_still_exports(tmp_path):
+    """Codex P2: `{"events": 3}` used to raise TypeError inside the zip write
+    and unlink the temp file; now it is a partial statement and the pack lands."""
+    odd = BundleDownload(
+        filename="securacv-events-1700000400.json",
+        content=json.dumps({"artifact": {"batches": [{"buckets": [{"events": 3}]}]}}).encode(),
+    )
+    composed = _compose(tmp_path / "ev", "0ddba11c", 1700000400, download=odd)
+    with zipfile.ZipFile(tmp_path / "ev" / composed.record.file) as zf:
+        assert zf.read("securacv-events-1700000400.json") == odd.content
+        assert "Parts of securacv-events-1700000400.json are in a shape" in zf.read("WITNESS_STATEMENT.txt").decode()
 
 
 def test_a_symlinked_destination_is_refused(tmp_path):
