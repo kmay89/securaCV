@@ -11,7 +11,12 @@ integration makes, a disclosure act) and composes ONE zip,
     byte-equal to ``viewer/evidence_viewer.html``;
   - ``README.txt`` — the recipient's recipe (``www/evidence-README.txt``);
   - ``WITNESS_KEY.txt`` — the pinned verifying key and its fingerprint, so a
-    recipient can turn "self-attested" into "authorship confirmed".
+    recipient can turn "self-attested" into "authorship confirmed";
+  - ``WITNESS_STATEMENT.txt`` — the pack read out in plain language
+    (``witness_statement.py``): what the witness recorded in the window, by
+    kind, zone and ten-minute window, what that proves, what it does not,
+    and how to check it. A reading of the bundle, never evidence; the viewer
+    ignores it.
 
 The zip lands under ``hass.config.path("securacv", "evidence")`` — a
 directory Home Assistant does not serve — created 0700, files 0600, written
@@ -39,7 +44,7 @@ import tempfile
 import time
 import zipfile
 from dataclasses import asdict, dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +71,7 @@ from .const import (
     EVIDENCE_VIEWER_SOURCE,
     EVIDENCE_ZIP_KEY,
     EVIDENCE_ZIP_README,
+    EVIDENCE_ZIP_STATEMENT,
     EVIDENCE_ZIP_VIEWER,
     MAX_EVIDENCE_KEEP,
     MIN_EVIDENCE_KEEP,
@@ -73,6 +79,7 @@ from .const import (
 )
 from .data import SecuraCVConfigEntry, VerificationState, runtime_for
 from .kernel_trust import kernel_key_fingerprint, normalize_kernel_key
+from .witness_statement import LocalClock, witness_statement_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -157,6 +164,16 @@ def evidence_dir(hass: HomeAssistant) -> Path:
 def www_dir() -> Path:
     """Where W5 ships the viewer and the README."""
     return Path(__file__).parent / "www"
+
+
+def integration_version_string() -> str:
+    """The integration's own version, as manifest.json states it."""
+    try:
+        manifest = json.loads((Path(__file__).resolve().parent / "manifest.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return "unknown"
+    version = manifest.get("version") if isinstance(manifest, dict) else None
+    return str(version) if version else "unknown"
 
 
 def new_export_id() -> str:
@@ -286,13 +303,19 @@ def compose_export(
     keep: int,
     viewer_source: Path | None,
     readme_source: Path | None,
+    chain_state: str = "not verified yet",
+    exported_at: datetime | None = None,
+    local: LocalClock | None = None,
+    integration_version: str = "",
 ) -> ComposedExport:
     """Write the zip, the index and prune to `keep` (blocking; executor).
 
     Every write is a temp file renamed into place; the directory is 0700
     and the files 0600. A viewer or README W5 has not shipped yet is left
     out of the zip (and the README then explains itself by absence) rather
-    than failing the export.
+    than failing the export. The statement is written from the bundle
+    itself, so it is always present; `chain_state`, `exported_at` and
+    `local` (the owner's clock) only shape its wording.
     """
     _ensure_private_dir(directory)
     filename = zip_filename(date, export_id)
@@ -307,6 +330,25 @@ def compose_export(
                     zf.writestr(EVIDENCE_ZIP_README, readme_source.read_bytes())
                 if verifying_key:
                     zf.writestr(EVIDENCE_ZIP_KEY, witness_key_text(verifying_key, kernel_device_id))
+                zf.writestr(
+                    EVIDENCE_ZIP_STATEMENT,
+                    witness_statement_text(
+                        bundle_bytes=download.content,
+                        bundle_filename=download.filename,
+                        window_hours=window_hours,
+                        export_id=export_id,
+                        exported_at=exported_at or datetime.fromtimestamp(created_bucket_start, tz=dt_util.UTC),
+                        kernel_device_id=kernel_device_id,
+                        fingerprint=(
+                            kernel_key_fingerprint(verifying_key)
+                            if verifying_key and normalize_kernel_key(verifying_key)
+                            else None
+                        ),
+                        chain_state=chain_state,
+                        integration_version=integration_version or integration_version_string(),
+                        **({"local": local} if local is not None else {}),
+                    ),
+                )
         os.chmod(tmp_name, FILE_MODE)
         os.replace(tmp_name, directory / filename)
     except BaseException:
@@ -434,6 +476,9 @@ async def async_export_evidence(
                 keep=evidence_keep(entry),
                 viewer_source=www_dir() / EVIDENCE_VIEWER_SOURCE,
                 readme_source=www_dir() / EVIDENCE_README_SOURCE,
+                chain_state=chain_state_words(runtime.verification),
+                exported_at=dt_util.now(),
+                local=lambda epoch_s: dt_util.as_local(dt_util.utc_from_timestamp(epoch_s)),
             )
         )
         _cache_records(hass, composed.records)

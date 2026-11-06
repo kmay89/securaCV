@@ -95,8 +95,18 @@ def test_the_pack_is_private_atomic_and_holds_the_contract_s_members(tmp_path):
     with zipfile.ZipFile(zip_path) as zf:
         assert sorted(zf.namelist()) == sorted([
             "securacv-events-1700000400.json", "evidence_viewer.html", "README.txt", "WITNESS_KEY.txt",
+            "WITNESS_STATEMENT.txt",
         ])
         assert zf.read("securacv-events-1700000400.json") == BUNDLE, "the bundle, verbatim"
+        statement = zf.read("WITNESS_STATEMENT.txt").decode()
+        assert statement.startswith("SecuraCV witness statement\n")
+        assert "Export deadbeef, made " in statement and "covering the last 24 hours before it." in statement
+        assert "Witness: kernel pwk_1a2b3c4d." in statement
+        assert f"Witness key fingerprint: {kernel_key_fingerprint(KEY)} " in statement
+        assert "Chain state when exported: not verified yet (" in statement, "the default when no walk is passed"
+        assert "3 sealed events" in statement, "read from the artifact, like record.events"
+        assert "as a reading of securacv-events-1700000400.json (SHA-256 " in statement
+        assert "integration 0.9.0 " in statement or "integration unknown " not in statement
         assert zf.read("evidence_viewer.html") == b"<html>viewer</html>"
         assert zf.read("README.txt") == b"Open evidence_viewer.html offline.\n"
         assert zf.read("WITNESS_KEY.txt").decode() == (
@@ -139,7 +149,8 @@ def test_the_viewer_s_zip_core_reads_the_pack_the_integration_writes(tmp_path):
     assert out["memberName"] == "securacv-events-1700000400.json"
     assert out["text"].encode("utf-8") == BUNDLE, "the bundle, byte for byte"
     assert sorted(out["members"]) == sorted(
-        ["securacv-events-1700000400.json", "evidence_viewer.html", "README.txt", "WITNESS_KEY.txt"]
+        ["securacv-events-1700000400.json", "evidence_viewer.html", "README.txt", "WITNESS_KEY.txt",
+         "WITNESS_STATEMENT.txt"]
     )
     assert out["witnessKey"]["verifying_key"] == KEY
     assert out["witnessKey"]["fingerprint"] == kernel_key_fingerprint(KEY)
@@ -149,7 +160,11 @@ def test_a_viewer_or_readme_w5_has_not_shipped_is_left_out_not_fatal(tmp_path):
     composed = _compose(tmp_path / "ev", "cafebabe", 1700000400,
                         viewer_source=tmp_path / "missing.html", readme_source=None)
     with zipfile.ZipFile(tmp_path / "ev" / composed.record.file) as zf:
-        assert sorted(zf.namelist()) == ["WITNESS_KEY.txt", "securacv-events-1700000400.json"]
+        # The statement is written from the bundle itself, so it never depends
+        # on a file W5 ships; it is in every pack.
+        assert sorted(zf.namelist()) == [
+            "WITNESS_KEY.txt", "WITNESS_STATEMENT.txt", "securacv-events-1700000400.json",
+        ]
 
 
 def test_a_symlinked_destination_is_refused(tmp_path):

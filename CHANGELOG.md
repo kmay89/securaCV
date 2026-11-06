@@ -3,6 +3,24 @@
 ## [Unreleased]
 ### canary-wap Chirp keeps its limits across the uptime wrap and under a flood; a read that failed is not a value that is missing, on the flagship's TLS pair, three witness keys, the canary's RSSI and the camera's thermal sensor (and the ESP32-S3 reads its die sensor for the first time); both dashboards draw names as text; witnessd checks the model it ships with; the desktop releases pin their AppImage tools and attach their own SBOMs; canary-wap says what happened and counts a Canary once; Home Assistant reads a battery only from a number; the flasher catalog and the build matrix take their facts from the source; the playground names a Modbus exception; the Lab's twins run the firmware; three claims are held to what ships; and the Lab's WAP page reads the sketch (#1920, wave 23)
 
+- **Home Assistant: the evidence pack reads itself out.** Every
+  `securacv.export_evidence` zip now carries `WITNESS_STATEMENT.txt`
+  (`custom_components/securacv/witness_statement.py`): the export in plain
+  language for whoever receives it — the sealed events by kind, zone and
+  ten-minute window in the owner's time zone, the kernel's own failure
+  records in the window, what the record proves, what it does not (no
+  pixels, no identity, no precise second, no proof of whose hand held the
+  key, no proof it is the only history), and how to check it with the
+  viewer. Every number is read from the bundle's artifact; the statement
+  names the sealed file and its SHA-256, says it is a reading and not
+  evidence, and the checker ignores it. The README's file list and
+  `docs/homeassistant_setup.md` name it. Pinned by
+  `test_witness_statement.py` (counts, labels, the owner's clock, an
+  empty or unreadable bundle, the cap on window lines) and the pack tests
+  in both lanes. The strategy review found the incident moment to be the
+  one stage of the product with no plain-language surface; this is the
+  first half of closing it (the other half is the Lab showing the same
+  statement).
 - **canary-wap Chirp keeps its limits across the 49.7-day uptime wrap and
   under a flood (sweep F416, F309, F417, D19).** The per-key witness limit and
   the recent table give up their oldest row by age, and a rate row whose hour

@@ -828,9 +828,15 @@ and writes **one zip** —
 `<config>/securacv/evidence` (directory `0700`, files `0600`, never under
 `www/`), holding the kernel's bundle verbatim
 (`securacv-events-<bucket>.json`), `evidence_viewer.html` (the offline
-checker), `README.txt` (the recipient's recipe) and `WITNESS_KEY.txt`
-(`verifying_key=…`, `fingerprint=…`, `kernel=…`). Nothing is added to,
-removed from or re-serialized in the bundle. A persistent notification,
+checker), `README.txt` (the recipient's recipe), `WITNESS_KEY.txt`
+(`verifying_key=…`, `fingerprint=…`, `kernel=…`) and `WITNESS_STATEMENT.txt`
+(the export read out in plain language for whoever receives it: the sealed
+events by kind, zone and ten-minute window in the owner's time zone, the
+kernel's own failure records in the window, what the record proves, what it
+does not — no pixels, no identity, no precise second, no proof of whose
+hand held the key — and how to check it; a reading of the bundle, never
+evidence, and the checker ignores it). Nothing is added to, removed from
+or re-serialized in the bundle. A persistent notification,
 **SecuraCV evidence export ready**, reads *"Evidence pack ready — last 24
 hours, 17 sealed events, chain verified ✓. Download the evidence pack (link
 valid 24 hours; also under Media → SecuraCV evidence). Send the whole zip to
