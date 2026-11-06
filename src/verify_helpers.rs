@@ -39,7 +39,8 @@ pub fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
         ));
     }
     key_bytes.copy_from_slice(&bytes);
-    crate::crypto::signatures::verifying_key_strict(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
+    crate::crypto::signatures::verifying_key_strict(&key_bytes)
+        .map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
 #[cfg(feature = "pqc-signatures")]

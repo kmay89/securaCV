@@ -423,7 +423,8 @@ fn run_inner(
 }
 
 fn verifying_key_from_bytes(bytes: &[u8; 32]) -> Result<VerifyingKey> {
-    crate::crypto::signatures::verifying_key_strict(bytes).map_err(|e| anyhow::anyhow!("invalid verifying key: {}", e))
+    crate::crypto::signatures::verifying_key_strict(bytes)
+        .map_err(|e| anyhow::anyhow!("invalid verifying key: {}", e))
 }
 
 #[cfg(test)]

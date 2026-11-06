@@ -3954,7 +3954,8 @@ pub(crate) fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
     }
     let mut key_bytes = [0u8; 32];
     key_bytes.copy_from_slice(bytes);
-    crate::crypto::signatures::verifying_key_strict(&key_bytes).map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
+    crate::crypto::signatures::verifying_key_strict(&key_bytes)
+        .map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
 }
 
 #[cfg(feature = "pqc-signatures")]
@@ -8115,7 +8116,6 @@ mod tests {
         assert!(report.chain_valid, "{:?}", report.error);
         Ok(())
     }
-
 
     #[test]
     fn retention_ages_rows_by_the_signed_bucket_not_the_created_at_column() -> Result<()> {

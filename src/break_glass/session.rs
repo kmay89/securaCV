@@ -13,7 +13,6 @@
 
 use crate::TimeBucket;
 
-
 use super::core::{verify_approval, Approval, QuorumPolicy, UnlockRequest};
 
 /// Why a submitted approval was not added to the session.
@@ -299,7 +298,9 @@ mod tests {
         let mallory = SigningKey::from_bytes(&[7u8; 32]);
         let policy = policy_with(&[("alice", &alice)], 1);
         let mut session = BreakGlassSession::new();
-        let rh = session.open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap()).expect("fresh request opens");
+        let rh = session
+            .open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap())
+            .expect("fresh request opens");
 
         // Unknown trustee id.
         assert_eq!(
@@ -334,7 +335,9 @@ mod tests {
         let alice = SigningKey::from_bytes(&[1u8; 32]);
         let policy = policy_with(&[("alice", &alice)], 1);
         let mut session = BreakGlassSession::new();
-        let rh = session.open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap()).expect("fresh request opens");
+        let rh = session
+            .open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap())
+            .expect("fresh request opens");
         assert_eq!(session.submit(&policy, sign(&alice, "alice", rh)), Ok(true));
         // Same trustee again → replaces, not a second count.
         assert_eq!(
@@ -350,7 +353,9 @@ mod tests {
         let alice = SigningKey::from_bytes(&[1u8; 32]);
         let policy = policy_with(&[("alice", &alice)], 1);
         let mut session = BreakGlassSession::new();
-        let rh = session.open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap()).expect("fresh request opens");
+        let rh = session
+            .open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap())
+            .expect("fresh request opens");
         session.submit(&policy, sign(&alice, "alice", rh)).unwrap();
         assert!(session.is_open());
         session.close();
@@ -376,5 +381,4 @@ mod tests {
         let other = UnlockRequest::new("vault:2", [3u8; 32], "x", bucket()).unwrap();
         assert!(session.open(other).is_some(), "a different request opens");
     }
-
 }

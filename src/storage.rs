@@ -493,7 +493,11 @@ pub const RETENTION_CHAIN_BREAK: &str = "CONFORMANCE_RETENTION_CHAIN_BREAK";
 /// genesis hash; a broken link is an `Err` prefixed [`RETENTION_CHAIN_BREAK`]
 /// and the caller prunes nothing. The `created_at` column is read only to
 /// report a disagreement with the signed bucket — it never decides age.
-fn expired_prefix_end(conn: &Connection, chain_start: [u8; 32], cutoff: i64) -> Result<Option<i64>> {
+fn expired_prefix_end(
+    conn: &Connection,
+    chain_start: [u8; 32],
+    cutoff: i64,
+) -> Result<Option<i64>> {
     let mut stmt = conn.prepare(
         "SELECT id, created_at, payload_json, prev_hash, entry_hash FROM sealed_events ORDER BY id ASC",
     )?;

@@ -290,7 +290,9 @@ pub fn verify_ed25519_only(
 /// act of signing. Every key read from storage, the wire, a policy or a
 /// rotation record goes through here; `ed25519_dalek::VerifyingKey::from_bytes`
 /// alone accepts them.
-pub fn verifying_key_strict(bytes: &[u8; 32]) -> Result<VerifyingKey, ed25519_dalek::SignatureError> {
+pub fn verifying_key_strict(
+    bytes: &[u8; 32],
+) -> Result<VerifyingKey, ed25519_dalek::SignatureError> {
     let key = VerifyingKey::from_bytes(bytes)?;
     if key.is_weak() {
         return Err(ed25519_dalek::SignatureError::new());
@@ -339,7 +341,8 @@ fn verify_rotation_binding(
     sig_bytes.copy_from_slice(signature);
     let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
     verifying_key
-        .verify_strict(&rotation_binding_hash(domain, prev_public_key, new_public_key),
+        .verify_strict(
+            &rotation_binding_hash(domain, prev_public_key, new_public_key),
             &sig,
         )
         .map_err(|e| anyhow!("rotation {} verification failed: {}", what, e))

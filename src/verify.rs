@@ -560,14 +560,15 @@ where
                     ),
                 ));
             }
-            let new_key = crate::crypto::signatures::verifying_key_strict(&rotation.new_public_key).map_err(|e| {
-                fail(
-                    FailedLedger::SealedEvents,
-                    Some(id),
-                    FailureKind::KeyRotationInvalid,
-                    format!("key rotation at id {}: invalid new public key: {}", id, e),
-                )
-            })?;
+            let new_key = crate::crypto::signatures::verifying_key_strict(&rotation.new_public_key)
+                .map_err(|e| {
+                    fail(
+                        FailedLedger::SealedEvents,
+                        Some(id),
+                        FailureKind::KeyRotationInvalid,
+                        format!("key rotation at id {}: invalid new public key: {}", id, e),
+                    )
+                })?;
             // Retiring key authorized the successor; the new key proves possession. The entry
             // signature (verified above under `active_key`) already proves the predecessor
             // signed this rotation into the chain, so the explicit authorization is required

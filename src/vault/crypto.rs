@@ -217,7 +217,8 @@ pub fn decrypt_v2(
     // shared secret and the master-key-wrapped classical secret feed one
     // derivation, and there is no fallback to either half.
     if envelope.kem_alg == KEM_ALG_HYBRID_ML_KEM_768 {
-        let kp = kem_keypair.ok_or_else(|| anyhow!("vault KEM keypair missing for hybrid envelope"))?;
+        let kp =
+            kem_keypair.ok_or_else(|| anyhow!("vault KEM keypair missing for hybrid envelope"))?;
         let wrap = envelope
             .classical_wrap
             .as_ref()
@@ -1032,7 +1033,10 @@ mod tests {
             Some(&kp),
         )
         .unwrap();
-        assert!(decrypt_v2(&envelope, &key, None).is_err(), "master key alone");
+        assert!(
+            decrypt_v2(&envelope, &key, None).is_err(),
+            "master key alone"
+        );
         assert!(
             decrypt_v2(&envelope, &[7u8; 32], Some(&kp)).is_err(),
             "KEM keypair with the wrong master key"
@@ -1043,7 +1047,10 @@ mod tests {
         );
         let mut stripped = envelope.clone();
         stripped.classical_wrap = None;
-        assert!(decrypt_v2(&stripped, &key, Some(&kp)).is_err(), "wrap removed");
+        assert!(
+            decrypt_v2(&stripped, &key, Some(&kp)).is_err(),
+            "wrap removed"
+        );
         let mut relabeled = envelope.clone();
         relabeled.kem_alg = KEM_ALG_ML_KEM_768.to_string();
         assert!(
@@ -1060,20 +1067,38 @@ mod tests {
         // as it always did) so an existing vault stays readable.
         let key = [42u8; 32];
         let kp = KemKeypair::generate();
-        let mut envelope = seal_v2("legacy", [4u8; 32], b"old", VaultCryptoMode::Pq, &key, Some(&kp))
-            .unwrap();
+        let mut envelope = seal_v2(
+            "legacy",
+            [4u8; 32],
+            b"old",
+            VaultCryptoMode::Pq,
+            &key,
+            Some(&kp),
+        )
+        .unwrap();
         let mut shared = kem_decapsulate(&kp, &envelope.kem_ct).unwrap();
         let dek = kdf_dek(&shared, &envelope.kdf_info);
         shared.zeroize();
         envelope.classical_wrap = Some(wrap_dek(&key, "legacy", &[4u8; 32], &dek).unwrap());
         assert_eq!(decrypt_v2(&envelope, &key, None).unwrap(), b"old");
-        assert_eq!(decrypt_v2(&envelope, &[9u8; 32], Some(&kp)).unwrap(), b"old");
+        assert_eq!(
+            decrypt_v2(&envelope, &[9u8; 32], Some(&kp)).unwrap(),
+            b"old"
+        );
     }
 
     #[test]
     fn decrypt_v2_refuses_an_unknown_aead_or_kem_label() {
         let key = [42u8; 32];
-        let envelope = seal_v2("alg", [1u8; 32], b"x", VaultCryptoMode::Classical, &key, None).unwrap();
+        let envelope = seal_v2(
+            "alg",
+            [1u8; 32],
+            b"x",
+            VaultCryptoMode::Classical,
+            &key,
+            None,
+        )
+        .unwrap();
         let mut other_aead = envelope.clone();
         other_aead.aead_alg = "aes-256-gcm".to_string();
         assert!(decrypt_v2(&other_aead, &key, None).is_err());

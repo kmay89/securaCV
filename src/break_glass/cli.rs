@@ -1845,7 +1845,9 @@ fn cmd_rotate_identity(
             None => {
                 let from_file = match seed_file {
                     Some(path) => crypto::read_device_seed_file(std::path::Path::new(path))?,
-                    None => crypto::find_device_seed(db_path, None)?.map(|found| found.seed.to_string()),
+                    None => {
+                        crypto::find_device_seed(db_path, None)?.map(|found| found.seed.to_string())
+                    }
                 };
                 zeroize::Zeroizing::new(from_file.ok_or_else(|| {
                     anyhow!(
@@ -2862,7 +2864,8 @@ fn cmd_trustee_enroll(
             }
             let mut pk = [0u8; 32];
             pk.copy_from_slice(&bytes);
-            crate::crypto::signatures::verifying_key_strict(&pk).map_err(|_| anyhow!("not a valid Ed25519 public key"))?;
+            crate::crypto::signatures::verifying_key_strict(&pk)
+                .map_err(|_| anyhow!("not a valid Ed25519 public key"))?;
             pk
         }
         (false, None) => {
@@ -3328,7 +3331,8 @@ fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
         ));
     }
     key_bytes.copy_from_slice(&bytes);
-    crate::crypto::signatures::verifying_key_strict(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
+    crate::crypto::signatures::verifying_key_strict(&key_bytes)
+        .map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
 fn parse_trustee_entry(entry: &str) -> Result<crate::break_glass::TrusteeEntry> {

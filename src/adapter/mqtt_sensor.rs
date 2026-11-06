@@ -578,12 +578,16 @@ mod tests {
         let claim = adapter
             .message_to_claim("s/pir", br#"{"zone":"server_room"}"#)
             .expect("claim");
-        assert_eq!(claim.zone_label, "default_zone", "the operator's label stands");
+        assert_eq!(
+            claim.zone_label, "default_zone",
+            "the operator's label stands"
+        );
     }
 
     #[test]
     fn payload_zone_override_wins_when_the_route_allows_it() {
-        let mut route = SensorRoute::new("s/pir", ClaimKind::PresenceInRestrictedZone, "default_zone");
+        let mut route =
+            SensorRoute::new("s/pir", ClaimKind::PresenceInRestrictedZone, "default_zone");
         route.allow_zone_override = true;
         let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
         let claim = adapter

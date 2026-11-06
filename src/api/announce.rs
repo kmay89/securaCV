@@ -99,12 +99,18 @@ pub fn check_announce_body(
     if !names_self {
         return Err(AnnounceBodyRefusal::NamesAnotherKernel);
     }
-    if object.keys().any(|k| !ANNOUNCE_FIELDS.contains(&k.as_str())) {
+    if object
+        .keys()
+        .any(|k| !ANNOUNCE_FIELDS.contains(&k.as_str()))
+    {
         return Err(AnnounceBodyRefusal::UnknownField);
     }
     if let Some(api) = object.get("api") {
         let api = api.as_object().ok_or(AnnounceBodyRefusal::UnknownField)?;
-        if api.keys().any(|k| !ANNOUNCE_API_FIELDS.contains(&k.as_str())) {
+        if api
+            .keys()
+            .any(|k| !ANNOUNCE_API_FIELDS.contains(&k.as_str()))
+        {
             return Err(AnnounceBodyRefusal::UnknownField);
         }
     }
