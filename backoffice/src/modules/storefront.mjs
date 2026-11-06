@@ -22,6 +22,7 @@ import { isOn } from '../flags.mjs';
 import { timedFetch } from '../net.mjs';
 import { recordSession } from './recovery.mjs';
 import { listingState } from './listing.mjs';
+import { awayState, awayUntilFor } from './away.mjs';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -40,18 +41,24 @@ export const dayLabel = (p, { year = false } = {}) => `${SHORT[p.weekday]}, ${MO
 
 // The batch cadence: orders in by <closeDay> <closeHour>:59 (operator time) ship on the next
 // <shipDay>. Past the close, the next batch. Returns calendar dates in the operator's zone and
-// the sentence the store prints.
-export function nextShipDate(now = new Date(), { tz = currentTz(), closeDay = 0, closeHour = 23, shipDay = 2 } = {}) {
-  const p = zoneParts(now, tz);
+// the sentence the store prints. While the operator is away (`awayUntil`, the day they are back,
+// YYYY-MM-DD in that zone; away.mjs), the cadence counts from the morning of that day instead of
+// now — the first close on or after it, then the ship day after that — and the sentence says so.
+export function nextShipDate(now = new Date(), { tz = currentTz(), closeDay = 0, closeHour = 23, shipDay = 2, awayUntil = null } = {}) {
+  const today = zoneParts(now, tz);
+  const back = awayUntil && /^\d{4}-\d{2}-\d{2}$/.test(awayUntil) && awayUntil > ymd(today) ? (() => { const [y, m, d] = awayUntil.split('-').map(Number); return { ...plusDays({ y, m, d }, 0), hour: 0, minute: 0 }; })() : null;
+  const p = back || today;
   let untilClose = (closeDay - p.weekday + 7) % 7;
   if (untilClose === 0 && p.hour >= closeHour) untilClose = 7;         // the close is the top of that hour; past it, next week
   const close = plusDays(p, untilClose);
   let untilShip = (shipDay - close.weekday + 7) % 7; if (untilShip === 0) untilShip = 7;   // ships strictly after the close
   const ship = plusDays(close, untilShip);
-  const closesTonight = untilClose === 0;
+  const closesTonight = !back && untilClose === 0;
+  const hour = `${closeHour >= 12 ? `${closeHour === 12 ? 12 : closeHour - 12} pm` : `${closeHour || 12} am`}`;
   return { closes_on: ymd(close), closes_weekday: DAYS[closeDay], closes_hour: closeHour, ships_on: ymd(ship), ships_weekday: DAYS[shipDay],
-    label: `Order by ${closesTonight ? 'tonight' : DAYS[closeDay]} ${closeHour >= 12 ? `${closeHour === 12 ? 12 : closeHour - 12} pm` : `${closeHour || 12} am`} · ships ${dayLabel(ship)}`,
-    ships_label: dayLabel(ship), closes_label: `${closesTonight ? 'tonight' : DAYS[closeDay]}, ${MONTHS[close.m - 1]} ${close.d}`, tz };
+    label: back ? `Back ${dayLabel(back)} · ships ${dayLabel(ship)}` : `Order by ${closesTonight ? 'tonight' : DAYS[closeDay]} ${hour} · ships ${dayLabel(ship)}`,
+    ships_label: dayLabel(ship), closes_label: `${closesTonight ? 'tonight' : DAYS[closeDay]}, ${MONTHS[close.m - 1]} ${close.d}`, tz,
+    away: back ? { until: awayUntil, label: dayLabel(back) } : null };
 }
 
 // ZIP → state, by the three-digit prefix ranges the USPS assigns. Enough for an estimate, and
@@ -67,9 +74,10 @@ export function stateForZip(zip) {
 }
 
 // What a shopper sees before paying: when the batch ships and when it lands at that ZIP. With no
-// ZIP (or one we cannot place) the window is the honest middle of the country.
-export function estimateForZip(zip, { now = new Date(), cfg = {} } = {}) {
-  const ships = nextShipDate(now, { tz: cfg.tz, closeDay: cfg.batchCloseDay, closeHour: cfg.batchCloseHour, shipDay: cfg.batchShipDay });
+// ZIP (or one we cannot place) the window is the honest middle of the country. Given the database,
+// the cadence knows whether the operator is away (away.mjs); without it, the normal cadence.
+export function estimateForZip(zip, { now = new Date(), cfg = {}, db = null, awayUntil = db ? awayUntilFor(db, cfg, now.getTime()) : null } = {}) {
+  const ships = nextShipDate(now, { tz: cfg.tz, closeDay: cfg.batchCloseDay, closeHour: cfg.batchCloseHour, shipDay: cfg.batchShipDay, awayUntil });
   const state = stateForZip(zip);
   const shipAt = new Date(`${ships.ships_on}T16:00:00Z`);
   const d = estimateDelivery(shipAt, state, { fromState: cfg.shipFromState, carrier: 'USPS' });
@@ -110,7 +118,8 @@ export function oversoldLines(db, order, catalog, { now = new Date(), tz = curre
 }
 
 export function storefrontCatalog(db, catalog, { now = new Date(), cfg = {} } = {}) {
-  const ships = nextShipDate(now, { tz: cfg.tz, closeDay: cfg.batchCloseDay, closeHour: cfg.batchCloseHour, shipDay: cfg.batchShipDay });
+  const away = awayState(db, cfg, { now: now.getTime() });
+  const ships = nextShipDate(now, { tz: cfg.tz, closeDay: cfg.batchCloseDay, closeHour: cfg.batchCloseHour, shipDay: cfg.batchShipDay, awayUntil: away.on ? away.until : null });
   const products = [];
   for (const p of catalog.products.values()) {
     const available = availableNow(db, p, { now, tz: cfg.tz });
@@ -118,7 +127,8 @@ export function storefrontCatalog(db, catalog, { now = new Date(), cfg = {} } = 
     const reason = p.authorization === 'pending-fcc' ? 'pending-fcc' : state || (available === 0 ? 'batch-full' : null);
     products.push({ sku: p.sku, name: p.name, price_cents: p.price_cents, group: p.group, available, sellable: !reason, reason, link: p.link || '', hidden: !!p.hidden, opens: state === 'not-yet' ? p.available_from : null, closes: p.available_until || null });
   }
-  return { mode: catalog.mode, shipping_flat_cents: catalog.shipping_flat_cents, ships, products, checkout: cfg.demo ? 'demo' : cfg.stripeApiKey ? 'hosted' : 'links', generated_at: now.toISOString() };
+  // `away`: the site prints the note (if any) beside the ship date while the operator is away; null the rest of the year
+  return { mode: catalog.mode, shipping_flat_cents: catalog.shipping_flat_cents, ships, away: away.on ? { until: away.until, label: away.until_label, note: away.note || '' } : null, products, checkout: cfg.demo ? 'demo' : cfg.stripeApiKey ? 'hosted' : 'links', generated_at: now.toISOString() };
 }
 
 // Stripe's form encoding: nested keys in brackets, one pair per leaf.
@@ -155,7 +165,7 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
     if (available != null && l.qty > available) throw new StoreError(409, available ? `${l.name}: only ${available} left in this batch` : `${l.name}: this batch is full — the next one opens within a week`);
     delete l.product;
   }
-  const est = estimateForZip(zip, { now, cfg });
+  const est = estimateForZip(zip, { now, cfg, db });
   const site = (cfg.siteOrigin || '').replace(/\/$/, '');
   const session = {
     mode: 'payment',
@@ -187,7 +197,7 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
 export function sessionStatus(db, cfg, sessionId, { now = new Date() } = {}) {
   if (!/^cs_[A-Za-z0-9_]{8,}$/.test(String(sessionId || ''))) throw new StoreError(400, 'that is not a checkout session id');
   const o = orderByNumber(db, sessionId); if (!o) return { pending: true };
-  const est = estimateForZip(o.ship_zip, { now, cfg });
+  const est = estimateForZip(o.ship_zip, { now, cfg, db });
   return { pending: false, order: o.number, status: o.status, items: o.items.map(i => ({ sku: i.sku, name: i.name, qty: i.qty })), total_cents: o.total_cents, ships: est.ships, delivers: est.delivers, status_url: cfg.secret ? orderStatusUrl(cfg, o) : null };
 }
 

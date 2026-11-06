@@ -41,6 +41,28 @@ server. A week of them is enough.
 - **The build.** `backoffice version` against the repository; the Node row on
   Health says how long this runtime is maintained.
 
+## Before you go away
+
+One field. **Settings → Away**, the day you are back (or `backoffice away
+2026-12-01 --note 'Back from the show'`). From that second the store's
+catalog, the ZIP estimate, Stripe's shipping option and the promise written
+on every new order say the first batch after that day — "Back Mon, Dec 1 ·
+ships Tue, Dec 9" — never a Tuesday nobody is there to pack. A ticket that
+arrives meanwhile is acknowledged with the date and its SLA clock starts the
+morning you return, so the `sla` job raises no alarm about a wait the
+customer was told about (the queue still shows it, oldest first). Home wears
+the strip with the days to go and what the store is saying, the doctor has
+an *Away* row, and the digest carries it every morning so you cannot forget
+you set it.
+
+It ends by itself the morning of that day — the date is compared, not a
+flag — or earlier on **I'm back**. Nothing about orders, stock or people
+changes either way; both ends are in the audit log. Orders placed while you
+were away keep the promise they were made, so pack them first.
+
+What still needs you while away: nothing the system will not wait for. The
+digest keeps coming; read its first line as usual.
+
 ## When you update
 
 ```
@@ -101,6 +123,7 @@ without judgment calls. The judgment comes afterward, with coffee.
 | 30 s | the mail outbox | Mail |
 | 10 min | abandoned-checkout follow-ups, the SLA watch | Support, Exceptions |
 | hour | stock, invoices, tracking, automations | Home cards |
+| 6 h | the mail domain's SPF, DMARC and MX, as receivers read them | Health · Mail domain |
 | day | a checked backup (off-site when configured), the Stripe reconcile, the **audit chain verify**, the digest | Health |
 | week | the restore drill | Health |
 | boot | the self-check: key private, files private, Node maintained, chain tail verifies | Health, the console |

@@ -98,6 +98,15 @@ export function createApp({ db, cfg }) {
   });
   router.get('/status', (c) => html(c.res, statusPage(db, cfg), 200, { 'Cache-Control': 'public, max-age=60' }));
   router.get('/status.json', (c) => json(c.res, publicStatus(db), 200, { 'Cache-Control': 'public, max-age=60', 'Access-Control-Allow-Origin': '*' }));
+  // RFC 9116: where a researcher reports a hole in this box. The support address files "security" as urgent
+  // (support.mjs); Expires is the first of a month inside a year, so the file is never stale and never a lie.
+  const securityTxt = (c) => {
+    if (!cfg.supportAddr) throw new HttpError(404, 'no contact address configured');
+    const n = new Date(); const expires = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth() + 11, 1)).toISOString();
+    text(c.res, `Contact: mailto:${cfg.supportAddr}\nExpires: ${expires}\nPreferred-Languages: en\nCanonical: ${cfg.baseUrl}/.well-known/security.txt\n${cfg.siteOrigin ? `Policy: ${cfg.siteOrigin.replace(/\/$/, '')}/security.txt\n` : ''}`, 200, { 'Cache-Control': 'public, max-age=86400' });
+  };
+  router.get('/.well-known/security.txt', securityTxt, { public: true });
+  router.get('/security.txt', securityTxt, { public: true });
   router.get('/confirm/:token', (c) => { const ok = confirmConsent(db, c.params.token); html(c.res, plain(cfg, ok ? 'Confirmed' : 'Link expired', ok ? `Thanks — ${e(ok.email)} is confirmed for occasional news. One-click unsubscribe is in every mail.` : 'That confirmation link is not valid any more. Sign up again if you still want the news.'), ok ? 200 : 404); });
   const unsub = (c) => { const r = unsubscribe(db, c.params.token); html(c.res, plain(cfg, r ? 'Unsubscribed' : 'Unknown link', r ? `${e(r.email)} will not get another newsletter. Order and support mail still arrives — those are about things you asked for.` : 'That unsubscribe link is not one we issued.'), r ? 200 : 404); };
   router.get('/u/:token', unsub); router.post('/u/:token', unsub, { public: true });
@@ -194,7 +203,7 @@ export function createApp({ db, cfg }) {
   // paying, the hosted Checkout Session, and what the thanks page shows. Public, CORS to the site.
   const store = (fn) => async (c) => { try { await fn(c); } catch (err) { if (err instanceof StoreError) throw new HttpError(err.status, err.message); throw err; } };
   router.get('/store/catalog', store(async (c) => { const cat = await app.catalog().catch(() => null); if (!cat) throw new HttpError(503, 'the catalog is not loaded'); json(c.res, storefrontCatalog(db, cat, { cfg }), 200, { ...corsHeaders(cfg), 'Cache-Control': 'public, max-age=60' }); }), { public: true });
-  router.get('/store/estimate', store(async (c) => { json(c.res, estimateForZip(c.query.get('zip') || '', { cfg }), 200, { ...corsHeaders(cfg), 'Cache-Control': 'public, max-age=300' }); }), { public: true });
+  router.get('/store/estimate', store(async (c) => { json(c.res, estimateForZip(c.query.get('zip') || '', { cfg, db }), 200, { ...corsHeaders(cfg), 'Cache-Control': 'public, max-age=300' }); }), { public: true });
   router.post('/store/checkout', store(async (c) => {
     if (!app.limiter.allow(`store:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
     if (cfg.demo) throw new HttpError(503, 'the demo takes no payments — the site falls back to its own cart');
@@ -329,7 +338,7 @@ export function createApp({ db, cfg }) {
       if (site && !['same-origin', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && !route.opts.public) throw new HttpError(403, 'cross-site request refused');
       const ip = clientIp(req);
       // ADMIN_ALLOW_CIDRS: the admin (and its door) exist only for these networks; a customer's page, the store, the webhook and the status page are for everyone.
-      const forCustomers = ['/healthz', '/status', '/status.json', '/robots.txt'].includes(url.pathname) || /^\/(o|u|i|confirm)\//.test(url.pathname);
+      const forCustomers = ['/healthz', '/status', '/status.json', '/robots.txt', '/security.txt', '/.well-known/security.txt'].includes(url.pathname) || /^\/(o|u|i|confirm)\//.test(url.pathname);
       const cookies = parseCookies(req);
       let session = sessionFor(db, cookies.bo_session);
       // SESSION_BIND_IP: a session that turns up from another network than it was opened on is over (a stolen cookie travels).
@@ -412,7 +421,7 @@ export async function applyStripeEvent(app, m, event = null) {
     if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || timedFetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
     if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || timedFetch }); } catch { /* the id stays */ } }
     // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying, written on the order as its promise.
-    const est = estimateForZip(m.ship?.zip || m.ship_zip, { cfg });
+    const est = estimateForZip(m.ship?.zip || m.ship_zip, { cfg, db });
     const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe', promise: { ship_on: est.ships.ships_on, arrive_by: est.delivers?.latest || null } });
     if (created && order.email && order.items.length) { const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
       enqueue(db, { to: order.email, subject: `We have your ${cfg.product || 'SecuraCV'} order ${order.number}`, kind: 'transactional', ref: `order:${order.number}`, contactId: order.contact_id,

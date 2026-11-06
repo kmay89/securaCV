@@ -24,6 +24,9 @@ import { analytics } from './analytics.mjs';
 import { envRules } from '../env.mjs';
 import { describeBuild } from '../version.mjs';
 import { listFlags } from '../flags.mjs';
+import { awayState, waitingTickets } from './away.mjs';
+import { nextShipDate } from './storefront.mjs';
+import { mailDomainOf, lastMailDomainCheck } from './maildns.mjs';
 
 const hoursSince = (iso) => iso ? (Date.now() - Date.parse(iso)) / 3600000 : null;
 const fmtH = (h) => h == null ? 'never' : h < 1 ? `${Math.round(h * 60)} min ago` : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} d ago`;
@@ -43,6 +46,11 @@ export function doctor(db, cfg) {
   const people = db.all("SELECT role, COUNT(*) AS n FROM users WHERE status = 'active' GROUP BY role"); const locked = db.get('SELECT COUNT(*) AS n FROM users WHERE locked_until > ?', new Date().toISOString()).n;
   add('operator', 'An owner can log in', hasOperator(db), hasOperator(db) ? `password + authenticator · ${people.map(p => `${p.n} ${p.role}`).join(', ')}${locked ? ` · ${locked} locked out` : ''}` : 'no owner', 'run `backoffice setup`, or accept the invitation');
   const stale = db.get("SELECT COUNT(*) AS n FROM users WHERE status = 'invited' AND invite_expires_at < ?", new Date().toISOString()).n; add('invites', 'Invitations', stale === 0, stale ? `${stale} expired without being accepted` : 'none waiting past their time', 'remove them on /users, or invite again');
+  // away: informational while on (the store and the SLA clock already follow it), never a failure
+  const aw = awayState(db, cfg);
+  if (aw.on) { const ships = nextShipDate(new Date(), { tz: cfg.tz, closeDay: cfg.batchCloseDay, closeHour: cfg.batchCloseHour, shipDay: cfg.batchShipDay, awayUntil: aw.until }); const wt = waitingTickets(db);
+    add('away', 'Away', null, `until ${aw.until_label} (${aw.days_left} d) · the store says "${ships.label}" · ${wt} ticket${wt === 1 ? '' : 's'} waiting for you, SLA alarms wait too${aw.note ? ` · "${aw.note}"` : ''}`, 'Settings → Away: "I\'m back" ends it early; it ends by itself that morning'); }
+  else add('away', 'Away', true, 'not away — the store promises the normal cadence', 'Settings → Away sets the day you are back; the store, the acknowledgments and the SLA clock follow it');
   add('https', 'Served over HTTPS (secure cookies)', demo ? null : cfg.secure, demo ? 'demo mode' : cfg.secure ? cfg.baseUrl : `BACKOFFICE_BASE_URL is ${cfg.baseUrl}`, 'put Caddy or Fly in front and set BACKOFFICE_BASE_URL=https://…');
   const defaultUrl = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(cfg.baseUrl);
   add('base_url', 'The codes on slips and labels point here', demo ? null : !defaultUrl, demo ? 'demo mode' : defaultUrl ? `BACKOFFICE_BASE_URL is ${cfg.baseUrl} — a phone scanning a slip lands nowhere` : cfg.baseUrl, 'set BACKOFFICE_BASE_URL to the address the phone reaches');
@@ -58,6 +66,11 @@ export function doctor(db, cfg) {
   add('labels', 'Labels from the ship bench', demo ? null : cfg.shippoToken ? shipFromIssues(cfg).length === 0 : null, demo ? 'demo labels (pretend, printable)' : cfg.shippoToken ? (shipFromIssues(cfg).length ? `SHIPPO_API_TOKEN set, return address incomplete: ${shipFromIssues(cfg).join(', ')}` : `SHIPPO_API_TOKEN set · from ${cfg.shipFrom.city}, ${cfg.shipFrom.state}`) : 'no SHIPPO_API_TOKEN — labels come from the website\'s fulfill.mjs and the manifest', 'set SHIPPO_API_TOKEN and SHIP_FROM_NAME/LINE1/CITY/STATE/ZIP');
   add('shipping_data', 'Box data (shipping.json) for the pack bench', demo ? null : sh.loaded_at ? !sh.error || hoursSince(sh.loaded_at) < 24 : sh.error ? false : null, demo ? 'demo boxes' : sh.loaded_at ? `${sh.boxes} boxes, ${sh.parcels} parcels · loaded ${fmtH(hoursSince(sh.loaded_at))}${sh.error ? ` · last refresh failed: ${sh.error}` : ''}` : sh.error ? sh.error : 'not asked for yet — opens with the first order page', 'set SHIPPING_JSON (or put shipping.json beside store.json) so boxes are planned, not guessed');
   add('smtp', 'Outbound mail relay', demo ? null : !!cfg.smtpUrl, demo ? 'demo transport' : cfg.smtpUrl ? 'SMTP_URL set' : 'mail is queued, never sent', 'set SMTP_URL to a relay with SPF/DKIM for your domain');
+  // the mail domain's DNS, as the receiving side sees it (maildns.mjs; the job looks every six hours)
+  const md = mailDomainOf(cfg); const mr = lastMailDomainCheck(db);
+  add('mail_dns', 'Mail domain (SPF, DMARC, MX)', demo ? null : !md ? null : !mr || mr.domain !== md ? null : mr.error ? null : mr.ok,
+    demo ? 'demo mode' : !md ? 'no MAIL_FROM or SUPPORT_ADDR to check' : !mr || mr.domain !== md ? `${md} · not looked up yet (the maildns job runs every 6 h; Settings → Jobs → run)` : mr.error ? `${md} · the lookup failed: ${mr.error}` : `${md} · SPF ${mr.spf.found ? 'ok' : 'MISSING'} · DMARC ${mr.dmarc.found ? (mr.dmarc.policy ? `p=${mr.dmarc.policy}` : 'ok') : 'MISSING'} · MX ${mr.mx.found ? `${mr.mx.hosts.length} host${mr.mx.hosts.length === 1 ? '' : 's'}` : 'MISSING'} · checked ${fmtH(hoursSince(mr.at))}${mr.problems.length ? ` · ${mr.problems.join('; ')}` : ''}`,
+    'a TXT record "v=spf1 include:<your relay> -all" on the domain, a TXT record at _dmarc.<domain> "v=DMARC1; p=quarantine; rua=mailto:…", and an MX so replies and bounces come back; DKIM is the relay\'s key and is set up in its dashboard — without these, customers\' mail lands in spam');
   add('imap', 'Support mailbox read', demo ? null : !!cfg.imapUrl, demo ? 'demo mode' : cfg.imapUrl ? 'IMAP_URL set' : 'inbound mail is not read', 'set IMAP_URL and SUPPORT_ADDR');
   add('stripe_webhook', 'Stripe webhook signing secret', !!cfg.stripeWebhookSecret, cfg.stripeWebhookSecret ? 'set' : 'orders cannot arrive', 'set STRIPE_WEBHOOK_SECRET from the Stripe dashboard');
   add('stripe_api', 'Stripe API key (line items, reconciliation)', demo ? null : !!cfg.stripeApiKey, demo ? 'demo mode' : cfg.stripeApiKey ? 'set' : 'orders without inline line items stay empty; no reconciliation', 'set STRIPE_API_KEY (a restricted key: read charges/payouts, read checkout sessions)');

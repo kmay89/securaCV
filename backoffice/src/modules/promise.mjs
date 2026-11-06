@@ -23,8 +23,8 @@ export const labelOf = (ymd) => ymd ? dayLabel(ymdParts(ymd)) : '';
 const today = (cfg, now = Date.now()) => { const p = zoneParts(new Date(now), cfg?.tz || currentTz()); return `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`; };
 
 // The promise for an order paid at `paidAt` going to `zip`: the batch it fell into and the arrival window.
-export function promiseFor(paidAt, { zip = null, state = null, cfg = {} } = {}) {
-  const ships = nextShipDate(new Date(paidAt || Date.now()), batchOpts(cfg));
+export function promiseFor(paidAt, { zip = null, state = null, cfg = {}, awayUntil = null } = {}) {
+  const ships = nextShipDate(new Date(paidAt || Date.now()), { ...batchOpts(cfg), awayUntil });
   const to = state || stateForZip(zip);
   const d = estimateDelivery(new Date(`${ships.ships_on}T16:00:00Z`), to, { fromState: cfg.shipFromState, carrier: 'USPS' });
   return { ship_on: ships.ships_on, closes_on: ships.closes_on, arrive_by: d ? d.latest : null, arrive_from: d ? d.earliest : null, arrive_label: d ? d.label : '' };
