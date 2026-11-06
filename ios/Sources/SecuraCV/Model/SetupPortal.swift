@@ -255,6 +255,14 @@ enum SetupPortal {
     static let joinedElsewhereLine =
         "It's on your Wi-Fi — its own verdict, from its own page. Its setup network goes away now, and this phone is back on your Wi-Fi."
 
+    /// When the setup network stopped answering while the list was on
+    /// screen (SetupPortalClient.watchWhileReady): the firmware takes it
+    /// down 1.6 s after the first client reads `success`, so a join
+    /// finished on the Canary's own page can end this way — or the Canary
+    /// was unplugged. Both are said, and the next step is pointed at.
+    static let portalGoneLine =
+        "The Canary's setup network went away before this phone read its verdict. If its own page said it joined, it shows up on the Fleet tab shortly — the last step below picks it out. Otherwise power it off and on and start again."
+
     /// Where the device stands with the join, from `/status`.
     enum JoinState: Equatable, Sendable {
         case idle, connecting, success

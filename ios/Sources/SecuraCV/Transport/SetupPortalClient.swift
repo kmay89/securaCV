@@ -25,6 +25,20 @@
 //     the phone can never drift back onto a Canary's setup network by itself
 //     weeks later. Only the SecuraCV- shapes are touched; the app configures
 //     no other network.
+//   * `finish()` also ends every step still in flight. `connect` and `hand`
+//     are unstructured work the screen cannot cancel, so each checks the
+//     client's `generation` after every await and stops when `finish()` has
+//     moved it — a walkthrough closed while the Canary was still listing
+//     its networks must not come back to life as a watcher polling a
+//     network the phone has left.
+//   * The ready watch reads `/status` once a second and treats a portal
+//     that stops answering as news, not as noise. Both firmware portals
+//     take the setup network down 1.6 s after ANY client reads `success`
+//     (onboarding_fsm.h `ap_hold_after_ack_ms`), so a join finished on the
+//     Canary's own page can be acknowledged there, and the network gone,
+//     between two of this client's polls. Three silent polls end the step
+//     in words that say so (SetupPortal.portalGoneLine), never a spinner
+//     over a network that no longer exists.
 
 import Foundation
 import NetworkExtension
@@ -64,6 +78,17 @@ final class SetupPortalClient: ObservableObject {
     /// Watches `/status` while the list is on screen (`watchWhileReady`).
     private var readyWatch: Task<Void, Never>?
 
+    /// Moved by `finish()`. `connect` and `hand` note it when they start
+    /// and stop at the first await after it moved: the screen closed, or a
+    /// new connect began, and nothing older may touch the phase again.
+    private var generation = 0
+
+    /// Polls of `/status` answered by nobody before the ready watch judges
+    /// the setup network gone: more than one, so a busy ESP's dropped
+    /// answer is not the end; few enough that a person is told within
+    /// seconds, not left with a list over a network the phone has left.
+    static let silentPollsBeforeGone = 3
+
     /// A session pinned to the Wi-Fi interface: on a captive network with
     /// no internet iOS would otherwise route around it over cellular, and
     /// 192.168.4.1 would answer from somewhere else or not at all.
@@ -83,6 +108,8 @@ final class SetupPortalClient: ObservableObject {
     /// empty: the form then takes a typed name) or a named failure.
     func connect(setupSSID: String, setupKey: String) async {
         stopReadyWatch()
+        generation += 1
+        let gen = generation
         onSetupNetwork = false
         handedSSID = nil
         networks = []
@@ -96,6 +123,12 @@ final class SetupPortalClient: ObservableObject {
         } catch {
             outcome = Self.joinOutcome(error)
         }
+        guard gen == generation else {
+            // The screen closed while iOS was joining: `finish()` ran before
+            // the network was known to it, so let it go here.
+            if outcome.isOn { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: setupSSID) }
+            return
+        }
         guard outcome.isOn else {
             phase = .failed(outcome.advice(ssid: setupSSID) ?? "iOS couldn't join \(setupSSID).")
             return
@@ -103,7 +136,9 @@ final class SetupPortalClient: ObservableObject {
         joinedSSID = setupSSID
 
         phase = .reachingPortal
-        guard await waitForPortal(seconds: 25) else {
+        let answered = await waitForPortal(seconds: 25, gen: gen)
+        guard gen == generation else { return }
+        guard answered else {
             // Leave the network now: a phone parked on a setup network with
             // no page to talk to has no internet and nothing to do there.
             finish()
@@ -113,7 +148,9 @@ final class SetupPortalClient: ObservableObject {
         onSetupNetwork = true
 
         phase = .listing
-        networks = await scan(seconds: 10)
+        let listed = await scan(seconds: 10, gen: gen)
+        guard gen == generation else { return }
+        networks = listed
         phase = .ready
         startReadyWatch()
     }
@@ -124,6 +161,7 @@ final class SetupPortalClient: ObservableObject {
     func hand(homeSSID: String, homePassword: String,
               timeZone: String? = TimeZone.current.identifier) async {
         stopReadyWatch()
+        let gen = generation
         if let problem = SetupPortal.credentialProblem(ssid: homeSSID, password: homePassword) {
             phase = .failed(problem)
             return
@@ -133,14 +171,22 @@ final class SetupPortalClient: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data(SetupPortal.joinBody(ssid: homeSSID, password: homePassword, timeZone: timeZone).utf8)
+        let posted: Result<Data, Error>
         do {
             let (data, _) = try await session.data(for: request)
+            posted = .success(data)
+        } catch {
+            posted = .failure(error)
+        }
+        guard gen == generation else { return }
+        switch posted {
+        case .success(let data):
             let reply = SetupPortal.parseJoinReply(data)
             guard reply.ok else {
                 phase = .failed(SetupPortal.advice(for: reply.reason ?? "The Canary refused the credentials."))
                 return
             }
-        } catch {
+        case .failure(let error):
             phase = .failed("The Canary's setup page didn't take the credentials: \(error.localizedDescription)")
             return
         }
@@ -151,7 +197,9 @@ final class SetupPortalClient: ObservableObject {
         // read here is the join, confirmed at the source.
         let deadline = Date().addingTimeInterval(90)
         while Date() < deadline {
-            if let state = await status() {
+            let read = await status()
+            guard gen == generation else { return }
+            if let state = read {
                 phase = .waiting(state)
                 switch state {
                 case .success:
@@ -166,12 +214,14 @@ final class SetupPortalClient: ObservableObject {
             }
             try? await Task.sleep(for: .seconds(2))
         }
+        guard gen == generation else { return }
         phase = .failed("No verdict from the Canary in time. If it joined, it appears on the Fleet tab shortly; otherwise power it off and on and try again.")
     }
 
     /// Let the setup network go (done, abandoned, or the screen closed):
     /// the phone leaves it now, back to the home Wi-Fi, and forgets it.
     func finish() {
+        generation += 1
         stopReadyWatch()
         if let ssid = joinedSSID {
             NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
@@ -226,18 +276,36 @@ final class SetupPortalClient: ObservableObject {
     /// While the list is on screen, keep an eye on `/status`: a join that
     /// finished some other way — the Canary's own page in iOS's captive
     /// pop-up, another phone at the same Canary — ends here as `.done` too,
-    /// with `handedSSID` nil because this phone did not send it. Reading
-    /// `success` is also what lets the Canary take its setup network down,
-    /// so the phone is returned to the home Wi-Fi either way.
+    /// with `handedSSID` nil because this phone did not send it.
+    ///
+    /// Once a second, because the firmware holds the setup network only
+    /// 1.6 s after the FIRST client to read `success` (the page in the
+    /// pop-up acknowledges it too), so a slower beat would read success
+    /// only by luck. And a portal that stops answering is the other way
+    /// this ends: the network went away — after a success this client did
+    /// not catch, or because the Canary was unplugged — and the person is
+    /// told so, pointed at the watch-it-appear step, instead of kept over a
+    /// list that no longer has a Canary behind it. A `fail` read here is
+    /// someone else's wrong password, not this phone's: the list stays.
     private func watchWhileReady() async {
+        var silentPolls = 0
         while !Task.isCancelled, phase == .ready {
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled, phase == .ready else { return }
-            let state = await status()
-            if state == .success {
+            switch await status() {
+            case .success?:
                 phase = .done
                 finish()
                 return
+            case nil:
+                silentPolls += 1
+                if silentPolls >= Self.silentPollsBeforeGone {
+                    finish()
+                    phase = .failed(SetupPortal.portalGoneLine)
+                    return
+                }
+            default:
+                silentPolls = 0
             }
         }
     }
@@ -247,9 +315,9 @@ final class SetupPortalClient: ObservableObject {
     /// Poll `GET /scan` until the Canary stops answering "scanning" (it
     /// sweeps asynchronously, ~1-3 s) or the time runs out. Empty on any
     /// failure: the form then takes a typed name, as it always did.
-    private func scan(seconds: Int) async -> [SetupPortal.Network] {
+    private func scan(seconds: Int, gen: Int) async -> [SetupPortal.Network] {
         let deadline = Date().addingTimeInterval(TimeInterval(seconds))
-        while Date() < deadline {
+        while Date() < deadline, gen == generation {
             var request = URLRequest(url: SetupPortal.baseURL.appendingPathComponent("scan"))
             request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
             if let reply = try? await session.data(for: request),
@@ -261,9 +329,9 @@ final class SetupPortalClient: ObservableObject {
         return []
     }
 
-    private func waitForPortal(seconds: Int) async -> Bool {
+    private func waitForPortal(seconds: Int, gen: Int) async -> Bool {
         let deadline = Date().addingTimeInterval(TimeInterval(seconds))
-        while Date() < deadline {
+        while Date() < deadline, gen == generation {
             if await status() != nil { return true }
             try? await Task.sleep(for: .seconds(1))
         }

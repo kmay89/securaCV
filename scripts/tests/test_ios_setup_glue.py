@@ -219,15 +219,49 @@ class TheSetupNetworkIsLetGoByTheClientNeverByIOS(unittest.TestCase):
 
     def test_a_join_finished_elsewhere_is_noticed_while_the_person_decides(self):
         connect = self._body("connect")
-        self.assertIn("phase = .ready startReadyWatch()", connect, "the watch starts the moment the list is up")
+        self.assertIn("guard gen == generation else { return } networks = listed phase = .ready startReadyWatch()",
+                      connect, "the watch starts the moment the list is up — and only for a live connect")
         for name in ("hand", "finish"):
             self.assertIn("stopReadyWatch()", self._body(name), f"{name} ends the watch")
         watch = self._body("watchWhileReady")
-        self.assertIn("if state == .success", watch)
-        self.assertIn("phase = .done finish()", watch)
+        self.assertIn("case .success?: phase = .done finish() return", watch)
         hand = self._body("hand")
         self.assertIn("handedSSID = homeSSID", hand, "only a network this phone posted is named")
         self.assertNotIn("handedSSID = homeSSID", watch)
+
+    def test_the_watch_beats_the_firmwares_hold_and_names_a_vanished_portal(self):
+        # onboarding_fsm.h takes the setup network down ap_hold_after_ack_ms
+        # (1.6 s) after the FIRST client reads success — the page in iOS's
+        # pop-up counts — so the watch polls every second and treats a portal
+        # that stops answering as the end of the step, said in words.
+        watch = self._body("watchWhileReady")
+        self.assertIn("Task.sleep(for: .seconds(1))", watch)
+        self.assertNotIn(".seconds(3)", watch)
+        self.assertIn("case nil: silentPolls += 1 if silentPolls >= Self.silentPollsBeforeGone { finish() "
+                      "phase = .failed(SetupPortal.portalGoneLine) return }", watch)
+        self.assertIn("default: silentPolls = 0", watch, "one dropped answer is not the end")
+        self.assertRegex(flat(self.text), r"static let silentPollsBeforeGone = [2-5]\b")
+
+    def test_a_closed_screen_ends_every_step_in_flight(self):
+        # connect() and hand() are unstructured work the view cannot cancel;
+        # finish() moves the generation and each stops at its next await.
+        finish = self._body("finish")
+        self.assertTrue(finish.startswith("{ generation += 1 stopReadyWatch()"), finish[:60])
+        connect = self._body("connect")
+        self.assertIn("generation += 1 let gen = generation", connect)
+        self.assertGreaterEqual(connect.count("guard gen == generation else {"), 3,
+                                "after the iOS join, after the page answered, after the list")
+        # A join iOS finished after the screen closed is let go, not kept.
+        self.assertIn("guard gen == generation else { if outcome.isOn { "
+                      "NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: setupSSID) } return }", connect)
+        self.assertIn("waitForPortal(seconds: 25, gen: gen)", connect)
+        self.assertIn("scan(seconds: 10, gen: gen)", connect)
+        hand = self._body("hand")
+        self.assertIn("let gen = generation", hand)
+        self.assertGreaterEqual(hand.count("guard gen == generation else { return }"), 3,
+                                "after the post, after every status read, before the timeout verdict")
+        for name in ("scan", "waitForPortal"):
+            self.assertIn("while Date() < deadline, gen == generation {", self._body(name), name)
 
     def test_launch_forgets_what_an_earlier_run_left(self):
         sweep = self._body("forgetLingeringSetupNetworks")

@@ -478,7 +478,13 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
   what both ways out do (finish there, or Cancel → Use Without Internet),
   and the client watches `/status` while the person decides: a join finished
   in the pop-up lands here as done, its network unnamed and unremembered,
-  since this phone never sent it. iOS's own refusals — Cancel on its prompt,
+  since this phone never sent it. That watch beats once a second, because
+  both firmware portals take the setup network down 1.6 s after the FIRST
+  client to read `success` (the pop-up's page counts), and three polls
+  answered by nobody end the step in words that point at the
+  watch-it-appear step. Closing the screen ends every step still in flight
+  (`finish()` moves a generation that `connect` and `hand` check after each
+  await), so a dismissed walkthrough never comes back as a watcher. iOS's own refusals — Cancel on its prompt,
   a key outside 8–63 characters, the app not in front — are said in those
   words (`SetupPortal.HotspotJoinOutcome`), never as a bare
   `localizedDescription`. A brand-new WAP's fallback is its

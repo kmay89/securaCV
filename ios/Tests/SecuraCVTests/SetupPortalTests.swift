@@ -222,8 +222,15 @@ final class SetupPortalTests: XCTestCase {
         XCTAssertTrue(SetupPortal.captivePopupNote.contains("this screen notices"),
                       "the client watches /status meanwhile")
         XCTAssertTrue(SetupPortal.joinedElsewhereLine.contains("its own verdict"))
+        // The setup network goes down 1.6 s after the first client reads
+        // success (onboarding_fsm.h ap_hold_after_ack_ms), so a join finished
+        // in the pop-up can vanish between two polls: the line says where to
+        // look, and what to do if it was not a join at all.
+        XCTAssertTrue(SetupPortal.portalGoneLine.contains("Fleet tab"))
+        XCTAssertTrue(SetupPortal.portalGoneLine.contains("power it off and on"))
+        XCTAssertEqual(SetupPortalClient.silentPollsBeforeGone, 3)
         XCTAssertFalse(SetupPortal.joinedElsewhereLine.contains("\\("), "no network name to interpolate: it was never typed here")
-        for s in [SetupPortal.captivePopupNote, SetupPortal.joinedElsewhereLine] {
+        for s in [SetupPortal.captivePopupNote, SetupPortal.joinedElsewhereLine, SetupPortal.portalGoneLine] {
             XCTAssertTrue(s.hasSuffix("."), s)
         }
     }
