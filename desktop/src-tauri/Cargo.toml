@@ -54,7 +54,7 @@ sha2 = "0.11"
 # key, and the AEAD its token rides under. x25519-dalek 3 shares the
 # curve25519-dalek 5 already in the lock under ed25519-dalek 3.
 x25519-dalek = { version = "3", features = ["static_secrets"] }
-chacha20poly1305 = "0.10"
+chacha20poly1305 = "0.11"
 tempfile = "3"
 # Native serial-port enumeration — the whole point of going native: no
 # Web Serial, no Chromium. `serialport` talks to the OS directly.
