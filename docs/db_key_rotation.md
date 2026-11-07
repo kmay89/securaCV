@@ -206,8 +206,10 @@ After this the DB key is independent of the signing key — the prerequisite for
 ## Verifier CLIs
 
 `log_verify` / `export_verify` / `log_anchor` / `court_export` and
-`break_glass receipts` / `policy history` / `policy show` / `unseal` take the DB
-key directly via `--db-key` / `SECURACV_DB_KEY`. `break_glass db-key
+`break_glass receipts` / `policy history` / `policy show` take the DB key
+directly via `--db-key` / `SECURACV_DB_KEY` (`unseal` does not: redeeming a
+token appends a device-signed redemption receipt, so it needs the signing
+seed). `break_glass db-key
 --device-key-seed …` prints the key the kernel derives (honoring
 `SECURACV_DB_KEY_SEED` when set), which is how an operator hands a verifier
 the database key without the signing seed. Run on the device itself with

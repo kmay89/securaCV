@@ -126,8 +126,9 @@ impl BreakGlassOps for KernelVaultOps {
 
         // Burn-first (durable anti-replay): record the nonce in the
         // receipts DB before any cleartext exists, so this token — even if
-        // its file form leaks — can never authorize a second unseal.
-        self.kernel.consume_token_durably(&token)?;
+        // its file form leaks — can never authorize a second unseal. The
+        // signed redemption row lands in the same transaction.
+        self.kernel.redeem_token_durably(&token)?;
 
         // Unseal through the same kernel: device key + receipt lookup both come
         // from it, so no second connection is opened.

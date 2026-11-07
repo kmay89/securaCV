@@ -397,6 +397,8 @@ pub struct EnvelopeReport {
     pub sealed_events: u64,
     pub break_glass_granted: u64,
     pub break_glass_denied: u64,
+    /// `TokenRedeemed` rows: tokens actually spent at the unseal gate.
+    pub break_glass_redeemed: u64,
     pub export_receipts: u64,
     pub pq_checked: bool,
     pub warnings: Vec<String>,
@@ -557,6 +559,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         bg_head,
     )?;
     let (mut granted, mut denied) = (0u64, 0u64);
+    let mut redemptions = verify::RedemptionLedger::default();
     for (idx, entry) in envelope
         .ledgers
         .break_glass_receipts
@@ -582,8 +585,23 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         match receipt.outcome {
             crate::BreakGlassOutcome::Granted => granted += 1,
             crate::BreakGlassOutcome::Denied { .. } => denied += 1,
+            crate::BreakGlassOutcome::TokenRedeemed { .. } => {}
         }
+        // Chain-internal redemption rules (one redemption per nonce and per
+        // grant, restating the grant it redeems). The burn table is not part
+        // of an envelope, so the live-database reconciliation is not run here.
+        redemptions
+            .observe(&receipt, entry.entry_hash, &approvals)
+            .map_err(|e| {
+                chain_fail(
+                    "break_glass_receipts",
+                    idx,
+                    verify::FailureKind::TokenRedemption,
+                    format!("break-glass token redemption invalid: {}", e),
+                )
+            })?;
     }
+    let redeemed = redemptions.redeemed();
 
     // 6. Export receipts chain.
     let exp_iter = envelope.ledgers.export_receipts.entries.iter().map(|e| {
@@ -718,6 +736,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         sealed_events: envelope.ledgers.sealed_events.entries.len() as u64,
         break_glass_granted: granted,
         break_glass_denied: denied,
+        break_glass_redeemed: redeemed,
         export_receipts: envelope.ledgers.export_receipts.entries.len() as u64,
         pq_checked,
         warnings,

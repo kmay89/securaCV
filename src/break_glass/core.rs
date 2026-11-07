@@ -754,7 +754,21 @@ fn empty_approvals_commitment() -> [u8; 32] {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum BreakGlassOutcome {
     Granted,
-    Denied { reason: String },
+    Denied {
+        reason: String,
+    },
+    /// A granted token was redeemed: its nonce is burned, and the row that
+    /// says so is device-signed and hash-chained like every other receipt.
+    /// `nonce` is the token's nonce; `receipt_entry_hash` is the chain hash
+    /// of the `Granted` receipt the token was minted from. The unsigned
+    /// `consumed_break_glass_tokens` table still burns first, but a row
+    /// deleted from it no longer buys a replay: the gate also refuses any
+    /// nonce this chain already shows redeemed, and the verifier fails a
+    /// chain that redeems one nonce twice or burns a nonce without a row.
+    TokenRedeemed {
+        nonce: [u8; 32],
+        receipt_entry_hash: [u8; 32],
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -809,6 +823,79 @@ fn bucket_utc_label(bucket: TimeBucket) -> String {
 }
 
 impl BreakGlassReceipt {
+    /// The redemption row for `token`, built from the `Granted` receipt it
+    /// was minted from (`granted`, whose chain hash is `granted_entry_hash`).
+    /// Appended to the receipt chain at the unseal gate, after the nonce is
+    /// burned and before any cleartext exists. Refuses a receipt that is not
+    /// `Granted`, or a token that does not point at it: the row must restate
+    /// the grant it redeems, so an audit can re-join the two by hash alone.
+    ///
+    /// The row's `time_bucket` is the token's own bucket, which is the
+    /// grant's bucket (a token is only redeemable inside the bucket it was
+    /// minted in), so a redemption row stamped outside its grant's bucket is
+    /// a forgery, not history. It names no trustee and carries no approvals:
+    /// consent was given once, on the grant.
+    pub fn redemption_of(
+        granted: &BreakGlassReceipt,
+        granted_entry_hash: [u8; 32],
+        token: &BreakGlassToken,
+    ) -> Result<Self> {
+        if !matches!(granted.outcome, BreakGlassOutcome::Granted) {
+            return Err(anyhow!(
+                "cannot record a redemption of a receipt that is not Granted"
+            ));
+        }
+        if token.receipt_entry_hash() != granted_entry_hash {
+            return Err(anyhow!(
+                "token points at receipt {} but the redemption names receipt {}",
+                hex::encode(token.receipt_entry_hash()),
+                hex::encode(granted_entry_hash)
+            ));
+        }
+        if token.vault_envelope_id() != granted.vault_envelope_id
+            || token.ruleset_hash() != granted.ruleset_hash
+        {
+            return Err(anyhow!(
+                "token envelope/ruleset do not match the Granted receipt it points at"
+            ));
+        }
+        if token.token_nonce() == [0u8; 32] {
+            return Err(anyhow!("break-glass token nonce invalid"));
+        }
+        if token.expires_bucket() != granted.time_bucket {
+            return Err(anyhow!(
+                "token bucket is not the bucket its Granted receipt was issued in"
+            ));
+        }
+        Ok(Self {
+            vault_envelope_id: granted.vault_envelope_id.clone(),
+            request_hash: granted.request_hash,
+            ruleset_hash: granted.ruleset_hash,
+            time_bucket: token.expires_bucket(),
+            trustees_used: vec![],
+            approvals_commitment: empty_approvals_commitment(),
+            policy_commitment: granted.policy_commitment,
+            outcome: BreakGlassOutcome::TokenRedeemed {
+                nonce: token.token_nonce(),
+                receipt_entry_hash: granted_entry_hash,
+            },
+            purpose: None,
+            context: None,
+            request_bucket: None,
+        })
+    }
+
+    /// `(nonce, granted receipt hash)` when this row records a redemption.
+    pub fn redeemed_token(&self) -> Option<([u8; 32], [u8; 32])> {
+        match &self.outcome {
+            BreakGlassOutcome::TokenRedeemed {
+                nonce,
+                receipt_entry_hash,
+            } => Some((*nonce, *receipt_entry_hash)),
+            _ => None,
+        }
+    }
+
     /// §3.6 binding audit: when this receipt records its request's context
     /// (purpose + request bucket, optionally operator context), re-derive
     /// the request hash from those recorded fields and require it to equal
@@ -871,6 +958,15 @@ impl BreakGlassReceipt {
                 "  Outcome: DENIED at {} — {}\n",
                 bucket_utc_label(self.time_bucket),
                 display_safe(reason)
+            )),
+            BreakGlassOutcome::TokenRedeemed {
+                nonce,
+                receipt_entry_hash,
+            } => out.push_str(&format!(
+                "  Outcome: TOKEN REDEEMED at {} — nonce {} of grant {}\n",
+                bucket_utc_label(self.time_bucket),
+                hex::encode(nonce),
+                hex::encode(receipt_entry_hash)
             )),
         }
         match &self.context {
@@ -1286,6 +1382,12 @@ impl BreakGlass {
                 (Ok(token), receipt)
             }
             BreakGlassOutcome::Denied { reason } => (Err(anyhow!(reason)), receipt),
+            // `authorize` never builds a redemption outcome; the variant is
+            // written only by `Kernel::redeem_token_durably`.
+            BreakGlassOutcome::TokenRedeemed { .. } => (
+                Err(anyhow!("authorize cannot produce a redemption outcome")),
+                receipt,
+            ),
         }
     }
 
@@ -1321,6 +1423,9 @@ impl BreakGlass {
             BreakGlassOutcome::Denied { reason } => {
                 Err(anyhow!("break-glass receipt not granted: {}", reason))
             }
+            BreakGlassOutcome::TokenRedeemed { .. } => Err(anyhow!(
+                "break-glass token points at a redemption record, not a grant"
+            )),
         }
     }
 }
@@ -1380,6 +1485,100 @@ mod tests {
         // Same approvals inside the window still grant.
         let (result, _) = BreakGlass::authorize(&policy, &request, &[approval], opened);
         assert!(result.is_ok());
+    }
+
+    fn granted_fixture() -> (QuorumPolicy, BreakGlassReceipt, BreakGlassToken) {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:1", [1u8; 32], "incident", bucket).unwrap();
+        let signing_key = SigningKey::from_bytes(&[1u8; 32]);
+        let approval = Approval::new(
+            TrusteeId::new("alice"),
+            request.request_hash(),
+            sign_approval(&signing_key, &request.request_hash()).to_vec(),
+        );
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: signing_key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let (result, receipt) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        let mut token = result.unwrap();
+        let device_key = SigningKey::from_bytes(&[2u8; 32]);
+        token
+            .attach_receipt_signature([0xAAu8; 32], &device_key)
+            .unwrap();
+        (policy, receipt, token)
+    }
+
+    #[test]
+    fn redemption_row_restates_its_grant_and_refuses_the_wrong_one() {
+        let (policy, granted, token) = granted_fixture();
+        let row = BreakGlassReceipt::redemption_of(&granted, [0xAAu8; 32], &token).unwrap();
+        assert_eq!(
+            row.redeemed_token(),
+            Some((token.token_nonce(), [0xAAu8; 32]))
+        );
+        assert_eq!(row.vault_envelope_id, granted.vault_envelope_id);
+        assert_eq!(row.request_hash, granted.request_hash);
+        assert_eq!(row.ruleset_hash, granted.ruleset_hash);
+        assert_eq!(row.policy_commitment, granted.policy_commitment);
+        assert_eq!(row.time_bucket, token.expires_bucket());
+        assert!(row.trustees_used.is_empty());
+        assert_eq!(row.approvals_commitment, approvals_commitment(&[]));
+        assert!(row.purpose.is_none() && row.context.is_none() && row.request_bucket.is_none());
+        // It names nobody, so attribution holds with no approvals at all.
+        assert!(verify_trustee_attribution(&policy, &row, &[]).is_ok());
+        // The rendered record says what was spent and of which grant.
+        let human = row.render_human();
+        assert!(human.contains("TOKEN REDEEMED"), "{human}");
+        assert!(human.contains(&hex::encode(token.token_nonce())), "{human}");
+        // Serde round-trips the new variant like the other two.
+        let json = serde_json::to_string(&row).unwrap();
+        let back: BreakGlassReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.redeemed_token(), row.redeemed_token());
+
+        // The hash the token points at must be the grant's.
+        assert!(BreakGlassReceipt::redemption_of(&granted, [0xBBu8; 32], &token).is_err());
+        // A denial has no token to redeem.
+        let denied = BreakGlassReceipt {
+            outcome: BreakGlassOutcome::Denied {
+                reason: "no".to_string(),
+            },
+            ..granted.clone()
+        };
+        assert!(BreakGlassReceipt::redemption_of(&denied, [0xAAu8; 32], &token).is_err());
+        // Nor can a redemption row be redeemed again.
+        assert!(BreakGlassReceipt::redemption_of(&row, [0xAAu8; 32], &token).is_err());
+        // A token for another envelope does not redeem this grant.
+        let other = BreakGlassReceipt {
+            vault_envelope_id: "vault:2".to_string(),
+            ..granted.clone()
+        };
+        assert!(BreakGlassReceipt::redemption_of(&other, [0xAAu8; 32], &token).is_err());
+    }
+
+    #[test]
+    fn gate_refuses_a_token_whose_receipt_is_a_redemption_row() {
+        let (_policy, granted, token) = granted_fixture();
+        let device_key = SigningKey::from_bytes(&[2u8; 32]);
+        let row = BreakGlassReceipt::redemption_of(&granted, [0xAAu8; 32], &token).unwrap();
+        let err = BreakGlass::assert_token_valid(
+            &token,
+            "vault:1",
+            [1u8; 32],
+            token.expires_bucket(),
+            &device_key.verifying_key(),
+            |_| Ok(row.outcome.clone()),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("redemption record"), "{err}");
     }
 
     #[test]
