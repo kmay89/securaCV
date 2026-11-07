@@ -9,9 +9,10 @@ import { connect } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { timedFetch } from '../src/net.mjs';
+import { timedFetch, readCapped, readJsonCapped } from '../src/net.mjs';
 import { openDb } from '../src/db.mjs';
 import { createApp } from '../src/server.mjs';
+import { sessionFor } from '../src/auth.mjs';
 import { seedDemo } from '../src/modules/demo.mjs';
 import { testDb, testCfg } from './helpers.mjs';
 
@@ -93,17 +94,29 @@ test('trusted proxies decide whose X-Forwarded-For counts; a session on the API 
       assert.equal(JSON.parse(db.get("SELECT detail FROM audit_log WHERE action = 'auth.login.failed' ORDER BY id DESC LIMIT 1").detail).ip, '127.0.0.1');
     } finally { setTrustedProxies(cfg.trustedProxies); }
     const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email: 'o@errer.test', password: 'owner password 1234', code: totp(secret) }) });
-    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf;
+    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = sessionFor(db, cookie.split('=')[1]).csrf;
     const order = { email: 'x@example.test', name: 'X', subtotal_cents: 100, shipping_cents: 0, tax_cents: 0, total_cents: 100, items: [{ sku: 'wap-kit', qty: 1, unit_cents: 100 }], ship: { line1: '1', city: 'B', state: 'MA', zip: '02134', country: 'US' } };
     const bare = await fetch(base + '/api/orders', { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(order) });
     assert.equal(bare.status, 403); assert.match((await bare.json()).error, /session CSRF token/);
     assert.equal((await fetch(base + '/api/orders', { method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf': csrf }, body: JSON.stringify(order) })).status, 201, 'the X-CSRF header');
     assert.equal((await fetch(base + '/api/orders', { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ ...order, _csrf: csrf, allow_duplicate: true }) })).status, 201, 'or _csrf in the body');
     assert.equal((await fetch(base + '/api/orders', { headers: { cookie } })).status, 200, 'a read needs none');
-    for (const url of ['http://127.0.0.1:9/', 'http://localhost/x', 'http://10.0.0.5/', 'http://169.254.169.254/latest/meta-data/', 'http://[::1]/', 'http://backoffice.internal/', 'http://100.64.0.1/']) {
+    for (const url of ['http://127.0.0.1:9/', 'http://localhost/x', 'http://10.0.0.5/', 'http://169.254.169.254/latest/meta-data/', 'http://[::1]/', 'http://backoffice.internal/', 'http://100.64.0.1/', 'http://[::ffff:127.0.0.1]/', 'http://[::ffff:169.254.169.254]/latest/meta-data/', 'http://[::]/', 'http://[64:ff9b::a9fe:a9fe]/', 'http://[fc00::1]/', 'http://[fd12:3456::1]/', 'http://[fe80::1]/', 'http://[2002:7f00:1::1]/', 'http://0x7f.1/', 'http://2130706433/']) {
       const p = await fetch(base + '/status-admin/probe', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: form({ _csrf: csrf, name: 'x', url }) });
       assert.equal(p.status, 400, url); assert.match((await p.json()).error, /public address/);
     }
     assert.equal(db.get('SELECT COUNT(*) AS n FROM probes').n, 0);
   } finally { await app.close(); }
+});
+
+test('readCapped abandons a body past its budget and reads a short one whole; a stand-in response without a stream is read as is', async () => {
+  const srv = createServer((req, res) => { res.writeHead(200, { 'content-type': req.url === '/json' ? 'application/json' : 'text/plain' }); if (req.url === '/json') return res.end('{"ok":true}'); if (req.url === '/small') return res.end('small body'); let n = 0; const push = () => { while (n < 4 * 1024 * 1024) { n += 65536; if (!res.write('y'.repeat(65536))) return res.once('drain', push); } res.end(); }; push(); });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r)); const base = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    assert.equal(await readCapped(await fetch(base + '/small')), 'small body');
+    await assert.rejects(readCapped(await fetch(base + '/big'), 1024 * 1024), /over 1048576 bytes/);
+    await assert.rejects(readCapped(await fetch(base + '/big')), /over 2097152 bytes/, 'two mebibytes by default');
+    assert.deepEqual(await readJsonCapped(await fetch(base + '/json')), { ok: true });
+    assert.equal(await readCapped({ text: async () => 'faked' }), 'faked'); assert.deepEqual(await readJsonCapped({ json: async () => ({ a: 1 }) }), { a: 1 });
+  } finally { srv.close(); }
 });

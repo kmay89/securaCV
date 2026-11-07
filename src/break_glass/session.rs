@@ -12,7 +12,6 @@
 //! are unit-tested in isolation; the HTTP layer is a thin wrapper over this.
 
 use crate::TimeBucket;
-use ed25519_dalek::VerifyingKey;
 
 use super::core::{verify_approval, Approval, QuorumPolicy, UnlockRequest};
 
@@ -74,10 +73,22 @@ struct Pending {
     approvals: Vec<Approval>,
 }
 
+/// How many redeemed request hashes a session remembers. A request hash
+/// binds a 10-minute bucket, so a handful covers every replay window that
+/// is still open; the list is bounded against a caller who opens and
+/// unseals in a loop.
+const REDEEMED_REMEMBERED: usize = 64;
+
 /// Holds at most one open request and its collected approvals.
 #[derive(Default)]
 pub struct BreakGlassSession {
     pending: Option<Pending>,
+    /// Request hashes already unsealed in this process. The hash covers the
+    /// envelope, purpose, ruleset and *bucket* but no nonce, so inside one
+    /// bucket the same request re-opens to the same hash — and the
+    /// approvals a trustee signed for the first ceremony would verify for a
+    /// second. One ceremony, one consent: an unsealed hash does not reopen.
+    redeemed: std::collections::VecDeque<[u8; 32]>,
 }
 
 impl BreakGlassSession {
@@ -90,16 +101,40 @@ impl BreakGlassSession {
         self.pending.is_some()
     }
 
+    /// True once `request_hash` was unsealed in this process: the approvals
+    /// collected for it must not authorize a second unseal.
+    pub fn was_redeemed(&self, request_hash: &[u8; 32]) -> bool {
+        self.redeemed.contains(request_hash)
+    }
+
+    /// Record that the open request was unsealed, then close it. The hash
+    /// stays refused by [`BreakGlassSession::open`] for the life of the
+    /// process (bounded memory: the oldest is forgotten past
+    /// `REDEEMED_REMEMBERED`, long after its bucket closed).
+    pub fn redeem(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            if self.redeemed.len() >= REDEEMED_REMEMBERED {
+                self.redeemed.pop_front();
+            }
+            self.redeemed.push_back(pending.request_hash);
+        }
+    }
+
     /// Open a new request, discarding any previous pending request and its
-    /// collected approvals. Returns the request hash trustees must sign.
-    pub fn open(&mut self, request: UnlockRequest) -> [u8; 32] {
+    /// collected approvals. Returns the request hash trustees must sign, or
+    /// `None` when that hash was already unsealed in this process (the
+    /// caller answers "already redeemed"; nothing is opened).
+    pub fn open(&mut self, request: UnlockRequest) -> Option<[u8; 32]> {
         let request_hash = request.request_hash();
+        if self.was_redeemed(&request_hash) {
+            return None;
+        }
         self.pending = Some(Pending {
             request,
             request_hash,
             approvals: Vec::new(),
         });
-        request_hash
+        Some(request_hash)
     }
 
     /// Discard the open request and wipe collected approvals.
@@ -130,7 +165,7 @@ impl BreakGlassSession {
             .find(|t| t.id.0 == approval.trustee.0)
             .ok_or(ApprovalRejection::UnknownTrustee)?;
         // Surface an unusable trustee key distinctly from a bad signature.
-        VerifyingKey::from_bytes(&trustee.public_key)
+        crate::crypto::signatures::verifying_key_strict(&trustee.public_key)
             .map_err(|_| ApprovalRejection::InvalidTrusteeKey)?;
         // Domain-separated: a bare-hash or cross-context signature is rejected.
         if !verify_approval(
@@ -243,7 +278,7 @@ mod tests {
         let policy = policy_with(&[("alice", &alice), ("bob", &bob)], 2);
         let mut session = BreakGlassSession::new();
         let req = UnlockRequest::new("vault:1", [3u8; 32], "incident", bucket()).unwrap();
-        let rh = session.open(req);
+        let rh = session.open(req).expect("fresh request opens");
 
         assert!(!session.status(&policy).unwrap().ready);
         assert_eq!(session.submit(&policy, sign(&alice, "alice", rh)), Ok(true));
@@ -263,7 +298,9 @@ mod tests {
         let mallory = SigningKey::from_bytes(&[7u8; 32]);
         let policy = policy_with(&[("alice", &alice)], 1);
         let mut session = BreakGlassSession::new();
-        let rh = session.open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap());
+        let rh = session
+            .open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap())
+            .expect("fresh request opens");
 
         // Unknown trustee id.
         assert_eq!(
@@ -298,7 +335,9 @@ mod tests {
         let alice = SigningKey::from_bytes(&[1u8; 32]);
         let policy = policy_with(&[("alice", &alice)], 1);
         let mut session = BreakGlassSession::new();
-        let rh = session.open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap());
+        let rh = session
+            .open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap())
+            .expect("fresh request opens");
         assert_eq!(session.submit(&policy, sign(&alice, "alice", rh)), Ok(true));
         // Same trustee again → replaces, not a second count.
         assert_eq!(
@@ -314,12 +353,32 @@ mod tests {
         let alice = SigningKey::from_bytes(&[1u8; 32]);
         let policy = policy_with(&[("alice", &alice)], 1);
         let mut session = BreakGlassSession::new();
-        let rh = session.open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap());
+        let rh = session
+            .open(UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap())
+            .expect("fresh request opens");
         session.submit(&policy, sign(&alice, "alice", rh)).unwrap();
         assert!(session.is_open());
         session.close();
         assert!(!session.is_open());
         assert!(session.status(&policy).is_none());
         assert!(session.approvals().is_empty());
+    }
+    #[test]
+    fn a_redeemed_request_does_not_reopen_inside_its_bucket() {
+        let alice = SigningKey::from_bytes(&[1u8; 32]);
+        let bob = SigningKey::from_bytes(&[2u8; 32]);
+        let policy = policy_with(&[("alice", &alice), ("bob", &bob)], 2);
+        let mut session = BreakGlassSession::new();
+        let req = UnlockRequest::new("vault:1", [3u8; 32], "x", bucket()).unwrap();
+        let rh = session.open(req.clone()).expect("fresh request opens");
+        assert_eq!(session.submit(&policy, sign(&alice, "alice", rh)), Ok(true));
+        assert_eq!(session.submit(&policy, sign(&bob, "bob", rh)), Ok(true));
+        session.redeem();
+        assert!(!session.is_open());
+        assert!(session.was_redeemed(&rh));
+        assert_eq!(session.open(req), None, "same hash, same bucket: refused");
+        assert!(!session.is_open());
+        let other = UnlockRequest::new("vault:2", [3u8; 32], "x", bucket()).unwrap();
+        assert!(session.open(other).is_some(), "a different request opens");
     }
 }

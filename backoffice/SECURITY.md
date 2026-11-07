@@ -18,7 +18,9 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   chooses their own password and scans their own authenticator, and the
   account opens only when a code from it has been seen. The invitation can
   be handed over any way the owner trusts (and is mailed when a relay is
-  configured); it carries no secret of its own.
+  configured); it carries no secret of its own. The link is shown once, in
+  the answer to the click that made it, never in a URL; the token is stored
+  as its SHA-256, so a copy of the table opens no invitation.
 - **Roles, checked on every request.** `owner` (everything, including
   people, tokens, settings, the books and forgetting a customer), `ops`
   (runs the shop; not people, tokens, settings or the books), `support`
@@ -26,7 +28,10 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   (reads, changes nothing). The rule lives in one function (`can()` in
   `auth.mjs`), by path and method, and the pipeline applies it before any
   handler runs — the sidebar hides what a role cannot open, but hiding is
-  never the enforcement. A role change or a disable applies to the person's
+  never the enforcement. The API answers to the same rule as the page it
+  mirrors: `/api/users` is the owner's as `/users` is, `/api/exceptions` is
+  ops' as `/exceptions` is, and running a backup through the API is a job
+  (owner) while reading the list of backups is not. A role change or a disable applies to the person's
   live sessions at once. The last active owner cannot be demoted, disabled
   or removed. API tokens are owner-made and not bound to a role; their
   scope is the limit.
@@ -38,7 +43,11 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   failures against one person *from one address* and that pair waits, the
   right password included. A stranger guessing from anywhere cannot keep
   the owner out of their own backoffice: the person's own browser still
-  gets in. The lock lives in memory (a restart clears it); the users table
+  gets in. An "address" is a v4 address, or a v6 /64 — the allocation one
+  subscriber holds, so nobody walks a /64's 2^64 addresses past an
+  eight-try lock; the limiter and the scanner watch count by the same
+  unit. The lock lives in memory (a restart clears it; a flood that fills
+  the table sheds its oldest entries, never every entry); the users table
   keeps the count and the time as a record, so the People page can say
   "locked out". Every attempt, locked or not, is in the audit log with its
   address; the Health page counts the last 24 hours and names anyone locked
@@ -59,29 +68,38 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   screenshot is one login, not two. The step after is accepted as usual.
 - **Sessions.** A random 256-bit id in an `HttpOnly; SameSite=Lax`
   cookie (`Secure` when the base URL is https), 12 hours absolute, a new id
-  on every login, deleted on logout. A CSRF token per session rides in every
+  on every login, deleted on logout; the row holds the id's SHA-256, so a
+  copy of the table is no session. A CSRF token per session rides in every
   form; a POST whose browser says it came from another site
   (`Sec-Fetch-Site` other than `same-origin` or `none`) is refused before
-  the body is read. A session cookie on an `/api` write needs the same
+  the body is read — the login forms included, so no other site can sign
+  a browser in as someone else. A session cookie on an `/api` write needs the same
   token (an `x-csrf` header or `_csrf` in the body); only a bearer token
   writes to the API without one.
 - **Which address is "the address".** The limiter, the lockout and the
   audit log use the peer's address unless the peer is a trusted proxy, in
-  which case the last `X-Forwarded-For` hop it appended is used.
-  `TRUSTED_PROXIES` names the trusted peers (`loopback,private` by default:
-  Caddy on the same box or network; add a CIDR or an address, or set it
-  empty when nothing sits in front). A forged header from the open internet
-  never moves the count onto somebody else.
+  which case `X-Forwarded-For` is read from the right: the last hop is the
+  one that proxy appended, a hop that is itself a trusted proxy (Caddy
+  behind a load balancer) is skipped, and the first that is not is the
+  client; whatever the client wrote into the header itself sits to the left
+  of that and is never reached. If every hop is trusted, the peer is the
+  client. `TRUSTED_PROXIES` names the trusted peers (`loopback,private` by
+  default: Caddy on the same box or network; add a CIDR or an address, or
+  set it empty when nothing sits in front). A forged header from the open
+  internet never moves the count onto somebody else.
 - **API tokens.** `bo_<id>.<secret>`; the secret is scrypt-hashed (N=2^12:
   256 random bits need less stretching than a phrase), so a copy of the
   table verifies nothing. A token can be read-only (`--read-only`,
   or the Scope choice on Settings): GET only, for a dashboard or a monitor.
   Revocation is immediate.
 - **Rotation.** Each person changes their own password on *Your account*
-  (the current one is required) and sets up a new authenticator there; the
-  old authenticator keeps working until a code from the new one is seen,
-  so a half-finished switch locks nobody out. *Log out everywhere else*
-  ends their other sessions. The Health page warns when the oldest owner
+  (the current one is required) and sets up a new authenticator there: the
+  password again to begin, then a code from the old authenticator and one
+  from the new to confirm, so a stolen session alone cannot swap the second
+  factor for a thief's; the old authenticator keeps working until that
+  confirmation, so a half-finished switch locks nobody out. Each step is
+  in the audit log with its address. *Log out everywhere else* ends their
+  other sessions, for the password again. The Health page warns when the oldest owner
   password is a year old.
 - **A sign-in link, in place of the password.** With a mail relay, the
   login page offers "Email me a sign-in link". The link stands in for the
@@ -91,8 +109,11 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   mailbox on another device opens nothing (a 404, the same as an expired or
   a used one). The token and the nonce are stored as SHA-256 hashes. The
   answer to a request is the same whether the address is a person here or
-  not, so there is nothing to enumerate; a wrong code on the link counts
-  like a wrong password, against the same locks.
+  not, and so is the database work behind it, so there is nothing to
+  enumerate by the answer or by the clock (the mail queued for a known
+  address is the one difference left); a wrong code on the link counts
+  like a wrong password, against the same locks. An email typed at the door
+  is scrubbed and capped at 254 characters before it is written down.
 - **The watch.** Every sign-in from a network (a /24, a /48) the person has
   not used in thirty days mails the person ("log out everywhere else, change
   your password, tell an owner" if it was not them) and pushes to the phone,
@@ -130,11 +151,36 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   (it is logged, the client gets a generic line).
 - The public surface is small and rate-limited per address: the Stripe
   webhook (signature + timestamp tolerance + idempotency on event id), the
-  website forms (honeypot + 30/min per IP + 5 per 10 min per email, and one
-  acknowledgement per address per hour so the forms cannot be turned on a
-  third party's inbox), the status page, confirm/unsubscribe links (random
-  144-bit tokens), invoice and order links (HMAC of the number, compared in
-  constant time).
+  website forms (honeypot + 30/min per IP + 5 per 10 min per email), the
+  store's checkout (30/min per IP and 5 per 10 min per email), the status
+  page, confirm/unsubscribe links (random 144-bit tokens), invoice and order
+  links (HMAC of the number, compared in constant time). Nothing public can
+  be turned on a third party's inbox: a contact form earns one
+  acknowledgement per address per hour, with a fixed subject and no name
+  echoed from the form; the newsletter and waitlist forms earn one
+  confirmation mail per address per hour, and the token in it is not
+  replaced meanwhile; an abandoned checkout is written to once per session
+  and once per address per day, and only when the address is already a
+  contact here (the address on an expired session is whatever was typed on
+  Stripe's page, by whoever opened the cart). A confirm or unsubscribe link
+  opens a page that asks; the button on it (a POST) is what acts, so a link
+  scanner or a mail preview confirms and unsubscribes nobody (the RFC 8058
+  one-click unsubscribe is a POST already). The thanks page's session lookup
+  returns the order number, its lines and its dates — never the signed
+  order link, which only the confirmation mail carries.
+- Inbound mail is outsider input twice over. A body is read up to 20 000
+  characters before anything scans it, HTML is walked once, and a multipart
+  nested past ten levels is kept as text, so a crafted mail costs
+  milliseconds, not minutes or the stack. A bounce suppresses an address only
+  when the notification names a mail *we* sent (our Message-ID in its
+  headers or body) and only the address that mail went to, a few per
+  notification at most; a postmaster writing "every address bounced"
+  suppresses nobody. A reply threads onto a ticket only by its token or by
+  one of our own Message-IDs, never by an id the sender chose earlier, and a
+  reply from any address other than the ticket's contact is filed as a
+  flagged note, not as the customer's word. Each fetched message is filed on
+  its own: one the parser cannot read is an exception naming its subject,
+  and the rest of the batch still lands.
 - What Stripe sends in the wrong order is refused, not lost: a refund whose
   order is not here yet (the session's own event failed or is still on the
   way) is a 400, Stripe retries it for three days, and the retry applies once
@@ -207,12 +253,16 @@ A breach you cannot see is the one that costs you. Three things make one
 visible here, and each is a mechanism, not a promise:
 
 - **The audit log is a chain.** Every row carries `prev` (the mark of the
-  row before it, or `genesis`) and `mac`, an HMAC-SHA256 over the row's
-  fields and `prev`, under a key that lives *outside* the database:
-  `audit.key` beside it (written on first open, mode 0600) or
-  `BACKOFFICE_AUDIT_KEY`. A row changed after the fact fails its mark; a row
-  removed breaks the next row's `prev`; a row slipped in without a mark, or a
-  second `genesis`, is named. `backoffice verify` walks the whole log and
+  row before it, or `genesis`) and `mac`, an HMAC-SHA256 over the row's id,
+  its fields and `prev` (as one JSON array, so no field can be read as two),
+  under a key that lives *outside* the database: `audit.key` beside it
+  (written on first open, mode 0600) or `BACKOFFICE_AUDIT_KEY`. A row
+  changed after the fact fails its mark; a row removed breaks the next
+  row's `prev`; a row moved to another id, slipped in without a mark, given
+  an id below 1 (the app never writes one), or a second `genesis`, is
+  named. Rows marked before migration 016 (without the id, the fields joined on a
+  separator) still verify under that older form; the two forms cannot be
+  mistaken for each other, so accepting both weakens nothing. `backoffice verify` walks the whole log and
   exits 1 on a break; the `verify` job does it daily, raises an exception and
   pushes to the phone. The database's own `app:secret` is deliberately not the
   key: anyone who can write the file can read that. Rows from before 0.8.0
@@ -268,6 +318,14 @@ anchor, an intruder cannot touch without the anchor saying so.
   never holds a readable database.
 - Secrets live in the environment, never in the database or the audit log;
   the Settings page shows which are set, not what they are.
+- Forgetting a person reaches every column their address was written into:
+  the contact, their orders' addresses and notes, tickets, attachments,
+  waitlist rows, outbox mail, the carts they opened, invoices billed to them,
+  warranty stories, and the address inside an order's timeline or an
+  exception's text (replaced, the rest kept). The audit chain is immutable by
+  design, so nothing writes an address into it or into a timeline in the
+  first place: a bounce, a recovery mail and a shipping notice are recorded
+  by contact id, session id or order number.
 - Shipping is guarded against the mistakes that put a wrong box in the mail:
   a tracking number is normalized and may sit on one order only; the
   fulfill CSV lists paid and packed orders whatever filter the link named;
@@ -306,7 +364,9 @@ anchor, an intruder cannot touch without the anchor saying so.
   connection that opens and sends nothing is dropped after 15 seconds, a
   request is given a minute, and every outbound call (Stripe, SMTP, IMAP,
   S3, GitHub, a probe) is abandoned after 20 seconds (two minutes for a
-  backup upload), so one dead peer never pins the scheduler.
+  backup upload), so one dead peer never pins the scheduler. A body read from
+  another server (a probe's page, the catalog, a Stripe or Shippo answer) is
+  abandoned past 2 MiB, so a peer that streams forever fills no memory.
 - **Two outbound calls the operator chooses.** Shippo (`SHIPPO_API_TOKEN`)
   receives one order's shipping address and parcel when the ship bench buys
   its label — the same call the website's `fulfill.mjs` makes. An ntfy topic
@@ -315,7 +375,16 @@ anchor, an intruder cannot touch without the anchor saying so.
   staging and the demo, and both are named on the Health page.
 - **An outbound probe to the inside.** The Health page's "probe a URL" is
   refused for loopback, link-local and private addresses and for
-  metadata hosts, so it cannot be turned on the box or its network.
+  metadata hosts — in v4 and in every v6 spelling of them (mapped, NAT64,
+  6to4, ULA, link-local, `::`, `::1`), by one parser (`isPrivateAddress`
+  in `net.mjs`) — so it cannot be turned on the box or its network. The
+  same check runs again at every probe, not only when it was saved: the name
+  is resolved then and there, and if any address it resolves to is one of
+  those, nothing is sent. A redirect is the probe's result, never followed.
+  What this does not cover: a resolver that answers one address to the
+  check and another to the connection a moment later (the two lookups are
+  not pinned to each other), so the box should not sit on a network where
+  that address is worth reaching.
 - **A malicious reviewer.** Nobody outside this repository has audited the
   code. The tests pin every control above; read them before trusting it
   with real orders, and send findings to the support address.

@@ -5115,6 +5115,68 @@
   legs of "WAP guard self-tests".
 - **Date learned:** 2026-10
 
+## Peer protocol: a replay window is a window, and the address is outside the tag
+
+### "Uptime fell" is not a reboot: it is any captured early-boot frame
+- **What happened:** `peer_protocol.h`'s replay rule took a frame whose
+  `uptime_s` was below the row's as a reboot and reset the row's counter to
+  it, and every accepted frame re-pointed the row's address to the socket's
+  source. The tag covers the frame, not the address. Any LAN host that had
+  captured one early heartbeat of a peer could send it to the multicast
+  group whenever it liked: the window reopened, and the coordinator-bound
+  unicast events of `peer_link.cpp` went to the sender. `docs/TRUST_MODEL.md`
+  said a captured heartbeat could not be replayed.
+- **Root cause:** a monotone counter is a replay window only while the
+  receiver can tell a restart from a replay of the first frames after one.
+  Uptime cannot: the replayed frame's uptime is low because it was captured
+  low. Nothing in the frame was per-boot.
+- **Fix:** the header's reserved byte carries a random per-boot `boot_id`
+  (0 on older senders); a row tracks the boot it is in and the one before,
+  each with its last counter; a frame must advance one of them. A claimed
+  new boot is taken only from its first 8 frames and 120 s, once per 30 s
+  per peer, and provisionally (presence only) until its second in-order
+  frame confirms it; the address is taken only from a frame that advanced a
+  counter the row already held. What still does not hold is written down in
+  `TRUST_MODEL.md` §3 (a captured pair the receiver never saw; a forgotten
+  row; a sender without a `boot_id`): a window is a window, say so.
+- **Regression check:** `tests_host/test_peer_protocol.cpp`,
+  `a_captured_frame_is_not_a_reboot` (the keyed and the fallback rules, the
+  provisional sighting, the address never moved by a replay).
+- **Date learned:** 2026-11
+
+### A gate that is "the bearer or a session" is a session gate
+- **What happened:** every Beacon route, the origination and cosign among
+  them, sat behind `api_auth_check()`, which the landing-page session any
+  LAN host can mint satisfies; and the trampoline let a null token through
+  (`if (tok && !check)`). With two WAPs on one LAN, a session on each was a
+  genuinely dual-signed life-safety ALERT with no human at either device,
+  every invariant of the two-pubkey rule honored.
+- **Root cause:** the invariants bind the signers, not the caller; the REST
+  caller is bound by the gate alone, and the gate was the weakest one.
+- **Fix:** every Beacon `POST` takes `bcn_bearer_gated` (the bearer alone,
+  as the Bluetooth and mesh pair confirms do); both gates refuse a null
+  token. `test_beacon_cancel_origination.cpp` pins the registrations and the
+  gate bodies in the source, since `api_auth.h` is not host-buildable.
+- **Regression check:** `test_source_writes_take_the_bearer` there.
+- **Date learned:** 2026-11
+
+### A signed v1 manifest is a signed way to drop the board binding
+- **What happened:** `securacv_ota_board_ok()` returned true for any
+  `manifest_version != 2`, and nothing remembered that a device had ever
+  taken a v2 manifest. A release server (or a mirror replaying an old,
+  validly signed v1 manifest under the right product id) could offer an
+  image for another board of the same product without the binding the v2
+  format was added for.
+- **Root cause:** one monotonic floor (the version) and none for the
+  format; the board rule read the version field instead of the fields.
+- **Fix:** a second NVS floor (`man_floor`), raised to 2 the moment a signed
+  v2 manifest verifies (a format floor, so an image rollback cannot strand
+  the device), and `securacv_ota_manifest_version_ok()` refuses v1 past it
+  (`SECURACV_OTA_ERR_MANIFEST_DOWNGRADE`); `securacv_ota_board_ok()` now holds
+  a manifest to every field it names whatever its version.
+- **Regression check:** `common/ota/test_ota_logic.cpp`
+  (`test_manifest_v2_message_and_rules`).
+
 ### A signature on one topic does not cover the next topic over
 
 - **What happened:** The kernel's fleet roll-call (`src/fleet_peers.rs`)

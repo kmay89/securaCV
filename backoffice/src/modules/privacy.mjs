@@ -22,6 +22,13 @@ export function forgetContact(db, idOrEmail, { actor = 'web' } = {}) {
     out.mails = db.run('UPDATE mail_outbox SET to_addr = ?, body_text = \'(forgotten)\', subject = \'(forgotten)\' WHERE to_addr = ? OR contact_id = ?', ghost, c.email, c.id).changes;
     out.waitlist = db.run('DELETE FROM waitlist WHERE contact_id = ?', c.id).changes;
     db.run('DELETE FROM automation_runs WHERE contact_id = ? AND sent_at IS NULL', c.id);
+    // The address written elsewhere than its own column: the carts they opened, the invoices billed to them, a
+    // warranty story, an order's timeline and an exception's text (replaced inside the text, the rest kept).
+    out.checkouts = db.run('UPDATE checkout_sessions SET email = NULL WHERE lower(email) = lower(?)', c.email).changes;
+    out.invoices = db.run("UPDATE invoices SET bill_to = '(forgotten)', po_number = NULL WHERE contact_id = ?", c.id).changes;
+    out.claims = db.run("UPDATE warranty_claims SET description = '(forgotten at the customer''s request)' WHERE contact_id = ? OR order_id IN (SELECT id FROM orders WHERE contact_id = ?)", c.id, c.id).changes;
+    db.run("UPDATE order_events SET text = replace(text, ?, '[forgotten]') WHERE order_id IN (SELECT id FROM orders WHERE contact_id = ?) AND instr(text, ?) > 0", c.email, c.id, c.email);
+    db.run("UPDATE exceptions SET title = replace(title, ?, '[forgotten]'), body = replace(body, ?, '[forgotten]') WHERE instr(title, ?) > 0 OR instr(body, ?) > 0", c.email, c.email, c.email, c.email);
     db.audit(actor, 'contact.forget', 'contact', c.id, out);
     return out;
   });
@@ -32,5 +39,10 @@ export function exportContact(db, idOrEmail) {
   if (!c) throw new Error('no such contact');
   const orders = db.all('SELECT * FROM orders WHERE contact_id = ?', c.id).map(o => ({ ...o, items: db.all('SELECT sku, name, qty, unit_cents FROM order_items WHERE order_id = ?', o.id), events: db.all('SELECT at, kind, text FROM order_events WHERE order_id = ? ORDER BY id', o.id) }));
   const tickets = db.all('SELECT * FROM tickets WHERE contact_id = ?', c.id).map(t => ({ ...t, messages: db.all('SELECT direction, created_at, body FROM ticket_messages WHERE ticket_id = ? ORDER BY id', t.id) }));
-  return { exported_at: nowIso(), contact: { ...c, consent_token: undefined, unsubscribe_token: undefined }, orders, tickets, waitlist: db.all('SELECT sku, qty, created_at, notified_at FROM waitlist WHERE contact_id = ?', c.id), mail: db.all('SELECT created_at, subject, kind, status FROM mail_outbox WHERE contact_id = ? OR to_addr = ? ORDER BY id', c.id, c.email), consent_history: db.all('SELECT at, action FROM audit_log WHERE entity = \'contact\' AND entity_id = ? ORDER BY id', String(c.id)) };
+  return { exported_at: nowIso(), contact: { ...c, consent_token: undefined, unsubscribe_token: undefined }, orders, tickets, waitlist: db.all('SELECT sku, qty, created_at, notified_at FROM waitlist WHERE contact_id = ?', c.id), mail: db.all('SELECT created_at, subject, kind, status FROM mail_outbox WHERE contact_id = ? OR to_addr = ? ORDER BY id', c.id, c.email), consent_history: db.all('SELECT at, action FROM audit_log WHERE entity = \'contact\' AND entity_id = ? ORDER BY id', String(c.id)),
+    // the same rows a forget blanks
+    checkouts: db.all('SELECT id, created_at, status, amount_cents, lines, email FROM checkout_sessions WHERE lower(email) = lower(?) ORDER BY created_at', c.email),
+    invoices: db.all('SELECT number, status, bill_to, po_number, total_cents, created_at FROM invoices WHERE contact_id = ? ORDER BY id', c.id),
+    warranty_claims: db.all('SELECT number, category, description, status, created_at FROM warranty_claims WHERE contact_id = ? OR order_id IN (SELECT id FROM orders WHERE contact_id = ?) ORDER BY id', c.id, c.id),
+    exceptions: db.all('SELECT key, title, body, opened_at FROM exceptions WHERE instr(title, ?) > 0 OR instr(body, ?) > 0 ORDER BY opened_at', c.email, c.email) };
 }

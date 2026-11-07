@@ -8,7 +8,7 @@
 // machine: a stand-in label with a synthetic tracking number, printable from /orders/:id/label.
 import { orderById, transition, addressIssues, packPlanOf } from './orders.mjs';
 import { packOrder, weightCheck } from './packing.mjs';
-import { timedFetch } from '../net.mjs';
+import { timedFetch, readJsonCapped } from '../net.mjs';
 
 // shipping.json names a service in words; Shippo wants its token.
 export const SERVICE_TOKENS = { 'usps ground advantage': 'usps_ground_advantage', 'ground advantage': 'usps_ground_advantage', 'usps priority': 'usps_priority', 'usps priority mail': 'usps_priority', 'priority mail': 'usps_priority', 'usps priority mail express': 'usps_priority_express', 'usps first class': 'usps_first' };
@@ -51,13 +51,13 @@ export async function shippoBuy(shipment, token, { fetchImpl = timedFetch, base 
   const { service, ...body } = shipment;
   const sRes = await fetchImpl(`${base}/shipments/`, { method: 'POST', headers: H, body: JSON.stringify(body) });
   if (!sRes.ok) throw new Error(`Shippo refused the shipment (HTTP ${sRes.status})`);
-  const s = await sRes.json();
+  const s = await readJsonCapped(sRes);
   const bad = (s.messages || []).filter(m => /error/i.test(m.source || '') || /invalid|not found|unable/i.test(m.text || ''));
   const rate = (s.rates || []).find(r => r.servicelevel?.token === service) || (s.rates || [])[0];
   if (!rate) throw new Error(`Shippo returned no rate for this shipment${bad.length ? `: ${bad.map(m => m.text).join('; ')}` : ''}`);
   const tRes = await fetchImpl(`${base}/transactions/`, { method: 'POST', headers: H, body: JSON.stringify({ rate: rate.object_id, label_file_type: 'PDF_4x6', async: false }) });
   if (!tRes.ok) throw new Error(`Shippo refused the label (HTTP ${tRes.status})`);
-  const t = await tRes.json();
+  const t = await readJsonCapped(tRes);
   if (t.status !== 'SUCCESS') throw new Error(`Shippo label ${t.status || 'failed'}: ${(t.messages || []).map(m => m.text).join('; ') || 'no reason given'}`);
   return { tracking: t.tracking_number, label_url: t.label_url, amount_cents: Math.round(Number(rate.amount || 0) * 100), service: rate.servicelevel?.name || service, provider: 'shippo' };
 }

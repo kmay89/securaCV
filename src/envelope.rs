@@ -449,7 +449,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     // exports its retained history), so the acceptable-signer set is the
     // lineage reconstructed from the envelope's own KeyRotation records,
     // anchored at the provenance key (see envelope_key_lineage).
-    ed25519_dalek::VerifyingKey::from_bytes(&envelope.provenance.device_public_key)
+    crate::crypto::signatures::verifying_key_strict(&envelope.provenance.device_public_key)
         .map_err(|e| anyhow!("invalid device public key: {}", e))?;
     let pq_key = parse_pq_key(envelope.provenance.pq_public_key.as_deref());
     let (lineage_keys, sealed_row_key) = envelope_key_lineage(
@@ -658,7 +658,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     // unsigned whole-envelope digest. Strict here; only the ledger walks
     // accept historical signers.
     let provenance_key =
-        ed25519_dalek::VerifyingKey::from_bytes(&envelope.provenance.device_public_key)
+        crate::crypto::signatures::verifying_key_strict(&envelope.provenance.device_public_key)
             .map_err(|e| anyhow!("invalid device public key: {}", e))?;
     verify_entry_signature(
         &provenance_key,
@@ -901,9 +901,9 @@ fn envelope_key_lineage(
         if rot.new != current {
             continue;
         }
-        let new_key = ed25519_dalek::VerifyingKey::from_bytes(&rot.new)
+        let new_key = crate::crypto::signatures::verifying_key_strict(&rot.new)
             .map_err(|e| anyhow!("key rotation at row {}: invalid new key: {}", rot.row, e))?;
-        let prev_key = ed25519_dalek::VerifyingKey::from_bytes(&rot.prev)
+        let prev_key = crate::crypto::signatures::verifying_key_strict(&rot.prev)
             .map_err(|e| anyhow!("key rotation at row {}: invalid prev key: {}", rot.row, e))?;
         crate::crypto::signatures::verify_rotation_attestation(
             &new_key,
@@ -944,7 +944,7 @@ fn envelope_key_lineage(
     let keys = keys_rev
         .iter()
         .map(|k| {
-            ed25519_dalek::VerifyingKey::from_bytes(k)
+            crate::crypto::signatures::verifying_key_strict(k)
                 .map_err(|e| anyhow!("invalid lineage key: {}", e))
         })
         .collect::<Result<Vec<_>>>()?;

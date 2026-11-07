@@ -132,6 +132,12 @@ jobs:
         NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
         PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node viewer/build.mjs --check
+    - name: Built viewer page tests (its CSP, and hostile bundle fields render as text)
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads-viewer
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+      run: node --test viewer/evidence_viewer.test.js
     - name: HA timeline card helper tests
       env:
         PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads-viewer

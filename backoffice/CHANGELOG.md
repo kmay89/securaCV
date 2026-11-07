@@ -55,6 +55,24 @@ the package version, so neither moves without the other.
   an `Expires` inside a year, the canonical URL, the site's policy page. A
   404 until `SUPPORT_ADDR` is set; a customer-facing path for
   `ADMIN_ALLOW_CIDRS`.
+- **The door, reviewed.** Behind a trusted proxy the client's address is
+  the last `X-Forwarded-For` hop that proxy appended (read from the right,
+  trusted hops skipped), never the first hop the client wrote. The limiter,
+  the lockout and the scanner watch count a v6 address by its /64 and shed
+  their oldest entries instead of forgetting everything at once. Setting
+  up a new authenticator asks for the password, confirming it for a code
+  from the old one and the new; "log out everywhere else" asks for the
+  password; each step is audited with its address. Session ids and
+  invitation tokens are stored hashed (migration 016 ends the sessions and
+  open invitations from before), and an invitation link is shown once in
+  the answer to the click, never in a URL. The login forms refuse a
+  cross-site browser like every other POST. The audit mark now covers the
+  row's id and is JSON-encoded, the verifier walks from the lowest id and
+  names one below 1, and old marks still verify. The probe's "inside" test
+  reads every v6 spelling of a private address (`isPrivateAddress`,
+  `net.mjs`). `/api/users` and `health/external` are the owner's,
+  `/api/exceptions` is ops', running a backup through the API is the
+  owner's. `tests/perimeter.test.mjs`.
 
 ## 0.8.0
 

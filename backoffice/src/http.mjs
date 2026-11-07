@@ -3,6 +3,8 @@
 // HTML escaping. No framework — the whole thing is readable in one sitting.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
+import { limiterKey, trimMap } from './guard.mjs';
 
 // The one script the admin ships: on a phone, scroll the current section's link into view in the
 // top strip. Inline, so it needs no second request — and allowed by hash, so the policy stays
@@ -63,22 +65,25 @@ export function parseBody(raw, contentType = '') {
   return { _raw: raw.toString('utf8') };
 }
 
-// --- a lockout: after N failures in the window the key is refused until it clears (login).
+const live = (map, k, now, windowMs) => { const arr = (map.get(k) || []).filter(t => now - t < windowMs); map.delete(k); if (arr.length) map.set(k, arr); return arr; };
+const spent = (windowMs, now) => (arr) => !arr.length || now - arr[arr.length - 1] >= windowMs;
+
+// --- a lockout: after N failures in the window the key is refused until it clears (login). An address is
+// counted by limiterKey (a v6 address as its /64).
 export class Lockout {
   constructor({ limit = 8, windowMs = 15 * 60_000 } = {}) { this.limit = limit; this.windowMs = windowMs; this.fails = new Map(); }
-  locked(key, now = Date.now()) { const arr = (this.fails.get(key) || []).filter(t => now - t < this.windowMs); this.fails.set(key, arr); return arr.length >= this.limit; }
-  fail(key, now = Date.now()) { const arr = (this.fails.get(key) || []).filter(t => now - t < this.windowMs); arr.push(now); this.fails.set(key, arr); if (this.fails.size > 10_000) this.fails.clear(); return arr.length; }
-  clear(key) { this.fails.delete(key); }
+  locked(key, now = Date.now()) { return live(this.fails, limiterKey(key), now, this.windowMs).length >= this.limit; }
+  fail(key, now = Date.now()) { const k = limiterKey(key); const arr = live(this.fails, k, now, this.windowMs); arr.push(now); this.fails.set(k, arr); trimMap(this.fails, { stale: spent(this.windowMs, now) }); return arr.length; }
+  clear(key) { this.fails.delete(limiterKey(key)); }
 }
 
-// --- rate limiter: a sliding window per key, in memory. Public endpoints only.
+// --- rate limiter: a sliding window per key, in memory. Public endpoints only. The same unit per address.
 export class RateLimiter {
   constructor({ limit = 20, windowMs = 60_000 } = {}) { this.limit = limit; this.windowMs = windowMs; this.hits = new Map(); }
   allow(key, now = Date.now()) {
-    const arr = (this.hits.get(key) || []).filter(t => now - t < this.windowMs);
-    if (arr.length >= this.limit) { this.hits.set(key, arr); return false; }
-    arr.push(now); this.hits.set(key, arr);
-    if (this.hits.size > 10_000) this.hits.clear(); // never grow without bound
+    const k = limiterKey(key); const arr = live(this.hits, k, now, this.windowMs);
+    if (arr.length >= this.limit) return false;
+    arr.push(now); this.hits.set(k, arr); trimMap(this.hits, { stale: spent(this.windowMs, now) });
     return true;
   }
 }
@@ -161,9 +166,24 @@ export function isTrustedProxy(peer, list = TRUSTED) {
   }
   return false;
 }
+// The address a request is judged by. Behind a trusted proxy, X-Forwarded-For is read from the RIGHT: the last
+// hop is the one that proxy appended; a hop that is itself a trusted proxy (Caddy behind a load balancer) is
+// skipped; the first hop that is not is the client. Whatever the client put in the header itself sits to the
+// left of what the proxy appended and is never reached. If every hop is trusted, the peer is the client.
 export function clientIp(req) {
   const peer = req.socket?.remoteAddress || '';
   const fwd = req.headers['x-forwarded-for'];
-  if (fwd && isTrustedProxy(peer)) return String(fwd).split(',')[0].trim() || peer;
+  if (!fwd || !isTrustedProxy(peer)) return peer;
+  const hops = String(fwd).split(',').map(forwardedHop).filter(Boolean);
+  for (let i = hops.length - 1; i >= 0; i--) if (!isTrustedProxy(hops[i])) return hops[i];
   return peer;
 }
+// One hop as a proxy writes it: trimmed, a bracketed v6 unbracketed, a zone id dropped, a port dropped from a
+// v4. What is not an address is not a hop.
+const forwardedHop = (s) => {
+  let h = String(s).trim();
+  const b = /^\[([^\]]+)\](?::\d+)?$/.exec(h); if (b) h = b[1];
+  const zone = h.indexOf('%'); if (zone >= 0) h = h.slice(0, zone);
+  const p = /^(\d+\.\d+\.\d+\.\d+):\d+$/.exec(h); if (p) h = p[1];
+  return isIP(h) ? h : null;
+};

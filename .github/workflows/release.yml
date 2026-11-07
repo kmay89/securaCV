@@ -96,6 +96,18 @@ jobs:
           if [ ! -s release_notes.md ]; then
             echo "Release ${VERSION}" > release_notes.md
           fi
+      # The installer (scripts/install.sh) provisions from a source archive of
+      # the tagged tree. GitHub's generated tarballs are not byte-stable and
+      # carry no checksum, so the release publishes its own, made from the
+      # tag's commit with `git archive` (the same bytes for the same commit),
+      # and the checksum file and the attestation below cover it: the
+      # installer verifies that line before it extracts anything.
+      - name: Package the source archive
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/source
+          git archive --format=tar.gz --prefix="securacv-${GITHUB_REF_NAME}/" \
+            -o "artifacts/source/securacv-source-${GITHUB_REF_NAME}.tar.gz" "$GITHUB_SHA"
       # The trust-critical verifier binaries (log_verify, export_verify, …) ship
       # here with no integrity artifact of their own — unlike the firmware
       # release, which publishes sha256sums.txt and a provenance attestation.

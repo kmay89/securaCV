@@ -297,6 +297,23 @@ fi
 export WITNESS_API_ALLOW_INSECURE=1
 API_BIND_ADDR="0.0.0.0:8799"
 
+# The fleet roll-call, GET /api/fleet, takes no token, so the kernel's own
+# default is its own row (`self`). The Witness Wall needs every Canary's
+# row: the `fleet_rollcall` option opts into `full`. witness_api (frigate
+# mode) and witnessd (standalone) read the same WITNESS_API_FLEET_ROLLCALL.
+FLEET_ROLLCALL="self"
+if bashio::config.has_value 'fleet_rollcall'; then
+    FLEET_ROLLCALL=$(bashio::config 'fleet_rollcall')
+fi
+case "$FLEET_ROLLCALL" in
+    self|full) ;;
+    *)
+        bashio::log.warning "fleet_rollcall='${FLEET_ROLLCALL}' is neither self nor full; serving this kernel's own row only."
+        FLEET_ROLLCALL="self"
+        ;;
+esac
+export WITNESS_API_FLEET_ROLLCALL="$FLEET_ROLLCALL"
+
 # The Supervisor-internal hostname the discovery payload and the MQTT
 # announce carry (contract C1/C6). Not a LAN address.
 ADDON_HOST=$(bashio::addon.hostname 2>/dev/null || hostname)
@@ -664,7 +681,7 @@ fi
     declare -p MODE DEVICE_ID ADDON_HOST TOKEN_FILE PUBLISH_PREFIX \
         MQTT_PUBLISH_ENABLED INSTALL_INTEGRATION
     declare -p DEVICE_KEY_SEED WITNESS_CONFIG WITNESS_VAULT_PATH RUST_LOG \
-        WITNESS_API_ALLOW_INSECURE
+        WITNESS_API_ALLOW_INSECURE WITNESS_API_FLEET_ROLLCALL
     declare -p PUBLISHER_CMD_ARRAY PUBLISHER_MQTT_PASSWORD
     declare -p FRIGATE_CMD_ARRAY FRIGATE_MQTT_PASSWORD
 } > "$SETUP_FILE"

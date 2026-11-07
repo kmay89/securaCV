@@ -97,7 +97,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 
 /// The summary file's schema tag. A file with any other tag is ignored by the
@@ -950,10 +950,10 @@ pub fn verify_chain_signature(
     let Ok(sig): Result<[u8; 64], _> = sig.try_into() else {
         return false;
     };
-    let Ok(key) = VerifyingKey::from_bytes(pinned) else {
+    let Ok(key) = crate::crypto::signatures::verifying_key_strict(pinned) else {
         return false;
     };
-    key.verify(canonical.as_bytes(), &Signature::from_bytes(&sig))
+    key.verify_strict(canonical.as_bytes(), &Signature::from_bytes(&sig))
         .is_ok()
 }
 
@@ -1032,10 +1032,10 @@ pub fn verify_state_signature(
     let Ok(sig): Result<[u8; 64], _> = sig.try_into() else {
         return false;
     };
-    let Ok(key) = VerifyingKey::from_bytes(pinned) else {
+    let Ok(key) = crate::crypto::signatures::verifying_key_strict(pinned) else {
         return false;
     };
-    key.verify(canonical.as_bytes(), &Signature::from_bytes(&sig))
+    key.verify_strict(canonical.as_bytes(), &Signature::from_bytes(&sig))
         .is_ok()
 }
 

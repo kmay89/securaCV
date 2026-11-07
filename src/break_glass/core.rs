@@ -84,7 +84,7 @@ impl QuorumPolicy {
             if !uniq.insert(t.id.0.clone()) {
                 return Err(anyhow!("duplicate trustee id: {}", t.id.0));
             }
-            VerifyingKey::from_bytes(&t.public_key)
+            crate::crypto::signatures::verifying_key_strict(&t.public_key)
                 .map_err(|_| anyhow!("invalid public key for trustee {}", t.id.0))?;
             // Reject a key reused across trustee slots: without this, one
             // key-holder counts as several distinct trustees and can satisfy
@@ -528,7 +528,7 @@ pub fn sign_approval(signing_key: &SigningKey, request_hash: &[u8; 32]) -> [u8; 
 /// signature that verifies under any domain other than
 /// `DOMAIN_TRUSTEE_APPROVAL` (cross-context signatures are rejected).
 pub fn verify_approval(public_key: &[u8; 32], request_hash: &[u8; 32], signature: &[u8]) -> bool {
-    let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) else {
+    let Ok(verifying_key) = crate::crypto::signatures::verifying_key_strict(public_key) else {
         return false;
     };
     let Ok(sig_array) = <[u8; 64]>::try_from(signature) else {
@@ -679,7 +679,7 @@ pub fn verify_policy_change_approval(
     change_hash: &[u8; 32],
     signature: &[u8],
 ) -> bool {
-    let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) else {
+    let Ok(verifying_key) = crate::crypto::signatures::verifying_key_strict(public_key) else {
         return false;
     };
     let Ok(sig_array) = <[u8; 64]>::try_from(signature) else {

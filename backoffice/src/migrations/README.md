@@ -24,6 +24,13 @@ before it (below). `tests/migrations.test.mjs` holds every rule on this page.
    why each file runs exactly once and is recorded.
 5. **Data moves are migrations too**, and they are written as `UPDATE … WHERE
    <column> IS NULL` so a re-run after a crash changes nothing.
+6. **A migration may end what the code can no longer read, and says so.**
+   `016_hashed_ids.sql` is the one so far: when session ids and invitation
+   tokens became stored hashes, the clear rows from before were closed
+   (every session ended, every open invitation expired) instead of left to
+   look live. The cost is one sign-in per person and a "new link" per open
+   invitation; the file's header says exactly that, and the pre-migrate copy
+   holds the rows.
 
 ## What the app does around them
 

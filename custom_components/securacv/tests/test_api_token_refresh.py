@@ -14,6 +14,8 @@ Kernel HTTP mode alive across rotations:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
@@ -30,8 +32,8 @@ class _FakeResponse:
         self.status = status
         self._payload = payload
 
-    async def json(self):
-        return self._payload
+    async def read(self):
+        return b"" if self._payload is None else json.dumps(self._payload).encode()
 
     async def __aenter__(self):
         return self

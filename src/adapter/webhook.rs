@@ -53,8 +53,15 @@ impl<T: Read + Write> ReadWrite for T {}
 /// Converts an accepted `TcpStream` into a served stream (identity for plaintext, a TLS handshake
 /// wrapper when TLS is enabled). Run in the worker, not the accept loop, so handshakes don't block
 /// `accept`.
-type StreamWrap =
-    Arc<dyn Fn(TcpStream) -> std::io::Result<Box<dyn ReadWrite + Send>> + Send + Sync>;
+/// Absolute wall-clock budget for one webhook connection, handshake through
+/// response. The per-op `READ_TIMEOUT` alone let a sender that drips a byte
+/// every few seconds hold a worker forever (sixteen such connections held
+/// the whole pool); the budget ends the connection whatever it is doing.
+const CONNECTION_BUDGET: Duration = Duration::from_secs(30);
+
+type StreamWrap = Arc<
+    dyn Fn(crate::api::DeadlineStream) -> std::io::Result<Box<dyn ReadWrite + Send>> + Send + Sync,
+>;
 
 /// Identity wrap: serve the TCP stream directly (no TLS).
 fn plain_wrap() -> StreamWrap {
@@ -475,15 +482,9 @@ fn run_pool(
                 Err(_) => break, // listener dropped the sender
             };
             // Bound reads, writes, and the TLS handshake on the underlying socket so a client that
-            // stalls mid-read or refuses to read the response cannot tie up a worker forever.
-            if let Err(e) = tcp.set_read_timeout(Some(READ_TIMEOUT)) {
-                log::debug!("webhook set_read_timeout failed: {e}");
-                continue;
-            }
-            if let Err(e) = tcp.set_write_timeout(Some(READ_TIMEOUT)) {
-                log::debug!("webhook set_write_timeout failed: {e}");
-                continue;
-            }
+            // stalls mid-read or refuses to read the response cannot tie up a worker forever —
+            // per operation AND for the connection as a whole (`DeadlineStream`).
+            let tcp = crate::api::DeadlineStream::new(tcp, CONNECTION_BUDGET, READ_TIMEOUT);
             match wrap(tcp) {
                 Ok(stream) => {
                     if let Err(e) = handle_connection(stream, &shared) {
@@ -704,7 +705,7 @@ pub mod tls {
             buckets: Mutex::new(HashMap::new()),
             seen_nonces: Mutex::new(HashMap::new()),
         });
-        let wrap: StreamWrap = Arc::new(move |tcp: TcpStream| {
+        let wrap: StreamWrap = Arc::new(move |tcp: crate::api::DeadlineStream| {
             let conn = rustls::ServerConnection::new(Arc::clone(&config))
                 .map_err(std::io::Error::other)?;
             Ok(Box::new(rustls::StreamOwned::new(conn, tcp)) as Box<dyn ReadWrite + Send>)

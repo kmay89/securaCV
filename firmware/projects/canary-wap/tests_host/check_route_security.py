@@ -168,6 +168,10 @@ PUBLIC_ALLOWLIST = {
     # Device identity is deliberately public (pubkey + fingerprint).
     ("GET", "/api/device/enroll"): "public device identity (pubkey/fingerprint)",
     ("GET", "/enroll"): "human-readable enroll page for the same data",
+    ("GET", "/api/device/seal"): "the sealed bearer's handshake (api_seal.h): the public "
+        "identity card, a fresh ephemeral X25519 key and the identity key's signature over "
+        "them; no secret is read or answered (the token it later carries is opened by "
+        "api_auth.h's gates, under the lockout)",
     ("GET", "/api/device-info"): "non-sensitive metadata; advertises auth_required",
     # Wizard pre-credential surface: the SoftAP password is the boundary.
     ("GET", "/api/wifi"): "wizard status poll before any token exists (documented)",
@@ -420,7 +424,9 @@ MODULE_TOKEN_COPIES = {
                      "decl": ("const char* (*s_api_token_provider)() = nullptr;",),
                      "read": ("handle_config_get", "handle_config_post", "handle_test")},
     "audible_chirp_api.h": _gated_module("auth_gated"),
-    "beacon_api.h": _gated_module("bcn_auth_gated"),
+    # bcn_bearer_gated: every Beacon write (the POSTs), the bearer alone —
+    # a session on each of two WAPs was a dual-signed ALERT no human sent.
+    "beacon_api.h": _gated_module("bcn_auth_gated", "bcn_bearer_gated"),
     # bt_bearer_gated: the bond's confirm, the bearer alone (F346); the
     # status route reads the copy only to ask the bearer gate whether a
     # Passkey Entry's digits may ride.

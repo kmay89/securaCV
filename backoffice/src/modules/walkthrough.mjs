@@ -157,7 +157,8 @@ export const STEPS = [
       const j = await r.json().catch(() => ({})); const before = db.get('SELECT consent_marketing FROM contacts WHERE email = ?', FIRST.email)?.consent_marketing;
       const mail = db.get("SELECT subject, body_text FROM mail_outbox WHERE to_addr = ? AND body_text LIKE '%/confirm/%' ORDER BY id DESC LIMIT 1", FIRST.email);
       const link = (mail?.body_text || '').match(/https?:\/\/\S+\/confirm\/[A-Za-z0-9_-]+/)?.[0] || '';
-      const clicked = link ? await fetch(link.replace(ctx.cfg.baseUrl, base)) : null; const after = db.get('SELECT consent_marketing, consent_at FROM contacts WHERE email = ?', FIRST.email);
+      // the link opens a page that asks (a scanner's GET confirms nobody); the button on it is the POST that confirms
+      const opened = link ? await fetch(link.replace(ctx.cfg.baseUrl, base)) : null; const clicked = opened?.status === 200 ? await fetch(link.replace(ctx.cfg.baseUrl, base), { method: 'POST' }) : opened; const after = db.get('SELECT consent_marketing, consent_at FROM contacts WHERE email = ?', FIRST.email);
       return { facts: { form: `${r.status} ${j.newsletter || ''}`, confirmation_mail: mail?.subject || '(none)', link_clicked: clicked ? clicked.status : 'no link', consent: after?.consent_marketing ? `confirmed ${after.consent_at}` : 'not confirmed' }, links: [['The customer', `/customers?q=${encodeURIComponent(FIRST.email)}`], ['Mail', '/mail']],
         checks: [check('the form was accepted', r.status < 300, String(r.status)), check('a confirmation mail is queued with a link', !!link), check('no consent until the click', before === 0), check('the click confirms consent', after?.consent_marketing === 1), check('the consent is audited', !!db.get("SELECT 1 FROM audit_log WHERE action = 'contact.consent'"))] };
     } },

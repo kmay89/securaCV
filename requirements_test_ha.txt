@@ -1,4 +1,6 @@
 # The real-Home-Assistant test lane (tests/ha): the CURRENT cell.
+# Pinned by version, not by `--hash`, for the reason requirements_test.txt
+# gives (one line pins a whole core release's tree; hashes would churn it).
 # pytest-homeassistant-custom-component pins the Home Assistant release it was
 # cut for (and pytest, pytest-asyncio, syrupy, freezegun, aiohttp...), so this
 # one line decides which core the lane runs on. The floor cell — the release

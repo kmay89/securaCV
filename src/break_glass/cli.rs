@@ -1793,7 +1793,7 @@ fn cmd_rekey_db(
         (None, None) => match crate::crypto::find_device_seed(db_path, None)? {
             Some(found) => {
                 eprintln!("current database key derived from the {}", found.source);
-                DbKeySource::Seed(found.seed)
+                DbKeySource::Seed(found.seed.to_string())
             }
             None => DbKeySource::None,
         },
@@ -1835,7 +1835,9 @@ fn cmd_rotate_identity(
             None => {
                 let from_file = match seed_file {
                     Some(path) => crypto::read_device_seed_file(std::path::Path::new(path))?,
-                    None => crypto::find_device_seed(db_path, None)?.map(|found| found.seed),
+                    None => {
+                        crypto::find_device_seed(db_path, None)?.map(|found| found.seed.to_string())
+                    }
                 };
                 zeroize::Zeroizing::new(from_file.ok_or_else(|| {
                     anyhow!(
@@ -1861,15 +1863,17 @@ fn cmd_rotate_identity(
 
     // The successor, validated the way the kernel validates a seed (placeholder
     // and length rules) before anything is written — including a re-key.
-    let successor = zeroize::Zeroizing::new(if generate {
+    let successor = if generate {
         crypto::generate_device_seed()
     } else {
-        new_seed
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow!("pass --generate or --new-seed"))?
-            .to_string()
-    });
+        zeroize::Zeroizing::new(
+            new_seed
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("pass --generate or --new-seed"))?
+                .to_string(),
+        )
+    };
     let successor_public = crate::signing_key_from_seed(&successor)
         .map_err(|err| anyhow!("successor seed rejected: {err}"))?
         .verifying_key();
@@ -2238,7 +2242,7 @@ fn cmd_doctor(db_path: &str, vault_path: &str, device_key_seed: &str) -> Result<
                 );
                 let mut bad_keys = 0usize;
                 for t in &policy.trustees {
-                    if VerifyingKey::from_bytes(&t.public_key).is_ok() {
+                    if crate::crypto::signatures::verifying_key_strict(&t.public_key).is_ok() {
                         println!("    · {}  {}", t.id.0, short_fp(&t.public_key));
                     } else {
                         println!(
@@ -2825,7 +2829,8 @@ fn cmd_trustee_enroll(
             }
             let mut pk = [0u8; 32];
             pk.copy_from_slice(&bytes);
-            VerifyingKey::from_bytes(&pk).map_err(|_| anyhow!("not a valid Ed25519 public key"))?;
+            crate::crypto::signatures::verifying_key_strict(&pk)
+                .map_err(|_| anyhow!("not a valid Ed25519 public key"))?;
             pk
         }
         (false, None) => {
@@ -3299,7 +3304,8 @@ fn verifying_key_from_hex(hex_str: &str) -> Result<VerifyingKey> {
         ));
     }
     key_bytes.copy_from_slice(&bytes);
-    VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid public key bytes: {}", e))
+    crate::crypto::signatures::verifying_key_strict(&key_bytes)
+        .map_err(|e| anyhow!("invalid public key bytes: {}", e))
 }
 
 fn parse_trustee_entry(entry: &str) -> Result<crate::break_glass::TrusteeEntry> {

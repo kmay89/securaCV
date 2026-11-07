@@ -69,6 +69,14 @@ configuration:
       How often the kernel re-walks its own sealed log and reports the
       result (0 disables). The SecuraCV integration verifies the chain on
       its own schedule as well; this keeps the kernel's self-report fresh.
+  fleet_rollcall:
+    name: Fleet roll-call (GET /api/fleet)
+    description: >-
+      What the roll-call the Apple TV Witness Wall reads serves. "self"
+      (the default) is this kernel's own row; "full" adds every Canary the
+      publisher has heard, with its coarse per-room wellbeing words. The
+      Wall needs "full", and it is an opt-in because that route takes no
+      token: anything that can reach port 8799 reads the same answer.
   install_integration:
     name: Let the app install the SecuraCV integration
     description: >-

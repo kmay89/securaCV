@@ -18,7 +18,7 @@ import { createDiscount, evaluate } from '../src/modules/discounts.mjs';
 import { reconcile } from '../src/modules/reconcile.mjs';
 import { backup } from '../src/modules/backup.mjs';
 import { openDb } from '../src/db.mjs';
-import { setupOperator, totp } from '../src/auth.mjs';
+import { setupOperator, totp, sessionFor } from '../src/auth.mjs';
 import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../bin/backoffice.mjs', import.meta.url));
@@ -113,7 +113,7 @@ test('packing is one order at a time: the bulk menu refuses it, and a pack from 
   try {
     const secret = setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'O' });
     const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ email: 'o@errer.test', password: 'owner password 1234', code: totp(secret) }) });
-    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf;
+    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = sessionFor(db, cookie.split('=')[1]).csrf;
     const { order } = recordOrder(db, sampleOrder(), { catalog: catalog() });
     const bulk = await fetch(base + '/orders/bulk', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ _csrf: csrf, 'ids[]': String(order.id), action: 'packed' }) });
     assert.equal(bulk.status, 400); assert.match((await bulk.json()).error, /one at a time at the Pack bench/);

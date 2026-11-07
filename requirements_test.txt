@@ -3,6 +3,12 @@
 # custom_components/securacv/manifest.json (currently none beyond HA core).
 #
 # Install:  pip install -r requirements_test.txt
+#
+# Pinned by version, not by `--hash`: every pin here moves on its own
+# schedule (cryptography and ruff in particular), and a hash per wheel per
+# platform churns the file on each bump for packages installed only into
+# CI's throwaway interpreter. Revisit if a test dependency ever ships into a
+# user's install.
 cryptography==50.0.2   # tests/test_signature.py + signature.py Ed25519 verify
 pytest==9.2.0
 PyYAML==6.0.3          # tests/test_quality_scale.py reads quality_scale.yaml (the HA lane pins the same)

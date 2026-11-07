@@ -7,7 +7,7 @@ import { recordOrder } from '../src/modules/orders.mjs';
 import { openTicket, reply } from '../src/modules/support.mjs';
 import { raise as raiseException } from '../src/modules/exceptions.mjs';
 import { createApp } from '../src/server.mjs';
-import { setupOperator, totp } from '../src/auth.mjs';
+import { setupOperator, totp, sessionFor } from '../src/auth.mjs';
 import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
 
 const H = 3600000, D = 86400000;
@@ -92,7 +92,7 @@ test('every page wears the same marks: a sidebar badge, the home focus strip, th
     const orders = await get('/orders');
     assert.ok(orders.includes('<tr class="now">') && orders.includes('waiting 6 d') && orders.includes('1 order is past the day it was promised to ship'), 'the late line and the row');
     // answering it clears the badge on the very next page (a write forgets the memo)
-    const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf;
+    const csrf = sessionFor(db, cookie.split('=')[1]).csrf;
     await fetch(base + `/tickets/${t.id}/reply`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ _csrf: csrf, body: 'On its way.' }).toString() });
     assert.ok(!/<span>Support<\/span> <span class="b now"/.test(await get('/tickets')), 'the red count on Support is gone (the Pack bench keeps its own)');
     assert.ok(!(await fetch(base + '/login')).ok || !(await (await fetch(base + '/login')).text()).includes('class="b '), 'a page without a person shows no badges');

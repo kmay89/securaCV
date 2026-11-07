@@ -83,11 +83,28 @@ fleet_key = HKDF-SHA256(salt = "securacv:fleet-key:v1",
   flow, and that flow is future work (`PARITY.md` marks hub-driven rotation
   ⚠️). Until then a household rotates the way it always could: change the
   Wi-Fi password, and every node re-derives on its next join.
-- **Replay.** Each frame carries the sender's boot-relative uptime and a
-  per-boot sequence number; a receiver accepts a frame only when the sequence
-  advances, or when the sender's uptime fell (it rebooted). A captured
-  heartbeat cannot be replayed later, and a captured event cannot be
-  re-injected.
+- **Replay.** Each frame carries the sender's boot-relative uptime, a
+  per-boot sequence number and a random per-boot `boot_id` (one byte, drawn
+  at boot; 0 on firmware that predates it). A receiver keeps, per peer, the
+  boot it tracks and the boot before it, each with the last counter heard,
+  and accepts a frame only when it advances one of those counters (same
+  `boot_id`, higher `seq`). A frame that claims a boot the row does not know
+  is taken only from that boot's first 8 frames and first 120 s, at most once
+  per 30 s per peer, and provisionally: it moves presence only, until a
+  second in-order frame of that boot confirms it. The source address is not
+  under the tag, so it is taken only from a frame that advanced a counter the
+  row already held, never from a first sight or a provisional one
+  (`peer_protocol.h`, REPLAY; `test_peer_protocol.cpp`). What this holds: a
+  frame this receiver has seen is never accepted again while it still holds
+  the sender's row, in either of the two boots it knows, and no single
+  captured frame re-points where the sender's unicast goes. What it does
+  not: a captured *pair* of a boot's first frames that this receiver never
+  saw (it was off, or not yet paired, when they were sent) confirms that
+  boot and re-points the address until the live peer's next frame takes the
+  row back; a row forgotten after 35 s of silence starts over at the next
+  frame's counters; and a sender without a `boot_id` is held to the old
+  rule (its counter must advance), under which an earlier boot's frame with
+  a higher counter passes. Replay resistance is a window, not a proof.
 - **What the key does not do.** It does not identify a node (the fingerprint
   in the frame is self-asserted, like the beacon's), does not encrypt (every
   payload is the ObjectClass vocabulary and coarse state, by Invariant II/III

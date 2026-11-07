@@ -4,7 +4,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub mod signatures;
 
@@ -37,20 +37,22 @@ impl fmt::Display for SeedSource {
 /// `KernelConfig` takes; `source` is what a daemon may log.
 #[derive(Clone, Debug)]
 pub struct ResolvedSeed {
-    pub seed: String,
+    /// Zeroized when dropped; copy it with `to_string()` only into a
+    /// holder that zeroizes too (`KernelConfig` does).
+    pub seed: Zeroizing<String>,
     pub source: SeedSource,
 }
 
 /// Mint a fresh device seed from the OS RNG: `devkey:` + 64 hex chars (32 bytes
 /// of entropy), the format `witnessd` has always generated on first start.
-pub fn generate_device_seed() -> String {
+pub fn generate_device_seed() -> Zeroizing<String> {
     let mut seed_bytes = [0u8; 32];
     rand::rngs::SysRng
         .try_fill_bytes(&mut seed_bytes[..])
         .expect("OS RNG unavailable");
-    let seed_hex = hex::encode(seed_bytes);
+    let seed_hex = Zeroizing::new(hex::encode(seed_bytes));
     seed_bytes.zeroize();
-    format!("devkey:{}", seed_hex)
+    Zeroizing::new(format!("devkey:{}", *seed_hex))
 }
 
 /// Resolve the device seed for a WRITE-SIDE process (the bridges,
@@ -98,7 +100,7 @@ fn resolve_device_seed_inner(
         Err(err) => {
             return match env_seed {
                 Some(seed) => Ok(ResolvedSeed {
-                    seed: seed.to_string(),
+                    seed: Zeroizing::new(seed.to_string()),
                     source: SeedSource::Env,
                 }),
                 None => Err(err),
@@ -117,7 +119,7 @@ fn resolve_device_seed_inner(
                 }
             }
             Ok(ResolvedSeed {
-                seed: seed.to_string(),
+                seed: Zeroizing::new(seed.to_string()),
                 source: SeedSource::Env,
             })
         }
@@ -133,7 +135,7 @@ fn resolve_device_seed_inner(
 pub fn find_device_seed(db_path: &str, env_seed: Option<&str>) -> Result<Option<ResolvedSeed>> {
     if let Some(seed) = env_seed.map(str::trim).filter(|s| !s.is_empty()) {
         return Ok(Some(ResolvedSeed {
-            seed: seed.to_string(),
+            seed: Zeroizing::new(seed.to_string()),
             source: SeedSource::Env,
         }));
     }
@@ -141,7 +143,7 @@ pub fn find_device_seed(db_path: &str, env_seed: Option<&str>) -> Result<Option<
         return Ok(None);
     };
     Ok(read_seed_file(&path)?.map(|seed| ResolvedSeed {
-        seed,
+        seed: Zeroizing::new(seed),
         source: SeedSource::File(path),
     }))
 }
@@ -180,7 +182,7 @@ pub fn device_key_path_for_db(db_path: &str) -> Result<PathBuf> {
 pub fn load_or_create_device_seed(
     path: impl AsRef<Path>,
     provided_seed: Option<&str>,
-) -> Result<String> {
+) -> Result<Zeroizing<String>> {
     load_or_create_device_seed_with_source(path.as_ref(), provided_seed).map(|r| r.seed)
 }
 
@@ -196,12 +198,12 @@ fn load_or_create_device_seed_with_source(
                 ));
             }
             return Ok(ResolvedSeed {
-                seed,
+                seed: Zeroizing::new(seed),
                 source: SeedSource::Env,
             });
         }
         return Ok(ResolvedSeed {
-            seed,
+            seed: Zeroizing::new(seed),
             source: SeedSource::File(path.to_path_buf()),
         });
     }
@@ -222,7 +224,7 @@ fn load_or_create_device_seed_with_source(
             }
         }
         return Ok(ResolvedSeed {
-            seed: trimmed.to_string(),
+            seed: Zeroizing::new(trimmed.to_string()),
             source: SeedSource::Env,
         });
     }
@@ -232,7 +234,7 @@ fn load_or_create_device_seed_with_source(
     if !written {
         if let Some(existing) = read_seed_file(path)? {
             return Ok(ResolvedSeed {
-                seed: existing,
+                seed: Zeroizing::new(existing),
                 source: SeedSource::File(path.to_path_buf()),
             });
         }
@@ -475,10 +477,10 @@ mod tests {
         let test_seed = "devkey:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
 
         let seed = load_or_create_device_seed(&path, Some(test_seed)).unwrap();
-        assert_eq!(seed, test_seed);
+        assert_eq!(*seed, test_seed);
 
         let reload = load_or_create_device_seed(&path, Some(test_seed)).unwrap();
-        assert_eq!(reload, test_seed);
+        assert_eq!(*reload, test_seed);
     }
 
     #[test]
@@ -560,7 +562,7 @@ mod tests {
 
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(
-            load_or_create_device_seed(&path, None).unwrap(),
+            *load_or_create_device_seed(&path, None).unwrap(),
             "devkey:loose_mode_seed_value_with_entropy"
         );
     }
@@ -593,7 +595,7 @@ mod tests {
         assert_eq!(second.source, SeedSource::File(seed_path.clone()));
 
         // Environment agrees with the file: the environment is the source.
-        let third = resolve_device_seed(db, Some(&format!("  {}\n", first.seed))).unwrap();
+        let third = resolve_device_seed(db, Some(&format!("  {}\n", *first.seed))).unwrap();
         assert_eq!(third.seed, first.seed);
         assert_eq!(third.source, SeedSource::Env);
 
@@ -619,7 +621,7 @@ mod tests {
         let env_seed = "devkey:from_the_environment_with_entropy";
 
         let resolved = resolve_device_seed(db, Some(env_seed)).unwrap();
-        assert_eq!(resolved.seed, env_seed);
+        assert_eq!(*resolved.seed, env_seed);
         assert_eq!(resolved.source, SeedSource::Env);
         assert!(
             find_device_seed(db, None).unwrap().is_none(),
@@ -651,11 +653,11 @@ mod tests {
         let env_seed = "devkey:from_the_environment_with_entropy";
 
         let resolved = resolve_device_seed_persisting_env(db, Some(env_seed)).unwrap();
-        assert_eq!(resolved.seed, env_seed);
+        assert_eq!(*resolved.seed, env_seed);
         assert_eq!(resolved.source, SeedSource::Env);
 
         let found = find_device_seed(db, None).unwrap().expect("file persisted");
-        assert_eq!(found.seed, env_seed);
+        assert_eq!(*found.seed, env_seed);
         assert!(matches!(found.source, SeedSource::File(_)));
     }
 

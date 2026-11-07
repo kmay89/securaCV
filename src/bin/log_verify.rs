@@ -147,7 +147,7 @@ fn main() -> Result<()> {
                 "log_verify: database key from the {} (it does not anchor identity)",
                 found.source
             );
-            found.seed
+            found.seed.to_string()
         }),
     };
     let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {

@@ -48,13 +48,22 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
     assert.equal(r.status, 400);
     assert.equal((await fetch(base + '/forms/nope', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'a@b.test' }) })).status, 404);
 
-    // double opt-in click and one-click unsubscribe (RFC 8058 POST)
+    // the waitlist quantity is a whole number from 1 to 50 — never 1.5, 1e400 or a string the column would store as REAL
+    for (const [i, qty] of [1.5, '1e400', 0, 51, 'x'].entries()) assert.equal((await fetch(base + '/forms/waitlist', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: `qty${i}@example.test`, sku: 'wap-kit', qty }) })).status, 400, `qty ${qty}`);
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM waitlist').n, 1, 'none of them joined');
+    // the form's acknowledgement has a fixed subject and no name: the form cannot relay a line into a stranger's inbox
+    const ack = db.get("SELECT subject, body_text FROM mail_outbox WHERE ref = 'ticket:T-000001'"); assert.match(ack.subject, /^\[T-000001 [a-z0-9]{6}\] We got your message$/); assert.ok(!ack.subject.includes('face recognition')); assert.match(ack.body_text, /^Hi there,/);
+    // double opt-in: the link's GET only asks (a scanner confirms nobody); the button's POST confirms; one-click unsubscribe (RFC 8058 POST)
     const c = db.get('SELECT * FROM contacts WHERE email = ?', 'ada@example.test');
-    assert.equal((await fetch(base + '/confirm/' + c.consent_token)).status, 200);
+    r = await fetch(base + '/confirm/' + c.consent_token); assert.equal(r.status, 200); assert.match(await r.text(), /<form method="post" action="\/confirm\//);
+    assert.equal(db.get('SELECT consent_marketing FROM contacts WHERE id = ?', c.id).consent_marketing, 0, 'a GET changes nothing');
+    assert.equal((await fetch(base + '/confirm/' + c.consent_token, { method: 'POST' })).status, 200);
     assert.equal(db.get('SELECT consent_marketing FROM contacts WHERE id = ?', c.id).consent_marketing, 1);
+    assert.equal((await fetch(base + '/confirm/' + c.consent_token, { method: 'POST' })).status, 404, 'a token is spent by its confirmation');
+    r = await fetch(base + '/u/' + c.unsubscribe_token); assert.equal(r.status, 200); assert.match(await r.text(), /<form method="post" action="\/u\//); assert.equal(db.get('SELECT unsubscribed_at FROM contacts WHERE id = ?', c.id).unsubscribed_at, null, 'a GET unsubscribes nobody');
     assert.equal((await fetch(base + '/u/' + c.unsubscribe_token, { method: 'POST', body: 'List-Unsubscribe=One-Click', headers: { 'content-type': 'application/x-www-form-urlencoded' } })).status, 200);
     assert.ok(db.get('SELECT unsubscribed_at FROM contacts WHERE id = ?', c.id).unsubscribed_at);
-    assert.equal((await fetch(base + '/u/bogus')).status, 404);
+    assert.equal((await fetch(base + '/u/bogus')).status, 404); assert.equal((await fetch(base + '/u/bogus', { method: 'POST' })).status, 404);
 
     // Stripe webhook: unsigned 400, signed creates the order once
     const event = JSON.stringify({ type: 'checkout.session.completed', data: { object: { id: 'cs_live_1', payment_status: 'paid', currency: 'usd', amount_subtotal: 6900, amount_total: 7700, created: 1760000000, total_details: { amount_shipping: 800, amount_tax: 0 },

@@ -37,17 +37,18 @@ them.
 
 | Verdict | Meaning |
 |---|---|
-| **Verified — integrity intact** (all N checks passed) | every event carries a valid signature, is chained to the one before it, and nothing was added, removed or reordered since it was sealed; this file is exactly what was exported |
-| **Verified — with notes** | integrity intact; read the notes. The usual one is *self-attested* (below) |
-| **Not verified — rejected** | a check failed. A truncated download fails the same way as tampering, so ask for a fresh export; if a fresh copy fails too, keep both and treat that as significant |
+| **Self-consistent — signed by the key it names (identity not confirmed)** | every check passed: every event carries a valid signature under the key the file itself names, is chained to the one before it, and nothing was added, removed or reordered since it was sealed. Who holds that key is not confirmed — this is what a blank **expected device key** field earns, for an envelope and an event export alike (below) |
+| **Verified — integrity intact** (all N checks passed) | the same, under a key *you* supplied: authorship confirmed. "Verified" is reserved for this |
+| **Verified — with notes** | verified; read the notes (a post-quantum signature this browser cannot test, declared gaps) |
+| **Not verified — rejected** | a check failed. A truncated download fails the same way as tampering, so ask for a fresh export; if a fresh copy fails too, keep both and treat that as significant. A key you supplied that is not the key the file names fails this way too |
 | **Inconclusive** | this browser could not run the Ed25519 check; open the same file in a current browser. Nothing valid is ever shown as rejected for this reason |
 
-### "Self-attested" → "authorship confirmed"
+### "Self-consistent" → "Verified"
 
 The key that signed the record travels inside the record, so on its own the
 export proves it is *internally consistent and signed by the key it names*,
-not *who* that key belongs to. The viewer says so ("self-attested") until you
-give it a key you obtained independently:
+not *who* that key belongs to. The viewer says so ("self-consistent", with a
+"self-attested" note) until you give it a key you obtained independently:
 
 1. Ask the owner for their **witness key fingerprint** by phone or in person.
    Home Assistant shows it on the SecuraCV device page (the *Witness key
@@ -58,7 +59,8 @@ give it a key you obtained independently:
    what it says and whether it matches the bundle, but a file that traveled in
    the pack can never be the independent confirmation — the phone call is.
 3. Paste the 64-character key into the **expected device key** field and
-   verify again. The verdict now reads **authorship confirmed**.
+   verify again. The verdict now reads **Verified**, with **authorship
+   confirmed** on the signature check — or **rejected**, if the keys differ.
 
 ## What the viewer does not prove
 

@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Filled by viewer/build.mjs with the sha256 of every inline script and the style block. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-L2f9ulDNTzIhUq4Luzt37yfJSY+dTV6VKX51jKU4Z+M=' 'sha256-LBAnM3qHWW5ib2SP6Fl9m39wYUoNmGCSVeGD27qC158=' 'sha256-Nwl/xttjiTtjUX50UyhumWrbL4RQZwqAC1YracOmPxo=' 'sha256-vYq7Gz2AKKukGdY/NgPGUPtONXK25bRAwoBxgdKWSmo='; style-src 'sha256-e7ozVxf7MNrR4rizIw9HrBstIeronyYskq+pu2ORdA0='; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Verify a securaCV evidence bundle offline in your browser. No install, no account, no network.">
 <title>securaCV · Evidence Viewer</title>
@@ -474,6 +476,15 @@
          color:var(--accent); font-size:12px; font-weight:600; }
   .tag.fail { background:var(--bad-bg); color:var(--bad); }
   .hint { color:var(--muted); font-size:12.5px; margin-top:8px; }
+  /* The page CSP allows only this hashed block, so markup carries no inline
+     style attribute: these classes replace the static ones, and computed
+     positions travel as data-style, applied through the CSSOM by paint(). */
+  .c-bad { color:var(--bad); }
+  .c-muted { color:var(--muted); }
+  .hint.mt0 { margin-top:0; }
+  .hint.mt2 { margin-top:2px; }
+  .lead { font-size:14.5px; }
+  .hint.next-head { margin-top:10px; font-weight:600; color:var(--fg); }
 
   footer { color:var(--muted); font-size:12px; text-align:center; padding:26px 24px; }
   footer a { color:var(--muted); text-decoration:underline; }
@@ -524,9 +535,9 @@
     </div>
     <div class="keyopt">
       <input id="trustkey" class="mono" type="text" spellcheck="false" autocomplete="off"
-             placeholder="Optional: expected device key (64 hex chars) — confirms who signed an event export">
-      <div class="hint">Leave blank to check integrity only. With the key the device owner published, the
-        result also confirms authorship.</div>
+             placeholder="Optional: expected device key (64 hex chars) — confirms who signed it">
+      <div class="hint">Leave blank to check integrity only — the result then reads “self-consistent”, not
+        “verified”. With the key the device owner published, it also confirms authorship.</div>
     </div>
 
     <details class="trust">
@@ -1017,10 +1028,29 @@ function validateSummary(name, entriesLen, declaredCount, declaredHeadRaw, compu
 
 // ---- top-level verify ----------------------------------------------------
 
+// The caller's trusted device key, or null when none was supplied. Shared by
+// both verifiers so "the key you supplied" is parsed and refused identically.
+function trustedKeyBytes(opts) {
+  const trustedHex = ((opts && opts.trustedDeviceKeyHex) || '').trim().toLowerCase();
+  if (!trustedHex) return null;
+  // hexToBytes decodes a non-hex digit as 0, so a pasted key is checked for
+  // shape here: a typo must be refused, never silently read as a different key.
+  if (!/^[0-9a-f]*$/.test(trustedHex) || trustedHex.length % 2 !== 0) throw new Error('the supplied device key is not valid hex');
+  const trusted = hexToBytes(trustedHex);
+  if (trusted.length !== 32) throw new Error('the supplied device key must be 32 bytes (64 hex characters)');
+  return trusted;
+}
+
 // Returns { status, ok, error?, sealed_events, break_glass_granted, break_glass_denied,
 //           break_glass_redeemed, export_receipts, pq_checked, warnings,
-//           whole_envelope_digest }.
-async function verifyEnvelope(envelope) {
+//           whole_envelope_digest, authorship }.
+//
+// Trust caveat, the same as verifyExportBundle's: the envelope carries its own
+// device key (provenance.device_public_key), so without `opts.trustedDeviceKeyHex`
+// the verdict means "internally consistent and signed by the key the envelope
+// names" — authorship is self-attested. Supplying the key the device owner
+// published upgrades it to confirmed authorship, or fails it if the keys differ.
+async function verifyEnvelope(envelope, opts = {}) {
   const result = {
     status: 'compromised',
     ok: false,
@@ -1033,11 +1063,27 @@ async function verifyEnvelope(envelope) {
     warnings: [],
     checks: [],
     whole_envelope_digest: envelope && envelope.whole_envelope_digest,
+    authorship: 'envelope', device_public_key: null,
   };
   try {
     if (envelope.envelope_format !== ENVELOPE_FORMAT) throw new Error(`unknown envelope_format: ${envelope.envelope_format}`);
     if (envelope.envelope_version !== ENVELOPE_VERSION) throw new Error(`unsupported envelope_version ${envelope.envelope_version}`);
     result.checks.push('Envelope format and version recognized');
+
+    // Authorship: compare the envelope's own key against the caller's trusted
+    // key BEFORE any signature check, so "verified" means verified under the
+    // key the caller trusts — never merely under the key the file names.
+    const namedKey = hexToBytes(envelope.provenance.device_public_key);
+    if (namedKey.length !== 32) throw new Error('provenance device_public_key must be 32 bytes');
+    result.device_public_key = bytesToHex(namedKey);
+    const trusted = trustedKeyBytes(opts);
+    if (trusted) {
+      if (!bytesEqual(trusted, namedKey)) {
+        throw new Error('device key mismatch: this envelope names a different device key than the one you supplied');
+      }
+      result.authorship = 'trusted';
+      result.checks.push('Envelope device key matches the trusted key you supplied');
+    }
 
     // Manifest must equal the canonical v1 manifest ("rules travel with the data").
     if (canonicalize(envelope.manifest) !== canonicalize(V1_MANIFEST)) {
@@ -1080,7 +1126,11 @@ async function verifyEnvelope(envelope) {
       { perEntry: lineage.keys, rowKey: lineage.rowKey }, 'sealed_events', sigCheckable);
     validateSummary('sealed_events', sealed.entries.length, sealed.count, sealed.head_hash, sealedHead);
     result.checks.push(`Sealed-event hash chain intact (${sealed.entries.length} ${sealed.entries.length === 1 ? 'entry' : 'entries'})`);
-    if (sigCheckable) result.checks.push('Device Ed25519 signatures valid on every sealed event');
+    if (sigCheckable) {
+      result.checks.push(result.authorship === 'trusted'
+        ? 'Device Ed25519 signatures valid on every sealed event (authorship confirmed against your trusted key)'
+        : 'Device Ed25519 signatures valid on every sealed event, under the device key named in the envelope');
+    }
 
     // Checkpoint signature — by whichever lineage key was current when it was written.
     // The cutoff-bound message first (src/log/mod.rs checkpoint_message), then the legacy
@@ -1207,6 +1257,9 @@ async function verifyEnvelope(envelope) {
     }
 
     // Warnings & status.
+    if (result.authorship !== 'trusted') {
+      result.warnings.push('device key taken from the envelope itself — authorship is self-attested; compare the key against one published by the device owner, or supply it to confirm');
+    }
     if (envelope.provenance.pq_public_key) result.warnings.push('post-quantum signatures present but not verified in this offline viewer');
     else result.warnings.push('no post-quantum public key; PQ signatures not checked');
     // failure_count is derived from the artifact at assembly (artifact_hash is signature-bound;
@@ -1290,11 +1343,8 @@ async function verifyExportBundle(bundle, opts = {}) {
     // Authorship: compare the bundle's key against a caller-supplied trusted
     // key BEFORE the signature check, so "verified" means verified under the
     // key the caller trusts — the same semantics as the Rust `export_verify`.
-    const trustedHex = (opts.trustedDeviceKeyHex || '').trim().toLowerCase();
-    if (trustedHex) {
-      let trusted;
-      try { trusted = hexToBytes(trustedHex); } catch { throw new Error('the supplied device key is not valid hex'); }
-      if (trusted.length !== 32) throw new Error('the supplied device key must be 32 bytes (64 hex characters)');
+    const trusted = trustedKeyBytes(opts);
+    if (trusted) {
       if (!bytesEqual(trusted, pubKey)) {
         throw new Error('device key mismatch: this bundle names a different device key than the one you supplied');
       }
@@ -3442,6 +3492,13 @@ const V = globalThis.SecuraCVVerify;
 const T = globalThis.SecuraCVTimeline;
 const Z = globalThis.SecuraCVZip;
 const $ = (id) => document.getElementById(id);
+// The one way markup reaches the page. Computed positions arrive as
+// data-style and are applied through the CSSOM, which the page's hash-only
+// style-src permits; an inline style attribute in markup would be refused.
+function paint(el, html) {
+  el.innerHTML = html;
+  for (const n of el.querySelectorAll('[data-style]')) n.style.cssText = n.dataset.style;
+}
 const out = $('out'), drop = $('drop'), fileInput = $('file');
 
 const ICONS = {
@@ -3529,7 +3586,7 @@ function fmtBytes(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toF
 function fmtBucket(tb) {
   if (!tb || typeof tb.start_epoch_s !== 'number') return '—';
   const iso = new Date(tb.start_epoch_s * 1000).toISOString().replace('.000Z', 'Z');
-  return esc(iso) + ' <span style="color:var(--muted)">· ' + (tb.size_s || 0) + 's</span>';
+  return esc(iso) + ' <span class="c-muted">· ' + (tb.size_s || 0) + 's</span>';
 }
 
 // ---- dual-register check copy --------------------------------------------
@@ -3547,6 +3604,9 @@ const CHECK_PLAIN = [
   [/^Manifest matches the canonical/, 'The privacy rules traveled inside the bundle and match the official spec'],
   [/^Bundle fingerprint recomputed/, 'The bundle’s fingerprint recomputes from scratch — the file is exactly what was exported'],
   [/^Sealed-event hash chain intact/, 'Every event is chained to the one before it — nothing added, removed, or reordered'],
+  [/^Envelope device key matches the trusted key/, 'The bundle names exactly the device key you supplied'],
+  [/^Device Ed25519 signatures valid on every sealed event \(authorship confirmed/, 'Every event was signed by the device you named — authorship confirmed'],
+  [/^Device Ed25519 signatures valid on every sealed event, under the device key named/, 'Every event carries a valid signature from the device key the bundle names'],
   [/^Device Ed25519 signatures valid/, 'Every event carries a valid signature from the device’s own key'],
   [/^Checkpoint signature valid/, 'Older, pruned history is anchored by a valid signed checkpoint'],
   [/^Break-glass receipts verified/, 'Every vault access left a signed, verifiable receipt — none happened off the books'],
@@ -3563,6 +3623,22 @@ function checkRow(c, failed) {
   const head = plain || c;
   const tech = plain ? `<div class="c-tech">${esc(c)}</div>` : '';
   return `<li class="chk${failed ? ' fail' : ''}">${icon}<div><div class="c-plain">${esc(head)}</div>${tech}</div></li>`;
+}
+// The headline a passing report earns. "Verified" is reserved for signatures
+// checked against a key the reader supplied; a pass under the key the file
+// itself names is self-consistent — the file vouches for its own author — and
+// the banner says exactly that, never "verified".
+function passTitle(report) {
+  if (report.authorship !== 'trusted') return 'Self-consistent — signed by the key it names (identity not confirmed)';
+  return report.warnings.length ? 'Verified — with notes' : 'Verified — integrity intact';
+}
+function passSub(report) {
+  return report.authorship === 'trusted'
+    ? 'Every cryptographic check above was recomputed locally on this device — and every one passed.'
+    : 'Every check above passed under the device key the file itself names — whose key that is was not confirmed. Paste the owner’s published key above and verify again to confirm it.';
+}
+function passKind(report) {
+  return report.authorship !== 'trusted' ? 'selfconsistent' : report.warnings.length ? 'notes' : 'verified';
 }
 // Plain-language headline for the check that failed, keyed by the structured
 // failure kind (details live in failureDiagnosis below).
@@ -3598,7 +3674,7 @@ async function process(envelope, sourceLabel) {
   // Verify first (it takes milliseconds), then reveal the real results
   // check by check. Nothing shown is speculative.
   let report;
-  try { report = await V.verifyEnvelope(envelope); }
+  try { report = await V.verifyEnvelope(envelope, { trustedDeviceKeyHex: $('trustkey').value }); }
   catch (e) { if (!stale()) renderBad('The verifier hit an unexpected error.', e.message); return; }
   if (stale()) return;
 
@@ -3612,23 +3688,21 @@ async function process(envelope, sourceLabel) {
 
   const cls = report.status === 'ok' ? 'ok' : report.status === 'valid_with_warnings' ? 'warn' : 'bad';
   const icon = report.ok ? (report.warnings.length ? ICONS.warn : ICONS.ok) : ICONS.bad;
-  const title = report.ok ? (report.warnings.length ? 'Verified — with notes' : 'Verified — integrity intact') : 'Not verified — bundle rejected';
-  const sub = report.ok
-    ? 'Every cryptographic check above was recomputed locally on this device — and every one passed.'
-    : 'A check failed. Do not trust the contents of this bundle.';
+  const title = report.ok ? passTitle(report) : 'Not verified — bundle rejected';
+  const sub = report.ok ? passSub(report) : 'A check failed. Do not trust the contents of this bundle.';
 
   let html = `<div class="banner ${cls}">${icon}<div>${title}<small>${esc(sub)}</small></div></div>`;
-  html += whatThisMeans(report.ok ? (report.warnings.length ? 'notes' : 'verified') : 'rejected');
+  html += whatThisMeans(report.ok ? passKind(report) : 'rejected');
   html += metaPanel(sourceLabel, title);
 
   if (!report.ok) {
     html += `<div class="panel"><h2>What failed</h2>`;
     if (report.failure) html += failureDiagnosis(report.failure);
-    html += `<div class="hint">Raw error:</div><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div>`;
+    html += `<div class="hint">Raw error:</div><div class="mono c-bad">${esc(report.error || 'unknown error')}</div>`;
     html += `</div>`;
     html += provesPanel();
     html += actions(true);
-    $('report').innerHTML = `<div class="fade-in">${html}</div>`;
+    paint($('report'), `<div class="fade-in">${html}</div>`);
     wire();
     return;
   }
@@ -3653,7 +3727,11 @@ async function process(envelope, sourceLabel) {
     <dt>Device key (Ed25519)</dt><dd class="mono">${esc(p.device_public_key)}</dd>
     <dt>Post-quantum key</dt><dd>${p.pq_public_key ? 'present — not checked in this offline viewer' : 'none'}</dd>
     <dt>Disclosure profile</dt><dd>${esc((envelope.disclosure && envelope.disclosure.profile) || 'full')}</dd>
-  </dl></div>`;
+  </dl>
+    <div class="hint">${report.authorship === 'trusted'
+      ? 'Device key matches the key you supplied — authorship confirmed.'
+      : 'Device key taken from the bundle itself. To confirm authorship, compare it against the key published by the device owner (or paste that key above and re-verify).'}</div>
+    ${packKeyNote(p.device_public_key)}</div>`;
 
   if (report.warnings.length) {
     html += `<div class="panel"><h2>Notes</h2><ul class="warns">${report.warnings.map((w) => {
@@ -3665,7 +3743,7 @@ async function process(envelope, sourceLabel) {
   html += renderTimeline(envelope);
   html += provesPanel();
   html += actions(true);
-  $('report').innerHTML = `<div class="fade-in">${html}</div>`;
+  paint($('report'), `<div class="fade-in">${html}</div>`);
   wire();
 }
 
@@ -3687,21 +3765,19 @@ async function processBundle(bundle, sourceLabel, stale) {
 
   const cls = report.status === 'ok' ? 'ok' : report.status === 'valid_with_warnings' ? 'warn' : 'bad';
   const icon = report.ok ? (report.warnings.length ? ICONS.warn : ICONS.ok) : ICONS.bad;
-  const title = report.ok ? (report.warnings.length ? 'Verified — with notes' : 'Verified — integrity intact') : 'Not verified — export rejected';
-  const sub = report.ok
-    ? 'Every cryptographic check above was recomputed locally on this device — and every one passed.'
-    : 'A check failed. Do not trust the contents of this export.';
+  const title = report.ok ? passTitle(report) : 'Not verified — export rejected';
+  const sub = report.ok ? passSub(report) : 'A check failed. Do not trust the contents of this export.';
 
   let html = `<div class="banner ${cls}">${icon}<div>${title}<small>${esc(sub)}</small></div></div>`;
-  html += whatThisMeans(report.ok ? (report.warnings.length ? 'notes' : 'verified') : 'rejected');
+  html += whatThisMeans(report.ok ? passKind(report) : 'rejected');
   html += metaPanel(sourceLabel, title);
 
   if (!report.ok) {
     html += `<div class="panel"><h2>What failed</h2>
-      <div class="hint">Raw error:</div><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div></div>`;
+      <div class="hint">Raw error:</div><div class="mono c-bad">${esc(report.error || 'unknown error')}</div></div>`;
     html += provesPanel();
     html += actions(true);
-    $('report').innerHTML = `<div class="fade-in">${html}</div>`;
+    paint($('report'), `<div class="fade-in">${html}</div>`);
     wire();
     return;
   }
@@ -3738,27 +3814,19 @@ async function processBundle(bundle, sourceLabel, stale) {
 
   if (report.warnings.length) {
     html += `<div class="panel"><h2>Notes</h2><ul class="warns">${report.warnings.map((w) => {
-      const hint = warningHint(w) || bundleWarningHint(w);
+      const hint = warningHint(w);
       return `<li>${esc(w)}${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</li>`;
     }).join('')}</ul></div>`;
   }
 
   html += renderBundleTimeline(bundle);
-  html += `<div class="panel"><h2>Privacy coarsening (by design)</h2><div class="hint" style="margin-top:0">
+  html += `<div class="panel"><h2>Privacy coarsening (by design)</h2><div class="hint mt0">
     Times are grouped into ${esc(String((bundle.artifact.batches[0] && bundle.artifact.batches[0].buckets[0] && bundle.artifact.batches[0].buckets[0].time_bucket.size_s / 60) || 10))}-minute buckets${bundle.artifact.jitter_s > 0 ? ` and jittered ±${esc(String(bundle.artifact.jitter_s))}s (step ${esc(String(bundle.artifact.jitter_step_s))}s)` : ''}
     to protect bystanders — the export proves <em>what</em> was witnessed without exposing precise timing. See spec/event_contract.md.</div></div>`;
   html += provesPanel();
   html += actions(true);
-  $('report').innerHTML = `<div class="fade-in">${html}</div>`;
+  paint($('report'), `<div class="fade-in">${html}</div>`);
   wire();
-}
-
-// One-line context for export-bundle-specific notes.
-function bundleWarningHint(w) {
-  if (/self-attested/.test(w)) {
-    return 'Integrity is fully proven either way — this note is only about which device signed it. The device owner can publish their key fingerprint, or hand you the C2PA trust anchor for the same export.';
-  }
-  return null;
 }
 
 function renderBundleTimeline(bundle) {
@@ -3785,7 +3853,7 @@ async function playChecks(report, stale) {
       <div class="runhead">
         <div class="grow">
           <div class="run-title" id="runtitle">Checking this bundle, from scratch…</div>
-          <div class="hint" id="runcount" style="margin-top:2px">Re-deriving every proof locally — the bundle is not taken at its word.</div>
+          <div class="hint mt2" id="runcount">Re-deriving every proof locally — the bundle is not taken at its word.</div>
         </div>
         <button class="btn toggle" id="techtoggle" type="button" aria-pressed="false">Show technical detail</button>
       </div>
@@ -3903,6 +3971,9 @@ function failureDiagnosis(f) {
 // One-line context per envelope warning so a note never reads as an alarm
 // (or worse, gets ignored) for lack of explanation.
 function warningHint(w) {
+  if (/self-attested/.test(w)) {
+    return 'Integrity is fully proven either way — this note is only about which device signed it. The device owner can publish their key fingerprint, or hand you the C2PA trust anchor for the same export.';
+  }
   if (/post-quantum signatures present/.test(w)) {
     return 'The classical Ed25519 signatures above were fully checked; the extra post-quantum layer needs the Rust verifier (envelope_verify --sig-mode strict).';
   }
@@ -3953,7 +4024,7 @@ function metaPanel(sourceLabel, resultText) {
   const when = new Date().toLocaleString(undefined, { timeZoneName: 'short' });
   return `<div class="panel"><h2>Verification record</h2><dl class="kv">
     <dt>Source file</dt><dd>${esc(sourceLabel)}</dd>
-    <dt>Verified at</dt><dd>${esc(when)} <span style="color:var(--muted)">· this device's local clock</span></dd>
+    <dt>Checked at</dt><dd>${esc(when)} <span class="c-muted">· this device's local clock</span></dd>
     <dt>Method</dt><dd>Offline, in-browser (Web Crypto) — same algorithm as the securaCV Rust verifier</dd>
     <dt>Result</dt><dd>${esc(resultText)}</dd>
   </dl></div>`;
@@ -3969,6 +4040,11 @@ function whatThisMeans(kind) {
       next: ['Keep the original file exactly as you received it — the <strong>.zip</strong> pack or the <strong>.json</strong> bundle is the evidence; this page is only a check of it.',
              'Use <strong>Save / print report</strong> below for a dated record of <em>what</em> you verified and <em>when</em>.',
              'To let someone else confirm it, send them the bundle file and this viewer. ' + reproduce] },
+    selfconsistent: {
+      what: 'Every check passed: nothing has been added, removed, or altered since the record was sealed, and every signature verifies under the device key the file itself names. What this does <em>not</em> establish is whose key that is — the key traveled inside the file, so authorship is self-attested, not confirmed. That is why this reads “self-consistent”, not “verified”: anyone with a device could produce a file that passes these checks under their own key.',
+      next: ['Get the owner’s key fingerprint through another channel — the fingerprint on their Home Assistant device page, or a phone call — then paste the key into the box above and verify again. A match turns this into <strong>Verified</strong>; a mismatch is a rejection.',
+             'Keep the original file exactly as you received it — the <strong>.zip</strong> pack or the <strong>.json</strong> bundle is the evidence; this page is only a check of it.',
+             'Use <strong>Save / print report</strong> below for a dated record of <em>what</em> you checked and <em>when</em>.'] },
     notes: {
       what: 'The record’s integrity is intact and signed. The notes below do not affect that — they flag things a checker couldn’t fully evaluate (e.g. a post-quantum signature this browser can’t test).',
       next: ['Read the <strong>Notes</strong> panel so you can explain each one.',
@@ -3983,8 +4059,8 @@ function whatThisMeans(kind) {
              'The checks that <em>did</em> run are listed above; a tampered fingerprint or broken chain would already have been caught here.'] },
   };
   const c = copy[kind]; if (!c) return '';
-  return `<div class="panel"><h2>What this means</h2><div style="font-size:14.5px">${c.what}</div>`
-    + `<div class="hint" style="margin-top:10px;font-weight:600;color:var(--fg)">What to do next</div>`
+  return `<div class="panel"><h2>What this means</h2><div class="lead">${c.what}</div>`
+    + `<div class="hint next-head">What to do next</div>`
     + `<ul class="checks">${c.next.map((n) => `<li>${ICONS.tick}<span>${n}</span></li>`).join('')}</ul></div>`;
 }
 
@@ -3997,7 +4073,7 @@ function renderInconclusive(report, sourceLabel) {
   html += whatThisMeans('inconclusive');
   html += metaPanel(sourceLabel, 'Inconclusive — signatures not checked in this browser');
   html += actions(true);
-  $('report').innerHTML = `<div class="fade-in">${html}</div>`;
+  paint($('report'), `<div class="fade-in">${html}</div>`);
   wire();
 }
 
@@ -4105,7 +4181,7 @@ function tlRow(item) {
       // dim must be able to win (see the .tl-cell comment). Statuses that ARE
       // the point (tamper, gap) never fade below full ink.
       const op = c.family === 'tamper' || c.hasGap ? 1 : c.count >= 4 ? 1 : c.count >= 2 ? 0.85 : 0.7;
-      return `<i class="tl-cell fam-${c.family}${c.hasGap ? ' tl-cellgap' : ''}" style="left:${(c.i * cellW).toFixed(3)}%;width:${Math.max(cellW, 0.35).toFixed(3)}%;--cnt:${op}"></i>`;
+      return `<i class="tl-cell fam-${c.family}${c.hasGap ? ' tl-cellgap' : ''}" data-style="left:${(c.i * cellW).toFixed(3)}%;width:${Math.max(cellW, 0.35).toFixed(3)}%;--cnt:${op}"></i>`;
     }).join('');
     const meta = `${d.count} record${d.count === 1 ? '' : 's'}`
       + (d.tamperCount ? ` · <button class="tl-tam" type="button" data-day="${d.dayT0}" data-kind="tamper"
@@ -4122,7 +4198,7 @@ function tlRow(item) {
         aria-label="Scrub ${esc(d.label)} — ${d.count} record${d.count === 1 ? '' : 's'}. ${hasCoverage
           ? 'The bar marks the window this export declares it covers; hours outside it are blank, not quiet.'
           : 'This bundle declares no coverage window, so no span of this day is claimed as watched.'}">
-        ${hasCoverage ? `<i class="tl-covtrack" style="left:${covL.toFixed(3)}%;width:${covW.toFixed(3)}%"></i>` : ''}${cells}<i class="tl-stripcaret" hidden></i></span>
+        ${hasCoverage ? `<i class="tl-covtrack" data-style="left:${covL.toFixed(3)}%;width:${covW.toFixed(3)}%"></i>` : ''}${cells}<i class="tl-stripcaret" hidden></i></span>
       <span class="tl-daymeta">${meta}</span></div>`;
   }
   if (item.kind === 'fold') {
@@ -4149,7 +4225,7 @@ function tlRow(item) {
   const conf = typeof r.conf === 'number'
     ? `<span class="tl-conf" title="Confidence ${r.conf.toFixed(2)} — ${CONF_SAYS}"`
       + ` aria-label="Confidence ${r.conf.toFixed(2)}: ${CONF_SAYS}">`
-      + `<span class="tl-meter"><i style="width:${Math.round(Math.min(Math.max(r.conf, 0), 1) * 100)}%"></i></span><b>${r.conf.toFixed(2)}</b></span>`
+      + `<span class="tl-meter"><i data-style="width:${Math.round(Math.min(Math.max(r.conf, 0), 1) * 100)}%"></i></span><b>${r.conf.toFixed(2)}</b></span>`
     : '';
   return `<div class="tl-row tl-ev fam-${r.family}" data-t0="${r.t0}">
     <span class="tl-rail"><i class="tl-node"></i></span>
@@ -4181,7 +4257,7 @@ function initTimeline() {
     layout = T.layoutSegments(model.segments, H);
     let html = '';
     for (const line of T.gridLines(layout, 22)) {
-      html += `<i class="tl-gline${line.major ? ' major' : ''}" style="top:${line.y.toFixed(1)}px"></i>`;
+      html += `<i class="tl-gline${line.major ? ' major' : ''}" data-style="top:${line.y.toFixed(1)}px"></i>`;
     }
     // Name the days. A greeked map is a remembered shape, and two busy
     // mornings look alike — a tiny real-text label where each day begins is
@@ -4198,11 +4274,11 @@ function initTimeline() {
         // and reads as a strikethrough where strokes cross it.
         const parts = d.label.split(', ');
         const lab = parts[0].slice(0, 3) + ' ' + ((parts[1] || '').split(' ')[1] || '');
-        html += `<i class="tl-maplab" style="top:${(y + 2).toFixed(1)}px">${esc(lab.trim())}</i>`;
+        html += `<i class="tl-maplab" data-style="top:${(y + 2).toFixed(1)}px">${esc(lab.trim())}</i>`;
       }
     }
     for (const s of layout) {
-      if (s.kind === 'fold') html += `<i class="tl-pleat" style="top:${s.y0.toFixed(1)}px;height:${(s.y1 - s.y0).toFixed(1)}px"></i>`;
+      if (s.kind === 'fold') html += `<i class="tl-pleat" data-style="top:${s.y0.toFixed(1)}px;height:${(s.y1 - s.y0).toFixed(1)}px"></i>`;
     }
     // How many strokes each bucket will actually SKIP, counted BEFORE drawing
     // so the "there is more here" bar is only drawn when something really is
@@ -4230,7 +4306,7 @@ function initTimeline() {
       if (r.kind === 'gap') {
         tickIdx += 1;
         const h = Math.max(3, T.yOfTime(layout, r.t0 + r.size) - T.yOfTime(layout, r.t0));
-        html += `<i class="tl-tick tl-tickgap fam-gap" data-b="${bucketKey(r)}" style="top:${T.yOfTime(layout, r.t0).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${delay}ms"></i>`;
+        html += `<i class="tl-tick tl-tickgap fam-gap" data-b="${bucketKey(r)}" data-style="top:${T.yOfTime(layout, r.t0).toFixed(1)}px;height:${h.toFixed(1)}px;animation-delay:${delay}ms"></i>`;
         continue;
       }
       const key = bucketKey(r);
@@ -4255,10 +4331,10 @@ function initTimeline() {
       // overflow:hidden and vanished again — the exact disappearance the
       // exemption exists to prevent.
       const x = 8 + T.zoneIndent(model.zones, r.zone) + Math.min(n, 5) * 2;
-      html += `<i class="tl-tick fam-${r.family}${over ? ' tl-more' : ''}" data-b="${key}" style="top:${y.toFixed(1)}px;left:${x}px;width:${w}px;animation-delay:${delay}ms"></i>`;
+      html += `<i class="tl-tick fam-${r.family}${over ? ' tl-more' : ''}" data-b="${key}" data-style="top:${y.toFixed(1)}px;left:${x}px;width:${w}px;animation-delay:${delay}ms"></i>`;
     }
     html += '<i class="tl-view" id="tlview"></i>';
-    map.innerHTML = html;
+    paint(map, html);
     ticksByBucket = new Map();
     for (const el of map.querySelectorAll('.tl-tick[data-b]')) {
       const k = +el.dataset.b;
@@ -4921,7 +4997,7 @@ function initTimeline() {
 function renderBad(msg, detail) {
   runSeq++; // a fresh error display supersedes any in-flight animated run
   out.innerHTML = `<div class="banner bad">${ICONS.bad}<div>Could not verify<small>${esc(msg)}</small></div></div>`
-    + (detail ? `<div class="panel"><h2>Details</h2><div class="mono" style="color:var(--bad)">${esc(detail)}</div></div>` : '')
+    + (detail ? `<div class="panel"><h2>Details</h2><div class="mono c-bad">${esc(detail)}</div></div>` : '')
     + actions(false);
   wire();
 }

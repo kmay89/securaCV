@@ -927,8 +927,14 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   range could confirm a pairing it drove and be handed the opera secret.
   The code itself stays visible to the session (`GET /api/mesh`'s
   `pairing_code`): both ends compute it from the session key, so hiding it
-  protected nothing. `POST /api/beacon/pair/confirm` is a stub behind
-  `FEATURE_BEACON_CHANNEL` (off) and takes the bearer when it becomes real.
+  protected nothing. Every Beacon write (`POST /api/beacon/*`: the pair
+  confirm, revoke, originate, originate-solo, cosign, cancel, cancel-solo,
+  silence and the self-test, all behind `FEATURE_BEACON_CHANNEL`, off)
+  takes the bearer alone too (`beacon_api.h`'s `bcn_bearer_gated`): with two
+  WAPs on one LAN, a session-gated originate on one and cosign on the other
+  was a genuinely dual-signed ALERT with no human at either device. The
+  reads keep `api_auth_check()`, and neither gate is open when no token was
+  registered.
   The flagship's mesh confirm already goes through its bearer-only
   `auth_gate()`. Peers a session paired on 2.4.17 or earlier persist until
   the owner removes them. Since F345, Forget Wi-Fi takes the bearer, so a

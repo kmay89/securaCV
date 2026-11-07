@@ -16,9 +16,10 @@ on:
       - "backoffice/**"
       - ".github/workflows/backoffice-image.yml"
 
+# contents: read at the top; packages: write on the one job, which pushes
+# only off a pull request (`push:` below).
 permissions:
   contents: read
-  packages: write
 
 # A publisher (CI.md R3, publisher half — main_queue_ok): PR builds collapse,
 # main publishes queue in order so :latest always ends on the newest commit.
@@ -31,6 +32,9 @@ jobs:
     name: build${{ github.event_name != 'pull_request' && ' + publish' || ' (validate only)' }}
     runs-on: ubuntu-24.04  # the image the job was written against (CI.md R11)
     timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v7
 
@@ -62,7 +66,10 @@ jobs:
           file: backoffice/deploy/Dockerfile
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
-          provenance: false
+          # A SLSA provenance attestation and an SBOM ride along with a
+          # published image (a PR build is validate-only and carries none).
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
           build-args: |
             BUILD_SHA=${{ steps.meta.outputs.sha }}
             BUILD_DATE=${{ steps.meta.outputs.date }}
