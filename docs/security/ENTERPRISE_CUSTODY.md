@@ -127,11 +127,19 @@ truncation but can never cause a false verify failure.
   fleet-level aggregate checkpoint anchored outward (TSA + OpenTimestamps).
   *Design specified:* `spec/quorum_unseal_v2.md` §4; standards research
   `PROVENANCE_INTEROP.md` §1.5.
-- **Fold anchor verification into `run_full_verify`** and require the CMS
-  countersignature to be checked in-boundary (see §4). `log_anchor verify` no
-  longer prints "OK" for a cryptographically unverified anchor — it prints
-  `UNVERIFIED` — but anchor checking is still a separate command; folding it in
-  makes truncation-past-an-anchor a hard verify failure.
+- **Fold anchor verification into `run_full_verify`.** *Shipped (structural):*
+  every `tsa_anchors` row is checked inside `run_full_verify` — row shape,
+  token imprint against the row, and for every head kind membership in the
+  declared ledger keyed on signed evidence only (a live row, or a retention
+  checkpoint whose device signature verifies under a lineage key). A head
+  that is in neither is `anchor_regression` — truncation past an anchor, a
+  rollback, or a different history than the one anchored is now a hard
+  verify failure in `log_verify`, witnessd's boot verify and `POST /verify`;
+  a damaged row or token is a warning (`docs/log_verify.md`). *Still
+  tracked:* the CMS countersignature stays delegated to `openssl ts -verify`
+  via `log_anchor verify --ca` — the kernel never links a CMS implementation
+  (see §4) — so the ledger verdict says the anchored states are present, not
+  that a TSA vouched for them.
 - **Cross-bind the receipt chains.** *Partly shipped:* every receipt-ledger
   head is an anchor subject of its own (`log_anchor --subject`, `anchor-all`),
   `court_export` packages the disclosure's own receipt-head token, and
