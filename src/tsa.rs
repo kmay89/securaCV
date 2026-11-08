@@ -424,6 +424,11 @@ pub enum AnchorSubject {
     BreakGlassReceiptHead,
     /// Head of the policy-change history.
     PolicyHead,
+    /// Head of the clock-provenance ledger (device clock vs TSA `genTime`,
+    /// one device-signed record per anchor row; `src/clock_provenance.rs`).
+    /// Appended last: the order of the kinds before it is part of
+    /// `anchor-all`'s request order and `classify_hash`'s search order.
+    ClockProvenanceHead,
 }
 
 /// Domain prefix of the per-subject empty-ledger sentinel digest.
@@ -431,11 +436,12 @@ const EMPTY_LEDGER_SENTINEL_PREFIX: &[u8] = b"securacv:anchor:empty-ledger:v1:";
 
 impl AnchorSubject {
     /// Every head kind, in the order `anchor-all` and `classify_hash` use.
-    pub const HEADS: [AnchorSubject; 4] = [
+    pub const HEADS: [AnchorSubject; 5] = [
         AnchorSubject::ChainHead,
         AnchorSubject::ExportReceiptHead,
         AnchorSubject::BreakGlassReceiptHead,
         AnchorSubject::PolicyHead,
+        AnchorSubject::ClockProvenanceHead,
     ];
 
     /// The stored literal.
@@ -446,6 +452,7 @@ impl AnchorSubject {
             AnchorSubject::ExportReceiptHead => "export_receipt_head",
             AnchorSubject::BreakGlassReceiptHead => "break_glass_receipt_head",
             AnchorSubject::PolicyHead => "policy_head",
+            AnchorSubject::ClockProvenanceHead => "clock_provenance_head",
         }
     }
 
@@ -457,6 +464,7 @@ impl AnchorSubject {
             "export_receipt_head" => Some(AnchorSubject::ExportReceiptHead),
             "break_glass_receipt_head" => Some(AnchorSubject::BreakGlassReceiptHead),
             "policy_head" => Some(AnchorSubject::PolicyHead),
+            "clock_provenance_head" => Some(AnchorSubject::ClockProvenanceHead),
             _ => None,
         }
     }
@@ -481,6 +489,7 @@ impl AnchorSubject {
             AnchorSubject::ExportReceiptHead => Some("export_receipts"),
             AnchorSubject::BreakGlassReceiptHead => Some("break_glass_receipts"),
             AnchorSubject::PolicyHead => Some("policy_change_history"),
+            AnchorSubject::ClockProvenanceHead => Some("clock_provenance"),
         }
     }
 
@@ -493,6 +502,7 @@ impl AnchorSubject {
             AnchorSubject::ExportReceiptHead => "export-receipt chain",
             AnchorSubject::BreakGlassReceiptHead => "break-glass receipt chain",
             AnchorSubject::PolicyHead => "policy-change history",
+            AnchorSubject::ClockProvenanceHead => "clock-provenance ledger",
         }
     }
 
@@ -504,6 +514,7 @@ impl AnchorSubject {
             AnchorSubject::ExportReceiptHead => "in export-receipt chain history",
             AnchorSubject::BreakGlassReceiptHead => "in break-glass receipt chain history",
             AnchorSubject::PolicyHead => "in policy-change history",
+            AnchorSubject::ClockProvenanceHead => "in clock-provenance ledger history",
         }
     }
 
@@ -520,6 +531,9 @@ impl AnchorSubject {
                 "anchored hash is not in break-glass receipt chain history"
             }
             AnchorSubject::PolicyHead => "anchored hash is not in policy-change history",
+            AnchorSubject::ClockProvenanceHead => {
+                "anchored hash is not in clock-provenance ledger history"
+            }
         }
     }
 
@@ -1237,6 +1251,31 @@ pub fn list_anchors(conn: &Connection) -> Result<Vec<AnchorRecord>> {
         .collect()
 }
 
+/// `(id, token_der)` of every anchor row with `id > after_id`, in id order,
+/// for the clock-provenance poll. The token column is read as the `Value`
+/// SQLite holds: `Some` for a BLOB (or TEXT, as bytes), `None` for anything
+/// else — a row whose token is not bytes gets no clock record, and the poll
+/// still moves past it. `Ok(vec![])` when the table is absent.
+pub fn anchor_tokens_after(conn: &Connection, after_id: i64) -> Result<Vec<(i64, Option<Vec<u8>>)>> {
+    use rusqlite::types::ValueRef;
+    if !table_exists(conn, "tsa_anchors")? {
+        return Ok(Vec::new());
+    }
+    let mut stmt =
+        conn.prepare("SELECT id, token_der FROM tsa_anchors WHERE id > ?1 ORDER BY id ASC")?;
+    let rows = stmt.query_map([after_id], |row| {
+        let id: i64 = row.get(0)?;
+        let token = match row.get_ref(1)? {
+            ValueRef::Blob(b) => Some(b.to_vec()),
+            ValueRef::Text(t) => Some(t.to_vec()),
+            _ => None,
+        };
+        Ok((id, token))
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
 fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     Ok(conn
         .query_row(
@@ -1351,8 +1390,8 @@ pub fn hash_in_ledger(
 }
 
 /// Which ledger a hash belongs to (chain head first, then the export-receipt,
-/// break-glass receipt and policy-change ledgers), tolerating missing
-/// tables. Sentinel hashes are never classified as heads: they are in no
+/// break-glass receipt, policy-change and clock-provenance ledgers),
+/// tolerating missing tables. Sentinel hashes are never classified as heads: they are in no
 /// ledger by construction.
 pub fn classify_hash(conn: &Connection, hash: &[u8; 32]) -> Result<Option<HashLocation>> {
     for subject in AnchorSubject::HEADS {
@@ -1726,6 +1765,7 @@ mod tests {
             AnchorSubject::ExportReceiptHead,
             AnchorSubject::BreakGlassReceiptHead,
             AnchorSubject::PolicyHead,
+            AnchorSubject::ClockProvenanceHead,
         ] {
             assert_eq!(AnchorSubject::parse(kind.as_str()), Some(kind));
             assert_eq!(kind.to_string(), kind.as_str());

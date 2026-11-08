@@ -21,6 +21,7 @@ pub enum VerifiedItem {
     Event { id: i64, entry_hash: [u8; 32] },
     BreakGlassReceipt { id: i64, entry_hash: [u8; 32] },
     ExportReceipt { id: i64, entry_hash: [u8; 32] },
+    ClockProvenance { id: i64, entry_hash: [u8; 32] },
 }
 
 /// Outcome of a successful full verification. Timestamps are bucketed —
@@ -55,6 +56,15 @@ pub struct VerifyReport {
     /// retained over MQTT.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchors_checked: Option<u64>,
+    /// Number of `clock_provenance` rows (device clock vs TSA `genTime`, one
+    /// device-signed record per anchor row; `src/clock_provenance.rs`) whose
+    /// hash chain and device signatures verified. `None` when the ledger has
+    /// no rows — table absent or empty, so a database that never recorded
+    /// one serializes exactly as before — and `None` on a failed report.
+    /// Additive; the assessment of each record (offset bands, orphans) is
+    /// warnings only, printed by `log_anchor verify` in full.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_provenance_verified: Option<u64>,
     pub events_verified: u64,
     pub break_glass_receipts_verified: u64,
     pub break_glass_granted: u64,
@@ -93,6 +103,7 @@ impl VerifyReport {
             identity_verified: false,
             high_water_mark_checked: false,
             anchors_checked: None,
+            clock_provenance_verified: None,
             events_verified: 0,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
@@ -198,6 +209,8 @@ fn run_full_verify_impl(
             report.chain_valid = false;
             report.error = Some(format!("{err:#}"));
             report.failure = err.downcast_ref::<verify::VerifyFailure>().cloned();
+            // A count of verified records has no meaning on a failed report.
+            report.clock_provenance_verified = None;
         }
     }
     report.verdict = if report.chain_valid {
@@ -320,6 +333,20 @@ fn run_inner(
         pq_verifying_key.as_ref(),
         |id, entry_hash| on_item(VerifiedItem::ExportReceipt { id, entry_hash }),
     )?;
+
+    // The clock-provenance ledger (device clock vs TSA genTime, one
+    // device-signed record per anchor row). A chain or signature failure is
+    // a verdict failure like any other device-signed ledger's; what the
+    // records SAY is cross-checked against the anchors table below, as
+    // warnings only.
+    let clock_rows = verify::verify_clock_provenance_with(
+        conn,
+        &lineage_keys,
+        signature_mode,
+        pq_verifying_key.as_ref(),
+        |id, entry_hash| on_item(VerifiedItem::ClockProvenance { id, entry_hash }),
+    )?;
+    report.clock_provenance_verified = (clock_rows > 0).then_some(clock_rows);
 
     // Signed external high-water-mark (ENTERPRISE_CUSTODY §2): the interior
     // hash chain, now proven above, cannot bind its own length or head. If a
@@ -446,6 +473,10 @@ fn run_inner(
     // here (`log_anchor verify --ca`, openssl). Runs after the high-water-mark
     // so an anchor failure reports on top of an otherwise-consistent chain.
     let mut anchor_warnings = Vec::new();
+    // The rows that decoded, and the ids that did not, for the
+    // clock-provenance cross-check below.
+    let mut decoded_anchors: Vec<crate::tsa::AnchorRecord> = Vec::new();
+    let mut malformed_anchor_ids: Vec<i64> = Vec::new();
     if crate::tsa::anchor_table_exists(conn)? {
         report.anchors_checked = Some(0);
         for (id, row) in crate::tsa::list_anchors_lenient(conn)? {
@@ -456,9 +487,11 @@ fn run_inner(
                     anchor_warnings.push(format!(
                         "anchor #{id}: row is malformed ({reason}); run log_anchor verify"
                     ));
+                    malformed_anchor_ids.push(id);
                     continue;
                 }
             };
+            decoded_anchors.push(record.clone());
             let token = match crate::tsa::parse_token(&record.token_der) {
                 Ok(token) => token,
                 Err(_) => {
@@ -495,7 +528,91 @@ fn run_inner(
     }
     report.warnings.extend(anchor_warnings);
 
+    // Clock-provenance records against the anchors table as it stands now:
+    // warnings only (the ledger itself already passed above). A record whose
+    // anchor is gone, or whose anchor's token hashes differently, names a
+    // deleted or replaced anchor; a prompt-or-negative offset beyond one
+    // bucket names a device clock that disagreed with the TSA's. A missing
+    // record is never a warning (anchors predate the ledger). The check runs
+    // even with no anchors table (every record is then an orphan) and skips
+    // records whose anchor row exists but is malformed (already warned).
+    if clock_rows > 0 {
+        clock_provenance_warnings(
+            conn,
+            &decoded_anchors,
+            &malformed_anchor_ids,
+            &mut report.warnings,
+        );
+    }
+
     Ok(())
+}
+
+/// The clock-provenance cross-check warnings (see the call site). No
+/// `genTime`, no full hash: a 16-hex prefix of the two token hashes is all a
+/// replaced-token warning carries.
+fn clock_provenance_warnings(
+    conn: &Connection,
+    anchors: &[crate::tsa::AnchorRecord],
+    malformed_anchor_ids: &[i64],
+    warnings: &mut Vec<String>,
+) {
+    use crate::clock_provenance::{self, AnchorLink, ONE_BUCKET_S};
+    let rows = match clock_provenance::list_rows(conn) {
+        Ok(rows) => rows,
+        Err(err) => {
+            warnings.push(format!(
+                "clock provenance ledger could not be read for the anchor cross-check: {err:#}"
+            ));
+            return;
+        }
+    };
+    for row in &rows {
+        let record = &row.record;
+        match clock_provenance::link_to_anchor(record, anchors) {
+            AnchorLink::AnchorMissing => {
+                if malformed_anchor_ids.contains(&record.anchor_id) {
+                    continue;
+                }
+                warnings.push(format!(
+                    "clock provenance orphan: record #{} names anchor #{}, which is no longer \
+                     in the anchors table (deleted, or the table was rebuilt); run log_anchor \
+                     verify",
+                    row.id, record.anchor_id
+                ));
+            }
+            AnchorLink::TokenReplaced {
+                stored_token_sha256,
+            } => {
+                warnings.push(format!(
+                    "clock provenance orphan: record #{} binds anchor #{} to token sha256 {}… \
+                     but the row now holds {}… (the token was replaced); run log_anchor verify",
+                    row.id,
+                    record.anchor_id,
+                    &record.token_sha256[..record.token_sha256.len().min(16)],
+                    &stored_token_sha256[..16]
+                ));
+            }
+            AnchorLink::Matches => {
+                let Some(anchor) = anchors.iter().find(|a| a.id == record.anchor_id) else {
+                    continue;
+                };
+                let Some(assessment) = clock_provenance::assess(record, anchor) else {
+                    continue;
+                };
+                if clock_provenance::beyond(record, &assessment, ONE_BUCKET_S) {
+                    let offset = record.observed_offset_s.unwrap_or(0);
+                    warnings.push(format!(
+                        "clock offset: record #{} measured the device clock {} from anchor \
+                         #{}'s TSA time — beyond one bucket (600 s); run log_anchor verify",
+                        row.id,
+                        clock_provenance::format_offset(offset),
+                        record.anchor_id
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// `list_anchors_lenient` wraps a row's reason as `corrupt anchor {id}:

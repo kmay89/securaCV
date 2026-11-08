@@ -286,6 +286,11 @@ fn main() -> Result<()> {
                             id,
                             &verify_helpers::hex32(&entry_hash)[..16]
                         ),
+                        VerifiedItem::ClockProvenance { id, entry_hash } => println!(
+                            "  clock-provenance record {}: hash={} OK",
+                            id,
+                            &verify_helpers::hex32(&entry_hash)[..16]
+                        ),
                     }
                 }
             },
@@ -358,6 +363,17 @@ fn main() -> Result<()> {
         "verified {} export receipt entries",
         report.export_receipts_verified
     );
+    println!();
+
+    println!("=== Clock Provenance ===");
+    match report.clock_provenance_verified {
+        Some(n) => println!(
+            "verified {n} clock-provenance record(s) (device clock vs TSA genTime, one per \
+             anchor; assessment: log_anchor --db {} verify)",
+            args.db
+        ),
+        None => println!("no clock-provenance records"),
+    }
 
     if !report.chain_valid {
         if let Some(failure) = &report.failure {
@@ -375,11 +391,15 @@ fn main() -> Result<()> {
 
     // Anchor-row anomalies are a different finding from timeline anomalies
     // (a damaged auxiliary row, not a gap in the record), so they print under
-    // their own heading.
-    let (anchor_warnings, timeline_warnings): (Vec<&String>, Vec<&String>) = report
-        .warnings
-        .iter()
-        .partition(|w| verify::classify_warning(w) == verify::WarningKind::AnchorAnomaly);
+    // their own heading — the clock-provenance cross-check findings with them,
+    // since both are about the anchors table.
+    let (anchor_warnings, timeline_warnings): (Vec<&String>, Vec<&String>) =
+        report.warnings.iter().partition(|w| {
+            matches!(
+                verify::classify_warning(w),
+                verify::WarningKind::AnchorAnomaly | verify::WarningKind::ClockProvenance
+            )
+        });
     if !timeline_warnings.is_empty() {
         println!();
         println!("=== Timeline Audit ===");

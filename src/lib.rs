@@ -34,8 +34,8 @@ use zeroize::Zeroizing;
 use crate::crypto::signatures::{
     sign_rotation_attestation, sign_rotation_authorization, verify_rotation_attestation,
     verify_rotation_authorization, PqPublicKey, SignatureKeys, SignatureMode, SignatureSet,
-    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_EXPORT_RECEIPT, DOMAIN_POLICY_CHANGE_RECORD,
-    DOMAIN_SEALED_LOG_ENTRY,
+    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CLOCK_PROVENANCE, DOMAIN_EXPORT_RECEIPT,
+    DOMAIN_POLICY_CHANGE_RECORD, DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::storage::ensure_columns;
 
@@ -54,6 +54,7 @@ pub mod bridge;
 #[cfg(feature = "c2pa-export")]
 pub mod c2pa_export;
 pub mod canonical_json;
+pub mod clock_provenance;
 pub mod config;
 pub mod crypto;
 pub mod detect;
@@ -1113,6 +1114,71 @@ pub struct ExportBundle {
     pub pq_public_key: Option<Vec<u8>>,
 }
 
+/// Schema discriminator of a [`ClockProvenanceRecord`] (precedent:
+/// [`KEY_ROTATION_SCHEMA_V1`]).
+pub const CLOCK_PROVENANCE_SCHEMA_V1: &str = "securacv/clock_provenance/v1";
+
+/// The bound on a recorded clock offset, in whole seconds either way. A
+/// reading past it is stored as the bound itself (`>= +3600 s` /
+/// `<= -3600 s`): the record says "at least this far", never how far.
+pub const CLOCK_PROVENANCE_CLAMP_S: i64 = 3600;
+
+/// One sealed clock-provenance record: the device's own clock measured
+/// against one RFC 3161 token's `genTime`, at the moment `witnessd` first saw
+/// the anchor row (`docs/design/clock_provenance.md`).
+///
+/// The wire shape is byte-pinned (`serde_json::to_string`, declared order,
+/// both `Option`s serialized as explicit `null`): the stored `payload_json`
+/// literal is what is hashed and signed, and a verifier never re-serializes
+/// it. New fields go LAST and are `Option` + `default`.
+///
+/// Every field is a 10-minute bucket, a whole-second clamped difference, a
+/// whole-second clamped duration, a row id, a hash or a version string —
+/// no precise absolute instant of the kernel's own (Invariant III). The only
+/// precise instant derivable, `genTime + observed_offset_s`, is the time of
+/// an anchoring act the TSA already fixed to the second.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClockProvenanceRecord {
+    /// [`CLOCK_PROVENANCE_SCHEMA_V1`].
+    pub schema: String,
+    /// The device clock at observation, at kernel granularity (10 minutes).
+    pub time_bucket: TimeBucket,
+    /// The `tsa_anchors` row observed — a locator; the binding is the hash.
+    pub anchor_id: i64,
+    /// SHA-256 (64 lowercase hex) over the row's `token_der`: binds the
+    /// imprint, the `genTime` and the TSA identity, `sha256sum`-checkable.
+    pub token_sha256: String,
+    /// `clamp(device wall clock − genTime, ±3600)` in whole seconds; positive
+    /// means the device read ahead of the TSA. `None` is a binding-only
+    /// record (the row was already there at the first poll of this process).
+    pub observed_offset_s: Option<i32>,
+    /// Whole seconds since the previous completed poll (1..=3600): the row
+    /// was at most this old when first seen. `None` with `observed_offset_s`.
+    pub poll_gap_s: Option<u32>,
+    /// The `witnessd` build that measured.
+    pub kernel_version: String,
+}
+
+/// What one poll of the anchors table observed, as the daemon hands it to
+/// [`Kernel::observe_anchors_for_clock_provenance`]: the wall clock read ONCE
+/// for every row of the poll, and the measured gap since the previous
+/// completed poll (`None` on the first poll of a process ⇒ binding-only
+/// records).
+#[derive(Clone, Copy, Debug)]
+pub struct ClockObservation<'a> {
+    pub observed_wall_s: u64,
+    pub poll_gap_s: Option<u32>,
+    pub kernel_version: &'a str,
+}
+
+/// One record a poll sealed, as returned to the daemon for its log line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SealedClockProvenance {
+    pub id: i64,
+    pub anchor_id: i64,
+    pub record: ClockProvenanceRecord,
+}
+
 /// One sealed-log row as `GET /api/sealed-log` serves it to a read-only
 /// verifier — the wire shape `tvos/witness-core`'s `SealedEntry` walks.
 ///
@@ -1703,6 +1769,9 @@ impl Kernel {
               entry_hash BLOB NOT NULL,
               signature BLOB NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS clock_provenance (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, payload_json TEXT NOT NULL, prev_hash BLOB NOT NULL, entry_hash BLOB NOT NULL, signature BLOB NOT NULL, pq_signature BLOB, pq_scheme TEXT);
+            CREATE TABLE IF NOT EXISTS clock_provenance_cursor (id INTEGER PRIMARY KEY CHECK (id = 1), last_anchor_id INTEGER NOT NULL);
 
             CREATE TABLE IF NOT EXISTS device_metadata (
               id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -2564,6 +2633,66 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         )?;
 
         Ok(entry_hash)
+    }
+
+    /// Seal one clock-provenance record into the never-pruned
+    /// `clock_provenance` ledger in its own `BEGIN IMMEDIATE` transaction.
+    /// The daemon path is [`Self::observe_anchors_for_clock_provenance`],
+    /// which seals and advances the cursor together; this is the primitive
+    /// under it.
+    pub fn append_clock_provenance(
+        &mut self,
+        record: &ClockProvenanceRecord,
+    ) -> Result<clock_provenance::ClockProvenanceRow> {
+        let key_material = self.signature_key_material();
+        self.conn.execute_batch("BEGIN IMMEDIATE;")?;
+        match append_clock_provenance_locked(&self.conn, &key_material, record)
+            .and_then(|row| {
+                self.conn.execute_batch("COMMIT;")?;
+                Ok(row)
+            }) {
+            Ok(row) => Ok(row),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
+    }
+
+    /// One poll of the local `tsa_anchors` table (a read of this database,
+    /// no network): for every anchor row past the persistent cursor, seal one
+    /// clock-provenance record and advance the cursor, all in ONE
+    /// `BEGIN IMMEDIATE` transaction, so a crash can neither duplicate a
+    /// record nor skip a row.
+    ///
+    /// - No cursor row yet (first poll on an upgraded database): the cursor is
+    ///   set to `MAX(tsa_anchors.id)` (0 without the table) and nothing is
+    ///   sealed — pre-upgrade anchors are never backfilled.
+    /// - `obs.poll_gap_s == None` (the first poll of this process): every row
+    ///   gets a binding-only record (`observed_offset_s` and `poll_gap_s`
+    ///   both `null`) — the row may have been there for any length of time.
+    /// - A row whose `token_der` is not readable as bytes gets no record; the
+    ///   cursor still moves past it.
+    /// - A token that does not parse, or whose `genTime` does not, gets a
+    ///   binding-only record: the hash binding holds, the measurement cannot.
+    ///
+    /// Returns the records sealed, in anchor-id order.
+    pub fn observe_anchors_for_clock_provenance(
+        &mut self,
+        obs: &ClockObservation<'_>,
+    ) -> Result<Vec<SealedClockProvenance>> {
+        let key_material = self.signature_key_material();
+        self.conn.execute_batch("BEGIN IMMEDIATE;")?;
+        match observe_anchors_locked(&self.conn, &key_material, obs).and_then(|sealed| {
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(sealed)
+        }) {
+            Ok(sealed) => Ok(sealed),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
     }
 
     pub fn log_break_glass_receipt(
@@ -4409,6 +4538,161 @@ pub(crate) fn wait_out_bucket_first_second() {
     while now_s().is_ok_and(|s| s % u64::from(TEN_MINUTES_S) == 0) {
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// The newest clock-provenance entry hash, or the genesis `[0; 32]`, read on
+/// the transaction's own connection so the link and the insert see one state.
+fn last_clock_provenance_hash_or_zero(conn: &Connection) -> Result<[u8; 32]> {
+    let mut stmt =
+        conn.prepare("SELECT entry_hash FROM clock_provenance ORDER BY id DESC LIMIT 1")?;
+    let mut rows = stmt.query([])?;
+    match rows.next()? {
+        Some(row) => {
+            let entry_bytes: Vec<u8> = row.get(0)?;
+            blob32(entry_bytes, "clock_provenance.entry_hash")
+        }
+        None => Ok([0u8; 32]),
+    }
+}
+
+/// Hash, sign and insert one clock-provenance record with the write lock
+/// held (the caller owns the transaction). Chain shape = export receipts:
+/// `entry_hash = SHA256(prev_hash ‖ payload_json)`, signed under
+/// [`DOMAIN_CLOCK_PROVENANCE`]; `created_at` is the record's bucket start.
+fn append_clock_provenance_locked(
+    conn: &Connection,
+    key_material: &SignatureKeyMaterial,
+    record: &ClockProvenanceRecord,
+) -> Result<clock_provenance::ClockProvenanceRow> {
+    if record.schema != CLOCK_PROVENANCE_SCHEMA_V1 {
+        return Err(anyhow!(
+            "clock-provenance record schema must be {CLOCK_PROVENANCE_SCHEMA_V1} (got {:?})",
+            record.schema
+        ));
+    }
+    let created_at = record.time_bucket.start_epoch_s as i64;
+    let prev_hash = last_clock_provenance_hash_or_zero(conn)?;
+    let payload_json = serde_json::to_string(record)?;
+    let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+    let signature_set = sign_entry(
+        &key_material.signature_keys(),
+        &entry_hash,
+        DOMAIN_CLOCK_PROVENANCE,
+    )?;
+    let pq_signature = signature_set
+        .pq_signature
+        .as_ref()
+        .map(|sig| sig.signature.clone());
+    let pq_scheme = signature_set
+        .pq_signature
+        .as_ref()
+        .map(|sig| sig.scheme_id.clone());
+    conn.execute(
+        "INSERT INTO clock_provenance(created_at, payload_json, prev_hash, entry_hash, \
+         signature, pq_signature, pq_scheme) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            created_at,
+            payload_json,
+            prev_hash.to_vec(),
+            entry_hash.to_vec(),
+            signature_set.ed25519_signature,
+            pq_signature,
+            pq_scheme,
+        ],
+    )?;
+    Ok(clock_provenance::ClockProvenanceRow {
+        id: conn.last_insert_rowid(),
+        created_at,
+        payload_json,
+        prev_hash,
+        entry_hash,
+        signatures: signature_set,
+        record: record.clone(),
+    })
+}
+
+/// The body of [`Kernel::observe_anchors_for_clock_provenance`], with the
+/// write lock held.
+fn observe_anchors_locked(
+    conn: &Connection,
+    key_material: &SignatureKeyMaterial,
+    obs: &ClockObservation<'_>,
+) -> Result<Vec<SealedClockProvenance>> {
+    let cursor: Option<i64> = conn
+        .query_row(
+            "SELECT last_anchor_id FROM clock_provenance_cursor WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(cursor) = cursor else {
+        // First poll ever on this database: start at the newest row that
+        // exists, so nothing anchored before this release is ever measured
+        // against a clock that did not observe it.
+        let newest: i64 = if tsa::anchor_table_exists(conn)? {
+            conn.query_row(
+                "SELECT COALESCE(MAX(id), 0) FROM tsa_anchors",
+                [],
+                |row| row.get(0),
+            )?
+        } else {
+            0
+        };
+        conn.execute(
+            "INSERT INTO clock_provenance_cursor(id, last_anchor_id) VALUES (1, ?1)",
+            params![newest],
+        )?;
+        return Ok(Vec::new());
+    };
+    let rows = tsa::anchor_tokens_after(conn, cursor)?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let size = TEN_MINUTES_S as u64;
+    let time_bucket = TimeBucket {
+        start_epoch_s: (obs.observed_wall_s / size) * size,
+        size_s: TEN_MINUTES_S,
+    };
+    let mut sealed = Vec::new();
+    let mut last_id = cursor;
+    for (anchor_id, token_der) in rows {
+        last_id = anchor_id;
+        let Some(token_der) = token_der else {
+            continue;
+        };
+        let token_sha256 = clock_provenance::token_sha256_hex(&token_der);
+        // A measurement needs a completed previous poll (else the row's age
+        // is unbounded) and a readable genTime; otherwise the record binds
+        // the token and says nothing about the clock.
+        let measured = obs.poll_gap_s.and_then(|gap| {
+            let token = tsa::parse_token(&token_der).ok()?;
+            let gen_time = tsa::gen_time_unix(&token.gen_time)?;
+            let offset = (obs.observed_wall_s as i64 - gen_time)
+                .clamp(-CLOCK_PROVENANCE_CLAMP_S, CLOCK_PROVENANCE_CLAMP_S)
+                as i32;
+            Some((offset, gap.clamp(1, CLOCK_PROVENANCE_CLAMP_S as u32)))
+        });
+        let record = ClockProvenanceRecord {
+            schema: CLOCK_PROVENANCE_SCHEMA_V1.to_string(),
+            time_bucket,
+            anchor_id,
+            token_sha256,
+            observed_offset_s: measured.map(|(offset, _)| offset),
+            poll_gap_s: measured.map(|(_, gap)| gap),
+            kernel_version: obs.kernel_version.to_string(),
+        };
+        let row = append_clock_provenance_locked(conn, key_material, &record)?;
+        sealed.push(SealedClockProvenance {
+            id: row.id,
+            anchor_id,
+            record,
+        });
+    }
+    conn.execute(
+        "UPDATE clock_provenance_cursor SET last_anchor_id = ?1 WHERE id = 1",
+        params![last_id],
+    )?;
+    Ok(sealed)
 }
 
 /// Durable anti-replay ledger for break-glass tokens.
