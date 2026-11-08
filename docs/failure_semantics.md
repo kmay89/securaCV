@@ -147,12 +147,17 @@ still functioning when it reports it.
 A stored break-glass quorum policy that this build cannot parse or validate (a
 corrupt row, or a field a newer release wrote that this build refuses) does
 **not** stop the kernel from opening. `Kernel::open` records the load error and
-leaves the policy unset, and every break-glass action on that database refuses
-with the recorded error (`Kernel::break_glass_policy_checked`): authorize,
-unseal, `policy set` and `policy propose`, and the console. The policy is never
-treated as absent, so a `policy set` cannot bootstrap over it without the
+leaves the policy unset, and every break-glass action on that database
+refuses. Authorize, unseal, `policy set`, `policy propose` and the trustee
+enrollment that completes a setup roster refuse with the recorded error
+(`Kernel::break_glass_policy_checked`). The console answers
+`500 policy_load_failed` and logs nothing per request; the error is logged when
+the kernel opens. A token redemption (unseal or quorum export) that reaches the
+gate is refused there, because the gate's own policy read fails. The policy is
+never treated as absent, so a `policy set` cannot bootstrap over it without the
 stored quorum's consent; that path refuses too. `break_glass doctor` reports
-`policy: UNREADABLE — …` and exits 1.
+`policy: UNREADABLE — …` and exits 1; a database with no policy table yet (an
+empty pre-created file) is reported with the read's own error instead.
 
 Verification is unchanged and refuses the database: the verifier's own policy
 read fails, so the report is `verification failed`, and witnessd's boot check

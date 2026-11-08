@@ -10,11 +10,14 @@
   signing domain or table changes.
 - **An unreadable policy no longer stops `Kernel::open`.** A stored quorum
   policy this build cannot parse or validate is recorded as a load error; the
-  kernel opens, and every break-glass action refuses with
+  kernel opens, and every break-glass action refuses. Authorize, unseal,
+  `policy set`, `policy propose` and the trustee enrollment that completes a
+  setup roster refuse with
   `break-glass policy could not be loaded: {e} — this build refuses every
   break-glass action on this database (run log_verify; upgrade if the policy
-  was written by a newer release)`: authorize, unseal, `policy set`,
-  `policy propose` and the console (`500 policy_load_failed`). Verification
+  was written by a newer release)`; the console answers
+  `500 policy_load_failed`; a token redemption (unseal or quorum export) that
+  reaches the gate is refused by the gate's own policy read. Verification
   still refuses the database (`verification failed`), so `witnessd` boots
   into safe mode, serving the read and verify API, where it used to exit.
   `frigate_bridge` keeps sealing: the policy governs break-glass only.
@@ -23,7 +26,9 @@
   not be loaded ({e}) — a quorum change needs the stored policy; it is never
   treated as absent`.
 - **`break_glass doctor`** names the case on its own line,
-  `policy: UNREADABLE — {e}`, counts it as a problem and exits 1.
+  `policy: UNREADABLE — {e}`, counts it as a problem and exits 1. A failed
+  SQL read (an empty pre-created database with no policy table yet) keeps its
+  own message and is not called UNREADABLE.
 - **Recorded approvals.** `authorize` commits, and the kernel stores, only the
   approvals over the receipt's own request hash, in presentation order. A
   stale approval file handed in beside the right ones used to land in the
