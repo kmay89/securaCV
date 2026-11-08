@@ -236,6 +236,12 @@ answers who asked and why. Verification re-derives the request hash from
 those recorded fields and refuses a receipt whose recorded context is not
 what the trustees signed.
 
+The approvals recorded on a receipt are those over its request hash, in the
+order they were presented. An approval over another hash (a stale file for an
+earlier request, handed in beside the right ones) never counts and is neither
+committed nor stored; one over this hash from a trustee whose signature does
+not verify is recorded but never counted.
+
 ## Unsealing
 
 Use the token file to unseal the envelope. The output is written to the
@@ -320,7 +326,12 @@ one.
 
 Receipts form an append-only, signed chain in the kernel database. Use the
 `break_glass receipts` command (or `log_verify`) to validate the chain and
-confirm that approvals align with the stored quorum policy. Verification
+confirm that approvals align with the stored quorum policy. An approval that
+does not count (over another request hash, from a trustee outside the
+receipt's policy era, or with a signature that does not verify) is skipped,
+never a failure, on every outcome: a `Granted` receipt still needs `n`
+distinct valid approvals and must name exactly the trustees whose approvals
+verify. Verification
 also re-derives each receipt's request hash from its recorded purpose and
 operator context. The audit path tolerates a receipt that recorded no
 context (a pre-§3.6 build's row has nothing to bind and is reported as it

@@ -1,6 +1,40 @@
 # Changelog
 
 ## [Unreleased]
+### An unreadable break-glass policy lands witnessd in safe mode instead of exiting, and a stale approval no longer poisons a receipt
+
+- **Release coupling.** This change must ship in a release before the custody
+  epoch (cooling-off, veto, emergency and seal profiles; the next roadmap PR):
+  that release's policy and approval shapes rely on every reader already
+  refusing into safe mode and skipping approvals that do not count. No format,
+  signing domain or table changes.
+- **An unreadable policy no longer stops `Kernel::open`.** A stored quorum
+  policy this build cannot parse or validate is recorded as a load error; the
+  kernel opens, and every break-glass action refuses with
+  `break-glass policy could not be loaded: {e} — this build refuses every
+  break-glass action on this database (run log_verify; upgrade if the policy
+  was written by a newer release)`: authorize, unseal, `policy set`,
+  `policy propose` and the console (`500 policy_load_failed`). Verification
+  still refuses the database (`verification failed`), so `witnessd` boots
+  into safe mode, serving the read and verify API, where it used to exit.
+  `frigate_bridge` keeps sealing: the policy governs break-glass only.
+- **Never bootstrapped over.** A `policy set` against an unreadable policy
+  refuses: `refusing to change the break-glass policy: the stored policy could
+  not be loaded ({e}) — a quorum change needs the stored policy; it is never
+  treated as absent`.
+- **`break_glass doctor`** names the case on its own line,
+  `policy: UNREADABLE — {e}`, counts it as a problem and exits 1.
+- **Recorded approvals.** `authorize` commits, and the kernel stores, only the
+  approvals over the receipt's own request hash, in presentation order. A
+  stale approval file handed in beside the right ones used to land in the
+  signed row, and the verifier failed that row on every outcome.
+- **The verifier skips an approval that does not count** (over another request
+  hash, from a trustee outside the era's roster, or with a bad signature) on
+  every outcome, so a row an earlier build wrote with a stale approval now
+  verifies. An invalid trustee public key in the policy is still an error; a
+  `Granted` row still needs `n` distinct valid approvals and exact
+  attribution. `VerifyReport` and the JS viewer are unchanged.
+
 ### Every disclosed file carries its handoff sidecar; the device records the decrypt; a quorum export names its grant
 
 - **Release coupling — merge gate.** This change adds a receipt outcome
