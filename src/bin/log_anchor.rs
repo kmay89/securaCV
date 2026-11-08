@@ -30,6 +30,13 @@
 //! TSAs in the declared roles — roles are the operator's declarations, never
 //! a legal finding.
 //!
+//! `verify` also reads the clock-provenance ledger `witnessd` seals (one
+//! device-signed record per anchor row: the device clock measured against
+//! the token's genTime, bound by the token's hash) and prints, under every
+//! anchor, what that record says — with the ClockSkew correlation and the
+//! structural seal-before-genTime check. It holds no key and writes nothing;
+//! `docs/design/clock_provenance.md`.
+//!
 //! `list`, `verify`, `query` and `anchor-all --offline-dir` open the
 //! database read-only and never create the anchors table (an observer
 //! writes nothing); `request`, `import`, online `anchor-all` and `relabel`
@@ -37,13 +44,16 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{ArgAction, Parser, Subcommand};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use witness_kernel::anchor_policy::{self, AnchorPolicy, Attribution, CoverageVerdict, Verified};
+use witness_kernel::clock_provenance::{self, ClockProvenanceRow};
+use witness_kernel::crypto::signatures::SignatureMode;
 use witness_kernel::tsa::{self, AnchorRecord, AnchorSubject};
+use witness_kernel::{verify, verify_helpers};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -986,9 +996,25 @@ fn verify(
     };
     if anchors.is_empty() {
         println!("no anchors stored");
-        if policy.is_none() {
-            return Ok(());
+    }
+    // The clock-provenance ledger, whole, before any anchor: its chain and
+    // device signatures under the key lineage this database names. The
+    // per-anchor clock lines below only mean something over a ledger that
+    // holds together.
+    let threshold_s = policy
+        .as_ref()
+        .map(|(p, _)| p.max_clock_offset_s)
+        .unwrap_or(clock_provenance::ONE_BUCKET_S);
+    let mut clock = ClockContext::load(conn, threshold_s)?;
+    if anchors.is_empty() && policy.is_none() {
+        let orphans = clock.finish(&anchors);
+        if !clock.ledger_ok {
+            bail!("clock provenance ledger failed verification");
         }
+        if orphans > 0 {
+            bail!("{orphans} clock-provenance record(s) name anchors that were deleted or replaced");
+        }
+        return Ok(());
     }
 
     let mut failures = 0usize;
@@ -1176,6 +1202,7 @@ fn verify(
 
         let membership = membership_text(a);
         let signer_text = signer_summary(&a.token_der);
+        let line_ok = problems.is_empty() && under_label.is_some();
         if problems.is_empty() {
             if let Some(label) = under_label {
                 println!(
@@ -1216,7 +1243,9 @@ fn verify(
                 println!("    {p}");
             }
         }
+        clock.print_for_anchor(conn, a, line_ok, policy.is_some())?;
     }
+    let orphans = clock.finish(&anchors);
 
     // Distinctness: only OK rows, only head kinds.
     for key in &head_order {
@@ -1335,15 +1364,24 @@ fn verify(
             }
         }
         print_policy_note(path);
-        let unsatisfied = uncovered > 0 || (require_current && not_current > 0);
+        let breaches = clock.breaches;
+        let unsatisfied = uncovered > 0 || (require_current && not_current > 0) || breaches > 0;
         if unsatisfied {
             let current_part = if require_current {
                 format!(", {not_current} not current")
             } else {
                 String::new()
             };
+            let clock_part = if breaches > 0 {
+                format!(
+                    ", {breaches} clock-offset breach(es) of max_clock_offset_s {}",
+                    p.max_clock_offset_s
+                )
+            } else {
+                String::new()
+            };
             let msg = format!(
-                "anchor policy {}: NOT SATISFIED ({uncovered} subject(s) uncovered{current_part})",
+                "anchor policy {}: NOT SATISFIED ({uncovered} subject(s) uncovered{current_part}{clock_part})",
                 path.display()
             );
             // The verdict line goes to stdout either way, on the same stream
@@ -1359,10 +1397,302 @@ fn verify(
     if failures > 0 {
         bail!("{failures} anchor(s) failed verification");
     }
+    if !clock.ledger_ok {
+        bail!("clock provenance ledger failed verification");
+    }
+    if orphans > 0 {
+        bail!("{orphans} clock-provenance record(s) name anchors that were deleted or replaced");
+    }
     if let Some(msg) = policy_failure {
         bail!("{msg}");
     }
     Ok(())
+}
+
+/// What `verify` knows about the clock-provenance ledger while it walks the
+/// anchors (`docs/design/clock_provenance.md`, "Verification"). Read-only
+/// and key-free: the ledger is checked under the key lineage the database
+/// itself names, so its line says self-consistent, never verified.
+struct ClockContext {
+    rows: Vec<ClockProvenanceRow>,
+    /// `false` after the ledger line printed `FAIL`: the per-anchor clock
+    /// lines are suppressed and the run bails after the loop.
+    ledger_ok: bool,
+    /// `max_clock_offset_s` from the policy, else one bucket (600 s).
+    threshold_s: i64,
+    /// Retained ClockSkew failure buckets, for the correlation notes.
+    skew_buckets: Vec<i64>,
+    /// Records that contradict the anchors table (anchor deleted or token
+    /// replaced); each fails the run.
+    orphans: usize,
+    /// Under `--policy`: evaluated offsets beyond the threshold, plus
+    /// seal-before-genTime findings beyond it on anchors whose own line is OK.
+    breaches: usize,
+}
+
+impl ClockContext {
+    fn load(conn: &Connection, threshold_s: i64) -> Result<Self> {
+        let mut ctx = Self {
+            rows: Vec::new(),
+            ledger_ok: true,
+            threshold_s,
+            skew_buckets: Vec::new(),
+            orphans: 0,
+            breaches: 0,
+        };
+        let count = clock_provenance::row_count(conn)?;
+        if count == 0 {
+            println!("clock provenance: no records");
+            return Ok(ctx);
+        }
+        match Self::walk_ledger(conn) {
+            Ok(rows) => {
+                println!(
+                    "clock provenance: {} record(s), ledger self-consistent (chain and device \
+                     signatures check under the key lineage this database names; identity \
+                     unverified)",
+                    rows.len()
+                );
+                ctx.rows = rows;
+                ctx.skew_buckets = clock_provenance::clock_skew_buckets(conn)?;
+            }
+            Err(e) => {
+                println!("clock provenance: FAIL ({e:#})");
+                ctx.ledger_ok = false;
+            }
+        }
+        Ok(ctx)
+    }
+
+    /// The court_export pattern: the database's pinned device key, every
+    /// validated lineage key, the stored PQ key when there is one, Compat.
+    fn walk_ledger(conn: &Connection) -> Result<Vec<ClockProvenanceRow>> {
+        let genesis = witness_kernel::device_public_key_from_db(conn)
+            .map_err(|e| anyhow!("could not read the database's device identity: {e}"))?;
+        let keys = verify_helpers::lineage_verifying_keys(conn, &genesis)?;
+        let pq = verify_helpers::load_pq_verifying_key(conn, None, None)?;
+        verify::verify_clock_provenance_with(conn, &keys, SignatureMode::Compat, pq.as_ref(), |_, _| {})?;
+        clock_provenance::list_rows(conn)
+    }
+
+    fn band(&self, is_beyond: bool) -> String {
+        let (word, what) = (
+            if is_beyond { "BEYOND" } else { "within" },
+            if self.threshold_s == clock_provenance::ONE_BUCKET_S {
+                "one bucket (600 s)".to_string()
+            } else {
+                format!("{} s (max_clock_offset_s)", self.threshold_s)
+            },
+        );
+        format!("{word} {what}")
+    }
+
+    /// The clock lines under one anchor's block: the record's statement
+    /// (steps 2, 5, 6, 8), the token cross-check (3), and the structural
+    /// seal-before-genTime check on a chain-head anchor over a live sealed
+    /// row (7), which needs no record at all.
+    fn print_for_anchor(
+        &mut self,
+        conn: &Connection,
+        a: &AnchorRecord,
+        line_ok: bool,
+        under_policy: bool,
+    ) -> Result<()> {
+        if self.ledger_ok {
+            let row = clock_provenance::record_for_anchor(&self.rows, a.id).cloned();
+            match row {
+                None => println!(
+                    "    clock: no record (anchored before clock provenance, or witnessd was not \
+                     running to observe it)"
+                ),
+                Some(row) => {
+                    let stored = clock_provenance::token_sha256_hex(&a.token_der);
+                    if stored != row.record.token_sha256 {
+                        self.orphans += 1;
+                        println!(
+                            "    clock: FAIL record #{} binds token sha256 {}… but the row now \
+                             holds {}… — the token was replaced after the device bound it",
+                            row.id,
+                            prefix16(&row.record.token_sha256),
+                            &stored[..16]
+                        );
+                    } else {
+                        self.print_record(&row, a, under_policy);
+                    }
+                }
+            }
+        }
+        // Step 7: structural, record or no record. The sealed row's bucket
+        // start versus the token's time bounds how far ahead the device read
+        // when it sealed the anchored row.
+        if a.subject_kind() == Some(AnchorSubject::ChainHead) {
+            let created_at: Option<i64> = conn
+                .query_row(
+                    "SELECT created_at FROM sealed_events WHERE entry_hash = ?1 ORDER BY id ASC \
+                     LIMIT 1",
+                    [a.subject_hash.as_slice()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let gen_time = tsa::parse_token(&a.token_der)
+                .ok()
+                .and_then(|t| tsa::gen_time_unix(&t.gen_time));
+            if let (Some(created_at), Some(gen_time)) = (created_at, gen_time) {
+                if let Some(n) = clock_provenance::seal_precedes_gen_time(created_at, gen_time) {
+                    if n > self.threshold_s {
+                        println!(
+                            "    WARNING: the anchored sealed row's bucket starts {n} s after the \
+                             TSA genTime: the device clock read at least {n} s ahead when it sealed \
+                             that row ({})",
+                            self.band(true)
+                        );
+                        if under_policy && line_ok {
+                            self.breaches += 1;
+                        }
+                    } else {
+                        println!(
+                            "    note: the anchored sealed row's bucket starts {n} s after the TSA \
+                             genTime: the device clock read at least {n} s ahead when it sealed \
+                             that row"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn print_record(&mut self, row: &ClockProvenanceRow, a: &AnchorRecord, under_policy: bool) {
+        let rec = &row.record;
+        let Some(offset) = rec.observed_offset_s else {
+            println!(
+                "    clock: record #{} binds this token (sha256 {}…); binding only, no \
+                 measurement (row already present at the first poll of a witnessd process)",
+                row.id,
+                prefix16(&rec.token_sha256)
+            );
+            return;
+        };
+        let offset_text = clock_provenance::format_offset(offset);
+        let Some(asmt) = clock_provenance::assess(rec, a) else {
+            println!(
+                "    clock: record #{}: device clock {offset_text} recorded, but genTime not \
+                 readable from the token; not evaluated",
+                row.id
+            );
+            return;
+        };
+        let gap = rec.poll_gap_s.unwrap_or(0);
+        let lag = clock_provenance::human_lag(asmt.lag_s);
+        if !(asmt.prompt || offset < 0) {
+            println!(
+                "    clock: record #{}: device clock {offset_text} vs TSA genTime; row stored \
+                 {lag} after issuance (delayed import), positive offset not evaluated",
+                row.id
+            );
+        } else {
+            let is_beyond = clock_provenance::beyond(rec, &asmt, self.threshold_s);
+            let when = if asmt.prompt {
+                format!("row seen within {gap} s, stored {lag} after issuance")
+            } else {
+                format!(
+                    "row seen within {gap} s, stored {lag} after issuance (delayed import; a \
+                     negative offset is evaluated regardless)"
+                )
+            };
+            println!(
+                "    clock: record #{}: device clock {offset_text} vs TSA genTime ({when}); {}",
+                row.id,
+                self.band(is_beyond)
+            );
+            if is_beyond {
+                if under_policy {
+                    self.breaches += 1;
+                } else {
+                    println!(
+                        "    WARNING: device clock offset beyond the structural threshold; with \
+                         --policy this counts against the anchor policy"
+                    );
+                }
+                let center = rec.time_bucket.start_epoch_s as i64;
+                match clock_provenance::skew_within(
+                    &self.skew_buckets,
+                    center,
+                    clock_provenance::ONE_BUCKET_S,
+                ) {
+                    Some(b) => println!(
+                        "    note: a ClockSkew failure record is retained in bucket {b} (within \
+                         one bucket of this reading)"
+                    ),
+                    None => println!(
+                        "    note: no ClockSkew failure record retained within one bucket of this \
+                         reading (retention prunes failure records)"
+                    ),
+                }
+            }
+        }
+        if asmt.host_clock_disagrees {
+            println!(
+                "    note: host clock: the device's reading at observation is {:+} s from the \
+                 anchor row's bucket start (expected 0 to 1199 s); the anchoring host's clock \
+                 and the device clock disagree",
+                asmt.host_gap_s
+            );
+        }
+    }
+
+    /// After the anchor loop: records whose anchor is gone (step 3), and the
+    /// step check between consecutive measured records (step 9). Returns the
+    /// orphan count.
+    fn finish(&mut self, anchors: &[AnchorRecord]) -> usize {
+        if !self.ledger_ok {
+            return self.orphans;
+        }
+        for row in &self.rows {
+            if !anchors.iter().any(|a| a.id == row.record.anchor_id) {
+                self.orphans += 1;
+                println!(
+                    "clock provenance: FAIL record #{} names anchor #{}, which is not in the \
+                     anchors table (deleted, or the table was rebuilt)",
+                    row.id, row.record.anchor_id
+                );
+            }
+        }
+        let measured: Vec<&ClockProvenanceRow> = self
+            .rows
+            .iter()
+            .filter(|r| r.record.observed_offset_s.is_some())
+            .collect();
+        for pair in measured.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let (oa, ob) = (
+                i64::from(a.record.observed_offset_s.unwrap_or(0)),
+                i64::from(b.record.observed_offset_s.unwrap_or(0)),
+            );
+            let step = ob - oa;
+            if step.abs() > clock_provenance::ONE_BUCKET_S {
+                let (lo, hi) = (
+                    a.record.time_bucket.start_epoch_s as i64,
+                    b.record.time_bucket.start_epoch_s as i64,
+                );
+                match clock_provenance::skew_between(&self.skew_buckets, lo, hi) {
+                    Some(bk) => println!(
+                        "clock provenance: note: device clock offset stepped {step:+} s between \
+                         records #{} and #{}; a ClockSkew failure record is retained between \
+                         their buckets (bucket {bk})",
+                        a.id, b.id
+                    ),
+                    None => println!(
+                        "clock provenance: note: device clock offset stepped {step:+} s between \
+                         records #{} and #{}; no ClockSkew failure record is retained between \
+                         their buckets (retention prunes failure records)",
+                        a.id, b.id
+                    ),
+                }
+            }
+        }
+        self.orphans
+    }
 }
 
 fn print_policy_note(path: &Path) {

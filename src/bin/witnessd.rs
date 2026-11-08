@@ -22,8 +22,9 @@ use witness_kernel::{
     config::DetectBackendPreference,
     detect::{BackendRegistry, CpuBackend, StubBackend},
     storage_health::MonitorSettings,
-    BackendSelection, BucketKeyManager, CapabilityBoundaryRuntime, DeviceCapabilities, FailureType,
-    FileConfig, FileSource, FrameBuffer, InferenceBackend, Kernel, KernelConfig, LifecyclePhase,
+    BackendSelection, BucketKeyManager, CapabilityBoundaryRuntime, ClockObservation,
+    DeviceCapabilities, FailureType, FileConfig, FileSource, FrameBuffer, InferenceBackend, Kernel,
+    KernelConfig, LifecyclePhase,
     Module, ModuleDescriptor, RtspConfig, RtspSource, SharedStorageHealth, StorageHealthMonitor,
     TimeBucket, Vault, VaultConfig, ZoneCrossingModule, ZonePolicy,
 };
@@ -406,6 +407,7 @@ fn main() -> Result<()> {
         config.ingest.reconnect_backoff_max,
     );
     let mut clock_monitor = ClockMonitor::new(config.clock.skew_tolerance);
+    let mut anchor_observer = AnchorObserver::new(Instant::now());
     let mut heartbeat = HeartbeatScheduler::new(config.health.heartbeat);
     let mut disk_monitor =
         DiskMonitor::new(config.storage.min_free_bytes, config.storage.check_interval);
@@ -453,6 +455,13 @@ fn main() -> Result<()> {
         };
         clock_monitor.observe(
             bucket,
+            &mut kernel,
+            &mut pipeline,
+            kernel_version,
+            &cfg.ruleset_id,
+            ruleset_hash,
+        );
+        anchor_observer.tick(
             &mut kernel,
             &mut pipeline,
             kernel_version,
@@ -1077,6 +1086,143 @@ impl ClockMonitor {
         }
         // Track the observed bucket (even after regression, so one record per jump).
         self.last_bucket_start = Some(bucket.start_epoch_s);
+    }
+}
+
+/// How often the daemon polls its own `tsa_anchors` table for rows to seal a
+/// clock-provenance record for (a local read; no network).
+const CLOCK_PROVENANCE_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// How long a failed poll holds the next one off.
+const CLOCK_PROVENANCE_RETRY_BACKOFF: Duration = Duration::from_secs(60);
+
+/// Seals one clock-provenance record per anchor row — the device's own clock
+/// measured against the token's genTime, bound by the hash of the token —
+/// into the never-pruned `clock_provenance` ledger
+/// (`Kernel::observe_anchors_for_clock_provenance`;
+/// `docs/design/clock_provenance.md`). `witnessd` is the only process whose
+/// wall clock stamps the sealed log and the only long-running holder of the
+/// device key, so it is the only process that can make that statement.
+///
+/// The first poll of a process has no completed predecessor, so the rows it
+/// finds are of unbounded age and get binding-only records; from then on each
+/// poll carries the measured gap since the previous COMPLETED poll (a stalled
+/// main loop widens the gap honestly instead of asserting a 5 s bound). A
+/// failed poll is sealed as a `StorageWriteFailed` failure, backs the next
+/// poll off, and does not count as completed. Safe mode never reaches the
+/// main loop, so nothing is appended there.
+struct AnchorObserver {
+    last_poll_completed: Option<Instant>,
+    next_poll: Instant,
+    backoff_until: Option<Instant>,
+}
+
+impl AnchorObserver {
+    fn new(now: Instant) -> Self {
+        Self {
+            last_poll_completed: None,
+            next_poll: now,
+            backoff_until: None,
+        }
+    }
+
+    /// Whether a poll is due: the interval has elapsed and no backoff holds.
+    fn due(&self, now: Instant) -> bool {
+        now >= self.next_poll && self.backoff_until.is_none_or(|until| now >= until)
+    }
+
+    /// Whole seconds (rounded up, clamped to 1..=3600) since the previous
+    /// completed poll — the bound on how old a newly seen row can be — or
+    /// `None` on the first poll of this process.
+    fn poll_gap_s(&self, now: Instant) -> Option<u32> {
+        let since = now.saturating_duration_since(self.last_poll_completed?);
+        let whole = since.as_secs() + u64::from(since.subsec_nanos() > 0);
+        Some(whole.clamp(1, witness_kernel::CLOCK_PROVENANCE_CLAMP_S as u64) as u32)
+    }
+
+    /// One poll: hand the kernel the wall clock read once, the gap and the
+    /// build, and schedule the next poll. On success the poll counts as
+    /// completed; on failure it does not (the caller records the failure).
+    fn poll(
+        &mut self,
+        kernel: &mut Kernel,
+        now_wall_s: u64,
+        now_mono: Instant,
+        kernel_version: &str,
+    ) -> Result<Vec<witness_kernel::SealedClockProvenance>> {
+        let obs = ClockObservation {
+            observed_wall_s: now_wall_s,
+            poll_gap_s: self.poll_gap_s(now_mono),
+            kernel_version,
+        };
+        let sealed = kernel.observe_anchors_for_clock_provenance(&obs)?;
+        self.last_poll_completed = Some(now_mono);
+        self.backoff_until = None;
+        self.next_poll = now_mono + CLOCK_PROVENANCE_POLL_INTERVAL;
+        Ok(sealed)
+    }
+
+    /// A failed poll: back off, and leave `last_poll_completed` alone so the
+    /// next successful poll measures the whole gap.
+    fn record_failure(&mut self, now: Instant) {
+        self.backoff_until = Some(now + CLOCK_PROVENANCE_RETRY_BACKOFF);
+        self.next_poll = now + CLOCK_PROVENANCE_RETRY_BACKOFF;
+    }
+
+    fn tick(
+        &mut self,
+        kernel: &mut Kernel,
+        pipeline: &mut PipelineCounters,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) {
+        let now_mono = Instant::now();
+        if !self.due(now_mono) {
+            return;
+        }
+        let now_wall_s = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                // A wall clock before the epoch is the clock monitor's
+                // finding, not a storage failure; try again next interval.
+                log::warn!("clock provenance: wall clock unreadable: {e}");
+                self.next_poll = now_mono + CLOCK_PROVENANCE_POLL_INTERVAL;
+                return;
+            }
+        };
+        match self.poll(kernel, now_wall_s, now_mono, kernel_version) {
+            Ok(sealed) => {
+                for s in sealed {
+                    match s.record.observed_offset_s {
+                        Some(offset) => log::info!(
+                            "clock provenance: record #{} for anchor #{}: device clock {} vs TSA \
+                             genTime (row seen within {} s)",
+                            s.id,
+                            s.anchor_id,
+                            witness_kernel::clock_provenance::format_offset(offset),
+                            s.record.poll_gap_s.unwrap_or(0)
+                        ),
+                        None => log::info!(
+                            "clock provenance: record #{} binds anchor #{} (binding only: first \
+                             poll of this process)",
+                            s.id,
+                            s.anchor_id
+                        ),
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("clock provenance append failed: {e}");
+                kernel.report_storage_failure(
+                    &format!("clock provenance append failed: {e}"),
+                    kernel_version,
+                    ruleset_id,
+                    ruleset_hash,
+                );
+                pipeline.failures_recorded += 1;
+                self.record_failure(now_mono);
+            }
+        }
     }
 }
 
