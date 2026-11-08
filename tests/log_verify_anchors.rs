@@ -323,3 +323,95 @@ fn database_without_an_anchors_table_reads_as_before() {
     assert!(report.get("anchors_checked").is_none(), "{report}");
     assert_eq!(report["chain_valid"], true);
 }
+
+/// One poll of the anchors table as witnessd makes it, with injected clock
+/// readings (the fixture token's genTime is 1781094804).
+fn observe(kernel: &mut Kernel, wall: u64, gap: Option<u32>) -> usize {
+    kernel
+        .observe_anchors_for_clock_provenance(&witness_kernel::ClockObservation {
+            observed_wall_s: wall,
+            poll_gap_s: gap,
+            kernel_version: "0.0.0-test",
+        })
+        .expect("observe")
+        .len()
+}
+
+#[test]
+fn clock_provenance_section_and_its_warnings() {
+    let temp = tempfile::tempdir().unwrap();
+    let (db, mut kernel) = make_db(temp.path());
+    assert_eq!(observe(&mut kernel, 1_781_094_804, None), 0);
+    drop(kernel);
+
+    // Zero rows: the section says so and the JSON field is omitted.
+    let out = log_verify(&db, &[]);
+    assert!(out.status.success(), "{}\n{}", stdout(&out), stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("=== Clock Provenance ===\nno clock-provenance records\n"),
+        "{text}"
+    );
+    let report = json(&log_verify(&db, &["--json"]));
+    assert!(
+        report.get("clock_provenance_verified").is_none(),
+        "{report}"
+    );
+
+    // A prompt anchor measured 900 s behind: one record, one clock warning.
+    let mut kernel = Kernel::open(&test_cfg(&db)).unwrap();
+    let head = event_hash(&kernel, 2);
+    let id = anchor(&kernel, AnchorSubject::ChainHead, &head);
+    kernel
+        .conn
+        .execute(
+            "UPDATE tsa_anchors SET created_bucket_start = 1781094600 WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+    assert_eq!(observe(&mut kernel, 1_781_094_804 - 900, Some(5)), 1);
+    drop(kernel);
+
+    let out = log_verify(&db, &[]);
+    assert!(out.status.success(), "{}\n{}", stdout(&out), stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(&format!(
+            "=== Clock Provenance ===\nverified 1 clock-provenance record(s) (device clock vs TSA \
+             genTime, one per anchor; assessment: log_anchor --db {} verify)",
+            db.display()
+        )),
+        "{text}"
+    );
+    assert!(text.contains("=== Anchor Audit ==="), "{text}");
+    assert!(
+        text.contains(
+            "The clock-provenance ledger verified; these records contradict the anchors table \
+             or read the device clock far from the TSA's time:"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("these anchor rows cannot vouch"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "WARNING: clock offset: record #1 measured the device clock -900 s from anchor \
+             #{id}'s TSA time — beyond one bucket (600 s); run log_anchor verify"
+        )),
+        "{text}"
+    );
+    assert!(text.contains("hint: a clock-provenance record"), "{text}");
+
+    let out = log_verify(&db, &["--json", "--strict"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    let report = json(&out);
+    assert_eq!(report["clock_provenance_verified"], 1);
+    let warnings = report["warnings"].as_array().expect("warnings");
+    assert_eq!(warnings.len(), 1);
+    assert!(!has_64_hex(warnings[0].as_str().unwrap()));
+    let out = log_verify(&db, &["--strict"]);
+    assert!(
+        stderr(&out).contains("--strict treats 1 warning(s) as failure (0 timeline, 1 anchor)"),
+        "{}",
+        stderr(&out)
+    );
+}

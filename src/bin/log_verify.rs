@@ -407,13 +407,25 @@ fn main() -> Result<()> {
         print_warnings(&timeline_warnings);
     }
     if !anchor_warnings.is_empty() {
+        let (clock_warnings, row_warnings): (Vec<&String>, Vec<&String>) = anchor_warnings
+            .iter()
+            .partition(|w| verify::classify_warning(w) == verify::WarningKind::ClockProvenance);
         println!();
         println!("=== Anchor Audit ===");
-        println!(
-            "The ledgers verified and no anchored head is missing; these anchor rows cannot \
-             vouch for anything:"
-        );
-        print_warnings(&anchor_warnings);
+        if !row_warnings.is_empty() {
+            println!(
+                "The ledgers verified and no anchored head is missing; these anchor rows cannot \
+                 vouch for anything:"
+            );
+            print_warnings(&row_warnings);
+        }
+        if !clock_warnings.is_empty() {
+            println!(
+                "The clock-provenance ledger verified; these records contradict the anchors \
+                 table or read the device clock far from the TSA's time:"
+            );
+            print_warnings(&clock_warnings);
+        }
     }
     if args.strict && !report.warnings.is_empty() {
         // Exit 2, the same code the --json path uses for --strict warnings, so
