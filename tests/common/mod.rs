@@ -192,6 +192,16 @@ pub fn token_with_unreadable_signer(h: &[u8; 32]) -> Vec<u8> {
     out
 }
 
+/// Whether the Python OpenTimestamps client (`ots`) is on PATH; the
+/// cross-implementation tests skip when it is not.
+pub fn ots_available() -> bool {
+    Command::new("ots")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 pub fn openssl_available() -> bool {
     Command::new("openssl")
         .arg("version")

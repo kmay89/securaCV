@@ -24,6 +24,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use witness_kernel::clock_provenance::{self, ClockProvenanceRow};
 use witness_kernel::crypto::signatures::{SignatureMode, DOMAIN_CLOCK_PROVENANCE};
+use witness_kernel::ots;
 use witness_kernel::tsa::AnchorSubject;
 use witness_kernel::{
     hash_entry, tsa, verify, verify_export_bundle, verify_helpers, ExportAuthMode, ExportBundle,
@@ -119,6 +120,148 @@ struct KitAnchor {
     /// The token's `SignerInfo` identity (`TsaSigner::sid_hex`), for the
     /// custody record when no certificate is embedded.
     signer_sid: Option<String>,
+}
+
+/// One packaged OpenTimestamps proof. Its state is derived from the proof,
+/// never from the row's cache columns, and is rendered as "attests":
+/// confirmation is the comparison the reader runs against a header.
+struct KitOtsAnchor {
+    file_name: String,
+    subject: String,
+    /// The digest the proof covers (what `ots verify -d` takes).
+    digest_hex: String,
+    covers: Covers,
+    calendar_url: String,
+    state: ots::ProofState,
+    /// Explorer byte order, of the lowest-height Bitcoin leaf.
+    merkle_root_display: Option<String>,
+    pending_uris: Vec<String>,
+}
+
+impl KitOtsAnchor {
+    /// `"bitcoin"` (the proof attests a Bitcoin block — nothing confirmed),
+    /// `"pending"`, or `"none"`.
+    fn attestation(&self) -> &'static str {
+        match self.state {
+            ots::ProofState::Bitcoin { .. } => "bitcoin",
+            ots::ProofState::Pending => "pending",
+            ots::ProofState::NoKnownAttestation => "none",
+        }
+    }
+
+    fn height(&self) -> Option<u64> {
+        self.state.height()
+    }
+}
+
+/// The strongest state among proofs covering `covers`: `bitcoin` >
+/// `pending` > `none`.
+fn ots_strongest(ots_anchors: &[KitOtsAnchor], covers: Covers) -> &'static str {
+    let mine: Vec<&KitOtsAnchor> = ots_anchors.iter().filter(|a| a.covers == covers).collect();
+    if mine.iter().any(|a| a.attestation() == "bitcoin") {
+        "bitcoin"
+    } else if mine.iter().any(|a| a.attestation() == "pending") {
+        "pending"
+    } else {
+        "none"
+    }
+}
+
+/// A database-supplied subject as a path component.
+fn safe_subject(subject: &str) -> String {
+    subject
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(32)
+        .collect()
+}
+
+/// The OpenTimestamps proofs this disclosure can use, selected by the same
+/// rule as the RFC 3161 tokens — by hash first, label last — and copied
+/// verbatim to `anchors/ots-NNNN-<subject>.ots`. Read-only: an absent
+/// table is an empty list.
+fn package_ots_anchors(
+    conn: &Connection,
+    kit_dir: &Path,
+    bundle_sha256: &[u8; 32],
+    receipt_entry_hash: &[u8; 32],
+) -> Result<Vec<KitOtsAnchor>> {
+    let mut out = Vec::new();
+    for row in ots::list_ots_anchors(conn)? {
+        let covers = if &row.subject_hash == bundle_sha256 {
+            Covers::BundleBytes
+        } else if &row.subject_hash == receipt_entry_hash {
+            Covers::ReceiptEntry
+        } else if row.subject_kind_or_digest() == AnchorSubject::ChainHead {
+            Covers::ChainHead
+        } else {
+            continue;
+        };
+        let proof = match ots::Proof::parse(&row.proof) {
+            Ok(p) if p.digest == row.subject_hash => p,
+            Ok(p) => {
+                eprintln!(
+                    "WARNING: ots anchor #{} excluded from the kit: its proof covers {}, not the \
+                     digest the anchor row claims ({}). Run `log_anchor verify` on this database.",
+                    row.id,
+                    hex::encode(p.digest),
+                    hex::encode(row.subject_hash)
+                );
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "WARNING: ots anchor #{} excluded from the kit: its stored proof does not \
+                     parse as an OpenTimestamps proof ({e}). Run `log_anchor verify` on this \
+                     database.",
+                    row.id
+                );
+                continue;
+            }
+        };
+        if covers == Covers::ChainHead
+            && tsa::hash_in_ledger(conn, &row.subject_hash, AnchorSubject::ChainHead)?.is_none()
+        {
+            eprintln!(
+                "WARNING: ots anchor #{} excluded from the kit: it claims to anchor a chain \
+                 head, but the anchored hash is not in this database's chain history. Run \
+                 `log_anchor verify` on this database.",
+                row.id
+            );
+            continue;
+        }
+        let state = proof.state();
+        let merkle_root_display = proof
+            .leaves()
+            .into_iter()
+            .filter_map(|l| match l.attestation {
+                ots::Attestation::Bitcoin { height } => Some((height, l.msg)),
+                _ => None,
+            })
+            .min_by_key(|(h, _)| *h)
+            .map(|(_, msg)| ots::display_hex(&msg));
+        let file_name = format!("ots-{:04}-{}.ots", row.id, safe_subject(&row.subject));
+        let dir = kit_dir.join("anchors");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join(&file_name), &row.proof)?;
+        out.push(KitOtsAnchor {
+            file_name,
+            subject: row.subject.clone(),
+            digest_hex: hex::encode(row.subject_hash),
+            covers,
+            calendar_url: row.calendar_url.clone(),
+            state,
+            merkle_root_display,
+            pending_uris: proof.pending_leaves().into_iter().map(|(u, _)| u).collect(),
+        });
+    }
+    Ok(out)
 }
 
 fn open_db(args: &Args) -> Result<Connection> {
@@ -592,18 +735,7 @@ fn package_anchors(
         // The subject is database-supplied TEXT: sanitize before it becomes a
         // path component, so a tampered row cannot steer the write outside
         // `anchors/`.
-        let safe_subject: String = anchor
-            .subject
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .take(32)
-            .collect();
+        let safe_subject = safe_subject(&anchor.subject);
         // `token_der` is the bare DER TimeStampToken the TSA's response
         // carried (tsa::parse_response unwraps the TimeStampResp), so the
         // file is named `.der`, not `.tsr`: a `.tsr` is a full response and
@@ -759,6 +891,10 @@ fn main() -> Result<()> {
         };
         package_clock_provenance(&conn, kit, &anchors, &anchor_records, &lineage_keys)?
     };
+    let ots_anchors = {
+        let _stage = ui.stage("Package OpenTimestamps proofs");
+        package_ots_anchors(&conn, kit, &bundle_sha256, &bundle.receipt_entry.entry_hash)?
+    };
     let digest_anchors: Vec<&KitAnchor> = anchors
         .iter()
         .filter(|a| a.covers == Covers::BundleBytes)
@@ -791,7 +927,7 @@ fn main() -> Result<()> {
 
     {
         let _stage = ui.stage("Write kit documents");
-        write_readme(kit, &bundle_file_name, anchored, &clock)?;
+        write_readme(kit, &bundle_file_name, anchored, &clock, ots_anchors.len())?;
         write_system_description(kit)?;
         write_custody_record(
             kit,
@@ -809,6 +945,7 @@ fn main() -> Result<()> {
             chain_length,
             identity_verified,
             &anchors,
+            &ots_anchors,
             &clock,
         )?;
         write_verification(
@@ -819,6 +956,7 @@ fn main() -> Result<()> {
             receipt_anchored,
             &device_key_hex,
             &anchors,
+            &ots_anchors,
             &clock,
         )?;
         write_certifications(kit, &bundle_file_name, &bundle_hex, &artifact_hash_hex)?;
@@ -835,6 +973,7 @@ fn main() -> Result<()> {
             receipt_anchored,
             identity_verified,
             &anchors,
+            &ots_anchors,
             &clock,
         )?;
     }
@@ -860,6 +999,18 @@ fn main() -> Result<()> {
         anchors
             .iter()
             .filter(|a| a.covers == Covers::ReceiptEntry)
+            .count()
+    );
+    println!(
+        "  ots:       {} proof(s), {} attest a Bitcoin block, {} pending",
+        ots_anchors.len(),
+        ots_anchors
+            .iter()
+            .filter(|a| a.attestation() == "bitcoin")
+            .count(),
+        ots_anchors
+            .iter()
+            .filter(|a| a.attestation() == "pending")
             .count()
     );
     println!(
@@ -896,7 +1047,14 @@ fn write_readme(
     bundle_file_name: &str,
     anchored: bool,
     clock: &ClockKit,
+    ots_count: usize,
 ) -> Result<()> {
+    let ots_sentence = if ots_count > 0 {
+        " OpenTimestamps proofs in `anchors/*.ots` tie the same digests to the Bitcoin \
+         blockchain; `VERIFICATION.md` shows the `ots` command and the block to look up."
+    } else {
+        ""
+    };
     // Item 7 says what the custody record and the manifest say: the same
     // three ledger states, and "none recorded" only when that is the case.
     let mut clock_item = match clock.status {
@@ -951,7 +1109,7 @@ fn write_readme(
          its position in the signed, hash-chained receipt ledger.\n\
          3. `VERIFICATION.md` — steps any party can run with `sha256sum` and \
          `openssl` (plus `xxd`, `cut` and `date` for the clock records); no SecuraCV \
-         software required for the trust-critical checks.\n\
+         software required for the trust-critical checks.{ots_sentence}\n\
          4. `CERTIFICATION_FRE_902_13.md` / `CERTIFICATION_FRE_902_14.md` — draft \
          self-authentication certifications for the person who performed the \
          verification to review, complete, and sign.\n\
@@ -972,6 +1130,7 @@ fn write_readme(
         bundle = bundle_file_name,
         anchor_note = anchor_note,
         clock_item = clock_item,
+        ots_sentence = ots_sentence,
     );
     std::fs::write(kit.join("README.md"), text)?;
     Ok(())
@@ -1054,6 +1213,7 @@ fn write_custody_record(
     chain_length: i64,
     identity_verified: bool,
     anchors: &[KitAnchor],
+    ots_anchors: &[KitOtsAnchor],
     clock: &ClockKit,
 ) -> Result<()> {
     let time_source = time_source_section(anchors, clock);
@@ -1067,7 +1227,7 @@ fn write_custody_record(
          is what turns self-consistency into a confirmed identity"
     };
     let mut anchor_rows = String::new();
-    if anchors.is_empty() {
+    if anchors.is_empty() && ots_anchors.is_empty() {
         anchor_rows.push_str("(none recorded)\n");
     } else {
         for a in anchors {
@@ -1105,6 +1265,12 @@ fn write_custody_record(
                     Covers::ChainHead => "",
                 }
             ));
+        }
+        // OpenTimestamps proofs: "attests", never "confirmed" — the kit
+        // records the height only; the reader compares the merkle root with
+        // a header from a source they trust.
+        for o in ots_anchors {
+            anchor_rows.push_str(&ots_custody_row(o));
         }
     }
     let text = format!(
@@ -1293,9 +1459,18 @@ fn write_verification(
     receipt_anchored: bool,
     device_key_hex: &str,
     anchors: &[KitAnchor],
+    ots_anchors: &[KitOtsAnchor],
     clock: &ClockKit,
 ) -> Result<()> {
     let clock_steps = clock_verification_steps(anchors, clock, device_key_hex);
+    let ots_steps = ots_verification_steps(ots_anchors);
+    let ots_intro = if ots_anchors.is_empty() {
+        ""
+    } else {
+        " The optional OpenTimestamps check in step 3 also needs the open-source `ots` \
+         client (`pip install opentimestamps-client`) and a Bitcoin node or block explorer \
+         you trust."
+    };
     let mut anchor_steps = String::new();
     let covering: Vec<&KitAnchor> = anchors
         .iter()
@@ -1356,7 +1531,7 @@ fn write_verification(
         "# Verification instructions\n\
          \n\
          Steps 1-3 need only `sha256sum` and `openssl` (step 3b also `xxd`, `cut` and \
-         `date`) — no SecuraCV software.\n\
+         `date`) — no SecuraCV software.{ots_intro}\n\
          \n\
          ## 1. Confirm the manifest\n\
          \n\
@@ -1375,6 +1550,7 @@ fn write_verification(
          ## 3. Verify the timestamp anchors\n\
          \n\
          {anchor_steps}\
+         {ots_steps}\
          \n\
          ## 3b. Verify the clock-provenance records\n\
          \n\
@@ -1399,9 +1575,94 @@ fn write_verification(
         bundle_hex = bundle_hex,
         anchor_steps = anchor_steps,
         clock_steps = clock_steps,
+        ots_steps = ots_steps,
+        ots_intro = ots_intro,
     );
     std::fs::write(kit.join("VERIFICATION.md"), text)?;
     Ok(())
+}
+
+/// One custody-record row for a packaged OpenTimestamps proof:
+/// "attests", never "confirmed" — the kit records the height only; the
+/// reader compares the merkle root with a header from a source they trust.
+fn ots_custody_row(o: &KitOtsAnchor) -> String {
+    let state = match (o.height(), &o.merkle_root_display) {
+        (Some(h), Some(root)) => format!(
+            "attests Bitcoin block {h} (merkle root {root} — check it against a header from a \
+             source you trust; this kit records the height only)"
+        ),
+        _ if !o.pending_uris.is_empty() => format!(
+            "pending (not yet in a Bitcoin block) at {}",
+            o.pending_uris.join(", ")
+        ),
+        _ => "no Bitcoin or pending attestation".to_string(),
+    };
+    format!(
+        "- `anchors/{}` — subject `{}`, OpenTimestamps proof via {}; {state}{}\n",
+        o.file_name,
+        o.subject,
+        o.calendar_url,
+        match o.covers {
+            Covers::BundleBytes => " — **covers the evidence file's exact bytes**",
+            Covers::ReceiptEntry => {
+                " — **covers this disclosure's export receipt (entry hash above)**"
+            }
+            Covers::ChainHead => "",
+        }
+    )
+}
+
+/// Step 3's optional OpenTimestamps subsection: per proof, the `ots`
+/// commands and the block to look up — "attests", never "confirmed".
+fn ots_verification_steps(ots_anchors: &[KitOtsAnchor]) -> String {
+    if ots_anchors.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n### OpenTimestamps proofs (optional)\n\n");
+    for o in ots_anchors {
+        let over = match o.covers {
+            Covers::BundleBytes => "the evidence file",
+            Covers::ReceiptEntry => "this disclosure's export receipt entry",
+            Covers::ChainHead => "the producing device's chain head",
+        };
+        match (o.height(), &o.merkle_root_display) {
+            (Some(h), Some(root)) => out.push_str(&format!(
+                "```sh\n\
+                 # OpenTimestamps proof over {over} — attests Bitcoin block {h}\n\
+                 ots info anchors/{file}\n\
+                 ots --no-bitcoin verify -d {digest} anchors/{file}\n\
+                 #   prints: To verify manually, check that Bitcoin block {h} has merkleroot {root}\n\
+                 #   (without a Bitcoin node the run ends in failure: nothing has been checked yet)\n\
+                 ```\n\
+                 Compare that merkle root with block {h}'s merkle root from a Bitcoin node you \
+                 run (`bitcoin-cli getblockheader $(bitcoin-cli getblockhash {h})`, field \
+                 `merkleroot`) or a block explorer you trust; it must read `{root}`. With a node \
+                 configured, `ots verify -d {digest} anchors/{file}` prints `Success! Bitcoin \
+                 block {h} attests existence as of <date>`. A match shows that these exact bytes \
+                 existed before block {h} was mined; it says nothing about who made them. Bitcoin \
+                 fixes time only to roughly the block interval, and block times are set by miners \
+                 within consensus bounds, not read from a reference clock. The calendar that \
+                 relayed the commitment is a public service with no identity or accreditation; \
+                 once the Bitcoin path exists it needs no trust. Looking a block up on a public \
+                 explorer tells that explorer which block you are interested in.\n\n",
+                file = o.file_name,
+                digest = o.digest_hex,
+            )),
+            _ => out.push_str(&format!(
+                "```sh\n\
+                 # OpenTimestamps proof over {over} — pending\n\
+                 ots info anchors/{file}\n\
+                 ```\n\
+                 This proof is pending (not yet in a Bitcoin block): it shows only that the \
+                 calendar at `{uri}` received a commitment. `ots upgrade anchors/{file}` fetches \
+                 its Bitcoin path once the calendar has committed it (this contacts the \
+                 calendar). Until then it is not evidence of time.\n\n",
+                file = o.file_name,
+                uri = o.pending_uris.first().map(String::as_str).unwrap_or(&o.calendar_url),
+            )),
+        }
+    }
+    out
 }
 
 /// Step 3b: every stored fact of a packaged clock-provenance record
@@ -1640,6 +1901,7 @@ fn write_manifest(
     receipt_anchored: bool,
     identity_verified: bool,
     anchors: &[KitAnchor],
+    ots_anchors: &[KitOtsAnchor],
     clock: &ClockKit,
 ) -> Result<()> {
     // Enumerate every file the kit contains (the manifest itself excluded) and
@@ -1662,6 +1924,9 @@ fn write_manifest(
     }
     for a in anchors {
         paths.push(kit.join("anchors").join(&a.file_name));
+    }
+    for o in ots_anchors {
+        paths.push(kit.join("anchors").join(&o.file_name));
     }
     for c in &clock.records {
         paths.push(kit.join("clock_provenance").join(&c.file_name));
@@ -1728,6 +1993,28 @@ fn write_manifest(
             })
             .collect::<Vec<_>>(),
         "clock_provenance_ledger": clock.status.as_str(),
+        // OpenTimestamps proofs: additive keys, always present. `anchors[]`,
+        // `anchor_count`, `anchored` and `receipt_anchored` stay RFC 3161
+        // only. "bitcoin" means the proof attests a Bitcoin block, not that
+        // anything was confirmed against a header.
+        "ots_anchor_count": ots_anchors.len(),
+        "ots_bundle_attestation": ots_strongest(ots_anchors, Covers::BundleBytes),
+        "ots_receipt_attestation": ots_strongest(ots_anchors, Covers::ReceiptEntry),
+        "ots_anchors": ots_anchors
+            .iter()
+            .map(|o| {
+                serde_json::json!({
+                    "file": format!("anchors/{}", o.file_name),
+                    "subject": o.subject,
+                    "covers": o.covers.as_str(),
+                    "calendar_url": o.calendar_url,
+                    "attestation": o.attestation(),
+                    "bitcoin_height": o.height(),
+                    "merkle_root": o.merkle_root_display,
+                    "pending_uris": o.pending_uris,
+                })
+            })
+            .collect::<Vec<_>>(),
         "files": files,
     });
     std::fs::write(
@@ -1735,4 +2022,76 @@ fn write_manifest(
         format!("{}\n", serde_json::to_string_pretty(&manifest)?),
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kit_ots_from(file: &str, covers: Covers) -> KitOtsAnchor {
+        let bytes = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/ots")
+                .join(file),
+        )
+        .unwrap();
+        let proof = ots::Proof::parse(&bytes).unwrap();
+        let merkle_root_display = proof
+            .leaves()
+            .into_iter()
+            .filter_map(|l| match l.attestation {
+                ots::Attestation::Bitcoin { height } => Some((height, l.msg)),
+                _ => None,
+            })
+            .min_by_key(|(h, _)| *h)
+            .map(|(_, m)| ots::display_hex(&m));
+        KitOtsAnchor {
+            file_name: "ots-0007-digest.ots".to_string(),
+            subject: "digest".to_string(),
+            digest_hex: hex::encode(proof.digest),
+            covers,
+            calendar_url: "https://alice.btc.calendar.opentimestamps.org".to_string(),
+            state: proof.state(),
+            merkle_root_display,
+            pending_uris: proof.pending_leaves().into_iter().map(|(u, _)| u).collect(),
+        }
+    }
+
+    #[test]
+    fn attests_rendering_text() {
+        let o = kit_ots_from("bitcoin.ots", Covers::BundleBytes);
+        assert_eq!(o.attestation(), "bitcoin");
+        let row = ots_custody_row(&o);
+        assert!(
+            row.starts_with(
+                "- `anchors/ots-0007-digest.ots` — subject `digest`, OpenTimestamps proof via \
+                 https://alice.btc.calendar.opentimestamps.org; attests Bitcoin block 449397 \
+                 (merkle root 18f21f7933f1fcf0bd7648bcdc9032986988c32f44cd4e60a31dbcd6a0a8177c — \
+                 check it against a header from a source you trust; this kit records the height \
+                 only) — **covers the evidence file's exact bytes**"
+            ),
+            "{row}"
+        );
+        let steps = ots_verification_steps(&[o]);
+        assert!(steps.contains("### OpenTimestamps proofs (optional)"));
+        assert!(steps.contains(
+            "ots --no-bitcoin verify -d 6fd9c1c4f096b77e6d4457bac1c7f51010d318db483f2868d3795843f098d378 anchors/ots-0007-digest.ots"
+        ));
+        assert!(steps.contains(
+            "#   prints: To verify manually, check that Bitcoin block 449397 has merkleroot 18f21f7933f1fcf0bd7648bcdc9032986988c32f44cd4e60a31dbcd6a0a8177c"
+        ));
+        let pending = kit_ots_from("pending-bob.ots", Covers::ChainHead);
+        let prow = ots_custody_row(&pending);
+        assert!(prow.contains(
+            "; pending (not yet in a Bitcoin block) at https://bob.btc.calendar.opentimestamps.org\n"
+        ), "{prow}");
+        let psteps = ots_verification_steps(&[pending]);
+        assert!(psteps.contains("This proof is pending (not yet in a Bitcoin block)"));
+        // Kit text never claims a confirmation or a verification it did not run.
+        for text in [&row, &steps, &prow, &psteps] {
+            let lower = text.to_lowercase();
+            assert!(!lower.contains("confirmed"), "{text}");
+            assert!(!lower.contains("verified"), "{text}");
+        }
+    }
 }
