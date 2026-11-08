@@ -1182,15 +1182,12 @@ fn time_source_section(anchors: &[KitAnchor], clock: &ClockKit) -> String {
                 let lag = match c.lag_s {
                     Some(lag) if lag > clock_provenance::PROMPT_LAG_MAX_S && offset >= 0 => {
                         format!(
-                            "; the row was stored {} after the token's time (a delayed import), \
-                             so a positive offset is not a clock reading and is not evaluated",
-                            clock_provenance::human_lag(lag)
+                            "; the row was {} (a delayed import), so a positive offset is not a \
+                             clock reading and is not evaluated",
+                            clock_provenance::stored_text(lag)
                         )
                     }
-                    Some(lag) => format!(
-                        "; the row was stored {} after the token's time",
-                        clock_provenance::human_lag(lag)
-                    ),
+                    Some(lag) => format!("; the row was {}", clock_provenance::stored_text(lag)),
                     None => String::new(),
                 };
                 format!(

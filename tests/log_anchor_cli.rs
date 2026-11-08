@@ -1644,3 +1644,522 @@ fn verify_policy_without_an_anchors_table_matches_the_empty_table() -> Result<()
     assert_eq!(stdout(&out), one_text);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Clock provenance (`docs/design/clock_provenance.md`): `verify` reads the
+// device-signed ledger witnessd seals per anchor row. The daemon's poll is
+// driven here through the same kernel call with injected clock readings,
+// keyed to the committed fixture token's genTime; no test reads the wall
+// clock.
+// ---------------------------------------------------------------------------
+
+/// The fixture token's genTime (`20260610123324Z`) and its bucket.
+const GEN: i64 = 1_781_094_804;
+const GEN_BUCKET: i64 = 1_781_094_600;
+
+const LEDGER_OK_1: &str = "clock provenance: 1 record(s), ledger self-consistent (chain and device signatures check under the key lineage this database names; identity unverified)";
+
+/// One poll of the anchors table as witnessd makes it: the wall clock read
+/// once (`wall`), the gap since the previous completed poll (`None` = the
+/// first poll of a process).
+fn observe(db: &Path, wall: i64, gap: Option<u32>) -> Vec<witness_kernel::SealedClockProvenance> {
+    let mut kernel = Kernel::open(&test_cfg(db)).expect("open kernel");
+    kernel
+        .observe_anchors_for_clock_provenance(&witness_kernel::ClockObservation {
+            observed_wall_s: wall as u64,
+            poll_gap_s: gap,
+            kernel_version: "0.0.0-test",
+        })
+        .expect("observe")
+}
+
+/// Import a fixture-derived token over `hash` (a digest anchor unless the
+/// hash is a ledger head) and return its row id.
+fn import_hash(dir: &Path, db: &Path, name: &str, hash: &[u8; 32]) -> i64 {
+    let file = write_response(dir, name, hash);
+    assert_ok(&log_anchor(db, &["import", "--response", &file]));
+    anchor_rows(db).last().expect("a row").id
+}
+
+/// Put an anchor row's bucket where a prompt online anchoring would have
+/// put it (the bucket of the token's own time), or anywhere else.
+fn set_anchor_bucket(db: &Path, id: i64, start: i64) {
+    let kernel = Kernel::open(&test_cfg(db)).expect("open kernel");
+    kernel
+        .conn
+        .execute(
+            "UPDATE tsa_anchors SET created_bucket_start = ?1 WHERE id = ?2",
+            rusqlite::params![start, id],
+        )
+        .unwrap();
+}
+
+/// A prompt digest anchor, measured `offset` s from genTime by a running
+/// daemon whose previous poll completed 5 s earlier.
+fn measured_anchor(dir: &Path, db: &Path, n: u8, offset: i64) -> i64 {
+    let id = import_hash(dir, db, &format!("d{n}.tsr"), &[n; 32]);
+    set_anchor_bucket(db, id, GEN_BUCKET);
+    assert_eq!(observe(db, GEN + offset, Some(5)).len(), 1);
+    id
+}
+
+/// A ClockSkew failure record sealed by the kernel, then moved to `bucket`
+/// (the record's own bucket comes from the wall clock; the test needs it at
+/// the fixture's time).
+fn seal_clock_skew_at(db: &Path, bucket: i64) {
+    let cfg = test_cfg(db);
+    let mut kernel = Kernel::open(&cfg).expect("open kernel");
+    kernel.report_clock_skew(
+        "clock skew detected",
+        &cfg.kernel_version,
+        &cfg.ruleset_id,
+        cfg.ruleset_hash,
+    );
+    kernel
+        .conn
+        .execute(
+            "UPDATE sealed_events SET created_at = ?1 WHERE id = (SELECT MAX(id) FROM sealed_events)",
+            [bucket],
+        )
+        .unwrap();
+}
+
+fn token_sha256_prefix(db: &Path, id: i64) -> String {
+    let row = anchor_rows(db).into_iter().find(|a| a.id == id).unwrap();
+    hex::encode(&Sha256::digest(&row.token_der)[..8])
+}
+
+#[test]
+fn verify_prints_the_clock_ledger_line() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    let pre = import_hash(temp.path(), &db, "pre.tsr", &[1u8; 32]);
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    let text = stdout(&out);
+    assert!(text.contains("clock provenance: no records\n"), "{text}");
+    assert!(
+        text.contains("    clock: no record (anchored before clock provenance, or witnessd was not running to observe it)"),
+        "{text}"
+    );
+
+    // The daemon's first poll on this database: the cursor starts at the
+    // newest row, so the pre-existing anchor is never backfilled.
+    assert!(observe(&db, GEN, None).is_empty());
+    measured_anchor(temp.path(), &db, 2, 2);
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    let text = stdout(&out);
+    assert!(text.contains(LEDGER_OK_1), "{text}");
+    // The device key comes from the database itself: never "verified".
+    for line in text.lines().filter(|l| l.contains("clock")) {
+        assert!(!line.contains(" verified"), "never 'verified': {line}");
+    }
+    assert_eq!(
+        text.matches("    clock: no record").count(),
+        1,
+        "#{pre}: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn verify_prints_one_clock_line_per_anchor() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    assert!(observe(&db, GEN, None).is_empty());
+    let prompt = measured_anchor(temp.path(), &db, 1, 2);
+    let behind = measured_anchor(temp.path(), &db, 2, -900);
+    let clamped = measured_anchor(temp.path(), &db, 3, 5_000);
+    // A row that appeared while no daemon ran: the next process's first poll.
+    let bound = import_hash(temp.path(), &db, "d4.tsr", &[4u8; 32]);
+    assert_eq!(observe(&db, GEN, None).len(), 1);
+    // A token imported two days after issuance (an offline round trip).
+    let late = import_hash(temp.path(), &db, "d5.tsr", &[5u8; 32]);
+    set_anchor_bucket(&db, late, GEN_BUCKET + 2 * 86_400);
+    assert_eq!(observe(&db, GEN + 30, Some(7)).len(), 1);
+
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    let text = stdout(&out);
+    assert!(
+        text.contains("clock provenance: 5 record(s), ledger self-consistent"),
+        "{text}"
+    );
+    let expect = [
+        format!("    clock: record #{prompt}: device clock +2 s vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); within one bucket (600 s)"),
+        format!("    clock: record #{behind}: device clock -900 s vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); BEYOND one bucket (600 s)"),
+        "    WARNING: device clock offset beyond the structural threshold; with --policy this counts against the anchor policy".to_string(),
+        "    note: no ClockSkew failure record retained within one bucket of this reading (retention prunes failure records)".to_string(),
+        "    note: host clock: the device's reading at observation is -696 s from the anchor row's bucket start (expected 0 to 1199 s); the anchoring host's clock and the device clock disagree".to_string(),
+        format!("    clock: record #{clamped}: device clock >= +3600 s (clamped) vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); BEYOND one bucket (600 s)"),
+        format!("    clock: record #{bound} binds this token (sha256 {}…); binding only, no measurement (row already present at the first poll of a witnessd process)", token_sha256_prefix(&db, bound)),
+        format!("    clock: record #{late}: device clock +30 s vs TSA genTime; row stored 1d 23h after issuance (delayed import), positive offset not evaluated"),
+    ];
+    for line in &expect {
+        assert!(text.contains(line.as_str()), "missing {line:?} in:\n{text}");
+    }
+    // The +2 s prompt reading agrees with the anchoring host: no host note
+    // under it; the WARNING is printed once per beyond reading.
+    assert_eq!(
+        text.matches("    WARNING: device clock offset beyond")
+            .count(),
+        2,
+        "{text}"
+    );
+    assert_eq!(text.matches("note: host clock:").count(), 3, "{text}");
+    Ok(())
+}
+
+#[test]
+fn verify_fails_on_a_deleted_or_replaced_anchor_and_on_a_broken_ledger() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    assert!(observe(&db, GEN, None).is_empty());
+    let id = measured_anchor(temp.path(), &db, 1, 2);
+    let cfg = test_cfg(&db);
+
+    // Replaced: the row now holds another token (over another hash, so the
+    // anchor's own line fails too; the clock line names the replacement).
+    let kernel = Kernel::open(&cfg)?;
+    let original: Vec<u8> = kernel.conn.query_row(
+        "SELECT token_der FROM tsa_anchors WHERE id = ?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET token_der = ?1 WHERE id = ?2",
+        rusqlite::params![common::token_with_imprint(&[9u8; 32]), id],
+    )?;
+    drop(kernel);
+    let out = log_anchor(&db, &["verify"]);
+    assert_exit1(&out);
+    let text = stdout(&out);
+    assert!(
+        text.contains(&format!(
+            "    clock: FAIL record #1 binds token sha256 {}… but the row now holds {}… — the token was replaced after the device bound it",
+            hex::encode(&Sha256::digest(&original)[..8]),
+            token_sha256_prefix(&db, id)
+        )),
+        "{text}"
+    );
+    assert!(
+        stderr(&out).contains("1 anchor(s) failed verification"),
+        "{}",
+        stderr(&out)
+    );
+
+    // Deleted: the record names an anchor that is gone.
+    let kernel = Kernel::open(&cfg)?;
+    kernel
+        .conn
+        .execute("DELETE FROM tsa_anchors WHERE id = ?1", [id])?;
+    drop(kernel);
+    let out = log_anchor(&db, &["verify"]);
+    assert_exit1(&out);
+    assert!(
+        stdout(&out).contains(&format!(
+            "clock provenance: FAIL record #1 names anchor #{id}, which is not in the anchors table (deleted, or the table was rebuilt)"
+        )),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stderr(&out)
+            .contains("1 clock-provenance record(s) name anchors that were deleted or replaced"),
+        "{}",
+        stderr(&out)
+    );
+
+    // A changed payload literal: the ledger itself fails; the per-anchor
+    // clock lines are suppressed.
+    let kernel = Kernel::open(&cfg)?;
+    kernel.conn.execute(
+        "UPDATE clock_provenance SET payload_json = replace(payload_json, '\"poll_gap_s\":5', '\"poll_gap_s\":1')",
+        [],
+    )?;
+    drop(kernel);
+    let out = log_anchor(&db, &["verify"]);
+    assert_exit1(&out);
+    let text = stdout(&out);
+    assert!(
+        text.contains("clock provenance: FAIL (integrity check failed at clock-provenance record id 1: computed_hash="),
+        "{text}"
+    );
+    assert!(!text.contains("    clock:"), "{text}");
+    assert!(
+        stderr(&out).contains("clock provenance ledger failed verification"),
+        "{}",
+        stderr(&out)
+    );
+    Ok(())
+}
+
+#[test]
+fn verify_policy_counts_a_clock_offset_breach() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let Some(alpha) = common::ThrowawayTsa::new(&temp.path().join("alpha"), "TSA Alpha") else {
+        eprintln!("skipping: openssl not available");
+        return Ok(());
+    };
+    let beta = common::ThrowawayTsa::new(&temp.path().join("beta"), "TSA Beta").unwrap();
+    let db = make_db(temp.path())?;
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    let head = tsa::chain_head(&kernel.conn)?;
+    drop(kernel);
+    assert!(observe(&db, GEN, None).is_empty());
+    let entries: &[(&str, &str, &str, &[String])] = &[
+        ("alpha", "qualified", &alpha.ca_path(), &[]),
+        ("beta", "independent", &beta.ca_path(), &[]),
+    ];
+    let base = policy_json(entries, &["chain_head"]);
+    let tight = base.trim_end_matches('}').to_string() + r#","max_clock_offset_s":30}"#;
+    let base_path = temp.path().join("base.json");
+    let tight_path = temp.path().join("tight.json");
+    std::fs::write(&base_path, &base)?;
+    std::fs::write(&tight_path, &tight)?;
+    let base_s = base_path.to_string_lossy().into_owned();
+    let tight_s = tight_path.to_string_lossy().into_owned();
+
+    // Minted tokens carry the throwaway TSA's genTime; the device reading is
+    // that genTime + 60 s (read back from the token, never from a clock).
+    for (tsa, name) in [(&alpha, "alpha"), (&beta, "beta")] {
+        let (bytes, token) = tsa.mint_response(&head);
+        let path = temp.path().join(format!("{name}.tsr"));
+        std::fs::write(&path, bytes)?;
+        assert_ok(&log_anchor(
+            &db,
+            &[
+                "import",
+                "--policy",
+                &base_s,
+                "--tsa",
+                name,
+                "--response",
+                &path.to_string_lossy(),
+            ],
+        ));
+        let gen = tsa::gen_time_unix(&token.gen_time).expect("minted genTime parses");
+        let row = anchor_rows(&db).last().unwrap().id;
+        set_anchor_bucket(&db, row, gen / 600 * 600);
+        assert_eq!(observe(&db, gen + 60, Some(5)).len(), 1);
+    }
+
+    let out = log_anchor(&db, &["verify", "--policy", &base_s]);
+    assert_ok(&out);
+    let text = stdout(&out);
+    assert!(text.contains("device clock +60 s vs TSA genTime"), "{text}");
+    assert!(text.contains("; within one bucket (600 s)"), "{text}");
+    assert!(
+        text.contains(&format!("anchor policy {}: SATISFIED", base_path.display())),
+        "{text}"
+    );
+
+    let out = log_anchor(&db, &["verify", "--policy", &tight_s]);
+    assert_exit1(&out);
+    let text = stdout(&out);
+    assert!(
+        text.contains("; BEYOND 30 s (max_clock_offset_s)"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("WARNING: device clock offset beyond"),
+        "{text}"
+    );
+    let verdict = format!(
+        "anchor policy {}: NOT SATISFIED (0 subject(s) uncovered, 2 clock-offset breach(es) of max_clock_offset_s 30)",
+        tight_path.display()
+    );
+    assert!(text.contains(&verdict), "{text}");
+    assert!(stderr(&out).contains(&verdict), "{}", stderr(&out));
+    Ok(())
+}
+
+#[test]
+fn verify_notes_a_sealed_row_whose_bucket_starts_after_gen_time() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    let cfg = test_cfg(&db);
+    let kernel = Kernel::open(&cfg)?;
+    let head = tsa::chain_head(&kernel.conn)?;
+    drop(kernel);
+    import_hash(temp.path(), &db, "chain.tsr", &head);
+    let move_sealed_row = |created_at: i64| {
+        let kernel = Kernel::open(&cfg).unwrap();
+        kernel
+            .conn
+            .execute(
+                "UPDATE sealed_events SET created_at = ?1 WHERE entry_hash = ?2",
+                rusqlite::params![created_at, head.to_vec()],
+            )
+            .unwrap();
+    };
+
+    // The sealed row's bucket starts 396 s after the TSA's time: the device
+    // read at least that far ahead when it sealed (within one bucket: note).
+    move_sealed_row(GEN_BUCKET + 600);
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    assert!(stdout(&out).contains("    note: the anchored sealed row's bucket starts 396 s after the TSA genTime: the device clock read at least 396 s ahead when it sealed that row"), "{}", stdout(&out));
+
+    // 996 s: beyond one bucket, a WARNING (no exit code without a policy).
+    move_sealed_row(GEN_BUCKET + 1_200);
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    assert!(stdout(&out).contains("    WARNING: the anchored sealed row's bucket starts 996 s after the TSA genTime: the device clock read at least 996 s ahead when it sealed that row (BEYOND one bucket (600 s))"), "{}", stdout(&out));
+
+    // The bucket of the token's own time (or earlier): nothing to say.
+    move_sealed_row(GEN_BUCKET);
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    assert!(
+        !stdout(&out).contains("sealed row's bucket starts"),
+        "{}",
+        stdout(&out)
+    );
+    Ok(())
+}
+
+#[test]
+fn verify_notes_a_host_clock_that_disagrees_with_the_device() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    assert!(observe(&db, GEN, None).is_empty());
+    let id = measured_anchor(temp.path(), &db, 1, 2);
+    // The anchoring host stamped the row three buckets before the token's
+    // time: the device's reading lands 2006 s after the row's bucket start.
+    set_anchor_bucket(&db, id, GEN_BUCKET - 1_800);
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "stored 33m before issuance by the anchoring host's clock); within one bucket (600 s)"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("    note: host clock: the device's reading at observation is +2006 s from the anchor row's bucket start (expected 0 to 1199 s); the anchoring host's clock and the device clock disagree"), "{text}");
+    Ok(())
+}
+
+#[test]
+fn verify_correlates_a_beyond_reading_with_a_retained_clock_skew_record() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    assert!(observe(&db, GEN, None).is_empty());
+    measured_anchor(temp.path(), &db, 1, -900);
+    // The record's bucket is the bucket of genTime − 900.
+    let record_bucket = (GEN - 900) / 600 * 600;
+    seal_clock_skew_at(&db, record_bucket);
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    assert!(
+        stdout(&out).contains(&format!(
+            "    note: a ClockSkew failure record is retained in bucket {record_bucket} (within one bucket of this reading)"
+        )),
+        "{}",
+        stdout(&out)
+    );
+    Ok(())
+}
+
+#[test]
+fn verify_notes_a_step_between_consecutive_measured_records() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    assert!(observe(&db, GEN, None).is_empty());
+    measured_anchor(temp.path(), &db, 1, 2);
+    measured_anchor(temp.path(), &db, 2, 30);
+    measured_anchor(temp.path(), &db, 3, -900);
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    let text = stdout(&out);
+    // +2 → +30 is no step; +30 → -900 is.
+    assert_eq!(
+        text.matches("device clock offset stepped").count(),
+        1,
+        "{text}"
+    );
+    assert!(text.contains("clock provenance: note: device clock offset stepped -930 s between records #2 and #3; no ClockSkew failure record is retained between their buckets (retention prunes failure records)"), "{text}");
+
+    seal_clock_skew_at(&db, GEN_BUCKET - 600);
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    assert!(stdout(&out).contains(&format!(
+        "clock provenance: note: device clock offset stepped -930 s between records #2 and #3; a ClockSkew failure record is retained between their buckets (bucket {})",
+        GEN_BUCKET - 600
+    )), "{}", stdout(&out));
+    Ok(())
+}
+
+#[test]
+fn anchor_all_default_subjects_include_the_clock_provenance_head() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let db = make_db(temp.path())?;
+    let policy = temp.path().join("policy.json");
+    // No "subjects" key: the default is every ledger head, five of them.
+    std::fs::write(
+        &policy,
+        r#"{"format":"securacv-anchor-policy:v1","tsas":[{"name":"alpha","role":"qualified","url":"https://alpha.example/tsr","ca":"alpha.pem"},{"name":"beta","role":"independent","url":"https://beta.example/tsr","ca":"beta.pem"}]}"#,
+    )?;
+    let out_dir = temp.path().join("out");
+    let run = |dir: &Path| {
+        log_anchor(
+            &db,
+            &[
+                "anchor-all",
+                "--policy",
+                &policy.to_string_lossy(),
+                "--offline-dir",
+                &dir.to_string_lossy(),
+            ],
+        )
+    };
+    assert_ok(&run(&out_dir));
+    let mut files: Vec<String> = std::fs::read_dir(&out_dir)?
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    assert_eq!(files.len(), 5, "{files:?}");
+    assert!(
+        files.contains(&"clock_provenance_head.tsq".to_string()),
+        "{files:?}"
+    );
+    // An empty ledger: the subject's sentinel is requested.
+    let sentinel = AnchorSubject::ClockProvenanceHead
+        .empty_ledger_sentinel()
+        .unwrap();
+    assert_eq!(
+        std::fs::read(out_dir.join("clock_provenance_head.tsq"))?,
+        tsa::build_request(&sentinel, None, true)
+    );
+
+    // Once the ledger holds a record, its head is requested instead.
+    assert!(observe(&db, GEN, None).is_empty());
+    measured_anchor(temp.path(), &db, 1, 2);
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    let head =
+        tsa::ledger_head(&kernel.conn, AnchorSubject::ClockProvenanceHead)?.expect("ledger head");
+    drop(kernel);
+    let out_dir2 = temp.path().join("out2");
+    assert_ok(&run(&out_dir2));
+    assert_eq!(
+        std::fs::read(out_dir2.join("clock_provenance_head.tsq"))?,
+        tsa::build_request(&head, None, true)
+    );
+    // And a token over it imports as the fifth subject.
+    let id = import_hash(temp.path(), &db, "cp.tsr", &head);
+    let row = anchor_rows(&db).into_iter().find(|a| a.id == id).unwrap();
+    assert_eq!(row.subject, "clock_provenance_head");
+    let out = log_anchor(&db, &["verify"]);
+    assert_ok(&out);
+    assert!(
+        stdout(&out).contains(&format!(
+            "anchor #{id}: UNVERIFIED (imprint matches, in clock-provenance ledger history;"
+        )),
+        "{}",
+        stdout(&out)
+    );
+    Ok(())
+}

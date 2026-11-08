@@ -322,6 +322,26 @@ pub fn human_lag(lag_s: i64) -> String {
     format!("{sign}{body}")
 }
 
+/// When the anchoring host stored the row, relative to the token's time, as
+/// the tools print it. `lag_s` is `anchor bucket start − genTime`, so a row
+/// stored in the bucket that contains `genTime` has `-600 < lag_s <= 0`:
+/// `stored in the bucket of issuance`; later, `stored 2d 3h after issuance`;
+/// a bucket that starts a whole bucket or more before the token's time can
+/// only come from the anchoring host's clock: `stored 20m before issuance by
+/// the anchoring host's clock`.
+pub fn stored_text(lag_s: i64) -> String {
+    if lag_s > 0 {
+        format!("stored {} after issuance", human_lag(lag_s))
+    } else if lag_s > -ONE_BUCKET_S {
+        "stored in the bucket of issuance".to_string()
+    } else {
+        format!(
+            "stored {} before issuance by the anchoring host's clock",
+            human_lag(-lag_s)
+        )
+    }
+}
+
 /// The lineage key under which a row's device signature verifies, if any.
 pub fn signer_of(
     row: &ClockProvenanceRow,
@@ -412,6 +432,22 @@ mod tests {
         assert_eq!(human_lag(3_600 + 5 * 60), "1h 5m");
         assert_eq!(human_lag(2 * 86_400 + 3 * 3_600 + 59 * 60), "2d 3h");
         assert_eq!(human_lag(-600), "-10m");
+    }
+
+    #[test]
+    fn stored_text_pins_the_phrases() {
+        assert_eq!(stored_text(-204), "stored in the bucket of issuance");
+        assert_eq!(stored_text(0), "stored in the bucket of issuance");
+        assert_eq!(stored_text(-599), "stored in the bucket of issuance");
+        assert_eq!(
+            stored_text(2 * 86_400 - 204),
+            "stored 1d 23h after issuance"
+        );
+        assert_eq!(stored_text(45 * 60), "stored 45m after issuance");
+        assert_eq!(
+            stored_text(-2_004),
+            "stored 33m before issuance by the anchoring host's clock"
+        );
     }
 
     #[test]

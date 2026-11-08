@@ -1592,21 +1592,21 @@ impl ClockContext {
             return;
         };
         let gap = rec.poll_gap_s.unwrap_or(0);
-        let lag = clock_provenance::human_lag(asmt.lag_s);
+        let stored = clock_provenance::stored_text(asmt.lag_s);
         if !(asmt.prompt || offset < 0) {
             println!(
-                "    clock: record #{}: device clock {offset_text} vs TSA genTime; row stored \
-                 {lag} after issuance (delayed import), positive offset not evaluated",
+                "    clock: record #{}: device clock {offset_text} vs TSA genTime; row {stored} \
+                 (delayed import), positive offset not evaluated",
                 row.id
             );
         } else {
             let is_beyond = clock_provenance::beyond(rec, &asmt, self.threshold_s);
             let when = if asmt.prompt {
-                format!("row seen within {gap} s, stored {lag} after issuance")
+                format!("row seen within {gap} s, {stored}")
             } else {
                 format!(
-                    "row seen within {gap} s, stored {lag} after issuance (delayed import; a \
-                     negative offset is evaluated regardless)"
+                    "row seen within {gap} s, {stored} (delayed import; a negative offset is \
+                     evaluated regardless)"
                 )
             };
             println!(
