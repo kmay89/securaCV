@@ -1372,3 +1372,206 @@ fn ots_leg_refuses_pool_style_response() {
     assert_eq!(rep.stored.len(), 1);
     assert_eq!(rep.fetches, 0, "request --policy never upgrades");
 }
+
+/// `00 ‖ Pending{uri}`: a pending leaf's bytes.
+fn pending_leaf_bytes(uri: &str) -> Vec<u8> {
+    let mut out = vec![0x00];
+    write_attestation(&mut out, &Attestation::Pending { uri: uri.into() });
+    out
+}
+
+/// A calendar whose `POST /digest` body nests `depth` sha256 ops above its
+/// pending leaf: within the recursion limit on its own, and `compose` adds
+/// two more levels above it.
+struct DeepCalendar {
+    depth: usize,
+}
+
+impl CalendarTransport for DeepCalendar {
+    fn submit(&self, url: &str, _c: &[u8; 32], _allow_http: bool) -> Result<Vec<u8>> {
+        let mut body = vec![0x08; self.depth];
+        body.extend(pending_leaf_bytes(url));
+        Ok(body)
+    }
+
+    fn fetch(&self, _uri: &str, _msg: &[u8], _allow_http: bool) -> Result<Option<Vec<u8>>> {
+        bail!("not polled in this test")
+    }
+}
+
+#[test]
+fn deep_stamp_response_refused_before_storing() {
+    let conn = mem();
+    let policy: OtsPolicy =
+        serde_json::from_str(&format!(r#"{{"calendars":[{{"name":"bob","url":"{BOB}"}}]}}"#))
+            .unwrap();
+    let planned = vec![PlannedOts {
+        stored_as: AnchorSubject::Digest,
+        hash: [5u8; 32],
+        sentinel: false,
+    }];
+    let mut nonce = random_nonce;
+    // 254 nested ops parse as a body (the limit allows 255), but the stored
+    // file would nest 256 deep from the digest: refused, nothing stored.
+    let rep = run_ots_leg(
+        &conn,
+        &policy,
+        &planned,
+        &DeepCalendar { depth: 254 },
+        bucket(600),
+        false,
+        &mut nonce,
+    )
+    .unwrap();
+    assert_eq!(rep.submissions, 1);
+    assert!(rep.stored.is_empty());
+    assert_eq!(rep.submit_failures.len(), 1);
+    assert_eq!(
+        rep.submit_failures[0].error,
+        "proof would not read back (timestamp nests deeper than the recursion limit of 256); \
+         not stored"
+    );
+    assert!(
+        !ots_table_exists(&conn).unwrap(),
+        "refused before the table is created"
+    );
+    // One level shallower is exactly the deepest file the reader accepts.
+    let rep = run_ots_leg(
+        &conn,
+        &policy,
+        &planned,
+        &DeepCalendar { depth: 253 },
+        bucket(600),
+        false,
+        &mut nonce,
+    )
+    .unwrap();
+    assert!(rep.submit_failures.is_empty(), "{:?}", rep.submit_failures);
+    let rows = list_ots_anchors(&conn).unwrap();
+    assert_eq!(rows.len(), 1);
+    Proof::parse(&rows[0].proof).unwrap();
+}
+
+#[test]
+fn deep_upgrade_body_leaves_the_pending_row_unchanged() {
+    let conn = chain_db();
+    let pending = Proof::parse(&fx("pending-bob.ots")).unwrap();
+    let id = insert_ots_anchor(
+        &conn,
+        bucket(BASE),
+        AnchorSubject::Digest,
+        &pending.digest,
+        BOB,
+        &pending,
+    )
+    .unwrap();
+    let before = list_ots_anchors(&conn).unwrap().remove(0);
+    // bob's pending node sits 6 ops below the digest. A body of 250 nested
+    // sha256 ops ending in a Bitcoin leaf over a 32-byte message parses on
+    // its own and passes refuse_malformed, but merged it nests 256 deep.
+    let deep = |n: usize| {
+        let mut b = vec![0x08; n];
+        b.extend(btc_leaf(1));
+        b
+    };
+    let fake = FakeCalendar::new();
+    fake.upgrades.borrow_mut().push(Some(deep(250)));
+    let policy = two_calendars();
+    let mut nonce = random_nonce;
+    let rep = run_ots_leg(
+        &conn,
+        &policy,
+        &[],
+        &fake,
+        bucket(BASE),
+        true,
+        &mut nonce,
+    )
+    .unwrap();
+    assert_eq!(rep.fetches, 1);
+    assert!(rep.upgraded.is_empty());
+    assert_eq!(
+        rep.upgrade_errors,
+        vec![(
+            id,
+            BOB.to_string(),
+            "proof would not read back (timestamp nests deeper than the recursion limit of \
+             256); not stored"
+                .to_string()
+        )]
+    );
+    let after = list_ots_anchors(&conn).unwrap().remove(0);
+    assert_eq!(after.proof, before.proof, "the pending proof is kept");
+    assert_eq!(after.attestation, "pending");
+    assert_eq!(after.bitcoin_height, None);
+    assert_eq!(after.upgraded_bucket_start, None);
+    // One level shallower merges to the deepest readable file and upgrades.
+    fake.upgrades.borrow_mut().push(Some(deep(249)));
+    let rep = run_ots_leg(
+        &conn,
+        &policy,
+        &[],
+        &fake,
+        bucket(BASE + 600),
+        true,
+        &mut nonce,
+    )
+    .unwrap();
+    assert!(rep.upgrade_errors.is_empty(), "{:?}", rep.upgrade_errors);
+    assert_eq!(rep.upgraded, vec![(id, "digest".to_string(), 1)]);
+    let row = list_ots_anchors(&conn).unwrap().remove(0);
+    assert!(Proof::parse(&row.proof).unwrap().contains(&pending));
+}
+
+#[test]
+fn upgrade_horizon_is_two_sided() {
+    let now = bucket(BASE);
+    let at = |s: u64| bucket(s);
+    assert!(within_upgrade_horizon(now, at(BASE)));
+    assert!(within_upgrade_horizon(now, at(BASE - OTS_UPGRADE_HORIZON_S)));
+    assert!(within_upgrade_horizon(now, at(BASE + OTS_UPGRADE_HORIZON_S)));
+    assert!(!within_upgrade_horizon(now, at(BASE - OTS_UPGRADE_HORIZON_S - 600)));
+    assert!(!within_upgrade_horizon(now, at(BASE + OTS_UPGRADE_HORIZON_S + 600)));
+
+    // In the leg: a row dated 8 days after `now` and one 8 days before it are
+    // both beyond the horizon and never fetched; a 6-day skew either way is
+    // still polled.
+    let conn = chain_db();
+    let stripped = Proof::parse(&fx("bitcoin-stripped.ots")).unwrap();
+    let row = |start: u64| {
+        insert_ots_anchor(
+            &conn,
+            bucket(start),
+            AnchorSubject::Digest,
+            &stripped.digest,
+            BOB,
+            &stripped,
+        )
+        .unwrap()
+    };
+    let now_s = 100 * 86_400;
+    let future = row(now_s + 8 * 86_400);
+    let past = row(now_s - 8 * 86_400);
+    let ahead = row(now_s + 6 * 86_400);
+    let behind = row(now_s - 6 * 86_400);
+    let fake = FakeCalendar::new();
+    let policy = two_calendars();
+    let mut nonce = random_nonce;
+    let rep = run_ots_leg(
+        &conn,
+        &policy,
+        &[],
+        &fake,
+        bucket(now_s),
+        true,
+        &mut nonce,
+    )
+    .unwrap();
+    assert_eq!(rep.beyond_horizon, vec![future, past]);
+    assert_eq!(rep.fetches, 2);
+    assert_eq!(
+        rep.still_pending,
+        vec![(ahead, BOB.to_string()), (behind, BOB.to_string())]
+    );
+    assert_eq!(fake.fetched.borrow().len(), 2);
+}

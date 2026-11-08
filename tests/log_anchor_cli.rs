@@ -2451,9 +2451,12 @@ fn anchor_all_default_subjects_include_the_clock_provenance_head() -> Result<()>
 //
 // Rows are inserted with `ots::insert_ots_anchor` on a real database. A row
 // over an arbitrary hash is composed from the fixture calendar body
-// `response-bob.otsr`: a calendar's ops apply to any commitment. Rows that
-// must read "recent" carry a far-future bucket, so no test depends on the
-// wall clock; "beyond the horizon" rows carry bucket 0.
+// `response-bob.otsr`: a calendar's ops apply to any commitment. The binary
+// judges the 7-day upgrade horizon against its own clock, on both sides (a
+// row dated more than 7 days ahead is outside it too), so rows that must
+// read "recent" carry the current 10-minute bucket, read once here: the
+// horizon is seven days wide, so no outcome depends on which bucket the run
+// lands in. "Beyond the horizon" rows carry bucket 0.
 
 use witness_kernel::ots;
 
@@ -2466,8 +2469,15 @@ const OTS_BOB_MSG_BITCOIN: &str =
     "5883f171aa6795c4b2d50c11a9261949a1eedfdcf8254d5adab80b95d36584163a25cfcd6d4580fc64dfa979";
 const OTS_ALICE_MSG_BITCOIN: &str =
     "5883f17120599b7b1ba5dd17ee43289504b3d17636dba6009f57ddc961b104c16b0caf4b5deb8967362e06b6";
-/// A bucket no wall clock reaches in these tests: always within the horizon.
-const RECENT: u64 = 4_000_000_200;
+/// The current 10-minute bucket start: within the binary's horizon for the
+/// whole run (the horizon is 7 days; see the section comment).
+fn recent() -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    now - now % 600
+}
 
 fn ots_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ots")
@@ -2561,9 +2571,9 @@ fn list_shows_ots_rows_and_no_anchors_line_only_when_both_empty() -> Result<()> 
     drop(kernel);
 
     let pending = ots::Proof::parse(&ots_fx("pending-bob.ots"))?;
-    let a = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, RECENT);
+    let a = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, recent());
     let btc = ots::Proof::parse(&ots_fx("bitcoin.ots"))?;
-    let b = insert_ots(&db, AnchorSubject::Digest, OTS_ALICE, &btc, RECENT);
+    let b = insert_ots(&db, AnchorSubject::Digest, OTS_ALICE, &btc, recent());
     let out = log_anchor(&db, &["list"]);
     assert_ok(&out);
     let text = stdout(&out);
@@ -2596,7 +2606,7 @@ fn verify_pending_row_unverified_literal() -> Result<()> {
         AnchorSubject::ChainHead,
         OTS_BOB,
         &composed(&head, 1),
-        RECENT,
+        recent(),
     );
     let before = std::fs::read(&db)?;
     let out = log_anchor(&db, &["verify"]);
@@ -2625,7 +2635,7 @@ fn verify_bitcoin_row_without_headers_unverified_with_hint() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let db = make_db(temp.path())?;
     let btc = ots::Proof::parse(&ots_fx("bitcoin.ots"))?;
-    let id = insert_ots(&db, AnchorSubject::Digest, OTS_ALICE, &btc, RECENT);
+    let id = insert_ots(&db, AnchorSubject::Digest, OTS_ALICE, &btc, recent());
     let out = log_anchor(&db, &["verify"]);
     assert_ok(&out);
     let text = stdout(&out);
@@ -2649,7 +2659,7 @@ fn verify_genesis_with_headers_ok_literal() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let db = make_db(temp.path())?;
     let genesis = ots::Proof::parse(&ots_fx("genesis.ots"))?;
-    let id = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &genesis, RECENT);
+    let id = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &genesis, recent());
     let headers = ots_dir().join("headers.txt");
     let out = log_anchor(
         &db,
@@ -2690,7 +2700,7 @@ fn verify_genesis_with_headers_ok_literal() -> Result<()> {
     let mut flipped = genesis.clone();
     flipped.digest[0] ^= 1;
     flipped.root.msg[0] ^= 1;
-    let bad = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &flipped, RECENT);
+    let bad = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &flipped, recent());
     let out = log_anchor(
         &db,
         &["verify", "--bitcoin-headers", &headers.to_string_lossy()],
@@ -2707,26 +2717,26 @@ fn verify_digest_mismatch_and_cache_contradiction_fail() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let db = make_db(temp.path())?;
     let pending = ots::Proof::parse(&ots_fx("pending-bob.ots"))?;
-    let moved = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, RECENT);
+    let moved = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, recent());
     ots_sql(
         &db,
         "UPDATE ots_anchors SET subject_hash = x'0101010101010101010101010101010101010101010101010101010101010101' WHERE id = ?1",
         moved,
     );
-    let lied = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, RECENT);
+    let lied = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, recent());
     ots_sql(
         &db,
         "UPDATE ots_anchors SET attestation = 'bitcoin', bitcoin_height = 5 WHERE id = ?1",
         lied,
     );
-    let weird = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, RECENT);
+    let weird = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, recent());
     ots_sql(
         &db,
         "UPDATE ots_anchors SET attestation = 'confirmed' WHERE id = ?1",
         weird,
     );
     let btc = ots::Proof::parse(&ots_fx("bitcoin.ots"))?;
-    let low = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &btc, RECENT);
+    let low = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &btc, recent());
     ots_sql(
         &db,
         "UPDATE ots_anchors SET bitcoin_height = 449399 WHERE id = ?1",
@@ -2830,10 +2840,10 @@ fn verify_policy_ots_lines() -> Result<()> {
         AnchorSubject::ChainHead,
         OTS_BOB,
         &composed(&head, 2),
-        RECENT,
+        recent(),
     );
     let genesis = ots::Proof::parse(&ots_fx("genesis.ots"))?;
-    insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &genesis, RECENT);
+    insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &genesis, recent());
     let headers = ots_dir().join("headers.txt");
 
     let policy = write_ots_policy(temp.path(), &["chain_head"], false);
@@ -2893,10 +2903,22 @@ fn verify_beyond_horizon_line() -> Result<()> {
     let db = make_db(temp.path())?;
     let pending = ots::Proof::parse(&ots_fx("pending-bob.ots"))?;
     let id = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, 0);
+    // Dated 8 days after the host's clock (a clock that ran ahead when it
+    // was stamped): outside the horizon too, and said so.
+    let ahead = insert_ots(
+        &db,
+        AnchorSubject::Digest,
+        OTS_BOB,
+        &pending,
+        recent() + 8 * 86_400,
+    );
     let out = log_anchor(&db, &["verify"]);
     assert_ok(&out);
     assert!(stdout(&out).contains(&format!(
         "ots anchor #{id}: UNVERIFIED (proof digest matches, digest anchor, chain membership not applicable; pending (not yet in a Bitcoin block) at {OTS_BOB}, beyond the 7-day upgrade horizon — no longer polled; the calendar may never have committed it) via {OTS_BOB}"
+    )), "{}", stdout(&out));
+    assert!(stdout(&out).contains(&format!(
+        "ots anchor #{ahead}: UNVERIFIED (proof digest matches, digest anchor, chain membership not applicable; pending (not yet in a Bitcoin block) at {OTS_BOB}, dated more than 7 days after this host's clock — not polled; check the host clock) via {OTS_BOB}"
     )), "{}", stdout(&out));
     Ok(())
 }
@@ -2906,9 +2928,16 @@ fn anchor_all_offline_writes_ots_requests_and_curl_lines_read_only() -> Result<(
     let temp = tempfile::tempdir()?;
     let db = make_db(temp.path())?;
     let stripped = ots::Proof::parse(&ots_fx("bitcoin-stripped.ots"))?;
-    let seeded = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, RECENT);
-    // Beyond the horizon: no upgrade file.
+    let seeded = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, recent());
+    // Beyond the horizon, on either side: no upgrade file.
     insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, 0);
+    insert_ots(
+        &db,
+        AnchorSubject::Digest,
+        OTS_BOB,
+        &stripped,
+        recent() + 8 * 86_400,
+    );
     let policy = write_ots_policy(
         temp.path(),
         &AnchorSubject::HEADS
@@ -3136,9 +3165,9 @@ fn import_ots_dir_upgrade_binds_by_message() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let db = make_db(temp.path())?;
     let stripped = ots::Proof::parse(&ots_fx("bitcoin-stripped.ots"))?;
-    let up = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, RECENT);
-    let wrong = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, RECENT);
-    let empty = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, RECENT);
+    let up = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, recent());
+    let wrong = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, recent());
+    let empty = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, recent());
     let dir = temp.path().join("in");
     std::fs::create_dir(&dir)?;
     let write = |id: i64, msg: &str| {
@@ -3276,7 +3305,7 @@ fn relabel_ots() -> Result<()> {
         AnchorSubject::ChainHead,
         OTS_BOB,
         &composed(&h1, 9),
-        RECENT,
+        recent(),
     );
     let out = log_anchor(
         &db_path,
@@ -3310,7 +3339,7 @@ fn relabel_ots() -> Result<()> {
         AnchorSubject::ChainHead,
         OTS_BOB,
         &composed(&h3, 8),
-        RECENT,
+        recent(),
     );
     let kernel = Kernel::open(&cfg)?;
     kernel.conn.execute(

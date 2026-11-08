@@ -684,11 +684,7 @@ fn pollable_rows(
 ) -> Result<Vec<(i64, String, Vec<u8>)>> {
     let mut out = Vec::new();
     for row in ots::pending_ots_anchors(conn)? {
-        if now
-            .start_epoch_s
-            .saturating_sub(row.created_bucket.start_epoch_s)
-            > ots::OTS_UPGRADE_HORIZON_S
-        {
+        if !ots::within_upgrade_horizon(now, row.created_bucket) {
             continue;
         }
         let Ok(proof) = ots::Proof::parse(&row.proof) else {
@@ -1776,15 +1772,14 @@ fn verify_ots_rows(
             anchor_policy::OtsRowState::Unchecked { height }
         } else {
             pending += 1;
-            let beyond = now
-                .start_epoch_s
-                .saturating_sub(r.created_bucket.start_epoch_s)
-                > ots::OTS_UPGRADE_HORIZON_S;
-            let tail = if beyond {
+            let tail = if ots::within_upgrade_horizon(now, r.created_bucket) {
+                ""
+            } else if r.created_bucket.start_epoch_s > now.start_epoch_s {
+                ", dated more than 7 days after this host's clock — not polled; check the host \
+                 clock"
+            } else {
                 ", beyond the 7-day upgrade horizon — no longer polled; the calendar may never \
                  have committed it"
-            } else {
-                ""
             };
             println!(
                 "ots anchor #{}: UNVERIFIED (proof digest matches, {membership}; pending (not yet \

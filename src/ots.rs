@@ -742,6 +742,17 @@ impl Proof {
     }
 }
 
+/// Whether a pending row created in `created` may be polled at `now`: its
+/// bucket lies within `OTS_UPGRADE_HORIZON_S` of `now` on EITHER side. A row
+/// dated more than the horizon after `now` (a host clock that ran ahead when
+/// it was stamped or imported, or a damaged cell) is outside too, so no row
+/// is polled for longer than twice the horizon whichever way the clock was
+/// skewed. The one rule `run_ots_leg`, the offline upgrade files and the
+/// `verify` label share.
+pub fn within_upgrade_horizon(now: TimeBucket, created: TimeBucket) -> bool {
+    now.start_epoch_s.abs_diff(created.start_epoch_s) <= OTS_UPGRADE_HORIZON_S
+}
+
 /// `SHA256(digest ‖ nonce)`: what a calendar receives.
 pub fn commitment(digest: &[u8; 32], nonce: &[u8; OTS_NONCE_LEN]) -> [u8; 32] {
     let mut h = Sha256::new();
@@ -1057,6 +1068,28 @@ pub fn ots_table_exists(conn: &Connection) -> Result<bool> {
         .unwrap_or(false))
 }
 
+/// The canonical bytes of `proof`, refused unless they read back as the
+/// same proof. `compose` and `merge_at` graft a calendar body below ops the
+/// body was not parsed under, so a body within the recursion limit on its
+/// own can make a stored file nest past it; storing that would replace
+/// readable evidence (on an upgrade, a valid pending proof) with a file no
+/// verifier, ours or the `ots` client, can parse.
+fn storable_bytes(proof: &Proof) -> Result<Vec<u8>> {
+    let bytes = proof.to_bytes();
+    if bytes.len() > OTS_MAX_FILE_BYTES {
+        bail!(
+            "proof is {} bytes (limit {OTS_MAX_FILE_BYTES})",
+            bytes.len()
+        );
+    }
+    let back =
+        Proof::parse(&bytes).map_err(|e| anyhow!("proof would not read back ({e}); not stored"))?;
+    if back.to_bytes() != bytes {
+        bail!("proof does not read back byte for byte; not stored");
+    }
+    Ok(bytes)
+}
+
 /// Store a proof over `hash`. The caches are derived from the proof; a
 /// proof over another digest, with no pending or Bitcoin leaf, or with a
 /// Bitcoin leaf that cannot be a merkle root is refused.
@@ -1080,13 +1113,7 @@ pub fn insert_ots_anchor(
         bail!("proof carries no Pending or Bitcoin attestation; not stored");
     };
     refuse_malformed(proof)?;
-    let bytes = proof.to_bytes();
-    if bytes.len() > OTS_MAX_FILE_BYTES {
-        bail!(
-            "proof is {} bytes (limit {OTS_MAX_FILE_BYTES})",
-            bytes.len()
-        );
-    }
+    let bytes = storable_bytes(proof)?;
     ensure_ots_table(conn)?;
     let ledger_id = tsa::ledger_position(conn, subject, hash)?;
     let height = state.height().map(|h| h as i64);
@@ -1132,13 +1159,7 @@ pub fn record_ots_upgrade(
         bail!("upgraded proof attests no Bitcoin block; not stored");
     };
     refuse_malformed(new)?;
-    let bytes = new.to_bytes();
-    if bytes.len() > OTS_MAX_FILE_BYTES {
-        bail!(
-            "proof is {} bytes (limit {OTS_MAX_FILE_BYTES})",
-            bytes.len()
-        );
-    }
+    let bytes = storable_bytes(new)?;
     let changed = conn.execute(
         "UPDATE ots_anchors SET proof = ?2, attestation = 'bitcoin', bitcoin_height = ?3, upgraded_bucket_start = ?4 WHERE id = ?1 AND attestation = 'pending'",
         rusqlite::params![id, bytes, height as i64, bucket.start_epoch_s as i64],
@@ -1614,11 +1635,7 @@ pub fn run_ots_leg(
     if upgrade {
         for row in pending_ots_anchors(conn)? {
             let id = row.id;
-            if now
-                .start_epoch_s
-                .saturating_sub(row.created_bucket.start_epoch_s)
-                > OTS_UPGRADE_HORIZON_S
-            {
+            if !within_upgrade_horizon(now, row.created_bucket) {
                 rep.beyond_horizon.push(id);
                 rep.events.push(OtsLegEvent::BeyondHorizon { id });
                 continue;
