@@ -53,7 +53,9 @@ use std::path::{Path, PathBuf};
 use witness_kernel::anchor_policy::{self, AnchorPolicy, Attribution, CoverageVerdict, Verified};
 use witness_kernel::clock_provenance::{self, ClockProvenanceRow};
 use witness_kernel::crypto::signatures::SignatureMode;
+use witness_kernel::ots::{self, OtsLegEvent, OtsLegReport, PlannedOts};
 use witness_kernel::tsa::{self, AnchorRecord, AnchorSubject};
+use witness_kernel::TimeBucket;
 use witness_kernel::{verify, verify_helpers};
 
 #[derive(Parser, Debug)]
@@ -129,13 +131,25 @@ enum Command {
         /// Anchor the SHA-256 of this file's bytes
         #[arg(long, value_name = "PATH")]
         file: Option<PathBuf>,
+        /// Anchor policy file: when it has an `ots` block, also write one
+        /// OpenTimestamps request (`{stem}.{calendar}.ots-request.json` and
+        /// `.ots-commitment`) per declared calendar beside --out
+        #[arg(long, value_name = "FILE")]
+        policy: Option<PathBuf>,
     },
-    /// Import and store TSA responses obtained out-of-band
+    /// Import and store TSA responses (and, with --ots-dir, OpenTimestamps
+    /// calendar responses) obtained out-of-band
     Import {
         /// Path to a DER .tsr response (repeatable; one `--response` also
         /// takes several paths, so a shell glob like `out/*.tsr` works)
-        #[arg(long, value_name = "PATH", action = ArgAction::Append, num_args = 1.., required = true)]
+        #[arg(long, value_name = "PATH", action = ArgAction::Append, num_args = 1.., required_unless_present = "ots_dir")]
         response: Vec<String>,
+        /// Directory written by `anchor-all --offline-dir` (or `query
+        /// --policy`): import every `*.ots-request.json` with its `.otsr`
+        /// calendar response and every `ots-*.ots-upgrade.json` with its
+        /// `ots-{id}.otsr`
+        #[arg(long, value_name = "DIR")]
+        ots_dir: Option<PathBuf>,
         /// TSA URL to record alongside the anchor (provenance only; default
         /// "(offline)", or the policy entry's url under --policy)
         #[arg(long, value_name = "TEXT")]
@@ -177,8 +191,14 @@ enum Command {
         #[arg(long, value_name = "FILE")]
         policy: Option<PathBuf>,
         /// Fail unless every covered head is the ledger's current head
+        /// (the RFC 3161 leg only; Bitcoin confirmation lags by design)
         #[arg(long, requires = "policy")]
         require_current: bool,
+        /// Bitcoin block headers, one per line: `<height> <160 hex of the
+        /// 80-byte header>`, from a node you run. The only Bitcoin source
+        /// verify reads; it never contacts the network
+        #[arg(long, value_name = "FILE")]
+        bitcoin_headers: Option<PathBuf>,
     },
     /// Downgrade a ledger-head anchor whose head was pruned before this
     /// release to a digest anchor (the token is untouched)
@@ -189,6 +209,10 @@ enum Command {
         /// The new subject; only `digest` is accepted
         #[arg(long, value_name = "S")]
         subject: String,
+        /// Relabel an OpenTimestamps row (`ots_anchors`) instead of an RFC
+        /// 3161 row
+        #[arg(long)]
+        ots: bool,
     },
 }
 
@@ -281,6 +305,7 @@ fn main() -> Result<()> {
             subject,
             digest,
             file,
+            policy,
         } => {
             let conn = open(&args, OpenMode::ReadOnly)?;
             query(
@@ -289,19 +314,24 @@ fn main() -> Result<()> {
                 subject.as_deref(),
                 digest.as_deref(),
                 file.as_deref(),
+                policy.as_deref(),
             )
         }
         Command::Import {
             response,
+            ots_dir,
             url,
             policy,
             tsa,
         } => {
             let conn = open(&args, OpenMode::ReadWrite)?;
-            tsa::ensure_anchor_table(&conn)?;
+            if !response.is_empty() {
+                tsa::ensure_anchor_table(&conn)?;
+            }
             import(
                 &conn,
                 response,
+                ots_dir.as_deref(),
                 url.as_deref(),
                 policy.as_deref(),
                 tsa.as_deref(),
@@ -330,14 +360,26 @@ fn main() -> Result<()> {
             ca,
             policy,
             require_current,
+            bitcoin_headers,
         } => {
             let conn = open(&args, OpenMode::ReadOnly)?;
-            verify(&conn, &args.db, ca, policy.as_deref(), *require_current)
+            verify(
+                &conn,
+                &args.db,
+                ca,
+                policy.as_deref(),
+                *require_current,
+                bitcoin_headers.as_deref(),
+            )
         }
-        Command::Relabel { id, subject } => {
+        Command::Relabel { id, subject, ots } => {
             let conn = open(&args, OpenMode::ReadWrite)?;
-            tsa::ensure_anchor_table(&conn)?;
-            relabel(&conn, *id, subject)
+            if *ots {
+                relabel_ots(&conn, *id, subject)
+            } else {
+                tsa::ensure_anchor_table(&conn)?;
+                relabel(&conn, *id, subject)
+            }
         }
     }
 }
@@ -445,6 +487,222 @@ fn openssl_missing_warning(policy_path: &Path) {
     );
 }
 
+// -------------------- the OpenTimestamps leg (shared) --------------------
+
+/// Refused before the first request when a policy carries `ots` but this
+/// build has no calendar client: a run does every leg or nothing.
+#[cfg_attr(not(feature = "tsa"), allow(dead_code))]
+const NO_OTS_CLIENT: &str = "this build has no OpenTimestamps calendar client (rebuild with `--features tsa,ots`), \
+     or use the offline flow: `log_anchor anchor-all --policy <file> --offline-dir <dir>` then \
+     `log_anchor import --policy <file> --ots-dir <dir>`";
+
+#[cfg_attr(not(feature = "tsa"), allow(dead_code))]
+fn ots_client_check(policy: &AnchorPolicy) -> Result<()> {
+    if policy.ots.is_some() && !cfg!(feature = "ots") {
+        bail!("{NO_OTS_CLIENT}");
+    }
+    Ok(())
+}
+
+/// `  (empty-ledger sentinel for {owner})` for a digest row over a sentinel.
+fn sentinel_suffix(stored_as: AnchorSubject, hash: &[u8; 32]) -> String {
+    match AnchorSubject::sentinel_owner(hash) {
+        Some(owner) if stored_as == AnchorSubject::Digest => {
+            format!("  (empty-ledger sentinel for {owner})")
+        }
+        _ => String::new(),
+    }
+}
+
+/// The two lines of a stored OpenTimestamps row.
+fn print_ots_stored(
+    id: i64,
+    stored_as: AnchorSubject,
+    hash: &[u8; 32],
+    calendar: &str,
+    state: ots::ProofState,
+    pending_uri: Option<&str>,
+) {
+    println!(
+        "ots anchor #{id} stored: {stored_as} {}{}",
+        hex::encode(hash),
+        sentinel_suffix(stored_as, hash)
+    );
+    match (state, pending_uri) {
+        (ots::ProofState::Bitcoin { height }, _) => {
+            println!("  attests Bitcoin block {height} via {calendar}")
+        }
+        (_, Some(uri)) => println!("  pending at {uri} via {calendar}"),
+        (_, None) => println!("  via {calendar}"),
+    }
+}
+
+/// Print what the leg did, in order. Every line says "attests", never
+/// "confirmed": no header is checked here.
+#[cfg_attr(not(feature = "tsa"), allow(dead_code))]
+fn print_ots_events(report: &OtsLegReport, planned: &[PlannedOts]) {
+    for event in &report.events {
+        match event {
+            OtsLegEvent::Upgrading { id, uri } => {
+                eprintln!("ots: upgrading ots anchor #{id} at {uri}")
+            }
+            OtsLegEvent::Upgraded {
+                id,
+                subject,
+                height,
+            } => println!("ots anchor #{id} upgraded: {subject} attests Bitcoin block {height}"),
+            OtsLegEvent::StillPending { id, uri } => {
+                eprintln!("ots anchor #{id}: still pending at {uri}")
+            }
+            OtsLegEvent::AnsweredWithoutBitcoin { id, uri } => eprintln!(
+                "ots anchor #{id}: {uri} answered without a Bitcoin attestation; left pending"
+            ),
+            OtsLegEvent::UpgradeFailed { id, uri, error } => {
+                eprintln!("ots anchor #{id}: upgrade from {uri} FAILED: {error}")
+            }
+            OtsLegEvent::BeyondHorizon { .. } => {}
+            OtsLegEvent::NotPolledUndeclared { id, uri } => eprintln!(
+                "ots anchor #{id}: pending at {uri}, which this policy does not declare; not polled"
+            ),
+            OtsLegEvent::Stamping {
+                planned: i,
+                calendar,
+                url,
+            } => {
+                let p = &planned[*i];
+                let subject = if p.sentinel {
+                    AnchorSubject::sentinel_owner(&p.hash).unwrap_or(p.stored_as)
+                } else {
+                    p.stored_as
+                };
+                eprintln!(
+                    "ots: stamping {subject} {} via {calendar} ({url})",
+                    hex::encode(p.hash)
+                );
+            }
+            OtsLegEvent::Stored(i) => {
+                let s = &report.stored[*i];
+                print_ots_stored(
+                    s.id,
+                    s.stored_as,
+                    &s.hash,
+                    &s.calendar,
+                    s.state,
+                    s.first_pending_uri.as_deref(),
+                );
+            }
+            OtsLegEvent::SubmitFailed(i) => {
+                let f = &report.submit_failures[*i];
+                eprintln!("ots via {} ({}) FAILED: {}", f.calendar, f.url, f.error);
+            }
+        }
+    }
+}
+
+/// The online leg with the real transport (`--features tsa,ots`).
+#[cfg(all(feature = "tsa", feature = "ots"))]
+fn ots_leg_online(
+    conn: &Connection,
+    policy: &anchor_policy::OtsPolicy,
+    planned: &[PlannedOts],
+    upgrade: bool,
+) -> Result<OtsLegReport> {
+    ots::run_ots_leg(
+        conn,
+        policy,
+        planned,
+        &ots::UreqCalendar,
+        TimeBucket::now_10min()?,
+        upgrade,
+        &mut ots::random_nonce,
+    )
+}
+
+/// Unreachable after `ots_client_check`; kept so the build without `ots`
+/// gives the same refusal.
+#[cfg(all(feature = "tsa", not(feature = "ots")))]
+fn ots_leg_online(
+    _: &Connection,
+    _: &anchor_policy::OtsPolicy,
+    _: &[PlannedOts],
+    _: bool,
+) -> Result<OtsLegReport> {
+    bail!("{NO_OTS_CLIENT}")
+}
+
+/// `{TSA text}; {OTS text}`, either alone, or nothing.
+fn combined_failure(tsa_text: Option<String>, ots_text: Option<String>) -> Result<()> {
+    match (tsa_text, ots_text) {
+        (None, None) => Ok(()),
+        (Some(t), None) => bail!("{t}"),
+        (None, Some(o)) => bail!("{o}"),
+        (Some(t), Some(o)) => bail!("{t}; {o}"),
+    }
+}
+
+/// The curl line that submits one offline request file to its calendar.
+fn ots_submit_curl(dir: &Path, stem: &str, url: &str) -> String {
+    format!(
+        "  curl -sf -H 'Accept: {}' --data-binary @{d}/{stem}.ots-commitment {url}/digest > {d}/{stem}.otsr",
+        ots::OTS_ACCEPT,
+        d = dir.display()
+    )
+}
+
+/// Write `{stem}.ots-request.json` and `{stem}.ots-commitment` into `dir`
+/// for one (hash, calendar) with a fresh nonce.
+fn write_ots_request(
+    dir: &Path,
+    stem: &str,
+    hash: &[u8; 32],
+    calendar: &anchor_policy::CalendarEntry,
+) -> Result<()> {
+    let nonce = ots::random_nonce();
+    let request = ots::OtsRequestFile {
+        format: ots::OTS_REQUEST_FORMAT.to_string(),
+        subject_hash: hex::encode(hash),
+        nonce: hex::encode(nonce),
+        calendar: calendar.name.clone(),
+        calendar_url: calendar.url.clone(),
+    };
+    let json_path = dir.join(format!("{stem}.ots-request.json"));
+    std::fs::write(&json_path, serde_json::to_string(&request)? + "\n")
+        .with_context(|| format!("writing {}", json_path.display()))?;
+    let c_path = dir.join(format!("{stem}.ots-commitment"));
+    std::fs::write(&c_path, ots::commitment(hash, &nonce))
+        .with_context(|| format!("writing {}", c_path.display()))?;
+    Ok(())
+}
+
+/// The pending rows the upgrade pass would poll now: within the horizon,
+/// with a pending leaf at a declared calendar. `(id, uri, message)`.
+fn pollable_rows(
+    conn: &Connection,
+    policy: &anchor_policy::OtsPolicy,
+    now: TimeBucket,
+) -> Result<Vec<(i64, String, Vec<u8>)>> {
+    let mut out = Vec::new();
+    for row in ots::pending_ots_anchors(conn)? {
+        if now
+            .start_epoch_s
+            .saturating_sub(row.created_bucket.start_epoch_s)
+            > ots::OTS_UPGRADE_HORIZON_S
+        {
+            continue;
+        }
+        let Ok(proof) = ots::Proof::parse(&row.proof) else {
+            continue;
+        };
+        if policy.calendar_for_url(&row.calendar_url).is_none() {
+            continue;
+        }
+        if let Some((uri, msg)) = ots::pollable_leaf(&proof, &row.calendar_url) {
+            out.push((row.id, uri, msg));
+        }
+    }
+    Ok(out)
+}
+
 // -------------------- request (online) --------------------
 
 /// One TSA to request from: a bare `--url`, or a policy entry.
@@ -529,6 +787,9 @@ fn request(
     file: Option<&Path>,
 ) -> Result<()> {
     let policy = policy_path.map(anchor_policy::load).transpose()?;
+    if let Some(p) = &policy {
+        ots_client_check(p)?;
+    }
     let (kind, hash) = resolve_subject(conn, subject, digest, file)?;
     let targets = targets(urls, allow_http, policy.as_ref());
     let total = targets.len();
@@ -545,10 +806,27 @@ fn request(
             eprintln!("anchor via {} FAILED: {e:#}", target.url);
         }
     }
-    if failed > 0 {
-        bail!("{failed} of {total} TSA request(s) failed");
+    let tsa_text = (failed > 0).then(|| format!("{failed} of {total} TSA request(s) failed"));
+    // The policy's OpenTimestamps leg: the only online path by which a
+    // court-kit bundle digest gets a proof. No upgrade pass (anchor-all's).
+    let mut ots_text = None;
+    if let Some(ots_policy) = policy.as_ref().and_then(|p| p.ots.as_ref()) {
+        let planned = [PlannedOts {
+            stored_as: kind,
+            hash,
+            sentinel: false,
+        }];
+        let report = ots_leg_online(conn, ots_policy, &planned, false)?;
+        print_ots_events(&report, &planned);
+        let f = report.submit_failures.len();
+        if f > 0 {
+            ots_text = Some(format!(
+                "{f} of {} calendar submission(s) failed",
+                report.submissions
+            ));
+        }
     }
-    Ok(())
+    combined_failure(tsa_text, ots_text)
 }
 
 #[cfg(not(feature = "tsa"))]
@@ -577,7 +855,9 @@ fn query(
     subject: Option<&str>,
     digest: Option<&str>,
     file: Option<&Path>,
+    policy_path: Option<&Path>,
 ) -> Result<()> {
+    let policy = policy_path.map(anchor_policy::load).transpose()?;
     let (kind, hash) = resolve_subject(conn, subject, digest, file)?;
     // No nonce in the offline flow: the query may be submitted much later,
     // and import correlates by message imprint against ledger history instead.
@@ -592,6 +872,32 @@ fn query(
         out.trim_end_matches(".tsq"),
         out.trim_end_matches(".tsq"),
     );
+    // The offline twin of `request --policy`: one OpenTimestamps request
+    // per declared calendar beside --out (e.g. for a bundle digest).
+    if let (Some(p), Some(path)) = (&policy, policy_path) {
+        if let Some(ots_policy) = &p.ots {
+            let out_path = Path::new(out);
+            let dir = match out_path.parent() {
+                Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+                _ => PathBuf::from("."),
+            };
+            let stem = out_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| anyhow!("--out {out} has no file name"))?;
+            println!("submit every OpenTimestamps request to its calendar, e.g.:");
+            for cal in &ots_policy.calendars {
+                let s = format!("{stem}.{}", cal.name);
+                write_ots_request(&dir, &s, &hash, cal)?;
+                println!("{}", ots_submit_curl(&dir, &s, &cal.url));
+            }
+            println!(
+                "then: log_anchor import --policy {} --ots-dir {}",
+                path.display(),
+                dir.display()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -646,26 +952,7 @@ fn import_one(
         (None, None) => "(offline)".to_string(),
     };
 
-    // The ledgers may have advanced since the query was written; the imprint
-    // must match *some* recorded state of *some* ledger, not the current head.
-    let kind = match tsa::classify_hash(conn, &hash)? {
-        Some(loc) => loc.subject,
-        None => {
-            match AnchorSubject::sentinel_owner(&hash) {
-                Some(owner) => eprintln!(
-                    "note: imprint {}… is the empty-ledger sentinel for {owner}; stored as a digest anchor",
-                    &hex::encode(hash)[..16]
-                ),
-                None => eprintln!(
-                    "note: imprint {} is not in this DB's chain or receipt-ledger history; storing as a \
-                     generic digest anchor (use this for export-bundle digests; a ledger head pruned by \
-                     retention before import also lands here)",
-                    hex::encode(hash)
-                ),
-            }
-            AnchorSubject::Digest
-        }
-    };
+    let kind = classify_imported(conn, &hash, "imprint")?;
 
     if let (Some(e), Some(n), Some((_, policy_path))) = (entry, name, policy) {
         if anchor_policy::openssl_available() {
@@ -683,9 +970,35 @@ fn import_one(
     Ok(())
 }
 
+/// The subject an imported hash is stored under, derived from the ledgers,
+/// never from a file: the ledgers may have advanced since the request was
+/// written, so the hash must match *some* recorded state of *some* ledger,
+/// not the current head. A miss is a digest anchor (a sentinel is named).
+fn classify_imported(conn: &Connection, hash: &[u8; 32], noun: &str) -> Result<AnchorSubject> {
+    Ok(match tsa::classify_hash(conn, hash)? {
+        Some(loc) => loc.subject,
+        None => {
+            match AnchorSubject::sentinel_owner(hash) {
+                Some(owner) => eprintln!(
+                    "note: {noun} {}… is the empty-ledger sentinel for {owner}; stored as a digest anchor",
+                    &hex::encode(hash)[..16]
+                ),
+                None => eprintln!(
+                    "note: {noun} {} is not in this DB's chain or receipt-ledger history; storing as a \
+                     generic digest anchor (use this for export-bundle digests; a ledger head pruned by \
+                     retention before import also lands here)",
+                    hex::encode(hash)
+                ),
+            }
+            AnchorSubject::Digest
+        }
+    })
+}
+
 fn import(
     conn: &Connection,
     responses: &[String],
+    ots_dir: Option<&Path>,
     url: Option<&str>,
     policy_path: Option<&Path>,
     tsa_name: Option<&str>,
@@ -700,10 +1013,195 @@ fn import(
             eprintln!("import {file}: {e:#}");
         }
     }
-    if failed > 0 {
-        bail!("{failed} of {total} response(s) failed to import");
+    let tsa_text =
+        (failed > 0).then(|| format!("{failed} of {total} response(s) failed to import"));
+    let ots_text = match ots_dir {
+        Some(dir) => import_ots_dir(conn, dir, policy_ref)?,
+        None => None,
+    };
+    combined_failure(tsa_text, ots_text)
+}
+
+/// What one OpenTimestamps upgrade file did.
+enum OtsUpgradeOutcome {
+    Upgraded,
+    StillPending,
+    Ignored,
+}
+
+/// `import --ots-dir`: every `*.ots-request.json` (a stamp) and every
+/// `ots-*.ots-upgrade.json` (an upgrade), in name order. Returns the exit
+/// text when any response failed.
+fn import_ots_dir(
+    conn: &Connection,
+    dir: &Path,
+    policy: Option<(&AnchorPolicy, &Path)>,
+) -> Result<Option<String>> {
+    let now = TimeBucket::now_10min()?;
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .collect();
+    names.sort();
+    let (mut stored, mut upgraded, mut pending, mut failed) = (0usize, 0usize, 0usize, 0usize);
+    for name in &names {
+        let Some(stem) = name.strip_suffix(".ots-request.json") else {
+            continue;
+        };
+        match import_ots_request(conn, dir, stem, policy, now) {
+            Ok(()) => stored += 1,
+            Err(e) => {
+                failed += 1;
+                eprintln!("{e:#}");
+            }
+        }
     }
+    for name in &names {
+        if !(name.starts_with("ots-") && name.ends_with(".ots-upgrade.json")) {
+            continue;
+        }
+        match import_ots_upgrade(conn, dir, name, now) {
+            Ok(OtsUpgradeOutcome::Upgraded) => upgraded += 1,
+            Ok(OtsUpgradeOutcome::StillPending) => pending += 1,
+            Ok(OtsUpgradeOutcome::Ignored) => {}
+            Err(e) => {
+                failed += 1;
+                eprintln!("{e:#}");
+            }
+        }
+    }
+    println!(
+        "import (ots): {stored} stored, {upgraded} upgraded, {pending} still pending, {failed} failed"
+    );
+    Ok((failed > 0).then(|| format!("{failed} OpenTimestamps response(s) failed to import")))
+}
+
+/// One stamp: `{stem}.ots-request.json` + `{stem}.otsr`.
+fn import_ots_request(
+    conn: &Connection,
+    dir: &Path,
+    stem: &str,
+    policy: Option<(&AnchorPolicy, &Path)>,
+    now: TimeBucket,
+) -> Result<()> {
+    let json_path = dir.join(format!("{stem}.ots-request.json"));
+    let file = json_path.display().to_string();
+    let response_name = format!("{stem}.otsr");
+    let text = std::fs::read_to_string(&json_path).with_context(|| format!("reading {file}"))?;
+    let request: ots::OtsRequestFile =
+        serde_json::from_str(&text).map_err(|e| anyhow!("{file}: {e}"))?;
+    let (hash, nonce) = request.decode().map_err(|e| anyhow!("{file}: {e}"))?;
+    let commitment = ots::commitment(&hash, &nonce);
+    let c_path = dir.join(format!("{stem}.ots-commitment"));
+    if let Ok(bytes) = std::fs::read(&c_path) {
+        if bytes != commitment {
+            bail!(
+                "{}: is not SHA256(subject_hash ‖ nonce) of {file}; not stored",
+                c_path.display()
+            );
+        }
+    }
+    if let Some((p, path)) = policy {
+        let declared = p
+            .ots
+            .as_ref()
+            .and_then(|o| o.calendar(&request.calendar))
+            .is_some_and(|c| c.url == request.calendar_url);
+        if !declared {
+            bail!(
+                "{file}: calendar '{}' is not declared in {} with url {}; not stored",
+                request.calendar,
+                path.display(),
+                request.calendar_url
+            );
+        }
+    }
+    let body = std::fs::read(dir.join(&response_name)).unwrap_or_default();
+    if body.is_empty() {
+        bail!("import {response_name}: no response (the calendar request failed); not stored");
+    }
+    let node = ots::parse_timestamp(&body, &commitment)
+        .map_err(|e| anyhow!("import {response_name}: not an OpenTimestamps calendar response ({e})"))?;
+    ots::accept_response(&node, &request.calendar, &request.calendar_url)
+        .map_err(|e| anyhow!("import {response_name}: {e}"))?;
+    let proof = ots::Proof::compose(&hash, &nonce, node)
+        .map_err(|e| anyhow!("import {response_name}: {e}"))?;
+    let kind = classify_imported(conn, &hash, "digest")?;
+    let id = ots::insert_ots_anchor(conn, now, kind, &hash, &request.calendar_url, &proof)
+        .map_err(|e| anyhow!("import {response_name}: {e:#}"))?;
+    let pend = proof.pending_leaves();
+    let uri = pend
+        .iter()
+        .find(|(u, _)| *u == request.calendar_url)
+        .or(pend.first())
+        .map(|(u, _)| u.as_str());
+    print_ots_stored(id, kind, &hash, &request.calendar, proof.state(), uri);
     Ok(())
+}
+
+/// One upgrade: `ots-{id}.ots-upgrade.json` + `ots-{id}.otsr`, bound to
+/// the stored proof by the pending leaf's message — a misnamed file is
+/// refused, never merged.
+fn import_ots_upgrade(
+    conn: &Connection,
+    dir: &Path,
+    name: &str,
+    now: TimeBucket,
+) -> Result<OtsUpgradeOutcome> {
+    let json_path = dir.join(name);
+    let file = json_path.display().to_string();
+    let text = std::fs::read_to_string(&json_path).with_context(|| format!("reading {file}"))?;
+    let upgrade: ots::OtsUpgradeFile =
+        serde_json::from_str(&text).map_err(|e| anyhow!("{file}: {e}"))?;
+    let msg = upgrade.decode().map_err(|e| anyhow!("{file}: {e}"))?;
+    let id = upgrade.anchor_id;
+    let row = ots::list_ots_anchors_lenient(conn)?
+        .into_iter()
+        .find(|(rid, _)| *rid == id)
+        .and_then(|(_, r)| r.ok())
+        .filter(|r| r.attestation == ots::OTS_ATTESTATION_PENDING);
+    let Some(row) = row else {
+        eprintln!("ots anchor #{id} is not pending; {file} ignored");
+        return Ok(OtsUpgradeOutcome::Ignored);
+    };
+    let proof = ots::Proof::parse(&row.proof)
+        .map_err(|e| anyhow!("ots anchor #{id}: stored proof does not parse ({e})"))?;
+    if !proof
+        .pending_leaves()
+        .iter()
+        .any(|(u, m)| *u == upgrade.uri && *m == msg)
+    {
+        eprintln!("{file}: message is not a pending leaf of ots anchor #{id}; ignored");
+        return Ok(OtsUpgradeOutcome::Ignored);
+    }
+    let response_path = dir.join(format!("ots-{id}.otsr"));
+    let body = std::fs::read(&response_path).unwrap_or_default();
+    if body.is_empty() {
+        eprintln!(
+            "ots anchor #{id}: still pending (empty response in {})",
+            response_path.display()
+        );
+        return Ok(OtsUpgradeOutcome::StillPending);
+    }
+    match ots::apply_upgrade(conn, &row, now, &upgrade.uri, &msg, &body)
+        .map_err(|e| anyhow!("import {}: {e:#}", response_path.display()))?
+    {
+        Some(height) => {
+            println!(
+                "ots anchor #{id} upgraded: {} attests Bitcoin block {height}",
+                row.subject
+            );
+            Ok(OtsUpgradeOutcome::Upgraded)
+        }
+        None => {
+            eprintln!(
+                "ots anchor #{id}: {} answered without a Bitcoin attestation; left pending",
+                upgrade.uri
+            );
+            Ok(OtsUpgradeOutcome::StillPending)
+        }
+    }
 }
 
 // -------------------- anchor-all --------------------
@@ -762,6 +1260,7 @@ fn plan_subjects(conn: &Connection, policy: &AnchorPolicy) -> Result<Vec<Planned
 #[cfg(feature = "tsa")]
 fn anchor_all_online(conn: &Connection, policy_path: &Path, allow_http: bool) -> Result<()> {
     let policy = anchor_policy::load(policy_path)?;
+    ots_client_check(&policy)?;
     let planned = plan_subjects(conn, &policy)?;
     let targets = targets(&[], allow_http, Some(&policy));
     let mut stored = 0usize;
@@ -798,13 +1297,49 @@ fn anchor_all_online(conn: &Connection, policy_path: &Path, allow_http: bool) ->
         planned.len(),
         targets.len()
     );
-    if failed > 0 {
-        bail!(
+    let tsa_text = (failed > 0).then(|| {
+        format!(
             "{failed} of {} TSA request(s) failed",
             planned.len() * targets.len()
+        )
+    });
+    // The OpenTimestamps leg runs whether or not TSA requests failed, so a
+    // TSA failure never changes whether calendars are asked (Invariant III):
+    // upgrades of earlier pending rows first, then every planned subject at
+    // every declared calendar, a fresh nonce each.
+    let mut ots_text = None;
+    if let Some(ots_policy) = &policy.ots {
+        let planned_ots: Vec<PlannedOts> = planned
+            .iter()
+            .map(|p| PlannedOts {
+                stored_as: p.stored_as,
+                hash: p.hash,
+                sentinel: p.sentinel,
+            })
+            .collect();
+        let report = ots_leg_online(conn, ots_policy, &planned_ots, true)?;
+        print_ots_events(&report, &planned_ots);
+        let f = report.submit_failures.len();
+        println!(
+            "anchor-all (ots): {} stored, {f} failed ({}×{} submitted; {sentinels} over empty-ledger \
+             sentinels); upgrades: {} now attest a Bitcoin block, {} still pending, {} error(s), {} \
+             beyond the 7-day horizon (not polled)",
+            report.stored.len(),
+            planned_ots.len(),
+            ots_policy.calendars.len(),
+            report.upgraded.len(),
+            report.still_pending.len(),
+            report.upgrade_errors.len(),
+            report.beyond_horizon.len()
         );
+        if f > 0 {
+            ots_text = Some(format!(
+                "{f} of {} calendar submission(s) failed",
+                report.submissions
+            ));
+        }
     }
-    Ok(())
+    combined_failure(tsa_text, ots_text)
 }
 
 #[cfg(not(feature = "tsa"))]
@@ -846,6 +1381,40 @@ fn anchor_all_offline(conn: &Connection, db: &str, policy_path: &Path, dir: &Pat
     for (path, what) in &lines {
         println!("  {path:<width$}   {what}");
     }
+    // The OpenTimestamps leg, offline: |subjects| × |calendars| request
+    // files every run (a fresh nonce each), plus one upgrade file per
+    // pending row the online pass would poll now — the same counts.
+    let mut ots_stems: Vec<(String, String)> = Vec::new();
+    let mut ots_upgrades: Vec<(i64, String, Vec<u8>)> = Vec::new();
+    if let Some(ots_policy) = &policy.ots {
+        for p in &planned {
+            for cal in &ots_policy.calendars {
+                let stem = format!("{}.{}", p.subject, cal.name);
+                write_ots_request(dir, &stem, &p.hash, cal)?;
+                ots_stems.push((stem, cal.url.clone()));
+            }
+        }
+        ots_upgrades = pollable_rows(conn, ots_policy, TimeBucket::now_10min()?)?;
+        for (id, uri, msg) in &ots_upgrades {
+            let upgrade = ots::OtsUpgradeFile {
+                format: ots::OTS_UPGRADE_FORMAT.to_string(),
+                anchor_id: *id,
+                uri: uri.clone(),
+                message: hex::encode(msg),
+            };
+            let path = dir.join(format!("ots-{id}.ots-upgrade.json"));
+            std::fs::write(&path, serde_json::to_string(&upgrade)? + "\n")
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
+        println!(
+            "anchor-all (offline): {n}×{c} OpenTimestamps request file(s) written to {}  ({n}×{c} \
+             calendar submissions per run, always; {} upgrade fetch(es) for pending proofs)",
+            dir.display(),
+            ots_upgrades.len(),
+            n = planned.len(),
+            c = ots_policy.calendars.len(),
+        );
+    }
     println!("submit every .tsq to every TSA, e.g.:");
     for p in &planned {
         for entry in &policy.tsas {
@@ -859,11 +1428,32 @@ fn anchor_all_offline(conn: &Connection, db: &str, policy_path: &Path, dir: &Pat
             );
         }
     }
+    if policy.ots.is_some() {
+        println!("submit every OpenTimestamps request to its calendar, e.g.:");
+        for (stem, url) in &ots_stems {
+            println!("{}", ots_submit_curl(dir, stem, url));
+        }
+        for (id, uri, msg) in &ots_upgrades {
+            println!(
+                "  curl -sf -H 'Accept: {}' {uri}/timestamp/{} > {}/ots-{id}.otsr",
+                ots::OTS_ACCEPT,
+                hex::encode(msg),
+                dir.display()
+            );
+        }
+    }
     println!(
         "then, back on this host, within the retention window ([retention], default 7 days — a head pruned before import can only be stored as a digest anchor):\n  log_anchor --db {db} import --policy {p} --response {d}/*.tsr\n  log_anchor --db {db} verify --policy {p}",
         p = policy_path.display(),
         d = dir.display()
     );
+    if policy.ots.is_some() {
+        println!(
+            "and, for the OpenTimestamps leg:\n  log_anchor --db {db} import --policy {} --ots-dir {}",
+            policy_path.display(),
+            dir.display()
+        );
+    }
     Ok(())
 }
 
@@ -883,13 +1473,31 @@ fn is_hex64(s: &str) -> bool {
 
 // -------------------- list --------------------
 
-fn list(conn: &Connection) -> Result<()> {
-    if !tsa::anchor_table_exists(conn)? {
-        println!("no anchors stored");
-        return Ok(());
+/// What a proof claims, for `list` (display only; `verify` re-derives).
+fn ots_state_text(proof: &ots::Proof) -> String {
+    match proof.state() {
+        ots::ProofState::Bitcoin { height } => format!("attests Bitcoin block {height}"),
+        ots::ProofState::Pending => format!(
+            "pending at {}",
+            proof
+                .pending_leaves()
+                .into_iter()
+                .map(|(u, _)| u)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ots::ProofState::NoKnownAttestation => "no pending or Bitcoin attestation".to_string(),
     }
-    let anchors = tsa::list_anchors(conn)?;
-    if anchors.is_empty() {
+}
+
+fn list(conn: &Connection) -> Result<()> {
+    let anchors = if tsa::anchor_table_exists(conn)? {
+        tsa::list_anchors(conn)?
+    } else {
+        Vec::new()
+    };
+    let ots_rows = ots::list_ots_anchors_lenient(conn)?;
+    if anchors.is_empty() && ots_rows.is_empty() {
         println!("no anchors stored");
         return Ok(());
     }
@@ -934,6 +1542,28 @@ fn list(conn: &Connection) -> Result<()> {
             signer_text
         );
     }
+    for (id, row) in ots_rows {
+        let r = match row {
+            Ok(r) => r,
+            Err(e) => {
+                println!("ots #{id}  (row malformed: {e})");
+                continue;
+            }
+        };
+        let state = match ots::Proof::parse(&r.proof) {
+            Ok(proof) => ots_state_text(&proof),
+            Err(_) => "(proof unreadable)".to_string(),
+        };
+        println!(
+            "ots #{}  {}  {}{}  bucket {}  {state}  via {}",
+            r.id,
+            r.subject,
+            hex::encode(r.subject_hash),
+            sentinel_suffix(r.subject_kind_or_digest(), &r.subject_hash),
+            bucket_utc(r.created_bucket.start_epoch_s),
+            r.calendar_url
+        );
+    }
     Ok(())
 }
 
@@ -941,8 +1571,13 @@ fn list(conn: &Connection) -> Result<()> {
 
 /// The membership clause for a row: what was checked, and only that.
 fn membership_text(a: &AnchorRecord) -> String {
-    match a.subject_kind() {
-        Some(AnchorSubject::Digest) => match AnchorSubject::sentinel_owner(&a.subject_hash) {
+    membership_text_for(&a.subject, a.subject_kind(), &a.subject_hash)
+}
+
+/// `membership_text` for any row: its subject text, kind and hash.
+fn membership_text_for(subject_text: &str, kind: Option<AnchorSubject>, hash: &[u8; 32]) -> String {
+    match kind {
+        Some(AnchorSubject::Digest) => match AnchorSubject::sentinel_owner(hash) {
             Some(owner) => {
                 format!("empty-ledger sentinel for {owner}, chain membership not applicable")
             }
@@ -950,8 +1585,7 @@ fn membership_text(a: &AnchorRecord) -> String {
         },
         Some(kind) => kind.membership_label().to_string(),
         None => format!(
-            "unknown subject '{}', treated as a digest anchor; ledger membership not asserted",
-            a.subject
+            "unknown subject '{subject_text}', treated as a digest anchor; ledger membership not asserted"
         ),
     }
 }
@@ -968,12 +1602,229 @@ fn roles_text(by: &[(String, anchor_policy::TsaRole)]) -> String {
         .join(", ")
 }
 
+/// What the OpenTimestamps rows of `verify` came to.
+struct OtsVerifyOutcome {
+    failures: usize,
+    /// Rows that passed every structural check, for the policy coverage.
+    passed: Vec<anchor_policy::OtsPassed>,
+}
+
+/// The display text of a proof's pending URIs.
+fn pending_uris_text(proof: &ots::Proof) -> String {
+    proof
+        .pending_leaves()
+        .into_iter()
+        .map(|(u, _)| u)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Every OpenTimestamps row, in id order: structural checks (any problem is
+/// FAIL), then the Bitcoin tier — `OK … confirmed` only when a leaf reaches
+/// the merkle root of a header the operator supplied; a height alone, or a
+/// pending proof, is `UNVERIFIED`. Network-silent.
+fn verify_ots_rows(
+    conn: &Connection,
+    rows: Vec<(i64, Result<ots::OtsAnchorRecord>)>,
+    headers: Option<&ots::HeaderFile>,
+    now: TimeBucket,
+) -> Result<OtsVerifyOutcome> {
+    let mut out = OtsVerifyOutcome {
+        failures: 0,
+        passed: Vec::new(),
+    };
+    let (mut confirmed, mut unchecked, mut pending) = (0usize, 0usize, 0usize);
+    let total = rows.len();
+    for (id, row) in rows {
+        let r = match row {
+            Ok(r) => r,
+            Err(e) => {
+                out.failures += 1;
+                println!("ots anchor #{id}: FAIL");
+                println!("    row is malformed: {e}");
+                continue;
+            }
+        };
+        let mut problems: Vec<String> = Vec::new();
+        let proof = match ots::Proof::parse(&r.proof) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                problems.push(format!(
+                    "proof does not parse as an OpenTimestamps proof: {e}"
+                ));
+                None
+            }
+        };
+        let mut checks = Vec::new();
+        if let Some(proof) = &proof {
+            if proof.digest != r.subject_hash {
+                problems.push(format!(
+                    "proof covers {} but anchor row claims {}",
+                    hex::encode(proof.digest),
+                    hex::encode(r.subject_hash)
+                ));
+            }
+            let state = proof.state();
+            let holds = match state {
+                ots::ProofState::Bitcoin { height } => format!("Bitcoin block {height}"),
+                _ => "pending".to_string(),
+            };
+            match r.attestation.as_str() {
+                ots::OTS_ATTESTATION_PENDING | ots::OTS_ATTESTATION_BITCOIN => {
+                    if let Some(column) = state.column() {
+                        if column != r.attestation {
+                            problems.push(format!(
+                                "row records attestation '{}' but the proof holds {holds}",
+                                r.attestation
+                            ));
+                        } else if let ots::ProofState::Bitcoin { height } = state {
+                            if r.bitcoin_height != Some(height as i64) {
+                                problems.push(format!(
+                                    "row records Bitcoin block {} but the proof's lowest Bitcoin \
+                                     attestation is block {height}",
+                                    r.bitcoin_height
+                                        .map(|h| h.to_string())
+                                        .unwrap_or_else(|| "(none)".to_string())
+                                ));
+                            }
+                        } else if let Some(h) = r.bitcoin_height {
+                            problems.push(format!(
+                                "row records Bitcoin block {h} but the proof holds pending"
+                            ));
+                        }
+                    }
+                }
+                other => problems.push(format!(
+                    "row records an attestation value this tool never writes ({other:?})"
+                )),
+            }
+            if state == ots::ProofState::NoKnownAttestation {
+                problems.push("proof carries no Pending or Bitcoin attestation".to_string());
+            }
+            checks = ots::check_bitcoin_leaves(proof, headers);
+            for c in &checks {
+                if let ots::BitcoinCheck::Malformed { height, len } = c {
+                    problems.push(format!(
+                        "Bitcoin attestation for block {height} is over a {len}-byte message; a \
+                         merkle root is 32 bytes"
+                    ));
+                }
+            }
+        }
+        if let Some(kind) = r.subject_kind().filter(|k| k.is_head()) {
+            if tsa::hash_in_ledger(conn, &r.subject_hash, kind)?.is_none() {
+                problems.push(kind.not_in_history_label().to_string());
+            }
+        }
+        // A branch that contradicts a header the verifier trusts is FAIL,
+        // even when another branch matches.
+        for c in &checks {
+            if let ots::BitcoinCheck::Mismatch {
+                height,
+                proof_display,
+                header_display,
+            } = c
+            {
+                problems.push(format!(
+                    "merkle root of the supplied header for Bitcoin block {height} \
+                     ({header_display}) does not match the proof ({proof_display})"
+                ));
+            }
+        }
+        let (Some(proof), true) = (&proof, problems.is_empty()) else {
+            out.failures += 1;
+            println!("ots anchor #{}: FAIL", r.id);
+            for p in problems {
+                println!("    {p}");
+            }
+            continue;
+        };
+        let membership = membership_text_for(&r.subject, r.subject_kind(), &r.subject_hash);
+        let matched = checks
+            .iter()
+            .filter_map(|c| match c {
+                ots::BitcoinCheck::Matches {
+                    height,
+                    block_hash_display,
+                } => Some((*height, block_hash_display.clone())),
+                _ => None,
+            })
+            .min_by_key(|(h, _)| *h);
+        let state = if let Some((height, block_hash)) = matched {
+            confirmed += 1;
+            println!(
+                "ots anchor #{}: OK (proof digest matches, {membership}; confirmed in Bitcoin block \
+                 {height} against the supplied header, block hash {block_hash}) via {}",
+                r.id, r.calendar_url
+            );
+            anchor_policy::OtsRowState::Confirmed { height }
+        } else if let ots::ProofState::Bitcoin { height } = proof.state() {
+            unchecked += 1;
+            let why = match headers {
+                None => "merkle root NOT checked — re-run with --bitcoin-headers <file>".to_string(),
+                Some(h) => format!("no header for block {height} in {}", h.path),
+            };
+            println!(
+                "ots anchor #{}: UNVERIFIED (proof digest matches, {membership}; attests Bitcoin \
+                 block {height}; {why}) via {}",
+                r.id, r.calendar_url
+            );
+            anchor_policy::OtsRowState::Unchecked { height }
+        } else {
+            pending += 1;
+            let beyond = now
+                .start_epoch_s
+                .saturating_sub(r.created_bucket.start_epoch_s)
+                > ots::OTS_UPGRADE_HORIZON_S;
+            let tail = if beyond {
+                ", beyond the 7-day upgrade horizon — no longer polled; the calendar may never \
+                 have committed it"
+            } else {
+                ""
+            };
+            println!(
+                "ots anchor #{}: UNVERIFIED (proof digest matches, {membership}; pending (not yet \
+                 in a Bitcoin block) at {}{tail}) via {}",
+                r.id,
+                pending_uris_text(proof),
+                r.calendar_url
+            );
+            anchor_policy::OtsRowState::Pending
+        };
+        out.passed.push(anchor_policy::OtsPassed {
+            id: r.id,
+            subject: r.subject_kind_or_digest(),
+            hash: r.subject_hash,
+            bucket_start: r.created_bucket.start_epoch_s,
+            state,
+        });
+    }
+    if total > 0 {
+        println!(
+            "{total} OpenTimestamps anchor(s): {confirmed} confirmed against the supplied header, \
+             {unchecked} attest a Bitcoin block not checked against a header, {pending} pending \
+             (not yet in a Bitcoin block), {} failed",
+            out.failures
+        );
+        if unchecked > 0 && headers.is_none() {
+            println!(
+                "  A block height alone is a claim anyone can write into a file; pass\n  \
+                 --bitcoin-headers <file>   (one line per block: <height> <160 hex of the 80-byte \
+                 header>, from a node you run: bitcoin-cli getblockheader $(bitcoin-cli \
+                 getblockhash N) false)"
+            );
+        }
+    }
+    Ok(out)
+}
+
 fn verify(
     conn: &Connection,
     db: &str,
     cas: &[String],
     policy_path: Option<&Path>,
     require_current: bool,
+    bitcoin_headers: Option<&Path>,
 ) -> Result<()> {
     let policy = match policy_path {
         Some(path) => {
@@ -991,6 +1842,18 @@ fn verify(
         }
         None => None,
     };
+    // The only Bitcoin source verify reads: the operator's header file,
+    // loaded (and proof-of-work sanity-checked) before any output.
+    let headers = bitcoin_headers.map(ots::load_headers).transpose()?;
+    if let Some((p, _)) = &policy {
+        if p.ots.as_ref().is_some_and(|o| o.required) && headers.is_none() {
+            bail!(
+                "verify --policy requires --bitcoin-headers <file> when the policy's ots leg is \
+                 required (a Bitcoin attestation is only a block height until its merkle root is \
+                 checked against a header)"
+            );
+        }
+    }
     let checks_countersignature = !cas.is_empty() || policy.is_some();
 
     // A database no writer has touched has no anchors table; it reads as
@@ -1002,21 +1865,27 @@ fn verify(
         .as_ref()
         .map(|(p, _)| p.max_clock_offset_s)
         .unwrap_or(clock_provenance::ONE_BUCKET_S);
-    // The anchors table and the clock-provenance ledger are read inside ONE
-    // read transaction. witnessd may insert an anchor row and seal its record
-    // between two separate reads, and a record read without its row would be
-    // reported after the loop as naming a deleted anchor. The database is in
-    // WAL mode, so the snapshot blocks no writer; it ends (a no-op rollback)
-    // when `snapshot` drops at the end of this block.
-    let (anchors, mut clock) = {
+    // The anchors table, the OpenTimestamps rows and the clock-provenance
+    // ledger are read inside ONE read transaction. witnessd may insert an
+    // anchor row and seal its record between two separate reads, and a record
+    // read without its row would be reported after the loop as naming a
+    // deleted anchor. The database is in WAL mode, so the snapshot blocks no
+    // writer; it ends (a no-op rollback) when `snapshot` drops at the end of
+    // this block.
+    let (anchors, ots_rows, mut clock) = {
         let snapshot = conn.unchecked_transaction()?;
         let anchors = if tsa::anchor_table_exists(&snapshot)? {
             tsa::list_anchors(&snapshot)?
         } else {
             Vec::new()
         };
+        let ots_rows = ots::list_ots_anchors_lenient(&snapshot)?;
         if anchors.is_empty() {
-            println!("no anchors stored");
+            if ots_rows.is_empty() {
+                println!("no anchors stored");
+            } else {
+                println!("no RFC 3161 anchors stored");
+            }
         }
         #[cfg(test)]
         tests::between_the_two_reads();
@@ -1025,9 +1894,9 @@ fn verify(
         // per-anchor clock lines below only mean something over a ledger that
         // holds together.
         let clock = ClockContext::load(&snapshot, threshold_s)?;
-        (anchors, clock)
+        (anchors, ots_rows, clock)
     };
-    if anchors.is_empty() && policy.is_none() {
+    if anchors.is_empty() && ots_rows.is_empty() && policy.is_none() {
         let orphans = clock.finish(&anchors);
         if !clock.ledger_ok {
             bail!("clock provenance ledger failed verification");
@@ -1287,7 +2156,7 @@ fn verify(
         );
     }
 
-    if !checks_countersignature {
+    if !checks_countersignature && !anchors.is_empty() {
         println!(
             "\n{unverified} anchor(s) structurally consistent but CRYPTOGRAPHICALLY UNVERIFIED. \
              Their genTime is attacker-controllable until the countersignature is checked; do not \
@@ -1295,6 +2164,10 @@ fn verify(
              --ca <tsa-ca.pem> or --policy <anchor-policy.json>   (runs: openssl ts -verify -digest <hash> -in <token> -CAfile …)"
         );
     }
+
+    // OpenTimestamps rows, after the RFC 3161 rows and their lines.
+    let ots_outcome = verify_ots_rows(conn, ots_rows, headers.as_ref(), TimeBucket::now_10min()?)?;
+    failures += ots_outcome.failures;
 
     // Coverage under the policy.
     let mut policy_failure: Option<String> = None;
@@ -1402,9 +2275,60 @@ fn verify(
                 }
             }
         }
-        print_policy_note(path);
+        // The OpenTimestamps leg: only header-confirmed rows cover;
+        // `--require-current` does not apply (Bitcoin confirmation lags by
+        // design), so `current head` is information only.
+        let mut ots_unconfirmed = 0usize;
+        let ots_required = p.ots.as_ref().is_some_and(|o| o.required);
+        if p.ots.is_some() {
+            let tail = if ots_required {
+                ""
+            } else {
+                "; not required by this policy"
+            };
+            for c in anchor_policy::evaluate_ots(p, &heads, &ots_outcome.passed) {
+                match c.verdict {
+                    anchor_policy::OtsCoverageVerdict::Empty => {}
+                    anchor_policy::OtsCoverageVerdict::Confirmed {
+                        anchor_ids,
+                        height,
+                        is_current,
+                        ..
+                    } => {
+                        let ids = anchor_ids
+                            .iter()
+                            .map(|i| format!("#{i}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let current = if is_current {
+                            "yes"
+                        } else {
+                            "NO (ledger advanced since)"
+                        };
+                        println!(
+                            "policy: {}: ots confirmed in Bitcoin block {height} against the \
+                             supplied header — ots anchors {ids}; current head: {current}{tail}",
+                            c.subject
+                        );
+                    }
+                    anchor_policy::OtsCoverageVerdict::NotConfirmed { pending, unchecked } => {
+                        ots_unconfirmed += 1;
+                        println!(
+                            "policy: {}: ots NOT confirmed — {pending} pending, {unchecked} \
+                             attested but not checked against a header{tail}",
+                            c.subject
+                        );
+                    }
+                }
+            }
+        }
+        print_policy_note(path, p.ots.is_some());
         let breaches = clock.breaches;
-        let unsatisfied = uncovered > 0 || (require_current && not_current > 0) || breaches > 0;
+        let ots_short = if ots_required { ots_unconfirmed } else { 0 };
+        let unsatisfied = uncovered > 0
+            || (require_current && not_current > 0)
+            || breaches > 0
+            || ots_short > 0;
         if unsatisfied {
             let current_part = if require_current {
                 format!(", {not_current} not current")
@@ -1419,8 +2343,13 @@ fn verify(
             } else {
                 String::new()
             };
+            let ots_part = if ots_short > 0 {
+                format!(", {ots_short} without a confirmed OpenTimestamps proof")
+            } else {
+                String::new()
+            };
             let msg = format!(
-                "anchor policy {}: NOT SATISFIED ({uncovered} subject(s) uncovered{current_part}{clock_part})",
+                "anchor policy {}: NOT SATISFIED ({uncovered} subject(s) uncovered{current_part}{clock_part}{ots_part})",
                 path.display()
             );
             // The verdict line goes to stdout either way, on the same stream
@@ -1765,12 +2694,19 @@ impl ClockContext {
     }
 }
 
-fn print_policy_note(path: &Path) {
+fn print_policy_note(path: &Path, has_ots: bool) {
     println!(
         "note: 'qualified' and 'independent' are the operator's declarations in {}; this tool \
          checks countersignatures, count and distinctness, not legal status.",
         path.display()
     );
+    if has_ots {
+        println!(
+            "note: OpenTimestamps calendars are relays, not authorities; \"confirmed\" means the \
+             proof's path reaches the merkle root of a Bitcoin block header you supplied — \
+             existence before that block, not identity."
+        );
+    }
 }
 
 // -------------------- relabel --------------------
@@ -1841,6 +2777,68 @@ fn relabel(conn: &Connection, id: i64, subject: &str) -> Result<()> {
     )?;
     println!(
         "anchor #{id} relabeled {old} -> digest (the token is unchanged; ledger membership is no longer asserted)"
+    );
+    Ok(())
+}
+
+/// `relabel --ots`: the RFC 3161 refusals, for an OpenTimestamps row ("the
+/// proof covers the row's hash" in place of the token). Never creates the
+/// table.
+fn relabel_ots(conn: &Connection, id: i64, subject: &str) -> Result<()> {
+    if subject != AnchorSubject::Digest.as_str() {
+        bail!("relabel only downgrades a ledger-head anchor to digest (got '{subject}')");
+    }
+    if !ots::ots_table_exists(conn)? {
+        bail!("no ots_anchors table in this database");
+    }
+    let rows = ots::list_ots_anchors(conn)?;
+    let Some(a) = rows.iter().find(|a| a.id == id) else {
+        bail!("ots anchor #{id} not found");
+    };
+    let old = match a.subject_kind() {
+        Some(kind) if kind.is_head() => kind,
+        Some(_) => bail!("ots anchor #{id} is already a digest anchor; nothing to relabel"),
+        None => bail!(
+            "ots anchor #{id} has subject '{}', not a ledger head; nothing to relabel",
+            a.subject
+        ),
+    };
+    match ots::Proof::parse(&a.proof) {
+        Ok(p) if p.digest == a.subject_hash => {}
+        _ => bail!(
+            "ots anchor #{id}: proof does not cover the row's hash; fix the row's evidence problem first"
+        ),
+    }
+    if tsa::hash_in_ledger(conn, &a.subject_hash, old)?.is_some() {
+        bail!(
+            "ots anchor #{id} is in {} history; nothing to relabel",
+            old.ledger_short()
+        );
+    }
+    if old != AnchorSubject::ChainHead {
+        bail!(
+            "ots anchor #{id}: the {} is never pruned, so its missing head is truncation or \
+             rollback, not a legacy prune; refusing to relabel",
+            old.ledger_short()
+        );
+    }
+    let cutoff = witness_kernel::verify::latest_checkpoint(conn)?.cutoff_event_id;
+    match (cutoff, a.ledger_id) {
+        (None, _) => bail!(
+            "ots anchor #{id}: no retention checkpoint exists, so the anchored head did not go \
+             missing through retention — that is truncation or rollback, not a legacy prune; \
+             refusing to relabel"
+        ),
+        (Some(c), Some(ledger_id)) if ledger_id > c => bail!(
+            "ots anchor #{id}: the anchored head (ledger row {ledger_id}) is newer than the \
+             retention cutoff — that is truncation or rollback, not a legacy prune; refusing \
+             to relabel"
+        ),
+        _ => {}
+    }
+    ots::relabel_ots_anchor_to_digest(conn, id)?;
+    println!(
+        "ots anchor #{id} relabeled {old} -> digest (the proof is unchanged; ledger membership is no longer asserted)"
     );
     Ok(())
 }
