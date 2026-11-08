@@ -139,6 +139,11 @@ pqc-tls = ["rustls", "webpki-roots", "rustls-pki-types"]
 # RFC 3161 trusted timestamping: enables log_anchor's online `request`
 # subcommand (the offline query/import flow needs no feature).
 tsa = ["ureq"]
+# OpenTimestamps calendar client for log_anchor's OTS leg of `anchor-all` and
+# `request --policy` (ureq: POST /digest, GET /timestamp/<hex>). The codec, every
+# verify path, list, import and the offline flow need no feature; no shipped image
+# enables this (docs/design/opentimestamps_leg.md).
+ots = ["ureq"]
 # The hub-side alert relay (docs/design/alert_relay.md): metadata-only pokes
 # over ntfy. Zero new crates — ureq (already vetted for tsa/ingest-esp32)
 # carries rustls, so network egress stays opt-in at build time.

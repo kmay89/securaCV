@@ -72,6 +72,7 @@ pub mod storage;
 pub mod storage_health;
 pub mod surface;
 pub mod transport;
+pub mod ots;
 pub mod tsa;
 pub mod vault;
 pub mod verify;
