@@ -1265,7 +1265,8 @@ fn time_source_section(anchors: &[KitAnchor], clock: &ClockKit) -> String {
                 )
             }
             _ => "binding only: the row was already present at the first poll of a daemon \
-                  process, so its age was unbounded and no offset was measured"
+                  process, or was first seen more than 3600 s after the previous completed \
+                  poll, so its age was unbounded and no offset was measured"
                 .to_string(),
         };
         out.push_str(&format!(
@@ -1283,6 +1284,7 @@ fn time_source_section(anchors: &[KitAnchor], clock: &ClockKit) -> String {
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_verification(
     kit: &Path,
     bundle_file_name: &str,
