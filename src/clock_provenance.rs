@@ -55,7 +55,9 @@ pub struct ClockProvenanceRow {
 
 impl ClockProvenanceRow {
     /// Binding-only: the row was already present at the first poll of a
-    /// `witnessd` process, so its age was unbounded and nothing was measured.
+    /// `witnessd` process, or was first seen more than 3600 s after the
+    /// previous completed poll, so its age was unbounded and nothing was
+    /// measured.
     pub fn is_binding_only(&self) -> bool {
         self.record.observed_offset_s.is_none()
     }
@@ -122,6 +124,43 @@ pub fn list_rows(conn: &Connection) -> Result<Vec<ClockProvenanceRow>> {
         });
     }
     Ok(out)
+}
+
+/// [`list_rows`], kept to the rows a chain walk just checked: `walked` holds
+/// the `(id, entry_hash)` pairs the walk's `on_row` reported. The walk and the
+/// listing are two reads of a database `witnessd` may be appending to, so a
+/// record committed between them is dropped here rather than reported as
+/// part of a ledger that was never checked with it in it.
+pub fn list_walked_rows(
+    conn: &Connection,
+    walked: &[(i64, [u8; 32])],
+) -> Result<Vec<ClockProvenanceRow>> {
+    let mut rows = list_rows(conn)?;
+    rows.retain(|r| walked.contains(&(r.id, r.entry_hash)));
+    Ok(rows)
+}
+
+/// `--require-current` on `clock_provenance_head`. The ledger grows by one
+/// record per anchor row `witnessd` observes — the anchoring run's own rows
+/// included — so its head moves past every hash a run anchors, within one
+/// poll, and plain equality with the head could never hold while the daemon
+/// runs. `Some(n)`: `covered` is a record in `rows`, and each of the `n`
+/// records after it binds an anchor row newer than the one the covered
+/// record binds — the ledger advanced only by observing later anchoring
+/// (this run's, or a later one). `None`: `covered` is not a record here, or a
+/// later record binds an anchor row at or before the covered record's, which
+/// the observer's cursor never produces.
+pub fn advanced_only_by_later_anchors(
+    rows: &[ClockProvenanceRow],
+    covered: &[u8; 32],
+) -> Option<usize> {
+    let pos = rows.iter().position(|r| &r.entry_hash == covered)?;
+    let bound = rows[pos].record.anchor_id;
+    let later = &rows[pos + 1..];
+    later
+        .iter()
+        .all(|r| r.record.anchor_id > bound)
+        .then_some(later.len())
 }
 
 fn blob32(bytes: Vec<u8>, id: i64, column: &str) -> Result<[u8; 32]> {
@@ -193,7 +232,10 @@ pub struct Assessment {
     /// `device_wall_s − anchor.created_bucket.start`; expected in
     /// `0..PROMPT_LAG_MAX_S` when the anchoring host and the device agree.
     pub host_gap_s: i64,
-    /// `host_gap_s` outside that range.
+    /// `host_gap_s` outside that range. For a clamped offset `host_gap_s` is
+    /// a bound (at least, at `+3600`; at most, at `-3600`), so this is set
+    /// only when the bound alone settles it: at `+3600` when
+    /// `host_gap_s >= 1200`, at `-3600` when `host_gap_s < 0`.
     pub host_clock_disagrees: bool,
     /// The stored offset sits at the clamp bound.
     pub clamped: bool,
@@ -210,13 +252,22 @@ pub fn assess(record: &ClockProvenanceRecord, anchor: &AnchorRecord) -> Option<A
     let lag_s = bucket_start - gen_time_unix;
     let device_wall_s = gen_time_unix + offset;
     let host_gap_s = device_wall_s - bucket_start;
+    // A clamped offset is a bound on the reading, not the reading: the true
+    // host gap is at least `host_gap_s` at +3600 and at most it at -3600.
+    let host_clock_disagrees = if offset >= CLOCK_PROVENANCE_CLAMP_S {
+        host_gap_s >= PROMPT_LAG_MAX_S
+    } else if offset <= -CLOCK_PROVENANCE_CLAMP_S {
+        host_gap_s < 0
+    } else {
+        !(0..PROMPT_LAG_MAX_S).contains(&host_gap_s)
+    };
     Some(Assessment {
         gen_time_unix,
         lag_s,
         prompt: lag_s <= PROMPT_LAG_MAX_S,
         device_wall_s,
         host_gap_s,
-        host_clock_disagrees: !(0..PROMPT_LAG_MAX_S).contains(&host_gap_s),
+        host_clock_disagrees,
         clamped: offset.abs() >= CLOCK_PROVENANCE_CLAMP_S,
     })
 }
@@ -496,6 +547,62 @@ mod tests {
         let a = assess(&record(Some(3600), Some(5)), &anchor_at(1_781_094_600)).unwrap();
         assert!(a.clamped);
         assert!(beyond(&record(Some(3600), Some(5)), &a, ONE_BUCKET_S));
+    }
+
+    #[test]
+    fn a_clamped_offset_is_a_bound_for_the_host_clock_note() {
+        let gen = 1_781_094_804u64;
+        // Imported two days late; the clocks agree, the reading clamped at
+        // +3600: the true host gap is only known to be >= -169 004 s, which
+        // settles nothing, so no disagreement is claimed.
+        let late = anchor_at(1_781_094_600 + 2 * 86_400);
+        let a = assess(&record(Some(3600), Some(5)), &late).unwrap();
+        assert!(a.host_gap_s < 0);
+        assert!(!a.host_clock_disagrees);
+        // Prompt row, clamped +3600: at least +3804 s from the row's bucket,
+        // already past 1199 — the bound settles it.
+        let a = assess(&record(Some(3600), Some(5)), &anchor_at(1_781_094_600)).unwrap();
+        assert_eq!(a.host_gap_s, 3_804);
+        assert!(a.host_clock_disagrees);
+        // Clamped -3600: at most -3396 s, below 0 — settled.
+        let a = assess(&record(Some(-3600), Some(5)), &anchor_at(1_781_094_600)).unwrap();
+        assert!(a.host_clock_disagrees);
+        // Clamped -3600 against a row stored well after: at most +3204 s,
+        // which may still be in range — no claim.
+        let a = assess(
+            &record(Some(-3600), Some(5)),
+            &anchor_at((gen - 3_600 - 3_204) / 600 * 600),
+        )
+        .unwrap();
+        assert!(a.host_gap_s >= 0);
+        assert!(!a.host_clock_disagrees);
+    }
+
+    fn row(id: i64, anchor_id: i64) -> ClockProvenanceRow {
+        let mut record = record(Some(2), Some(5));
+        record.anchor_id = anchor_id;
+        ClockProvenanceRow {
+            id,
+            created_at: 1_781_094_600,
+            payload_json: String::new(),
+            prev_hash: [0u8; 32],
+            entry_hash: [id as u8; 32],
+            signatures: SignatureSet::from_storage(&[0u8; 64], None, None).unwrap(),
+            record,
+        }
+    }
+
+    #[test]
+    fn advanced_only_by_later_anchors_counts_records_of_newer_anchor_rows() {
+        let rows = vec![row(1, 3), row(2, 10), row(3, 11), row(4, 12)];
+        assert_eq!(advanced_only_by_later_anchors(&rows, &[4u8; 32]), Some(0));
+        assert_eq!(advanced_only_by_later_anchors(&rows, &[1u8; 32]), Some(3));
+        assert_eq!(advanced_only_by_later_anchors(&rows, &[9u8; 32]), None);
+        // A later record that binds an anchor row at or before the covered
+        // record's: the ledger moved for some other reason.
+        let rows = vec![row(1, 3), row(2, 10), row(3, 3)];
+        assert_eq!(advanced_only_by_later_anchors(&rows, &[1u8; 32]), None);
+        assert_eq!(advanced_only_by_later_anchors(&rows, &[2u8; 32]), None);
     }
 
     #[test]

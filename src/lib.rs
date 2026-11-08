@@ -9455,6 +9455,27 @@ mod clock_provenance_tests {
     }
 
     #[test]
+    fn list_walked_rows_keeps_only_the_rows_a_walk_checked() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        insert_fixture_anchor(&k.conn);
+        k.observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        let all = clock_provenance::list_rows(&k.conn).unwrap();
+        assert_eq!(all.len(), 2);
+        // The walk saw only the first row; the second committed after it.
+        let walked = [(all[0].id, all[0].entry_hash)];
+        let kept = clock_provenance::list_walked_rows(&k.conn, &walked).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, all[0].id);
+        // A row whose entry_hash differs from the one walked is dropped too.
+        let walked = [(all[0].id, [0u8; 32])];
+        assert!(clock_provenance::list_walked_rows(&k.conn, &walked)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn a_gap_over_the_clamp_seals_a_binding_only_record() {
         // The main loop stalled 25 h: a clamped gap would state a false
         // bound on the row's age, so the record binds and measures nothing.

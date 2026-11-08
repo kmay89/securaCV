@@ -739,6 +739,14 @@ fn plan_subjects(conn: &Connection, policy: &AnchorPolicy) -> Result<Vec<Planned
                      so the request count stays constant",
                     &hex::encode(hash)[..16]
                 );
+                if subject == AnchorSubject::ClockProvenanceHead {
+                    eprintln!(
+                        "anchor-all: {subject}: witnessd seals one record per anchor row this run \
+                         stores, so the ledger is no longer empty afterwards and `verify --policy` \
+                         reads this subject NOT covered until the next anchor-all; run anchor-all \
+                         again once witnessd has polled (about 5 s)"
+                    );
+                }
                 out.push(Planned {
                     subject,
                     stored_as: AnchorSubject::Digest,
@@ -1303,21 +1311,37 @@ fn verify(
                     println!("policy: {}: ledger is empty; nothing to cover", c.subject)
                 }
                 CoverageVerdict::Covered {
+                    hash,
                     by,
                     anchor_ids,
                     bucket_start,
                     is_current,
-                    ..
                 } => {
                     let ids = anchor_ids
                         .iter()
                         .map(|i| format!("#{i}"))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    let current = if is_current {
-                        "yes".to_string()
-                    } else {
-                        "NO (ledger advanced since)".to_string()
+                    // The clock-provenance ledger grows by one record per
+                    // anchor row witnessd observes, this run's own rows
+                    // included, so its head always moves past what a run
+                    // anchored. It reads current when every record since
+                    // seals a later anchor row (`docs/timestamping.md`).
+                    let self_advanced = (!is_current
+                        && c.subject == AnchorSubject::ClockProvenanceHead
+                        && clock.ledger_ok)
+                        .then(|| {
+                            clock_provenance::advanced_only_by_later_anchors(&clock.rows, &hash)
+                        })
+                        .flatten();
+                    let is_current = is_current || self_advanced.is_some();
+                    let current = match self_advanced {
+                        _ if !is_current => "NO (ledger advanced since)".to_string(),
+                        Some(n) => format!(
+                            "yes (advanced since only by {n} record(s) of later anchor rows; this \
+                             ledger grows by one record per anchor row, this run's own included)"
+                        ),
+                        None => "yes".to_string(),
                     };
                     println!(
                         "policy: {}: covered by {} — anchors {ids}, bucket {}; current head: {current}",
@@ -1474,14 +1498,17 @@ impl ClockContext {
             .map_err(|e| anyhow!("could not read the database's device identity: {e}"))?;
         let keys = verify_helpers::lineage_verifying_keys(conn, &genesis)?;
         let pq = verify_helpers::load_pq_verifying_key(conn, None, None)?;
+        let mut walked: Vec<(i64, [u8; 32])> = Vec::new();
         verify::verify_clock_provenance_with(
             conn,
             &keys,
             SignatureMode::Compat,
             pq.as_ref(),
-            |_, _| {},
+            |id, entry_hash| walked.push((id, entry_hash)),
         )?;
-        clock_provenance::list_rows(conn)
+        // Only the rows the walk checked: witnessd may have committed one
+        // since, and an unchecked row must not ride on this verdict.
+        clock_provenance::list_walked_rows(conn, &walked)
     }
 
     fn band(&self, is_beyond: bool) -> String {
@@ -1642,11 +1669,19 @@ impl ClockContext {
             }
         }
         if asmt.host_clock_disagrees {
+            // A clamped offset gives a bound on the reading, so the gap is
+            // printed as the inequality it is.
+            let gap = if !asmt.clamped {
+                format!("{:+}", asmt.host_gap_s)
+            } else if offset > 0 {
+                format!(">= {:+}", asmt.host_gap_s)
+            } else {
+                format!("<= {:+}", asmt.host_gap_s)
+            };
             println!(
-                "    note: host clock: the device's reading at observation is {:+} s from the \
+                "    note: host clock: the device's reading at observation is {gap} s from the \
                  anchor row's bucket start (expected 0 to 1199 s); the anchoring host's clock \
-                 and the device clock disagree",
-                asmt.host_gap_s
+                 and the device clock disagree"
             );
         }
     }
@@ -1668,10 +1703,23 @@ impl ClockContext {
                 );
             }
         }
+        // Only evaluated readings are compared: the gate print_record and
+        // beyond() use (a readable genTime, and prompt or negative). A
+        // delayed import's positive offset is not a clock reading, so it
+        // can neither make nor hide a step.
         let measured: Vec<&ClockProvenanceRow> = self
             .rows
             .iter()
-            .filter(|r| r.record.observed_offset_s.is_some())
+            .filter(|r| {
+                let Some(offset) = r.record.observed_offset_s else {
+                    return false;
+                };
+                anchors
+                    .iter()
+                    .find(|a| a.id == r.record.anchor_id)
+                    .and_then(|a| clock_provenance::assess(&r.record, a))
+                    .is_some_and(|asmt| asmt.prompt || offset < 0)
+            })
             .collect();
         for pair in measured.windows(2) {
             let (a, b) = (pair[0], pair[1]);
