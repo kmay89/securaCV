@@ -19,6 +19,7 @@ on:
     paths:
       - "fuzz/**"
       - "src/tsa.rs"
+      - "src/ots.rs"
       - "src/vault/**"
       - "src/transport/frigate.rs"
       - "src/canonical_json.rs"
@@ -31,6 +32,7 @@ on:
     paths:
       - "fuzz/**"
       - "src/tsa.rs"
+      - "src/ots.rs"
       - "src/vault/**"
       - "src/transport/frigate.rs"
       - "src/canonical_json.rs"

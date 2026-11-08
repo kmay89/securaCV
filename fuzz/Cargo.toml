@@ -44,6 +44,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "ots_parse"
+path = "fuzz_targets/ots_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "vault_envelope_decode"
 path = "fuzz_targets/vault_envelope_decode.rs"
 test = false

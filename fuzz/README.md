@@ -18,6 +18,7 @@ input designed to break them.
 |---|---|---|
 | `tsa_parse_response` | RFC-3161 `TimeStampResp`, via the **hand-rolled DER reader** in `src/tsa.rs` | A remote TSA, or anyone who can MITM it. Hand-written DER over network bytes is the highest-risk parser in the tree. |
 | `tsa_parse_token` | The `ContentInfo` token and its imprint | Same, one layer in |
+| `ots_parse` | OpenTimestamps `.ots` proofs (`Proof::parse`) and bare calendar bodies (`parse_timestamp`), via the **hand-rolled codec** in `src/ots.rs`; asserts that canonical re-serialization is a fixed point | A public calendar, anyone who can MITM it, or a tampered `ots_anchors` row read by `witnessd` at boot. Seeds: the `opentimestamps` crate's two real proofs, the synthetic genesis proof and a derived upgrade body |
 | `vault_envelope_decode` | The sealed-vault binary container (`src/vault/format.rs`) | Whoever last held the SD card — precisely the adversary the vault exists for |
 | `vault_decode_aad` | The vault's additional-authenticated-data header | Same |
 | `frigate_event` | Frigate MQTT event/review payloads | **Any device on the LAN** that can publish to the broker topic |
