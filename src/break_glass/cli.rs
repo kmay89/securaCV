@@ -2241,11 +2241,21 @@ fn cmd_doctor(db_path: &str, vault_path: &str, device_key_seed: &str) -> Result<
         // A stored policy that cannot be parsed or validated is named as such
         // (`policy: UNREADABLE — …`), apart from a database that will not open:
         // the kernel opens over it and refuses every break-glass action, and
-        // witnessd boots into safe mode on it.
+        // witnessd boots into safe mode on it. A failure of the SQL read itself
+        // (no policy table in an unprovisioned database, I/O) is not a verdict
+        // on a stored policy and keeps its own message; a stored cell that is
+        // not text, a parse error and a validate error are.
         match open_kernel_db_keyed(db_path, device_key_seed).and_then(|conn| {
             load_break_glass_policy(&conn)
                 .map(|p| (conn, p))
-                .map_err(|e| anyhow!("policy: UNREADABLE — {e:#}"))
+                .map_err(|e| match e.downcast_ref::<rusqlite::Error>() {
+                    Some(
+                        rusqlite::Error::InvalidColumnType(..)
+                        | rusqlite::Error::FromSqlConversionFailure(..),
+                    )
+                    | None => anyhow!("policy: UNREADABLE — {e:#}"),
+                    Some(_) => e,
+                })
         }) {
             Ok((conn, Some(policy))) => {
                 println!(
@@ -2333,8 +2343,9 @@ fn cmd_doctor(db_path: &str, vault_path: &str, device_key_seed: &str) -> Result<
                 problems += 1;
             }
             Err(e) => {
-                // Either the database wouldn't open with this seed, or the stored
-                // policy could not be loaded (UNREADABLE) — both are hard problems.
+                // The database wouldn't open with this seed, the policy read
+                // failed, or the stored policy could not be loaded (UNREADABLE) —
+                // each is a hard problem.
                 println!("  {} {}", DR_BAD, e);
                 problems += 1;
             }
@@ -2949,6 +2960,11 @@ fn cmd_trustee_enroll(
         let policy = crate::break_glass::QuorumPolicy::new(draft.threshold, entries)?;
         let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
         let mut kernel = Kernel::open(&cfg)?;
+        // A stored policy that cannot be loaded is not a live one: refuse with
+        // the recorded load error (D7), never the "already live / policy
+        // CHANGE" guidance below, whose `policy propose` would refuse too.
+        // The locked re-read inside the gated set stays the backstop.
+        kernel.break_glass_policy_checked()?;
         match kernel.set_break_glass_policy_gated(&policy, &[], TimeBucket::now_10min()?) {
             Ok(_) => println!(
                 "  {} quorum policy is live: {}-of-{}",
