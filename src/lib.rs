@@ -1770,6 +1770,12 @@ pub struct Kernel {
     #[cfg(feature = "pqc-signatures")]
     device_pq_key: Option<PqKeypair>,
     break_glass_policy: Option<crate::break_glass::QuorumPolicy>,
+    /// The error recorded when the stored policy could not be parsed or
+    /// validated at open. `Some` means `break_glass_policy` is `None` because
+    /// the policy is UNREADABLE, never because it is absent: every
+    /// break-glass entry point refuses through
+    /// [`Kernel::break_glass_policy_checked`].
+    break_glass_policy_error: Option<String>,
     zone_policy: ZonePolicy,
 }
 
@@ -1833,13 +1839,14 @@ impl Kernel {
             #[cfg(feature = "pqc-signatures")]
             device_pq_key: None,
             break_glass_policy: None,
+            break_glass_policy_error: None,
             zone_policy,
         };
         k.ensure_schema()?;
         k.ensure_device_public_key()?;
         #[cfg(feature = "pqc-signatures")]
         k.ensure_device_pq_keys()?;
-        k.load_break_glass_policy()?;
+        k.load_break_glass_policy_at_open();
         Ok(k)
     }
 
@@ -1868,13 +1875,14 @@ impl Kernel {
             #[cfg(feature = "pqc-signatures")]
             device_pq_key: None,
             break_glass_policy: None,
+            break_glass_policy_error: None,
             zone_policy,
         };
         k.ensure_schema()?;
         k.ensure_device_public_key()?;
         #[cfg(feature = "pqc-signatures")]
         k.ensure_device_pq_keys()?;
-        k.load_break_glass_policy()?;
+        k.load_break_glass_policy_at_open();
         Ok(k)
     }
 
@@ -3093,11 +3101,35 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             params![json],
         )?;
         self.break_glass_policy = Some(policy.clone());
+        self.break_glass_policy_error = None;
         Ok(())
     }
 
+    /// The quorum policy loaded into this handle, `None` when none is
+    /// stored — or when the stored one could not be loaded. Every
+    /// break-glass path reads [`Kernel::break_glass_policy_checked`] instead,
+    /// which tells the two apart; this plain accessor is for tests and for a
+    /// caller that has already gone through the checked one.
     pub fn break_glass_policy(&self) -> Option<&crate::break_glass::QuorumPolicy> {
         self.break_glass_policy.as_ref()
+    }
+
+    /// `Err` with the recorded load error when the stored policy could not be parsed or validated.
+    ///
+    /// `Ok(None)` means no policy is stored; `Ok(Some(_))` is the loaded
+    /// policy. An unreadable policy (a corrupt row, or a field a newer
+    /// release wrote that this build refuses) is never reported as absent:
+    /// absent means "bootstrap", and an unreadable live policy must never be
+    /// bootstrapped over without its quorum.
+    pub fn break_glass_policy_checked(&self) -> Result<Option<&crate::break_glass::QuorumPolicy>> {
+        if let Some(e) = &self.break_glass_policy_error {
+            return Err(anyhow!(
+                "break-glass policy could not be loaded: {e} — this build refuses every \
+                 break-glass action on this database (run log_verify; upgrade if the policy was \
+                 written by a newer release)"
+            ));
+        }
+        Ok(self.break_glass_policy.as_ref())
     }
 
     /// Replace the stored quorum policy through the QUORUM-GATED path
@@ -3178,8 +3210,16 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         now_bucket: TimeBucket,
     ) -> Result<PolicyChangeOutcome> {
         // The committed policy, read under the lock — not the copy loaded
-        // when this handle was opened.
-        self.load_break_glass_policy()?;
+        // when this handle was opened. An unreadable stored policy REFUSES
+        // the change: treating it as absent would make this a bootstrap and
+        // let anyone replace a live policy without its quorum.
+        self.load_break_glass_policy().map_err(|e| {
+            anyhow!(
+                "refusing to change the break-glass policy: the stored policy could not be \
+                 loaded ({e:#}) — a quorum change needs the stored policy; it is never treated \
+                 as absent"
+            )
+        })?;
         let current = self.break_glass_policy.clone();
 
         let (prev_commitment, bootstrap) = match &current {
@@ -3316,6 +3356,27 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         read_policy_change_history(&self.conn)
     }
 
+    /// The open-time policy load. A stored policy that cannot be parsed or
+    /// validated does NOT fail the open: the error is recorded, the policy
+    /// stays `None`, and every break-glass entry point refuses with it
+    /// ([`Kernel::break_glass_policy_checked`]). The verifier still refuses
+    /// the database (`verify::load_break_glass_policy` errors), so witnessd's
+    /// boot check lands in safe mode — serving the read and verify API —
+    /// instead of exiting before any safe-mode logic runs.
+    fn load_break_glass_policy_at_open(&mut self) {
+        if let Err(e) = self.load_break_glass_policy() {
+            self.break_glass_policy = None;
+            self.break_glass_policy_error = Some(format!("{e:#}"));
+            ::log::error!(
+                "break-glass policy could not be loaded: {e:#} — every break-glass action on this \
+                 database is refused; run log_verify"
+            );
+        }
+    }
+
+    /// Read the stored policy into this handle. Propagates a parse or
+    /// validation error and leaves the handle unchanged on one; on success it
+    /// clears any recorded load error.
     fn load_break_glass_policy(&mut self) -> Result<()> {
         let mut stmt = self
             .conn
@@ -3329,6 +3390,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         } else {
             self.break_glass_policy = None;
         }
+        self.break_glass_policy_error = None;
         Ok(())
     }
 
