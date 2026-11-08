@@ -65,8 +65,7 @@ fn err_text(r: Result<impl std::fmt::Debug>) -> String {
 
 /// The node of `n` holding `Pending{uri}`.
 fn pending_node<'n>(n: &'n Node, uri: &str) -> Option<&'n Node> {
-    if n
-        .attestations
+    if n.attestations
         .iter()
         .any(|a| matches!(a, Attestation::Pending { uri: u } if u == uri))
     {
@@ -99,8 +98,7 @@ fn calendar_branch(c: &Node, uri: &str) -> Node {
 }
 
 fn strip_below_pending(n: &mut Node) {
-    if n
-        .attestations
+    if n.attestations
         .iter()
         .any(|a| matches!(a, Attestation::Pending { .. }))
     {
@@ -145,7 +143,10 @@ fn derived_fixtures() -> Vec<(&'static str, Vec<u8>)> {
         ("response-alice.otsr", serialize_node(&response_alice)),
         ("pending-bob.ots", pending_bob.to_bytes()),
         ("bitcoin-stripped.ots", stripped.to_bytes()),
-        ("upgrade-bob.otsr", serialize_node(&upgrade_at(&bitcoin, BOB))),
+        (
+            "upgrade-bob.otsr",
+            serialize_node(&upgrade_at(&bitcoin, BOB)),
+        ),
         (
             "upgrade-alice.otsr",
             serialize_node(&upgrade_at(&bitcoin, ALICE)),
@@ -171,17 +172,42 @@ fn contains_sub(hay: &[u8], needle: &[u8]) -> bool {
 #[test]
 fn derived_ots_fixtures_are_current() {
     let want_sha = [
-        ("response-bob.otsr", "367429bad7fd7a68372da640dd1449aa46dbc49da06b29f099fd8c9b1b6e9637"),
-        ("response-alice.otsr", "22fa7c6b5331002da3b9edfd1e21924436522b9eb285a61d5184a1bfa87c3288"),
-        ("pending-bob.ots", "3ed9cced375f9b29473b6d6ca95328391c635a1b8df68a82ad42b37869ea4c19"),
-        ("bitcoin-stripped.ots", "abf10428508436b038ddbc5de2a4858155f782a6dfff8a171ee1c515d12d7e4f"),
-        ("upgrade-bob.otsr", "17d3951afc464437f3e06e8157db4d4a407b9de9f115ffb1076d18688e0aeaec"),
-        ("upgrade-alice.otsr", "575f37f114d294d3c3cb83a05037098a1497ed8d6c2dc396fc526630658deab1"),
-        ("genesis.ots", "3ff23d220784c3499c21b5d7d1c1d28e7157d17d988353a10a5daac0975a74df"),
+        (
+            "response-bob.otsr",
+            "367429bad7fd7a68372da640dd1449aa46dbc49da06b29f099fd8c9b1b6e9637",
+        ),
+        (
+            "response-alice.otsr",
+            "22fa7c6b5331002da3b9edfd1e21924436522b9eb285a61d5184a1bfa87c3288",
+        ),
+        (
+            "pending-bob.ots",
+            "3ed9cced375f9b29473b6d6ca95328391c635a1b8df68a82ad42b37869ea4c19",
+        ),
+        (
+            "bitcoin-stripped.ots",
+            "abf10428508436b038ddbc5de2a4858155f782a6dfff8a171ee1c515d12d7e4f",
+        ),
+        (
+            "upgrade-bob.otsr",
+            "17d3951afc464437f3e06e8157db4d4a407b9de9f115ffb1076d18688e0aeaec",
+        ),
+        (
+            "upgrade-alice.otsr",
+            "575f37f114d294d3c3cb83a05037098a1497ed8d6c2dc396fc526630658deab1",
+        ),
+        (
+            "genesis.ots",
+            "3ff23d220784c3499c21b5d7d1c1d28e7157d17d988353a10a5daac0975a74df",
+        ),
     ];
     for ((name, bytes), (n2, sha)) in derived_fixtures().into_iter().zip(want_sha) {
         assert_eq!(name, n2);
-        assert_eq!(fx(name), bytes, "{name} is stale: run write_derived_ots_fixtures");
+        assert_eq!(
+            fx(name),
+            bytes,
+            "{name} is stale: run write_derived_ots_fixtures"
+        );
         assert_eq!(hex::encode(Sha256::digest(&bytes)), sha, "{name}");
     }
     // Independent of our serializer: every calendar body is a byte substring
@@ -242,10 +268,7 @@ fn pending_fixture_leaves() {
     assert_eq!(p.leaves().len(), 2);
     assert_eq!(p.state(), ProofState::Pending);
     assert_eq!(p.state().column(), Some("pending"));
-    assert_eq!(
-        commitment_node(&p).msg,
-        h32(PENDING_COMMITMENT).to_vec()
-    );
+    assert_eq!(commitment_node(&p).msg, h32(PENDING_COMMITMENT).to_vec());
 }
 
 #[test]
@@ -490,7 +513,10 @@ fn unknown_attestation_round_trips() {
     assert_eq!(p.to_bytes(), f);
     assert_eq!(p.state(), ProofState::NoKnownAttestation);
     assert_eq!(p.state().column(), None);
-    assert!(matches!(p.leaves()[0].attestation, Attestation::Unknown { .. }));
+    assert!(matches!(
+        p.leaves()[0].attestation,
+        Attestation::Unknown { .. }
+    ));
 }
 
 #[test]
@@ -514,11 +540,18 @@ fn canonical_order_is_python_order() {
         Ordering::Less
     );
     assert_eq!(op_cmp(&Op::Sha256, &Op::Append(vec![0])), Ordering::Less);
-    assert_eq!(op_cmp(&Op::Prepend(vec![0]), &Op::Append(vec![9])), Ordering::Greater);
+    assert_eq!(
+        op_cmp(&Op::Prepend(vec![0]), &Op::Append(vec![9])),
+        Ordering::Greater
+    );
     assert_eq!(
         attestation_cmp(
-            &Attestation::Pending { uri: "https://a".into() },
-            &Attestation::Pending { uri: "https://b".into() }
+            &Attestation::Pending {
+                uri: "https://a".into()
+            },
+            &Attestation::Pending {
+                uri: "https://b".into()
+            }
         ),
         Ordering::Less
     );
@@ -529,13 +562,17 @@ fn canonical_order_is_python_order() {
         ops: Vec::new(),
     };
     let msg = vec![9u8; 32];
-    let mut child_a = leaf(Attestation::Pending { uri: "https://a".into() });
+    let mut child_a = leaf(Attestation::Pending {
+        uri: "https://a".into(),
+    });
     child_a.msg = Op::Sha256.apply(&msg).unwrap();
     let mut child_b = leaf(Attestation::Bitcoin { height: 3 });
     child_b.msg = Op::Append(vec![1]).apply(&msg).unwrap();
     let one = Node {
         msg: msg.clone(),
-        attestations: vec![Attestation::Pending { uri: "https://z".into() }],
+        attestations: vec![Attestation::Pending {
+            uri: "https://z".into(),
+        }],
         ops: vec![(Op::Sha256, child_a.clone())],
     };
     let two = Node {
@@ -605,7 +642,10 @@ fn merge_at_refuses_unknown_message_or_uri() {
     let msg = hex::decode(BOB_MSG_BITCOIN).unwrap();
     let up = parse_timestamp(&fx("upgrade-bob.otsr"), &msg).unwrap();
     let e = err_text(p.merge_at(&msg, ALICE, up.clone()));
-    assert!(e.starts_with("no node of the proof holds a pending attestation for https://alice"), "{e}");
+    assert!(
+        e.starts_with("no node of the proof holds a pending attestation for https://alice"),
+        "{e}"
+    );
     let other = hex::decode(ALICE_MSG_BITCOIN).unwrap();
     assert_eq!(
         err_text(p.merge_at(&other, BOB, up)),
@@ -623,7 +663,11 @@ fn genesis_header_pow_and_root() {
     assert_eq!(h.bits(), 0x1d00ffff);
     let mut flipped = h;
     flipped.0[76] ^= 0x01;
-    assert!(flipped.block_hash_display().starts_with("8cdc343d"), "{}", flipped.block_hash_display());
+    assert!(
+        flipped.block_hash_display().starts_with("8cdc343d"),
+        "{}",
+        flipped.block_hash_display()
+    );
     assert!(!flipped.pow_sane());
     let mut easy = h;
     easy.0[72..76].copy_from_slice(&0x207f_ffffu32.to_le_bytes());
@@ -708,7 +752,11 @@ fn check_bitcoin_leaves_tiers() {
 #[test]
 fn load_headers_rules() {
     let dir = tempfile::tempdir().unwrap();
-    let ok = format!("# comment\n\n0 {}\n0 {}\n", GENESIS_HEADER, GENESIS_HEADER.to_uppercase());
+    let ok = format!(
+        "# comment\n\n0 {}\n0 {}\n",
+        GENESIS_HEADER,
+        GENESIS_HEADER.to_uppercase()
+    );
     let hf = load_headers(&headers_file(dir.path(), &ok)).unwrap();
     assert_eq!(hf.by_height.len(), 1);
     let path = headers_file(dir.path(), &format!("0 {}\n", &GENESIS_HEADER[..158]));
@@ -728,8 +776,13 @@ fn load_headers_rules() {
         dir.path(),
         &format!("0 {GENESIS_HEADER}\n0 {}\n", hex::encode(other.0)),
     );
-    assert!(err_text(load_headers(&path)).ends_with(":2: block 0 listed twice with different headers"));
-    let path = headers_file(dir.path(), &format!("0 {GENESIS_HEADER}\n1 {GENESIS_HEADER}\n"));
+    assert!(
+        err_text(load_headers(&path)).ends_with(":2: block 0 listed twice with different headers")
+    );
+    let path = headers_file(
+        dir.path(),
+        &format!("0 {GENESIS_HEADER}\n1 {GENESIS_HEADER}\n"),
+    );
     assert_eq!(load_headers(&path).unwrap().by_height.len(), 2);
     let mut easy = header(GENESIS_HEADER);
     easy.0[72..76].copy_from_slice(&0x207f_ffffu32.to_le_bytes());
@@ -787,7 +840,10 @@ fn request_and_upgrade_files_round_trip_and_deny_unknown_fields() {
     let text = serde_json::to_string(&u).unwrap();
     let back: OtsUpgradeFile = serde_json::from_str(&text).unwrap();
     assert_eq!(back, u);
-    assert_eq!(back.decode().unwrap(), hex::decode(BOB_MSG_BITCOIN).unwrap());
+    assert_eq!(
+        back.decode().unwrap(),
+        hex::decode(BOB_MSG_BITCOIN).unwrap()
+    );
     let extra = text.replace("{", "{\"proof\":\"00\",");
     assert!(serde_json::from_str::<OtsUpgradeFile>(&extra).is_err());
 }
@@ -807,7 +863,9 @@ fn mem() -> Connection {
 
 fn master(conn: &Connection) -> Vec<String> {
     let mut stmt = conn
-        .prepare("SELECT type || ':' || name || ':' || ifnull(sql,'') FROM sqlite_master ORDER BY name")
+        .prepare(
+            "SELECT type || ':' || name || ':' || ifnull(sql,'') FROM sqlite_master ORDER BY name",
+        )
         .unwrap();
     stmt.query_map([], |r| r.get(0))
         .unwrap()
@@ -852,8 +910,24 @@ fn insert_list_round_trip_caches_derived_from_proof() {
         rusqlite::params![vec![0u8; 32], btc.digest.to_vec()],
     )
     .unwrap();
-    let a = insert_ots_anchor(&conn, bucket(600), AnchorSubject::Digest, &pend.digest, BOB, &pend).unwrap();
-    let b = insert_ots_anchor(&conn, bucket(1200), AnchorSubject::ChainHead, &btc.digest, ALICE, &btc).unwrap();
+    let a = insert_ots_anchor(
+        &conn,
+        bucket(600),
+        AnchorSubject::Digest,
+        &pend.digest,
+        BOB,
+        &pend,
+    )
+    .unwrap();
+    let b = insert_ots_anchor(
+        &conn,
+        bucket(1200),
+        AnchorSubject::ChainHead,
+        &btc.digest,
+        ALICE,
+        &btc,
+    )
+    .unwrap();
     let rows = list_ots_anchors(&conn).unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].id, a);
@@ -871,16 +945,41 @@ fn insert_list_round_trip_caches_derived_from_proof() {
     assert_eq!(rows[1].created_bucket, bucket(1200));
     assert_eq!(pending_ots_anchors(&conn).unwrap().len(), 1);
     // A proof over another digest is refused.
-    assert!(insert_ots_anchor(&conn, bucket(0), AnchorSubject::Digest, &[1u8; 32], BOB, &pend).is_err());
+    assert!(insert_ots_anchor(
+        &conn,
+        bucket(0),
+        AnchorSubject::Digest,
+        &[1u8; 32],
+        BOB,
+        &pend
+    )
+    .is_err());
 }
 
 #[test]
 fn lenient_reader_reasons() {
     let conn = chain_db();
     let pend = Proof::parse(&fx("pending-bob.ots")).unwrap();
-    let id = insert_ots_anchor(&conn, bucket(600), AnchorSubject::Digest, &pend.digest, BOB, &pend).unwrap();
-    conn.execute("UPDATE ots_anchors SET proof = 'x' WHERE id = ?1", [id]).unwrap();
-    let id2 = insert_ots_anchor(&conn, bucket(600), AnchorSubject::Digest, &pend.digest, BOB, &pend).unwrap();
+    let id = insert_ots_anchor(
+        &conn,
+        bucket(600),
+        AnchorSubject::Digest,
+        &pend.digest,
+        BOB,
+        &pend,
+    )
+    .unwrap();
+    conn.execute("UPDATE ots_anchors SET proof = 'x' WHERE id = ?1", [id])
+        .unwrap();
+    let id2 = insert_ots_anchor(
+        &conn,
+        bucket(600),
+        AnchorSubject::Digest,
+        &pend.digest,
+        BOB,
+        &pend,
+    )
+    .unwrap();
     conn.execute(
         "UPDATE ots_anchors SET subject_hash = ?2 WHERE id = ?1",
         rusqlite::params![id2, vec![0u8; 31]],
@@ -903,12 +1002,26 @@ fn record_upgrade_once_and_refuses_non_superset() {
     let conn = chain_db();
     let old = Proof::parse(&fx("bitcoin-stripped.ots")).unwrap();
     let new = Proof::parse(&fx("bitcoin.ots")).unwrap();
-    let id = insert_ots_anchor(&conn, bucket(600), AnchorSubject::Digest, &old.digest, BOB, &old).unwrap();
+    let id = insert_ots_anchor(
+        &conn,
+        bucket(600),
+        AnchorSubject::Digest,
+        &old.digest,
+        BOB,
+        &old,
+    )
+    .unwrap();
     // A "new" proof that drops evidence is refused.
     let mut dropped = new.clone();
     strip_below_pending(&mut dropped.root);
     dropped.root.ops.truncate(1);
-    let e = err_text(record_ots_upgrade(&conn, id, bucket(1200), &old, &Proof::parse(&fx("genesis.ots")).unwrap()));
+    let e = err_text(record_ots_upgrade(
+        &conn,
+        id,
+        bucket(1200),
+        &old,
+        &Proof::parse(&fx("genesis.ots")).unwrap(),
+    ));
     assert_eq!(e, "upgraded proof covers a different digest; not stored");
     let mut lossy = new.clone();
     // Remove bob's pending leaf: no longer a superset.
@@ -941,7 +1054,8 @@ fn readers_never_create_the_table() {
         .unwrap()
         .execute_batch("CREATE TABLE sealed_events (id INTEGER PRIMARY KEY, entry_hash BLOB)")
         .unwrap();
-    let ro = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let ro =
+        Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let before = master(&ro);
     assert!(!ots_table_exists(&ro).unwrap());
     assert!(list_ots_anchors_lenient(&ro).unwrap().is_empty());
@@ -1016,7 +1130,9 @@ impl CalendarTransport for FakeCalendar {
     }
 
     fn fetch(&self, uri: &str, msg: &[u8], _allow_http: bool) -> Result<Option<Vec<u8>>> {
-        self.fetched.borrow_mut().push((uri.to_string(), msg.to_vec()));
+        self.fetched
+            .borrow_mut()
+            .push((uri.to_string(), msg.to_vec()));
         let mut q = self.upgrades.borrow_mut();
         Ok(if q.is_empty() { None } else { q.remove(0) })
     }
@@ -1050,8 +1166,11 @@ fn plan_all_heads(conn: &Connection) -> Vec<PlannedOts> {
 #[test]
 fn ots_leg_constant_count_fresh_nonces() {
     let conn = chain_db();
-    conn.execute("INSERT INTO sealed_events (entry_hash) VALUES (?1)", [vec![0x11u8; 32]])
-        .unwrap();
+    conn.execute(
+        "INSERT INTO sealed_events (entry_hash) VALUES (?1)",
+        [vec![0x11u8; 32]],
+    )
+    .unwrap();
     let planned = plan_all_heads(&conn);
     assert_eq!(planned.len(), AnchorSubject::HEADS.len());
     assert!(planned.iter().filter(|p| p.sentinel).count() >= 1);
@@ -1059,7 +1178,16 @@ fn ots_leg_constant_count_fresh_nonces() {
     let policy = two_calendars();
     let mut nonce = random_nonce;
     for run in 0..2u64 {
-        let rep = run_ots_leg(&conn, &policy, &planned, &fake, bucket(600 * (run + 1)), true, &mut nonce).unwrap();
+        let rep = run_ots_leg(
+            &conn,
+            &policy,
+            &planned,
+            &fake,
+            bucket(600 * (run + 1)),
+            true,
+            &mut nonce,
+        )
+        .unwrap();
         assert_eq!(rep.submissions, planned.len() * 2);
         assert_eq!(rep.stored.len(), rep.submissions);
         assert!(rep.submit_failures.is_empty());
@@ -1072,7 +1200,10 @@ fn ots_leg_constant_count_fresh_nonces() {
     let distinct: std::collections::HashSet<_> = received.iter().map(|(_, c)| *c).collect();
     assert_eq!(distinct.len(), received.len(), "every commitment is fresh");
     for p in &planned {
-        assert!(!distinct.contains(&p.hash), "a calendar never sees a head or sentinel");
+        assert!(
+            !distinct.contains(&p.hash),
+            "a calendar never sees a head or sentinel"
+        );
     }
     assert_eq!(list_ots_anchors(&conn).unwrap().len(), received.len());
     // Each stored proof is a valid nonced commitment over its subject.
@@ -1089,9 +1220,33 @@ const BASE: u64 = 10 * 86_400;
 fn ots_leg_upgrade_bound_and_order() {
     let conn = chain_db();
     let stripped = Proof::parse(&fx("bitcoin-stripped.ots")).unwrap();
-    let seeded = insert_ots_anchor(&conn, bucket(BASE), AnchorSubject::Digest, &stripped.digest, BOB, &stripped).unwrap();
-    let old = insert_ots_anchor(&conn, bucket(BASE), AnchorSubject::Digest, &stripped.digest, BOB, &stripped).unwrap();
-    let undeclared = insert_ots_anchor(&conn, bucket(BASE), AnchorSubject::Digest, &stripped.digest, "https://carol.example", &stripped).unwrap();
+    let seeded = insert_ots_anchor(
+        &conn,
+        bucket(BASE),
+        AnchorSubject::Digest,
+        &stripped.digest,
+        BOB,
+        &stripped,
+    )
+    .unwrap();
+    let old = insert_ots_anchor(
+        &conn,
+        bucket(BASE),
+        AnchorSubject::Digest,
+        &stripped.digest,
+        BOB,
+        &stripped,
+    )
+    .unwrap();
+    let undeclared = insert_ots_anchor(
+        &conn,
+        bucket(BASE),
+        AnchorSubject::Digest,
+        &stripped.digest,
+        "https://carol.example",
+        &stripped,
+    )
+    .unwrap();
     let now = BASE + 6 * 86_400;
     // Moved 8 days back from now: beyond the horizon.
     conn.execute(
@@ -1106,16 +1261,30 @@ fn ots_leg_upgrade_bound_and_order() {
     }];
     let fake = FakeCalendar::new();
     fake.upgrades.borrow_mut().push(None);
-    fake.upgrades.borrow_mut().push(Some(fx("upgrade-bob.otsr")));
+    fake.upgrades
+        .borrow_mut()
+        .push(Some(fx("upgrade-bob.otsr")));
     let policy = two_calendars();
     let mut nonce = random_nonce;
-    let rep = run_ots_leg(&conn, &policy, &planned, &fake, bucket(now), true, &mut nonce).unwrap();
+    let rep = run_ots_leg(
+        &conn,
+        &policy,
+        &planned,
+        &fake,
+        bucket(now),
+        true,
+        &mut nonce,
+    )
+    .unwrap();
     assert_eq!(rep.fetches, 1, "one GET: the seeded row only");
     assert_eq!(rep.still_pending, vec![(seeded, BOB.to_string())]);
     assert_eq!(rep.beyond_horizon, vec![old]);
     assert_eq!(rep.not_polled_undeclared.len(), 1);
     assert_eq!(rep.not_polled_undeclared[0].0, undeclared);
-    assert_eq!(fake.fetched.borrow()[0], (BOB.to_string(), hex::decode(BOB_MSG_BITCOIN).unwrap()));
+    assert_eq!(
+        fake.fetched.borrow()[0],
+        (BOB.to_string(), hex::decode(BOB_MSG_BITCOIN).unwrap())
+    );
     // Upgrades come before stamps in the event log.
     let first_stamp = rep
         .events
@@ -1127,10 +1296,27 @@ fn ots_leg_upgrade_bound_and_order() {
         .all(|e| !matches!(e, OtsLegEvent::Stamping { .. } | OtsLegEvent::Stored(_))));
     // Run 2: the rows stamped in run 1 are pending at alice/bob too; the
     // seeded row gets the real upgrade body.
-    let rep = run_ots_leg(&conn, &policy, &planned, &fake, bucket(now + 600), true, &mut nonce).unwrap();
+    let rep = run_ots_leg(
+        &conn,
+        &policy,
+        &planned,
+        &fake,
+        bucket(now + 600),
+        true,
+        &mut nonce,
+    )
+    .unwrap();
     assert_eq!(rep.upgraded, vec![(seeded, "digest".to_string(), 449399)]);
-    assert_eq!(rep.fetches, 1 + 2, "seeded row + the two rows stamped in run 1");
-    let row = list_ots_anchors(&conn).unwrap().into_iter().find(|r| r.id == seeded).unwrap();
+    assert_eq!(
+        rep.fetches,
+        1 + 2,
+        "seeded row + the two rows stamped in run 1"
+    );
+    let row = list_ots_anchors(&conn)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == seeded)
+        .unwrap();
     assert_eq!(row.attestation, "bitcoin");
     assert_eq!(row.bitcoin_height, Some(449399));
     assert_eq!(row.upgraded_bucket_start, Some((now + 600) as i64));
@@ -1145,10 +1331,22 @@ fn ots_leg_refuses_pool_style_response() {
         sentinel: false,
     }];
     let mut fake = FakeCalendar::new();
-    fake.answer_uri = Some((ALICE.to_string(), "https://a.pool.opentimestamps.org".to_string()));
+    fake.answer_uri = Some((
+        ALICE.to_string(),
+        "https://a.pool.opentimestamps.org".to_string(),
+    ));
     let policy = two_calendars();
     let mut nonce = random_nonce;
-    let rep = run_ots_leg(&conn, &policy, &planned, &fake, bucket(600), false, &mut nonce).unwrap();
+    let rep = run_ots_leg(
+        &conn,
+        &policy,
+        &planned,
+        &fake,
+        bucket(600),
+        false,
+        &mut nonce,
+    )
+    .unwrap();
     assert_eq!(rep.submit_failures.len(), 1);
     assert_eq!(
         rep.submit_failures[0].error,
@@ -1158,7 +1356,16 @@ fn ots_leg_refuses_pool_style_response() {
     // A transport error is a failure and the other calendar is still asked.
     let mut fake = FakeCalendar::new();
     fake.fail_url = Some(ALICE.to_string());
-    let rep = run_ots_leg(&conn, &policy, &planned, &fake, bucket(1200), false, &mut nonce).unwrap();
+    let rep = run_ots_leg(
+        &conn,
+        &policy,
+        &planned,
+        &fake,
+        bucket(1200),
+        false,
+        &mut nonce,
+    )
+    .unwrap();
     assert_eq!(rep.submit_failures.len(), 1);
     assert_eq!(rep.submit_failures[0].error, "connection refused");
     assert_eq!(fake.received.borrow().len(), 2);

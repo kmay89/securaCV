@@ -2975,7 +2975,10 @@ mod tests {
                 "verified_at_bucket_size"
             ]
         );
-        assert!(!crate::ots::ots_table_exists(&conn).unwrap(), "verify never creates it");
+        assert!(
+            !crate::ots::ots_table_exists(&conn).unwrap(),
+            "verify never creates it"
+        );
     }
 
     #[test]
@@ -2997,7 +3000,10 @@ mod tests {
         let report = verify(&conn);
         assert!(report.chain_valid, "{:?}", report.error);
         assert_eq!(report.ots_anchors_checked, Some(3));
-        assert_eq!(report.anchors_checked, None, "anchors_checked stays RFC 3161 only");
+        assert_eq!(
+            report.anchors_checked, None,
+            "anchors_checked stays RFC 3161 only"
+        );
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         assert!(serde_json::to_string(&report)
             .unwrap()
@@ -3017,8 +3023,11 @@ mod tests {
         let cache = ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
         let good = ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
         let c = &kernel.conn;
-        c.execute("UPDATE ots_anchors SET proof = 'text' WHERE id = ?1", [malformed])
-            .unwrap();
+        c.execute(
+            "UPDATE ots_anchors SET proof = 'text' WHERE id = ?1",
+            [malformed],
+        )
+        .unwrap();
         c.execute(
             "UPDATE ots_anchors SET proof = x'00010203' WHERE id = ?1",
             [unparseable],
@@ -3049,7 +3058,10 @@ mod tests {
             ]
         );
         for w in &report.warnings {
-            assert_eq!(verify::classify_warning(w), verify::WarningKind::AnchorAnomaly);
+            assert_eq!(
+                verify::classify_warning(w),
+                verify::WarningKind::AnchorAnomaly
+            );
             assert!(!w.contains("http"), "no URL in a warning: {w}");
             assert!(!w.contains("840000"), "no height in a warning: {w}");
         }

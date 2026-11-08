@@ -2459,11 +2459,9 @@ use witness_kernel::ots;
 
 const OTS_BOB: &str = "https://bob.btc.calendar.opentimestamps.org";
 const OTS_ALICE: &str = "https://alice.btc.calendar.opentimestamps.org";
-const OTS_PENDING_DIGEST: &str =
-    "a70dfe69c5a0d62816781abb6e1777854718624a0d194231adb14c32ee5438a4";
+const OTS_PENDING_DIGEST: &str = "a70dfe69c5a0d62816781abb6e1777854718624a0d194231adb14c32ee5438a4";
 const OTS_PENDING_NONCE: &str = "7a4605de0a5b37cb211759c6812bfe2e";
-const OTS_BITCOIN_DIGEST: &str =
-    "6fd9c1c4f096b77e6d4457bac1c7f51010d318db483f2868d3795843f098d378";
+const OTS_BITCOIN_DIGEST: &str = "6fd9c1c4f096b77e6d4457bac1c7f51010d318db483f2868d3795843f098d378";
 const OTS_BOB_MSG_BITCOIN: &str =
     "5883f171aa6795c4b2d50c11a9261949a1eedfdcf8254d5adab80b95d36584163a25cfcd6d4580fc64dfa979";
 const OTS_ALICE_MSG_BITCOIN: &str =
@@ -2556,7 +2554,10 @@ fn list_shows_ots_rows_and_no_anchors_line_only_when_both_empty() -> Result<()> 
     assert_ok(&out);
     assert_eq!(stdout(&out).trim(), "no anchors stored");
     let kernel = Kernel::open(&test_cfg(&db))?;
-    assert!(!ots::ots_table_exists(&kernel.conn)?, "list never creates it");
+    assert!(
+        !ots::ots_table_exists(&kernel.conn)?,
+        "list never creates it"
+    );
     drop(kernel);
 
     let pending = ots::Proof::parse(&ots_fx("pending-bob.ots"))?;
@@ -2590,7 +2591,13 @@ fn verify_pending_row_unverified_literal() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let db = make_db(temp.path())?;
     let head = current_chain_head(&db);
-    let id = insert_ots(&db, AnchorSubject::ChainHead, OTS_BOB, &composed(&head, 1), RECENT);
+    let id = insert_ots(
+        &db,
+        AnchorSubject::ChainHead,
+        OTS_BOB,
+        &composed(&head, 1),
+        RECENT,
+    );
     let before = std::fs::read(&db)?;
     let out = log_anchor(&db, &["verify"]);
     assert_ok(&out);
@@ -2713,17 +2720,28 @@ fn verify_digest_mismatch_and_cache_contradiction_fail() -> Result<()> {
         lied,
     );
     let weird = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &pending, RECENT);
-    ots_sql(&db, "UPDATE ots_anchors SET attestation = 'confirmed' WHERE id = ?1", weird);
+    ots_sql(
+        &db,
+        "UPDATE ots_anchors SET attestation = 'confirmed' WHERE id = ?1",
+        weird,
+    );
     let btc = ots::Proof::parse(&ots_fx("bitcoin.ots"))?;
     let low = insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &btc, RECENT);
-    ots_sql(&db, "UPDATE ots_anchors SET bitcoin_height = 449399 WHERE id = ?1", low);
+    ots_sql(
+        &db,
+        "UPDATE ots_anchors SET bitcoin_height = 449399 WHERE id = ?1",
+        low,
+    );
     let out = log_anchor(&db, &["verify"]);
     assert_exit1(&out);
     let text = stdout(&out);
-    assert!(text.contains(&format!(
+    assert!(
+        text.contains(&format!(
         "ots anchor #{moved}: FAIL\n    proof covers {OTS_PENDING_DIGEST} but anchor row claims {}",
         "01".repeat(32)
-    )), "{text}");
+    )),
+        "{text}"
+    );
     assert!(text.contains(&format!(
         "ots anchor #{lied}: FAIL\n    row records attestation 'bitcoin' but the proof holds pending"
     )), "{text}");
@@ -2743,7 +2761,10 @@ fn verify_headers_file_load_errors_bail() -> Result<()> {
     let db = make_db(temp.path())?;
     let bad = temp.path().join("bad.txt");
     std::fs::write(&bad, "# ok\n12 abcd\n")?;
-    let out = log_anchor(&db, &["verify", "--bitcoin-headers", &bad.to_string_lossy()]);
+    let out = log_anchor(
+        &db,
+        &["verify", "--bitcoin-headers", &bad.to_string_lossy()],
+    );
     assert_exit1(&out);
     assert!(stdout(&out).is_empty(), "bails before any output");
     assert!(
@@ -2755,14 +2776,19 @@ fn verify_headers_file_load_errors_bail() -> Result<()> {
         stderr(&out)
     );
     // A genesis header with an easier-than-mainnet target.
-    let mut easy = hex::decode(std::fs::read_to_string(ots_dir().join("headers.txt"))?
-        .lines()
-        .find(|l| l.starts_with("0 "))
-        .unwrap()[2..]
-        .trim())?;
+    let mut easy = hex::decode(
+        std::fs::read_to_string(ots_dir().join("headers.txt"))?
+            .lines()
+            .find(|l| l.starts_with("0 "))
+            .unwrap()[2..]
+            .trim(),
+    )?;
     easy[72..76].copy_from_slice(&0x207f_ffffu32.to_le_bytes());
     std::fs::write(&bad, format!("7 {}\n", hex::encode(easy)))?;
-    let out = log_anchor(&db, &["verify", "--bitcoin-headers", &bad.to_string_lossy()]);
+    let out = log_anchor(
+        &db,
+        &["verify", "--bitcoin-headers", &bad.to_string_lossy()],
+    );
     assert_exit1(&out);
     assert!(stderr(&out).contains(&format!(
         "bitcoin headers {}:1: block 7: header fails the proof-of-work sanity check (hash above its own target, or a target easier than Bitcoin's minimum difficulty); not a Bitcoin mainnet header",
@@ -2799,7 +2825,13 @@ fn verify_policy_ots_lines() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let db = make_db(temp.path())?;
     let head = current_chain_head(&db);
-    let pend = insert_ots(&db, AnchorSubject::ChainHead, OTS_BOB, &composed(&head, 2), RECENT);
+    let pend = insert_ots(
+        &db,
+        AnchorSubject::ChainHead,
+        OTS_BOB,
+        &composed(&head, 2),
+        RECENT,
+    );
     let genesis = ots::Proof::parse(&ots_fx("genesis.ots"))?;
     insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &genesis, RECENT);
     let headers = ots_dir().join("headers.txt");
@@ -2809,9 +2841,12 @@ fn verify_policy_ots_lines() -> Result<()> {
     let out = log_anchor(&db, &["verify", "--policy", &p]);
     assert_exit1(&out);
     let text = stdout(&out);
-    assert!(text.contains(&format!(
-        "ots anchor #{pend}: UNVERIFIED (proof digest matches, in chain history; pending"
-    )), "{text}");
+    assert!(
+        text.contains(&format!(
+            "ots anchor #{pend}: UNVERIFIED (proof digest matches, in chain history; pending"
+        )),
+        "{text}"
+    );
     assert!(text.contains(
         "policy: chain_head: ots NOT confirmed — 1 pending, 0 attested but not checked against a header; not required by this policy"
     ), "{text}");
@@ -2819,14 +2854,22 @@ fn verify_policy_ots_lines() -> Result<()> {
         "note: OpenTimestamps calendars are relays, not authorities; \"confirmed\" means the proof's path reaches the merkle root of a Bitcoin block header you supplied — existence before that block, not identity."
     ), "{text}");
     assert!(
-        text.contains(&format!("anchor policy {p}: NOT SATISFIED (1 subject(s) uncovered)\n")),
+        text.contains(&format!(
+            "anchor policy {p}: NOT SATISFIED (1 subject(s) uncovered)\n"
+        )),
         "required:false leaves the verdict as today: {text}"
     );
 
     let policy = write_ots_policy(temp.path(), &["chain_head"], true);
     let out = log_anchor(
         &db,
-        &["verify", "--policy", &p, "--bitcoin-headers", &headers.to_string_lossy()],
+        &[
+            "verify",
+            "--policy",
+            &p,
+            "--bitcoin-headers",
+            &headers.to_string_lossy(),
+        ],
     );
     assert_exit1(&out);
     let text = stdout(&out);
@@ -2837,7 +2880,10 @@ fn verify_policy_ots_lines() -> Result<()> {
     assert!(text.contains(&format!(
         "anchor policy {p}: NOT SATISFIED (1 subject(s) uncovered, 1 without a confirmed OpenTimestamps proof)"
     )), "{text}");
-    assert!(text.contains("confirmed in Bitcoin block 0 against the supplied header"), "{text}");
+    assert!(
+        text.contains("confirmed in Bitcoin block 0 against the supplied header"),
+        "{text}"
+    );
     Ok(())
 }
 
@@ -2865,7 +2911,10 @@ fn anchor_all_offline_writes_ots_requests_and_curl_lines_read_only() -> Result<(
     insert_ots(&db, AnchorSubject::Digest, OTS_BOB, &stripped, 0);
     let policy = write_ots_policy(
         temp.path(),
-        &AnchorSubject::HEADS.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
+        &AnchorSubject::HEADS
+            .iter()
+            .map(|k| k.as_str())
+            .collect::<Vec<_>>(),
         false,
     );
     let out_dir = temp.path().join("out");
@@ -2881,7 +2930,11 @@ fn anchor_all_offline_writes_ots_requests_and_curl_lines_read_only() -> Result<(
         ],
     );
     assert_ok(&out);
-    assert_eq!(std::fs::read(&db)?, before, "offline anchor-all must not write the DB");
+    assert_eq!(
+        std::fs::read(&db)?,
+        before,
+        "offline anchor-all must not write the DB"
+    );
     let n = AnchorSubject::HEADS.len();
     let mut requests = Vec::new();
     for k in AnchorSubject::HEADS {
@@ -2898,7 +2951,11 @@ fn anchor_all_offline_writes_ots_requests_and_curl_lines_read_only() -> Result<(
         }
     }
     let distinct: std::collections::HashSet<_> = requests.iter().collect();
-    assert_eq!(distinct.len(), n * 2, "a fresh nonce per (subject, calendar)");
+    assert_eq!(
+        distinct.len(),
+        n * 2,
+        "a fresh nonce per (subject, calendar)"
+    );
     let up: ots::OtsUpgradeFile = serde_json::from_str(&std::fs::read_to_string(
         out_dir.join(format!("ots-{seeded}.ots-upgrade.json")),
     )?)?;
@@ -2927,11 +2984,14 @@ fn anchor_all_offline_writes_ots_requests_and_curl_lines_read_only() -> Result<(
     assert!(text.contains(&format!(
         "  curl -sf -H 'Accept: application/vnd.opentimestamps.v1' {OTS_BOB}/timestamp/{OTS_BOB_MSG_BITCOIN} > {d}/ots-{seeded}.otsr"
     )), "{text}");
-    assert!(text.contains(&format!(
+    assert!(
+        text.contains(&format!(
         "and, for the OpenTimestamps leg:\n  log_anchor --db {} import --policy {} --ots-dir {d}",
         db.display(),
         policy.display()
-    )), "{text}");
+    )),
+        "{text}"
+    );
     Ok(())
 }
 
@@ -2960,7 +3020,14 @@ fn import_ots_dir_stamp_round_trip() -> Result<()> {
     std::fs::create_dir(&dir)?;
     let nonce: [u8; 16] = hex::decode(OTS_PENDING_NONCE).unwrap().try_into().unwrap();
     // a: the fixture's own digest and nonce.
-    write_request(&dir, "a.bob", &h32(OTS_PENDING_DIGEST), &nonce, "bob", OTS_BOB);
+    write_request(
+        &dir,
+        "a.bob",
+        &h32(OTS_PENDING_DIGEST),
+        &nonce,
+        "bob",
+        OTS_BOB,
+    );
     std::fs::write(dir.join("a.bob.otsr"), ots_fx("response-bob.otsr"))?;
     // b: the chain head.
     write_request(&dir, "b.bob", &head, &[3u8; 16], "bob", OTS_BOB);
@@ -2977,40 +3044,84 @@ fn import_ots_dir_stamp_round_trip() -> Result<()> {
     std::fs::write(dir.join("e.bob.otsr"), b"<html>502</html>")?;
     let out = log_anchor(
         &db,
-        &["import", "--policy", &policy.to_string_lossy(), "--ots-dir", &dir.to_string_lossy()],
+        &[
+            "import",
+            "--policy",
+            &policy.to_string_lossy(),
+            "--ots-dir",
+            &dir.to_string_lossy(),
+        ],
     );
     assert_exit1(&out);
     let rows = ots_rows(&db);
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].proof, ots_fx("pending-bob.ots"), "byte-identical to the fixture");
+    assert_eq!(
+        rows[0].proof,
+        ots_fx("pending-bob.ots"),
+        "byte-identical to the fixture"
+    );
     assert_eq!(rows[0].subject, "digest");
     assert_eq!(rows[1].subject, "chain_head");
     assert_eq!(rows[1].subject_hash, head);
     assert_eq!(rows[2].subject, "digest");
     let text = stdout(&out);
-    assert!(text.contains(&format!(
-        "ots anchor #{} stored: digest {OTS_PENDING_DIGEST}\n  pending at {OTS_BOB} via bob",
-        rows[0].id
-    )), "{text}");
-    assert!(text.contains(&format!(
-        "ots anchor #{} stored: digest {}  (empty-ledger sentinel for policy_head)",
-        rows[2].id,
-        hex::encode(sentinel)
-    )), "{text}");
-    assert!(text.contains("import (ots): 3 stored, 0 upgraded, 0 still pending, 2 failed"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "ots anchor #{} stored: digest {OTS_PENDING_DIGEST}\n  pending at {OTS_BOB} via bob",
+            rows[0].id
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "ots anchor #{} stored: digest {}  (empty-ledger sentinel for policy_head)",
+            rows[2].id,
+            hex::encode(sentinel)
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains("import (ots): 3 stored, 0 upgraded, 0 still pending, 2 failed"),
+        "{text}"
+    );
     let err = stderr(&out);
-    assert!(err.contains("is the empty-ledger sentinel for policy_head; stored as a digest anchor"), "{err}");
-    assert!(err.contains("import d.bob.otsr: no response (the calendar request failed); not stored"), "{err}");
-    assert!(err.contains("import e.bob.otsr: not an OpenTimestamps calendar response ("), "{err}");
-    assert!(err.contains("2 OpenTimestamps response(s) failed to import"), "{err}");
+    assert!(
+        err.contains("is the empty-ledger sentinel for policy_head; stored as a digest anchor"),
+        "{err}"
+    );
+    assert!(
+        err.contains("import d.bob.otsr: no response (the calendar request failed); not stored"),
+        "{err}"
+    );
+    assert!(
+        err.contains("import e.bob.otsr: not an OpenTimestamps calendar response ("),
+        "{err}"
+    );
+    assert!(
+        err.contains("2 OpenTimestamps response(s) failed to import"),
+        "{err}"
+    );
     // A calendar the policy does not declare with that url is refused.
     let dir2 = temp.path().join("in2");
     std::fs::create_dir(&dir2)?;
-    write_request(&dir2, "x.carol", &[7u8; 32], &[7u8; 16], "carol", "https://carol.example");
+    write_request(
+        &dir2,
+        "x.carol",
+        &[7u8; 32],
+        &[7u8; 16],
+        "carol",
+        "https://carol.example",
+    );
     std::fs::write(dir2.join("x.carol.otsr"), ots_fx("response-bob.otsr"))?;
     let out = log_anchor(
         &db,
-        &["import", "--policy", &policy.to_string_lossy(), "--ots-dir", &dir2.to_string_lossy()],
+        &[
+            "import",
+            "--policy",
+            &policy.to_string_lossy(),
+            "--ots-dir",
+            &dir2.to_string_lossy(),
+        ],
     );
     assert_exit1(&out);
     assert!(stderr(&out).contains(&format!(
@@ -3044,30 +3155,62 @@ fn import_ots_dir_upgrade_binds_by_message() -> Result<()> {
         .unwrap();
     };
     write(up, OTS_BOB_MSG_BITCOIN);
-    std::fs::write(dir.join(format!("ots-{up}.otsr")), ots_fx("upgrade-bob.otsr"))?;
+    std::fs::write(
+        dir.join(format!("ots-{up}.otsr")),
+        ots_fx("upgrade-bob.otsr"),
+    )?;
     // Alice's message named under bob's URI: not a pending leaf of the row.
     write(wrong, OTS_ALICE_MSG_BITCOIN);
-    std::fs::write(dir.join(format!("ots-{wrong}.otsr")), ots_fx("upgrade-alice.otsr"))?;
+    std::fs::write(
+        dir.join(format!("ots-{wrong}.otsr")),
+        ots_fx("upgrade-alice.otsr"),
+    )?;
     write(empty, OTS_BOB_MSG_BITCOIN);
     std::fs::write(dir.join(format!("ots-{empty}.otsr")), b"")?;
     let out = log_anchor(&db, &["import", "--ots-dir", &dir.to_string_lossy()]);
     assert_ok(&out);
     let text = stdout(&out);
-    assert!(text.contains(&format!("ots anchor #{up} upgraded: digest attests Bitcoin block 449399")), "{text}");
-    assert!(text.contains("import (ots): 0 stored, 1 upgraded, 1 still pending, 0 failed"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "ots anchor #{up} upgraded: digest attests Bitcoin block 449399"
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains("import (ots): 0 stored, 1 upgraded, 1 still pending, 0 failed"),
+        "{text}"
+    );
     let err = stderr(&out);
-    assert!(err.contains(&format!("message is not a pending leaf of ots anchor #{wrong}; ignored")), "{err}");
-    assert!(err.contains(&format!("ots anchor #{empty}: still pending (empty response in ")), "{err}");
+    assert!(
+        err.contains(&format!(
+            "message is not a pending leaf of ots anchor #{wrong}; ignored"
+        )),
+        "{err}"
+    );
+    assert!(
+        err.contains(&format!(
+            "ots anchor #{empty}: still pending (empty response in "
+        )),
+        "{err}"
+    );
     let rows = ots_rows(&db);
     assert_eq!(rows[0].attestation, "bitcoin");
     assert_eq!(rows[0].bitcoin_height, Some(449399));
     assert_eq!(rows[1].attestation, "pending");
-    assert_eq!(rows[1].proof, ots_fx("bitcoin-stripped.ots"), "never merged");
+    assert_eq!(
+        rows[1].proof,
+        ots_fx("bitcoin-stripped.ots"),
+        "never merged"
+    );
     assert_eq!(rows[2].attestation, "pending");
     // Re-importing: the row is no longer pending.
     let out = log_anchor(&db, &["import", "--ots-dir", &dir.to_string_lossy()]);
     assert_ok(&out);
-    assert!(stderr(&out).contains(&format!("ots anchor #{up} is not pending;")), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains(&format!("ots anchor #{up} is not pending;")),
+        "{}",
+        stderr(&out)
+    );
     Ok(())
 }
 
@@ -3087,7 +3230,10 @@ fn anchor_all_with_ots_policy_without_feature_refuses_before_any_request() -> Re
         assert!(err.contains(
             "this build has no OpenTimestamps calendar client (rebuild with `--features tsa,ots`), or use the offline flow: `log_anchor anchor-all --policy <file> --offline-dir <dir>` then `log_anchor import --policy <file> --ots-dir <dir>`"
         ), "{err}");
-        assert!(!err.contains("anchoring "), "no request was attempted: {err}");
+        assert!(
+            !err.contains("anchoring "),
+            "no request was attempted: {err}"
+        );
     }
     let kernel = Kernel::open(&test_cfg(&db))?;
     assert!(!ots::ots_table_exists(&kernel.conn)?);
@@ -3104,24 +3250,44 @@ fn relabel_ots() -> Result<()> {
     add_test_event(&mut kernel, &cfg)?;
     add_test_event(&mut kernel, &cfg)?;
     drop(kernel);
-    let out = log_anchor(&db_path, &["relabel", "--ots", "--id", "1", "--subject", "digest"]);
+    let out = log_anchor(
+        &db_path,
+        &["relabel", "--ots", "--id", "1", "--subject", "digest"],
+    );
     assert_exit1(&out);
     assert!(stderr(&out).contains("no ots_anchors table in this database"));
     let kernel = Kernel::open(&cfg)?;
-    assert!(!ots::ots_table_exists(&kernel.conn)?, "relabel never creates it");
-    let h1: Vec<u8> =
-        kernel
-            .conn
-            .query_row("SELECT entry_hash FROM sealed_events WHERE id = 1", [], |r| r.get(0))?;
+    assert!(
+        !ots::ots_table_exists(&kernel.conn)?,
+        "relabel never creates it"
+    );
+    let h1: Vec<u8> = kernel.conn.query_row(
+        "SELECT entry_hash FROM sealed_events WHERE id = 1",
+        [],
+        |r| r.get(0),
+    )?;
     let h1: [u8; 32] = h1.try_into().unwrap();
     let mut kernel = kernel;
     // The legacy shape: pruned before the row existed (ledger_id NULL).
     kernel.enforce_retention_with_checkpoint(std::time::Duration::from_secs(0))?;
     drop(kernel);
-    let legacy = insert_ots(&db_path, AnchorSubject::ChainHead, OTS_BOB, &composed(&h1, 9), RECENT);
+    let legacy = insert_ots(
+        &db_path,
+        AnchorSubject::ChainHead,
+        OTS_BOB,
+        &composed(&h1, 9),
+        RECENT,
+    );
     let out = log_anchor(
         &db_path,
-        &["relabel", "--ots", "--id", &legacy.to_string(), "--subject", "digest"],
+        &[
+            "relabel",
+            "--ots",
+            "--id",
+            &legacy.to_string(),
+            "--subject",
+            "digest",
+        ],
     );
     assert_ok(&out);
     assert_eq!(
@@ -3139,22 +3305,48 @@ fn relabel_ots() -> Result<()> {
     )?;
     let h3: [u8; 32] = h3.try_into().unwrap();
     drop(kernel);
-    let truncated = insert_ots(&db_path, AnchorSubject::ChainHead, OTS_BOB, &composed(&h3, 8), RECENT);
+    let truncated = insert_ots(
+        &db_path,
+        AnchorSubject::ChainHead,
+        OTS_BOB,
+        &composed(&h3, 8),
+        RECENT,
+    );
     let kernel = Kernel::open(&cfg)?;
-    kernel
-        .conn
-        .execute("DELETE FROM sealed_events WHERE entry_hash = ?1", [h3.as_slice()])?;
+    kernel.conn.execute(
+        "DELETE FROM sealed_events WHERE entry_hash = ?1",
+        [h3.as_slice()],
+    )?;
     drop(kernel);
     let out = log_anchor(
         &db_path,
-        &["relabel", "--ots", "--id", &truncated.to_string(), "--subject", "digest"],
+        &[
+            "relabel",
+            "--ots",
+            "--id",
+            &truncated.to_string(),
+            "--subject",
+            "digest",
+        ],
     );
     assert_exit1(&out);
-    assert!(stderr(&out).contains("is newer than the retention cutoff — that is truncation or rollback"), "{}", stderr(&out));
+    assert!(
+        stderr(&out)
+            .contains("is newer than the retention cutoff — that is truncation or rollback"),
+        "{}",
+        stderr(&out)
+    );
     // Already a digest.
     let out = log_anchor(
         &db_path,
-        &["relabel", "--ots", "--id", &legacy.to_string(), "--subject", "digest"],
+        &[
+            "relabel",
+            "--ots",
+            "--id",
+            &legacy.to_string(),
+            "--subject",
+            "digest",
+        ],
     );
     assert_exit1(&out);
     assert!(stderr(&out).contains("is already a digest anchor"));

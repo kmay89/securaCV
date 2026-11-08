@@ -1541,9 +1541,16 @@ fn ots_proof_over_bundle_packaged() -> Result<()> {
     let id = insert_ots_row(&db, tsa::AnchorSubject::Digest, &proof);
     let kit = temp.path().join("kit");
     let out = run_court_export(&db, &bundle, &kit);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let file = format!("ots-{id:04}-digest.ots");
-    assert_eq!(std::fs::read(kit.join("anchors").join(&file))?, proof.to_bytes());
+    assert_eq!(
+        std::fs::read(kit.join("anchors").join(&file))?,
+        proof.to_bytes()
+    );
     let m = read_manifest(&kit)?;
     assert_eq!(m["ots_anchor_count"], 1);
     assert_eq!(m["ots_bundle_attestation"], "pending");
@@ -1580,9 +1587,14 @@ fn ots_proof_over_bundle_packaged() -> Result<()> {
         "- `anchors/{file}` — subject `digest`, OpenTimestamps proof via {OTS_BOB}; pending (not yet in a Bitcoin block) at {OTS_BOB} — **covers the evidence file's exact bytes**"
     )), "{custody}");
     let readme = std::fs::read_to_string(kit.join("README.md"))?;
-    assert!(readme.contains("OpenTimestamps proofs in `anchors/*.ots` tie the same digests to the Bitcoin blockchain"));
+    assert!(readme.contains(
+        "OpenTimestamps proofs in `anchors/*.ots` tie the same digests to the Bitcoin blockchain"
+    ));
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("  ots:       1 proof(s), 0 attest a Bitcoin block, 1 pending"), "{stdout}");
+    assert!(
+        stdout.contains("  ots:       1 proof(s), 0 attest a Bitcoin block, 1 pending"),
+        "{stdout}"
+    );
     // An OTS proof never silences the RFC 3161 warning.
     assert!(stdout.contains("WARNING: no RFC 3161 anchor covers"));
     for doc in [&verification, &custody, &readme] {
@@ -1602,21 +1614,32 @@ fn ots_proof_over_bundle_packaged() -> Result<()> {
 fn ots_excluded_rows() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let (db, bundle) = make_db_and_bundle(temp.path())?;
-    let sentinel = tsa::AnchorSubject::PolicyHead.empty_ledger_sentinel().unwrap();
+    let sentinel = tsa::AnchorSubject::PolicyHead
+        .empty_ledger_sentinel()
+        .unwrap();
     insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&sentinel, 1));
     insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&[9u8; 32], 2));
-    let gone = insert_ots_row(&db, tsa::AnchorSubject::ChainHead, &ots_proof(&[8u8; 32], 3));
+    let gone = insert_ots_row(
+        &db,
+        tsa::AnchorSubject::ChainHead,
+        &ots_proof(&[8u8; 32], 3),
+    );
     let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
     let broken = insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha, 4));
     {
         let kernel = Kernel::open(&test_cfg(&db))?;
-        kernel
-            .conn
-            .execute("UPDATE ots_anchors SET proof = x'00' WHERE id = ?1", [broken])?;
+        kernel.conn.execute(
+            "UPDATE ots_anchors SET proof = x'00' WHERE id = ?1",
+            [broken],
+        )?;
     }
     let kit = temp.path().join("kit");
     let out = run_court_export(&db, &bundle, &kit);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let m = read_manifest(&kit)?;
     assert_eq!(m["ots_anchor_count"], 0);
     assert_eq!(m["ots_bundle_attestation"], "none");
@@ -1627,8 +1650,14 @@ fn ots_excluded_rows() -> Result<()> {
     assert!(err.contains(&format!(
         "WARNING: ots anchor #{broken} excluded from the kit: its stored proof does not parse as an OpenTimestamps proof ("
     )), "{err}");
-    assert_eq!(err.matches("WARNING: ots anchor").count(), 2, "sentinel and foreign digest stay out silently: {err}");
-    assert!(!kit.join("anchors").exists() || std::fs::read_dir(kit.join("anchors"))?.next().is_none());
+    assert_eq!(
+        err.matches("WARNING: ots anchor").count(),
+        2,
+        "sentinel and foreign digest stay out silently: {err}"
+    );
+    assert!(
+        !kit.join("anchors").exists() || std::fs::read_dir(kit.join("anchors"))?.next().is_none()
+    );
     Ok(())
 }
 
@@ -1649,7 +1678,10 @@ fn kit_without_ots_rows_has_constant_zero_keys() -> Result<()> {
     let readme = std::fs::read_to_string(kit.join("README.md"))?;
     assert!(!readme.contains("OpenTimestamps"));
     let kernel = Kernel::open(&test_cfg(&db))?;
-    assert!(!ots::ots_table_exists(&kernel.conn)?, "court_export never creates it");
+    assert!(
+        !ots::ots_table_exists(&kernel.conn)?,
+        "court_export never creates it"
+    );
     Ok(())
 }
 
@@ -1663,12 +1695,24 @@ fn ots_client_reads_fixtures_and_our_proofs() -> Result<()> {
         return Ok(());
     }
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ots");
-    for f in ["pending.ots", "bitcoin.ots", "pending-bob.ots", "genesis.ots"] {
+    for f in [
+        "pending.ots",
+        "bitcoin.ots",
+        "pending-bob.ots",
+        "genesis.ots",
+    ] {
         let o = Command::new("ots").arg("info").arg(dir.join(f)).output()?;
-        assert!(o.status.success(), "{f}: {}", String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success(),
+            "{f}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
         if f == "bitcoin.ots" {
             let text = String::from_utf8_lossy(&o.stdout);
-            assert!(text.contains("BitcoinBlockHeaderAttestation(449399)"), "{text}");
+            assert!(
+                text.contains("BitcoinBlockHeaderAttestation(449399)"),
+                "{text}"
+            );
             assert!(text.contains("https://alice.btc.calendar.opentimestamps.org"));
             assert!(text.contains("https://bob.btc.calendar.opentimestamps.org"));
         }

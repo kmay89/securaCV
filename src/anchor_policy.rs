@@ -337,7 +337,10 @@ fn validate_ots(ots: &OtsPolicy, tsas: &[TsaEntry], prefix: &str) -> Result<()> 
             bail!("{prefix}duplicate calendar name '{}'", c.name);
         }
         if tsas.iter().any(|t| t.name == c.name) {
-            bail!("{prefix}name '{}' is used by both a TSA and a calendar", c.name);
+            bail!(
+                "{prefix}name '{}' is used by both a TSA and a calendar",
+                c.name
+            );
         }
         let scheme_ok =
             c.url.starts_with("https://") || (c.allow_http && c.url.starts_with("http://"));
@@ -1545,7 +1548,13 @@ mod tests {
         .unwrap()
     }
 
-    fn passed(id: i64, subject: AnchorSubject, hash: u8, bucket: u64, state: OtsRowState) -> OtsPassed {
+    fn passed(
+        id: i64,
+        subject: AnchorSubject,
+        hash: u8,
+        bucket: u64,
+        state: OtsRowState,
+    ) -> OtsPassed {
         OtsPassed {
             id,
             subject,
@@ -1564,13 +1573,43 @@ mod tests {
         ];
         let rows = vec![
             // The current chain head, confirmed at two heights: lowest wins.
-            passed(1, AnchorSubject::ChainHead, 1, 600, OtsRowState::Confirmed { height: 12 }),
-            passed(2, AnchorSubject::ChainHead, 1, 600, OtsRowState::Confirmed { height: 10 }),
+            passed(
+                1,
+                AnchorSubject::ChainHead,
+                1,
+                600,
+                OtsRowState::Confirmed { height: 12 },
+            ),
+            passed(
+                2,
+                AnchorSubject::ChainHead,
+                1,
+                600,
+                OtsRowState::Confirmed { height: 10 },
+            ),
             // An older chain head confirmed in a NEWER bucket: the current head still wins.
-            passed(3, AnchorSubject::ChainHead, 2, 1200, OtsRowState::Confirmed { height: 11 }),
+            passed(
+                3,
+                AnchorSubject::ChainHead,
+                2,
+                1200,
+                OtsRowState::Confirmed { height: 11 },
+            ),
             // Policy head: two historical hashes confirmed, the head itself pending.
-            passed(4, AnchorSubject::PolicyHead, 7, 600, OtsRowState::Confirmed { height: 5 }),
-            passed(5, AnchorSubject::PolicyHead, 8, 1200, OtsRowState::Confirmed { height: 6 }),
+            passed(
+                4,
+                AnchorSubject::PolicyHead,
+                7,
+                600,
+                OtsRowState::Confirmed { height: 5 },
+            ),
+            passed(
+                5,
+                AnchorSubject::PolicyHead,
+                8,
+                1200,
+                OtsRowState::Confirmed { height: 6 },
+            ),
             passed(6, AnchorSubject::PolicyHead, 9, 1800, OtsRowState::Pending),
         ];
         let cov = evaluate_ots(&p, &heads, &rows);
@@ -1605,10 +1644,22 @@ mod tests {
         ];
         let mut rows = vec![
             passed(1, AnchorSubject::ChainHead, 1, 600, OtsRowState::Pending),
-            passed(2, AnchorSubject::ChainHead, 1, 600, OtsRowState::Unchecked { height: 3 }),
+            passed(
+                2,
+                AnchorSubject::ChainHead,
+                1,
+                600,
+                OtsRowState::Unchecked { height: 3 },
+            ),
             passed(3, AnchorSubject::ChainHead, 1, 600, OtsRowState::Pending),
             // A confirmed DIGEST row over the chain head's hash never counts.
-            passed(4, AnchorSubject::Digest, 1, 600, OtsRowState::Confirmed { height: 3 }),
+            passed(
+                4,
+                AnchorSubject::Digest,
+                1,
+                600,
+                OtsRowState::Confirmed { height: 3 },
+            ),
         ];
         rows.push(OtsPassed {
             id: 5,

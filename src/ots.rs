@@ -1069,7 +1069,11 @@ pub fn insert_ots_anchor(
     proof: &Proof,
 ) -> Result<i64> {
     if proof.digest != *hash {
-        bail!("proof covers {} but the row would claim {}", hex::encode(proof.digest), hex::encode(hash));
+        bail!(
+            "proof covers {} but the row would claim {}",
+            hex::encode(proof.digest),
+            hex::encode(hash)
+        );
     }
     let state = proof.state();
     let Some(column) = state.column() else {
@@ -1078,7 +1082,10 @@ pub fn insert_ots_anchor(
     refuse_malformed(proof)?;
     let bytes = proof.to_bytes();
     if bytes.len() > OTS_MAX_FILE_BYTES {
-        bail!("proof is {} bytes (limit {OTS_MAX_FILE_BYTES})", bytes.len());
+        bail!(
+            "proof is {} bytes (limit {OTS_MAX_FILE_BYTES})",
+            bytes.len()
+        );
     }
     ensure_ots_table(conn)?;
     let ledger_id = tsa::ledger_position(conn, subject, hash)?;
@@ -1127,7 +1134,10 @@ pub fn record_ots_upgrade(
     refuse_malformed(new)?;
     let bytes = new.to_bytes();
     if bytes.len() > OTS_MAX_FILE_BYTES {
-        bail!("proof is {} bytes (limit {OTS_MAX_FILE_BYTES})", bytes.len());
+        bail!(
+            "proof is {} bytes (limit {OTS_MAX_FILE_BYTES})",
+            bytes.len()
+        );
     }
     let changed = conn.execute(
         "UPDATE ots_anchors SET proof = ?2, attestation = 'bitcoin', bitcoin_height = ?3, upgraded_bucket_start = ?4 WHERE id = ?1 AND attestation = 'pending'",
@@ -1380,7 +1390,12 @@ pub fn accept_response(node: &Node, calendar_name: &str, calendar_url: &str) -> 
 /// The two calendar calls, behind a trait so the leg is tested offline.
 pub trait CalendarTransport {
     /// POST {calendar_url}/digest; Ok(body) on 200.
-    fn submit(&self, calendar_url: &str, commitment: &[u8; 32], allow_http: bool) -> Result<Vec<u8>>;
+    fn submit(
+        &self,
+        calendar_url: &str,
+        commitment: &[u8; 32],
+        allow_http: bool,
+    ) -> Result<Vec<u8>>;
     /// GET {uri}/timestamp/{hex(msg)}; Ok(None) on 404.
     fn fetch(&self, uri: &str, msg: &[u8], allow_http: bool) -> Result<Option<Vec<u8>>>;
 }
@@ -1434,7 +1449,12 @@ impl UreqCalendar {
 
 #[cfg(feature = "ots")]
 impl CalendarTransport for UreqCalendar {
-    fn submit(&self, calendar_url: &str, commitment: &[u8; 32], allow_http: bool) -> Result<Vec<u8>> {
+    fn submit(
+        &self,
+        calendar_url: &str,
+        commitment: &[u8; 32],
+        allow_http: bool,
+    ) -> Result<Vec<u8>> {
         Self::scheme_ok(calendar_url, allow_http)?;
         let url = format!("{calendar_url}/digest");
         let response = Self::agent()
@@ -1491,15 +1511,41 @@ pub struct OtsSubmitFailure {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OtsLegEvent {
     /// Before each upgrade GET.
-    Upgrading { id: i64, uri: String },
-    Upgraded { id: i64, subject: String, height: u64 },
-    StillPending { id: i64, uri: String },
-    AnsweredWithoutBitcoin { id: i64, uri: String },
-    UpgradeFailed { id: i64, uri: String, error: String },
-    BeyondHorizon { id: i64 },
-    NotPolledUndeclared { id: i64, uri: String },
+    Upgrading {
+        id: i64,
+        uri: String,
+    },
+    Upgraded {
+        id: i64,
+        subject: String,
+        height: u64,
+    },
+    StillPending {
+        id: i64,
+        uri: String,
+    },
+    AnsweredWithoutBitcoin {
+        id: i64,
+        uri: String,
+    },
+    UpgradeFailed {
+        id: i64,
+        uri: String,
+        error: String,
+    },
+    BeyondHorizon {
+        id: i64,
+    },
+    NotPolledUndeclared {
+        id: i64,
+        uri: String,
+    },
     /// Before each submission (index into `planned`, calendar name and url).
-    Stamping { planned: usize, calendar: String, url: String },
+    Stamping {
+        planned: usize,
+        calendar: String,
+        url: String,
+    },
     /// Index into `OtsLegReport.stored`.
     Stored(usize),
     /// Index into `OtsLegReport.submit_failures`.
@@ -1610,12 +1656,13 @@ pub fn run_ots_leg(
                 id,
                 uri: uri.clone(),
             });
-            let outcome = transport
-                .fetch(&uri, &msg, entry.allow_http)
-                .and_then(|body| match body {
-                    None => Ok(None),
-                    Some(body) => apply_upgrade(conn, &row, now, &uri, &msg, &body).map(Some),
-                });
+            let outcome =
+                transport
+                    .fetch(&uri, &msg, entry.allow_http)
+                    .and_then(|body| match body {
+                        None => Ok(None),
+                        Some(body) => apply_upgrade(conn, &row, now, &uri, &msg, &body).map(Some),
+                    });
             match outcome {
                 Ok(None) => {
                     rep.still_pending.push((id, uri.clone()));

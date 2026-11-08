@@ -66,13 +66,13 @@ pub mod ingest;
 pub mod inspect;
 pub mod log;
 pub mod module_runtime;
+pub mod ots;
 #[cfg(feature = "alert-relay")]
 pub mod relay;
 pub mod storage;
 pub mod storage_health;
 pub mod surface;
 pub mod transport;
-pub mod ots;
 pub mod tsa;
 pub mod vault;
 pub mod verify;
@@ -8760,7 +8760,11 @@ mod tests {
         assert!(!crate::tsa::anchor_table_exists(&kernel.conn)?);
         kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
         let checkpoints = checkpoint_rows(&kernel)?;
-        assert_eq!(checkpoints.len(), 2, "one OTS-anchored head + the real cutoff");
+        assert_eq!(
+            checkpoints.len(),
+            2,
+            "one OTS-anchored head + the real cutoff"
+        );
         assert_eq!((checkpoints[0].1, checkpoints[0].2), (2, h2));
         assert_eq!((checkpoints[1].1, checkpoints[1].2), (3, h3));
         assert!(!crate::tsa::hash_in_history(&kernel.conn, &h1)?);

@@ -492,7 +492,8 @@ fn openssl_missing_warning(policy_path: &Path) {
 /// Refused before the first request when a policy carries `ots` but this
 /// build has no calendar client: a run does every leg or nothing.
 #[cfg_attr(not(feature = "tsa"), allow(dead_code))]
-const NO_OTS_CLIENT: &str = "this build has no OpenTimestamps calendar client (rebuild with `--features tsa,ots`), \
+const NO_OTS_CLIENT: &str =
+    "this build has no OpenTimestamps calendar client (rebuild with `--features tsa,ots`), \
      or use the offline flow: `log_anchor anchor-all --policy <file> --offline-dir <dir>` then \
      `log_anchor import --policy <file> --ots-dir <dir>`";
 
@@ -1121,8 +1122,9 @@ fn import_ots_request(
     if body.is_empty() {
         bail!("import {response_name}: no response (the calendar request failed); not stored");
     }
-    let node = ots::parse_timestamp(&body, &commitment)
-        .map_err(|e| anyhow!("import {response_name}: not an OpenTimestamps calendar response ({e})"))?;
+    let node = ots::parse_timestamp(&body, &commitment).map_err(|e| {
+        anyhow!("import {response_name}: not an OpenTimestamps calendar response ({e})")
+    })?;
     ots::accept_response(&node, &request.calendar, &request.calendar_url)
         .map_err(|e| anyhow!("import {response_name}: {e}"))?;
     let proof = ots::Proof::compose(&hash, &nonce, node)
@@ -1761,7 +1763,9 @@ fn verify_ots_rows(
         } else if let ots::ProofState::Bitcoin { height } = proof.state() {
             unchecked += 1;
             let why = match headers {
-                None => "merkle root NOT checked — re-run with --bitcoin-headers <file>".to_string(),
+                None => {
+                    "merkle root NOT checked — re-run with --bitcoin-headers <file>".to_string()
+                }
                 Some(h) => format!("no header for block {height} in {}", h.path),
             };
             println!(
@@ -2323,10 +2327,8 @@ fn verify(
         print_policy_note(path, p.ots.is_some());
         let breaches = clock.breaches;
         let ots_short = if ots_required { ots_unconfirmed } else { 0 };
-        let unsatisfied = uncovered > 0
-            || (require_current && not_current > 0)
-            || breaches > 0
-            || ots_short > 0;
+        let unsatisfied =
+            uncovered > 0 || (require_current && not_current > 0) || breaches > 0 || ots_short > 0;
         if unsatisfied {
             let current_part = if require_current {
                 format!(", {not_current} not current")
