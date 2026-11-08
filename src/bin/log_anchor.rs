@@ -1826,15 +1826,25 @@ fn verify(
     require_current: bool,
     bitcoin_headers: Option<&Path>,
 ) -> Result<()> {
+    // The only Bitcoin source verify reads: the operator's header file,
+    // loaded (and proof-of-work sanity-checked) before any output.
+    let headers = bitcoin_headers.map(ots::load_headers).transpose()?;
     let policy = match policy_path {
         Some(path) => {
+            let p = anchor_policy::load(path)?;
+            if p.ots.as_ref().is_some_and(|o| o.required) && headers.is_none() {
+                bail!(
+                    "verify --policy requires --bitcoin-headers <file> when the policy's ots leg is \
+                     required (a Bitcoin attestation is only a block height until its merkle root is \
+                     checked against a header)"
+                );
+            }
             if !anchor_policy::openssl_available() {
                 bail!(
                     "verify --policy requires the openssl CLI to check countersignatures under \
                      each TSA's CA (not found on PATH)"
                 );
             }
-            let p = anchor_policy::load(path)?;
             for entry in &p.tsas {
                 ca_path_checked(entry)?;
             }
@@ -1842,18 +1852,6 @@ fn verify(
         }
         None => None,
     };
-    // The only Bitcoin source verify reads: the operator's header file,
-    // loaded (and proof-of-work sanity-checked) before any output.
-    let headers = bitcoin_headers.map(ots::load_headers).transpose()?;
-    if let Some((p, _)) = &policy {
-        if p.ots.as_ref().is_some_and(|o| o.required) && headers.is_none() {
-            bail!(
-                "verify --policy requires --bitcoin-headers <file> when the policy's ots leg is \
-                 required (a Bitcoin attestation is only a block height until its merkle root is \
-                 checked against a header)"
-            );
-        }
-    }
     let checks_countersignature = !cas.is_empty() || policy.is_some();
 
     // A database no writer has touched has no anchors table; it reads as
