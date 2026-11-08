@@ -2782,6 +2782,14 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// signing and the insert run under one write lock (`BEGIN IMMEDIATE`,
     /// or a savepoint inside a caller's transaction), so a second writer
     /// extends this row instead of forking from the head it read.
+    ///
+    /// The row stores the approvals the receipt records —
+    /// [`crate::break_glass::recorded_approvals`]: those over the receipt's
+    /// own request hash, in presentation order — the same set
+    /// [`crate::break_glass::BreakGlass::authorize`] commits. An approval over
+    /// another hash (a stale file handed in beside the right ones) never
+    /// counted toward the quorum and is not stored, so a caller may pass
+    /// everything it was handed. Redemption and unseal rows pass `&[]`.
     pub fn append_break_glass_receipt(
         &mut self,
         receipt: &crate::break_glass::BreakGlassReceipt,
@@ -2791,7 +2799,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             let created_at = now_s()? as i64;
             let prev_hash = kernel.last_break_glass_hash_or_zero()?;
             let payload_json = serde_json::to_string(receipt)?;
-            let approvals_json = serde_json::to_string(approvals)?;
+            let recorded =
+                crate::break_glass::recorded_approvals(&receipt.request_hash, approvals);
+            let approvals_json = serde_json::to_string(&recorded)?;
 
             let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
             let key_material = kernel.signature_key_material();
