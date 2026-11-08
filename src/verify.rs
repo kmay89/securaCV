@@ -1300,6 +1300,18 @@ mod tests {
             classify_warning("timeline audit could not run: boom"),
             WarningKind::AuditUnavailable
         );
+        assert_eq!(
+            classify_warning(
+                "anchor #3: row is malformed (subject_hash is not a BLOB); run log_anchor verify"
+            ),
+            WarningKind::AnchorAnomaly
+        );
+        assert_eq!(
+            classify_warning(
+                "anchor #4: stored token does not parse as an RFC 3161 token; run log_anchor verify"
+            ),
+            WarningKind::AnchorAnomaly
+        );
         assert_eq!(classify_warning("something else"), WarningKind::Other);
     }
 

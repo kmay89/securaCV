@@ -393,13 +393,16 @@ fn main() -> Result<()> {
         print_warnings(&anchor_warnings);
     }
     if args.strict && !report.warnings.is_empty() {
-        return Err(anyhow::anyhow!(
-            "verification passed but --strict treats {} warning(s) as failure ({} timeline, {} \
-             anchor)",
+        // Exit 2, the same code the --json path uses for --strict warnings, so
+        // a caller can tell "warnings promoted" from "chain failed" (exit 1).
+        eprintln!(
+            "Error: verification passed but --strict treats {} warning(s) as failure ({} \
+             timeline, {} anchor)",
             report.warnings.len(),
             timeline_warnings.len(),
             anchor_warnings.len()
-        ));
+        );
+        std::process::exit(2);
     }
 
     // B3 honesty: state what the verdict actually rests on. A self-anchored
