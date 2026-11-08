@@ -1,0 +1,656 @@
+{
+  "schema": "securacv-compliance-map:v1",
+  "regime": {
+    "id": "part11",
+    "title": "21 CFR Part 11 — electronic records and electronic signatures (US FDA)",
+    "kind": "regulation",
+    "determination_by": "the regulated organization, and the FDA on inspection",
+    "source": {
+      "citation": "21 CFR Part 11",
+      "access": "blocked",
+      "note": "ecfr.gov, govinfo.gov and law.cornell.edu were unreachable when this map was written; clause numbers follow common citation and are unverified; requirement text is our paraphrase"
+    }
+  },
+  "last_reviewed": "2026-11",
+  "rows": [
+    {
+      "id": "11.10(a)-integrity",
+      "clause": "11.10(a)",
+      "clause_verified": false,
+      "requirement": "Systems are validated for accuracy and reliability, and can tell an invalid or altered record from a good one.",
+      "mechanism": "Hash-chained, device-signed ledgers, checked by three independent implementations (Rust, JS, Python).",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "verify_sealed_log_accepts_good_chain_and_rejects_tampering"
+        },
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "full_verify_flags_tampered_payload_without_err"
+        },
+        {
+          "kind": "code",
+          "path": "src/log/mod.rs",
+          "symbol": "pub fn hash_entry"
+        },
+        {
+          "kind": "code",
+          "path": "custom_components/securacv/kernel_verify.py",
+          "symbol": "def hash_entry"
+        }
+      ],
+      "limits": "The host itself is out of scope (docs/root_paradox.md).",
+      "alcoa": [
+        "Accurate"
+      ]
+    },
+    {
+      "id": "11.10(a)-validation",
+      "clause": "11.10(a)",
+      "clause_verified": false,
+      "requirement": "The system is validated for its intended use.",
+      "mechanism": "The organization validates the system for its intended use. SecuraCV supplies the methodology and its test suites.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/compliance/VERIFICATION_METHODOLOGY.md"
+        }
+      ],
+      "operator_action": "Validate the deployment for its intended use and keep the record."
+    },
+    {
+      "id": "11.10(b)",
+      "clause": "11.10(b)",
+      "clause_verified": false,
+      "requirement": "Accurate and complete copies of records can be produced in human-readable and electronic form for inspection.",
+      "mechanism": "export_events bundles; the court kit (verbatim bundle, digests, rendered custody record); render_human.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/court_export.rs",
+          "test": "assembles_kit_and_manifest_hashes_are_correct"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "render_human_is_deterministic_and_carries_the_triad"
+        },
+        {
+          "kind": "code",
+          "path": "src/bin/court_export.rs",
+          "symbol": "fn write_custody_record"
+        }
+      ],
+      "limits": "Events are bucketed claims; raw media is reachable only through break-glass."
+    },
+    {
+      "id": "11.10(c)",
+      "clause": "11.10(c)",
+      "clause_verified": false,
+      "requirement": "Records are protected so they can be accurately and readily retrieved throughout the retention period.",
+      "mechanism": "Receipt ledgers are never pruned. Retention deletes only sealed_events up to a checkpoint (src/storage.rs:786).",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/evidence_lifecycle.md"
+        },
+        {
+          "kind": "procedure",
+          "path": "docs/scheduled_exports.md",
+          "anchor": "systemd-timer-recommended"
+        }
+      ],
+      "operator_action": "Set the retention period; back up the database and the high-water mark off-device.",
+      "limits": "Event records are deleted by retention by design."
+    },
+    {
+      "id": "11.10(d)-disclosure",
+      "clause": "11.10(d)",
+      "clause_verified": false,
+      "requirement": "System access is limited to authorized individuals.",
+      "mechanism": "An n-of-m trustee quorum, re-derived at the gate, authorizes every disclosure; the API takes capability and paired tokens.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "invalid_signature_does_not_count_toward_quorum"
+        },
+        {
+          "kind": "test",
+          "path": "tests/api_capability_tokens.rs",
+          "test": "api_rejects_missing_token"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub fn authorize("
+        }
+      ]
+    },
+    {
+      "id": "11.10(d)-system",
+      "clause": "11.10(d)",
+      "clause_verified": false,
+      "requirement": "System access is limited to authorized individuals.",
+      "mechanism": "Host and database access are the deployment's. There is no role model in the software.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "5-facility-management-and-operational-controls"
+        },
+        {
+          "kind": "tracker",
+          "path": "docs/security/ENTERPRISE_CUSTODY.md",
+          "anchor": "6-regulated-market-assurance-tier"
+        }
+      ],
+      "operator_action": "Restrict host accounts, physical access and the database key.",
+      "limits": "No role-based access control exists in the software (tracked as Missing)."
+    },
+    {
+      "id": "11.10(e)-trail",
+      "clause": "11.10(e)",
+      "clause_verified": false,
+      "requirement": "Secure, computer-generated, time-stamped audit trails record operator entries and actions without obscuring earlier entries.",
+      "mechanism": "Break-glass, export, policy-change and clock-provenance ledgers: append-only, hash-chained, device-signed; the named operator is recorded in break-glass and self-export context.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "authenticated_history_rejects_forged_era_and_tampered_approvals"
+        },
+        {
+          "kind": "test",
+          "path": "tests/court_export.rs",
+          "test": "tampered_interior_receipt_row_is_refused"
+        },
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "clock_provenance_tampered_ledger_fails_the_verdict"
+        },
+        {
+          "kind": "code",
+          "path": "src/lib.rs",
+          "symbol": "pub fn append_break_glass_receipt("
+        }
+      ],
+      "limits": "API exports name a credential class, not a person.",
+      "alcoa": [
+        "Attributable",
+        "Complete"
+      ]
+    },
+    {
+      "id": "11.10(e)-time",
+      "clause": "11.10(e)",
+      "clause_verified": false,
+      "requirement": "Audit-trail entries carry the date and time of the action.",
+      "mechanism": "Audit-trail times are 10-minute buckets. Precise time exists only on anchoring acts (a TSA's genTime).",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "spec/invariants.md",
+          "anchor": "5-invariant-iii--metadata-minimization-is-structural"
+        }
+      ],
+      "reason": "Sub-bucket times are never recorded, by design (Invariant III); whether bucket-level date and time is acceptable is the regulated organization's determination."
+    },
+    {
+      "id": "11.10(e)-tail",
+      "clause": "11.10(e)",
+      "clause_verified": false,
+      "requirement": "Audit trails cannot be silently shortened.",
+      "mechanism": "An external signed high-water mark fails closed on tail truncation, rollback or wipe.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "full_verify_fails_closed_on_tail_truncation"
+        },
+        {
+          "kind": "code",
+          "path": "src/verify_runner.rs",
+          "symbol": "pub fn run_full_verify_with_high_water_mark("
+        }
+      ],
+      "operator_action": "Set SECURACV_HWM_PATH on external media."
+    },
+    {
+      "id": "11.10(e)-tree",
+      "clause": "11.10(e)",
+      "clause_verified": false,
+      "requirement": "Audit trails are protected against undetected alteration.",
+      "mechanism": "A Merkle tree and a signed checkpoint over every ledger.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "4-layer-3--anchoring-and-witnessing-the-spine"
+        }
+      ],
+      "depends_on": [
+        "item3:F"
+      ]
+    },
+    {
+      "id": "11.10(e)-review",
+      "clause": "11.10(e)",
+      "clause_verified": false,
+      "requirement": "Audit trails are available for agency review and copying.",
+      "mechanism": "Periodic review of receipts, policy history and log_verify, recorded in the organization's record store.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "4-evidence-life-cycle-operational-requirements"
+        }
+      ],
+      "operator_action": "Review on a cadence and record it (CPS 4.10).",
+      "limits": "A signed review attestation is the next row."
+    },
+    {
+      "id": "11.10(e)-review-attest",
+      "clause": "11.10(e)",
+      "clause_verified": false,
+      "requirement": "Audit-trail review is itself recorded.",
+      "mechanism": "log_review attest: a reviewer-signed attestation through a tree size.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "4-layer-3--anchoring-and-witnessing-the-spine"
+        }
+      ],
+      "depends_on": [
+        "item3:H"
+      ]
+    },
+    {
+      "id": "11.10(f)",
+      "clause": "11.10(f)",
+      "clause_verified": false,
+      "requirement": "Operational system checks enforce the permitted sequencing of steps and events.",
+      "mechanism": "The request hash is re-derived at the gate; the token is burned before decryption; the token is single use and replay is refused.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "tampered_token_file_is_refused_before_anything_is_recorded"
+        },
+        {
+          "kind": "test",
+          "path": "tests/export_events_authorized.rs",
+          "test": "export_replay_of_token_file_is_refused_across_invocations"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/session.rs",
+          "test": "a_redeemed_request_does_not_reopen_inside_its_bucket"
+        },
+        {
+          "kind": "code",
+          "path": "src/lib.rs",
+          "symbol": "fn redeem_token_locked("
+        }
+      ]
+    },
+    {
+      "id": "11.10(f)-ceremony",
+      "clause": "11.10(f)",
+      "clause_verified": false,
+      "requirement": "Operational system checks enforce the permitted sequencing of steps and events.",
+      "mechanism": "Scripted ceremony steps enforced in order.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "34-ceremony-mode"
+        }
+      ],
+      "depends_on": [
+        "item4:R"
+      ]
+    },
+    {
+      "id": "11.10(g)",
+      "clause": "11.10(g)",
+      "clause_verified": false,
+      "requirement": "Authority checks ensure only authorized individuals can use the system, sign a record or perform the operation at hand.",
+      "mechanism": "Quorum consent per request and per policy change; token-gated export.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "valid_signature_counts_toward_quorum"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/cli.rs",
+          "test": "policy_set_mutation_requires_and_accepts_current_quorum_approvals"
+        },
+        {
+          "kind": "test",
+          "path": "tests/export_events_authorized.rs",
+          "test": "export_fails_without_valid_token"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub fn count_valid_distinct_policy_change_approvals("
+        }
+      ]
+    },
+    {
+      "id": "11.10(h)",
+      "clause": "11.10(h)",
+      "clause_verified": false,
+      "requirement": "Device checks determine, as appropriate, the validity of the source of data input or operational instructions.",
+      "mechanism": "The organization validates its input devices and adapters. Each event records its input tier; that is a recorded label, not a validity check (capture_provenance map).",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/compliance/CAPTURE_PROVENANCE.md"
+        }
+      ],
+      "operator_action": "Validate cameras, adapters and bridges as part of system validation.",
+      "limits": "The kernel does not authenticate the camera."
+    },
+    {
+      "id": "11.10(i)",
+      "clause": "11.10(i)",
+      "clause_verified": false,
+      "requirement": "People who develop, maintain or use the system have the education, training and experience for their tasks.",
+      "mechanism": "A person must do this; the CPS records who holds which role.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "5-facility-management-and-operational-controls"
+        }
+      ],
+      "operator_action": "Train the people who operate, approve and review."
+    },
+    {
+      "id": "11.10(j)",
+      "clause": "11.10(j)",
+      "clause_verified": false,
+      "requirement": "Written policies hold individuals accountable for actions taken under their electronic signatures.",
+      "mechanism": "A Custody Practice Statement template.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "0-how-to-use-this-template"
+        }
+      ],
+      "operator_action": "Adopt written accountability policies for actions taken under one's signature."
+    },
+    {
+      "id": "11.10(k)",
+      "clause": "11.10(k)",
+      "clause_verified": false,
+      "requirement": "System documentation is controlled in its distribution, access, use and revision.",
+      "mechanism": "Versioned docs in git; the kernel version in every kit's system description.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/court_export.md",
+          "anchor": "what-the-kit-contains"
+        }
+      ],
+      "operator_action": "Control the revision and distribution of the deployment's own procedures."
+    },
+    {
+      "id": "11.30",
+      "clause": "11.30",
+      "clause_verified": false,
+      "requirement": "Open systems add controls such as encryption and digital signatures to protect records from their point of creation to their receipt.",
+      "mechanism": "Disclosure files carry Ed25519 signatures either way (11.70 row).",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "6-technical-security-controls"
+        }
+      ],
+      "operator_action": "Determine whether the deployment is open or closed, and apply the added controls where it is open."
+    },
+    {
+      "id": "11.50(a)",
+      "clause": "11.50(a)",
+      "clause_verified": false,
+      "requirement": "Signed records show the signer's printed name, the date and time of signing, and the meaning of the signature.",
+      "mechanism": "render_human prints name, date/time and meaning.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "render_human_is_deterministic_and_carries_the_triad"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub fn render_human("
+        }
+      ],
+      "limits": "Date/time is the 10-minute bucket; a trustee's printed name is the roster id."
+    },
+    {
+      "id": "11.50(b)",
+      "clause": "11.50(b)",
+      "clause_verified": false,
+      "requirement": "The name, date/time and meaning appear in every human-readable form of the record.",
+      "mechanism": "The same rendering in break_glass receipts --verbose and in the kit's custody record, with forged lines neutralized.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "render_human_neutralizes_forged_lines_from_foreign_records"
+        },
+        {
+          "kind": "test",
+          "path": "tests/court_export.rs",
+          "test": "assembles_kit_and_manifest_hashes_are_correct"
+        },
+        {
+          "kind": "code",
+          "path": "src/bin/court_export.rs",
+          "symbol": "fn write_custody_record"
+        }
+      ]
+    },
+    {
+      "id": "11.70",
+      "clause": "11.70",
+      "clause_verified": false,
+      "requirement": "Signatures are linked to their records so they cannot be removed, copied or transferred to falsify another record.",
+      "mechanism": "Per-domain signatures over entry and request hashes; approvals bound by approvals_commitment.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "cross_domain_signature_rejected_as_approval"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "receipt_context_binding_round_trip_and_tamper"
+        },
+        {
+          "kind": "code",
+          "path": "src/crypto/signatures.rs",
+          "symbol": "pub fn domain_separated_hash("
+        }
+      ]
+    },
+    {
+      "id": "11.100(a)",
+      "clause": "11.100(a)",
+      "clause_verified": false,
+      "requirement": "Each electronic signature is unique to one individual and is not reused by or reassigned to anyone else.",
+      "mechanism": "One key per trustee; approvals are deduplicated by key.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CEREMONY_RUNBOOK.md",
+          "anchor": "c1--quorum-issuance-bootstrap"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "policy_change_count_uses_current_quorum_and_dedupes_by_key"
+        }
+      ],
+      "operator_action": "One key per person, never shared or reassigned."
+    },
+    {
+      "id": "11.100(b)",
+      "clause": "11.100(b)",
+      "clause_verified": false,
+      "requirement": "The organization verifies an individual's identity before establishing or assigning an electronic signature.",
+      "mechanism": "Enrollment read-back in the runbook.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CEREMONY_RUNBOOK.md",
+          "anchor": "c1--quorum-issuance-bootstrap"
+        }
+      ],
+      "operator_action": "Verify identity before enrolling a trustee key."
+    },
+    {
+      "id": "11.100(b)-attest",
+      "clause": "11.100(b)",
+      "clause_verified": false,
+      "requirement": "The organization verifies an individual's identity before establishing or assigning an electronic signature.",
+      "mechanism": "Enrollment attestation of hardware keys.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "37-trustee-credentials"
+        }
+      ],
+      "depends_on": [
+        "item4:P"
+      ]
+    },
+    {
+      "id": "11.100(c)",
+      "clause": "11.100(c)",
+      "clause_verified": false,
+      "requirement": "Before use, the organization tells the agency in writing that its electronic signatures are intended as the legally binding equivalent of handwritten ones.",
+      "mechanism": "SecuraCV makes no statement to any agency.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/compliance/README.md",
+          "anchor": "what-the-operator-decides"
+        }
+      ],
+      "operator_action": "Where the predicate rule calls for it, file the statement 11.100(c) describes."
+    },
+    {
+      "id": "11.200(a)",
+      "clause": "11.200(a)",
+      "clause_verified": false,
+      "requirement": "Non-biometric signatures use at least two distinct identification components and are used only by their genuine owners.",
+      "mechanism": "Passphrase-wrapped trustee keys and touch-gated hardware keys.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "37-trustee-credentials"
+        }
+      ],
+      "limits": "Today a trustee key file alone signs.",
+      "depends_on": [
+        "item4:O",
+        "item4:P"
+      ]
+    },
+    {
+      "id": "11.200(b)",
+      "clause": "11.200(b)",
+      "clause_verified": false,
+      "requirement": "Biometric signatures are designed so only their genuine owners can use them.",
+      "mechanism": "No biometric signature exists in SecuraCV.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "docs/security/PROVENANCE_INTEROP.md",
+          "anchor": "3-what-we-deliberately-do-not-adopt"
+        }
+      ],
+      "reason": "Face and voice verification of trustees is rejected, ever; no biometric signature exists in SecuraCV."
+    },
+    {
+      "id": "11.300-controls",
+      "clause": "11.300(a)–(c)",
+      "clause_verified": false,
+      "requirement": "Identification codes and passwords are kept unique, checked periodically, and withdrawn when lost or compromised.",
+      "mechanism": "Revocation is a quorum policy change (spec/quorum_unseal_v2.md §3.1).",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CEREMONY_RUNBOOK.md",
+          "anchor": "c2--roster-threshold-or-crypto-mode-change"
+        }
+      ],
+      "operator_action": "Revoke lost or departed keys through a policy change; review the roster periodically."
+    },
+    {
+      "id": "11.300-detect",
+      "clause": "11.300(d)–(e)",
+      "clause_verified": false,
+      "requirement": "Safeguards detect and report attempted unauthorized use, and devices that carry identification are tested periodically.",
+      "mechanism": "Grant notice and a single-trustee veto; enrollment attestation.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "35-token-semantics-and-cooling-off"
+        }
+      ],
+      "depends_on": [
+        "item4:M",
+        "item4:P"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,218 @@
+{
+  "schema": "securacv-compliance-map:v1",
+  "regime": {
+    "id": "bs10008",
+    "title": "BS 10008 — evidential weight of electronic information",
+    "kind": "standard",
+    "determination_by": "the operator's assessor",
+    "source": {
+      "citation": "BS 10008",
+      "access": "paywalled",
+      "note": "the standard is paywalled and was not read; no clause number is cited; topics follow docs/security/PROVENANCE_INTEROP.md §1.1; requirement text is our paraphrase of the topic"
+    }
+  },
+  "last_reviewed": "2026-11",
+  "rows": [
+    {
+      "id": "bs.policy",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "An information-management policy covers the electronic information whose evidential weight matters.",
+      "mechanism": "The operator pack lists what the policy names.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/compliance/BS10008_OPERATOR_PACK.md",
+          "anchor": "op-1-information-management-policy"
+        }
+      ],
+      "operator_action": "Write and adopt the information-management policy."
+    },
+    {
+      "id": "bs.duty-of-care",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "Roles and a duty of care are assigned for that information.",
+      "mechanism": "The CPS and the operator pack name the roles.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/compliance/BS10008_OPERATOR_PACK.md",
+          "anchor": "op-2-duty-of-care-and-roles"
+        }
+      ],
+      "operator_action": "Name the operator, trustees, reviewer and witness, with separation of duties."
+    },
+    {
+      "id": "bs.capture",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "Capture processes are documented.",
+      "mechanism": "The capture-provenance note says what the kernel records about the capture path.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/compliance/CAPTURE_PROVENANCE.md"
+        }
+      ],
+      "operator_action": "Document each device, adapter and ruleset in the capture path."
+    },
+    {
+      "id": "bs.storage-integrity",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "Stored information is protected from undetected change.",
+      "mechanism": "Chain and signatures.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "verify_sealed_log_accepts_good_chain_and_rejects_tampering"
+        },
+        {
+          "kind": "code",
+          "path": "src/log/mod.rs",
+          "symbol": "pub fn hash_entry"
+        }
+      ]
+    },
+    {
+      "id": "bs.transfer",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "Transfers of information keep their integrity, and the transfer is recorded.",
+      "mechanism": "Handoff sidecars and the court kit's manifest prove the copy by hash.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/handoff_sidecar_cli.rs",
+          "test": "unseal_with_a_recipient_file_writes_both_files_0600_and_verifies"
+        },
+        {
+          "kind": "code",
+          "path": "src/bin/court_export.rs",
+          "symbol": "fn write_manifest("
+        }
+      ]
+    },
+    {
+      "id": "bs.retention-disposal",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "Retention and disposal are planned and recorded.",
+      "mechanism": "Retention deletes event records up to a checkpoint; receipt ledgers are never pruned.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/evidence_lifecycle.md"
+        }
+      ],
+      "operator_action": "Set the retention period and record disposal."
+    },
+    {
+      "id": "bs.authentication",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "The people who act on the information are authenticated.",
+      "mechanism": "Trustee keys and the device seed authenticate custody acts.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "3-identification-and-authentication"
+        }
+      ],
+      "operator_action": "Authenticate the people who hold seeds and trustee keys."
+    },
+    {
+      "id": "bs.audit-trail",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "An audit trail records what happened to the information.",
+      "mechanism": "Break-glass, export, policy-change and clock-provenance ledgers: append-only, hash-chained, device-signed.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "authenticated_history_rejects_forged_era_and_tampered_approvals"
+        },
+        {
+          "kind": "test",
+          "path": "tests/court_export.rs",
+          "test": "tampered_interior_receipt_row_is_refused"
+        },
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "clock_provenance_tampered_ledger_fails_the_verdict"
+        },
+        {
+          "kind": "code",
+          "path": "src/lib.rs",
+          "symbol": "pub fn append_break_glass_receipt("
+        }
+      ]
+    },
+    {
+      "id": "bs.time",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "Dates and times are trustworthy.",
+      "mechanism": "Two TSAs and OpenTimestamps anchor the ledgers; the anchor policy is the operator's.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/timestamping.md",
+          "anchor": "two-tsas-and-the-anchor-policy"
+        }
+      ],
+      "operator_action": "Configure the anchor policy and anchor on a cadence."
+    },
+    {
+      "id": "bs.access",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "Access to the information is controlled.",
+      "mechanism": "Host and database access are the deployment's; there is no role model in the software.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "5-facility-management-and-operational-controls"
+        },
+        {
+          "kind": "tracker",
+          "path": "docs/security/ENTERPRISE_CUSTODY.md",
+          "anchor": "6-regulated-market-assurance-tier"
+        }
+      ],
+      "operator_action": "Restrict host accounts, physical access and the database key."
+    },
+    {
+      "id": "bs.outsourcing",
+      "clause": "BS 10008 (topic; clause number not cited — standard not read)",
+      "clause_verified": false,
+      "requirement": "Outsourced services that handle the information are controlled.",
+      "mechanism": "The operator pack names what to record about a service provider.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/compliance/BS10008_OPERATOR_PACK.md",
+          "anchor": "op-12-outsourcing"
+        }
+      ],
+      "operator_action": "Record each service provider that handles the information and the controls on it."
+    }
+  ]
+}

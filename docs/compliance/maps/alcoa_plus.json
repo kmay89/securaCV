@@ -1,0 +1,364 @@
+{
+  "schema": "securacv-compliance-map:v1",
+  "regime": {
+    "id": "alcoa_plus",
+    "title": "ALCOA+ — data-integrity attributes",
+    "kind": "vocabulary",
+    "determination_by": "the regulated organization and its inspectors",
+    "source": {
+      "citation": "ALCOA+ as used in PIC/S PI 041 and MHRA GXP data-integrity guidance",
+      "access": "blocked",
+      "note": "picscheme.org and gov.uk were unreachable when this map was written; the attribute list follows common usage and is unverified; definitions are our paraphrase"
+    }
+  },
+  "last_reviewed": "2026-11",
+  "rows": [
+    {
+      "id": "Attributable",
+      "clause": "Attributable",
+      "clause_verified": false,
+      "requirement": "A record shows who did an act.",
+      "mechanism": "Custody acts name who: trustee ids, the requester bound into the request hash, the self-export operator as declared.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "receipt_context_binding_round_trip_and_tamper"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "valid_signature_counts_toward_quorum"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub struct OperatorContext"
+        }
+      ],
+      "limits": "Events are attributable to device and ruleset, never to a person (Invariant II). API exports name a credential class.",
+      "alcoa": [
+        "Attributable"
+      ]
+    },
+    {
+      "id": "Legible",
+      "clause": "Legible",
+      "clause_verified": false,
+      "requirement": "A record can be read for as long as it is kept.",
+      "mechanism": "Deterministic rendering; forged lines are neutralized.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "render_human_neutralizes_forged_lines_from_foreign_records"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub fn display_safe("
+        }
+      ],
+      "alcoa": [
+        "Legible"
+      ]
+    },
+    {
+      "id": "Contemporaneous",
+      "clause": "Contemporaneous",
+      "clause_verified": false,
+      "requirement": "A record is made when the act happens.",
+      "mechanism": "The receipt is written in the act it records.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/export_events_authorized.rs",
+          "test": "export_succeeds_with_break_glass_token"
+        },
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "clock_provenance_walk_valid_tampered_and_off_lineage"
+        },
+        {
+          "kind": "code",
+          "path": "src/lib.rs",
+          "symbol": "pub fn append_export_receipt("
+        }
+      ],
+      "limits": "Times are 10-minute buckets; clock provenance measures the device clock against a TSA.",
+      "alcoa": [
+        "Contemporaneous"
+      ]
+    },
+    {
+      "id": "Original",
+      "clause": "Original",
+      "clause_verified": false,
+      "requirement": "The first capture of a record, or a true copy of it, is kept.",
+      "mechanism": "The sealed chain is the original record of each claim; exports are hash-proven copies.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/kernel_hardening.rs",
+          "test": "hash_chain_is_valid_after_many_events"
+        },
+        {
+          "kind": "code",
+          "path": "src/log/mod.rs",
+          "symbol": "pub fn hash_entry"
+        }
+      ],
+      "limits": "Raw frames stay sealed.",
+      "alcoa": [
+        "Original"
+      ]
+    },
+    {
+      "id": "Accurate-integrity",
+      "clause": "Accurate",
+      "clause_verified": false,
+      "requirement": "A record is free of undetected change.",
+      "mechanism": "Chain and signatures.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "verify_sealed_log_accepts_good_chain_and_rejects_tampering"
+        },
+        {
+          "kind": "code",
+          "path": "src/log/mod.rs",
+          "symbol": "pub fn hash_entry"
+        }
+      ],
+      "alcoa": [
+        "Accurate"
+      ]
+    },
+    {
+      "id": "Accurate-analytic",
+      "clause": "Accurate",
+      "clause_verified": false,
+      "requirement": "What a record says is true of the world.",
+      "mechanism": "Per-ruleset validation sheets.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/compliance/VALIDATION_SHEETS.md"
+        }
+      ],
+      "depends_on": [
+        "item7:CP3"
+      ],
+      "alcoa": [
+        "Accurate"
+      ]
+    },
+    {
+      "id": "Complete",
+      "clause": "Complete",
+      "clause_verified": false,
+      "requirement": "Nothing is missing from the record, including its changes.",
+      "mechanism": "Interior gaps fail the chain; the tail is checked by the high-water mark.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "full_verify_fails_closed_on_tail_truncation"
+        },
+        {
+          "kind": "test",
+          "path": "tests/court_export.rs",
+          "test": "tampered_interior_receipt_row_is_refused"
+        },
+        {
+          "kind": "code",
+          "path": "src/verify_runner.rs",
+          "symbol": "pub fn run_full_verify_with_high_water_mark("
+        }
+      ],
+      "limits": "Retention deletes event records by design; receipt ledgers are never pruned. The tree is designed (item3:F).",
+      "alcoa": [
+        "Complete"
+      ]
+    },
+    {
+      "id": "Consistent",
+      "clause": "Consistent",
+      "clause_verified": false,
+      "requirement": "A record is internally consistent and in sequence.",
+      "mechanism": "The Rust and JS verifiers agree on export bundles.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "viewer/verify_core.test.js",
+          "test": "export-bundle verification parity"
+        },
+        {
+          "kind": "code",
+          "path": "src/log/mod.rs",
+          "symbol": "pub fn hash_entry"
+        }
+      ],
+      "alcoa": [
+        "Consistent"
+      ]
+    },
+    {
+      "id": "Enduring",
+      "clause": "Enduring",
+      "clause_verified": false,
+      "requirement": "A record lasts for its retention period.",
+      "mechanism": "Backups, anchors and off-device copies.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/timestamping.md",
+          "anchor": "two-tsas-and-the-anchor-policy"
+        }
+      ],
+      "operator_action": "Keep copies and anchors on independent media.",
+      "alcoa": [
+        "Enduring"
+      ]
+    },
+    {
+      "id": "Available",
+      "clause": "Available",
+      "clause_verified": false,
+      "requirement": "A record can be reached for review when needed.",
+      "mechanism": "Sequential review and export.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/court_export.md",
+          "anchor": "usage"
+        }
+      ],
+      "operator_action": "Keep the export and verification tools available for review.",
+      "alcoa": [
+        "Available"
+      ]
+    },
+    {
+      "id": "Available-query",
+      "clause": "Available",
+      "clause_verified": false,
+      "requirement": "Records can be searched on demand.",
+      "mechanism": "No query interface over events exists.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "spec/invariants.md",
+          "anchor": "9-invariant-vii--non-queryability-by-design"
+        }
+      ],
+      "reason": "No query interface over events exists, by design (Invariant VII); inspection is sequential and context-bound.",
+      "alcoa": [
+        "Available"
+      ]
+    },
+    {
+      "id": "vocab-audit-trail-review",
+      "clause": "audit-trail review",
+      "clause_verified": false,
+      "requirement": "Audit trails are reviewed as part of routine data review.",
+      "mechanism": "Periodic review of receipts, policy history and log_verify (as Part 11 row 11.10(e)-review).",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "4-evidence-life-cycle-operational-requirements"
+        }
+      ],
+      "operator_action": "Review on a cadence and record it.",
+      "limits": "The signed review attestation is designed (item3:H)."
+    },
+    {
+      "id": "vocab-true-copy",
+      "clause": "true copy",
+      "clause_verified": false,
+      "requirement": "A copy keeps the content and meaning of the original.",
+      "mechanism": "A copy proven by SHA-256 equality.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "tests/court_export.rs",
+          "test": "assembles_kit_and_manifest_hashes_are_correct"
+        },
+        {
+          "kind": "code",
+          "path": "src/bin/court_export.rs",
+          "symbol": "fn write_manifest("
+        }
+      ]
+    },
+    {
+      "id": "vocab-metadata",
+      "clause": "metadata",
+      "clause_verified": false,
+      "requirement": "The context that gives a record its meaning is kept with it.",
+      "mechanism": "Bucket, ruleset id and hash, kernel version and attestation tier, all bound into each record.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "reprocess_guard_blocks_ruleset_mismatch"
+        },
+        {
+          "kind": "code",
+          "path": "src/lib.rs",
+          "symbol": "pub struct ReprocessGuard"
+        }
+      ],
+      "limits": "No sub-bucket time (Invariant III)."
+    },
+    {
+      "id": "vocab-data-criticality",
+      "clause": "data criticality",
+      "clause_verified": false,
+      "requirement": "Controls are scaled to how critical the data are.",
+      "mechanism": "A person must classify the data; the CPS introduction records the scope.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "1-introduction"
+        }
+      ],
+      "operator_action": "Classify data criticality."
+    },
+    {
+      "id": "vocab-data-governance",
+      "clause": "data governance",
+      "clause_verified": false,
+      "requirement": "An organization runs a data-governance program.",
+      "mechanism": "The CPS.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "0-how-to-use-this-template"
+        }
+      ],
+      "operator_action": "Own the governance program."
+    }
+  ]
+}
