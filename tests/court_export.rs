@@ -1649,7 +1649,10 @@ fn ots_readme_sentence_follows_the_proofs_state() -> Result<()> {
     assert!(readme.contains(
         "except those it lists as pending (not yet in a Bitcoin block), which are not yet evidence of time"
     ), "{readme}");
-    for doc in [&readme, &std::fs::read_to_string(kit2.join("VERIFICATION.md"))?] {
+    for doc in [
+        &readme,
+        &std::fs::read_to_string(kit2.join("VERIFICATION.md"))?,
+    ] {
         assert!(!doc.contains("confirmed in Bitcoin"), "{doc}");
         assert!(!doc.contains("tie the same digests"), "{doc}");
     }

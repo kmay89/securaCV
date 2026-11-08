@@ -1402,9 +1402,10 @@ impl CalendarTransport for DeepCalendar {
 #[test]
 fn deep_stamp_response_refused_before_storing() {
     let conn = mem();
-    let policy: OtsPolicy =
-        serde_json::from_str(&format!(r#"{{"calendars":[{{"name":"bob","url":"{BOB}"}}]}}"#))
-            .unwrap();
+    let policy: OtsPolicy = serde_json::from_str(&format!(
+        r#"{{"calendars":[{{"name":"bob","url":"{BOB}"}}]}}"#
+    ))
+    .unwrap();
     let planned = vec![PlannedOts {
         stored_as: AnchorSubject::Digest,
         hash: [5u8; 32],
@@ -1478,16 +1479,7 @@ fn deep_upgrade_body_leaves_the_pending_row_unchanged() {
     fake.upgrades.borrow_mut().push(Some(deep(250)));
     let policy = two_calendars();
     let mut nonce = random_nonce;
-    let rep = run_ots_leg(
-        &conn,
-        &policy,
-        &[],
-        &fake,
-        bucket(BASE),
-        true,
-        &mut nonce,
-    )
-    .unwrap();
+    let rep = run_ots_leg(&conn, &policy, &[], &fake, bucket(BASE), true, &mut nonce).unwrap();
     assert_eq!(rep.fetches, 1);
     assert!(rep.upgraded.is_empty());
     assert_eq!(
@@ -1528,10 +1520,22 @@ fn upgrade_horizon_is_two_sided() {
     let now = bucket(BASE);
     let at = |s: u64| bucket(s);
     assert!(within_upgrade_horizon(now, at(BASE)));
-    assert!(within_upgrade_horizon(now, at(BASE - OTS_UPGRADE_HORIZON_S)));
-    assert!(within_upgrade_horizon(now, at(BASE + OTS_UPGRADE_HORIZON_S)));
-    assert!(!within_upgrade_horizon(now, at(BASE - OTS_UPGRADE_HORIZON_S - 600)));
-    assert!(!within_upgrade_horizon(now, at(BASE + OTS_UPGRADE_HORIZON_S + 600)));
+    assert!(within_upgrade_horizon(
+        now,
+        at(BASE - OTS_UPGRADE_HORIZON_S)
+    ));
+    assert!(within_upgrade_horizon(
+        now,
+        at(BASE + OTS_UPGRADE_HORIZON_S)
+    ));
+    assert!(!within_upgrade_horizon(
+        now,
+        at(BASE - OTS_UPGRADE_HORIZON_S - 600)
+    ));
+    assert!(!within_upgrade_horizon(
+        now,
+        at(BASE + OTS_UPGRADE_HORIZON_S + 600)
+    ));
 
     // In the leg: a row dated 8 days after `now` and one 8 days before it are
     // both beyond the horizon and never fetched; a 6-day skew either way is
@@ -1557,16 +1561,7 @@ fn upgrade_horizon_is_two_sided() {
     let fake = FakeCalendar::new();
     let policy = two_calendars();
     let mut nonce = random_nonce;
-    let rep = run_ots_leg(
-        &conn,
-        &policy,
-        &[],
-        &fake,
-        bucket(now_s),
-        true,
-        &mut nonce,
-    )
-    .unwrap();
+    let rep = run_ots_leg(&conn, &policy, &[], &fake, bucket(now_s), true, &mut nonce).unwrap();
     assert_eq!(rep.beyond_horizon, vec![future, past]);
     assert_eq!(rep.fetches, 2);
     assert_eq!(
