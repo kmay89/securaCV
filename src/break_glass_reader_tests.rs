@@ -460,3 +460,137 @@ fn early_denial_records_only_matching_approvals() -> Result<()> {
     assert_eq!(full_verify(&kernel).break_glass_denied, 2);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// D7: a policy that cannot be loaded (tests 6–7; test 8 is the doctor CLI,
+// tests/break_glass_unreadable_policy.rs)
+// ---------------------------------------------------------------------------
+
+/// The policy row the brief names: `trustees` is a string, so it does not
+/// parse. A newer release's field this build refuses lands the same way.
+const UNREADABLE_POLICY: &str = r#"{"n":1,"m":1,"trustees":"x"}"#;
+
+/// The loader's error for [`UNREADABLE_POLICY`] (serde's, verbatim).
+const UNREADABLE_POLICY_ERROR: &str =
+    "invalid type: string \"x\", expected a sequence at line 1 column 27";
+
+/// An on-disk database (the kernel is reopened), removed on drop.
+struct TempDb(std::path::PathBuf);
+
+impl TempDb {
+    fn new(tag: &str) -> Self {
+        Self(
+            std::env::temp_dir().join(format!("m0_reader_{tag}_{:016x}.db", rand::random::<u64>())),
+        )
+    }
+    fn path(&self) -> String {
+        self.0.to_string_lossy().into_owned()
+    }
+}
+
+impl Drop for TempDb {
+    fn drop(&mut self) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", self.0.display()));
+        }
+    }
+}
+
+/// A database whose stored policy was bootstrapped (one history row) and
+/// then overwritten with [`UNREADABLE_POLICY`].
+fn database_with_unreadable_policy(db: &TempDb) -> Result<()> {
+    let (mut kernel, _) = {
+        let mut kernel = Kernel::open(&config(&db.path()))?;
+        let policy = two_of_three();
+        kernel.set_break_glass_policy_gated(&policy, &[], BUCKET)?;
+        (kernel, policy)
+    };
+    assert_eq!(kernel.policy_change_history()?.len(), 1);
+    kernel.conn.execute(
+        "UPDATE break_glass_policy SET policy_json = ?1 WHERE id = 1",
+        [UNREADABLE_POLICY],
+    )?;
+    kernel
+        .conn
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+    Ok(())
+}
+
+/// Test 6. The kernel opens over an unreadable policy, records the error,
+/// refuses every break-glass action with it, and fails verification — the
+/// report witnessd's boot check turns into safe mode.
+#[test]
+fn unreadable_policy_opens_and_refuses() -> Result<()> {
+    let db = TempDb::new("opens");
+    database_with_unreadable_policy(&db)?;
+
+    let kernel = Kernel::open(&config(&db.path())).expect("Kernel::open succeeds");
+    assert!(kernel.break_glass_policy().is_none());
+    let refusal = format!(
+        "break-glass policy could not be loaded: {UNREADABLE_POLICY_ERROR} — this build \
+         refuses every break-glass action on this database (run log_verify; upgrade if the \
+         policy was written by a newer release)"
+    );
+    assert_eq!(
+        kernel.break_glass_policy_checked().unwrap_err().to_string(),
+        refusal
+    );
+
+    // The verifier refuses the database: a failed verdict, never `valid`.
+    let report = full_verify(&kernel);
+    assert!(!report.chain_valid);
+    assert_eq!(report.verdict, "verification failed");
+    assert_eq!(report.error.as_deref(), Some(UNREADABLE_POLICY_ERROR));
+    // witnessd's boot check (`verify_sealed_log`): `chain_valid: false` is
+    // the safe-mode trigger (`src/bin/witnessd.rs`), as an `Err` would be.
+    let boot = kernel.verify_sealed_log_with_hwm_path(None)?;
+    assert!(!boot.chain_valid);
+    assert_eq!(boot.error.as_deref(), Some(UNREADABLE_POLICY_ERROR));
+    drop(kernel);
+
+    // The console backend refuses with the same recorded error (its HTTP
+    // handler answers 500 `policy_load_failed` on it).
+    use crate::break_glass::BreakGlassOps;
+    let ops = crate::break_glass::KernelVaultOps::open(config(&db.path()), "unused-vault")?;
+    assert_eq!(ops.policy().unwrap_err().to_string(), refusal);
+    Ok(())
+}
+
+/// Test 7. A policy set against an unreadable policy refuses — it is never
+/// taken for "no policy" and bootstrapped over — and writes no history row.
+#[test]
+fn unreadable_policy_is_never_bootstrapped_over() -> Result<()> {
+    let db = TempDb::new("bootstrap");
+    database_with_unreadable_policy(&db)?;
+
+    let mut kernel = Kernel::open(&config(&db.path()))?;
+    let replacement = QuorumPolicy::new(
+        1,
+        vec![TrusteeEntry {
+            id: TrusteeId::new("mallory"),
+            public_key: SigningKey::from_bytes(&[0x44; 32])
+                .verifying_key()
+                .to_bytes(),
+        }],
+    )?;
+    let err = kernel
+        .set_break_glass_policy_gated(&replacement, &[], NEXT_BUCKET)
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "refusing to change the break-glass policy: the stored policy could not be loaded \
+             ({UNREADABLE_POLICY_ERROR}) — a quorum change needs the stored policy; it is never \
+             treated as absent"
+        )
+    );
+    assert_eq!(kernel.policy_change_history()?.len(), 1);
+    let stored: String = kernel.conn.query_row(
+        "SELECT policy_json FROM break_glass_policy WHERE id = 1",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(stored, UNREADABLE_POLICY);
+    assert!(kernel.break_glass_policy_checked().is_err());
+    Ok(())
+}
