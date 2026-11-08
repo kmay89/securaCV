@@ -499,12 +499,8 @@ impl Drop for TempDb {
 /// A database whose stored policy was bootstrapped (one history row) and
 /// then overwritten with [`UNREADABLE_POLICY`].
 fn database_with_unreadable_policy(db: &TempDb) -> Result<()> {
-    let (mut kernel, _) = {
-        let mut kernel = Kernel::open(&config(&db.path()))?;
-        let policy = two_of_three();
-        kernel.set_break_glass_policy_gated(&policy, &[], BUCKET)?;
-        (kernel, policy)
-    };
+    let mut kernel = Kernel::open(&config(&db.path()))?;
+    kernel.set_break_glass_policy_gated(&two_of_three(), &[], BUCKET)?;
     assert_eq!(kernel.policy_change_history()?.len(), 1);
     kernel.conn.execute(
         "UPDATE break_glass_policy SET policy_json = ?1 WHERE id = 1",
