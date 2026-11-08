@@ -18,7 +18,8 @@
 //!              (or anchor-all --policy … --offline-dir out/ for every subject)
 //!
 //! Subjects: `chain_head` (default), `export_receipt_head`,
-//! `break_glass_receipt_head`, `policy_head`, or a bare `digest`
+//! `break_glass_receipt_head`, `policy_head`, `clock_provenance_head`, or a
+//! bare `digest`
 //! (`--digest HEX` / `--file PATH`).
 //!
 //! `log_anchor verify` re-checks every stored anchor structurally (imprint
@@ -102,7 +103,7 @@ enum Command {
         #[arg(long, value_name = "FILE")]
         policy: Option<PathBuf>,
         /// Ledger head to anchor: chain_head (default), export_receipt_head,
-        /// break_glass_receipt_head, policy_head
+        /// break_glass_receipt_head, policy_head, clock_provenance_head
         #[arg(long, value_name = "S", conflicts_with_all = ["digest", "file"])]
         subject: Option<String>,
         /// Anchor an explicit hex SHA-256 digest (e.g. an export bundle
@@ -119,7 +120,7 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         out: String,
         /// Ledger head to anchor: chain_head (default), export_receipt_head,
-        /// break_glass_receipt_head, policy_head
+        /// break_glass_receipt_head, policy_head, clock_provenance_head
         #[arg(long, value_name = "S", conflicts_with_all = ["digest", "file"])]
         subject: Option<String>,
         /// Anchor an explicit hex SHA-256 digest instead of a ledger head
@@ -349,7 +350,7 @@ fn parse_head_subject(s: &str) -> Result<AnchorSubject> {
         Some(kind) => Ok(kind),
         None => bail!(
             "unknown subject '{s}' (allowed: chain_head, export_receipt_head, \
-             break_glass_receipt_head, policy_head)"
+             break_glass_receipt_head, policy_head, clock_provenance_head)"
         ),
     }
 }
@@ -1012,7 +1013,9 @@ fn verify(
             bail!("clock provenance ledger failed verification");
         }
         if orphans > 0 {
-            bail!("{orphans} clock-provenance record(s) name anchors that were deleted or replaced");
+            bail!(
+                "{orphans} clock-provenance record(s) name anchors that were deleted or replaced"
+            );
         }
         return Ok(());
     }
@@ -1471,7 +1474,13 @@ impl ClockContext {
             .map_err(|e| anyhow!("could not read the database's device identity: {e}"))?;
         let keys = verify_helpers::lineage_verifying_keys(conn, &genesis)?;
         let pq = verify_helpers::load_pq_verifying_key(conn, None, None)?;
-        verify::verify_clock_provenance_with(conn, &keys, SignatureMode::Compat, pq.as_ref(), |_, _| {})?;
+        verify::verify_clock_provenance_with(
+            conn,
+            &keys,
+            SignatureMode::Compat,
+            pq.as_ref(),
+            |_, _| {},
+        )?;
         clock_provenance::list_rows(conn)
     }
 
@@ -1787,7 +1796,7 @@ mod tests {
     fn empty_ledger_sentinels_are_planned_as_digest_rows() {
         let conn = Connection::open_in_memory().unwrap();
         // The chain reader needs its two tables to exist; the receipt and
-        // policy readers tolerate a missing table. All four ledgers are empty.
+        // policy readers tolerate a missing table. All five ledgers are empty.
         conn.execute_batch(
             "CREATE TABLE sealed_events (id INTEGER PRIMARY KEY, entry_hash BLOB);
              CREATE TABLE checkpoints (id INTEGER PRIMARY KEY, chain_head_hash BLOB);",
@@ -1796,11 +1805,13 @@ mod tests {
         let policy: AnchorPolicy = serde_json::from_str(
             r#"{"format":"securacv-anchor-policy:v1","tsas":[{"name":"a","role":"qualified",
                 "url":"https://a.example/tsr","ca":"a.pem"}],
-                "subjects":["chain_head","export_receipt_head","break_glass_receipt_head","policy_head"]}"#,
+                "subjects":["chain_head","export_receipt_head","break_glass_receipt_head","policy_head",
+                "clock_provenance_head"]}"#,
         )
         .unwrap();
         let planned = plan_subjects(&conn, &policy).unwrap();
-        assert_eq!(planned.len(), 4);
+        assert_eq!(planned.len(), AnchorSubject::HEADS.len());
+        assert_eq!(planned.len(), 5);
         for (p, subject) in planned.iter().zip(AnchorSubject::HEADS) {
             assert_eq!(p.subject, subject);
             assert!(p.sentinel);

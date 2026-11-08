@@ -1154,7 +1154,10 @@ mod tests {
             "{err}"
         );
         let err = err_of(&two_tsas(r#","max_clock_offset_s":-5"#));
-        assert!(err.contains("max_clock_offset_s must be at least 1 (got -5)"), "{err}");
+        assert!(
+            err.contains("max_clock_offset_s must be at least 1 (got -5)"),
+            "{err}"
+        );
     }
 
     #[test]

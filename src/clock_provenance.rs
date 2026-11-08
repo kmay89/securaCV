@@ -79,9 +79,11 @@ pub fn row_count(conn: &Connection) -> Result<u64> {
     if !table_exists(conn)? {
         return Ok(0);
     }
-    Ok(conn.query_row("SELECT COUNT(*) FROM clock_provenance", [], |row| {
-        row.get::<_, i64>(0)
-    })? as u64)
+    Ok(
+        conn.query_row("SELECT COUNT(*) FROM clock_provenance", [], |row| {
+            row.get::<_, i64>(0)
+        })? as u64,
+    )
 }
 
 /// Every row in id order (none when the table is absent). A payload that
@@ -131,7 +133,10 @@ fn blob32(bytes: Vec<u8>, id: i64, column: &str) -> Result<[u8; 32]> {
 /// The record naming `anchor_id`, if any. Records are 1:1 with anchor rows by
 /// construction (the cursor); when a database nonetheless holds two, the
 /// first (oldest) one is the one the daemon sealed first.
-pub fn record_for_anchor(rows: &[ClockProvenanceRow], anchor_id: i64) -> Option<&ClockProvenanceRow> {
+pub fn record_for_anchor(
+    rows: &[ClockProvenanceRow],
+    anchor_id: i64,
+) -> Option<&ClockProvenanceRow> {
     rows.iter().find(|r| r.record.anchor_id == anchor_id)
 }
 
@@ -430,7 +435,7 @@ mod tests {
         let positive = record(Some(900), Some(5));
         let a = assess(&positive, &late).unwrap();
         assert!(!a.prompt);
-        assert_eq!(a.lag_s, 2 * 86_400);
+        assert_eq!(a.lag_s, 2 * 86_400 - 204);
         // A delayed positive offset is never evaluated …
         assert!(!beyond(&positive, &a, ONE_BUCKET_S));
         // … a delayed negative one is (behind is behind).

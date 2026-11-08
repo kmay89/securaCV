@@ -24,9 +24,9 @@ use witness_kernel::{
     storage_health::MonitorSettings,
     BackendSelection, BucketKeyManager, CapabilityBoundaryRuntime, ClockObservation,
     DeviceCapabilities, FailureType, FileConfig, FileSource, FrameBuffer, InferenceBackend, Kernel,
-    KernelConfig, LifecyclePhase,
-    Module, ModuleDescriptor, RtspConfig, RtspSource, SharedStorageHealth, StorageHealthMonitor,
-    TimeBucket, Vault, VaultConfig, ZoneCrossingModule, ZonePolicy,
+    KernelConfig, LifecyclePhase, Module, ModuleDescriptor, RtspConfig, RtspSource,
+    SharedStorageHealth, StorageHealthMonitor, TimeBucket, Vault, VaultConfig, ZoneCrossingModule,
+    ZonePolicy,
 };
 #[cfg(feature = "ingest-esp32")]
 use witness_kernel::{Esp32Config, Esp32Source};
@@ -1180,8 +1180,38 @@ impl AnchorObserver {
         if !self.due(now_mono) {
             return;
         }
-        let now_wall_s = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(d) => d.as_secs(),
+        let wall = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
+        self.tick_at(
+            kernel,
+            pipeline,
+            kernel_version,
+            ruleset_id,
+            ruleset_hash,
+            now_mono,
+            wall.map(|d| d.as_secs()),
+        );
+    }
+
+    /// The body of [`Self::tick`] with both clock readings injected, so the
+    /// tests never read a clock: `now_mono` from the monotonic clock, the
+    /// wall clock read ONCE for the whole poll (an `Err` when it reads before
+    /// the epoch).
+    #[allow(clippy::too_many_arguments)]
+    fn tick_at(
+        &mut self,
+        kernel: &mut Kernel,
+        pipeline: &mut PipelineCounters,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+        now_mono: Instant,
+        wall: std::result::Result<u64, std::time::SystemTimeError>,
+    ) {
+        if !self.due(now_mono) {
+            return;
+        }
+        let now_wall_s = match wall {
+            Ok(s) => s,
             Err(e) => {
                 // A wall clock before the epoch is the clock monitor's
                 // finding, not a storage failure; try again next interval.
@@ -1204,7 +1234,7 @@ impl AnchorObserver {
                         ),
                         None => log::info!(
                             "clock provenance: record #{} binds anchor #{} (binding only: first \
-                             poll of this process)",
+                             poll of this process, or the token's genTime is unreadable)",
                             s.id,
                             s.anchor_id
                         ),
@@ -2328,5 +2358,186 @@ mod tests {
                 "{err:#}"
             );
         }
+    }
+
+    // ---- AnchorObserver (clock provenance) ----
+    // Every instant is injected: a base `Instant` captured once and offsets
+    // from it, and wall-clock seconds as literals keyed to the committed
+    // fixture token's genTime (1781094804). No test reads the wall clock.
+
+    const FIXTURE_GEN_TIME: u64 = 1_781_094_804;
+
+    fn insert_fixture_anchor(kernel: &Kernel) -> i64 {
+        let path = format!(
+            "{}/tests/fixtures/tsa/reply.tsr",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let token = witness_kernel::tsa::parse_response(&std::fs::read(path).unwrap()).unwrap();
+        witness_kernel::tsa::ensure_anchor_table(&kernel.conn).unwrap();
+        let imprint: [u8; 32] = token.imprint.clone().try_into().unwrap();
+        witness_kernel::tsa::insert_anchor(&kernel.conn, "digest", &imprint, "(offline)", &token)
+            .unwrap()
+    }
+
+    #[test]
+    fn anchor_observer_due_and_gap_follow_the_completed_polls() {
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        assert!(obs.due(t0), "the first poll is due at start");
+        assert_eq!(obs.poll_gap_s(t0), None, "first poll of a process: no gap");
+        obs.last_poll_completed = Some(t0);
+        obs.next_poll = t0 + CLOCK_PROVENANCE_POLL_INTERVAL;
+        assert!(!obs.due(t0 + Duration::from_secs(4)));
+        assert!(obs.due(t0 + Duration::from_secs(5)));
+        // Whole seconds, rounded up, clamped to 1..=3600.
+        assert_eq!(obs.poll_gap_s(t0), Some(1));
+        assert_eq!(obs.poll_gap_s(t0 + Duration::from_millis(5_001)), Some(6));
+        assert_eq!(obs.poll_gap_s(t0 + Duration::from_secs(5)), Some(5));
+        assert_eq!(obs.poll_gap_s(t0 + Duration::from_secs(90_000)), Some(3600));
+    }
+
+    #[test]
+    fn anchor_observer_backoff_holds_the_next_poll_and_keeps_the_gap_honest() {
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        obs.last_poll_completed = Some(t0);
+        let failed_at = t0 + Duration::from_secs(5);
+        obs.record_failure(failed_at);
+        assert!(!obs.due(failed_at + Duration::from_secs(59)));
+        assert!(obs.due(failed_at + CLOCK_PROVENANCE_RETRY_BACKOFF));
+        // A failed poll is not a completed one: the next gap spans it.
+        assert_eq!(obs.last_poll_completed, Some(t0));
+        assert_eq!(
+            obs.poll_gap_s(failed_at + CLOCK_PROVENANCE_RETRY_BACKOFF),
+            Some(65)
+        );
+    }
+
+    #[test]
+    fn anchor_observer_first_poll_binds_then_later_polls_measure() {
+        let (mut kernel, cfg) = test_kernel();
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        // First poll on a fresh database: initializes the cursor, seals nothing.
+        let sealed = obs
+            .poll(&mut kernel, FIXTURE_GEN_TIME, t0, &cfg.kernel_version)
+            .unwrap();
+        assert!(sealed.is_empty());
+        assert_eq!(obs.last_poll_completed, Some(t0));
+        assert_eq!(obs.next_poll, t0 + CLOCK_PROVENANCE_POLL_INTERVAL);
+
+        // A row appears; the next poll (5 s later) measures it.
+        let id = insert_fixture_anchor(&kernel);
+        let t1 = t0 + Duration::from_secs(5);
+        let sealed = obs
+            .poll(&mut kernel, FIXTURE_GEN_TIME + 3, t1, &cfg.kernel_version)
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, id);
+        assert_eq!(sealed[0].record.observed_offset_s, Some(3));
+        assert_eq!(sealed[0].record.poll_gap_s, Some(5));
+
+        // A new process (fresh observer) finds a row that appeared while no
+        // daemon ran: binding only.
+        let id2 = insert_fixture_anchor(&kernel);
+        let mut restarted = AnchorObserver::new(t1);
+        let sealed = restarted
+            .poll(&mut kernel, FIXTURE_GEN_TIME + 900, t1, &cfg.kernel_version)
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, id2);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+    }
+
+    #[test]
+    fn anchor_observer_failed_append_seals_a_storage_failure_and_backs_off() {
+        let (mut kernel, cfg) = test_kernel();
+        let mut pipeline = PipelineCounters::default();
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        obs.tick_at(
+            &mut kernel,
+            &mut pipeline,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+            t0,
+            Ok(FIXTURE_GEN_TIME),
+        );
+        assert_eq!(obs.last_poll_completed, Some(t0));
+        // Break the ledger so the next append fails, then give it a row.
+        kernel
+            .conn
+            .execute_batch("DROP TABLE clock_provenance;")
+            .unwrap();
+        insert_fixture_anchor(&kernel);
+        let t1 = t0 + Duration::from_secs(5);
+        obs.tick_at(
+            &mut kernel,
+            &mut pipeline,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+            t1,
+            Ok(FIXTURE_GEN_TIME + 2),
+        );
+        assert_eq!(pipeline.failures_recorded, 1);
+        assert_eq!(
+            count_failures(&mut kernel, &cfg, FailureType::StorageWriteFailed),
+            1
+        );
+        assert_eq!(
+            obs.last_poll_completed,
+            Some(t0),
+            "a failed poll is not completed"
+        );
+        assert_eq!(obs.backoff_until, Some(t1 + CLOCK_PROVENANCE_RETRY_BACKOFF));
+        // Inside the backoff a tick does nothing at all.
+        obs.tick_at(
+            &mut kernel,
+            &mut pipeline,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+            t1 + Duration::from_secs(10),
+            Ok(FIXTURE_GEN_TIME + 12),
+        );
+        assert_eq!(pipeline.failures_recorded, 1);
+        // The cursor did not move: the transaction rolled back.
+        let cursor: i64 = kernel
+            .conn
+            .query_row(
+                "SELECT last_anchor_id FROM clock_provenance_cursor WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn anchor_observer_unreadable_wall_clock_skips_the_poll_without_a_failure() {
+        let (mut kernel, cfg) = test_kernel();
+        let mut pipeline = PipelineCounters::default();
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        // A wall clock before the epoch, constructed without reading a clock.
+        let before_epoch = SystemTime::UNIX_EPOCH
+            .duration_since(SystemTime::UNIX_EPOCH + Duration::from_secs(1))
+            .map(|d| d.as_secs());
+        assert!(before_epoch.is_err());
+        obs.tick_at(
+            &mut kernel,
+            &mut pipeline,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+            t0,
+            before_epoch,
+        );
+        assert_eq!(pipeline.failures_recorded, 0);
+        assert_eq!(obs.last_poll_completed, None);
+        assert_eq!(obs.next_poll, t0 + CLOCK_PROVENANCE_POLL_INTERVAL);
     }
 }

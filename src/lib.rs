@@ -2646,11 +2646,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     ) -> Result<clock_provenance::ClockProvenanceRow> {
         let key_material = self.signature_key_material();
         self.conn.execute_batch("BEGIN IMMEDIATE;")?;
-        match append_clock_provenance_locked(&self.conn, &key_material, record)
-            .and_then(|row| {
-                self.conn.execute_batch("COMMIT;")?;
-                Ok(row)
-            }) {
+        match append_clock_provenance_locked(&self.conn, &key_material, record).and_then(|row| {
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(row)
+        }) {
             Ok(row) => Ok(row),
             Err(e) => {
                 let _ = self.conn.execute_batch("ROLLBACK;");
@@ -4630,11 +4629,9 @@ fn observe_anchors_locked(
         // exists, so nothing anchored before this release is ever measured
         // against a clock that did not observe it.
         let newest: i64 = if tsa::anchor_table_exists(conn)? {
-            conn.query_row(
-                "SELECT COALESCE(MAX(id), 0) FROM tsa_anchors",
-                [],
-                |row| row.get(0),
-            )?
+            conn.query_row("SELECT COALESCE(MAX(id), 0) FROM tsa_anchors", [], |row| {
+                row.get(0)
+            })?
         } else {
             0
         };
@@ -9139,11 +9136,21 @@ mod clock_provenance_tests {
     fn ddl_literals_are_frozen() {
         // Pinned in the source …
         let source = include_str!("lib.rs");
-        assert!(source.contains(DDL_LEDGER), "clock_provenance DDL changed");
-        assert!(source.contains(DDL_CURSOR), "clock_provenance_cursor DDL changed");
+        // (twice: once in `ensure_schema`, once in the constants above).
+        assert!(
+            source.matches(DDL_LEDGER).count() >= 2,
+            "clock_provenance DDL changed"
+        );
+        assert!(
+            source.matches(DDL_CURSOR).count() >= 2,
+            "clock_provenance_cursor DDL changed"
+        );
         // … and in the schema SQLite actually holds (it drops IF NOT EXISTS).
         let k = kernel();
-        for (name, ddl) in [("clock_provenance", DDL_LEDGER), ("clock_provenance_cursor", DDL_CURSOR)] {
+        for (name, ddl) in [
+            ("clock_provenance", DDL_LEDGER),
+            ("clock_provenance_cursor", DDL_CURSOR),
+        ] {
             let stored: String = k
                 .conn
                 .query_row(
@@ -9172,7 +9179,9 @@ mod clock_provenance_tests {
         );
         let binding_only = serde_json::to_string(&record(None, None)).unwrap();
         assert!(
-            binding_only.ends_with(r#""observed_offset_s":null,"poll_gap_s":null,"kernel_version":"0.0.0-test"}"#),
+            binding_only.ends_with(
+                r#""observed_offset_s":null,"poll_gap_s":null,"kernel_version":"0.0.0-test"}"#
+            ),
             "{binding_only}"
         );
         // Round trip, both shapes.
@@ -9185,11 +9194,16 @@ mod clock_provenance_tests {
     #[test]
     fn append_chains_from_genesis_and_signs_under_the_domain() {
         let mut k = kernel();
-        let first = k.append_clock_provenance(&record(Some(2), Some(5))).unwrap();
+        let first = k
+            .append_clock_provenance(&record(Some(2), Some(5)))
+            .unwrap();
         let second = k.append_clock_provenance(&record(None, None)).unwrap();
         assert_eq!(first.id, 1);
         assert_eq!(first.prev_hash, [0u8; 32]);
-        assert_eq!(first.entry_hash, hash_entry(&[0u8; 32], first.payload_json.as_bytes()));
+        assert_eq!(
+            first.entry_hash,
+            hash_entry(&[0u8; 32], first.payload_json.as_bytes())
+        );
         assert_eq!(second.prev_hash, first.entry_hash);
         assert_eq!(second.created_at, FIXTURE_BUCKET as i64);
         let key = device_public_key_from_db(&k.conn).unwrap();
@@ -9284,8 +9298,15 @@ mod clock_provenance_tests {
         let err = k
             .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
             .unwrap_err();
-        assert!(err.to_string().contains("simulated storage failure"), "{err}");
-        assert_eq!(cursor(&k.conn), Some(0), "the cursor must not move past an unsealed row");
+        assert!(
+            err.to_string().contains("simulated storage failure"),
+            "{err}"
+        );
+        assert_eq!(
+            cursor(&k.conn),
+            Some(0),
+            "the cursor must not move past an unsealed row"
+        );
         assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 0);
         assert!(k.conn.is_autocommit(), "the transaction was rolled back");
         k.conn
@@ -9408,9 +9429,6 @@ mod clock_provenance_tests {
         assert!(sealed
             .iter()
             .all(|s| s.record.observed_offset_s == Some(1199)));
-        assert_eq!(
-            sealed[0].record.time_bucket.start_epoch_s,
-            (w / 600) * 600
-        );
+        assert_eq!(sealed[0].record.time_bucket.start_epoch_s, (w / 600) * 600);
     }
 }

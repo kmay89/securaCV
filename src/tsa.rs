@@ -910,8 +910,8 @@ pub struct AnchorRecord {
     pub id: i64,
     pub created_bucket: TimeBucket,
     /// What was anchored: an `AnchorSubject` literal (`chain_head`, `digest`,
-    /// `export_receipt_head`, `break_glass_receipt_head`, `policy_head`), or
-    /// unknown text from an older writer (treated as a digest anchor).
+    /// `export_receipt_head`, `break_glass_receipt_head`, `policy_head`,
+    /// `clock_provenance_head`), or unknown text from an older writer (treated as a digest anchor).
     pub subject: String,
     pub subject_hash: [u8; 32],
     pub tsa_url: String,
@@ -1256,7 +1256,10 @@ pub fn list_anchors(conn: &Connection) -> Result<Vec<AnchorRecord>> {
 /// SQLite holds: `Some` for a BLOB (or TEXT, as bytes), `None` for anything
 /// else — a row whose token is not bytes gets no clock record, and the poll
 /// still moves past it. `Ok(vec![])` when the table is absent.
-pub fn anchor_tokens_after(conn: &Connection, after_id: i64) -> Result<Vec<(i64, Option<Vec<u8>>)>> {
+pub fn anchor_tokens_after(
+    conn: &Connection,
+    after_id: i64,
+) -> Result<Vec<(i64, Option<Vec<u8>>)>> {
     use rusqlite::types::ValueRef;
     if !table_exists(conn, "tsa_anchors")? {
         return Ok(Vec::new());
@@ -1851,6 +1854,95 @@ mod tests {
         assert_eq!(AnchorSubject::Digest.empty_ledger_sentinel(), None);
         assert_eq!(AnchorSubject::sentinel_owner(&fixture_digest()), None);
         assert_eq!(AnchorSubject::sentinel_owner(&[0u8; 32]), None);
+    }
+
+    #[test]
+    fn clock_provenance_head_is_the_fifth_subject() {
+        assert_eq!(AnchorSubject::HEADS.len(), 5);
+        assert_eq!(
+            AnchorSubject::HEADS[4],
+            AnchorSubject::ClockProvenanceHead,
+            "appended last: the request and classify order of the first four is unchanged"
+        );
+        let kind = AnchorSubject::ClockProvenanceHead;
+        assert_eq!(kind.as_str(), "clock_provenance_head");
+        assert_eq!(kind.table(), Some("clock_provenance"));
+        assert_eq!(kind.ledger_short(), "clock-provenance ledger");
+        assert_eq!(
+            kind.membership_label(),
+            "in clock-provenance ledger history"
+        );
+        assert_eq!(
+            kind.not_in_history_label(),
+            "anchored hash is not in clock-provenance ledger history"
+        );
+        let sentinel = kind.empty_ledger_sentinel().unwrap();
+        assert_eq!(AnchorSubject::sentinel_owner(&sentinel), Some(kind));
+
+        // The generic `id, entry_hash` readers work on the new table: an
+        // absent table has no head, a live row is a head and a member.
+        let conn = Connection::open_in_memory().unwrap();
+        assert_eq!(ledger_head(&conn, kind).unwrap(), None);
+        conn.execute_batch(
+            "CREATE TABLE clock_provenance (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+             entry_hash BLOB NOT NULL)",
+        )
+        .unwrap();
+        assert_eq!(ledger_head(&conn, kind).unwrap(), None);
+        let head = [0x5au8; 32];
+        conn.execute(
+            "INSERT INTO clock_provenance(entry_hash) VALUES (?1)",
+            [head.as_slice()],
+        )
+        .unwrap();
+        assert_eq!(ledger_head(&conn, kind).unwrap(), Some(head));
+        assert_eq!(ledger_position(&conn, kind, &head).unwrap(), Some(1));
+        let located = classify_hash(&conn, &head).unwrap().expect("classified");
+        assert_eq!(located.subject, kind);
+        assert_eq!(
+            classify_hash(&conn, &sentinel).unwrap().map(|l| l.subject),
+            None
+        );
+    }
+
+    #[test]
+    fn anchor_tokens_after_is_tolerant() {
+        let conn = Connection::open_in_memory().unwrap();
+        // No table: no rows, no error.
+        assert!(anchor_tokens_after(&conn, 0).unwrap().is_empty());
+        ensure_anchor_table(&conn).unwrap();
+        assert!(anchor_tokens_after(&conn, 0).unwrap().is_empty());
+        let der = fixture_token_der();
+        let insert = |token: rusqlite::types::Value| {
+            conn.execute(
+                "INSERT INTO tsa_anchors(created_bucket_start, created_bucket_size, subject, \
+                 subject_hash, tsa_url, gen_time, token_der) \
+                 VALUES (0, 600, 'digest', ?1, '(offline)', 'x', ?2)",
+                rusqlite::params![vec![0u8; 32], token],
+            )
+            .unwrap();
+        };
+        insert(rusqlite::types::Value::Blob(der.clone()));
+        insert(rusqlite::types::Value::Text("not der".to_string()));
+        insert(rusqlite::types::Value::Integer(42));
+        insert(rusqlite::types::Value::Blob(der.clone()));
+        let rows = anchor_tokens_after(&conn, 0).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (1, Some(der.clone())),
+                (2, Some(b"not der".to_vec())),
+                (3, None),
+                (4, Some(der.clone())),
+            ]
+        );
+        // Strictly after the cursor, in id order.
+        let after = anchor_tokens_after(&conn, 2).unwrap();
+        assert_eq!(
+            after.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        assert!(anchor_tokens_after(&conn, 4).unwrap().is_empty());
     }
 
     #[test]
