@@ -969,7 +969,7 @@ fn refuse_malformed(proof: &Proof) -> Result<()> {
 
 // -------------------- storage: the frozen ots_anchors table --------------------
 
-/// The frozen `CREATE TABLE`. Newer columns go in [`OTS_EXTRA_COLUMNS`].
+/// The frozen `CREATE TABLE`. Newer columns go in `OTS_EXTRA_COLUMNS`.
 pub const OTS_ANCHORS_DDL: &str = "CREATE TABLE IF NOT EXISTS ots_anchors (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_bucket_start INTEGER NOT NULL,
