@@ -5,7 +5,8 @@ bundle: the evidence, its digests, a custody-and-control record rendered from
 the signed receipts, the RFC 3161 anchor tokens that fix it in time,
 pre-filled FRE 902(13)/(14) certification drafts, a plain-English system
 description, and verification instructions that opposing counsel can run with
-`sha256sum` and `openssl` alone. It is the packaging layer the evidence rules
+`sha256sum` and `openssl` alone (the clock-provenance records add `xxd`,
+`cut` and `date`). It is the packaging layer the evidence rules
 actually consume — the cryptography underneath already existed
 ([`security/PROVENANCE_INTEROP.md`](security/PROVENANCE_INTEROP.md) §1.1).
 
@@ -103,21 +104,35 @@ with them.
    clock (fail closed). Over a ledger that holds, the record naming each
    packaged anchor is packaged only when its `token_sha256` equals the
    SHA-256 of the token bytes actually packaged; a mismatch is left out with
-   a `WARNING`. `CUSTODY_AND_CONTROL.md` gains a **Time source** section
+   a `WARNING` and counted in `README.md` and the custody record. `CUSTODY_AND_CONTROL.md` gains a **Time source** section
    (one line per packaged record: the offset, the poll gap, how long after
    issuance the row was stored, and the sentence "an event's bucket under a
    device offset is the same width shifted — a bias correction adds no
    precision"); `VERIFICATION.md` gains **step 3b**, which re-derives every
-   stored fact with `sha256sum`, `xxd`, `jq` and `openssl pkeyutl -rawin`
-   (Ed25519 over `SHA256(u32le(32) ‖ "securacv:pwk:clock-provenance:v1" ‖
-   entry_hash)`); `README.md` names the directory as item 7. The manifest
+   stored fact in POSIX `sh` with `sha256sum`, `xxd`, `cut`, `date` and
+   `openssl pkeyutl -rawin` (Ed25519 over `SHA256(u32le(32) ‖
+   "securacv:pwk:clock-provenance:v1" ‖ entry_hash)`). Every hex value is
+   written into the commands, so no JSON parser is needed; the entry hash is
+   recomputed from the payload bytes and the signed message built from that
+   recomputation; the verifying key is the device public key the custody
+   record and the evidence file name — never a key read from the record
+   under check — and a record that verifies under another key of the
+   device's lineage (a rotation) says the kit alone cannot tie that key to
+   the device. Step 2 is generated per record: an in-bucket check for a
+   measured offset, a one-sided check at the ±3600 s clamp (a bound, not a
+   reading), "does not apply" for a binding-only record. `README.md` names
+   the directory as item 7, in the same three states as the manifest
+   (packaged; absent; not packaged because the ledger did not verify). The manifest
    gains two additive keys: `clock_provenance_ledger` —
    `"self-consistent; identity unverified"`, `"verification failed"` or
    `"absent"`, never "verified" (the ledger is checked under the lineage the
    kit derived; whether that lineage was pinned out of band is
    `identity_verified`) — and, per entry of `anchors`, a `clock_provenance`
    object (`file`, `payload_file`, `record_id`, `observed_offset_s`,
-   `poll_gap_s`, `binding_only`) or `null`. The terminal summary adds
+   `poll_gap_s`, `binding_only`, `signer_is_device_key`) or `null`. Only
+   records the packaging-time chain walk checked are packaged: one
+   `witnessd` commits between the walk and the listing is left for the next
+   kit. The terminal summary adds
    `clock:     N clock-provenance record(s) packaged; ledger <status>`.
    `clock_provenance_head` anchors, which fix the ledger itself in time,
    are never packaged: like the other receipt-ledger heads they would

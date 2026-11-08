@@ -426,8 +426,8 @@ is never evidence.
 ### C5 — Anchoring (RFC 3161)
 
 **Subjects** (**CODE**): `chain_head` (default), `export_receipt_head`,
-`break_glass_receipt_head`, `policy_head` (`--subject`), and `digest`
-(`--digest <hex>` / `--file <path>`). A head subject anchors the newest
+`break_glass_receipt_head`, `policy_head`, `clock_provenance_head`
+(`--subject`), and `digest` (`--digest <hex>` / `--file <path>`). A head subject anchors the newest
 `entry_hash` of that ledger; `--file` hashes a file's bytes in-tool (the
 export-bundle digest `court_export` looks for). The subject is what the row
 *claims*; `verify` re-derives membership from the ledger the row names.
@@ -485,7 +485,18 @@ anchor `UNVERIFIED` (**CODE** — without `--ca` or `--policy` nothing is
 cryptographically verified and the tool says so; `verify --policy` refuses to
 run without the `openssl` CLI rather than degrade). `current head: NO` is
 normal between ceremonies (the chain head moves with every heartbeat); at
-close-out pass `--require-current`.
+close-out pass `--require-current`. `witnessd` writes the clock-provenance
+ledger, one record per anchor row it observes — this run's own rows included
+— so `clock_provenance_head` reads current when every record after the
+covered hash seals a later anchor row: `current head: yes (advanced since
+only by N record(s) of later anchor rows; …)` (**CODE**;
+`docs/timestamping.md`). On a new database, and on the first `anchor-all`
+after the upgrade that added the clock-provenance ledger, that ledger is empty
+and only its sentinel is anchored; `witnessd` then seals records, and the
+subject reads `NOT covered` until the next run. **At upgrade, run `anchor-all`
+twice, the second about 5 s after the first, before this check** (**PROC**).
+A policy that lists `clock_provenance_head` in `subjects` is refused by an
+older `log_anchor`; omit `subjects`, or upgrade every policy reader first.
 
 **Version mix:** upgrade `witnessd` before anchoring chain heads with these
 tools — an older `witnessd` prunes anchored heads at every retention pass
@@ -653,6 +664,11 @@ rotate per bucket automatically.
    before and after the ceremony.
 2. Anchor (C5): `anchor-all --policy` then `verify --policy
    --require-current` — `SATISFIED`, nothing `UNVERIFIED`.
+   `clock_provenance_head` reads `current head: yes (advanced since only by
+   N record(s) of later anchor rows; …)` while `witnessd` runs — the records
+   it sealed for this run's own rows — and that counts as current. Right
+   after the upgrade that added the ledger, run `anchor-all` twice first
+   (C5, "Check").
 3. `CLOSEOUT.md`: participants, script hash, every artifact with its SHA-256
    (`MANIFEST.sha256`), the exceptions summary, the witness statement, anchor
    ids and TSA `genTime`.

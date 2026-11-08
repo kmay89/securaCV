@@ -19,13 +19,15 @@ at observation, the anchor row id, `sha256(token_der)`, and — when the row
 appeared between two polls of a running daemon — the whole-second, clamped
 `observed_offset_s = device wall clock − genTime` with the measured
 `poll_gap_s` that bounds how old the row could have been. Rows found at the
-first poll after a daemon start get a binding-only record (both measurements
+first poll after a daemon start, or after a gap of more than 3600 s since the
+previous completed poll, get a binding-only record (both measurements
 `null`). The ledger's head is the fifth anchor subject,
 `clock_provenance_head`, so every record is fixed in external time by the
 next scheduled `anchor-all`. `log_anchor` stays an observer: no key, no new
 columns, nothing new written. A third party with the database or the court
-kit, the device public key, `sha256sum` and `openssl` re-derives every
-stored fact and checks every signature.
+kit, the device public key, `sha256sum`, `xxd` and `openssl` (plus `cut`
+and `date` for the arithmetic) re-derives every stored fact and checks every
+signature.
 
 ## Verifier first: what each stored fact is checked against
 
@@ -43,28 +45,41 @@ stored fact and checks every signature.
 
 Per anchor row *r* at poll time:
 
-- `W` — the witnessd wall clock in whole seconds, read **once** per poll and
-  shared by every row of that poll. `G` — the token's `genTime`
+- `W` — the witnessd wall clock in whole seconds, read **once** per poll,
+  after the poll's `BEGIN IMMEDIATE` holds the write lock
+  (`Kernel::observe_anchors_for_clock_provenance_with`), and shared by every
+  row of that poll. Read under the lock, `W` cannot predate a row that
+  committed while the poll waited for the lock (up to the 5 s busy timeout). `G` — the token's `genTime`
   (`tsa::gen_time_unix`, fractional seconds truncated:
   `20260610123324.5Z → 1781094804`).
 - `observed_offset_s = clamp(W − G, −3600, +3600)` (i32);
-  `poll_gap_s = clamp(ceil(seconds since the previous COMPLETED poll), 1, 3600)`
-  (u32) on the monotonic clock.
+  `poll_gap_s = max(1, ceil(seconds since the previous COMPLETED poll))` (u32)
+  on the monotonic clock, read under the lock with `W`. A gap over 3600 s
+  seals a **binding-only** record instead: past the clamp the row's age is
+  unbounded, exactly as on a process's first poll. (This departs from the
+  original brief, which clamped the gap to 3600: a clamped gap states a false
+  bound after a stall — the failure the brief rejected the constant interval
+  for — and the offset then blames the device clock for the stall.)
 - The bound: with δ = device clock − true time,
-  δ ∈ [offset − poll_gap_s − d, offset), where *d* (issuance-to-storage delay,
-  about a second on a hub that anchors online) is not measured and is stated
-  as a residual. A negative offset means the device read behind by at least
-  |offset| whatever the delay.
+  δ ∈ (offset − poll_gap_s − d − 1, offset + 1), where *d*
+  (issuance-to-storage delay, about a second on a hub that anchors online) is
+  not measured and is stated as a residual, and the ±1 s is the whole-second
+  truncation of both `W` and `G`. A negative offset means the device read
+  behind by more than |offset| − 1 s whatever the delay. (The original
+  brief's `[offset − poll_gap_s − d, offset)` ignored the truncation and is
+  corrected here.)
 
 Mechanics (`src/bin/witnessd.rs`, `AnchorObserver`, beside `ClockMonitor`
 and ticked right after it): poll interval 5 s, a failed poll backs off 60 s,
 is sealed as a `StorageWriteFailed` failure record, counts into the
 heartbeat's failure delta, and is **not** a completed poll (so the next gap
 measures the whole stall). A stalled main loop widens `poll_gap_s` honestly
-instead of asserting a 5 s bound. Safe mode returns before the main loop, so
+instead of asserting a 5 s bound, and a stall over an hour seals binding-only
+records. Safe mode returns before the main loop, so
 nothing is appended there. The tick is composed of pieces the tests drive
-with injected instants (`due`, `poll_gap_s`, `poll`, `record_failure`,
-`tick_at`).
+with injected instants (`due`, `poll_gap_s`, `poll_with`, `record_failure`,
+`tick_at`; the clock readings come from a closure the kernel calls under
+the lock).
 
 ## The record — these fields and nothing else
 
@@ -75,7 +90,7 @@ with injected instants (`due`, `poll_gap_s`, `poll`, `record_failure`,
 | `anchor_id` | i64 | locator; the binding is `token_sha256` |
 | `token_sha256` | 64 lowercase hex over `token_der` | binds imprint, `genTime`, TSA identity; `sha256sum`-checkable |
 | `observed_offset_s` | i32 or `null` (clamped ±3600) | the measurement; positive = device ahead; `null` = binding only |
-| `poll_gap_s` | u32 or `null` (1..=3600) | the row was at most this old when first seen; `null` with the offset |
+| `poll_gap_s` | u32 or `null` (1..=3600) | the row was at most this old when first seen; `null` with the offset (first poll of a process, or a gap over 3600 s) |
 | `kernel_version` | string | which build measured |
 
 Not stored: `genTime`, the anchor's subject or subject hash, TSA identity or
@@ -146,7 +161,10 @@ CREATE TABLE IF NOT EXISTS clock_provenance_cursor (id INTEGER PRIMARY KEY CHECK
    prompt OR negative; a delayed positive offset prints `not evaluated`.
 6. Host-clock note: `host_gap_s = (G + offset) − anchor bucket start`,
    expected in `0..1200`; anything else is a `note:` that the anchoring
-   host's clock and the device's disagree.
+   host's clock and the device's disagree. A clamped offset is a bound, so
+   there `host_gap_s` is too (at least it at +3600, at most it at −3600): the
+   note fires only when the bound settles it, and prints the gap as `>=` /
+   `<=`.
 7. Structural check for every `chain_head` anchor whose head is a live
    sealed row, record or no record: `n = sealed_row.created_at − G`; `n > 1`
    means the device read at least `n` s ahead when it sealed that row — a
@@ -155,9 +173,26 @@ CREATE TABLE IF NOT EXISTS clock_provenance_cursor (id INTEGER PRIMARY KEY CHECK
 8. ClockSkew correlation for every `BEYOND` line: the sealed log's retained
    `ClockSkew` failure records within one bucket of the record's bucket are
    named — "retained", because retention prunes failure records.
-9. Step check after the loop: consecutive measured records whose offsets
-   differ by more than 600 s get a note naming whether a ClockSkew record is
-   retained between their buckets (inclusive).
+9. Step check after the loop: consecutive **evaluated** records (the gate of
+   step 5: a readable `genTime`, and prompt or negative) whose offsets differ
+   by more than 600 s get a note naming whether a ClockSkew record is
+   retained between their buckets (inclusive). A delayed import's positive
+   offset is not a clock reading and never makes a step.
+10. The ledger line and every per-anchor line read only the rows the chain
+    walk checked (`clock_provenance::list_walked_rows`): `witnessd` may commit
+    a record between the walk and the listing, and an unchecked record must
+    never ride on "self-consistent". `court_export` does the same.
+11. Under `--policy --require-current`, `clock_provenance_head` has its own
+    currency rule. The ledger grows by one record per anchor row `witnessd`
+    observes, the anchoring run's own rows included, so its head always
+    moves past the hash a run anchored and plain equality could never hold
+    while the daemon runs. A covered hash reads current when every record
+    after it binds an anchor row newer than the one the covered record binds
+    (`clock_provenance::advanced_only_by_later_anchors`), printed as
+    `current head: yes (advanced since only by N record(s) of later anchor
+    rows; …)`. A rule keyed to the smallest id of the covering anchor group
+    would fail on every run, because the run's earlier subjects store their
+    rows before the `clock_provenance_head` rows.
 
 Bail order: `{n} anchor(s) failed verification` → `clock provenance ledger
 failed verification` → `{n} clock-provenance record(s) name anchors that
@@ -184,13 +219,20 @@ derived; every packaged token's record (by `anchor_id`, and only when its
 `token_sha256` equals the hash of the packaged bytes) is written as
 `clock_provenance/clock-NNNN.json` beside the verbatim signed bytes
 `clock-NNNN.payload.json`; `CUSTODY_AND_CONTROL.md` gains a "Time source"
-section, `VERIFICATION.md` a step 3b (`sha256sum`, `xxd`, `openssl pkeyutl
--rawin`), `README.md` an item 7, and `MANIFEST.json` the additive keys
+section, `VERIFICATION.md` a step 3b (`sha256sum`, `xxd`, `cut`, `openssl
+pkeyutl -rawin`, `date`; every hex value written into the POSIX `sh`
+commands, no JSON parser), `README.md` an item 7, and `MANIFEST.json` the additive keys
 `clock_provenance_ledger` (`"self-consistent; identity unverified"` |
 `"verification failed"` | `"absent"`) and a per-anchor `clock_provenance`
-object or `null`. The manifest never says "verified". A ledger that does not
-verify packages no record (fail closed). `clock_provenance_head` anchor rows
-are never packaged.
+object or `null` (with `signer_is_device_key`). The manifest never says
+"verified". A ledger that does not verify packages no record (fail closed).
+`clock_provenance_head` anchor rows are never packaged. Step 3b verifies
+under the device public key the custody record and the evidence name —
+never a key read from the record under check — and step 2 is generated per
+record: an in-bucket check for a measured offset, a one-sided check at the
+±3600 clamp, "does not apply" for a binding-only record. A record that
+verifies under another key of the lineage (a rotation) says the kit alone
+cannot tie that key to the device.
 
 ## ClockSkew and `audit_chain_timeline` — unchanged
 
@@ -231,8 +273,10 @@ additive `Option`; `ClockConfigFile` and the witnessd config are unchanged.
 | Mix | Behavior |
 |---|---|
 | old database, new binaries | zero rows: the report field is omitted, `log_verify` prints `no clock-provenance records`, `log_anchor verify` prints `clock provenance: no records`, the kit says `absent`; `anchor-all`'s default subjects anchor the `clock_provenance_head` sentinel until the ledger has a row; anchors that predate the upgrade are never recorded |
+| `verify --policy` between the first and second `anchor-all` on an upgraded (or new) database | the first run anchors the empty-ledger sentinel, then `witnessd` seals that run's records, so a policy listing `clock_provenance_head` (or omitting `subjects`) reads it NOT covered — `NOT SATISFIED (1 subject(s) uncovered)` — until the next run; `anchor-all` says so on stderr. Run `anchor-all` twice at upgrade, the second about 5 s after the first |
 | new database, old binaries | a `clock_provenance_head` row reads as a digest anchor (the documented fallthrough for unknown subject literals); older verifiers ignore the table |
 | anchor policy carrying `max_clock_offset_s`, older `log_anchor` | refused (unknown key; the policy format denies unknown fields) — add the key only after every policy reader is upgraded |
+| anchor policy whose `subjects` lists `clock_provenance_head`, older `log_anchor` | refused (`not a ledger head`) — list it only after every policy reader is upgraded, or omit `subjects` (new readers anchor five heads, older ones four) |
 | `anchor-all` request count | four subjects per TSA per run become five; the count stays constant run to run |
 | MQTT verify report | unchanged until the first record exists |
 

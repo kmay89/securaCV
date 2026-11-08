@@ -72,7 +72,10 @@ provenance"), `log_verify`:
    diagnosis). The human report prints a `=== Clock Provenance ===` section
    after `=== Export Receipts ===`: `verified N clock-provenance record(s)
    (device clock vs TSA genTime, one per anchor; assessment: log_anchor --db
-   <db> verify)`, or `no clock-provenance records`; `--verbose` lists each
+   <db> verify)`, or `no clock-provenance records`; on a failed report it
+   never claims the ledger is empty — `clock-provenance ledger FAILED (see
+   Diagnosis)` when that ledger failed, `not reported: verification failed
+   (see Diagnosis)` when another one did; `--verbose` lists each
    as `clock-provenance record <id>: hash=<16 hex> OK`. The JSON report gains
    `clock_provenance_verified`, omitted while the ledger has no rows (so a
    database that never recorded one reports byte-identically to before) and

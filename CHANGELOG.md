@@ -12,8 +12,10 @@
   daemon — `observed_offset_s` (device wall clock − the token's `genTime`,
   whole seconds, clamped to ±3600) with the measured `poll_gap_s` that bounds
   how old the row could have been. A row already present at a daemon's first
-  poll gets a binding-only record; anchors stored before the upgrade are
-  never recorded. The record and its cursor advance share one transaction;
+  poll, or first seen more than 3600 s after the previous completed poll,
+  gets a binding-only record (a clamped gap would state a false bound); the
+  wall clock and the gap are read once per poll under the database write
+  lock; anchors stored before the upgrade are never recorded. The record and its cursor advance share one transaction;
   a failed append is a `StorageWriteFailed` record and backs the poll off
   60 s; safe mode appends nothing. Signing domain
   `securacv:pwk:clock-provenance:v1`; the stored payload literal is what is
@@ -30,7 +32,12 @@
   clamped, binding only — with notes for a disagreeing anchoring-host clock,
   a sealed chain-head row whose bucket starts after the token's time, a
   retained `ClockSkew` record near a beyond reading, and a step of more than
-  one bucket between consecutive readings. A record whose anchor was deleted
+  one bucket between consecutive evaluated readings. A clamped offset is a
+  bound, never a reading, for the host-clock note. Under `--policy
+  --require-current`, `clock_provenance_head` reads current when every
+  record after the covered hash seals a later anchor row — `witnessd` seals
+  one per anchor row, the run's own included, so plain equality could never
+  hold while it runs. A record whose anchor was deleted
   or whose token was replaced fails the run; a broken ledger fails it. The
   anchor policy gains `max_clock_offset_s` (default 600, at least 1): under
   `--policy` a reading beyond it is a breach that makes the policy `NOT
@@ -38,6 +45,8 @@
 - **`log_verify` / `run_full_verify`** walk the ledger as part of the verdict
   (`failure.ledger = "clock_provenance"`), print `=== Clock Provenance ===`,
   and add `clock_provenance_verified` to the report once a record exists
+  (a failed report says the ledger FAILED or was not reported — never that
+  it is empty)
   (omitted otherwise, so the retained MQTT report is unchanged for every
   database without one). A record naming a deleted or replaced anchor
   (`clock provenance orphan: …`) or a prompt-or-negative offset beyond one
@@ -47,8 +56,11 @@
   the record of every packaged token (`clock_provenance/clock-NNNN.json`
   beside the verbatim signed `clock-NNNN.payload.json`) when its token hash
   matches the packaged bytes; `CUSTODY_AND_CONTROL.md` gains "Time source",
-  `VERIFICATION.md` step 3b re-derives every fact with `sha256sum`, `xxd`,
-  `jq` and `openssl pkeyutl -rawin`, and the manifest gains
+  `VERIFICATION.md` step 3b re-derives every fact in POSIX `sh` with
+  `sha256sum`, `xxd`, `cut`, `date` and `openssl pkeyutl -rawin` (hex values
+  written into the commands; the key is the device key the custody record
+  names; step 2 per record, one-sided at the clamp, n/a for binding only),
+  and the manifest gains
   `clock_provenance_ledger` (`self-consistent; identity unverified` /
   `verification failed` / `absent`) and a per-anchor `clock_provenance`
   object. A ledger that does not verify packages nothing (fail closed);
@@ -63,9 +75,17 @@
   `tests/log_verify_anchors.rs`).
 - **Upgrade note.** `anchor-all` requests five subjects per TSA per run
   instead of four (still constant run to run); until the first record exists
-  it anchors the `clock_provenance_head` sentinel. Add `max_clock_offset_s`
-  to an anchor policy only after every `log_anchor` that reads the policy is
-  upgraded — an older one refuses a policy carrying a key it does not know.
+  it anchors the `clock_provenance_head` sentinel, and `witnessd` then seals
+  records for that run's rows, so from the first post-upgrade `anchor-all`
+  until the next one, `verify --policy` with a policy listing
+  `clock_provenance_head` (including any policy without a `subjects` key)
+  reads it `NOT covered` and `NOT SATISFIED (1 subject(s) uncovered)`. **Run
+  `anchor-all` twice at upgrade**, the second about 5 s after the first.
+  Add `max_clock_offset_s`, or list `clock_provenance_head` in `subjects`,
+  only after every `log_anchor` that reads the policy is upgraded — an older
+  one refuses a key it does not know and a subject it does not know (`not a
+  ledger head`); omitting `subjects` gives new readers five heads and older
+  ones four.
   An older `log_anchor` reads a `clock_provenance_head` row as a digest
   anchor. The witnessd config gains no key.
 
