@@ -22,10 +22,11 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use witness_kernel::crypto::signatures::SignatureMode;
+use witness_kernel::clock_provenance::{self, ClockProvenanceRow};
+use witness_kernel::crypto::signatures::{SignatureMode, DOMAIN_CLOCK_PROVENANCE};
 use witness_kernel::tsa::AnchorSubject;
 use witness_kernel::{
-    hash_entry, tsa, verify_export_bundle, verify_helpers, ExportAuthMode, ExportBundle,
+    hash_entry, tsa, verify, verify_export_bundle, verify_helpers, ExportAuthMode, ExportBundle,
 };
 
 #[path = "../ui.rs"]
@@ -98,6 +99,10 @@ impl Covers {
 
 /// One packaged anchor token, with what it proves.
 struct KitAnchor {
+    /// The `tsa_anchors` row id — the locator a clock-provenance record names.
+    id: i64,
+    /// SHA-256 (64 hex) of the packaged token bytes, what `sha256sum` prints.
+    token_sha256: String,
     file_name: String,
     /// The row's stored subject literal (reported, not re-derived).
     subject: String,
@@ -181,7 +186,7 @@ fn locate_receipt_in_chain(
     conn: &Connection,
     bundle: &ExportBundle,
     trusted_genesis: Option<&ed25519_dalek::VerifyingKey>,
-) -> Result<(i64, i64)> {
+) -> Result<(i64, i64, Vec<ed25519_dalek::VerifyingKey>)> {
     // The database's pinned device identity must BE the bundle's signer.
     let db_device_key = witness_kernel::device_public_key_from_db(conn)
         .map_err(|e| anyhow!("could not read the database's device identity: {}", e))?;
@@ -289,7 +294,169 @@ fn locate_receipt_in_chain(
             "custody break: the stored receipt's device signature differs from the bundle's"
         ));
     }
-    Ok((chain_position, total))
+    Ok((chain_position, total, lineage_keys))
+}
+
+/// The manifest's `clock_provenance_ledger` value. Never "verified": the
+/// ledger is checked under the key lineage the kit already derived, and
+/// whether that lineage was pinned out of band is `identity_verified`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClockLedgerStatus {
+    /// The ledger has no rows (table absent or empty).
+    Absent,
+    /// Chain and device signatures check under the derived lineage.
+    SelfConsistent,
+    /// The walk failed: nothing from the ledger is packaged (fail closed).
+    Failed,
+}
+
+impl ClockLedgerStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            ClockLedgerStatus::Absent => "absent",
+            ClockLedgerStatus::SelfConsistent => "self-consistent; identity unverified",
+            ClockLedgerStatus::Failed => "verification failed",
+        }
+    }
+}
+
+/// One packaged clock-provenance record (`clock_provenance/clock-NNNN.json`
+/// beside the verbatim `clock-NNNN.payload.json`), for the anchor at
+/// `anchor_index` in the kit's anchor list.
+struct KitClock {
+    file_name: String,
+    payload_file_name: String,
+    record_id: i64,
+    anchor_index: usize,
+    observed_offset_s: Option<i32>,
+    poll_gap_s: Option<u32>,
+    /// `anchor.created_bucket.start − genTime`, when the token's time reads.
+    lag_s: Option<i64>,
+}
+
+struct ClockKit {
+    status: ClockLedgerStatus,
+    records: Vec<KitClock>,
+}
+
+/// Verify the clock-provenance ledger under the kit's lineage and package
+/// the record of every anchor the kit carries, requiring the record's
+/// `token_sha256` to equal the hash of the token bytes actually packaged.
+/// A ledger that does not verify packages nothing and is reported as such
+/// (fail closed); a record whose hash does not match its packaged token is
+/// left out with a warning. `clock_provenance_head` anchor rows never reach
+/// this function: `package_anchors` excludes every head kind but
+/// `chain_head`.
+fn package_clock_provenance(
+    conn: &Connection,
+    kit_dir: &Path,
+    anchors: &[KitAnchor],
+    anchor_records: &[tsa::AnchorRecord],
+    lineage_keys: &[ed25519_dalek::VerifyingKey],
+) -> Result<ClockKit> {
+    if clock_provenance::row_count(conn)? == 0 {
+        return Ok(ClockKit {
+            status: ClockLedgerStatus::Absent,
+            records: Vec::new(),
+        });
+    }
+    let pq_public_key = verify_helpers::load_pq_verifying_key(conn, None, None)?;
+    let rows: Vec<ClockProvenanceRow> = match verify::verify_clock_provenance_with(
+        conn,
+        lineage_keys,
+        SignatureMode::Compat,
+        pq_public_key.as_ref(),
+        |_, _| {},
+    )
+    .and_then(|_| clock_provenance::list_rows(conn))
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!(
+                "WARNING: the clock-provenance ledger does not verify ({e:#}); no clock record \
+                 is packaged and the manifest says so. Run `log_anchor verify` on this database."
+            );
+            return Ok(ClockKit {
+                status: ClockLedgerStatus::Failed,
+                records: Vec::new(),
+            });
+        }
+    };
+    let mut records = Vec::new();
+    for (anchor_index, anchor) in anchors.iter().enumerate() {
+        let Some(row) = clock_provenance::record_for_anchor(&rows, anchor.id) else {
+            continue;
+        };
+        if row.record.token_sha256 != anchor.token_sha256 {
+            eprintln!(
+                "WARNING: clock-provenance record #{} for anchor #{} is not packaged: it binds a \
+                 token (sha256 {}…) that is not the one stored now ({}…). Run `log_anchor \
+                 verify` on this database.",
+                row.id,
+                anchor.id,
+                &row.record.token_sha256[..row.record.token_sha256.len().min(16)],
+                &anchor.token_sha256[..16]
+            );
+            continue;
+        }
+        if records.is_empty() {
+            std::fs::create_dir_all(kit_dir.join("clock_provenance"))?;
+        }
+        let signer = clock_provenance::signer_of(
+            row,
+            lineage_keys,
+            SignatureMode::Compat,
+            pq_public_key.as_ref(),
+        )
+        .map(|k| hex::encode(k.to_bytes()));
+        let file_name = format!("clock-{:04}.json", row.id);
+        let payload_file_name = format!("clock-{:04}.payload.json", row.id);
+        let dir = kit_dir.join("clock_provenance");
+        // The payload bytes go down verbatim: they are what the entry hash
+        // covers, and a re-serialization would be a different document.
+        std::fs::write(dir.join(&payload_file_name), row.payload_json.as_bytes())?;
+        let sidecar = serde_json::json!({
+            "format": "securacv-clock-provenance-record:v1",
+            "record_id": row.id,
+            "anchor_id": anchor.id,
+            "anchor_file": format!("anchors/{}", anchor.file_name),
+            "payload_file": format!("clock_provenance/{payload_file_name}"),
+            "created_bucket_start": row.created_at,
+            "prev_hash": hex::encode(row.prev_hash),
+            "entry_hash": hex::encode(row.entry_hash),
+            "signing_domain": DOMAIN_CLOCK_PROVENANCE,
+            "signature": {
+                "ed25519_scheme": row.signatures.ed25519_scheme,
+                "ed25519": hex::encode(&row.signatures.ed25519_signature),
+                "pq_scheme": row.signatures.pq_signature.as_ref().map(|p| p.scheme_id.clone()),
+                "pq": row.signatures.pq_signature.as_ref().map(|p| hex::encode(&p.signature)),
+            },
+            "signer_public_key": signer,
+            "record": row.record,
+        });
+        std::fs::write(
+            dir.join(&file_name),
+            format!("{}\n", serde_json::to_string_pretty(&sidecar)?),
+        )?;
+        let lag_s = anchor_records
+            .iter()
+            .find(|a| a.id == anchor.id)
+            .and_then(|a| clock_provenance::assess(&row.record, a))
+            .map(|a| a.lag_s);
+        records.push(KitClock {
+            file_name,
+            payload_file_name,
+            record_id: row.id,
+            anchor_index,
+            observed_offset_s: row.record.observed_offset_s,
+            poll_gap_s: row.record.poll_gap_s,
+            lag_s,
+        });
+    }
+    Ok(ClockKit {
+        status: ClockLedgerStatus::SelfConsistent,
+        records,
+    })
 }
 
 /// Copy the relevant stored RFC 3161 anchor tokens into `anchors/`: tokens
@@ -418,6 +585,8 @@ fn package_anchors(
         let file_name = format!("anchor-{:04}-{}.der", anchor.id, safe_subject);
         std::fs::write(dir.join(&file_name), &anchor.token_der)?;
         out.push(KitAnchor {
+            id: anchor.id,
+            token_sha256: clock_provenance::token_sha256_hex(&anchor.token_der),
             file_name,
             subject: anchor.subject,
             gen_time: token_gen_time,
@@ -501,7 +670,7 @@ fn main() -> Result<()> {
         (hex, file) => Some(verify_helpers::load_verifying_key(&conn, hex, file)?),
     };
     let identity_verified = trusted_genesis.is_some();
-    let (chain_position, chain_length) = {
+    let (chain_position, chain_length, lineage_keys) = {
         let _stage = ui.stage("Locate receipt in chain");
         locate_receipt_in_chain(&conn, &bundle, trusted_genesis.as_ref())?
     };
@@ -551,6 +720,18 @@ fn main() -> Result<()> {
         let _stage = ui.stage("Package anchor tokens");
         package_anchors(&conn, kit, &bundle_sha256, &bundle.receipt_entry.entry_hash)?
     };
+    let clock = {
+        let _stage = ui.stage("Package clock-provenance records");
+        // The anchor rows again, for the lag arithmetic the custody record
+        // renders (a read-only re-read; the table cannot be absent when any
+        // anchor was packaged, and an empty list is fine otherwise).
+        let anchor_records = if anchors.is_empty() || !tsa::anchor_table_exists(&conn)? {
+            Vec::new()
+        } else {
+            tsa::list_anchors(&conn)?
+        };
+        package_clock_provenance(&conn, kit, &anchors, &anchor_records, &lineage_keys)?
+    };
     let digest_anchors: Vec<&KitAnchor> = anchors
         .iter()
         .filter(|a| a.covers == Covers::BundleBytes)
@@ -583,7 +764,7 @@ fn main() -> Result<()> {
 
     {
         let _stage = ui.stage("Write kit documents");
-        write_readme(kit, &bundle_file_name, anchored)?;
+        write_readme(kit, &bundle_file_name, anchored, !clock.records.is_empty())?;
         write_system_description(kit)?;
         write_custody_record(
             kit,
@@ -601,6 +782,7 @@ fn main() -> Result<()> {
             chain_length,
             identity_verified,
             &anchors,
+            &clock,
         )?;
         write_verification(
             kit,
@@ -609,6 +791,7 @@ fn main() -> Result<()> {
             &entry_hash_hex,
             receipt_anchored,
             &anchors,
+            &clock,
         )?;
         write_certifications(kit, &bundle_file_name, &bundle_hex, &artifact_hash_hex)?;
         write_manifest(
@@ -624,6 +807,7 @@ fn main() -> Result<()> {
             receipt_anchored,
             identity_verified,
             &anchors,
+            &clock,
         )?;
     }
 
@@ -650,6 +834,11 @@ fn main() -> Result<()> {
             .filter(|a| a.covers == Covers::ReceiptEntry)
             .count()
     );
+    println!(
+        "  clock:     {} clock-provenance record(s) packaged; ledger {}",
+        clock.records.len(),
+        clock.status.as_str()
+    );
     if !anchored {
         println!();
         println!(
@@ -674,7 +863,16 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn write_readme(kit: &Path, bundle_file_name: &str, anchored: bool) -> Result<()> {
+fn write_readme(kit: &Path, bundle_file_name: &str, anchored: bool, has_clock: bool) -> Result<()> {
+    let clock_item = if has_clock {
+        "7. `clock_provenance/` — the producing device's own clock measured against each \
+         packaged token's time, as device-signed records (`clock-NNNN.json` beside the \
+         verbatim signed bytes `clock-NNNN.payload.json`); `CUSTODY_AND_CONTROL.md` \
+         \"Time source\" reads them and `VERIFICATION.md` step 3b checks them.\n"
+    } else {
+        "7. `clock_provenance/` — absent: no clock-provenance record exists for the \
+         packaged tokens (the producing daemon recorded none for them).\n"
+    };
     let anchor_note = if anchored {
         "RFC 3161 timestamp tokens in `anchors/` fix this exact file in time; \
          `VERIFICATION.md` shows how to check them with openssl."
@@ -701,6 +899,7 @@ fn write_readme(kit: &Path, bundle_file_name: &str, anchored: bool) -> Result<()
          artifact and its signed export receipt, exactly as exported.\n\
          6. `MANIFEST.json` — machine-readable list of every file here with its \
          SHA-256.\n\
+         {clock_item}\
          \n\
          {anchor_note}\n\
          \n\
@@ -712,6 +911,7 @@ fn write_readme(kit: &Path, bundle_file_name: &str, anchored: bool) -> Result<()
          counsel. Nothing in this kit is legal advice.\n",
         bundle = bundle_file_name,
         anchor_note = anchor_note,
+        clock_item = clock_item,
     );
     std::fs::write(kit.join("README.md"), text)?;
     Ok(())
@@ -794,7 +994,9 @@ fn write_custody_record(
     chain_length: i64,
     identity_verified: bool,
     anchors: &[KitAnchor],
+    clock: &ClockKit,
 ) -> Result<()> {
+    let time_source = time_source_section(anchors, clock);
     let identity = if identity_verified {
         "confirmed: the device public key was supplied out of band at packaging time \
          and the database's identity and the bundle's signer both sit in its lineage"
@@ -889,6 +1091,10 @@ fn write_custody_record(
          \n\
          {anchors}\n\
          \n\
+         ## Time source\n\
+         \n\
+         {time_source}\
+         \n\
          ## Handling\n\
          \n\
          Digital custody transfers by hash, not by possession: any recipient \
@@ -909,9 +1115,100 @@ fn write_custody_record(
         pos = chain_position,
         len = chain_length,
         anchors = anchor_rows,
+        time_source = time_source,
     );
     std::fs::write(kit.join("CUSTODY_AND_CONTROL.md"), text)?;
     Ok(())
+}
+
+/// The custody record's "Time source" section: what the device's clock read
+/// against each packaged token, from the device-signed clock-provenance
+/// records, and the honest statement of what that does and does not add.
+fn time_source_section(anchors: &[KitAnchor], clock: &ClockKit) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "Event times in the evidence are 10-minute buckets stamped by the producing \
+         device's own clock. The device measures that clock against every RFC 3161 token \
+         it stores — `witnessd` seals one device-signed, hash-chained clock-provenance \
+         record per anchor row: the token's hash, the device's bucket at observation, and \
+         (when the row appeared between two polls of a running daemon) the whole-second \
+         offset `device clock − genTime` with the poll gap that bounds how old the row \
+         could have been. The records are a statement about the clock that stamped the \
+         evidence, not about any event: an event's bucket under a device offset is the \
+         same width shifted — a bias correction adds no precision.\n\n",
+    );
+    out.push_str(&format!(
+        "Clock-provenance ledger: **{}**",
+        clock.status.as_str()
+    ));
+    match clock.status {
+        ClockLedgerStatus::Absent => out.push_str(
+            " — the producing database holds no clock-provenance record (anchored before \
+             the ledger existed, or the daemon was not running to observe the rows).\n",
+        ),
+        ClockLedgerStatus::Failed => out.push_str(
+            " — the ledger's hash chain or device signatures did not verify at packaging \
+             time, so no record is packaged and nothing below is asserted.\n",
+        ),
+        ClockLedgerStatus::SelfConsistent => out.push_str(
+            " (hash chain and device signatures check under the device key lineage this \
+             kit was assembled under; the identity of that lineage is the \
+             \"Device identity\" row above).\n",
+        ),
+    }
+    if clock.records.is_empty() {
+        if clock.status == ClockLedgerStatus::SelfConsistent {
+            out.push_str("\nNo packaged token has a clock-provenance record.\n");
+        }
+        return out;
+    }
+    out.push('\n');
+    for c in &clock.records {
+        let anchor = &anchors[c.anchor_index];
+        let reading = match (c.observed_offset_s, c.poll_gap_s) {
+            (Some(offset), Some(gap)) => {
+                let band = if i64::from(offset).abs() > clock_provenance::ONE_BUCKET_S {
+                    "beyond one bucket (600 s)"
+                } else {
+                    "within one bucket (600 s)"
+                };
+                let lag = match c.lag_s {
+                    Some(lag) if lag > clock_provenance::PROMPT_LAG_MAX_S && offset >= 0 => {
+                        format!(
+                            "; the row was stored {} after the token's time (a delayed import), \
+                             so a positive offset is not a clock reading and is not evaluated",
+                            clock_provenance::human_lag(lag)
+                        )
+                    }
+                    Some(lag) => format!(
+                        "; the row was stored {} after the token's time",
+                        clock_provenance::human_lag(lag)
+                    ),
+                    None => String::new(),
+                };
+                format!(
+                    "device clock {} from the token's time, the row first seen within {gap} s of \
+                     its storage ({band}){lag}",
+                    clock_provenance::format_offset(offset)
+                )
+            }
+            _ => "binding only: the row was already present at the first poll of a daemon \
+                  process, so its age was unbounded and no offset was measured"
+                .to_string(),
+        };
+        out.push_str(&format!(
+            "- `clock_provenance/{}` (record #{}) binds `anchors/{}` by SHA-256 \
+             `{}`: {}.\n",
+            c.file_name, c.record_id, anchor.file_name, anchor.token_sha256, reading
+        ));
+    }
+    out.push_str(
+        "\nA positive offset means the device clock read ahead of the TSA's; an offset at \
+         ±3600 s is a clamp bound (\"at least this far\"), not a measurement. The tokens \
+         fix the ledger states in time; the records say what the device's clock read when \
+         it saw each token — nothing more.\n",
+    );
+    out
 }
 
 fn write_verification(
@@ -921,7 +1218,9 @@ fn write_verification(
     entry_hash_hex: &str,
     receipt_anchored: bool,
     anchors: &[KitAnchor],
+    clock: &ClockKit,
 ) -> Result<()> {
+    let clock_steps = clock_verification_steps(anchors, clock);
     let mut anchor_steps = String::new();
     let covering: Vec<&KitAnchor> = anchors
         .iter()
@@ -1001,6 +1300,10 @@ fn write_verification(
          \n\
          {anchor_steps}\
          \n\
+         ## 3b. Verify the clock-provenance records\n\
+         \n\
+         {clock_steps}\
+         \n\
          ## 4. Deeper verification (optional, SecuraCV tooling)\n\
          \n\
          The evidence file carries its signed export receipt and the device \
@@ -1019,9 +1322,90 @@ fn write_verification(
         bundle = bundle_file_name,
         bundle_hex = bundle_hex,
         anchor_steps = anchor_steps,
+        clock_steps = clock_steps,
     );
     std::fs::write(kit.join("VERIFICATION.md"), text)?;
     Ok(())
+}
+
+/// Step 3b: every stored fact of a packaged clock-provenance record
+/// re-derived with `sha256sum`, `xxd` and `openssl` alone.
+fn clock_verification_steps(anchors: &[KitAnchor], clock: &ClockKit) -> String {
+    let mut out = String::new();
+    match clock.status {
+        ClockLedgerStatus::Absent => {
+            out.push_str(
+                "No clock-provenance record is packaged: the producing database holds none \
+                 for these tokens (`clock_provenance_ledger: \"absent\"` in the manifest).\n",
+            );
+            return out;
+        }
+        ClockLedgerStatus::Failed => {
+            out.push_str(
+                "**The clock-provenance ledger did not verify at packaging time**, so no record \
+                 is packaged (`clock_provenance_ledger: \"verification failed\"` in the \
+                 manifest). The tokens above stand on their own; nothing is asserted about \
+                 the device's clock.\n",
+            );
+            return out;
+        }
+        ClockLedgerStatus::SelfConsistent if clock.records.is_empty() => {
+            out.push_str(
+                "The producing database's clock-provenance ledger is self-consistent, but no \
+                 packaged token has a record in it.\n",
+            );
+            return out;
+        }
+        ClockLedgerStatus::SelfConsistent => {}
+    }
+    out.push_str(
+        "Each `clock_provenance/clock-NNNN.json` describes one device-signed record whose \
+         exact signed bytes are `clock-NNNN.payload.json`. The record binds a token by hash \
+         and states what the producing device's clock read when it first saw that token \
+         (`observed_offset_s`, whole seconds, positive = device ahead of the TSA; `null` = \
+         binding only). Every fact is re-derivable here:\n\n",
+    );
+    for c in &clock.records {
+        let anchor = &anchors[c.anchor_index];
+        out.push_str(&format!(
+            "```sh\n\
+             # Record #{id}: anchors/{tok} ↔ clock_provenance/{payload}\n\
+             sha256sum anchors/{tok}                      # 1. equals \"token_sha256\" in {payload}\n\
+             openssl ts -reply -in anchors/{tok} -token_in -text | grep 'Time stamp'\n\
+             #    2. genTime; genTime + observed_offset_s is what the device clock read, and must\n\
+             #       lie in [time_bucket.start_epoch_s, start_epoch_s + 600) of {payload}\n\
+             J=clock_provenance/{json}\n\
+             ( xxd -r -p <<< \"$(jq -r .prev_hash $J)\"; cat clock_provenance/{payload} ) | sha256sum\n\
+             #    3. equals \"entry_hash\" in $J (SHA-256 over prev_hash ‖ the payload bytes)\n\
+             ( printf '\\x20\\x00\\x00\\x00securacv:pwk:clock-provenance:v1'; xxd -r -p <<< \"$(jq -r .entry_hash $J)\" ) \\\n\
+               | sha256sum | cut -d' ' -f1 | xxd -r -p > msg.bin\n\
+             #    4. the signed message: SHA-256(u32le(32) ‖ domain ‖ entry_hash)\n\
+             ( printf '\\x30\\x2a\\x30\\x05\\x06\\x03\\x2b\\x65\\x70\\x03\\x21\\x00'; xxd -r -p <<< \"$(jq -r .signer_public_key $J)\" ) \\\n\
+               | openssl pkey -pubin -inform DER -out device.pem\n\
+             xxd -r -p <<< \"$(jq -r .signature.ed25519 $J)\" > sig.bin\n\
+             openssl pkeyutl -verify -pubin -inkey device.pem -rawin -in msg.bin -sigfile sig.bin\n\
+             #    5. expect: Signature Verified Successfully (Ed25519 under the device key named in\n\
+             #       CUSTODY_AND_CONTROL.md; \"signer_public_key\" is the lineage key the record\n\
+             #       verifies under, which equals the device key unless the key was rotated)\n\
+             ```\n\n",
+            id = c.record_id,
+            tok = anchor.file_name,
+            payload = c.payload_file_name,
+            json = c.file_name,
+        ));
+    }
+    out.push_str(
+        "Each record's `prev_hash` is the previous record's `entry_hash` (the first record's \
+         is 32 zero bytes), so a kit that packages consecutive records lets you check the \
+         chain link too; the ledger's full chain is checked at the producing side by \
+         `log_verify` and `log_anchor verify`. Limits: a record says what the device's clock \
+         read at the time of an anchoring act the TSA fixed to the second — it says nothing \
+         about when any event happened (the evidence's 10-minute buckets stay 10-minute \
+         buckets), and the kit packages only the records of the tokens it packages; the \
+         `clock_provenance_head` anchors that fix the ledger itself in time stay in the \
+         producing database.\n",
+    );
+    out
 }
 
 fn write_certifications(
@@ -1116,6 +1500,7 @@ fn write_manifest(
     receipt_anchored: bool,
     identity_verified: bool,
     anchors: &[KitAnchor],
+    clock: &ClockKit,
 ) -> Result<()> {
     // Enumerate every file the kit contains (the manifest itself excluded) and
     // hash the bytes actually on disk — the manifest attests the kit as built.
@@ -1137,6 +1522,10 @@ fn write_manifest(
     }
     for a in anchors {
         paths.push(kit.join("anchors").join(&a.file_name));
+    }
+    for c in &clock.records {
+        paths.push(kit.join("clock_provenance").join(&c.file_name));
+        paths.push(kit.join("clock_provenance").join(&c.payload_file_name));
     }
     for path in paths {
         let bytes = std::fs::read(&path)?;
@@ -1170,7 +1559,18 @@ fn write_manifest(
         "receipt_anchored": receipt_anchored,
         "anchors": anchors
             .iter()
-            .map(|a| {
+            .enumerate()
+            .map(|(i, a)| {
+                let record = clock.records.iter().find(|c| c.anchor_index == i).map(|c| {
+                    serde_json::json!({
+                        "file": format!("clock_provenance/{}", c.file_name),
+                        "payload_file": format!("clock_provenance/{}", c.payload_file_name),
+                        "record_id": c.record_id,
+                        "observed_offset_s": c.observed_offset_s,
+                        "poll_gap_s": c.poll_gap_s,
+                        "binding_only": c.observed_offset_s.is_none(),
+                    })
+                });
                 serde_json::json!({
                     "file": format!("anchors/{}", a.file_name),
                     "subject": a.subject,
@@ -1179,9 +1579,11 @@ fn write_manifest(
                         "declared_name": a.declared_tsa,
                         "signer_cert_sha256": a.signer_fingerprint,
                     },
+                    "clock_provenance": record,
                 })
             })
             .collect::<Vec<_>>(),
+        "clock_provenance_ledger": clock.status.as_str(),
         "files": files,
     });
     std::fs::write(
