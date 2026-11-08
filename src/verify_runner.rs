@@ -47,6 +47,14 @@ pub struct VerifyReport {
     /// (`ENTERPRISE_CUSTODY.md` §2 anti-truncation/rollback/wipe). When `true`
     /// and `chain_valid` is `true`, the live log is at or ahead of the mark.
     pub high_water_mark_checked: bool,
+    /// Number of `tsa_anchors` rows that passed the structural checks (row well-formed, token parses, imprint equals the
+    /// row's subject hash, and — for head subjects — the hash is in its declared ledger's history, a checkpoint witness
+    /// only if that checkpoint's device signature verifies). `None` when the database has no anchors table; `Some(n)`
+    /// on a failed report counts the rows checked before the failing one. Structural only: the TSA countersignature is
+    /// checked by `log_anchor verify --ca` (openssl), never here. No times, no hashes: this report is published
+    /// retained over MQTT.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchors_checked: Option<u64>,
     pub events_verified: u64,
     pub break_glass_receipts_verified: u64,
     pub break_glass_granted: u64,
@@ -82,6 +90,7 @@ impl VerifyReport {
             verdict: String::new(),
             identity_verified: false,
             high_water_mark_checked: false,
+            anchors_checked: None,
             events_verified: 0,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
@@ -174,8 +183,9 @@ fn run_full_verify_impl(
         Ok(()) => {
             report.chain_valid = true;
             // The timeline audit only makes sense over a hash-valid chain.
+            // EXTEND: the anchor audit's warnings are already in the report.
             match verify::audit_chain_timeline(conn, bucket.start_epoch_s) {
-                Ok(warnings) => report.warnings = warnings,
+                Ok(warnings) => report.warnings.extend(warnings),
                 Err(err) => report
                     .warnings
                     .push(format!("timeline audit could not run: {err:#}")),
@@ -419,7 +429,170 @@ fn run_inner(
         report.high_water_mark_checked = true;
     }
 
+    // RFC 3161 anchors (ENTERPRISE_CUSTODY §2, structural). An anchor is
+    // auxiliary evidence ABOUT the ledgers: a head-kind row whose hash is no
+    // longer in its declared ledger's history is a rollback, a truncation, or
+    // a different history than the one that was anchored, so it fails the
+    // verdict. Membership is keyed on signed evidence only — a live row, or a
+    // checkpoint whose device signature verifies under a lineage key; the
+    // unsigned `ledger_id` column only sharpens the diagnosis text. A damaged
+    // row or token is a WARNING: it cannot vouch for anything, but it is not
+    // evidence of a rewritten ledger, and one corrupt auxiliary row must not
+    // boot witnessd into safe mode. The TSA countersignature is never checked
+    // here (`log_anchor verify --ca`, openssl). Runs after the high-water-mark
+    // so an anchor failure reports on top of an otherwise-consistent chain.
+    let mut anchor_warnings = Vec::new();
+    if crate::tsa::anchor_table_exists(conn)? {
+        report.anchors_checked = Some(0);
+        for (id, row) in crate::tsa::list_anchors_lenient(conn)? {
+            let record = match row {
+                Ok(record) => record,
+                Err(err) => {
+                    let reason = strip_corrupt_prefix(&err.to_string(), id);
+                    anchor_warnings.push(format!(
+                        "anchor #{id}: row is malformed ({reason}); run log_anchor verify"
+                    ));
+                    continue;
+                }
+            };
+            let token = match crate::tsa::parse_token(&record.token_der) {
+                Ok(token) => token,
+                Err(_) => {
+                    anchor_warnings.push(format!(
+                        "anchor #{id}: stored token does not parse as an RFC 3161 token; run \
+                         log_anchor verify"
+                    ));
+                    continue;
+                }
+            };
+            if token.imprint.as_slice() != record.subject_hash.as_slice() {
+                anchor_warnings.push(format!(
+                    "anchor #{id}: token imprint does not match the subject hash the row claims; \
+                     run log_anchor verify"
+                ));
+                continue;
+            }
+            let subject = crate::tsa::AnchorSubject::from_row(&record.subject);
+            if subject.is_head() {
+                check_anchored_head(
+                    conn,
+                    &record,
+                    subject,
+                    &lineage,
+                    &checkpoint,
+                    signature_mode,
+                    pq_verifying_key.as_ref(),
+                )?;
+            }
+            if let Some(n) = report.anchors_checked.as_mut() {
+                *n += 1;
+            }
+        }
+    }
+    report.warnings.extend(anchor_warnings);
+
     Ok(())
+}
+
+/// `list_anchors_lenient` wraps a row's reason as `corrupt anchor {id}:
+/// {reason}`; the warning names the row itself, so keep only the reason.
+fn strip_corrupt_prefix(message: &str, id: i64) -> String {
+    let prefix = format!("corrupt anchor {id}: ");
+    message.strip_prefix(&prefix).unwrap_or(message).to_string()
+}
+
+/// The first 16 hex characters of a hash — all a retained MQTT report may
+/// carry (Invariant III).
+fn hex16(hash: &[u8; 32]) -> String {
+    hex::encode(&hash[..8])
+}
+
+/// A head-kind anchor's membership check: the anchored hash must be in its
+/// declared ledger's history, witnessed by a live row or by a checkpoint
+/// whose signature verifies under a genesis-anchored lineage key.
+fn check_anchored_head(
+    conn: &Connection,
+    record: &crate::tsa::AnchorRecord,
+    subject: crate::tsa::AnchorSubject,
+    lineage: &[crate::DeviceKeyEpoch],
+    cutoff_checkpoint: &verify::CheckpointInfo,
+    signature_mode: SignatureMode,
+    pq_verifying_key: Option<&PqPublicKey>,
+) -> Result<()> {
+    use crate::tsa::HistoryWitness;
+    let id = record.id;
+    let hash = &record.subject_hash;
+    let regression = |detail: String| {
+        anyhow::Error::new(verify::VerifyFailure {
+            ledger: verify::FailedLedger::Anchors,
+            entry_id: Some(id),
+            kind: verify::FailureKind::AnchorRegression,
+            detail,
+        })
+    };
+    match crate::tsa::hash_in_ledger(conn, hash, subject)? {
+        Some(HistoryWitness::LiveRow { .. }) => Ok(()),
+        Some(HistoryWitness::CheckpointHead { checkpoint_id }) => {
+            // Reading the witness row is a database operation: a plain `Err`.
+            let witness = verify::checkpoint_by_id(conn, checkpoint_id)?;
+            // Signer: the recorded key, which must be in the lineage; a NULL
+            // signer means the key active at the checkpoint's cutoff —
+            // mirroring the cutoff checkpoint's own handling above.
+            let signer = match witness.signer_public_key {
+                Some(key) => {
+                    if !lineage.iter().any(|e| e.public_key == key) {
+                        return Err(regression(format!(
+                            "anchor regression: anchor #{id} covers chain head {}… which survives \
+                             only as checkpoint #{checkpoint_id} signed by a key outside the \
+                             genesis-anchored device key lineage",
+                            hex16(hash)
+                        )));
+                    }
+                    key
+                }
+                None => {
+                    crate::device_key_active_at_in(lineage, witness.cutoff_event_id.unwrap_or(0))?
+                }
+            };
+            let signer = verifying_key_from_bytes(&signer)?;
+            verify::verify_checkpoint_signature(&signer, &witness, signature_mode, pq_verifying_key)
+                .map_err(|e| {
+                    regression(format!(
+                        "anchor regression: anchor #{id} covers chain head {}… which survives \
+                         only as checkpoint #{checkpoint_id} whose signature does not verify: {e:#}",
+                        hex16(hash)
+                    ))
+                })?;
+            Ok(())
+        }
+        None => {
+            // Qualifier: text only, chain-head rows only. The unsigned
+            // `ledger_id` sharpens the diagnosis; it never decides the verdict.
+            let qualifier = match (subject, cutoff_checkpoint.cutoff_event_id) {
+                (crate::tsa::AnchorSubject::ChainHead, Some(cutoff)) => match record.ledger_id {
+                    Some(ledger_id) if ledger_id <= cutoff => format!(
+                        " (the anchored ledger row {ledger_id} is at or below the retention \
+                         cutoff {cutoff})"
+                    ),
+                    Some(ledger_id) => format!(
+                        " (the anchored ledger row {ledger_id} is newer than the retention \
+                         cutoff {cutoff})"
+                    ),
+                    None => " (the anchor row records no ledger position — imported before this \
+                             release, or after the head was already pruned)"
+                        .to_string(),
+                },
+                _ => String::new(),
+            };
+            Err(regression(format!(
+                "anchor regression: anchor #{id} covers {subject} {}… which is not in this \
+                 database's {} history — rollback, truncation, or a different history than the \
+                 one that was anchored{qualifier}",
+                hex16(hash),
+                subject.ledger_short()
+            )))
+        }
+    }
 }
 
 fn verifying_key_from_bytes(bytes: &[u8; 32]) -> Result<VerifyingKey> {
@@ -656,6 +829,7 @@ mod tests {
             verdict: "valid".to_string(),
             identity_verified: true,
             high_water_mark_checked: false,
+            anchors_checked: None,
             events_verified: 3,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
