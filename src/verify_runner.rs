@@ -1794,19 +1794,30 @@ mod tests {
     /// Invariant III for the retained MQTT report: no anchored hash leaves
     /// in full. `error`, `failure.detail` and every warning carry at most a
     /// 16-hex prefix, and the anchored hash's full hex is nowhere in the JSON.
+    /// Nor do they carry a URL (an anchor's TSA or calendar), a block height
+    /// or a bucket epoch (an all-digit token of 6 to 10 digits — row ids and
+    /// counts in these tests are shorter, and a hex prefix is not all
+    /// digits), or a rendered time.
     fn assert_report_hygiene(report: &VerifyReport, anchored: &[u8; 32]) {
-        if let Some(err) = &report.error {
-            assert!(!has_64_hex(err), "full hash in error: {err}");
-        }
-        if let Some(failure) = &report.failure {
+        let texts = report
+            .error
+            .iter()
+            .map(|e| ("error", e.as_str()))
+            .chain(report.failure.iter().map(|f| ("detail", f.detail.as_str())))
+            .chain(report.warnings.iter().map(|w| ("warning", w.as_str())));
+        for (what, text) in texts {
+            assert!(!has_64_hex(text), "full hash in {what}: {text}");
             assert!(
-                !has_64_hex(&failure.detail),
-                "full hash in detail: {}",
-                failure.detail
+                !text.contains("http") && !text.contains("://"),
+                "URL in {what}: {text}"
             );
-        }
-        for w in &report.warnings {
-            assert!(!has_64_hex(w), "full hash in warning: {w}");
+            assert!(
+                !text
+                    .split(|c: char| !c.is_ascii_alphanumeric())
+                    .any(|t| (6..=10).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_digit())),
+                "a height or epoch in {what}: {text}"
+            );
+            assert!(!text.contains("UTC"), "a time in {what}: {text}");
         }
         let json = serde_json::to_string(report).unwrap();
         assert!(
@@ -3062,8 +3073,6 @@ mod tests {
                 verify::classify_warning(w),
                 verify::WarningKind::AnchorAnomaly
             );
-            assert!(!w.contains("http"), "no URL in a warning: {w}");
-            assert!(!w.contains("840000"), "no height in a warning: {w}");
         }
         assert_report_hygiene(&report, &head);
     }
