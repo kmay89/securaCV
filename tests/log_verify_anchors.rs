@@ -415,3 +415,60 @@ fn clock_provenance_section_and_its_warnings() {
         stderr(&out)
     );
 }
+
+#[test]
+fn a_failed_report_never_says_the_clock_ledger_is_empty() {
+    let temp = tempfile::tempdir().unwrap();
+    let (db, mut kernel) = make_db(temp.path());
+    assert_eq!(observe(&mut kernel, 1_781_094_804, None), 0);
+    let head = event_hash(&kernel, 2);
+    anchor(&kernel, AnchorSubject::ChainHead, &head);
+    assert_eq!(observe(&mut kernel, 1_781_094_806, Some(5)), 1);
+
+    // The clock-provenance ledger itself fails: a changed payload literal.
+    kernel
+        .conn
+        .execute(
+            "UPDATE clock_provenance SET payload_json = replace(payload_json, '\"poll_gap_s\":5', '\"poll_gap_s\":1')",
+            [],
+        )
+        .unwrap();
+    drop(kernel);
+    let out = log_verify(&db, &[]);
+    assert!(!out.status.success());
+    let text = stdout(&out);
+    assert!(
+        text.contains("=== Clock Provenance ===\nclock-provenance ledger FAILED (see Diagnosis)\n"),
+        "{text}"
+    );
+    assert!(!text.contains("no clock-provenance records"), "{text}");
+
+    // Another ledger fails: the clock section reports no count, and never
+    // that the ledger is empty.
+    let kernel = Kernel::open(&test_cfg(&db)).unwrap();
+    kernel
+        .conn
+        .execute(
+            "UPDATE clock_provenance SET payload_json = replace(payload_json, '\"poll_gap_s\":1', '\"poll_gap_s\":5')",
+            [],
+        )
+        .unwrap();
+    kernel
+        .conn
+        .execute(
+            "UPDATE sealed_events SET payload_json = payload_json || ' ' WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    drop(kernel);
+    let out = log_verify(&db, &[]);
+    assert!(!out.status.success());
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "=== Clock Provenance ===\nnot reported: verification failed (see Diagnosis)\n"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("no clock-provenance records"), "{text}");
+}

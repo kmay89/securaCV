@@ -372,6 +372,15 @@ fn main() -> Result<()> {
              anchor; assessment: log_anchor --db {} verify)",
             args.db
         ),
+        // A failed report carries no count: the ledger is what failed, or
+        // the verdict failed elsewhere (before the walk or after it), and
+        // neither means it is empty.
+        None if !report.chain_valid => match &report.failure {
+            Some(f) if f.ledger == verify::FailedLedger::ClockProvenance => {
+                println!("clock-provenance ledger FAILED (see Diagnosis)")
+            }
+            _ => println!("not reported: verification failed (see Diagnosis)"),
+        },
         None => println!("no clock-provenance records"),
     }
 
