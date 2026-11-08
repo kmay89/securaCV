@@ -2795,13 +2795,25 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         receipt: &crate::break_glass::BreakGlassReceipt,
         approvals: &[crate::break_glass::Approval],
     ) -> Result<[u8; 32]> {
+        let recorded = crate::break_glass::recorded_approvals(&receipt.request_hash, approvals);
+        self.append_break_glass_receipt_row(receipt, &recorded)
+    }
+
+    /// The row writer behind [`Kernel::append_break_glass_receipt`]: stores
+    /// `stored_approvals` exactly as given. Every production path goes through
+    /// `append_break_glass_receipt`, which passes the recorded set; the tests
+    /// call this directly to reproduce the row an earlier writer stored
+    /// (every presented approval, a stale one included).
+    fn append_break_glass_receipt_row(
+        &mut self,
+        receipt: &crate::break_glass::BreakGlassReceipt,
+        stored_approvals: &[crate::break_glass::Approval],
+    ) -> Result<[u8; 32]> {
         self.in_immediate_write_tx("break_glass_receipt", |kernel| {
             let created_at = now_s()? as i64;
             let prev_hash = kernel.last_break_glass_hash_or_zero()?;
             let payload_json = serde_json::to_string(receipt)?;
-            let recorded =
-                crate::break_glass::recorded_approvals(&receipt.request_hash, approvals);
-            let approvals_json = serde_json::to_string(&recorded)?;
+            let approvals_json = serde_json::to_string(stored_approvals)?;
 
             let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
             let key_material = kernel.signature_key_material();
@@ -5215,6 +5227,9 @@ pub mod verify_runner;
 
 #[cfg(test)]
 mod disclosure_tests;
+
+#[cfg(test)]
+mod break_glass_reader_tests;
 
 pub(crate) fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
