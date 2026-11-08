@@ -180,6 +180,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Device trust & PKI](device_trust.md) — pinned keys, stricter than TOFU
 - [Log verification](log_verify.md) — proving the chain, offline
 - [Timestamping](timestamping.md) — coarse time as a feature
+- [Clock provenance (design, as built)](design/clock_provenance.md) — every RFC 3161 anchor gets one device-signed, hash-chained record of what the device's own clock read against the token's `genTime` (whole seconds, clamped, with the measured poll gap that bounds it); the fifth anchor subject fixes the ledger in time; `log_anchor verify`, `log_verify` and the court kit check it with `sha256sum` and `openssl` alone; the rejected alternatives and the Invariant II residual, named
 - [Court export](court_export.md) — the FRE 902(13)/(14) disclosure kit: evidence + digests + custody record + anchor tokens + certification drafts, verifiable with `sha256sum` and `openssl` alone
 - [Sealed snapshot vault](sealed_snapshot_vault.md) · [scheduled exports](scheduled_exports.md)
 - [C2PA Content Credentials for exports (design)](design/c2pa_export.md) — implemented behind `c2pa-export`: `export_events --c2pa` signs an industry-standard sidecar manifest any Content Credentials tool can verify — keys derived from the device seed, reproducible device-local CA, fully offline, chain stays the root of trust

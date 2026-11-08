@@ -290,6 +290,11 @@ that lands with the §5 unseal-output/sidecar work.)*
   policy with declared roles, anchor-all, distinctness check; OTS open.)*
 - Each anchor seals a **clock-provenance event** (the measured device-clock
   vs TSA `genTime` offset) — the direct rebuttal to timestamp challenges.
+  *(Implemented: `witnessd` seals one device-signed, hash-chained record per
+  anchor row into the never-pruned `clock_provenance` ledger, whose head is
+  the anchor subject `clock_provenance_head`; `log_anchor verify`,
+  `run_full_verify` and `court_export` check it.
+  `docs/design/clock_provenance.md`.)*
 - Verification trust is a **tlog-policy file** (device-key pin + witness
   quorum). Without one, `run_full_verify` reports "self-consistent,
   identity unverified" — vocabulary deliberately aligned with C2PA's

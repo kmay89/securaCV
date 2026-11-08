@@ -53,7 +53,7 @@ air-gapped deployments.
 
 ## Anchoring a ledger head
 
-An anchor row names what it covers — its **subject**. Four ledgers have a
+An anchor row names what it covers — its **subject**. Five ledgers have a
 head that can be anchored, selected with `--subject`:
 
 | `--subject` | What is anchored |
@@ -62,6 +62,7 @@ head that can be anchored, selected with `--subject`:
 | `export_receipt_head` | the newest export-receipt `entry_hash` |
 | `break_glass_receipt_head` | the newest break-glass-receipt `entry_hash` |
 | `policy_head` | the newest policy-change-history `entry_hash` |
+| `clock_provenance_head` | the newest clock-provenance `entry_hash` ("Clock provenance" below) |
 
 Anything else is a bare `digest` (`--digest <hex>` or `--file <path>`, which
 hashes the file's bytes in-tool); `--subject`, `--digest` and `--file` are
@@ -149,11 +150,19 @@ anchor, and what "covered" means:
       "allow_http": false,
       "cert_sha256": ["<64-hex of the TSA signing certificate, optional>"] }
   ],
-  "subjects": ["chain_head", "export_receipt_head", "break_glass_receipt_head", "policy_head"],
+  "subjects": ["chain_head", "export_receipt_head", "break_glass_receipt_head", "policy_head", "clock_provenance_head"],
   "require_roles": ["qualified", "independent"],
-  "min_distinct_tsas": 2
+  "min_distinct_tsas": 2,
+  "max_clock_offset_s": 600
 }
 ```
+
+`subjects` defaults to all five heads, `require_roles` to both roles,
+`min_distinct_tsas` to 2 and `max_clock_offset_s` (the clock-provenance
+threshold, "Clock provenance" below) to 600; `max_clock_offset_s` must be at
+least 1. **Add `max_clock_offset_s` only once every `log_anchor` that reads
+the policy is upgraded** — an older one refuses a policy carrying a key it
+does not know.
 
 `ca` paths resolve relative to the policy file. Unknown fields, a missing
 format tag, a `digest` subject, a role no TSA declares, or a `min_distinct_tsas`
@@ -260,8 +269,8 @@ Per anchor this checks, in order of increasing externality:
    anchor row claims (parsed by SecuraCV's own RFC 3161 reader).
 2. **Ledger membership** — the hash is in the ledger the row declares:
    sealed-event hash or checkpoint head for `chain_head`, the
-   export-receipt, break-glass-receipt, or policy-change history for the
-   receipt-head kinds. A tampered or regenerated ledger fails here: its
+   export-receipt, break-glass-receipt, policy-change or clock-provenance
+   history for the other head kinds. A tampered or regenerated ledger fails here: its
    history no longer contains the anchored state.
 3. **The TSA countersignature** (with `--ca`) — delegated to an
    *independent implementation*, `openssl ts -verify`, the same
@@ -288,6 +297,139 @@ names the anchor row id and at most a 16-hex prefix, never a `genTime`. Check
 ledger verdict says the anchored states are still present, not that a TSA
 vouched for them — `log_verify` prints the exact `log_anchor … verify --ca`
 command as the next step.
+
+## Clock provenance (device clock vs TSA `genTime`)
+
+An anchor fixes a ledger state in the TSA's time. The events in that ledger
+carry the **device's** time — 10-minute buckets stamped by `witnessd`'s wall
+clock. Clock provenance is the record of how that clock compared with the
+TSA's at every anchor: the direct answer to "the device's clock was wrong".
+Design and the rejected alternatives: [`design/clock_provenance.md`](design/clock_provenance.md).
+
+**What is recorded.** `witnessd` polls its own `tsa_anchors` table every 5 s
+(a read of the local database; no network) and seals **one device-signed,
+hash-chained record per anchor row** into the never-pruned
+`clock_provenance` ledger:
+
+| Field | Meaning |
+|---|---|
+| `time_bucket` | the device's 10-minute bucket when it first saw the row |
+| `anchor_id` | the anchor row (a locator) |
+| `token_sha256` | SHA-256 of the row's token — what `sha256sum` prints; this is the binding |
+| `observed_offset_s` | `device wall clock − genTime`, whole seconds, clamped to ±3600; positive = the device read ahead. `null` = binding only |
+| `poll_gap_s` | whole seconds since the previous completed poll (1–3600): the row was at most this old when first seen. `null` with the offset |
+| `kernel_version` | the build that measured |
+
+A row already present at the first poll of a `witnessd` process is of
+unbounded age, so it gets a **binding-only** record (both measurements
+`null`). With δ the device clock's true error, a measured record bounds
+δ ∈ [offset − poll_gap_s − d, offset), where *d*, the delay between the
+TSA issuing the token and the row being stored (about a second when the hub
+anchors online), is not measured. A negative offset means the device read
+behind by at least |offset| whatever *d* was. Anchors stored before the
+upgrade are never recorded: the first poll on an upgraded database starts at
+the newest existing row.
+
+The ledger's head is the fifth anchor subject, `clock_provenance_head`, so
+`anchor-all` fixes every record in external time at the next scheduled run.
+A failed append is sealed as a `StorageWriteFailed` failure record and the
+next poll waits 60 s; safe mode appends nothing.
+
+**`log_anchor verify`** reads the ledger (read-only; it holds no key and
+writes nothing) and checks it under the device key lineage the database
+names, so its verdict is self-consistency, never "verified". Before the
+anchors, one ledger line:
+
+```
+clock provenance: no records
+clock provenance: 3 record(s), ledger self-consistent (chain and device signatures check under the key lineage this database names; identity unverified)
+clock provenance: FAIL (integrity check failed at clock-provenance record id 2: computed_hash=…, stored_hash=…)
+```
+
+Under every anchor, one `clock:` line — the forms, with placeholders:
+
+```
+    clock: no record (anchored before clock provenance, or witnessd was not running to observe it)
+    clock: record #1: device clock +2 s vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); within one bucket (600 s)
+    clock: record #2: device clock -900 s vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); BEYOND one bucket (600 s)
+    clock: record #3: device clock >= +3600 s (clamped) vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); BEYOND one bucket (600 s)
+    clock: record #4 binds this token (sha256 <16 hex>…); binding only, no measurement (row already present at the first poll of a witnessd process)
+    clock: record #5: device clock +30 s vs TSA genTime; row stored 1d 23h after issuance (delayed import), positive offset not evaluated
+    clock: record #6: device clock -40 s vs TSA genTime (row seen within 5 s, stored 1d 23h after issuance (delayed import; a negative offset is evaluated regardless)); within one bucket (600 s)
+    clock: record #7: device clock +2 s recorded, but genTime not readable from the token; not evaluated
+    clock: FAIL record #8 binds token sha256 <16 hex>… but the row now holds <16 hex>… — the token was replaced after the device bound it
+```
+
+The storage phrase is `stored in the bucket of issuance`, `stored <d h | h m
+| m> after issuance`, or `stored <…> before issuance by the anchoring host's
+clock`. A record is **prompt** when the anchor row's bucket starts no more
+than 1200 s after `genTime`; a prompt offset is evaluated either way, a
+delayed one only when negative — a late offline import cannot make a clock
+look fast, and behind is behind. With `--policy` the band names the policy's
+threshold (`BEYOND 30 s (max_clock_offset_s)`). Beside a beyond reading:
+
+```
+    WARNING: device clock offset beyond the structural threshold; with --policy this counts against the anchor policy
+    note: a ClockSkew failure record is retained in bucket <bucket start> (within one bucket of this reading)
+    note: no ClockSkew failure record retained within one bucket of this reading (retention prunes failure records)
+```
+
+(the first only without `--policy`). When the anchoring host's clock and the
+device's disagree — the device's reading at observation is not within
+`0..1200` s after the anchor row's bucket start:
+
+```
+    note: host clock: the device's reading at observation is -696 s from the anchor row's bucket start (expected 0 to 1199 s); the anchoring host's clock and the device clock disagree
+```
+
+For every `chain_head` anchor whose head is still a live sealed row, record
+or no record, a structural check: if the sealed row's bucket starts `n > 1`
+seconds after the token's `genTime`, the device read at least `n` s ahead
+when it sealed that row (a `note:` within the threshold, a `WARNING` beyond
+it, and under `--policy` a breach only when the anchor's own line is `OK`):
+
+```
+    note: the anchored sealed row's bucket starts 396 s after the TSA genTime: the device clock read at least 396 s ahead when it sealed that row
+    WARNING: the anchored sealed row's bucket starts 996 s after the TSA genTime: the device clock read at least 996 s ahead when it sealed that row (BEYOND one bucket (600 s))
+```
+
+After the anchors, a record whose anchor is gone, and the step check between
+consecutive measured records more than one bucket apart:
+
+```
+clock provenance: FAIL record #1 names anchor #1, which is not in the anchors table (deleted, or the table was rebuilt)
+clock provenance: note: device clock offset stepped -930 s between records #2 and #3; no ClockSkew failure record is retained between their buckets (retention prunes failure records)
+clock provenance: note: device clock offset stepped -930 s between records #2 and #3; a ClockSkew failure record is retained between their buckets (bucket <bucket start>)
+```
+
+The ClockSkew notes say **retained**: retention prunes failure records, so
+"none retained" never means "none happened". Without `--policy` a beyond
+reading is a printed `WARNING` and no exit code; with `--policy` each one
+counts as a breach of `max_clock_offset_s` (default 600):
+`anchor policy …: NOT SATISFIED (0 subject(s) uncovered, 2 clock-offset
+breach(es) of max_clock_offset_s 30)`. The run fails, in this order, with
+`{n} anchor(s) failed verification`, `clock provenance ledger failed
+verification`, `{n} clock-provenance record(s) name anchors that were deleted
+or replaced`, then the policy's `NOT SATISFIED`.
+
+**`log_verify`** walks the ledger as part of the verdict (a broken chain or
+signature fails it as the `clock_provenance` ledger) and reports
+`clock_provenance_verified` in `--json` once a record exists. A record whose
+anchor was deleted or replaced, or a prompt-or-negative offset beyond one
+bucket, is a warning under `=== Anchor Audit ===`; a missing record never is
+([`log_verify.md`](log_verify.md)). **`court_export`** packages the record of
+every packaged token beside it ([`court_export.md`](court_export.md)).
+
+**Invariant III.** Every field is a 10-minute bucket, a whole-second clamped
+difference, a whole-second clamped duration, a row id, a hash or a version
+string. The only precise instant derivable, `genTime + observed_offset_s`,
+is the time of an anchoring act the TSA already fixed to the second in a
+token the database already stores. Nothing about events changes: an event's
+bucket under a device offset is the same width shifted — a bias correction
+adds no precision. Records are 1:1 with anchor rows and `anchor-all` is
+constant-count, so record timing tracks the anchoring schedule. `witnessd`
+opens no connection. The ledger is local and reaches a third party only
+inside a court kit, for the tokens that kit packages.
 
 ## Honest limits
 
@@ -327,6 +469,21 @@ command as the next step.
 - `list`, `verify`, `query`, and `anchor-all --offline-dir` open the
   database read-only and create nothing; a database with no anchors table
   reads as `no anchors stored`.
+- A clock-provenance record says what the device's clock read when it first
+  saw a token, to the second, bounded by the measured poll gap and an
+  unmeasured issuance-to-storage delay. It says nothing about when any event
+  happened, and it cannot correct a bucket: a shifted bucket is the same
+  width. A binding-only record measures nothing; an anchor stored while no
+  `witnessd` ran, or before the upgrade, has no record at all.
+- The record is the device's own statement, signed by the device key. Its
+  value against a challenge to the device clock rests on the next
+  `clock_provenance_head` anchor fixing it in time, and on the key not being
+  in an adversary's hands before that anchor.
+- **Invariant II residual.** A sequence of offsets is a fingerprint of one
+  device's clock skew. It is bounded by the 1 s quantization, the anchor
+  cadence (not the event cadence), the ±3600 s clamp, local storage and
+  kit-scoped disclosure. Do not lower the quantization, raise the cadence or
+  publish the ledger without revisiting this.
 
 ### Compatibility across versions
 
@@ -339,4 +496,8 @@ command as the next step.
 | new binaries on an older DB / legacy eight-column anchors table | read-only verbs probe the columns and never migrate; write verbs (`request`, `import`, online `anchor-all`, `relabel`) add the columns on open |
 | **older `witnessd` keeps writing while new `log_anchor`/`court_export` anchor into its DB** | anchored chain heads are still lost at every retention pass — only this release's `witnessd` writes the preserving checkpoints. `verify` then reports `anchored hash is not in chain history`; `relabel` is the remediation. **Upgrade `witnessd` before anchoring chain heads with these tools** |
 | conformance fixture (no `tsa_anchors`) | retention and packaging take the no-table branch |
+| this release's binaries on an older DB (no clock-provenance records) | the report field is omitted; `log_verify` prints `no clock-provenance records`, `log_anchor verify` `clock provenance: no records`, a court kit `absent`; anchors stored before the upgrade are never recorded |
+| `anchor-all` across the upgrade | five subjects per TSA per run instead of four (the count stays constant run to run); `clock_provenance_head` anchors its sentinel until the ledger has a row |
+| older `log_anchor` on a DB with `clock_provenance_head` rows | the literal falls through to `digest anchor, chain membership not applicable` |
+| older `log_anchor` reading a policy with `max_clock_offset_s` | refused at load (unknown key) — add the key only after every policy reader is upgraded |
 | offline `.tsq` whose `.tsr` is imported after the head was pruned | no row existed when retention ran, so nothing preserved the head; stored as `digest` with the stderr note; no membership, no policy credit — complete the round trip inside the retention window |

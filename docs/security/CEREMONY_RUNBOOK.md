@@ -518,8 +518,15 @@ given, with two-TSA count / distinctness under `--policy` — the kernel never
 links a CMS implementation, so a `valid` ledger verdict says the anchored
 states are present, not that a TSA vouched for them (**GAP** → §4;
 `ENTERPRISE_CUSTODY.md` §2). The anchors table is not itself chained: export
-`tsa_anchors.token_der` with every backup (**PROC**). An OpenTimestamps leg and clock-provenance
-events are **GAP** (§4). No shipped image enables the `tsa` feature: online
+`tsa_anchors.token_der` with every backup (**PROC**). Clock provenance is
+**CODE**: `witnessd` seals one device-signed record per anchor row (the
+device clock against the token's `genTime`), `log_anchor verify` prints a
+`clock:` line under every anchor and fails on a record whose anchor was
+deleted or replaced, and `--policy` counts offsets beyond
+`max_clock_offset_s` into `NOT SATISFIED` (`docs/timestamping.md`, "Clock
+provenance"). The anchoring host's clock still needs the NTP check above
+(**PROC**): a `note: host clock:` line names a disagreement, it does not fix
+one. An OpenTimestamps leg is **GAP** (§4). No shipped image enables the `tsa` feature: online
 `anchor-all` runs from an operator host (**PROC**). The Debian-based
 `witnessd` image carries the `openssl` CLI (via `ca-certificates`), so
 `verify --ca` / `--policy` can run inside it against a mounted CA or policy
@@ -706,6 +713,7 @@ rotate per bucket automatically.
 | Recovery quorum | **GAP** → §2.3 | none — loss of quorum has no in-band recovery |
 | Proactive resharing, liveness attestations | **GAP** → §2.4 | recorded rehearsals (C4b) |
 | Anchors cross-bound into full verify (`log_verify`) | **CODE** (structural) / **GAP** (countersignature) → §4 | every anchor row's shape, imprint and declared-ledger membership are part of the ledger verdict (`anchor_regression`); the TSA countersignature stays with `log_anchor verify --ca` |
+| Clock provenance sealed per anchor | **CODE** | `witnessd` seals the device-clock-vs-`genTime` record of every anchor row; `log_anchor verify` (`clock:` lines, `max_clock_offset_s` under `--policy`), `log_verify` (`=== Clock Provenance ===`), `court_export` (`clock_provenance/`, "Time source") |
 | Handoff sidecars for unseal outputs | **GAP** → §5 | `CLOSEOUT.md` digests |
 | Device-key rotation and database re-key commands | **CODE** | `break_glass rotate-identity`, `break_glass rekey-db` |
 | Device seed file private to its owner | **CODE** | a seed file with any group/other permission bit is refused, naming `chmod 600` |

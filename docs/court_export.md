@@ -48,6 +48,7 @@ with them.
 | `CERTIFICATION_FRE_902_13.md` / `_14.md` | Draft 28 U.S.C. § 1746 declarations, digests pre-filled, blanks for the certifier |
 | `evidence/` | The bundle exactly as exported (plus its C2PA sidecar, if any) |
 | `anchors/*.der` | The RFC 3161 tokens relevant to THIS disclosure, verbatim as bare DER TimeStampTokens (verified with `openssl ts -verify … -token_in`; a `.tsr` is a full response and takes no such flag), each one's embedded imprint checked against the digest its row claims: tokens over the bundle's exact bytes (called out as such), any token over this disclosure's own signed export receipt entry hash (called out as such, whatever its stored subject — `export_receipt_head` or a `digest` anchor made from `receipts --verbose`), plus chain-head tokens. Digest anchors for other exports, later export-receipt heads, empty-ledger sentinels, break-glass and policy heads are deliberately excluded — including them would disclose that those acts exist |
+| `clock_provenance/clock-NNNN.json` + `clock-NNNN.payload.json` | For every packaged token that has one, the producing device's own clock-provenance record ([`timestamping.md`](timestamping.md), "Clock provenance"): what the device's clock read against that token's `genTime`. The `.payload.json` file is the exact signed bytes; the `.json` beside it carries `prev_hash`, `entry_hash`, the signing domain, the Ed25519 signature and the lineage key it verifies under. Absent when no packaged token has a record |
 | `MANIFEST.json` | Machine-readable list of every kit file with its SHA-256 |
 
 ## What it checks before packaging
@@ -92,7 +93,38 @@ with them.
    the evidence file alone (the offline viewer's export-bundle mode or the
    library's `verify_export_bundle`); the database-side checks in its step 4
    are a separate, deeper check.
-4. **Fresh output directory**: the manifest attests every file in the kit,
+4. **Clock provenance**: the producing database's clock-provenance ledger is
+   walked from genesis (every link, every entry hash over the stored payload
+   literal, every device signature under the key lineage the kit already
+   derived). A ledger that does not verify packages **no** clock record —
+   the terminal prints a `WARNING`, the manifest says
+   `"clock_provenance_ledger": "verification failed"`, and the custody
+   record and `VERIFICATION.md` say nothing is asserted about the device's
+   clock (fail closed). Over a ledger that holds, the record naming each
+   packaged anchor is packaged only when its `token_sha256` equals the
+   SHA-256 of the token bytes actually packaged; a mismatch is left out with
+   a `WARNING`. `CUSTODY_AND_CONTROL.md` gains a **Time source** section
+   (one line per packaged record: the offset, the poll gap, how long after
+   issuance the row was stored, and the sentence "an event's bucket under a
+   device offset is the same width shifted — a bias correction adds no
+   precision"); `VERIFICATION.md` gains **step 3b**, which re-derives every
+   stored fact with `sha256sum`, `xxd`, `jq` and `openssl pkeyutl -rawin`
+   (Ed25519 over `SHA256(u32le(32) ‖ "securacv:pwk:clock-provenance:v1" ‖
+   entry_hash)`); `README.md` names the directory as item 7. The manifest
+   gains two additive keys: `clock_provenance_ledger` —
+   `"self-consistent; identity unverified"`, `"verification failed"` or
+   `"absent"`, never "verified" (the ledger is checked under the lineage the
+   kit derived; whether that lineage was pinned out of band is
+   `identity_verified`) — and, per entry of `anchors`, a `clock_provenance`
+   object (`file`, `payload_file`, `record_id`, `observed_offset_s`,
+   `poll_gap_s`, `binding_only`) or `null`. The terminal summary adds
+   `clock:     N clock-provenance record(s) packaged; ledger <status>`.
+   `clock_provenance_head` anchors, which fix the ledger itself in time,
+   are never packaged: like the other receipt-ledger heads they would
+   disclose activity outside this export, so a kit carries the records of
+   its own tokens and leaves the ledger's own anchors in the producing
+   database.
+5. **Fresh output directory**: the manifest attests every file in the kit,
    so `--output-dir` must be absent or empty — a directory with any
    pre-existing content is refused.
 
@@ -105,6 +137,11 @@ with them.
   unanchored bundle's timing rests on the device clock and key.
 - The kit renders times at the 10-minute bucket granularity the receipts
   carry — the disclosure discloses nothing finer (Invariant III).
+- A clock-provenance record states what the device's clock read when it
+  first saw a token. It is the device's own signed statement; it says
+  nothing about when any event happened, and the evidence's 10-minute
+  buckets stay 10-minute buckets. The only instant it yields to the second
+  is the time of the anchoring act, which the token already fixes.
 
 Design lineage: this is the "court export" move from the provenance-interop
 research ([`security/PROVENANCE_INTEROP.md`](security/PROVENANCE_INTEROP.md)
