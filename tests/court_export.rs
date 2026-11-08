@@ -1588,8 +1588,9 @@ fn ots_proof_over_bundle_packaged() -> Result<()> {
     )), "{custody}");
     let readme = std::fs::read_to_string(kit.join("README.md"))?;
     assert!(readme.contains(
-        "OpenTimestamps proofs in `anchors/*.ots` tie the same digests to the Bitcoin blockchain"
-    ));
+        "OpenTimestamps proofs in `anchors/*.ots` are pending (not yet in a Bitcoin block) and are not yet evidence of time; `VERIFICATION.md` shows how to upgrade and check them."
+    ), "{readme}");
+    assert!(!readme.contains("attest Bitcoin blocks"), "{readme}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("  ots:       1 proof(s), 0 attest a Bitcoin block, 1 pending"),
@@ -1607,6 +1608,50 @@ fn ots_proof_over_bundle_packaged() -> Result<()> {
             .arg(kit.join("anchors").join(&file))
             .output()?;
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    Ok(())
+}
+
+/// A proof over `hash` whose calendar body is a Bitcoin leaf at the
+/// commitment itself (synthetic: a 32-byte message, so it reads as attesting
+/// block `height`; no header confirms it, and the kit never says it does).
+fn ots_attested_proof(hash: &[u8; 32], height: u8) -> ots::Proof {
+    let nonce = [7u8; ots::OTS_NONCE_LEN];
+    let c = ots::commitment(hash, &nonce);
+    let mut body = vec![0x00, 0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01, 0x01];
+    body.push(height);
+    let node = ots::parse_timestamp(&body, &c).unwrap();
+    ots::Proof::compose(hash, &nonce, node).unwrap()
+}
+
+#[test]
+fn ots_readme_sentence_follows_the_proofs_state() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
+    let attested = ots_attested_proof(&bundle_sha, 5);
+    assert_eq!(attested.state(), ots::ProofState::Bitcoin { height: 5 });
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &attested);
+    let kit = temp.path().join("kit");
+    export_ok(&db, &bundle, &kit);
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(readme.contains(
+        "OpenTimestamps proofs in `anchors/*.ots` attest Bitcoin blocks for digests named in `CUSTODY_AND_CONTROL.md`; `VERIFICATION.md` shows the `ots` command and the block to look up."
+    ), "{readme}");
+    assert!(!readme.contains("are pending"), "{readme}");
+    assert_eq!(read_manifest(&kit)?["ots_bundle_attestation"], "bitcoin");
+
+    // One attested and one pending: the sentence names the exception.
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha, 2));
+    let kit2 = temp.path().join("kit2");
+    export_ok(&db, &bundle, &kit2);
+    let readme = std::fs::read_to_string(kit2.join("README.md"))?;
+    assert!(readme.contains(
+        "except those it lists as pending (not yet in a Bitcoin block), which are not yet evidence of time"
+    ), "{readme}");
+    for doc in [&readme, &std::fs::read_to_string(kit2.join("VERIFICATION.md"))?] {
+        assert!(!doc.contains("confirmed in Bitcoin"), "{doc}");
+        assert!(!doc.contains("tie the same digests"), "{doc}");
     }
     Ok(())
 }

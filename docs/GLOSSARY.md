@@ -623,8 +623,9 @@ event's 10-minute bucket finer. → [timestamping](timestamping.md) ·
 hash operations from the digest to a calendar's commitment and, once the
 calendar has committed it, to a Bitcoin block's merkle root. `anchor-all`
 stores one per (subject, calendar) in `ots_anchors`; a court kit packages
-them as `anchors/ots-NNNN-<subject>.ots`. Proves existence before a block,
-never identity. → [timestamping](timestamping.md) ·
+them as `anchors/ots-NNNN-<subject>.ots`. Once its path is checked against a
+block header you trust, it shows existence before that block, never identity;
+a pending proof is not yet evidence of time. → [timestamping](timestamping.md) ·
 [design](design/opentimestamps_leg.md)
 
 **Calendar (OpenTimestamps)** — A public server that aggregates submitted

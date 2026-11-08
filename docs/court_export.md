@@ -159,7 +159,12 @@ with them.
    (optional)` — `ots info`, `ots --no-bitcoin verify -d <hex>`, and the
    block whose merkle root to compare against a node or explorer you trust
    (or, for a pending proof, what `ots upgrade` would do) — and its intro
-   names the `ots` client. The terminal summary adds
+   names the `ots` client. The subsection sits inside step 3, after the
+   openssl recipes and before step 3b. The README's sentence about the
+   proofs follows their state: proofs that attest a block "attest Bitcoin
+   blocks for digests named in `CUSTODY_AND_CONTROL.md`"; when every proof is
+   pending it says they "are pending (not yet in a Bitcoin block) and are not
+   yet evidence of time". The terminal summary adds
    `ots:       N proof(s), B attest a Bitcoin block, P pending`. A bundle
    digest gets a proof from `log_anchor request --policy p.json --file
    bundle.json` (online) or `query --policy` then `import --ots-dir`.

@@ -19,7 +19,7 @@ calendar, run), sentinels included, so no calendar ever sees a ledger head or
 a public sentinel and no calendar can link two runs or two calendars. Each
 answer is stored as one complete `.ots` file per (subject, calendar) in a new
 frozen table, `ots_anchors`, never in `tsa_anchors`. Earlier rows still
-pending and younger than a fixed 7-day horizon each get exactly one upgrade
+pending and within a fixed 7-day horizon of the run each get exactly one upgrade
 GET, before the run's stamps; a reply that reaches a Bitcoin block-header
 attestation is merged into the stored proof. The kernel gets a hand-written
 `.ots` codec (`src/ots.rs`, always compiled, on `sha2` and `hex`), pinned
@@ -140,7 +140,13 @@ speculatively, readers treat absence as "no OpenTimestamps anchors", and
 Bitcoin row, once, and only after checking that the new proof covers the same
 digest and contains every leaf of the stored one: a merge only adds, and a
 proof is self-checking, so a tampered update can drop evidence but never
-forge it.
+forge it. Before either the INSERT or the UPDATE, the canonical bytes are
+parsed back and must reproduce themselves: a calendar body is parsed with the
+full recursion budget, but `compose` and `merge_at` graft it below ops it was
+not parsed under, so a body deep enough could otherwise yield a stored file
+that nests past the limit and that no reader (ours or the `ots` client)
+accepts. A refused upgrade leaves the pending row and its readable proof
+untouched.
 
 Retention keeps an anchored chain head as a signed checkpoint when a row in
 `tsa_anchors` **or** `ots_anchors` covers it (each clause only when its table
@@ -153,8 +159,8 @@ exists); otherwise a head anchored only on this leg would be pruned and
 eight-point argument in full: no kernel involvement; a constant submission
 count (`|planned subjects| × |calendars|`, sentinels substituted, no skip, the
 leg runs whether or not the TSA leg failed); upgrade count a function of
-cadence and calendar latency (at most one GET per pending row younger than 7
-days, upgrades before stamps, no rows created); random request content (the
+cadence and calendar latency (at most one GET per pending row within 7 days
+of the run's bucket on either side, upgrades before stamps, no rows created); random request content (the
 nonce); the operator's schedule (no sleep, poll or wait; a feature-less build
 refuses a policy with `ots` before the first request); no precise external
 time in any record (a height is not a time; buckets only); egress compiled
@@ -164,7 +170,12 @@ Residuals, stated so nobody weakens them later: a calendar learns the source
 address, the cadence and the per-run count (a configuration constant plus a
 bounded number of upgrade GETs); a calendar can stall a proof forever
 (availability, not forgery); the chain holds the calendar's merkle root, not
-ours; a failed run changes that run's count; a court kit discloses its
+ours; a failed run changes that run's count; an operator one-off
+(`request --policy` over a bundle digest, an `import --ots-dir`, a repeated
+import) stores pending rows that later `anchor-all` runs also poll, adding a
+bounded number of upgrade GETs over the next ≤ 7 days — at most one per such
+row per run, each naming a commitment the calendar already holds, and none
+driven by a witnessed event; a court kit discloses its
 packaged proofs (nonces, calendar hostnames, block height ≈ anchoring time to
 a block interval), kit-scoped and selected by hash; an explorer lookup tells
 the explorer which block the verifier cares about.
@@ -230,6 +241,16 @@ block whose merkle root the reader looks up; the custody record says
 source you trust; this kit records the height only)". A bundle digest gets a
 proof through `log_anchor request --policy` (online) or
 `query --policy` + `import --ots-dir` (offline).
+
+The kit's `VERIFICATION.md` places `### OpenTimestamps proofs (optional)`
+inside `## 3. Verify the timestamp anchors`, after the openssl recipes and
+before `## 3b. Verify the clock-provenance records`. The design brief said
+both "under step 3" and "after step 3b"; an unnumbered `###` placed after 3b
+would read as part of the clock-provenance step, so it stays under step 3,
+where the README's "the optional OpenTimestamps check in step 3" points. The
+README's sentence about the proofs follows their state: proofs that attest a
+block "attest Bitcoin blocks"; pending proofs are "pending (not yet in a
+Bitcoin block) and are not yet evidence of time".
 
 ## Compatibility
 

@@ -69,11 +69,20 @@ air-gapped deployments.
    events.** Each run sends at most one GET per pending row created within
    the last 7 days (a constant), polling the first pending leaf whose URI
    equals the row's calendar URL, and only if that URL is a declared
-   calendar. Every run creates the same number of rows, so the pending set is
-   fixed by the cron interval and how fast calendars commit; the horizon
-   bounds the GET count by `|subjects| × |calendars| × runs-per-7-days`, a
-   configuration constant. Rows beyond the horizon stay pending and are
-   reported, not polled. The upgrade pass runs before the stamp pass, so rows
+   calendar. Every `anchor-all` run creates the same number of rows, so the
+   pending set those runs leave is fixed by the cron interval and how fast
+   calendars commit; the horizon bounds their GET count by `|subjects| ×
+   |calendars| × runs-per-7-days`, a configuration constant. Rows stored by
+   an operator one-off — `request --policy` (a bundle digest) or `import
+   --ots-dir` (including a repeated import of the same directory) — are
+   pending rows too, and each later `anchor-all` run within the horizon polls
+   each of them with at most one GET: such a one-off adds at most `(rows it
+   added) × runs-per-7-days` GETs. Those GETs follow operator actions, never
+   witnessed events, and each names a commitment that calendar already
+   received. The horizon is two-sided: a row dated more than 7 days after the
+   host's clock (a clock that ran ahead when it was stamped) is not polled
+   either, so the bound holds whichever way the clock was skewed. Rows beyond
+   the horizon stay pending and are reported, not polled. The upgrade pass runs before the stamp pass, so rows
    stamped in a run are never polled in it. Upgrades create no rows.
 4. **Request content is random.** Each calendar receives `SHA256(hash ‖
    nonce16)`, with a nonce fresh per (subject, calendar, run); heads and
@@ -362,8 +371,9 @@ then the calendar's own steps to its pending attestation.
 
 **Stamp and upgrade, on the `anchor-all` cadence** (`--features tsa,ots`).
 Each run first sends at most one `GET <calendar>/timestamp/<pending message>`
-per earlier row that is still pending and was created within the last 7 days
-(a fixed horizon), then stamps every planned subject at every calendar. A
+per earlier row that is still pending and was created within 7 days of the
+run's bucket (a fixed horizon, on either side, so a row dated ahead by a fast
+host clock is not polled indefinitely), then stamps every planned subject at every calendar. A
 reply that reaches a Bitcoin block-header attestation is merged into the
 stored proof (the pending leaf is kept beside the new path, as `ots upgrade`
 leaves it); rows stamped in this run are never polled in it. Rows past the
@@ -426,7 +436,7 @@ source is the verifier's trust root. Lines per row:
 
 - `ots anchor #N: OK (proof digest matches, <membership>; confirmed in Bitcoin block H against the supplied header, block hash <hash>) via <calendar>` — a Bitcoin leaf's 32-byte message equals the supplied header's merkle root;
 - `UNVERIFIED (…; attests Bitcoin block H; merkle root NOT checked — re-run with --bitcoin-headers <file>)` or `(…; no header for block H in <file>)`;
-- `UNVERIFIED (…; pending (not yet in a Bitcoin block) at <uri>)`, with `, beyond the 7-day upgrade horizon — no longer polled; the calendar may never have committed it` past the horizon;
+- `UNVERIFIED (…; pending (not yet in a Bitcoin block) at <uri>)`, with `, beyond the 7-day upgrade horizon — no longer polled; the calendar may never have committed it` past the horizon, or `, dated more than 7 days after this host's clock — not polled; check the host clock` for a row dated ahead of it;
 - `FAIL` and one problem per line: the proof does not parse, covers another hash, contradicts the row's cached `attestation`/`bitcoin_height`, carries no pending or Bitcoin leaf, has a Bitcoin leaf over a message that is not 32 bytes, a head missing from its ledger, or **any** Bitcoin leaf whose supplied header's merkle root differs (`merkle root of the supplied header for Bitcoin block H (<header root>) does not match the proof (<proof root>)`).
 
 A summary follows: `{n} OpenTimestamps anchor(s): {c} confirmed against the

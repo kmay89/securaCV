@@ -927,7 +927,7 @@ fn main() -> Result<()> {
 
     {
         let _stage = ui.stage("Write kit documents");
-        write_readme(kit, &bundle_file_name, anchored, &clock, ots_anchors.len())?;
+        write_readme(kit, &bundle_file_name, anchored, &clock, &ots_anchors)?;
         write_system_description(kit)?;
         write_custody_record(
             kit,
@@ -1047,13 +1047,30 @@ fn write_readme(
     bundle_file_name: &str,
     anchored: bool,
     clock: &ClockKit,
-    ots_count: usize,
+    ots_anchors: &[KitOtsAnchor],
 ) -> Result<()> {
-    let ots_sentence = if ots_count > 0 {
-        " OpenTimestamps proofs in `anchors/*.ots` tie the same digests to the Bitcoin \
-         blockchain; `VERIFICATION.md` shows the `ots` command and the block to look up."
-    } else {
+    // By state, derived from the proofs: a pending proof is in no Bitcoin
+    // block and is not yet evidence of time, so it is never described as
+    // tying anything to the blockchain.
+    let attested = ots_anchors
+        .iter()
+        .filter(|a| a.attestation() == "bitcoin")
+        .count();
+    let ots_sentence = if ots_anchors.is_empty() {
         ""
+    } else if attested == ots_anchors.len() {
+        " OpenTimestamps proofs in `anchors/*.ots` attest Bitcoin blocks for digests named \
+         in `CUSTODY_AND_CONTROL.md`; `VERIFICATION.md` shows the `ots` command and the \
+         block to look up."
+    } else if attested > 0 {
+        " OpenTimestamps proofs in `anchors/*.ots` attest Bitcoin blocks for digests named \
+         in `CUSTODY_AND_CONTROL.md`, except those it lists as pending (not yet in a Bitcoin \
+         block), which are not yet evidence of time; `VERIFICATION.md` shows the `ots` \
+         command and the block to look up."
+    } else {
+        " OpenTimestamps proofs in `anchors/*.ots` are pending (not yet in a Bitcoin block) \
+         and are not yet evidence of time; `VERIFICATION.md` shows how to upgrade and check \
+         them."
     };
     // Item 7 says what the custody record and the manifest say: the same
     // three ledger states, and "none recorded" only when that is the case.
