@@ -54,6 +54,11 @@ FLEET_PEERS_FILE="/config/fleet_peers.json"
 # existing /config copy over, verified, and removes it.
 DEVICE_KEY_FILE="/data/device_key"
 LEGACY_DEVICE_KEY_FILE="/config/.securacv/device_key"
+# The copy of the seed the kernel itself used to keep beside the sealed log
+# (crypto::device_key_path_for_db: DB_PATH with its extension replaced).
+# witnessd no longer writes it (the service sets DEVICE_KEY_SEED_PERSIST=0);
+# run_lib.sh remove_kernel_seed_copy removes the one an earlier release left.
+KERNEL_SEED_FILE="/config/witness.ed25519.seed"
 INGRESS_PORT="${INGRESS_PORT:-8788}"
 RUN_DIR="/run/securacv"
 SETUP_FILE="$RUN_DIR/setup.sh"
@@ -202,6 +207,32 @@ if [ -z "$OPTION_DEVICE_KEY_SEED" ] || [ "$OPTION_DEVICE_KEY_SEED" = "devkey:mvp
         bashio::log.info "Device key: recorded in the device_key_seed option (Configuration tab) — copy it from there for a backup; the file copy stays in the app's data (${DEVICE_KEY_FILE})."
     elif [ "${record:-}" != "already-set" ]; then
         bashio::log.warning "Device key: could not record it in the device_key_seed option (${record:-the Supervisor did not answer}); it is in the app's data only (${DEVICE_KEY_FILE}). Re-run the setup wizard from the panel to record it, or restart the app to try again."
+    fi
+fi
+
+# ============================================================================
+# The kernel's own copy of the seed leaves /config (one-time). In standalone
+# mode witnessd wrote the environment seed beside the sealed log, at
+# /config/witness.ed25519.seed, at its first start — the key this release
+# moved into /data, back inside every backup. The witnessd service now
+# starts it with DEVICE_KEY_SEED_PERSIST=0, so a fresh install writes no
+# such file, and the copy an earlier release left is removed here once it is
+# shown to hold the seed in use, byte for byte (the seed is never logged;
+# the verdicts are fixed words). A copy holding another key is kept, with a
+# warning: witnessd says the same at open, and nothing a person might need
+# is deleted on the way to that message. Runs in both modes: a Frigate-mode
+# install that once ran standalone has the file too.
+# ============================================================================
+if [ -e "$KERNEL_SEED_FILE" ]; then
+    if seed_copy=$(remove_kernel_seed_copy "$KERNEL_SEED_FILE" "$DEVICE_KEY_SEED"); then
+        case "$seed_copy" in
+            "removed")
+                bashio::log.info "Device key: the kernel's copy at ${KERNEL_SEED_FILE} held the key in use and is removed; the kernel writes no copy under /config anymore (the key stays in ${DEVICE_KEY_FILE} and the device_key_seed option)." ;;
+            "kept differs")
+                bashio::log.warning "Device key: ${KERNEL_SEED_FILE} holds a different key from the one in use (${DEVICE_KEY_FILE}, or the device_key_seed option), so it is kept. The kernel refuses to open the log with two identities and will say so; remove that file by hand once you are sure which key is the log's." ;;
+        esac
+    else
+        bashio::log.warning "Device key: could not remove the kernel's copy at ${KERNEL_SEED_FILE}; it is tried again at the next start. Check /config for errors."
     fi
 fi
 

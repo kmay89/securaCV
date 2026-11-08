@@ -181,8 +181,9 @@ schema:
     topic_prefix: str?
     discovery_prefix: str?
   # `password`: the Supervisor masks it in the Configuration tab and its
-  # logs. The seed itself still lives where it always did (/config, in the
-  # kernel's config); moving it is a data migration, tracked separately.
+  # logs. The seed's file copy is the app's own /data/device_key (run.sh);
+  # nothing under /config holds it, and the kernel writes no copy there
+  # (its service sets DEVICE_KEY_SEED_PERSIST=0).
   device_key_seed: password?
   retention_days: int(1,365)
   time_bucket_minutes: int(5,60)

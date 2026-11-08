@@ -213,6 +213,40 @@ assert_eq 0 "$(code_lines "$RUN_SH" | { grep -c -E 'bashio::log\.[a-z]+ .*DEVICE
 assert_eq 0 "$(code_lines "$RUN_SH" | grep -F 'bashio::log' | { grep -c -F 'key_move' || true; })" \
     "run.sh: the move's verdict is matched, never interpolated into a log line"
 
+# The kernel's own copy beside the log (`<db>.ed25519.seed`): witnessd no
+# longer writes it (its service sets DEVICE_KEY_SEED_PERSIST=0 before the
+# exec), and run.sh removes the one an earlier release left, once the seed
+# in use is resolved, by handing both to remove_kernel_seed_copy exactly
+# once. The file name is DB_PATH's with the kernel's extension.
+ADDON_KERNEL_SEED=$(fixed_value "$RUN_SH" KERNEL_SEED_FILE)
+assert_eq "${ADDON_DB%.db}.ed25519.seed" "$ADDON_KERNEL_SEED" \
+    "run.sh: KERNEL_SEED_FILE is DB_PATH with the kernel's seed extension (crypto::device_key_path_for_db)"
+assert_eq 1 "$(count_needle "$RUN_SH" 'remove_kernel_seed_copy "$KERNEL_SEED_FILE" "$DEVICE_KEY_SEED"')" \
+    "run.sh: the kernel's copy is held to the seed in use exactly once"
+RESOLVE_LINE=$(code_lines "$RUN_SH" | grep -n -F 'resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE"' | cut -d: -f1 | head -n1)
+CLEANUP_LINE=$(code_lines "$RUN_SH" | grep -n -F 'remove_kernel_seed_copy "$KERNEL_SEED_FILE"' | cut -d: -f1 | head -n1)
+SETUP_WRITE_LINE=$(code_lines "$RUN_SH" | grep -n -F 'touch "$CONFIGURED_MARKER"' | cut -d: -f1 | head -n1)
+if [ -n "$RESOLVE_LINE" ] && [ -n "$CLEANUP_LINE" ] && [ -n "$SETUP_WRITE_LINE" ] \
+    && [ "$RESOLVE_LINE" -lt "$CLEANUP_LINE" ] && [ "$CLEANUP_LINE" -lt "$SETUP_WRITE_LINE" ]; then
+    ok "run.sh: the kernel's copy is removed after the seed resolves and before the services start"
+else
+    fail "run.sh: resolve (line ${RESOLVE_LINE:-?}) must precede the cleanup (line ${CLEANUP_LINE:-?}), which must precede the services (line ${SETUP_WRITE_LINE:-?})"
+fi
+assert_eq 0 "$(code_lines "$RUN_SH" | grep -F 'bashio::log' | { grep -c -F 'seed_copy' || true; })" \
+    "run.sh: the cleanup's verdict is matched, never interpolated into a log line"
+WITNESSD_RUN="$(dirname "$RUN_SH")/rootfs/etc/services.d/witnessd/run"
+if [ -f "$WITNESSD_RUN" ]; then
+    assert_eq 1 "$(count_needle "$WITNESSD_RUN" 'export DEVICE_KEY_SEED_PERSIST=0')" \
+        "witnessd service: tells the kernel the seed is kept elsewhere (no copy beside the log)"
+    PERSIST_LINE=$(code_lines "$WITNESSD_RUN" | grep -n -F 'export DEVICE_KEY_SEED_PERSIST=0' | cut -d: -f1 | head -n1)
+    EXEC_LINE=$(code_lines "$WITNESSD_RUN" | grep -n -F 'exec /usr/local/bin/witnessd' | cut -d: -f1 | head -n1)
+    if [ -n "$PERSIST_LINE" ] && [ -n "$EXEC_LINE" ] && [ "$PERSIST_LINE" -lt "$EXEC_LINE" ]; then
+        ok "witnessd service: the switch is exported before the exec"
+    else
+        fail "witnessd service: DEVICE_KEY_SEED_PERSIST=0 (line ${PERSIST_LINE:-?}) must precede the exec (line ${EXEC_LINE:-?})"
+    fi
+fi
+
 # The fragment as run.sh builds it with publishing on, and as it is with it off.
 ADDON_API_ON=", \"fleet_peers_path\": \"$ADDON_PEERS\""
 
