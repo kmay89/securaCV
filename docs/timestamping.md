@@ -51,6 +51,56 @@ SecuraCV's no-outbound-network principle is preserved: nothing in
 operator's cron job) runs `log_anchor`, and an offline flow exists for
 air-gapped deployments.
 
+### The OpenTimestamps leg and Invariant III
+
+1. **No kernel involvement.** `witnessd` never contacts a calendar. Stamping
+   and upgrading run only inside operator-initiated `log_anchor anchor-all`
+   (the TSA leg's process and cadence) and `request --policy` (an operator
+   one-off). The kernel's only OpenTimestamps code is structural
+   verification and the retention union. `ots_anchors` is auxiliary,
+   unsigned evidence, like `tsa_anchors`.
+2. **Constant submission count.** Every run submits exactly `|planned
+   subjects| × |calendars|` commitments: `plan_subjects` substitutes the fixed
+   sentinel for an empty ledger. There is no already-anchored lookup and no
+   skip for an unchanged head, and the leg runs whether or not the TSA leg's
+   requests failed, so a TSA failure never changes whether calendars are
+   asked.
+3. **Upgrade count is a function of cadence and calendar latency, never of
+   events.** Each run sends at most one GET per pending row created within
+   the last 7 days (a constant), polling the first pending leaf whose URI
+   equals the row's calendar URL, and only if that URL is a declared
+   calendar. Every run creates the same number of rows, so the pending set is
+   fixed by the cron interval and how fast calendars commit; the horizon
+   bounds the GET count by `|subjects| × |calendars| × runs-per-7-days`, a
+   configuration constant. Rows beyond the horizon stay pending and are
+   reported, not polled. The upgrade pass runs before the stamp pass, so rows
+   stamped in a run are never polled in it. Upgrades create no rows.
+4. **Request content is random.** Each calendar receives `SHA256(hash ‖
+   nonce16)`, with a nonce fresh per (subject, calendar, run); heads and
+   sentinels are blinded alike. A calendar cannot see a ledger head, cannot
+   recognize an empty ledger, cannot tell whether a head changed between
+   runs, and cannot link its submission to another calendar's. The TSA leg's
+   residual — the imprint repeats across runs until the head changes — does
+   not exist on this leg. An upgrade GET names the calendar's own commitment
+   (the pending message), which the calendar already holds.
+5. **Request timing is the operator's schedule.** The tool never sleeps,
+   polls or waits. A policy carrying `ots` on a build without the feature is
+   refused before the first TSA request, so a run either does every leg or
+   nothing.
+6. **No precise external time enters a record.** A proof carries no time: a
+   Bitcoin attestation is a block height. The block header's `nTime` lives in
+   the verifier's header source and is never written to the database, the
+   report, the kit, or `verify` output. `created_bucket_start` and
+   `upgraded_bucket_start` are 10-minute buckets. `VerifyReport` gains one
+   counter and no height, hash or time.
+7. **Egress is compile-time opt-in, and verification is silent.** The calls
+   exist only under `--features ots`, which no image enables. These make no
+   network call: `list`, `verify` (any flags), `import`,
+   `anchor-all --offline-dir`, `court_export`, `run_full_verify`.
+8. **Offline mirrors online.** `--offline-dir` writes `|subjects| ×
+   |calendars|` request files every run, plus one upgrade file per pollable
+   pending row. The file count never reflects events.
+
 ## Anchoring a ledger head
 
 An anchor row names what it covers — its **subject**. Five ledgers have a
@@ -276,6 +326,135 @@ avoid the window, run `anchor-all` a second time once `witnessd` has polled
 `anchor policy anchor-policy.json: SATISFIED` with exit 0, or `NOT SATISFIED
 (…)` with exit 1, as above; both go to stdout, and the failing one is also
 the process's error on stderr (`Error: anchor policy …: NOT SATISFIED (…)`).
+
+## The OpenTimestamps leg
+
+An anchor policy may carry an optional `ots` object. With it, every planned
+subject is also submitted to every declared OpenTimestamps calendar — a
+trust-kind-independent leg beside the two TSAs. Its proofs live in their own
+table, `ots_anchors`, never in `tsa_anchors`; the design record is
+[`design/opentimestamps_leg.md`](design/opentimestamps_leg.md).
+
+```json
+"ots": {
+  "calendars": [
+    { "name": "alice", "url": "https://alice.btc.calendar.opentimestamps.org" },
+    { "name": "bob",   "url": "https://bob.btc.calendar.opentimestamps.org" }
+  ],
+  "required": false
+}
+```
+
+One to eight calendars; a name is unique across both rosters (TSA and
+calendar names); a URL is `https://` (or `http://` with `"allow_http": true`),
+has no trailing `/`, query or fragment, and uses only `A-Z a-z 0-9 . _ / : -`
+— the characters a pending attestation may carry, so a stored proof's pending
+URI matches its calendar entry by exact string equality. Declare the
+calendars themselves, not an aggregator pool: a response whose pending
+attestation names another URL is refused. **Add `ots` only once every policy
+reader is upgraded** — an older `log_anchor` refuses the unknown key.
+
+**Commitments.** A calendar never receives a ledger head or a sentinel. Each
+submission is `SHA256(hash ‖ 16 fresh random bytes)` — the reference client's
+own blinding — with a nonce fresh per (subject, calendar, run). The stored
+proof is the complete `.ots` file over the hash: `append(nonce)`, `sha256`,
+then the calendar's own steps to its pending attestation.
+
+**Stamp and upgrade, on the `anchor-all` cadence** (`--features tsa,ots`).
+Each run first sends at most one `GET <calendar>/timestamp/<pending message>`
+per earlier row that is still pending and was created within the last 7 days
+(a fixed horizon), then stamps every planned subject at every calendar. A
+reply that reaches a Bitcoin block-header attestation is merged into the
+stored proof (the pending leaf is kept beside the new path, as `ots upgrade`
+leaves it); rows stamped in this run are never polled in it. Rows past the
+horizon stay pending and are reported, not polled. Output:
+
+```text
+ots: stamping chain_head <hash> via alice (https://alice.btc.calendar.opentimestamps.org)   (stderr)
+ots anchor #12 stored: chain_head <hash>
+  pending at https://alice.btc.calendar.opentimestamps.org via alice
+ots anchor #7 upgraded: chain_head attests Bitcoin block 912345
+anchor-all (ots): 10 stored, 0 failed (5×2 submitted; 2 over empty-ledger sentinels); upgrades: 1 now attest a Bitcoin block, 9 still pending, 0 error(s), 0 beyond the 7-day horizon (not polled)
+```
+
+Upgrade misses and errors never fail a run; a failed submission does
+(`{f} of {M} calendar submission(s) failed`, joined to the TSA text with `; `
+when both legs failed). A build with `tsa` but not `ots` refuses a policy
+carrying `ots` before the first TSA request — a run does every leg or
+nothing — and names the offline flow.
+
+**Offline round trip.** `anchor-all --offline-dir out/` also writes, for
+every subject and calendar, `out/{subject}.{calendar}.ots-request.json`
+(`{"format":"securacv-ots-request:v1","subject_hash":…,"nonce":…,"calendar":…,"calendar_url":…}`
+— no subject field: import re-derives it from the ledgers) and
+`out/{subject}.{calendar}.ots-commitment` (the 32-byte POST body), plus one
+`out/ots-{id}.ots-upgrade.json` per row the online pass would poll now. It
+prints the `curl -sf … --data-binary @… <url>/digest > ….otsr` and
+`curl -sf … <uri>/timestamp/<hex> > out/ots-{id}.otsr` lines; then
+
+```sh
+log_anchor --db witness.db import --policy anchor-policy.json --ots-dir out/
+# import (ots): {s} stored, {u} upgraded, {p} still pending, {f} failed
+```
+
+An empty `.otsr` (curl `-f` on a 404 or error) is "no response" for a stamp
+(failed) and "still pending" for an upgrade (not a failure). An upgrade file
+binds by the pending leaf's message, which must be in the stored proof: a
+misnamed file is refused, never merged.
+
+**Bundle digests.** `request --policy p.json --file bundle.json` (online)
+stamps the digest at the policy's calendars after its TSA requests;
+`query --policy p.json --file bundle.json --out bundle.tsq` writes the
+request files beside `bundle.tsq` for the offline flow. `request --url`
+stays TSA-only.
+
+**Verifying.** `log_anchor verify` never contacts the network. Its one
+Bitcoin source is `--bitcoin-headers <file>`: one line per block, `<height>
+<160 hex of the 80-byte header>`, from a node you run:
+
+```sh
+for h in <heights>; do echo "$h $(bitcoin-cli getblockheader $(bitcoin-cli getblockhash $h) false)"; done > headers.txt
+log_anchor --db witness.db verify --bitcoin-headers headers.txt
+```
+
+Each header must pass a proof-of-work **sanity check**: its hash is at or
+below the target its own `nBits` encodes, and that target is no easier than
+Bitcoin's minimum difficulty (`0x1d00ffff`). That catches a typo, a testnet
+or regtest header, or the wrong file. It is not evidence that the header is
+on the real chain — a forger with modest hardware can satisfy it; the header
+source is the verifier's trust root. Lines per row:
+
+- `ots anchor #N: OK (proof digest matches, <membership>; confirmed in Bitcoin block H against the supplied header, block hash <hash>) via <calendar>` — a Bitcoin leaf's 32-byte message equals the supplied header's merkle root;
+- `UNVERIFIED (…; attests Bitcoin block H; merkle root NOT checked — re-run with --bitcoin-headers <file>)` or `(…; no header for block H in <file>)`;
+- `UNVERIFIED (…; pending (not yet in a Bitcoin block) at <uri>)`, with `, beyond the 7-day upgrade horizon — no longer polled; the calendar may never have committed it` past the horizon;
+- `FAIL` and one problem per line: the proof does not parse, covers another hash, contradicts the row's cached `attestation`/`bitcoin_height`, carries no pending or Bitcoin leaf, has a Bitcoin leaf over a message that is not 32 bytes, a head missing from its ledger, or **any** Bitcoin leaf whose supplied header's merkle root differs (`merkle root of the supplied header for Bitcoin block H (<header root>) does not match the proof (<proof root>)`).
+
+A summary follows: `{n} OpenTimestamps anchor(s): {c} confirmed against the
+supplied header, {u} attest a Bitcoin block not checked against a header,
+{p} pending (not yet in a Bitcoin block), {f} failed`. Roots and hashes are
+printed in explorer byte order.
+
+**Under `--policy`.** Coverage counts only header-confirmed rows: pending
+never covers, and a height nobody checked never covers. The lines are
+`policy: <subject>: ots confirmed in Bitcoin block H against the supplied
+header — ots anchors #a, #b; current head: yes|NO (ledger advanced since)`
+and `policy: <subject>: ots NOT confirmed — {p} pending, {u} attested but not
+checked against a header`. With `"required": false` both end `; not required
+by this policy` and nothing counts toward the verdict. With
+`"required": true`, `verify --policy` refuses to run without
+`--bitcoin-headers`, and each non-empty subject without a confirmed proof
+adds `, {k} without a confirmed OpenTimestamps proof` to `NOT SATISFIED (…)`.
+`--require-current` does not apply to this leg: Bitcoin confirmation lags by
+hours by design, so "current head" would be unsatisfiable on any ledger that
+advances between runs; the TSA leg carries freshness and the OTS line's
+`current head` is information only. A brand-new ledger therefore fails a
+`required` policy until its first confirmation.
+
+**Clock provenance.** An OpenTimestamps row creates no clock-provenance
+record: a block height is not an issuer time.
+
+**`relabel --ots --id N --subject digest`** is `relabel` for an
+OpenTimestamps row, with the same refusals; it never creates the table.
 
 ## TSA identity
 
@@ -526,6 +705,36 @@ inside a court kit, for the tokens that kit packages.
   value against a challenge to the device clock rests on the next
   `clock_provenance_head` anchor fixing it in time, and on the key not being
   in an adversary's hands before that anchor.
+- **The OpenTimestamps leg, stated so nobody weakens it later.** A calendar
+  learns the requester's source address, the cadence, and the per-run count —
+  `|subjects| × |calendars|`, a configuration constant, plus a bounded number
+  of upgrade GETs. A calendar can decline to confirm (404 forever): that is
+  availability, not forgery; the row stays pending, `verify` says so, and two
+  declared calendars make one stall survivable. The Bitcoin chain publicly
+  holds the calendar's merkle root, not ours, so the chain reveals nothing
+  about this device. A run that fails on the network changes that run's
+  count, the residual the TSA leg already accepts. A court kit discloses its
+  packaged proofs — their nonces, calendar hostnames and block height, which
+  is the anchoring time to roughly a block interval — kit-scoped and selected
+  by hash, as for TSA tokens. An explorer lookup during a manual check tells
+  that explorer which block the verifier cares about; use your own node if
+  that matters.
+- Calendars are unaccountable public relays with no identity or
+  accreditation. Once a Bitcoin path exists the calendar needs no trust: it
+  only relayed the commitment.
+- Bitcoin time is block-granular, and block times are set by miners within
+  consensus bounds, not read from a reference clock. A confirmed proof shows
+  that the bytes existed before block N was mined — existence, not identity,
+  and nothing about who made them. A pending proof shows nothing about time.
+- The header source is the verifier's trust root; the proof-of-work check is
+  a sanity check, not evidence of the real chain. The kernel never checks
+  Bitcoin: `run_full_verify` and `log_verify` check OpenTimestamps rows
+  structurally only.
+- The codec in `src/ots.rs` is structural and hand-written; the second
+  implementation is the Python `ots` client (`ots info`, `ots verify -d`).
+  `ots verify` on a pending proof contacts the calendars it names. Proofs
+  using SHA-1, RIPEMD-160 or Keccak operations are refused at parse with a
+  message that names the operation.
 - **Invariant II residual.** A sequence of offsets is a fingerprint of one
   device's clock skew. It is bounded by the 1 s quantization, the anchor
   cadence (not the event cadence), the ±3600 s clamp, local storage and
@@ -550,3 +759,9 @@ inside a court kit, for the tokens that kit packages.
 | older `log_anchor` reading a policy with `max_clock_offset_s` | refused at load (unknown key) — add the key only after every policy reader is upgraded |
 | older `log_anchor` reading a policy whose `subjects` lists `clock_provenance_head` | refused at load (`not a ledger head`) — list the subject only after every policy reader is upgraded, or omit `subjects` (new readers anchor five heads, older ones four) |
 | offline `.tsq` whose `.tsr` is imported after the head was pruned | no row existed when retention ran, so nothing preserved the head; stored as `digest` with the stderr note; no membership, no policy credit — complete the round trip inside the retention window |
+| pre-OpenTimestamps `log_anchor` / `log_verify` / `court_export` / `witnessd` on a DB with `ots_anchors` | never read the table; nothing changes for them. **A pre-OpenTimestamps `witnessd` still prunes OTS-only-anchored chain heads without a checkpoint** — upgrade `witnessd` before stamping chain heads; `relabel --ots` repairs an affected row |
+| pre-OpenTimestamps `log_anchor` given a policy with `ots` | refused at load (``unknown field `ots` ``) — add the key only after every policy reader (operator hosts, the ceremony observer's binary) is upgraded |
+| this release's binaries on a DB without `ots_anchors` | `list` / `verify` output unchanged (`no anchors stored`); `ots_anchors_checked` omitted (report byte-identical); the kit carries `ots_anchor_count: 0`, `ots_*_attestation: "none"`, `ots_anchors: []` |
+| `anchor-all` with a policy without `ots` | identical to before, byte for byte, in requests and output; the table is never created |
+| a build with `tsa` but not `ots`, policy with `ots` | `anchor-all` / `request --policy` refuse before any request; the offline flow, `import --ots-dir`, `verify`, `list` and the kit all work |
+| `verify` without `--bitcoin-headers` | OpenTimestamps rows are at most `UNVERIFIED`; `--policy` with `ots.required` refuses up front |

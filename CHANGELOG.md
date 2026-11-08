@@ -1,6 +1,50 @@
 # Changelog
 
 ## [Unreleased]
+### OpenTimestamps is the trust-kind-independent anchoring leg: nonced commitments on the `anchor-all` cadence, Bitcoin confirmation only against a header file you supply, proofs in the court kit
+
+- **OpenTimestamps is the trust-kind-independent anchoring leg**
+  (`spec/quorum_unseal_v2.md` §4; `docs/design/opentimestamps_leg.md`). An
+  anchor policy may carry an optional `ots` object (1-8 calendars by name and
+  URL, `required` default `false`); `log_anchor anchor-all` then submits every
+  planned subject to every calendar as a nonced commitment
+  `SHA256(hash ‖ 16 fresh random bytes)` — fresh per subject, calendar and run,
+  sentinels included — and stores each answer as one complete `.ots` proof in
+  the new frozen table `ots_anchors` (never `tsa_anchors`; created by the first
+  insert only). Each run first sends at most one upgrade fetch per pending row
+  younger than 7 days, then stamps; a reply that reaches a Bitcoin attestation
+  is merged into the stored proof. The per-run count is constant
+  (`|subjects| × |calendars|`), and the leg runs whether or not the TSA leg
+  failed. The two HTTP calls are behind the new non-default Cargo feature
+  `ots` (ureq, 30 s, 10 000-byte cap, no redirects, ureq's default
+  User-Agent); the hand-written codec (`src/ots.rs`: bounded varints, exact
+  payload consumption, canonical order, SHA-1/RIPEMD-160/Keccak refused by
+  name), verification, `list`, the offline flow
+  (`anchor-all --offline-dir`, `query --policy`, `import --ots-dir`) and
+  `request --policy` for bundle digests need no feature for anything but the
+  network. `log_anchor verify --bitcoin-headers <file>` (one
+  `<height> <160 hex>` line per block, each passing a proof-of-work sanity
+  check) is the only Bitcoin source and the only way a proof reads `OK …
+  confirmed in Bitcoin block N against the supplied header`; a height alone
+  or a pending proof is `UNVERIFIED`; policy coverage counts only
+  header-confirmed rows, and `"required": true` refuses to verify without the
+  header file. `run_full_verify` checks the rows structurally
+  (`ots_anchors_checked`, `ots anchor #N:` warnings, `anchor_regression` on
+  the ledger `ots_anchors`); retention keeps a chain head anchored in either
+  table. `court_export` packages `anchors/ots-NNNN-<subject>.ots` with the
+  additive MANIFEST keys `ots_anchor_count`, `ots_bundle_attestation`,
+  `ots_receipt_attestation` and `ots_anchors[]` (`anchors[]` and `anchored`
+  stay RFC 3161), and its text says "attests Bitcoin block N", never
+  "confirmed". No block time is stored anywhere. `relabel --ots` is `relabel`
+  for an OpenTimestamps row.
+- **Upgrade note.** Add `ots` to a policy only after every policy reader is
+  upgraded (an older `log_anchor` refuses the unknown key). Upgrade `witnessd`
+  before stamping chain heads — an older one prunes OTS-only-anchored heads
+  without a checkpoint (`relabel --ots` repairs). No shipped image enables
+  `ots`: run the online leg from an operator host built with
+  `--features tsa,ots`. `ots verify` needs a Bitcoin node; without one, use
+  the manual explorer step `VERIFICATION.md` prints.
+
 ### Every anchor carries the device's own clock: witnessd seals a clock-provenance record per anchor row, and the verifiers and the court kit check it
 
 - **Clock provenance sealed per anchor** (`spec/quorum_unseal_v2.md` §4).

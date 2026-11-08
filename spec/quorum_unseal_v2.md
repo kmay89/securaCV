@@ -287,7 +287,9 @@ that lands with the §5 unseal-output/sidecar work.)*
   one independent) plus **OpenTimestamps** as a trust-kind-independent leg.
   Public witness networks / Sigsum are enterprise-tier opt-ins with a
   rotatable origin. *(Implemented in part: typed anchor subjects, anchor
-  policy with declared roles, anchor-all, distinctness check; OTS open.)*
+  policy with declared roles, anchor-all, distinctness check; OpenTimestamps
+  leg implemented for per-device subjects (`docs/design/opentimestamps_leg.md`);
+  the fleet-aggregate checkpoint remains design.)*
 - Each anchor seals a **clock-provenance event** (the measured device-clock
   vs TSA `genTime` offset) — the direct rebuttal to timestamp challenges.
   *(Implemented: `witnessd` seals one device-signed, hash-chained record per
@@ -319,7 +321,8 @@ that lands with the §5 unseal-output/sidecar work.)*
   *(Implemented for event-export bundles: the `court_export` tool packages a
   verified bundle with custody/identity binding, anchor tokens, certification
   drafts, and an explicit unanchored warning — `docs/court_export.md`. Vault
-  unseal outputs and OTS anchoring remain design.)*
+  unseal outputs remain design; OpenTimestamps proofs are packaged in the court
+  kit.)*
 - Exports optionally carry the frozen **C2PA witness-manifest profile**:
   COSE claim under a self-signed X.509 wrap of the device key, exactly one
   hard binding, `c2pa.created` with capture provenance bound to

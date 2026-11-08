@@ -123,6 +123,24 @@ report from such a database is byte-identical to before; on a failed report
 it counts the rows checked before the failing one). Warnings about damaged
 rows print under `=== Anchor Audit ===`, apart from the timeline audit.
 
+**OpenTimestamps rows** (when the database has an `ots_anchors` table) are
+checked by the same structural rules — the row is well-formed, the proof
+parses, its digest equals the row's hash, the cached `attestation` and
+`bitcoin_height` agree with the proof, and a head-kind row's hash is in its
+declared ledger's history (a missing one fails the verdict as
+`anchor_regression` on the ledger `ots_anchors`, `entry_id` = the
+`ots_anchors` row id). Bitcoin attestations are never checked here — there is
+no header input, and this runs at `witnessd` boot. The human report prints
+`ots anchors: N checked (structural; Bitcoin attestations: log_anchor --db
+<db> verify --bitcoin-headers <file>)`; the JSON report gains
+`ots_anchors_checked`, with the same contract as `anchors_checked` (omitted
+when the table is absent; `anchors_checked` stays RFC 3161 only). The four
+warnings — `ots anchor #N: row is malformed (…)`, `… stored proof does not
+parse as an OpenTimestamps proof`, `… proof digest does not match the subject
+hash the row claims`, `… attestation columns disagree with the stored proof`,
+each ending `; run log_anchor verify` — print under `=== Anchor Audit ===`
+and carry no hash, height, URL or time.
+
 **Clock-provenance records against the anchors table.** After the anchor
 rows, every clock-provenance record is cross-checked against them, as
 warnings only (the ledger itself already verified):
@@ -227,7 +245,7 @@ Failure kinds and the gist of their guidance:
 With `--json`, the same information is machine-readable: the report gains a
 `failure` object (`{ledger, entry_id, kind, detail}`) next to the unchanged
 `error` string. `ledger` is one of `sealed_events`, `break_glass_receipts`,
-`export_receipts`, `checkpoint`, `key_lineage`, `high_water_mark`, `anchors`. The HTTP API's `POST /verify` returns the same report.
+`export_receipts`, `checkpoint`, `key_lineage`, `high_water_mark`, `anchors`, `clock_provenance`, `ots_anchors`. The HTTP API's `POST /verify` returns the same report.
 
 ## Future work
 - Support multiple checkpoints and archived compacted segments.

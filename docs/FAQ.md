@@ -215,6 +215,26 @@ stops repeating; anchoring a single per-run ledger-heads leaf (planned with the
 Merkle tree) removes that.
 → [timestamping](timestamping.md)
 
+### Does an OpenTimestamps calendar learn my ledger head or when things happened?
+
+No. A calendar receives `SHA256(hash ‖ 16 fresh random bytes)` — a fresh
+nonce per subject, calendar and run — so it never sees a ledger head or an
+empty-ledger sentinel, cannot tell whether a head changed, and cannot link
+two runs or two calendars. What it does learn: your address, your cadence,
+and the per-run count, which is a configuration constant (subjects ×
+calendars, plus a bounded number of upgrade fetches). The Bitcoin chain holds
+the calendar's merkle root, not yours.
+→ [timestamping](timestamping.md)
+
+### Why does `verify` say UNVERIFIED for a proof with a block height?
+
+Because a block height alone is a claim anyone can write into a file. A proof
+is `confirmed` only when its path reaches the merkle root of that block's
+header — and `log_anchor verify` reads headers only from a file you supply
+(`--bitcoin-headers`, from a node you run); it never looks a block up on the
+network. Only confirmed proofs count toward an anchor policy.
+→ [timestamping](timestamping.md)
+
 ### What if someone says the device's clock was wrong?
 
 Every anchor carries an answer. When a timestamp token is stored, `witnessd`

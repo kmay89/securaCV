@@ -619,6 +619,38 @@ device's clock was wrong" with a signed measurement; it never makes an
 event's 10-minute bucket finer. → [timestamping](timestamping.md) ·
 [design](design/clock_provenance.md)
 
+**OpenTimestamps proof** — A `.ots` file over a SHA-256 digest: a chain of
+hash operations from the digest to a calendar's commitment and, once the
+calendar has committed it, to a Bitcoin block's merkle root. `anchor-all`
+stores one per (subject, calendar) in `ots_anchors`; a court kit packages
+them as `anchors/ots-NNNN-<subject>.ots`. Proves existence before a block,
+never identity. → [timestamping](timestamping.md) ·
+[design](design/opentimestamps_leg.md)
+
+**Calendar (OpenTimestamps)** — A public server that aggregates submitted
+commitments into one Bitcoin transaction. A relay, not an authority: once a
+proof reaches a Bitcoin block it needs no trust in the calendar. Declared in
+the anchor policy's `ots` object by name and URL. →
+[timestamping](timestamping.md)
+
+**Commitment (OpenTimestamps)** — What a calendar receives:
+`SHA256(hash ‖ 16 fresh random bytes)`, a fresh nonce per subject, calendar
+and run, so no calendar sees a ledger head or an empty-ledger sentinel. →
+[timestamping](timestamping.md)
+
+**Attests Bitcoin block N / Confirmed in Bitcoin block N** — "Attests": the
+proof carries a Bitcoin attestation at height N, a claim anyone can write
+into a file. "Confirmed": `log_anchor verify` matched the proof's path to the
+merkle root of block N's header, supplied by the verifier
+(`--bitcoin-headers`). Only confirmed rows count toward an anchor policy;
+court kits say "attests", because the reader runs the comparison. →
+[timestamping](timestamping.md)
+
+**Pending (not yet in a Bitcoin block)** — An OpenTimestamps proof whose only
+attestation names a calendar that received the commitment. Not evidence of
+time; `anchor-all` polls it for an upgrade for 7 days. →
+[timestamping](timestamping.md)
+
 **Empty-ledger sentinel** — The fixed per-subject digest `anchor-all` requests
 when a ledger has no head yet, so a scheduled run always sends the same number
 of requests. Stored as a `digest` anchor; proves nothing about any ledger.

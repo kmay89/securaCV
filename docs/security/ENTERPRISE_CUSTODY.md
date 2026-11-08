@@ -125,6 +125,10 @@ truncation but can never cause a false verify failure.
   (receipt-chain heads as leaves = the cross-binding item below), C2SP
   checkpoint notes, fleet-internal witness cosigning as the default, and one
   fleet-level aggregate checkpoint anchored outward (TSA + OpenTimestamps).
+  The per-device OpenTimestamps leg has shipped (`anchor-all` with an `ots`
+  policy block; `docs/design/opentimestamps_leg.md`), and the structural fold
+  into `run_full_verify` covers both anchor tables; the fleet aggregate stays
+  open.
   *Design specified:* `spec/quorum_unseal_v2.md` §4; standards research
   `PROVENANCE_INTEROP.md` §1.5.
 - **Fold anchor verification into `run_full_verify`.** *Shipped (structural):*
