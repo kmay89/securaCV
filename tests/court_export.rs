@@ -971,3 +971,314 @@ fn break_glass_policy_sentinel_and_later_receipt_heads_are_never_packaged() -> R
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Clock provenance: the device-signed record of every packaged token travels
+// with it (`clock_provenance/clock-NNNN.json` beside the verbatim signed
+// bytes), checked under the kit's lineage and bound by the packaged token's
+// hash. Clock readings are injected, keyed to the fixture token's genTime.
+// ---------------------------------------------------------------------------
+
+const GEN: u64 = 1_781_094_804;
+
+fn observe(db: &Path, wall: u64, gap: Option<u32>) -> usize {
+    let mut kernel = Kernel::open(&test_cfg(db)).expect("open kernel");
+    kernel
+        .observe_anchors_for_clock_provenance(&witness_kernel::ClockObservation {
+            observed_wall_s: wall,
+            poll_gap_s: gap,
+            kernel_version: "0.0.0-test",
+        })
+        .expect("observe")
+        .len()
+}
+
+/// A database whose export-receipt head is anchored (so the token is
+/// packaged) and measured +2 s by a running daemon; plus a digest anchor
+/// that is not this kit's and has a record of its own. Returns db, bundle.
+fn clock_kit_db(dir: &Path) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    let (db, bundle) = make_db_and_bundle(dir)?;
+    let entry_hash = bundle_entry_hash(&bundle)?;
+    assert_eq!(
+        observe(&db, GEN, None),
+        0,
+        "first poll initializes the cursor"
+    );
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    tsa::insert_anchor(
+        &kernel.conn,
+        "export_receipt_head",
+        &entry_hash,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&entry_hash),
+    )?;
+    let other = [0x42u8; 32];
+    tsa::insert_anchor(
+        &kernel.conn,
+        "digest",
+        &other,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&other),
+    )?;
+    // Both rows stored in the bucket of the token's own time (a prompt
+    // online anchoring), not at the test's wall-clock bucket.
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET created_bucket_start = 1781094600",
+        [],
+    )?;
+    drop(kernel);
+    assert_eq!(observe(&db, GEN + 2, Some(5)), 2);
+    Ok((db, bundle))
+}
+
+fn export_ok(db: &Path, bundle: &Path, kit: &Path) -> std::process::Output {
+    let out = run_court_export(db, bundle, kit);
+    assert!(
+        out.status.success(),
+        "court_export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
+#[test]
+fn clock_provenance_records_are_packaged_by_token_hash() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let kit = temp.path().join("kit");
+    let out = export_ok(&db, &bundle, &kit);
+
+    // Only the packaged token's record: #1 (the digest anchor's #2 is not
+    // this kit's).
+    let dir = kit.join("clock_provenance");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)?
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["clock-0001.json", "clock-0001.payload.json"]);
+
+    // The payload file is the stored literal, byte for byte.
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    let (stored_payload, prev, entry): (String, Vec<u8>, Vec<u8>) = kernel.conn.query_row(
+        "SELECT payload_json, prev_hash, entry_hash FROM clock_provenance WHERE id = 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    drop(kernel);
+    let payload = std::fs::read(dir.join("clock-0001.payload.json"))?;
+    assert_eq!(payload, stored_payload.as_bytes());
+
+    // Every fact re-derives from kit files alone: the token hash, the entry
+    // hash over prev ‖ payload, and the Ed25519 signature under the domain.
+    let token = std::fs::read(kit.join("anchors/anchor-0001-export_receipt_head.der"))?;
+    let record: serde_json::Value = serde_json::from_slice(&payload)?;
+    assert_eq!(record["token_sha256"], hex::encode(Sha256::digest(&token)));
+    assert_eq!(record["observed_offset_s"], 2);
+    assert_eq!(record["poll_gap_s"], 5);
+    let sidecar: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("clock-0001.json"))?)?;
+    assert_eq!(sidecar["format"], "securacv-clock-provenance-record:v1");
+    assert_eq!(
+        sidecar["anchor_file"],
+        "anchors/anchor-0001-export_receipt_head.der"
+    );
+    assert_eq!(
+        sidecar["signing_domain"],
+        "securacv:pwk:clock-provenance:v1"
+    );
+    assert_eq!(sidecar["prev_hash"], hex::encode(&prev));
+    assert_eq!(prev, vec![0u8; 32], "the first record links to genesis");
+    let mut h = Sha256::new();
+    h.update(&prev);
+    h.update(&payload);
+    let derived: [u8; 32] = h.finalize().into();
+    assert_eq!(derived.to_vec(), entry);
+    assert_eq!(sidecar["entry_hash"], hex::encode(derived));
+    let key_bytes: [u8; 32] = hex::decode(sidecar["signer_public_key"].as_str().unwrap())?
+        .try_into()
+        .unwrap();
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes)?;
+    let sig_bytes: [u8; 64] = hex::decode(sidecar["signature"]["ed25519"].as_str().unwrap())?
+        .try_into()
+        .unwrap();
+    let message = witness_kernel::crypto::signatures::domain_separated_hash(
+        "securacv:pwk:clock-provenance:v1",
+        &derived,
+    );
+    key.verify_strict(&message, &ed25519_dalek::Signature::from_bytes(&sig_bytes))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(
+            "  clock:     1 clock-provenance record(s) packaged; ledger self-consistent; identity unverified"
+        ),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn clock_provenance_time_source_section_and_manifest_keys() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    // Absent: a database with no record says so and packages nothing.
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let kit = temp.path().join("kit_absent");
+    export_ok(&db, &bundle, &kit);
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["clock_provenance_ledger"], "absent");
+    assert!(!kit.join("clock_provenance").exists());
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(
+        custody.contains("Clock-provenance ledger: **absent**"),
+        "{custody}"
+    );
+
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let kit = temp.path().join("kit");
+    export_ok(&db, &bundle, &kit);
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(
+        manifest["clock_provenance_ledger"],
+        "self-consistent; identity unverified"
+    );
+    let text = serde_json::to_string(&manifest)?;
+    assert!(!text.contains("\"verified\""), "{text}");
+    let anchor = &manifest["anchors"][0];
+    assert_eq!(
+        anchor["clock_provenance"]["file"],
+        "clock_provenance/clock-0001.json"
+    );
+    assert_eq!(
+        anchor["clock_provenance"]["payload_file"],
+        "clock_provenance/clock-0001.payload.json"
+    );
+    assert_eq!(anchor["clock_provenance"]["record_id"], 1);
+    assert_eq!(anchor["clock_provenance"]["observed_offset_s"], 2);
+    assert_eq!(anchor["clock_provenance"]["poll_gap_s"], 5);
+    assert_eq!(anchor["clock_provenance"]["binding_only"], false);
+    let files = manifest["files"].to_string();
+    assert!(
+        files.contains("clock_provenance/clock-0001.json"),
+        "{files}"
+    );
+    assert!(
+        files.contains("clock_provenance/clock-0001.payload.json"),
+        "{files}"
+    );
+
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(custody.contains("## Time source"), "{custody}");
+    assert!(
+        custody.contains(
+            "an event's bucket under a device offset is the same width shifted — a bias correction adds no precision"
+        ),
+        "{custody}"
+    );
+    assert!(
+        custody.contains("Clock-provenance ledger: **self-consistent; identity unverified**"),
+        "{custody}"
+    );
+    assert!(
+        custody.contains("binds `anchors/anchor-0001-export_receipt_head.der` by SHA-256"),
+        "{custody}"
+    );
+    assert!(
+        custody.contains("device clock +2 s from the token's time, the row first seen within 5 s of its storage (within one bucket (600 s)); the row was stored in the bucket of issuance."),
+        "{custody}"
+    );
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(
+        verification.contains("## 3b. Verify the clock-provenance records"),
+        "{verification}"
+    );
+    assert!(
+        verification.contains("sha256sum anchors/anchor-0001-export_receipt_head.der"),
+        "{verification}"
+    );
+    assert!(
+        verification.contains(
+            "openssl pkeyutl -verify -pubin -inkey device.pem -rawin -in msg.bin -sigfile sig.bin"
+        ),
+        "{verification}"
+    );
+    assert!(
+        verification.contains("printf '\\x20\\x00\\x00\\x00securacv:pwk:clock-provenance:v1'"),
+        "{verification}"
+    );
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(readme.contains("7. `clock_provenance/`"), "{readme}");
+    Ok(())
+}
+
+#[test]
+fn clock_provenance_ledger_that_fails_packages_nothing() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    kernel.conn.execute(
+        "UPDATE clock_provenance SET payload_json = replace(payload_json, '\"observed_offset_s\":2', '\"observed_offset_s\":0') WHERE id = 1",
+        [],
+    )?;
+    drop(kernel);
+    let kit = temp.path().join("kit");
+    let out = export_ok(&db, &bundle, &kit);
+    assert!(!kit.join("clock_provenance").exists(), "fail closed");
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["clock_provenance_ledger"], "verification failed");
+    assert_eq!(
+        manifest["anchors"][0]["clock_provenance"],
+        serde_json::Value::Null
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("WARNING: the clock-provenance ledger does not verify"),
+        "{stderr}"
+    );
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(
+        custody.contains("Clock-provenance ledger: **verification failed**"),
+        "{custody}"
+    );
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(
+        verification.contains("**The clock-provenance ledger did not verify at packaging time**"),
+        "{verification}"
+    );
+    Ok(())
+}
+
+#[test]
+fn clock_provenance_head_anchors_are_never_packaged() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    let head = tsa::ledger_head(
+        &kernel.conn,
+        witness_kernel::tsa::AnchorSubject::ClockProvenanceHead,
+    )?
+    .expect("ledger head");
+    tsa::insert_anchor(
+        &kernel.conn,
+        "clock_provenance_head",
+        &head,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&head),
+    )?;
+    drop(kernel);
+    let kit = temp.path().join("kit");
+    export_ok(&db, &bundle, &kit);
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["anchor_count"], 1);
+    let anchors: Vec<String> = std::fs::read_dir(kit.join("anchors"))?
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(anchors, vec!["anchor-0001-export_receipt_head.der"]);
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(
+        verification.contains("`clock_provenance_head` anchors that fix the ledger itself in time stay in the producing database"),
+        "{verification}"
+    );
+    Ok(())
+}

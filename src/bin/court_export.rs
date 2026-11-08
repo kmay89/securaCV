@@ -1173,11 +1173,11 @@ fn time_source_section(anchors: &[KitAnchor], clock: &ClockKit) -> String {
                     .lag_s
                     .is_some_and(|lag| lag > clock_provenance::PROMPT_LAG_MAX_S);
                 let band = if delayed && offset >= 0 {
-                    "not evaluated"
+                    ""
                 } else if i64::from(offset).abs() > clock_provenance::ONE_BUCKET_S {
-                    "beyond one bucket (600 s)"
+                    " (beyond one bucket (600 s))"
                 } else {
-                    "within one bucket (600 s)"
+                    " (within one bucket (600 s))"
                 };
                 let lag = match c.lag_s {
                     Some(lag) if lag > clock_provenance::PROMPT_LAG_MAX_S && offset >= 0 => {
@@ -1192,7 +1192,7 @@ fn time_source_section(anchors: &[KitAnchor], clock: &ClockKit) -> String {
                 };
                 format!(
                     "device clock {} from the token's time, the row first seen within {gap} s of \
-                     its storage ({band}){lag}",
+                     its storage{band}{lag}",
                     clock_provenance::format_offset(offset)
                 )
             }
