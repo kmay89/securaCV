@@ -1279,9 +1279,7 @@ pub fn classify_warning(warning: &str) -> WarningKind {
         WarningKind::StaleTail
     } else if warning.starts_with("timeline audit could not run") {
         WarningKind::AuditUnavailable
-    } else if warning.starts_with("anchor #") {
-        WarningKind::AnchorAnomaly
-    } else if warning.starts_with("ots anchor #") {
+    } else if warning.starts_with("anchor #") || warning.starts_with("ots anchor #") {
         WarningKind::AnchorAnomaly
     } else if warning.starts_with("clock provenance ") || warning.starts_with("clock offset:") {
         WarningKind::ClockProvenance

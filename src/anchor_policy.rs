@@ -701,7 +701,8 @@ pub fn evaluate_ots(
         };
         let mine: Vec<&OtsPassed> = rows.iter().filter(|r| r.subject == subject).collect();
         // hash -> (ids, lowest height, newest (bucket, id))
-        let mut confirmed: HashMap<[u8; 32], (Vec<i64>, u64, (u64, i64))> = HashMap::new();
+        type Confirmed = (Vec<i64>, u64, (u64, i64));
+        let mut confirmed: HashMap<[u8; 32], Confirmed> = HashMap::new();
         for r in &mine {
             if let OtsRowState::Confirmed { height } = r.state {
                 let e = confirmed

@@ -1602,10 +1602,11 @@ fn ots_proof_over_bundle_packaged() -> Result<()> {
     }
 
     if common::ots_available() {
-        for f in [kit.join("anchors").join(&file)] {
-            let o = Command::new("ots").arg("info").arg(&f).output()?;
-            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-        }
+        let o = Command::new("ots")
+            .arg("info")
+            .arg(kit.join("anchors").join(&file))
+            .output()?;
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     }
     Ok(())
 }
