@@ -951,6 +951,7 @@ mod tests {
             identity_verified: true,
             high_water_mark_checked: false,
             anchors_checked: None,
+            clock_provenance_verified: None,
             events_verified: 3,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
@@ -974,6 +975,8 @@ mod tests {
         assert!(!json.contains("error"));
         // Empty warnings are omitted entirely (additive-field compat).
         assert!(!json.contains("warnings"));
+        // A ledger with no rows leaves the report byte-identical to before.
+        assert!(!json.contains("clock_provenance_verified"));
         // B3 labeling fields are always present.
         assert!(json.contains("\"verdict\":\"valid\""));
         assert!(json.contains("\"identity_verified\":true"));

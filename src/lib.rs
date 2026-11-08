@@ -9046,3 +9046,371 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod clock_provenance_tests {
+    use super::*;
+    use crate::clock_provenance::token_sha256_hex;
+    use crate::crypto::signatures::verify_with_domain;
+    use crate::tsa;
+
+    /// The committed fixture token's genTime, `20260610123324Z`.
+    const FIXTURE_GEN_TIME: i64 = 1_781_094_804;
+    const FIXTURE_BUCKET: u64 = 1_781_094_600;
+
+    fn kernel() -> Kernel {
+        Kernel::open(&KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        })
+        .expect("open kernel")
+    }
+
+    fn fixture_token() -> tsa::TimestampToken {
+        let path = format!(
+            "{}/tests/fixtures/tsa/reply.tsr",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        tsa::parse_response(&std::fs::read(&path).expect("reading TSA fixture"))
+            .expect("fixture token parses")
+    }
+
+    fn insert_fixture_anchor(conn: &Connection) -> i64 {
+        tsa::ensure_anchor_table(conn).unwrap();
+        let token = fixture_token();
+        let imprint: [u8; 32] = token.imprint.clone().try_into().expect("32-byte imprint");
+        tsa::insert_anchor(conn, "digest", &imprint, "(offline)", &token).unwrap()
+    }
+
+    fn cursor(conn: &Connection) -> Option<i64> {
+        conn.query_row(
+            "SELECT last_anchor_id FROM clock_provenance_cursor WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap()
+    }
+
+    fn obs(observed_wall_s: u64, poll_gap_s: Option<u32>) -> ClockObservation<'static> {
+        ClockObservation {
+            observed_wall_s,
+            poll_gap_s,
+            kernel_version: "0.0.0-test",
+        }
+    }
+
+    /// Cursor at 0 with no anchors stored: the state a fresh database reaches
+    /// at its first poll.
+    fn kernel_with_cursor() -> Kernel {
+        let mut k = kernel();
+        assert!(k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, None))
+            .unwrap()
+            .is_empty());
+        assert_eq!(cursor(&k.conn), Some(0));
+        k
+    }
+
+    fn record(offset: Option<i32>, gap: Option<u32>) -> ClockProvenanceRecord {
+        ClockProvenanceRecord {
+            schema: CLOCK_PROVENANCE_SCHEMA_V1.to_string(),
+            time_bucket: TimeBucket {
+                start_epoch_s: FIXTURE_BUCKET,
+                size_s: 600,
+            },
+            anchor_id: 7,
+            token_sha256: "ab".repeat(32),
+            observed_offset_s: offset,
+            poll_gap_s: gap,
+            kernel_version: "0.0.0-test".to_string(),
+        }
+    }
+
+    const DDL_LEDGER: &str = "CREATE TABLE IF NOT EXISTS clock_provenance (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, payload_json TEXT NOT NULL, prev_hash BLOB NOT NULL, entry_hash BLOB NOT NULL, signature BLOB NOT NULL, pq_signature BLOB, pq_scheme TEXT);";
+    const DDL_CURSOR: &str = "CREATE TABLE IF NOT EXISTS clock_provenance_cursor (id INTEGER PRIMARY KEY CHECK (id = 1), last_anchor_id INTEGER NOT NULL);";
+
+    #[test]
+    fn ddl_literals_are_frozen() {
+        // Pinned in the source …
+        let source = include_str!("lib.rs");
+        assert!(source.contains(DDL_LEDGER), "clock_provenance DDL changed");
+        assert!(source.contains(DDL_CURSOR), "clock_provenance_cursor DDL changed");
+        // … and in the schema SQLite actually holds (it drops IF NOT EXISTS).
+        let k = kernel();
+        for (name, ddl) in [("clock_provenance", DDL_LEDGER), ("clock_provenance_cursor", DDL_CURSOR)] {
+            let stored: String = k
+                .conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
+                    [name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let expected = ddl
+                .replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE")
+                .trim_end_matches(';')
+                .to_string();
+            assert_eq!(stored, expected);
+        }
+    }
+
+    #[test]
+    fn payload_wire_shape_is_byte_pinned() {
+        let measured = serde_json::to_string(&record(Some(2), Some(5))).unwrap();
+        assert_eq!(
+            measured,
+            format!(
+                r#"{{"schema":"securacv/clock_provenance/v1","time_bucket":{{"start_epoch_s":1781094600,"size_s":600}},"anchor_id":7,"token_sha256":"{}","observed_offset_s":2,"poll_gap_s":5,"kernel_version":"0.0.0-test"}}"#,
+                "ab".repeat(32)
+            )
+        );
+        let binding_only = serde_json::to_string(&record(None, None)).unwrap();
+        assert!(
+            binding_only.ends_with(r#""observed_offset_s":null,"poll_gap_s":null,"kernel_version":"0.0.0-test"}"#),
+            "{binding_only}"
+        );
+        // Round trip, both shapes.
+        for text in [&measured, &binding_only] {
+            let parsed: ClockProvenanceRecord = serde_json::from_str(text).unwrap();
+            assert_eq!(serde_json::to_string(&parsed).unwrap(), **text);
+        }
+    }
+
+    #[test]
+    fn append_chains_from_genesis_and_signs_under_the_domain() {
+        let mut k = kernel();
+        let first = k.append_clock_provenance(&record(Some(2), Some(5))).unwrap();
+        let second = k.append_clock_provenance(&record(None, None)).unwrap();
+        assert_eq!(first.id, 1);
+        assert_eq!(first.prev_hash, [0u8; 32]);
+        assert_eq!(first.entry_hash, hash_entry(&[0u8; 32], first.payload_json.as_bytes()));
+        assert_eq!(second.prev_hash, first.entry_hash);
+        assert_eq!(second.created_at, FIXTURE_BUCKET as i64);
+        let key = device_public_key_from_db(&k.conn).unwrap();
+        verify_with_domain(
+            DOMAIN_CLOCK_PROVENANCE,
+            &key,
+            &first.entry_hash,
+            &first.signatures,
+            SignatureMode::Compat,
+            None,
+        )
+        .expect("verifies under its own domain");
+        assert!(verify_with_domain(
+            DOMAIN_EXPORT_RECEIPT,
+            &key,
+            &first.entry_hash,
+            &first.signatures,
+            SignatureMode::Compat,
+            None,
+        )
+        .is_err());
+        // The stored row is what the walker sees.
+        let rows = clock_provenance::list_rows(&k.conn).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].payload_json, first.payload_json);
+        assert_eq!(rows[1].record, record(None, None));
+        // A record of another schema is refused before anything is written.
+        let mut other = record(None, None);
+        other.schema = "securacv/clock_provenance/v2".to_string();
+        assert!(k.append_clock_provenance(&other).is_err());
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn first_observation_initializes_the_cursor_to_the_newest_anchor_and_seals_nothing() {
+        let mut k = kernel();
+        insert_fixture_anchor(&k.conn);
+        let newest = insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert!(sealed.is_empty(), "pre-upgrade rows are never backfilled");
+        assert_eq!(cursor(&k.conn), Some(newest));
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 0);
+        // Without an anchors table the cursor starts at 0.
+        let k2 = kernel_with_cursor();
+        assert_eq!(cursor(&k2.conn), Some(0));
+    }
+
+    #[test]
+    fn new_rows_get_one_record_each_and_the_cursor_advances_with_them() {
+        let mut k = kernel_with_cursor();
+        let a = insert_fixture_anchor(&k.conn);
+        let b = insert_fixture_anchor(&k.conn);
+        let w = (FIXTURE_GEN_TIME + 2) as u64;
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(w, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 2);
+        assert_eq!((sealed[0].anchor_id, sealed[1].anchor_id), (a, b));
+        assert_eq!((sealed[0].id, sealed[1].id), (1, 2));
+        let token_hash = token_sha256_hex(&fixture_token().token_der);
+        for s in &sealed {
+            assert_eq!(s.record.observed_offset_s, Some(2));
+            assert_eq!(s.record.poll_gap_s, Some(5));
+            assert_eq!(s.record.token_sha256, token_hash);
+            assert_eq!(s.record.time_bucket.start_epoch_s, FIXTURE_BUCKET);
+            assert_eq!(s.record.time_bucket.size_s, 600);
+            assert_eq!(s.record.kernel_version, "0.0.0-test");
+        }
+        assert_eq!(cursor(&k.conn), Some(b));
+        // Nothing new: nothing sealed, cursor unchanged.
+        assert!(k
+            .observe_anchors_for_clock_provenance(&obs(w + 5, Some(5)))
+            .unwrap()
+            .is_empty());
+        assert_eq!(cursor(&k.conn), Some(b));
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_failing_append_leaves_the_cursor_where_it_was() {
+        let mut k = kernel_with_cursor();
+        let a = insert_fixture_anchor(&k.conn);
+        // Simulate the crash: the ledger insert aborts mid-transaction.
+        k.conn
+            .execute_batch(
+                "CREATE TRIGGER simulated_failure BEFORE INSERT ON clock_provenance BEGIN \
+                 SELECT RAISE(ABORT, 'simulated storage failure'); END;",
+            )
+            .unwrap();
+        let err = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap_err();
+        assert!(err.to_string().contains("simulated storage failure"), "{err}");
+        assert_eq!(cursor(&k.conn), Some(0), "the cursor must not move past an unsealed row");
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 0);
+        assert!(k.conn.is_autocommit(), "the transaction was rolled back");
+        k.conn
+            .execute_batch("DROP TRIGGER simulated_failure;")
+            .unwrap();
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, a);
+        assert_eq!(cursor(&k.conn), Some(a));
+    }
+
+    #[test]
+    fn first_poll_of_a_process_seals_binding_only_records() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, None))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        let rows = clock_provenance::list_rows(&k.conn).unwrap();
+        assert!(rows[0].is_binding_only());
+        assert!(rows[0]
+            .payload_json
+            .contains(r#""observed_offset_s":null,"poll_gap_s":null"#));
+    }
+
+    #[test]
+    fn unreadable_token_der_gets_no_record_but_the_cursor_moves_past_it() {
+        let mut k = kernel_with_cursor();
+        tsa::ensure_anchor_table(&k.conn).unwrap();
+        k.conn
+            .execute(
+                "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject, \
+                 subject_hash, tsa_url, gen_time, token_der) VALUES (?1, 600, 'digest', ?2, \
+                 '(offline)', '20260610123324Z', 5)",
+                params![FIXTURE_BUCKET as i64, vec![0u8; 32]],
+            )
+            .unwrap();
+        let bad = k.conn.last_insert_rowid();
+        let good = insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, good);
+        assert_eq!(cursor(&k.conn), Some(good));
+        assert!(good > bad);
+    }
+
+    #[test]
+    fn unparseable_gen_time_gives_a_binding_only_record() {
+        let mut k = kernel_with_cursor();
+        tsa::ensure_anchor_table(&k.conn).unwrap();
+        let mut token_der = fixture_token().token_der;
+        let needle = b"20260610123324Z";
+        let at = token_der
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("genTime occurs in the token");
+        token_der[at..at + needle.len()].copy_from_slice(b"20261310123324Z");
+        assert_eq!(tsa::gen_time_unix("20261310123324Z"), None);
+        k.conn
+            .execute(
+                "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject, \
+                 subject_hash, tsa_url, gen_time, token_der) VALUES (?1, 600, 'digest', ?2, \
+                 '(offline)', '20261310123324Z', ?3)",
+                params![FIXTURE_BUCKET as i64, vec![0u8; 32], token_der.clone()],
+            )
+            .unwrap();
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        assert_eq!(sealed[0].record.token_sha256, token_sha256_hex(&token_der));
+    }
+
+    #[test]
+    fn offsets_are_clamped_both_ways() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs((FIXTURE_GEN_TIME + 10_000) as u64, Some(5)))
+            .unwrap();
+        assert_eq!(sealed[0].record.observed_offset_s, Some(3600));
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs((FIXTURE_GEN_TIME - 10_000) as u64, Some(5)))
+            .unwrap();
+        assert_eq!(sealed[0].record.observed_offset_s, Some(-3600));
+        // The poll gap is clamped into 1..=3600 as well.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(90_000)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, Some(3600));
+    }
+
+    #[test]
+    fn one_wall_clock_reading_serves_every_row_of_a_poll() {
+        let mut k = kernel_with_cursor();
+        for _ in 0..3 {
+            insert_fixture_anchor(&k.conn);
+        }
+        let w = (FIXTURE_GEN_TIME + 599 + 600) as u64; // the next bucket, +1199 s
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(w, Some(7)))
+            .unwrap();
+        assert_eq!(sealed.len(), 3);
+        let buckets: std::collections::BTreeSet<u64> = sealed
+            .iter()
+            .map(|s| s.record.time_bucket.start_epoch_s)
+            .collect();
+        assert_eq!(buckets.len(), 1, "one W per poll ⇒ one bucket");
+        assert!(sealed
+            .iter()
+            .all(|s| s.record.observed_offset_s == Some(1199)));
+        assert_eq!(
+            sealed[0].record.time_bucket.start_epoch_s,
+            (w / 600) * 600
+        );
+    }
+}
