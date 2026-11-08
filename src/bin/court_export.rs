@@ -394,7 +394,7 @@ fn package_clock_provenance(
                  verify` on this database.",
                 row.id,
                 anchor.id,
-                &row.record.token_sha256[..row.record.token_sha256.len().min(16)],
+                row.record.token_sha256.chars().take(16).collect::<String>(),
                 &anchor.token_sha256[..16]
             );
             continue;
@@ -1167,7 +1167,14 @@ fn time_source_section(anchors: &[KitAnchor], clock: &ClockKit) -> String {
         let anchor = &anchors[c.anchor_index];
         let reading = match (c.observed_offset_s, c.poll_gap_s) {
             (Some(offset), Some(gap)) => {
-                let band = if i64::from(offset).abs() > clock_provenance::ONE_BUCKET_S {
+                // A delayed import's positive offset is not a clock reading
+                // (the same rule `log_anchor verify` applies): no band.
+                let delayed = c
+                    .lag_s
+                    .is_some_and(|lag| lag > clock_provenance::PROMPT_LAG_MAX_S);
+                let band = if delayed && offset >= 0 {
+                    "not evaluated"
+                } else if i64::from(offset).abs() > clock_provenance::ONE_BUCKET_S {
                     "beyond one bucket (600 s)"
                 } else {
                     "within one bucket (600 s)"
