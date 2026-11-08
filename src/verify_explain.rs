@@ -18,6 +18,7 @@ pub fn ledger_name(ledger: FailedLedger) -> &'static str {
         FailedLedger::HighWaterMark => "signed external high-water-mark",
         FailedLedger::Anchors => "RFC 3161 anchor table",
         FailedLedger::ClockProvenance => "clock-provenance ledger",
+        FailedLedger::OtsAnchors => "OpenTimestamps anchor table",
     }
 }
 
@@ -121,12 +122,13 @@ pub fn explain_failure(kind: FailureKind) -> FailureExplanation {
                    Do NOT re-sign a shorter chain to clear the error.",
         },
         FailureKind::AnchorRegression => FailureExplanation {
-            what: "an RFC 3161 anchor row covers a ledger head that is no longer in that \
-                   ledger's history: the hash is in no live row and in no retention \
-                   checkpoint whose device signature verifies. The anchor is auxiliary \
-                   evidence about the ledger — a state the ledger once had, countersigned \
-                   by a time-stamping authority — and this database no longer contains \
-                   that state. The interior chain itself verified.",
+            what: "an anchor row (RFC 3161 token or OpenTimestamps proof) covers a \
+                   ledger head that is no longer in that ledger's history: the hash is \
+                   in no live row and in no retention checkpoint whose device signature \
+                   verifies. The anchor is auxiliary evidence about the ledger — a state \
+                   the ledger once had, countersigned by a time-stamping authority or \
+                   committed to an OpenTimestamps calendar — and this database no longer \
+                   contains that state. The interior chain itself verified.",
             likely_causes: "an older whole-database snapshot was restored (rollback); the \
                    tail was truncated past the anchored head; the ledger was regenerated \
                    as a different history than the one that was anchored. One benign \

@@ -8721,6 +8721,95 @@ mod tests {
         Ok(())
     }
 
+    /// An OpenTimestamps proof over `hash`, built from the fixture calendar
+    /// body (a calendar's ops apply to any commitment).
+    fn ots_fixture_proof(hash: &[u8; 32]) -> crate::ots::Proof {
+        let body = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ots/response-bob.otsr"
+        ))
+        .unwrap();
+        let nonce = [0x42u8; crate::ots::OTS_NONCE_LEN];
+        let c = crate::ots::commitment(hash, &nonce);
+        let node = crate::ots::parse_timestamp(&body, &c).unwrap();
+        crate::ots::Proof::compose(hash, &nonce, node).unwrap()
+    }
+
+    #[test]
+    fn retention_checkpoints_ots_anchored_heads() -> Result<()> {
+        // A chain head anchored ONLY on the OpenTimestamps leg (pending, even)
+        // survives pruning as a signed checkpoint, exactly as a TSA-anchored one.
+        let bucket = TimeBucket {
+            start_epoch_s: 600,
+            size_s: TEN_MINUTES_S,
+        };
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        for z in ["zone:a", "zone:b", "zone:c"] {
+            seal_one_event(&mut kernel, &cfg, z)?;
+        }
+        let events = sealed_event_hashes(&kernel)?;
+        let (h1, h2, h3) = (events[0].1, events[1].1, events[2].1);
+        crate::ots::insert_ots_anchor(
+            &kernel.conn,
+            bucket,
+            crate::tsa::AnchorSubject::ChainHead,
+            &h2,
+            "https://bob.btc.calendar.opentimestamps.org",
+            &ots_fixture_proof(&h2),
+        )?;
+        assert!(!crate::tsa::anchor_table_exists(&kernel.conn)?);
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        let checkpoints = checkpoint_rows(&kernel)?;
+        assert_eq!(checkpoints.len(), 2, "one OTS-anchored head + the real cutoff");
+        assert_eq!((checkpoints[0].1, checkpoints[0].2), (2, h2));
+        assert_eq!((checkpoints[1].1, checkpoints[1].2), (3, h3));
+        assert!(!crate::tsa::hash_in_history(&kernel.conn, &h1)?);
+        let report = crate::verify_runner::run_full_verify(
+            &kernel.conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            |_| {},
+        )?;
+        assert!(report.chain_valid, "{:?}", report.error);
+
+        // Both tables present: the union holds (h1 by TSA, h3 by OTS).
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        for z in ["zone:a", "zone:b", "zone:c", "zone:d"] {
+            seal_one_event(&mut kernel, &cfg, z)?;
+        }
+        let events = sealed_event_hashes(&kernel)?;
+        let (h1, h3, h4) = (events[0].1, events[2].1, events[3].1);
+        crate::tsa::ensure_anchor_table(&kernel.conn)?;
+        crate::tsa::insert_anchor(
+            &kernel.conn,
+            "chain_head",
+            &h1,
+            "(offline)",
+            &tsa_fixture_token(),
+        )?;
+        crate::ots::insert_ots_anchor(
+            &kernel.conn,
+            bucket,
+            crate::tsa::AnchorSubject::Digest,
+            &h3,
+            "https://bob.btc.calendar.opentimestamps.org",
+            &ots_fixture_proof(&h3),
+        )?;
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        let checkpoints = checkpoint_rows(&kernel)?;
+        let kept: Vec<(i64, [u8; 32])> = checkpoints.iter().map(|c| (c.1, c.2)).collect();
+        assert_eq!(kept, vec![(1, h1), (3, h3), (4, h4)]);
+
+        // Neither table: only the real cutoff checkpoint, as before.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        assert_eq!(checkpoint_rows(&kernel)?.len(), 1);
+        Ok(())
+    }
+
     /// A failure record stamped with an explicit bucket: the one append path
     /// that lets a test seal a row with a chosen `created_at`.
     fn seal_failure_at(kernel: &mut Kernel, cfg: &KernelConfig, start_epoch_s: u64) -> Result<()> {
