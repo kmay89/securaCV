@@ -1576,7 +1576,8 @@ impl ClockContext {
         let Some(offset) = rec.observed_offset_s else {
             println!(
                 "    clock: record #{} binds this token (sha256 {}…); binding only, no \
-                 measurement (row already present at the first poll of a witnessd process)",
+                 measurement (row already present at the first poll of a witnessd process, or \
+                 first seen more than 3600 s after the previous completed poll)",
                 row.id,
                 prefix16(&rec.token_sha256)
             );

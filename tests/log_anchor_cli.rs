@@ -1793,7 +1793,7 @@ fn verify_prints_one_clock_line_per_anchor() -> Result<()> {
         "    note: no ClockSkew failure record retained within one bucket of this reading (retention prunes failure records)".to_string(),
         "    note: host clock: the device's reading at observation is -696 s from the anchor row's bucket start (expected 0 to 1199 s); the anchoring host's clock and the device clock disagree".to_string(),
         format!("    clock: record #{clamped}: device clock >= +3600 s (clamped) vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); BEYOND one bucket (600 s)"),
-        format!("    clock: record #{bound} binds this token (sha256 {}…); binding only, no measurement (row already present at the first poll of a witnessd process)", token_sha256_prefix(&db, bound)),
+        format!("    clock: record #{bound} binds this token (sha256 {}…); binding only, no measurement (row already present at the first poll of a witnessd process, or first seen more than 3600 s after the previous completed poll)", token_sha256_prefix(&db, bound)),
         format!("    clock: record #{late}: device clock +30 s vs TSA genTime; row stored 1d 23h after issuance (delayed import), positive offset not evaluated"),
     ];
     for line in &expect {

@@ -2667,9 +2667,11 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// - No cursor row yet (first poll on an upgraded database): the cursor is
     ///   set to `MAX(tsa_anchors.id)` (0 without the table) and nothing is
     ///   sealed — pre-upgrade anchors are never backfilled.
-    /// - `obs.poll_gap_s == None` (the first poll of this process): every row
-    ///   gets a binding-only record (`observed_offset_s` and `poll_gap_s`
-    ///   both `null`) — the row may have been there for any length of time.
+    /// - `obs.poll_gap_s == None` (the first poll of this process) or a gap
+    ///   over 3600 s: every row gets a binding-only record
+    ///   (`observed_offset_s` and `poll_gap_s` both `null`) — the row may have
+    ///   been there for any length of time, and a clamped gap would state a
+    ///   false bound.
     /// - A row whose `token_der` is not readable as bytes gets no record; the
     ///   cursor still moves past it.
     /// - A token that does not parse, or whose `genTime` does not, gets a
@@ -2680,13 +2682,45 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         &mut self,
         obs: &ClockObservation<'_>,
     ) -> Result<Vec<SealedClockProvenance>> {
+        let (wall, gap) = (obs.observed_wall_s, obs.poll_gap_s);
+        self.observe_anchors_for_clock_provenance_with(obs.kernel_version, || Some((wall, gap)))
+            .map(Option::unwrap_or_default)
+    }
+
+    /// [`Self::observe_anchors_for_clock_provenance`] with the clock readings
+    /// taken by `read_clocks`, called exactly ONCE, after `BEGIN IMMEDIATE`
+    /// has the write lock and before the anchors table is read: the wall
+    /// clock `W` (whole seconds) and the gap since the previous completed
+    /// poll. Read under the lock, `W` cannot predate a row that committed
+    /// while this poll waited for the lock (up to the 5 s busy timeout), so
+    /// a row's genTime is never measured against an earlier reading.
+    ///
+    /// `read_clocks` returning `None` (a wall clock that cannot be read)
+    /// rolls back with nothing written and returns `Ok(None)`.
+    pub fn observe_anchors_for_clock_provenance_with<F>(
+        &mut self,
+        kernel_version: &str,
+        read_clocks: F,
+    ) -> Result<Option<Vec<SealedClockProvenance>>>
+    where
+        F: FnOnce() -> Option<(u64, Option<u32>)>,
+    {
         let key_material = self.signature_key_material();
         self.conn.execute_batch("BEGIN IMMEDIATE;")?;
-        match observe_anchors_locked(&self.conn, &key_material, obs).and_then(|sealed| {
+        let Some((observed_wall_s, poll_gap_s)) = read_clocks() else {
+            let _ = self.conn.execute_batch("ROLLBACK;");
+            return Ok(None);
+        };
+        let obs = ClockObservation {
+            observed_wall_s,
+            poll_gap_s,
+            kernel_version,
+        };
+        match observe_anchors_locked(&self.conn, &key_material, &obs).and_then(|sealed| {
             self.conn.execute_batch("COMMIT;")?;
             Ok(sealed)
         }) {
-            Ok(sealed) => Ok(sealed),
+            Ok(sealed) => Ok(Some(sealed)),
             Err(e) => {
                 let _ = self.conn.execute_batch("ROLLBACK;");
                 Err(e)
@@ -4658,17 +4692,21 @@ fn observe_anchors_locked(
             continue;
         };
         let token_sha256 = clock_provenance::token_sha256_hex(&token_der);
-        // A measurement needs a completed previous poll (else the row's age
-        // is unbounded) and a readable genTime; otherwise the record binds
-        // the token and says nothing about the clock.
-        let measured = obs.poll_gap_s.and_then(|gap| {
-            let token = tsa::parse_token(&token_der).ok()?;
-            let gen_time = tsa::gen_time_unix(&token.gen_time)?;
-            let offset = (obs.observed_wall_s as i64 - gen_time)
-                .clamp(-CLOCK_PROVENANCE_CLAMP_S, CLOCK_PROVENANCE_CLAMP_S)
-                as i32;
-            Some((offset, gap.clamp(1, CLOCK_PROVENANCE_CLAMP_S as u32)))
-        });
+        // A measurement needs a completed previous poll no more than 3600 s
+        // ago (else the row's age is unbounded: a gap is a bound only while
+        // it is not clamped) and a readable genTime; otherwise the record
+        // binds the token and says nothing about the clock.
+        let measured = obs
+            .poll_gap_s
+            .filter(|gap| i64::from(*gap) <= CLOCK_PROVENANCE_CLAMP_S)
+            .and_then(|gap| {
+                let token = tsa::parse_token(&token_der).ok()?;
+                let gen_time = tsa::gen_time_unix(&token.gen_time)?;
+                let offset = (obs.observed_wall_s as i64 - gen_time)
+                    .clamp(-CLOCK_PROVENANCE_CLAMP_S, CLOCK_PROVENANCE_CLAMP_S)
+                    as i32;
+                Some((offset, gap.max(1)))
+            });
         let record = ClockProvenanceRecord {
             schema: CLOCK_PROVENANCE_SCHEMA_V1.to_string(),
             time_bucket,
@@ -9402,12 +9440,88 @@ mod clock_provenance_tests {
             .observe_anchors_for_clock_provenance(&obs((FIXTURE_GEN_TIME - 10_000) as u64, Some(5)))
             .unwrap();
         assert_eq!(sealed[0].record.observed_offset_s, Some(-3600));
-        // The poll gap is clamped into 1..=3600 as well.
+        // A gap of 0 still reads as a 1 s bound.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(0)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, Some(1));
+        // Exactly 3600 s is still a bound.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(3600)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, Some(3600));
+    }
+
+    #[test]
+    fn a_gap_over_the_clamp_seals_a_binding_only_record() {
+        // The main loop stalled 25 h: a clamped gap would state a false
+        // bound on the row's age, so the record binds and measures nothing.
+        let mut k = kernel_with_cursor();
         insert_fixture_anchor(&k.conn);
         let sealed = k
             .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(90_000)))
             .unwrap();
-        assert_eq!(sealed[0].record.poll_gap_s, Some(3600));
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        let payload: String = k
+            .conn
+            .query_row(
+                "SELECT payload_json FROM clock_provenance WHERE id = ?1",
+                [sealed[0].id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            payload.contains("\"observed_offset_s\":null,\"poll_gap_s\":null"),
+            "{payload}"
+        );
+        // 3601 s is already over.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(3601)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+    }
+
+    #[test]
+    fn the_clock_readings_are_taken_once_under_the_write_lock() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let mut calls = 0;
+        let sealed = k
+            .observe_anchors_for_clock_provenance_with("0.0.0-test", || {
+                calls += 1;
+                Some((FIXTURE_GEN_TIME as u64 + 2, Some(5)))
+            })
+            .unwrap()
+            .expect("readings taken");
+        assert_eq!(calls, 1);
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, Some(2));
+        // An unreadable wall clock: nothing written, the cursor unmoved, and
+        // the row is still there for the next poll.
+        insert_fixture_anchor(&k.conn);
+        let before: i64 = k
+            .conn
+            .query_row("SELECT COUNT(*) FROM clock_provenance", [], |r| r.get(0))
+            .unwrap();
+        assert!(k
+            .observe_anchors_for_clock_provenance_with("0.0.0-test", || None)
+            .unwrap()
+            .is_none());
+        let after: i64 = k
+            .conn
+            .query_row("SELECT COUNT(*) FROM clock_provenance", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, after);
+        assert!(k.conn.is_autocommit(), "the transaction was closed");
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_GEN_TIME as u64, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
     }
 
     #[test]
