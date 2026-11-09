@@ -16,9 +16,20 @@
   sealed log with the kernel's own verifier (the seed must open the log and
   derive its key), and only then removed, with one line in the log. A key
   the log refuses is kept in both places and the log says why. The API token
-  the integration reads stays at `/config/api_token`. In standalone mode the
-  kernel still keeps the seed beside the log at `/config/witness.ed25519.seed`;
-  that copy is a kernel behavior and is tracked separately.
+  the integration reads stays at `/config/api_token`.
+- **The kernel's own copy of the key leaves `/config` too.** In standalone
+  mode the kernel wrote the seed a second time, beside the log at
+  `/config/witness.ed25519.seed`, at its first start — the same key the
+  move above took out of `/config`, back inside every backup. The app now
+  starts the kernel with `DEVICE_KEY_SEED_PERSIST=0`, a new kernel switch
+  that says the seed is kept elsewhere: the kernel uses the seed it is given,
+  writes no copy, and still refuses one that disagrees with a copy that
+  exists. The first start after the update removes an existing copy once it
+  is shown to hold, byte for byte, the key in use (one line in the log; the
+  key itself is never logged). A copy holding a different key is kept, with
+  a warning, and the kernel says why it will not open the log. The kernel's
+  AppArmor profile no longer lets any kernel process write that file. After
+  one start on this release, nothing under `/config` holds the key.
 - **The two Frigate lists are declared as lists.** The options schema gave
   `frigate.cameras` and `frigate.labels` the Supervisor's select syntax,
   which takes one word from a fixed set (here only the word `str`), never a
