@@ -321,6 +321,49 @@ already means a Vision event's body posture and the Pocket Canary's bird.
 → [`spec/household_keys_v0.md`](../spec/household_keys_v0.md),
 [the decision record](design/household_presence_and_posture.md)
 
+**Projection** — A file derived from receipts that adds no authority; the
+receipt is the record. The first one designed is the SIEM projection.
+→ [`compliance/SIEM_PROJECTION.md`](compliance/SIEM_PROJECTION.md)
+
+**FHIR AuditEvent** — HL7's audit-record resource. SecuraCV's projection is
+shaped as an R4 AuditEvent, one per receipt row; designed, item 7 CP2.
+→ [`compliance/SIEM_PROJECTION.md`](compliance/SIEM_PROJECTION.md)
+
+**IHE ATNA** — IHE's audit-trail and node-authentication profile, which
+carries audit records over syslog. Transport is the operator's: SecuraCV
+writes files and never sends.
+→ [`compliance/SIEM_PROJECTION.md`](compliance/SIEM_PROJECTION.md)
+
+**CAWG identity assertion** — The Creator Assertions Working Group's
+assertion that names a person in a C2PA manifest. SecuraCV's design names
+only the person the cited receipt records, as publisher; designed, item 7 CP5.
+→ [`compliance/CAWG_COSIGNING.md`](compliance/CAWG_COSIGNING.md)
+
+**Qualified electronic ledger** — An eIDAS category (Arts. 45k/45l) whose
+records carry a legal presumption of ordering and integrity. SecuraCV is not
+one and seeks no such status.
+→ [`compliance/eidas_qualified_ledger.md`](compliance/eidas_qualified_ledger.md)
+
+**ALCOA+** — The data-integrity attributes regulators of pharmaceutical and
+medical records use: attributable, legible, contemporaneous, original,
+accurate, and complete, consistent, enduring, available.
+→ [`compliance/alcoa_plus.md`](compliance/alcoa_plus.md)
+
+**BS 10008** — The British standard on the evidential weight of electronic
+information. Mapped by topic only, because the standard was not read.
+→ [`compliance/BS10008_OPERATOR_PACK.md`](compliance/BS10008_OPERATOR_PACK.md)
+
+**Validation sheet** — Per-ruleset reliability documentation: what a ruleset's
+events assert and do not, and whether any validation was performed (by
+SecuraCV, never). Designed, item 7 CP3.
+→ [`compliance/VALIDATION_SHEETS.md`](compliance/VALIDATION_SHEETS.md)
+
+**Compliance map** — A JSON file that maps one regime's clauses to SecuraCV
+mechanisms, each row with one status from a closed vocabulary
+(`structural`, `procedural`, `designed`, `not-applicable`, `not-pursued`) and
+evidence a linter holds to the disk. A map, never a determination.
+→ [`compliance/README.md`](compliance/README.md), [`compliance/STATUS.md`](compliance/STATUS.md)
+
 **Fleet** — **The word for a group of Canaries.** Not "flock" — that word is
 off-limits in all copy, identifiers, and comments (a company called Flock
 soured it); the only exception is the Unix `flock(2)` syscall. Rule:
@@ -759,6 +802,7 @@ event vocabulary and signed witness record stay identical across profiles.
 | "verified" for a kernel's self-check | **"Chain OK (kernel-reported)"**, `kernel_reported_chain_ok` | A kernel vouching for itself with its own key is not a check you ran; only the integration's walk, or the recipient's viewer, earns the word. |
 | face recognition, plate reading, gait, re-ID, demographics | — | Not disabled — **absent**. Invariant II; never implement. |
 | "secure" as a bare adjective | the specific property | Say what can't happen and what still has to be true. |
+| words that claim a standing under a regime, about SecuraCV | "maps to", "designed to support", "shaped as" | The determination belongs to the regulator, the assessor, the court or the operator; the list lives once, in `scripts/lint_compliance_map.py`. |
 | performance claims without benchmarks | "varies by hardware; benchmark first" | Claims discipline. On the site, review keeps them out (no site test looks for them); here, `scripts/lint_bench_rows.py` fails the build on a pasted [benchmark](BENCHMARKS.md) table. |
 
 ---
