@@ -16,7 +16,12 @@ use std::io::IsTerminal;
 use std::io::Write;
 use zeroize::Zeroize;
 
-use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT};
+use crate::break_glass::trustee_key::load_trustee_signer;
+use crate::crypto::passphrase::PassphraseInput;
+use crate::crypto::signatures::{
+    SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_POLICY_CHANGE_APPROVAL,
+    DOMAIN_TRUSTEE_APPROVAL,
+};
 use crate::{
     approvals_commitment, break_glass::BreakGlassTokenFile, device_public_key_from_db, hash_entry,
     verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
@@ -90,8 +95,15 @@ enum Command {
         request_hash: Option<String>,
         #[arg(long)]
         trustee: String,
+        /// Trustee key file: a wrapped key (`trustee keygen`, `trustee wrap`)
+        /// or a plaintext 64-hex seed, which still works with a warning
         #[arg(long)]
         signing_key: String,
+        /// Read a wrapped key's passphrase from this file descriptor (one
+        /// line) instead of the terminal. A passphrase is never taken from
+        /// argv or the environment.
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
         #[arg(long)]
         output: String,
     },
@@ -450,8 +462,13 @@ enum PolicyCommand {
         proposal: String,
         #[arg(long)]
         trustee: String,
+        /// Trustee key file: a wrapped key or a plaintext 64-hex seed
         #[arg(long)]
         signing_key: String,
+        /// Read a wrapped key's passphrase from this file descriptor (one
+        /// line) instead of the terminal
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
         #[arg(long)]
         output: String,
     },
@@ -551,6 +568,7 @@ pub fn run() -> Result<()> {
             request_hash,
             trustee,
             signing_key,
+            passphrase_fd,
             output,
         } => {
             let _stage = ui.stage("Sign approval");
@@ -559,6 +577,7 @@ pub fn run() -> Result<()> {
                 request_hash.as_deref(),
                 &trustee,
                 &signing_key,
+                passphrase_fd,
                 &output,
             )
         }
@@ -682,10 +701,11 @@ pub fn run() -> Result<()> {
                 proposal,
                 trustee,
                 signing_key,
+                passphrase_fd,
                 output,
             } => {
                 let _stage = ui.stage("Approve policy change");
-                cmd_policy_change_approve(&proposal, &trustee, &signing_key, &output)
+                cmd_policy_change_approve(&proposal, &trustee, &signing_key, passphrase_fd, &output)
             }
             PolicyCommand::Show {
                 db,
@@ -1074,11 +1094,10 @@ fn cmd_request(
     Ok(())
 }
 
-fn read_signing_key(signing_key_path: &str) -> Result<SigningKey> {
-    let signing_key_hex = std::fs::read_to_string(signing_key_path)
-        .map_err(|e| anyhow!("failed to read signing key {}: {}", signing_key_path, e))?;
-    let signing_key_bytes = parse_hex32(signing_key_hex.trim())?;
-    Ok(SigningKey::from_bytes(&signing_key_bytes))
+/// The passphrase source for one trustee command: `--passphrase-fd`, else
+/// the terminal.
+fn passphrase_input(passphrase_fd: Option<i32>) -> Result<PassphraseInput> {
+    PassphraseInput::new(passphrase_fd).map_err(|e| anyhow!("{e}"))
 }
 
 fn cmd_approve(
@@ -1086,8 +1105,10 @@ fn cmd_approve(
     request_hash_hex: Option<&str>,
     trustee: &str,
     signing_key_path: &str,
+    passphrase_fd: Option<i32>,
     output: &str,
 ) -> Result<()> {
+    let mut passphrase = passphrase_input(passphrase_fd)?;
     let request_hash = match (request_file, request_hash_hex) {
         (Some(path), _) => {
             // Recompute everything locally from the request's FIELDS. The
@@ -1125,18 +1146,16 @@ fn cmd_approve(
         }
     };
 
-    let signing_key = read_signing_key(signing_key_path)?;
+    let signer = load_trustee_signer(signing_key_path, &mut passphrase)?;
     // Domain-separated to DOMAIN_TRUSTEE_APPROVAL so this consent cannot be
     // replayed as (or from) any other signature context.
-    let approval = Approval::signed(TrusteeId::new(trustee), request_hash, &signing_key);
+    let signature = signer.sign(DOMAIN_TRUSTEE_APPROVAL, &request_hash)?;
+    let approval = Approval::new(TrusteeId::new(trustee), request_hash, signature);
     let json = serde_json::to_string_pretty(&approval)?;
     std::fs::write(output, json)?;
 
     println!("Approval written to: {}", output);
-    println!(
-        "Trustee public key: {}",
-        hex32(&signing_key.verifying_key().to_bytes())
-    );
+    println!("Trustee public key: {}", hex32(&signer.public_key()));
     Ok(())
 }
 
@@ -1479,8 +1498,10 @@ fn cmd_policy_change_approve(
     proposal_path: &str,
     trustee: &str,
     signing_key_path: &str,
+    passphrase_fd: Option<i32>,
     output: &str,
 ) -> Result<()> {
+    let mut passphrase = passphrase_input(passphrase_fd)?;
     let json = std::fs::read_to_string(proposal_path)
         .map_err(|e| anyhow!("failed to read proposal {}: {}", proposal_path, e))?;
     let file: PolicyChangeProposalFile = serde_json::from_str(&json)
@@ -1565,19 +1586,15 @@ fn cmd_policy_change_approve(
     );
     println!();
 
-    let signing_key = read_signing_key(signing_key_path)?;
+    let signer = load_trustee_signer(signing_key_path, &mut passphrase)?;
     // Signed under DOMAIN_POLICY_CHANGE_APPROVAL — disjoint from unlock
     // approvals, so this consent authorizes exactly one thing.
-    let signature =
-        crate::break_glass::sign_policy_change_approval(&signing_key, &recomputed).to_vec();
+    let signature = signer.sign(DOMAIN_POLICY_CHANGE_APPROVAL, &recomputed)?;
     let approval = Approval::new(TrusteeId::new(trustee), recomputed, signature);
     std::fs::write(output, serde_json::to_string_pretty(&approval)?)?;
 
     println!("Policy-change approval written to: {}", output);
-    println!(
-        "Trustee public key: {}",
-        hex32(&signing_key.verifying_key().to_bytes())
-    );
+    println!("Trustee public key: {}", hex32(&signer.public_key()));
     Ok(())
 }
 
@@ -4147,7 +4164,7 @@ mod tests {
 
         // The trustee tool recomputes the hash from the file's FIELDS and
         // signs that — producing a valid, domain-separated approval.
-        cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path)?;
+        cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path)?;
         let approval: Approval = serde_json::from_str(&std::fs::read_to_string(&out_path)?)?;
         let file: UnlockRequestFile = serde_json::from_str(&std::fs::read_to_string(&req_path)?)?;
         let expected = parse_hex32(&file.request_hash)?;
@@ -4191,7 +4208,7 @@ mod tests {
         file.purpose = "totally routine, nothing to see".to_string();
         std::fs::write(&req_path, serde_json::to_string_pretty(&file)?)?;
 
-        let result = cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path);
+        let result = cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path);
         assert!(
             result.is_err(),
             "a request file whose fields do not hash to its claimed request hash must be refused"
@@ -4221,7 +4238,7 @@ mod tests {
         file.requested_by = Some("Definitely Bob".to_string());
         std::fs::write(&req_path, serde_json::to_string_pretty(&file)?)?;
         assert!(
-            cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path).is_err(),
+            cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path).is_err(),
             "a swapped requester name must be refused — it is consent-bound"
         );
         Ok(())
@@ -4267,7 +4284,14 @@ mod tests {
         let key_path = temp.join("alice.key").to_string_lossy().to_string();
         let approval_path = temp.join("alice.approval").to_string_lossy().to_string();
         std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
-        cmd_approve(Some(&req_path), None, "alice", &key_path, &approval_path)?;
+        cmd_approve(
+            Some(&req_path),
+            None,
+            "alice",
+            &key_path,
+            None,
+            &approval_path,
+        )?;
 
         // Operator: authorize FROM THE FILE — reproduces the consented hash,
         // context included, so the approval counts.
@@ -4472,7 +4496,7 @@ mod tests {
 
         let alice = SigningKey::from_bytes(&[43u8; 32]);
         std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
-        cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path)?;
+        cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path)?;
         let approval: Approval = serde_json::from_str(&std::fs::read_to_string(&out_path)?)?;
         assert_eq!(approval.request_hash, request.request_hash());
 
@@ -4482,7 +4506,7 @@ mod tests {
         smuggled.requested_by = Some("Alice".to_string());
         smuggled.reason = Some("incident-review".to_string());
         std::fs::write(&req_path, serde_json::to_string_pretty(&smuggled)?)?;
-        assert!(cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path).is_err());
+        assert!(cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path).is_err());
         Ok(())
     }
 
@@ -4552,7 +4576,13 @@ mod tests {
                 "ruleset:test",
                 seed,
             )?;
-            cmd_policy_change_approve(&proposal_path, "alice", &alice_key_path, &approval_path)?;
+            cmd_policy_change_approve(
+                &proposal_path,
+                "alice",
+                &alice_key_path,
+                None,
+                &approval_path,
+            )?;
             match cmd_policy_set(
                 2,
                 &[alice_entry.clone(), bob_entry.clone()],
@@ -4832,7 +4862,7 @@ mod tests {
             .join("alice.policy-approval")
             .to_string_lossy()
             .to_string();
-        let result = cmd_policy_change_approve(&proposal_path, "alice", &key_path, &out_path);
+        let result = cmd_policy_change_approve(&proposal_path, "alice", &key_path, None, &out_path);
         assert!(
             result.is_err(),
             "a proposal whose contents do not hash to its claimed change hash must be refused"

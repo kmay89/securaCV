@@ -23,13 +23,12 @@
 //! it: the hub cannot check that a trustee's key is wrapped, and a field it
 //! cannot check would invite a false claim.
 
-// The container lands one commit before the commands that use it.
-#![allow(dead_code)]
-
 use anyhow::{anyhow, Result};
 use ed25519_dalek::SigningKey;
 use zeroize::Zeroizing;
 
+use crate::crypto::passphrase::{PassphraseError, PassphraseInput};
+use crate::crypto::signatures::sign_ed25519_only;
 use crate::vault::crypto::{
     keyguard_open, keyguard_params_pinned, keyguard_seal, KEYGUARD_SALT_LEN, KEYGUARD_TKG1,
 };
@@ -42,6 +41,16 @@ pub(crate) const TRUSTEE_KEY_FILE_PREFIX: &str = "securacv-trustee-key:v1 ";
 /// from argv or the environment.
 pub(crate) const NO_PASSPHRASE_SOURCE: &str =
     "wrapped trustee key needs a passphrase: run on a terminal or pass --passphrase-fd";
+
+/// The warning printed when a trustee signs with an unwrapped key file. It is
+/// the one message in this module that names a path: the operator needs it
+/// to run the wrap command it suggests.
+pub(crate) fn plaintext_key_warning(path: &str) -> String {
+    format!(
+        "WARNING: {path} is an unwrapped trustee key — anyone who copies it can sign as this \
+         trustee. Wrap it: break_glass trustee wrap --signing-key {path} --id <id> --output <id>.tkey"
+    )
+}
 
 /// The longest trustee id a TKG1 trailer carries, in bytes.
 pub(crate) const MAX_TRUSTEE_KEY_ID_LEN: usize = 64;
@@ -73,6 +82,7 @@ pub(crate) fn tkg1_aad_suffix(id: &str, public_key: &[u8; 32]) -> Vec<u8> {
 
 /// Wrap a trustee's 32-byte Ed25519 seed under `passphrase` as TKG1 bytes,
 /// with a fresh salt and nonce.
+#[allow(dead_code)] // called by `trustee keygen` / `trustee wrap` (next commit)
 pub(crate) fn tkg1_seal(seed: &[u8; 32], id: &str, passphrase: &str) -> Result<Vec<u8>> {
     check_trustee_key_id(id)?;
     let public_key = SigningKey::from_bytes(seed).verifying_key().to_bytes();
@@ -166,6 +176,7 @@ impl WrappedTrusteeKey {
 }
 
 /// The one line a wrapped trustee key file holds.
+#[allow(dead_code)] // called by `trustee keygen` / `trustee wrap` (next commit)
 pub(crate) fn trustee_key_file_text(tkg1: &[u8]) -> String {
     format!("{TRUSTEE_KEY_FILE_PREFIX}{}\n", hex::encode(tkg1))
 }
@@ -190,6 +201,108 @@ pub(crate) fn parse_trustee_key_file_text(text: &str) -> Result<WrappedTrusteeKe
     let bytes = hex::decode(body)
         .map_err(|_| anyhow!("trustee key file: the hex after the prefix does not decode"))?;
     WrappedTrusteeKey::parse(&bytes)
+}
+
+/// Something that signs as one trustee. Today that is a seed read from a
+/// file, wrapped (TKG1) or plaintext; a hardware credential (a FIDO2
+/// authenticator, a smart card) is a later implementation of the same seam.
+/// Callers never see the secret, only the public key and signatures.
+pub(crate) trait TrusteeSigner {
+    /// The Ed25519 public key the quorum policy enrolls for this trustee.
+    fn public_key(&self) -> [u8; 32];
+
+    /// The signature an approval carries over `message_hash` under `domain`.
+    /// For a seed this is Ed25519 over
+    /// `domain_separated_hash(domain, message_hash)`, byte-identical to
+    /// `sign_approval` / `sign_policy_change_approval`.
+    fn sign(&self, domain: &str, message_hash: &[u8; 32]) -> Result<Vec<u8>>;
+}
+
+/// A trustee seed held in memory for one command. `SigningKey` zeroizes its
+/// secret on drop and has no `Debug` that prints it; this type derives no
+/// `Debug` at all.
+struct SeedSigner {
+    key: SigningKey,
+}
+
+impl TrusteeSigner for SeedSigner {
+    fn public_key(&self) -> [u8; 32] {
+        self.key.verifying_key().to_bytes()
+    }
+
+    fn sign(&self, domain: &str, message_hash: &[u8; 32]) -> Result<Vec<u8>> {
+        Ok(sign_ed25519_only(domain, &self.key, message_hash).to_vec())
+    }
+}
+
+/// The two file forms [`load_trustee_signer`] accepts.
+pub(crate) enum TrusteeKeyFile {
+    /// `securacv-trustee-key:v1 <hex of TKG1>`.
+    Wrapped(WrappedTrusteeKey),
+    /// 64 hex characters: the seed itself, as `trustee enroll --generate`
+    /// wrote it before TKG1 existed.
+    Plaintext(Zeroizing<[u8; 32]>),
+}
+
+/// Read a trustee key file and tell its form apart. Nothing is decrypted.
+pub(crate) fn read_trustee_key_file(path: &str) -> Result<TrusteeKeyFile> {
+    let text = Zeroizing::new(
+        std::fs::read_to_string(path)
+            .map_err(|e| anyhow!("failed to read the trustee key file: {e}"))?,
+    );
+    if is_wrapped_trustee_key_text(&text) {
+        return parse_trustee_key_file_text(&text).map(TrusteeKeyFile::Wrapped);
+    }
+    let trimmed = text.trim();
+    if trimmed.len() == 64 && trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let mut seed = Zeroizing::new([0u8; 32]);
+        hex::decode_to_slice(trimmed, seed.as_mut())
+            .map_err(|_| anyhow!("trustee key file: the hex does not decode"))?;
+        return Ok(TrusteeKeyFile::Plaintext(seed));
+    }
+    Err(anyhow!(
+        "unrecognized trustee key file: expected a securacv-trustee-key:v1 line or 64 hex characters"
+    ))
+}
+
+/// The prompt for a wrapped key's passphrase on the terminal.
+pub(crate) fn unwrap_prompt(id: &str) -> String {
+    format!("passphrase for trustee key '{id}': ")
+}
+
+/// Open a wrapped key with a passphrase from `input`. With no terminal and
+/// no `--passphrase-fd`, refuse with [`NO_PASSPHRASE_SOURCE`].
+pub(crate) fn open_wrapped(
+    wrapped: &WrappedTrusteeKey,
+    input: &mut PassphraseInput,
+) -> Result<Zeroizing<[u8; 32]>> {
+    let passphrase = input
+        .read(&unwrap_prompt(&wrapped.id))
+        .map_err(|e| match e {
+            PassphraseError::NoSource => anyhow!("{NO_PASSPHRASE_SOURCE}"),
+            PassphraseError::Failed(e) => e,
+        })?;
+    wrapped.open(&passphrase)
+}
+
+/// Load the signer for `--signing-key PATH`, detecting the file's form: a
+/// wrapped key is opened with a passphrase from `input`; a plaintext key
+/// still works and prints [`plaintext_key_warning`] to stderr. This is the
+/// one place a trustee command turns a key file into a signer.
+pub(crate) fn load_trustee_signer(
+    path: &str,
+    input: &mut PassphraseInput,
+) -> Result<Box<dyn TrusteeSigner>> {
+    let seed = match read_trustee_key_file(path)? {
+        TrusteeKeyFile::Wrapped(wrapped) => open_wrapped(&wrapped, input)?,
+        TrusteeKeyFile::Plaintext(seed) => {
+            eprintln!("{}", plaintext_key_warning(path));
+            seed
+        }
+    };
+    Ok(Box::new(SeedSigner {
+        key: SigningKey::from_bytes(&seed),
+    }))
 }
 
 #[cfg(test)]
@@ -435,5 +548,145 @@ pub(crate) mod tests {
         for msg in [e(&hex::encode(&bytes)), e(&format!("{line}extra\n"))] {
             assert!(!msg.contains(&hex::encode(alice_pk())));
         }
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("securacv-tkey-{}-{}", std::process::id(), name));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    fn pipe_with(contents: &[u8]) -> i32 {
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        assert_eq!(
+            unsafe { libc::write(fds[1], contents.as_ptr().cast(), contents.len()) },
+            contents.len() as isize
+        );
+        unsafe { libc::close(fds[1]) };
+        fds[0]
+    }
+
+    #[test]
+    fn plaintext_warning_is_exact() {
+        assert_eq!(
+            plaintext_key_warning("bob.key"),
+            "WARNING: bob.key is an unwrapped trustee key — anyone who copies it can sign as \
+             this trustee. Wrap it: break_glass trustee wrap --signing-key bob.key --id <id> \
+             --output <id>.tkey"
+        );
+        assert_eq!(
+            unwrap_prompt("alice"),
+            "passphrase for trustee key 'alice': "
+        );
+    }
+
+    #[test]
+    fn the_seam_signs_exactly_as_the_seed_did() {
+        use crate::crypto::signatures::{DOMAIN_POLICY_CHANGE_APPROVAL, DOMAIN_TRUSTEE_APPROVAL};
+        let dir = scratch("seam");
+        let plain = dir.join("alice.key");
+        std::fs::write(&plain, format!("{}\n", hex::encode(ALICE_SEED))).unwrap();
+        let signer = load_trustee_signer(
+            plain.to_str().unwrap(),
+            &mut PassphraseInput::without_terminal(),
+        )
+        .unwrap();
+        let key = SigningKey::from_bytes(&ALICE_SEED);
+        assert_eq!(signer.public_key(), key.verifying_key().to_bytes());
+        let h = [0x42u8; 32];
+        assert_eq!(
+            signer.sign(DOMAIN_TRUSTEE_APPROVAL, &h).unwrap(),
+            crate::break_glass::sign_approval(&key, &h).to_vec()
+        );
+        assert_eq!(
+            signer.sign(DOMAIN_POLICY_CHANGE_APPROVAL, &h).unwrap(),
+            crate::break_glass::sign_policy_change_approval(&key, &h).to_vec()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_detects_the_form() {
+        let dir = scratch("detect");
+        let wrapped = dir.join("alice.tkey");
+        let bytes = tkg1_seal(&ALICE_SEED, "alice", PASS).unwrap();
+        std::fs::write(&wrapped, trustee_key_file_text(&bytes)).unwrap();
+        let path = wrapped.to_str().unwrap();
+
+        // Wrapped, passphrase on an fd.
+        let fd = pipe_with(format!("{PASS}\n").as_bytes());
+        let mut input = PassphraseInput::new(Some(fd)).unwrap();
+        let signer = load_trustee_signer(path, &mut input).unwrap();
+        assert_eq!(signer.public_key(), alice_pk());
+        unsafe { libc::close(fd) };
+
+        // Wrapped, wrong passphrase on an fd.
+        let fd = pipe_with(b"nope\n");
+        let mut input = PassphraseInput::new(Some(fd)).unwrap();
+        let err = load_trustee_signer(path, &mut input)
+            .err()
+            .unwrap()
+            .to_string();
+        assert_eq!(err, "trustee key: wrong passphrase");
+        unsafe { libc::close(fd) };
+
+        // Wrapped, no terminal and no fd: the exact refusal.
+        let err = load_trustee_signer(path, &mut PassphraseInput::without_terminal())
+            .err()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            err,
+            "wrapped trustee key needs a passphrase: run on a terminal or pass --passphrase-fd"
+        );
+
+        // Plaintext, with or without a trailing newline or uppercase hex.
+        for body in [
+            format!("{}\n", hex::encode(ALICE_SEED)),
+            hex::encode(ALICE_SEED),
+            hex::encode_upper(ALICE_SEED),
+        ] {
+            let plain = dir.join("alice.key");
+            std::fs::write(&plain, body).unwrap();
+            let signer = load_trustee_signer(
+                plain.to_str().unwrap(),
+                &mut PassphraseInput::without_terminal(),
+            )
+            .unwrap();
+            assert_eq!(signer.public_key(), alice_pk());
+        }
+
+        // Neither form; and a missing file. Neither error names the path.
+        let other = dir.join("other.key");
+        std::fs::write(&other, "not a key\n").unwrap();
+        let err = load_trustee_signer(
+            other.to_str().unwrap(),
+            &mut PassphraseInput::without_terminal(),
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert_eq!(
+            err,
+            "unrecognized trustee key file: expected a securacv-trustee-key:v1 line or 64 hex characters"
+        );
+        let missing = dir.join("missing.key");
+        let err = load_trustee_signer(
+            missing.to_str().unwrap(),
+            &mut PassphraseInput::without_terminal(),
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            err.starts_with("failed to read the trustee key file: "),
+            "{err}"
+        );
+        assert!(!err.contains("missing.key"), "{err}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

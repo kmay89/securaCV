@@ -18,9 +18,6 @@
 //! The reader is generic: it knows nothing about what the passphrase opens.
 //! Every value it returns is `Zeroizing`, and it never formats one.
 
-// The reader lands one commit before the commands that call it.
-#![allow(dead_code)]
-
 use anyhow::anyhow;
 use zeroize::Zeroizing;
 
@@ -59,6 +56,7 @@ fn failed(msg: impl std::fmt::Display) -> PassphraseError {
 /// the terminal.
 pub(crate) struct PassphraseInput {
     fd: Option<i32>,
+    terminal: bool,
 }
 
 impl PassphraseInput {
@@ -68,10 +66,25 @@ impl PassphraseInput {
         if let Some(fd) = passphrase_fd {
             check_fd_open(fd)?;
         }
-        Ok(Self { fd: passphrase_fd })
+        Ok(Self {
+            fd: passphrase_fd,
+            terminal: true,
+        })
+    }
+
+    /// An input with no fd that never opens the terminal: every read is
+    /// [`PassphraseError::NoSource`]. For tests, which must not prompt on a
+    /// developer's terminal.
+    #[cfg(test)]
+    pub(crate) fn without_terminal() -> Self {
+        Self {
+            fd: None,
+            terminal: false,
+        }
     }
 
     /// True when passphrases come from `--passphrase-fd`.
+    #[allow(dead_code)] // called by `trustee keygen` / `trustee wrap` (next commit)
     pub(crate) fn uses_fd(&self) -> bool {
         self.fd.is_some()
     }
@@ -81,12 +94,14 @@ impl PassphraseInput {
     pub(crate) fn read(&mut self, prompt: &str) -> Result<Zeroizing<String>, PassphraseError> {
         match self.fd {
             Some(fd) => read_passphrase_line(fd),
-            None => read_from_tty(prompt),
+            None if self.terminal => read_from_tty(prompt),
+            None => Err(PassphraseError::NoSource),
         }
     }
 
     /// Read a NEW passphrase. From the fd it is one line. On the terminal it
     /// is typed twice (`prompt`, then `repeat_prompt`) and must match.
+    #[allow(dead_code)] // called by `trustee keygen` / `trustee wrap` (next commit)
     pub(crate) fn read_new(
         &mut self,
         prompt: &str,
