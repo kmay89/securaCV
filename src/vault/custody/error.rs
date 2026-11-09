@@ -126,6 +126,7 @@ pub(crate) enum CustodyError {
     /// A share wrapped at rest failed its AEAD.
     AtRestAuthentication,
     /// A box-2 operation in a build without `pqc-vault`.
+    #[cfg_attr(feature = "pqc-vault", allow(dead_code))]
     Box2NeedsFeature,
     /// An ML-KEM-768 operation failed (a malformed key or ciphertext).
     MlKem,

@@ -1495,6 +1495,43 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(feature = "pqc-vault")]
+    #[test]
+    fn round_trip_transport_box2_with_mlkem() {
+        // A real ML-KEM-768 recipient key: the share seals with box 2 and
+        // opens with both halves of the recipient key.
+        let mut split = test_split(2, 3, ROLE_OPERATIONAL);
+        let secret =
+            RecipientSecret::generate("alice", HOLDER_ROLE_TRUSTEE, true, &mut OsCustodyRng)
+                .unwrap();
+        split.publics[0] = signed_public(&secret, &[1; 32]);
+        split.secrets[0] = secret;
+        let mut header = split.header(1, PROTECTION_TRANSPORT_BOX2);
+        header.release_box = BOX_HPKE_X25519_PSK_MLKEM768;
+        let file = ShareFile::seal_transport(
+            header,
+            &split.shares[0],
+            &split.publics[0],
+            &mut OsCustodyRng,
+        )
+        .unwrap();
+        let ShareBody::Transport { enc, .. } = &file.body else {
+            panic!("a transport share");
+        };
+        assert_eq!(enc.len(), BOX2_ENC_LEN);
+        let decoded = ShareFile::decode(&file.encode()).unwrap();
+        let opened = decoded.open_transport(&split.secrets[0]).unwrap();
+        assert_eq!(opened.scalars(), split.shares[0].scalars());
+        // The X25519 half alone does not open it.
+        let x_only = RecipientSecret::from_parts(
+            "alice",
+            HOLDER_ROLE_TRUSTEE,
+            *split.secrets[0].x25519_secret(),
+            None,
+        );
+        assert!(decoded.open_transport(&x_only).is_err());
+    }
+
     #[cfg(not(feature = "pqc-vault"))]
     #[test]
     fn box2_without_feature_message() {

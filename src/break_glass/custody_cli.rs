@@ -1041,6 +1041,26 @@ File check:   intact
         assert_eq!(opened.x25519_public(), public.x25519_public().unwrap());
     }
 
+    #[cfg(feature = "pqc-vault")]
+    #[test]
+    fn keygen_pq_binds_an_mlkem_key() {
+        let out = keygen_core(
+            "alice",
+            HOLDER_ROLE_TRUSTEE,
+            true,
+            &alice_signer(),
+            "kat passphrase",
+            &mut OsCustodyRng,
+        )
+        .unwrap();
+        let public = RecipientPublic::from_json(out.public_text.as_bytes()).unwrap();
+        assert!(public.mlkem768_public().unwrap().is_some());
+        public.check_binding_ed25519().unwrap();
+        assert!(out
+            .lines
+            .starts_with("Recipient key for 'alice' (trustee): X25519 + ML-KEM-768\n"));
+    }
+
     #[cfg(not(feature = "pqc-vault"))]
     #[test]
     fn keygen_refuses_pq_without_feature() {
