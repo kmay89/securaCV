@@ -4839,4 +4839,68 @@ mod tests {
         );
         Ok(())
     }
+
+    /// Every argument of every `break_glass` subcommand, as clap sees it.
+    fn every_arg() -> Vec<(String, clap::Arg)> {
+        use clap::CommandFactory;
+        fn walk(prefix: &str, cmd: &clap::Command, out: &mut Vec<(String, clap::Arg)>) {
+            let path = format!("{prefix} {}", cmd.get_name());
+            for arg in cmd.get_arguments() {
+                out.push((path.clone(), arg.clone()));
+            }
+            for sub in cmd.get_subcommands() {
+                walk(&path, sub, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk("", &Args::command(), &mut out);
+        out
+    }
+
+    #[test]
+    fn no_passphrase_is_read_from_argv_or_the_environment() {
+        // The only passphrase argument any subcommand may declare is
+        // --passphrase-fd, a descriptor NUMBER; no argument of any kind may
+        // fall back to an environment variable that names a passphrase.
+        for (path, arg) in every_arg() {
+            let id = arg.get_id().as_str().to_ascii_lowercase();
+            let long = arg.get_long().unwrap_or("").to_ascii_lowercase();
+            for name in [&id, &long] {
+                if name.contains("passphrase") || name.contains("password") {
+                    assert!(
+                        name.as_str() == "passphrase_fd" || name.as_str() == "passphrase-fd",
+                        "{path}: --{long} would put a passphrase on the command line"
+                    );
+                    assert!(
+                        arg.get_env().is_none(),
+                        "{path}: --{long} must not read the environment"
+                    );
+                }
+            }
+            if let Some(env) = arg.get_env() {
+                let env = env.to_string_lossy().to_ascii_uppercase();
+                assert!(
+                    !env.contains("PASSPHRASE") && !env.contains("PASSWORD"),
+                    "{path}: --{long} reads {env}"
+                );
+            }
+        }
+        // And the trustee-key code paths read neither argv nor the
+        // environment directly. The needles are built at run time so this
+        // test does not match itself.
+        for (file, src) in [
+            ("trustee_key.rs", include_str!("trustee_key.rs")),
+            ("passphrase.rs", include_str!("../crypto/passphrase.rs")),
+        ] {
+            for needle in [
+                ["env", "::var"].concat(),
+                ["env", "::args"].concat(),
+                ["var", "_os("].concat(),
+                ["get", "env("].concat(),
+                ["PASS", "PHRASE\""].concat(),
+            ] {
+                assert!(!src.contains(&needle), "{file} contains {needle}");
+            }
+        }
+    }
 }

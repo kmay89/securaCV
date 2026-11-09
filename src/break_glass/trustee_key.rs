@@ -37,6 +37,12 @@ use crate::vault::crypto::{
 /// The prefix of a wrapped trustee key file's one line.
 pub(crate) const TRUSTEE_KEY_FILE_PREFIX: &str = "securacv-trustee-key:v1 ";
 
+/// The refusal when a wrapped trustee key must be opened and there is no
+/// terminal to ask on and no `--passphrase-fd`. A passphrase is never taken
+/// from argv or the environment.
+pub(crate) const NO_PASSPHRASE_SOURCE: &str =
+    "wrapped trustee key needs a passphrase: run on a terminal or pass --passphrase-fd";
+
 /// The longest trustee id a TKG1 trailer carries, in bytes.
 pub(crate) const MAX_TRUSTEE_KEY_ID_LEN: usize = 64;
 
