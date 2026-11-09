@@ -327,6 +327,9 @@ pub(crate) struct KeyguardFormat {
     /// after the tag. MKG1 is read leniently, exactly as before this
     /// recipe was shared, so no existing keyguard changes verdict.
     pub(crate) exact: bool,
+    /// The error returned when the AEAD refuses (a tampered byte, or a
+    /// container bound to another AAD suffix).
+    pub(crate) aead_failure: &'static str,
 }
 
 /// The vault master-key keyguard (`master.keyguard`).
@@ -335,6 +338,19 @@ pub(crate) const KEYGUARD_MKG1: KeyguardFormat = KeyguardFormat {
     aad_domain: b"securacv-vault-keyguard-v1",
     label: "vault keyguard",
     exact: false,
+    aead_failure: "vault decryption failed",
+};
+
+/// A trustee's Ed25519 signing seed at rest (`.tkey`): the MKG1 layout under
+/// its own magic and AAD domain. The AAD suffix is
+/// `u32le(len id) ‖ id ‖ public_key[32]`, so a renamed trustee or a swapped
+/// public key fails the AEAD (`break_glass::trustee_key`).
+pub(crate) const KEYGUARD_TKG1: KeyguardFormat = KeyguardFormat {
+    magic: b"TKG1",
+    aad_domain: b"securacv-trustee-key-v1",
+    label: "trustee key",
+    exact: true,
+    aead_failure: "trustee key: the file was altered, or its trustee id or public key was changed",
 };
 
 const KEYGUARD_KIND_ARGON2ID: u8 = 1;
@@ -513,7 +529,8 @@ pub(crate) fn keyguard_open(
     let aad = keyguard_aad(format, aad_suffix);
     let mut buf = zeroize::Zeroizing::new([0u8; 32]);
     buf.copy_from_slice(&ct);
-    decrypt_payload(kek_bytes, &nonce, &aad, buf.as_mut(), &tag)?;
+    decrypt_payload(kek_bytes, &nonce, &aad, buf.as_mut(), &tag)
+        .map_err(|_| anyhow!("{}", format.aead_failure))?;
     Ok(buf)
 }
 

@@ -7,6 +7,7 @@ pub mod cli;
 pub mod http;
 pub mod server;
 pub mod session;
+pub(crate) mod trustee_key;
 
 pub use backend::KernelVaultOps;
 pub use cli::run;
