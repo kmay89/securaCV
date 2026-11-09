@@ -21,13 +21,16 @@ input designed to break them.
 | `ots_parse` | OpenTimestamps `.ots` proofs (`Proof::parse`) and bare calendar bodies (`parse_timestamp`), via the **hand-rolled codec** in `src/ots.rs`; asserts that canonical re-serialization is a fixed point | A public calendar, anyone who can MITM it, or a tampered `ots_anchors` row read by `witnessd` at boot. Seeds: the `opentimestamps` crate's two real proofs, the synthetic genesis proof and a derived upgrade body |
 | `vault_envelope_decode` | The sealed-vault binary container (`src/vault/format.rs`) | Whoever last held the SD card — precisely the adversary the vault exists for |
 | `vault_decode_aad` | The vault's additional-authenticated-data header | Same |
+| `custody_share_decode` | A threshold-custody share file (`SHR1`, text and binary forms), then its embedded `MKC1` copy's header (`src/vault/custody/share.rs`); asserts the file re-encodes to its own bytes | Whoever handed a holder the file — a dealer, a courier, the drawer it sat in |
+| `custody_container_decode` | The `MKC1` custody container's public header, bounds only, no key (`src/vault/custody/container.rs`); asserts the header re-encodes to its own bytes | Anyone who can write the vault directory or a share's container copy |
+| `custody_recipient_decode` | A holder's recipient public file (JSON, 8 KiB cap) and a recipient key file's `TEK1` header, whose Argon2id parameters are refused before any KDF (`src/vault/custody/recipient.rs`) | Anyone who can hand the operator a recipient file, or a holder a key file |
 | `frigate_event` | Frigate MQTT event/review payloads | **Any device on the LAN** that can publish to the broker topic |
 | `canonical_json` | JSON → canonical byte form (`src/canonical_json.rs`) | Anything that reaches a signing path — see the property note below |
 | `event_payload` | Module-runtime candidate events | Adapter/module output, i.e. third-party code |
 | `api_read_request` | One Event API HTTP request, via the **hand-rolled request reader** in `src/api/mod.rs` (`read_request`), plus the token extractors and the body accessor that run on it before any credential is checked | A local process on the default loopback bind; **any host on the LAN** once the port is published for pairing or a Witness Wall |
 | `webhook_request` | One whole webhook connection (`handle_connection` in `src/adapter/webhook.rs`): request line, headers, auth, body, routing | Anything that can open a TCP connection to the webhook listener — the ingress built for devices we did not write |
 
-## Four targets check more than "it didn't crash"
+## Some targets check more than "it didn't crash"
 
 Absence of a panic is a weak property. Where a stronger one exists, the target
 asserts it:
@@ -39,6 +42,10 @@ asserts it:
   canonicalize identically, and the output must re-parse to an equal value.
   This class of bug is invisible to a crash-only fuzzer and is exactly the kind
   that turns into "attacker gets a valid signature over a different meaning."
+- **The three `custody_*` targets assert re-encode stability too**, and keep
+  their checks in the crate (`src/vault/custody/fuzz.rs`, public only under
+  `--cfg fuzzing`), where `cargo test` replays the committed seeds and a
+  sweep of their truncations and byte edits on every run.
 - **`vault_envelope_decode` asserts re-encode stability.** Anything that
   decodes must re-encode to bytes that decode the same way again. A decoder
   that accepts a container it cannot faithfully reproduce is one that disagrees

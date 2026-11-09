@@ -58,6 +58,14 @@
 
 pub(crate) mod container;
 mod error;
+// The fuzz targets' entry points: public only under `--cfg fuzzing` (set by
+// cargo-fuzz and nothing else), and compiled into the tests so the seeds
+// are replayed by `cargo test` too.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzz;
+#[cfg(all(test, not(fuzzing)))]
+mod fuzz;
 pub(crate) mod group;
 pub(crate) mod hpke;
 #[cfg(test)]

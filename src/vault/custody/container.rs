@@ -114,16 +114,10 @@ fn encode_payload(master: &[u8; 32], kem: Option<(&[u8], &[u8])>) -> Zeroizing<V
     out
 }
 
-/// Seal `payload` under `wrap_key` with the given header fields. No check
-/// that the header describes the payload: callers do that (and the tests
-/// use it to build a container whose header lies).
-fn encode_raw(
-    wrap_key: &[u8; 32],
-    header: &Mkc1Header,
-    nonce: [u8; 12],
-    payload: &[u8],
-) -> Result<Vec<u8>, CustodyError> {
-    let mut out = Vec::with_capacity(105 + header.mlkem768_public.len() + payload.len() + 16);
+/// The public header's bytes, `magic` through `mlkem768_public`
+/// (`bytes[0..89+P]`): everything before the nonce.
+pub(crate) fn encode_mkc1_header(header: &Mkc1Header) -> Vec<u8> {
+    let mut out = Vec::with_capacity(MKC1_FIXED + header.mlkem768_public.len());
     out.extend_from_slice(MKC1_MAGIC);
     out.push(1);
     out.push(SUITE_V1);
@@ -133,6 +127,20 @@ fn encode_raw(
     out.extend_from_slice(&header.vault_x25519_public);
     out.extend_from_slice(&(header.mlkem768_public.len() as u16).to_le_bytes());
     out.extend_from_slice(&header.mlkem768_public);
+    out
+}
+
+/// Seal `payload` under `wrap_key` with the given header fields. No check
+/// that the header describes the payload: callers do that (and the tests
+/// use it to build a container whose header lies).
+fn encode_raw(
+    wrap_key: &[u8; 32],
+    header: &Mkc1Header,
+    nonce: [u8; 12],
+    payload: &[u8],
+) -> Result<Vec<u8>, CustodyError> {
+    let mut out = encode_mkc1_header(header);
+    out.reserve(16 + payload.len() + 16);
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&((payload.len() + 16) as u32).to_le_bytes());
     let mut aad = MKC1_AAD_DOMAIN.to_vec();
