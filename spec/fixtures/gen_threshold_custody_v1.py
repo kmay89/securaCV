@@ -945,7 +945,12 @@ def subsets(xs, n):
 # ---------------------------------------------------------------------------
 
 ARGON2ID_PASSPHRASE = "kat passphrase"
-ARGON2ID_RUST_PINS = {}
+ARGON2ID_RUST_PINS = {
+    # salt (the at-rest share's) -> Argon2id("kat passphrase", salt, 65536/3/1)
+    "71a54f2c92c276b9b3b400962d394162": "ca250820dec3b09afc0404fd4239708086d8c8d40cd58e36d1a6fb7fb5bed2c7",
+    # salt (TEK1's)
+    "d1f6b6b6451f36329592e66b105db231": "241ca5db8e5ff57cafa3b0f960b8621c8eda811fb747d07d3a5e41690416255f",
+}
 
 OPERATIONAL_IDS = ["alice", "bob", "carol", "dave", "erin"]
 RECOVERY_IDS = ["r1", "r2", "r3", "r4", "r5", "r6"]
@@ -1244,7 +1249,7 @@ def argon_pin(salt):
         "passphrase": ARGON2ID_PASSPHRASE,
         "params": {"m_kib": ARGON2[0], "t": ARGON2[1], "p": ARGON2[2]},
         "salt": salt.hex(),
-        "output": ARGON2ID_RUST_PINS.get(salt.hex(), ""),
+        "output": ARGON2ID_RUST_PINS[salt.hex()],
     }
 
 

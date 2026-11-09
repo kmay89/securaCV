@@ -53,6 +53,8 @@ pub(crate) mod container;
 mod error;
 pub(crate) mod group;
 pub(crate) mod hpke;
+#[cfg(test)]
+mod kat;
 pub(crate) mod recipient;
 pub(crate) mod share;
 pub(crate) mod split_record;

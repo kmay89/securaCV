@@ -514,7 +514,7 @@
  },
  "share_file_at_rest": {
   "argon2id_rust_pin": {
-   "output": "",
+   "output": "ca250820dec3b09afc0404fd4239708086d8c8d40cd58e36d1a6fb7fb5bed2c7",
    "params": {
     "m_kib": 65536,
     "p": 1,
@@ -1182,7 +1182,7 @@
  },
  "tek1": {
   "argon2id_rust_pin": {
-   "output": "",
+   "output": "241ca5db8e5ff57cafa3b0f960b8621c8eda811fb747d07d3a5e41690416255f",
    "params": {
     "m_kib": 65536,
     "p": 1,
