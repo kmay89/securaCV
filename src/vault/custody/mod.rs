@@ -49,9 +49,11 @@
 //!   secret unless both the X25519 key and the ML-KEM secret are broken; the
 //!   HPKE draft states that this hybrid property is not proven.
 
+pub(crate) mod container;
 mod error;
 pub(crate) mod group;
 pub(crate) mod hpke;
+pub(crate) mod recipient;
 pub(crate) mod vss;
 
 pub(crate) use error::{CustodyError, ShareReason};

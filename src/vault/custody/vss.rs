@@ -710,5 +710,7 @@ pub(crate) mod tests {
         let (k, _) = kek.scalars();
         let k_hex = hex::encode(k.to_bytes());
         assert!(!format!("{kek:?} {:?}", shares).contains(&k_hex));
+        crate::vault::custody::recipient::tests::recipient_secret_debug_is_redacted();
+        crate::vault::custody::container::tests::mkc1_plain_debug_is_redacted();
     }
 }
