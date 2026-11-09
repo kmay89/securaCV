@@ -19,6 +19,16 @@ use ed25519_dalek::VerifyingKey;
 
 pub mod crypto;
 
+// The threshold-custody core (spec quorum_unseal_v2 §2) stays out of the
+// shipped public API for the reason `format` does, below: no public
+// in-process path from custody bytes to a key may bypass a token. The
+// break_glass holder tools are in this crate, so `pub(crate)` reaches them.
+#[cfg(not(fuzzing))]
+pub(crate) mod custody;
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod custody;
+
 // `format` stays private in every build that ships.
 //
 // The parser genuinely needs to be fuzzable: `unseal()` decodes the on-disk
