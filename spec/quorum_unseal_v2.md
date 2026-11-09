@@ -61,11 +61,13 @@ visible artifact adopts a ratified format rather than a bespoke one.
 
 ### 2.1 Key hierarchy
 
-v2 introduces a **vault KEK** between trustee custody and per-envelope DEKs:
+v2 introduces a **vault KEK** between trustee custody and the existing
+master key, which still wraps the per-envelope DEKs:
 
 ```
-trustee shares (n-of-m, VSS)  ──reconstruct──►  KEK
-KEK ──unwraps──► per-envelope DEK ──decrypts──► envelope payload
+trustee shares (n-of-m, Pedersen VSS)  ──reconstruct──►  KEK (k, r)
+KEK ──opens──► MKC1 custody container ──► master key + ML-KEM-768 decapsulation key
+master key / ML-KEM key ──unwrap / decapsulate (unchanged)──► per-envelope DEK ──decrypts──► envelope payload
 ```
 
 - The KEK is split n-of-m with **Shamir secret sharing hardened by

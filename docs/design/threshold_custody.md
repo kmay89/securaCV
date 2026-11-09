@@ -16,6 +16,12 @@ vault under custody and cannot make one unopenable.
 `docs/security/ENTERPRISE_CUSTODY.md` §1 "State today" stands as written:
 the quorum is an authorization gate, not the lock.
 
+S amends `spec/quorum_unseal_v2.md` §2.1 (Pedersen over
+ristretto255 and the KEK that wraps the unchanged master key; the key
+hierarchy diagram, which now runs KEK → `MKC1` → master key and ML-KEM key →
+per-envelope DEK; the digest of the master secret; the recipient key), §2.2
+(the ML-KEM-768 key wrapped under the KEK, not seed-split) and §6 item 5.
+
 ## Status
 
 | Change | Content | State |
@@ -35,7 +41,7 @@ G after F) → Y. S and T touch no shared format.
 
 | Question | Decision | Why |
 |---|---|---|
-| Reconstruct the KEK in memory, or threshold decryption? | **Reconstruct**, as spec §2.1 says, at the unseal gate only | Every existing envelope is encrypted under the master key or the ML-KEM secret; a threshold-ElGamal target opens none of them. Threshold decryption is kept as the named future seam for new envelopes (rejection 9). The residual is R-KEEP (§6). |
+| Reconstruct the KEK in memory, or threshold decryption? | **Reconstruct**, as spec §2.1 says, at the unseal gate only | Every existing envelope is encrypted under the master key or the ML-KEM secret; a threshold-ElGamal target opens none of them. Threshold decryption is kept as the named future seam for new envelopes (rejection 9). The residual is R-KEEP (§11). |
 | When do releases happen? | **After the device-signed redemption row exists**, enforced on each holder's own device | The record precedes the capability. A collection that never reaches n spends the grant; a fresh request is needed. |
 | Where does the vault X25519 key come from? | **Derived from the master key** | One secret, the master key, opens every envelope, old and new. During dual custody `witnessd` keeps sealing the legacy `kem_alg`s; the custody seal is first exercised by the drill (V). |
 | Which sentinel marks a custody vault? | **A self-explaining text file**, `securacv-vault-custody-sentinel:v1` plus one English line | Older builds refuse it with their shipped messages; `MKG1` kind 2 stays reserved for a hardware KEK. |
@@ -269,16 +275,41 @@ record every holder compares their share against.
 | `custody recipient keygen --holder ID --role trustee\|recovery --signing-key K [--pq] [--passphrase-fd N] --output-key F --output-public P` | Makes the recipient key, signs its binding with the holder's trustee key (TKG1 or legacy plaintext), wraps the secret as TEK1 under a new passphrase, re-opens it, writes both files (never overwriting) |
 | `custody rehearse --threshold N --recipient P… --output-dir D` | Deals a REHEARSAL split of a throwaway key, proves it, writes one share per recipient and the split record |
 | `share inspect --share F` | Prints what the file says about itself; a damaged file still shows its header, with `File check: FAILED` |
-| `share verify --share F (--recipient-key K \| --at-rest) [--split-record R] [--passphrase-fd N]` | Opens the share, runs the Pedersen check, compares with the split record, checks the container copy names the share's KEK |
+| `share verify --share F (--recipient-key K \| --at-rest) [--split-record R] [--passphrase-fd N]` | Checks, before any HPKE runs, that the share's roster pins for the holder the signing key their own recipient key file records; opens the share, runs the Pedersen check, compares with the split record, checks the container copy names the share's KEK |
 | `share protect --share F --recipient-key K [--passphrase-fd N] --output G` | Rewraps a transport share at rest under Argon2id, then re-opens and re-checks it before writing |
 
 Passphrases come only from the terminal (echo off) or `--passphrase-fd`,
 never argv or the environment. A Pedersen check is reported as "checks
-passed", never as "verified". No printed line carries a path, a full hash or
-a secret: hashes and keys print as 16-hex prefixes, and where the brief's
-lines named a file by path they name the flag instead (`the --output-key
-file`, `the --output file`, `the output directory`). Every printed block is a
-pure function pinned by a test.
+passed", never as "verified". No line these commands add carries a path, a
+full hash or a secret: hashes and keys print as 16-hex prefixes, and where
+the brief's lines named a file by path they name the flag instead (`the
+--output-key file`, `the --output file`, `the output directory`). The one
+path that can appear is the trustee-key release's existing unwrapped-key
+warning: `custody recipient keygen` loads `--signing-key` through
+`load_trustee_signer`, which still names a legacy plaintext key's path so the
+operator can run the `break_glass trustee wrap` command it suggests. Every
+printed block is a pure function pinned by a test.
+
+**The roster pin is checked against the holder's own key file.** A recipient
+key opened from its `TEK1` file carries the signing key that file records. A
+transport share opens only if its own roster entry pins exactly that key and
+its recorded recipient hash is the one computed under it; the hash is never
+rebuilt from a signing key the share header supplies. A share that names the
+holder and their recipient key but pins another signing key for them (a
+faulty dealer pinning a key it holds, whether the recipient hash was
+recomputed over that key or left honest) is refused before any HPKE runs:
+
+```
+share check FAILED: the roster in this share pins a different signing key for you than your recipient key records — do not acknowledge it; record a class-d-security exception (the dealer is faulty)
+```
+
+`share protect` opens the same way, so a forged pin never reaches an at-rest
+file. Every text-form refusal of `share verify` and `share protect`, the
+oversize one included, prints as `share check FAILED: share file: {why}`; an
+I/O failure reading the file is not a share check and keeps its own line.
+`custody recipient keygen` writes the secret file, then the public file; if
+the public file cannot be written, it removes the secret file it just
+created, so a retry is not refused by an orphan.
 
 ## 7. The dependency line
 
@@ -293,25 +324,26 @@ custody code `Scalar` and `RistrettoPoint`. `from_uniform_bytes`,
 `mul_clamped` need no feature.
 
 `cargo tree -e features -i curve25519-dalek@5.0.0`, before the line (at the
-base commit):
+base commit). Cargo prints the root package's local checkout path; it is
+written here as `<repo root>`, and the output is otherwise verbatim:
 
 ```
 curve25519-dalek v5.0.0
 ├── curve25519-dalek feature "alloc"
 │   └── ed25519-dalek feature "alloc"
 │       └── ed25519-dalek feature "pem"
-│           └── witness-kernel v0.9.0 (/home/user/securaCV-prs)
+│           └── witness-kernel v0.9.0 (<repo root>)
 │               └── witness-kernel feature "default" (command-line)
 ├── curve25519-dalek feature "digest"
 │   └── ed25519-dalek v3.0.0
 │       ├── ed25519-dalek feature "alloc" (*)
 │       ├── ed25519-dalek feature "default"
-│       │   └── witness-kernel v0.9.0 (/home/user/securaCV-prs) (*)
+│       │   └── witness-kernel v0.9.0 (<repo root>) (*)
 │       ├── ed25519-dalek feature "fast"
 │       │   └── ed25519-dalek feature "default" (*)
 │       ├── ed25519-dalek feature "pem" (*)
 │       ├── ed25519-dalek feature "pkcs8"
-│       │   └── witness-kernel v0.9.0 (/home/user/securaCV-prs) (*)
+│       │   └── witness-kernel v0.9.0 (<repo root>) (*)
 │       │   └── ed25519-dalek feature "pem" (*)
 │       ├── ed25519-dalek feature "signature"
 │       │   └── ed25519-dalek feature "alloc" (*)
@@ -328,31 +360,31 @@ After:
 ```
 curve25519-dalek v5.0.0
 ├── curve25519-dalek feature "alloc"
-│   └── witness-kernel v0.9.0 (/home/user/securaCV-prs)
+│   └── witness-kernel v0.9.0 (<repo root>)
 │       └── witness-kernel feature "default" (command-line)
 │   └── ed25519-dalek feature "alloc"
 │       └── ed25519-dalek feature "pem"
-│           └── witness-kernel v0.9.0 (/home/user/securaCV-prs) (*)
+│           └── witness-kernel v0.9.0 (<repo root>) (*)
 ├── curve25519-dalek feature "digest"
 │   └── ed25519-dalek v3.0.0
 │       ├── ed25519-dalek feature "alloc" (*)
 │       ├── ed25519-dalek feature "default"
-│       │   └── witness-kernel v0.9.0 (/home/user/securaCV-prs) (*)
+│       │   └── witness-kernel v0.9.0 (<repo root>) (*)
 │       ├── ed25519-dalek feature "fast"
 │       │   └── ed25519-dalek feature "default" (*)
 │       ├── ed25519-dalek feature "pem" (*)
 │       ├── ed25519-dalek feature "pkcs8"
-│       │   └── witness-kernel v0.9.0 (/home/user/securaCV-prs) (*)
+│       │   └── witness-kernel v0.9.0 (<repo root>) (*)
 │       │   └── ed25519-dalek feature "pem" (*)
 │       ├── ed25519-dalek feature "signature"
 │       │   └── ed25519-dalek feature "alloc" (*)
 │       └── ed25519-dalek feature "zeroize"
 │           └── ed25519-dalek feature "default" (*)
 ├── curve25519-dalek feature "precomputed-tables"
-│   └── witness-kernel v0.9.0 (/home/user/securaCV-prs) (*)
+│   └── witness-kernel v0.9.0 (<repo root>) (*)
 │   └── ed25519-dalek feature "fast" (*)
 └── curve25519-dalek feature "zeroize"
-    └── witness-kernel v0.9.0 (/home/user/securaCV-prs) (*)
+    └── witness-kernel v0.9.0 (<repo root>) (*)
     └── ed25519-dalek feature "zeroize" (*)
 ```
 
@@ -376,9 +408,20 @@ The fixture holds the KEK, a 3-of-5 operational and a 4-of-6 recovery split
 of the same KEK (coefficients, commitments, shares, public shares, Lagrange
 subsets), eleven recipients with their binding signatures, eleven box-1
 share files, box 2's PSK layer, an at-rest share, TEK1, a classical and a
-hybrid `MKC1`, both split records, and 37 negative cases with their exact
+hybrid `MKC1`, both split records, and 41 negative cases with their exact
 refusals. `src/vault/custody/kat.rs` rebuilds every value in Rust and
 compares bytes; every comparison agreed on the first run.
+
+The review of S added four negative cases and changed no other fixture byte
+(the new cases draw from their own stream, `negative/forged-pin`, so every
+earlier stream is unchanged): alice's share with its index flipped to 0 and
+set to 6 (`share file: index must be between 1 and 5`), and two shares whose
+roster pins a dealer-held signing key for alice, sealed honestly to her real
+X25519 key, one with the recipient hash recomputed over the forged key and
+one with the honest hash kept. Both must be refused by her key before HPKE
+(`custody: the roster in this share pins a different signing key for you
+than your recipient key records`). The Python generator wrote the cases, and
+the Rust code agreed with them on the first run.
 
 Two layers are not cross-implemented. Argon2id is not in the Python standard
 library: the at-rest and TEK1 vectors pin the AEAD under a given Argon2id

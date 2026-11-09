@@ -20,9 +20,14 @@
   passphrase), `custody rehearse` (a throwaway REHEARSAL split dealt to real
   recipient keys), `share inspect`, `share verify` (the Pedersen check, the
   split record, the container copy; reported as "checks passed") and `share
-  protect` (rewrap at rest under Argon2id). Passphrases come only from the
-  terminal or `--passphrase-fd`. No printed line carries a path, a full
-  hash or a secret.
+  protect` (rewrap at rest under Argon2id). `share verify` and `share
+  protect` refuse, before any decryption, a share whose roster pins a
+  signing key for the holder other than the one their own recipient key
+  file records. Passphrases come only from the terminal or
+  `--passphrase-fd`. No line these commands add carries a path, a full hash
+  or a secret; keygen given a legacy plaintext `--signing-key` still prints
+  the unwrapped trustee-key warning, which names that file so its wrap
+  command can be run.
 - **Added: the KATs.** `spec/fixtures/gen_threshold_custody_v1.py`, a
   standard-library-only second implementation, writes
   `spec/fixtures/threshold_custody_v1.json` after checking itself against
