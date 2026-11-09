@@ -41,13 +41,18 @@
       "clause": "dual control",
       "clause_verified": false,
       "requirement": "An action requires two or more people acting together.",
-      "mechanism": "n-of-m trustee approvals for grants and policy changes.",
+      "mechanism": "n-of-m trustee approvals for grants and policy changes, re-derived at the gate; the operator sets n.",
       "status": "structural",
       "evidence": [
         {
           "kind": "test",
           "path": "src/break_glass/core.rs",
           "test": "valid_signature_counts_toward_quorum"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "duplicate_trustee_approvals_only_count_once"
         },
         {
           "kind": "test",
@@ -59,7 +64,9 @@
           "path": "src/break_glass/core.rs",
           "symbol": "pub fn authorize("
         }
-      ]
+      ],
+      "operator_action": "Set the quorum threshold to 2 or more and record the roster and threshold in the CPS; a threshold change is itself a quorum policy change.",
+      "limits": "The gate enforces the threshold the policy states, and a policy may set it to 1 (QuorumPolicy refuses only 0): under a 1-of-1 policy one trustee authorizes alone. Two-person control holds only when the operator sets n to 2 or more."
     },
     {
       "id": "dual-control-key",

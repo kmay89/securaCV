@@ -43,6 +43,7 @@
           "anchor": "2-layer-1--threshold-custody-the-lock"
         }
       ],
+      "limits": "Threshold custody is not an HSM or secure element: the vault KEK is reconstructed in host memory inside the unseal gate. A hardware-held KEK (ENTERPRISE_CUSTODY §1 item 2) is tracked as missing on the host, with no design record yet, and the device signing seed is outside this row.",
       "depends_on": [
         "item5:U"
       ]

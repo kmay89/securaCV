@@ -36,7 +36,7 @@
       "clause": "§7.1",
       "clause_verified": false,
       "requirement": "Data are protected against damage, and their accessibility, readability and accuracy are checked.",
-      "mechanism": "Hash-chained, device-signed ledgers, checked by three independent implementations (as Part 11 row 11.10(a)-integrity).",
+      "mechanism": "Hash-chained, device-signed ledgers, checked by three implementations (as Part 11 row 11.10(a)-integrity).",
       "status": "structural",
       "evidence": [
         {
@@ -48,6 +48,21 @@
           "kind": "test",
           "path": "src/verify_runner.rs",
           "test": "full_verify_flags_tampered_payload_without_err"
+        },
+        {
+          "kind": "test",
+          "path": "viewer/verify_core.test.js",
+          "test": "export-bundle verification parity"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_a_tampered_payload_is_an_entry_hash_mismatch_at_its_index"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_the_primitives_match_verify_core_js"
         },
         {
           "kind": "code",
@@ -125,7 +140,9 @@
           "path": "src/break_glass/core.rs",
           "symbol": "pub const REASON_CODES"
         }
-      ]
+      ],
+      "operator_action": "Record the reason for each retention deletion in the change record.",
+      "limits": "Covers disclosure requests only, and only when the request carries operator context: a format-v1 request file, or authorize without --requested-by/--reason, is accepted with a NOTICE and records no reason. Events are never edited; retention deletes event records up to a checkpoint and records no reason."
     },
     {
       "id": "annex11-§9-policy-reason",
@@ -221,7 +238,7 @@
           "symbol": "pub struct OperatorContext"
         }
       ],
-      "limits": "Times are 10-minute buckets; API exports name a credential class."
+      "limits": "Times are 10-minute buckets; API exports name a credential class. A format-v1 request file, or authorize without --requested-by/--reason, is accepted with a NOTICE, and that receipt names no requester."
     },
     {
       "id": "annex11-§14-e-signature",

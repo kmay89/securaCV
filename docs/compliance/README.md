@@ -88,7 +88,8 @@ The kernel cannot give these, because the capability was never written:
 What exists:
 - the receipts themselves (`court_export`, `break_glass receipts --verbose`);
 - `log_verify` under a key the auditor pins;
-- projection files on the operator's cadence;
+- projection files on the operator's cadence, once item 7's CP2 lands (designed,
+  not built: [`SIEM_PROJECTION.md`](SIEM_PROJECTION.md));
 - these maps, with their evidence.
 
 Each refusal is a recorded design decision (`docs/security/PROVENANCE_INTEROP.md` §3–§4, `spec/invariants.md`). A regime that requires one of them describes a requirement the organization fulfills by other means, and the map row says so.

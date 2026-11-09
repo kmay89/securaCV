@@ -54,7 +54,8 @@ goes. Each template line carries exactly one status from the closed set
   `bs.storage-integrity`.
 - **The operator documents:** where the device key is pinned out of band,
   and the cadence on which `log_verify` is run under it.
-- **Template:** `{{audit.review_cadence}}`.
+- **Template:** `{{audit.review_cadence}}`. The ledger line is `structural`;
+  the verification line is `procedural`, because a person runs it.
 
 ### OP-5 Audit trails
 
@@ -63,7 +64,8 @@ goes. Each template line carries exactly one status from the closed set
   `bs.audit-trail`.
 - **The operator documents:** who reviews the trail and how the review is
   recorded.
-- **Template:** `{{audit.review_cadence}}`.
+- **Template:** `{{audit.review_cadence}}`. The ledger line is `structural`;
+  the review line is `procedural`, because a person reviews.
 
 ### OP-6 Transfer and disclosure
 

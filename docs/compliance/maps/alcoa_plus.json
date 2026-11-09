@@ -37,7 +37,7 @@
           "symbol": "pub struct OperatorContext"
         }
       ],
-      "limits": "Events are attributable to device and ruleset, never to a person (Invariant II). API exports name a credential class.",
+      "limits": "Events are attributable to device and ruleset, never to a person (Invariant II). API exports name a credential class. A grant from a format-v1 request file, or from authorize without --requested-by/--reason, names no requester (the CLI prints a NOTICE).",
       "alcoa": [
         "Attributable"
       ]
@@ -104,8 +104,13 @@
       "evidence": [
         {
           "kind": "test",
-          "path": "tests/kernel_hardening.rs",
-          "test": "hash_chain_is_valid_after_many_events"
+          "path": "src/lib.rs",
+          "test": "verify_sealed_log_accepts_good_chain_and_rejects_tampering"
+        },
+        {
+          "kind": "test",
+          "path": "tests/court_export.rs",
+          "test": "assembles_kit_and_manifest_hashes_are_correct"
         },
         {
           "kind": "code",
@@ -166,7 +171,7 @@
       "clause": "Complete",
       "clause_verified": false,
       "requirement": "Nothing is missing from the record, including its changes.",
-      "mechanism": "Interior gaps fail the chain; the tail is checked by the high-water mark.",
+      "mechanism": "Interior changes fail the chain; the tail is checked by the high-water mark when one is configured.",
       "status": "structural",
       "evidence": [
         {
@@ -185,6 +190,7 @@
           "symbol": "pub fn run_full_verify_with_high_water_mark("
         }
       ],
+      "operator_action": "Set SECURACV_HWM_PATH on external media; without a configured high-water mark, tail truncation is not detected.",
       "limits": "Retention deletes event records by design; receipt ledgers are never pruned. The tree is designed (item3:F).",
       "alcoa": [
         "Complete"

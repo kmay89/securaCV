@@ -340,13 +340,16 @@ only the person the cited receipt records, as publisher; designed, item 7 CP5.
 → [`compliance/CAWG_COSIGNING.md`](compliance/CAWG_COSIGNING.md)
 
 **Qualified electronic ledger** — An eIDAS category (Arts. 45k/45l) whose
-records carry a legal presumption of ordering and integrity. SecuraCV is not
-one and seeks no such status.
+records, as commonly cited, carry a legal presumption of ordering and
+integrity; the article text was not read here, so that content is unverified
+(see the map). SecuraCV is not one and seeks no such status.
 → [`compliance/eidas_qualified_ledger.md`](compliance/eidas_qualified_ledger.md)
 
-**ALCOA+** — The data-integrity attributes regulators of pharmaceutical and
-medical records use: attributable, legible, contemporaneous, original,
-accurate, and complete, consistent, enduring, available.
+**ALCOA+** — Data-integrity attributes, as commonly listed for pharmaceutical
+and medical records: attributable, legible, contemporaneous, original,
+accurate, and complete, consistent, enduring, available. The list follows
+common usage and is unverified against the PIC/S and MHRA guidance (see the
+map).
 → [`compliance/alcoa_plus.md`](compliance/alcoa_plus.md)
 
 **BS 10008** — The British standard on the evidential weight of electronic

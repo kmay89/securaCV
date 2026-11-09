@@ -21,8 +21,10 @@ assessor's determination. The mapping it follows is
 | OP-3 Storage | {{storage.locations}} | procedural |
 | OP-3 Retention | {{retention.period}} | procedural |
 | OP-3 Disposal | {{disposal.procedure}} | procedural |
-| OP-4 Authenticity and integrity | hash-chained, device-signed ledgers, checked with `log_verify` under the pinned device key every {{audit.review_cadence}} | structural |
-| OP-5 Audit trails | the receipt ledgers, reviewed every {{audit.review_cadence}} | structural |
+| OP-4 Authenticity and integrity | hash-chained, device-signed ledgers (row `bs.storage-integrity`) | structural |
+| OP-4 Verification | the device key is pinned out of band, and `log_verify` is run under it every {{audit.review_cadence}} | procedural |
+| OP-5 Audit trails | the receipt ledgers (row `bs.audit-trail`) | structural |
+| OP-5 Review of the trail | reviewed by {{roles.records_manager}} every {{audit.review_cadence}}, recorded in the record store | procedural |
 | OP-6 Transfer and disclosure | {{transfer.handoff_procedure}} | procedural |
 | OP-7 Time | the anchor policy kept at {{storage.locations}} | procedural |
 | OP-8 Identity of originators | requesters are identified before approval by {{roles.records_manager}} | procedural |

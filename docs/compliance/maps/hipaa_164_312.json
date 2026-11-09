@@ -55,7 +55,7 @@
       "clause": "164.312(c)(1)",
       "clause_verified": false,
       "requirement": "Policies and procedures protect ePHI from improper alteration or destruction.",
-      "mechanism": "Hash-chained, device-signed ledgers, checked by three independent implementations (as Part 11 row 11.10(a)-integrity).",
+      "mechanism": "Hash-chained, device-signed ledgers, checked by three implementations (as Part 11 row 11.10(a)-integrity).",
       "status": "structural",
       "evidence": [
         {
@@ -69,6 +69,21 @@
           "test": "full_verify_flags_tampered_payload_without_err"
         },
         {
+          "kind": "test",
+          "path": "viewer/verify_core.test.js",
+          "test": "export-bundle verification parity"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_a_tampered_payload_is_an_entry_hash_mismatch_at_its_index"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_the_primitives_match_verify_core_js"
+        },
+        {
           "kind": "code",
           "path": "src/log/mod.rs",
           "symbol": "pub fn hash_entry"
@@ -78,7 +93,8 @@
           "path": "custom_components/securacv/kernel_verify.py",
           "symbol": "def hash_entry"
         }
-      ]
+      ],
+      "limits": "The policies and procedures are the covered entity's; this row maps the integrity mechanism they rely on. The ledgers detect improper alteration or destruction; they do not prevent it."
     },
     {
       "id": "164.312(c)(2)",

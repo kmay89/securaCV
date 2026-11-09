@@ -94,7 +94,8 @@
           "path": "src/verify_runner.rs",
           "symbol": "pub fn run_full_verify_with_high_water_mark("
         }
-      ]
+      ],
+      "operator_action": "Set SECURACV_HWM_PATH on external media; without a configured high-water mark, tail truncation, rollback and wipe are not detected."
     },
     {
       "id": "45l-origin",
@@ -189,7 +190,7 @@
       "clause": "Arts. 41–42 (context)",
       "clause_verified": false,
       "requirement": "Time-stamp evidence does not rest on one authority.",
-      "mechanism": "The anchor policy requires a minimum number of distinct TSAs.",
+      "mechanism": "Under an anchor policy, log_anchor verify --policy reports a head covered only when distinct policy entries cover every required role and at least min_distinct_tsas of them countersigned it (default 2).",
       "status": "structural",
       "evidence": [
         {
@@ -202,7 +203,9 @@
           "path": "src/anchor_policy.rs",
           "symbol": "pub min_distinct_tsas"
         }
-      ]
+      ],
+      "operator_action": "Write an anchor policy that keeps min_distinct_tsas at 2 or more with both roles required, and run log_anchor verify --policy on a cadence.",
+      "limits": "The control runs only under an operator-written anchor policy: without one, log_anchor verify reports how many distinct TSAs countersigned each head but requires none, and a policy may lower the minimum to 1."
     }
   ]
 }

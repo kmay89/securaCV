@@ -3,10 +3,21 @@
 This is the procedure a third party follows when all they hold is the files:
 a database or an export, the device's public key from an out-of-band source,
 and the open tools named below. It is written in the order that party works
-in. Nothing here asks the reader to trust SecuraCV, its builds or its
-authors: every step either recomputes a hash, checks an Ed25519 signature
-against a key the reader pinned, or compares the output of two independent
-implementations.
+in. Nothing here asks the reader to take SecuraCV's word for a result:
+every step either recomputes a hash or checks an Ed25519 signature against a
+key the reader pinned. Most steps (§2–§6) run SecuraCV's own open-source
+tools, which a reader can build from source and audit, and the three
+implementations of §4 were all written by SecuraCV's authors, so their
+agreement guards against a bug in one of them, not against their authors.
+The steps that need no SecuraCV software at all are:
+
+- the court kit's `VERIFICATION.md` (§7, §8), with `sha256sum`, `xxd` and
+  `openssl`;
+- the handoff-sidecar shell recipe (§5);
+- `openssl ts` and `ots` (§6).
+
+A reader who trusts no SecuraCV build cross-checks the tools' verdicts with
+those.
 
 It is the procedure the `procedural` validation rows of the maps point at
 ([`part11.md`](part11.md) row 11.10(a)-validation,
@@ -58,7 +69,7 @@ the lineage ([`docs/log_verify.md`](../log_verify.md)).
 - `break_glass policy history --public-key-file device.pub` walks the
   quorum-policy history and should print `History chain VALID` (CPS 8.4).
 
-## 4. Independent implementations
+## 4. Three implementations
 
 Three implementations check the same chain:
 
@@ -67,11 +78,18 @@ Three implementations check the same chain:
   with the Rust verifier on export bundles is pinned by
   `viewer/verify_core.test.js` (`describe('export-bundle verification parity'`).
 - Python: [`custom_components/securacv/kernel_verify.py`](../../custom_components/securacv/kernel_verify.py)
-  (`hash_entry`).
+  (`hash_entry`), a line-for-line port of the JS math (its module docstring
+  says so), held to the JS on the shared vector by
+  `custom_components/securacv/tests/test_kernel_verify.py`.
 
-Why agreement matters: no single implementation is trusted. A bug that makes
-one of them accept a bad chain has to be made the same way, independently, in
-the others before it goes unnoticed.
+Why agreement matters: no single implementation is trusted. The shared vector
+`tests/fixtures/envelope/sealed_log_document_vector.json` pins all three to
+the same verdicts, so a divergence between them fails a test. The Python
+verifier is a port of the JS one, so the two are not independent of each
+other: a mistake carried into the port is not caught by their agreement. All
+three are SecuraCV's, so agreement guards against a slip in one of them, not
+against their authors; the no-SecuraCV recipes named at the top are the check
+that does not depend on them.
 
 ## 5. Exports
 

@@ -17,8 +17,8 @@
       "id": "11.10(a)-integrity",
       "clause": "11.10(a)",
       "clause_verified": false,
-      "requirement": "Systems are validated for accuracy and reliability, and can tell an invalid or altered record from a good one.",
-      "mechanism": "Hash-chained, device-signed ledgers, checked by three independent implementations (Rust, JS, Python).",
+      "requirement": "The system can tell an invalid or altered record from a good one.",
+      "mechanism": "Hash-chained, device-signed ledgers, checked by three implementations: Rust, JS, and a Python port of the JS math, held to the same verdicts by shared fixtures.",
       "status": "structural",
       "evidence": [
         {
@@ -30,6 +30,21 @@
           "kind": "test",
           "path": "src/verify_runner.rs",
           "test": "full_verify_flags_tampered_payload_without_err"
+        },
+        {
+          "kind": "test",
+          "path": "viewer/verify_core.test.js",
+          "test": "export-bundle verification parity"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_a_tampered_payload_is_an_entry_hash_mismatch_at_its_index"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_the_primitives_match_verify_core_js"
         },
         {
           "kind": "code",
@@ -226,7 +241,7 @@
           "symbol": "pub fn run_full_verify_with_high_water_mark("
         }
       ],
-      "operator_action": "Set SECURACV_HWM_PATH on external media."
+      "operator_action": "Set SECURACV_HWM_PATH on external media; without a configured high-water mark, tail truncation is not detected."
     },
     {
       "id": "11.10(e)-tree",
@@ -465,7 +480,7 @@
       "clause": "11.50(b)",
       "clause_verified": false,
       "requirement": "The name, date/time and meaning appear in every human-readable form of the record.",
-      "mechanism": "The same rendering in break_glass receipts --verbose and in the kit's custody record, with forged lines neutralized.",
+      "mechanism": "break_glass receipts --verbose prints the render_human record (requester, bucketed date/time, and each signature's meaning), with forged lines neutralized; the court kit's custody record names the authorizing grant by entry hash and its trustees by roster id.",
       "status": "structural",
       "evidence": [
         {
@@ -476,14 +491,20 @@
         {
           "kind": "test",
           "path": "tests/court_export.rs",
-          "test": "assembles_kit_and_manifest_hashes_are_correct"
+          "test": "the_disclosure_context_labels_declared_and_trustee_consented_fields"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/cli.rs",
+          "symbol": "receipt.render_human()"
         },
         {
           "kind": "code",
           "path": "src/bin/court_export.rs",
           "symbol": "fn write_custody_record"
         }
-      ]
+      ],
+      "limits": "The court kit's custody record does not use render_human: it names the grant and the trustees' roster ids but carries no per-signature meaning or date/time line. The full rendering is break_glass receipts --verbose on the producing database."
     },
     {
       "id": "11.70",
