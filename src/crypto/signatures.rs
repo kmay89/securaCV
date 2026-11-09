@@ -52,6 +52,14 @@ pub const DOMAIN_POLICY_CHANGE_RECORD: &str = "securacv:pwk:policy-change-record
 // anchor row; `docs/design/clock_provenance.md`). 32 bytes, so the
 // length-prefixed signing message starts `20 00 00 00`.
 pub const DOMAIN_CLOCK_PROVENANCE: &str = "securacv:pwk:clock-provenance:v1";
+// A custody holder's signature binding their recipient (encryption) key to
+// their signing credential: Ed25519 over the 32-byte `recipient_key_hash` of
+// a `securacv-custody-recipient:v1` file (spec/quorum_unseal_v2.md §2.1;
+// `docs/design/threshold_custody.md`). Without it an operator could enroll
+// their own recipient key under a holder's name and receive that holder's
+// share. Signed on the holder's own machine (`break_glass custody recipient
+// keygen`) and checked before any share is sealed to the key.
+pub const DOMAIN_CUSTODY_RECIPIENT_BINDING: &str = "securacv:pwk:custody-recipient-binding:v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureMode {
