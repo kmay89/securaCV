@@ -210,6 +210,41 @@ class RepositoryAndSelfTest(Base):
             'write "maps to", "designed to support" or "shaped as"; the determination belongs to the '
             "regulator, the court or the operator")
 
+    def test_wrapped_claim_in_prose_fails_at_its_first_line(self):
+        # A Markdown wrap between the two words of a claim is still the claim,
+        # reported where it starts; a wrap inside a masked regime noun still masks.
+        sample = next(s for s in L.MUST_FAIL if "\n" in s)
+        noun = next(s for s in L.MUST_PASS if "\n" in s)
+        t = self.tree()
+        t.write("docs/compliance/a.md", f"# A\n\n{noun}\n\n{sample} under the fixture\n")  # noun: lines 3-4
+        self.assertFinds(
+            t,
+            f'docs/compliance/a.md:6: "{word_of(sample)}" reads as a claim about SecuraCV\'s standing — write '
+            '"maps to", "designed to support" or "shaped as"; the determination belongs to the regulator, '
+            "the court or the operator")
+        self.assertNotIn("\n", word_of(sample))
+        t2 = self.tree()
+        t2.write("docs/compliance/a.md", f"# A\n\n{noun}\n")
+        self.assertClean(t2)
+
+    def test_format_character_inside_a_claim_word_still_fails(self):
+        # A soft hyphen or zero-width space renders as nothing but splits the
+        # word: W1 still finds it, and in a map string it is also an S4 character.
+        shy = next(s for s in L.MUST_FAIL if "\u00ad" in s)
+        zw = next(s for s in L.MUST_FAIL if "\u200b" in s)
+        t = self.tree()
+        t.map["rows"][0]["mechanism"] = shy
+        t.write("docs/compliance/a.md", f"# A\n\n{zw}\n")
+        self.assertFinds(
+            t,
+            f'{MAP}: rows[0]: "mechanism" contains a control or text-direction character',
+            f'{MAP}: rows[0].mechanism: "{word_of(shy)}" reads as a claim about SecuraCV\'s standing — '
+            'write "maps to", "designed to support" or "shaped as"; the determination belongs to the '
+            "fixture regulator",
+            f'docs/compliance/a.md:3: "{word_of(zw)}" reads as a claim about SecuraCV\'s standing — write '
+            '"maps to", "designed to support" or "shaped as"; the determination belongs to the regulator, '
+            "the court or the operator")
+
     def test_regime_noun_phrases_pass(self):
         t = self.tree()
         t.write("docs/compliance/a.md", "# A\n\n" + "\n\n".join(L.MUST_PASS) + "\n")
@@ -406,6 +441,31 @@ class Statuses(Base):
         t2.row("s1")["evidence"][0]["test"] = "async_test"
         self.assertClean(t2)
 
+    def test_blank_symbol_fails(self):
+        # "" matches every line, so a blank symbol would keep a structural row
+        # green with no mechanism named: it is S4, and it does not satisfy V2.
+        v2 = f'{MAP}:s1: "structural" needs a code evidence entry naming a symbol'
+        for blank in ("", "  "):
+            with self.subTest(symbol=blank):
+                t = self.tree()
+                t.row("s1")["evidence"][1]["symbol"] = blank
+                self.assertFinds(t, f'{MAP}: rows[0].evidence[1]: "symbol" must be a non-empty string', v2)
+        t2 = self.tree()  # no word character: names nothing, and E3 refuses it
+        t2.row("s1")["evidence"][1]["symbol"] = "("
+        self.assertFinds(t2, v2, f'{MAP}:s1: src/lib.rs no longer contains "(" — the mechanism the row names '
+                                 "moved or regressed; fix the row, or restore the mechanism")
+
+    def test_blank_test_or_anchor_fails(self):
+        t = self.tree()
+        t.row("s1")["evidence"][0]["test"] = " "
+        t.row("p1")["evidence"][0]["anchor"] = ""
+        self.assertFinds(
+            t,
+            f'{MAP}: rows[0].evidence[0]: "test" must be a non-empty string',
+            f'{MAP}:s1: "structural" needs a test evidence entry naming a test function — '
+            'without one the row is "designed" or "procedural"',
+            f'{MAP}: rows[1].evidence[0]: "anchor" must be a non-empty string')
+
     def test_bare_test_file_without_name_fails(self):
         t = self.tree()
         del t.row("s1")["evidence"][0]["test"]
@@ -447,8 +507,12 @@ class Statuses(Base):
     def test_designed_without_depends_on_fails(self):
         t = self.tree()
         del t.row("d1")["depends_on"]
-        self.assertFinds(t, f'{MAP}:d1: "designed" needs a design evidence entry (spec/, docs/design/, '
-                            "docs/security/ or a docs/compliance design note) and depends_on")
+        msg = (f'{MAP}:d1: "designed" needs a design evidence entry (spec/, docs/design/, '
+               "docs/security/ or a docs/compliance design note) and depends_on")
+        self.assertFinds(t, msg)
+        t2 = self.tree()  # the other half: depends_on kept, no design entry
+        t2.row("d1")["evidence"] = []
+        self.assertFinds(t2, msg)
 
     def test_not_applicable_short_reason_fails(self):
         t = self.tree()
@@ -458,8 +522,12 @@ class Statuses(Base):
     def test_not_pursued_without_decision_fails(self):
         t = self.tree()
         t.row("x1")["evidence"] = []
-        self.assertFinds(t, f'{MAP}:x1: "not-pursued" needs a reason of at least 40 characters and a decision '
-                            "evidence entry naming where the decision is recorded")
+        msg = (f'{MAP}:x1: "not-pursued" needs a reason of at least 40 characters and a decision '
+               "evidence entry naming where the decision is recorded")
+        self.assertFinds(t, msg)
+        t2 = self.tree()  # the other half: decision entry kept, reason too short
+        t2.row("x1")["reason"] = "Too short to be a reason."
+        self.assertFinds(t2, msg)
 
     def test_tracker_must_point_at_enterprise_custody(self):
         t = self.tree()

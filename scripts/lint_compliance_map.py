@@ -102,7 +102,7 @@ BIDI = {chr(c) for c in range(0x202A, 0x202F)} | {chr(c) for c in range(0x2066, 
 CLAIM = re.compile(
     r"\b(certif(?:ied|y|ies|iable)|(?:non-)?compliant|complies|conformant|conforms|accredited|"
     r"qualif(?:ied|ies)|satisf(?:y|ies|ied)|meets|guarantee[sd]?|admissible|tamper-proof|"
-    r"validated\s+(?:system|module)|fips[- ](?:validated|approved))\b", re.IGNORECASE)
+    r"validated\s+(?:system|module)|fips[-\s](?:validated|approved))\b", re.IGNORECASE)
 MASK = [  # regime proper nouns and our own checker's verdict phrase: never a claim about SecuraCV's standing
     r"qualified\s+electronic\s+(?:ledgers?|time[- ]?stamps?|signatures?|seals?)",
     r"qualified\s+trust\s+service(?:\s+providers?)?s?", r"\bQTSPs?\b", r"qualified\s+certificates?",
@@ -114,11 +114,14 @@ MASK_RE = [re.compile(p, re.IGNORECASE) for p in MASK]
 MUST_PASS = ["a qualified electronic ledger under Art. 45k", "the draft certification for a qualified person to sign",
              "maps to 21 CFR 11.10(e)", "designed to support the operator's assessment", "the C2PA conformance program",
              "one TSA may be a qualified TSA the operator declares", "the compliance mapping suite",
-             "verdict: conforms to securacv-c2pa-witness-profile:v1"]
+             "verdict: conforms to securacv-c2pa-witness-profile:v1",
+             "a qualified\nelectronic ledger"]                     # a Markdown wrap inside a masked noun
 MUST_FAIL = ["SecuraCV is compliant", "this deployment meets 11.10", "a certified system", "satisfies Annex 11",
              "qualified by design", "a qualified ledger", "the ledger conforms to eIDAS", "admissible evidence",
              'SecuraCV is "compliant"', "SecuraCV is `compliant`", "uses FIPS-validated cryptography",
-             "a qualified electronic ledger, and SecuraCV is qualified", "tamper-proof receipts"]
+             "a qualified electronic ledger, and SecuraCV is qualified", "tamper-proof receipts",
+             "SecuraCV is a validated\nsystem",                     # a Markdown wrap between two words
+             "SecuraCV is compli\u00adant", "SecuraCV is compli\u200bant"]  # a soft hyphen, a zero-width space
 
 # docs/compliance/README.md opens with this, verbatim after whitespace
 # normalization (rule P1). Changing the posture is changing this string in
@@ -205,14 +208,37 @@ class ParseError(Exception):
 
 
 # ── Claim words ─────────────────────────────────────────────────────────────
+def visible(text: str) -> str:
+    """Drop format characters (Unicode Cf: soft hyphen, zero-width space and
+    joiners, word joiner, BOM, the text-direction marks). They render as
+    nothing but split a word, so a claim word with one inside is still the
+    word. Newlines are never Cf, so line numbers survive."""
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+
+def forbidden_char(ch: str) -> bool:
+    """A control or text-direction character (S4): Cc, Cf (which holds the
+    bidi embeddings and isolates, the marks and the zero-width characters)."""
+    return unicodedata.category(ch) in ("Cc", "Cf") or ch in BIDI
+
+
 def masked(text: str) -> str:
+    """Format characters dropped, then each MASK span blanked to spaces of the
+    same length, so an offset into the result is an offset into visible(text)."""
+    text = visible(text)
     for rx in MASK_RE:
         text = rx.sub(lambda m: " " * len(m.group(0)), text)
     return text
 
 
+def claim_hits(text: str) -> list[tuple[int, str]]:
+    """(offset into visible(text), word) for each claim; the whitespace inside
+    a multi-word hit (a wrapped line) is normalized to one space."""
+    return [(m.start(), " ".join(m.group(0).split())) for m in CLAIM.finditer(masked(text))]
+
+
 def claim_words(text: str) -> list[str]:
-    return [m.group(0) for m in CLAIM.finditer(masked(text))]
+    return [w for _, w in claim_hits(text)]
 
 
 def self_test() -> list[str]:
@@ -254,6 +280,8 @@ def symbol_pattern(symbol: str) -> re.Pattern:
 
 
 def has_symbol(path: Path, symbol: str) -> bool:
+    if not named(symbol):
+        return False
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -414,7 +442,7 @@ def lint_map(path: Path, root: Path, statuses: list[str] | None) -> tuple[dict |
 
     # Strings everywhere: control and text-direction characters; N1 results.
     for trail, key, s in walk_strings(data, ""):
-        if any(unicodedata.category(ch) == "Cc" or ch in BIDI for ch in s):
+        if any(forbidden_char(ch) for ch in s):
             obj_trail = trail.rsplit(".", 1)[0] if "." in trail else "top level"
             add("S4", M_S4_CHAR, trail=obj_trail, key=key)
         if RESULT_RE.search(s):
@@ -477,6 +505,9 @@ def lint_map(path: Path, root: Path, statuses: list[str] | None) -> tuple[dict |
             closed(ev, etrail, EVIDENCE_REQUIRED, EVIDENCE_OPTIONAL)
             for k in EVIDENCE_REQUIRED + EVIDENCE_OPTIONAL:
                 typed(ev, etrail, k, str)
+            for k in EVIDENCE_OPTIONAL:  # a blank name names nothing, and "" matches every line
+                if isinstance(ev.get(k), str) and not ev[k].strip():
+                    add("S4", M_S4_TYPE, trail=etrail, key=k, type="non-empty string")
             kind, p = ev.get("kind"), ev.get("path")
             if not isinstance(kind, str) or not isinstance(p, str):
                 continue
@@ -500,9 +531,9 @@ def lint_map(path: Path, root: Path, statuses: list[str] | None) -> tuple[dict |
             radd("V1", M_V1, s=status)
             continue
         if status == "structural":
-            if not any(isinstance(e.get("test"), str) for e in kinds.get("test", [])):
+            if not any(named(e.get("test")) for e in kinds.get("test", [])):
                 radd("V2", M_V2_TEST)
-            if not any(isinstance(e.get("symbol"), str) for e in kinds.get("code", [])):
+            if not any(named(e.get("symbol")) for e in kinds.get("code", [])):
                 radd("V2", M_V2_CODE)
         elif status == "procedural":
             if not kinds.get("procedure") or not str(row.get("operator_action", "")).strip():
@@ -518,6 +549,11 @@ def lint_map(path: Path, root: Path, statuses: list[str] | None) -> tuple[dict |
                 radd("V6", M_V6)
 
     return data, out
+
+
+def named(value) -> bool:
+    """A test or symbol name that names something: a string with a word character."""
+    return isinstance(value, str) and re.search(r"\w", value) is not None
 
 
 def check_evidence(ev: dict, kind: str, p: str, root: Path, radd) -> None:
@@ -542,11 +578,14 @@ def check_evidence(ev: dict, kind: str, p: str, root: Path, radd) -> None:
         radd("E6", M_E6, k=kind, p=p)
     if kind == "procedure" and not p.startswith("docs/"):
         radd("E6", M_E6, k=kind, p=p)
-    if isinstance(ev.get("symbol"), str) and not has_symbol(target, ev["symbol"]):
+    # A blank name is already an S4 finding; a non-blank one with no word
+    # character (a lone "(") matches nearly every line, so E3 refuses it.
+    if isinstance(ev.get("symbol"), str) and ev["symbol"].strip() and not has_symbol(target, ev["symbol"]):
         radd("E3", M_E3, p=p, symbol=ev["symbol"])
-    if kind == "test" and isinstance(ev.get("test"), str) and not has_test(target, p, ev["test"]):
+    if kind == "test" and isinstance(ev.get("test"), str) and ev["test"].strip() \
+            and not has_test(target, p, ev["test"]):
         radd("E4", M_E4, t=ev["test"], p=p)
-    if isinstance(ev.get("anchor"), str) and ev["anchor"] not in anchors_of(target):
+    if isinstance(ev.get("anchor"), str) and ev["anchor"].strip() and ev["anchor"] not in anchors_of(target):
         radd("E5", M_E5, a=ev["anchor"], p=p)
 
 
@@ -565,11 +604,14 @@ def prose_files(root: Path) -> list[Path]:
 def lint_prose(path: Path, root: Path) -> list[Finding]:
     file = path.relative_to(root).as_posix()
     out = []
-    text = path.read_text(encoding="utf-8", errors="replace")
-    for i, line in enumerate(text.splitlines(), 1):
-        for word in claim_words(line):
-            out.append(Finding("W1", M_W1.format(where=f"{file}:{i}", word=word,
-                                                 determination=PROSE_DETERMINATION)))
+    # The whole file at once, so a claim (or a masked regime noun) that a
+    # Markdown wrap splits across two lines is still seen; each hit is
+    # reported at the line it starts on.
+    text = visible(path.read_text(encoding="utf-8", errors="replace"))
+    for offset, word in claim_hits(text):
+        line = text.count("\n", 0, offset) + 1
+        out.append(Finding("W1", M_W1.format(where=f"{file}:{line}", word=word,
+                                             determination=PROSE_DETERMINATION)))
     return out
 
 
