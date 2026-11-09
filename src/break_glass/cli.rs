@@ -16,8 +16,11 @@ use std::io::IsTerminal;
 use std::io::Write;
 use zeroize::Zeroize;
 
-use crate::break_glass::trustee_key::load_trustee_signer;
-use crate::crypto::passphrase::PassphraseInput;
+use crate::break_glass::trustee_key::{
+    check_trustee_key_id, load_trustee_signer, open_wrapped, parse_trustee_key_file_text,
+    plaintext_key_warning, read_trustee_key_file, tkg1_seal, trustee_key_file_text, TrusteeKeyFile,
+};
+use crate::crypto::passphrase::{PassphraseError, PassphraseInput};
 use crate::crypto::signatures::{
     SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_POLICY_CHANGE_APPROVAL,
     DOMAIN_TRUSTEE_APPROVAL,
@@ -357,7 +360,8 @@ enum Command {
         draft: Option<String>,
     },
 
-    /// Manage trustees during setup
+    /// Trustee keys (`keygen`, `wrap`, `pubkey`, run by the trustee) and
+    /// enrollment during setup (`enroll`, run by the operator)
     Trustee {
         #[command(subcommand)]
         command: TrusteeCommand,
@@ -366,15 +370,67 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum TrusteeCommand {
-    /// Enroll one trustee into the setup draft. Either import an existing public
-    /// key (`--public-key`) or mint a fresh keypair (`--generate --output`). The
-    /// quorum policy commits automatically once the roster is complete.
+    /// Run by the TRUSTEE on their own machine: mint a signing key, wrap it
+    /// under a passphrase (TKG1: Argon2id, ChaCha20-Poly1305, bound to the
+    /// trustee id and public key) and write it mode 0600. Prints the public
+    /// key and fingerprint for the operator, never the secret.
+    Keygen {
+        /// Trustee id (bound into the wrapped file)
+        #[arg(long)]
+        id: String,
+        /// Where to write the wrapped key; never overwritten
+        #[arg(long, value_name = "PATH")]
+        output: String,
+        /// Read the new passphrase from this file descriptor (one line)
+        /// instead of the terminal. Never from argv or the environment.
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
+    },
+
+    /// Wrap an existing plaintext (64-hex) trustee key under a passphrase,
+    /// writing a new file. The plaintext file is left in place: destroy it
+    /// yourself once the wrapped one works.
+    Wrap {
+        /// The plaintext key file to wrap
+        #[arg(long, value_name = "PATH")]
+        signing_key: String,
+        /// Trustee id (bound into the wrapped file)
+        #[arg(long)]
+        id: String,
+        /// Where to write the wrapped key; never overwritten
+        #[arg(long, value_name = "PATH")]
+        output: String,
+        /// Read the new passphrase from this file descriptor (one line)
+        /// instead of the terminal
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
+    },
+
+    /// Print the public key and fingerprint of a trustee key file. A wrapped
+    /// file is opened with its passphrase, so the key printed is the one the
+    /// file actually signs with.
+    Pubkey {
+        /// The trustee key file (wrapped or plaintext)
+        #[arg(long, value_name = "PATH")]
+        signing_key: String,
+        /// Read the passphrase from this file descriptor (one line) instead
+        /// of the terminal
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
+    },
+
+    /// Enroll one trustee into the setup draft. Import the public key the
+    /// trustee made with `trustee keygen` (`--public-key`). `--generate
+    /// --output` (operator-minted) is deprecated: it leaves the operator
+    /// holding the trustee's secret. The quorum policy commits automatically
+    /// once the roster is complete.
     Enroll {
         /// Trustee id (a short human label, unique within the quorum)
         #[arg(long)]
         id: String,
-        /// Mint a fresh Ed25519 keypair for this trustee (writes the signing key
-        /// to --output). Mutually exclusive with --public-key.
+        /// DEPRECATED: mint a fresh Ed25519 keypair for this trustee (writes
+        /// the plaintext signing key to --output). Prefer `trustee keygen`,
+        /// run by the trustee. Mutually exclusive with --public-key.
         #[arg(long, conflicts_with = "public_key")]
         generate: bool,
         /// Where to write the newly-minted signing key (required with --generate)
@@ -803,6 +859,21 @@ pub fn run() -> Result<()> {
             )
         }
         Command::Trustee { command } => match command {
+            TrusteeCommand::Keygen {
+                id,
+                output,
+                passphrase_fd,
+            } => cmd_trustee_keygen(&id, &output, passphrase_fd),
+            TrusteeCommand::Wrap {
+                signing_key,
+                id,
+                output,
+                passphrase_fd,
+            } => cmd_trustee_wrap(&signing_key, &id, &output, passphrase_fd),
+            TrusteeCommand::Pubkey {
+                signing_key,
+                passphrase_fd,
+            } => cmd_trustee_pubkey(&signing_key, passphrase_fd),
             TrusteeCommand::Enroll {
                 id,
                 generate,
@@ -2745,6 +2816,29 @@ fn write_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
     std::fs::write(path, bytes).map_err(|e| anyhow!("failed to write {}: {}", path, e))
 }
 
+/// Write a NEW secret file, mode 0600: refuses an existing path (including a
+/// symlink, dangling or not) instead of truncating it, so a key file is
+/// never overwritten. Errors name no path.
+fn write_new_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            anyhow!("{OUTPUT_EXISTS}")
+        } else {
+            anyhow!("failed to create the key file: {e}")
+        }
+    })?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|e| anyhow!("failed to write the key file: {e}"))
+}
+
 /// Write a freshly-minted trustee signing key (hex) to `path`, mode 0600 — this
 /// IS a secret, unlike the draft. Matches the format `approve --signing-key`
 /// reads.
@@ -2775,7 +2869,9 @@ fn print_setup_next_steps(draft: &SetupDraft) {
         return;
     }
     println!("  break_glass trustee enroll --id <name> --public-key <HEX>");
-    println!("  break_glass trustee enroll --id <name> --generate --output <name>.key");
+    println!(
+        "  (each trustee makes their key on their own machine: break_glass trustee keygen --id <name> --output <name>.tkey)"
+    );
 }
 
 fn cmd_init(
@@ -2854,6 +2950,161 @@ fn cmd_init(
     Ok(())
 }
 
+/// Printed to stderr by `trustee enroll --generate`.
+const ENROLL_GENERATE_DEPRECATED: &str = "WARNING: trustee enroll --generate is deprecated: \
+     it leaves the operator holding the trustee's secret. Have the trustee run \
+     break_glass trustee keygen on their own machine and enroll the public key it prints \
+     with --public-key.";
+
+/// The refusal when a NEW trustee key's passphrase has no source.
+const NO_NEW_PASSPHRASE_SOURCE: &str =
+    "a new trustee key needs a passphrase: run on a terminal or pass --passphrase-fd";
+
+/// The refusal when `--output` names an existing file.
+const OUTPUT_EXISTS: &str = "the output file already exists; this tool never overwrites a key file";
+
+/// The public-key block every trustee key command prints: the full key
+/// (what the operator enrolls) and the fingerprint (what is read back).
+fn trustee_key_lines(header: &str, public_key: &[u8; 32]) -> String {
+    format!(
+        "{header}\n  public key  {}\n  fingerprint {}\n",
+        hex32(public_key),
+        short_fp(public_key)
+    )
+}
+
+/// What `trustee keygen` prints.
+fn keygen_lines(id: &str, public_key: &[u8; 32]) -> String {
+    let mut out = trustee_key_lines(
+        &format!("trustee key for '{id}': wrapped under your passphrase (Argon2id, mode 0600)"),
+        public_key,
+    );
+    out.push_str(&format!(
+        "Give the operator the public key above for: break_glass trustee enroll --id {id} --public-key <it>\n"
+    ));
+    out.push_str(
+        "Read the fingerprint back when they enroll you. The key file and its passphrase stay with you.\n",
+    );
+    out
+}
+
+/// What `trustee wrap` prints.
+fn wrap_lines(id: &str, public_key: &[u8; 32]) -> String {
+    let mut out = trustee_key_lines(
+        &format!("trustee key for '{id}': wrapped under your passphrase (Argon2id, mode 0600)"),
+        public_key,
+    );
+    out.push_str("now destroy the plaintext file; this tool does not delete it\n");
+    out
+}
+
+/// What `trustee pubkey` prints. `id` is the wrapped file's trustee id;
+/// a plaintext file has none.
+fn pubkey_lines(id: Option<&str>, public_key: &[u8; 32]) -> String {
+    let header = match id {
+        Some(id) => format!("trustee key for '{id}': wrapped (TKG1); the passphrase opened it"),
+        None => "trustee key: plaintext (unwrapped)".to_string(),
+    };
+    trustee_key_lines(&header, public_key)
+}
+
+/// Read a NEW passphrase for a trustee key: one line from the fd, or typed
+/// twice on the terminal.
+fn read_new_trustee_passphrase(
+    id: &str,
+    input: &mut PassphraseInput,
+) -> Result<zeroize::Zeroizing<String>> {
+    input
+        .read_new(
+            &format!("new passphrase for trustee key '{id}': "),
+            "repeat it: ",
+        )
+        .map_err(|e| match e {
+            PassphraseError::NoSource => anyhow!("{NO_NEW_PASSPHRASE_SOURCE}"),
+            PassphraseError::Failed(e) => e,
+        })
+}
+
+/// Seal `seed` for `id` under a new passphrase, prove the result opens to
+/// the same key, and write it to `output` (never overwriting). Returns the
+/// public key.
+fn write_wrapped_trustee_key(
+    seed: &[u8; 32],
+    id: &str,
+    output: &str,
+    input: &mut PassphraseInput,
+) -> Result<[u8; 32]> {
+    let passphrase = read_new_trustee_passphrase(id, input)?;
+    let tkg1 = tkg1_seal(seed, id, &passphrase)?;
+    let text = trustee_key_file_text(&tkg1);
+    // Open what is about to be written before writing it: a file this tool
+    // reports as made must open with the passphrase just given.
+    let check = parse_trustee_key_file_text(&text)?;
+    if *check.open(&passphrase)? != *seed {
+        return Err(anyhow!(
+            "trustee key: the wrapped file did not open to the same key"
+        ));
+    }
+    write_new_secret_file(output, text.as_bytes())?;
+    Ok(check.public_key)
+}
+
+fn cmd_trustee_keygen(id: &str, output: &str, passphrase_fd: Option<i32>) -> Result<()> {
+    check_trustee_key_id(id)?;
+    if std::path::Path::new(output).symlink_metadata().is_ok() {
+        return Err(anyhow!("{OUTPUT_EXISTS}"));
+    }
+    let mut input = passphrase_input(passphrase_fd)?;
+    let mut seed = zeroize::Zeroizing::new([0u8; 32]);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut seed[..])
+        .map_err(|_| anyhow!("OS RNG unavailable"))?;
+    let public_key = write_wrapped_trustee_key(&seed, id, output, &mut input)?;
+    print!("{}", keygen_lines(id, &public_key));
+    Ok(())
+}
+
+fn cmd_trustee_wrap(
+    signing_key_path: &str,
+    id: &str,
+    output: &str,
+    passphrase_fd: Option<i32>,
+) -> Result<()> {
+    check_trustee_key_id(id)?;
+    let seed = match read_trustee_key_file(signing_key_path)? {
+        TrusteeKeyFile::Plaintext(seed) => seed,
+        TrusteeKeyFile::Wrapped(_) => {
+            return Err(anyhow!(
+                "the signing key file is already wrapped (securacv-trustee-key:v1); nothing to do"
+            ))
+        }
+    };
+    if std::path::Path::new(output).symlink_metadata().is_ok() {
+        return Err(anyhow!("{OUTPUT_EXISTS}"));
+    }
+    let mut input = passphrase_input(passphrase_fd)?;
+    let public_key = write_wrapped_trustee_key(&seed, id, output, &mut input)?;
+    print!("{}", wrap_lines(id, &public_key));
+    Ok(())
+}
+
+fn cmd_trustee_pubkey(signing_key_path: &str, passphrase_fd: Option<i32>) -> Result<()> {
+    let mut input = passphrase_input(passphrase_fd)?;
+    let (id, seed) = match read_trustee_key_file(signing_key_path)? {
+        TrusteeKeyFile::Wrapped(wrapped) => {
+            let seed = open_wrapped(&wrapped, &mut input)?;
+            (Some(wrapped.id), seed)
+        }
+        TrusteeKeyFile::Plaintext(seed) => {
+            eprintln!("{}", plaintext_key_warning(signing_key_path));
+            (None, seed)
+        }
+    };
+    let public_key = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+    print!("{}", pubkey_lines(id.as_deref(), &public_key));
+    Ok(())
+}
+
 // A CLI handler whose parameters map one-to-one to `trustee enroll` flags; the
 // arguments are all distinct and independently meaningful, so a bag struct would
 // obscure more than it helps.
@@ -2889,6 +3140,7 @@ fn cmd_trustee_enroll(
     // Resolve the trustee's public key: mint a fresh keypair, or import one.
     let public_key_bytes: [u8; 32] = match (generate, public_key) {
         (true, _) => {
+            eprintln!("{ENROLL_GENERATE_DEPRECATED}");
             let out = output.ok_or_else(|| {
                 anyhow!("--generate requires --output <file> to save the trustee's signing key")
             })?;

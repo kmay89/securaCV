@@ -82,7 +82,6 @@ pub(crate) fn tkg1_aad_suffix(id: &str, public_key: &[u8; 32]) -> Vec<u8> {
 
 /// Wrap a trustee's 32-byte Ed25519 seed under `passphrase` as TKG1 bytes,
 /// with a fresh salt and nonce.
-#[allow(dead_code)] // called by `trustee keygen` / `trustee wrap` (next commit)
 pub(crate) fn tkg1_seal(seed: &[u8; 32], id: &str, passphrase: &str) -> Result<Vec<u8>> {
     check_trustee_key_id(id)?;
     let public_key = SigningKey::from_bytes(seed).verifying_key().to_bytes();
@@ -176,7 +175,6 @@ impl WrappedTrusteeKey {
 }
 
 /// The one line a wrapped trustee key file holds.
-#[allow(dead_code)] // called by `trustee keygen` / `trustee wrap` (next commit)
 pub(crate) fn trustee_key_file_text(tkg1: &[u8]) -> String {
     format!("{TRUSTEE_KEY_FILE_PREFIX}{}\n", hex::encode(tkg1))
 }

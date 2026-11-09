@@ -83,12 +83,6 @@ impl PassphraseInput {
         }
     }
 
-    /// True when passphrases come from `--passphrase-fd`.
-    #[allow(dead_code)] // called by `trustee keygen` / `trustee wrap` (next commit)
-    pub(crate) fn uses_fd(&self) -> bool {
-        self.fd.is_some()
-    }
-
     /// Read one passphrase: the next line of the fd, or one line typed at the
     /// terminal after `prompt` with echo off. An empty passphrase is refused.
     pub(crate) fn read(&mut self, prompt: &str) -> Result<Zeroizing<String>, PassphraseError> {
@@ -101,7 +95,6 @@ impl PassphraseInput {
 
     /// Read a NEW passphrase. From the fd it is one line. On the terminal it
     /// is typed twice (`prompt`, then `repeat_prompt`) and must match.
-    #[allow(dead_code)] // called by `trustee keygen` / `trustee wrap` (next commit)
     pub(crate) fn read_new(
         &mut self,
         prompt: &str,
@@ -313,7 +306,6 @@ mod tests {
     fn fd_reads_one_line_per_passphrase() {
         let fd = pipe_with(b"first one\nsecond\r\nthird-no-newline");
         let mut input = PassphraseInput::new(Some(fd)).unwrap();
-        assert!(input.uses_fd());
         assert_eq!(input.read("unused").unwrap().as_str(), "first one");
         assert_eq!(
             input.read_new("unused", "unused").unwrap().as_str(),
