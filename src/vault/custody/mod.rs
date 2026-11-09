@@ -49,12 +49,19 @@
 //!   secret unless both the X25519 key and the ML-KEM secret are broken; the
 //!   HPKE draft states that this hybrid property is not proven.
 
+// Parts of the core (the container writer and opener, the HPKE exporter,
+// the box-2 seal) have no caller outside their tests until the vault readers
+// and the issuance change wire them in; the holder CLI uses the rest. They
+// are compiled, tested and frozen now so nothing later depends on unpinned
+// bytes.
+#![cfg_attr(not(test), allow(dead_code))]
+
 pub(crate) mod container;
 mod error;
 pub(crate) mod group;
 pub(crate) mod hpke;
 #[cfg(test)]
-mod kat;
+pub(crate) mod kat;
 pub(crate) mod recipient;
 pub(crate) mod share;
 pub(crate) mod split_record;

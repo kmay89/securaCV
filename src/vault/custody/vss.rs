@@ -201,7 +201,7 @@ pub(crate) fn deal(
     indices: &[u8],
     rng: &mut dyn CustodyRng,
 ) -> Result<(Commitments, Vec<SecretShare>), CustodyError> {
-    if n < MIN_THRESHOLD || n > MAX_HOLDERS || indices.len() < usize::from(n) {
+    if !(MIN_THRESHOLD..=MAX_HOLDERS).contains(&n) || indices.len() < usize::from(n) {
         return Err(CustodyError::DealParameters);
     }
     let n = usize::from(n);

@@ -4,6 +4,7 @@ mod core;
 
 pub mod backend;
 pub mod cli;
+mod custody_cli;
 pub mod http;
 pub mod server;
 pub mod session;

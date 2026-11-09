@@ -294,7 +294,6 @@ pub(crate) fn open_psk(
 
 /// `SetupBaseS(pkR, info)` then `Export(exporter_context, 32)`: the seam a
 /// later change seals vault envelopes through (the envelope DEK).
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn setup_base_s_export(
     pk_r: &[u8; 32],
     info: &[u8],
@@ -310,7 +309,6 @@ pub(crate) fn setup_base_s_export(
 }
 
 /// `SetupPSKS(pkR, info, psk, psk_id)` then `Export(exporter_context, 32)`.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn setup_psk_s_export(
     pk_r: &[u8; 32],
     info: &[u8],

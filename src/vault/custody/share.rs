@@ -35,7 +35,7 @@ use super::hpke::{open_base, seal_base_derand, BOX2_ENC_LEN};
 use super::recipient::{RecipientPublic, RecipientSecret};
 use super::vss::SecretShare;
 use super::{
-    holder_id_ok, CustodyError, ShareReason, ARGON2_M_KIB, ARGON2_P, ARGON2_T, BOX_HPKE_X25519,
+    holder_id_ok, CustodyError, ShareReason, ARGON2_M_KIB, ARGON2_P, ARGON2_T,
     BOX_HPKE_X25519_PSK_MLKEM768, CONTAINER_COPY_MAX, HPKE_INFO_SHARE, MAX_HOLDERS, MIN_THRESHOLD,
     PROTECTION_AT_REST, PROTECTION_TRANSPORT_BOX1, PROTECTION_TRANSPORT_BOX2, ROLE_OPERATIONAL,
     ROLE_RECOVERY, ROLE_REHEARSAL, SHARE_AT_REST_AAD_PREFIX, SHARE_FILE_CHECK_DOMAIN, SHARE_MAGIC,
@@ -804,15 +804,6 @@ fn open_box2(
     Err(CustodyError::Box2NeedsFeature)
 }
 
-/// The box a vault's releases use, by name.
-pub(crate) fn release_box_name(b: u8) -> &'static str {
-    match b {
-        BOX_HPKE_X25519 => "hpke-x25519",
-        BOX_HPKE_X25519_PSK_MLKEM768 => "hpke-x25519-psk-mlkem768",
-        _ => "none",
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -821,6 +812,7 @@ pub(crate) mod tests {
     use crate::vault::custody::recipient::tests::signed_public;
     use crate::vault::custody::recipient::HOLDER_ROLE_TRUSTEE;
     use crate::vault::custody::vss::{check_share, deal, Kek};
+    use crate::vault::custody::BOX_HPKE_X25519;
 
     /// The bucket every share test is issued in.
     pub(crate) const BUCKET: u64 = 1_794_312_000;

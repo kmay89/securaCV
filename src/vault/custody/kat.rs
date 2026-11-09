@@ -91,20 +91,20 @@ impl CustodyRng for GivenRng {
     }
 }
 
-fn fx() -> &'static Value {
+pub(crate) fn fx() -> &'static Value {
     static V: OnceLock<Value> = OnceLock::new();
     V.get_or_init(|| serde_json::from_str(FIXTURE).expect("the fixture is JSON"))
 }
 
-fn s(v: &Value) -> &str {
+pub(crate) fn s(v: &Value) -> &str {
     v.as_str().expect("a string")
 }
 
-fn h(v: &Value) -> Vec<u8> {
+pub(crate) fn h(v: &Value) -> Vec<u8> {
     hex::decode(s(v)).expect("lowercase hex")
 }
 
-fn h32(v: &Value) -> [u8; 32] {
+pub(crate) fn h32(v: &Value) -> [u8; 32] {
     h(v).try_into().expect("32 bytes")
 }
 
@@ -137,7 +137,7 @@ fn holder_role(id: &str) -> u8 {
     }
 }
 
-fn recipient_secret(id: &str) -> RecipientSecret {
+pub(crate) fn recipient_secret(id: &str) -> RecipientSecret {
     RecipientSecret::from_parts(
         id,
         holder_role(id),
@@ -146,7 +146,7 @@ fn recipient_secret(id: &str) -> RecipientSecret {
     )
 }
 
-fn recipient_public(id: &str) -> RecipientPublic {
+pub(crate) fn recipient_public(id: &str) -> RecipientPublic {
     RecipientPublic::from_json(s(&fx()["recipients"][id]["recipient_json"]).as_bytes()).unwrap()
 }
 
@@ -161,7 +161,7 @@ fn holder_split(id: &str) -> (&'static str, u8) {
     panic!("{id} is in no split");
 }
 
-fn fixture_share(id: &str) -> SecretShare {
+pub(crate) fn fixture_share(id: &str) -> SecretShare {
     let (name, index) = holder_split(id);
     let row = &fx()["splits"][name]["shares"][usize::from(index) - 1];
     let mut b = [0u8; 64];

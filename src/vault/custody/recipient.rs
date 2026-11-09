@@ -30,7 +30,6 @@
 
 use std::fmt;
 
-use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -247,7 +246,7 @@ impl RecipientPublic {
     /// Whether a signature is a well-formed 64 bytes (the parsed check).
     #[cfg(test)]
     pub(crate) fn binding_signature_bytes(&self) -> Option<[u8; 64]> {
-        Signature::from_slice(&hex::decode(&self.binding_signature).ok()?)
+        ed25519_dalek::Signature::from_slice(&hex::decode(&self.binding_signature).ok()?)
             .ok()
             .map(|s| s.to_bytes())
     }
@@ -424,11 +423,6 @@ impl RecipientSecret {
         &self.holder
     }
 
-    /// `0x01` trustee or `0x02` recovery.
-    pub(crate) fn role(&self) -> u8 {
-        self.role
-    }
-
     /// The X25519 secret.
     pub(crate) fn x25519_secret(&self) -> &[u8; 32] {
         &self.x25519
@@ -439,7 +433,8 @@ impl RecipientSecret {
         x25519_public(&self.x25519)
     }
 
-    /// The ML-KEM-768 key pair, if any.
+    /// The ML-KEM-768 key pair, if any (box 2 opens with it).
+    #[cfg_attr(not(feature = "pqc-vault"), allow(dead_code))]
     pub(crate) fn mlkem(&self) -> Option<(&[u8], &[u8])> {
         self.mlkem
             .as_ref()
