@@ -88,7 +88,7 @@ try {
   if (!/draft/.test(await badge())) fail("step 2 (threshold met, roster incomplete) must still be a draft");
   if (/live/.test(await badge())) fail("no policy may go live before the roster is complete");
 
-  // step 3 (carol, minted): roster complete → policy goes live once, as 2-of-3
+  // step 3 (carol, imported): roster complete → policy goes live once, as 2-of-3
   await next.click();
   await wait(() => /live · 2-of-3/.test(document.querySelector(".op-badge")?.textContent || ""),
     "policy did not go live as 2-of-3 at the complete roster");
