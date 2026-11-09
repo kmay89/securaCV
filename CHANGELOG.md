@@ -1,6 +1,39 @@
 # Changelog
 
 ## [Unreleased]
+### Trustee keys can be wrapped at rest: `trustee keygen`, `wrap` and `pubkey`; a passphrase comes from the terminal or `--passphrase-fd`, never argv or the environment
+
+- **`break_glass trustee keygen --id ID --output F`**, run by the trustee on
+  their own machine, mints an Ed25519 key, wraps it under a passphrase and
+  writes one line, `securacv-trustee-key:v1 <hex>`, mode 0600, never
+  overwriting. It prints the public key and its fingerprint, never the
+  secret, so a trustee no longer needs an external Ed25519 tool to enroll.
+  **`trustee wrap --signing-key OLD --id ID --output F`** migrates a
+  plaintext key (and says the plaintext file is yours to destroy; it is not
+  deleted). **`trustee pubkey --signing-key F`** prints the key a file signs
+  with.
+- **The container, TKG1**, is the vault keyguard's MKG1 layout under its own
+  magic and AAD domain: Argon2id (64 MiB, 3 passes, 1 lane, any other
+  parameters refused before derivation) and ChaCha20-Poly1305 over the
+  32-byte seed, followed by a public trailer naming the trustee id and public
+  key. The trailer is the AAD, so a renamed trustee or a swapped key does not
+  open, and the decrypted seed must yield the recorded key.
+- **`approve` and `policy approve`** read either form from `--signing-key`
+  and take `--passphrase-fd N`. A plaintext key still signs and prints
+  `WARNING: {path} is an unwrapped trustee key — anyone who copies it can
+  sign as this trustee. Wrap it: break_glass trustee wrap --signing-key
+  {path} --id <id> --output <id>.tkey`. With a wrapped key, no terminal and
+  no fd, the command refuses: `wrapped trustee key needs a passphrase: run
+  on a terminal or pass --passphrase-fd`.
+- **`trustee enroll --generate` is deprecated** and prints a warning: it
+  leaves the operator holding the trustee's secret.
+- **Nothing changes on the hub.** The quorum policy records nothing about
+  wrapping (the hub cannot check it), approvals are byte-identical, and the
+  vault keyguard (MKG1) is unchanged; a test pins its bytes against the
+  pre-change encoder. The ceremony runbook's trustee-key rows move from
+  **GAP** to **PROC** + **CODE** tool, and the practice statement's 6.2
+  declares key protection per trustee. Hardware trustee keys remain a gap.
+
 ### Compliance maps say which mechanism stands behind which clause, and never more
 
 - **`docs/compliance/`** (roadmap item 7, CP1): eleven closed clause → mechanism → status maps (21 CFR Part 11, EU GMP Annex 11, ALCOA+, HIPAA 164.312, US evidence rules, eIDAS qualified electronic ledgers, the C2PA conformance program, BS 10008 by topic, the FIPS split-knowledge vocabulary, and the capture-provenance and enterprise-assurance trackers), each row with one status from the new `compliance_map_status` block of `spec/witness_dictionary.json`; the README's pinned posture paragraph (maps, never determinations); the verification methodology; the BS 10008 operator pack and its template; the capture-provenance note; and the design notes for the SIEM projection, validation sheets and CAWG co-signing. Every regime clause is marked unverified: no regime source could be fetched.

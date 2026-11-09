@@ -66,14 +66,18 @@ ceremony — who is in the room, what is read aloud, what is retained — see
 DEVICE_KEY_SEED=devkey:your-seed \
   cargo run --bin break_glass -- init --threshold 2 --trustees 3 --db witness.db
 
-# Import a trustee who generated their own key and sent you the public half:
+# Each trustee, on their own machine, makes a passphrase-wrapped key and sends
+# you only the public key it prints:
+cargo run --bin break_glass -- trustee keygen --id alice --output alice.tkey
+
+# Import it:
 DEVICE_KEY_SEED=devkey:your-seed \
   cargo run --bin break_glass -- trustee enroll --id alice --public-key 0123... --db witness.db
-
-# …or mint a keypair for them (writes the signing key at mode 0600 to hand over):
-DEVICE_KEY_SEED=devkey:your-seed \
-  cargo run --bin break_glass -- trustee enroll --id bob --generate --output bob.key --db witness.db
 ```
+
+`trustee enroll --generate --output bob.key` (the operator mints the key and
+hands it over) still works but is deprecated and says so: it leaves you holding
+the trustee's secret, as a plaintext file.
 
 The draft is a plain file next to the database (`<db>.setup-draft.json`, override with
 `--draft`). It holds only public keys and counts — no secrets. It is kept **separate**
@@ -100,6 +104,44 @@ DEVICE_KEY_SEED=devkey:your-seed \
 
 Trustee entries use the format `id:HEX_PUBLIC_KEY`, where the public key is the hex-encoded
 32-byte Ed25519 verifying key.
+
+### Trustee keys at rest (`trustee keygen`, `wrap`, `pubkey`)
+
+A trustee's signing key lives on the trustee's own machine, never the hub's.
+These three commands are run by the trustee:
+
+```bash
+# Mint a key, wrapped under a passphrase (typed twice, echo off); prints the
+# public key and its fingerprint, never the secret:
+break_glass trustee keygen --id alice --output alice.tkey
+
+# Wrap an existing plaintext (64-hex) key file; the plaintext file is left in
+# place for you to destroy once the wrapped one works:
+break_glass trustee wrap --signing-key alice.key --id alice --output alice.tkey
+
+# Print the public key a file signs with (a wrapped file asks for its passphrase):
+break_glass trustee pubkey --signing-key alice.tkey
+```
+
+A wrapped file is one line, `securacv-trustee-key:v1 <hex>`, mode 0600: the
+seed under ChaCha20-Poly1305 with an Argon2id key (64 MiB, 3 passes, 1 lane —
+any other parameters are refused before derivation), bound to the trustee id
+and public key, so a renamed or re-keyed file does not open. `approve`,
+`policy approve` and `trustee pubkey` read either form from `--signing-key`:
+a wrapped file asks for its passphrase, and a plaintext one still works but
+prints a warning naming `trustee wrap`.
+
+The passphrase comes from the terminal with echo off, or from a file
+descriptor you name with `--passphrase-fd N` (one line per passphrase; for
+example `--passphrase-fd 0` with the passphrase piped in from a password
+manager). It is never read from the command line or
+an environment variable. With neither a terminal nor `--passphrase-fd`, the
+command refuses.
+
+The quorum policy records nothing about wrapping: the hub cannot check that a
+trustee's key is wrapped, so whether each trustee uses a wrapped key is a
+procedure the ceremony record declares per trustee
+([`security/CEREMONY_RUNBOOK.md`](security/CEREMONY_RUNBOOK.md) C1).
 
 **Auditing without the signing seed.** `receipts`, `policy history`, and `policy show`
 open the encrypted database with either `--device-key-seed` or the database key alone
@@ -168,7 +210,7 @@ cargo run --bin break_glass -- request \
 cargo run --bin break_glass -- approve \
   --request unlock.request \
   --trustee alice \
-  --signing-key /path/to/alice.signing.key \
+  --signing-key /path/to/alice.tkey \
   --output alice.approval
 
 DEVICE_KEY_SEED=devkey:your-seed \
