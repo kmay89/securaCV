@@ -18,8 +18,7 @@ use zeroize::Zeroize;
 
 use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT};
 use crate::{
-    approvals_commitment, break_glass::BreakGlassTokenFile,
-    break_glass_receipt_outcome_for_verifier, device_public_key_from_db, hash_entry,
+    approvals_commitment, break_glass::BreakGlassTokenFile, device_public_key_from_db, hash_entry,
     verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
     KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig, ZonePolicy,
 };
@@ -178,19 +177,11 @@ enum Command {
         vault_path: String,
         #[arg(long, default_value = "vault/unsealed")]
         output_dir: String,
-        /// Device key seed — used only to derive the database encryption key
-        /// (like log_verify); needed to open a real deployment's database.
+        /// Device key seed (must match witnessd). Redeeming a token appends a
+        /// device-signed redemption receipt to the chain, so unseal needs the
+        /// signing seed, not only the database key.
         #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
-        device_key_seed: Option<String>,
-        /// Explicit SQLCipher key (hex), overriding the seed derivation.
-        #[arg(
-            long,
-            env = "SECURACV_DB_KEY",
-            hide_env_values = true,
-            conflicts_with = "device_key_seed",
-            value_name = "HEX"
-        )]
-        db_key: Option<String>,
+        device_key_seed: String,
     },
 
     /// Manage break-glass quorum policy stored in the kernel database
@@ -628,14 +619,13 @@ pub fn run() -> Result<()> {
             vault_path,
             output_dir,
             device_key_seed,
-            db_key,
         } => {
             let _stage = ui.stage("Unseal envelope");
             cmd_unseal(
                 &envelope,
                 &token,
                 &db,
-                DbKeySource::from_args(device_key_seed.as_deref(), db_key.as_deref()),
+                &device_key_seed,
                 &ruleset_id,
                 &vault_path,
                 &output_dir,
@@ -2131,7 +2121,8 @@ impl DbKeySource {
 /// missing or mistyped `--db` fails instead of creating an empty database
 /// file, and no audit can write to what it audits — the custody boundary the
 /// runbook documents for an observer. `unseal` (which must consume the
-/// token nonce), `doctor`, and the drill open read-write.
+/// token nonce, through a `Kernel` that also signs the redemption row),
+/// `doctor`, and the drill open read-write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OpenMode {
     ReadOnly,
@@ -2503,54 +2494,45 @@ fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
     let ruleset_hash = cfg.ruleset_hash;
     let envelope = "drill-rehearsal";
 
-    // Authorize both tokens (seal + unseal) up front, then drop the kernel so the
-    // vault side reads the receipts through its own connection — no two writers.
-    let device_vk;
-    let crypto_mode;
-    let mut seal_token;
-    let mut unseal_token;
-    {
-        let mut kernel = Kernel::open(&cfg)?;
-        device_vk = kernel.device_verifying_key();
+    // One kernel for the whole rehearsal: it authorizes both tokens, signs the
+    // redemption row when the unseal token is spent, and answers the vault's
+    // receipt lookups — exactly the handle `unseal` uses in production.
+    let mut kernel = Kernel::open(&cfg)?;
+    let device_vk = kernel.device_verifying_key();
 
-        let trustee_keys: Vec<SigningKey> = (0..trustees)
-            .map(|i| SigningKey::from_bytes(&[0xA0u8.wrapping_add(i); 32]))
-            .collect();
-        let entries: Vec<crate::break_glass::TrusteeEntry> = trustee_keys
-            .iter()
-            .enumerate()
-            .map(|(i, key)| crate::break_glass::TrusteeEntry {
-                id: TrusteeId::new(&format!("drill-trustee-{}", i + 1)),
-                public_key: key.verifying_key().to_bytes(),
-            })
-            .collect();
-        let policy = crate::break_glass::QuorumPolicy::new(threshold, entries)?;
-        kernel.set_break_glass_policy(&policy)?;
-        crypto_mode = policy.vault.crypto_mode;
-        println!(
-            "  {} set up a {}-of-{} sandbox quorum",
-            DR_OK, policy.n, policy.m
-        );
+    let trustee_keys: Vec<SigningKey> = (0..trustees)
+        .map(|i| SigningKey::from_bytes(&[0xA0u8.wrapping_add(i); 32]))
+        .collect();
+    let entries: Vec<crate::break_glass::TrusteeEntry> = trustee_keys
+        .iter()
+        .enumerate()
+        .map(|(i, key)| crate::break_glass::TrusteeEntry {
+            id: TrusteeId::new(&format!("drill-trustee-{}", i + 1)),
+            public_key: key.verifying_key().to_bytes(),
+        })
+        .collect();
+    let policy = crate::break_glass::QuorumPolicy::new(threshold, entries)?;
+    kernel.set_break_glass_policy(&policy)?;
+    let crypto_mode = policy.vault.crypto_mode;
+    println!(
+        "  {} set up a {}-of-{} sandbox quorum",
+        DR_OK, policy.n, policy.m
+    );
 
-        let approvers = &trustee_keys[..threshold as usize];
-        seal_token = drill_authorize(&mut kernel, &policy, envelope, ruleset_hash, approvers)?;
-        unseal_token = drill_authorize(&mut kernel, &policy, envelope, ruleset_hash, approvers)?;
-        println!(
-            "  {} {} trustees approved; two break-glass tokens minted (one to seal, one to unseal)",
-            DR_OK, threshold
-        );
-    }
+    let approvers = &trustee_keys[..threshold as usize];
+    let mut seal_token = drill_authorize(&mut kernel, &policy, envelope, ruleset_hash, approvers)?;
+    let mut unseal_token =
+        drill_authorize(&mut kernel, &policy, envelope, ruleset_hash, approvers)?;
+    println!(
+        "  {} {} trustees approved; two break-glass tokens minted (one to seal, one to unseal)",
+        DR_OK, threshold
+    );
 
     let vault = Vault::new(VaultConfig {
         local_path: vault_path,
         crypto_mode,
         key_material: crate::VaultKeyMaterial::from_env(),
     })?;
-    let conn = open_kernel_db_keyed(&db_str, DRILL_SEED)?;
-    #[cfg(feature = "pqc-signatures")]
-    let pq_pk = crate::device_pq_public_key_from_db(&conn).ok();
-    #[cfg(not(feature = "pqc-signatures"))]
-    let pq_pk: Option<crate::crypto::signatures::PqPublicKey> = None;
 
     let payload =
         b"SecuraCV break-glass drill \xE2\x80\x94 throwaway payload, safe to discard".to_vec();
@@ -2561,36 +2543,19 @@ fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
         ruleset_hash,
         &mut raw,
         &device_vk,
-        |hash| {
-            break_glass_receipt_outcome_for_verifier(
-                &conn,
-                &device_vk,
-                envelope,
-                ruleset_hash,
-                hash,
-                pq_pk.as_ref(),
-            )
-        },
+        |hash| kernel.break_glass_receipt_outcome(envelope, ruleset_hash, hash),
     )?;
     println!("  {} sealed a throwaway envelope", DR_OK);
 
-    // Burn-first, exactly as `unseal` does, then recover.
-    crate::consume_break_glass_token_durably(&conn, &unseal_token)?;
+    // Burn-first, exactly as `unseal` does — nonce burned and the signed
+    // redemption receipt appended — then recover.
+    kernel.redeem_token_durably(&unseal_token)?;
     let clear = vault.unseal(
         envelope,
         &mut unseal_token,
         ruleset_hash,
         &device_vk,
-        |hash| {
-            break_glass_receipt_outcome_for_verifier(
-                &conn,
-                &device_vk,
-                envelope,
-                ruleset_hash,
-                hash,
-                pq_pk.as_ref(),
-            )
-        },
+        |hash| kernel.break_glass_receipt_outcome(envelope, ruleset_hash, hash),
     )?;
     println!("  {} unsealed it with a fresh quorum token", DR_OK);
 
@@ -2977,6 +2942,7 @@ fn cmd_receipts(
     let mut n = 0usize;
     let mut expected_prev = [0u8; 32];
     let mut invalid_count = 0usize;
+    let mut redemptions = crate::verify::RedemptionLedger::default();
     while let Some(row) = rows.next()? {
         let policy = policy
             .as_ref()
@@ -2998,6 +2964,7 @@ fn cmd_receipts(
         let outcome = match &receipt.outcome {
             BreakGlassOutcome::Granted => "GRANTED",
             BreakGlassOutcome::Denied { .. } => "DENIED",
+            BreakGlassOutcome::TokenRedeemed { .. } => "REDEEMED",
         };
 
         let mut status = "VALID";
@@ -3061,6 +3028,12 @@ fn cmd_receipts(
                 ) {
                     status = "INVALID";
                     issues.push(format!("approvals invalid: {}", err));
+                }
+                // Token redemptions: one signed row per spent nonce, naming
+                // the grant it redeems — shared with log_verify.
+                if let Err(err) = redemptions.observe(&receipt, entry_hash, &approvals) {
+                    status = "INVALID";
+                    issues.push(format!("redemption invalid: {}", err));
                 }
             }
             Err(e) => {
@@ -3126,6 +3099,13 @@ fn cmd_receipts(
         expected_prev = entry_hash;
         n += 1;
     }
+    // A nonce the unsigned anti-replay table burned with no signed
+    // redemption row behind it: the ledger says a token was spent, the chain
+    // says it was not.
+    if let Err(err) = redemptions.reconcile_consumed(&conn) {
+        invalid_count += 1;
+        println!("  verification: {}", err);
+    }
     println!("Total: {}{}", n, provenance.verdict_suffix());
     if invalid_count > 0 {
         return Err(anyhow!(
@@ -3171,7 +3151,7 @@ fn cmd_unseal(
     envelope: &str,
     token_path: &str,
     db_path: &str,
-    key_source: DbKeySource,
+    device_key_seed: &str,
     ruleset_id: &str,
     vault_path: &str,
     output_dir: &str,
@@ -3193,9 +3173,12 @@ fn cmd_unseal(
         ));
     }
     let mut token = token_file.into_token()?;
-    // Read-write: redeeming the token consumes its nonce durably.
-    let conn = open_kernel_db(db_path, &key_source, OpenMode::ReadWrite)?;
-    let crypto_mode = load_break_glass_policy(&conn)?
+    // Read-write, with the signing key: redeeming the token burns its nonce
+    // durably AND appends a device-signed redemption receipt to the chain.
+    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
+    let mut kernel = Kernel::open(&cfg)?;
+    let crypto_mode = kernel
+        .break_glass_policy()
         .map(|policy| policy.vault.crypto_mode)
         .unwrap_or_default();
     let vault = Vault::new(VaultConfig {
@@ -3203,25 +3186,15 @@ fn cmd_unseal(
         crypto_mode,
         key_material: crate::VaultKeyMaterial::from_env(),
     })?;
-    let verifying_key = device_public_key_from_db(&conn)?;
-    #[cfg(feature = "pqc-signatures")]
-    let pq_pk = crate::device_pq_public_key_from_db(&conn).ok();
-    #[cfg(not(feature = "pqc-signatures"))]
-    let pq_pk: Option<crate::crypto::signatures::PqPublicKey> = None;
+    let verifying_key = kernel.device_verifying_key();
     // Burn-first (durable anti-replay): the token file just re-parsed as
     // unconsumed, so this is THE gate that stops a granted token from
     // authorizing repeated unseals across separate CLI runs within its
-    // validity bucket. Record the nonce before any cleartext exists.
-    crate::consume_break_glass_token_durably(&conn, &token)?;
+    // validity bucket. Record the nonce — and the signed redemption row that
+    // a deleted nonce row cannot undo — before any cleartext exists.
+    kernel.redeem_token_durably(&token)?;
     let clear = vault.unseal(envelope, &mut token, ruleset_hash, &verifying_key, |hash| {
-        break_glass_receipt_outcome_for_verifier(
-            &conn,
-            &verifying_key,
-            envelope,
-            ruleset_hash,
-            hash,
-            pq_pk.as_ref(),
-        )
+        kernel.break_glass_receipt_outcome(envelope, ruleset_hash, hash)
     })?;
 
     let sanitized = crate::vault::sanitize_envelope_id(envelope)?;

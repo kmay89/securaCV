@@ -49,6 +49,25 @@
 
 ### canary-wap Chirp keeps its limits across the uptime wrap and under a flood; a read that failed is not a value that is missing, on the flagship's TLS pair, three witness keys, the canary's RSSI and the camera's thermal sensor (and the ESP32-S3 reads its die sensor for the first time); both dashboards draw names as text; witnessd checks the model it ships with; the desktop releases pin their AppImage tools and attach their own SBOMs; canary-wap says what happened and counts a Canary once; Home Assistant reads a battery only from a number; the flasher catalog and the build matrix take their facts from the source; the playground names a Modbus exception; the Lab's twins run the firmware; three claims are held to what ships; and the Lab's WAP page reads the sketch (#1920, wave 23)
 
+- **Home Assistant: the kernel's copy of the device key leaves `/config`
+  too.** In standalone mode `witnessd` wrote the environment seed beside the
+  sealed log (`/config/witness.ed25519.seed`) at its first start — the key
+  that PR #1935 moved into the app's own `/data`, back inside every Home
+  Assistant backup. The kernel grows one switch, `DEVICE_KEY_SEED_PERSIST`
+  (`crypto::device_seed_persist_policy`): unset keeps witnessd's historical
+  persisting, which the container image's operator commands rely on; `0`
+  makes witnessd resolve like every other daemon (`resolve_device_seed`:
+  the environment seed is used as given, never written, and an existing
+  seed file that disagrees is still refused); a typo is a startup error, not
+  a silent "persist". The app's witnessd service sets `0`, and `run.sh`
+  removes the copy an earlier release left once it holds, byte for byte,
+  the seed in use (`run_lib.sh remove_kernel_seed_copy`: fixed-word
+  verdicts, the seed never printed; a differing copy is kept with a
+  warning). The AppArmor profile grants no kernel process `w` on that file
+  anymore (the setup alone, for the removal), pinned by
+  `test_addon_store.py`; `test_run_lib.sh` and `test_config_render.sh`
+  cover the helper and the wiring; `DOCS.md`, `docs/homeassistant_setup.md`
+  and the app's changelog no longer say the copy is still there.
 - **Home Assistant: the evidence pack reads itself out.** Every
   `securacv.export_evidence` zip now carries `WITNESS_STATEMENT.txt`
   (`custom_components/securacv/witness_statement.py`): the export in plain

@@ -143,6 +143,17 @@ pub fn explain_failure(kind: FailureKind) -> FailureExplanation {
                    delete the anchor row: that destroys evidence, it never clears a \
                    finding.",
         },
+        FailureKind::TokenRedemption => FailureExplanation {
+            what: "the break-glass chain's record of spent tokens is inconsistent: a nonce \
+                   redeemed twice, a redemption naming no earlier Granted receipt, or a nonce \
+                   burned in the anti-replay table with no signed redemption row behind it.",
+            likely_causes: "a single-use token was replayed (its burn row deleted and the \
+                   token presented again); a redemption row was forged or removed from the \
+                   chain tail; the token was spent by a build that wrote no redemption rows.",
+            next_steps: "treat the unseal as possibly repeated. Compare the chain head \
+                   against its last anchor, ask who held the token file, and check the \
+                   vault for an unsealed artifact that no redemption row accounts for.",
+        },
     }
 }
 

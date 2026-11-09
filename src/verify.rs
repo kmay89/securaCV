@@ -47,6 +47,11 @@ pub enum FailureKind {
     /// A head-kind anchor covers a hash that is not in its declared ledger's history, or that survives only in a
     /// checkpoint whose signature does not verify: rollback, truncation, or a different history than the one anchored.
     AnchorRegression,
+    /// The break-glass receipt chain's record of token redemptions is
+    /// inconsistent: one nonce redeemed twice, a redemption that names no
+    /// earlier `Granted` receipt (or restates it wrongly), or a nonce burned
+    /// in the anti-replay table with no signed redemption row behind it.
+    TokenRedemption,
 }
 
 /// Structured verification failure. `Display` reproduces the exact legacy
@@ -106,6 +111,8 @@ pub struct BreakGlassReceiptCounts {
     pub total: u64,
     pub granted: u64,
     pub denied: u64,
+    /// `TokenRedeemed` rows: one per token actually spent at the unseal gate.
+    pub redeemed: u64,
 }
 
 /// What a checkpoint's signature was found to cover (see `log::checkpoint_message`).
@@ -720,6 +727,7 @@ where
     let mut granted = 0u64;
     let mut denied = 0u64;
     let mut last_ok_signer = 0usize;
+    let mut redemptions = RedemptionLedger::default();
 
     while let Some(row) = rows.next()? {
         let policy = policy.ok_or_else(|| {
@@ -797,6 +805,7 @@ where
         match receipt.outcome {
             BreakGlassOutcome::Granted => granted += 1,
             BreakGlassOutcome::Denied { .. } => denied += 1,
+            BreakGlassOutcome::TokenRedeemed { .. } => {}
         }
         let approvals: Vec<Approval> = serde_json::from_str(&approvals_json)?;
         let commitment = approvals_commitment(&approvals);
@@ -821,6 +830,16 @@ where
                 format!("{}", e),
             )
         })?;
+        redemptions
+            .observe(&receipt, entry_hash, &approvals)
+            .map_err(|e| {
+                fail(
+                    FailedLedger::BreakGlassReceipts,
+                    Some(id),
+                    FailureKind::TokenRedemption,
+                    format!("integrity check failed at receipt id {}: {}", id, e),
+                )
+            })?;
 
         on_receipt(id, entry_hash);
 
@@ -828,10 +847,22 @@ where
         count += 1;
     }
 
+    // A burned nonce with no signed redemption row behind it: the unsigned
+    // anti-replay table says a token was spent, the chain says it was not.
+    redemptions.reconcile_consumed(conn).map_err(|e| {
+        fail(
+            FailedLedger::BreakGlassReceipts,
+            None,
+            FailureKind::TokenRedemption,
+            format!("integrity check failed on token redemptions: {}", e),
+        )
+    })?;
+
     Ok(BreakGlassReceiptCounts {
         total: count,
         granted,
         denied,
+        redeemed: redemptions.redeemed(),
     })
 }
 
@@ -1149,6 +1180,166 @@ pub fn classify_warning(warning: &str) -> WarningKind {
     }
 }
 
+/// What a redemption row must restate about the grant it redeems.
+#[derive(Debug, Clone)]
+struct GrantFacts {
+    vault_envelope_id: String,
+    ruleset_hash: [u8; 32],
+    request_hash: [u8; 32],
+    time_bucket: crate::TimeBucket,
+}
+
+/// The token-redemption bookkeeping of one receipt-chain walk, shared by
+/// `verify_break_glass_receipts_with`, the evidence-envelope walk and the
+/// `break_glass receipts` CLI so no walk can pass a chain another fails.
+///
+/// Feed it every receipt in chain order (`observe`); it fails the walk when
+/// a `TokenRedeemed` row redeems a nonce the chain already redeemed, names
+/// a receipt hash that is not an earlier `Granted` receipt (or redeems one
+/// grant twice — a grant mints one token), restates the grant's envelope,
+/// ruleset, request hash or bucket wrongly, or carries approvals or named
+/// trustees (consent was given once, on the grant). After the walk,
+/// `reconcile_consumed` fails when the unsigned anti-replay table burns a
+/// nonce the chain never redeemed: a token the ledger shows was spent with
+/// no signed row behind it.
+///
+/// Honest scope note: a redemption row at the chain TAIL can be dropped
+/// together with its burn row without breaking any hash in the middle. The
+/// walk cannot see that; the anchored receipt head
+/// (`tsa::AnchorSubject::BreakGlassReceiptHead`) can.
+#[derive(Debug, Default)]
+pub struct RedemptionLedger {
+    grants: std::collections::HashMap<[u8; 32], GrantFacts>,
+    redeemed_nonces: std::collections::HashSet<[u8; 32]>,
+    redeemed_grants: std::collections::HashSet<[u8; 32]>,
+}
+
+impl RedemptionLedger {
+    /// Record one receipt, in chain order, with its chain hash and the
+    /// approvals stored beside it.
+    pub fn observe(
+        &mut self,
+        receipt: &BreakGlassReceipt,
+        entry_hash: [u8; 32],
+        approvals: &[Approval],
+    ) -> Result<()> {
+        match &receipt.outcome {
+            BreakGlassOutcome::Granted => {
+                self.grants.insert(
+                    entry_hash,
+                    GrantFacts {
+                        vault_envelope_id: receipt.vault_envelope_id.clone(),
+                        ruleset_hash: receipt.ruleset_hash,
+                        request_hash: receipt.request_hash,
+                        time_bucket: receipt.time_bucket,
+                    },
+                );
+                Ok(())
+            }
+            BreakGlassOutcome::Denied { .. } => Ok(()),
+            BreakGlassOutcome::TokenRedeemed {
+                nonce,
+                receipt_entry_hash,
+            } => {
+                if *nonce == [0u8; 32] {
+                    return Err(anyhow!("redemption row carries a zero nonce"));
+                }
+                if !self.redeemed_nonces.insert(*nonce) {
+                    return Err(anyhow!(
+                        "token nonce {} is redeemed twice — a single-use token was spent again",
+                        hex::encode(nonce)
+                    ));
+                }
+                let Some(grant) = self.grants.get(receipt_entry_hash) else {
+                    return Err(anyhow!(
+                        "redemption names receipt {} but no earlier Granted receipt has that hash",
+                        hex::encode(receipt_entry_hash)
+                    ));
+                };
+                if !self.redeemed_grants.insert(*receipt_entry_hash) {
+                    return Err(anyhow!(
+                        "Granted receipt {} is redeemed twice — a grant mints exactly one token",
+                        hex::encode(receipt_entry_hash)
+                    ));
+                }
+                if grant.vault_envelope_id != receipt.vault_envelope_id
+                    || grant.ruleset_hash != receipt.ruleset_hash
+                    || grant.request_hash != receipt.request_hash
+                {
+                    return Err(anyhow!(
+                        "redemption row does not restate the envelope, ruleset and request hash \
+                         of the Granted receipt it redeems"
+                    ));
+                }
+                if grant.time_bucket != receipt.time_bucket {
+                    return Err(anyhow!(
+                        "redemption row is stamped outside the bucket its grant was issued in \
+                         (a token is only redeemable inside that bucket)"
+                    ));
+                }
+                if !approvals.is_empty() || !receipt.trustees_used.is_empty() {
+                    return Err(anyhow!(
+                        "redemption row carries approvals or names trustees — consent is \
+                         recorded once, on the grant"
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// How many redemption rows were observed.
+    pub fn redeemed(&self) -> u64 {
+        self.redeemed_nonces.len() as u64
+    }
+
+    /// After the walk: the unsigned `consumed_break_glass_tokens` table and
+    /// the signed chain must tell the same story. Every burned nonce needs a
+    /// signed redemption row (a token the ledger shows was spent with no row
+    /// behind it), and every redemption row needs its burn row (the two land
+    /// in one transaction, so a redeemed nonce missing from the table was
+    /// deleted — the replay set-up this row exists to defeat). A database
+    /// with no redemption rows and no table (never unsealed) passes.
+    pub fn reconcile_consumed(&self, conn: &Connection) -> Result<()> {
+        let table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'consumed_break_glass_tokens'",
+            [],
+            |row| row.get::<_, i64>(0).map(|n| n > 0),
+        )?;
+        let mut burned = std::collections::HashSet::new();
+        if table_exists {
+            let mut stmt = conn.prepare(
+                "SELECT token_nonce FROM consumed_break_glass_tokens ORDER BY consumed_at ASC, rowid ASC",
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                let nonce: Vec<u8> = row.get(0)?;
+                let nonce = crate::blob32(nonce, "consumed_break_glass_tokens.token_nonce")?;
+                if !self.redeemed_nonces.contains(&nonce) {
+                    return Err(anyhow!(
+                        "token nonce {} is burned in the anti-replay table but the receipt chain \
+                         holds no signed redemption row for it — the token was spent by a build \
+                         that wrote no redemption rows, or the row was removed from the chain tail",
+                        hex::encode(nonce)
+                    ));
+                }
+                burned.insert(nonce);
+            }
+        }
+        for nonce in &self.redeemed_nonces {
+            if !burned.contains(nonce) {
+                return Err(anyhow!(
+                    "token nonce {} has a signed redemption row but no burn row in the \
+                     anti-replay table — the two are written together, so the burn row was \
+                     deleted (a replay set-up; the signed row is why it did not work)",
+                    hex::encode(nonce)
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Re-derive a break-glass receipt's quorum against the policy that was
 /// actually in force when it was authorized (Invariant V). Never trusts the
 /// receipt's recorded `outcome`: a device-key holder can forge a `Granted`
@@ -1440,6 +1631,196 @@ mod tests {
         let result =
             verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None);
         assert!(result.is_err());
+        Ok(())
+    }
+
+    // ─── Token redemptions: one signed row per spent nonce, joined to its
+    // grant by hash; the walk fails on a replay, a stray row, or a burn the
+    // chain does not explain. ───────────────────────────────────────────────
+
+    /// A kernel with a 1-of-1 quorum and one Granted, signed token.
+    fn kernel_with_granted_token() -> Result<(
+        crate::Kernel,
+        QuorumPolicy,
+        crate::BreakGlassToken,
+        [u8; 32],
+    )> {
+        use crate::break_glass::{TrusteeEntry, TrusteeId, UnlockRequest};
+        use crate::{BreakGlass, Kernel, KernelConfig, TimeBucket, ZonePolicy};
+
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let alice = SigningKey::from_bytes(&[41u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+        let bucket = TimeBucket::now(600)?;
+        let request = UnlockRequest::new("vault:1", cfg.ruleset_hash, "incident", bucket)?;
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+        let (result, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        let mut token = result.expect("1-of-1 quorum grants");
+        let granted_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+        kernel.sign_break_glass_token(&mut token, granted_hash)?;
+        Ok((kernel, policy, token, granted_hash))
+    }
+
+    fn walk(kernel: &crate::Kernel, policy: &QuorumPolicy) -> Result<BreakGlassReceiptCounts> {
+        verify_break_glass_receipts_with(
+            &kernel.conn,
+            &[kernel.device_verifying_key()],
+            Some(policy),
+            SignatureMode::Compat,
+            None,
+            |_, _| {},
+        )
+    }
+
+    fn redemption_failure(err: &anyhow::Error) -> String {
+        let failure = err
+            .downcast_ref::<VerifyFailure>()
+            .expect("a typed verification failure");
+        assert_eq!(failure.ledger, FailedLedger::BreakGlassReceipts);
+        assert_eq!(failure.kind, FailureKind::TokenRedemption);
+        failure.detail.clone()
+    }
+
+    fn granted_receipt(kernel: &crate::Kernel, hash: [u8; 32]) -> Result<BreakGlassReceipt> {
+        let payload: String = kernel.conn.query_row(
+            "SELECT payload_json FROM break_glass_receipts WHERE entry_hash = ?1",
+            rusqlite::params![hash.to_vec()],
+            |r| r.get(0),
+        )?;
+        Ok(serde_json::from_str(&payload)?)
+    }
+
+    #[test]
+    fn one_redemption_per_grant_walks_green_and_is_counted() -> Result<()> {
+        let (mut kernel, policy, token, _) = kernel_with_granted_token()?;
+        let counts = walk(&kernel, &policy)?;
+        assert_eq!((counts.granted, counts.redeemed), (1, 0));
+        kernel.redeem_token_durably(&token)?;
+        let counts = walk(&kernel, &policy)?;
+        assert_eq!((counts.total, counts.granted, counts.redeemed), (2, 1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn two_redemptions_of_one_nonce_fail_the_walk() -> Result<()> {
+        let (mut kernel, policy, token, granted_hash) = kernel_with_granted_token()?;
+        kernel.redeem_token_durably(&token)?;
+        // A device-key holder forges a second redemption row for the same
+        // nonce (the gate refuses it; the walk must too).
+        let granted = granted_receipt(&kernel, granted_hash)?;
+        let again = BreakGlassReceipt::redemption_of(&granted, granted_hash, &token)?;
+        kernel.append_break_glass_receipt(&again, &[])?;
+        let err = walk(&kernel, &policy).unwrap_err();
+        let detail = redemption_failure(&err);
+        assert!(detail.contains("redeemed twice"), "{detail}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_grant_redeemed_by_two_nonces_fails_the_walk() -> Result<()> {
+        let (mut kernel, policy, token, granted_hash) = kernel_with_granted_token()?;
+        kernel.redeem_token_durably(&token)?;
+        // Same grant, a different nonce: a grant mints exactly one token.
+        let other_nonce = rand::random::<[u8; 32]>();
+        let mut other = crate::BreakGlassToken::test_token_with(
+            other_nonce,
+            token.expires_bucket(),
+            "vault:1",
+            token.ruleset_hash(),
+        );
+        other.attach_receipt_signature(granted_hash, &kernel.device_key)?;
+        let granted = granted_receipt(&kernel, granted_hash)?;
+        let row = BreakGlassReceipt::redemption_of(&granted, granted_hash, &other)?;
+        kernel.append_break_glass_receipt(&row, &[])?;
+        kernel.conn.execute(
+            "INSERT INTO consumed_break_glass_tokens(token_nonce, consumed_at) VALUES (?1, 1)",
+            rusqlite::params![other_nonce.to_vec()],
+        )?;
+        let err = walk(&kernel, &policy).unwrap_err();
+        let detail = redemption_failure(&err);
+        assert!(detail.contains("exactly one token"), "{detail}");
+        Ok(())
+    }
+
+    #[test]
+    fn redemption_naming_no_grant_fails_the_walk() -> Result<()> {
+        let (mut kernel, policy, token, granted_hash) = kernel_with_granted_token()?;
+        let granted = granted_receipt(&kernel, granted_hash)?;
+        // Build an honest-shaped row, then point it at a hash the chain
+        // never held.
+        let mut row = BreakGlassReceipt::redemption_of(&granted, granted_hash, &token)?;
+        row.outcome = BreakGlassOutcome::TokenRedeemed {
+            nonce: token.token_nonce(),
+            receipt_entry_hash: [0xEEu8; 32],
+        };
+        kernel.append_break_glass_receipt(&row, &[])?;
+        let err = walk(&kernel, &policy).unwrap_err();
+        let detail = redemption_failure(&err);
+        assert!(detail.contains("no earlier Granted receipt"), "{detail}");
+        Ok(())
+    }
+
+    #[test]
+    fn redemption_outside_its_grant_bucket_fails_the_walk() -> Result<()> {
+        let (mut kernel, policy, token, granted_hash) = kernel_with_granted_token()?;
+        let granted = granted_receipt(&kernel, granted_hash)?;
+        let mut row = BreakGlassReceipt::redemption_of(&granted, granted_hash, &token)?;
+        row.time_bucket.start_epoch_s += 600;
+        kernel.append_break_glass_receipt(&row, &[])?;
+        kernel.conn.execute(
+            "INSERT INTO consumed_break_glass_tokens(token_nonce, consumed_at) VALUES (?1, 1)",
+            rusqlite::params![token.token_nonce().to_vec()],
+        )?;
+        let err = walk(&kernel, &policy).unwrap_err();
+        let detail = redemption_failure(&err);
+        assert!(detail.contains("outside the bucket"), "{detail}");
+        Ok(())
+    }
+
+    #[test]
+    fn burned_nonce_without_a_redemption_row_fails_the_walk() -> Result<()> {
+        // The ledger shows a token was spent (its nonce is burned) but the
+        // chain holds no signed row for it: an older build's burn, or a row
+        // dropped from the chain tail. Either way the walk names the nonce.
+        let (kernel, policy, token, _) = kernel_with_granted_token()?;
+        crate::consume_break_glass_token_durably(&kernel.conn, &token)?;
+        let err = walk(&kernel, &policy).unwrap_err();
+        let detail = redemption_failure(&err);
+        assert!(detail.contains("no signed redemption row"), "{detail}");
+        assert!(
+            detail.contains(&hex::encode(token.token_nonce())),
+            "{detail}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn redemption_row_without_its_burn_row_fails_the_walk() -> Result<()> {
+        let (mut kernel, policy, token, _) = kernel_with_granted_token()?;
+        kernel.redeem_token_durably(&token)?;
+        kernel
+            .conn
+            .execute("DELETE FROM consumed_break_glass_tokens", [])?;
+        let err = walk(&kernel, &policy).unwrap_err();
+        let detail = redemption_failure(&err);
+        assert!(detail.contains("no burn row"), "{detail}");
         Ok(())
     }
 

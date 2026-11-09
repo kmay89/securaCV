@@ -470,7 +470,8 @@ function trustedKeyBytes(opts) {
 }
 
 // Returns { status, ok, error?, sealed_events, break_glass_granted, break_glass_denied,
-//           export_receipts, pq_checked, warnings, whole_envelope_digest, authorship }.
+//           break_glass_redeemed, export_receipts, pq_checked, warnings,
+//           whole_envelope_digest, authorship }.
 //
 // Trust caveat, the same as verifyExportBundle's: the envelope carries its own
 // device key (provenance.device_public_key), so without `opts.trustedDeviceKeyHex`
@@ -484,6 +485,7 @@ async function verifyEnvelope(envelope, opts = {}) {
     sealed_events: 0,
     break_glass_granted: 0,
     break_glass_denied: 0,
+    break_glass_redeemed: 0,
     export_receipts: 0,
     pq_checked: false,
     warnings: [],
@@ -578,6 +580,9 @@ async function verifyEnvelope(envelope, opts = {}) {
     const bgHead = await verifyLinearChain(bg.entries, new Uint8Array(32), domains.break_glass,
       { anyOf: lineage.keys }, 'break_glass_receipts', sigCheckable);
     validateSummary('break_glass_receipts', bg.entries.length, bg.count, bg.head_hash, bgHead);
+    const grants = new Map();
+    const redeemedNonces = new Set();
+    const redeemedGrants = new Set();
     for (let i = 0; i < bg.entries.length; i++) {
       const e = bg.entries[i];
       const receipt = JSON.parse(e.payload_json);
@@ -587,8 +592,45 @@ async function verifyEnvelope(envelope, opts = {}) {
         throw chainFail('break-glass approvals commitment mismatch',
           'break_glass_receipts', i, 'approvals_commitment_mismatch');
       }
-      if (receipt.outcome === 'Granted' || (receipt.outcome && receipt.outcome.Granted !== undefined)) result.break_glass_granted++;
-      else result.break_glass_denied++;
+      const entryHex = bytesToHex(toBytes(e.entry_hash));
+      const redeemed = receipt.outcome && receipt.outcome.TokenRedeemed;
+      if (receipt.outcome === 'Granted' || (receipt.outcome && receipt.outcome.Granted !== undefined)) {
+        result.break_glass_granted++;
+        grants.set(entryHex, {
+          envelope: receipt.vault_envelope_id,
+          ruleset: bytesToHex(toBytes(receipt.ruleset_hash)),
+          request: bytesToHex(toBytes(receipt.request_hash)),
+          bucket: receipt.time_bucket,
+        });
+      } else if (redeemed) {
+        // Mirrors src/verify.rs RedemptionLedger: one signed row per spent
+        // nonce, naming the Granted receipt it redeems and restating it.
+        const nonce = bytesToHex(toBytes(redeemed.nonce));
+        const grantHex = bytesToHex(toBytes(redeemed.receipt_entry_hash));
+        const fail = (why) => chainFail(`break-glass token redemption invalid: ${why}`,
+          'break_glass_receipts', i, 'token_redemption');
+        if (redeemedNonces.has(nonce)) throw fail(`token nonce ${nonce} is redeemed twice`);
+        redeemedNonces.add(nonce);
+        const grant = grants.get(grantHex);
+        if (!grant) throw fail(`redemption names receipt ${grantHex} but no earlier Granted receipt has that hash`);
+        if (redeemedGrants.has(grantHex)) throw fail(`Granted receipt ${grantHex} is redeemed twice`);
+        redeemedGrants.add(grantHex);
+        if (grant.envelope !== receipt.vault_envelope_id
+          || grant.ruleset !== bytesToHex(toBytes(receipt.ruleset_hash))
+          || grant.request !== bytesToHex(toBytes(receipt.request_hash))) {
+          throw fail('redemption row does not restate the Granted receipt it redeems');
+        }
+        if (grant.bucket.start_epoch_s !== receipt.time_bucket.start_epoch_s
+          || grant.bucket.size_s !== receipt.time_bucket.size_s) {
+          throw fail('redemption row is stamped outside the bucket its grant was issued in');
+        }
+        if (approvals.length > 0 || (receipt.trustees_used && receipt.trustees_used.length > 0)) {
+          throw fail('redemption row carries approvals or names trustees');
+        }
+        result.break_glass_redeemed++;
+      } else {
+        result.break_glass_denied++;
+      }
     }
     if (bg.entries.length > 0) result.checks.push(`Break-glass receipts verified (${bg.entries.length})`);
 

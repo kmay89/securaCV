@@ -76,12 +76,41 @@ pub fn resolve_device_seed(db_path: &str, env_seed: Option<&str>) -> Result<Reso
     resolve_device_seed_inner(db_path, env_seed, false)
 }
 
+/// The environment variable that tells `witnessd` whether an environment
+/// seed may be persisted beside the database. Unset, it may (the behavior
+/// `witnessd` has always had, which the container image relies on: the
+/// seed file is where every later process on the host finds the identity).
+/// `0`/`false`/`no`/`off` says the seed is kept elsewhere (a secret store,
+/// the Home Assistant app's own `/data`) and must not be copied onto the
+/// database's directory; `witnessd` then resolves like every other daemon
+/// ([`resolve_device_seed`]). Any other value is a startup error: a typo
+/// here would silently put the seed where the operator moved it away from.
+pub const DEVICE_KEY_SEED_PERSIST_ENV: &str = "DEVICE_KEY_SEED_PERSIST";
+
+/// Parse [`DEVICE_KEY_SEED_PERSIST_ENV`]'s value: `true` when an environment
+/// seed may be persisted. `None` (unset) and the empty string keep the
+/// default (`true`); `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` are
+/// accepted in any case; anything else is refused.
+pub fn device_seed_persist_policy(value: Option<&str>) -> Result<bool> {
+    let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(true);
+    };
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        other => Err(anyhow!(
+            "{DEVICE_KEY_SEED_PERSIST_ENV} must be true/false (got '{other}')"
+        )),
+    }
+}
+
 /// [`resolve_device_seed`] for `witnessd`, which has always written an
 /// environment seed to `<db>.ed25519.seed` when no file exists yet (so the
 /// seed file is where every later process on the host finds the identity).
-/// Kept for that one daemon so its on-disk behavior does not change; every
-/// other write-side process uses [`resolve_device_seed`], which never
-/// persists an environment seed.
+/// Kept for that one daemon so its on-disk behavior does not change unless
+/// the operator sets [`DEVICE_KEY_SEED_PERSIST_ENV`] to `0`; every other
+/// write-side process uses [`resolve_device_seed`], which never persists an
+/// environment seed.
 pub fn resolve_device_seed_persisting_env(
     db_path: &str,
     env_seed: Option<&str>,
@@ -659,6 +688,67 @@ mod tests {
         let found = find_device_seed(db, None).unwrap().expect("file persisted");
         assert_eq!(*found.seed, env_seed);
         assert!(matches!(found.source, SeedSource::File(_)));
+    }
+
+    /// `DEVICE_KEY_SEED_PERSIST`: unset keeps witnessd's historical
+    /// persisting; the off words turn it off; a typo is refused rather than
+    /// read as "persist" (the one reading that would put the seed back where
+    /// the operator moved it away from).
+    #[test]
+    fn device_seed_persist_policy_parses_the_switch_and_refuses_typos() {
+        assert!(device_seed_persist_policy(None).unwrap());
+        assert!(device_seed_persist_policy(Some("")).unwrap());
+        assert!(device_seed_persist_policy(Some("  ")).unwrap());
+        for on in ["1", "true", "TRUE", "yes", "on", " On "] {
+            assert!(device_seed_persist_policy(Some(on)).unwrap(), "{on:?}");
+        }
+        for off in ["0", "false", "False", "no", "off", " OFF "] {
+            assert!(!device_seed_persist_policy(Some(off)).unwrap(), "{off:?}");
+        }
+        for bad in ["never", "2", "nope", "persist"] {
+            let err = device_seed_persist_policy(Some(bad))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(DEVICE_KEY_SEED_PERSIST_ENV), "got: {err}");
+            assert!(err.contains("true/false"), "got: {err}");
+        }
+    }
+
+    /// With persisting off, witnessd's path is [`resolve_device_seed`]: an
+    /// environment seed leaves no file behind, and a seed file that already
+    /// exists (an install from before the switch) still has to agree with it,
+    /// so the read-side mismatch check keeps working for those installs.
+    #[test]
+    fn witnessd_with_persisting_off_writes_nothing_and_still_checks_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("witness.db");
+        let db = db.to_str().unwrap();
+        let env_seed = "devkey:kept_in_the_apps_own_data_dir_xx";
+
+        assert!(!device_seed_persist_policy(Some("0")).unwrap());
+        let resolved = resolve_device_seed(db, Some(env_seed)).unwrap();
+        assert_eq!(*resolved.seed, env_seed);
+        assert_eq!(resolved.source, SeedSource::Env);
+        assert!(
+            !device_key_path_for_db(db).unwrap().exists(),
+            "persisting off: no seed file beside the database"
+        );
+
+        // An earlier release's file beside the database: identical is fine,
+        // a different one is a configuration error, and neither is rewritten.
+        let seed_path = device_key_path_for_db(db).unwrap();
+        load_or_create_device_seed(&seed_path, Some(env_seed)).unwrap();
+        let before = fs::read_to_string(&seed_path).unwrap();
+        assert_eq!(
+            resolve_device_seed(db, Some(env_seed)).unwrap().source,
+            SeedSource::Env
+        );
+        let err = resolve_device_seed(db, Some("devkey:another_identity_with_entropy_ab"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("mismatch"), "got: {err}");
+        assert!(!err.contains("devkey:"), "the error must not carry a seed");
+        assert_eq!(fs::read_to_string(&seed_path).unwrap(), before);
     }
 
     /// `:memory:` has no seed file: the environment is the only source.

@@ -1655,7 +1655,9 @@ const fleetBook = {
       deviceId: entry.deviceId,
       expectedFp: entry.pubkeyFp || "",
     });
-    if (!entry.pairedAddr) { entry.pairedAddr = this.addrOf(base); savePrefs(); }
+    // A refusal (r.refused: the handshake's own sentence) sent nothing, so
+    // the address it came from proves nothing; the pairing waits.
+    if (!r.refused && !entry.pairedAddr) { entry.pairedAddr = this.addrOf(base); savePrefs(); }
     return r;
   },
 
@@ -1670,7 +1672,9 @@ const fleetBook = {
       if (!token || !base) { this.note(key, token ? "It isn't answering right now." : this.noTokenNote()); return; }
       if (!(await this.addressTrusted(entry, base))) { this.note(key, "Not sent — the new address wasn't trusted."); return; }
       const r = await this.deviceCall(entry, base, token, "identify");
-      if (r.httpStatus === 401) this.note(key, this.staleTokenNote());
+      if (r.refused) this.note(key, r.refused);
+      else if (r.httpStatus === 429) this.note(key, this.heldOffNote());
+      else if (r.httpStatus === 401) this.note(key, this.staleTokenNote());
       else if (r.httpStatus === 404) this.note(key, "This firmware doesn't have an identify signal yet.");
       else this.note(key, "✓ Watch for the blink. (The key went sealed to its identity.)");
     } catch (e) {
@@ -1705,17 +1709,20 @@ const fleetBook = {
         if (attempt) await new Promise((r) => setTimeout(r, 5000));
         let inst = null;
         try { inst = await this.deviceCall(entry, base, token, "ota-install"); }
-        catch (e) {
-          // The Rust gate's refusals (an unproven or wrong key at this
-          // address, no recorded fingerprint) are answers, not a lost
-          // socket: say them and stop.
-          if (/not sending its credential|fingerprint/.test(String(e))) { this.note(key, String(e)); return; }
-          // The install call can outlive its own socket (the board can get
-          // to rebooting) — treat transport loss as "watch the status".
+        catch (_) {
+          // Only a transport failure throws (a refusal to seal the key to
+          // what answered comes back as inst.refused, below). The install
+          // call can outlive its own socket (the board can get to
+          // rebooting) — treat transport loss as "watch the status".
           lostSocket = true;
           started = true;
           break;
         }
+        // The handshake's refusal is an answer, not a lost socket: the
+        // key stayed here, and the sentence says why (old firmware, a
+        // different key at this address, a signature that didn't verify).
+        if (inst.refused) { this.note(key, inst.refused); return; }
+        if (inst.httpStatus === 429) { this.note(key, this.heldOffNote()); return; }
         if (inst.httpStatus === 401) { this.note(key, this.staleTokenNote()); return; }
         if (inst.httpStatus === 404) { this.note(key, "This firmware predates one-click updates. Update once over USB; later updates work from here."); return; }
         if (inst.httpStatus === 409) { this.note(key, "The board is busy — waiting…"); continue; }
@@ -1732,6 +1739,10 @@ const fleetBook = {
         let st = null;
         try { st = await this.deviceCall(entry, base, token, "ota-status"); }
         catch (_) { sawActivity = true; this.note(key, "Rebooting into the new build…"); continue; }
+        // After the reboot the board may answer the new handshake with a
+        // key the book doesn't know (reflashed meanwhile): say so and stop,
+        // rather than narrating a reboot for five minutes.
+        if (st && st.refused) { this.note(key, st.refused); return; }
         const b = (st && st.body) || {};
         const stateName = String(b.state || "").toUpperCase();
         if (b.error && b.error !== "NONE" && b.error_text) { this.note(key, "The board reports: " + b.error_text); return; }
@@ -1777,6 +1788,9 @@ const fleetBook = {
   callNote(e) {
     const s = String(e);
     return /^[A-Z]/.test(s) ? s : "Couldn't reach it: " + s;
+  },
+  heldOffNote() {
+    return "The board is holding this address off for a moment after wrong keys. Try again in a few seconds.";
   },
   noTokenNote() {
     return "No stored key for this board. Reflash it once with this app and one is minted and kept.";

@@ -345,8 +345,11 @@ fn main() -> Result<()> {
 
     println!("=== Break-Glass Receipts ===");
     println!(
-        "verified {} receipt entries ({} granted, {} denied)",
-        report.break_glass_receipts_verified, report.break_glass_granted, report.break_glass_denied
+        "verified {} receipt entries ({} granted, {} denied, {} redeemed)",
+        report.break_glass_receipts_verified,
+        report.break_glass_granted,
+        report.break_glass_denied,
+        report.break_glass_redeemed
     );
     println!();
 
