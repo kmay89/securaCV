@@ -822,6 +822,23 @@ pub(crate) fn cmd_share_verify(
     split_record: Option<&str>,
     passphrase_fd: Option<i32>,
 ) -> Result<()> {
+    let lines = share_verify_with(share, recipient_key, at_rest, split_record, || {
+        PassphraseInput::new(passphrase_fd)
+    })?;
+    print!("{lines}");
+    Ok(())
+}
+
+/// The body of `share verify`, with the passphrase source supplied by the
+/// caller (built only after the share and the split record are read, so a
+/// file refusal comes first); returns what the command prints.
+pub(crate) fn share_verify_with(
+    share: &str,
+    recipient_key: Option<&str>,
+    at_rest: bool,
+    split_record: Option<&str>,
+    passphrase_input: impl FnOnce() -> Result<PassphraseInput, PassphraseError>,
+) -> Result<String> {
     let file = decode_share_for_check(&read_share_text(share)?)?;
     if recipient_key.is_none() && !at_rest {
         return Err(anyhow!("{VERIFY_NEEDS_KEY}"));
@@ -835,21 +852,19 @@ pub(crate) fn cmd_share_verify(
         )?)?),
         None => None,
     };
-    let mut input = PassphraseInput::new(passphrase_fd).map_err(|e| anyhow!("{e}"))?;
-    let lines = match recipient_key {
+    let mut input = passphrase_input().map_err(|e| anyhow!("{e}"))?;
+    match recipient_key {
         Some(path) => {
             let key = read_recipient_key(path, &mut input)?;
-            share_verify_core(&file, ShareKey::Recipient(&key), record.as_ref())?
+            share_verify_core(&file, ShareKey::Recipient(&key), record.as_ref())
         }
         None => {
             let passphrase = input
                 .read("share passphrase: ")
                 .map_err(|e| no_source(e, NO_PASSPHRASE))?;
-            share_verify_core(&file, ShareKey::Passphrase(&passphrase), record.as_ref())?
+            share_verify_core(&file, ShareKey::Passphrase(&passphrase), record.as_ref())
         }
-    };
-    print!("{lines}");
-    Ok(())
+    }
 }
 
 /// What `share protect` prints.
@@ -891,6 +906,22 @@ pub(crate) fn cmd_share_protect(
     passphrase_fd: Option<i32>,
     output: &str,
 ) -> Result<()> {
+    let lines = share_protect_with(share, recipient_key, output, || {
+        PassphraseInput::new(passphrase_fd)
+    })?;
+    print!("{lines}");
+    Ok(())
+}
+
+/// The body of `share protect`, with the passphrase source supplied by the
+/// caller (built only after the share and the output path are checked);
+/// returns what the command prints.
+pub(crate) fn share_protect_with(
+    share: &str,
+    recipient_key: &str,
+    output: &str,
+    passphrase_input: impl FnOnce() -> Result<PassphraseInput, PassphraseError>,
+) -> Result<String> {
     let file = decode_share_for_check(&read_share_text(share)?)?;
     if file.header.protection == PROTECTION_AT_REST {
         return Err(anyhow!("{PROTECT_NEEDS_TRANSPORT}"));
@@ -898,15 +929,22 @@ pub(crate) fn cmd_share_protect(
     if exists(output) {
         return Err(anyhow!("{OUTPUT_EXISTS}"));
     }
-    let mut input = PassphraseInput::new(passphrase_fd).map_err(|e| anyhow!("{e}"))?;
+    let mut input = passphrase_input().map_err(|e| anyhow!("{e}"))?;
     let key = read_recipient_key(recipient_key, &mut input)?;
-    let passphrase = input
-        .read_new("new share passphrase: ", "repeat it: ")
-        .map_err(|e| no_source(e, NO_PASSPHRASE))?;
+    let passphrase = read_new_share_passphrase(&mut input)?;
     let (protected, lines) = share_protect_core(&file, &key, &passphrase, &mut OsCustodyRng)?;
     write_new_secret_file(output, protected.to_text().as_bytes())?;
-    print!("{lines}");
-    Ok(())
+    Ok(lines)
+}
+
+/// The new passphrase `share protect` wraps the share under. Read from the
+/// same source as the recipient-key passphrase just before it, so with no
+/// source at all that earlier read refuses first; this refusal is reached
+/// only when the source is lost between the two reads.
+fn read_new_share_passphrase(input: &mut PassphraseInput) -> Result<zeroize::Zeroizing<String>> {
+    input
+        .read_new("new share passphrase: ", "repeat it: ")
+        .map_err(|e| no_source(e, NO_PASSPHRASE))
 }
 
 /// Dispatch `break_glass custody …`.
@@ -1182,6 +1220,61 @@ File check:   intact
         assert_eq!(
             refused.to_string(),
             "a new recipient key needs a passphrase: run on a terminal or pass --passphrase-fd"
+        );
+    }
+
+    #[test]
+    fn share_commands_refuse_with_no_passphrase_source() {
+        // Driven through the real command bodies with an input that has no
+        // fd and never opens the terminal, the state of a run with neither.
+        const LINE: &str = "this needs a passphrase: run on a terminal or pass --passphrase-fd";
+        let temp = tempfile::tempdir().unwrap();
+        let write = |name: &str, text: &str| {
+            let path = temp.path().join(name);
+            std::fs::write(&path, text).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        let transport = write("alice.share", &alice_file().to_text());
+        let at_rest = write(
+            "alice.protected.share",
+            &ShareFile::decode(&h(&fx()["share_file_at_rest"]["file_hex"]))
+                .unwrap()
+                .to_text(),
+        );
+        let key = write("alice.reckey", s(&fx()["tek1"]["file_text"]));
+        let none = || Ok(PassphraseInput::without_terminal());
+        // `share verify --at-rest`: the share passphrase.
+        assert_eq!(
+            share_verify_with(&at_rest, None, true, None, none)
+                .unwrap_err()
+                .to_string(),
+            LINE
+        );
+        // `share verify --recipient-key`: the recipient-key passphrase,
+        // asked only after the key file parses.
+        assert_eq!(
+            share_verify_with(&transport, Some(&key), false, None, none)
+                .unwrap_err()
+                .to_string(),
+            LINE
+        );
+        // `share protect`: the recipient-key passphrase comes first, and a
+        // refused run writes nothing.
+        let output = temp.path().join("out.share");
+        assert_eq!(
+            share_protect_with(&transport, &key, &output.to_string_lossy(), none)
+                .unwrap_err()
+                .to_string(),
+            LINE
+        );
+        assert!(!output.exists());
+        // The new share passphrase `share protect` reads next refuses the
+        // same way when its source is gone.
+        assert_eq!(
+            read_new_share_passphrase(&mut PassphraseInput::without_terminal())
+                .unwrap_err()
+                .to_string(),
+            LINE
         );
     }
 
