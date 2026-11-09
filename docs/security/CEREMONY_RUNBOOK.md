@@ -60,7 +60,7 @@ The KSK ceremony roles, mapped onto ours. "Trustee" is the SecuraCV word;
 | KSK role | SecuraCV role | Holds | Runs | May not | Status |
 |---|---|---|---|---|---|
 | Ceremony Administrator | **Operator** | access to `DEVICE_KEY_SEED` on the host | `init`, `trustee enroll`, `policy propose` / `set`, `request`, `authorize`, `unseal`, `receipts`, `doctor`, `db-key` (derives the database key for observers), `log_anchor`, `log_verify` | hold a trustee signing key in the same ceremony | **PROC** — nothing stops one person holding both; the record must say so |
-| Crypto Officer | **Trustee** (one of *m*) | one Ed25519 signing-key file (32-byte hex seed, mode 0600) on their own machine | `approve --request`, `policy approve --proposal` | sign anything their own tool did not display | **CODE** — `approve --request` recomputes the hash from the file's fields before signing; `--request-hash` is labeled blind signing |
+| Crypto Officer | **Trustee** (one of *m*) | one Ed25519 trustee key file on their own machine, wrapped under a passphrase (TKG1, mode 0600; a plaintext 64-hex seed still signs, with a warning) | `approve --request`, `policy approve --proposal` | sign anything their own tool did not display | **CODE** — `approve --request` recomputes the hash from the file's fields before signing; `--request-hash` is labeled blind signing |
 | Requester of the act | **Requester** | nothing cryptographic | supplies `--requested-by`, `--reason`, `--case-ref`, `--requester-key` | — | **CODE** — consent-bound and recorded in the receipt; the requester key is recorded, not checked against a registry. The requester is often the operator; write that down |
 | Internal Witness | **Ceremony witness** — a person who is neither trustee nor operator | the exceptions register | nothing on the kernel | approve, operate | **PROC** → §3.4 witness co-signature. No kernel principal exists for this role |
 | Safe Security Controller | **Device-key custodian**; in keyguard mode also the **Vault-passphrase custodian** | where `DEVICE_KEY_SEED` lives; `SECURACV_VAULT_PASSPHRASE` (environment or secrets manager, never on disk) | sets the environment for the operator's commands | — | **CODE** for the on-disk part (the keyguard never writes the plaintext key); custody itself **PROC** |
@@ -263,8 +263,12 @@ incoming trustee (if any) for read-back.
 2. Each current trustee, on their own machine, offline:
    ```sh
    break_glass --ui plain policy approve --proposal change.proposal \
-     --trustee alice --signing-key alice.key --output alice.policy-approval
+     --trustee alice --signing-key alice.tkey --output alice.policy-approval
    ```
+   A wrapped key asks for its passphrase on the terminal with echo off; with
+   no terminal, pass `--passphrase-fd N`. It is never read from the command
+   line or an environment variable (**CODE**). A plaintext key still signs
+   but prints a warning naming `trustee wrap`: record it as an E-entry.
    The tool recomputes the change hash from the proposal's full contents and
    displays the diff; a tampered proposal is refused, not signed; the
    signature domain is disjoint from unlock approvals (**CODE**).
@@ -323,8 +327,9 @@ script hash, and a procedural cooling-off.
 3. Each trustee, on their own machine:
    ```sh
    break_glass --ui plain approve --request unlock.request \
-     --trustee alice --signing-key alice.key --output alice.approval
+     --trustee alice --signing-key alice.tkey --output alice.approval
    ```
+   The passphrase is asked for as in C2 step 2.
    The tool recomputes the request hash from the file's fields and displays
    every field before signing (**CODE**). `--request-hash` prints a
    blind-signing warning: any use is an E-entry, and in the high-stakes

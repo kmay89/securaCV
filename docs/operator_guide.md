@@ -134,9 +134,13 @@ prints a warning naming `trustee wrap`.
 The passphrase comes from the terminal with echo off, or from a file
 descriptor you name with `--passphrase-fd N` (one line per passphrase; for
 example `--passphrase-fd 0` with the passphrase piped in from a password
-manager). It is never read from the command line or
-an environment variable. With neither a terminal nor `--passphrase-fd`, the
-command refuses.
+manager). An fd that is itself a terminal is read the same way as the
+terminal: echo off, and a new passphrase typed twice. It is never read from
+the command line or an environment variable. With neither a terminal nor
+`--passphrase-fd`, the command refuses. While echo is off, Ctrl-C (or
+SIGTERM, SIGHUP) puts it back before the command dies, Ctrl-Z is ignored,
+and a line over 1024 bytes is refused and discarded from the terminal so the
+shell never reads the rest of it.
 
 The quorum policy records nothing about wrapping: the hub cannot check that a
 trustee's key is wrapped, so whether each trustee uses a wrapped key is a

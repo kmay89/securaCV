@@ -25,6 +25,15 @@
   {path} --id <id> --output <id>.tkey`. With a wrapped key, no terminal and
   no fd, the command refuses: `wrapped trustee key needs a passphrase: run
   on a terminal or pass --passphrase-fd`.
+- **The passphrase prompt.** While echo is off, Ctrl-C, SIGQUIT, SIGTERM
+  and SIGHUP put the terminal back before the command dies of the signal,
+  and Ctrl-Z is ignored, so the process is never stopped with echo off and
+  resumed reading with it on. A line over 1024 bytes is refused and the rest
+  of it discarded from the terminal, so the shell never reads it. An fd
+  named by `--passphrase-fd` that is itself a terminal is read with echo
+  off too. `approve` and `policy approve` always run their stage plain, so
+  no spinner redraws over the prompt, and the next steps `request` and
+  `policy propose` print name `--signing-key <name>.tkey`.
 - **`trustee enroll --generate` is deprecated** and prints a warning: it
   leaves the operator holding the trustee's secret.
 - **Nothing changes on the hub.** The quorum policy records nothing about

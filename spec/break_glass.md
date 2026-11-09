@@ -72,7 +72,7 @@ break_glass policy propose \
 # a tampered proposal is refused, not signed.
 break_glass policy approve \
   --proposal change.proposal --trustee alice \
-  --signing-key alice.key --output alice.policy-approval
+  --signing-key alice.tkey --output alice.policy-approval
 
 # Operator: apply with the collected approvals (within the same
 # 10-minute freshness window the proposal was created in)
@@ -184,7 +184,7 @@ hash" social-engineering call has nothing the tool will accept.
 break_glass approve \
   --request unlock.request \
   --trustee alice \
-  --signing-key /path/to/alice.signing.key \
+  --signing-key /path/to/alice.tkey \
   --output alice.approval
 ```
 
