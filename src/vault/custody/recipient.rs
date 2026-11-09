@@ -253,13 +253,18 @@ impl RecipientPublic {
 }
 
 /// A recipient secret: the X25519 secret and, for box 2, the ML-KEM-768
-/// key pair. No `Clone`, no `Serialize`, no `PartialEq`; `Debug` prints
-/// `<redacted>`.
+/// key pair, bound to the holder's Ed25519 signing public key (the one its
+/// TEK1 file records). No `Clone`, no `Serialize`, no `PartialEq`; `Debug`
+/// prints `<redacted>`.
 pub(crate) struct RecipientSecret {
     x25519: Zeroizing<[u8; 32]>,
     mlkem: Option<(Vec<u8>, Zeroizing<Vec<u8>>)>,
     holder: String,
     role: u8,
+    /// The signing key this recipient key is bound to. A share's roster
+    /// must pin exactly this key for the holder, or the holder's tool
+    /// refuses it (`ShareFile::open_transport`).
+    signing_public_key: [u8; 32],
 }
 
 impl fmt::Debug for RecipientSecret {
@@ -377,12 +382,13 @@ pub(crate) fn tek1_from_text(text: &[u8]) -> Result<Vec<u8>, CustodyError> {
 }
 
 impl RecipientSecret {
-    /// A fresh recipient key for `holder`: the X25519 secret is HPKE
-    /// `DeriveKeyPair` of 32 random bytes; `pq` adds an ML-KEM-768 key pair
-    /// (a `pqc-vault` build only).
+    /// A fresh recipient key for `holder`, bound to `signing_public_key`:
+    /// the X25519 secret is HPKE `DeriveKeyPair` of 32 random bytes; `pq`
+    /// adds an ML-KEM-768 key pair (a `pqc-vault` build only).
     pub(crate) fn generate(
         holder: &str,
         role: u8,
+        signing_public_key: &[u8; 32],
         pq: bool,
         rng: &mut dyn CustodyRng,
     ) -> Result<Self, CustodyError> {
@@ -399,6 +405,7 @@ impl RecipientSecret {
             mlkem,
             holder: holder.to_string(),
             role,
+            signing_public_key: *signing_public_key,
         })
     }
 
@@ -407,6 +414,7 @@ impl RecipientSecret {
     pub(crate) fn from_parts(
         holder: &str,
         role: u8,
+        signing_public_key: [u8; 32],
         x25519: [u8; 32],
         mlkem: Option<(Vec<u8>, Vec<u8>)>,
     ) -> Self {
@@ -415,12 +423,25 @@ impl RecipientSecret {
             mlkem: mlkem.map(|(pk, sk)| (pk, Zeroizing::new(sk))),
             holder: holder.to_string(),
             role,
+            signing_public_key,
         }
     }
 
     /// The holder id.
     pub(crate) fn holder(&self) -> &str {
         &self.holder
+    }
+
+    /// The Ed25519 signing public key this recipient key is bound to (for
+    /// an opened file, the one its TEK1 header records).
+    pub(crate) fn signing_public_key(&self) -> &[u8; 32] {
+        &self.signing_public_key
+    }
+
+    /// `recipient_key_hash` of this key under its own signing key: the
+    /// hash its TEK1 file records.
+    pub(crate) fn own_key_hash(&self) -> [u8; 32] {
+        self.key_hash(&self.signing_public_key)
     }
 
     /// The X25519 secret.
@@ -452,16 +473,16 @@ impl RecipientSecret {
         )
     }
 
-    /// The public file, without its binding signature: the caller signs
-    /// [`RecipientPublic::key_hash`] under
-    /// `DOMAIN_CUSTODY_RECIPIENT_BINDING` and sets it with
+    /// The public file, naming this key's own signing key, without its
+    /// binding signature: the caller signs [`RecipientPublic::key_hash`]
+    /// under `DOMAIN_CUSTODY_RECIPIENT_BINDING` and sets it with
     /// [`RecipientPublic::with_binding`].
-    pub(crate) fn public_unsigned(&self, signing_public_key: &[u8; 32]) -> RecipientPublic {
+    pub(crate) fn public_unsigned(&self) -> RecipientPublic {
         RecipientPublic {
             format: RECIPIENT_FORMAT.to_string(),
             holder: self.holder.clone(),
             role: role_name(self.role).to_string(),
-            signing_public_key: hex::encode(signing_public_key),
+            signing_public_key: hex::encode(self.signing_public_key),
             x25519: hex::encode(self.x25519_public()),
             mlkem768: self.mlkem.as_ref().map(|(pk, _)| hex::encode(pk)),
             binding_signature: String::new(),
@@ -486,19 +507,17 @@ impl RecipientSecret {
     /// seam: the AEAD layer without the KDF).
     pub(crate) fn wrap_with_kek(
         &self,
-        signing_public_key: &[u8; 32],
         argon_out: &[u8; 32],
         salt: &[u8; 16],
         nonce: &[u8; 12],
     ) -> Result<Vec<u8>, CustodyError> {
-        let recorded = self.key_hash(signing_public_key);
-        self.encode_tek1(signing_public_key, &recorded, argon_out, salt, nonce)
+        let recorded = self.own_key_hash();
+        self.encode_tek1(&recorded, argon_out, salt, nonce)
     }
 
     /// TEK1 bytes recording `recorded_hash` (tests pass a wrong one).
     fn encode_tek1(
         &self,
-        signing_public_key: &[u8; 32],
         recorded_hash: &[u8; 32],
         argon_out: &[u8; 32],
         salt: &[u8; 16],
@@ -517,7 +536,7 @@ impl RecipientSecret {
         out.push(self.holder.len() as u8);
         out.extend_from_slice(self.holder.as_bytes());
         out.push(self.role);
-        out.extend_from_slice(signing_public_key);
+        out.extend_from_slice(&self.signing_public_key);
         out.extend_from_slice(recorded_hash);
         let mut aad = TEK1_AAD_DOMAIN.to_vec();
         aad.extend_from_slice(&out);
@@ -535,7 +554,6 @@ impl RecipientSecret {
     /// and return the file's one line.
     pub(crate) fn wrap(
         &self,
-        signing_public_key: &[u8; 32],
         passphrase: &str,
         rng: &mut dyn CustodyRng,
     ) -> Result<String, CustodyError> {
@@ -543,7 +561,7 @@ impl RecipientSecret {
         let nonce: [u8; 12] = random_array(rng);
         let kek = keyguard_kek(passphrase, &salt, KEYGUARD_M_KIB, KEYGUARD_T, KEYGUARD_P)
             .map_err(|_| CustodyError::RecipientKey("key derivation failed"))?;
-        let tek1 = self.wrap_with_kek(signing_public_key, &kek, &salt, &nonce)?;
+        let tek1 = self.wrap_with_kek(&kek, &salt, &nonce)?;
         Ok(format!(
             "{RECIPIENT_KEY_TEXT_PREFIX} {}\n",
             hex::encode(tek1)
@@ -587,8 +605,9 @@ impl RecipientSecret {
             mlkem,
             holder: header.holder.clone(),
             role: header.role,
+            signing_public_key: header.signing_public_key,
         };
-        if secret.key_hash(&header.signing_public_key) != header.recipient_key_hash {
+        if secret.own_key_hash() != header.recipient_key_hash {
             return Err(CustodyError::RecipientKey(
                 "its keys do not match its recorded recipient hash",
             ));
@@ -639,17 +658,29 @@ pub(crate) mod tests {
     use crate::vault::custody::group::OsCustodyRng;
     use ed25519_dalek::SigningKey;
 
-    /// A signed public file for `secret` under `seed`.
+    /// The Ed25519 public key of a test seed.
+    pub(crate) fn spk_of(seed: &[u8; 32]) -> [u8; 32] {
+        SigningKey::from_bytes(seed).verifying_key().to_bytes()
+    }
+
+    /// A signed public file for `secret` under `seed`, which must be the
+    /// seed of the signing key `secret` is bound to.
     pub(crate) fn signed_public(secret: &RecipientSecret, seed: &[u8; 32]) -> RecipientPublic {
         let key = SigningKey::from_bytes(seed);
-        let unsigned = secret.public_unsigned(&key.verifying_key().to_bytes());
+        assert_eq!(
+            secret.signing_public_key(),
+            &key.verifying_key().to_bytes(),
+            "the test signs with the key the recipient secret is bound to"
+        );
+        let unsigned = secret.public_unsigned();
         let hash = unsigned.key_hash().unwrap();
         let sig = sign_ed25519_only(DOMAIN_CUSTODY_RECIPIENT_BINDING, &key, &hash);
         unsigned.with_binding(&sig)
     }
 
     pub(crate) fn recipient_secret_debug_is_redacted() {
-        let secret = RecipientSecret::from_parts("alice", HOLDER_ROLE_TRUSTEE, [0x42; 32], None);
+        let secret =
+            RecipientSecret::from_parts("alice", HOLDER_ROLE_TRUSTEE, [0x41; 32], [0x42; 32], None);
         let shown = format!("{secret:?}");
         assert_eq!(shown, "RecipientSecret('alice', <redacted>)");
         assert!(!shown.contains("4242"));
@@ -658,18 +689,18 @@ pub(crate) mod tests {
     #[test]
     fn tek1_round_trip_wrong_passphrase_and_param_refusal() {
         let mut rng = OsCustodyRng;
+        let signing_pk = spk_of(&[0x11; 32]);
         let secret =
-            RecipientSecret::generate("alice", HOLDER_ROLE_TRUSTEE, false, &mut rng).unwrap();
-        let signing_pk = SigningKey::from_bytes(&[0x11; 32])
-            .verifying_key()
-            .to_bytes();
-        let text = secret
-            .wrap(&signing_pk, "recipient pass", &mut rng)
-            .unwrap();
+            RecipientSecret::generate("alice", HOLDER_ROLE_TRUSTEE, &signing_pk, false, &mut rng)
+                .unwrap();
+        let text = secret.wrap("recipient pass", &mut rng).unwrap();
         assert!(text.starts_with("securacv-custody-recipient-key:v1 "));
         assert!(text.ends_with('\n'));
         let (opened, header) = RecipientSecret::unwrap(text.as_bytes(), "recipient pass").unwrap();
         assert_eq!(opened.x25519_secret(), secret.x25519_secret());
+        // The opened key carries the signing key its file records.
+        assert_eq!(opened.signing_public_key(), &signing_pk);
+        assert_eq!(opened.own_key_hash(), secret.own_key_hash());
         assert_eq!(header.holder, "alice");
         assert_eq!(header.role, HOLDER_ROLE_TRUSTEE);
         assert_eq!(header.signing_public_key, signing_pk);
@@ -714,15 +745,10 @@ pub(crate) mod tests {
         );
         // Keys that do not reproduce the recorded hash are refused: a file
         // whose header records alice's hash but seals other keys.
-        let other = RecipientSecret::from_parts("alice", HOLDER_ROLE_TRUSTEE, [9; 32], None);
+        let other =
+            RecipientSecret::from_parts("alice", HOLDER_ROLE_TRUSTEE, signing_pk, [9; 32], None);
         let lying = other
-            .encode_tek1(
-                &signing_pk,
-                &secret.key_hash(&signing_pk),
-                &kek,
-                &[1; 16],
-                &[2; 12],
-            )
+            .encode_tek1(&secret.key_hash(&signing_pk), &kek, &[1; 16], &[2; 12])
             .unwrap();
         assert_eq!(
             RecipientSecret::open_with_kek(&lying, &kek)
@@ -749,9 +775,15 @@ pub(crate) mod tests {
 
     #[test]
     fn binding_signature_checks_and_rejects_other_key() {
-        let secret =
-            RecipientSecret::generate("bob", HOLDER_ROLE_TRUSTEE, false, &mut OsCustodyRng)
-                .unwrap();
+        let bob_pk = spk_of(&[0x22; 32]);
+        let secret = RecipientSecret::generate(
+            "bob",
+            HOLDER_ROLE_TRUSTEE,
+            &bob_pk,
+            false,
+            &mut OsCustodyRng,
+        )
+        .unwrap();
         let public = signed_public(&secret, &[0x22; 32]);
         public.check_binding_ed25519().unwrap();
         assert_eq!(
@@ -762,10 +794,7 @@ pub(crate) mod tests {
         let refusal =
             "recipient file: its binding signature does not check against its own signing key";
         // Signed by another key, but naming bob's.
-        let bob_pk = SigningKey::from_bytes(&[0x22; 32])
-            .verifying_key()
-            .to_bytes();
-        let unsigned = secret.public_unsigned(&bob_pk);
+        let unsigned = secret.public_unsigned();
         let forged = sign_ed25519_only(
             DOMAIN_CUSTODY_RECIPIENT_BINDING,
             &SigningKey::from_bytes(&[0x33; 32]),
@@ -782,11 +811,16 @@ pub(crate) mod tests {
         );
         // An operator who substitutes their own recipient key under bob's
         // name and signing key cannot produce bob's signature.
-        let operator =
-            RecipientSecret::generate("bob", HOLDER_ROLE_TRUSTEE, false, &mut OsCustodyRng)
-                .unwrap();
+        let operator = RecipientSecret::generate(
+            "bob",
+            HOLDER_ROLE_TRUSTEE,
+            &bob_pk,
+            false,
+            &mut OsCustodyRng,
+        )
+        .unwrap();
         let swapped = operator
-            .public_unsigned(&bob_pk)
+            .public_unsigned()
             .with_binding(&public.binding_signature_bytes().unwrap());
         assert_eq!(
             swapped.check_binding_ed25519().unwrap_err().to_string(),
@@ -817,9 +851,14 @@ pub(crate) mod tests {
 
     #[test]
     fn recipient_json_rejects_unknown_fields() {
-        let secret =
-            RecipientSecret::generate("carol", HOLDER_ROLE_RECOVERY, false, &mut OsCustodyRng)
-                .unwrap();
+        let secret = RecipientSecret::generate(
+            "carol",
+            HOLDER_ROLE_RECOVERY,
+            &spk_of(&[0x33; 32]),
+            false,
+            &mut OsCustodyRng,
+        )
+        .unwrap();
         let public = signed_public(&secret, &[0x33; 32]);
         let text = public.to_json_text();
         assert!(RecipientPublic::from_json(text.as_bytes()).is_ok());
@@ -883,10 +922,9 @@ pub(crate) mod tests {
         // ...and TEK1, which reuses its KDF and AEAD in a layout of its
         // own, is not an MKG1 or a TKG1: each reader refuses the others'
         // magic before deriving anything.
-        let secret = RecipientSecret::from_parts("alice", HOLDER_ROLE_TRUSTEE, [1; 32], None);
-        let tek1 = secret
-            .wrap_with_kek(&[2; 32], &[3; 32], &salt, &nonce)
-            .unwrap();
+        let secret =
+            RecipientSecret::from_parts("alice", HOLDER_ROLE_TRUSTEE, [2; 32], [1; 32], None);
+        let tek1 = secret.wrap_with_kek(&[3; 32], &salt, &nonce).unwrap();
         assert_eq!(
             &tek1[4..19],
             &frozen[4..19],

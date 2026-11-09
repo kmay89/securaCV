@@ -145,6 +145,10 @@ pub(crate) enum CustodyError {
     /// A transport share opened with another holder's recipient key; the
     /// two 8-hex prefixes name the recorded and the supplied key hashes.
     WrongRecipient { recorded: String, yours: String },
+    /// A share whose roster pins, under the holder's own name and for the
+    /// holder's own recipient key, a signing key other than the one the
+    /// holder's recipient key file records (a faulty dealer).
+    PinnedSigningKeyDiffers,
     /// A share asked to open in a way its protection does not allow.
     WrongProtection,
     /// A share header that does not describe the share, recipient or
@@ -227,6 +231,11 @@ impl fmt::Display for CustodyError {
                 f,
                 "cannot open this share with the supplied recipient key: it was encrypted to \
                  recipient {recorded}…, yours is {yours}…"
+            ),
+            PinnedSigningKeyDiffers => write!(
+                f,
+                "custody: the roster in this share pins a different signing key for you than \
+                 your recipient key records"
             ),
             WrongProtection => write!(
                 f,

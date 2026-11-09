@@ -141,6 +141,7 @@ pub(crate) fn recipient_secret(id: &str) -> RecipientSecret {
     RecipientSecret::from_parts(
         id,
         holder_role(id),
+        h32(&fx()["recipients"][id]["signing_public_key"]),
         h32(&fx()["recipients"][id]["x25519_secret"]),
         None,
     )
@@ -605,9 +606,8 @@ mod tests {
         let salt: [u8; 16] = random_array(&mut rng);
         let nonce: [u8; 12] = random_array(&mut rng);
         assert_eq!(argon_out, h32(&t["argon_out"]));
-        let spk = h32(&fx()["recipients"]["alice"]["signing_public_key"]);
         let tek1 = recipient_secret("alice")
-            .wrap_with_kek(&spk, &argon_out, &salt, &nonce)
+            .wrap_with_kek(&argon_out, &salt, &nonce)
             .unwrap();
         assert_eq!(hex::encode(&tek1), s(&t["tek1_hex"]));
         assert_eq!(
@@ -620,7 +620,9 @@ mod tests {
             recipient_secret("alice").x25519_secret()
         );
         assert_eq!(header.holder, "alice");
+        let spk = h32(&fx()["recipients"]["alice"]["signing_public_key"]);
         assert_eq!(header.signing_public_key, spk);
+        assert_eq!(opened.signing_public_key(), &spk);
         assert_eq!(
             header.recipient_key_hash,
             h32(&fx()["recipients"]["alice"]["recipient_key_hash"])
@@ -713,10 +715,11 @@ mod tests {
             let key = SigningKey::from_bytes(&seed);
             let spk = key.verifying_key().to_bytes();
             assert_eq!(spk, h32(&want["signing_public_key"]));
-            let secret = RecipientSecret::generate(id, holder_role(id), false, &mut rng).unwrap();
+            let secret =
+                RecipientSecret::generate(id, holder_role(id), &spk, false, &mut rng).unwrap();
             assert_eq!(secret.x25519_secret(), &h32(&want["x25519_secret"]));
             assert_eq!(secret.x25519_public(), h32(&want["x25519_public"]));
-            let unsigned = secret.public_unsigned(&spk);
+            let unsigned = secret.public_unsigned();
             let hash = unsigned.key_hash().unwrap();
             assert_eq!(hash, h32(&want["recipient_key_hash"]));
             assert_eq!(secret.key_hash(&spk), hash);

@@ -172,6 +172,9 @@ pub(crate) const RECORD_COMMITMENTS_DIFFER: &str = "share check FAILED: the shar
 pub(crate) const RECORD_SPLIT_DIFFERS: &str = "share check FAILED: the share's split differs from the split record you were given (its holders, container, device key or bucket) — do not acknowledge it";
 /// The container copy is sealed under another KEK than the share's.
 pub(crate) const CONTAINER_OTHER_KEK: &str = "share check FAILED: the container copy names a different KEK than the share — do not acknowledge it; record a class-d-security exception";
+/// The share's roster pins, for this holder and this recipient key, a
+/// signing key other than the one the holder's recipient key file records.
+pub(crate) const PINNED_SIGNING_KEY_DIFFERS: &str = "share check FAILED: the roster in this share pins a different signing key for you than your recipient key records — do not acknowledge it; record a class-d-security exception (the dealer is faulty)";
 /// A wrong share passphrase.
 pub(crate) const WRONG_SHARE_PASSPHRASE: &str = "cannot open this share: wrong passphrase";
 /// `share protect` of a share that is already protected.
@@ -289,14 +292,14 @@ pub(crate) fn keygen_core(
     if pq && !cfg!(feature = "pqc-vault") {
         return Err(anyhow!("{PQ_NEEDS_FEATURE}"));
     }
-    let secret = RecipientSecret::generate(holder, role, pq, rng)?;
     let signing_public_key = signer.public_key();
-    let unsigned = secret.public_unsigned(&signing_public_key);
+    let secret = RecipientSecret::generate(holder, role, &signing_public_key, pq, rng)?;
+    let unsigned = secret.public_unsigned();
     let hash = unsigned.key_hash()?;
     let signature = signer.sign(DOMAIN_CUSTODY_RECIPIENT_BINDING, &hash)?;
     let public = unsigned.with_binding(&signature);
     public.check_binding_ed25519()?;
-    let key_text = zeroize::Zeroizing::new(secret.wrap(&signing_public_key, passphrase, rng)?);
+    let key_text = zeroize::Zeroizing::new(secret.wrap(passphrase, rng)?);
     // Open what is about to be written: a key this tool reports as made
     // must open with the passphrase just given, to the same keys.
     let (reopened, header) = RecipientSecret::unwrap(key_text.as_bytes(), passphrase)?;
@@ -370,9 +373,24 @@ pub(crate) fn cmd_recipient_keygen(
         &passphrase,
         &mut OsCustodyRng,
     )?;
-    write_new_secret_file(output_key, out.key_text.as_bytes())?;
-    write_new_public_file(output_public, out.public_text.as_bytes())?;
+    write_keygen_files(&out, output_key, output_public)?;
     print!("{}", out.lines);
+    Ok(())
+}
+
+/// Write keygen's two files: the secret file first (mode 0600), then the
+/// public file. If the public file cannot be written, the secret file this
+/// call just created is removed again: with no public half it is bound to
+/// nothing, and left behind it would make a retry refuse with
+/// [`OUTPUT_EXISTS`]. Errors name no path.
+fn write_keygen_files(out: &KeygenOutput, output_key: &str, output_public: &str) -> Result<()> {
+    write_new_secret_file(output_key, out.key_text.as_bytes())?;
+    if let Err(e) = write_new_public_file(output_public, out.public_text.as_bytes()) {
+        // `write_new_secret_file` created this file (create_new, no
+        // symlink), so removing it removes only what this call wrote.
+        let _ = std::fs::remove_file(output_key);
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -647,9 +665,31 @@ pub(crate) fn share_inspect_lines(file: &ShareFile, file_ok: bool) -> String {
     out
 }
 
+/// Read at most `SHARE_TEXT_MAX_BYTES + 1` bytes of a share file, so that
+/// an oversize file reaches `ShareFile::text_to_binary`'s own closed
+/// `longer than …` reason instead of a reader message. Only an I/O failure
+/// is refused here. Errors name no path.
+fn read_share_text(path: &str) -> Result<Vec<u8>> {
+    let file =
+        std::fs::File::open(path).map_err(|e| anyhow!("failed to read the share file: {e}"))?;
+    let mut out = Vec::new();
+    file.take(SHARE_TEXT_MAX_BYTES as u64 + 1)
+        .read_to_end(&mut out)
+        .map_err(|e| anyhow!("failed to read the share file: {e}"))?;
+    Ok(out)
+}
+
+/// The binary form of a share file's text (`share inspect` prints a
+/// refusal's bare closed reason).
 fn read_share_file(path: &str) -> Result<Vec<u8>> {
-    let text = read_capped(path, SHARE_TEXT_MAX_BYTES, "share file")?;
-    Ok(ShareFile::text_to_binary(&text)?)
+    Ok(ShareFile::text_to_binary(&read_share_text(path)?)?)
+}
+
+/// Decode a share file's text for `share verify` and `share protect`:
+/// every closed reason, the text form's included, prints as
+/// `share check FAILED: share file: {why}`.
+pub(crate) fn decode_share_for_check(text: &[u8]) -> Result<ShareFile> {
+    ShareFile::from_text(text).map_err(|e| anyhow!("share check FAILED: {e}"))
 }
 
 /// `break_glass share inspect`.
@@ -677,6 +717,7 @@ fn open_refusal(e: CustodyError) -> anyhow::Error {
     match e {
         CustodyError::WrongRecipient { .. } | CustodyError::Box2NeedsFeature => anyhow!("{e}"),
         CustodyError::WrongPassphrase => anyhow!("{WRONG_SHARE_PASSPHRASE}"),
+        CustodyError::PinnedSigningKeyDiffers => anyhow!("{PINNED_SIGNING_KEY_DIFFERS}"),
         CustodyError::WrongProtection => anyhow!("{VERIFY_NEEDS_KEY}"),
         other => anyhow!("share check FAILED: {other}"),
     }
@@ -781,8 +822,7 @@ pub(crate) fn cmd_share_verify(
     split_record: Option<&str>,
     passphrase_fd: Option<i32>,
 ) -> Result<()> {
-    let file = ShareFile::decode(&read_share_file(share)?)
-        .map_err(|e| anyhow!("share check FAILED: {e}"))?;
+    let file = decode_share_for_check(&read_share_text(share)?)?;
     if recipient_key.is_none() && !at_rest {
         return Err(anyhow!("{VERIFY_NEEDS_KEY}"));
     }
@@ -851,8 +891,7 @@ pub(crate) fn cmd_share_protect(
     passphrase_fd: Option<i32>,
     output: &str,
 ) -> Result<()> {
-    let file = ShareFile::decode(&read_share_file(share)?)
-        .map_err(|e| anyhow!("share check FAILED: {e}"))?;
+    let file = decode_share_for_check(&read_share_text(share)?)?;
     if file.header.protection == PROTECTION_AT_REST {
         return Err(anyhow!("{PROTECT_NEEDS_TRANSPORT}"));
     }
@@ -1239,6 +1278,72 @@ File check:   intact
         assert!(!fresh.exists(), "a refused rehearsal writes nothing");
     }
 
+    #[test]
+    fn rehearse_refuses_more_than_32_holders() {
+        // The holder-count check runs before any binding check or write.
+        let many: Vec<RecipientPublic> = (0..33).map(|_| recipient_public("alice")).collect();
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("too-many");
+        assert_eq!(
+            rehearse_core(2, &many, &dir, 1_794_312_000, &mut OsCustodyRng)
+                .unwrap_err()
+                .to_string(),
+            "custody rehearse: a split has at most 32 holders"
+        );
+        assert!(!dir.exists(), "a refused rehearsal writes nothing");
+    }
+
+    #[test]
+    fn keygen_refuses_one_file_for_both_outputs() {
+        // Refused before the signing key or any passphrase is read: the
+        // signing key named here does not exist.
+        assert_eq!(
+            cmd_recipient_keygen(
+                "alice",
+                "trustee",
+                "/nonexistent/securacv-test/alice.tkey",
+                false,
+                None,
+                "/nonexistent/securacv-test/same",
+                "/nonexistent/securacv-test/same",
+            )
+            .unwrap_err()
+            .to_string(),
+            "--output-key and --output-public must name different files"
+        );
+    }
+
+    #[test]
+    fn keygen_failed_public_write_leaves_no_key_file() {
+        let out = keygen_core(
+            "alice",
+            HOLDER_ROLE_TRUSTEE,
+            false,
+            &alice_signer(),
+            "kat passphrase",
+            &mut OsCustodyRng,
+        )
+        .unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let key = temp.path().join("alice.reckey");
+        let key_path = key.to_string_lossy().into_owned();
+        // The public file's directory does not exist.
+        let missing = temp.path().join("missing").join("alice.recipient");
+        let err = write_keygen_files(&out, &key_path, &missing.to_string_lossy()).unwrap_err();
+        assert!(err.to_string().starts_with("failed to create the file: "));
+        assert!(!err.to_string().contains(&*temp.path().to_string_lossy()));
+        assert!(!key.exists(), "the orphaned key file is removed");
+        // So a retry with a good public path is not refused by an orphan.
+        let public = temp.path().join("alice.recipient");
+        write_keygen_files(&out, &key_path, &public.to_string_lossy()).unwrap();
+        assert_eq!(std::fs::read(&key).unwrap(), out.key_text.as_bytes());
+        assert_eq!(std::fs::read(&public).unwrap(), out.public_text.as_bytes());
+        // A key file that already exists is never touched.
+        let err = write_keygen_files(&out, &key_path, &missing.to_string_lossy()).unwrap_err();
+        assert_eq!(err.to_string(), OUTPUT_EXISTS);
+        assert!(key.exists());
+    }
+
     /// Deterministic: the fixture's recipients and a KatRng stream.
     const REHEARSE_PIN: &str = "\
 REHEARSAL split b3030878: any 3 of 5 shares open a throwaway key that protects nothing
@@ -1335,10 +1440,13 @@ share checks passed. Keep this file apart from the hub; it is useless without yo
     fn share_verify_wrong_recipient_line() {
         let file = alice_file();
         let bob = recipient_secret("bob");
-        let spk: [u8; 32] = h(&fx()["recipients"]["alice"]["signing_public_key"])
-            .try_into()
-            .unwrap();
-        let yours = hex8(&bob.key_hash(&spk));
+        // "yours" is the hash bob's own key file records, never one rebuilt
+        // from a signing key the share supplies.
+        let yours = hex8(&bob.own_key_hash());
+        assert_eq!(
+            yours,
+            hex8(&h(&fx()["recipients"]["bob"]["recipient_key_hash"]))
+        );
         assert_eq!(
             share_verify_core(&file, ShareKey::Recipient(&bob), None)
                 .unwrap_err()
@@ -1367,6 +1475,201 @@ share checks passed. Keep this file apart from the hub; it is useless without yo
                 .unwrap_err()
                 .to_string(),
             SHARE_MISMATCH
+        );
+    }
+
+    /// The fixture's forged-pin share files (written by the Python
+    /// generator): alice's share whose roster pins a dealer-held signing
+    /// key under her name, sealed to her real X25519 key.
+    fn forged_pin_files() -> Vec<ShareFile> {
+        let rows: Vec<ShareFile> = fx()["negative"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| s(&c["name"]).contains("pins a dealer-held signing key"))
+            .map(|c| ShareFile::decode(&h(&c["file_hex"])).unwrap())
+            .collect();
+        assert_eq!(rows.len(), 2);
+        rows
+    }
+
+    #[test]
+    fn share_verify_pinned_signing_key_line() {
+        for file in forged_pin_files() {
+            // The forged file is internally consistent: a split record built
+            // from its own header matches it, so only the pin check stands
+            // between the holder and "share checks passed".
+            let own_record = SplitRecord::from_header(&file.header);
+            assert_eq!(
+                share_verify_core(
+                    &file,
+                    ShareKey::Recipient(&recipient_secret("alice")),
+                    Some(&own_record)
+                )
+                .unwrap_err()
+                .to_string(),
+                PINNED_SIGNING_KEY_DIFFERS
+            );
+            // share protect opens the same way and writes nothing.
+            assert_eq!(
+                share_protect_core(
+                    &file,
+                    &recipient_secret("alice"),
+                    "new share passphrase",
+                    &mut OsCustodyRng
+                )
+                .unwrap_err()
+                .to_string(),
+                PINNED_SIGNING_KEY_DIFFERS
+            );
+        }
+        assert_eq!(
+            PINNED_SIGNING_KEY_DIFFERS,
+            "share check FAILED: the roster in this share pins a different signing key for you than your recipient key records — do not acknowledge it; record a class-d-security exception (the dealer is faulty)"
+        );
+    }
+
+    #[test]
+    fn share_verify_container_other_kek_line() {
+        use crate::vault::custody::container::{encode_mkc1_with, CRYPTO_MODE_CLASSICAL};
+        use sha2::{Digest, Sha256};
+        // A dealer seals alice's real share over a header whose container
+        // copy is a well-formed MKC1 under another KEK, its hash recorded
+        // honestly: the file decodes, the share opens and checks, and only
+        // the container's KEK commitment gives it away.
+        let mut header = alice_file().header.clone();
+        let other = Kek::generate(&mut KatRng::new("other-kek-test"));
+        header.container = encode_mkc1_with(
+            &other,
+            [1; 16],
+            [2; 12],
+            CRYPTO_MODE_CLASSICAL,
+            &[3; 32],
+            None,
+        )
+        .unwrap();
+        header.container_sha256 = Sha256::digest(&header.container).into();
+        let sealed = ShareFile::seal_transport_box1_derand(
+            header,
+            &fixture_share("alice"),
+            &recipient_public("alice"),
+            &[9; 32],
+        )
+        .unwrap();
+        let file = decode_share_for_check(sealed.to_text().as_bytes()).unwrap();
+        assert_eq!(
+            share_verify_core(&file, ShareKey::Recipient(&recipient_secret("alice")), None)
+                .unwrap_err()
+                .to_string(),
+            CONTAINER_OTHER_KEK
+        );
+        assert_eq!(
+            CONTAINER_OTHER_KEK,
+            "share check FAILED: the container copy names a different KEK than the share — do not acknowledge it; record a class-d-security exception"
+        );
+    }
+
+    #[test]
+    fn share_verify_text_form_refusal_lines() {
+        // Every closed reason of the text form carries the same prefix as
+        // the binary ones, for verify and protect alike.
+        let text = s(&fx()["share_files"]["alice"]["text"]);
+        let upper = format!("securacv-share:v1 {}\n", "ABCD");
+        let cases: [(Vec<u8>, &str); 5] = [
+            (
+                upper.into_bytes(),
+                "share check FAILED: share file: the hex form is malformed",
+            ),
+            (
+                text.replace('\n', "\r\n").into_bytes(),
+                "share check FAILED: share file: the hex form is malformed",
+            ),
+            (
+                format!("{text}\n").into_bytes(),
+                "share check FAILED: share file: the hex form is malformed",
+            ),
+            (
+                text.replacen("securacv-share:v1", "securacv-share:v2", 1)
+                    .into_bytes(),
+                "share check FAILED: share file: not a securacv-share:v1 file",
+            ),
+            (
+                // An odd number of hex digits.
+                format!(
+                    "securacv-share:v1 {}\n",
+                    &text["securacv-share:v1 ".len()..text.len() - 2]
+                )
+                .into_bytes(),
+                "share check FAILED: share file: the hex form is malformed",
+            ),
+        ];
+        for (input, want) in cases {
+            assert_eq!(
+                decode_share_for_check(&input).unwrap_err().to_string(),
+                want
+            );
+        }
+        // A truncated binary inside a well-formed line.
+        let hex = &text["securacv-share:v1 ".len()..text.len() - 1];
+        let short = format!("securacv-share:v1 {}\n", &hex[..hex.len() - 2]);
+        assert_eq!(
+            decode_share_for_check(short.as_bytes())
+                .unwrap_err()
+                .to_string(),
+            "share check FAILED: share file: truncated"
+        );
+        // An oversize file is read one byte past the cap, so the closed
+        // reason (not a reader message) is what the holder sees.
+        let temp = tempfile::tempdir().unwrap();
+        let big = temp.path().join("big.share");
+        std::fs::write(&big, vec![b'a'; SHARE_TEXT_MAX_BYTES + 100]).unwrap();
+        let read = read_share_text(&big.to_string_lossy()).unwrap();
+        assert_eq!(read.len(), SHARE_TEXT_MAX_BYTES + 1);
+        assert_eq!(
+            decode_share_for_check(&read).unwrap_err().to_string(),
+            "share check FAILED: share file: longer than 16384 bytes"
+        );
+        // `share inspect` keeps the bare closed reason.
+        assert_eq!(
+            read_share_file(&big.to_string_lossy())
+                .unwrap_err()
+                .to_string(),
+            "share file: longer than 16384 bytes"
+        );
+        // The commands themselves refuse the same way, before any key or
+        // passphrase is read.
+        let upper_file = temp.path().join("upper.share");
+        std::fs::write(&upper_file, "securacv-share:v1 ABCD\n").unwrap();
+        let path = upper_file.to_string_lossy();
+        assert_eq!(
+            cmd_share_verify(
+                &path,
+                Some("/nonexistent/securacv-test/k"),
+                false,
+                None,
+                None
+            )
+            .unwrap_err()
+            .to_string(),
+            "share check FAILED: share file: the hex form is malformed"
+        );
+        assert_eq!(
+            cmd_share_protect(
+                &path,
+                "/nonexistent/securacv-test/k",
+                None,
+                "/nonexistent/securacv-test/o"
+            )
+            .unwrap_err()
+            .to_string(),
+            "share check FAILED: share file: the hex form is malformed"
+        );
+        // A file that cannot be read is not a share check: no prefix.
+        assert!(
+            cmd_share_verify("/nonexistent/securacv-test/s", None, true, None, None)
+                .unwrap_err()
+                .to_string()
+                .starts_with("failed to read the share file: ")
         );
     }
 
@@ -1479,6 +1782,7 @@ share checks passed. Keep this file apart from the hub; it is useless without yo
             RECORD_COMMITMENTS_DIFFER,
             RECORD_SPLIT_DIFFERS,
             CONTAINER_OTHER_KEK,
+            PINNED_SIGNING_KEY_DIFFERS,
             WRONG_SHARE_PASSPHRASE,
             PROTECT_NEEDS_TRANSPORT,
             REHEARSE_DIR_NOT_EMPTY,

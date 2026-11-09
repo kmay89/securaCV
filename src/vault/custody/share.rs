@@ -582,6 +582,14 @@ impl ShareFile {
 
     /// Open a transport share with the holder's recipient key. The caller
     /// then runs the Pedersen check (`vss::check_share`).
+    ///
+    /// Before any HPKE runs, the roster pin is checked against the key the
+    /// holder's own recipient key file records: the share's own roster
+    /// entry must pin exactly that signing key, and the recorded recipient
+    /// hash must be the one computed under it. The hash is never rebuilt
+    /// from a signing key the share header supplies, so a dealer who pins
+    /// a key of their own under the holder's name (with the hash
+    /// recomputed over it) is refused, not reported as checked.
     pub(crate) fn open_transport(
         &self,
         key: &RecipientSecret,
@@ -590,12 +598,25 @@ impl ShareFile {
             return Err(CustodyError::WrongProtection);
         };
         let own = self.header.own_entry().ok_or(CustodyError::SealMismatch)?;
-        let yours = key.key_hash(&own.signing_public_key);
-        if key.holder() != self.header.holder
-            || !bool::from(yours.ct_eq(&self.header.recipient_key_hash))
-        {
+        let recorded = &self.header.recipient_key_hash;
+        let yours = key.own_key_hash();
+        let same_holder = key.holder() == self.header.holder;
+        let pinned_is_yours = own.signing_public_key == *key.signing_public_key();
+        let hash_is_yours = bool::from(yours.ct_eq(recorded));
+        if same_holder && !pinned_is_yours {
+            // The share names this holder but pins another signing key for
+            // them. If the recorded hash is this very recipient key's, under
+            // either signing key, the box is sealed to the holder's key and
+            // only the pin is wrong: say so. Otherwise it is simply another
+            // recipient's share.
+            let under_pinned = key.key_hash(&own.signing_public_key);
+            if hash_is_yours || bool::from(under_pinned.ct_eq(recorded)) {
+                return Err(CustodyError::PinnedSigningKeyDiffers);
+            }
+        }
+        if !same_holder || !pinned_is_yours || !hash_is_yours {
             return Err(CustodyError::WrongRecipient {
-                recorded: super::hex8(&self.header.recipient_key_hash),
+                recorded: super::hex8(recorded),
                 yours: super::hex8(&yours),
             });
         }
@@ -809,7 +830,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::vault::custody::container::{encode_mkc1_with, CRYPTO_MODE_CLASSICAL};
     use crate::vault::custody::group::OsCustodyRng;
-    use crate::vault::custody::recipient::tests::signed_public;
+    use crate::vault::custody::recipient::tests::{signed_public, spk_of};
     use crate::vault::custody::recipient::HOLDER_ROLE_TRUSTEE;
     use crate::vault::custody::vss::{check_share, deal, Kek};
     use crate::vault::custody::BOX_HPKE_X25519;
@@ -842,7 +863,13 @@ pub(crate) mod tests {
         let mut publics = Vec::new();
         for i in 1..=m {
             let id = IDS[usize::from(i) - 1];
-            let secret = RecipientSecret::from_parts(id, HOLDER_ROLE_TRUSTEE, [0x40 + i; 32], None);
+            let secret = RecipientSecret::from_parts(
+                id,
+                HOLDER_ROLE_TRUSTEE,
+                spk_of(&[i; 32]),
+                [0x40 + i; 32],
+                None,
+            );
             publics.push(signed_public(&secret, &[i; 32]));
             secrets.push(secret);
         }
@@ -1001,6 +1028,108 @@ pub(crate) mod tests {
             .unwrap_err(),
             CustodyError::SealMismatch
         );
+    }
+
+    /// The dealer's forgery of a roster pin: holder `index`'s own roster
+    /// entry pins `forged_spk`; with `recompute`, the recorded recipient
+    /// hash (header and roster) is recomputed over the forged key, else the
+    /// honest hash is kept. The box is sealed, honestly, to the holder's
+    /// real X25519 key, so only the pin is false.
+    pub(crate) fn forge_pin(
+        split: &TestSplit,
+        index: u8,
+        forged_spk: [u8; 32],
+        recompute: bool,
+    ) -> ShareFile {
+        let i = usize::from(index) - 1;
+        let mut header = split.header(index, PROTECTION_TRANSPORT_BOX1);
+        let secret = &split.secrets[i];
+        header.roster[i].signing_public_key = forged_spk;
+        if recompute {
+            let forged_hash = secret.key_hash(&forged_spk);
+            header.roster[i].recipient_key_hash = forged_hash;
+            header.recipient_key_hash = forged_hash;
+        }
+        let (enc, ct) = super::super::hpke::seal_base_derand(
+            &secret.x25519_public(),
+            HPKE_INFO_SHARE,
+            &header.to_bytes(),
+            &split.shares[i].to_bytes()[..],
+            &[0x77; 32],
+        )
+        .unwrap();
+        let forged = ShareFile {
+            header,
+            body: ShareBody::Transport {
+                enc: enc.to_vec(),
+                ct: ct.try_into().unwrap(),
+            },
+        };
+        // A well-formed file: the decoder has no way to know the pin is
+        // false, and the box really opens with the holder's key.
+        ShareFile::decode(&forged.encode()).unwrap()
+    }
+
+    #[test]
+    fn roster_pin_must_be_the_holders_own_signing_key() {
+        let split = test_split(2, 3, ROLE_OPERATIONAL);
+        let alice = &split.secrets[0];
+        // A key the dealer holds, pinned under alice's name.
+        let dealer_key = spk_of(&[0xd1; 32]);
+        for recompute in [true, false] {
+            let forged = forge_pin(&split, 1, dealer_key, recompute);
+            // The box itself opens with alice's X25519 key: without the pin
+            // check, every share check would pass.
+            let ShareBody::Transport { enc, ct } = &forged.body else {
+                panic!("a transport share");
+            };
+            let enc: [u8; 32] = enc.as_slice().try_into().unwrap();
+            assert!(super::super::hpke::open_base(
+                alice.x25519_secret(),
+                &enc,
+                HPKE_INFO_SHARE,
+                &forged.header_bytes(),
+                ct
+            )
+            .is_ok());
+            let err = forged.open_transport(alice).unwrap_err();
+            assert_eq!(err, CustodyError::PinnedSigningKeyDiffers, "{recompute}");
+            assert_eq!(
+                err.to_string(),
+                "custody: the roster in this share pins a different signing key for you than \
+                 your recipient key records"
+            );
+            // Protecting at rest goes through the same open, so the forged
+            // pin never reaches an at-rest file.
+        }
+        // The same recipient key bound to the dealer's key (what the dealer
+        // could build from alice's public file) is not alice's key file, and
+        // a different holder's key is still simply the wrong recipient.
+        let forged = forge_pin(&split, 1, dealer_key, true);
+        assert!(matches!(
+            forged.open_transport(&split.secrets[1]).unwrap_err(),
+            CustodyError::WrongRecipient { .. }
+        ));
+        // Alice's honest share still opens.
+        let honest = split.sealed(1);
+        assert_eq!(
+            honest.open_transport(alice).unwrap().scalars(),
+            split.shares[0].scalars()
+        );
+        // A recipient key for alice under another signing key of her own
+        // (not this share's recipient at all) is the wrong recipient, not
+        // a forged pin: neither hash names this recipient key.
+        let other = RecipientSecret::from_parts(
+            "alice",
+            HOLDER_ROLE_TRUSTEE,
+            spk_of(&[0xa2; 32]),
+            [0x99; 32],
+            None,
+        );
+        assert!(matches!(
+            honest.open_transport(&other).unwrap_err(),
+            CustodyError::WrongRecipient { .. }
+        ));
     }
 
     #[test]
@@ -1501,9 +1630,14 @@ pub(crate) mod tests {
         // A real ML-KEM-768 recipient key: the share seals with box 2 and
         // opens with both halves of the recipient key.
         let mut split = test_split(2, 3, ROLE_OPERATIONAL);
-        let secret =
-            RecipientSecret::generate("alice", HOLDER_ROLE_TRUSTEE, true, &mut OsCustodyRng)
-                .unwrap();
+        let secret = RecipientSecret::generate(
+            "alice",
+            HOLDER_ROLE_TRUSTEE,
+            &spk_of(&[1; 32]),
+            true,
+            &mut OsCustodyRng,
+        )
+        .unwrap();
         split.publics[0] = signed_public(&secret, &[1; 32]);
         split.secrets[0] = secret;
         let mut header = split.header(1, PROTECTION_TRANSPORT_BOX2);
@@ -1526,6 +1660,7 @@ pub(crate) mod tests {
         let x_only = RecipientSecret::from_parts(
             "alice",
             HOLDER_ROLE_TRUSTEE,
+            *split.secrets[0].signing_public_key(),
             *split.secrets[0].x25519_secret(),
             None,
         );

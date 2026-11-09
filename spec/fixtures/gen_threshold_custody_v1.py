@@ -1269,6 +1269,46 @@ def _set(file_bytes, at, value):
     return _refile(bytes(b))
 
 
+def forged_pin_cases(alice, classical, op, recipients):
+    """A faulty dealer pins a signing key it holds under alice's name. The
+    file is well formed and its box is sealed, honestly, to alice's real
+    X25519 key, so it decodes and its box opens; alice's tool must refuse it
+    by comparing the pin with the signing key her own recipient key file
+    records, before any HPKE runs. Two forms: the recorded recipient hash
+    recomputed over the forged key, and the honest hash kept."""
+    st = Stream("negative/forged-pin")
+    dealer_spk = ed25519_public(st.bytes(32))
+    a = recipients["alice"]
+    x_pk = bytes.fromhex(a["x25519_public"])
+    honest_rkh = bytes.fromhex(a["recipient_key_hash"])
+    forged_rkh = recipient_key_hash("alice", HOLDER_TRUSTEE, dealer_spk, x_pk)
+    assert forged_rkh != honest_rkh
+    commitments = [bytes.fromhex(c) for c in op["commitments"]]
+    row = op["shares"][0]
+    pt = bytes.fromhex(row["s"]) + bytes.fromhex(row["t"])
+    out = []
+    for label, rkh in (("its recipient hash recomputed over that key", forged_rkh),
+                       ("its honest recipient hash kept", honest_rkh)):
+        roster = [
+            (i + 1, hid, bytes.fromhex(recipients[hid]["signing_public_key"]), bytes.fromhex(recipients[hid]["recipient_key_hash"]))
+            for i, hid in enumerate(op["holders"])
+        ]
+        roster[0] = (1, "alice", dealer_spk, rkh)
+        header = share_header(
+            PROTECTION_BOX1, ROLE_OPERATIONAL, 0x01, bytes.fromhex(op["split_id"]), commitments, classical,
+            alice[89:121], op["n"], op["m"], 1, roster,
+        )
+        enc, ct = seal_base_derand(x_pk, HPKE_INFO_SHARE, header, pt, st.bytes(32))
+        assert open_hpke(0, bytes.fromhex(a["x25519_secret"]), enc, HPKE_INFO_SHARE, header, ct) == pt
+        out.append({
+            "name": "alice's share whose roster pins a dealer-held signing key for her, " + label,
+            "kind": "share_file", "holder": "alice",
+            "file_hex": with_file_check(header + transport_body(enc, ct)).hex(),
+            "open_error": "custody: the roster in this share pins a different signing key for you than your recipient key records",
+        })
+    return out
+
+
 def negatives(k, r, kek_salt, master, classical, share_files, splits, recipients, tek1):
     out = []
     op = splits["operational"]
@@ -1325,6 +1365,7 @@ def negatives(k, r, kek_salt, master, classical, share_files, splits, recipients
         ("container hash", 57, "share file: the container copy does not match its recorded hash"),
         ("device key", 89, None),
         ("issued bucket", 121, "share file: the issued bucket must be a multiple of 600 seconds"),
+        ("index", 131, "share file: index must be between 1 and 5"),
         ("holder id", holder_at, "share file: holder id must be 1 to 64 bytes of [A-Za-z0-9._-]"),
         ("recipient key hash", rkh_at, "share file: the holder entry does not match the roster entry at index 1"),
         ("commitment 1", c1_at, "share file: commitment 1 is not a canonical ristretto255 encoding"),
@@ -1352,6 +1393,9 @@ def negatives(k, r, kek_salt, master, classical, share_files, splits, recipients
                 "error": "share file: threshold must be between 2 and 32 and at most the holder count"})
     out.append({"name": "a 65-byte holder id", "kind": "share_file", "holder": "alice", "file_hex": _set(alice, 132, 65).hex(),
                 "error": "share file: holder id must be 1 to 64 bytes of [A-Za-z0-9._-]"})
+    out.append({"name": "an index above m", "kind": "share_file", "holder": "alice", "file_hex": _set(alice, 131, 6).hex(),
+                "error": "share file: index must be between 1 and 5"})
+    out.extend(forged_pin_cases(alice, classical, op, recipients))
     out.append({"name": "a box-2 share with a 32-byte encapsulation", "kind": "share_file", "holder": "alice",
                 "file_hex": _set(alice, 6, PROTECTION_BOX2).hex(),
                 "error": "share file: encapsulation length 32 does not match protection 2"})
