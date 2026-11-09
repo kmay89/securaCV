@@ -134,6 +134,10 @@ pub(crate) enum CustodyError {
     Container(&'static str),
     /// `custody container: ciphertext length {n} is out of bounds`.
     ContainerCiphertextLength(u32),
+    /// `custody container: unsupported version {v}`.
+    ContainerVersion(u8),
+    /// `custody container: unsupported suite {s}`.
+    ContainerSuite(u8),
     /// A recipient public file refused (`recipient file: {why}`).
     Recipient(&'static str),
     /// A recipient secret file refused (`recipient key file: {why}`).
@@ -223,6 +227,8 @@ impl fmt::Display for CustodyError {
                 f,
                 "custody container: ciphertext length {n} is out of bounds (17 to 4096)"
             ),
+            ContainerVersion(v) => write!(f, "custody container: unsupported version {v}"),
+            ContainerSuite(s) => write!(f, "custody container: unsupported suite {s}"),
             Recipient(why) => write!(f, "recipient file: {why}"),
             RecipientKey(why) => write!(f, "recipient key file: {why}"),
             RecipientKeyVersion(v) => write!(f, "recipient key file: unsupported version {v}"),

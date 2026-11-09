@@ -229,11 +229,15 @@ fn parse(bytes: &[u8]) -> Result<Parsed<'_>, CustodyError> {
     if c.take(4)? != MKC1_MAGIC {
         return Err(CustodyError::Container("bad magic"));
     }
-    if c.array::<1>()?[0] != 1 {
-        return Err(CustodyError::Container("unsupported version"));
+    // A v1 reader refuses any other version, and any other suite, by
+    // number (design record §5; SHR1 and TEK1 do the same).
+    let version = c.array::<1>()?[0];
+    if version != 1 {
+        return Err(CustodyError::ContainerVersion(version));
     }
-    if c.array::<1>()?[0] != SUITE_V1 {
-        return Err(CustodyError::Container("unsupported suite"));
+    let suite = c.array::<1>()?[0];
+    if suite != SUITE_V1 {
+        return Err(CustodyError::ContainerSuite(suite));
     }
     let crypto_mode = c.array::<1>()?[0];
     if !matches!(
@@ -584,5 +588,44 @@ pub(crate) mod tests {
         let mut kem_len = c.clone();
         kem_len[87] = 1;
         assert!(decode_mkc1_header(&kem_len).is_err());
+    }
+
+    #[test]
+    fn mkc1_refuses_another_version_or_suite_by_number() {
+        let kek = Kek::generate(&mut OsCustodyRng);
+        let c = encode_mkc1_with(
+            &kek,
+            [1; 16],
+            [2; 12],
+            CRYPTO_MODE_CLASSICAL,
+            &[9; 32],
+            None,
+        )
+        .unwrap();
+        assert!(open_mkc1(&c, &kek).is_ok());
+        for (at, byte, line) in [
+            (4, 2u8, "custody container: unsupported version 2"),
+            (4, 0, "custody container: unsupported version 0"),
+            (4, 255, "custody container: unsupported version 255"),
+            (5, 2, "custody container: unsupported suite 2"),
+            (5, 0, "custody container: unsupported suite 0"),
+        ] {
+            let mut other = c.clone();
+            other[at] = byte;
+            assert_eq!(decode_mkc1_header(&other).unwrap_err().to_string(), line);
+            assert_eq!(open_mkc1(&other, &kek).unwrap_err().to_string(), line);
+        }
+        let mut v2 = c.clone();
+        v2[4] = 2;
+        assert_eq!(
+            decode_mkc1_header(&v2).unwrap_err(),
+            CustodyError::ContainerVersion(2)
+        );
+        let mut s2 = c;
+        s2[5] = 2;
+        assert_eq!(
+            decode_mkc1_header(&s2).unwrap_err(),
+            CustodyError::ContainerSuite(2)
+        );
     }
 }
