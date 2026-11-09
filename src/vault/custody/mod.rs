@@ -51,6 +51,7 @@
 
 mod error;
 pub(crate) mod group;
+pub(crate) mod hpke;
 pub(crate) mod vss;
 
 pub(crate) use error::{CustodyError, ShareReason};
