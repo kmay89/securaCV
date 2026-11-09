@@ -578,6 +578,29 @@ enum PolicyCommand {
     },
 }
 
+/// The `--ui` mode a command's stage runs in. `approve` and `policy
+/// approve` may ask for a trustee-key passphrase on the terminal; a spinner
+/// redrawing its line every 120 ms would erase that prompt, so those two
+/// always run their stage plain, whatever `--ui` says.
+fn stage_ui_flag<'a>(command: &Command, ui: &'a str) -> &'a str {
+    if matches!(
+        command,
+        Command::Approve { .. }
+            | Command::Policy {
+                command: PolicyCommand::Approve { .. }
+            }
+    ) {
+        "plain"
+    } else {
+        ui
+    }
+}
+
+/// Printed after each "each trustee runs" line: where the passphrase of a
+/// wrapped key comes from.
+const TRUSTEE_PASSPHRASE_NOTE: &str =
+    "  (a wrapped key's passphrase is read from the terminal, or from --passphrase-fd N)";
+
 pub fn run() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
@@ -590,7 +613,11 @@ pub fn run() -> Result<()> {
                 command: PolicyCommand::Show { .. }
             }
         );
-    let ui = ui::Ui::from_args(Some(&args.ui), is_tty, disable_pretty);
+    let ui = ui::Ui::from_args(
+        Some(stage_ui_flag(&args.command, &args.ui)),
+        is_tty,
+        disable_pretty,
+    );
 
     match args.command {
         Command::Request {
@@ -1147,15 +1174,17 @@ fn cmd_request(
             "Send the FILE to each trustee (full context, never a bare hash). Each trustee runs:"
         );
         println!(
-            "  break_glass approve --request {} --trustee <name> --signing-key <hex-key-file> --output <name>.approval",
+            "  break_glass approve --request {} --trustee <name> --signing-key <name>.tkey --output <name>.approval",
             path
         );
+        println!("{TRUSTEE_PASSPHRASE_NOTE}");
     } else {
         println!("Share the request hash with trustees. Each trustee runs:");
         println!(
-            "  break_glass approve --request-hash {} --trustee <name> --signing-key <hex-key-file> --output <name>.approval",
+            "  break_glass approve --request-hash {} --trustee <name> --signing-key <name>.tkey --output <name>.approval",
             hex32(&request_hash)
         );
+        println!("{TRUSTEE_PASSPHRASE_NOTE}");
         println!(
             "Better: re-run with --output-request <file> and send trustees the full context \
              file instead, so their tool can show them what they are signing."
@@ -1558,9 +1587,10 @@ fn cmd_policy_propose(
         current.n
     );
     println!(
-        "  break_glass policy approve --proposal {} --trustee <name> --signing-key <hex-key-file> --output <name>.policy-approval",
+        "  break_glass policy approve --proposal {} --trustee <name> --signing-key <name>.tkey --output <name>.policy-approval",
         output
     );
+    println!("{TRUSTEE_PASSPHRASE_NOTE}");
     println!("Then apply within the window: break_glass policy set … --approvals <files>");
     Ok(())
 }
@@ -3008,17 +3038,22 @@ fn pubkey_lines(id: Option<&str>, public_key: &[u8; 32]) -> String {
     trustee_key_lines(&header, public_key)
 }
 
-/// Read a NEW passphrase for a trustee key: one line from the fd, or typed
-/// twice on the terminal.
+/// The prompt for a NEW trustee-key passphrase.
+fn new_passphrase_prompt(id: &str) -> String {
+    format!("new passphrase for trustee key '{id}': ")
+}
+
+/// The prompt that asks for a new passphrase a second time.
+const REPEAT_PASSPHRASE_PROMPT: &str = "repeat it: ";
+
+/// Read a NEW passphrase for a trustee key: one line from a plain fd, or
+/// typed twice where a prompt is shown.
 fn read_new_trustee_passphrase(
     id: &str,
     input: &mut PassphraseInput,
 ) -> Result<zeroize::Zeroizing<String>> {
     input
-        .read_new(
-            &format!("new passphrase for trustee key '{id}': "),
-            "repeat it: ",
-        )
+        .read_new(&new_passphrase_prompt(id), REPEAT_PASSPHRASE_PROMPT)
         .map_err(|e| match e {
             PassphraseError::NoSource => anyhow!("{NO_NEW_PASSPHRASE_SOURCE}"),
             PassphraseError::Failed(e) => e,
@@ -5168,9 +5203,16 @@ mod tests {
             }
         }
         // And the trustee-key code paths read neither argv nor the
-        // environment directly. The needles are built at run time so this
-        // test does not match itself.
+        // environment directly: the key loader, the reader, and this file's
+        // own code, where the trustee commands and their passphrase plumbing
+        // live. cli.rs is scanned up to its test module, which names the
+        // needles in its own assertions; the needles and the marker are
+        // built at run time so this test does not match itself.
+        let cli_src = include_str!("cli.rs");
+        let marker = ["#[cfg", "(test)]"].concat();
+        let cli_code = &cli_src[..cli_src.find(&marker).expect("cli.rs has a test module")];
         for (file, src) in [
+            ("cli.rs", cli_code),
             ("trustee_key.rs", include_str!("trustee_key.rs")),
             ("passphrase.rs", include_str!("../crypto/passphrase.rs")),
         ] {
@@ -5180,9 +5222,66 @@ mod tests {
                 ["var", "_os("].concat(),
                 ["get", "env("].concat(),
                 ["PASS", "PHRASE\""].concat(),
+                ["PASS", "WORD\""].concat(),
             ] {
                 assert!(!src.contains(&needle), "{file} contains {needle}");
             }
         }
+    }
+
+    /// `approve` and `policy approve` may prompt for a passphrase on the
+    /// terminal, so their stage never runs the spinner that would erase the
+    /// prompt, even under `--ui pretty`. Every other command keeps its flag.
+    #[test]
+    fn signing_commands_run_their_stage_plain() {
+        let parse = |argv: &[&str]| {
+            let mut full = vec!["break_glass"];
+            full.extend_from_slice(argv);
+            Args::try_parse_from(full).unwrap_or_else(|e| panic!("{e}"))
+        };
+        let approve = parse(&[
+            "approve",
+            "--request-hash",
+            "00",
+            "--trustee",
+            "alice",
+            "--signing-key",
+            "alice.tkey",
+            "--output",
+            "a.approval",
+        ]);
+        let policy_approve = parse(&[
+            "policy",
+            "approve",
+            "--proposal",
+            "p",
+            "--trustee",
+            "alice",
+            "--signing-key",
+            "alice.tkey",
+            "--passphrase-fd",
+            "0",
+            "--output",
+            "a",
+        ]);
+        let drill = parse(&["drill"]);
+        for ui in ["auto", "pretty", "plain"] {
+            assert_eq!(stage_ui_flag(&approve.command, ui), "plain");
+            assert_eq!(stage_ui_flag(&policy_approve.command, ui), "plain");
+            assert_eq!(stage_ui_flag(&drill.command, ui), ui);
+        }
+    }
+
+    #[test]
+    fn new_passphrase_prompts_are_exact() {
+        assert_eq!(
+            new_passphrase_prompt("carol"),
+            "new passphrase for trustee key 'carol': "
+        );
+        assert_eq!(REPEAT_PASSPHRASE_PROMPT, "repeat it: ");
+        assert_eq!(
+            TRUSTEE_PASSPHRASE_NOTE,
+            "  (a wrapped key's passphrase is read from the terminal, or from --passphrase-fd N)"
+        );
     }
 }
