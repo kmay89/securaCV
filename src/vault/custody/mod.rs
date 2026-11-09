@@ -54,6 +54,8 @@ mod error;
 pub(crate) mod group;
 pub(crate) mod hpke;
 pub(crate) mod recipient;
+pub(crate) mod share;
+pub(crate) mod split_record;
 pub(crate) mod vss;
 
 pub(crate) use error::{CustodyError, ShareReason};

@@ -35,6 +35,7 @@ pub(crate) enum ShareReason {
     RecoveryReleaseBox,
     NotShareText,
     HexMalformed,
+    IssuedBucket,
 }
 
 impl fmt::Display for ShareReason {
@@ -85,6 +86,7 @@ impl fmt::Display for ShareReason {
             RecoveryReleaseBox => write!(f, "a recovery share names a release box"),
             NotShareText => write!(f, "not a securacv-share:v1 file"),
             HexMalformed => write!(f, "the hex form is malformed"),
+            IssuedBucket => write!(f, "the issued bucket must be a multiple of 600 seconds"),
         }
     }
 }
@@ -139,6 +141,14 @@ pub(crate) enum CustodyError {
     RecipientKeyVersion(u8),
     /// A split record refused (`split record: {why}`).
     SplitRecord(&'static str),
+    /// A transport share opened with another holder's recipient key; the
+    /// two 8-hex prefixes name the recorded and the supplied key hashes.
+    WrongRecipient { recorded: String, yours: String },
+    /// A share asked to open in a way its protection does not allow.
+    WrongProtection,
+    /// A share header that does not describe the share, recipient or
+    /// split it is sealed with.
+    SealMismatch,
 }
 
 impl From<ShareReason> for CustodyError {
@@ -212,6 +222,20 @@ impl fmt::Display for CustodyError {
             RecipientKey(why) => write!(f, "recipient key file: {why}"),
             RecipientKeyVersion(v) => write!(f, "recipient key file: unsupported version {v}"),
             SplitRecord(why) => write!(f, "split record: {why}"),
+            WrongRecipient { recorded, yours } => write!(
+                f,
+                "cannot open this share with the supplied recipient key: it was encrypted to \
+                 recipient {recorded}…, yours is {yours}…"
+            ),
+            WrongProtection => write!(
+                f,
+                "custody: this share is not protected that way (a transport share opens with a \
+                 recipient key, a protected one with its passphrase)"
+            ),
+            SealMismatch => write!(
+                f,
+                "custody: the share header does not describe this share, recipient or split"
+            ),
         }
     }
 }
