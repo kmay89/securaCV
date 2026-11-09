@@ -3,11 +3,25 @@
 //! Two sources exist, and only two:
 //!
 //! - the controlling terminal, `/dev/tty`, with echo turned off (libc
-//!   `tcgetattr` / `tcsetattr`) for the length of one line and restored
-//!   afterwards, even on error;
+//!   `tcgetattr` / `tcsetattr`) for the length of one line;
 //! - a file descriptor the caller names (`--passphrase-fd N`), read one line
 //!   per passphrase, so a script can pipe it in without it ever being a
-//!   command-line argument.
+//!   command-line argument. An fd that is itself a terminal is read like the
+//!   controlling terminal: echo off, and the prompt shown on it when it is
+//!   open for writing.
+//!
+//! While echo is off ([`EchoGuard`]) the saved terminal settings come back
+//! on every return path, error returns included, and on the four signals
+//! that would otherwise kill the process mid-prompt (SIGINT, SIGQUIT,
+//! SIGTERM, SIGHUP): a handler restores the settings and re-raises, so the
+//! process still dies of the signal. Job-control stop (SIGTSTP, Ctrl-Z) is
+//! ignored for that window, so the process is never stopped with echo off
+//! and resumed with the shell's echo back on. Two paths are not covered: a
+//! release build aborts on panic (`panic = "abort"`) without running Drop,
+//! and SIGKILL cannot be caught; after either, `stty sane` restores the
+//! terminal. A line longer than [`MAX_PASSPHRASE_LEN`] typed at a terminal is
+//! refused and the rest of it discarded from the terminal's input queue, so
+//! no piece of it is left for the shell to read, show, and save in history.
 //!
 //! There is deliberately no argv flag and no environment variable: argv is
 //! world-readable through `/proc/<pid>/cmdline` and lands in shell history,
@@ -84,24 +98,33 @@ impl PassphraseInput {
     }
 
     /// Read one passphrase: the next line of the fd, or one line typed at the
-    /// terminal after `prompt` with echo off. An empty passphrase is refused.
+    /// terminal after `prompt` with echo off. An fd that is a terminal is
+    /// read with echo off too, after `prompt` when the fd is open for
+    /// writing. An empty passphrase is refused.
     pub(crate) fn read(&mut self, prompt: &str) -> Result<Zeroizing<String>, PassphraseError> {
         match self.fd {
-            Some(fd) => read_passphrase_line(fd),
+            Some(fd) => read_from_fd(fd, prompt),
             None if self.terminal => read_from_tty(prompt),
             None => Err(PassphraseError::NoSource),
         }
     }
 
-    /// Read a NEW passphrase. From the fd it is one line. On the terminal it
-    /// is typed twice (`prompt`, then `repeat_prompt`) and must match.
+    /// Read a NEW passphrase. From a plain fd (a pipe, a file) it is one
+    /// line. Where a prompt is shown (the terminal, or an fd that is a
+    /// terminal open for writing) it is typed twice (`prompt`, then
+    /// `repeat_prompt`) and must match, so a typo typed blind never becomes
+    /// the passphrase.
     pub(crate) fn read_new(
         &mut self,
         prompt: &str,
         repeat_prompt: &str,
     ) -> Result<Zeroizing<String>, PassphraseError> {
         let first = self.read(prompt)?;
-        if self.fd.is_some() {
+        let confirm = match self.fd {
+            Some(fd) => fd_prompts(fd),
+            None => true,
+        };
+        if !confirm {
             return Ok(first);
         }
         let second = self.read(repeat_prompt)?;
@@ -128,6 +151,43 @@ fn check_fd_open(_fd: i32) -> Result<(), PassphraseError> {
     Err(failed("--passphrase-fd needs a Unix host"))
 }
 
+/// Whether `fd` is a terminal.
+#[cfg(unix)]
+fn fd_is_tty(fd: i32) -> bool {
+    // SAFETY: isatty only queries the fd.
+    unsafe { libc::isatty(fd) == 1 }
+}
+
+/// Whether a read from `fd` shows its prompt: `fd` is a terminal open for
+/// writing. A terminal opened read-only (`3</dev/tty`) is still read with
+/// echo off, but nothing can be written to it.
+#[cfg(unix)]
+fn fd_prompts(fd: i32) -> bool {
+    // SAFETY: F_GETFL only queries the descriptor's status flags.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    fd_is_tty(fd) && flags >= 0 && flags & libc::O_ACCMODE != libc::O_RDONLY
+}
+
+#[cfg(not(unix))]
+fn fd_prompts(_fd: i32) -> bool {
+    false
+}
+
+/// One passphrase from the fd `--passphrase-fd` names: echo off when it is
+/// a terminal, else a plain line read.
+#[cfg(unix)]
+fn read_from_fd(fd: i32, prompt: &str) -> Result<Zeroizing<String>, PassphraseError> {
+    if fd_is_tty(fd) {
+        return read_line_echo_off(fd, fd_prompts(fd).then_some(prompt));
+    }
+    read_passphrase_line(fd)
+}
+
+#[cfg(not(unix))]
+fn read_from_fd(fd: i32, _prompt: &str) -> Result<Zeroizing<String>, PassphraseError> {
+    read_passphrase_line(fd)
+}
+
 /// Turn the raw bytes of one line into a passphrase: drop one trailing
 /// `\r`, then require UTF-8 and at least one byte.
 fn finish_line(mut line: Zeroizing<Vec<u8>>) -> Result<Zeroizing<String>, PassphraseError> {
@@ -146,7 +206,12 @@ fn finish_line(mut line: Zeroizing<Vec<u8>>) -> Result<Zeroizing<String>, Passph
 /// second passphrase on the same fd stays for the next read.
 #[cfg(unix)]
 fn read_raw_line(fd: i32) -> Result<(Zeroizing<Vec<u8>>, bool), PassphraseError> {
-    let mut line = Zeroizing::new(Vec::with_capacity(64));
+    use zeroize::Zeroize;
+    // Allocated once, at the cap: the length check below runs before every
+    // push, so the buffer never grows. A Vec that grew would free its
+    // outgrown buffers with passphrase bytes still in them, and Zeroizing
+    // wipes only the buffer it holds at drop.
+    let mut line = Zeroizing::new(Vec::with_capacity(MAX_PASSPHRASE_LEN));
     let mut saw_any = false;
     loop {
         let mut byte = 0u8;
@@ -167,15 +232,17 @@ fn read_raw_line(fd: i32) -> Result<(Zeroizing<Vec<u8>>, bool), PassphraseError>
             return Ok((line, true));
         }
         if line.len() == MAX_PASSPHRASE_LEN {
+            byte.zeroize();
             return Err(failed(format!(
                 "the passphrase is longer than {MAX_PASSPHRASE_LEN} bytes"
             )));
         }
         line.push(byte);
+        byte.zeroize();
     }
 }
 
-/// One passphrase line from `--passphrase-fd`.
+/// One passphrase line from a `--passphrase-fd` that is not a terminal.
 #[cfg(unix)]
 fn read_passphrase_line(fd: i32) -> Result<Zeroizing<String>, PassphraseError> {
     let (line, saw_any) = read_raw_line(fd)?;
@@ -192,56 +259,212 @@ fn read_passphrase_line(_fd: i32) -> Result<Zeroizing<String>, PassphraseError> 
     Err(failed("--passphrase-fd needs a Unix host"))
 }
 
-/// Restores a terminal's saved attributes when dropped, so an error or a
-/// panic between "echo off" and "echo on" never leaves the terminal mute.
 #[cfg(unix)]
-struct EchoGuard {
-    fd: i32,
-    saved: libc::termios,
-}
+pub(crate) use echo::EchoGuard;
 
+/// Terminal echo off, and back on however the window ends.
 #[cfg(unix)]
-impl Drop for EchoGuard {
-    fn drop(&mut self) {
-        // SAFETY: restores attributes read from this same fd by tcgetattr.
+mod echo {
+    use super::{failed, PassphraseError};
+    use std::cell::UnsafeCell;
+    use std::mem::MaybeUninit;
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+
+    /// The signals that would otherwise kill the process between "echo off"
+    /// and "echo on": Ctrl-C, Ctrl-\, `kill`, and a closed terminal.
+    const FATAL: [libc::c_int; 4] = [libc::SIGINT, libc::SIGQUIT, libc::SIGTERM, libc::SIGHUP];
+
+    /// The settings to put back, reachable from a signal handler. A lock is
+    /// not async-signal-safe, so exclusivity comes from `ACTIVE` (at most
+    /// one guard exists) and the handler reads the slot only while `SAVED`
+    /// says it holds something.
+    struct Slot(UnsafeCell<MaybeUninit<libc::termios>>);
+
+    // SAFETY: written only by the one guard `ACTIVE` admits, before `SAVED`
+    // is set; read only after `SAVED` is swapped from true.
+    unsafe impl Sync for Slot {}
+
+    static SAVED_TERMIOS: Slot = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+    static SAVED: AtomicBool = AtomicBool::new(false);
+    static ACTIVE: AtomicBool = AtomicBool::new(false);
+    static FD: AtomicI32 = AtomicI32::new(-1);
+
+    /// Put the terminal back, if it is still owed. `swap` so the guard's
+    /// Drop and a signal arriving mid-drop never both restore.
+    fn restore() {
+        if !SAVED.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        // SAFETY: `SAVED` was true, so the slot was written from this fd by
+        // tcgetattr; tcsetattr is async-signal-safe (POSIX.1-2008).
         unsafe {
-            libc::tcsetattr(self.fd, libc::TCSANOW, &self.saved);
+            let saved = (*SAVED_TERMIOS.0.get()).assume_init_ref();
+            libc::tcsetattr(FD.load(Ordering::SeqCst), libc::TCSANOW, saved);
+        }
+    }
+
+    /// Restore the terminal, then die of the signal the user sent: the
+    /// default disposition, re-raised, so the parent sees "killed by
+    /// SIGINT", not an exit code. The signal is blocked while this runs, so
+    /// the re-raise is delivered when it returns.
+    pub(super) extern "C" fn restore_and_die(sig: libc::c_int) {
+        restore();
+        // SAFETY: signal and raise are async-signal-safe.
+        unsafe {
+            libc::signal(sig, libc::SIG_DFL);
+            libc::raise(sig);
+        }
+    }
+
+    /// What one signal's disposition was before the guard took it.
+    pub(super) fn current_action(sig: libc::c_int) -> libc::sigaction {
+        // SAFETY: sigaction is plain data; a null new action only queries.
+        unsafe {
+            let mut old: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(sig, std::ptr::null(), &mut old);
+            old
+        }
+    }
+
+    fn set_action(sig: libc::c_int, action: &libc::sigaction) {
+        // SAFETY: `action` is a valid disposition, from sigaction or built
+        // below with an `extern "C"` handler of the right shape.
+        unsafe {
+            libc::sigaction(sig, action, std::ptr::null_mut());
+        }
+    }
+
+    /// Echo off on one terminal until dropped (the newline still echoes, so
+    /// the next output starts on a fresh line). While held, SIGINT, SIGQUIT,
+    /// SIGTERM and SIGHUP restore the terminal and re-raise (a signal the
+    /// process already ignored stays ignored), and SIGTSTP is ignored. Drop
+    /// restores the terminal first, then every disposition. One guard at a
+    /// time per process.
+    pub(crate) struct EchoGuard {
+        fatal: [Option<libc::sigaction>; FATAL.len()],
+        tstp: libc::sigaction,
+    }
+
+    impl EchoGuard {
+        /// Turn echo off on `fd`. Not a terminal is
+        /// [`PassphraseError::NoSource`]. Allocates nothing on success.
+        pub(crate) fn engage(fd: i32) -> Result<Self, PassphraseError> {
+            // SAFETY: isatty only queries the fd.
+            if unsafe { libc::isatty(fd) } != 1 {
+                return Err(PassphraseError::NoSource);
+            }
+            if ACTIVE.swap(true, Ordering::SeqCst) {
+                return Err(failed(
+                    "another passphrase prompt already holds the terminal",
+                ));
+            }
+            let mut saved = MaybeUninit::<libc::termios>::uninit();
+            // SAFETY: tcgetattr fills `saved` or returns nonzero.
+            if unsafe { libc::tcgetattr(fd, saved.as_mut_ptr()) } != 0 {
+                ACTIVE.store(false, Ordering::SeqCst);
+                return Err(PassphraseError::NoSource);
+            }
+            // SAFETY: tcgetattr returned zero, so it wrote the whole struct.
+            let saved = unsafe { saved.assume_init() };
+            // Save before anything changes, so a handler never finds the
+            // terminal quiet with nothing to restore.
+            // SAFETY: `ACTIVE` is ours and no handler is installed yet.
+            unsafe { (*SAVED_TERMIOS.0.get()).write(saved) };
+            FD.store(fd, Ordering::SeqCst);
+            SAVED.store(true, Ordering::SeqCst);
+
+            // Handlers BEFORE echo goes off, so no signal finds the terminal
+            // quiet and the default disposition in place.
+            let mut fatal = [None; FATAL.len()];
+            for (slot, sig) in fatal.iter_mut().zip(FATAL) {
+                let previous = current_action(sig);
+                if previous.sa_sigaction == libc::SIG_IGN {
+                    continue; // ignored (nohup, a background job): keep it so
+                }
+                // SAFETY: sigaction is plain data; sigfillset fills the mask.
+                let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+                action.sa_sigaction =
+                    restore_and_die as extern "C" fn(libc::c_int) as libc::sighandler_t;
+                // SAFETY: a valid mask to fill.
+                unsafe { libc::sigfillset(&mut action.sa_mask) };
+                set_action(sig, &action);
+                *slot = Some(previous);
+            }
+            let tstp = current_action(libc::SIGTSTP);
+            // SAFETY: sigaction is plain data; SIG_IGN is a valid disposition.
+            let mut ignore: libc::sigaction = unsafe { std::mem::zeroed() };
+            ignore.sa_sigaction = libc::SIG_IGN;
+            set_action(libc::SIGTSTP, &ignore);
+            // From here Drop undoes everything above.
+            let guard = EchoGuard { fatal, tstp };
+
+            let mut quiet = saved;
+            quiet.c_lflag &= !libc::ECHO;
+            quiet.c_lflag |= libc::ECHONL;
+            // SAFETY: attributes derived from the ones just read.
+            if unsafe { libc::tcsetattr(fd, libc::TCSAFLUSH, &quiet) } != 0 {
+                return Err(failed(format!(
+                    "could not turn terminal echo off: {}",
+                    std::io::Error::last_os_error()
+                )));
+            }
+            // tcsetattr succeeds when it applied ANY of the changes, so read
+            // back the one bit this guard exists for.
+            let mut now = MaybeUninit::<libc::termios>::uninit();
+            // SAFETY: as above; `now` is read only on a zero return.
+            let echo_off = unsafe {
+                libc::tcgetattr(fd, now.as_mut_ptr()) == 0
+                    && now.assume_init().c_lflag & libc::ECHO == 0
+            };
+            if !echo_off {
+                return Err(failed("the terminal kept echo on"));
+            }
+            Ok(guard)
+        }
+    }
+
+    impl Drop for EchoGuard {
+        fn drop(&mut self) {
+            // Terminal first, dispositions second: the other order leaves a
+            // window with the default disposition back and echo still off.
+            restore();
+            for (slot, sig) in self.fatal.iter().zip(FATAL) {
+                if let Some(previous) = slot {
+                    set_action(sig, previous);
+                }
+            }
+            set_action(libc::SIGTSTP, &self.tstp);
+            FD.store(-1, Ordering::SeqCst);
+            ACTIVE.store(false, Ordering::SeqCst);
         }
     }
 }
 
-/// Write `prompt` to the terminal `fd` and read one line with echo off.
-/// Echo is turned off BEFORE the prompt is written, so anything typed after
-/// the prompt appears is never shown; the newline still echoes (ECHONL) so
-/// the next output starts on a fresh line. Attributes are restored on every
-/// path. `fd` must be a terminal.
+/// Read one line from the terminal `fd` with echo off ([`EchoGuard`]),
+/// after writing `prompt` to it when given. Echo is turned off BEFORE the
+/// prompt is written, so anything typed after the prompt appears is never
+/// shown; the newline still echoes (ECHONL) so the next output starts on a
+/// fresh line. If the read fails (a line longer than
+/// [`MAX_PASSPHRASE_LEN`]), the terminal's pending input is discarded before
+/// echo comes back, so the rest of the line never reaches the shell. `fd`
+/// must be a terminal; anything else is [`PassphraseError::NoSource`].
 #[cfg(unix)]
 pub(crate) fn read_line_echo_off(
     fd: i32,
-    prompt: &str,
+    prompt: Option<&str>,
 ) -> Result<Zeroizing<String>, PassphraseError> {
-    // SAFETY: isatty only queries the fd.
-    if unsafe { libc::isatty(fd) } != 1 {
-        return Err(PassphraseError::NoSource);
+    let guard = EchoGuard::engage(fd)?;
+    if let Some(prompt) = prompt {
+        write_all_fd(fd, prompt.as_bytes())?;
     }
-    // SAFETY: termios is plain data; tcgetattr fills it or fails.
-    let mut saved: libc::termios = unsafe { std::mem::zeroed() };
-    if unsafe { libc::tcgetattr(fd, &mut saved) } != 0 {
-        return Err(PassphraseError::NoSource);
-    }
-    let mut quiet = saved;
-    quiet.c_lflag &= !libc::ECHO;
-    quiet.c_lflag |= libc::ECHONL;
-    // SAFETY: sets attributes derived from the ones just read.
-    if unsafe { libc::tcsetattr(fd, libc::TCSAFLUSH, &quiet) } != 0 {
-        return Err(failed(format!(
-            "could not turn terminal echo off: {}",
-            std::io::Error::last_os_error()
-        )));
-    }
-    let guard = EchoGuard { fd, saved };
-    write_all_fd(fd, prompt.as_bytes())?;
-    let (line, _) = read_raw_line(fd)?;
+    let line = match read_raw_line(fd) {
+        Ok((line, _)) => line,
+        Err(e) => {
+            // SAFETY: tcflush only discards this terminal's pending input.
+            unsafe { libc::tcflush(fd, libc::TCIFLUSH) };
+            return Err(e);
+        }
+    };
     drop(guard);
     finish_line(line)
 }
@@ -275,7 +498,7 @@ fn read_from_tty(prompt: &str) -> Result<Zeroizing<String>, PassphraseError> {
         .custom_flags(libc::O_NOCTTY)
         .open("/dev/tty")
         .map_err(|_| PassphraseError::NoSource)?;
-    read_line_echo_off(tty.as_raw_fd(), prompt)
+    read_line_echo_off(tty.as_raw_fd(), Some(prompt))
 }
 
 #[cfg(not(unix))]
@@ -360,13 +583,42 @@ mod tests {
     }
 
     #[test]
+    fn the_line_buffer_is_allocated_once_and_never_grows() {
+        // A buffer that grew would free its outgrown copies of the
+        // passphrase unwiped. A line at the cap keeps the first allocation.
+        let fd = pipe_with(&[b'a'; MAX_PASSPHRASE_LEN]);
+        let (line, saw_any) = read_raw_line(fd).unwrap();
+        assert!(saw_any);
+        assert_eq!(line.len(), MAX_PASSPHRASE_LEN);
+        assert_eq!(
+            line.capacity(),
+            Vec::<u8>::with_capacity(MAX_PASSPHRASE_LEN).capacity()
+        );
+        unsafe { libc::close(fd) };
+    }
+
+    #[test]
     fn a_non_terminal_fd_is_no_source() {
         let fd = pipe_with(b"secret\n");
         assert!(matches!(
-            read_line_echo_off(fd, "pw: "),
+            read_line_echo_off(fd, Some("pw: ")),
+            Err(PassphraseError::NoSource)
+        ));
+        assert!(matches!(
+            EchoGuard::engage(fd),
             Err(PassphraseError::NoSource)
         ));
         unsafe { libc::close(fd) };
+    }
+
+    /// Every test that turns echo off holds this: the guard is one per
+    /// process and installs process-wide signal dispositions.
+    #[cfg(target_os = "linux")]
+    static TERMINAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(target_os = "linux")]
+    fn serialize() -> std::sync::MutexGuard<'static, ()> {
+        TERMINAL.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Open a pseudo-terminal pair: (controller, terminal).
@@ -413,17 +665,39 @@ mod tests {
         }
     }
 
+    /// Read from the controller until exactly `expected` has been shown (or
+    /// five seconds pass), and check it.
+    #[cfg(target_os = "linux")]
+    fn expect_shown(controller: i32, expected: &[u8]) {
+        let mut out = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while out.len() < expected.len() && std::time::Instant::now() < deadline {
+            out.extend_from_slice(&drain(controller, 200));
+        }
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(expected)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn lflag(fd: i32) -> libc::tcflag_t {
+        let mut t: libc::termios = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { libc::tcgetattr(fd, &mut t) }, 0);
+        t.c_lflag
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn terminal_echo_is_off_while_typing_and_restored_after() {
+        let _serial = serialize();
         let (controller, terminal) = open_pty();
-        let mut before: libc::termios = unsafe { std::mem::zeroed() };
-        assert_eq!(unsafe { libc::tcgetattr(terminal, &mut before) }, 0);
-        assert_ne!(before.c_lflag & libc::ECHO, 0, "a fresh pty echoes");
+        let before = lflag(terminal);
+        assert_ne!(before & libc::ECHO, 0, "a fresh pty echoes");
 
         let (tx, rx) = std::sync::mpsc::channel();
         let reader = std::thread::spawn(move || {
-            let got = read_line_echo_off(terminal, "trustee key passphrase: ")
+            let got = read_line_echo_off(terminal, Some("trustee key passphrase: "))
                 .map(|s| s.to_string())
                 .map_err(|e| e.to_string());
             tx.send(got).unwrap();
@@ -443,16 +717,277 @@ mod tests {
             !echoed.windows(6).any(|w| w == b"s3cret"),
             "the passphrase was echoed: {echoed:?}"
         );
+        assert_eq!(lflag(terminal), before, "terminal attributes restored");
+        unsafe {
+            libc::close(terminal);
+            libc::close(controller);
+        }
+    }
 
-        let mut after: libc::termios = unsafe { std::mem::zeroed() };
-        assert_eq!(unsafe { libc::tcgetattr(terminal, &mut after) }, 0);
+    /// An over-long line typed at a terminal is refused, and the rest of
+    /// it does not stay queued on the terminal for the shell to read, show,
+    /// run and save in its history.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_over_long_terminal_line_leaves_nothing_queued() {
+        let _serial = serialize();
+        let (controller, terminal) = open_pty();
+        let before = lflag(terminal);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let got = read_line_echo_off(terminal, Some("pw: "))
+                .map(|s| s.to_string())
+                .map_err(|e| e.to_string());
+            tx.send(got).unwrap();
+        });
+        expect_shown(controller, b"pw: ");
+        let mut typed = vec![b'a'; MAX_PASSPHRASE_LEN + 76];
+        typed.push(b'\n');
+        write_all_fd(controller, &typed).unwrap();
+        let got = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the reader returns");
+        reader.join().unwrap();
+        let err = got.expect_err("an over-long line is refused");
+        assert_eq!(err, "the passphrase is longer than 1024 bytes");
+        // Nothing of the line is left on the terminal's input queue (the
+        // terminal side, where the shell would read it).
+        let mut pending: libc::c_int = -1;
         assert_eq!(
-            after.c_lflag, before.c_lflag,
-            "terminal attributes restored"
+            unsafe { libc::ioctl(terminal, libc::FIONREAD, &mut pending) },
+            0
+        );
+        assert_eq!(pending, 0, "bytes of the passphrase left queued");
+        assert_eq!(lflag(terminal), before, "terminal attributes restored");
+        let shown = drain(controller, 200);
+        assert!(!shown.contains(&b'a'), "the passphrase was echoed");
+        unsafe {
+            libc::close(terminal);
+            libc::close(controller);
+        }
+    }
+
+    /// `--passphrase-fd` naming a terminal: echo off, the prompt shown on
+    /// it, and a new passphrase typed twice.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_terminal_fd_reads_with_echo_off_and_confirms_a_new_passphrase() {
+        let _serial = serialize();
+        for (first, second, expected) in [
+            (
+                &b"same-one\n"[..],
+                &b"same-one\n"[..],
+                Ok("same-one".to_string()),
+            ),
+            (
+                &b"typed-one\n"[..],
+                &b"typed-two\n"[..],
+                Err("the two passphrases differ".to_string()),
+            ),
+        ] {
+            let (controller, terminal) = open_pty();
+            let before = lflag(terminal);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                let mut input = PassphraseInput::new(Some(terminal)).unwrap();
+                let got = input
+                    .read_new("new passphrase: ", "repeat it: ")
+                    .map(|s| s.to_string())
+                    .map_err(|e| e.to_string());
+                tx.send(got).unwrap();
+            });
+            expect_shown(controller, b"new passphrase: ");
+            write_all_fd(controller, first).unwrap();
+            // The newline echoes (ECHONL, as \r\n on a pty), then the second
+            // prompt, written only once echo is off again.
+            expect_shown(controller, b"\r\nrepeat it: ");
+            write_all_fd(controller, second).unwrap();
+            let got = rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("the reader returns");
+            reader.join().unwrap();
+            assert_eq!(got, expected);
+            expect_shown(controller, b"\r\n");
+            assert_eq!(lflag(terminal), before, "terminal attributes restored");
+            unsafe {
+                libc::close(terminal);
+                libc::close(controller);
+            }
+        }
+    }
+
+    /// A terminal fd opened read-only cannot show a prompt: it is still read
+    /// with echo off, once.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_read_only_terminal_fd_reads_once_with_echo_off_and_no_prompt() {
+        let _serial = serialize();
+        let (controller, terminal) = open_pty();
+        let mut name = [0 as libc::c_char; 128];
+        assert_eq!(
+            unsafe { libc::ptsname_r(controller, name.as_mut_ptr(), name.len()) },
+            0
+        );
+        let read_only = unsafe { libc::open(name.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) };
+        assert!(read_only >= 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut input = PassphraseInput::new(Some(read_only)).unwrap();
+            let got = input
+                .read_new("never shown: ", "never shown: ")
+                .map(|s| s.to_string())
+                .map_err(|e| e.to_string());
+            tx.send(got).unwrap();
+        });
+        // Nothing to wait for on screen: wait until echo is off instead.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while lflag(terminal) & libc::ECHO != 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(lflag(terminal) & libc::ECHO, 0, "echo went off");
+        write_all_fd(controller, b"quiet-one\n").unwrap();
+        let got = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the reader returns");
+        reader.join().unwrap();
+        assert_eq!(got.unwrap(), "quiet-one");
+        assert_eq!(drain(controller, 200), b"\r\n");
+        unsafe {
+            libc::close(read_only);
+            libc::close(terminal);
+            libc::close(controller);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_second_guard_is_refused_while_one_is_held() {
+        let _serial = serialize();
+        let (controller, terminal) = open_pty();
+        let guard = EchoGuard::engage(terminal).unwrap_or_else(|e| panic!("{e}"));
+        match EchoGuard::engage(terminal) {
+            Err(e) => assert_eq!(
+                e.to_string(),
+                "another passphrase prompt already holds the terminal"
+            ),
+            Ok(_) => panic!("a second guard must be refused"),
+        }
+        drop(guard);
+        drop(EchoGuard::engage(terminal).unwrap_or_else(|e| panic!("{e}")));
+        unsafe {
+            libc::close(terminal);
+            libc::close(controller);
+        }
+    }
+
+    /// Fork a child that runs `body` and `_exit`s with what it returns; the
+    /// parent waits and returns the raw wait status. The child does only
+    /// what the guard does on its own path: no allocation.
+    #[cfg(target_os = "linux")]
+    fn in_child(body: impl FnOnce() -> i32) -> i32 {
+        // SAFETY: the child runs `body` (async-signal-safe calls only) and
+        // leaves through _exit or a signal; it never returns to the harness.
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0, "fork");
+        if child == 0 {
+            let code = body();
+            unsafe { libc::_exit(code) };
+        }
+        let mut status = 0;
+        // SAFETY: reaping the child just forked.
+        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+        status
+    }
+
+    /// While the guard is held: SIGTSTP is ignored (Ctrl-Z cannot stop the
+    /// process with echo off), the fatal signals restore the terminal, and a
+    /// signal the process already ignored stays ignored. Drop puts every
+    /// disposition back. Checked in a forked child, so the dispositions of
+    /// the test process itself are never touched.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_guard_ignores_sigtstp_and_takes_the_fatal_signals_only_while_held() {
+        let _serial = serialize();
+        let (controller, terminal) = open_pty();
+        let status = in_child(|| {
+            use echo::{current_action, restore_and_die};
+            let handler = restore_and_die as extern "C" fn(libc::c_int) as libc::sighandler_t;
+            let tstp = current_action(libc::SIGTSTP).sa_sigaction;
+            let int = current_action(libc::SIGINT).sa_sigaction;
+            // SAFETY: plain disposition change in the single-threaded child.
+            unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) };
+            let Ok(guard) = EchoGuard::engage(terminal) else {
+                return 2;
+            };
+            if current_action(libc::SIGTSTP).sa_sigaction != libc::SIG_IGN {
+                return 3;
+            }
+            for sig in [libc::SIGINT, libc::SIGQUIT, libc::SIGTERM] {
+                if current_action(sig).sa_sigaction != handler {
+                    return 4;
+                }
+            }
+            if current_action(libc::SIGHUP).sa_sigaction != libc::SIG_IGN {
+                return 5;
+            }
+            drop(guard);
+            if current_action(libc::SIGTSTP).sa_sigaction != tstp
+                || current_action(libc::SIGINT).sa_sigaction != int
+                || current_action(libc::SIGHUP).sa_sigaction != libc::SIG_IGN
+            {
+                return 6;
+            }
+            0
+        });
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "child status {status:#x} (2 = no guard, 3 = SIGTSTP not ignored, \
+             4 = a fatal signal not taken, 5 = an ignored signal un-ignored, \
+             6 = a disposition not restored)"
         );
         unsafe {
             libc::close(terminal);
             libc::close(controller);
+        }
+    }
+
+    /// Ctrl-C (or SIGTERM) at the prompt: Drop never runs, so the handler
+    /// must put echo back, and the process must still die of the signal.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_fatal_signal_at_the_prompt_restores_echo_and_still_kills() {
+        let _serial = serialize();
+        for sig in [libc::SIGINT, libc::SIGTERM] {
+            let (controller, terminal) = open_pty();
+            assert_ne!(lflag(terminal) & libc::ECHO, 0);
+            let status = in_child(|| {
+                let guard = EchoGuard::engage(terminal);
+                if guard.is_err() {
+                    return 2;
+                }
+                let mut t: libc::termios = unsafe { std::mem::zeroed() };
+                if unsafe { libc::tcgetattr(terminal, &mut t) } != 0 || t.c_lflag & libc::ECHO != 0
+                {
+                    return 4; // echo never went off: the test would prove nothing
+                }
+                // SAFETY: what the terminal delivers on Ctrl-C.
+                unsafe { libc::raise(sig) };
+                3 // the handler swallowed the signal
+            });
+            assert!(
+                libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == sig,
+                "the child must die of signal {sig} while holding the guard \
+                 (status {status:#x}; 2 = no guard, 3 = swallowed, 4 = echo never off)"
+            );
+            assert_ne!(
+                lflag(terminal) & libc::ECHO,
+                0,
+                "signal {sig} at the prompt left the terminal with echo off"
+            );
+            unsafe {
+                libc::close(terminal);
+                libc::close(controller);
+            }
         }
     }
 
