@@ -28,6 +28,9 @@ on:
       # compares the Rust code against the fixture the stdlib-only generator writes.
       - 'spec/fixtures/gen_threshold_custody_v1.py'
       - 'spec/fixtures/threshold_custody_v1.json'
+      # src/vault/custody/fuzz.rs include_bytes! the committed custody fuzz
+      # seeds and asserts each equals the fixture byte for byte.
+      - 'fuzz/seeds/custody_*/**'
       # src/config.rs's tests parse the rtsp guide's witnessd example: witness_api
       # must read the file the kernel is started with (sweep A103).
       - 'docs/rtsp_setup.md'
@@ -59,6 +62,9 @@ on:
       # compares the Rust code against the fixture the stdlib-only generator writes.
       - 'spec/fixtures/gen_threshold_custody_v1.py'
       - 'spec/fixtures/threshold_custody_v1.json'
+      # src/vault/custody/fuzz.rs include_bytes! the committed custody fuzz
+      # seeds and asserts each equals the fixture byte for byte.
+      - 'fuzz/seeds/custody_*/**'
       # src/config.rs's tests parse the rtsp guide's witnessd example: witness_api
       # must read the file the kernel is started with (sweep A103).
       - 'docs/rtsp_setup.md'

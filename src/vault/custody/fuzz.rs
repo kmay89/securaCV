@@ -88,6 +88,19 @@ mod tests {
     const TEK1_TEXT: &[u8] =
         include_bytes!("../../../fuzz/seeds/custody_recipient_decode/alice_tek1.txt");
 
+    /// The seeds above are compile-time inputs of this test, so the Rust
+    /// lane must run when only a seed changes: both of `rust.yml`'s path
+    /// lists (push and pull request) name them.
+    #[test]
+    fn rust_lane_watches_the_custody_seeds() {
+        const RUST_YML: &str = include_str!("../../../.github/workflows/rust.yml");
+        assert_eq!(
+            RUST_YML.matches("- 'fuzz/seeds/custody_*/**'\n").count(),
+            2,
+            "rust.yml must list fuzz/seeds/custody_*/** in both path filters"
+        );
+    }
+
     #[test]
     fn fuzz_seeds_are_the_fixture_and_replay_clean() {
         // The seeds are the fixture's bytes, so they decode (a seed the
