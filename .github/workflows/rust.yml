@@ -24,6 +24,10 @@ on:
       # The attention engine's conformance vectors, replayed by the
       # alert-relay lane's src/relay/attention.rs tests.
       - 'spec/fixtures/attention_v1.json'
+      # The custody core's cross-implementation KATs: src/vault/custody/kat.rs
+      # compares the Rust code against the fixture the stdlib-only generator writes.
+      - 'spec/fixtures/gen_threshold_custody_v1.py'
+      - 'spec/fixtures/threshold_custody_v1.json'
       # src/config.rs's tests parse the rtsp guide's witnessd example: witness_api
       # must read the file the kernel is started with (sweep A103).
       - 'docs/rtsp_setup.md'
@@ -51,6 +55,10 @@ on:
       # The attention engine's conformance vectors, replayed by the
       # alert-relay lane's src/relay/attention.rs tests.
       - 'spec/fixtures/attention_v1.json'
+      # The custody core's cross-implementation KATs: src/vault/custody/kat.rs
+      # compares the Rust code against the fixture the stdlib-only generator writes.
+      - 'spec/fixtures/gen_threshold_custody_v1.py'
+      - 'spec/fixtures/threshold_custody_v1.json'
       # src/config.rs's tests parse the rtsp guide's witnessd example: witness_api
       # must read the file the kernel is started with (sweep A103).
       - 'docs/rtsp_setup.md'
@@ -83,6 +91,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+    # The custody KAT generator's --check (standard library only, so nothing
+    # to pip install) runs on the repo's pinned Python, not the image's.
+    - uses: actions/setup-python@v7
+      with:
+        python-version-file: pyproject.toml
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -104,6 +117,8 @@ jobs:
         RUSTDOCFLAGS: "-D warnings"
     - name: Build
       run: cargo build --verbose
+    - name: Custody KAT fixture is current (stdlib-only Python generator)
+      run: python3 -I spec/fixtures/gen_threshold_custody_v1.py --check
     - name: Run tests
       run: cargo test --verbose
     - name: Build with no default features
