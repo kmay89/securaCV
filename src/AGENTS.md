@@ -46,8 +46,9 @@ audited", never "cryptographically enforces".
 
 ## Dependencies
 
-Always fine: `anyhow`, `thiserror`, `sha2`, `ed25519-dalek`, `serde`,
-`serde_json`, `rusqlite`. Feature-gated and audited: `tract-onnx`, `ort`,
+Always fine: `anyhow`, `thiserror`, `sha2`, `ed25519-dalek`,
+`curve25519-dalek` (already compiled through ed25519-dalek; Scalar/RistrettoPoint
+for custody), `serde`, `serde_json`, `rusqlite`. Feature-gated and audited: `tract-onnx`, `ort`,
 `gstreamer`. Never: anything that phones home, carries telemetry, or exposes a
 face-recognition API. `deny.toml` and `scripts/lint_feature_flags.sh` keep
 the feature list honest.

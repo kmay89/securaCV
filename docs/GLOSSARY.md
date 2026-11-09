@@ -88,6 +88,20 @@ the Lab.
 opens — by quorum, never by one person.
 → [`spec/break_glass.md`](../spec/break_glass.md)
 
+**Vault KEK** — The key that wraps the vault master key under threshold
+custody, held only as shares. Designed; not yet in use.
+→ [`docs/design/threshold_custody.md`](design/threshold_custody.md)
+
+**Custody share** — One holder's piece of the Vault KEK, a self-describing
+`SHR1` file that checks itself against public commitments (`break_glass share
+verify`). Any n of m open the KEK.
+→ [`docs/design/threshold_custody.md`](design/threshold_custody.md)
+
+**Split** — One dealing of the Vault KEK to a set of holders, named by its
+split id. The operational split serves unseals; the recovery split can only
+rebuild a lost trustee quorum.
+→ [`docs/design/threshold_custody.md`](design/threshold_custody.md)
+
 **Handoff sidecar** — The file that travels with every disclosed file,
 `<file>.securacv-handoff.json` (0600): the device-signed rows of the
 disclosure that released it, verbatim — the trustees' grant, the
