@@ -70,7 +70,9 @@
 #pragma GCC diagnostic ignored "-Wsign-compare"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-function"
+#if defined(__GNUC__) && !defined(__clang__)   // a GCC-only warning name
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
+#endif
 #include MESH_NETWORK_CPP
 #pragma GCC diagnostic pop
 #include "mesh_net_sim.h"
@@ -1277,7 +1279,7 @@ void test_a_role_free_confirm_fails_closed() {
     memcpy(in, mn::g_pairing.session_key, mn::SESSION_KEY_SIZE);
     memcpy(in + mn::SESSION_KEY_SIZE, &mn::g_pairing.confirmation_code, 4);
     Frame old_hash(32);
-    mn::sha256_domain(mesh_pair_crypto::DOMAIN_PAIR_CONFIRM, in, sizeof in, old_hash.data());
+    CHECK(mn::sha256_domain(mesh_pair_crypto::DOMAIN_PAIR_CONFIRM, in, sizeof in, old_hash.data()));
     deliver(me, partner.mac, confirm_frame(old_hash));
     become(me);
     if (!owner_first) {

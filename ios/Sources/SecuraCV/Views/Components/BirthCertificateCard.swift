@@ -17,7 +17,8 @@
 //       - the device says it was first dated later than it was made
 //         → "First dated", with the reason, because calling a week on a
 //           workshop shelf a birthday would be a guess wearing a fact's
-//           clothes
+//           clothes (a day sent with no flag reads "First dated" too, with
+//           no reason given)
 //       - the device has never met a clock → no born line at all
 //     "Paired" is shown alongside and is never a substitute: it is when YOU
 //     added it, a fact about this phone. Two people looking at the same
@@ -104,9 +105,8 @@ struct BirthCertificateCard: View {
                 }
                 // The device's own day, labeled as precisely as the device
                 // earned. Above "Paired" because it is the older fact.
-                if let bornOn = witness.bornOn {
-                    CertificateRow(label: witness.bornExact ? "Born" : "First dated",
-                                   value: bornOn.formatted(date: .abbreviated, time: .omitted))
+                if let label = witness.bornLabel, let day = witness.bornDayText() {
+                    CertificateRow(label: label, value: day)
                 }
                 if let pairedAt {
                     CertificateRow(label: "Paired",
@@ -133,8 +133,8 @@ struct BirthCertificateCard: View {
 
                 // Said once, where the claim is, rather than left for someone
                 // to wonder why one Canary says "Born" and another doesn't.
-                if witness.bornOn != nil, !witness.bornExact {
-                    Text("This Canary met a clock later than it was made, so this is the first day it could date itself — its real birthday is on or before it.")
+                if let note = witness.bornNote {
+                    Text(note)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

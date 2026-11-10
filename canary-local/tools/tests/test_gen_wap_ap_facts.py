@@ -29,6 +29,11 @@ the sketch are each refused with the file and the line; a registration the
 compiler never sees (in a comment, a string, under #if 0) is not counted,
 and at the sketch's port 80 the page does not move.
 
+The securacv service's TXT records were typed there too. They are read now
+from each start's MDNS.addServiceTxt() calls, and the broker records from
+mdns_sync_broker_txt(), by the same rules: the starts must agree, and a call
+the generator cannot read is refused with its line.
+
     python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 """
 from __future__ import annotations
@@ -53,6 +58,12 @@ CONST = "static const int   HTTPS_PORT          = 443;"
 HTTP = 'MDNS.addService("http", "tcp", 80);'
 SECURACV = 'MDNS.addService("securacv", "tcp", 80);'
 START_INDENT = {"rename": "  ", "sta": "          ", "boot": "    "}
+# Two TXT records every start writes with the same text, and the broker
+# sync's last one.
+ROLE = 'MDNS.addServiceTxt("securacv", "tcp", "role", "witness");'
+DT = 'MDNS.addServiceTxt("securacv", "tcp", "dt",   "canary-wap");'
+BPORT_OFF = 'MDNS.addServiceTxt("securacv", "tcp", "bport", "");'
+SYNC = "mdns_sync_broker_txt();"
 INO_NAME = "canary_wap.ino"
 
 TOOLS = Path(__file__).resolve().parents[1]
@@ -599,7 +610,11 @@ class SketchApFacts(unittest.TestCase):
             return ("static void mdns_fourth() {\n  if (MDNS.begin(g_device.mdns_hostname)) {\n"
                     + body + "  }\n}\n\n" + anchor)
 
-        cases = ((f"    {HTTP}\n    {SECURACV}\n", None, None),
+        # an agreeing start adds the same TXT records: the rename start's lines
+        sketch = (self.root / INO).read_text(encoding="utf-8")
+        txt = sketch[sketch.index(self.at("rename", SECURACV)) + len(self.at("rename", SECURACV)) + 1:]
+        txt = txt[:txt.index(SYNC) + len(SYNC)] + "\n"
+        cases = ((f"    {HTTP}\n    {SECURACV}\n{txt}", None, None),
                  (f"    {HTTP.replace(' 80);', ' 8080);')}\n    {SECURACV}\n",
                   "the mDNS starts disagree on the http service's port", "8080"),
                  ("", "registers no http and no securacv service", "static void mdns_fourth() {"))
@@ -633,6 +648,7 @@ class SketchApFacts(unittest.TestCase):
         for text, refused in (('void mdns_extra() {\n  MDNS.addService("http", "tcp", 8080);\n}\n', True),
                               ("void mdns_extra() {\n  if (MDNS.begin(\"canary\")) {}\n}\n", True),
                               ('void mdns_extra() {\n  mdns_service_port_set("_http", "_tcp", 8080);\n}\n', True),
+                              (f"void mdns_extra() {{\n  {ROLE}\n}}\n", True),
                               ('// MDNS.addService("http", "tcp", 8080);\nvoid mdns_extra() {}\n', False)):
             with self.subTest(text=text):
                 try:
@@ -645,6 +661,108 @@ class SketchApFacts(unittest.TestCase):
                         self.assertEqual(got, self.base)
                 finally:
                     extra.unlink(missing_ok=True)
+
+    # -- the securacv service's TXT records ---------------------------------
+
+    def txt(self, key: str = "txt"):
+        return self.generate()["ap"]["mdns_services"][1][key]
+
+    def test_the_committed_txt_records_are_the_sketchs(self):
+        svc = self.base["ap"]["mdns_services"][1]
+        self.assertEqual(svc["txt"], ["device_id", "fw", "host", "name", "model", "dt=canary-wap", "role=witness"])
+        self.assertEqual(svc["txt_while_mqtt_up"], ["broker", "bport"])
+
+    def test_a_txt_record_changed_at_every_start_moves_the_page(self):
+        for old, new, want in ((ROLE, ROLE.replace('"role"', '"kind"'), "kind=witness"),
+                               (DT, DT.replace("canary-wap", "canary-x"), "dt=canary-x"),
+                               (DT, DT.replace('"canary-wap"', "DEVICE_TYPE"), "dt"),
+                               (ROLE, ROLE + ' MDNS.addServiceTxt("securacv", "tcp", "v", "1");', None)):
+            with self.subTest(new=new):
+                try:
+                    self.edit(INO, old, new, count=3)
+                    if want is None:
+                        self.assertIn("in a form this generator cannot read", self.generate())
+                    else:
+                        self.assertIn(want, self.txt())
+                finally:
+                    self.tearDown()
+
+    def test_a_record_the_broker_sync_adds_is_listed_apart(self):
+        self.edit(INO, BPORT_OFF, BPORT_OFF + '\n    MDNS.addServiceTxt("securacv", "tcp", "btls", "");')
+        self.assertEqual(self.txt("txt_while_mqtt_up"), ["broker", "bport", "btls"])
+        self.assertEqual(self.txt(), self.base["ap"]["mdns_services"][1]["txt"])
+
+    def test_a_txt_record_the_compiler_never_sees_moves_nothing(self):
+        for line in (f"// {ROLE.replace('role', 'kind')}", f'Serial.println("{ROLE.replace(chr(34), chr(39))}");',
+                     f"#if 0\n{ROLE.replace('role', 'kind')}\n#endif"):
+            with self.subTest(line=line):
+                try:
+                    self.edit(INO, self.at("boot", ROLE), self.at("boot", ROLE) + "\n" + line)
+                    self.assertEqual(self.generate(), self.base)
+                finally:
+                    self.tearDown()
+
+    def test_a_txt_call_the_generator_cannot_read_is_refused(self):
+        # Each at one start only: a reader that skipped it would see the
+        # starts disagree, or agree on a list the device does not advertise.
+        boot = self.at("boot", ROLE)
+        form = "in a form this generator cannot read"
+        for new, why, needle in (
+                ('MDNS.addServiceTxt("securacv", "tcp", key, "witness");', form, "key,"),
+                ('MDNS.addServiceTxt("http", "tcp", "role", "witness");', form, '"http", "tcp", "role"'),
+                ('MDNS.addServiceTxt("securacv", "udp", "role", "witness");', form, '"udp"'),
+                ('mdns.addServiceTxt("securacv", "tcp", "role", "witness");', form, "mdns.addServiceTxt"),
+                ('if (named) MDNS.addServiceTxt("securacv", "tcp", "role", "witness");', form, "if (named)"),
+                ('MDNS.addServiceTxt("securacv", "tcp", "role",\n\n\n\n"witness");', form, '"role",'),
+                ('#define ROLE_TXT() MDNS.addServiceTxt("securacv", "tcp", "role", "witness")\n    ROLE_TXT();',
+                 "a preprocessor line names an mDNS TXT call", "#define ROLE_TXT()"),
+                (f"#if defined(CANARY_ROLE)\n    {ROLE}\n#endif", "under a condition this generator does not evaluate", ROLE),
+                (f"#if defined(CANARY_ROLE)\n    {ROLE}\n#elif defined(X)\n    {ROLE}\n#endif",
+                 "under a condition this generator does not evaluate", ROLE),
+                (f"{ROLE}\n    {ROLE}", "adds the TXT record 'role' twice", ROLE),
+                (ROLE.replace("witness", "display"), "the mDNS starts disagree on the securacv service's TXT records", None),
+                ("", "the mDNS starts disagree on the securacv service's TXT records", None)):
+            with self.subTest(new=new):
+                try:
+                    self.edit(INO, boot, f"\n{START_INDENT['boot']}{new}")
+                    got = self.generate()
+                    self.assertIsInstance(got, str, "generated a page from a sketch it cannot read")
+                    self.assertIn(why, got)
+                    if needle:
+                        lines = (self.root / INO).read_text(encoding="utf-8").split("\n")
+                        at = [i + 1 for i, ln in enumerate(lines) if needle in ln and ln.startswith(("    ", "#"))
+                              and not ln.startswith("     ")]
+                        self.assertTrue(any(f"{INO_NAME}:{n}:" in got for n in at), f"{got} names none of {at}")
+                finally:
+                    self.tearDown()
+
+    def test_the_model_pair_is_read_and_half_of_it_is_refused(self):
+        # Both branches add "model" with their own board: listed by key.
+        self.assertIn("model", self.base["ap"]["mdns_services"][1]["txt"])
+        c3 = '\n    MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32C3");'
+        s3 = c3.replace("ESP32C3", "ESP32S3")
+        self.edit(INO, s3, s3.replace('"model"', '"board"'))
+        self.assert_refused("under a condition this generator does not evaluate")
+        self.tearDown()
+        # one literal in both branches is a fixed value
+        self.edit(INO, c3, s3)
+        self.assert_refused("the mDNS starts disagree on the securacv service's TXT records")
+
+    def test_a_txt_record_outside_a_start_is_refused(self):
+        anchor = "static void mdns_reannounce() {"
+        self.edit(INO, anchor, f"static void mdns_late() {{\n  {ROLE}\n}}\n\n{anchor}")
+        self.assert_refused("an mDNS TXT record is added outside an mDNS start's function")
+
+    def test_the_broker_sync_is_one_function_every_start_calls(self):
+        self.edit(INO, self.at("boot", SYNC), self.at("boot", "// " + SYNC))
+        self.assert_refused("does not call mdns_sync_broker_txt()")
+        self.tearDown()
+        gate = "#if defined(FEATURE_MDNS_BROKER_GOSSIP) && FEATURE_MDNS_BROKER_GOSSIP\n  csi_mqtt::Config cfg;"
+        self.edit(INO, gate, gate.replace("FEATURE_MDNS_BROKER_GOSSIP\n", "FEATURE_MDNS_BROKER_GOSSIP && X\n"))
+        self.assert_refused("adds a TXT record outside its one feature switch")
+        self.tearDown()
+        self.edit(INO, "static void mdns_sync_broker_txt() {", "static void mdns_sync_broker() {")
+        self.assert_refused("expected one 'static void mdns_sync_broker_txt() {'")
 
     def test_wap_server_h_is_not_read(self):
         header = self.root / SKETCH / "wap_server.h"

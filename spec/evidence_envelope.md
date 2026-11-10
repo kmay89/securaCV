@@ -246,7 +246,11 @@ This is a deliberate subset of RFC 8785 that is trivially reproducible in JavaSc
    (reporting which form held — a legacy checkpoint's cutoff is not signed and must not be
    trusted on its own).
 5. Break-glass: recompute `approvals_commitment` and confirm it matches each receipt; tally
-   granted/denied.
+   granted/denied. Trustee approval signatures and the quorum threshold are NOT checked: the
+   envelope carries no trustee policy. A `Granted` row is therefore reported as present, never
+   as a verified grant, and one or more of them adds the warning
+   `N break-glass grant(s) present: trustee approvals are not verified offline`.
+   (Pinned cross-language by `forged_grant_envelope.json`.)
 6. Disclosure: confirm any `omitted_entry_hashes` link the chain across the omission.
 7. Artifact: confirm `SHA256(serde_json_bytes(artifact)) == export_receipt_entry.receipt.artifact_hash`
    and verify the export-receipt entry signature — **strictly under the provenance key**, never
@@ -261,4 +265,5 @@ This is a deliberate subset of RFC 8785 that is trivially reproducible in JavaSc
    future format revision should add a signed epoch binding to receipt rows.)
 
 Overall status: `ok` (all pass, no gaps/warnings) / `valid_with_warnings` (valid but gaps,
-PQ-unchecked, or redactions present) / `compromised` (any chain, hash, or signature failure).
+PQ-unchecked, redactions, or a break-glass grant present) / `compromised` (any chain, hash, or
+signature failure). An envelope with a `Granted` break-glass row is never `ok`.

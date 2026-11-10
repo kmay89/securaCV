@@ -1194,8 +1194,18 @@ mod tests {
         out
     }
 
+    /// The tests' device key: minted once per process from the OS RNG (a
+    /// literal seed reads as a hard-coded key to a scanner, and the tests
+    /// only need one stable key, not a particular one).
     fn signer() -> SigningKey {
-        SigningKey::from_bytes(&[7u8; 32])
+        static SEED: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+        SigningKey::from_bytes(SEED.get_or_init(rand::random::<[u8; 32]>))
+    }
+
+    /// A fresh key that is not the signer's: another device, an impostor,
+    /// a stranger. Distinct from `signer()` with overwhelming probability.
+    fn other_key() -> SigningKey {
+        SigningKey::from_bytes(&rand::random::<[u8; 32]>())
     }
 
     fn pubkey_hex(key: &SigningKey) -> String {
@@ -1327,9 +1337,7 @@ mod tests {
             "porch", 42, "00", &sig_b64, &pinned
         ));
         // A different key, a truncated signature, a padded-but-wrong one.
-        let other = SigningKey::from_bytes(&[9u8; 32])
-            .verifying_key()
-            .to_bytes();
+        let other = other_key().verifying_key().to_bytes();
         assert!(!verify_chain_signature("porch", 42, HASH, &sig_b64, &other));
         assert!(!verify_chain_signature(
             "porch",
@@ -1401,7 +1409,7 @@ mod tests {
     #[test]
     fn a_second_key_for_a_pinned_id_is_a_sticky_conflict() {
         let key = signer();
-        let impostor = SigningKey::from_bytes(&[3u8; 32]);
+        let impostor = other_key();
         let mut table = PeerTable::default();
         table.observe("securacv/porch/health", &health(&key), false, NOW);
         table.observe("securacv/porch/health", &health(&impostor), false, NOW + 1);
@@ -1455,6 +1463,9 @@ mod tests {
             state_canonical("sense01", mark, "present", "1", "true"),
             STATE_GOLDEN
         );
+        // The golden vector was signed with this exact key, so it is the one
+        // literal the tests keep: a test fixture, not a deployed secret.
+        // codeql[rust/hard-coded-cryptographic-value]
         let key = SigningKey::from_bytes(&[0x42u8; 32]);
         let pinned = key.verifying_key().to_bytes();
         assert_eq!(hex::encode(pinned), STATE_GOLDEN_PUB);
@@ -1527,9 +1538,7 @@ mod tests {
             );
         }
         assert!(!verify_state_signature("sense02", &publish, &pinned));
-        let other = SigningKey::from_bytes(&[9u8; 32])
-            .verifying_key()
-            .to_bytes();
+        let other = other_key().verifying_key().to_bytes();
         assert!(!verify_state_signature("sense01", &publish, &other));
         // The firmware host test carries the same literal: neither side can
         // move it alone.
@@ -1548,7 +1557,7 @@ mod tests {
     #[test]
     fn an_unsigned_or_foreign_state_sets_no_wellbeing_words() {
         let key = signer();
-        let impostor = SigningKey::from_bytes(&[3u8; 32]);
+        let impostor = other_key();
         let mut table = PeerTable::default();
         table.observe("securacv/bedroom/health", &health(&key), false, NOW);
         table.observe(
@@ -2045,7 +2054,7 @@ mod tests {
         table.observe("securacv/ghost/status", b"{}", false, NOW + 1);
         // A device whose health pinned a key but whose chain never verified:
         // pinned, never proven. Its pin must survive any clock.
-        let fresh = SigningKey::from_bytes(&[11u8; 32]);
+        let fresh = other_key();
         table.observe("securacv/fresh/health", &health(&fresh), false, NOW + 1);
         // The bridge restarts with the host clock 40 days ahead (a bad RTC or
         // NTP answer) and flushes: the pass straddling the jump is skipped,
@@ -2123,7 +2132,7 @@ mod tests {
     #[test]
     fn an_unsigned_health_with_another_key_changes_no_verdict_by_itself() {
         let key = signer();
-        let impostor = SigningKey::from_bytes(&[3u8; 32]);
+        let impostor = other_key();
         let mut table = PeerTable::default();
         table.observe("securacv/porch/health", &health(&key), false, NOW);
         table.observe(
@@ -2154,7 +2163,7 @@ mod tests {
         );
         // A publish signed by neither key is not evidence of a second key
         // either: the verdict says the last publish failed, nothing sticks.
-        let garbage = SigningKey::from_bytes(&[5u8; 32]);
+        let garbage = other_key();
         table.observe(
             "securacv/porch/chain",
             &signed_chain(&garbage, "porch", 3),
@@ -2394,7 +2403,7 @@ mod tests {
         // Rehydrating keeps the pin: the impostor is still an impostor.
         let rehydrated = PeerSummaryFile::read(&path)?.expect("file exists");
         let mut table = PeerTable::from_summary(rehydrated);
-        let impostor = SigningKey::from_bytes(&[3u8; 32]);
+        let impostor = other_key();
         table.observe("securacv/porch/health", &health(&impostor), false, NOW + 5);
         table.observe(
             "securacv/porch/chain",

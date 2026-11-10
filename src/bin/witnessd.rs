@@ -86,11 +86,24 @@ fn main() -> Result<()> {
         let provided_seed = std::env::var("DEVICE_KEY_SEED").ok();
         // witnessd alone writes an environment seed to <db>.ed25519.seed when
         // no file exists yet, as it always has; every other daemon persists
-        // only a seed it generated.
-        let resolved = witness_kernel::crypto::resolve_device_seed_persisting_env(
-            &config.db_path,
-            provided_seed.as_deref(),
+        // only a seed it generated. DEVICE_KEY_SEED_PERSIST=0 turns that off
+        // for a deployment that keeps the seed elsewhere (the Home Assistant
+        // app's own /data): witnessd then resolves like the other daemons —
+        // the environment seed is used as given, never written, and a seed
+        // file that already exists must still agree with it.
+        let persist_env = witness_kernel::crypto::device_seed_persist_policy(
+            std::env::var(witness_kernel::crypto::DEVICE_KEY_SEED_PERSIST_ENV)
+                .ok()
+                .as_deref(),
         )?;
+        let resolved = if persist_env {
+            witness_kernel::crypto::resolve_device_seed_persisting_env(
+                &config.db_path,
+                provided_seed.as_deref(),
+            )?
+        } else {
+            witness_kernel::crypto::resolve_device_seed(&config.db_path, provided_seed.as_deref())?
+        };
         // Log where the identity came from (the environment, or which seed
         // file) so an operator can find it; the seed value is never logged.
         log::info!("device key seed: {}", resolved.source);

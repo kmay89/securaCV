@@ -109,6 +109,11 @@ jobs:
         # rule now lives once in common/network/wifi_join_policy.h, and this
         # lint is what stops a fifth copy appearing.
         run: python3 scripts/lint_wifi_join_policy.py
+      - name: Chip-target macros are tested after sdkconfig.h
+        # CONFIG_IDF_TARGET_* and ESP_IDF_VERSION come from headers, never the
+        # command line: a file that tests one first compiles its "no such
+        # chip" branch on every chip, and nothing warns.
+        run: python3 scripts/lint_idf_target_include_order.py
       - name: scripts/tests suites (lints, board cost model, BOM pricing)
         # `discover` runs EVERY test_*.py in scripts/tests exactly once, so the
         # board cost model (test_board_design.py) and BOM pricing contract

@@ -51,6 +51,8 @@ pub struct VerifyReport {
     pub break_glass_receipts_verified: u64,
     pub break_glass_granted: u64,
     pub break_glass_denied: u64,
+    /// `TokenRedeemed` rows: tokens actually spent at the unseal gate.
+    pub break_glass_redeemed: u64,
     pub export_receipts_verified: u64,
     pub alarm_count: u64,
     pub checkpoint_cutoff_event_id: Option<i64>,
@@ -86,6 +88,7 @@ impl VerifyReport {
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
             break_glass_denied: 0,
+            break_glass_redeemed: 0,
             export_receipts_verified: 0,
             alarm_count: 0,
             checkpoint_cutoff_event_id: None,
@@ -298,6 +301,7 @@ fn run_inner(
     report.break_glass_receipts_verified = counts.total;
     report.break_glass_granted = counts.granted;
     report.break_glass_denied = counts.denied;
+    report.break_glass_redeemed = counts.redeemed;
 
     report.export_receipts_verified = verify::verify_export_receipts_with(
         conn,
@@ -660,6 +664,7 @@ mod tests {
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
             break_glass_denied: 0,
+            break_glass_redeemed: 0,
             export_receipts_verified: 1,
             alarm_count: 0,
             checkpoint_cutoff_event_id: None,

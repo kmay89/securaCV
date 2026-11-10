@@ -391,13 +391,14 @@ def test_apparmor_only_the_panel_writes_the_integration_tree():
 # Every file a confined process opens under /config, by the literal the Rust
 # source (or the setup) spells, with the least permission that keeps it
 # running — a standalone install crash-looped once because witnessd's own
-# seed file (crypto::resolve_device_seed_persisting_env creates
-# `<db>.ed25519.seed` at every first start) had no rule. A new file in the
-# sources is a new row here AND a new rule in apparmor.txt.
+# seed file (crypto::resolve_device_seed_persisting_env created
+# `<db>.ed25519.seed` at every first start, until the service set
+# DEVICE_KEY_SEED_PERSIST=0) had no rule. A new file in the sources is a new
+# row here AND a new rule in apparmor.txt.
 #
 #   witness.db(-wal/-shm)        storage.rs (SQLite WAL)            witnessd, witness_api, frigate_bridge
 #   witness.db.health.json(.tmp) storage_health.rs store_state      witnessd, witness_api
-#   witness.ed25519.seed         crypto/mod.rs device_key_path_for_db  witnessd (creates), witness_api + frigate_bridge (read)
+#   witness.ed25519.seed         crypto/mod.rs device_key_path_for_db  witnessd + witness_api + frigate_bridge (read, mismatch check); the setup removes it
 #   api_token + .api_token.*.tmp api/mod.rs write_restricted         witnessd, witness_api (write); event_mqtt_bridge, panel (read)
 #   paired_tokens.json (+tmp)    api/pairing.rs PAIRED_TOKEN_FILE_NAME  witnessd, witness_api
 #   pairing_code (+tmp)          api/pairing.rs PAIRING_CODE_FILE_NAME  witnessd, witness_api
@@ -411,7 +412,7 @@ REQUIRED_FILE_RULES = {
         "/config/witness.db-*": "rwk",
         "/config/witness.db.health.json": "rw",
         "/config/witness.db.health.json.tmp": "rw",
-        "/config/witness.ed25519.seed": "rw",
+        "/config/witness.ed25519.seed": "r",
         "/config/api_token": "rw",
         "/config/.api_token.*.tmp": "rw",
         "/config/viewer_tokens.json": "r",
@@ -503,15 +504,29 @@ def test_apparmor_the_device_key_lives_in_data_and_the_setup_can_verify_it():
     assert 'LEGACY_DEVICE_KEY_FILE = Path("/config/.securacv/device_key")' in wizard
 
 
-def test_apparmor_the_seed_file_is_created_by_witnessd_alone():
-    """witnessd persists the environment seed on a first standalone start;
-    the other kernel processes only read it (resolve_device_seed never
-    writes a seed it was given)."""
-    assert "w" in _file_rules(_profile_block("witnessd"))["/config/witness.ed25519.seed"]
-    for profile in ("witness_api", "frigate_bridge"):
+def test_apparmor_no_kernel_process_writes_the_seed_file_and_the_setup_removes_it():
+    """The seed never lands under /config again. witnessd used to persist
+    the environment seed beside the database on a first standalone start;
+    its service now sets DEVICE_KEY_SEED_PERSIST=0, so it, like witness_api
+    and frigate_bridge, only reads the file (the seed-mismatch check for an
+    install that still has one). The setup alone holds `w`, to remove the
+    copy an earlier release left once it is shown to hold the key in use
+    (run_lib.sh remove_kernel_seed_copy, called from run.sh)."""
+    for profile in ("witnessd", "witness_api", "frigate_bridge"):
         assert _file_rules(_profile_block(profile))["/config/witness.ed25519.seed"] == "r", profile
     for profile in ("event_mqtt_bridge", "panel"):
         assert "/config/witness.ed25519.seed" not in _file_rules(_profile_block(profile)), profile
+    assert _file_rules(_setup_profile_block())["/config/witness.ed25519.seed"] == "rw"
+    service = (SERVICES_DIR / "witnessd" / "run").read_text()
+    assert "export DEVICE_KEY_SEED_PERSIST=0\n" in service
+    assert service.index("export DEVICE_KEY_SEED_PERSIST=0") < service.index("exec /usr/local/bin/witnessd")
+    witnessd = (REPO / "src" / "bin" / "witnessd.rs").read_text()
+    assert "DEVICE_KEY_SEED_PERSIST_ENV" in witnessd and "device_seed_persist_policy" in witnessd
+    assert 'DEVICE_KEY_SEED_PERSIST_ENV: &str = "DEVICE_KEY_SEED_PERSIST"' in (
+        REPO / "src" / "crypto" / "mod.rs"
+    ).read_text()
+    assert 'KERNEL_SEED_FILE="/config/witness.ed25519.seed"' in RUN_SH
+    assert RUN_SH.count('remove_kernel_seed_copy "$KERNEL_SEED_FILE" "$DEVICE_KEY_SEED"') == 1
 
 
 def test_apparmor_rules_name_the_literals_the_sources_spell():

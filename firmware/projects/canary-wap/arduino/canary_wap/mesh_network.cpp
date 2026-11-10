@@ -417,25 +417,30 @@ static void espnow_recv_cb(const esp_now_recv_info_t* info, const uint8_t* data,
 // CRYPTO HELPERS
 // ════════════════════════════════════════════════════════════════════════════
 
-static void sha256_domain(const char* domain, const uint8_t* data, size_t len, uint8_t* out) {
+// False, with the 32-byte `out` zeroed, when a SHA-256 step fails.
+[[nodiscard]] static bool sha256_domain(const char* domain, const uint8_t* data, size_t len, uint8_t* out) {
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, (const uint8_t*)domain, strlen(domain));
-  mbedtls_sha256_update(&ctx, data, len);
-  mbedtls_sha256_finish(&ctx, out);
+  int rc = mbedtls_sha256_starts(&ctx, 0);
+  if (rc == 0) rc = mbedtls_sha256_update(&ctx, (const uint8_t*)domain, strlen(domain));
+  if (rc == 0) rc = mbedtls_sha256_update(&ctx, data, len);
+  if (rc == 0) rc = mbedtls_sha256_finish(&ctx, out);
   mbedtls_sha256_free(&ctx);
+  if (rc != 0) memset(out, 0, 32);
+  return rc == 0;
 }
 
+// A hash that fails leaves the fingerprint zeroed, which no key has.
 static void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
   uint8_t hash[32];
-  sha256_domain("securacv:pubkey:fingerprint", pubkey, PUBKEY_SIZE, hash);
+  (void)sha256_domain("securacv:pubkey:fingerprint", pubkey, PUBKEY_SIZE, hash);
   memcpy(fp_out, hash, FINGERPRINT_SIZE);
 }
 
+// A hash that fails leaves the opera id zeroed.
 static void compute_opera_id(const uint8_t* secret, uint8_t* id_out) {
   uint8_t hash[32];
-  sha256_domain(DOMAIN_FLEET_ID, secret, OPERA_SECRET_SIZE, hash);
+  (void)sha256_domain(DOMAIN_FLEET_ID, secret, OPERA_SECRET_SIZE, hash);
   memcpy(id_out, hash, OPERA_ID_SIZE);
 }
 
@@ -487,15 +492,19 @@ static bool decrypt_message(const uint8_t* key, const uint8_t* ciphertext, size_
 
 static bool sign_message(const uint8_t* privkey, const uint8_t* data, size_t len, uint8_t* sig_out) {
   // Use domain-separated signing
+  // Nothing is signed over a hash that failed.
   uint8_t hash[32];
-  sha256_domain(DOMAIN_MESSAGE, data, len, hash);
+  if (!sha256_domain(DOMAIN_MESSAGE, data, len, hash)) {
+    memset(sig_out, 0, SIGNATURE_SIZE);
+    return false;
+  }
   Ed25519::sign(sig_out, privkey, g_device_pubkey, hash, 32);
   return true;
 }
 
 static bool verify_signature(const uint8_t* pubkey, const uint8_t* data, size_t len, const uint8_t* sig) {
   uint8_t hash[32];
-  sha256_domain(DOMAIN_MESSAGE, data, len, hash);
+  if (!sha256_domain(DOMAIN_MESSAGE, data, len, hash)) return false;
   return Ed25519::verify(sig, pubkey, hash, 32);
 }
 
@@ -919,7 +928,9 @@ static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* paylo
 
   // Sign the message (excluding signature space)
   uint8_t signature[SIGNATURE_SIZE];
-  sign_message(g_device_privkey, msg, offset, signature);
+  if (!sign_message(g_device_privkey, msg, offset, signature)) {
+    return false;
+  }
   memcpy(msg + offset, signature, SIGNATURE_SIZE);
   offset += SIGNATURE_SIZE;
 
@@ -1156,7 +1167,10 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
       {
         if (!peer->session_established) break;
         if (payload_len != sizeof(OperaRekeyPayload)) break;
-        const OperaRekeyPayload* rk = (const OperaRekeyPayload*)payload;
+        // Copied out: the payload sits unaligned in the frame for its uint32_t.
+        OperaRekeyPayload copy;
+        memcpy(&copy, payload, sizeof(copy));
+        const OperaRekeyPayload* rk = &copy;
         uint8_t new_secret[OPERA_SECRET_SIZE];
         if (!decrypt_message(peer->session_key, rk->encrypted_secret,
                              OPERA_SECRET_SIZE, rk->nonce, rk->tag, new_secret)) {
@@ -1187,7 +1201,10 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
       // We're the initiator; record this peer's ACK.
       {
         if (payload_len != sizeof(OperaRekeyAckPayload)) break;
-        const OperaRekeyAckPayload* ack = (const OperaRekeyAckPayload*)payload;
+        // Copied out: the payload sits unaligned in the frame for its uint32_t.
+        OperaRekeyAckPayload copy;
+        memcpy(&copy, payload, sizeof(copy));
+        const OperaRekeyAckPayload* ack = &copy;
         if (!g_rekey.active) break;
         if (ack->rekey_id != g_rekey.rekey_id) break;
         // Find peer index in g_peers (peer pointer arithmetic).
@@ -1280,13 +1297,13 @@ static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload, si
   memcpy(sign_input + AUTH_CHALLENGE_SIZE, g_opera_config.opera_id, OPERA_ID_SIZE);
 
   uint8_t hash[32];
-  sha256_domain(DOMAIN_AUTH, sign_input, sizeof(sign_input), hash);
+  if (!sha256_domain(DOMAIN_AUTH, sign_input, sizeof(sign_input), hash)) return;
   Ed25519::sign(response.challenge_sig, g_device_privkey, g_device_pubkey, hash, 32);
 
   memcpy(response.pubkey, g_device_pubkey, PUBKEY_SIZE);
 
   // Sign opera_id as proof of membership
-  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash);
+  if (!sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash)) return;
   Ed25519::sign(response.opera_proof, g_device_privkey, g_device_pubkey, hash, 32);
 
   // Derive session key
@@ -1311,7 +1328,7 @@ static void handle_auth_response(OperaPeer* peer, const uint8_t* payload, size_t
 
   // Verify opera proof
   uint8_t hash[32];
-  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash);
+  if (!sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash)) return;
   if (!Ed25519::verify(response->opera_proof, peer->pubkey, hash, 32)) {
     g_auth_failures++;
     return;
@@ -1331,7 +1348,10 @@ static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload, size_t 
   if (!peer) return;
   if (payload_len != sizeof(TamperAlertPayload)) return;
 
-  const TamperAlertPayload* alert = (const TamperAlertPayload*)payload;
+  // Copied out: the payload sits unaligned in the frame for its uint32_t.
+  TamperAlertPayload copy;
+  memcpy(&copy, payload, sizeof(copy));
+  const TamperAlertPayload* alert = &copy;
 
   update_peer_state(peer, PEER_ALERT);
   peer->alerts_received++;
@@ -1395,7 +1415,10 @@ static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload, siz
   if (!peer) return;
   if (payload_len != sizeof(OfflineImminentPayload)) return;
 
-  const OfflineImminentPayload* alert = (const OfflineImminentPayload*)payload;
+  // Copied out: the payload sits unaligned in the frame for its uint32_t.
+  OfflineImminentPayload copy;
+  memcpy(&copy, payload, sizeof(copy));
+  const OfflineImminentPayload* alert = &copy;
 
   update_peer_state(peer, PEER_OFFLINE);
   peer->alerts_received++;

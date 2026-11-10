@@ -4,6 +4,7 @@
 // what they are called, and when the card stays quiet. Pure, so every
 // branch is a line here.
 
+import SwiftUI
 import XCTest
 @testable import SecuraCV
 
@@ -324,6 +325,40 @@ final class NearbyCanaryTests: XCTestCase {
         XCTAssertNil(card.visible(standingDown: true), "not drawn while the sheet is up")
         XCTAssertEqual(card.latched, one, "but still held, unanswered")
         XCTAssertEqual(card.visible(standingDown: false), one, "and back when the sheet goes")
+    }
+
+    // MARK: - the stand-down is per window
+
+    func testEachWindowCarriesItsOwnStandDown() {
+        // Two iPad windows, each with its RootView's flag in its environment.
+        var leftFlag = false, rightFlag = false
+        var left = EnvironmentValues(), right = EnvironmentValues()
+        left.nearbyOfferStandDown = Binding(get: { leftFlag }, set: { leftFlag = $0 })
+        right.nearbyOfferStandDown = Binding(get: { rightFlag }, set: { rightFlag = $0 })
+
+        let one = candidate("K7MZ", rssi: -50)
+        var leftCard = NearbyOfferLatch(), rightCard = NearbyOfferLatch()
+        _ = leftCard.latch(one, setupOpen: false, standingDown: leftFlag)
+        _ = rightCard.latch(one, setupOpen: false, standingDown: rightFlag)
+
+        // The "+" sheet goes up in the left window only.
+        left.nearbyOfferStandDown.wrappedValue = true
+        XCTAssertNil(leftCard.visible(standingDown: leftFlag))
+        XCTAssertEqual(rightCard.visible(standingDown: rightFlag), one,
+                       "a sheet in one window leaves the other window's card alone")
+
+        // One up in each, then the left one closes: the right stays down.
+        right.nearbyOfferStandDown.wrappedValue = true
+        left.nearbyOfferStandDown.wrappedValue = false
+        XCTAssertEqual(leftCard.visible(standingDown: leftFlag), one)
+        XCTAssertNil(rightCard.visible(standingDown: rightFlag),
+                     "closing one window's sheet must not bring the card back behind another's")
+    }
+
+    func testOutsideAWindowTheStandDownWritesNowhere() {
+        let standDown = EnvironmentValues().nearbyOfferStandDown
+        standDown.wrappedValue = true
+        XCTAssertFalse(standDown.wrappedValue)
     }
 
     func testAnAnswerOrLeavingEarshotLetsGo() {

@@ -376,8 +376,7 @@ HTTP_PORT = _HTTP_PORTS["config.server_port"]
 # registration under a condition this reader does not evaluate (#if X,
 # #ifdef, #elif: the compiler may drop it, and the page would list a service
 # the device does not advertise), and an mDNS call in any other file of the
-# sketch, which this reader does not read. The TXT records the page lists
-# are typed here, not read.
+# sketch, which this reader does not read.
 _INO_REL = INO.relative_to(REPO)
 _MDNS_BEGIN = re.compile(r"\bMDNS\s*\.\s*begin\s*\(")
 # In the sketch any call named addService is read, whatever it is called on
@@ -387,7 +386,7 @@ _MDNS_BEGIN = re.compile(r"\bMDNS\s*\.\s*begin\s*\(")
 # is refused.
 _MDNS_ADD = re.compile(r"\baddService\s*\(")
 _MDNS_OTHER = re.compile(r"\b(enableArduino|enableWorkstation|mdns_service_\w+)\s*\(")
-_MDNS_ELSEWHERE = re.compile(r"\bMDNS\s*\.\s*(?:begin|addService|enableArduino|enableWorkstation)\s*\("
+_MDNS_ELSEWHERE = re.compile(r"\bMDNS\s*\.\s*(?:begin|addService|addServiceTxt|enableArduino|enableWorkstation)\s*\("
                              r"|\bmdns_(?:init|service_\w+)\s*\(")
 _MDNS_PORT_NAMES = {"HTTPS_PORT": HTTPS_PORT}
 _MDNS_SERVICE = re.compile(r'\s*MDNS\.addService\("([a-z][a-z0-9-]*)",\s*"tcp",\s*('
@@ -463,6 +462,112 @@ for _path in sorted(FW.rglob("*")):
                 f"{INO.name} ({_ln.strip()!r}): this generator reads the services from {INO.name} only")
 MDNS_HTTP_PORT = MDNS_PORTS["http"][0]
 MDNS_SECURACV_PORT = MDNS_PORTS["securacv"][0]
+
+# The securacv service's TXT records, read like the ports. Each start's
+# MDNS.addServiceTxt("securacv", "tcp", "<key>", <value>); calls sit below
+# its MDNS.begin() in the same function, and the starts must agree. A value
+# that is one string literal at every start is listed as key=value, any
+# other as the key. A key may sit under a condition only as an #if/#else
+# pair that adds it in both branches (the board's model).
+# mdns_sync_broker_txt(), which every start must call, adds the records
+# listed apart: they hold a value only while the MQTT link is up, on a build
+# with the gossip switch on. Refused, with the line: another service, a key
+# that is no literal, a call on a preprocessor line, outside a start, twice
+# in one start, or under any other condition.
+_TXT_CALL = re.compile(r'MDNS\.addServiceTxt\("securacv",\s*"tcp",\s*"([a-z][a-z0-9_]*)",\s*([^;]+)\);')
+_TXT_LITERAL = re.compile(r'"([^"\\]*)"')
+_BROKER_FN = "static void mdns_sync_broker_txt() {"
+_BROKER_IF = "#if defined(FEATURE_MDNS_BROKER_GOSSIP) && FEATURE_MDNS_BROKER_GOSSIP"
+_ROWS = _scan_lines(read(INO))
+
+
+def _fn_end(line: int) -> int:
+    """The line of the first column-0 `}` after `line`: its function's end."""
+    return next((r[0] for r in _ROWS[line:] if r[1].rstrip() == "}"), len(_ROWS))
+
+
+_BROKER_AT = [r[0] for r in _ROWS if r[4] and r[2] == _BROKER_FN]
+if len(_BROKER_AT) != 1:
+    die(f"{_INO_REL}: expected one {_BROKER_FN!r} in the sketch, found {len(_BROKER_AT)}")
+# A start's records run to its function's end, or to the next start in it.
+_BEGINS = [b for b, _ in _MDNS_STARTS]
+_TXT_REGIONS = [("broker", _BROKER_AT[0], _fn_end(_BROKER_AT[0]))] + [
+    (b, b, min([_fn_end(b)] + [nxt - 1 for nxt in _BEGINS if nxt > b])) for b in _BEGINS]
+_TXT_DIRS: list = []  # every conditional directive so far: (line, word)
+_TXT_CALLS: dict = {b: [] for b, _ in _MDNS_STARTS}  # start -> [(key, value, line, unread, directives before)]
+_TXT_SYNCED: set = set()  # the starts that call mdns_sync_broker_txt()
+MDNS_TXT_BROKER: list = []
+_i = 0
+while _i < len(_ROWS):
+    _n, _ln, _code, _bare, _live, _unread = _ROWS[_i]
+    _i += 1
+    _m = re.match(r"#\s*(if|ifdef|ifndef|else|elif|endif)\b", _code)
+    if _m:
+        _TXT_DIRS.append((_n, _m.group(1)))
+    if not _live:
+        continue
+    _where = next((name for name, lo, hi in _TXT_REGIONS if lo <= _n <= hi), None)
+    if _code == "mdns_sync_broker_txt();" and _where in _TXT_CALLS and not _unread:
+        _TXT_SYNCED.add(_where)
+    if not re.search(r"\baddServiceTxt\s*\(", _bare):
+        continue
+    if _code.startswith("#"):
+        die(f"{_INO_REL}:{_n}: a preprocessor line names an mDNS TXT call ({_ln.strip()!r}): "
+            f"this generator does not expand macros")
+    _text = _code
+    while ");" not in _text and _i < len(_ROWS) and _i - _n < 3:  # a call may wrap onto the next lines
+        _text += " " + _ROWS[_i][2]
+        _i += 1
+    _m = _TXT_CALL.fullmatch(_text)
+    if not _m:
+        die(f"{_INO_REL}:{_n}: the sketch adds an mDNS TXT record in a form this generator cannot read "
+            f"({_text!r}): write it as MDNS.addServiceTxt(\"securacv\", \"tcp\", \"<key>\", <value>);")
+    if _where is None:
+        die(f"{_INO_REL}:{_n}: an mDNS TXT record is added outside an mDNS start's function and "
+            f"outside mdns_sync_broker_txt() ({_ln.strip()!r}): this generator reads the records there only")
+    _lit = _TXT_LITERAL.fullmatch(_m.group(2).strip())
+    if _where == "broker":
+        if not (_unread or "").endswith(": " + _BROKER_IF):
+            die(f"{_INO_REL}:{_n}: mdns_sync_broker_txt() adds a TXT record outside its one feature switch "
+                f"({_BROKER_IF})")
+        if _m.group(1) not in MDNS_TXT_BROKER:
+            MDNS_TXT_BROKER.append(_m.group(1))
+        continue
+    _TXT_CALLS[_where].append((_m.group(1), _lit.group(1) if _lit else None, _n, _unread, len(_TXT_DIRS)))
+
+
+def _txt_records(begin: int) -> list:
+    """One start's records, in order: (key, the literal value or None)."""
+    calls, out, k = _TXT_CALLS[begin], {}, 0
+    while k < len(calls):
+        key, value, n, unread, nd = calls[k]
+        if key in out:
+            die(f"{_INO_REL}:{n}: the mDNS start at line {begin} adds the TXT record {key!r} twice")
+        if unread:
+            other = calls[k + 1] if k + 1 < len(calls) else None
+            paired = (other and other[0] == key and other[3] == unread and other[4] == nd + 1
+                      and _TXT_DIRS[nd][1] == "else" and _TXT_DIRS[nd - 1][1].startswith("if")
+                      and unread.startswith(f"{_TXT_DIRS[nd - 1][0]}:"))
+            if not paired:
+                die(f"{_INO_REL}:{n}: the TXT record {key!r} is added under a condition this generator does "
+                    f"not evaluate (under line {unread}): add it outside any #if, or in both branches of "
+                    f"one #if/#else")
+            value = value if value == other[1] else None
+            k += 1
+        out[key] = value
+        k += 1
+    return list(out.items())
+
+
+_TXT_FIRST = _txt_records(_MDNS_STARTS[0][0])
+for _begin, _ in _MDNS_STARTS:
+    if _txt_records(_begin) != _TXT_FIRST:
+        die(f"{_INO_REL}:{_begin}: the mDNS starts disagree on the securacv service's TXT records: line "
+            f"{_MDNS_STARTS[0][0]} adds {_TXT_FIRST}, line {_begin} adds {_txt_records(_begin)}")
+    if _begin not in _TXT_SYNCED:
+        die(f"{_INO_REL}:{_begin}: the mDNS start here does not call mdns_sync_broker_txt(): "
+            f"each start must, or the page's broker records are not that start's")
+MDNS_TXT = [k if v is None else f"{k}={v}" for k, v in _TXT_FIRST]
 DEVICE_NAME_MAX = int(grab(SETUP_WIZARD_H, r"DEVICE_NAME_MAX\s*=\s*(\d+)", "DEVICE_NAME_MAX"))
 DNS_PORT = int(grab(SETUP_WIZARD_H, r"DNS_PORT\s*=\s*(\d+)", "DNS_PORT"))
 NVS_NS = grab(SETUP_WIZARD_H, r'prefs\.begin\("([a-z]+)"', "NVS namespace")
@@ -582,7 +687,7 @@ AP = {
     "mdns_services": [
         {"service": "_http._tcp", "port": MDNS_HTTP_PORT},
         {"service": "_securacv._tcp", "port": MDNS_SECURACV_PORT,
-         "txt": ["device_id", "fw", "host", "name", "model", "dt=canary-wap", "role=witness"]},
+         "txt": MDNS_TXT, "txt_while_mqtt_up": MDNS_TXT_BROKER},
     ],
     "nvs_namespace": NVS_NS,
     "nvs_key": NVS_KEY,
@@ -1494,14 +1599,13 @@ must_words(DOC, "A WAP repeats them in its `[WIFI] AP started` line at boot, and
 must_words(DOC, f"A short BOOT press prints neither: it opens the provisioning gate for "
                 f"{GATE_TTL_MS // 1000} seconds.",
            "docs: a short press opens the gate and prints no key")
-# The one-asker rule is the WAP's (tap_arbitrate()); the all-rounder Canary's
-# tap goes to whichever asks first, so the guide scopes the press-after-asking
-# order to a WAP, and this pin holds that scope.
+# The tap goes to one asker on both trees (tap_arbitrate()); the guide says
+# how a WAP's page asks first, and what closes the tap on either.
 must_words(DOC, "On a WAP it hands the recovery kit to one asking address: click **Use BOOT Tap Once** on "
-                "the dashboard first and press when the page says to. A second address asking from 10 seconds "
-                "before the tap closes it, and a tap no page was asking for goes to the first address that "
-                "asks after it.",
-           "docs: a short press on a WAP serves one asker, the first to ask when none was")
+                "the dashboard first and press when the page says to. On either, a second address asking "
+                "from 10 seconds before the tap closes it, and a tap no page was asking for goes to the "
+                "first address that asks after it.",
+           "docs: a short press serves one asker, the first to ask when none was")
 must_words(DOC, f"Held for {RESET_HOLD_MS // 1000} seconds, BOOT resets Wi-Fi and settings and keeps "
                 "the device's keypair", "docs: the reset keeps the keypair")
 must_words(DOC, "A WAP has no such stage, and no BOOT hold changes its key.", "docs: no wipe on a WAP")

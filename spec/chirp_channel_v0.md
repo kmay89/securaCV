@@ -60,18 +60,19 @@ This is **NOT** a surveillance system like Ring doorbells. Key differences:
 3. **Soft Witness**: Calm notifications, not panic alarms
 4. **Opt-In Only**: Devices explicitly subscribe to receive community alerts
 5. **No History**: Alerts display in real-time, then fade away
-6. **Rate Limited**: One chirp per device per 5-minute window (prevents spam/hysteria)
+6. **Rate Limited**: An escalating cooldown after each send, 5 minutes to 4 hours (§2.5.4; prevents spam/hysteria)
 7. **Limited Range**: Max 3 hops - your building/block, not the whole city
 8. **Deniable**: Cannot prove who sent a chirp (ephemeral keys)
 
 ### 1.3 Use Cases
 
-- "Unusual activity on my street" - soft awareness, not accusation
 - "Power outage in area" - community situational awareness
-- "Someone checking car doors" - heads-up without police involvement
 - "Fire/smoke in building" - faster than waiting for official alarm
 - "Medical emergency, need help" - community response
 - "All clear" - de-escalation after concern passes
+
+Each is a template (§2.5.3). No chirp describes a person or what a person
+is doing.
 
 ### 1.4 Non-Goals
 
@@ -724,10 +725,9 @@ chirp_mute = {
 
 1. **Device detects something** (motion, tamper, user observation)
 2. **User is prompted**: "Share with nearby community?"
-3. **User selects category and urgency** from simple picker
-4. **User optionally adds brief message** (64 chars max)
-5. **User confirms send** with deliberate action (hold button 2 sec)
-6. **Chirp broadcasts** to nearby devices
+3. **User selects a template and an urgency** from simple picker
+4. **User confirms send** with deliberate action (hold button 2 sec)
+5. **Chirp broadcasts** to nearby devices
 
 ```
 ┌─────────────────────────────────────────┐
@@ -736,24 +736,25 @@ chirp_mute = {
 │  🐦🌳⭐🌙🍀 (your session)               │
 │                                         │
 │  ┌─────────────────────────────────┐   │
-│  │ What's happening?               │   │
-│  │ ○ Unusual activity              │   │
-│  │ ○ Utility issue                 │   │
-│  │ ○ Safety concern                │   │
-│  │ ○ Community notice              │   │
+│  │ What are you witnessing?        │   │
+│  │ ○ power outage                  │   │
+│  │ ○ fire or smoke visible         │   │
+│  │ ○ medical emergency scene       │   │
+│  │ ○ situation resolved            │   │
 │  └─────────────────────────────────┘   │
 │                                         │
 │  How urgent?                            │
 │  [Info] [Caution] [Urgent]             │
-│                                         │
-│  Brief message (optional):              │
-│  [_______________________________]      │
 │                                         │
 │  [ Cancel ]    [====Hold to Send====]  │
 │                                         │
 │  ⚠️ This will notify ~12 nearby devices │
 └─────────────────────────────────────────┘
 ```
+
+The picker offers templates (§2.5.3) and the three urgencies; there is no
+free text. On the canary-wap the send button asks "Send this alert?" in
+place of the 2-second hold.
 
 ### 4.2 Receiving a Chirp
 
@@ -783,9 +784,11 @@ six categories are `category_name()`'s (`chirp_channel.cpp`). `GET
 
 To prevent spam and hysteria:
 
-- **Per-device**: Max 1 chirp per 5 minutes
-- **Per-category**: Max 1 chirp per category per 15 minutes
-- **Relay limit**: Max 2 relays per received chirp
+- **Per-device**: an escalating cooldown after each send: 5 minutes, 15
+  minutes, 1 hour, then 4 hours (§2.5.4)
+- **Per origin key, on receive**: 4 witnesses an hour
+- **Relay limit**: a device relays a chirp once, when it is validated, and
+  at most 10 chirps a minute (§5.2)
 - **Cooldown display**: "You can chirp again in 3:24"
 
 ## 5. Relay and Propagation
@@ -826,7 +829,7 @@ if (chirp.nonce in nonce_filter or chirp.nonce in recent_chirps) {
   drop()                                  // and its nonce is not kept
 } else {
   nonce_filter.add(chirp.nonce)
-  process_chirp()                         // template, per-key rate limit, freshness, store
+  process_chirp()                         // template, freshness, per-key rate limit, store
 }
 ```
 
@@ -840,15 +843,11 @@ heard chirp's nonce kept that chirp out of a receiver it had not reached
 yet. Taking it first saved little: a flood with a fresh nonce per frame
 reaches the signature check every time either way, and only a junk frame
 sent again with the same nonce now costs one. A verified frame that a later
-check refuses (an unknown template, the per-key rate limit, the freshness
-window) keeps its nonce, so it is refused at the lookup when it comes
-again while the filter holds it (331 to 662 s, below): a stale frame
-played back counts against its key's hour once in that time, not at every
-replay. Played back once a filter period it reaches the rate limit again,
-since that runs before the freshness window, and four plays of one
-captured stale frame use up its key's hour: a known limit of this version,
-tracked as its own item (running the freshness window before the rate
-limit would close it).
+check refuses (an unknown template, the freshness window, the per-key rate
+limit) keeps its nonce, so it is refused at the lookup when it comes
+again while the filter holds it (331 to 662 s, below). The freshness
+window runs before the rate limit, so a stale frame played back never
+counts against its key's hour.
 
 The filter holds nonces, not who signed them, and so does the recent
 table: a frame that verifies under any key, an attacker's own among them,
@@ -982,6 +981,9 @@ ACTIVE ──send_chirp()──→ COOLDOWN
 COOLDOWN ──timeout(tier: 5 min to 4 h)──→ ACTIVE
 * ──disable()──→ DISABLED
 ```
+
+The canary-wap's enable goes from INITIALIZING straight to ACTIVE; LISTENING
+is left for other implementations.
 
 On the canary-wap the two COOLDOWN arrows are the timer starting and running
 out, not stored transitions: MUTED ──unmute/timeout──→ ACTIVE reads COOLDOWN
@@ -1176,7 +1178,7 @@ Chirp notifications should be **informative, not alarming**:
 
 ### 10.1 Threats Mitigated
 
-1. **Spam/Abuse**: Rate limiting (1 per 5 min)
+1. **Spam/Abuse**: Rate limiting (escalating send cooldown, §2.5.4; 4 witnesses an hour per origin key on receive)
 2. **Tracking**: Ephemeral session identity
 3. **Hysteria**: Human confirmation required, calm UI
 4. **Replay**: one nonce, one chirp: the nonce filter, which takes only
