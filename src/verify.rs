@@ -246,8 +246,8 @@ pub fn checkpoint_by_id(conn: &Connection, id: i64) -> Result<CheckpointInfo> {
 
 pub fn count_alarms(conn: &Connection) -> Result<u64> {
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM conformance_alarms")?;
-    let count: u64 = stmt.query_row([], |row| row.get(0))?;
-    Ok(count)
+    let count: i64 = stmt.query_row([], |row| row.get(0))?;
+    Ok(u64::try_from(count)?)
 }
 
 pub fn load_alarms(conn: &Connection) -> Result<Vec<AlarmEntry>> {
