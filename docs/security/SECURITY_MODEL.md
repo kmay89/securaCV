@@ -308,7 +308,10 @@ The token rides the page only while the first-boot wizard is running, for a
 request that already carries the bearer token, for a request over the
 flagship's own access point, or for the one page load that spends a short
 BOOT tap: the tap opens a 30-second gate that exactly one consumer spends —
-that page load or one provisioning-receipt fetch, whichever asks first.
+a page load or a provisioning-receipt fetch from the one address asking for
+it. A second address asking from 10 seconds before the tap closes it for
+both, and the dashboard's unlock banner asks before the press, so the tap
+goes to that page (F354).
 
 A request whose `Host` header cannot name this device — an IP address, the
 `.local` name, a single label and a private-use suffix all can; a public
@@ -352,9 +355,9 @@ mistyped paste is dropped at its first refusal instead of being sent on
 every poll. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
 token waits at most about 60 s, or taps BOOT, which clears its address when
-the tap is served to it (F341): the flagship's tap still goes to the first
-asker (F354), so it is that browser's own receipt request or page load that
-has to be the one served. A host that strikes from 9 or more addresses
+the tap is served to it (F341): the flagship's tap goes to the one address
+asking for it (F354), so that browser's unlock banner has to be asking when
+BOOT is pressed. A host that strikes from 9 or more addresses
 within 60 s holds every untracked address while the shared overflow slot
 runs, and a tap does not clear that. The flagship has no Bluetooth lane
 that changes its Wi-Fi and no Bluetooth setup door, so there the way out is

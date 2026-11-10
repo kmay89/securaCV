@@ -68,8 +68,8 @@ were prose with nothing holding them to the code, so this test does:
     nonces (a relay with no origin signature among them: v0.2's soft
     accept), and keeps F310 open; its Chirp "Spoofed origination" cell is
     partial for as long as handle_witness() soft-accepts such a relay, and
-    may not say so once it does not. §5.3 says a stale frame's nonce holds
-    its key's count to once per filter period, not once. The old text (an
+    may not say so once it does not. §5.3 says a stale frame never counts
+    against its key's hour, as handle_witness() orders it. The old text (an
     "activity" category, a `message`, "1024-entry dedup", "yes (Ed25519,
     v0.2)") fails each of these.
 
@@ -945,6 +945,26 @@ class ChirpSpecApiExamples(unittest.TestCase):
                          ["all_clear", "authority", "emergency", "infrastructure", "mutual_aid", "weather"])
         self.assertIn("six categories are `category_name()`'s", prose(spec_section(self.spec, "4.2 Receiving a Chirp")))
 
+    def test_the_send_mockup_offers_templates(self):
+        # §4.1: each picker line is a template's text, and there is no free text.
+        section = spec_section(self.spec, "4.1 Sending a Chirp")
+        offered = re.findall(r"○\s+(.*?)\s*│", section)
+        texts = {text for text, _ in templates(self.cpp, self.mesh).values()}
+        self.assertTrue(offered)
+        self.assertEqual([o for o in offered if o not in texts], [])
+        self.assertNotIn("Brief message", section)
+
+    def test_the_rate_limits_are_the_codes(self):
+        # §4.3's numbers are mesh_network.h's.
+        chirp = namespace_body(self.mesh, "chirp_channel")
+        limits = prose(spec_section(self.spec, "4.3 Rate Limiting"))
+        tiers = [constant(chirp, f"COOLDOWN_TIER_{n}_MS") // 60000 for n in (1, 2, 3, 4)]
+        self.assertEqual(tiers, [5, 15, 60, 240])
+        self.assertIn("5 minutes, 15 minutes, 1 hour, then 4 hours", limits)
+        self.assertIn(f"{constant(chirp, 'MAX_WITNESSES_PER_PUBKEY_PER_HOUR')} witnesses an hour", limits)
+        self.assertIn(f"at most {constant(chirp, 'MAX_RELAYS_PER_MINUTE')} chirps a minute", limits)
+        self.assertNotIn("Per-category", limits)
+
     def test_the_replay_cell_is_the_filter(self):
         self.assertEqual(replay_cell_problems(self.threat, self.cpp), [])
         outstanding = self.threat.split("### Outstanding work (tracked)", 1)[1]
@@ -969,12 +989,14 @@ class ChirpSpecApiExamples(unittest.TestCase):
                       "still accepts one on its relayer's signature alone and stores it as that origin's chirp with "
                       "content the origin never signed", dedup)
         self.assertIn("Both are known limits of this version.", dedup)
-        # A stale frame's nonce is held 331 to 662 s; played back once a
-        # filter period it reaches the rate limit each time (F309's review).
-        self.assertIn("counts against its key's hour once in that time, not at every replay", dedup)
-        self.assertIn("four plays of one captured stale frame use up its key's hour: a known limit of this version",
-                      dedup)
-        self.assertNotIn("counts against its key's hour once, not at every replay", dedup)
+        # handle_witness() runs the freshness window before the per-key
+        # rate limit, and the spec says so.
+        witness = function_body(self.cpp, r"static void handle_witness\([^)]*\)")
+        self.assertLess(witness.index("outside freshness window"), witness.index("pubkey_rate_check_and_record("))
+        self.assertIn("// template, freshness, per-key rate limit, store", spec_section(self.spec, "5.3 Deduplication"))
+        self.assertIn("The freshness window runs before the rate limit, so a stale frame played back never counts "
+                      "against its key's hour.", dedup)
+        self.assertNotIn("use up its key's hour", dedup)
         mitigated = prose(spec_section(self.spec, "10.1 Threats Mitigated"))
         self.assertNotIn("5-minute TTL", mitigated)
         self.assertIn("(§5.3; sweep F310, open)", mitigated)

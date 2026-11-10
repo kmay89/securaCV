@@ -307,7 +307,7 @@ static const size_t DETAIL_COUNT = sizeof(DETAIL_TABLE) / sizeof(DETAIL_TABLE[0]
 // ════════════════════════════════════════════════════════════════════════════
 
 static void set_state(ChirpState new_state);
-static void generate_session_identity();
+[[nodiscard]] static bool generate_session_identity();
 static void generate_emoji_string(const uint8_t* session_id, char* emoji_out);
 static bool is_nonce_seen(const uint8_t* nonce);
 static void cache_nonce(const uint8_t* nonce);
@@ -330,7 +330,7 @@ static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int
 static const TemplateEntry* find_template(ChirpTemplate id);
 static ChirpCategory template_to_category(ChirpTemplate id);
 static uint32_t get_cooldown_for_tier(uint8_t tier);
-static void session_id_from_pubkey(const uint8_t* pubkey, uint8_t* sid_out);
+[[nodiscard]] static bool session_id_from_pubkey(const uint8_t* pubkey, uint8_t* sid_out);
 static size_t build_witness_canonical(const ChirpHeader* hdr,
                                       const ChirpWitnessPayload* payload,
                                       const uint8_t* signer_pubkey,
@@ -401,32 +401,41 @@ static uint32_t wall_clock_now_seconds() {
 // SESSION IDENTITY
 // ════════════════════════════════════════════════════════════════════════════
 
-static void session_id_from_pubkey(const uint8_t* pubkey, uint8_t* sid_out) {
+// False, with the id zeroed, when a SHA-256 step fails.
+[[nodiscard]] static bool session_id_from_pubkey(const uint8_t* pubkey, uint8_t* sid_out) {
   mbedtls_sha256_context ctx;
   uint8_t hash[32];
   mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, (const uint8_t*)"securacv:chirp:session:v0", 25);
-  mbedtls_sha256_update(&ctx, pubkey, SESSION_PUBKEY_SIZE);
-  mbedtls_sha256_finish(&ctx, hash);
+  int rc = mbedtls_sha256_starts(&ctx, 0);
+  if (rc == 0) rc = mbedtls_sha256_update(&ctx, (const uint8_t*)"securacv:chirp:session:v0", 25);
+  if (rc == 0) rc = mbedtls_sha256_update(&ctx, pubkey, SESSION_PUBKEY_SIZE);
+  if (rc == 0) rc = mbedtls_sha256_finish(&ctx, hash);
   mbedtls_sha256_free(&ctx);
+  if (rc != 0) memset(hash, 0, sizeof(hash));
   memcpy(sid_out, hash, SESSION_ID_SIZE);
+  return rc == 0;
 }
 
-static void generate_session_identity() {
+// False, with no session, when the new key's session id did not hash.
+[[nodiscard]] static bool generate_session_identity() {
   uint8_t seed[32];
   esp_fill_random(seed, sizeof(seed));
 
   Ed25519::generatePrivateKey(g_session.session_privkey);
   Ed25519::derivePublicKey(g_session.session_pubkey, g_session.session_privkey);
 
-  session_id_from_pubkey(g_session.session_pubkey, g_session.session_id);
+  if (!session_id_from_pubkey(g_session.session_pubkey, g_session.session_id)) {
+    memset(&g_session, 0, sizeof(g_session));
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK, "chirp: session id hash failed");
+    return false;
+  }
   generate_emoji_string(g_session.session_id, g_session.emoji_display);
 
   g_session.created_ms = millis();
   g_session.valid = true;
 
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: new session identity generated");
+  return true;
 }
 
 // v0.2: 5 emojis instead of 3, raising distinct-display count from ~4 K to ~1 M.
@@ -756,7 +765,7 @@ static bool pubkey_rate_check_and_record(const uint8_t* pubkey) {
 // (handle_suppress_vote(); sweep F234, open).
 static bool nearby_has_pubkey_with_presence(const uint8_t* pubkey) {
   uint8_t sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(pubkey, sid);
+  if (!session_id_from_pubkey(pubkey, sid)) return false;
   for (size_t i = 0; i < g_nearby_count; i++) {
     if (memcmp(g_nearby_devices[i].session_id, sid, SESSION_ID_SIZE) == 0) {
       return millis() - g_nearby_devices[i].first_seen_ms >= PRESENCE_REQUIRED_MS;
@@ -955,7 +964,7 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
 
   // audit C6: session_id MUST derive from carried session_pubkey
   uint8_t derived_sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(payload->session_pubkey, derived_sid);
+  if (!session_id_from_pubkey(payload->session_pubkey, derived_sid)) return;
   if (memcmp(derived_sid, hdr->session_id, SESSION_ID_SIZE) != 0) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
                "chirp: rejected witness — session_id != hash(pubkey)");
@@ -1018,6 +1027,11 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
     memcpy(origin_pubkey, payload->session_pubkey, SESSION_PUBKEY_SIZE);
   }
 
+  // The origin's session id, for its emoji. A hash that fails drops the
+  // frame before its nonce is kept.
+  uint8_t origin_sid[SESSION_ID_SIZE];
+  if (!session_id_from_pubkey(origin_pubkey, origin_sid)) return;
+
   // Only a nonce whose frame verified enters the filter (sweep F309). The
   // insert came first, before the session-id and signature checks, so
   // unsigned frames from any device in range filled it (a half's
@@ -1027,14 +1041,10 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   // not reached yet. Taking it first saved nothing a flooder cannot route
   // around: a fresh nonce per frame reaches the SHA-256 and the Ed25519
   // checks every time; only a junk frame sent again with the same nonce
-  // costs those checks now. It goes in here, before the template, the rate
-  // limit and the freshness window, as it did, so a verified frame that
-  // one of those refuses is refused at the lookup above when it comes
-  // again while the filter holds its nonce (331 to 662 s), and counts
-  // against its key's hour once in that time, not at every repeat. Played
-  // back once a filter period it reaches the rate limit again, since that
-  // runs before the freshness window, and four plays of one captured stale
-  // frame use up its key's hour: a known limit, handed up (spec §5.3).
+  // costs those checks now. It goes in here, before the template, the
+  // freshness window and the rate limit, as it did, so a verified frame
+  // that one of those refuses is refused at the lookup above when it comes
+  // again while the filter holds its nonce (331 to 662 s).
   // A frame dropped before the checks, below the urgency filter or during
   // a mute, leaves no nonce now, so a copy heard once the filter or the
   // mute lets it through is taken, where before it was refused as a repeat
@@ -1055,11 +1065,8 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
     return;
   }
 
-  if (!pubkey_rate_check_and_record(origin_pubkey)) {
-    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: rate-limited witness from pubkey");
-    return;
-  }
-
+  // Freshness before the rate limit: a stale frame, played back, costs its
+  // origin key none of its hour.
   bool unverifiable_ts = false;
   if (wall_clock_is_synced()) {
     uint32_t now_sec = wall_clock_now_seconds();
@@ -1073,13 +1080,16 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
     unverifiable_ts = true;
   }
 
+  if (!pubkey_rate_check_and_record(origin_pubkey)) {
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: rate-limited witness from pubkey");
+    return;
+  }
+
   ReceivedChirp chirp;
   memset(&chirp, 0, sizeof(chirp));
   memcpy(chirp.sender_session, hdr->session_id, SESSION_ID_SIZE);
   memcpy(chirp.sender_pubkey, origin_pubkey, SESSION_PUBKEY_SIZE);
 
-  uint8_t origin_sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(origin_pubkey, origin_sid);
   generate_emoji_string(origin_sid, chirp.sender_emoji);
 
   chirp.template_id = template_id;
@@ -1166,7 +1176,7 @@ static void handle_ack(const uint8_t* data, size_t len) {
   }
 
   uint8_t derived_sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(payload->confirmer_session_pubkey, derived_sid);
+  if (!session_id_from_pubkey(payload->confirmer_session_pubkey, derived_sid)) return;
   if (memcmp(derived_sid, hdr->session_id, SESSION_ID_SIZE) != 0) return;
 
   if (memcmp(payload->confirmer_session_pubkey, chirp->sender_pubkey,
@@ -1224,7 +1234,7 @@ static void handle_suppress_vote(const uint8_t* data, size_t len) {
   if (!Ed25519::verify(payload->signature, payload->voter_session_pubkey, canonical, cl)) return;
 
   uint8_t derived_sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(payload->voter_session_pubkey, derived_sid);
+  if (!session_id_from_pubkey(payload->voter_session_pubkey, derived_sid)) return;
   if (memcmp(derived_sid, hdr->session_id, SESSION_ID_SIZE) != 0) return;
 
   // A nonce has one row (sweep F270: handle_witness() refuses a frame whose
@@ -1590,7 +1600,10 @@ static bool enable() {
   if (!g_initialized) return false;
   if (g_state != CHIRP_DISABLED) return true;
   set_state(CHIRP_INITIALIZING);
-  generate_session_identity();
+  if (!generate_session_identity()) {
+    set_state(CHIRP_DISABLED);
+    return false;
+  }
   // A new session has sent nothing: its beacons say 255 ("never") until its
   // own first send. The age counted from the last session's send, so the new
   // key's first beacons told any neighbor that heard the old one how long ago

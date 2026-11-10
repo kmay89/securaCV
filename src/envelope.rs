@@ -395,6 +395,8 @@ pub enum IntegrityStatus {
 pub struct EnvelopeReport {
     pub status: IntegrityStatus,
     pub sealed_events: u64,
+    /// `Granted` rows present. Their chain, device signature and approvals
+    /// commitment are checked; trustee signatures and the quorum are not.
     pub break_glass_granted: u64,
     pub break_glass_denied: u64,
     /// `TokenRedeemed` rows: tokens actually spent at the unseal gate.
@@ -408,7 +410,8 @@ pub struct EnvelopeReport {
 ///
 /// Mirrors `src/verify.rs`. Returns an error on any integrity, hash, or signature failure
 /// (status `compromised`); otherwise returns a report whose status is `Ok` or
-/// `ValidWithWarnings` (gaps, redactions, or PQ-not-checked).
+/// `ValidWithWarnings` (gaps, redactions, PQ-not-checked, or a break-glass grant, whose
+/// trustee approvals an envelope cannot prove).
 pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Result<EnvelopeReport> {
     if envelope.envelope_format != ENVELOPE_FORMAT {
         return Err(anyhow!(
@@ -527,7 +530,9 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         })?;
     }
 
-    // 5. Break-glass receipts: chain + signatures + approvals commitment + tally.
+    // 5. Break-glass receipts: chain + device signatures + approvals commitment + tally.
+    // Trustee signatures and the quorum are not checked: the envelope carries no
+    // trustee policy. A grant is reported as present and downgrades the status.
     let bg_iter = envelope
         .ledgers
         .break_glass_receipts
@@ -690,6 +695,13 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     }
 
     // Warnings & status.
+    // Same text as verify_core.js.
+    if granted > 0 {
+        warnings.push(format!(
+            "{} break-glass grant(s) present: trustee approvals are not verified offline",
+            granted
+        ));
+    }
     let has_pq_material = envelope.provenance.pq_public_key.is_some();
     if has_pq_material && !pq_checked {
         warnings.push("post-quantum signatures present but not verified".to_string());

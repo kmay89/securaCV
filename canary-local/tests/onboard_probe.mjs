@@ -75,9 +75,11 @@
 //     glass (haloInked — the landscape nightlight's ring runs off the
 //     panel's right edge by onboard_layout.h's rule), and the card stands over
 //     the halo's center with its sides inside the stroke (cardInHalo; on the
-//     dash its corners reach past the 800 px glass's ring, F155, and are
-//     printed, not held; on the nightlight they are held inside the stroke,
-//     F157). --walk native|turned runs one kind of walk only.
+//     dash, native walk included, its corners reach past the 800 px glass's
+//     ring and are held at the ceilings test_onboard_layout holds; on the
+//     nightlight they are held inside the stroke, F157). --walk native|turned
+//     runs one kind of walk only. On every walk the splash bubble's
+//     tail is read off the frame, with and without it (tailInk, tailDrawn).
 //  2. fleet.html, the watch sheet, "Try it": the same walk through the phone
 //     the Lab shows, with a securitypolicyviolation listener installed and the
 //     captive <iframe srcdoc> checked for the firmware's own styling (its
@@ -92,8 +94,8 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { birdPerch, birdOnGlass, breathOnSeat, flourishHop } from "./bird_perch.mjs";
 import {
-  linesOnGlass, linesCut, haloOf, cardInHalo, framesOnGlass, cardAtLayout, haloAtLayout,
-  qrFinders, qrUpright, haloInk, haloInked, linesInk, linesInked, linesSettled,
+  linesOnGlass, linesCut, haloOf, cardInHalo, wideCardCeiling, framesOnGlass, cardAtLayout, haloAtLayout,
+  qrFinders, qrUpright, haloInk, haloInked, linesInk, linesInked, linesSettled, splashTail, tailInk, tailDrawn,
 } from "./onboard_glass.mjs";
 import { turnedGlasses, readTurnedSources, helloLines, splashCoverage, splashInk, isWholeLine } from "./turned_glass.mjs";
 import { lookup } from "./probe_server.mjs";
@@ -160,8 +162,8 @@ if (!RUN.length) { console.error(`ONBOARD_PROBE_FAIL: no dist bundle for ${ONLY 
 // dash turned portrait in software (480x800, glass_settings.h's ROT_PORTRAIT)
 // and the nightlight stood on its edge in hardware (320x180, io/orientation.h's
 // Orient::R90), each on the panel build.sh's pin map names for the flavor. The
-// dash's QR card corners reach past the ring there as on its native glass
-// (F155, open), so they are printed, not held; the landscape nightlight's
+// dash's QR card corners reach past the ring there as on its native glass,
+// so both walks hold them at WIDE_CEILING; the landscape nightlight's
 // layout keeps them inside the stroke (F157), so there they are held. A
 // flavor with no committed dist bundle is not walked (the dist is what a bare
 // checkout serves; the drift check names a missing bundle).
@@ -177,6 +179,13 @@ const SPLASH_SCALE = 0.5;
 const CARD_RADIUS = Number(/constexpr int kCardRadius = (\d+);/.exec(
   await readFile(join(ROOT, "firmware/projects/canary-display/include/canary/ui/onboard_layout.h"), "utf8"))?.[1]);
 if (!(CARD_RADIUS > 0)) { console.error("ONBOARD_PROBE_FAIL: onboard_layout.h names no kCardRadius"); process.exit(1); }
+// The splash bubble's tail: where splash_layout.h puts it, and the native render test's ink floor.
+const TAIL = splashTail(
+  await readFile(join(ROOT, "firmware/projects/canary-display/include/canary/ui/splash_layout.h"), "utf8"),
+  await readFile(join(ROOT, "canary-local/emulator/test/glass_splash_test.cpp"), "utf8"));
+// How far the wide glass's card corners may reach, as test_onboard_layout holds it.
+const WIDE_CEILING = wideCardCeiling(
+  await readFile(join(ROOT, "firmware/projects/canary-display/tests_host/test_onboard_layout.cpp"), "utf8"));
 if (SHOTS) await mkdir(SHOTS, { recursive: true });
 
 // Allowlist, not sanitization (same stance as the sibling probes).
@@ -534,6 +543,45 @@ async function walkHarness(flavor, turn = null) {
     const harnessError = await E(() => window.__harnessError || null);
     check(!harnessError, `the harness did not boot: ${harnessError}`);
 
+    // The splash bubble's tail, on every walk, off the frame: the glass with
+    // a whole line up against the glass as it stood with the bubble hidden
+    // (a wordless beat: no label shown, where a bubble waiting for its first
+    // character shows an empty one), a frame after each was read. tailStep
+    // takes each read of the splash's labels; every whole line it reaches is
+    // held.
+    const tailReads = [];
+    const tailSeen = new Set();
+    let quietAt = null;
+    const tailStep = async (labels) => {
+      if (!labels.some((l) => l.shown)) {
+        // a frame drawn since the bubble went: the glass without the tail
+        const frames = await E(() => window.__state.flushes);
+        if (quietAt === null) quietAt = frames;
+        else if (frames > quietAt) {
+          await E(async () => {
+            if ((await window.__emu.screenLabels()).some((l) => l.shown)) return;
+            const cv = document.getElementById("glass");
+            window.__tailBase = { w: cv.width, h: cv.height, bird: await window.__emu.markBox(),
+              data: cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data };
+          });
+        }
+        return;
+      }
+      quietAt = null;
+      const whole = labels.find((l) => l.shown && l.opa >= 250 && !tailSeen.has(l.text) &&
+        HELLO_LINES.some((line) => isWholeLine(l.text, line)));
+      if (!whole) return;
+      const frames = await E(() => window.__state.flushes);
+      const t0 = Date.now();
+      while (Date.now() - t0 < 300 && (await E(() => window.__state.flushes)) <= frames) await new Promise((r) => setTimeout(r, 2));
+      const read = await onCanvas(tailInk, [TAIL], `(async () => ({ labels: await window.__emu.screenLabels(), ` +
+        `bird: await window.__emu.markBox(), base: window.__tailBase || null }))()`);
+      if (!read || read.text !== whole.text) return;   // the script moved on: the next whole line is read
+      tailSeen.add(whole.text);
+      const bad = tailDrawn(read, TAIL);
+      check(bad === null, `the splash: ${bad}`);
+      tailReads.push(read);
+    };
     // F206: on a turned walk, the first meeting's splash, read from power-on
     // on the slowed clock until the onboarding takes the glass (the
     // first-boot line): every read on the turned glass, every line on it and
@@ -587,6 +635,7 @@ async function walkHarness(flavor, turn = null) {
           const dark = await inkSplash();
           check(dark === null, `the splash: ${dark} (F206)`);
         }
+        await tailStep(st.labels);
         await new Promise((r) => setTimeout(r, 30));
       }
       splashRead = splashCoverage(reads, HELLO_LINES);
@@ -598,7 +647,15 @@ async function walkHarness(flavor, turn = null) {
         `the splash was not seen drawn: ${inkReads.length} canvas reads, never inked whole at full strength: ` +
         `${JSON.stringify(splashInked.missing)} (F206)`);
       await E(() => window.__emu.setTimeScale(1));
+    } else {
+      // A native walk reads the splash until one line's tail is held.
+      await until(() => E(() => window.__state.flushes > 0), "the firmware's first frame", 60000, 20);
+      while (!tailReads.length && !(await serial()).includes('First boot - onboarding AP "SecuraCV-')) {
+        await tailStep(await E(() => window.__emu.screenLabels()));
+        await new Promise((r) => setTimeout(r, 20));
+      }
     }
+    check(tailReads.length > 0, "the splash: no whole line was read with its bubble's tail");
 
     // First boot: the firmware's own line, and the radio it configured.
     await until(async () => (await serial()).includes('First boot - onboarding AP "SecuraCV-'), "the first-boot serial line");
@@ -678,8 +735,9 @@ async function walkHarness(flavor, turn = null) {
     // each held to onboard_layout.h's stack as the firmware evaluates it
     // (onboardJoin), the halo's stroke inked on the glass where its circle
     // says, and the card over the halo's center with its sides inside the
-    // stroke; its corners are held only where the layout keeps them inside
-    // (not on the 800 px glass, F155).
+    // stroke; its corners are held inside it where the layout keeps them
+    // there, and at WIDE_CEILING on the 800 px glass, turned or not.
+    const wide = turn ? !turn.corners : flavor === "dash";
     let inHalo = null;
     const holdJoin = async (scene, joinCardNow) => {
       const layout = await E(() => window.__emu.onboardJoin());
@@ -688,11 +746,12 @@ async function walkHarness(flavor, turn = null) {
       check(bad === null, `${scene}: ${bad}`);
       const ink = haloInked(await onCanvas(haloInk, [halo]), 0, 3);
       check(ink === null, `${scene}: ${ink}`);
-      const h = cardInHalo(joinCardNow, halo, { corners: turn.corners, cornerR: CARD_RADIUS });
+      const ceiling = wide ? WIDE_CEILING : null;
+      const h = cardInHalo(joinCardNow, halo, { corners: !!turn && turn.corners, cornerR: CARD_RADIUS, ceiling });
       check(h.fail === null, `${scene}: ${h.fail}`);
       return h;
     };
-    if (turn) inHalo = await holdJoin("the join scene", card);
+    if (turn || wide) inHalo = await holdJoin("the join scene", card);
     // F45: no line of the Join scene ends in an ellipsis, and the name and
     // key the firmware printed are on the glass — then nobody joins for 45 s
     // and the stuck-phone hint comes up; still none cut, and the name and
@@ -721,7 +780,7 @@ async function walkHarness(flavor, turn = null) {
     const cardHint = await E(joinCard);
     const uprightHint = qrUpright(await onCanvas(qrFinders, [cardHint ? cardHint.box : [0, 0, -1, -1], CARD_RADIUS]));
     check(uprightHint === null, `with the stuck-phone hint up: ${uprightHint}`);
-    if (turn) await holdJoin("with the stuck-phone hint up", cardHint);
+    if (turn || wide) await holdJoin("with the stuck-phone hint up", cardHint);
     const hintLines = await E(glassLines);
     // A changed label is not enough: on round glass the title yields as the
     // hint arrives, so the wait above passes even if the hint never draws.
@@ -896,14 +955,20 @@ async function walkHarness(flavor, turn = null) {
       "the display's MQTT status after onboarding", 30000);
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/onboard_${walkName}.png` });
     if (errors.length) throw new Error("page errors:\n" + errors.slice(0, 8).join("\n"));
+    const seated = inHalo
+      ? `the QR card and halo where ` +
+        `the layout seats them (offset ${inHalo.offset.join(",")}, sides ${inHalo.sides} px from the center, inner ` +
+        `edge ${inHalo.inner}; corners reach ${inHalo.reach}, held ` +
+        `${wide ? `at <= ${WIDE_CEILING.reach} and <= ${WIDE_CEILING.over} past the edge` : "inside"}), `
+      : "";
     const turned = turn
       ? `${turn.glass.w}x${turn.glass.h} glass from the first frame, the splash read whole (${splashRead.reads} ` +
         `reads, the bird in ${splashRead.bird}, all ${splashRead.seen.length} lines, each inked on the canvas ` +
-        `in its box: ${splashInked.inked.length} lines), the QR card and halo where ` +
-        `the layout seats them (offset ${inHalo.offset.join(",")}, sides ${inHalo.sides} px from the center, inner ` +
-        `edge ${inHalo.inner}; corners reach ${inHalo.reach}${turn.corners ? ", held inside" : ", F155"}), `
+        `in its box: ${splashInked.inked.length} lines), `
       : "";
-    console.log(`ONBOARD_PROBE_OK[${walkName}] ${ap.ssid}: ${turned}${framesAtEnd.frames} frames on one glass ` +
+    const tailed = `the bubble's tail on its top edge under ${tailReads.length} line(s) ` +
+      `(${Math.min(...tailReads.map((r) => r.ink))} px of ink at the least), `;
+    console.log(`ONBOARD_PROBE_OK[${walkName}] ${ap.ssid}: ${turned}${tailed}${seated}${framesAtEnd.frames} frames on one glass ` +
       `(${framesAtBoot.shapes.length} shape(s) announced), every line read on the glass, inked and none cut ` +
       `(Connecting and ${successReads} Success reads included), QR upright, ` +
       `join card clean, no line cut and name + key on the glass (with and without the stuck hint), ` +

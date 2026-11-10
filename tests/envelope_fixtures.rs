@@ -8,7 +8,9 @@ use std::path::Path;
 
 use witness_kernel::crypto::signatures::SignatureMode;
 use witness_kernel::verify::{FailedLedger, FailureKind, VerifyFailure};
-use witness_kernel::{verify_envelope, EvidenceEnvelope, ExportAuthMode};
+use witness_kernel::{
+    verify_envelope, Approval, EvidenceEnvelope, ExportAuthMode, IntegrityStatus,
+};
 
 fn load(name: &str) -> EvidenceEnvelope {
     let path = Path::new("tests/fixtures/envelope").join(name);
@@ -106,4 +108,43 @@ fn tampered_digest_fixture_is_rejected() {
         format!("{err}").contains("whole_envelope_digest"),
         "unexpected error: {err}"
     );
+}
+
+/// A `Granted` row no trustee approved: device-signed, commitment matching, the
+/// approval's signature filler. Offline it is present, not verified — the
+/// status is never `Ok`. The JS verifier pins the same fixture and text.
+/// Regenerate with:
+///   cargo run --example gen_forged_grant_envelope_fixture
+#[test]
+fn forged_grant_fixture_is_never_ok() {
+    const WARNING: &str =
+        "1 break-glass grant(s) present: trustee approvals are not verified offline";
+    let envelope = load("forged_grant_envelope.json");
+    let approvals: Vec<Approval> =
+        serde_json::from_str(&envelope.ledgers.break_glass_receipts.entries[0].approvals_json)
+            .expect("approvals parse");
+    assert_eq!(approvals[0].signature, vec![0xAA; 64], "filler signature");
+
+    let report =
+        verify_envelope(&envelope, SignatureMode::Compat).expect("the chain itself verifies");
+    assert_eq!(report.break_glass_granted, 1);
+    assert_eq!(report.status, IntegrityStatus::ValidWithWarnings);
+    assert!(
+        report.warnings.iter().any(|w| w == WARNING),
+        "{:?}",
+        report.warnings
+    );
+
+    // The grant alone causes the warning: the same envelope without the row
+    // carries every other warning and not this one.
+    let mut bare = envelope.clone();
+    bare.ledgers.break_glass_receipts.entries.clear();
+    bare.ledgers.break_glass_receipts.count = 0;
+    bare.ledgers.break_glass_receipts.head_hash = None;
+    bare.whole_envelope_digest =
+        witness_kernel::envelope::compute_whole_envelope_digest(&bare).expect("digest");
+    let bare_report = verify_envelope(&bare, SignatureMode::Compat).expect("bare verifies");
+    let mut expected = bare_report.warnings.clone();
+    expected.insert(0, WARNING.to_string());
+    assert_eq!(report.warnings, expected);
 }

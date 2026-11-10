@@ -632,7 +632,10 @@ async function verifyEnvelope(envelope, opts = {}) {
         result.break_glass_denied++;
       }
     }
-    if (bg.entries.length > 0) result.checks.push(`Break-glass receipts verified (${bg.entries.length})`);
+    // Trustee signatures and the quorum are not checked: the envelope carries no trustee policy.
+    if (bg.entries.length > 0) {
+      result.checks.push(`Break-glass receipt chain intact${sigCheckable ? ' and device-signed' : ''} (${bg.entries.length}); approvals match the sealed commitments`);
+    }
 
     // Export receipts.
     const exp = envelope.ledgers.export_receipts;
@@ -687,6 +690,10 @@ async function verifyEnvelope(envelope, opts = {}) {
     // Warnings & status.
     if (result.authorship !== 'trusted') {
       result.warnings.push('device key taken from the envelope itself — authorship is self-attested; compare the key against one published by the device owner, or supply it to confirm');
+    }
+    // Same text as src/envelope.rs.
+    if (result.break_glass_granted > 0) {
+      result.warnings.push(`${result.break_glass_granted} break-glass grant(s) present: trustee approvals are not verified offline`);
     }
     if (envelope.provenance.pq_public_key) result.warnings.push('post-quantum signatures present but not verified in this offline viewer');
     else result.warnings.push('no post-quantum public key; PQ signatures not checked');

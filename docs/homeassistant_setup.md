@@ -445,8 +445,9 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    already set up, a page loaded over your home WiFi arrives without its API
    token, so its saves are refused. The page carries the token only for the
    first-boot wizard, a request that already sends it, a device on the
-   Canary's own WiFi, or one BOOT tap: tap the Canary's BOOT button and
-   reload within 30 seconds (one tap unlocks one page load), or paste the
+   Canary's own WiFi, or one BOOT tap: keep the page open and tap the
+   Canary's BOOT button when its banner says to (the banner asks first, and
+   one tap unlocks one page where it stands, with no reload), or paste the
    token from your recovery kit into the dashboard. The Canary's own WiFi
    unlocks the page too, but it broadcasts only while the Canary is off
    your home network (before setup, or after it loses that network), so on

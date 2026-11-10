@@ -800,7 +800,7 @@ static const size_t EMOJI_DISPLAY_SIZE = 31;       // 5 emojis (up to 6 bytes ea
 static const size_t MAX_CONFIRMERS_PER_CHIRP = 8;  // Unique pubkey set tracked per pending chirp (v0.2 Sybil resistance)
 static const uint32_t MIN_UNIX_TIME = 1700000000;  // Threshold below which time(nullptr) is treated as unsynced (v0.2)
 static const uint8_t MAX_WITNESSES_PER_PUBKEY_PER_HOUR = 4;  // v0.2 per-pubkey receive-side rate limit (C14)
-static const size_t MAX_PUBKEY_RATE_TRACK = 32;    // LRU of recent originating pubkeys for rate-limit tracking
+static const size_t MAX_PUBKEY_RATE_TRACK = 32;    // origin keys rate-tracked at once; a full table gives up the row whose window opened longest ago
 
 // Timing (milliseconds)
 static const uint32_t PRESENCE_INTERVAL_MS = 60000;    // Send presence every 60s

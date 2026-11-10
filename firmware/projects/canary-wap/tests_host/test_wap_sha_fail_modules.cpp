@@ -44,8 +44,16 @@
 //   - sha256_domain() keeps its void signature (ble_scan.cpp is byte-
 //     identical with the canary tree, whose API is void) and zeroes its
 //     output after a failed step, as the canary library's IDF 5 body does.
+//   - beacon_channel.cpp's sha256_two() answers false with a zeroed digest:
+//     no co-sign session key, no fingerprint, and no audit link (the chain
+//     and both logs stay as they were, and a head that did not hash at load
+//     is re-derived before the next append); a tampered neighbor is still
+//     revoked, found by its key.
+// mesh_network.cpp's and chirp_channel.cpp's checked hashes run over the
+// whole files in test_mesh_address_wap.cpp and test_chirp_security.cpp.
 // And the sources: none of the five modules' files, nor
-// evidence_update_verify.cpp, makes a bare call of an mbedTLS SHA step, of
+// evidence_update_verify.cpp nor the three channel files, makes a bare call
+// of an mbedTLS SHA step, of
 // the helpers above or of verify()'s injected hash. That scan is a line
 // tripwire, not the proof: it flags a call that starts a statement on its
 // line (at the line's start; after `;`, `{` or `}`; as the body of an
@@ -104,6 +112,8 @@
 #include "familiar.h"
 #include "evidence_update_verify.h"
 #include "mesh_crypto.h"
+#include "beacon_wire.h"
+#include "beacon_cosign_aad.h"
 #include "json_strict.h"     // the route's answers, read as JSON.parse reads them
 
 #ifndef WAP_SHAMOD_VAULT_STATE_INC
@@ -129,6 +139,9 @@
 #endif
 #ifndef WAP_SHAMOD_VAULT_KEY_INC
 #error "WAP_SHAMOD_VAULT_KEY_INC must name the cut of canary_wap.ino's handle_vault_key_set() (the Makefile passes it)"
+#endif
+#ifndef WAP_SHAMOD_BEACON_INC
+#error "WAP_SHAMOD_BEACON_INC must name the cut of beacon_channel.cpp's functions (the Makefile passes it)"
 #endif
 #ifndef WAP_SKETCH_DIR
 #error "WAP_SKETCH_DIR must name the sketch directory (the Makefile passes it)"
@@ -1249,6 +1262,294 @@ static void test_mesh_crypto() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// beacon_channel.cpp
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Its hash helper and what stands on it, cut verbatim: the co-sign session
+// key, the fingerprint, the audit chain's head at load and at each append,
+// and the tamper auto-revoke. A hash that fails gives no key, no
+// fingerprint and no chain link; the revoke still happens.
+
+namespace beacon_world {
+using namespace beacon_channel;
+
+struct Prefs {
+  std::map<std::string, std::vector<uint8_t>> blobs;
+  std::map<std::string, uint32_t> ulongs;
+  int puts = 0;
+  void begin(const char*, bool) {}
+  void end() {}
+  uint32_t getULong(const char* k, uint32_t def) { return ulongs.count(k) ? ulongs[k] : def; }
+  size_t getBytes(const char* k, void* out, size_t len) {
+    if (!blobs.count(k) || blobs[k].size() > len) return 0;
+    std::memcpy(out, blobs[k].data(), blobs[k].size());
+    return blobs[k].size();
+  }
+  size_t putBytes(const char* k, const void* in, size_t len) {
+    ++puts;
+    const uint8_t* b = static_cast<const uint8_t*>(in);
+    blobs[k].assign(b, b + len);
+    return len;
+  }
+  size_t putULong(const char* k, uint32_t v) {
+    ulongs[k] = v;
+    return 4;
+  }
+};
+static Prefs g_prefs;
+static const char* NVS_NS = "beacon";
+static const char* NVS_AUDIT_COUNT = "audit_cnt";
+static const char* NVS_AUDIT_PREFIX = "aud_";
+static const char* NVS_AUDIT_HEAD = "aud_head";
+static bool flash_encryption_enabled() { return true; }
+
+static uint8_t g_x25519_privkey[32];
+static BeaconSetEntry g_beacon_set[MAX_BEACON_SET];
+static uint8_t g_beacon_set_count = 0;
+static const size_t AUDIT_LOG_MAX = 64;
+static BeaconAuditEntry g_audit_log[AUDIT_LOG_MAX];
+static size_t g_audit_log_count = 0;
+static size_t g_audit_head = 0;
+static uint8_t g_audit_chain_head[32];
+static bool g_audit_head_known = true;
+
+// The SD log of record: each appended entry with the head it was given.
+static std::vector<std::pair<BeaconAuditEntry, std::string>> g_sd;
+static bool sd_append_audit_entry(const BeaconAuditEntry* entry, const uint8_t* new_chain_head) {
+  g_sd.emplace_back(*entry, hex(new_chain_head, 32));
+  return true;
+}
+static int g_set_persists = 0;
+static bool persist_beacon_set() {
+  ++g_set_persists;
+  return true;
+}
+static void recompute_trouble_reasons() {}
+
+#include WAP_SHAMOD_BEACON_INC
+
+static void reset() {
+  stub_sha256::disarm();
+  g_log.clear();
+  g_prefs = Prefs();
+  g_sd.clear();
+  g_set_persists = 0;
+  std::memset(g_beacon_set, 0, sizeof g_beacon_set);
+  g_beacon_set_count = 0;
+  std::memset(g_audit_log, 0, sizeof g_audit_log);
+  std::memset(g_audit_chain_head, 0, sizeof g_audit_chain_head);
+  g_audit_log_count = g_audit_head = 0;
+  g_audit_head_known = true;
+}
+
+// The head the chain must hold after `e`: SHA-256(prev || entry).
+static std::string head_after(const BeaconAuditEntry& e) {
+  uint8_t out[32];
+  openssl_sha(std::string(reinterpret_cast<const char*>(e.prev_audit_hash), 32),
+              reinterpret_cast<const uint8_t*>(&e), sizeof e, out);
+  return hex(out, 32);
+}
+static BeaconAuditEntry entry_of(uint8_t seed) {
+  BeaconAuditEntry e;
+  std::memset(&e, 0, sizeof e);
+  e.received_at = 1760000000u + seed;
+  std::memset(e.sig_originator, seed, sizeof e.sig_originator);
+  e.hop_count = seed & 3;
+  return e;
+}
+
+// Every step a two-part hash can fail at, and what a failed finish leaves.
+static const FailCase kTwoPart[] = {
+    {Step::Starts, 0, 0, Out::Scribble, "start"},
+    {Step::Update, 0, 0, Out::Scribble, "the first update"},
+    {Step::Update, 0, 1, Out::Scribble, "the second update"},
+    {Step::Finish, 0, 0, Out::Scribble, "finish"},
+    {Step::Finish, 0, 0, Out::Untouched, "finish"},
+    {Step::Finish, 0, 0, Out::Digest, "finish"},
+};
+static std::string label_of(const char* what, const FailCase& fc) {
+  return std::string(what) + ", " + fc.name + " fails, " + out_name(fc.out);
+}
+
+static void test_hash_and_fingerprint() {
+  reset();
+  uint8_t pub[DEVICE_PUBKEY_SIZE];
+  for (size_t i = 0; i < sizeof pub; i++) pub[i] = (uint8_t)(0x30 + i);
+  uint8_t want[32];
+  openssl_sha("", pub, sizeof pub, want);
+  uint8_t fp[DEVICE_FP_SIZE];
+  stub_sha256::arm();
+  CHECK(answered(compute_fingerprint, pub, fp));
+  CHECK(std::memcmp(fp, want, DEVICE_FP_SIZE) == 0);
+  CHECK(stub_sha256::live == 0);
+  for (const FailCase& fc : kTwoPart) {
+    if (fc.step == Step::Update && fc.update == 1) continue;  // one part
+    const std::string label = label_of("beacon fingerprint", fc);
+    std::memset(fp, 0x5C, sizeof fp);
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK_MSG(!answered(compute_fingerprint, pub, fp), label + ": answers false");
+    CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+    CHECK_MSG(all_zero(fp, sizeof fp), label + ": the fingerprint is zeros");
+  }
+  uint8_t out[32];
+  for (const FailCase& fc : kTwoPart) {
+    const std::string label = label_of("beacon sha256_two", fc);
+    std::memset(out, 0x5C, sizeof out);
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK_MSG(!answered(sha256_two, pub, (size_t)16, pub + 16, (size_t)16, out), label + ": answers false");
+    CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+    CHECK_MSG(all_zero(out, sizeof out), label + ": the digest is zeros");
+  }
+  stub_sha256::disarm();
+  CHECK(answered(sha256_two, pub, (size_t)16, pub + 16, (size_t)16, out));
+  CHECK(std::memcmp(out, want, 32) == 0);
+}
+
+static void test_cosign_key() {
+  reset();
+  uint8_t their_priv[32], their_pub[32], shared[32], want[32], key[32];
+  for (size_t i = 0; i < 32; i++) {
+    g_x25519_privkey[i] = (uint8_t)(0x11 + i);
+    their_priv[i] = (uint8_t)(0x77 - i);
+  }
+  CHECK(Curve25519::eval(their_pub, their_priv, nullptr));
+  CHECK(Curve25519::eval(shared, g_x25519_privkey, their_pub));
+  openssl_sha("securacv:beacon:cosign:v0", shared, 32, want);
+  stub_sha256::arm();
+  CHECK(ecdh_session_key(their_pub, key));
+  CHECK(std::memcmp(key, want, 32) == 0);
+  CHECK(stub_sha256::live == 0);
+  for (const FailCase& fc : kTwoPart) {
+    const std::string label = label_of("beacon co-sign key", fc);
+    std::memset(key, 0x5C, sizeof key);
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK_MSG(!ecdh_session_key(their_pub, key), label + ": no key");
+    CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+    CHECK_MSG(all_zero(key, sizeof key), label + ": the key is zeros");
+  }
+  stub_sha256::disarm();
+}
+
+static void test_audit_chain() {
+  reset();
+  // Three entries chain, in RAM, on SD and in NVS.
+  std::string head = hex(g_audit_chain_head, 32);
+  for (uint8_t i = 1; i <= 3; i++) {
+    BeaconAuditEntry e = entry_of(i);
+    CHECK(chain_audit_entry(&e));
+    CHECK(hex(e.prev_audit_hash, 32) == head);
+    head = head_after(e);
+    CHECK(hex(g_audit_chain_head, 32) == head);
+    CHECK(g_sd.size() == i && g_sd.back().second == head);
+  }
+  CHECK(g_audit_log_count == 3 && g_audit_head == 3 && g_prefs.puts == 3);
+
+  // A link that does not hash: nothing recorded, the chain as it was.
+  for (const FailCase& fc : kTwoPart) {
+    const std::string label = label_of("beacon audit append", fc);
+    g_log.clear();
+    BeaconAuditEntry e = entry_of(9);
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK_MSG(!chain_audit_entry(&e), label + ": answers false");
+    CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+    CHECK_MSG(hex(g_audit_chain_head, 32) == head, label + ": the head is unchanged");
+    CHECK_MSG(g_audit_log_count == 3 && g_audit_head == 3, label + ": the ring is unchanged");
+    CHECK_MSG(g_sd.size() == 3 && g_prefs.puts == 3, label + ": nothing written to SD or NVS");
+    CHECK_MSG(log_has("beacon audit: entry not recorded"), label + ": logged");
+  }
+  stub_sha256::disarm();
+  BeaconAuditEntry fourth = entry_of(4);
+  CHECK(chain_audit_entry(&fourth));
+  CHECK(hex(fourth.prev_audit_hash, 32) == head);
+  head = head_after(fourth);
+  CHECK(hex(g_audit_chain_head, 32) == head);
+
+  // A reboot: the head is re-derived from the ring's newest entry.
+  const Prefs stored = g_prefs;
+  auto reboot = [&stored] {
+    std::memset(g_audit_log, 0, sizeof g_audit_log);
+    std::memset(g_audit_chain_head, 0, sizeof g_audit_chain_head);
+    g_audit_log_count = g_audit_head = 0;
+    g_audit_head_known = true;
+    g_prefs = stored;
+    g_sd.clear();
+    g_log.clear();
+  };
+  reboot();
+  CHECK(load_audit_log());
+  CHECK(g_audit_head_known && hex(g_audit_chain_head, 32) == head);
+  CHECK(g_audit_log_count == 4 && g_audit_head == 4);
+
+  for (const FailCase& fc : kTwoPart) {
+    const std::string label = label_of("beacon audit load", fc);
+    // The head does not hash at load: it is unknown, not a digest.
+    reboot();
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK(load_audit_log());
+    CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+    CHECK_MSG(!g_audit_head_known, label + ": the head is unknown");
+    CHECK_MSG(all_zero(g_audit_chain_head, 32), label + ": and zeroed");
+    // Nor at the next append: no entry is chained from an unknown head.
+    BeaconAuditEntry e = entry_of(5);
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK_MSG(!chain_audit_entry(&e), label + ": an append is refused while it stays unknown");
+    CHECK_MSG(stub_sha256::fired && g_sd.empty() && g_audit_log_count == 4, label + ": nothing recorded");
+    // Once it hashes, the append chains from the true head.
+    stub_sha256::disarm();
+    CHECK_MSG(chain_audit_entry(&e), label + ": the next append is taken");
+    CHECK_MSG(hex(e.prev_audit_hash, 32) == head, label + ": chained from the stored chain's head");
+    CHECK_MSG(hex(g_audit_chain_head, 32) == head_after(e), label + ": the new head");
+    CHECK_MSG(g_sd.size() == 1 && g_audit_log_count == 5, label + ": recorded once");
+  }
+}
+
+static void test_tamper_revoke() {
+  reset();
+  uint8_t pub[DEVICE_PUBKEY_SIZE], stranger[DEVICE_PUBKEY_SIZE];
+  for (size_t i = 0; i < sizeof pub; i++) {
+    pub[i] = (uint8_t)(0xA0 + i);
+    stranger[i] = (uint8_t)(0x40 + i);
+  }
+  auto set_up = [&pub] {
+    std::memset(g_beacon_set, 0, sizeof g_beacon_set);
+    g_beacon_set_count = 2;  // slot 0 a hole (all zeros), slot 1 the neighbor
+    std::memcpy(g_beacon_set[1].device_pubkey, pub, sizeof pub);
+    uint8_t h[32];
+    openssl_sha("", pub, sizeof pub, h);
+    std::memcpy(g_beacon_set[1].fingerprint, h, DEVICE_FP_SIZE);
+    g_beacon_set[1].trust_level = BCN_TRUST_COSIGNER;
+    g_beacon_set[1].valid = true;
+    g_set_persists = 0;
+  };
+  set_up();
+  CHECK(on_peer_tampered(pub));
+  CHECK(g_beacon_set[1].trust_level == BCN_TRUST_REVOKED && g_set_persists == 1);
+  for (const FailCase& fc : kTwoPart) {
+    if (fc.step == Step::Update && fc.update == 1) continue;  // one part
+    const std::string label = label_of("beacon tamper revoke", fc);
+    set_up();
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK_MSG(on_peer_tampered(pub), label + ": the neighbor is revoked all the same");
+    CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+    CHECK_MSG(g_beacon_set[1].trust_level == BCN_TRUST_REVOKED && g_set_persists == 1, label);
+    // A key in no entry revokes nothing, and an all-zero key does not find
+    // the all-zero hole.
+    const uint8_t zero_key[DEVICE_PUBKEY_SIZE] = {};
+    const uint8_t* keys[] = {stranger, zero_key};
+    for (const uint8_t* key : keys) {
+      set_up();
+      stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+      CHECK_MSG(!on_peer_tampered(key), label + ": a key in no entry revokes nothing");
+      CHECK_MSG(g_beacon_set[0].trust_level != BCN_TRUST_REVOKED &&
+                    g_beacon_set[1].trust_level == BCN_TRUST_COSIGNER && g_set_persists == 0,
+                label + ": no entry changed");
+    }
+  }
+  stub_sha256::disarm();
+}
+}  // namespace beacon_world
+
+// ════════════════════════════════════════════════════════════════════════════
 // The sources: no bare call of a SHA step or of the helpers above
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1354,8 +1655,29 @@ static void test_sources() {
   const char* calls[] = {"mbedtls_sha256(", "mbedtls_sha256_starts(", "mbedtls_sha256_update(",
                          "mbedtls_sha256_finish(", "sha256_key_id(", "hash_indices(",
                          "hash_mac(", "d.sha256("};
+  // The channel files: the SHA steps, and each file's own checked helpers.
+  struct FileCalls {
+    const char* file;
+    std::vector<const char*> calls;
+  };
+  const FileCalls channel_files[] = {
+      {"beacon_channel.cpp",
+       {"sha256_two(", "compute_fingerprint(", "audit_head_after(", "rederive_audit_head(",
+        "ecdh_session_key("}},
+      {"mesh_network.cpp", {"sign_message(", "verify_signature("}},
+      {"chirp_channel.cpp", {"session_id_from_pubkey(", "generate_session_identity("}},
+  };
   int seen = 0;
-  for (const char* name : files) {
+  std::vector<std::pair<const char*, std::vector<const char*>>> scans;
+  for (const char* name : files) scans.push_back({name, {std::begin(calls), std::end(calls)}});
+  for (const FileCalls& fc : channel_files) {
+    std::vector<const char*> all(std::begin(calls), std::begin(calls) + 4);  // the four SHA steps
+    all.insert(all.end(), fc.calls.begin(), fc.calls.end());
+    scans.push_back({fc.file, all});
+  }
+  for (const auto& scan : scans) {
+    const char* name = scan.first;
+    const std::vector<const char*>& calls = scan.second;
     const std::string path = std::string(WAP_SKETCH_DIR) + "/" + name;
     const std::string text = read_file(path);
     CHECK_MSG(!text.empty(), path + " is readable");
@@ -1379,7 +1701,7 @@ static void test_sources() {
       }
     }
   }
-  CHECK_MSG(seen >= 15, "the scan found the calls (" + std::to_string(seen) + ")");
+  CHECK_MSG(seen >= 45, "the scan found the calls (" + std::to_string(seen) + ")");
 }
 
 int main() {
@@ -1392,6 +1714,10 @@ int main() {
   test_familiar();
   test_presence();
   test_mesh_crypto();
+  beacon_world::test_hash_and_fingerprint();
+  beacon_world::test_cosign_key();
+  beacon_world::test_audit_chain();
+  beacon_world::test_tamper_revoke();
   test_sources();
 
   if (g_failures != 0) {

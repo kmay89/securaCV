@@ -37,6 +37,23 @@ DEPFLAGS = -MMD -MP
 override CXXFLAGS += $(DEPFLAGS)
 with_deps = $(1) && $(filter-out -o $@ -MMD -l% -Wl%,$(1)) -MM -MT $@ > $@.d
 
+# Flags one compiler has and the other refuses under -Werror. clang names
+# itself in --version (Apple's g++ included); GCC does not.
+ifeq ($(shell $(CXX) --version 2>/dev/null | grep -ci clang),0)
+# GCC only: a bounded strncpy in the CSI library, not a test's to fix.
+WNO_STRINGOP = -Wno-stringop-truncation
+else
+# clang's -Wall, not GCC's: constants the CSI library names and leaves unread,
+# and a loop whose variable only the lambda it calls advances.
+WNO_UNUSED_CONST = -Wno-unused-const-variable
+WNO_LAMBDA_LOOP  = -Wno-for-loop-analysis
+# clang's UBSan runtime is a separate package. Without it the UBSan suite
+# still runs, trapping (SIGILL) on undefined behavior instead of reporting it.
+ifneq ($(shell echo 'int main(){}' | $(CXX) -x c++ - -fsanitize=undefined -o /dev/null 2>/dev/null; echo $$?),0)
+UBSAN_TRAP = -fsanitize-trap=undefined
+endif
+endif
+
 MR60_DIR = ../common/sensors/mmwave_mr60
 MR60_SRC = $(MR60_DIR)/mr60_uart.cpp \
            $(MR60_DIR)/mr60_presence.cpp \
@@ -1341,7 +1358,7 @@ $(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) $(MQTTQUEUE_HDR) M
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_backfill.cpp -o $@
 
 $(CANEGR_BIN): test_canary_event_egress.cpp $(CANEGR_SRC) $(CANEGR_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) -DCSI_TEST_HOST_BUILD \
 	    -DFEATURE_CSI=1 -DFEATURE_HA_MQTT=1 -DFEATURE_SD_STORAGE=1 -DFEATURE_WATCHDOG=1 \
 	    -I stubs/canary_egress -I ../canary/include -I ../canary/src \
 	    -I ../canary/lib/securacv_mqtt/src -I ../common/csi/src -I ../common \
@@ -1401,20 +1418,20 @@ run-secauth-knobs:
 run: run-secauth-knobs
 
 $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
 	    test_csi_event_id_space.cpp $(IDSPACE_SRC) -o $@)
 
 $(CEILING_BIN): test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -DCSI_TEST_CLOCK -I $(IDSPACE_DIR) \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) -DCSI_TEST_HOST_BUILD -DCSI_TEST_CLOCK -I $(IDSPACE_DIR) \
 	    test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) -o $@)
 
 $(MODINT_BIN): test_csi_modules_integration.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) $(WNO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
 	    test_csi_modules_integration.cpp $(MODINT_SRC) -o $@)
 
 $(MODBOOT_BIN): test_csi_module_boot.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) $(WNO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
 	    test_csi_module_boot.cpp $(MODINT_SRC) -o $@)
 
@@ -1441,7 +1458,7 @@ $(DAILY_INC): $(DAILY_MAIN) cut_functions.awk Makefile | $(BUILD_DIR)
 
 $(DAILY_BIN): test_csi_daily_summary.cpp $(DAILY_INC) $(MODINT_SRC) $(MODINT_HDRS) \
               ../common/time/tz_rule.h Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) $(WNO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src -I ../common \
 	    -I $(BUILD_DIR) -DCANARY_MAIN_CPP='"$(abspath $(DAILY_MAIN))"' \
 	    test_csi_daily_summary.cpp $(MODINT_SRC) -o $@)
@@ -1602,17 +1619,18 @@ $(VISION_PIPE_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefi
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_detection_pipeline.cpp -o $@
 
 $(VISION_PIPE_UBSAN_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -fsanitize=undefined -fno-sanitize-recover=all -I $(VISION_INC) -I $(VISION_CFG) \
+	$(if $(UBSAN_TRAP),@echo "note: $(CXX) has no UBSan runtime library: $(@F) traps with SIGILL on undefined behavior and prints no report")
+	$(CXX) $(CXXFLAGS) -fsanitize=undefined -fno-sanitize-recover=all $(UBSAN_TRAP) -I $(VISION_INC) -I $(VISION_CFG) \
 	    test_vision_detection_pipeline.cpp -o $@
 
 $(VISPROF_BIN): test_vision_profiles.cpp $(VISPROF_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) -I ../common/fleet_link test_vision_profiles.cpp -o $@
 
 $(VISFSM_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@)
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_LAMBDA_LOOP) -I $(VISION_INC) -I $(VISION_CFG) test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@)
 
 $(VISFSM_GRACE_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -DVISION_DWELL_END_GRACE_MS=$(VISFSM_GRACE_MS) -I $(VISION_INC) -I $(VISION_CFG) \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_LAMBDA_LOOP) -DVISION_DWELL_END_GRACE_MS=$(VISFSM_GRACE_MS) -I $(VISION_INC) -I $(VISION_CFG) \
 	    test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@)
 
 $(VISCORE_BIN): test_vision_core_bindings.cpp $(VISCORE_SRC) Makefile | $(BUILD_DIR)

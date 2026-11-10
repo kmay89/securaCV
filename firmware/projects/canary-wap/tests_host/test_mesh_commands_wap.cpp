@@ -40,7 +40,9 @@
 #pragma GCC diagnostic ignored "-Wsign-compare"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-function"
+#if defined(__GNUC__) && !defined(__clang__)   // a GCC-only warning name
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
+#endif
 #include MESH_NETWORK_CPP
 #pragma GCC diagnostic pop
 #include "mesh_net_sim.h"

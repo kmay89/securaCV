@@ -8,7 +8,7 @@
 > (`.github/workflows/features-dashboard-guard.yml` blocks any ✅→⚠️/❌ regression without an issue
 > ref). This plan is the *closure program* for the cells where the two trees disagree today.
 >
-> **Companion:** [`../docs/V1_LAUNCH_REVIEW.md`](../docs/V1_LAUNCH_REVIEW.md) (§4 decisions) ·
+> **Companion:** [`../docs/v1-roadmap.md`](../docs/v1-roadmap.md) (decisions on record) ·
 > [`../docs/V1_BENCH_TEST_RUNBOOK.md`](../docs/V1_BENCH_TEST_RUNBOOK.md) (on-device proof) ·
 > [`VARIANT_POLICY.md`](VARIANT_POLICY.md) + [`FIRMWARE_VARIANT_AUDIT.md`](FIRMWARE_VARIANT_AUDIT.md)
 > (lifecycle + de-rot plan — note its item #6 recommends *convergence*, which §2 reconciles with
