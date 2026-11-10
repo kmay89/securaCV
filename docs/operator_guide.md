@@ -366,7 +366,7 @@ See [`docs/esp32_s3_setup.md`](esp32_s3_setup.md).
 Local ONNX inference for object detection. Feature-gated (`backend-tract`); requires a **local**
 model file and explicit width/height (RTSP or V4L2 ingest only).
 
-Fetch the recommended small model (Apache-2.0) with one command — it downloads and
+Fetch the recommended small model (MIT) with one command — it downloads and
 **SHA-256-verifies** the model into `vendor/models/` (a one-time, operator-initiated step; the
 kernel itself never downloads models at runtime):
 

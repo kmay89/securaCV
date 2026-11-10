@@ -68,17 +68,6 @@ final class FleetStore: ObservableObject {
     /// (FleetMerge.rememberDoorNames), so its Fleet row keeps reading
     /// "Canary Sense K7MZ" once the door shuts and the advert name is gone.
     private var doorNames: [UUID: String] = [:]
-    /// The Fleet tab's "+" sheet (AddCanarySheet) is up. It lists the nearby
-    /// Canaries inline, and at its .medium detent the card that slides up by
-    /// itself would show dimmed behind it, so that card stands down — draws
-    /// nothing and latches nothing — until the sheet goes (NearbyOfferLatch;
-    /// sweep A75). The sheet sets it on appear and clears it on disappear.
-    /// One flag for the app, not per window: on an iPad with two windows a
-    /// "+" sheet in one stands the card down in both, and with a "+" sheet
-    /// up in each, closing one brings the card back behind the other
-    /// (a magic_pairing.md §9 bench row).
-    @Published var nearbyOfferStandsDown = false
-
     // Collaborators
     let devices: DeviceStore
     let discovery = Discovery()
@@ -94,6 +83,10 @@ final class FleetStore: ObservableObject {
 
     private var refreshTask: Task<Void, Never>?
     private var bag = Set<AnyCancellable>()
+
+    /// Pairings a Canary answered 403 to. Not polled or probed again until
+    /// paired again or removed.
+    private var refusedPairings = RefusedPairings()
 
     /// Durable per-witness mutes, re-applied at every fold (rows are rebuilt
     /// from device truth, so mute must outlive them).
@@ -586,6 +579,7 @@ final class FleetStore: ObservableObject {
     func refreshOnce() async {
         var next: [Witness] = []
         var events: [TimelineEvent] = []
+        if !refusedPairings.isEmpty { refusedPairings.prune(to: devices.devices) }
 
         // ── Tier 3: paired devices, authenticated and locally verified ──
         await withTaskGroup(of: (Witness, [TimelineEvent])?.self) { group in
@@ -912,7 +906,8 @@ final class FleetStore: ObservableObject {
 
     private func probeOnce() async {
         let targets = devices.devices.compactMap { ref -> (String, URL, String?)? in
-            guard ref.deviceType.isHTTPPairable, let url = ref.baseURL else { return nil }
+            guard ref.deviceType.isHTTPPairable, let url = ref.baseURL,
+                  !refusedPairings.holds(ref) else { return nil }
             return (ref.id, url, ref.tlsCertFingerprint)
         }
         guard !targets.isEmpty else { return }
@@ -1063,9 +1058,29 @@ final class FleetStore: ObservableObject {
         WidgetCenter.shared.reloadTimelines(ofKind: PhoneGlanceCache.widgetKind)
     }
 
+    /// The row for a pairing the Canary refused: named, not dark, and
+    /// flagged so the detail screen offers to pair again or remove it.
+    private static func refusedRow(_ ref: PairedDeviceRef) -> Witness {
+        var w = Witness(id: ref.id, deviceType: ref.deviceType, name: ref.name)
+        w.pairingRefused = true
+        w.baseURL = ref.baseURL
+        return w
+    }
+
+    /// Remove a pairing from this phone: its row, token and pinned key.
+    func removePairing(_ id: String) {
+        devices.remove(id)
+        refusedPairings.prune(to: devices.devices)
+        missCounts[id] = nil
+        headWatch.forget(id: id)
+        Task { await self.refreshOnce() }
+    }
+
     /// Poll one device: /info for liveness + /witness for the chain head, verify
     /// on-device, pin its key TOFU. Static so the task group stays Sendable-safe.
     private static func poll(_ ref: PairedDeviceRef, store: FleetStore) async -> (Witness, [TimelineEvent])? {
+        // A refused pairing sends nothing: each request would be a strike.
+        if store.refusedPairings.holds(ref) { return (refusedRow(ref), []) }
         guard ref.deviceType.isHTTPPairable, let api = try? store.devices.api(for: ref) else {
             return (Witness(id: ref.id, deviceType: ref.deviceType, name: ref.name), [])
         }
@@ -1076,10 +1091,24 @@ final class FleetStore: ObservableObject {
         // stays intact as the fallback for the reference device-api
         // (canary-vision/docs/api.md), same both-dialects spirit as
         // DeviceAPI.authorize(_:).
-        if let status = try? await api.wapStatus() {
+        var refused = false
+        do {
+            let status = try await api.wapStatus()
             return await pollWAP(ref, api: api, status: status)
+        } catch {
+            refused = RefusedPairings.isRefusal(error)
         }
-        guard let info = try? await api.info() else {
+        let info: DeviceInfo
+        do {
+            info = try await api.info()
+        } catch {
+            // A 403 with neither dialect answering: the token is no longer
+            // this Canary's. Stop asking (refusedRow) instead of going dark.
+            if refused || RefusedPairings.isRefusal(error) {
+                store.refusedPairings.note(ref)
+                store.missCounts[ref.id] = nil
+                return (refusedRow(ref), [])
+            }
             var w = Witness(id: ref.id, deviceType: ref.deviceType, name: ref.name)
             w.link = .lost                       // couldn't reach it → dark
             return (w, [])

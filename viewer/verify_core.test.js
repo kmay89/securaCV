@@ -182,6 +182,35 @@ describe('envelope verification parity', () => {
       { start_epoch_s: 600, end_epoch_s: 2400 });
   });
 
+  // A Granted row no trustee approved: device-signed, commitment matching, the
+  // approval's signature filler. Same fixture and warning text as
+  // tests/envelope_fixtures.rs.
+  it('reports a break-glass grant as present, not verified — a forged grant is never ok', async () => {
+    const WARNING = '1 break-glass grant(s) present: trustee approvals are not verified offline';
+    const envelope = loadFixture('forged_grant_envelope.json');
+    const approvals = JSON.parse(envelope.ledgers.break_glass_receipts.entries[0].approvals_json);
+    assert.deepEqual(approvals[0].signature, new Array(64).fill(0xaa), 'filler signature');
+
+    const trusted = { trustedDeviceKeyHex: envelope.provenance.device_public_key };
+    for (const opts of [{}, trusted]) {
+      const report = await V.verifyEnvelope(envelope, opts);
+      assert.equal(report.ok, true, report.error);
+      assert.equal(report.status, 'valid_with_warnings');
+      assert.equal(report.break_glass_granted, 1);
+      assert.ok(report.warnings.includes(WARNING), report.warnings.join(' | '));
+      assert.ok(!report.checks.some((c) => /break-glass.*verified/i.test(c)), 'no check may call the receipts verified');
+    }
+
+    // The grant alone causes the warning: without the row, every other warning stays.
+    const withGrant = (await V.verifyEnvelope(envelope, trusted)).warnings;
+    const bg = envelope.ledgers.break_glass_receipts;
+    bg.entries = []; bg.count = 0; bg.head_hash = null;
+    envelope.whole_envelope_digest = await V.computeWholeEnvelopeDigest(envelope);
+    const bare = await V.verifyEnvelope(envelope, trusted);
+    assert.equal(bare.ok, true, bare.error);
+    assert.deepEqual(withGrant, [WARNING, ...bare.warnings]);
+  });
+
   it('rejects a tampered payload (chain break)', async () => {
     const report = await V.verifyEnvelope(loadFixture('tampered_payload.json'));
     assert.equal(report.ok, false);

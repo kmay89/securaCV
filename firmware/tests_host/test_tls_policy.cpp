@@ -3,7 +3,8 @@
 //
 // The rows that matter most:
 //   * decide(): HTTPS only when the build, the core, the certificate and the
-//     wizard all allow it, with the reason naming the FIRST fact that did not;
+//     wizard all allow it, with the reason naming the FIRST fact that did not
+//     (the caller's own reason for a missing certificate is kept on that row);
 //   * the port-80 Location builder refuses truncation, a malformed host
 //     (falling back to the arrived-on address), a non-origin-form target and
 //     control bytes, drops ":port", and keeps the query string — and it echoes
@@ -51,15 +52,36 @@ static void decide_names_the_first_blocker() {
   const char* why = nullptr;
   decide(false, false, false, true, &why);
   CHECK(std::strstr(why, "FEATURE_HTTPS=0"), "build first: %s", why);
+  why = nullptr;
   decide(true, false, false, true, &why);
   CHECK(std::strstr(why, "esp_https_server"), "then the core: %s", why);
+  why = nullptr;
   decide(true, true, false, true, &why);
   CHECK(std::strstr(why, "setup wizard"), "then the wizard: %s", why);
+  why = nullptr;
   decide(true, true, false, false, &why);
-  CHECK(std::strstr(why, "certificate"), "then the certificate: %s", why);
+  CHECK(std::strstr(why, "no TLS certificate"), "then the certificate: %s", why);
+  why = nullptr;
   decide(true, true, true, false, &why);
   CHECK(std::strstr(why, "443"), "HTTPS reason names the port: %s", why);
   CHECK(decide(true, true, true, false, nullptr) == Mode::HTTPS_REDIRECT, "reason pointer optional");
+}
+
+// The caller's reason for a missing certificate survives only on the row the
+// missing certificate decides; every other row names its own blocker.
+static void decide_keeps_the_callers_certificate_reason() {
+  static const char kMine[] = "stored certificate unreadable";
+  for (int bits = 0; bits < 16; ++bits) {
+    const bool feature = bits & 1, lib = bits & 2, cert = bits & 4, setup = bits & 8;
+    const char* why = kMine;
+    const Mode m = decide(feature, lib, cert, setup, &why);
+    const bool cert_row = feature && lib && !setup && !cert;
+    CHECK(m == decide(feature, lib, cert, setup), "bits=%d: the reason never changes the mode", bits);
+    CHECK((why == kMine) == cert_row, "bits=%d: kept only on the certificate row: %s", bits, why);
+  }
+  const char* empty = "";
+  decide(true, true, false, false, &empty);
+  CHECK(std::strstr(empty, "no TLS certificate"), "an empty reason falls back: %s", empty);
 }
 
 // ── Location builder ────────────────────────────────────────────────────────
@@ -200,6 +222,7 @@ static void mdns_advert_reflects_tls_state() {
 int main() {
   decide_every_row();
   decide_names_the_first_blocker();
+  decide_keeps_the_callers_certificate_reason();
   redirect_uses_host_header_and_keeps_query();
   redirect_falls_back_on_a_malformed_or_missing_host();
   live_reason_follows_setup_completion();

@@ -4475,7 +4475,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (d.ok) document.getElementById('pairingStatus').textContent = 'Completing…';
     }
     async function cancelPairing() { stopPairingPolling(); await api('/api/mesh/pair/cancel', 'POST'); refreshOpera(); }
-    async function saveOperaName() { const name = document.getElementById('operaNameInput').value.trim(); if (name) await api('/api/mesh/name', 'POST', { name }); refreshOpera(); }
+    // Shows a refusal; the refresh then puts the stored name back in the box.
+    async function saveOperaName() {
+      const name = document.getElementById('operaNameInput').value.trim();
+      if (name) {
+        const d = await api('/api/mesh/name', 'POST', { name });
+        if (!d.ok && !signInRaised(d)) alert('Name not saved. ' + (d.error || 'Unknown error'));
+      }
+      refreshOpera();
+    }
     async function leaveOpera() { if (confirm('Leave this opera? This Canary stops sharing alerts with the group. You can re-pair any time to rejoin.')) { await api('/api/mesh/leave', 'POST'); refreshOpera(); } }
     async function removePeer(fp) { if (confirm('Remove this device from the opera? It stops sharing alerts with this Canary until it pairs again.')) { await api('/api/mesh/remove', 'POST', { fingerprint: fp }); loadPeers(); } }
     async function toggleMeshEnabled() { const enabled = document.getElementById('meshEnabled').checked; await api('/api/mesh/enable', 'POST', { enabled }); refreshOpera(); }

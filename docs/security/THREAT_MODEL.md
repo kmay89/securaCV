@@ -1487,8 +1487,9 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   - `confirm_count` removed from wire; receivers track unique-pubkey
     confirmation sets locally (audit C2, C3).
   - Signed suppress voting wired (audit C7).
-  - Wall-clock-anchored timestamps; origination refused when SNTP
-    unsynced (audit C10, C15).
+  - Wall-clock-anchored timestamps; origination refused while the wall
+    clock is not set (the canary-wap has no SNTP; GPS sets its clock)
+    (audit C10, C15).
   - Per-pubkey rate-limit on incoming witnesses (audit C14).
   - REST API (`/api/chirp/*`) behind `api_auth_check()` when wired into
     `canary_wap.ino` (audit C12): the bearer, or a landing session any host

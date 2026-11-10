@@ -39,7 +39,7 @@ them.
 |---|---|
 | **Self-consistent — signed by the key it names (identity not confirmed)** | every check passed: every event carries a valid signature under the key the file itself names, is chained to the one before it, and nothing was added, removed or reordered since it was sealed. Who holds that key is not confirmed — this is what a blank **expected device key** field earns, for an envelope and an event export alike (below) |
 | **Verified — integrity intact** (all N checks passed) | the same, under a key *you* supplied: authorship confirmed. "Verified" is reserved for this |
-| **Verified — with notes** | verified; read the notes (a post-quantum signature this browser cannot test, declared gaps) |
+| **Verified — with notes** | verified; read the notes (a post-quantum signature this browser cannot test, declared gaps, a break-glass grant whose trustee approvals are not checked offline) |
 | **Not verified — rejected** | a check failed. A truncated download fails the same way as tampering, so ask for a fresh export; if a fresh copy fails too, keep both and treat that as significant. A key you supplied that is not the key the file names fails this way too |
 | **Inconclusive** | this browser could not run the Ed25519 check; open the same file in a current browser. Nothing valid is ever shown as rejected for this reason |
 

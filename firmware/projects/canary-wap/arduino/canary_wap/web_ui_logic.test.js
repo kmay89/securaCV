@@ -387,6 +387,59 @@ describe('the Chirp mute and unmute buttons', () => {
   });
 });
 
+// The Opera rename says a refusal. saveOperaName() is page glue, lifted out
+// of web_ui.h whole beside the page's own signInRaised() and run with
+// stand-ins for api(), the name box, alert() and the refresh.
+describe('the Opera rename shows a refusal', () => {
+  async function rename(typed, answer) {
+    const calls = [];
+    const alerts = [];
+    let refreshed = 0;
+    const sandbox = {
+      api: async (endpoint, method, body) => { calls.push({ endpoint, method, body }); return answer; },
+      document: { getElementById: (id) => (id === 'operaNameInput' ? { value: typed } : null) },
+      alert: (text) => { alerts.push(text); },
+      refreshOpera: () => { refreshed++; },
+    };
+    vm.runInNewContext(`${glueFunction('signInRaised')}\n${glueFunction('saveOperaName')}\n` +
+                       'globalThis.__run = saveOperaName;', sandbox);
+    await sandbox.__run();
+    return { calls, alerts, refreshed };
+  }
+  const refusal = 'Invalid Opera name: 1 to 32 bytes of well-formed UTF-8, no byte below 0x20';
+
+  it('a refused name is said in the device\'s words, and the name is read back', async () => {
+    const r = await rename('  bad\u0001name ', { ok: false, error: refusal });
+    assert.equal(JSON.stringify(r.calls),
+                 JSON.stringify([{ endpoint: '/api/mesh/name', method: 'POST', body: { name: 'bad\u0001name' } }]));
+    assert.deepEqual(r.alerts, ['Name not saved. ' + refusal]);
+    assert.equal(r.refreshed, 1);
+  });
+  it('a refusal with no reason still says the name was not saved', async () => {
+    const r = await rename('Home', { ok: false });
+    assert.deepEqual(r.alerts, ['Name not saved. Unknown error']);
+  });
+  it('a saved name says nothing', async () => {
+    const r = await rename('Home', { ok: true });
+    assert.equal(r.calls.length, 1);
+    assert.deepEqual(r.alerts, []);
+    assert.equal(r.refreshed, 1);
+  });
+  it('a refusal the sign-in already raised says nothing more', async () => {
+    for (const error of ['auth_required', 'rate_limited']) {
+      const r = await rename('Home', { ok: false, error });
+      assert.deepEqual(r.alerts, [], error);
+      assert.equal(r.refreshed, 1);
+    }
+  });
+  it('an empty box posts nothing', async () => {
+    const r = await rename('   ', { ok: true });
+    assert.equal(r.calls.length, 0);
+    assert.deepEqual(r.alerts, []);
+    assert.equal(r.refreshed, 1);
+  });
+});
+
 // The Bluetooth card after a tap brings a refused stack up (sweep F235):
 // refreshBtStatus() put "Radio off — <reason>" in the card's subtitle while
 // GET /api/bluetooth named a refusal, and nothing put the card's own line

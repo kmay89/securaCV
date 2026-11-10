@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- Filled by viewer/build.mjs with the sha256 of every inline script and the style block. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-L2f9ulDNTzIhUq4Luzt37yfJSY+dTV6VKX51jKU4Z+M=' 'sha256-LBAnM3qHWW5ib2SP6Fl9m39wYUoNmGCSVeGD27qC158=' 'sha256-Nwl/xttjiTtjUX50UyhumWrbL4RQZwqAC1YracOmPxo=' 'sha256-vYq7Gz2AKKukGdY/NgPGUPtONXK25bRAwoBxgdKWSmo='; style-src 'sha256-e7ozVxf7MNrR4rizIw9HrBstIeronyYskq+pu2ORdA0='; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-6++bycc7gmp7jI/jE4GCqeWu6YeaQ7zdIJ4su6h6pL0=' 'sha256-LBAnM3qHWW5ib2SP6Fl9m39wYUoNmGCSVeGD27qC158=' 'sha256-Nwl/xttjiTtjUX50UyhumWrbL4RQZwqAC1YracOmPxo=' 'sha256-dlF3MZgxgxUPUB1zioSzt8ceVDI0WkeUVMrP/iI8MG4='; style-src 'sha256-e7ozVxf7MNrR4rizIw9HrBstIeronyYskq+pu2ORdA0='; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Verify a securaCV evidence bundle offline in your browser. No install, no account, no network.">
 <title>securaCV · Evidence Viewer</title>
@@ -553,8 +553,11 @@
           <li>The whole-bundle <em>fingerprint</em> recomputes to the value embedded in the bundle.</li>
           <li>Each event is <em>hash-chained</em> to the one before it — no insertions, deletions, or edits.</li>
           <li>Every entry carries a valid <em>Ed25519 signature</em> from the device's key.</li>
-          <li>Checkpoints, break-glass approvals, and the export receipt all verify and bind together.</li>
+          <li>The checkpoint and the export receipt verify and bind together.</li>
+          <li>Break-glass receipts are hash-chained and signed, and their approvals match the sealed commitment.</li>
         </ul>
+        <p><strong>Not checked here:</strong> the trustee signatures behind a break-glass grant, and the
+        quorum. This file does not carry the trustee keys; the kernel re-derives both against its database.</p>
         <p>This viewer implements the same algorithm as the project's Rust verifier, and the two are
         pinned to identical test fixtures in CI. Post-quantum (ML-DSA) signatures, when present, are
         reported as <em>not checked</em> here rather than assumed valid.</p>
@@ -1204,7 +1207,10 @@ async function verifyEnvelope(envelope, opts = {}) {
         result.break_glass_denied++;
       }
     }
-    if (bg.entries.length > 0) result.checks.push(`Break-glass receipts verified (${bg.entries.length})`);
+    // Trustee signatures and the quorum are not checked: the envelope carries no trustee policy.
+    if (bg.entries.length > 0) {
+      result.checks.push(`Break-glass receipt chain intact${sigCheckable ? ' and device-signed' : ''} (${bg.entries.length}); approvals match the sealed commitments`);
+    }
 
     // Export receipts.
     const exp = envelope.ledgers.export_receipts;
@@ -1259,6 +1265,10 @@ async function verifyEnvelope(envelope, opts = {}) {
     // Warnings & status.
     if (result.authorship !== 'trusted') {
       result.warnings.push('device key taken from the envelope itself — authorship is self-attested; compare the key against one published by the device owner, or supply it to confirm');
+    }
+    // Same text as src/envelope.rs.
+    if (result.break_glass_granted > 0) {
+      result.warnings.push(`${result.break_glass_granted} break-glass grant(s) present: trustee approvals are not verified offline`);
     }
     if (envelope.provenance.pq_public_key) result.warnings.push('post-quantum signatures present but not verified in this offline viewer');
     else result.warnings.push('no post-quantum public key; PQ signatures not checked');
@@ -3609,7 +3619,7 @@ const CHECK_PLAIN = [
   [/^Device Ed25519 signatures valid on every sealed event, under the device key named/, 'Every event carries a valid signature from the device key the bundle names'],
   [/^Device Ed25519 signatures valid/, 'Every event carries a valid signature from the device’s own key'],
   [/^Checkpoint signature valid/, 'Older, pruned history is anchored by a valid signed checkpoint'],
-  [/^Break-glass receipts verified/, 'Every vault access left a signed, verifiable receipt — none happened off the books'],
+  [/^Break-glass receipt chain intact/, 'Break-glass receipts are chained and match their sealed approvals — the trustee signatures behind them are not checked here'],
   [/^Human-readable artifact bound/, 'The readable summary matches the sealed data exactly'],
   [/^Export receipt signature valid/, 'This export itself was signed by the device — its origin is proven'],
 ];
@@ -3716,7 +3726,7 @@ async function process(envelope, sourceLabel) {
   html += `<div class="panel"><h2>Contents</h2><div class="stats">
     ${stat(report.sealed_events, 'Sealed events')}
     ${stat(report.export_receipts, 'Export receipts')}
-    ${stat(report.break_glass_granted + report.break_glass_denied, 'Break-glass events')}
+    ${stat(report.break_glass_granted + report.break_glass_denied, 'Break-glass receipts')}
     ${stat((envelope.gaps && envelope.gaps.failure_count) || 0, 'Recorded gaps')}
   </div></div>`;
 
@@ -3974,6 +3984,9 @@ function warningHint(w) {
   if (/self-attested/.test(w)) {
     return 'Integrity is fully proven either way — this note is only about which device signed it. The device owner can publish their key fingerprint, or hand you the C2PA trust anchor for the same export.';
   }
+  if (/break-glass grant\(s\) present/.test(w)) {
+    return 'The receipts are hash-chained, signed by the device key, and their approvals match the sealed commitment. The trustee signatures and the quorum are not checked here — this file does not carry the trustee keys. The kernel re-derives both against its database (log_verify).';
+  }
   if (/post-quantum signatures present/.test(w)) {
     return 'The classical Ed25519 signatures above were fully checked; the extra post-quantum layer needs the Rust verifier (envelope_verify --sig-mode strict).';
   }
@@ -4005,6 +4018,7 @@ function provesPanel() {
       <li>That nothing happened outside the device’s coverage or while it was off (though such gaps are recorded as explicit failure records).</li>
       <li>Exact times — events are deliberately grouped into 10-minute buckets with added jitter to protect bystanders’ privacy.</li>
       <li>Who physically operated or had access to the device.</li>
+      <li>That a break-glass grant had its trustee quorum — the trustee signatures are checked by the kernel against its database, not here.</li>
     </ul>
     <p>These limits are by design: the device records less so it can prove what it does record. See <code>docs/why_secure.md</code> in the securaCV repository.</p>
   </div></details>`;
@@ -4046,7 +4060,7 @@ function whatThisMeans(kind) {
              'Keep the original file exactly as you received it — the <strong>.zip</strong> pack or the <strong>.json</strong> bundle is the evidence; this page is only a check of it.',
              'Use <strong>Save / print report</strong> below for a dated record of <em>what</em> you checked and <em>when</em>.'] },
     notes: {
-      what: 'The record’s integrity is intact and signed. The notes below do not affect that — they flag things a checker couldn’t fully evaluate (e.g. a post-quantum signature this browser can’t test).',
+      what: 'The record’s integrity is intact and signed. The notes below do not affect that — they flag things a checker couldn’t fully evaluate (e.g. a post-quantum signature this browser can’t test, or the trustee approvals behind a break-glass grant).',
       next: ['Read the <strong>Notes</strong> panel so you can explain each one.',
              'Save / print the report and keep the original bundle, exactly as for a clean pass.'] },
     rejected: {
