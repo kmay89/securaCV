@@ -4051,25 +4051,6 @@ so — see D2 below.)
   its date to October 29, 2026. Still human: the contact mailing address, a
   role email and the Google Fonts call.
 
-- [ ] **W35 [code] The night contrast pass reads root pages once loaded, and
-  nothing a visitor opens.** The routed `/tv/` app (`tv/index.html`), the
-  states a visitor opens (plugin.html's iPhone flow, which hid a 1.1:1 heading
-  until a static test caught it; store's cart drawer; dialogs; tabs; the ideas
-  vote dialog) and `:hover`/`:focus` colors outside the `--on-brand` state
-  fills `tests/dark-mode.test.mjs` reads are outside it
-  (`scripts/lib/night-contrast.mjs` SCOPE). Extend it to `tv/index.html` and
-  to named interactions per page, read through the same fixture-checked judge,
-  and force `:hover`/`:focus` on the controls the static guard covers. Found
-  by W34 (the website PR, securacv_website#228).
-
-- [ ] **W36 [code] W22's dark-ink guard does not read `css/site.css`.** The
-  dark-ink guard in `tests/dark-mode.test.mjs` reads page `<style>` blocks and
-  scripts, not `css/site.css`'s shared rules; W32's light-ink guard now reads
-  all three through one sources list. Give the dark-ink guard the same list,
-  so a shared rule that paints dark ink on a night-dark panel is caught
-  statically, not only by the rendered pass. Found by W32 (the website PR,
-  securacv_website#228).
-
 - [ ] **W37 [decision] The night contrast pass holds normal-size text to 3:1,
   not 4.5:1.** It fails only under 3:1 (WCAG's large-text and UI-component
   floor), so normal-size text between 3:1 and 4.5:1 passes (lab.html's stage 5
@@ -4088,43 +4069,6 @@ so — see D2 below.)
   keeps a readable fade (3:1 or better, by opacity or a muted ink); if so,
   restyle the six and delete DIMMED. Found by W34 (the website PR,
   securacv_website#228).
-
-- [ ] **W39 [code] plugin.html's iPhone mock grays read under 3:1 by day and
-  by night.** The Files rows' meta labels ("Files ▸ Browse", "HTML · 2 KB",
-  "folder") and the opening line ("START-HERE.html", "Opening …") are #94a3b8
-  on the mock's light rows and screen, 2.2 to 2.6:1, the same in both themes.
-  Give the mock an iOS secondary gray that reads (#6b7280 reads 4.8:1 on
-  white, as the mock's own `.toast small` already uses). Found by W33's review
-  (the website PR, securacv_website#228).
-
-- [ ] **W40 [code] The emulator's tile toast says "online · chain intact" for
-  an offline tile.** `js/tv-emulator.js`'s live tile toast says 'online ·
-  chain intact' for every tile, a live offline one included (left website-side
-  by A24's re-vendor, #1720), and since A72 (#1832) the birth-day line is
-  appended to that sentence. Say what the tile's own state is, then re-vendor
-  the emulator (`scripts/vendor_witness_emulator.sh`) into both app copies.
-  The toast's wiring regexes in both repos (`tests/tv-wall.test.mjs`,
-  `canary-local/tests/canary_local.test.js`) pin its current shape, so the fix
-  updates them too. Found by A72 (#1832).
-
-- [ ] **W42 [code] The website's `/playground` draws the playground's fault
-  rows (A109's site half).** Since A109 (#1920) the carried
-  `playground-sim.js` can print a Modbus exception (`rs485ProbeException(now,
-  2)`), a CAN bus-off with its recovery (`canBusOff(now)`; the page's 1 Hz
-  `sim.tick(now)` prints the recovery lines) and a frame no node acknowledges
-  (`canNoAck(now)`), and the carried `playground-data.js` holds the rows as
-  per-station `faults`, which `js/playground.js` does not read, so the site
-  shows no button that does nothing. After the weekly carry (or
-  `carry_to_site.py --only playground`) lands them: in `_renderPanel` draw
-  `[...st.stimulus, ...(st.faults || [])]` (class `pg-poke pg-fault`, so they
-  can be styled apart), and in `_poke` add the `rs485:exception`, `can:busoff`
-  and `can:noack` cases calling those three (flash `di`, `do`, `do`).
-  Previewed on a scratch copy of website main (site suite 819/819; Chromium
-  clicks print the firmware lines). One trace already reaches the site: the
-  RS485 panel's instructions, carried verbatim from the glass, end with "An
-  exception (exc 2 = illegal data address) is the slave refusing the register:
-  check it, not A/B.", a case the page cannot stage until this lands. From the
-  carry and a Chromium probe. Found by A109 (#1920).
 
 - [ ] **W24 [decision] The TV app's store text says "verified record".**
   `tv/appinfo.json`'s `appDescription`, `tv/config.xml`'s `<description>` and
