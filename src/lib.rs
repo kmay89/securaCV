@@ -4367,6 +4367,17 @@ fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
+/// Test helper. A row stamped with the current 10-minute bucket is still
+/// inside a zero retention during that bucket's first second, when its start
+/// equals the cutoff. Wait that second out before a test prunes with
+/// retention 0 and expects such a row to go.
+#[cfg(test)]
+pub(crate) fn wait_out_bucket_first_second() {
+    while now_s().is_ok_and(|s| s % u64::from(TEN_MINUTES_S) == 0) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Durable anti-replay ledger for break-glass tokens.
 ///
 /// The in-memory `BreakGlassToken` `consumed` flag dies with the process,
@@ -8581,6 +8592,7 @@ mod tests {
         seal_one_event(&mut kernel, &cfg, "zone:b")?;
         // Retention=0 checkpoints at the current head and prunes everything up to it (so the
         // pruned prefix includes the rotation; the checkpoint is signed by the new key).
+        wait_out_bucket_first_second();
         kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
         seal_one_event(&mut kernel, &cfg, "zone:c")?; // post-checkpoint, new key
 
