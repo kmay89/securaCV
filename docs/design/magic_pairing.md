@@ -1408,11 +1408,12 @@ inherits the session (§3.6).
 - [ ] With the card up, the Fleet tab's "+" sheet hides it (nothing dimmed
       behind the half-height sheet, on an iPhone and on an iPad) and lists
       the Canary inline; closing the sheet brings the card back; a Canary
-      first heard while the sheet is up is offered once it closes. On an
-      iPad with two windows the stand-down is app-wide (one flag in
-      `FleetStore`): a "+" sheet in one window hides the card in both, and
-      with a "+" sheet up in each, closing one brings the card back
-      behind the other; note what the bench sees.
+      first heard while the sheet is up is offered once it closes.
+- [ ] On an iPad with two windows the stand-down is per window (each
+      window's `RootView` holds its own; `scripts/tests/test_ios_setup_glue.py`
+      pins the wiring): a "+" sheet in one window hides the card in that
+      window only, and with a "+" sheet up in each, closing one brings
+      the card back in that window and not behind the other.
 - [ ] The Keychain item is written only after a proven join, never on a
       failure; Forget clears it; it is absent from iCloud Keychain.
 - [ ] The `403`-on-claim path lands on the WAP's row under Ready to pair,

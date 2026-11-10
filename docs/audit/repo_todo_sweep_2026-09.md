@@ -576,28 +576,6 @@ so — see D2 below.)
   stays per device, becomes per source, or both. From code; not probed.
   Found by the F340 decision's security review, 2026-10-19.
 
-- [ ] **F352 [code] iOS: a pairing for a re-installed Canary keeps polling
-  with its old token.** An install or a full erase in either flasher, whose
-  factory image starts NVS over and so regenerates the WAP's key (an OTA
-  update and the 10 s hold keep the key and the token), changes both its
-  token and its `device_id`. *(Amended 2026-10-21, #1843: this item had said
-  a factory reset, which keeps both. Amended again 2026-10-22, #1843's sweep,
-  third pass: that amendment named a full erase as the only cause and said
-  an ordinary re-flash keeps the key, but both flashers write a factory image
-  that spans offset 0 to the app's end with the settings region blank
-  (`make_factory.py`; `browser_flasher.md`, "A factory flash re-initializes
-  NVS"), so an install without the erase changes them too.)* `DeviceStore.add`
-  (`ios/Sources/SecuraCV/Security/DeviceStore.swift`) dedupes by id, so the
-  old row stays beside the new one, and `FleetStore`'s 20 s refresh loop
-  (`ios/Sources/SecuraCV/App/FleetStore.swift`, `startRefreshLoop()`) keeps
-  sending the old token to `/api/status`. Since F343 that holds only the
-  phone's own address, but that is the address the new pairing polls from,
-  so the new row is held at `429` intermittently; a refused `wapStatus()`
-  falls back to the reference API's `info()`, and a row that answers
-  neither is marked `.lost` (the same file). The fix is to stop
-  polling a row that answers `403` and offer re-pair or remove. From code;
-  not run. Found by the F343 decision's owner review, 2026-10-19.
-
 - [ ] **F353 [decision] canary-wap: the bearer token cannot be rotated.**
   `derive_api_token()` derives the token from the identity key, and the 10 s
   BOOT hold keeps both (`factory_reset_by_hold()`), so the token a unit was
@@ -3387,21 +3365,6 @@ so — see D2 below.)
   id is in fact one per account, and what the second phone receives after the
   first opts out. Found by the 2026-10 cleanup's Apple package.
 
-- [ ] **A113 [code] The iPhone reads a birth day the Wall drops, and shows it
-  a day early west of UTC.** Since A72 (#1832) the Wall and the web readers
-  keep `born_day` only inside the window a Canary can stamp (20089 to 49710)
-  and format it in UTC. The iPhone's `FleetSelfReport`
-  (`ios/Sources/SecuraCV/Wire/FleetSelfReport.swift`) accepts any `born_day`
-  above 0, with no window, so a day from 1 to 20088 or above 49710, which no
-  Canary can stamp, shows on the phone but nowhere else; and its
-  `BirthCertificateCard` formats `bornOn` (midnight UTC) in the local time
-  zone, so west of UTC it shows the day before (day 20673 reads Aug 7 instead
-  of Aug 8 in US time zones). It also shows its 'met a clock late' note for a
-  day with no flag, where the Wall shows it only beside `born_exact: false`.
-  Bring the phone in line: the same window, a UTC `FormatStyle`, and a
-  west-of-UTC test zone, as the Wall's DeviceParityTests use. Swift builds are
-  CI's. Found by A72 (#1832).
-
 - [ ] **A114 [code+decision] No hub or display relays a device's birth day.**
   The kernel's `/api/fleet` (`fleet_document`, `FleetRow` in
   `src/fleet_peers.rs`) and a display's peer rows (canary-display
@@ -3430,19 +3393,6 @@ so — see D2 below.)
   the Ultra's Action button picker. (`apple_watch_and_notifications.md` §8 W1
   says the long-look is untried.)
 
-- [ ] **A111 [code] The phone's Orientation picker shows only the saved
-  turn.** The dash's `GET /api/settings` now serves `orientation_worn` and
-  `orientation_refused` beside `orientation` (F245, #1836), but
-  `ios/Sources/SecuraCV/Transport/GlassSettings.swift` decodes only
-  `orientation`, so a glass that refused a turn still reads as turned on the
-  phone. Reading `orientation_refused` (absent from older firmware: treat as
-  0), the sheet could say the glass stayed landscape for want of memory, in
-  the glass's own words. It must read the port's word, not `orientation_worn`
-  differing from `orientation`: `GlassSettingsSheet.swift` posts one key and
-  re-reads at once, which usually lands in the second before the render loop
-  wears the turn, when the two differ on a healthy glass. Swift builds are
-  CI's. Found by F245 (#1836).
-
 - [ ] **A91 [code+decision] A recovery kit of another device, opened from a
   Ready-to-pair row, is paired under that row's name.** `PairView.pair(from:)`
   keeps another device's kit at the host it names (A88) but still builds the
@@ -3457,17 +3407,6 @@ so — see D2 below.)
   be moved at all when it names a host other than the setup address; then test
   it in `DeviceAPITests` and pin the view in
   `scripts/tests/test_ios_setup_glue.py`. Found by the A88 review (#1802).
-
-- [ ] **A92 [code] The nearby card's stand-down is one flag for every iPad
-  window.** `FleetStore.nearbyOfferStandsDown` (A75) is a single `@Published`
-  Bool and the app supports multiple scenes
-  (`UIApplicationSupportsMultipleScenes`), so a "+" sheet in one window hides
-  the card in every window, and with a "+" sheet up in two windows, closing
-  one clears the flag while the other is still up, and the card shows dimmed
-  behind it. Keep the stand-down per scene (an environment value from the
-  scene that presents the sheet), or count presenters with a guard against an
-  unpaired onAppear, and turn the `magic_pairing.md` section 9 iPad note into
-  a check. Found by the A75 review (#1802).
 
 - [ ] **A90 [decision] The Lab's canary-wap topic sample shows a Chirp state the
   device never enters.** `gen_wap.py` writes the `chirp` topic's sample
