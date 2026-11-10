@@ -445,8 +445,9 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    already set up, a page loaded over your home WiFi arrives without its API
    token, so its saves are refused. The page carries the token only for the
    first-boot wizard, a request that already sends it, a device on the
-   Canary's own WiFi, or one BOOT tap: tap the Canary's BOOT button and
-   reload within 30 seconds (one tap unlocks one page load), or paste the
+   Canary's own WiFi, or one BOOT tap: keep the page open and tap the
+   Canary's BOOT button when its banner says to (the banner asks first, and
+   one tap unlocks one page where it stands, with no reload), or paste the
    token from your recovery kit into the dashboard. The Canary's own WiFi
    unlocks the page too, but it broadcasts only while the Canary is off
    your home network (before setup, or after it loses that network), so on
@@ -1493,10 +1494,18 @@ key the log does not accept is kept in both places and the log says why.
 The rotating API token the integration reads is unchanged at
 `/config/api_token`.
 
-Not moved yet: in **standalone** mode the kernel itself keeps the seed
-beside the log at `/config/witness.ed25519.seed`, so a standalone install's
-`/config` still holds it. That is a kernel behavior, tracked separately;
-Frigate mode (the wizard's default) has no such copy.
+The kernel's own copy goes too. In **standalone** mode the kernel used to
+keep the seed a second time, beside the log at
+`/config/witness.ed25519.seed`: the same key, back inside every backup. The
+app now starts the kernel with `DEVICE_KEY_SEED_PERSIST=0`, which tells it
+the seed is kept elsewhere, so a fresh install writes nothing there; and the
+first start after the update removes an existing copy once it is shown to
+hold, byte for byte, the key in use (one line in the log says so). A copy
+holding a different key is kept, with a warning, and the kernel refuses to
+open the log with two identities until a person removes the wrong one.
+Frigate mode (the wizard's default) never had such a copy, though an install
+that once ran standalone is cleaned up the same way. After one start on this
+release, nothing under `/config` holds the key.
 
 #### Advanced: manual configuration (optional)
 

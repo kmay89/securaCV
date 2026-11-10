@@ -250,7 +250,9 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]);
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wunused-variable"
+#if defined(__GNUC__) && !defined(__clang__)   // a GCC-only warning name
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
+#endif
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #pragma GCC diagnostic ignored "-Wc++20-extensions"   // g_settings' designated initializer
 #include BLUETOOTH_CHANNEL_CPP
@@ -294,7 +296,9 @@ inline void vTaskDelete(TaskHandle_t) {}
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wunused-variable"
+#if defined(__GNUC__) && !defined(__clang__)   // a GCC-only warning name
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
+#endif
 #include "ble_nearby.h"
 #pragma GCC diagnostic pop
 static_assert(FEATURE_BLE && FEATURE_BLE_NEARBY, "the host build compiles the nearby scan");

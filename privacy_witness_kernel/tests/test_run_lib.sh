@@ -357,6 +357,66 @@ fi
 chmod 700 "$MIG/data"
 unset LOG_VERIFY_BIN ACCEPT_SEED STUB_LOG
 
+# ---- remove_kernel_seed_copy -----------------------------------------------
+# The copy witnessd used to keep beside the sealed log goes only when it
+# holds the seed in use, byte for byte; anything else is left for a person.
+KSEED="$MIG/config/witness.ed25519.seed"
+
+rm -f "$KSEED"
+assert_eq "" "$(remove_kernel_seed_copy "$KSEED" "$SEED_A")" \
+    "kernel seed copy: no file prints nothing"
+
+# the kernel's copy holds the seed in use (witnessd wrote it trimmed, 0600)
+printf '%s\n' "$SEED_A" > "$KSEED"
+chmod 600 "$KSEED"
+assert_eq "removed" "$(remove_kernel_seed_copy "$KSEED" "$SEED_A")" \
+    "kernel seed copy: the copy of the key in use is removed"
+[ ! -e "$KSEED" ] || { echo "FAIL: kernel seed copy: identical copy not removed" >&2; FAILURES=$((FAILURES+1)); }
+
+# surrounding whitespace is not a difference (the kernel trims on read too)
+printf '  %s \n\n' "$SEED_A" > "$KSEED"
+assert_eq "removed" "$(remove_kernel_seed_copy "$KSEED" "$SEED_A")" \
+    "kernel seed copy: whitespace around the seed is not a different key"
+
+# a different key: kept, untouched
+printf '%s\n' "$SEED_B" > "$KSEED"
+assert_eq "kept differs" "$(remove_kernel_seed_copy "$KSEED" "$SEED_A")" \
+    "kernel seed copy: a copy holding another key is kept"
+assert_eq "$SEED_B" "$(head -n1 "$KSEED")" "kernel seed copy: the kept file is unchanged"
+
+# a prefix of the key in use is a different key, not a match
+printf '%s\n' "${SEED_A:0:32}" > "$KSEED"
+assert_eq "kept differs" "$(remove_kernel_seed_copy "$KSEED" "$SEED_A")" \
+    "kernel seed copy: a truncated seed is a different key"
+
+# an empty file is never 'the key in use'
+: > "$KSEED"
+assert_eq "kept differs" "$(remove_kernel_seed_copy "$KSEED" "$SEED_A")" \
+    "kernel seed copy: an empty file is kept for a person to look at"
+[ -e "$KSEED" ] || { echo "FAIL: kernel seed copy: empty file removed" >&2; FAILURES=$((FAILURES+1)); }
+
+# the seed is never printed: every verdict is a fixed word
+printf '%s\n' "$SEED_A" > "$KSEED"
+case "$(remove_kernel_seed_copy "$KSEED" "$SEED_A" 2>&1; remove_kernel_seed_copy "$KSEED" "$SEED_B" 2>&1)" in
+    *"$SEED_A"*|*"$SEED_B"*) echo "FAIL: kernel seed copy: a verdict carried the seed" >&2; FAILURES=$((FAILURES+1)) ;;
+    *) echo "ok: kernel seed copy: no verdict names the seed" ;;
+esac
+
+# the file cannot be removed: failed, file untouched
+printf '%s\n' "$SEED_A" > "$KSEED"
+chmod 500 "$MIG/config"
+if [ "$(id -u)" = "0" ]; then
+    echo "skip: kernel seed copy: removal failure case needs an unprivileged user (root ignores modes)"
+else
+    assert_eq "failed remove" "$(remove_kernel_seed_copy "$KSEED" "$SEED_A" 2>/dev/null || true)" \
+        "kernel seed copy: an unremovable file fails the cleanup"
+    remove_kernel_seed_copy "$KSEED" "$SEED_A" > /dev/null 2>&1 \
+        && { echo "FAIL: kernel seed copy: failed remove must return 1" >&2; FAILURES=$((FAILURES+1)); }
+    [ -s "$KSEED" ] || { echo "FAIL: kernel seed copy: file touched by a failed remove" >&2; FAILURES=$((FAILURES+1)); }
+fi
+chmod 700 "$MIG/config"
+rm -f "$KSEED"
+
 # ---- install_blueprints ----------------------------------------------------
 # The image carries the blueprints; the app places them under
 # /config/blueprints/automation/securacv without ever overwriting a copy the

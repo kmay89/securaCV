@@ -988,14 +988,23 @@ test("the credential is sealed to the device key: both flashers say so, the Rust
   //    the session cache is the app's managed state.
   const fleetCode = fleetRs.replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(fleetCode, /bearer_auth\(|"Bearer /, "fleet.rs must never send a plain bearer");
-  assert.match(fleetCode, /seal_need\(&token, &device_id, &expected_fp\)\?/, "fleet.rs must refuse a token with no fingerprint to seal to");
+  assert.match(fleetCode, /match crate::seal::seal_need\(&token, &device_id, &expected_fp\) \{\s*Ok\(sealed\) => sealed,\s*Err\(detail\) => return Ok\(refused\(detail\)\),/,
+    "fleet.rs must refuse a token with no fingerprint to seal to, as `refused`, never thrown");
   assert.match(fleetCode, /hs\.accept\(device_id, expected_fp, &answer\)/, "fleet.rs must check the handshake against the recorded fingerprint");
   assert.match(fleetCode, /reqwest::header::AUTHORIZATION, header/, "fleet.rs must send the sealed header");
   assert.match(libRsSrc, /\.manage\(fleet::SealState::default\(\)\)/, "lib.rs must manage the session cache");
   assert.match(libRsSrc, /^mod seal;/m, "lib.rs must declare the seal module");
   assert.match(appJs, /invoke\("fleet_device_call", \{\s*\n?\s*base, token, action,\s*\n?\s*deviceId: entry\.deviceId,\s*\n?\s*expectedFp: entry\.pubkeyFp/,
     "app.js must hand fleet_device_call the id and fingerprint the handshake is checked against");
-  assert.match(appJs, /callNote\(e\)/, "the fleet book must show the handshake's own refusal sentence");
+  assert.match(appJs, /callNote\(e\)/, "the fleet book must show a transport failure as one");
+  // A refusal to seal is an ANSWER on the result (`refused`), never a thrown
+  // error: the OTA loop treats a throw as a lost socket and narrates a
+  // reboot, so a thrown refusal would be swallowed for five minutes.
+  assert.match(fleetCode, /"refused": detail/, "fleet.rs must carry a handshake refusal as the result's `refused`");
+  assert.match(appJs, /if \(r\.refused\) this\.note\(key, r\.refused\)/, "identify must show a refusal");
+  assert.match(appJs, /if \(inst\.refused\) \{ this\.note\(key, inst\.refused\); return; \}/, "the install call must show a refusal and stop");
+  assert.match(appJs, /if \(st && st\.refused\) \{ this\.note\(key, st\.refused\); return; \}/, "the status poll must show a refusal and stop");
+  assert.match(appJs, /if \(!r\.refused && !entry\.pairedAddr\)/, "a refused call must not pair the address");
 
   // 8. The firmware's side is host-tested, and the suite is wired in.
   assert.match(makefile, /^run: run-api-seal$/m, "the WAP host Makefile must run the sealed-bearer suite");

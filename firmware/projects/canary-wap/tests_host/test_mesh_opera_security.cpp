@@ -143,7 +143,8 @@ void test_o3_rekey_commits_on_all_acks() {
   // 3 peers pending ACK → bits 0,1,2 set
   r.pending_acks = 0b111;
 
-  EXPECT(!finalize_rekey(r, *(new OperaConfig{}), peers, /*now_ms=*/100,
+  OperaConfig untouched{};
+  EXPECT(!finalize_rekey(r, untouched, peers, /*now_ms=*/100,
                          /*timeout_ms=*/60000),
          "O3: rekey not finalized while ACKs outstanding");
 

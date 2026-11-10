@@ -17,7 +17,16 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+// g++ reports a false -Wmaybe-uninitialized inside libstdc++'s <regex> when
+// ASan is on (GCC PR 105562).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 #include <regex>
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #include <sstream>
 #include <string>
 

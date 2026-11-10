@@ -43,6 +43,7 @@
     "presence_range": "static human presence 1.5\u20136 m",
     "presence_max_m": 6.0,
     "vitals_range_m": 1.5,
+    "vitals_period_ms": 1000,
     "vitals_accuracy": "breathing ~90%, heart rate ~85% (\u22641.5 m, single target)",
     "host": "XIAO ESP32-C6 (RISC-V, WiFi 6, BLE 5, 802.15.4)",
     "link": "UART1 \u00b7 host TX GPIO16 \u2192 radar RX, host RX GPIO17 \u2190 radar TX \u00b7 115200 8N1",
@@ -1147,7 +1148,7 @@
       "state": "Present",
       "led": "green",
       "event": "occupancy_changed",
-      "serial": "[vitals] breathing lost",
+      "serial": "[vitals] breathing lost (stall)",
       "mqtt": [
         {
           "suffix": "events",

@@ -148,16 +148,34 @@ unless the line says otherwise.
   certificate, never an insecure-verify mode. `src/bin/adapter_host.rs`.
 - `adapter_host`'s SocketCAN frame read is `ptr::read_unaligned` (the
   byte buffer carried no alignment promise).
+- **Break-glass token redemption lived only in an unsigned table.** A
+  redeemed token's nonce went into `consumed_break_glass_tokens`, which
+  nothing signs; a database writer could delete the row and present the
+  token again inside its bucket (the in-memory `consumed` flag is per
+  process). Redemption is now recorded twice, burn first, in one
+  transaction: the nonce is burned, then a device-signed, hash-chained
+  `TokenRedeemed { nonce, receipt_entry_hash }` row is appended to
+  `break_glass_receipts`, restating the `Granted` receipt it spends. The
+  burn refuses any nonce the chain already shows redeemed, so a deleted row
+  buys no replay; the token is validated (signature, live bucket, grant
+  quorum) before anything is written, so a tampered token file cannot
+  poison the chain. Every chain walk (`log_verify`, `break_glass receipts`,
+  the boot verification, the evidence-envelope verifier in Rust and JS)
+  fails on a nonce redeemed twice, a grant redeemed by two nonces, a
+  redemption naming no grant or restating it wrongly, a burned nonce with no
+  signed row, or a signed row with no burn row (`FailureKind::
+  TokenRedemption`). `break_glass unseal` therefore needs the signing seed,
+  not only the database key. What the walk cannot see — a redemption row
+  dropped from the chain tail with its burn row — is what anchoring the
+  receipt head is for; `spec/break_glass.md` says so. `src/lib.rs`,
+  `src/break_glass/core.rs`, `src/verify.rs`, `src/envelope.rs`,
+  `src/break_glass/cli.rs`, `viewer/verify_core.js`.
 
 ### Stated, not fixed
 
 - `reference_v1`'s witness-page pre-image joins fields with `:` and is not
   injective; the spec now says so and what a verifier must reject
   (`spec/witness_api_v1.md` §4.1). The next `chain_format` length-prefixes.
-- The break-glass single-use token ledger (`consumed_break_glass_tokens`) is
-  an unsigned table; a database writer can delete a row and replay a token
-  once more inside its bucket. A device-signed `TokenRedeemed` receipt row is
-  the fix and is tracked.
 
 ## Backoffice — the door (`backoffice/`)
 

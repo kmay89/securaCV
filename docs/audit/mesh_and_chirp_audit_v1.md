@@ -387,7 +387,7 @@ Before merging the Chirp v0.2 hardening to main:
 - [x] `PROTOCOL_VERSION` bump documented; older firmware refuses v1 frames gracefully. (Bumped from 0 to 1 in `mesh_network.h:514`; `chirp_channel.cpp::on_espnow_recv` strict-rejects mismatched version.)
 - [x] Spec `spec/chirp_channel_v0.md` updated to v0.2 with corrected wire format and removed `TPL_AUTH_FEDERAL_PRESENCE`.
 - [x] `docs/security/THREAT_MODEL.md` Chirp section added.
-- [x] HA MQTT discovery surfaces `chirp.state` four-state NFPA enum (`Normal | Trouble | Alarm | Supervisory`).
+- [x] HA MQTT discovery surfaces `chirp.state` as the firmware's own state words (`disabled | initializing | listening | active | muted | cooldown`, or `unknown`), not an NFPA enum.
 
 **Status: closed (PR #450 + #454 merged 2026-05-11/12).**
 
@@ -415,6 +415,7 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 - [x] Self-test heartbeat (`BEACON_MSG_SELFTEST_OK`) emits daily; receivers surface `Trouble` on >36h absence.
 - [x] X25519 keypair NVS-persisted (audit follow-up: codex P1 #7 closure in PR #454).
 - [x] Audit log NVS-persisted as a ring buffer with head pointer (audit follow-up: gemini P1 #3 / codex P2 #8 closure in PR #454).
+- [x] An audit entry is chained only from and to a head that hashed: when the SHA-256 for its link fails, the entry is not recorded, the chain, the SD log and the ring stay as they were, an ALERT is logged and the alarm proceeds; a head that did not hash at boot is re-derived before the next append (`beacon_channel.cpp::chain_audit_entry`, `tests_host/test_wap_sha_fail_modules.cpp`). Host-tested only.
 - [x] COSIGN_REQ/RESP encrypted with X25519 + ChaCha20-Poly1305 (audit follow-up in PR #454). Since 2026-09 the clear routing fields (fingerprints, `ciphertext_len`, `accept`) are bound as associated data and an all-zero X25519 shared secret is refused (`beacon_cosign_aad.h`, `tests_host/test_beacon_cosign_aad.cpp`).
 
 **Status: closed (PR #454 merged 2026-05-12).** Hardware verification of the two-pubkey origination flow remains queued — see `docs/audit/hardware_verification_checklist.md`.

@@ -1,8 +1,63 @@
 # Changelog
 
 ## [Unreleased]
+### v1 readiness: the fixes a session could finish, and a backlog that holds only open work (#1951)
+
+- **Offline envelopes say what they cannot prove.** An evidence envelope
+  with a break-glass grant reads `valid_with_warnings` in both verifiers
+  ("N break-glass grant(s) present: trustee approvals are not verified
+  offline"), and the viewer no longer says break-glass approvals verify. The
+  interim half of #1580.
+- **canary-wap Chirp checks freshness before the per-key limit**, so a
+  captured stale frame no longer counts against its origin key's hour (F436).
+- **A failed SHA-256 is refused** in the beacon, mesh and chirp helpers
+  (F364, slice 1b). The WAP host suite is clean under clang++ 18 and
+  ASan/UBSan; that run found and fixed four unaligned payload reads and a
+  one-byte over-read in `api_seal.h`'s `hex_decode()` (F434).
+- **TLS status and storage:** `/api/status` keeps why a stored certificate was
+  refused (F439); the WAP probes NVS for its TLS pair as the flagship does
+  (F440). The WAP dashboard's Opera rename shows a refusal (F444).
+- **iOS:** a pairing a Canary answers 403 to is no longer polled and offers
+  Pair again / Remove (F352); the birth day is windowed and shown in UTC
+  (A113); the Orientation sheet says when the glass refused a turn (A111);
+  the nearby card stands down per window (A92).
+- **Lab:** the Sense radar lab models the radar's vitals cadence (A129);
+  `gen_wap.py` reads the mDNS TXT records from the sketch (A131); the
+  onboarding probes hold the Join card's reach and read the splash's tail
+  (A110, A112); the Wall emulator re-vendored, an offline tile's toast says
+  offline (W40).
+- **Checks:** the flagship host suite runs under clang (F441); a lint for a
+  chip-target macro tested before `sdkconfig.h` (F442); the JSON-answer
+  guard's proof runs in a pool (CI22).
+- **Docs:** `docs/v1-roadmap.md` is one short page and replaces
+  `V1_LAUNCH_REVIEW.md`; the backlog (`docs/audit/repo_todo_sweep_2026-09.md`)
+  holds only open items, 2.1 MB to 290 KB; `IMPROVEMENT_ROADMAP.md` keeps the
+  two sections other docs point at. The tap-gate passages in the user and
+  security docs say one asker (F20's note); the Chirp spec describes the
+  flow the code runs (D20). Also closed: HA59, D15, D17, D21, D22.
+- Host-tested and CI-compiled; nothing here was run on a device.
+
 ### canary-wap Chirp keeps its limits across the uptime wrap and under a flood; a read that failed is not a value that is missing, on the flagship's TLS pair, three witness keys, the canary's RSSI and the camera's thermal sensor (and the ESP32-S3 reads its die sensor for the first time); both dashboards draw names as text; witnessd checks the model it ships with; the desktop releases pin their AppImage tools and attach their own SBOMs; canary-wap says what happened and counts a Canary once; Home Assistant reads a battery only from a number; the flasher catalog and the build matrix take their facts from the source; the playground names a Modbus exception; the Lab's twins run the firmware; three claims are held to what ships; and the Lab's WAP page reads the sketch (#1920, wave 23)
 
+- **Home Assistant: the kernel's copy of the device key leaves `/config`
+  too.** In standalone mode `witnessd` wrote the environment seed beside the
+  sealed log (`/config/witness.ed25519.seed`) at its first start — the key
+  that PR #1935 moved into the app's own `/data`, back inside every Home
+  Assistant backup. The kernel grows one switch, `DEVICE_KEY_SEED_PERSIST`
+  (`crypto::device_seed_persist_policy`): unset keeps witnessd's historical
+  persisting, which the container image's operator commands rely on; `0`
+  makes witnessd resolve like every other daemon (`resolve_device_seed`:
+  the environment seed is used as given, never written, and an existing
+  seed file that disagrees is still refused); a typo is a startup error, not
+  a silent "persist". The app's witnessd service sets `0`, and `run.sh`
+  removes the copy an earlier release left once it holds, byte for byte,
+  the seed in use (`run_lib.sh remove_kernel_seed_copy`: fixed-word
+  verdicts, the seed never printed; a differing copy is kept with a
+  warning). The AppArmor profile grants no kernel process `w` on that file
+  anymore (the setup alone, for the removal), pinned by
+  `test_addon_store.py`; `test_run_lib.sh` and `test_config_render.sh`
+  cover the helper and the wiring; `DOCS.md`, `docs/homeassistant_setup.md`
+  and the app's changelog no longer say the copy is still there.
 - **Home Assistant: the evidence pack reads itself out.** Every
   `securacv.export_evidence` zip now carries `WITNESS_STATEMENT.txt`
   (`custom_components/securacv/witness_statement.py`): the export in plain
@@ -31,9 +86,7 @@
   raise its false-positive rate, and a frame that fails its signature checks
   no longer keeps a heard chirp out; a frame signed under any key, or a relay
   naming an origin key with no origin signature (v0.2's soft accept), still
-  can, and a captured stale frame played back once a filter period still
-  counts against its key's hour: both are written in spec §5.3 and the threat
-  model, pinned by tests, and filed. The presence beacon's last-send age stops
+  can: written in spec §5.3 and the threat model, pinned by tests, and filed. The presence beacon's last-send age stops
   at 254 minutes, where it read 5 minutes 2^32 ms after a send, and presence's
   ten-minute relapse every 2^32 ms is written down as a known limit. The
   threat model's Replay and Spoofed-origination cells, its Outstanding list

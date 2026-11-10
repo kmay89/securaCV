@@ -498,8 +498,8 @@ HUB on the WAP is a follow-up, not a claim this page makes.
 | 1 | Is the `Host` foreign (cannot name this device, and the request did not arrive over the SoftAP)? | `403 {"error":"host"}` | The bearer is unread, the claim untouched, the BOOT tap left unspent. |
 | 2 | A valid **bearer**? | serve | The claim and the tap are left alone. |
 | 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim only on a match** (a wrong value spends nothing; an expired claim is burned). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
-| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | The tap is one consumer across every path. On the flagship the take is `take()`, one atomic exchange. On the WAP the receipt's take is `take_exact()`, a compare-and-swap of the stamp `tap_arbitrate()` judged, and the tap is served only to the sole address asking for it; a second address in the window closes the tap with `409 tap_contended`. The WAP's BLE OTA break-glass takes the same tap with `take()`'s exchange, and an exchange and a compare-and-swap of one word cannot both win. |
-| — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). The WAP answers its own literal with the same fields, whose `hint` and `button` say to start asking first, then short-tap BOOT (F342); the shared builder's "short tap, then poll" moves with F354. |
+| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | The tap is one consumer across every path. On both trees the receipt's take is `take_exact()`, a compare-and-swap of the stamp `tap_arbitrate()` judged, and the tap is served only to the sole address asking for it; a second address in the window closes the tap with `409 tap_contended`. On the flagship a home-network page load that would take the tap asks the same arbiter (F354). The WAP's BLE OTA break-glass takes the same tap with `take()`'s exchange, and an exchange and a compare-and-swap of one word cannot both win. |
+| — | none of the above | `403 physical_confirmation_required` | The body `build_gate_refusal_json` builds, with the fields the three-grant route always answered; its `hint` and `button` say to start asking first, then short-tap BOOT (F342, F354). The WAP answers its own literal, the same body at the same TTL. |
 
 Every caller the three-grant overload admitted is admitted here too, in the
 same order; the claim is inserted between the bearer and the tap and
@@ -809,8 +809,6 @@ What stays open, and is the ledger's, not a claim of this design:
   still work.
 - A dual-stack browser would count as two askers if the WAP's station
   interface ever enabled IPv6 (it does not today).
-- The flagship's tap, on its receipt and on the page load it unlocks, still
-  goes to the first asker (F354).
 
 Host-tested (`firmware/tests_host/test_provisioning_gate.cpp`,
 `test_receipt_grant.cpp`, `test_receipt_authority.cpp`,
@@ -1408,11 +1406,12 @@ inherits the session (§3.6).
 - [ ] With the card up, the Fleet tab's "+" sheet hides it (nothing dimmed
       behind the half-height sheet, on an iPhone and on an iPad) and lists
       the Canary inline; closing the sheet brings the card back; a Canary
-      first heard while the sheet is up is offered once it closes. On an
-      iPad with two windows the stand-down is app-wide (one flag in
-      `FleetStore`): a "+" sheet in one window hides the card in both, and
-      with a "+" sheet up in each, closing one brings the card back
-      behind the other; note what the bench sees.
+      first heard while the sheet is up is offered once it closes.
+- [ ] On an iPad with two windows the stand-down is per window (each
+      window's `RootView` holds its own; `scripts/tests/test_ios_setup_glue.py`
+      pins the wiring): a "+" sheet in one window hides the card in that
+      window only, and with a "+" sheet up in each, closing one brings
+      the card back in that window and not behind the other.
 - [ ] The Keychain item is written only after a proven join, never on a
       failure; Forget clears it; it is absent from iCloud Keychain.
 - [ ] The `403`-on-claim path lands on the WAP's row under Ready to pair,

@@ -10,7 +10,7 @@ deferred.
 | Feature | Why | Persona |
 |---------|-----|---------|
 | **Ship & tag v1** + align `CHANGELOG.md` and `v1-roadmap.md` | "Rely on this for evidence" is hollow until v1 exists | All |
-| **One-click install** (HA add-on store, no terminal) + **bundled detection model** (deferred — [`docs/V1_LAUNCH_REVIEW.md`](../V1_LAUNCH_REVIEW.md) §4: in the primary Frigate deployment detection is Frigate's job) | Kills the single biggest onboarding drop-off; removes the ONNX hand-download | A, C |
+| **One-click install** (HA add-on store, no terminal) + **bundled detection model** (deferred — [`docs/v1-roadmap.md`](../v1-roadmap.md), decisions on record: in the primary Frigate deployment detection is Frigate's job) | Kills the single biggest onboarding drop-off; removes the ONNX hand-download | A, C |
 | **Timeline / verification UI in HA** (events + verified ✓ + chain status) | The persuasive payoff currently lives as raw sensors | A, B |
 | **Working mobile push out-of-the-box** (digest + pattern alerts) | The daily "it's working" signal; already partly built | A, B |
 | **Court-grade signed export + standalone verifier** | Turns the moat into something a non-dev can actually *use* | B, E |

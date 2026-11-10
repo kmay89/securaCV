@@ -2301,33 +2301,49 @@ static void tls_free_buffers() {
   g_tls_key_der_len = 0;
 }
 
-// The stored certificate and its key (sweep F404, nvs_load_key()'s rule):
-// Loaded only when the session opened, both entries are stored and each read
-// answered all its bytes. Absent only when the session opened and neither is
-// stored: the one answer init_tls_cert() makes and stores a new certificate
-// on. Every other way the pair goes unread answers Refused, with both
-// buffers zeroed and freed (tls_free_buffers()) and one line saying why: a
-// session that did not open, one of the two stored without the other, a
-// length malloc cannot hold, and a read that answered fewer bytes than the
-// lookup (IDF copies a blob's data before its CRC check refuses it and
-// answers 0, so the buffer can hold bytes that read refused). Before, both
-// getBytes() answers were dropped, so a refused read handed mbedTLS what the
-// buffer held; and every false meant "no certificate", so a build that can
-// generate one made a new certificate and stored it over the one whose pin
-// the phones hold.
+// The stored certificate and its key. Absent only when IDF's NVS says neither
+// entry is stored (no namespace, or neither key in it): the one answer
+// init_tls_cert() makes and stores a new certificate on. Loaded only when
+// both are stored and each read answered all its bytes. Every other way the
+// pair goes unread answers Refused, with both buffers zeroed and freed and
+// one line saying why. The lengths are asked of IDF because Preferences
+// answers 0 alike for an entry never stored and for a lookup that failed.
 static KeyLoad tls_load_from_nvs() {
-  NvsMainSession nvs(true);
-  if (!nvs.isOpen()) {
-    Serial.println("[TLS] Certificate not loaded: the NVS session did not open");
+  size_t cert_len = 0, key_len = 0;
+  esp_err_t cert_err = ESP_OK, key_err = ESP_OK;
+  nvs_handle_t h;
+  const esp_err_t opened = nvs_open(NVS_MAIN_NS, NVS_READONLY, &h);
+  if (opened == ESP_OK) {
+    cert_err = nvs_get_blob(h, NVS_KEY_TLS_CERT, nullptr, &cert_len);
+    key_err = nvs_get_blob(h, NVS_KEY_TLS_KEY, nullptr, &key_len);
+    nvs_close(h);
+  } else {
+    cert_err = key_err = opened;
+  }
+  if (cert_err == ESP_ERR_NVS_NOT_FOUND && key_err == ESP_ERR_NVS_NOT_FOUND) return KeyLoad::Absent;
+  const esp_err_t fault = (cert_err != ESP_OK && cert_err != ESP_ERR_NVS_NOT_FOUND) ? cert_err
+                        : (key_err != ESP_OK && key_err != ESP_ERR_NVS_NOT_FOUND) ? key_err
+                        : ESP_OK;
+  if (fault != ESP_OK) {
+    Serial.printf("[TLS] Certificate not loaded: NVS could not say whether one is stored (%s)\n",
+                  esp_err_to_name(fault));
+    return KeyLoad::Refused;
+  }
+  if (cert_err != ESP_OK || key_err != ESP_OK) {
+    Serial.printf("[TLS] Certificate not loaded: the %s is stored without the %s\n",
+                  cert_err == ESP_OK ? "certificate" : "key",
+                  cert_err == ESP_OK ? "key" : "certificate");
+    return KeyLoad::Refused;
+  }
+  if (cert_len == 0 || key_len == 0) {
+    Serial.printf("[TLS] Certificate not loaded: the stored pair is empty (%u and %u bytes)\n",
+                  (unsigned)cert_len, (unsigned)key_len);
     return KeyLoad::Refused;
   }
 
-  const size_t cert_len = nvs->getBytesLength(NVS_KEY_TLS_CERT);
-  const size_t key_len  = nvs->getBytesLength(NVS_KEY_TLS_KEY);
-  if (cert_len == 0 && key_len == 0) return KeyLoad::Absent;
-  if (cert_len == 0 || key_len == 0) {
-    Serial.printf("[TLS] Certificate not loaded: the %s is stored without the %s\n",
-                  cert_len ? "certificate" : "key", cert_len ? "key" : "certificate");
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) {
+    Serial.println("[TLS] Certificate not loaded: the NVS session did not open");
     return KeyLoad::Refused;
   }
 

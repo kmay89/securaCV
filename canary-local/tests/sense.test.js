@@ -165,6 +165,23 @@ test("only events + identify echo are non-retained", () => {
   }
 });
 
+test("the vitals cadence is the radar notes' own, and the lab's clock sends one frame a period", async () => {
+  const notes = read(join(REPO, "docs/hardware/mr60bha2_radar_notes.md"));
+  const period = Number(notes.match(/^\|\s*vitals_period_ms\s*\|\s*(\d+)\s*\|/m)[1]);
+  assert.strictEqual(data.radar.vitals_period_ms, period);
+  assert.strictEqual(JSON.parse(read(join(ROOT, "devices/senselab.json"))).hardware.vitals_period_ms, period, "both Sense pages carry one cadence");
+  const { makeVitalsCadence } = await import("../assets/sense-ui.js");
+  const due = makeVitalsCadence(period);
+  const sent = [];
+  for (let t = period + 16; t < 6 * period; t += 16) if (due(t)) sent.push(t);
+  assert.strictEqual(sent.length, 5, "one report in each of five periods, at 60 passes a second");
+  assert.ok(sent.slice(1).every((t) => t % period < 16), "each on the first pass of its period");
+});
+
+test("the second-person scene's serial is drive_fsms' deadline line", () => {
+  assert.strictEqual(data.sandbox.find((s) => s.id === "second").serial, "[vitals] breathing lost (stall)");
+});
+
 test("sandbox scenarios only publish to real topics", () => {
   const suffixes = new Set(data.mqtt.topics.map((t) => t.suffix));
   for (const sc of data.sandbox)
@@ -509,7 +526,8 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
     await run(data.mqtt.heartbeat_ms + 200);
     fresh();
     click("sit");
-    await run(vit.lock_ms + 500);
+    // up to one vitals period for the radar's next report, then the lock window
+    await run(data.radar.vitals_period_ms + vit.lock_ms + 500);
     const sit = fresh();
     assert.deepStrictEqual(sit[sit.length - 1], [topic("state"), rowOf("sit", "state")], "the lock and its BPMs");
     click("second");
@@ -853,7 +871,8 @@ async function onLabBench(d, fn, t0 = 1000) {
 // drops), they leave (the lock is earned afresh), the radar unplugged
 // (Unknown, and the lock's deadline) and back, and the wellbeing build
 // switched off (a presence-only build prints no vitals line). The frames that
-// room makes, by the lab's rule (a presence frame each pass; after it, while
+// room makes, by the lab's rule (a presence frame each pass, its distance in
+// whole centimeters; after it, on the first pass of each vitals period while
 // someone is still, within the vitals range and Present on the wellbeing
 // build, a vitals frame with the wellbeing row's BPMs; nothing while
 // unplugged), are played through the firmware's drive_fsms
@@ -877,7 +896,7 @@ test("the radar lab's vitals lock ticks as mr60_vitals.cpp and drive_fsms do, th
   const well = JSON.parse(data.mqtt.topics.find((x) => x.suffix === "state").wellbeing);
   assert.ok(well.breath_bpm >= vcfg.breath_min_bpm && well.breath_bpm <= vcfg.breath_max_bpm && well.heart_bpm >= vcfg.heart_min_bpm
     && well.heart_bpm <= vcfg.heart_max_bpm, "the wellbeing row's BPMs are plausible to the firmware");
-  const L = v.lock_ms, X = v.lost_ms, D = p.debounce_ms, U = p.stall_ms + 3000;
+  const L = v.lock_ms, X = v.lost_ms, D = p.debounce_ms, U = p.stall_ms + 3000, P = data.radar.vitals_period_ms;
   const t0 = 1000;
 
   // the room, as the lab's labcmd handler and toggles place it (sense-ui.js)
@@ -889,14 +908,14 @@ test("the radar lab's vitals lock ticks as mr60_vitals.cpp and drive_fsms do, th
     [500, (lab) => lab.cmd("walkin"), () => { room.p1 = [3.0, 0.4]; }],
     [1500, (lab) => lab.cmd("near"), () => { room.p1 = [1.1, 0.1]; }],
     [2000, (lab) => lab.cmd("still"), () => { room.still = room.wellbeing = true; }],
-    [3000 + L, (lab) => lab.toggle("still"), () => { room.still = false; }],
-    [3500 + L + X, (lab) => lab.toggle("still"), () => { room.still = true; }],
-    [4000 + 2 * L + X, (lab) => lab.cmd("person2"), () => { room.p2 = [4.6, -1.4]; }],
-    [4500 + 2 * L + 2 * X, (lab) => lab.toggle("p2"), () => { room.p2 = null; }],
-    [5000 + 3 * L + 2 * X, (lab) => lab.cmd("stall"), () => { room.unplugged = U / STEP; }],
-    [6000 + 4 * L + 2 * X + U + D, (lab) => lab.toggle("well"), () => { room.wellbeing = false; }],
+    [3000 + L + P, (lab) => lab.toggle("still"), () => { room.still = false; }],
+    [3500 + L + P + X, (lab) => lab.toggle("still"), () => { room.still = true; }],
+    [4000 + 2 * (L + P) + X, (lab) => lab.cmd("person2"), () => { room.p2 = [4.6, -1.4]; }],
+    [4500 + 2 * (L + P) + 2 * X, (lab) => lab.toggle("p2"), () => { room.p2 = null; }],
+    [5000 + 3 * (L + P) + 2 * X, (lab) => lab.cmd("stall"), () => { room.unplugged = U / STEP; }],
+    [6000 + 4 * (L + P) + 2 * X + U + D, (lab) => lab.toggle("well"), () => { room.wellbeing = false; }],
   ];
-  const END = 7000 + 4 * L + 3 * X + U + D;
+  const END = 7000 + 4 * (L + P) + 3 * X + U + D;
 
   // the lab's VitalsFSM, every tick: what it was handed and what it said
   const proto = S.VitalsFSM.prototype, realTick = proto.tick;
@@ -910,17 +929,20 @@ test("the radar lab's vitals lock ticks as mr60_vitals.cpp and drive_fsms do, th
   let lines, states;
   try {
     await onLabBench(data, async (lab) => {
-      let si = 0;
+      let si = 0, slot = null;
       for (let ms = STEP; ms <= END; ms += STEP) {
         while (si < script.length && script[si][0] < ms) { script[si][1](lab); script[si][2](); si++; }
         const unplugged = room.unplugged > 0;
         if (unplugged) room.unplugged--;
         const people = [room.p1, room.p2].filter(Boolean);
         const ds = people.map(cone).filter((d) => d > 0);
-        const frame = unplugged ? null : ds.length ? { hasTarget: true, count: ds.length, distanceCm: Math.min(...ds) * 100 }
+        const frame = unplugged ? null : ds.length ? { hasTarget: true, count: ds.length, distanceCm: Math.round(Math.min(...ds) * 100) }
           : { hasTarget: false, count: 0, distanceCm: 0 };
         const near = people.some((q) => cone(q) > 0 && cone(q) <= VITR);
-        passes.push({ t: lab.t + STEP, frame, vitals: !!frame && room.wellbeing && room.still && near, wellbeing: room.wellbeing, still: room.still });
+        // the radar reports vitals on the first pass of each period
+        const due = Math.floor((lab.t + STEP) / P) !== slot;
+        slot = Math.floor((lab.t + STEP) / P);
+        passes.push({ t: lab.t + STEP, frame, vitals: due && !!frame && room.wellbeing && room.still && near, wellbeing: room.wellbeing, still: room.still });
         await lab.run(STEP);
       }
       assert.strictEqual(si, script.length, "the whole script ran");
@@ -934,11 +956,11 @@ test("the radar lab's vitals lock ticks as mr60_vitals.cpp and drive_fsms do, th
   // frame moves no presence: it lands on the same ms as the presence frame
   // before it, inside every window), then the vitals frames where the room
   // and the firmware's Present call for them, and drive_fsms on the lot
-  const pTick = (q) => (q.frame ? { t: q.t, target: q.frame.hasTarget, count: q.frame.count, cm: Math.round(q.frame.distanceCm) } : { t: q.t });
+  const pTick = (q) => (q.frame ? { t: q.t, target: q.frame.hasTarget, count: q.frame.count, cm: q.frame.distanceCm } : { t: q.t });
   const presence = native.runFirmware(fw, [{ reset: t0 }, ...passes.map(pTick)]);
   passes.forEach((q, i) => {
     if (q.frame && q.frame.hasTarget)
-      assert.strictEqual(ui.rangeBandOf(q.frame.distanceCm, p), presence[i].range, `pass ${i + 1}: the lab's unrounded cm bands as the firmware's`);
+      assert.strictEqual(ui.rangeBandOf(q.frame.distanceCm, p), presence[i].range, `pass ${i + 1}: the lab's cm bands as the firmware's`);
   });
   const trace = [{ reset: t0 }], passOf = [];
   passes.forEach((q, i) => {
@@ -1010,7 +1032,10 @@ test("the radar lab's vitals lock ticks as mr60_vitals.cpp and drive_fsms do, th
     "the first vitals frame: Unknown to Lost, seen data not yet confirmed (the old mirror sat in Unknown)");
   const confirms = ticks.filter(({ r }) => r.vitals.lock_changed && r.vitals.lock === "locked");
   assert.strictEqual(confirms.length, 4, "the lock is earned four times: sitting, still again, alone again, back from the stall");
-  assert.strictEqual(confirms[0].k.t, firstV.k.t + L, "lock_confirm_ms after the first valid frame");
+  assert.strictEqual(confirms[0].k.t, ticks.find(({ k }) => "breath" in k && k.t >= firstV.k.t + L).k.t,
+    "the first vitals frame lock_confirm_ms or more after the first valid one");
+  const vt = trace.filter((k) => "breath" in k).map((k) => k.t);
+  assert.ok(vt.length > 8 && vt.every((x, i) => !i || x - vt[i - 1] >= P), "the room's vitals frames come a vitals period apart, never every pass");
   const drops = ticks.filter(({ r }) => r.vitals.stalled);
   assert.strictEqual(drops.length, 4, "the deadline drops the lock four times");
   assert.ok(drops.every(({ r }) => r.vitals.lock === "lost" && r.vitals.lock_changed && !r.vitals.bpm_valid), "each drop is to Lost, BPMs gone");

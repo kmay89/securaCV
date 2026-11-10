@@ -297,7 +297,15 @@ static bool api_auth_check_bearer(httpd_req_t* req, const char* expected_token) 
   char token[API_AUTH_HEADER_CAP];
   const char* seal_reason = nullptr;
   if (!api_auth_presented_token(req, auth_buf, token, sizeof(token), &seal_reason)) {
-    auth_record_failure(req);
+    // A seal naming a session this device no longer holds (it rebooted, or
+    // the session aged out) is no guess at the token: the sid is public and
+    // the ciphertext cannot be opened without the key, so nothing about the
+    // token was tried. Counted, it would hold the owner's own address for
+    // 2 s and 429 the handshake-and-retry the 401 asks for. Every other
+    // refusal here is a strike, as a malformed header is.
+    const bool stale_session = seal_reason && (strcmp(seal_reason, "no_session") == 0 ||
+                                               strcmp(seal_reason, "expired") == 0);
+    if (!stale_session) auth_record_failure(req);
     httpd_resp_set_status(req, "401 Unauthorized");
     httpd_resp_set_type(req, "application/json");
     if (seal_reason) {
