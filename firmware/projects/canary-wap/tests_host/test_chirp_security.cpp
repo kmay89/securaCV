@@ -57,16 +57,16 @@
 //     over two hops and stored at each receiver, and lives there as long as
 //     any row does (DEFAULT_DISPLAY_MS): nothing on the receive side reads
 //     the TTL as a display time.
-//   - c9_a_forged_nonce_does_not_block_the_chirp, c9_a_refused_frame_counts_once,
-//     c9_a_stale_frame_counts_once_a_filter_period (sweep F309): a frame
+//   - c9_a_forged_nonce_does_not_block_the_chirp, c9_a_refused_frame_is_checked_once,
+//     c9_a_stale_frame_never_counts (sweep F309): a frame
 //     carrying a heard chirp's nonce that fails its signature checks, heard
 //     first, no longer keeps the chirp out; one that verifies under any key,
 //     an attacker's own or a relay naming the origin with no origin
 //     signature (v0.2's soft accept), still does (known limits, pinned);
-//     and a verified frame a later check refuses counts against its key's
-//     hour once while the filter holds its nonce (331 to 662 s), where
-//     played back once a filter period it counts each time (a known limit,
-//     pinned; its own item).
+//     a verified frame a later check refuses is refused at the nonce lookup
+//     while the filter holds its nonce (331 to 662 s); and a stale frame,
+//     refused at the freshness window before the per-key rate limit, never
+//     counts against its key's hour.
 //   - c14_two_keys_cannot_take_turns_after_the_wrap,
 //     c14_no_key_passes_its_hour_across_the_wrap,
 //     c14_the_oldest_live_window_goes_first_across_the_wrap,
@@ -447,17 +447,13 @@ void test_c9_a_forged_nonce_does_not_block_the_chirp() {
   CHECK(row_of(nonce)->template_id == cc::TPL_CLR_FALSE_ALARM);
 }
 
-// C9 (F309): where the nonce goes in. A verified frame that a later check
-// refuses (here the freshness window: its timestamp 400 s behind this
-// device's clock, a capture played back) is refused at the lookup when it
-// comes again while the filter holds its nonce, as before F309, so five
-// plays within that time reach the rate limit once: it counts against its
-// key's hour once in a filter period, not at every replay, and the key's
-// next three witnesses are stored and its fourth refused. Had the nonce
-// gone in only with the row, five replays of the one frame would have used
-// the key's hour, and the key's own chirps after them been refused. What
-// the filter's memory does not cover is the next case.
-void test_c9_a_refused_frame_counts_once() {
+// C9: where the nonce goes in. A verified frame that a later check refuses
+// (here the freshness window: its timestamp 400 s behind this device's
+// clock, a capture played back) keeps its nonce, so five plays while the
+// filter holds it reach the window once. The window runs before the per-key
+// rate limit, so the stale frame costs its key nothing: the key's next four
+// witnesses are stored and its fifth refused.
+void test_c9_a_refused_frame_is_checked_once() {
   boot_enabled();
   const Neighbor origin = neighbor_of(0x1B);
   cc::ChirpHeader h = header_of(origin, cc::CHIRP_MSG_WITNESS, 0x26);
@@ -468,34 +464,35 @@ void test_c9_a_refused_frame_counts_once() {
   CHECK(std::count(g_health.begin(), g_health.end(),
                    std::string("chirp: rejected witness \xE2\x80\x94 outside freshness window")) == 1);
   CHECK(cc::g_recent_chirp_count == 0);
-  for (uint8_t b = 0x27; b < 0x2A; ++b) {
+  for (uint8_t b = 0x27; b < 0x27 + cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR; ++b) {
     deliver(origin, witness_of(origin, b));
     CHECK(holds(witness_of(origin, b)));
   }
   g_health.clear();
-  deliver(origin, witness_of(origin, 0x2A));
-  CHECK(!holds(witness_of(origin, 0x2A)));
+  deliver(origin, witness_of(origin, 0x2B));
+  CHECK(!holds(witness_of(origin, 0x2B)));
   CHECK(logged("chirp: rate-limited witness from pubkey"));
 }
 
-// C9 (F309's review): a known limit, pinned. The filter holds a nonce for
-// 331 to 662 s (spec §5.3), and the rate limit runs before the freshness
-// window (handle_witness()), so one captured stale frame played back once a
-// filter period reaches the rate limit each time: four plays 11.1 min apart
-// use up its key's hour, and the key's own fresh witness after them is
-// refused. The same on the code before F309. Running the freshness window
-// first would close it; that is its own item, not this one.
-void test_c9_a_stale_frame_counts_once_a_filter_period() {
+// C9: a stale frame never counts against its key. The filter holds a nonce
+// for 331 to 662 s (spec §5.3), so one captured stale frame played back
+// 11.1 min apart reaches the freshness window every time. After eight plays,
+// twice the key's hourly budget, the key's own fresh witnesses are stored up
+// to that budget. With the rate limit ahead of the window, four plays used
+// up the key's hour.
+void test_c9_a_stale_frame_never_counts() {
   boot_enabled();
   const Neighbor origin = neighbor_of(0x1C);
   cc::ChirpHeader h = header_of(origin, cc::CHIRP_MSG_WITNESS, 0x2C);
   h.timestamp = (uint32_t)host_sim::wall_now - 400;
   const std::vector<uint8_t> stale = signed_by(origin, h, payload_of());
+  const int plays = 2 * (int)cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR;
   int reached_the_window = 0;
-  for (int play = 0; play < (int)cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR; ++play) {
+  for (int play = 0; play < plays; ++play) {
     g_health.clear();
     deliver(origin, stale);
     reached_the_window += logged("chirp: rejected witness \xE2\x80\x94 outside freshness window") ? 1 : 0;
+    CHECK(!logged("chirp: rate-limited witness from pubkey"));
     CHECK(cc::g_recent_chirp_count == 0);
     // 11.1 min on, past the 662 s the filter can hold a nonce; the wall
     // clock stays, so the frame stays 400 s stale.
@@ -504,16 +501,96 @@ void test_c9_a_stale_frame_counts_once_a_filter_period() {
     cc::update();
     CHECK(!cc::is_nonce_seen(h.nonce));
   }
+  CHECK(reached_the_window == plays);
+  for (uint8_t b = 0x2D; b < 0x2D + cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR; ++b) {
+    deliver(origin, witness_of(origin, b));
+    CHECK(holds(witness_of(origin, b)));
+  }
   g_health.clear();
-  const std::vector<uint8_t> fresh = witness_of(origin, 0x2D);
-  deliver(origin, fresh);
-  const bool rate_limited = logged("chirp: rate-limited witness from pubkey");
-  std::printf("  one stale frame played %d times, 11.1 min apart: %d reached the freshness window; "
-              "the key's own fresh witness then %s\n", (int)cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR,
-              reached_the_window, rate_limited ? "rate-limited" : "stored");
-  CHECK(reached_the_window == (int)cc::MAX_WITNESSES_PER_PUBKEY_PER_HOUR);
-  CHECK(!holds(fresh));
-  CHECK(rate_limited);
+  deliver(origin, witness_of(origin, 0x31));
+  CHECK(!holds(witness_of(origin, 0x31)));
+  CHECK(logged("chirp: rate-limited witness from pubkey"));
+}
+
+// C6: a session id that did not hash (an mbedTLS SHA-256 step answered an
+// error) refuses what it was for: no session at an enable, and a witness,
+// a confirmation or a suppress vote dropped. A failed finish leaves the
+// true digest behind, so a caller that dropped the answer would pass here.
+void test_c6_a_failed_session_hash_refuses() {
+  using stub_sha256::Out;
+  using stub_sha256::Step;
+  const struct { Step step; int update; } fails[] = {
+      {Step::Starts, 0}, {Step::Update, 0}, {Step::Update, 1}, {Step::Finish, 0}};
+
+  boot_enabled();
+  for (const auto& f : fails) {
+    cc::disable();
+    g_health.clear();
+    stub_sha256::arm(f.step, 0, f.update, Out::Digest);
+    CHECK(!cc::enable());
+    CHECK(stub_sha256::fired && stub_sha256::live == 0);
+    CHECK(cc::g_state == cc::CHIRP_DISABLED);
+    const cc::ChirpSession none = {};
+    CHECK(memcmp(&cc::g_session, &none, sizeof none) == 0);
+    CHECK(logged("chirp: session id hash failed"));
+  }
+  stub_sha256::disarm();
+
+  boot_enabled();
+  const Neighbor origin = neighbor_of(0x51);
+  const Neighbor a = neighbor_of(0x52);
+  const Neighbor b = neighbor_of(0x53);
+  const Neighbor d = neighbor_of(0x55);
+  for (const Neighbor& n : {a, b, d}) deliver(n, presence_of(n));
+  stay_present({a, b, d});
+  const std::vector<uint8_t> w = witness_of(origin, 0x54);
+  uint8_t nonce[8];
+  nonce_of(w, nonce);
+  // A witness hashes the carried key's id, then the origin's.
+  for (int hash = 0; hash < 2; ++hash) {
+    for (const auto& f : fails) {
+      stub_sha256::arm(f.step, hash, f.update, Out::Digest);
+      deliver(origin, w);
+      CHECK(stub_sha256::fired && stub_sha256::live == 0);
+      CHECK(row_of(nonce) == nullptr && !cc::is_nonce_seen(nonce));
+    }
+  }
+  stub_sha256::disarm();
+  deliver(origin, w);
+  cc::ReceivedChirp* c = row_of(nonce);
+  CHECK(c != nullptr);
+
+  // A confirmation hashes the confirmer's id, then its nearby row's.
+  uint8_t frame_byte = 0x71;
+  for (int hash = 0; hash < 2; ++hash) {
+    for (const auto& f : fails) {
+      stub_sha256::arm(f.step, hash, f.update, Out::Digest);
+      deliver(a, confirm_of(a, nonce, frame_byte++));
+      CHECK(stub_sha256::fired && stub_sha256::live == 0);
+      CHECK(c->confirm_count == 0 && !c->validated);
+    }
+  }
+  // A suppress vote hashes the voter's id.
+  cc::ChirpSuppressVotePayload vote;
+  memset(&vote, 0, sizeof vote);
+  memcpy(vote.original_nonce, nonce, 8);
+  memcpy(vote.voter_session_pubkey, b.pub, sizeof vote.voter_session_pubkey);
+  uint8_t canonical[128];
+  const size_t cl = cc::build_suppress_canonical(nonce, b.pub, canonical, sizeof canonical);
+  CHECK(cl > 0);
+  Ed25519::sign(vote.signature, b.priv, b.pub, canonical, cl);
+  const std::vector<uint8_t> v = frame_of(header_of(b, cc::CHIRP_MSG_SUPPRESS_VOTE, 0x7A), vote);
+  for (const auto& f : fails) {
+    stub_sha256::arm(f.step, 0, f.update, Out::Digest);
+    deliver(b, v);
+    CHECK(stub_sha256::fired && stub_sha256::live == 0);
+    CHECK(c->suppress_count == 0);
+  }
+  stub_sha256::disarm();
+  deliver(b, v);
+  CHECK(c->suppress_count == 1);
+  deliver(a, confirm_of(a, nonce, frame_byte++));
+  CHECK(c->confirm_count == 1);
 }
 
 // C8 (sweep F416): the oldest row goes first across uptime's wrap. Sixteen
@@ -1148,8 +1225,9 @@ const Test kTests[] = {
     {"c8_the_oldest_row_goes_first_across_the_wrap", test_c8_the_oldest_row_goes_first_across_the_wrap},
     {"c9_bloom_flood", test_c9_bloom_flood},
     {"c9_a_forged_nonce_does_not_block_the_chirp", test_c9_a_forged_nonce_does_not_block_the_chirp},
-    {"c9_a_refused_frame_counts_once", test_c9_a_refused_frame_counts_once},
-    {"c9_a_stale_frame_counts_once_a_filter_period", test_c9_a_stale_frame_counts_once_a_filter_period},
+    {"c9_a_refused_frame_is_checked_once", test_c9_a_refused_frame_is_checked_once},
+    {"c9_a_stale_frame_never_counts", test_c9_a_stale_frame_never_counts},
+    {"c6_a_failed_session_hash_refuses", test_c6_a_failed_session_hash_refuses},
     {"c14_two_keys_cannot_take_turns_after_the_wrap", test_c14_two_keys_cannot_take_turns_after_the_wrap},
     {"c14_no_key_passes_its_hour_across_the_wrap", test_c14_no_key_passes_its_hour_across_the_wrap},
     {"c14_the_oldest_live_window_goes_first_across_the_wrap", test_c14_the_oldest_live_window_goes_first_across_the_wrap},

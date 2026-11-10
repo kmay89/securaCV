@@ -114,6 +114,10 @@ struct RootView: View {
     // rotating a Max phone) stays on the section in use — swapping the
     // container must never navigate the user away.
     @State private var section: AppSection = .today
+    // This window's "+" sheet is up, so this window's nearby card stands
+    // down. Per window: each scene has its own RootView, so a sheet in one
+    // iPad window leaves the card in another alone.
+    @State private var nearbyOfferStandsDown = false
 
     var body: some View {
         Group {
@@ -142,8 +146,9 @@ struct RootView: View {
         // for exactly one close Canary, never twice for the same one in a
         // session (NearbyCanaries.autoOffer; NearbyOfferOverlay).
         .overlay(alignment: .bottom) {
-            NearbyOfferOverlay()
+            NearbyOfferOverlay(standingDown: nearbyOfferStandsDown)
         }
+        .environment(\.nearbyOfferStandDown, $nearbyOfferStandsDown)
         .onAppear { store.voice.arrive(at: section) }
         // The deep-link doors, both landing on the same route value: a
         // widget or link speaks the securacv:// dialect; a notification tap

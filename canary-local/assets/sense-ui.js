@@ -287,6 +287,19 @@ export function makeRadarLabLoop(data) {
   };
 }
 
+// The radar's vitals clock: true on the first pass of each vitals period
+// (sense.json's radar.vitals_period_ms). It runs whether or not anyone is
+// in range, so a person who sits down waits for the next report.
+export function makeVitalsCadence(periodMs) {
+  let slot = null;
+  return (now) => {
+    const s = Math.floor(now / periodMs);
+    if (s === slot) return false;
+    slot = s;
+    return true;
+  };
+}
+
 // How long the sandbox's stall scene keeps the radar UART unplugged: past
 // the stall window (sense.json's fsm.presence.stall_ms, the firmware's
 // CS_RADAR_STALL_MS), so the scene reaches Unknown wherever the stall seed is
@@ -564,6 +577,7 @@ export function buildRadarLab(data, bus) {
   // on the wellbeing build (a presence-only device compiles it out)
   const loop = makeRadarLabLoop(data);
   const fsm = loop.presence;
+  const vitalsDue = makeVitalsCadence(data.radar.vitals_period_ms);
   loop.reset(performance.now());
 
   const inCone = (x, y) => {
@@ -591,7 +605,8 @@ export function buildRadarLab(data, bus) {
       if (d && Math.sin(now / 90) > -0.85) targets.push(d);
     }
     if (!targets.length) return { hasTarget: false, count: 0, distanceCm: 0 };
-    return { hasTarget: true, count: targets.length, distanceCm: Math.min(...targets) * 100 };
+    // whole centimeters, as the firmware's parser rounds the radar's meters
+    return { hasTarget: true, count: targets.length, distanceCm: Math.round(Math.min(...targets) * 100) };
   }
 
   let lastPub = "—";
@@ -610,13 +625,15 @@ export function buildRadarLab(data, bus) {
     // sent since the last pass, or once on an empty frame when none came.
     // The lab's radar sends its presence frame on every pass and, on the
     // wellbeing build while someone is still, within the vitals range and
-    // Present, a vitals frame after it carrying the wellbeing row's BPMs;
-    // unplugged, it sends nothing (A124). Which target the vitals belong to
-    // is the firmware's call, not the room's: the lock is ticked with the
-    // debounced count, so a second person (or the cat) in the cone stops it.
+    // Present, a vitals frame after it once per vitals period, carrying the
+    // wellbeing row's BPMs; unplugged, it sends nothing. Which target the
+    // vitals belong to is the firmware's call, not the room's: the lock is
+    // ticked with the debounced count, so a second person (or the cat) in
+    // the cone stops it.
     const frame = radarFrame(now);
+    const due = vitalsDue(now);
     const ticks = [loop.drive(frame, now)];
-    if (frame && world.wellbeing && world.still && nearVitals() && fsm.state === "present")
+    if (due && frame && world.wellbeing && world.still && nearVitals() && fsm.state === "present")
       ticks.push(loop.drive({ breath: wellbeingRow.breath_bpm, heart: wellbeingRow.heart_bpm }, now));
 
     for (const { ev, signs, vev } of ticks) {

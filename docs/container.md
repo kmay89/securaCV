@@ -54,6 +54,14 @@ Optional:
   `openssl rand -hex 32`. Once a seed is persisted in `/data`, a *different*
   `DEVICE_KEY_SEED` is rejected at startup rather than silently re-keying the
   log.
+- `DEVICE_KEY_SEED_PERSIST`: whether `witnessd` writes a `DEVICE_KEY_SEED`
+  it was given to `/data/witness.ed25519.seed` when no seed file exists yet
+  (default: yes, so the operator commands below find the seed there). Set
+  `0` when the seed lives in a secret store and must not land on the data
+  volume: the seed is used as given, nothing is written, and a seed file
+  that already exists must still agree with it. Takes `1`/`true`/`yes`/`on`
+  or `0`/`false`/`no`/`off`; anything else stops the start. The Home
+  Assistant app sets `0` (its seed lives in the app's own `/data`).
 - `WITNESS_API_ADDR`: Event API bind address (default in container: `0.0.0.0:8799`)
 - `WITNESS_API_TOKEN_PATH`: file path for the Event API capability token
   (e.g. `/data/api_token`; the viewer-token and pairing files default

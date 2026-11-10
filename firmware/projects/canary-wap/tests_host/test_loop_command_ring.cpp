@@ -377,7 +377,9 @@ static void test_two_threads_every_command_runs_once_on_the_loop_thread() {
 // return its own result, and no slot may be lost: a drain that marked a slot
 // running in a second lock section, after copying its command, ran
 // withdrawn commands and leaked the slots they left, until every post found
-// the ring full. A 20 s deadline turns that into a failure, not a hang.
+// the ring full. A watchdog turns that into a failure, not a hang: 20 s in
+// which no requester finishes a command. It times the stall, not the run,
+// which a loaded machine stretches past any fixed limit.
 static void test_withdrawals_racing_the_drain_never_run() {
   std::printf("test_withdrawals_racing_the_drain_never_run\n");
   using RingM = lcr::Ring<Cmd, Res, 4, MutexLock>;
@@ -385,6 +387,7 @@ static void test_withdrawals_racing_the_drain_never_run() {
   constexpr int kRequesters = 6;
   constexpr uint32_t kPer = 2000;
   constexpr uint32_t kTotal = kRequesters * kPer;
+  constexpr long long kStallMs = 20000;
   std::vector<std::atomic<int>> ran(kTotal);       // runs per id (loop thread writes)
   std::vector<std::atomic<int>> outcome(kTotal);   // 1 done, 2 withdrawn, 3 gave up
   for (auto& a : ran) a = 0;
@@ -392,9 +395,13 @@ static void test_withdrawals_racing_the_drain_never_run() {
   std::atomic<bool> stop{false};
   std::atomic<bool> late{false};
   std::atomic<int> wrong{0};
-  const auto t0 = std::chrono::steady_clock::now();
+  auto now_ms = [] {
+    return (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+  };
+  std::atomic<long long> last_finish_ms{now_ms()};
   auto past_deadline = [&] {
-    if (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(20)) late = true;
+    if (now_ms() - last_finish_ms.load() > kStallMs) late = true;
     return late.load();
   };
 
@@ -429,6 +436,7 @@ static void test_withdrawals_racing_the_drain_never_run() {
           return;                                // the ring is stuck: stop this requester
         }
         outcome[id] = w == lcr::Wait::kDone ? 1 : 2;
+        last_finish_ms = now_ms();
         if (w == lcr::Wait::kDone && (r.id != id || r.value != (int32_t)id + 1)) wrong++;
       }
     });

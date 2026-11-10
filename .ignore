@@ -16,8 +16,7 @@ firmware/projects/canary-display/arduino/canary_display/
 # catalogs the generators write (1.2 MB and 0.5 MB)
 canary-local/devices/revisions.json
 canary-local/devices/enclosures.json
-# archives: a 1.8 MB audit dump and the 0.9 MB changelog
-docs/audit/repo_todo_sweep_2026-09.md
+# the 0.9 MB changelog
 CHANGELOG.md
 Cargo.lock
 package-lock.json

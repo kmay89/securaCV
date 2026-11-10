@@ -134,12 +134,14 @@ inline bool hex_is(const char* s, size_t n) {
   return s[n] == '\0';
 }
 
-/* 2*n hex chars from `s` into out[n]; false on any other byte. */
+/* 2*n hex chars from `s` into out[n]; false on any other byte. A string
+ * that ends early is not read past its NUL. */
 inline bool hex_decode(const char* s, size_t n, uint8_t* out) {
   for (size_t i = 0; i < n; ++i) {
     const int hi = hex_nibble(s[2 * i]);
+    if (hi < 0) return false;
     const int lo = hex_nibble(s[2 * i + 1]);
-    if (hi < 0 || lo < 0) return false;
+    if (lo < 0) return false;
     out[i] = (uint8_t)((hi << 4) | lo);
   }
   return true;

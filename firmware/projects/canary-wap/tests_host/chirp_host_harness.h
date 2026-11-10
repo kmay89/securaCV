@@ -79,7 +79,9 @@ inline bool nvs_set_u8(const char* key, uint8_t val) {
 #pragma GCC diagnostic ignored "-Wsign-compare"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-function"
+#if defined(__GNUC__) && !defined(__clang__)   // a GCC-only warning name
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
+#endif
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include CHIRP_CHANNEL_CPP
 #pragma GCC diagnostic pop
@@ -119,7 +121,7 @@ inline Neighbor neighbor_of(uint8_t seed) {
   n.priv[0] ^= 0x5A;
   n.priv[31] ^= 0xC3;
   Ed25519::derivePublicKey(n.pub, n.priv);
-  cc::session_id_from_pubkey(n.pub, n.sid);
+  CHECK(cc::session_id_from_pubkey(n.pub, n.sid));
   const uint8_t mac[6] = {0x02, 0x00, 0x00, 0x00, 0x02, seed};
   memcpy(n.mac, mac, sizeof mac);
   return n;

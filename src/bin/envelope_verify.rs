@@ -3,7 +3,8 @@
 //! Verifies a `securacv-evidence-envelope` JSON bundle entirely from its own contents
 //! (no database, no network): the four hash-chained ledgers, their signatures, the
 //! break-glass approvals commitments, the checkpoint, the artifact binding, the ledger
-//! summaries, the manifest, and the `whole_envelope_digest`.
+//! summaries, the manifest, and the `whole_envelope_digest`. Trustee approval signatures
+//! and the quorum are not checked here; `log_verify` re-derives them against the database.
 //!
 //! This is the Rust side of the cross-language verifier pair; `viewer/verify_core.js`
 //! implements the identical algorithm and both are pinned to the same fixtures.
@@ -111,6 +112,7 @@ fn main() -> Result<()> {
                     "sealed_events": report.sealed_events,
                     "break_glass_granted": report.break_glass_granted,
                     "break_glass_denied": report.break_glass_denied,
+                    "break_glass_redeemed": report.break_glass_redeemed,
                     "export_receipts": report.export_receipts,
                     "pq_checked": report.pq_checked,
                     "warnings": report.warnings,
@@ -132,8 +134,11 @@ fn main() -> Result<()> {
                 println!("  digest:         {}", envelope.whole_envelope_digest);
                 println!("  sealed events:  {}", report.sealed_events);
                 println!(
-                    "  break-glass:    {} granted, {} denied",
-                    report.break_glass_granted, report.break_glass_denied
+                    "  break-glass:    {} granted, {} denied, {} redeemed \
+                     (as recorded; trustee approvals not verified offline)",
+                    report.break_glass_granted,
+                    report.break_glass_denied,
+                    report.break_glass_redeemed
                 );
                 println!("  export receipts:{}", report.export_receipts);
                 println!("  pq checked:     {}", report.pq_checked);

@@ -554,24 +554,28 @@ page.
 On your home network any device could load that page, so the Canary sends
 it *without* the key and shows a banner with three ways in:
 
-- tap the **BOOT** button on the Canary, then reload within 30 seconds
-  (one tap unlocks one page load; reloading it later needs another tap);
+- keep the page open and tap the **BOOT** button on the Canary when the
+  banner says to. The banner asks the Canary first, for one minute and from
+  a hidden tab too, and the page unlocks where it stands, with no reload
+  (one tap unlocks one page; loading it again later needs another tap). On
+  a phone, keep the screen on until the page unlocks;
 - join the Canary's own Wi-Fi (`SecuraCV-canary-XXXX`) while it is still
   broadcasting (it stops once your home Wi-Fi is working); or
 - paste the token from your recovery kit into the banner. It is kept only
   for that browser tab, never saved.
 
 On the all-rounder Canary each BOOT tap unlocks exactly one thing within
-those 30 seconds: one page load, or one browser fetching the recovery kit —
-whichever asks first. A page you unlocked with the tap can save the
+its 30 seconds, for one asking address: that address's page load, or its
+fetch of the recovery kit. The banner is already asking when you press, so
+the tap goes to its page. A page you unlocked with the tap can save the
 recovery kit without a second tap: that is how you get the kit back later
 without a USB cable. On a WAP the tap unlocks no page load: it hands the
 recovery kit to one asking address, so click **Use BOOT Tap Once** (or
-**Save my recovery kit**) first and press BOOT when the page says to. If a
-second address on your network asks between 10 seconds before the tap and
-the kit going out, the WAP hands out nothing and the page says so, and a
-tap no page was asking for goes to the first address that asks within its
-30 seconds. The iPhone app never fetches the
+**Save my recovery kit**) first and press BOOT when the page says to. On
+either, if a second address on your network asks between 10 seconds before
+the tap and the kit going out, the Canary hands out nothing and the page
+says so, and a tap no page was asking for goes to the first address that
+asks within its 30 seconds. The iPhone app never fetches the
 kit with a tap: it pairs during setup, or from a kit you open in it. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
 yet on a bench device.)*
 
@@ -815,12 +819,12 @@ home Wi-Fi outage included. A WAP repeats them in its `[WIFI] AP started`
 line at boot, and its serial command `w` prints both at any time. A short
 BOOT press prints neither: it opens the provisioning gate for 30 seconds.
 On the all-rounder Canary that unlocks one home-network page load or one
-recovery-kit fetch, whichever asks first, so tap BOOT and then reload the
-dashboard within the 30 seconds. On a WAP it hands the recovery kit to one
-asking address: click **Use BOOT Tap Once** on the dashboard first and press
-when the page says to. A second address asking from 10 seconds before the
-tap closes it, and a tap no page was asking for goes to the first address
-that asks after it.
+recovery-kit fetch, for one asking address: keep the dashboard's unlock
+banner open and press when it says to. On a WAP it hands the recovery kit
+to one asking address: click **Use BOOT Tap Once** on the dashboard first
+and press when the page says to. On either, a second address asking from 10
+seconds before the tap closes it, and a tap no page was asking for goes to
+the first address that asks after it.
 
 Either flasher's done card shows the same pair after a flash, and a
 recovery kit saved from the dashboard carries the key as `ap_password`

@@ -14,10 +14,12 @@
 #   /run, /tmp         s6 and the setup's rendered service environment
 #   /config/witness.db*            the sealed log (SQLite WAL), plus the
 #        storage-health state beside it (witness.db.health.json + .tmp)
-#   /config/witness.ed25519.seed   the device key seed beside the database:
-#        witnessd (standalone mode) creates it at start when it is absent
-#        (crypto::resolve_device_seed_persisting_env); witness_api and
-#        frigate_bridge read it for the seed-mismatch check
+#   /config/witness.ed25519.seed   the seed copy the kernel used to keep
+#        beside the database: witnessd no longer writes it (the service
+#        sets DEVICE_KEY_SEED_PERSIST=0); witnessd, witness_api and
+#        frigate_bridge read it, when it exists, for the seed-mismatch
+#        check; the setup removes it once it is shown to hold the key in
+#        use (run_lib.sh remove_kernel_seed_copy)
 #   /config/witness_config.json    the kernel config the setup renders
 #   /config/api_token (+ temp)     the rotating capability token
 #   /config/fleet_peers.json (+ temp)  the roll-call the publisher keeps
@@ -102,6 +104,10 @@ profile privacy_witness_kernel flags=(attach_disconnected,mediate_deleted) {
   # WAL: the -wal and -shm files beside it).
   /config/witness.db rwk,
   /config/witness.db-* rwk,
+  # The seed copy witnessd used to keep beside the database: read to compare
+  # it with the key in use, removed (w) when they agree (run_lib.sh
+  # remove_kernel_seed_copy). No kernel process writes it anymore.
+  /config/witness.ed25519.seed rw,
   /config/.securacv/ rw,
   /config/.securacv/** rw,
   /config/blueprints/ rw,
@@ -200,10 +206,11 @@ profile privacy_witness_kernel flags=(attach_disconnected,mediate_deleted) {
     # The storage-health monitor's state (temp + rename).
     /config/witness.db.health.json rw,
     /config/witness.db.health.json.tmp rw,
-    # The device seed beside the database. witnessd alone persists the
-    # environment seed here on a first standalone start (create_new, 0600)
-    # and reads it back on every later one.
-    /config/witness.ed25519.seed rw,
+    # The seed copy an earlier release's witnessd left beside the database.
+    # witnessd runs with DEVICE_KEY_SEED_PERSIST=0 (its service file) and
+    # writes nothing here; it reads the file, while it exists, to refuse a
+    # seed that disagrees with the one in its environment.
+    /config/witness.ed25519.seed r,
     /config/api_token rw,
     /config/.api_token.*.tmp rw,
     /config/viewer_tokens.json r,

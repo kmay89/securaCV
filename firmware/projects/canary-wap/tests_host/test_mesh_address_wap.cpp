@@ -29,7 +29,9 @@
 #pragma GCC diagnostic ignored "-Wsign-compare"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-function"
+#if defined(__GNUC__) && !defined(__clang__)   // a GCC-only warning name
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
+#endif
 #include MESH_NETWORK_CPP
 #pragma GCC diagnostic pop
 #include "mesh_net_sim.h"
@@ -939,6 +941,97 @@ void test_an_old_duplicate_at_another_members_address_is_dropped() {
   std::printf("PASS an_old_duplicate_at_another_members_address_is_dropped\n");
 }
 
+// ── A SHA-256 step that answers an error ────────────────────────────────
+
+// Nothing is signed over a hash that failed and nothing verified against
+// one: no frame goes out, a frame heard is dropped, and neither side of the
+// AUTH exchange opens a session. A failed finish leaves the true digest
+// behind, so a caller that dropped the answer would pass here.
+void test_a_refused_hash_signs_and_verifies_nothing() {
+  using stub_sha256::Out;
+  using stub_sha256::Step;
+  const struct { Step step; int update; } fails[] = {
+      {Step::Starts, 0}, {Step::Update, 0}, {Step::Update, 1}, {Step::Finish, 0}};
+  fresh_opera();
+
+  // Verify: B's heartbeat at A.
+  const Frame hb = b_heartbeat_to(A);
+  const BView before = a_view_of_b();
+  for (const auto& f : fails) {
+    stub_sha256::arm(f.step, 0, f.update, Out::Digest);
+    deliver(A, B.mac, hb);
+    CHECK(stub_sha256::fired && stub_sha256::live == 0);
+    stub_sha256::disarm();
+    const BView after = a_view_of_b();
+    CHECK(after.rx == before.rx && after.received == before.received);
+  }
+  deliver(A, B.mac, hb);
+  CHECK(a_view_of_b().rx == counter_of(hb));
+
+  // Sign: A's frame to B.
+  mn::OperaPeer* b_at_a = entry(A, B);
+  for (const auto& f : fails) {
+    A.espnow.sent.clear();
+    stub_sha256::arm(f.step, 0, f.update, Out::Digest);
+    CHECK(!mn::send_to_peer(b_at_a, mn::MSG_HEARTBEAT, nullptr, 0));
+    CHECK(stub_sha256::fired && stub_sha256::live == 0);
+    CHECK(A.espnow.sent.empty());
+  }
+  stub_sha256::disarm();
+  CHECK(mn::send_to_peer(b_at_a, mn::MSG_HEARTBEAT, nullptr, 0));
+
+  // AUTH_CHALLENGE at B: the frame's verify is hash 0, the challenge's
+  // hash 1, the membership proof's hash 2.
+  mn::AuthChallengePayload ch;
+  host_sim::fill_random(ch.nonce, sizeof ch.nonce);
+  memcpy(ch.pubkey, A.pub, 32);
+  for (int hash = 1; hash <= 2; ++hash) {
+    for (const auto& f : fails) {
+      become(A);
+      host_sim::now_ms += 20;
+      CHECK(mn::send_to_peer(b_at_a, mn::MSG_AUTH_CHALLENGE,
+                             reinterpret_cast<const uint8_t*>(&ch), sizeof ch));
+      const Frame challenge = sent_to(A, B.mac).back();
+      mn::OperaPeer* a_at_b = entry(B, A);
+      stub_sha256::arm(f.step, hash, f.update, Out::Digest);
+      deliver(B, A.mac, challenge);
+      CHECK(stub_sha256::fired && stub_sha256::live == 0);
+      stub_sha256::disarm();
+      CHECK(!a_at_b->session_established);
+    }
+  }
+
+  // AUTH_RESPONSE at A (handed in: the frame is over ESP-NOW's 250 bytes).
+  mn::AuthResponsePayload resp;
+  memset(&resp, 0, sizeof resp);
+  memcpy(resp.pubkey, B.pub, 32);
+  become(A);
+  uint8_t proof_hash[32];
+  CHECK(mn::sha256_domain(mn::DOMAIN_AUTH, mn::g_opera_config.opera_id, mn::OPERA_ID_SIZE, proof_hash));
+  Ed25519::sign(resp.opera_proof, B.priv, B.pub, proof_hash, 32);
+  for (const auto& f : fails) {
+    stub_sha256::arm(f.step, 0, f.update, Out::Digest);
+    mn::handle_auth_response(b_at_a, reinterpret_cast<const uint8_t*>(&resp), sizeof resp);
+    CHECK(stub_sha256::fired && stub_sha256::live == 0);
+    CHECK(!b_at_a->session_established);
+  }
+  stub_sha256::disarm();
+  mn::handle_auth_response(b_at_a, reinterpret_cast<const uint8_t*>(&resp), sizeof resp);
+  CHECK(b_at_a->session_established);
+
+  // The helper itself: false and zeros, the context freed.
+  for (const auto& f : fails) {
+    uint8_t out[32];
+    memset(out, 0x5C, sizeof out);
+    stub_sha256::arm(f.step, 0, f.update, Out::Digest);
+    CHECK(!mn::sha256_domain(mn::DOMAIN_AUTH, A.pub, 32, out));
+    CHECK(stub_sha256::fired && stub_sha256::live == 0);
+    for (uint8_t byte : out) CHECK(byte == 0);
+  }
+  stub_sha256::disarm();
+  std::printf("PASS a_refused_hash_signs_and_verifies_nothing\n");
+}
+
 }  // namespace
 
 int main() {
@@ -969,6 +1062,7 @@ int main() {
   test_an_initiator_forgets_a_finished_pairing();
   test_an_old_duplicate_entry_folds_into_one_at_boot();
   test_an_old_duplicate_at_another_members_address_is_dropped();
+  test_a_refused_hash_signs_and_verifies_nothing();
   std::printf("ALL %d mesh address checks PASSED\n", g_checks);
   return 0;
 }

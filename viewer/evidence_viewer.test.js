@@ -244,6 +244,24 @@ describe('the headline a pass earns', () => {
     assert.doesNotMatch(report, /Self-consistent/);
   });
 
+  // Trustee approvals cannot be checked offline, so a grant is a note under
+  // the headline and nothing on the page calls it verified.
+  it('a break-glass grant is shown as present, not verified, even under a trusted key', async () => {
+    const envelope = loadJson('envelope/forged_grant_envelope.json');
+    const page = loadPage();
+    page.document.getElementById('trustkey').value = envelope.provenance.device_public_key;
+    await page.process(envelope, 'forged grant');
+    await settle();
+    const report = page.byId.get('report').innerHTML;
+    assert.match(report, /Verified — with notes/);
+    assert.doesNotMatch(report, /Verified — integrity intact/);
+    assert.match(report, /1 break-glass grant\(s\) present: trustee approvals are not verified offline/);
+    assert.match(report, /trustee signatures and the quorum are not checked here/);
+    const markup = page.writes.join('\n');
+    assert.match(markup, /Break-glass receipt chain intact and device-signed \(1\)/);
+    assert.doesNotMatch(markup, /Break-glass receipts verified|verifiable receipt/);
+  });
+
   it('with a different trusted key the same envelope is rejected, with the reason', async () => {
     const page = loadPage();
     page.document.getElementById('trustkey').value = '00'.repeat(32);

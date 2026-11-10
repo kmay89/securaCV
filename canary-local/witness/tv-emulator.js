@@ -80,14 +80,32 @@ if (tv && stage) {
       { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
     return (row.born_exact === true ? 'Born ' : 'First dated ') + date;
   }
+  // May a ?kernel= link auto-connect? A link is something anyone can hand
+  // someone. On an https page it may only name the same-origin demo fleet or
+  // a hub on the viewer's own LAN (localhost, 127.0.0.1, a *.local name);
+  // over plain http (a hub, a LAN host) the page is the user's own and the
+  // link is honored as typed. Self-contained, like bornLine: the app copies
+  // carry this file and highlight.js only, and the tests lift it out.
+  function kernelLinkAllowed(raw, loc) {
+    if (!raw) return false;
+    if (loc.protocol !== 'https:') return true;
+    let url;
+    try { url = new URL(raw, loc.href); } catch { return false; }
+    if (url.origin === loc.origin) return /(?:^|\/)demo-fleet\.json$/.test(url.pathname);
+    return /^(?:localhost|127\.0\.0\.1|.+\.local)$/i.test(url.hostname);
+  }
   function homeFleet() { return liveFleet ? liveFleet.map((d) => ({ n: d.name, off: d.online === false })) : homeTiles; }
   // For a business the real Canaries ARE the zones — when a live fleet is
   // connected, the Board's tiles and zone chips show it (offline = attention).
   function bizFleet() { return liveFleet ? liveFleet.map((d) => ({ n: d.name, off: d.online === false, attn: d.online === false })) : bizZones; }
 
+  // The demo's chip is a simulated pass. A LIVE tile comes from a real
+  // /api/fleet, which is presence and health — nothing here read a chain, so
+  // the chip says so (the same words tv/app.js uses for an unchecked fleet).
   function tilesHTML(tiles) {
     const cls = ['', 'b', 'c', 'd'];
-    return tiles.map((t, i) => `<div class="f tile ${cls[i % 4]}${t.off ? ' offline' : ''}${t.n === justAppeared ? ' just' : ''}" data-action="tile" data-name="${esc(t.n)}" tabindex="-1"><div class="n">${esc(t.n)}</div><div class="s"><span class="sd${t.off ? ' off' : ''}"></span>${t.off ? 'offline' : 'online · calm'}</div><span class="chip">chain ✓</span></div>`).join('');
+    const chip = liveFleet ? 'presence only — not verified' : 'chain ✓';
+    return tiles.map((t, i) => `<div class="f tile ${cls[i % 4]}${t.off ? ' offline' : ''}${t.n === justAppeared ? ' just' : ''}" data-action="tile" data-name="${esc(t.n)}" tabindex="-1"><div class="n">${esc(t.n)}</div><div class="s"><span class="sd${t.off ? ' off' : ''}"></span>${t.off ? 'offline' : 'online · calm'}</div><span class="chip">${chip}</span></div>`).join('');
   }
   const evHTML = (evs) => evs.map((e) => `<div class="ev${e.flag ? ' flag' : ''}" data-action="event"><span class="t">${e.t}</span><span class="w">${e.w}${e.z ? ' · ' + e.z : ''}</span><span class="seal">${e.flag ? '⚑ sealed ✓' : 'sealed ✓'}</span></div>`).join('');
 
@@ -236,7 +254,7 @@ if (tv && stage) {
 
   // ---------- toast ----------
   const toast = $('toast'), toastMsg = $('toastMsg'); let toastT;
-  function showToast(msg) { toastMsg.textContent = msg; toast.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove('show'), 2400); }
+  function showToast(msg, plain) { toastMsg.textContent = msg; toast.classList.toggle('plain', !!plain); toast.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove('show'), 2400); }
 
   // ---------- break-glass ----------
   const overlay = $('overlay'), quorumEl = $('quorum'), sealbox = $('sealbox'), ovTitle = $('ovTitle'), ovBody = $('ovBody');
@@ -353,7 +371,15 @@ if (tv && stage) {
     else if (a === 'ackall') { bizEvents.forEach((e) => { e.acked = true; }); render(); showToast('All events acknowledged'); }
     else if (a === 'ack') { const id = +current.getAttribute('data-id'); if (bizEvents[id]) bizEvents[id].acked = true; render(); showToast('Event acknowledged'); }
     else if (a === 'incident-review') { showToast('Dispute pack ready · signed timeline + sealed clip · checkable offline ✓'); }
-    else if (a === 'tile') { const n = current.getAttribute('data-name'), row = liveFleet && liveFleet.find((d) => d.name === n); showToast(n + ' · online · chain intact' + (row && row.born ? ' · ' + row.born : '')); }
+    // A tile's toast reads the live row that carries the tile's name, with the
+    // predicate homeFleet()/bizFleet() draw 'offline' with (`online === false`),
+    // so for that row the two never disagree about what the device reported.
+    // The lookup is by name, as the tile's data-name is: rows that share a
+    // name share a toast. 'chain intact' is the demo's simulated claim, like
+    // the tile's chip — nothing here reads a chain (tests/tv-wall.test.mjs
+    // says so in its header). A live row's toast drops the tick: nothing was
+    // checked.
+    else if (a === 'tile') { const n = current.getAttribute('data-name'), row = liveFleet && liveFleet.find((d) => d.name === n), off = row && row.online === false; showToast(n + (off ? ' · offline' : liveFleet ? ' · online · presence only — not verified' : ' · online · chain intact') + (row && row.born ? ' · ' + row.born : ''), !!liveFleet); }
     else if (a === 'event') { showToast('Event sealed · chain intact ✓'); }
     else if (a === 'watch') { homeMode = 'watching'; render(); showToast('Now playing · your fleet keeps witnessing'); }
     else if (a === 'stopwatch') { homeMode = 'wall'; render(); showToast('Back to the Witness Wall'); }
@@ -625,10 +651,13 @@ if (tv && stage) {
   // mixed content makes it unwinnable — and the live demo kernel button
   // always works because it's same-origin.)
   // A ?kernel= in the link connects for this visit only: a link is something
-  // anyone can hand someone, so it never becomes the remembered kernel.
+  // anyone can hand someone, so it never becomes the remembered kernel — and
+  // on the hosted site it may only name the demo fleet or a LAN hub
+  // (kernelLinkAllowed); any other address is dropped and the demo stays up.
   let boot = null, fromLink = false;
   try {
     boot = new URLSearchParams(location.search).get('kernel');
+    if (boot && !kernelLinkAllowed(boot, location)) boot = null;
     fromLink = !!boot;
     if (!boot) boot = localStorage.getItem('scv-kernel');
   } catch (e) { /* ignore */ }

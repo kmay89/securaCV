@@ -202,6 +202,47 @@ migrate_device_key_file() {
     return 0
 }
 
+# remove_kernel_seed_copy FILE SEED
+# One-time removal of the copy of the seed the kernel used to keep beside
+# the sealed log (`<db>.ed25519.seed`: in the app, /config/witness.ed25519.seed).
+# In standalone mode witnessd wrote the environment seed there at its first
+# start — the same bytes as /data/device_key, back under /config, where
+# every backup and file-sharing app reaches them. The witnessd service now
+# starts it with DEVICE_KEY_SEED_PERSIST=0, so no new file appears; this
+# removes the one an earlier release left. Runs at every start and is a
+# no-op once FILE is gone.
+#
+# FILE is removed only when the seed it holds is, byte for byte, the seed in
+# use (SEED: what run.sh resolved from the option or /data/device_key) — the
+# same identity, kept in a safer place, so nothing is lost. A file holding
+# another seed is left alone: witnessd refuses that disagreement at open
+# with a message naming the file, and nothing a person might need is
+# deleted on the way to that message.
+#
+# Prints one verdict and never the seed:
+#   removed        FILE held the seed in use; FILE removed
+#   kept differs   FILE holds a different (or no) seed; nothing changed
+#   failed remove  FILE could not be removed
+# Returns 1 for `failed remove`, 0 otherwise. Pure: paths and the seed
+# value only, no bashio — unit-tested in tests/test_run_lib.sh.
+remove_kernel_seed_copy() {
+    local file="${1:?remove_kernel_seed_copy: seed file required}"
+    local seed="${2:?remove_kernel_seed_copy: seed in use required}"
+    local stored
+    [ -e "$file" ] || return 0
+
+    stored=$(head -n1 "$file" 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$stored" ] || [ "$stored" != "$seed" ]; then
+        echo "kept differs"
+        return 0
+    fi
+    if ! rm -f "$file" || [ -e "$file" ]; then
+        echo "failed remove"
+        return 1
+    fi
+    echo "removed"
+}
+
 # ha_device_id SEED
 # The public Home Assistant device id of this kernel. It lands in retained
 # MQTT discovery topics and in the Supervisor discovery payload, both of

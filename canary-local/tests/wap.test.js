@@ -154,6 +154,15 @@ test("each mDNS service and its port is the one every mDNS start registers (F366
   }
 });
 
+test("the securacv service's TXT keys are the ones the sketch adds", () => {
+  const keys = (src) => [...new Set([...src.matchAll(/MDNS\.addServiceTxt\("securacv",\s*"tcp",\s*"([a-z_]+)"/g)].map((m) => m[1]))];
+  const code = codeLines(ino).join("\n");
+  const sync = code.slice(code.indexOf("static void mdns_sync_broker_txt() {"), code.indexOf("static void mdns_reannounce() {"));
+  const svc = data.ap.mdns_services[1];
+  assert.deepStrictEqual(svc.txt_while_mqtt_up, keys(sync));
+  assert.deepStrictEqual(svc.txt.map((t) => t.split("=")[0]), keys(code).filter((k) => !keys(sync).includes(k)));
+});
+
 test("captive.html is the firmware's CAPTIVE_PORTAL_HTML, verbatim", () => {
   const m = setupPageH.match(/R"HTML\(([\s\S]*)\)HTML"/);
   assert.ok(m, "CAPTIVE_PORTAL_HTML not found");

@@ -12,8 +12,8 @@
 // LCD_WIDTH x LCD_HEIGHT) and a quarter turn swaps its sides. `corners` says
 // whether the Join scene's QR card's rounded corners are held inside the
 // halo's stroke: the landscape nightlight's layout keeps them 2 px inside
-// (F157); the 800 px dash glass's reach past its ring in either orientation
-// (F155, an open decision), so there they are printed, not held.
+// (F157); the 800 px dash glass's reach past its ring in either orientation,
+// so there they are held at test_onboard_layout's ceilings instead.
 //
 // Pure functions over the source texts, so onboard.test.js holds them on the
 // real tree and on edited copies; onboard_probe.mjs calls turnedGlasses() and

@@ -190,9 +190,8 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
                 } else {
                     // Try to extract from BLE name "SCV-XXXX". The name is the
                     // advertiser's choice, so its four bytes are taken only when
-                    // all four are ASCII hex digits (sweep F405): a quote, a
-                    // backslash or a control byte reached deviceIdPrefix and GET
-                    // /api/nearby's hand-built JSON as it was.
+                    // all four are ASCII hex digits, folded to lowercase: any
+                    // other byte would reach GET /api/nearby's hand-built JSON.
                     const std::string name = advertisedDevice->getName();
                     if (!nearby_prefix_from_name(name.data(), name.size(), BLE_DEVICE_NAME_PREFIX, prefix)) {
                         // No valid device ID prefix available — treat as non-Canary

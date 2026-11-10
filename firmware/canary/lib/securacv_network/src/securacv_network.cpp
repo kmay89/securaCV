@@ -1630,8 +1630,9 @@ static void local_addr_of(httpd_req_t* req, char* out, size_t cap) {
 //
 // Every step logs why it stopped, and the reason lands in m_tls_reason,
 // which the boot's "[WARN] TLS unavailable (...)" line prints (main.cpp).
-// startHttpServer() then sets m_tls_reason from tls_policy::decide(), so
-// /api/status tls_mode_reason says decide()'s reason, not initTls()'s.
+// startHttpServer() hands it to tls_policy::decide(), which keeps it when the
+// missing certificate is what rules HTTPS out, so /api/status
+// tls_mode_reason says it too.
 // Serial lines never print key bytes.
 
 #if SECURACV_HAS_HTTPS_SERVER
@@ -2114,7 +2115,8 @@ static const uint16_t kRouteTableSlots = 63;
 bool ScvNetworkManager::startHttpServer() {
   using canary::net::tls_policy::Mode;
   const bool setup_active = setup_is_active() || setup_is_first_boot();
-  const char* why = nullptr;
+  // initTls()'s reason goes in; decide() keeps it only for a missing certificate.
+  const char* why = m_tls_reason;
   const Mode mode = canary::net::tls_policy::decide(
       FEATURE_HTTPS != 0, SECURACV_HAS_HTTPS_SERVER != 0,
       m_tls_cert_der != nullptr && m_tls_key_der != nullptr, setup_active, &why);
