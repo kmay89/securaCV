@@ -64,6 +64,10 @@
           "model",
           "dt=canary-wap",
           "role=witness"
+        ],
+        "txt_while_mqtt_up": [
+          "broker",
+          "bport"
         ]
       }
     ],

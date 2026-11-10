@@ -1001,22 +1001,6 @@ so — see D2 below.)
   the two Low-complexity rows still at ❌, #12 (audible chirp) and #14 (system
   monitor), then #15 (log acknowledgment and categories, Medium, already
   partial), then the unstarted phases.
-  *Note (2026-11-04, #1916, F354):* the flagship's tap now goes to one asker
-  and its banner asks before the press, and `CONSOLIDATION.md` gap #11 and
-  `FEATURES.md` say so. The user and security docs, this item's slice, still
-  describe first-asker or press-then-reload:
-  `docs/getting_started_canary.md:557` ("then reload within 30 seconds"),
-  `:564-567` ("whichever asks first") and `:818`;
-  `docs/homeassistant_setup.md:448`; `docs/security/SECURITY_MODEL.md:311` and
-  `:356`; `docs/security/SECURITY-AUDIT.md:204`'s amendment;
-  `docs/PARITY.md:181`; and `docs/design/magic_pairing.md:489` and `:800`.
-  `canary-local/tools/gen_wap.py:1255-1263`'s comment says the same, and its
-  `must_words` pin keeps the guide's "On a WAP it hands the recovery kit to
-  one asking address" paragraph scoped to a WAP, so rewriting that paragraph
-  turns `canary-local.yml`'s gen_wap step red unless the pin moves with it;
-  `test_docs_claims.py`'s `MUST_PASS_IN` and `RETIRED_IN` rows for
-  `getting_started_canary.md` move too. The guide can also say the banner asks
-  from a hidden tab and that a phone's screen should stay on.
 
 - [ ] **F21 [human] canary-wap enterprise readiness** —
   `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`. §1
@@ -3035,26 +3019,6 @@ so — see D2 below.)
   header. Related: F282 (which way R90 turns on the glass), to be settled on
   the same device. Found by A80 (#1802).
 
-- [ ] **A110 [code] The emulator's onboarding probe still prints the wide Join
-  card's corner reach without holding it.**
-  `canary-local/tests/onboard_probe.mjs` (`cardInHalo` in `onboard_glass.mjs`)
-  prints the corners' reach past the 800 px glass's ring, in both
-  orientations, with comments that call F155 open; `test_onboard_layout` now
-  holds 159.9 px (163.5 under Heirloom) and 12.9 (16.5) px past the stroke's
-  inner edge. Hold the same ceilings on the drawn glass and drop the "F155,
-  open" wording. Found by F155 (#1802).
-
-- [ ] **A112 [code] No browser probe reads the splash's tail.** Since F185
-  (#1836) every display flavor draws the speech bubble's tail, and the native
-  renders read it off the frame (`glass_splash_test.cpp` on LVGL 8.4, in every
-  8.4 build's config and the emulator's dash; `glass_splash_lvgl9_test.cpp` on
-  9.5), but the emulator's probes (`onboard_probe.mjs`'s splash reads,
-  `boot_probe.mjs`) read only the bubble's lines and the bird, so a rebuilt
-  dist that drew no tail, or drew it off the bubble's center line or into the
-  bird, would pass them. A read of the tail's ink around its box, the way the
-  native tests take it (the frame with and without the tail), would hold the
-  dist to it. Found by F185 (#1836).
-
 - [ ] **A65 [code+human] The iPhone's Fleet Wi-Fi Bluetooth rescue lane cannot
   reach a WAP.** The Fleet Wi-Fi rollout offers a "Bluetooth rescue" for a
   Canary the router change stranded (`FleetWiFiRollout.swift`'s did-not-return
@@ -3368,24 +3332,6 @@ so — see D2 below.)
   reboot a path that drops the keys and boots unprovisioned. Found by A99
   (#1919).
 
-- [ ] **A129 [code] Three fidelity gaps in the Sense radar lab's data path.**
-  Since A124 (#1920) the lab drives the firmware's two FSMs frame by frame,
-  and three small things still differ from the radar and the parser. (1) The
-  lab sends a vitals frame on every animation pass while someone is still,
-  near and Present; the MR60BHA2 reports vitals about once a second
-  (`senselab.json`'s `hardware.vitals_period_ms` is 1000) and `sense.json`
-  carries no cadence, so the lock confirms and drops up to one vitals period
-  earlier than on a real radar; carry the cadence into `sense.json`
-  (`gen_sense.py`) and have the lab model it. (2) `radarFrame` hands
-  `makePresenceFSM` `Math.min(...)*100` cm as a float where the firmware's
-  parser rounds distance to `uint16`, so a range band could differ within 0.5
-  cm of a gate; round in `radarFrame`. (3) `gen_sense.py` writes the `second`
-  sandbox scene's serial as `[vitals] breathing lost` where `drive_fsms`
-  prints `[vitals] breathing lost (stall)` as the deadline drops the lock,
-  which the lab now prints; the field is unused for lab-driven scenes but says
-  otherwise (a `gen_sense.py` edit and a `sense.json` regeneration). From
-  code. Found by A124 and its review (#1920).
-
 - [ ] **A130 [decision] Two rules for the Sense radar lab: what a moving
   in-range target's lock reads, and whether the wellbeing toggle restarts the
   FSMs.** (1) `makeRadarLabLoop`'s `VitalsFSM` sees only presence frames until
@@ -3403,16 +3349,6 @@ so — see D2 below.)
   Decide whether toggling should `reset()` the loop (a `presence_cleared` from
   the fresh boot would then be signed). From code. Found by A124's review
   (#1920).
-
-- [ ] **A131 [code] `gen_wap.py` still types the `_securacv._tcp` TXT list.**
-  `ap.mdns_services[1].txt` (`device_id`, `fw`, `host`, `name`, `model`,
-  `dt=canary-wap`, `role=witness`) is typed in the generator, not read from
-  `canary_wap.ino`'s `addServiceTxt()` calls, and the `broker` and `bport`
-  records `mdns_sync_broker_txt()` adds while the MQTT link is up are not
-  listed. F366@17612 (#1920) read the ports only. Read the records from the
-  sketch at each start as the ports are read, refusing a spelling the reader
-  cannot take, with scratch-copy cases in `test_gen_wap_ap_facts.py`. From
-  code. Found by F366's package (#1920).
 
 ---
 

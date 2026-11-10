@@ -751,8 +751,8 @@ RETIRED_IN = (
      "the banner is the all-rounder Canary's; a WAP's sign-in asks first"),
     ("docs/getting_started_canary.md",
      "one page load, or one app or browser fetching the recovery kit",
-     "on the flagship one page load or one browser fetch; a WAP's tap goes to "
-     "the one asker"),
+     "on the flagship one page load or one browser fetch, for one asking "
+     "address; a WAP's tap goes to the one asker"),
     ("docs/getting_started_canary.md",
      "the iPhone app fetching the kit on its own needs a fresh tap",
      "the iPhone app never fetches the kit with a tap"),
@@ -958,7 +958,16 @@ RETIRED_IN = (
      'the same'),
     ('docs/getting_started_canary.md',
      'it opens the provisioning gate for 30 seconds, which hands the recovery kit to the one page already asking for it',
-     "that is a WAP's rule; the all-rounder Canary's tap goes to whichever asks first"),
+     "the guide says how each tree's page asks first, and an unasked tap goes to the first address that asks"),
+    ('docs/getting_started_canary.md',
+     'tap the **BOOT** button on the Canary, then reload within 30 seconds',
+     "since F354 the banner asks first and the page unlocks where it stands, with no reload"),
+    ('docs/getting_started_canary.md',
+     'one page load, or one browser fetching the recovery kit — whichever asks first',
+     "since F354 the all-rounder Canary's tap goes to one asking address"),
+    ('docs/getting_started_canary.md',
+     'whichever asks first, so tap BOOT and then reload the dashboard within the 30 seconds',
+     "since F354 the unlock banner asks first: keep it open and press when it says to"),
     ('docs/getting_started_canary.md',
      "(This and the next paragraph are the all-rounder Canary's,",
      'the next paragraph covers the WAP too'),
@@ -4879,7 +4888,13 @@ MUST_PASS_IN = [
     ('firmware/projects/canary-wap/README.md',
      'it, and a tap no page was asking for goes to the first address that asks'),
     ('docs/getting_started_canary.md',
-     'dashboard within the 30 seconds. On a WAP it hands the recovery kit to one'),
+     'banner open and press when it says to. On a WAP it hands the recovery kit'),
+    ('docs/getting_started_canary.md',
+     '- keep the page open and tap the **BOOT** button on the Canary when the\n'
+     '  banner says to. The banner asks the Canary first, for one minute and from'),
+    ('docs/getting_started_canary.md',
+     'its 30 seconds, for one asking address: that address\'s page load, or its\n'
+     'fetch of the recovery kit.'),
     ('docs/design/magic_pairing.md',
      "sketch's own gestures. A short press hands the receipt to one asker for 30 s"),
     ('canary-local/assets/wap-ui.js',
@@ -7160,6 +7175,15 @@ MUST_FAIL_IN = [
     ('docs/getting_started_canary.md',
      'dashboard within the 30 seconds. On a WAP it hands the recovery kit only\n'
      'to the one page already asking for it, so click **Use BOOT Tap Once** on the'),
+    ('docs/getting_started_canary.md',
+     '- tap the **BOOT** button on the Canary, then reload within 30 seconds\n'
+     '  (one tap unlocks one page load; reloading it later needs another tap);'),
+    ('docs/getting_started_canary.md',
+     'those 30 seconds: one page load, or one browser fetching the recovery kit —\n'
+     'whichever asks first. A page you unlocked with the tap can save the'),
+    ('docs/getting_started_canary.md',
+     'recovery-kit fetch, whichever asks first, so tap BOOT and then reload the\n'
+     'dashboard within the 30 seconds. On a WAP it hands the recovery kit to one'),
     ('docs/design/magic_pairing.md',
      "sketch's own gestures. A short press opens the 30 s receipt gate, a 2 s hold"),
     ('canary-local/assets/wap-ui.js',

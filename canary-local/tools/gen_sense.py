@@ -28,6 +28,7 @@ Sources of truth (all in-repo, deterministic, offline):
   firmware/common/sensors/mmwave_mr60/mr60_{presence,vitals}.h  FSM contracts
   firmware/common/boot/boot_banner.cpp               shared boot scenes
   docs/canary_sense_mr60bha2_design.md               hardware envelope + scenarios
+  docs/hardware/mr60bha2_radar_notes.md              the radar's vitals cadence
   firmware/projects/canary-sense/README.md           quickstart + entity table
   canary-local/devices/registry.json                 fw_train + the canary-sense card
 
@@ -72,6 +73,7 @@ PRESENCE_H = REPO / "firmware/common/sensors/mmwave_mr60/mr60_presence.h"
 VITALS_H = REPO / "firmware/common/sensors/mmwave_mr60/mr60_vitals.h"
 BANNER_CPP = REPO / "firmware/common/boot/boot_banner.cpp"
 DESIGN = REPO / "docs/canary_sense_mr60bha2_design.md"
+NOTES = REPO / "docs/hardware/mr60bha2_radar_notes.md"
 REGISTRY = REPO / "canary-local/devices/registry.json"
 OUT_JSON = REPO / "canary-local/devices/sense.json"
 
@@ -192,6 +194,12 @@ must(UART_H, "c ^= b; c = ~c;", "XOR-fold checksum")
 must(UART_H, "HEADER scalar fields (id/len/type) are BIG-endian", "mixed endianness note")
 must(UART_H, "MR60_FRAME_QUEUE = 8", "frame queue depth")
 
+# How often the radar reports vitals: the notes doc's SIM:hardware row, the
+# one senselab.json carries. The lab sends a vitals frame once per period.
+VITALS_PERIOD_MS = int(grab(NOTES, r"^\|\s*vitals_period_ms\s*\|\s*(\d+)\s*\|", "SIM:hardware vitals_period_ms", re.M))
+if VITALS_PERIOD_MS <= 0:
+    die("SIM:hardware vitals_period_ms must be a positive number of milliseconds")
+
 RADAR = {
     "module": "MR60BHA2",
     "soc": "ADT6101P — 2T2R antenna, 1 MB flash, on-chip Cortex-M3 DSP",
@@ -201,6 +209,7 @@ RADAR = {
     "presence_range": "static human presence 1.5–6 m",
     "presence_max_m": 6.0,
     "vitals_range_m": 1.5,
+    "vitals_period_ms": VITALS_PERIOD_MS,
     "vitals_accuracy": "breathing ~90%, heart rate ~85% (≤1.5 m, single target)",
     "host": "XIAO ESP32-C6 (RISC-V, WiFi 6, BLE 5, 802.15.4)",
     "link": f"UART{RADAR_UART_NUM} · host TX GPIO{RADAR_TX} → radar RX, host RX GPIO{RADAR_RX} ← radar TX · {RADAR_BAUD} 8N1",
@@ -998,7 +1007,7 @@ SANDBOX = [
     {"id": "second", "label": "A second person walks in",
      "blurb": "The count bucket moves 1 → 2+; occupancy_changed chains, and vitals hard-suppress (BPM → null) — attribution refused, by code.",
      "state": "Present", "led": "green", "event": "occupancy_changed",
-     "serial": "[vitals] breathing lost",
+     "serial": "[vitals] breathing lost (stall)",
      "mqtt": [event_pub("occupancy_changed", "present", "2+", "near"),
               state_pub("wellbeing", presence=True, presence_state="present", occupants="2+",
                         breathing_locked=False, breath_bpm=None, heart_bpm=None, last_event="occupancy_changed"),
