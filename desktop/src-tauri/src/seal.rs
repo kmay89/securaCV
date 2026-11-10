@@ -346,7 +346,7 @@ impl Session {
         let cipher = ChaCha20Poly1305::new((&self.key).into());
         let sealed = cipher
             .encrypt(
-                Nonce::from_slice(&iv),
+                &Nonce::from(iv),
                 Payload {
                     msg: token.as_bytes(),
                     aad: aad.as_bytes(),
@@ -523,7 +523,7 @@ mod tests {
             let aad = format!("{method} {path}");
             ChaCha20Poly1305::new((&key_bytes()).into())
                 .decrypt(
-                    Nonce::from_slice(&iv),
+                    &Nonce::from(iv),
                     Payload {
                         msg: &ct,
                         aad: aad.as_bytes(),
