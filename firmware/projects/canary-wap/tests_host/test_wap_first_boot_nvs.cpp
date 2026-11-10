@@ -69,8 +69,10 @@
 // answers, so a refused read handed mbedTLS what the buffer held, and its
 // one false meant "no certificate": init_tls_cert() then made a new
 // certificate on a build that can, and stored it over the one whose pin the
-// phones hold. Now it answers KeyLoad: Absent only for a session that opened
-// with neither entry stored; a session that did not open, half a pair, a
+// phones hold. Now it answers KeyLoad: Absent only when IDF's NVS says
+// neither entry is stored (the lengths are asked of nvs_get_blob(), since
+// Preferences answers 0 for a failed lookup too); a lookup NVS could not
+// answer, a session that did not open, half a pair, an empty entry, a
 // length malloc cannot hold and a read that answered fewer bytes than its
 // length are Refused, with both buffers zeroed and freed; and init_tls_cert()
 // makes a certificate only on Absent. Cut verbatim (with secure_zero(),
@@ -843,9 +845,10 @@ static int test_no_stored_certificate_makes_and_stores_one() {
 }
 
 // A session that will not open (Preferences refuses it, the shared
-// handle's lock wait timed out; or NVS refuses every open): Refused.
-// Before, that read as "no certificate", and one was made (and, with the
-// session refused, not stored: HTTPS ran on this boot's certificate).
+// handle's lock wait timed out; or NVS refuses every open, which the length
+// probe meets first): Refused. Before, that read as "no certificate", and
+// one was made (and, with the session refused, not stored: HTTPS ran on
+// this boot's certificate).
 static int test_a_certificate_session_that_will_not_open_is_refused() {
   for (int fault = 0; fault < 2; fault++) {
     tls_unit(true, true);
@@ -854,9 +857,75 @@ static int test_a_certificate_session_that_will_not_open_is_refused() {
     const bool known = tls_boot();
     host_nvs().fail_begin = host_nvs().prefs_begin_fails = false;
     CHECK(check_tls_refused(known, before,
-                            "[TLS] Certificate not loaded: the NVS session did not open\n") == 0);
+                            fault ? "[TLS] Certificate not loaded: NVS could not say whether one is "
+                                    "stored (ESP_ERR_NVS_NOT_INITIALIZED)\n"
+                                  : "[TLS] Certificate not loaded: the NVS session did not open\n") == 0);
+    CHECK(host_nvs().blob_reads == 0);
   }
   return 0;
+}
+
+// A length lookup that answers neither ESP_OK nor ESP_ERR_NVS_NOT_FOUND
+// (stubs/first_boot/nvs.h says which answers IDF gives): Refused, with a
+// pair stored, half a pair, or none. Preferences' getBytesLength() answers 0
+// for such a lookup, which read as "no certificate": a new pair was made
+// and stored over the stored one.
+static int test_a_failed_certificate_length_lookup_is_refused() {
+  for (int stored = 0; stored < 4; stored++) {
+    tls_unit(stored & 1, stored & 2);
+    host_nvs().length_fault = ESP_FAIL;
+    const HostFirstBootNvs before = host_nvs();
+    const bool known = tls_boot();
+    const int refused = check_tls_refused(known, before,
+                                          "[TLS] Certificate not loaded: NVS could not say whether "
+                                          "one is stored (ESP_FAIL)\n");
+    host_nvs().length_fault = ESP_OK;
+    CHECK(refused == 0);
+    CHECK(host_nvs().blob_reads == 0 && host_alloc::made == 0);
+  }
+  // An entry stored as another type is not a certificate either.
+  tls_unit(false, true);
+  store_u32("tls_cert", 7);
+  const HostFirstBootNvs before = host_nvs();
+  const bool known = tls_boot();
+  CHECK(check_tls_refused(known, before,
+                          "[TLS] Certificate not loaded: NVS could not say whether one is stored "
+                          "(ESP_ERR_NVS_TYPE_MISMATCH)\n") == 0);
+  return 0;
+}
+
+// An entry stored with no bytes is stored: Refused, not read as absent.
+static int test_an_empty_stored_pair_is_refused() {
+  for (int empty = 1; empty < 4; empty++) {
+    tls_unit(true, true);
+    if (empty & 1) store_blob("tls_cert", 0, 0);
+    if (empty & 2) store_blob("tls_key", 0, 0);
+    const HostFirstBootNvs before = host_nvs();
+    const bool known = tls_boot();
+    char why[112];
+    std::snprintf(why, sizeof(why),
+                  "[TLS] Certificate not loaded: the stored pair is empty (%u and %u bytes)\n",
+                  (empty & 1) ? 0u : (unsigned)kCertLen, (empty & 2) ? 0u : (unsigned)kKeyLen);
+    CHECK(check_tls_refused(known, before, why) == 0);
+    CHECK(host_nvs().blob_reads == 0 && host_alloc::made == 0);
+  }
+  return 0;
+}
+
+// No "securacv" namespace at all: nothing is stored, so Absent, and the
+// boot makes and stores a certificate without an error line.
+static int test_no_namespace_reads_as_no_certificate() {
+  host_nvs().clear();
+  CHECK(tls_boot());
+  CHECK(g_certgens == g_tls_gens_before + 1);
+  CHECK(host_nvs().error_logs == 0);
+  CHECK(host_nvs().rows["securacv/tls_cert"].bytes == std::vector<uint8_t>(kGenCertLen, 0x61));
+  CHECK(host_nvs().rows["securacv/tls_key"].bytes == std::vector<uint8_t>(kGenKeyLen, 0x62));
+  CHECK(!printed("[TLS] Certificate not loaded"));
+  host_release(g_tls_cert_der);
+  host_release(g_tls_key_der);
+  g_tls_cert_der_len = g_tls_key_der_len = 0;
+  return check_idle();
 }
 
 // Half a pair, either half: Refused, and the half that is there is kept.
@@ -1363,6 +1432,9 @@ int main() {
   rc |= test_a_stored_certificate_loads_unchanged();
   rc |= test_no_stored_certificate_makes_and_stores_one();
   rc |= test_a_certificate_session_that_will_not_open_is_refused();
+  rc |= test_a_failed_certificate_length_lookup_is_refused();
+  rc |= test_an_empty_stored_pair_is_refused();
+  rc |= test_no_namespace_reads_as_no_certificate();
   rc |= test_half_a_stored_pair_is_refused();
   rc |= test_a_certificate_with_no_memory_for_it_is_refused();
   rc |= test_a_certificate_read_that_falls_short_is_refused();

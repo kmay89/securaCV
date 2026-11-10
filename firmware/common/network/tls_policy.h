@@ -52,9 +52,13 @@ enum class Mode : uint8_t {
 // Order matters and is the order a reader should check things in: the build
 // first, then the core, then the wizard, then the certificate. `reason` is a
 // string literal (never freed) naming the first fact that ruled HTTPS out.
+// `*reason` is also read: a non-empty string there on entry is the caller's
+// account of why there is no certificate, kept when the missing certificate
+// is what rules HTTPS out. Every other row overwrites it.
 inline Mode decide(bool feature_on, bool server_lib_present,
                    bool cert_available, bool setup_active,
                    const char** reason = nullptr) {
+  const char* cert_why = reason ? *reason : nullptr;
   const char* why = "self-signed TLS on 443; port 80 redirects";
   Mode out = Mode::HTTPS_REDIRECT;
   if (!feature_on) {
@@ -67,7 +71,9 @@ inline Mode decide(bool feature_on, bool server_lib_present,
     why = "setup wizard active: captive sheets go blank on a self-signed certificate";
     out = Mode::HTTP_ONLY;
   } else if (!cert_available) {
-    why = "no TLS certificate (generation unavailable or failed)";
+    why = (cert_why && cert_why[0] != '\0')
+              ? cert_why
+              : "no TLS certificate (generation unavailable or failed)";
     out = Mode::HTTP_ONLY;
   }
   if (reason) *reason = why;

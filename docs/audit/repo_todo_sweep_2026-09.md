@@ -1018,31 +1018,6 @@ so — see D2 below.)
   Comment-only, three one-line edits; the J11 text moves no gate. From code.
   Found by F416's and F425's reviews (#1920).
 
-- [ ] **F439 [code] `/api/status`'s `tls_mode_reason` never says why the
-  stored certificate was refused.** `initTls()` sets `m_tls_reason` ("stored
-  certificate unreadable: HTTPS off this boot, nothing stored over it"; F421,
-  #1920) and the boot's `[WARN] TLS unavailable` line and the health log carry
-  it, but `startHttpServer()` (`securacv_network.cpp`, `m_tls_reason = why;`
-  after `tls_policy::decide`) overwrites it with `decide()`'s generic "no TLS
-  certificate (generation unavailable or failed)", so `/api/status` reports
-  that. Pre-existing for every `initTls()` failure (keygen, DRBG, now the
-  refused read); the comment above the TLS section claimed otherwise and now
-  says what happens. Let `decide()` keep `initTls()`'s reason when the
-  certificate is missing; that touches the shared, host-tested
-  `common/network/tls_policy.h`. Unreachable on stock units until F15. From
-  code. Found by F421 (#1920).
-
-- [ ] **F440 [code] canary-wap's `tls_load_from_nvs()` still reads
-  Preferences' two zero lengths as absence.** F404's rule on the WAP
-  (`canary_wap.ino`) takes `getBytesLength() == 0` for both entries as Absent,
-  and Preferences answers 0 for a failed lookup too, so a lookup fault on both
-  entries would generate a new pair over a stored one. Not reachable today
-  (IDF's size query answers only OK, NOT_FOUND or INVALID_HANDLE once the open
-  succeeded) and certgen is off on stock units (F15). The flagship asks IDF
-  with an `nvs_get_blob` size probe since F421 (#1920); give the WAP the same
-  probe for parity, with a host case in `test_wap_first_boot_nvs.cpp`. From
-  code. Found by F421 (#1920).
-
 - [ ] **F443 [code+decision] Both dashboards still splice device vocabulary
   into `innerHTML` and `onclick` strings.** Outside the rows F407, F422 and
   F423 moved to the escape-and-index pattern, the WAP's `web_ui.h` splices
@@ -1060,13 +1035,6 @@ so — see D2 below.)
   text, so none was changed. Decide whether to move them all to the index and
   escape pattern for defense in depth; this list is the whole grep, so that
   package starts from it. From code. Found by F422's review (#1920).
-
-- [ ] **F444 [code] The WAP dashboard's Opera rename shows no refusal.**
-  `web_ui.h`'s `saveOperaName()` posts `/api/mesh/name` and ignores the
-  answer, so a name the F303 rule (#1920) refuses (a byte below 0x20, past 32
-  bytes, not whole UTF-8) leaves the old name in place without a word, where
-  `startPairing()` alerts `d.error`. Show `d.error` there too, then regenerate
-  `web_assets_gz.h`. From code. Found by F303 (#1920).
 
 - [ ] **F446 [code+decision, gated by U1] canary-wap Bluetooth: a Just Works
   bond that escapes F191's delete stays in the store, unlisted, with no road
@@ -1693,13 +1661,14 @@ so — see D2 below.)
   decision.
 
 - [ ] **F315 [code] The dashboard does not say when stored thresholds override
-  its preset.** Since F166 the calibration status carries `current_source`
-  (`stored`, `preset` or `mixed`), but the canary-wap dashboard's preset
-  picker and sensitivity slider show nothing when a stored `core.presence`
+  its preset.** The canary-wap's preset picker and sensitivity slider
+  (`csi_dashboard_html.h`) show nothing when a stored `core.presence`
   threshold (a calibration's apply, a bundle import, a Tuning Lab slider) wins
-  over them, so an owner who moves the slider sees no change. F127 made the
-  Lab's reset remove the row; this note was F127's third option, deferred
-  because `web_assets_gz.h` belonged to wave 18. Found doing F127 (#1802).
+  over them, so an owner who moves the slider sees no change. The calibration
+  status carries `current_source` (`stored`, `preset` or `mixed`), but only in
+  its `ready` state, so the page has nothing to read at load: serve it with
+  the settings the page loads (`csi_integration.cpp`), show a short note when
+  it is not `preset`, and cover it in `test_wap_tune_lab.cpp`.
 
 - [ ] **F165 [decision] canary-wap's first boot after an NVS erase says its
   event-id floor is unreadable and skips the card log's reload.**
