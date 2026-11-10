@@ -2963,34 +2963,6 @@ so — see D2 below.)
   before this reaches a release train; the S3 PlatformIO legs on #1920 are the
   compile proof. From code; not bench-tested. Found by F432's review (#1920).
 
-- [ ] **F441 [code] `make -C firmware/tests_host CXX=clang++-18 run` does not
-  complete.** The whole-tree clang++ 18 run stops on
-  `-Wno-stringop-truncation` (a GCC-only flag, unknown to clang under
-  `-Werror`) and, with `-Wno-unknown-warning-option` added, on six suites:
-  `test_csi_daily_summary`, `test_csi_module_boot` and
-  `test_csi_modules_integration` (`-Wunused-const-variable` in `common/csi`'s
-  `core_presence.cpp` and `anomaly_baseline.cpp`),
-  `test_vision_detection_pipeline_ubsan` (no clang UBSan runtime on the host)
-  and `test_vision_presence_fsm{,_grace}`. Wave 23's new suites pass under
-  clang one by one, so "again with `CXX=clang++-18`" means a per-suite build
-  today. Make the gate per suite or fix those six, so the clang run means the
-  whole suite; the canary-wap suite's list is F434. From host runs on
-  `653073f7`. Found by F421's package (#1920).
-
-- [ ] **F442 [code] A lint for a chip-target macro tested before `sdkconfig.h`
-  is included.** `securacv_thermal.cpp` was the one firmware file that tested
-  `CONFIG_IDF_TARGET_*` or `ESP_IDF_VERSION` before any include could have
-  reached `sdkconfig.h` (a scan of `firmware/` finds no other; canary-wap's
-  `mesh_crypto.cpp:36` is a comment), and that made the sensorless stub the
-  S3's provider for every release so far (F432, #1920; `LESSONS_LEARNED.md`'s
-  entry). `test_camera_thermal.cpp` pins this one file's include order. A
-  small `scripts/tests` check over every `.cpp`, `.h` and `.ino` under
-  `firmware/`: the first `#if` on `CONFIG_IDF_TARGET_*` or `ESP_IDF_VERSION`
-  must follow an include of `sdkconfig.h`, `Arduino.h` or an `esp_*`,
-  `driver/` or `freertos/` header, with a self-test that plants the old
-  provider. A new gate, not a review fix. From a scan. Found by F432's review
-  (#1920).
-
 ---
 
 ## 2. Apps (desktop Flasher, Lab, iOS, tvOS)
@@ -4570,21 +4542,6 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   `WASM32_CLANGXX=clang++-18` for `cores_wasm32.test.js`: the input, the pin
   and the job's `runs-on` move together, and that file's CI test fails by name
   on a `runs-on` change until they do.
-
-- [ ] **CI22 [code] Run `check_wap_json_answers.py`'s self-test mutations in
-  parallel.** The guard's proof grew to 230 mutations with J11 (F405, #1919):
-  13m07s of CPU locally with nothing else running, against 9m20s before the
-  wave. Each mutation reruns the whole check (about 3.3 s each, across the
-  230 mutations and 10 correct edits); J11's own rule adds about 0.13 s to
-  each run, so the growth is the count. On CI it took
-  9:51 on #1916's PR run but 12:49 on main after #1916 merged, at the
-  smaller count (`firmware.yml` run 41770593222), so a slow
-  runner would have landed at about 18 of the `wap-guard-selftests` job's 20
-  minutes; #1919 raised that job's timeout to 30 minutes as a stopgap. Run the
-  mutations in parallel inside the guard (a process pool), or shard them (a
-  `--shard K/N` flag and one matrix leg per shard), then bring the timeout
-  back down; `check_wap_loop_commands.py`, the job's other leg, may want the
-  same. Found by F405 (#1919).
 
 - [ ] **CI25 [decision] The AppImage runtime and plugin now ship from dated
   releases, and `pins.txt` is outside the release watches.** Two calls CI21

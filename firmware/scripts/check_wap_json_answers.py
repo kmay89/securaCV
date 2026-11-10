@@ -386,7 +386,10 @@ J12. Every health-log line reaches the ring through one scrub (F303). GET
 
 The value bounds follow ArduinoJson 7.4.1's TextFormatter (the version the
 sketch builds against, `arduino-libs.txt`). The check runs each mutation in
-`MUTATIONS` and must refuse every one.
+`MUTATIONS` and must refuse every one. Each re-runs the whole check, so they
+run in a pool of forked workers, one per CPU (JSON_ANSWERS_JOBS=<n> sets the
+count; 1, or a platform without fork, runs them in this process). Problems
+come back in the lists' own order, so the output is the same either way.
 
 Run locally:  python3 firmware/scripts/check_wap_json_answers.py   (repo root)
 CI:           firmware.yml "Regression guard", via regression_check.sh
@@ -396,8 +399,11 @@ from __future__ import annotations
 
 import bisect
 import functools
+import multiprocessing
+import os
 import re
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -3778,8 +3784,9 @@ JSON_APPEND_VOCAB: dict[str, str] = {
 # array, by the position of the array they write, with what holds them to hex digits. The rule
 # reads their calls, not their bodies: the host suite named here holds each body.
 HEX_WRITERS: dict[str, tuple[int, str]] = {
-    "nearby_prefix_from_name": (3, "ble_nearby_prefix.h: copies the four bytes after the name prefix only when all "
-                                   "four are ASCII hex digits (test_bluetooth_commands_wap.cpp)"),
+    "nearby_prefix_from_name": (3, "ble_nearby_prefix.h: copies the four bytes after the name prefix, folded to "
+                                   "lowercase, only when all four are ASCII hex digits "
+                                   "(test_bluetooth_commands_wap.cpp)"),
 }
 J11_COPIES = {"strncpy", "strcpy", "strlcpy", "memcpy", "memmove", "strncat", "strcat", "strlcat"}
 J11_PRINTFS = {"snprintf": 2, "vsnprintf": 2, "sprintf": 1, "vsprintf": 1}   # the format's position
@@ -5655,30 +5662,64 @@ ACCEPTED: list[tuple[str, Mutation]] = [
 ]
 
 
-def self_test(files: dict[str, str]) -> list[str]:
-    problems = []
-    for name, mutate in ACCEPTED:
-        try:
-            m = mutate(files)
-        except AnchorMissing as missing:
-            problems.append(f"self-test: correct edit '{name}' no longer applies (anchor {missing}) — the "
-                            "source changed shape; update this guard's correct edits with it")
-            continue
+# What every self-test case starts from, set before the pool forks: a worker
+# inherits it, the case lists (closures cannot be pickled) and the warm caches.
+_SELF_TEST_FILES: dict[str, str] | None = None
+
+
+def _case_problem(i: int) -> str | None:
+    """Case i of ACCEPTED then MUTATIONS: what is wrong, if anything."""
+    files = _SELF_TEST_FILES
+    correct = i < len(ACCEPTED)
+    name, mutate = ACCEPTED[i] if correct else MUTATIONS[i - len(ACCEPTED)]
+    try:
+        m = mutate(files)
+    except AnchorMissing as missing:
+        return (f"self-test: {'correct edit' if correct else 'mutation'} '{name}' no longer applies "
+                f"(anchor {missing}) — the source changed shape; update this guard's "
+                f"{'correct edits' if correct else 'mutations'} with it")
+    if correct:
         refused = check_files(m)[0] if m != files else ["it changed nothing"]
-        if refused:
-            problems.append(f"self-test: the check refused the correct edit '{name}': {refused[0]}")
-    for name, mutate in MUTATIONS:
+        return f"self-test: the check refused the correct edit '{name}': {refused[0]}" if refused else None
+    if m == files:
+        return f"self-test: mutation '{name}' changed nothing"
+    if not check_files(m)[0]:
+        return f"self-test: the check did not bite on mutation '{name}'"
+    return None
+
+
+def self_test_jobs() -> int:
+    """Worker count: JSON_ANSWERS_JOBS if set, else the CPUs this process may use."""
+    env = os.environ.get("JSON_ANSWERS_JOBS", "").strip()
+    if env:
         try:
-            m = mutate(files)
-        except AnchorMissing as missing:
-            problems.append(f"self-test: mutation '{name}' no longer applies (anchor {missing}) — the "
-                            "source changed shape; update this guard's mutations with it")
-            continue
-        if m == files:
-            problems.append(f"self-test: mutation '{name}' changed nothing")
-        elif not check_files(m)[0]:
-            problems.append(f"self-test: the check did not bite on mutation '{name}'")
-    return problems
+            return max(1, int(env))
+        except ValueError:
+            raise SystemExit(f"JSON_ANSWERS_JOBS={env!r} is not a number")
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:  # not Linux
+        return max(1, os.cpu_count() or 1)
+
+
+def self_test(files: dict[str, str]) -> list[str]:
+    global _SELF_TEST_FILES
+    _SELF_TEST_FILES = files
+    cases = range(len(ACCEPTED) + len(MUTATIONS))
+    jobs = min(self_test_jobs(), len(cases))
+    ctx = None
+    if jobs > 1:
+        try:
+            ctx = multiprocessing.get_context("fork")
+        except ValueError:  # no fork on this platform: run them here
+            ctx = None
+    if ctx is None:
+        results = map(_case_problem, cases)
+    else:
+        # Small chunks keep the workers evenly loaded; map() answers in order.
+        with ProcessPoolExecutor(max_workers=jobs, mp_context=ctx) as pool:
+            results = list(pool.map(_case_problem, cases, chunksize=max(1, len(cases) // (jobs * 8))))
+    return [p for p in results if p]
 
 
 def main(argv: list[str]) -> int:
