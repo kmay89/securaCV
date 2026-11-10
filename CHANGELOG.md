@@ -1,6 +1,52 @@
 # Changelog
 
 ## [Unreleased]
+### The ledger verdict checks the anchors: a head that was anchored and is gone fails `log_verify`, witnessd's boot verify and `POST /verify`
+
+- **RFC 3161 anchors are part of the ledger verdict (structural).**
+  `run_full_verify` now walks every `tsa_anchors` row after the chains and the
+  high-water-mark: the row is read by storage class and typed, the stored
+  token must parse and cover the hash the row claims, and a head-kind row
+  (`chain_head`, `export_receipt_head`, `break_glass_receipt_head`,
+  `policy_head`) must name a hash in the history of the ledger it declares —
+  a live row, or a retention checkpoint whose device signature verifies under
+  a genesis-anchored lineage key. A head in neither is a new failure,
+  `anchor_regression` in ledger `anchors` (`entry_id` = the anchor row id):
+  rollback, truncation, or a different history than the one that was
+  anchored. The unsigned `ledger_id` column never decides it; it only
+  sharpens the diagnosis (at or below / newer than the retention cutoff, or no
+  position recorded). A damaged row, or a token that does not parse or does
+  not cover its row's hash, is a warning (`anchor #N: …; run log_anchor
+  verify`), never a failure: a database with one corrupt anchor row does not
+  boot witnessd into safe mode. `VerifyReport` gains `anchors_checked`
+  (omitted when the database has no anchors table, so the retained MQTT
+  report is byte-identical for every such database; a failed report counts
+  the rows checked before the failing one); nothing in the report carries a
+  `genTime` or more than a 16-hex prefix of a hash. `log_verify` prints
+  `anchors: N checked (structural; countersignatures: log_anchor --db <db>
+  verify --ca <tsa-ca.pem>)`, lists damaged rows under `=== Anchor Audit ===`
+  apart from the timeline audit, and `--strict` counts both (`… (1 timeline,
+  2 anchor)`, exit 2 in the human report too). Structural only: the kernel
+  never links a CMS implementation, so the TSA countersignature stays with
+  `log_anchor verify --ca` (`openssl ts -verify`); `docs/timestamping.md` says
+  which image carries the `openssl` CLI. `list_anchors_lenient` is lenient at
+  the SQLite storage-class level (`subject_hash is not a BLOB`,
+  `created_bucket_start is not an INTEGER`, …); `checkpoint_by_id` shares
+  `latest_checkpoint`'s decoder. Docs: `docs/log_verify.md` ("Anchors are
+  part of the verdict"), `docs/timestamping.md`, `ENTERPRISE_CUSTODY.md` §2,
+  the runbook's §3 checklist, C5 scope and §8 matrix, the CPS template's
+  4.12. Pinned by unit tests in `verify_runner.rs` and
+  `tests/log_verify_anchors.rs`, all offline over the fixture token.
+- **Upgrade note.** Run `log_anchor verify` before upgrading `witnessd`. A
+  chain head anchored into a database that an older `witnessd` then pruned
+  (before anchored heads were kept as checkpoints) now fails the ledger
+  verdict — `log_verify` exits 1 and `witnessd` boots into safe mode — until
+  `log_anchor relabel --id N --subject digest` records that membership is no
+  longer asserted (it refuses a head newer than the retention cutoff, any
+  head when no checkpoint exists, and every receipt-ledger and policy head:
+  those are rollback or truncation, not a legacy prune). A damaged anchor row
+  is a warning, not a failure. Never delete an anchor row to clear a finding.
+
 ### v1 readiness: the fixes a session could finish, and a backlog that holds only open work (#1951)
 
 - **Offline envelopes say what they cannot prove.** An evidence envelope

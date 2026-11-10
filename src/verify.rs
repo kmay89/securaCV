@@ -24,6 +24,8 @@ pub enum FailedLedger {
     KeyLineage,
     /// The signed external high-water-mark (`ENTERPRISE_CUSTODY.md` §2).
     HighWaterMark,
+    /// The RFC 3161 anchor table (auxiliary evidence about the ledgers, checked structurally).
+    Anchors,
 }
 
 /// What kind of check failed. Drives the plain-language diagnosis the CLIs
@@ -42,6 +44,9 @@ pub enum FailureKind {
     /// The live sealed log is behind the signed external high-water-mark:
     /// tail truncation, whole-file rollback, or a wipe.
     HighWaterRegression,
+    /// A head-kind anchor covers a hash that is not in its declared ledger's history, or that survives only in a
+    /// checkpoint whose signature does not verify: rollback, truncation, or a different history than the one anchored.
+    AnchorRegression,
     /// The break-glass receipt chain's record of token redemptions is
     /// inconsistent: one nonce redeemed twice, a redemption that names no
     /// earlier `Granted` receipt (or restates it wrongly), or a nonce burned
@@ -55,6 +60,8 @@ pub enum FailureKind {
 #[derive(Debug, Clone, Serialize)]
 pub struct VerifyFailure {
     pub ledger: FailedLedger,
+    /// The row the check failed at; for `ledger == anchors` this is the
+    /// `tsa_anchors` row id.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_id: Option<i64>,
     pub kind: FailureKind,
@@ -173,34 +180,45 @@ pub fn verify_checkpoint_signature(
     }
 }
 
+/// The checkpoint columns every checkpoint reader decodes, in the order
+/// [`decode_checkpoint_row`] expects them.
+const CHECKPOINT_COLUMNS: &str =
+    "chain_head_hash, signature, pq_signature, pq_scheme, cutoff_event_id, signer_public_key";
+
+/// Decode one `checkpoints` row selected with [`CHECKPOINT_COLUMNS`]. Shared by
+/// [`latest_checkpoint`] and [`checkpoint_by_id`] so the two cannot drift.
+fn decode_checkpoint_row(row: &Row<'_>) -> Result<CheckpointInfo> {
+    let head = blob32(row, 0)?;
+    let signature: Vec<u8> = row.get(1)?;
+    let pq_signature: Option<Vec<u8>> = row.get(2)?;
+    let pq_scheme: Option<String> = row.get(3)?;
+    let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
+    let cutoff_event_id: i64 = row.get(4)?;
+    let signer_public_key: Option<Vec<u8>> = row.get(5)?;
+    let signer_public_key = match signer_public_key {
+        Some(bytes) if bytes.len() == 32 => {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&bytes);
+            Some(out)
+        }
+        Some(_) => return Err(anyhow!("corrupt checkpoint signer_public_key length")),
+        None => None,
+    };
+    Ok(CheckpointInfo {
+        chain_head_hash: Some(head),
+        signatures: Some(signature_set),
+        cutoff_event_id: Some(cutoff_event_id),
+        signer_public_key,
+    })
+}
+
 pub fn latest_checkpoint(conn: &Connection) -> Result<CheckpointInfo> {
-    let mut stmt = conn.prepare(
-        "SELECT chain_head_hash, signature, pq_signature, pq_scheme, cutoff_event_id, signer_public_key FROM checkpoints ORDER BY id DESC LIMIT 1",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {CHECKPOINT_COLUMNS} FROM checkpoints ORDER BY id DESC LIMIT 1"
+    ))?;
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
-        let head = blob32(row, 0)?;
-        let signature: Vec<u8> = row.get(1)?;
-        let pq_signature: Option<Vec<u8>> = row.get(2)?;
-        let pq_scheme: Option<String> = row.get(3)?;
-        let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
-        let cutoff_event_id: i64 = row.get(4)?;
-        let signer_public_key: Option<Vec<u8>> = row.get(5)?;
-        let signer_public_key = match signer_public_key {
-            Some(bytes) if bytes.len() == 32 => {
-                let mut out = [0u8; 32];
-                out.copy_from_slice(&bytes);
-                Some(out)
-            }
-            Some(_) => return Err(anyhow!("corrupt checkpoint signer_public_key length")),
-            None => None,
-        };
-        Ok(CheckpointInfo {
-            chain_head_hash: Some(head),
-            signatures: Some(signature_set),
-            cutoff_event_id: Some(cutoff_event_id),
-            signer_public_key,
-        })
+        decode_checkpoint_row(row)
     } else {
         Ok(CheckpointInfo {
             chain_head_hash: None,
@@ -208,6 +226,21 @@ pub fn latest_checkpoint(conn: &Connection) -> Result<CheckpointInfo> {
             cutoff_event_id: None,
             signer_public_key: None,
         })
+    }
+}
+
+/// One checkpoint row by id — the witness a pruned anchored head survives
+/// as. Reading it is a database operation: a missing or undecodable row is a
+/// plain `Err`, like the cutoff checkpoint's read; only the signature checks
+/// the caller runs on the result decide a verdict.
+pub fn checkpoint_by_id(conn: &Connection, id: i64) -> Result<CheckpointInfo> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {CHECKPOINT_COLUMNS} FROM checkpoints WHERE id = ?1"
+    ))?;
+    let mut rows = stmt.query([id])?;
+    match rows.next()? {
+        Some(row) => decode_checkpoint_row(row),
+        None => Err(anyhow!("checkpoint #{id} does not exist")),
     }
 }
 
@@ -1122,6 +1155,8 @@ pub enum WarningKind {
     StaleTail,
     /// Timeline audit itself could not run.
     AuditUnavailable,
+    /// An anchor row is malformed, or its stored token does not parse or does not cover the hash the row claims.
+    AnchorAnomaly,
     Other,
 }
 
@@ -1138,6 +1173,8 @@ pub fn classify_warning(warning: &str) -> WarningKind {
         WarningKind::StaleTail
     } else if warning.starts_with("timeline audit could not run") {
         WarningKind::AuditUnavailable
+    } else if warning.starts_with("anchor #") {
+        WarningKind::AnchorAnomaly
     } else {
         WarningKind::Other
     }
@@ -1453,6 +1490,18 @@ mod tests {
         assert_eq!(
             classify_warning("timeline audit could not run: boom"),
             WarningKind::AuditUnavailable
+        );
+        assert_eq!(
+            classify_warning(
+                "anchor #3: row is malformed (subject_hash is not a BLOB); run log_anchor verify"
+            ),
+            WarningKind::AnchorAnomaly
+        );
+        assert_eq!(
+            classify_warning(
+                "anchor #4: stored token does not parse as an RFC 3161 token; run log_anchor verify"
+            ),
+            WarningKind::AnchorAnomaly
         );
         assert_eq!(classify_warning("something else"), WarningKind::Other);
     }
