@@ -16,6 +16,7 @@ pub fn ledger_name(ledger: FailedLedger) -> &'static str {
         FailedLedger::Checkpoint => "retention checkpoint",
         FailedLedger::KeyLineage => "device key lineage",
         FailedLedger::HighWaterMark => "signed external high-water-mark",
+        FailedLedger::Anchors => "RFC 3161 anchor table",
     }
 }
 
@@ -118,6 +119,30 @@ pub fn explain_failure(kind: FailureKind) -> FailureExplanation {
                    copy of the mark), and check where this database file came from. \
                    Do NOT re-sign a shorter chain to clear the error.",
         },
+        FailureKind::AnchorRegression => FailureExplanation {
+            what: "an RFC 3161 anchor row covers a ledger head that is no longer in that \
+                   ledger's history: the hash is in no live row and in no retention \
+                   checkpoint whose device signature verifies. The anchor is auxiliary \
+                   evidence about the ledger — a state the ledger once had, countersigned \
+                   by a time-stamping authority — and this database no longer contains \
+                   that state. The interior chain itself verified.",
+            likely_causes: "an older whole-database snapshot was restored (rollback); the \
+                   tail was truncated past the anchored head; the ledger was regenerated \
+                   as a different history than the one that was anchored. One benign \
+                   cause: a chain head anchored into a database that an OLDER witnessd \
+                   then pruned — before this release, retention did not keep anchored \
+                   heads as checkpoints — which the diagnosis text flags when the anchored \
+                   row id is at or below the retention cutoff.",
+            next_steps: "run `log_anchor verify` for the per-anchor picture, and check \
+                   where this database file came from. Only for a head at or below the \
+                   retention cutoff of a database pruned by an older build is `log_anchor \
+                   relabel --id N --subject digest` the remedy: it records that membership \
+                   is no longer asserted and leaves the token untouched. A head NEWER than \
+                   the cutoff, or a receipt-ledger or policy head (those ledgers are never \
+                   pruned), is a rollback or truncation — do NOT relabel it, and never \
+                   delete the anchor row: that destroys evidence, it never clears a \
+                   finding.",
+        },
         FailureKind::TokenRedemption => FailureExplanation {
             what: "the break-glass chain's record of spent tokens is inconsistent: a nonce \
                    redeemed twice, a redemption naming no earlier Granted receipt, or a nonce \
@@ -163,6 +188,13 @@ pub fn warning_hint(kind: WarningKind) -> Option<&'static str> {
         WarningKind::AuditUnavailable => Some(
             "the timeline audit itself could not run — the hash chain is still valid, but \
              tail-truncation and clock checks were skipped.",
+        ),
+        WarningKind::AnchorAnomaly => Some(
+            "this anchor row cannot vouch for anything — its token does not parse, does not \
+             cover the hash the row claims, or the row itself is damaged. The ledgers still \
+             verified and no anchored head is missing. `log_anchor verify` reports a token \
+             problem as FAIL on that row; a malformed row stops it with `corrupt anchor N: …` \
+             and must be restored from a backup (export tokens alongside your DB backups).",
         ),
         WarningKind::Other => None,
     }
