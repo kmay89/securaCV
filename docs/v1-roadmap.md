@@ -47,8 +47,10 @@ checksum alone.
   maintainer decision ([`db_key_rotation.md`](db_key_rotation.md#verifier-clis)).
 - **Break-glass grants in an offline envelope.** The offline verifiers check
   the receipt chain and the approvals commitment, not the trustee signatures
-  or the quorum; the kernel re-derives those against its database. The full
-  fix is a wire-format revision (issue #1580).
+  or the quorum, so an envelope that carries a grant reads
+  `valid_with_warnings` and says why. The kernel re-derives the quorum
+  against its database; proving it offline needs a wire-format revision
+  (issue #1580).
 - **Hardware-backed keys** (TPM / secure element): needs hardware.
 
 ## Not in v1
