@@ -415,6 +415,7 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 - [x] Self-test heartbeat (`BEACON_MSG_SELFTEST_OK`) emits daily; receivers surface `Trouble` on >36h absence.
 - [x] X25519 keypair NVS-persisted (audit follow-up: codex P1 #7 closure in PR #454).
 - [x] Audit log NVS-persisted as a ring buffer with head pointer (audit follow-up: gemini P1 #3 / codex P2 #8 closure in PR #454).
+- [x] An audit entry is chained only from and to a head that hashed: when the SHA-256 for its link fails, the entry is not recorded, the chain, the SD log and the ring stay as they were, an ALERT is logged and the alarm proceeds; a head that did not hash at boot is re-derived before the next append (`beacon_channel.cpp::chain_audit_entry`, `tests_host/test_wap_sha_fail_modules.cpp`). Host-tested only.
 - [x] COSIGN_REQ/RESP encrypted with X25519 + ChaCha20-Poly1305 (audit follow-up in PR #454). Since 2026-09 the clear routing fields (fingerprints, `ciphertext_len`, `accept`) are bound as associated data and an all-zero X25519 shared secret is refused (`beacon_cosign_aad.h`, `tests_host/test_beacon_cosign_aad.cpp`).
 
 **Status: closed (PR #454 merged 2026-05-12).** Hardware verification of the two-pubkey origination flow remains queued — see `docs/audit/hardware_verification_checklist.md`.

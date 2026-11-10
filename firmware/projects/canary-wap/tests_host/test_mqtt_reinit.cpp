@@ -71,6 +71,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -106,7 +107,10 @@ struct Call {
 };
 
 std::string task = "loop";                 // the task the test is playing
-std::vector<esp_mqtt_client*> clients;     // every client ever made, never freed
+std::vector<esp_mqtt_client*> clients;     // this scene's clients, live or destroyed
+// Every client ever made, owned here until exit: a destroyed one stays
+// allocated, so a stale handle reads a dead client and not freed memory.
+std::vector<std::unique_ptr<esp_mqtt_client>> made;
 std::vector<Call> calls;
 std::vector<std::pair<std::string, std::string>> published;   // topic, payload
 std::vector<std::string> published_on;     // the task of each publish
@@ -226,7 +230,8 @@ void abort_connection(esp_mqtt_client* c) { dispatch(c, MQTT_EVENT_DISCONNECTED)
 extern "C" {
 
 esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t* config) {
-  esp_mqtt_client* c = new esp_mqtt_client();
+  fake::made.push_back(std::make_unique<esp_mqtt_client>());
+  esp_mqtt_client* c = fake::made.back().get();
   c->id = (int)fake::clients.size() + 1;
   c->uri = config->broker.address.uri ? config->broker.address.uri : "";
   c->will_topic = config->session.last_will.topic ? config->session.last_will.topic : "";

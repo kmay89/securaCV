@@ -151,7 +151,7 @@ void test_send_path_writes_the_registry_header() {
     "memcpy(msg+offset,g_device_fingerprint,FINGERPRINT_SIZE);offset+=FINGERPRINT_SIZE;",
     "for(inti=0;i<8;i++){msg[offset++]=(counter>>(i*8))&0xFF;}",
     "memcpy(msg+offset,&timestamp,4);offset+=4;",
-    "sign_message(g_device_privkey,msg,offset,signature);",
+    "if(!sign_message(g_device_privkey,msg,offset,signature)){returnfalse;}",
   };
   for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); ++i) {
     CHECK(count(tx, order[i]) == 1);

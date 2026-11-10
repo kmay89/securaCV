@@ -33,6 +33,13 @@ SRC_DIR   = ../arduino/canary_wap
 ARDUINO_GLOBALS = -include arduino_globals.h
 override CXXFLAGS += $(ARDUINO_GLOBALS)
 
+# -Wstringop-truncation is GCC's. clang refuses the name under -Werror, so
+# the flag that turns it off goes only to a compiler that takes it.
+NO_STRINGOP_TRUNC := $(shell $(CXX) -Werror -Wno-stringop-truncation -x c++ -fsyntax-only /dev/null >/dev/null 2>&1 && echo -Wno-stringop-truncation)
+# The sketch's CSI core files name feature-vector indexes they do not all
+# read. clang's -Wall counts an unused constant; GCC's does not.
+NO_UNUSED_CONST = -Wno-unused-const-variable
+
 # Every compile writes the headers it read beside its binary (sweep F286):
 # -MMD writes $@.d for `-o $@`, -MP gives each header an empty rule so a
 # deleted one is no error, and the end of this file reads them back and
@@ -356,7 +363,7 @@ EVLOAD_LIB = $(SRC_DIR)/csi_event_log.cpp $(SRC_DIR)/csi_event.cpp \
 
 $(EVLOAD_BIN): $(EVLOAD_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
                $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable $(NO_STRINGOP_TRUNC) -DCSI_TEST_HOST_BUILD \
 	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVLOAD_SRC) $(EVLOAD_LIB))
 
 .PHONY: run-evlog-load clean-evlog-load
@@ -378,7 +385,7 @@ EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
 
 $(EVDISMISS_BIN): $(EVDISMISS_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
                   $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable $(NO_STRINGOP_TRUNC) -DCSI_TEST_HOST_BUILD \
 	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVDISMISS_SRC) $(EVLOAD_LIB))
 
 .PHONY: run-evlog-dismiss clean-evlog-dismiss
@@ -410,7 +417,7 @@ $(EGRESS_BIN): $(EGRESS_SRC) $(EGRESS_LIB) $(SRC_DIR)/csi_event_egress.h $(SRC_D
                $(wildcard $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/loop_command_ring.h) \
                $(SRC_DIR)/csi_event_wire.h json_strict.h \
                $(wildcard stubs/egress/*.h stubs/egress/freertos/*.h stubs/sd_fake/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment $(NO_STRINGOP_TRUNC) -DCSI_TEST_HOST_BUILD \
 	  -I stubs/egress -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EGRESS_SRC) $(EGRESS_LIB))
 
 .PHONY: run-wap-egress clean-wap-egress
@@ -848,7 +855,7 @@ $(MODBOOT_BIN): $(MODBOOT_SRC) $(MODBOOT_LIB) $(SRC_DIR)/csi_module.h $(SRC_DIR)
                 $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_bundler.h $(SRC_DIR)/csi_integration.cpp \
                 $(SRC_DIR)/acoustic_events_module.cpp $(SRC_DIR)/vault_events_module.cpp $(SRC_DIR)/ble_scout.cpp \
                 $(wildcard stubs/module_boot/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror $(NO_STRINGOP_TRUNC) $(NO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
 	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(MODBOOT_SRC) $(MODBOOT_LIB))
 
@@ -882,7 +889,7 @@ $(TUNELAB_BIN): $(TUNELAB_SRC) $(TUNELAB_LIB) $(SRC_DIR)/csi_tune_lab.h $(SRC_DI
                 $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_event.h \
                 $(SRC_DIR)/csi_integration.cpp $(SRC_DIR)/csi_dashboard_html.h \
                 $(wildcard stubs/module_boot/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror $(NO_STRINGOP_TRUNC) $(NO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
 	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(TUNELAB_SRC) $(TUNELAB_LIB))
 
@@ -925,7 +932,7 @@ $(DAILY_BIN): $(DAILY_SRC) $(DAILY_INC) $(MODBOOT_LIB) $(SRC_DIR)/csi_settings_n
               $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/meta_daily_summary.h \
               $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_event_wire.h $(SRC_DIR)/tz_rule.h \
               $(wildcard stubs/module_boot/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror $(NO_STRINGOP_TRUNC) $(NO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	  -I stubs/module_boot -I $(SRC_DIR) -I . -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
 	  -o $@ $(DAILY_SRC) $(MODBOOT_LIB))
 
@@ -1678,7 +1685,7 @@ endif
 $(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
                   $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/http_body_reader.h \
                   json_strict.h mqtt_test_hooks.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function $(NO_STRINGOP_TRUNC) \
 	  -include mqtt_test_hooks.h $(MQTT_REINIT_HEAP) \
 	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp)
 
@@ -1705,7 +1712,7 @@ HA_IDS_SRC = test_ha_discovery_ids.cpp
 $(HA_IDS_BIN): $(HA_IDS_SRC) beacon_source_scan.h $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
                $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h \
                $(SRC_DIR)/http_body_reader.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function $(NO_STRINGOP_TRUNC) \
 	  -I stubs/mqtt -I $(SRC_DIR) -DCSI_MQTT_CPP='"$(abspath $(SRC_DIR))/csi_mqtt.cpp"' \
 	  -o $@ $(HA_IDS_SRC) $(SRC_DIR)/csi_mqtt.cpp)
 
@@ -1742,7 +1749,7 @@ $(MQTT_BODIES_BIN): $(MQTT_BODIES_SRC) json_strict.h $(SRC_DIR)/csi_mqtt.cpp $(S
                     $(SRC_DIR)/device_signature.cpp $(SRC_DIR)/device_signature.h $(SRC_DIR)/mqtt_identity.h \
                     $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h \
                     $(SRC_DIR)/http_body_reader.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function $(NO_STRINGOP_TRUNC) \
 	  -I stubs/mqtt -I $(SRC_DIR) -DDEVICE_SIGNATURE_CPP='"$(abspath $(SRC_DIR))/device_signature.cpp"' \
 	  -o $@ $(MQTT_BODIES_SRC) $(SRC_DIR)/csi_mqtt.cpp -lcrypto)
 
@@ -2410,8 +2417,12 @@ SHAMOD_USB          = test_wap_sha_fail_modules_usb.inc
 # answer the device's refusal (not the 64-hex shape text) and leave the key
 # registered before in RAM and NVS; a malformed key answers the shape text.
 SHAMOD_VAULT_KEY    = test_wap_sha_fail_modules_vault_key.inc
+# And beacon_channel.cpp's hash helper with what stands on it: the co-sign
+# session key, the fingerprint, the audit chain's head (load and append) and
+# the tamper auto-revoke.
+SHAMOD_BEACON       = test_wap_sha_fail_modules_beacon.inc
 SHAMOD_INCS         = $(SHAMOD_VAULT_STATE) $(SHAMOD_VAULT) $(SHAMOD_FAM_STATE) $(SHAMOD_FAM) \
-                      $(SHAMOD_WP_STATE) $(SHAMOD_WP) $(SHAMOD_USB) $(SHAMOD_VAULT_KEY)
+                      $(SHAMOD_WP_STATE) $(SHAMOD_WP) $(SHAMOD_USB) $(SHAMOD_VAULT_KEY) $(SHAMOD_BEACON)
 CUT_INCS           += $(SHAMOD_INCS)
 # A state block: every line from the first line matching `from` to the next
 # matching `to`, behind a #line naming the file, found exactly once.
@@ -2451,6 +2462,10 @@ $(SHAMOD_VAULT_KEY): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 	awk -v 'sigs=static esp_err_t handle_vault_key_set(httpd_req_t* req) {' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
+$(SHAMOD_BEACON): $(SRC_DIR)/beacon_channel.cpp $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=[[nodiscard]] static bool sha256_two(|static bool ecdh_session_key(|[[nodiscard]] static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {|static bool persist_audit_entry(|[[nodiscard]] static bool audit_head_after(|[[nodiscard]] static bool rederive_audit_head(|static bool load_audit_log(|static bool chain_audit_entry(BeaconAuditEntry* entry) {|bool revoke_beacon_set_entry(|bool on_peer_tampered(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/beacon_channel.cpp > $@.tmp && mv $@.tmp $@
+
 $(SHAMOD_BIN): $(SHAMOD_SRC) $(SHAMOD_INCS) $(SHAMOD_LINK) arduino_globals.h arduinojson_tree.h json_strict.h \
                $(SRC_DIR)/vault_snapshot.h
 	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I stubs/sd_fake \
@@ -2459,6 +2474,7 @@ $(SHAMOD_BIN): $(SHAMOD_SRC) $(SHAMOD_INCS) $(SHAMOD_LINK) arduino_globals.h ard
 	  -DWAP_SHAMOD_FAMILIAR_STATE_INC='"$(SHAMOD_FAM_STATE)"' -DWAP_SHAMOD_FAMILIAR_INC='"$(SHAMOD_FAM)"' \
 	  -DWAP_SHAMOD_PRESENCE_STATE_INC='"$(SHAMOD_WP_STATE)"' -DWAP_SHAMOD_PRESENCE_INC='"$(SHAMOD_WP)"' \
 	  -DWAP_SHAMOD_USB_INC='"$(SHAMOD_USB)"' -DWAP_SHAMOD_VAULT_KEY_INC='"$(SHAMOD_VAULT_KEY)"' \
+	  -DWAP_SHAMOD_BEACON_INC='"$(SHAMOD_BEACON)"' \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
 	  -o $@ $(SHAMOD_SRC) $(SHAMOD_LINK) -lcrypto)
 

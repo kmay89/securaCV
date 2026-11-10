@@ -239,18 +239,6 @@ so — see D2 below.)
   item), or both. From code and the host suite. Found by F309's review
   (#1920).
 
-- [ ] **F436 [code] canary-wap Chirp: a stale verified witness counts against
-  its origin key's hour once per filter period.** `handle_witness()` runs
-  `pubkey_rate_check_and_record()` before the freshness window, so a captured,
-  validly signed but stale frame counts against its origin key's 4-an-hour
-  budget before it is refused, once per filter period (331 to 662 s): four
-  plays 11.1 minutes apart use up the key's hour. Pre-existing; written in
-  spec §5.3 by D19 and pinned by
-  `c9_a_stale_frame_counts_once_a_filter_period`, which becomes the failing
-  test once the order moves. Move the freshness check ahead of the rate check;
-  `c9_a_refused_frame_counts_once`'s counts then shift by one. From code.
-  Found by F309's review (#1920).
-
 - [ ] **F445 [code+decision] Three canary-wap pairing lines still reach `GET
   /api/logs` cut at 79 bytes.** `HealthLogRingEntry::message` is 80 bytes and
   `health_log()` forwards no detail, so three pre-existing pairing lines in
@@ -729,136 +717,30 @@ so — see D2 below.)
   the decision. Host cases over the chain glue and `test_chain_state.cpp`'s
   decision. Found by F360's review (#1840).
 
-- [ ] **F364 [code] The canary-wap's plain SHA-256 helpers discard mbedTLS's
-  return codes.** `sha256_raw()` and `sha256_domain()` (`canary_wap.ino:1580`,
-  `:1589`) and `beacon_channel.cpp`'s `ecdh_session_key()` (`:318`),
-  `compute_fingerprint()` (`:409`), `load_audit_log()` (`:711`) and
-  `chain_audit_entry()` (`:932`) call `mbedtls_sha256_starts()`, `_update()`
-  and `_finish()` and check none of them. So do `mesh_crypto.cpp`,
-  `mesh_network.cpp`, `chirp_channel.cpp`, `familiar.cpp`,
-  `vault_snapshot.cpp` and `securacv_ota.cpp`; `ble_ota.cpp` checks its
-  three. Four callers drop one-shot `mbedtls_sha256()`'s answer:
-  `usb_evidence_drive.cpp:91`, `vault_snapshot.cpp:109`,
-  `device_pseudonym.h:57` (its own `sha256_raw()`, under `device_id_hex()`,
-  the salted pseudonym in the device-info answer) and `wifi_presence.h:111`
-  (`hash_mac()`, under `FEATURE_WIFI_PRESENCE`); `rf_presence.cpp:184`
-  checks its own. That is every call in the sketch directory (`grep -rnE
-  '\bmbedtls_sha256(_(starts|update|finish))?\s*\('` over its `.ino`, `.cpp`
-  and `.h` files). `mesh_crypto.cpp`'s note that these calls return `void`
-  "on arduino-esp32 2.0.x (this build)" is stale: the sketch pins core
-  3.3.8, where they return `int`. `sha256_raw()`, `sha256_domain()` and
-  the four `beacon_channel.cpp` helpers each hash on a stack context and
-  allocate nothing themselves (`securacv_ota.cpp`'s image hash mallocs a
-  4096-byte read buffer, which it checks and frees). On the ESP32-S3's
-  port (IDF v5.5.1 and v5.5.4 `port/sha/core/esp_sha256.c`, the same file
-  in both, and `sha.c`, whose two differences change no answer on either
-  chip: an aligned copy for flash-encrypted external memory, which neither
-  the S3's nor the C3's `soc_caps.h` enables, and the cache write-back of
-  PSRAM buffers, which the S3 builds, moved from `esp_sha_dma()` into
-  `esp_sha_dma_process()`, in both versions run before the DMA starts and
-  its result ignored) a call answers 0 except on the DMA path. An update takes it when the 64-byte
-  multiple it hashes in one call, after topping up any bytes already
-  buffered, is more than `SHA_DMA_MODE_THRESHOLD` (`SHA_ALIGN_DOWN()` and
-  `sha_operation_mode()`, `esp_sha_internal.h`): 256 on the S3, so 320
-  bytes or more of whole blocks, and 128 on the ESP32-C3 the sketch's
-  `XIAO_ESP32C3` compile leg builds for (`firmware.yml:553`), so 192 or
-  more. There `esp_sha_dma()` answers -1 when the first DMA operation
-  cannot claim the shared crypto GDMA channels (`esp_crypto_shared_gdma.c`,
-  retried by every later one until it succeeds) or when it cannot allocate
-  an internal copy of a buffer that is not DMA-capable. The update then
-  returns without hashing those blocks, and `_finish()` still writes all 32
-  bytes of a digest that skipped them: a wrong hash, not stack bytes. Of
-  `canary_wap.ino`'s callers, a record payload that long
-  (`create_witness_record()`, `:2836`) and the TLS certificate's
-  fingerprint (`:2149`) can take that path; the key fingerprint, the chain
-  link, the genesis head, the pseudonym and the Wi-Fi presence hash are
-  short (the last two under 100 bytes) and run in block mode, which has no
-  failing path. The OTA image hash (`securacv_ota.cpp`, 4096-byte updates)
-  takes it too, and a wrong digest there fails the manifest compare, so the
-  image is refused. A wrong payload hash is a record that fails
-  verification, and a wrong certificate fingerprint fails a pin, so this is
-  low severity: detectable, no secret, and it needs the GDMA claim or the
-  allocation to fail. The fix: check each answer, zero the output and have
-  callers refuse, as `hmac_sha256()` does since F359, and correct the stale
-  note. A host case like `test_wap_hmac_fail.cpp`'s seam. Found by F359's
-  review (#1840).
-  *Partly done (#1916), the sketch's slice; the item stays open for the module
-  files:* `canary_wap.ino`'s `sha256_raw()` and `sha256_domain()` are
-  `[[nodiscard]] bool`, check `_starts()`, `_update()` and `_finish()`, free
-  the context on every path and zero their 32-byte output on a failure, as
-  `hmac_sha256()` does since F359. Each of their five callers refuses what its
-  hash was for: a failed key fingerprint or genesis head fails provisioning, a
-  failed chain link makes no link, a failed payload hash makes no record, and
-  a failed certificate fingerprint leaves the certificate unpinned and HTTPS
-  off. A generated TLS certificate is now hashed before it is stored. The
-  review found the zeroed record reaching other surfaces, so a refused
-  fingerprint or genesis head also keeps BLE discovery off the air and keeps
-  `[OK] Boot attestation`, `loop()`'s table rows and the 60 s self-verify off
-  it. `test_wap_sha_fail.cpp` (new, 1280 checks) runs the helpers and their
-  callers, cut verbatim, over an mbedTLS stand-in that fails one named step
-  and lets the later steps run, since mbedTLS does not promise that a step
-  after a failed one fails, so a dropped update answer is caught. Host-tested
-  under g++, clang++ 18 and ASan/UBSan; the ESP32 compiles are CI's; not
-  bench-tested. Next slice: `beacon_channel.cpp`'s four helpers,
-  `mesh_crypto.cpp` (and its stale arduino-esp32 2.0.x note),
-  `mesh_network.cpp`, `chirp_channel.cpp`, `familiar.cpp`,
-  `vault_snapshot.cpp`, `usb_evidence_drive.cpp`, `wifi_presence.h`, both
-  `securacv_ota.cpp` copies, and the three `device_pseudonym.h` copies, which
-  move the emulator dist. Two connection-bound reads that still report the
-  unnamed identity on a refused boot are F403.
-  *Partly done (#1919), slice 1a, the WAP-only modules; the item stays open
-  for `beacon_channel.cpp`, `mesh_network.cpp`, `chirp_channel.cpp`,
-  `securacv_ota.cpp` and `device_pseudonym.h`:* `vault_snapshot.cpp`'s seal
-  digest fails the seal as `sha` (the tmp file is removed and nothing is
-  chained), `set_pubkey_hex()` refuses, before NVS is written, a key whose id
-  did not hash, and at boot `load_config_from()` adopts a stored key only when
-  it read back and its id computed. `evidence_update_verify.h`/`.cpp` and
-  `usb_evidence_drive.cpp` answer `sha_failed` before any compare. The
-  familiar-device filters (`familiar.cpp`, `familiar.h`) learn, match and
-  persist nothing on a failed hash, `wifi_presence.h` does not count a capture
-  whose MAC did not hash, and `mesh_crypto::sha256_domain()` checks every step
-  and zeroes its output on a failure, as the canary library's IDF 5 body does,
-  its stale arduino-esp32 2.0.x note corrected. A new seam,
-  `test_wap_sha_fail_modules.cpp`, runs the real code (whole files, linked
-  files or verbatim cuts) over a SHA-256 stand-in that fails a named step
-  once: 408 checks under g++, clang++ 18 `-Werror` and g++ ASan/UBSan,
-  valgrind-clean; over the old sources it fails 189 of 408, and valgrind
-  reports 126 uses of uninitialized values. `test_evidence_update_verify`
-  gains the refused-hash case. The ESP32 compiles are CI's (Arduino-CLI core
-  3.x, and PlatformIO's `canary-wap-default` and `canary-wap-usbdrive` envs,
-  the second the only build of `usb_evidence_drive.cpp`'s real body); not run
-  on a device. Still open in this slice's files: `sha256_domain()` stays
-  `void`, because `ble_scan.cpp`, which calls it, is byte-identical with the
-  canary tree's, whose API is `void`; so `hash_beacon_id()` and
-  `mesh_pair_crypto.h`'s `confirmation_code()` and `confirm_hash()` take a
-  zeroed digest as a real one (both sides of a failed pairing would show
-  000000). Their 56-72-byte inputs run in the SHA engine's block mode, so this
-  is hygiene, not a live path; making it `bool` edits
-  `canary/lib/securacv_mesh`, `securacv_ble_scan` and their WAP copies
-  together, and no sync script holds the two `mesh_crypto` copies equal. The
-  next slices, as wave 22's selection sets them: `beacon_channel.cpp`'s four
-  helpers, `mesh_network.cpp`'s `sha256_domain` and its sign and verify
-  callers, and `chirp_channel.cpp`'s `session_id_from_pubkey`, whose inputs
-  run in block mode except the beacon audit head on the C3 leg, next wave with
-  whoever owns those files then (`mesh_network.cpp`'s part with F303 and
-  F359); then the three `device_pseudonym.h` copies (they move the emulator
-  dist) and the three `securacv_ota.cpp` copies, which need an IDF 4.4
-  spelling (`mbedtls_sha256_*_ret`) only CI's core 2.0.17 legs compile, in the
-  dist wave with the next version-bump rebuild (the OTA image hash already
-  fails safe at the manifest compare). A refused vault key reads as a
-  malformed key in its API answer (F426).
-  *Note (2026-11-04, #1920):* none of the open slices landed this wave. Slice
-  1b (`beacon_channel.cpp`'s four helpers, `mesh_network.cpp`'s
-  `sha256_domain` and its sign and verify callers, `chirp_channel.cpp`'s
-  `session_id_from_pubkey`) is buildable, but its files were the chirp and
-  wap-says-what-happened packages' this wave and its proof file
-  `test_wap_sha_fail_modules.cpp` the latter's (F426, which slice 1a filed,
-  closed there: a refused key id answers in its own words), so it waits for
-  wave 24 as one package; every input runs in the SHA engine's block mode on
-  the S3 and the C3, so no failing path exists in practice meanwhile. Slice 2
-  (the three `device_pseudonym.h` copies) moves the emulator dist, and the
-  `securacv_ota.cpp` copies need the IDF 4.4 spelling only CI compiles: the
-  dist wave with the next version bump.
+- [ ] **F364 [code] The last SHA-256 helpers that discard mbedTLS's return
+  codes.** On the ESP32's hardware SHA a failed step (the DMA path, inputs of
+  192 bytes or more on the C3, 320 on the S3) leaves a digest that skipped
+  blocks, so each helper must check `_starts()`, `_update()` and `_finish()`,
+  zero its output and have its caller refuse, as the canary-wap's sketch,
+  its WAP-only modules, `beacon_channel.cpp`, `mesh_network.cpp`'s
+  `sha256_domain` and `chirp_channel.cpp` now do (`test_wap_sha_fail.cpp`,
+  `test_wap_sha_fail_modules.cpp`). Still open, all on inputs short enough to
+  run in block mode, which has no failing path:
+  - `mesh_crypto::sha256_domain()` stays `void`, because `ble_scan.cpp` is
+    byte-identical with the canary tree's, whose API is `void`; so
+    `hash_beacon_id()` and `mesh_pair_crypto.h`'s `confirmation_code()` and
+    `confirm_hash()` take a zeroed digest as a real one. Making it `bool`
+    edits `canary/lib/securacv_mesh`, `securacv_ble_scan` and their WAP copies
+    together.
+  - `mesh_network.cpp`'s `compute_fingerprint()` and `compute_opera_id()`
+    stay `void` and pass on a zeroed digest.
+  - The three `device_pseudonym.h` copies (they move the emulator dist) and
+    the three `securacv_ota.cpp` copies, which need the IDF 4.4 spelling
+    (`mbedtls_sha256_*_ret`) only CI's core 2.0.17 legs compile; the OTA image
+    hash already fails safe at the manifest compare. Do both with the next
+    version-bump dist rebuild.
+  - `beacon_channel::init()`'s refusal on a failed hash is not run by a host
+    test.
 
 - [ ] **F402 [decision] canary-wap: a stored token it cannot read or use keeps
   a release unit unprovisioned at every boot.** Since F365 (#1916) a stored
@@ -1003,20 +885,6 @@ so — see D2 below.)
   whether the flagship gets a card and whether the reference server gets a
   type of its own; either ripples through `tests/api` and `tests/spa`. From
   code. Found by F355 (#1919).
-
-- [ ] **F437 [code] Three canary-wap comments say what the code no longer
-  does.** `mesh_network.h`'s `MAX_PUBKEY_RATE_TRACK` still reads "LRU of
-  recent originating pubkeys"; since F416 (#1920) the victim is the row whose
-  window started longest ago, and a run-out window is dropped at the next loop
-  pass (a key used a second ago whose window opened 59 minutes ago goes before
-  one whose window opened a minute ago). `check_wap_json_answers.py`'s J11
-  `HEX_WRITERS` "why" for `nearby_prefix_from_name` says it copies the four
-  bytes after the name prefix, and `ble_nearby.h`'s call-site comment says
-  its four bytes are taken only when all four are hex digits; since F425
-  (#1920) they are also folded to lowercase (the record's guarantee, hex
-  digits only, still holds and the guard passes).
-  Comment-only, three one-line edits; the J11 text moves no gate. From code.
-  Found by F416's and F425's reviews (#1920).
 
 - [ ] **F443 [code+decision] Both dashboards still splice device vocabulary
   into `innerHTML` and `onclick` strings.** Outside the rows F407, F422 and
@@ -2910,36 +2778,6 @@ so — see D2 below.)
   writer yield once per 40-step window); either changes the test's character
   beyond F323's brief. From host runs. Found by F323 (#1919).
 
-- [ ] **F434 [code] The canary-wap host suite is clean only under CI's serial
-  g++ -O2.** Built with `CXX=clang++-18`, about 20 `tests_host` targets fail
-  to build: the GCC-only `-Wstringop-truncation` pragma and flag
-  (`chirp_host_harness.h` and others) and `-Wnested-anon-types` in
-  `stubs/bt/NimBLEDevice.h`. Built with g++ `-O1
-  -fsanitize=address,undefined`, libstdc++'s `<regex>` trips
-  `-Wmaybe-uninitialized` in five suites, UBSan reports misaligned member
-  access at two places in `mesh_network.cpp`, and LeakSanitizer a leak in
-  `test_mqtt_reinit`; all of these were so before #1919. One `make -j8` run on
-  a loaded machine also failed `test_loop_command_ring`'s
-  `test_withdrawals_racing_the_drain_never_run` (`!late.load()` and
-  `unfinished == 0`) where the serial build passed it, so it may be
-  timing-sensitive under load. Make the suite build under clang++ and the
-  sanitizers, fix or explain the two UBSan sites, and look at the ring test
-  under load. From host runs. Found by F404 (#1919).
-  *Note (2026-11-04, #1920):* wave 23's packages met the same three faults and
-  built around them; none is fixed. The GCC-only `#pragma GCC diagnostic
-  ignored "-Wstringop-truncation"` sits at `chirp_host_harness.h:82`,
-  `test_chirp_commands_wap.cpp:152`, `test_chirp_suppress_wap.cpp:121` and
-  twice in `test_bluetooth_commands_wap.cpp` (clang++ 18 `-Werror` rejects an
-  unknown warning group; a `#if !defined(__clang__)` guard closes it), and
-  `-Wnested-anon-types` fires on the anonymous structs inside
-  `stubs/bt/NimBLEDevice.h`'s `struct ble_store_status_event` (name them, or
-  guard them as the real header does); the packages ran clang with
-  `-Wno-unknown-warning-option -Wno-nested-anon-types`. The two UBSan sites
-  are `mesh_network.cpp:1343` (`TamperAlertPayload`, `test_mesh_commands_wap`)
-  and `:1162` (the rekey payload, `test_mesh_liveness_wap`), misaligned member
-  access on a payload read in place from the receive buffer; `memcpy` it out.
-  The flagship's `firmware/tests_host` has its own clang list (F441).
-
 - [ ] **F438 [human] The ESP32-S3 reads its die sensor for the first time:
   bench-validate every consumer.** Since F432 (#1920) `securacv_thermal.cpp`
   includes `sdkconfig.h` before it tests the chip target, so its TSENS branch
@@ -4475,20 +4313,6 @@ major, by theme") — work its themes, then tick here.
   five, the threshold does not change at night, and receivers do not enforce
   the hours), or decide on a night threshold. From code. Found by D16's review
   (#1919).
-
-- [ ] **D20 [code] More Chirp passages describe a v0.1 flow.** Outside D19's
-  scope (#1920), `spec/chirp_channel_v0.md` §1.2 rule 6 and §10.1 item 1 say
-  "one chirp per 5 minutes" where the code uses escalating cooldown tiers
-  (§2.5.4); §1.3 keeps the "someone checking car doors" use case; §4.1's send
-  flow and mockup offer a free-text "Brief message (64 chars max)" and four
-  categories that do not exist (Chirp sends templates only, §2.5.3); §4.3's
-  per-category and relay limits are not the code's; §7.2 describes
-  INITIALIZING → LISTENING → ACTIVE where the canary-wap takes INITIALIZING →
-  ACTIVE (A90's default: one sentence saying so, LISTENING left for other
-  implementers); and `THREAT_MODEL.md`'s Chirp section says origination is
-  refused "when SNTP unsynced", where the canary-wap has no SNTP (GPS sets its
-  clock). Bring each to the code; `ChirpSpecApiExamples`' readers could extend
-  to §4.1. From the spec. Found by D19's package (#1920).
 
 ---
 

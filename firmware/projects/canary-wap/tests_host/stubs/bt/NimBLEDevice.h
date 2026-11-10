@@ -205,17 +205,21 @@ union ble_store_value {
   struct ble_store_value_sec sec;
   struct ble_store_value_cccd cccd;
 };
+// The union's members are named types: an anonymous struct inside an
+// anonymous union is an extension clang's -Wpedantic refuses.
+struct ble_store_status_overflow {
+  int obj_type;
+  const union ble_store_value* value;
+};
+struct ble_store_status_full {
+  int obj_type;
+  uint16_t conn_handle;
+};
 struct ble_store_status_event {
   int event_code;
   union {
-    struct {
-      int obj_type;
-      const union ble_store_value* value;
-    } overflow;
-    struct {
-      int obj_type;
-      uint16_t conn_handle;
-    } full;
+    struct ble_store_status_overflow overflow;
+    struct ble_store_status_full full;
   };
 };
 
