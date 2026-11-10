@@ -1,6 +1,19 @@
 # Changelog
 
 ## [Unreleased]
+### rusqlite 0.41: SQLite 3.39.4 to 3.53.4 under SQLCipher, and what the audit pass does not mean
+
+- **`rusqlite` 0.31 to 0.41** (`libsqlite3-sys` 0.28 to 0.39.1; SQLCipher
+  4.5.3 to 4.19.0, SQLite 3.39.4 to 3.53.4). Cipher defaults are unchanged
+  and a database written by either version opens in the other. One source
+  change: `verify::count_alarms` reads the count as `i64` and converts it
+  checked. Dependabot's hold on the `rusqlite` major is lifted.
+- **RUSTSEC-2026-0459 is not fixed by this.** `cargo audit` passes again,
+  because the advisory is keyed on the crate version, but the SQLCipher
+  build still carries SQLite 3.53.4 and the fix is 3.54.0. `SECURITY.md`
+  ("Group 5") says who is exposed and what to do until `libsqlite3-sys`
+  can select the fixed `sqlcipher-src`.
+
 ### The ledger verdict checks the anchors: a head that was anchored and is gone fails `log_verify`, witnessd's boot verify and `POST /verify`
 
 - **RFC 3161 anchors are part of the ledger verdict (structural).**

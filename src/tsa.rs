@@ -1183,13 +1183,24 @@ fn decode_anchor_row(raw: &RawAnchorRow) -> std::result::Result<AnchorRecord, St
 /// genuine SQLite errors — propagate. A row whose `id` itself is not an
 /// INTEGER is reported under id `-1`.
 pub fn list_anchors_lenient(conn: &Connection) -> Result<Vec<(i64, Result<AnchorRecord>)>> {
-    use rusqlite::types::Value;
+    use rusqlite::types::{Value, ValueRef};
     let sql = anchor_select_sql(conn)?;
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| {
         let mut raw: RawAnchorRow = std::array::from_fn(|_| Value::Null);
         for (i, slot) in raw.iter_mut().enumerate() {
-            *slot = row.get_ref(i)?.into();
+            *slot = match row.get_ref(i)? {
+                ValueRef::Null => Value::Null,
+                ValueRef::Integer(v) => Value::Integer(v),
+                ValueRef::Real(v) => Value::Real(v),
+                ValueRef::Blob(b) => Value::Blob(b.to_vec()),
+                // TEXT that is not UTF-8 is kept as its bytes, so the row
+                // reports a mistyped column instead of failing the read.
+                ValueRef::Text(t) => match std::str::from_utf8(t) {
+                    Ok(s) => Value::Text(s.to_owned()),
+                    Err(_) => Value::Blob(t.to_vec()),
+                },
+            };
         }
         Ok(raw)
     })?;
@@ -1972,6 +1983,30 @@ mod tests {
         );
         assert_eq!(last.ledger_id, None);
         assert_eq!(last.tsa_name, None);
+    }
+
+    #[test]
+    fn list_anchors_lenient_isolates_text_that_is_not_utf8() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_anchor_table(&conn).unwrap();
+        let token = parse_token(&fixture_token_der()).unwrap();
+        let good = insert_anchor(&conn, "digest", &fixture_digest(), "(offline)", &token).unwrap();
+        conn.execute(
+            "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject,
+                subject_hash, tsa_url, gen_time, token_der)
+             VALUES (0, 600, CAST(x'ff' AS TEXT), ?1, '(offline)', '20260610123324Z', x'00')",
+            [vec![0u8; 32]],
+        )
+        .unwrap();
+        let bad = conn.last_insert_rowid();
+
+        let rows = list_anchors_lenient(&conn).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, good);
+        assert!(rows[0].1.is_ok());
+        assert_eq!(rows[1].0, bad);
+        let reason = rows[1].1.as_ref().unwrap_err().to_string();
+        assert!(reason.contains("subject is not TEXT"), "{reason}");
     }
 
     #[test]
