@@ -227,7 +227,7 @@ exercised in CI. Much of the firmware is **CI-verified, not yet
 hardware-verified** — v1 is deliberately held until it's proven on real
 devices. Boards are individually labeled `verified` or `compile-tested` so you
 can tell which is which.
-→ [v1 roadmap](v1-roadmap.md) · [launch review](V1_LAUNCH_REVIEW.md) ·
+→ [v1 roadmap](v1-roadmap.md) ·
 [bench-test runbook](V1_BENCH_TEST_RUNBOOK.md)
 
 ### Is it certified? Audited?

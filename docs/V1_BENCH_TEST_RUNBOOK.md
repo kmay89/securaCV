@@ -8,7 +8,7 @@
 > per-track pass criteria and artifact lists apply to Tracks A–C here — and gives you one
 > results matrix to sign off.
 >
-> **Companion:** [`V1_LAUNCH_REVIEW.md`](V1_LAUNCH_REVIEW.md) (the why) · this doc is the how.
+> **Companion:** [`v1-roadmap.md`](v1-roadmap.md) (the why) · this doc is the how.
 > **Closes:** the "on-device validation pending" blocker in `v1-roadmap.md` and issue **#610**.
 
 ## How to use this

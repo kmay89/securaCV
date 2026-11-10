@@ -1642,8 +1642,9 @@ const DiscoveryEntity ENTITIES[] = {
 /* The entity id each config asks Home Assistant for (sweep HA16):
  * "def_ent_id" (default_entity_id, Home Assistant 2025.10 and later) is a
  * full entity id, <component>.<device id slug>_<object_id>, the id the docs
- * give (binary_sensor.<id>_smoke_alarm). Home Assistant keeps the part after
- * the '.' as the object id when it first registers the entity; one already
+ * give (binary_sensor.<id>_smoke_alarm). Home Assistant tries the part after
+ * the '.' as the object id when it first registers the entity, adding _2
+ * when another entity holds it; one already
  * in its registry keeps the id it has, and an older release drops the key
  * (its discovery schemas remove keys they do not know). Without it the id
  * came from the device name and the entity name

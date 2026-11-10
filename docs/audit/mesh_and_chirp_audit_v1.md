@@ -387,7 +387,7 @@ Before merging the Chirp v0.2 hardening to main:
 - [x] `PROTOCOL_VERSION` bump documented; older firmware refuses v1 frames gracefully. (Bumped from 0 to 1 in `mesh_network.h:514`; `chirp_channel.cpp::on_espnow_recv` strict-rejects mismatched version.)
 - [x] Spec `spec/chirp_channel_v0.md` updated to v0.2 with corrected wire format and removed `TPL_AUTH_FEDERAL_PRESENCE`.
 - [x] `docs/security/THREAT_MODEL.md` Chirp section added.
-- [x] HA MQTT discovery surfaces `chirp.state` four-state NFPA enum (`Normal | Trouble | Alarm | Supervisory`).
+- [x] HA MQTT discovery surfaces `chirp.state` as the firmware's own state words (`disabled | initializing | listening | active | muted | cooldown`, or `unknown`), not an NFPA enum.
 
 **Status: closed (PR #450 + #454 merged 2026-05-11/12).**
 
