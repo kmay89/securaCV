@@ -11,13 +11,16 @@
  * would have become the unit's identity for good. Each keygen now asks
  * is_flat() of the draw, inside the bootloader_random pair and before
  * anything derives or stores a key, and a flat draw is refused: the keygen
- * answers false, its buffer zeroed, the way a failed draw already answers,
- * so nothing is written and the next boot draws again. What the boot does
- * then is what it already did on a key it could not make: the canary (PIO)
- * tree halts provisioning; the canary-wap's provisioning fails the way a key
- * it could not store does (no halt, F58's open halt-or-ephemeral call; a
- * release build serves no web page); canary-sense, canary-vision and
- * canary-sentinel disable signing for the boot.
+ * answers false, its buffer zeroed and no public key derived, so no key is
+ * stored and the next boot draws again. The false lands in each caller's
+ * existing "Keypair generation failed" branch, which nothing reached
+ * before (esp_fill_random() answers nothing, so no keygen could fail): the
+ * canary (PIO) tree halts provisioning; the canary-wap's provisioning fails
+ * without a halt (F58's open halt-or-ephemeral call; a release build serves
+ * no web page) and refuses the boot's chain, so no record is signed under
+ * the zeroed key and no chain state is persisted (the mesh and the hourly
+ * chain backup still take that key as it is); canary-sense, canary-vision
+ * and canary-sentinel disable signing for the boot.
  *
  * A draw is flat when
  *   - every byte is the same (all zero, all 0xFF, any constant byte), or

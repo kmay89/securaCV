@@ -60,6 +60,13 @@
 // establish_identity_key() (provision_device()'s key block, cut verbatim)
 // generates only on Absent; on Refused it sets g_device.key_refused,
 // generates and writes nothing, and setup() halts on it (pinned below).
+// A keygen that answers false (a flat draw, sweep F38's key_draw_check.h)
+// stores nothing and sets g_device.chain_refused, so the boot setup() goes
+// on with (F58's open call) signs no record under the zeroed key and
+// persists no chain state (create_witness_record() and
+// persist_chain_state() refuse on the flag: test_wap_sha_fail.cpp). Before,
+// that branch left the chain open, and the boot's records and its reboot,
+// safe-mode and deep-sleep persists ran from a zero head.
 // Against the old load and the old key block, adapted to build and to keep
 // the old code's shape (the sweep's F360 entry lists each change), the key
 // cases fail.
@@ -140,6 +147,7 @@ struct DeviceIdentity {
   uint32_t key_born_ms;
   bool key_is_new;
   bool key_refused;
+  bool chain_refused;         // set by a keygen that refuses its draw (F38)
   bool first_boot;
   char fingerprint_hex[17];   // init_tls_cert()'s CN line (F404)
 };
@@ -536,6 +544,7 @@ static int test_a_namespace_with_no_key_generates_one() {
   CHECK(establish());
   CHECK(g_keygens == keygens + 1);
   CHECK(!g_device.key_refused && g_device.key_is_new && g_device.first_boot);
+  CHECK(!g_device.chain_refused);
   CHECK(g_device.key_born_ms == 4242);
   CHECK(all_bytes(g_device.privkey, 0x5a));
   CHECK(host_nvs().rows["securacv/privkey"].bytes == std::vector<uint8_t>(32, 0x5a));
@@ -719,6 +728,31 @@ static int test_a_key_that_cannot_be_stored_fails_provisioning() {
   CHECK(printed("[!!] Failed to store keypair\n"));
   CHECK(!printed("[PROV] Keypair stored in NVS"));
   host_nvs().prefs_begin_fails = false;
+  return check_idle();
+}
+
+// No key stored, and the keygen refuses its draw (a flat one, sweep F38):
+// nothing is stored, provisioning fails without the flag setup() halts on
+// (F58's open call), and the chain is refused for the boot, so no record is
+// signed under the zeroed key and no {seq, head} from a zero head is
+// persisted for the next boot's identity to adopt. Before, the branch
+// returned with the chain open.
+static int test_a_refused_keygen_refuses_the_chain() {
+  host_nvs().clear();
+  const HostFirstBootNvs before = host_nvs();
+  const int keygens = g_keygens;
+  g_keygen_fails = true;
+  const bool ready = establish();
+  g_keygen_fails = false;
+  CHECK(!ready);
+  CHECK(g_keygens == keygens + 1);
+  CHECK(g_device.chain_refused);
+  CHECK(!g_device.key_refused);
+  CHECK(!g_device.key_is_new && !g_device.first_boot);
+  CHECK(same_store(before, host_nvs()));
+  CHECK(printed("[PROV] Generating Ed25519 keypair"));
+  CHECK(printed("[!!] Keypair generation failed\n"));
+  CHECK(!printed("[PROV] Keypair stored in NVS"));
   return check_idle();
 }
 
@@ -1429,6 +1463,7 @@ int main() {
   rc |= test_a_key_with_one_byte_set_loads();
   rc |= test_a_refused_boot_keeps_the_key_for_the_next();
   rc |= test_a_key_that_cannot_be_stored_fails_provisioning();
+  rc |= test_a_refused_keygen_refuses_the_chain();
   rc |= test_a_stored_certificate_loads_unchanged();
   rc |= test_no_stored_certificate_makes_and_stores_one();
   rc |= test_a_certificate_session_that_will_not_open_is_refused();

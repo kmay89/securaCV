@@ -779,7 +779,8 @@ struct DeviceIdentity {
   bool     key_is_new;    // …meaningful only if this boot is the one that made it.
   bool     key_refused;   // NVS holds, or may hold, a key this boot could not read: setup() halts (F360)
   // Provisioning could not hash the key's fingerprint or the genesis head
-  // (sweep F364): the device is unnamed or its chain unanchored this boot, so
+  // (sweep F364), or could not make a key at all (a flat draw, sweep F38):
+  // the device is unnamed or its chain unanchored this boot, so
   // create_witness_record() signs nothing and persist_chain_state() writes
   // nothing. setup() goes on, as after any provisioning refusal (F336).
   bool     chain_refused;
@@ -1916,10 +1917,12 @@ static bool generate_keypair(uint8_t priv[32], uint8_t pub[32]) {
   // _disable() to seed it properly (ESP-IDF's documented early-entropy pattern).
   // The draw is looked at before it becomes a key (sweep F38,
   // key_draw_check.h): a flat one (every byte equal, or too few or too many
-  // one bits) answers false, the buffer zeroed, so establish_identity_key()
-  // stores nothing and provisioning fails as on a key it could not store
-  // (setup() does not halt on that: F58's open call); the next boot draws
-  // again.
+  // one bits) answers false, the buffer zeroed and the public key not
+  // derived, into establish_identity_key()'s "Keypair generation failed"
+  // branch, which nothing reached before. That branch stores nothing and
+  // refuses the chain for the boot (g_device.chain_refused), so no record is
+  // signed under the zeroed key and no chain state is persisted; provisioning
+  // fails without a halt (F58's open call), and the next boot draws again.
   bootloader_random_enable();
   esp_fill_random(priv, 32);
   const bool flat = key_draw_check::is_flat(priv);
@@ -12393,6 +12396,13 @@ static bool establish_identity_key() {
   }
   Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
   if (!generate_keypair(g_device.privkey, g_device.pubkey)) {
+    // A refused draw (sweep F38) leaves this boot no key: g_device.privkey is
+    // zeroed and the public key never derived, and setup() goes on (F58's
+    // open halt-or-ephemeral call). The chain is refused as after a
+    // fingerprint that did not hash (F364), so create_witness_record() signs
+    // nothing under the zeroed key and persist_chain_state() writes no
+    // {seq, head} from a zero head for the next boot's identity to adopt.
+    g_device.chain_refused = true;
     Serial.println("[!!] Keypair generation failed");
     return false;
   }
@@ -13304,7 +13314,10 @@ void setup() {
     // established comes after provision_device() has loaded the chain state,
     // so the records below continue the stored chain; the only ones ahead of
     // it are a new key that could not be made or stored, on a boot with no
-    // key stored (F58's pending halt-or-ephemeral call).
+    // key stored (F58's pending halt-or-ephemeral call). One that could not
+    // be made (a flat draw, sweep F38) refuses the chain too, so no record
+    // below is signed under its zeroed key and no chain state is persisted;
+    // the mesh and the hourly chain backup still take that key as it is.
     if (g_device.key_refused) {
       Serial.println("[!!] PROVISIONING FAILED - the identity key could not be used (see the identity key line above) - HALTING");
       while (true) { delay(1000); }

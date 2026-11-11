@@ -512,10 +512,12 @@ Beyond §1.5:
   ([`common/identity/key_draw_check.h`](common/identity/key_draw_check.h), host-tested; the
   WAP sketch carries a staged copy `check_csi_sync.sh` holds) inside the `bootloader_random`
   pair, and a draw whose bytes are all equal or whose popcount is outside 48..208 of 256 is
-  refused: the keygen answers false and nothing is stored, the boot goes on as it already did on a
-  key it could not make (the canary (PIO) tree halts provisioning, the WAP's provisioning fails
-  without a halt, F58's open call, and the three headless projects disable signing for the boot),
-  and the next boot draws again. A uniform draw is refused with odds of about 2^-82.5. It is a check against a buffer the
+  refused: the keygen answers false and no key is stored, into each caller's existing "Keypair
+  generation failed" branch, which nothing reached before (the canary (PIO) tree halts
+  provisioning; the WAP's provisioning fails without a halt, F58's open call, and refuses the
+  boot's chain, so no record is signed under the zeroed key and no chain state is persisted, while
+  the mesh and the hourly chain backup still take that key as it is; the three headless projects
+  disable signing for the boot), and the next boot draws again. A uniform draw is refused with odds of about 2^-82.5. It is a check against a buffer the
   RNG never filled or a stuck output, not a randomness test: a fixed but varied pattern passes.
   Not bench-tested. **[P1 → done; ADC interaction bench-gated]**
 - **(fixed) Chain-head persistence is non-atomic** — `seq` then `chain_head` were two separate

@@ -44,14 +44,18 @@
  *     were, nothing persisted), logged as a mismatch with "SHA-256 failed";
  *   - test_chain(): false;
  *   - the fingerprint: provisioning answers false before the device is named
- *     or anything is written (no device id or SoftAP name, no boot count, no
- *     chain, no bearer derivation), and says why;
+ *     or anything after the key is written (no device id or SoftAP name, no
+ *     boot count, no chain, no bearer derivation), and says why. The key
+ *     loaders here are stand-ins that store nothing: on a first boot the
+ *     real one has stored the new key by then, and the next boot loads it
+ *     and computes the fingerprint again;
  *   - the genesis head: the same, nothing persisted;
  *   - the certificate pin: false and the hex emptied, so initTls() (pinned
  *     by text below) frees both buffers and serves no HTTPS with a reason;
  *   - each project: init() refuses a fingerprint or genesis head that did
  *     not compute (signing off, the key scrubbed before the signer sees it,
- *     nothing written), and chain_advance() a payload hash or link that did
+ *     no chain head or length written; the key load is the same kind of
+ *     stand-in), and chain_advance() a payload hash or link that did
  *     not (head and length as they were, nothing persisted);
  *   - the sources (argv): every call of these helpers in the canary tree and
  *     the three projects uses its answer, and initTls()'s refusal comes

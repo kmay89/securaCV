@@ -209,7 +209,9 @@ bool init() {
   // Fingerprint: wap formula — SHA256(domain || 0x00 || pubkey)[0..8] hex.
   // A fingerprint or a genesis head the hash did not compute (sweep F455)
   // disables signing for this boot, the path a refused key takes: the key
-  // is scrubbed before the signer sees it, and nothing is chained or stored.
+  // is scrubbed before the signer sees it, and no chain head or length is
+  // stored. (On a first boot the new key is already stored by then; the
+  // next boot loads it and computes both again.)
   uint8_t fp_hash[32];
   const bool fp_ok = sha256_domain(DOMAIN_FINGERPRINT, s_pub, sizeof(s_pub), fp_hash);
   if (!fp_ok) {

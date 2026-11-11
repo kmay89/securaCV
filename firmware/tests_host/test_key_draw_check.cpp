@@ -33,7 +33,9 @@
  *   - the five keygen sources (argv): each asks is_flat() of its draw on the
  *     line after esp_fill_random() and before bootloader_random_disable(),
  *     refuses before it derives or stores a key, and its caller refuses on
- *     the false (provisioning, as on a key it could not make).
+ *     the false (provisioning fails in the caller's "Keypair generation
+ *     failed" branch, which nothing reached before; the WAP's also refuses
+ *     the boot's chain); both caller files must be given.
  *
  * What this does not prove: that a draw it passes is random (a fixed but
  * varied pattern passes), the hardware RNG, or anything on a device. The
@@ -359,12 +361,16 @@ static void test_the_five_keygens_ask_inside_the_pair(const std::vector<std::str
   }
   CHECK(seen == 5);
 
-  // Each caller refuses on the false (the path a key it could not make took
-  // before): the canary's and the WAP's establish_identity_key() return
-  // false before anything stores a key, and each project's init() returns
-  // false before the signer sees one (the WITKEY suite pins init()).
+  // Each caller refuses on the false, in the "Keypair generation failed"
+  // branch nothing reached before: the canary's and the WAP's
+  // establish_identity_key() return false before anything stores a key (the
+  // WAP's refusing the boot's chain too: test_wap_first_boot_nvs.cpp runs
+  // it), and each project's init() returns false before the signer sees one
+  // (the WITKEY suite pins init()). Both caller files must be given.
+  int callers_seen = 0;
   for (const std::string& f : files) {
     if (ends_with(f, "canary/lib/securacv_witness/src/securacv_witness.cpp")) {
+      callers_seen++;
       const std::string est = body_of(read_file(f), "\nstatic bool establish_identity_key() {\n");
       const size_t gen = est.find("  if (!crypto_generate_keypair(g_device.privkey, g_device.pubkey)) {\n");
       const size_t store = est.find("nvs_store_key(");
@@ -373,14 +379,19 @@ static void test_the_five_keygens_ask_inside_the_pair(const std::vector<std::str
         CHECK(est.substr(gen, store - gen).find("    return false;\n") != std::string::npos);
     }
     if (ends_with(f, "projects/canary-wap/arduino/canary_wap/canary_wap.ino")) {
+      callers_seen++;
       const std::string est = body_of(read_file(f), "\nstatic bool establish_identity_key() {\n");
       const size_t gen = est.find("  if (!generate_keypair(g_device.privkey, g_device.pubkey)) {\n");
       const size_t store = est.find("nvs_store_key(");
       CHECK(gen != std::string::npos && store != std::string::npos && gen < store);
-      if (gen != std::string::npos && store != std::string::npos && gen < store)
-        CHECK(est.substr(gen, store - gen).find("    return false;\n") != std::string::npos);
+      if (gen != std::string::npos && store != std::string::npos && gen < store) {
+        const std::string branch = est.substr(gen, store - gen);
+        CHECK(branch.find("    return false;\n") != std::string::npos);
+        CHECK(branch.find("    g_device.chain_refused = true;\n") != std::string::npos);
+      }
     }
   }
+  CHECK(callers_seen == 2);
 }
 
 int main(int argc, char** argv) {

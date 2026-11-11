@@ -255,8 +255,10 @@ bool witness_provision_device() {
 
   // Derive public key + fingerprint. A fingerprint the hash did not compute
   // (sweep F455) would name the unit by 8 zero bytes, the same on every unit
-  // whose hash failed: provisioning stops before the device is named or
-  // anything is written, the path a refused key takes.
+  // whose hash failed: provisioning stops before the device is named or the
+  // boot count, the chain head or the bearer credential is written, the path
+  // a refused key takes. (On a first boot the new key is already stored by
+  // then; the next boot loads it and computes the fingerprint again.)
   Ed25519::derivePublicKey(g_device.pubkey, g_device.privkey);
   if (!crypto_fingerprint(g_device.pubkey, g_device.pubkey_fp)) {
     Serial.println("[!!] Public key fingerprint not computed (SHA-256 failed) - provisioning "
@@ -722,8 +724,11 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
   // makes no record (sweep F455): false before anything moves, with the seq,
   // the head and *out as they were (false is the answer a record that does
   // not verify already gave). main.cpp's callers that read the answer log it
-  // ("Record creation failed" and the rest); the power-mode and deep-sleep
-  // records do not read it, and are simply not made.
+  // ("Record creation failed" and the rest); the power-mode change and
+  // deep-sleep entry records (main.cpp), the power shutdown record
+  // (securacv_power.cpp) and the power incident record
+  // (canary_power_events.h) do not read it, and are simply not made; the
+  // boot attestation reads it and prints only on success.
   uint8_t payload_hash[32];
   if (!sha256_domain("securacv:fw:payload:v1", payload, len, payload_hash)) return false;
 
