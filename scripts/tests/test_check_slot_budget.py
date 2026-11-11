@@ -23,6 +23,10 @@ What is pinned and why:
     absent or empty bin and an over-slot image fail the step with an
     `::error::`, an env the script has no budget for fails it too
     (--require-budget), and the floor's warning shows on the PR as well;
+  • so does firmware.yml's Arduino CLI WAP size check, on the same sketch
+    image the release signs and under the same env key the release
+    measures it by (canary-wap-default): its old inline stat copy held the
+    slot as a literal and had no floor;
   • every OTA product the release signs (the variant index and display loop
     check_ota_channels.py reads out of firmware-release.yml) has a budget in
     the committed firmware/flavors.json, except the ones declared in
@@ -37,6 +41,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -321,6 +326,15 @@ def build_step_script() -> str:
     raise AssertionError(f"no step named {BUILD_STEP!r} in {FIRMWARE_YML}")
 
 
+def commands(script: str) -> str:
+    """A `run:` block's commands: comment lines dropped and backslash
+    continuations joined, so a pin on the call cannot be met by a comment
+    that merely names a flag."""
+    kept = [line for line in script.splitlines()
+            if not line.lstrip().startswith("#")]
+    return re.sub(r"[ \t]*\\\n\s*", " ", "\n".join(kept))
+
+
 STUB_PIO = """#!/usr/bin/env bash
 # `pio run -e <env>`: lay down .pio/build/<env>/firmware.bin at the size
 # $STUB_SIZES names for it (default 1000), or none for "missing".
@@ -379,9 +393,12 @@ class PrGateRunsTheScript(unittest.TestCase):
         return {flavor_envs.guard_env(g): g for g in leg.get("size_guards") or []}
 
     def test_the_step_is_the_scripts_not_an_inline_copy(self):
-        self.assertIn("firmware/scripts/check_slot_budget.py", self.script)
-        self.assertIn("--require-budget", self.script)
-        self.assertNotIn("stat -c", self.script)
+        code = commands(self.script)
+        self.assertIn('python3 "$GITHUB_WORKSPACE/firmware/scripts/'
+                      'check_slot_budget.py" --env "$GENV" --require-budget '
+                      '"$BIN"', code)
+        self.assertNotIn("stat -c", code)
+        self.assertNotIn("slot_bytes", code)
 
     def test_every_guard_of_every_leg_reaches_the_script(self):
         self.assertTrue(any(self.guarded(leg) for leg in self.legs))
@@ -456,6 +473,152 @@ class PrGateRunsTheScript(unittest.TestCase):
         line = self.refusal(leg, {"ghost-env": 10})
         self.assertIn("'ghost-env'", line)
         self.assertIn("NOT measured", line)
+
+
+WAP_JOB = "build-arduino-cli"
+WAP_COMPILE_STEP = "Compile firmware"
+WAP_SIZE_STEP = "Check binary size against the OTA slot"
+WAP_DIR = "/tmp/wap-build"
+WAP_BIN = f"{WAP_DIR}/canary_wap.ino.bin"
+FIRMWARE_RELEASE_YML = REPO / ".github" / "workflows" / "firmware-release.yml"
+
+
+def wap_steps() -> dict[str, str]:
+    workflow = yaml.safe_load(FIRMWARE_YML.read_text(encoding="utf-8"))
+    return {step["name"]: step.get("run", "")
+            for step in workflow["jobs"][WAP_JOB]["steps"] if "name" in step}
+
+
+def release_wap_env() -> str:
+    """The --env firmware-release.yml measures the WAP sketch image under:
+    the staged copy of WAP_BIN, then the check on that copy."""
+    text = commands(FIRMWARE_RELEASE_YML.read_text(encoding="utf-8"))
+    staged = re.search(re.escape(f"cp {WAP_BIN} ") + r'"([^"]+)"', text)
+    assert staged, f"firmware-release.yml no longer stages {WAP_BIN}"
+    call = re.search(r"check_slot_budget\.py --env (\S+) "
+                     + re.escape(f'"{staged.group(1)}"'), text)
+    assert call, "firmware-release.yml no longer measures the WAP image"
+    return call.group(1)
+
+
+@unittest.skipUnless(shutil.which("bash") and shutil.which("truncate"),
+                     "the WAP size check is bash, as on the runner")
+class WapArduinoStepRunsTheScript(unittest.TestCase):
+    """firmware.yml's Arduino CLI WAP job measures the sketch image the
+    release signs. Its size check is run here as the workflow runs it, with
+    the image's directory pointed at a scratch dir; GITHUB_WORKSPACE is this
+    checkout, so it calls the committed script against the committed
+    budget."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        steps = wap_steps()
+        cls.compile = steps[WAP_COMPILE_STEP]
+        cls.script = steps[WAP_SIZE_STEP]
+        cls.env = release_wap_env()
+        cls.guard = csb.load_budgets()[cls.env]
+        cls.slot = int(cls.guard["slot_bytes"])
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.wap = self.root / "wap-build"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def run_step(self, size, workspace: Path = REPO) -> subprocess.CompletedProcess:
+        if self.wap.exists():
+            shutil.rmtree(self.wap)
+        self.wap.mkdir()
+        if size != "missing":
+            sparse_image(self.wap, size, "canary_wap.ino.bin")
+        # the step names the arduino-cli output dir literally; point it here
+        self.assertIn(WAP_BIN, self.script)
+        script = self.script.replace(WAP_DIR, str(self.wap))
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": str(self.root),
+               "GITHUB_WORKSPACE": str(workspace)}
+        return subprocess.run(
+            ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+            cwd=self.root, env=env, capture_output=True, text=True,
+            timeout=120, check=False)
+
+    def lines(self, got: subprocess.CompletedProcess, kind: str) -> list[str]:
+        return [line for line in got.stdout.splitlines()
+                if line.startswith(f"::{kind}::")]
+
+    def test_the_step_measures_the_compiled_image_under_the_releases_env(self):
+        self.assertEqual(self.env, "canary-wap-default")
+        self.assertIn(f"--output-dir {WAP_DIR}", commands(self.compile))
+        code = commands(self.script)
+        self.assertIn('python3 "$GITHUB_WORKSPACE/firmware/scripts/'
+                      f'check_slot_budget.py" --env {self.env} '
+                      '--require-budget "$BIN"', code)
+        self.assertIn(f"BIN={WAP_BIN}", code)
+        # the budget is flavors.json's, not a literal in the workflow
+        self.assertNotIn("stat -c", code)
+        self.assertNotIn(str(self.slot), code)
+
+    def test_a_clear_image_is_quiet(self):
+        size = self.slot - expected_floor(self.slot)
+        got = self.run_step(size)
+        self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
+        self.assertIn(f"Firmware size: {size} / {self.slot} bytes", got.stdout)
+        self.assertEqual(self.lines(got, "warning"), [], got.stdout)
+        self.assertEqual(self.lines(got, "error"), [], got.stdout)
+
+    def test_an_image_under_the_floor_warns_and_passes(self):
+        for size in (self.slot - expected_floor(self.slot) + 1, self.slot - 1,
+                     self.slot):
+            with self.subTest(size=size):
+                got = self.run_step(size)
+                self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
+                warned = self.lines(got, "warning")
+                self.assertEqual(len(warned), 1, got.stdout)
+                self.assertIn(f"Firmware size: {size} / {self.slot} bytes",
+                              got.stdout)
+                self.assertIn(f"env '{self.env}'", warned[0])
+                self.assertIn(f"only {self.slot - size} bytes free", warned[0])
+                self.assertIn(f"floor of {expected_floor(self.slot)} bytes",
+                              warned[0])
+
+    def test_an_image_over_its_slot_fails_the_step(self):
+        got = self.run_step(self.slot + 1)
+        self.assertNotEqual(got.returncode, 0, got.stdout + got.stderr)
+        errors = self.lines(got, "error")
+        self.assertEqual(len(errors), 1, got.stdout + got.stderr)
+        self.assertIn(f"is {self.slot + 1} bytes but", errors[0])
+        self.assertNotIn("Firmware size:", got.stdout)
+
+    def test_an_absent_or_empty_image_fails_the_step_as_before(self):
+        for size in ("missing", 0):
+            with self.subTest(size=size):
+                got = self.run_step(size)
+                self.assertNotEqual(got.returncode, 0, got.stdout + got.stderr)
+                self.assertEqual(self.lines(got, "error"),
+                                 [f"::error::canary_wap.ino.bin not found in "
+                                  f"{self.wap}"], got.stdout)
+
+    def test_the_step_fails_if_the_wap_budget_goes_missing(self):
+        # a workspace whose flavors.json lost the WAP guard: the step must
+        # refuse, not pass an image it never measured
+        ws = self.root / "ws"
+        (ws / "firmware" / "scripts").mkdir(parents=True)
+        shutil.copy(SCRIPTS / "check_slot_budget.py",
+                    ws / "firmware" / "scripts" / "check_slot_budget.py")
+        flavors = json.loads(csb.FLAVORS.read_text(encoding="utf-8"))
+        for flavor in flavors:
+            flavor["size_guards"] = [
+                g for g in flavor.get("size_guards", [])
+                if flavor_envs.guard_env(g) != self.env]
+        (ws / "firmware" / "flavors.json").write_text(json.dumps(flavors),
+                                                      encoding="utf-8")
+        got = self.run_step(1000, workspace=ws)
+        self.assertNotEqual(got.returncode, 0, got.stdout + got.stderr)
+        errors = self.lines(got, "error")
+        self.assertEqual(len(errors), 1, got.stdout + got.stderr)
+        self.assertIn(f"'{self.env}'", errors[0])
+        self.assertIn("NOT measured", errors[0])
 
 
 class EveryPublishedProductIsBudgeted(unittest.TestCase):

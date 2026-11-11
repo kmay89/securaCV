@@ -19,29 +19,34 @@ images are arduino-cli builds of the same product an env guards in PR CI).
     python3 firmware/scripts/check_slot_budget.py --env canary-display-nightstand-c6 \
         /tmp/release/canary-display-nightstand-c6-2.4.6.bin
 
-Exit 0: the image fits its declared budget, or the env declares none (same
-semantics as the PR gate — unguarded envs pass). The absence is a GitHub
-`::warning::` annotation, not a plain log line: the release workflow calls
-this about to sign an OTA manifest, and the plain note let 9 of the 17
-published OTA products (fw-v2.4.16) ship unmeasured with nothing on the
-run's summary page to say so. Exit 1: the file is missing or the image
-exceeds the budget — the caller decides whether that sinks the release
-(flagship products) or skips the variant (the per-variant loops).
+Exit 0: the image fits its declared budget, or the env declares none and
+--require-budget is absent (the release path: an unbudgeted env passes,
+unmeasured). That absence is a GitHub `::warning::` annotation, not a plain
+log line: the release workflow calls this about to sign an OTA manifest,
+and the plain note let 9 of the 17 published OTA products (fw-v2.4.16) ship
+unmeasured with nothing on the run's summary page to say so. Exit 1: the
+file is missing, the image exceeds the budget, the env declares no budget
+and --require-budget was passed, or flavors.json holds two different
+budgets for one env. The release caller decides whether that sinks the
+release (flagship products) or skips the variant (the per-variant loops).
 
 The headroom floor (F367): an image that fits but leaves less than
 HEADROOM_FLOOR_PERCENT of its slot free is a `::warning::` naming the env,
 its free bytes and the floor, and the exit status does not move (it still
 fits, so it still passes; over the slot still fails). fw-v2.4.16's
 canary-display-nightstand-c6 fit its 2,031,616-byte slot with 2,832 bytes
-to spare and nothing said so; one more feature and the release's display
-loop would have skipped its OTA manifest with no earlier sign. The warning
-is that earlier sign, in the PR gate and on the release run alike.
+to spare, and nothing warned while it still fit: the first sign would have
+been a failing build, a red PR leg or a release display loop that skips its
+OTA manifest. The warning is the sign that comes while it still fits, on
+the PR and on the release run alike.
 
-The PR gate (.github/workflows/firmware.yml's size_guard) calls this too,
-with --require-budget: it only calls for an env whose guard it already
-holds, so an env this script cannot find a budget for is a disagreement
-between the two readers of flavors.json, and it fails there rather than
-passing as unmeasured.
+firmware.yml's PR checks call this too, with --require-budget: size_guard
+for each PlatformIO guard it walks, and the WAP arduino-cli job for its
+sketch image under canary-wap-default (the env the release keys its own
+arduino-cli build of that sketch by).
+Each asks only about an env it expects a budget for, so an env this script
+cannot find one for is a disagreement with flavors.json, and it fails there
+rather than passing as unmeasured.
 """
 from __future__ import annotations
 
@@ -94,17 +99,17 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("bin", type=pathlib.Path, help="the built image to measure")
     ap.add_argument("--require-budget", action="store_true",
                     help="fail (exit 1) when the env declares no budget, "
-                         "instead of the release path's warning; the PR gate "
-                         "passes it, since it only asks about envs it holds "
-                         "a guard for")
+                         "instead of the release path's warning; firmware.yml's "
+                         "PR checks pass it, since each asks only about an env "
+                         "it expects a budget for")
     args = ap.parse_args(argv)
 
     guard = load_budgets().get(args.env)
     if guard is None and args.require_budget:
         sys.exit(f"check_slot_budget: no size_guards budget declared for env "
-                 f"'{args.env}' in {FLAVORS}, but the caller holds a guard "
-                 f"for it — the two readers of flavors.json disagree, so "
-                 f"this image was NOT measured.")
+                 f"'{args.env}' in {FLAVORS}, but the caller requires one "
+                 f"(--require-budget: it holds a guard for this env or "
+                 f"measures it by name), so this image was NOT measured.")
     if guard is None:
         # Non-fatal on purpose (an unguarded env passes, as in the PR gate),
         # but an annotation, so "skipped" reads differently from "checked".

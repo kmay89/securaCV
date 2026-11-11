@@ -308,12 +308,14 @@ jobs:
           # that produces its bin, before a later env can clobber .pio/build.
           #
           # The measuring is check_slot_budget.py's, the same script the
-          # release runs on the bytes it signs, so the budget, the over-slot
+          # release runs on the bytes it signs and the build-arduino-cli job
+          # below runs on its WAP sketch image, so the budget, the over-slot
           # failure and the headroom floor's ::warning:: (an image that fits
-          # with under 5% of its slot free, F367) live once. This wrapper
-          # keeps the two things the script does not do: an empty or absent
-          # bin fails here as it always did, and the script's refusal is
-          # re-emitted as an ::error:: annotation so the summary page still
+          # with under HEADROOM_FLOOR_PERCENT, 5%, of its slot free, F367)
+          # are the script's alone, here and in firmware-release.yml. This
+          # wrapper keeps the two things the script does not do: an empty or
+          # absent bin fails here as it always did, and the script's refusal
+          # is re-emitted as an ::error:: annotation so the summary page still
           # names it. --require-budget: this loop only asks about an env it
           # holds a guard for, so "no budget" is a disagreement, not a pass.
           size_guard() {
@@ -463,6 +465,13 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
+      # The size check below runs check_slot_budget.py (stdlib only), so the
+      # job sets up Python (CI.md R9). The release compiles this same sketch
+      # with a setup-python interpreter on PATH as well (the one inside its
+      # setup-platformio step).
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Install Arduino CLI + ESP32 core (cached)
         # NimBLE-Arduino (2.x) is REQUIRED for the FULL profile's BLE stack.
@@ -504,18 +513,30 @@ jobs:
           # The XIAO_ESP32S3 board default (default_8MB.csv) gives app0/app1
           # 0x330000 (3,342,336 bytes) each. An image larger than that can
           # never be installed over the air (pull OTA or BLE OTA).
-          SLOT=3342336
-          SIZE=$(stat -c%s /tmp/wap-build/canary_wap.ino.bin 2>/dev/null || echo 0)
-          if [ "$SIZE" -eq 0 ]; then
+          #
+          # The budget is flavors.json's canary-wap-default guard, measured by
+          # check_slot_budget.py: the call firmware-release.yml makes on its
+          # own arduino-cli build of this sketch (pinned core, no
+          # VALIDATION_BUILD) before it signs it, so this check and the
+          # release apply one budget and one headroom floor (a ::warning::
+          # under 5% of the slot free, F367) to the same sketch; the bytes
+          # differ, which is why the release measures again. As in size_guard
+          # above, an empty or absent bin fails here, a refusal is re-emitted
+          # as an ::error::, and --require-budget fails the step if that guard
+          # ever goes missing instead of passing an unmeasured image.
+          BIN=/tmp/wap-build/canary_wap.ino.bin
+          if [ ! -s "$BIN" ]; then
             echo "::error::canary_wap.ino.bin not found in /tmp/wap-build"
             ls -la /tmp/wap-build || true
             exit 1
           fi
-          if [ "$SIZE" -gt "$SLOT" ]; then
-            echo "::error::canary-wap binary ($SIZE bytes) exceeds the 0x330000 OTA slot ($SLOT bytes). It could never be installed over the air."
+          if OUT=$(python3 "$GITHUB_WORKSPACE/firmware/scripts/check_slot_budget.py" \
+              --env canary-wap-default --require-budget "$BIN" 2>&1); then
+            echo "$OUT"
+          else
+            echo "::error::$OUT"
             exit 1
           fi
-          echo "canary-wap size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of OTA slot)"
 
       - name: Compile firmware (Beacon channel + tamper contact + wander/jitter gate)
         run: |
