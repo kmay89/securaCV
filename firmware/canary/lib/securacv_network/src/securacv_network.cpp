@@ -1733,6 +1733,19 @@ static bool tls_store_der_to_nvs(const uint8_t* cert, size_t cert_len,
   nvs.end();
   return ok;
 }
+
+// The pin a phone keeps for the life of the pairing (sweep F455, the
+// canary-wap's F364 rule): the SHA-256 of the certificate DER as lowercase
+// hex, or false with the hex emptied when the hash did not run. A
+// fingerprint of 32 zero bytes would be handed out as a pin no certificate
+// has, and the phone would refuse this unit from then on.
+static bool tls_cert_fingerprint(const uint8_t* cert, size_t cert_len, char hex[65]) {
+  hex[0] = '\0';
+  uint8_t digest[32];
+  if (!sha256_raw(cert, cert_len, digest)) return false;
+  canary::net::tls_policy::fingerprint_hex(digest, hex);
+  return true;
+}
 #endif  // SECURACV_HAS_HTTPS_SERVER
 
 #if SECURACV_HAS_TLS_CERTGEN
@@ -1907,13 +1920,29 @@ bool ScvNetworkManager::initTls() {
 #endif
   }
 
+  // A certificate whose fingerprint did not compute is not served this boot
+  // (sweep F455): no pin is handed out, both buffers are zeroed and freed
+  // before the members are set, so startHttpServer() sees no certificate,
+  // tls_policy::decide() keeps the reason below and /api/status
+  // tls_mode_reason says it. A stored pair stays in NVS (so does a generated
+  // one whose store above landed), and the next boot reads it and hashes it
+  // again; a generated one whose store did not land is not kept anywhere,
+  // and the next boot makes another.
+  if (!tls_cert_fingerprint(cert, cert_len, m_tls_cert_fp_hex)) {
+    secure_zero(key, key_len);
+    secure_zero(cert, cert_len);
+    free(key);
+    free(cert);
+    m_tls_reason = "certificate fingerprint not computed (SHA-256 failed): HTTPS off this boot, "
+                   "no pin handed out";
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "TLS off this boot: certificate fingerprint not computed",
+               "SHA-256 failed");
+    return false;
+  }
   m_tls_cert_der = cert;
   m_tls_cert_der_len = cert_len;
   m_tls_key_der = key;
   m_tls_key_der_len = key_len;
-  uint8_t digest[32];
-  sha256_raw(m_tls_cert_der, m_tls_cert_der_len, digest);
-  canary::net::tls_policy::fingerprint_hex(digest, m_tls_cert_fp_hex);
   m_tls_reason = "certificate ready";
   Serial.printf("[TLS] Cert fingerprint: %.16s...\n", m_tls_cert_fp_hex);
   return true;

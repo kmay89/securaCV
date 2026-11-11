@@ -148,6 +148,7 @@
 #include "witness_page.h"            // pure, host-tested GET /api/v1/witness page (spec/witness_api_v1.md)
 #include "fleet_selfreport.h"        // shared /api/fleet body builder (parity by architecture)
 #include "birth_day.h"               // pure, host-tested "when was this key born" rules
+#include "key_draw_check.h"          // pure, host-tested: a flat first-boot key draw is refused (F38)
 #include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
 #include "power_gate_logic.h"        // pure, host-tested round-two power gate decisions
 #include "health_store_logic.h"      // pure, host-tested /HEALTH jsonl format
@@ -1913,10 +1914,23 @@ static bool generate_keypair(uint8_t priv[32], uint8_t pub[32]) {
   // fingerprint, so the keypair must exist first), so the RNG has no RF entropy
   // source yet — gate the one-time draw with bootloader_random_enable()/
   // _disable() to seed it properly (ESP-IDF's documented early-entropy pattern).
+  // The draw is looked at before it becomes a key (sweep F38,
+  // key_draw_check.h): a flat one (every byte equal, or too few or too many
+  // one bits) answers false, the buffer zeroed, so establish_identity_key()
+  // stores nothing and provisioning fails as on a key it could not store
+  // (setup() does not halt on that: F58's open call); the next boot draws
+  // again.
   bootloader_random_enable();
   esp_fill_random(priv, 32);
+  const bool flat = key_draw_check::is_flat(priv);
   bootloader_random_disable();
-  
+  if (flat) {
+    secure_zero(priv, 32);
+    Serial.println("[!!] Identity key draw came out flat (every byte equal, or its bit count out "
+                   "of bounds) - no key made; the next boot draws again");
+    return false;
+  }
+
   // Derive public key
   Ed25519::derivePublicKey(pub, priv);
   return true;

@@ -45,8 +45,9 @@ namespace canary::witness {
 // Load-or-generate the keypair, derive the fingerprint, initialize the
 // shared device_signature module, and load (or start) the chain. Call
 // once in setup() after canary::cfg::get() is available. Returns false
-// if key material could not be established (signing disabled; the
-// witness still publishes, unsigned).
+// if key material could not be established, the first-boot draw came out
+// flat (sweep F38), or the fingerprint or the genesis head did not compute
+// (sweep F455) (signing disabled; the witness still publishes, unsigned).
 bool init();
 bool ready();
 
@@ -63,7 +64,9 @@ bool sign_event_envelope(uint32_t             seq,
 
 // Advance the hash chain over the same canonical bytes that are signed —
 // one message, one record: the chain never attests to something the event
-// signature did not cover — then persist head + length to NVS.
+// signature did not cover — then persist head + length to NVS. A payload
+// hash or link that did not compute chains nothing and persists nothing
+// (sweep F455): the head and length stay as they were.
 void chain_advance(uint32_t             seq,
                    const SentinelClaim& claim,
                    uint32_t             bucket_uptime_s);

@@ -253,9 +253,16 @@ bool witness_provision_device() {
   g_device.born_day = nvs_load_u32(NVS_KEY_BORN, 0);
   g_device.born_exact = nvs_load_u32(NVS_KEY_BORN_EX, 0) != 0;
 
-  // Derive public key + fingerprint
+  // Derive public key + fingerprint. A fingerprint the hash did not compute
+  // (sweep F455) would name the unit by 8 zero bytes, the same on every unit
+  // whose hash failed: provisioning stops before the device is named or
+  // anything is written, the path a refused key takes.
   Ed25519::derivePublicKey(g_device.pubkey, g_device.privkey);
-  crypto_fingerprint(g_device.pubkey, g_device.pubkey_fp);
+  if (!crypto_fingerprint(g_device.pubkey, g_device.pubkey_fp)) {
+    Serial.println("[!!] Public key fingerprint not computed (SHA-256 failed) - provisioning "
+                   "cannot continue");
+    return false;
+  }
 
   // Device ID / AP SSID from the pubkey fingerprint (no MAC read).
   generate_device_id(g_device.device_id, sizeof(g_device.device_id),
@@ -303,9 +310,16 @@ bool witness_provision_device() {
         // Initialize genesis chain hash. The seq stays whatever the legacy
         // entry says (0 on a fresh device), exactly as before the blob. The
         // head is written below, after log_seq is loaded.
+        // A genesis head the hash did not compute (sweep F455) is refused
+        // like the fingerprint: provisioning stops here, before the boot
+        // count or the head is written, so nothing persists it.
         g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
-        sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
-                      strlen(g_device.device_id), g_device.chain_head);
+        if (!sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
+                           strlen(g_device.device_id), g_device.chain_head)) {
+          Serial.println("[!!] Genesis chain head not computed (SHA-256 failed) - provisioning "
+                         "cannot continue");
+          return false;
+        }
         genesis = true;
         break;
     }
@@ -351,14 +365,21 @@ bool witness_provision_device() {
 // CHAIN OPERATIONS
 // ════════════════════════════════════════════════════════════════════════════
 
-static void update_chain(const uint8_t payload_hash[32], uint32_t tb, WitnessRecord* rec) {
-  rec->seq = ++g_device.seq;
+// The link is computed before anything moves (sweep F455): a chain hash the
+// engine did not compute answers false with the seq, the head and *rec as
+// they were, so the next record takes the same seq from the same head.
+static bool update_chain(const uint8_t payload_hash[32], uint32_t tb, WitnessRecord* rec) {
+  const uint32_t seq = g_device.seq + 1;
+  uint8_t chain_hash[32];
+  if (!compute_chain_hash(g_device.chain_head, payload_hash, seq, tb, chain_hash)) return false;
+  rec->seq = seq;
   rec->time_bucket = tb;
   memcpy(rec->prev_hash, g_device.chain_head, 32);
   memcpy(rec->payload_hash, payload_hash, 32);
-
-  compute_chain_hash(rec->prev_hash, payload_hash, rec->seq, tb, rec->chain_hash);
-  memcpy(g_device.chain_head, rec->chain_hash, 32);
+  memcpy(rec->chain_hash, chain_hash, 32);
+  g_device.seq = seq;
+  memcpy(g_device.chain_head, chain_hash, 32);
+  return true;
 }
 
 bool witness_note_wall_clock(uint32_t unix_s) {
@@ -660,11 +681,14 @@ bool witness_recover_from_sd() {
   // require a match — otherwise a tampered card could keep a genuine
   // ch/sig pair while editing seq to move the device sequence to an
   // arbitrary value (the same check verify_witness_log.py runs offline).
+  // A hash that did not run (sweep F455) is a mismatch: the tail is not
+  // vouched for by bytes the engine never wrote.
   uint8_t recomputed[32];
-  compute_chain_hash(rec.prev, rec.ph, rec.seq, rec.tb, recomputed);
-  if (memcmp(recomputed, rec.ch, 32) != 0) {
+  const bool recomputed_ok = compute_chain_hash(rec.prev, rec.ph, rec.seq, rec.tb, recomputed);
+  if (!recomputed_ok || memcmp(recomputed, rec.ch, 32) != 0) {
     log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE,
-               "Witness SD tail ignored: chain hash mismatch", nullptr);
+               "Witness SD tail ignored: chain hash mismatch",
+               recomputed_ok ? nullptr : "SHA-256 failed");
     return false;
   }
   if (!crypto_verify(g_device.pubkey, rec.ch, 32, rec.sig)) {
@@ -694,13 +718,18 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
                                const GpsTimeAttestation* gps, WitnessRecord* out) {
   if (out == nullptr) return false;
 
-  // Hash payload
+  // Hash payload. A hash the engine did not compute, here or in the link,
+  // makes no record (sweep F455): false before anything moves, with the seq,
+  // the head and *out as they were (false is the answer a record that does
+  // not verify already gave). main.cpp's callers that read the answer log it
+  // ("Record creation failed" and the rest); the power-mode and deep-sleep
+  // records do not read it, and are simply not made.
   uint8_t payload_hash[32];
-  sha256_domain("securacv:fw:payload:v1", payload, len, payload_hash);
+  if (!sha256_domain("securacv:fw:payload:v1", payload, len, payload_hash)) return false;
 
   // Update chain
   uint32_t tb = time_bucket();
-  update_chain(payload_hash, tb, out);
+  if (!update_chain(payload_hash, tb, out)) return false;
   out->type = type;
   out->payload_len = len;
 

@@ -664,7 +664,14 @@
 - **Root cause:** ESP32 Arduino Core 3.x (built on ESP-IDF 5.x) removed the
   `_ret` suffix from all mbedTLS functions
 - **Fix:** `mbedtls_sha256_ret()` → `mbedtls_sha256()`, etc.
-- **Regression check:** `regression_check.sh` greps for `_ret(`
+- **The other half (2026-11, sweep F455):** core 2.0.17's mbedTLS 2.28 keeps
+  the plain names but makes them return `void`, so code that must check a
+  step's answer on both cores calls the `_ret` names on 2.x and the plain ones
+  on 3.x, behind `#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER
+  >= 0x03000000` (the plain names) `#else` (the `_ret` names) `#endif`, with
+  `mbedtls/version.h` included (2.28's `sha256.h` does not define the number).
+- **Regression check:** `regression_check.sh` greps for `_ret(` and fails every
+  hit outside the `#else` branch of that exact guard
 - **Date learned:** 2026-01
 
 ### `esp_camera.h` include order matters

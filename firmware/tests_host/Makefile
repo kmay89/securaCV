@@ -906,8 +906,81 @@ WITKEY_SRCS     = $(foreach p,$(WITKEY_PROJECTS),../projects/$(p)/src/witness.cp
 WITKEY_SIGS     = void secure_zero(|bool load_or_generate_keypair(
 WITKEY_DECLS    = ^(constexpr const char\* (NVS_NAMESPACE|KEY_PRIV) |uint8_t  s_(priv|pub)\[32\] )
 WITKEY_INCS     = $(foreach p,$(WITKEY_PROJECTS),$(BUILD_DIR)/witness_key_load_$(p).inc)
-WITKEY_HDRS     = ../projects/canary-sense/include/canary/log.h $(wildcard stubs/nvs_key/*.h)
+WITKEY_HDRS     = ../projects/canary-sense/include/canary/log.h ../common/identity/key_draw_check.h \
+                  $(wildcard stubs/nvs_key/*.h)
 WITKEY_BIN      = $(BUILD_DIR)/test_witness_key_load_projects
+
+# The first-boot identity key draw check (repo sweep F38,
+# test_key_draw_check.cpp): common/identity/key_draw_check.h refuses a draw
+# whose bytes are all equal or whose popcount is outside [48, 208], and the
+# suite computes the false-refusal odds from its bounds. It runs the two
+# keygens that call it with no NVS in the same function on their own code:
+# crypto_generate_keypair() and secure_zero() cut out of securacv_crypto.cpp,
+# generate_keypair() and secure_zero() out of canary_wap.ino, each into its
+# own .inc, over stubs/sha_fail (Serial) and stand-ins for the RNG, the
+# bootloader_random pair and Ed25519. It reads the five keygen sources (the
+# ask sits inside the pair, after the draw and before the key is used) and
+# the two establish_identity_key() callers. The three projects' keygen runs
+# its flat draw in the WITKEY suite above.
+KEYDRAW_HDR         = ../common/identity/key_draw_check.h
+KEYDRAW_CRYPTO_SRC  = ../canary/lib/securacv_crypto/src/securacv_crypto.cpp
+KEYDRAW_WAP_SRC     = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
+KEYDRAW_CRYPTO_SIGS = bool crypto_generate_keypair(|void secure_zero(
+KEYDRAW_WAP_SIGS    = static void secure_zero(|static bool generate_keypair(
+KEYDRAW_CRYPTO_INC  = $(BUILD_DIR)/key_draw_check_flagship.inc
+KEYDRAW_WAP_INC     = $(BUILD_DIR)/key_draw_check_wap.inc
+KEYDRAW_READS       = $(KEYDRAW_CRYPTO_SRC) $(WITKEY_SRCS) $(KEYDRAW_WAP_SRC) \
+                      ../canary/lib/securacv_witness/src/securacv_witness.cpp
+KEYDRAW_BIN         = $(BUILD_DIR)/test_key_draw_check
+
+# The flagship's and the common witness core's SHA-256 fail closed (repo
+# sweep F455, test_sha_fail_flagship.cpp; the canary-wap's F364 rule on the
+# other trees). The helpers answer whether each mbedTLS step ran and zero
+# their output when one did not, and every caller refuses what the hash was
+# for. The suite runs the real code, cut verbatim by cut_functions.awk:
+# securacv_crypto.cpp's step wrappers and four hash helpers;
+# securacv_witness.cpp's record, link, SD tail recovery, provisioning and
+# persist glue; securacv_diagnostics.cpp's test_chain();
+# securacv_network.cpp's tls_cert_fingerprint(); witness_chain.h itself
+# (WC_HAS_MBEDTLS=1); and from each project's src/witness.cpp the file's own
+# names and buffers (ten declaration lines, or the recipe fails) and its
+# sha256_domain() wrapper, secure_zero(), load_or_start_chain(),
+# persist_chain(), init() and chain_advance(), one namespace per project.
+# Under them is stubs/sha_fail's mbedTLS stand-in (a real SHA-256 over
+# OpenSSL that fails the step a test names), and the suite is built twice:
+# as mbedTLS 2.28 (core 2.0.17, the _ret names answer and the plain ones are
+# void) and as 3.6 (core 3.x, the _ret names gone). It also reads the canary
+# tree and the three projects (every call uses its answer; initTls()'s
+# refusal comes before the certificate is kept).
+SHAFL_CRYPTO_SRC   = ../canary/lib/securacv_crypto/src/securacv_crypto.cpp
+SHAFL_WITNESS_SRC  = ../canary/lib/securacv_witness/src/securacv_witness.cpp
+SHAFL_DIAG_SRC     = ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp
+SHAFL_NET_SRC      = ../canary/lib/securacv_network/src/securacv_network.cpp
+SHAFL_CRYPTO_SIGS  = static int sha256_step_starts(|static int sha256_step_update(|static int sha256_step_finish(|bool sha256_raw(|bool sha256_domain(|bool crypto_fingerprint(|bool compute_chain_hash(
+SHAFL_WITNESS_SIGS = static bool persist_chain_blob(|bool witness_provision_device(|static bool update_chain(|void witness_persist_chain_state(|static void persist_chain_if_due(|bool witness_recover_from_sd(|bool witness_create_record_gps(|bool witness_verify_record(
+SHAFL_DIAG_SIGS    = static bool test_chain(
+SHAFL_NET_SIGS     = static bool tls_cert_fingerprint(
+SHAFL_PROJ_DECLS   = ^(constexpr const char\* (DOMAIN_FINGERPRINT|DOMAIN_PAYLOAD|NVS_NAMESPACE|KEY_CHAIN_HEAD|KEY_CHAIN_LEN) |uint8_t  s_(priv|pub|head)\[32\] |uint32_t s_length |bool     s_ready )
+SHAFL_PROJ_SIGS    = [[nodiscard]] bool sha256_domain(|void secure_zero(|bool load_or_start_chain(|void persist_chain(|bool init(|void chain_advance(
+SHAFL_PROJ_INCS    = $(foreach p,$(WITKEY_PROJECTS),$(BUILD_DIR)/sha_fail_decls_$(p).inc $(BUILD_DIR)/sha_fail_funcs_$(p).inc)
+SHAFL_INCS         = $(BUILD_DIR)/sha_fail_crypto.inc $(BUILD_DIR)/sha_fail_witness.inc \
+                     $(BUILD_DIR)/sha_fail_diag.inc $(BUILD_DIR)/sha_fail_network.inc $(SHAFL_PROJ_INCS)
+SHAFL_HDRS         = ../common/witness/witness_chain.h ../common/witness/witness_store.h $(CHAINST_HDR) \
+                     ../common/witness/chain_persist.h ../common/network/tls_policy.h \
+                     ../common/identity/device_signature.h ../projects/canary-sense/include/canary/log.h \
+                     ../projects/canary-sentinel/include/canary/types.h \
+                     ../canary/lib/securacv_crypto/src/securacv_crypto.h \
+                     ../canary/lib/securacv_witness/src/securacv_witness.h \
+                     ../canary/include/canary_config.h ../canary/include/log_level.h \
+                     $(wildcard stubs/sha_fail/*.h stubs/sha_fail/mbedtls/*.h stubs/nvs_manager/freertos/*.h)
+SHAFL_FLAGS        = -DWC_HAS_MBEDTLS=1 -I stubs/sha_fail -I stubs/nvs_manager \
+                     -I ../canary/lib/securacv_crypto/src -I ../canary/lib/securacv_witness/src \
+                     -I ../canary/include -I ../common -I ../projects/canary-sense/include -I $(BUILD_DIR)
+SHAFL_READS        = $(NVSKEY_READS) $(WITKEY_SRCS)
+SHAFL_BIN          = $(BUILD_DIR)/test_sha_fail_flagship
+SHAFL_BINS         = $(SHAFL_BIN)_mbedtls2 $(SHAFL_BIN)_mbedtls3
+$(SHAFL_BIN)_mbedtls2: SHAFL_MBEDTLS = 0x021C0700
+$(SHAFL_BIN)_mbedtls3: SHAFL_MBEDTLS = 0x03060300
 
 # The camera's thermal step (repo sweep F432, test_camera_thermal.cpp):
 # securacv_camera's camera_thermal.h, the miss counter, fail-safe throttle,
@@ -1580,13 +1653,59 @@ $(BUILD_DIR)/witness_key_load_%.inc: ../projects/%/src/witness.cpp cut_functions
 	awk -v 'sigs=$(WITKEY_SIGS)' -f cut_functions.awk $< >> $@.tmp && mv $@.tmp $@
 
 $(WITKEY_BIN): test_witness_key_load_projects.cpp $(WITKEY_INCS) $(WITKEY_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I ../projects/canary-sense/include -I $(BUILD_DIR) \
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I ../projects/canary-sense/include -I ../common -I $(BUILD_DIR) \
 	    test_witness_key_load_projects.cpp -o $@
 
 .PHONY: run-witness-key-load-projects
 run-witness-key-load-projects: $(WITKEY_BIN)
 	./$(WITKEY_BIN) $(WITKEY_SRCS)
 run: run-witness-key-load-projects
+
+$(KEYDRAW_CRYPTO_INC): $(KEYDRAW_CRYPTO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(KEYDRAW_CRYPTO_SIGS)' -f cut_functions.awk $(KEYDRAW_CRYPTO_SRC) > $@.tmp && mv $@.tmp $@
+
+$(KEYDRAW_WAP_INC): $(KEYDRAW_WAP_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(KEYDRAW_WAP_SIGS)' -f cut_functions.awk $(KEYDRAW_WAP_SRC) > $@.tmp && mv $@.tmp $@
+
+$(KEYDRAW_BIN): test_key_draw_check.cpp $(KEYDRAW_CRYPTO_INC) $(KEYDRAW_WAP_INC) $(KEYDRAW_HDR) \
+                $(wildcard stubs/sha_fail/*.h) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/sha_fail -I ../common -I $(BUILD_DIR) test_key_draw_check.cpp -o $@
+
+.PHONY: run-key-draw-check
+run-key-draw-check: $(KEYDRAW_BIN)
+	./$(KEYDRAW_BIN) $(KEYDRAW_READS)
+run: run-key-draw-check
+
+$(BUILD_DIR)/sha_fail_crypto.inc: $(SHAFL_CRYPTO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(SHAFL_CRYPTO_SIGS)' -f cut_functions.awk $(SHAFL_CRYPTO_SRC) > $@.tmp && mv $@.tmp $@
+
+$(BUILD_DIR)/sha_fail_witness.inc: $(SHAFL_WITNESS_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(SHAFL_WITNESS_SIGS)' -f cut_functions.awk $(SHAFL_WITNESS_SRC) > $@.tmp && mv $@.tmp $@
+
+$(BUILD_DIR)/sha_fail_diag.inc: $(SHAFL_DIAG_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(SHAFL_DIAG_SIGS)' -f cut_functions.awk $(SHAFL_DIAG_SRC) > $@.tmp && mv $@.tmp $@
+
+$(BUILD_DIR)/sha_fail_network.inc: $(SHAFL_NET_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(SHAFL_NET_SIGS)' -f cut_functions.awk $(SHAFL_NET_SRC) > $@.tmp && mv $@.tmp $@
+
+$(BUILD_DIR)/sha_fail_decls_%.inc: ../projects/%/src/witness.cpp Makefile | $(BUILD_DIR)
+	grep -E '$(SHAFL_PROJ_DECLS)' $< > $@.tmp
+	@test "$$(wc -l < $@.tmp)" -eq 10 || { \
+	  echo "$<: the witness names and buffers moved (expected 10 declaration lines)" >&2; exit 1; }
+	mv $@.tmp $@
+
+$(BUILD_DIR)/sha_fail_funcs_%.inc: ../projects/%/src/witness.cpp cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(SHAFL_PROJ_SIGS)' -f cut_functions.awk $< > $@.tmp && mv $@.tmp $@
+
+$(SHAFL_BINS): test_sha_fail_flagship.cpp $(SHAFL_INCS) $(SHAFL_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DSHA_STUB_MBEDTLS_VERSION=$(SHAFL_MBEDTLS) $(SHAFL_FLAGS) \
+	    test_sha_fail_flagship.cpp -lcrypto -o $@
+
+.PHONY: run-sha-fail-flagship
+run-sha-fail-flagship: $(SHAFL_BINS)
+	./$(SHAFL_BIN)_mbedtls2 $(SHAFL_READS)
+	./$(SHAFL_BIN)_mbedtls3 $(SHAFL_READS)
+run: run-sha-fail-flagship
 
 $(CAMTHERM_BINS): test_camera_thermal.cpp $(CAMTHERM_READS) $(CAMTHERM_HDRS) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(CAMTHERM_STUBS)/$(CAMTHERM_TARGET) -I $(CAMTHERM_STUBS)/common \

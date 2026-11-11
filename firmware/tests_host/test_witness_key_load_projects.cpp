@@ -32,7 +32,9 @@
  *   Read::Fails / Garbles / Short                        signing off, nothing written
  *   the Preferences session refuses to open              signing off, nothing written
  *   a stored key of 32 zero bytes                        signing off, nothing written
- * So only true absence reaches the draw-and-store path.
+ *   no key stored, and the draw came out flat (F38)      signing off, nothing written
+ * So only true absence reaches the draw-and-store path, and only a draw
+ * key_draw_check.h passes is stored.
  *
  * It also reads the three sources (argv): the three functions are byte for
  * byte the same, each project's init() returns false on the load's false
@@ -58,6 +60,7 @@
 #include "Preferences.h"  // stubs/nvs_key
 #include "nvs.h"          // stubs/nvs_key: IDF's NVS over the Preferences fake's store
 #include "canary/log.h"   // canary-sense's own log_line() / dbg_serial()
+#include "identity/key_draw_check.h"  // the draw check the keygen asks (sweep F38)
 
 static int g_checks = 0;
 static int g_failures = 0;
@@ -75,6 +78,10 @@ static int g_failures = 0;
 static int g_draws = 0;
 static int g_rng_gates = 0;     // bootloader_random_enable() calls not yet disabled
 static int g_derives = 0;
+// The RNG hands back a flat draw (sweep F38): `flat_fill` is the byte it
+// fills with, or -1 to leave the buffer as the keygen handed it.
+static bool g_flat_draw = false;
+static int g_flat_fill = -1;
 static uint8_t drawn_byte(size_t i) { return (uint8_t)(0xC3 ^ (i * 11)); }
 void bootloader_random_enable() { g_rng_gates++; }
 void bootloader_random_disable() { g_rng_gates--; }
@@ -82,6 +89,10 @@ void esp_fill_random(void* buf, size_t len) {
   g_draws++;
   CHECK(g_rng_gates == 1);   // the identity draw runs inside the early-entropy gate
   uint8_t* b = static_cast<uint8_t*>(buf);
+  if (g_flat_draw) {
+    if (g_flat_fill >= 0) std::memset(b, g_flat_fill, len);
+    return;
+  }
   for (size_t i = 0; i < len; i++) b[i] = drawn_byte(i);
 }
 struct Ed25519 {
@@ -149,6 +160,8 @@ static void fresh_world(const Project& p) {
   g_draws = 0;
   g_rng_gates = 0;
   g_derives = 0;
+  g_flat_draw = false;
+  g_flat_fill = -1;
 }
 static void store(const std::vector<uint8_t>& key) {
   host_key_nvs().ns_exists = true;
@@ -402,6 +415,39 @@ static size_t count_of(const std::string& s, const std::string& needle) {
   return n;
 }
 
+// A first boot whose draw came out flat (sweep F38, key_draw_check.h): the
+// buffer the RNG never filled, all 0xFF, a constant. Signing is off for the
+// boot as on a key that could not be stored: false, the buffer scrubbed, no
+// public key derived, no key stored (the namespace the read-write open made
+// holds nothing new), the bootloader_random pair closed, one line; the next
+// boot finds no key and draws again.
+static void test_a_flat_first_boot_draw_stores_no_key(const Project& p) {
+  for (int fill : {-1, 0xFF, 0x5A}) {
+    fresh_world(p);
+    g_flat_draw = true;
+    g_flat_fill = fill;
+    CHECK(!p.load());
+    CHECK(g_draws == 1 && g_derives == 0);
+    CHECK(host_key_nvs().blobs.count("privkey") == 0);
+    CHECK(host_key_nvs().puts == 0);
+    CHECK(all_zero(p.priv));
+    CHECK(all_zero(p.pub));
+    CHECK(Serial.lines.size() == 1);
+    CHECK(printed("Key draw came out flat"));
+    CHECK(printed("signing disabled this boot."));
+    CHECK(!printed("Generated new Ed25519 identity"));
+    check_idle_and_clean();
+
+    // The next boot draws again, and keeps a draw that is not flat.
+    g_flat_draw = false;
+    Serial.lines.clear();
+    CHECK(p.load());
+    CHECK(g_draws == 2 && g_derives == 1);
+    CHECK(host_key_nvs().blobs["privkey"] == drawn_key());
+    check_idle_and_clean();
+  }
+}
+
 static void test_the_sources(const std::vector<std::string>& files) {
   CHECK(files.size() == 3);
   std::string first;
@@ -447,6 +493,7 @@ int main(int argc, char** argv) {
     test_a_read_that_is_not_whole_is_not_replaced(p);
     test_a_session_that_will_not_open_is_not_replaced(p);
     test_an_all_zero_stored_key_is_not_replaced(p);
+    test_a_flat_first_boot_draw_stores_no_key(p);
     if (g_failures != before) std::printf("  ^ %s\n", p.name);
   }
   test_the_sources(std::vector<std::string>(argv + 1, argv + argc));
