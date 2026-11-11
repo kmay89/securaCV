@@ -337,6 +337,14 @@ function needsLocalName(url) {
   return parsed.origin !== pageOrigin();
 }
 
+// What a stored device's own view says when it was saved under such an
+// address (by a page served without this CSP, or by a browser that did not
+// enforce it): no view edits a stored base_url, so the way out is to remove
+// it and add it again.
+var SAVED_UNDER_IP = 'Saved under an IP address this app cannot reach: it reaches another Canary only by ' +
+  'its .local name. Remove it below and add it again by its .local name, or open this app from that ' +
+  'Canary\'s own address.';
+
 function localNameError() {
   var err = new Error(LOCAL_NAME_HINT);
   err.code = 'needs_local_name';
@@ -1639,8 +1647,12 @@ function peerBaseUrl(peer) {
   return baseUrl;
 }
 
-var NOT_REACHABLE_BY_NAME = 'Not reachable by name: it lists no .local name, and this app reaches ' +
-  'another Canary only by its .local name.';
+// Said of a listed peer with no .local name. It claims no more than that: a
+// peer listed only by an ip that happens to be this page's own origin can
+// still be entered by hand (needsLocalName() lets the page's own address
+// through), so the text says how to add it, not that it cannot be reached.
+var NOT_REACHABLE_BY_NAME = 'Not reachable by name: it lists no .local name. Add it by its .local name, ' +
+  'or open this app from that Canary\'s own address and enter that address.';
 
 // Returns the set of base_urls and device_ids already managed by the user,
 // so we can filter them out of the discovered list.
@@ -2838,9 +2850,14 @@ function renderDeviceView(deviceId) {
     })
     .catch(function (err) {
       var alertArea2 = document.getElementById('device-alert');
-      if (alertArea2) {
+      if (alertArea2 && err.code === 'needs_local_name') {
+        // Saved under an IP this page's connect-src refuses, so it was never
+        // asked. This view has no address field and Retry would be refused
+        // the same way: say what the owner can do instead.
+        alertArea2.appendChild(el('div', { className: 'alert alert-error', textContent: SAVED_UNDER_IP }));
+      } else if (alertArea2) {
         alertArea2.appendChild(el('div', { className: 'alert alert-error' }, [
-          err.code === 'needs_local_name' ? LOCAL_NAME_HINT : err.status === 401 ? 'Invalid token.' : 'Device offline.',
+          err.status === 401 ? 'Invalid token.' : 'Device offline.',
           el('button', {
             className: 'btn btn-secondary ml-12',
             textContent: 'Retry',
@@ -3469,16 +3486,20 @@ function renderEventsContent(container, data) {
   var totalDevices = results.length;
   var onlineDevices = 0;
   var offlineNames = [];
+  var needsNameNames = [];
   for (var i = 0; i < results.length; i++) {
     if (!results[i].error) {
       onlineDevices++;
+    } else if (results[i].error.code === 'needs_local_name') {
+      // Never asked (CanaryAPI.request refused its IP), so not "could not reach".
+      needsNameNames.push(results[i].device.name || results[i].device.id);
     } else {
       offlineNames.push(results[i].device.name || results[i].device.id);
     }
   }
 
   // Summary card
-  container.appendChild(renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames, container));
+  container.appendChild(renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames, container, needsNameNames));
 
   // Density bar (only show if there are records today)
   var todayCounts = countTodayByType(allRecords);
@@ -3497,7 +3518,7 @@ function renderEventsContent(container, data) {
   }
 }
 
-function renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames, contentContainer) {
+function renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNames, contentContainer, needsNameNames) {
   var todayCounts = countTodayByType(allRecords);
   var card = el('div', { className: 'card events-summary' });
 
@@ -3558,6 +3579,13 @@ function renderEventsSummary(allRecords, totalDevices, onlineDevices, offlineNam
     card.appendChild(el('div', {
       className: 'events-offline-note',
       textContent: '⚠ Could not reach: ' + offlineNames.join(', ')
+    }));
+  }
+  if (needsNameNames && needsNameNames.length > 0) {
+    card.appendChild(el('div', {
+      className: 'events-offline-note',
+      textContent: (needsNameNames.length === 1 ? '⚠ Needs its .local name: ' : '⚠ Need their .local names: ') +
+        needsNameNames.join(', ')
     }));
   }
 

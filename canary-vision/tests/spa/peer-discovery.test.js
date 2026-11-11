@@ -136,9 +136,20 @@ function memStorage(initial) {
   };
 }
 
-// `peers` is what GET /api/v1/peers answers; every other route stays in
+// A URL the served connect-src refuses: an IP host that is not this page's
+// origin. The stub fetch rejects it the way the browser does (a TypeError,
+// sweep F427), so a path that still reaches fetch with one sees what a page
+// under the served CSP sees.
+function cspRefuses(url) {
+  const u = new URL(url);
+  return !u.hostname.endsWith('.local') && u.origin !== PAGE_ORIGIN;
+}
+
+// `peers` is what GET /api/v1/peers answers; a URL matching `unreachable`
+// rejects like a device that is not there; every other route stays in
 // flight, so a step that asks shows up in `fetches` and nothing settles it.
-function loadApp({ prefillHost, devices, peers } = {}) {
+// `local` seeds localStorage.
+function loadApp({ prefillHost, devices, peers, unreachable, local } = {}) {
   const body = new FakeNode('body');
   const appRoot = body.appendChild(new FakeNode('div'));
   const noop = () => {};
@@ -151,7 +162,7 @@ function loadApp({ prefillHost, devices, peers } = {}) {
       },
     },
     addEventListener: noop,
-    getElementById: (id) => (id === 'app' ? appRoot : null),
+    getElementById: (id) => (id === 'app' ? appRoot : body.all().find((n) => n.attrs.id === id) || null),
     createElement: (tag) => new FakeNode(tag),
     createElementNS: (_ns, tag) => new FakeNode(tag),
     createTextNode: (text) => new FakeNode('#text', text),
@@ -167,7 +178,7 @@ function loadApp({ prefillHost, devices, peers } = {}) {
       history: { back: noop },
       matchMedia: () => ({ matches: false, addEventListener: noop }),
     },
-    localStorage: memStorage(),
+    localStorage: memStorage(local),
     sessionStorage: memStorage(session),
     navigator: { onLine: true },
     setInterval: noop,
@@ -176,6 +187,9 @@ function loadApp({ prefillHost, devices, peers } = {}) {
     clearTimeout: noop,
     fetch: (url, opts) => {
       fetches.push({ url: String(url), method: (opts && opts.method) || 'GET' });
+      if (cspRefuses(String(url)) || (unreachable && unreachable.test(String(url)))) {
+        return Promise.reject(new TypeError('Failed to fetch'));
+      }
       if (/\/api\/v1\/peers$/.test(String(url))) {
         return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ peers: peers || [] }) });
       }
@@ -203,10 +217,7 @@ function titles(h) {
 }
 // A fetch to an IP host that is not this page's origin: what CSP refuses.
 function refusedFetches(h) {
-  return h.fetches.filter((f) => {
-    const u = new URL(f.url);
-    return !u.hostname.endsWith('.local') && u.origin !== PAGE_ORIGIN;
-  });
+  return h.fetches.filter((f) => cspRefuses(f.url));
 }
 
 describe('CanaryAPI.request: the backstop for every path', () => {
@@ -387,11 +398,99 @@ describe('peers: no URL is built from a peer\'s ip', () => {
       assert.match(row(name).byClass('alert-warning').map((n) => n.textContent).join(''), NOT_BY_NAME, name);
     }
     assert.doesNotMatch(h.appRoot.textContent, /192\.168\.1\.1\d\d/, 'a peer IP is shown as its address');
+    assert.equal(row('Yard').byClass('alert-warning').length, 0, 'an MQTT peer is called not reachable by name');
+    assert.equal((row('Yard').listeners.click || []).length, 1, 'Yard (sense, no .local name) lost its click');
     row('Garage').click();
     await settleAll();
     assert.deepEqual(titles(h), ['Asking the Canary first']);
     assert.deepEqual(h.fetches.map((f) => f.url),
       ['http://canary-a3f7.local/api/v1/peers', 'http://canary-b1c2.local/api/provisioning-receipt']);
     assert.deepEqual(refusedFetches(h), []);
+  });
+});
+
+describe('an MQTT peer with no .local name keeps its Home Assistant route in the wizard', () => {
+  it('Yard (canary-sense, ip only) takes its click into the Home Assistant steps, asking nothing', async () => {
+    const yard = { device_id: 'canary-e5f6', name: 'Yard', dt: 'canary-sense', ip: '192.168.1.110' };
+    const h = loadApp({
+      devices: [{ id: 'canary-a3f7', name: 'Hall', base_url: 'http://canary-a3f7.local', token: 'cv_a3f7_x' }],
+      peers: [yard],
+    });
+    h.app.renderAddCanaryView();
+    await settleAll();
+    const row = h.appRoot.byClass('card').find((n) => n.byClass('card-title').length === 1
+      && n.byClass('card-title')[0].textContent === 'Yard');
+    assert.ok(row, 'Yard vanished from the wizard');
+    assert.equal(row.byClass('alert-warning').length, 0, 'an MQTT peer is called not reachable by name');
+    const asked = h.fetches.length;
+    row.click();
+    await settleAll();
+    assert.deepEqual(titles(h), ['Yard'], 'Yard did not reach its Home Assistant step');
+    assert.ok(h.appRoot.byClass('card-title').some((n) => n.textContent === 'It joins through Home Assistant'));
+    assert.equal(h.fetches.length, asked, 'the Home Assistant step made a request');
+    assert.deepEqual(refusedFetches(h), []);
+  });
+});
+
+// ── A device already stored under an IP the served CSP refuses ───────────
+//
+// Pairing no longer stores one, but a page once served without this CSP (or
+// a browser that did not enforce it) may have. CanaryAPI.request() refuses
+// it without asking, and each view that names the failure says why instead
+// of calling it offline. The stub fetch rejects a CSP-refused URL the way the
+// browser does, so on code that still asks, the page sees what it would see.
+
+describe('a device stored under a refused IP', () => {
+  const ATTIC = { id: 'canary-9999', name: 'Attic', base_url: 'http://10.0.0.5', token: 'cv_9999_x' };
+  const CELLAR = { id: 'canary-b1c2', name: 'Cellar', base_url: 'http://canary-b1c2.local', token: 'cv_b1c2_x' };
+  const UNREACHABLE = /^http:\/\/canary-b1c2\.local\//;
+  const HINT_DISMISSED = { cv_coverage_hint_dismissed: '1' };
+
+  function cardLabel(h, name) {
+    const card = h.appRoot.byClass('fleet-device-card')
+      .find((n) => n.byClass('card-title')[0].textContent === name);
+    assert.ok(card, name + ' has no fleet card');
+    return card.byClass('fleet-device-status')[0].textContent;
+  }
+
+  it('its fleet card reads "Needs its .local name", and an unanswered one still reads Offline', async () => {
+    const h = loadApp({ devices: [ATTIC, CELLAR], unreachable: UNREACHABLE, local: HINT_DISMISSED });
+    h.app.renderCanariesView();
+    await settleAll();
+    assert.equal(cardLabel(h, 'Attic'), 'Needs its .local name');
+    assert.equal(cardLabel(h, 'Cellar'), 'Offline');
+    assert.deepEqual(refusedFetches(h), [], 'a request CSP refuses reached fetch');
+  });
+
+  it('its device view says to remove it and add it again by name, with no Retry', async () => {
+    const h = loadApp({ devices: [ATTIC], local: HINT_DISMISSED });
+    h.app.renderDeviceView('canary-9999');
+    await settleAll();
+    const alert = h.appRoot.all().find((n) => n.attrs.id === 'device-alert');
+    assert.match(alert.textContent,
+      /^Saved under an IP address this app cannot reach: .*Remove it below and add it again by its \.local name/);
+    assert.equal(alert.button('Retry'), undefined, 'Retry would be refused the same way');
+    assert.ok(h.appRoot.button('Remove Device'), 'the view names a Remove button it does not have');
+    assert.deepEqual(refusedFetches(h), [], 'a request CSP refuses reached fetch');
+  });
+
+  it('a device that does not answer still reads "Device offline." with Retry', async () => {
+    const h = loadApp({ devices: [CELLAR], unreachable: UNREACHABLE, local: HINT_DISMISSED });
+    h.app.renderDeviceView('canary-b1c2');
+    await settleAll();
+    const alert = h.appRoot.all().find((n) => n.attrs.id === 'device-alert');
+    assert.equal(alert.textContent, 'Device offline.Retry');
+    assert.ok(alert.button('Retry'));
+  });
+
+  it('the Events summary names it apart from a device that did not answer', async () => {
+    const h = loadApp({ devices: [ATTIC, CELLAR], unreachable: UNREACHABLE, local: HINT_DISMISSED });
+    const data = await h.app.fetchAllWitnessRecords();
+    const scroller = h.appRoot.appendChild(new FakeNode('div'));
+    const container = scroller.appendChild(new FakeNode('div'));
+    h.app.renderEventsContent(container, data);
+    const notes = container.byClass('events-offline-note').map((n) => n.textContent);
+    assert.deepEqual(notes, ['⚠ Could not reach: Cellar', '⚠ Needs its .local name: Attic']);
+    assert.deepEqual(refusedFetches(h), [], 'a request CSP refuses reached fetch');
   });
 });
