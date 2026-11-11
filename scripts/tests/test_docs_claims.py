@@ -8880,7 +8880,8 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
 #
 # firmware/FEATURES.md's Health Monitoring rows, its WiFi presence and audible
 # chirp rows and their three flag rows, and firmware/canary/CONSOLIDATION.md's
-# gaps #14 and #15, read the flagship's log, diagnostics and thermal code and
+# gaps #14 and #15 (and, since slice c, the dashboard's SD storage row and gap
+# #17), read the flagship's log, diagnostics, thermal and SD code and
 # the canary-wap sketch under the profile each of its builds selects. Each
 # test reads the code first and derives the verdict from what it finds, so a
 # change to the code fails here with the row it moves named, as surely as an
@@ -9292,6 +9293,59 @@ class TheParityLedgersReadTheCode(unittest.TestCase):
             self.assertIn(needle, row[ARDUINO])
         self.assertIn("nothing writes a health line to it", row[CANARY])
         self.assertIn("SD health log persistence, the canary-wap cells ❌→✅", self.note())
+        # The dashboard's SD storage row, read the same way (sweep F20 slice
+        # c): of the four directories its label names, the flagship makes
+        # all four at mount and writes into those it opens a file in for
+        # writing. /HEALTH (above) and /EXPORT are named nowhere else, so no
+        # path it builds can reach them.
+        dirs = ("/WITNESS", "/HEALTH", "/CHAIN", "/EXPORT")
+        storage = c_code((FLAGSHIP / "lib/securacv_storage/src/securacv_storage.cpp").read_text(encoding="utf-8"))
+        for d in dirs:
+            self.assertIn(f'if (!SD.exists("{d}")) SD.mkdir("{d}");', storage)
+        for ln in self.flagship_src.splitlines():
+            if '"/EXPORT' in ln:
+                self.assertIn('if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");', ln,
+                              f"the flagship names /EXPORT anew: {ln.strip()}")
+        opened = set(re.findall(r'SD\.open\("(/[A-Z]+)/[^"]*",\s*FILE_(?:APPEND|WRITE)\)', self.flagship_src))
+        written = [d for d in dirs if d in opened]
+        self.assertEqual(written, ["/WITNESS", "/CHAIN"], "the flagship writes into another SD directory: "
+                         "restate the dashboard's SD storage row and gap #17")
+        sd = md_table(self.features, "Feature-Parity Dashboard")["SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`)"]
+        cell = sd["canary (PIO)"]
+        self.assertEqual(verdict(cell), "✅" if len(written) == len(dirs) else "⚠️" if written else "❌")
+        self.assertIn("`/HEALTH` made and rotated, never written", cell)
+        self.assertIn("`/EXPORT` made, never written", cell)
+        self.assertEqual(verdict(sd["canary-wap"]), "✅")  # its four writers: the drain above, the three below
+        sketch_src = "\n".join(c_code(f.read_text(encoding="utf-8", errors="replace")) for f in sorted(WAP.iterdir())
+                               if f.suffix in {".h", ".cpp", ".ino"})
+        for writer in ('SD.open("/WITNESS/records.jsonl", FILE_APPEND)', 'SD.open("/CHAIN/backup.bin", FILE_WRITE)',
+                       '"/EXPORT/bundle_%u.json"', "SD.open(export_path, FILE_WRITE)"):
+            self.assertIn(writer, sketch_src)
+        # Gap #17 carries the missing tier, with the Health row's verdict.
+        state = normalized(gap_state(self.consolidation, 17, "SD health log tier",
+                                     "`canary_wap/health_store_logic.h` + `health_store_drain()` (`canary_wap.ino`)"))
+        self.assertEqual(verdict(state), verdict(row[CANARY]))
+        self.assertTrue(state.startswith("❌ (2026-11, sweep F20 slice c; docs only)"), state[:60])
+        for needle in ("makes `/HEALTH` at mount", "counts and rotates it", "writes nothing to it",
+                       "fills the 100-entry RAM ring and prints to the serial port", "`/HEALTH/boot_<n>.jsonl`",
+                       "`health_store::line_build`", "`health_store_drain()`", "`FEATURE_SD_STORAGE`",
+                       "`health_store_logic.h`", "for `/EXPORT`, which this tree also makes and never writes"):
+            self.assertIn(needle, state)
+        gap17 = [ln for ln in self.consolidation.splitlines() if ln.startswith("| 17 | SD health log tier | ")]
+        self.assertTrue(gap17[0].endswith(" | Low-Medium | Low |"), gap17[0][-40:])
+        # And the next ports Phase 3 names: the Low-complexity rows still at
+        # ❌ are the ones it says are, read off the gap table.
+        gaps = {}
+        for ln in self.consolidation.splitlines():
+            if re.match(r"\| \d+ \| ", ln):
+                cells = [c.strip() for c in ln.strip().strip("|").split(" | ")]
+                gaps[int(cells[0])] = (verdict(cells[2]), cells[4])
+        low_missing = sorted(n for n, (v, cx) in gaps.items() if v == "❌" and re.match(r"\**Low\**(?![-\w])", cx))
+        self.assertEqual(low_missing, [12], "restate Phase 3's next per-gap ports")
+        self.assertIn("the next per-gap ports are #12 (audible chirp), the one Low-complexity row still at ❌, "
+                      "the remainder of #14 (system monitor, ⚠️ since sweep F20 slice b) and #17 (the SD health "
+                      "log tier, Low-Medium)", normalized(self.consolidation))
+        self.assertEqual((gaps[14][0], gaps[17]), ("⚠️", ("❌", "Low-Medium")))
 
     def test_the_system_monitor_rows_read_the_flagships_diagnostics(self):
         cfg = c_code((FLAGSHIP / "include/canary_config.h").read_text(encoding="utf-8"))
