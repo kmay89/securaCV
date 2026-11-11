@@ -28,7 +28,7 @@ where that design is written down.
 | Host clock step (forward or back) | yes | §2.4 | the chain is not ordered by the wall clock; a step is sealed as `ClockSkew`; retention is bounded against both directions |
 | Device clock absent | yes | §2.4 | device buckets are uptime-based and say so; wall time comes from GPS (WAP, flagship) or SNTP (display, Sense, Vision, Sentinel); the records of the headless boards stay uptime-stamped |
 | Message loss, duplication, reordering (MQTT) | yes | §2.3 | at-most-once from a device; duplicates and losses are bounded and described, not prevented |
-| Broker outage, network partition | yes | §2.3 | devices keep sealing locally; the hub keeps sealing its own sources; nothing replays across a partition except the PlatformIO tree's bounded RAM queue and, on that product and on the canary-wap when each owns a card, the SD event backfill, which does not resend a row a QoS 0 publish lost |
+| Broker outage, network partition | yes | §2.3 | devices keep sealing locally; the hub keeps sealing its own sources; nothing replays across a partition except the PlatformIO tree's bounded RAM queue, the canary-wap's 8-row RAM hold and, on both when each owns a card, the SD event backfill, which does not resend a row a QoS 0 publish lost |
 | Sensor silent, corrupt, stuck | yes | §2.7 | silent and corrupt are detected and reported; stuck is not |
 | Storage exhaustion (disk, NVS, card) | yes | §2.8 | detected and sealed on the hub; counted and retried on a Canary |
 | A device that lies (Byzantine) | **no**, beyond signatures | [`spec/threat_model.md`](../spec/threat_model.md), [`device_trust.md`](device_trust.md) | a signature proves *who* asserted a claim, never that it is true; there is no cross-device consensus |
@@ -164,7 +164,8 @@ recovers further:** its CSI event log's backfill (`csi_event_backfill.h`,
 driven by `csi_event_egress_pump()`; host-tested against a model of Home
 Assistant's replay gate) replays committed rows from `/EVENTS/today.ndjson`
 once the RAM queue has drained, across a reboot, never at or below the
-highest id already handed to the broker, the watermark (Home Assistant's
+highest id already handed to the MQTT layer (published live, or buffered in
+its RAM offline queue) or deliberately given up, the watermark (Home Assistant's
 replay gate refuses an id below the last one it verified; the watermark is
 a ceiling persisted in NVS before an id is handed over, so a reboot never
 republishes one and skips at most a stride of undelivered ones), in id
@@ -199,8 +200,10 @@ reboot or a broker change. **Neither backfill resends a row a QoS 0 publish
 lost.** Both trees move the watermark past a row when its publish returns
 success (the canary-wap's `to_sent()` counts `EventSend::kSent` as sent;
 the canary's port answers `Sent::kYes` when `mqtt_publish_event_live()`
-does), and at QoS 0 that means the bytes reached the TCP send buffer, never
-that the broker acknowledged them. A row whose bytes were still there when
+does), and the canary's also when the row goes into its RAM offline queue
+(`hand_to_queue()`, through `mqtt_publish_event()`), which replays it the
+same way later; at QoS 0 a success means the bytes reached the TCP send
+buffer, never that the broker acknowledged them. A row whose bytes were still there when
 the connection dropped is gone from the wire: the watermark is past it, so
 the backfill starts after it (a row the card keeps is still in its SD log).
 On the canary-wap that drop is a stalled link: the publish that next finds
