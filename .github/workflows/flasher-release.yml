@@ -667,7 +667,7 @@ jobs:
         # release if it doesn't exist yet (what the pre-key path relied on
         # before the key ceremony). Existing release notes and OTA assets are
         # preserved.
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: |
@@ -692,7 +692,7 @@ jobs:
         # stable fw-v* release. A prerelease is never returned by GitHub's
         # getLatestRelease — and `fw-dev-latest` doesn't match the `^fw-v` test
         # in .github/actions/keep-firmware-latest either. Both deliberate.
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Canary Firmware — dev channel (rolling)
