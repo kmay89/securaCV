@@ -8875,5 +8875,346 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
                             "the HomeKit recipe's filter put HA15's lines back while HA16's row is open")
 
 
+
+# ── The parity ledgers' health rows, held to the code (sweep F20, slice b) ──
+#
+# firmware/FEATURES.md's Health Monitoring rows, its WiFi presence and audible
+# chirp rows and their three flag rows, and firmware/canary/CONSOLIDATION.md's
+# gaps #14 and #15, read the flagship's log, diagnostics and thermal code and
+# the canary-wap sketch under the profile each of its builds selects. Each
+# test reads the code first and derives the verdict from what it finds, so a
+# change to the code (an acknowledgment that starts to persist, a profile that
+# drops a flag, a third env that turns the thermal watchdog off) fails here
+# with the row it moves named, as surely as an edit back to the old cells.
+
+FEATURES_MD = REPO / "firmware/FEATURES.md"
+CONSOLIDATION_MD = REPO / "firmware/canary/CONSOLIDATION.md"
+FLAGSHIP = REPO / "firmware/canary"
+WAP_PROJECT = REPO / "firmware/projects/canary-wap"
+SNAPSHOT, ARDUINO, CANARY, WAP_PIO = ("WAP Snapshot", "Arduino IDE",
+                                      "PlatformIO (canary/)", "PlatformIO (canary-wap/)")
+
+
+def md_table(text: str, heading: str) -> dict[str, dict[str, str]]:
+    """{first cell: {column: cell}} for the first table under `## heading`.
+    A label that appears twice is refused, so an old row restored beside its
+    restatement cannot hide behind it."""
+    start = text.index(f"\n## {heading}\n")
+    rows, started = [], False
+    for line in text[start:].splitlines()[2:]:
+        if line.startswith("|"):
+            started = True
+            rows.append([c.strip() for c in line.strip().strip("|").split("|")])
+        elif started:
+            break
+    header, out = rows[0], {}
+    for row in rows[2:]:
+        assert row[0] not in out, f"{heading}: the row {row[0]!r} appears twice"
+        assert len(row) == len(header), f"{heading}: {row[0]!r} has {len(row)} cells"
+        out[row[0]] = dict(zip(header, row))
+    return out
+
+
+def gap_state(text: str, number: int, gap: str, source: str) -> str:
+    """The 'Current canary (PIO) state' cell of CONSOLIDATION.md's gap row."""
+    rows = [ln for ln in text.splitlines() if ln.startswith(f"| {number} | {gap} | ")]
+    assert len(rows) == 1, f"gap #{number} ({gap}) has {len(rows)} rows"
+    head, tail = f"| {number} | {gap} | ", f" | {source} |"
+    assert tail in rows[0], f"gap #{number}'s row no longer names its source {source}"
+    return rows[0][len(head):rows[0].index(tail)]
+
+
+def enum_members(text: str, enum: str, prefix: str) -> list[tuple[str, int]]:
+    body = re.search(r"enum %s : uint8_t \{(.*?)\};" % enum, text, re.S).group(1)
+    return [(m.group(1), int(m.group(2)))
+            for m in re.finditer(prefix + r"(\w+)\s*=\s*(\d+)", body)]
+
+
+def c_body(text: str, head: str) -> str:
+    """The brace-matched body of the one function whose definition starts `head`."""
+    assert text.count(head) == 1, f"{head!r} occurs {text.count(head)} times"
+    i = text.index("{", text.index(head))
+    depth = 0
+    for k in range(i, len(text)):
+        depth += {"{": 1, "}": -1}.get(text[k], 0)
+        if depth == 0:
+            return text[i + 1:k]
+    raise AssertionError(f"{head!r}: unbalanced braces")
+
+
+_C_TOKENS = re.compile(r'R"([^(\s]*)\(.*?\)\1"'          # a raw string literal
+                       r'|"(?:\\.|[^"\\\n])*"'              # a string literal
+                       r"|'(?:\\.|[^'\\\n])*'"              # a character literal
+                       r"|/\*.*?\*/|//[^\n]*", re.S)        # a comment
+
+
+def c_code(text: str) -> str:
+    """C/C++ with its comments removed and its literals kept, so a call or a
+    word only a comment still names is not read as code, and a "/api/logs/*"
+    in a string does not open a comment."""
+    return _C_TOKENS.sub(lambda m: "" if m.group(0).startswith("/") else m.group(0), text)
+
+
+def ini_envs(text: str) -> dict[str, str]:
+    """{env name: the env section's build_flags, comments stripped}."""
+    out = {}
+    for m in re.finditer(r"^\[env:([^\]]+)\]\n(.*?)(?=^\[|\Z)", text, re.S | re.M):
+        flags, on = [], False
+        for line in m.group(2).splitlines():
+            if line[:1] not in ("", " ", "\t", ";") and "=" in line:  # a key at column 0
+                on = line.split("=", 1)[0].strip() == "build_flags"
+                continue
+            if on:
+                flags.append(line.split(";", 1)[0].strip())
+        out[m.group(1)] = "\n".join(f for f in flags if f)
+    return out
+
+
+def wap_profiles() -> tuple[str, dict[str, dict[str, str]]]:
+    """(the profile build_config.h picks when none is passed, {profile:
+    {FEATURE_*: value}}) from the sketch's profile chain."""
+    cfg = c_code((WAP / "build_config.h").read_text(encoding="utf-8"))
+    default_block = body_after(cfg, "#if !defined(BUILD_PROFILE_MINIMAL) && !defined(BUILD_PROFILE_DEV)",
+                               r"(?m)^#endif")
+    defaults = re.findall(r"(?m)^#define BUILD_PROFILE_(\w+)", default_block)
+    assert len(defaults) == 1, defaults
+    chain = cfg[cfg.index("\n#if defined(BUILD_PROFILE_MINIMAL)"):]
+    marks = list(re.finditer(r"(?m)^#(?:if|elif) defined\(BUILD_PROFILE_(\w+)\)[ \t]*$|^#endif\b", chain))
+    profiles = {}
+    for here, nxt in zip(marks, marks[1:]):
+        if here.group(1) is None:
+            break
+        block = chain[here.end():nxt.start()]
+        assert not re.search(r"(?m)^#if", block), f"{here.group(1)}: a column-0 #if inside the block"
+        profiles[here.group(1)] = dict(re.findall(r"(?m)^\s*#define (FEATURE_\w+)\s+(\S+)", block))
+    assert set(profiles) == {"MINIMAL", "DEV", "FULL"}, set(profiles)
+    return defaults[0], profiles
+
+
+def verdict(cell: str) -> str:
+    for mark in ("✅", "⚠️", "❌", "➖"):
+        if cell.startswith(mark):
+            return mark
+    raise AssertionError(f"a cell with no verdict: {cell[:60]!r}")
+
+
+class TheParityLedgersReadTheCode(unittest.TestCase):
+    def setUp(self):
+        self.features = FEATURES_MD.read_text(encoding="utf-8")
+        self.consolidation = CONSOLIDATION_MD.read_text(encoding="utf-8")
+        self.health = md_table(self.features, "Health Monitoring")
+        self.extra = md_table(self.features, "Additional WAP Features")
+        self.flags = md_table(self.features, "Feature Flags Comparison")
+        # The code with its comments removed: a fact these tests read is
+        # code, never a comment that still names it.
+        self.ino = c_code((WAP / "canary_wap.ino").read_text(encoding="utf-8"))
+        self.witness = c_code((FLAGSHIP / "lib/securacv_witness/src/securacv_witness.cpp").read_text(encoding="utf-8"))
+        self.net = c_code(FLAGSHIP_NET.read_text(encoding="utf-8"))
+
+    def test_the_log_rows_read_both_trees_log_code(self):
+        flag_ll = c_code((FLAGSHIP / "include/log_level.h").read_text(encoding="utf-8"))
+        wap_ll = c_code((WAP / "log_level.h").read_text(encoding="utf-8"))
+        # Levels: the same eight, in the same order, in both trees ...
+        levels = enum_members(flag_ll, "LogLevel", "LOG_LEVEL_")
+        self.assertEqual(levels, enum_members(wap_ll, "LogLevel", "SCV_LOG_"))
+        self.assertEqual([n for n, _ in levels][::7], ["DEBUG", "TAMPER"])
+        # ... stored from a floor the canary-wap's owner sets and the flagship fixes.
+        flag_log = c_code(c_body(self.witness, "void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {"))
+        wap_log = c_code(c_body(self.ino, "void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {"))
+        self.assertIn("if (level < LOG_LEVEL_INFO) return;", flag_log)
+        self.assertNotIn("min_level", self.witness, "the flagship's log floor became a setting: "
+                         "restate the severity row and gap #15")
+        self.assertIn("if (level < g_log_min_level) return;", wap_log)
+        self.assertIn('doc["log_level"] = g_log_min_level;', self.ino)
+        sev = self.health["Log severity levels (DEBUG..TAMPER)"]
+        self.assertEqual([verdict(sev[c]) for c in (ARDUINO, CANARY, WAP_PIO)], ["✅", "⚠️", "✅"])
+        self.assertIn("fixed floor", sev[CANARY])
+        self.assertIn("`g_log_min_level`", sev[ARDUINO])
+        # Categories: the flagship's are the canary-wap's first eleven, same values.
+        cats = enum_members(flag_ll, "LogCategory", "LOG_CAT_")
+        wap_cats = enum_members(wap_ll, "LogCategory", "SCV_CAT_")
+        self.assertEqual(cats, wap_cats[:len(cats)])
+        missing = [n for n, _ in wap_cats[len(cats):]]
+        self.assertEqual((len(cats), len(wap_cats), missing), (11, 13, ["RF", "AUTH"]))
+        self.assertIn('log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "BOOT tap closed', self.net)
+        row = self.health["Log categories (BOOT..SYSTEM)"]
+        self.assertEqual([verdict(row[c]) for c in (ARDUINO, CANARY, WAP_PIO)], ["✅", "⚠️", "✅"])
+        self.assertIn(f"✅ {len(wap_cats)}, `SYSTEM` to `AUTH`", row[ARDUINO])
+        self.assertIn(f"the first {len(cats)} of those {len(wap_cats)}", row[CANARY])
+        for name in missing:
+            self.assertIn(f"`{name}`", row[CANARY])
+        # The ring: 100 entries in both trees, served by GET /api/logs.
+        size = re.compile(r"static const size_t HEALTH_LOG_RING_SIZE = (\d+);")
+        rings = {int(size.search(self.witness).group(1)), int(size.search(self.ino).group(1))}
+        self.assertEqual(rings, {100})
+        row = self.health["Circular log ring buffer"]
+        for col in (ARDUINO, CANARY, WAP_PIO):
+            self.assertEqual(verdict(row[col]), "✅", col)
+        for col in (ARDUINO, CANARY):
+            self.assertIn("100 entries (`HEALTH_LOG_RING_SIZE`", row[col])
+        # The acknowledgment: per entry and all at once in both trees ...
+        wap_routes = self.ino[self.ino.index('httpd_uri_t logs = { .uri = "/api/logs"'):]
+        for uri, method in (("/api/logs", "HTTP_GET"), ("/api/logs/ack-all", "HTTP_POST"),
+                            ("/api/logs/*", "HTTP_POST")):
+            self.assertIn(f'.uri = "{uri}", .method = {method}', self.net)
+            self.assertIn(f'.uri = "{uri}", .method = {method}', wap_routes)
+        # ... over a status that lives in RAM only: the write touches the ring
+        # entry and nothing else, and the canary-wap's SD acknowledgment is a stub.
+        for tree, text in (("canary (PIO)", self.witness), ("canary-wap", self.ino)):
+            ack = c_code(c_body(text, "bool acknowledge_log_entry(uint32_t log_seq, AckStatus new_status, const char* reason) {"))
+            self.assertIn("entry.ack_status = new_status;", ack)
+            for persist in ("Preferences", "prefs", "nvs_", "SD.", "File", "write(", "storage", "fopen"):
+                self.assertNotIn(persist, ack, f"{tree}'s acknowledgment now persists ({persist}): restate the "
+                                 "Log acknowledgment row and gap #15")
+        stub = c_code((WAP / "sd_storage.cpp").read_text(encoding="utf-8"))
+        self.assertEqual(normalized(c_body(stub, "bool acknowledge_log(uint32_t log_seq, AckStatus new_status, const char* reason) {")).strip(),
+                         "return false;")
+        row = self.health["Log acknowledgment system"]
+        self.assertEqual(verdict(row[SNAPSHOT]), "✅")  # the removed tree's record, kept as history
+        for col in (ARDUINO, CANARY, WAP_PIO):
+            self.assertEqual(verdict(row[col]), "⚠️", col)
+        for col in (ARDUINO, CANARY):
+            self.assertIn("lost at reboot", row[col])
+            self.assertIn("`acknowledge_log_entry()`", row[col])
+        self.assertIn("`sd_storage::acknowledge_log()` is a stub that returns false", row[ARDUINO])
+        # Gap #15 says the same, with its remainder and what it rejected.
+        state = normalized(gap_state(self.consolidation, 15, "Log acknowledgment system + categories",
+                                     "`canary_wap/health_log.h` + `log_level.h`"))
+        self.assertTrue(state.startswith("⚠️ (2026-11, sweep F20 slice b; maintainer to confirm)"), state[:80])
+        for needle in ("lost at reboot", "`sd_storage::acknowledge_log()` is a stub that returns false",
+                       f"two of its {len(wap_cats)} categories, `RF` and `AUTH`", "`g_log_min_level`",
+                       "the append-only ack record was the removed snapshot's",
+                       "Rejected: ✅", "the canary-wap's is RAM-only too"):
+            self.assertIn(needle, state)
+        phase7 = [ln for ln in self.consolidation.splitlines() if ln.startswith("- GPS motion FSM (#4)")]
+        self.assertEqual(len(phase7), 1)
+        self.assertNotIn("log acknowledgments (#15)", phase7[0])
+        self.assertIn("the log categories and floor (#15", phase7[0])
+
+    def test_the_system_monitor_rows_read_the_flagships_diagnostics(self):
+        cfg = c_code((FLAGSHIP / "include/canary_config.h").read_text(encoding="utf-8"))
+        ini = (FLAGSHIP / "platformio.ini").read_text(encoding="utf-8")
+        main = c_code((FLAGSHIP / "src/main.cpp").read_text(encoding="utf-8"))
+        diag = c_code((FLAGSHIP / "lib/securacv_diagnostics/src/securacv_diagnostics.h").read_text(encoding="utf-8"))
+        twd = c_code((FLAGSHIP / "lib/securacv_thermal_watchdog/src/securacv_thermal_watchdog.h").read_text(encoding="utf-8"))
+        # What ships: both libraries on by default, pumped from loop(), each
+        # with its route under its own flag.
+        for flag in ("FEATURE_DIAGNOSTICS", "FEATURE_THERMAL_WATCHDOG"):
+            self.assertRegex(cfg, rf"#ifndef {flag}\n  #define {flag}\s+1\b")
+        loop = c_body(main, "void loop() {")
+        self.assertIn("diag_process();", loop)
+        self.assertIn("thermal_wd_process();", loop)
+        for field in ("free_heap", "min_heap", "largest_block", "psram_free", "psram_total", "degrade_level"):
+            self.assertRegex(c_body(diag, "typedef struct {\n  uint32_t free_heap;"), rf"\b{field};")
+        self.assertIn("replace_recommended;", diag)
+        self.assertIn("THERMAL_ADV_COLD", twd)
+        self.assertIn("thermal_wd_history_t", twd)
+        self.assertIn('#if FEATURE_DIAGNOSTICS\n  httpd_uri_t diag_ep = { .uri = "/api/diagnostics"', self.net)
+        self.assertIn('#if FEATURE_THERMAL_WATCHDOG\n  httpd_uri_t thermal_ep = { .uri = "/api/thermal"', self.net)
+        # Which envs turn the thermal watchdog off, and that none turns the
+        # diagnostics off: from the env sections, so a third env shows here.
+        envs = ini_envs(ini)
+        off = sorted(e for e, f in envs.items() if re.search(r"-DFEATURE_THERMAL_WATCHDOG=0\b", f))
+        self.assertEqual(ini.count("-DFEATURE_THERMAL_WATCHDOG="), len(off))
+        self.assertNotIn("-DFEATURE_DIAGNOSTICS", ini)
+        for env in off:
+            self.assertNotRegex(ini, rf"extends\s*=\s*env:{re.escape(env)}\b|\$\{{env:{re.escape(env)}\.")
+        self.assertEqual(off, ["esp32-wroom", "esp32cam"])
+        # What does not: sys_monitor.h's chip and build facts, which nothing
+        # in this tree reads, its route, and temperature and PSRAM on the
+        # periodic serial status.
+        sysmon = c_code((WAP / "sys_monitor.h").read_text(encoding="utf-8"))
+        chip_calls = ("getChipModel", "getChipRevision", "getChipCores", "getCpuFreqMHz",
+                      "getFlashChipSize", "getFlashChipSpeed", "getSdkVersion", "getSketchSize")
+        flagship_src = "\n".join(c_code(f.read_text(encoding="utf-8", errors="replace"))
+                                 for d in ("src", "lib", "include")
+                                 for f in sorted((FLAGSHIP / d).rglob("*"))
+                                 if f.suffix in {".h", ".cpp", ".c", ".hpp"})
+        for call in chip_calls:
+            self.assertIn(f"ESP.{call}()", sysmon)
+            self.assertNotIn(call, flagship_src, f"the flagship reads {call} now: restate the system monitor row and gap #14")
+        self.assertIn('.uri = "/api/system"', self.ino)
+        self.assertNotIn('"/api/system"', flagship_src)
+        self.assertIn("static const uint32_t METRICS_LOG_INTERVAL_MS = 30000;", sysmon)
+        line = c_body(sysmon, "void print_status_line() {")
+        self.assertIn("Temp:", line)
+        self.assertIn("PSRAM:", line)
+        self.assertIn("if (health.records_created % 20 == 0) {\n        print_status();", main)
+        status = c_body(main, "static void print_status() {")
+        self.assertIn("Free heap", status)
+        for word in ("PSRAM", "psram", "temp", "thermal"):
+            self.assertNotIn(word, status, f"the flagship's serial status prints {word} now: restate gap #14")
+        # The rows.
+        row = self.health["System monitor (temp, heap, PSRAM)"]
+        self.assertEqual(verdict(row[CANARY]), "⚠️")
+        cell = row[CANARY]
+        for needle in ("`securacv_diagnostics`", "`FEATURE_DIAGNOSTICS`", "`securacv_thermal_watchdog`",
+                       "`FEATURE_THERMAL_WATCHDOG`", "`GET /api/thermal`", "`GET /api/system`'s chip and build facts",
+                       "temperature and PSRAM on the periodic serial status"):
+            self.assertIn(needle, cell)
+        for env in off:
+            self.assertIn(f"`[env:{env}]`", cell)
+        state = normalized(gap_state(self.consolidation, 14, "System monitor (temp / heap / PSRAM)",
+                                     "`canary_wap/sys_monitor.h`"))
+        self.assertTrue(state.startswith('⚠️ (2026-11, sweep F20 slice b; option "⚠️ with what is missing", '
+                                         "maintainer to confirm)"), state[:80])
+        for env in off:
+            self.assertIn(f"`[env:{env}]`", state)
+        for needle in ("`GET /api/diagnostics`", "`GET /api/thermal`", "`GET /api/system` and its chip and build facts",
+                       "every 20 witness records", "every 30 s", "Rejected: ❌", "and ✅"):
+            self.assertIn(needle, state)
+        flag = self.flags["`FEATURE_SYS_MONITOR`"]
+        self.assertIn("`FEATURE_DIAGNOSTICS` and `FEATURE_THERMAL_WATCHDOG`", flag[CANARY])
+
+    def test_the_canary_wap_cells_read_the_profile_each_env_selects(self):
+        # Both toolchains build one sketch ...
+        proj = (WAP_PROJECT / "platformio.ini").read_text(encoding="utf-8")
+        self.assertRegex(proj, r"(?m)^src_dir = arduino/canary_wap$")
+        # ... under the profile each build selects: arduino-cli the header's
+        # default, each PlatformIO env the one its build_flags pass.
+        default, profiles = wap_profiles()
+        self.assertEqual(default, "FULL")
+        ini = (REPO / "firmware/envs/platformio/canary-wap.ini").read_text(encoding="utf-8")
+        envs = {e: f for e, f in ini_envs(ini).items() if e.startswith("canary-wap")}
+        built = json.loads((REPO / "firmware/flavors.json").read_text(encoding="utf-8"))
+        wap = next(f for f in built if f["name"] == "canary-wap")
+        self.assertLessEqual(set(wap["build_envs"]), set(envs))
+        selected = {}
+        for env, flags in envs.items():
+            picks = re.findall(r"-DBUILD_PROFILE_(\w+)\b", flags)
+            self.assertEqual(len(picks), 1, f"{env} passes {picks}")
+            selected[env] = picks[0]
+        self.assertEqual(selected["canary-wap-default"], "FULL")
+        rows = {
+            "FEATURE_SYS_MONITOR": ("sys_monitor.h", self.health, "System monitor (temp, heap, PSRAM)"),
+            "FEATURE_WIFI_PRESENCE": ("wifi_presence.h", self.extra, "WiFi presence detection"),
+            "FEATURE_AUDIBLE_CHIRP": ("audible_chirp.h", self.extra, "Audible chirp (buzzer/LED alerts)"),
+        }
+        for flag, (header, table, label) in rows.items():
+            with self.subTest(flag=flag):
+                self.assertIn(f'#include "{header}"', self.ino)
+                self.assertNotIn(f"-D{flag}", ini)  # nothing overrides the profile's value
+                on = {p for p, fl in profiles.items() if fl.get(flag) == "1"}
+                in_envs = {selected[e] in on for e in envs}
+                pio = "✅" if in_envs == {True} else "⚠️" if True in in_envs else "❌"
+                ide = "✅" if default in on else "❌"
+                for cells in (table[label], self.flags[f"`{flag}`"]):
+                    self.assertEqual(verdict(cells[ARDUINO]), ide, f"{label}: the Arduino IDE cell")
+                    self.assertEqual(verdict(cells[WAP_PIO]), pio, f"{label}: the PlatformIO (canary-wap/) cell")
+                self.assertEqual(sorted(on), ["DEV", "FULL"])
+                self.assertIn("1 in `BUILD_PROFILE_FULL` and `_DEV`", self.flags[f"`{flag}`"][ARDUINO])
+                self.assertIn(f"`{flag}`", table[label][ARDUINO])
+        # The chirp's cell names the pin its tones need.
+        chirp = c_code((WAP / "audible_chirp.h").read_text(encoding="utf-8"))
+        self.assertRegex(chirp, r"#if defined\(HARDWARE_XIAO_ESP32S3\)\n    #define CHIRP_GPIO  2\b")
+        self.assertIn("GPIO 2 (`CHIRP_GPIO`)", self.extra["Audible chirp (buzzer/LED alerts)"][ARDUINO])
+        # The note under the Health Monitoring table carries the confirmation
+        # ask and the readings it rejected.
+        note = normalized(re.sub(r"(?m)^> ?", "", body_after(
+            self.features, "> **Restated rows (2026-11-11, sweep F20 slice b;", r"\n## ")))
+        for needle in ("maintainer to confirm", "`BUILD_PROFILE_FULL`", "`canary-wap-mobile`'s `BUILD_PROFILE_DEV`",
+                       "The readings rejected", "⚠️ was weighed for the audible chirp", "the deleted scaffold's"):
+            self.assertIn(needle, note)
+
 if __name__ == "__main__":
     unittest.main()
