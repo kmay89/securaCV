@@ -15,6 +15,7 @@
 #include "chirp_scan.h"
 #include "ble_gate.h"       // shared BLE heap gate (chirp + fleet-link)
 #include "beacon_parse.h"   // fleet-link presence beacon wire format
+#include "fleet_chirp.h"    // Chirp advert wire format (common/fleet_link)
 #include "fleet_instance.h"
 #include "log.h"
 
@@ -89,21 +90,20 @@ void handle_advert(const NimBLEAdvertisedDevice* d) {
   const std::string m = dev->getManufacturerData();
   const uint8_t* p = reinterpret_cast<const uint8_t*>(m.data());
 
-  // Chirp (17-byte mfg, type 0x01..0x05) — spec §6, unchanged.
-  if (m.size() == 17) {
-    if (p[0] != 0xFF || p[1] != 0xFF) return;   // company id 0xFFFF (LE)
-    const uint8_t type = p[2];
-    if (type < 0x01 || type > 0x05) return;
-
+  // Chirp (17-byte mfg, company 0xFFFF LE, type 0x01..0x05) — spec §6;
+  // fleet_chirp.h is the layout, fp2 at [15-16]. A 17-byte blob it refuses
+  // matches nothing below either.
+  FleetChirpFields c;
+  if (fleet_chirp_parse(p, m.size(), &c)) {
     ChirpMsg msg;
     msg.kind = ChirpMsg::Kind::Chirp;
     static const char H[] = "0123456789abcdef";
-    msg.fp4[0] = H[(p[15] >> 4) & 0xF];
-    msg.fp4[1] = H[p[15] & 0xF];
-    msg.fp4[2] = H[(p[16] >> 4) & 0xF];
-    msg.fp4[3] = H[p[16] & 0xF];
+    msg.fp4[0] = H[(c.fp_b0 >> 4) & 0xF];
+    msg.fp4[1] = H[c.fp_b0 & 0xF];
+    msg.fp4[2] = H[(c.fp_b1 >> 4) & 0xF];
+    msg.fp4[3] = H[c.fp_b1 & 0xF];
     msg.fp4[4] = '\0';
-    msg.type = type;
+    msg.type = c.type;
     enqueue(msg);
     return;
   }

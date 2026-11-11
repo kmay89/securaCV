@@ -177,6 +177,8 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/fleet_link/fleet_beacon.h"
     "${FIRMWARE_ROOT}/common/fleet_link/fleet_beacon_udp.h"
     "${FIRMWARE_ROOT}/common/fleet_link/fleet_beacon_espnow.h"
+    # The Chirp advert's wire format, which net/chirp_scan.cpp parses.
+    "${FIRMWARE_ROOT}/common/fleet_link/fleet_chirp.h"
     # The performance engine + its scripts. splash.cpp plays a scene on EVERY
     # flavor (the meeting is the same bird on every board), so these are not
     # nightstand-only the way common/color is — the sketch will not compile

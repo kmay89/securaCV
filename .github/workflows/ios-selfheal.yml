@@ -43,7 +43,8 @@ on:
       # the firmware host test also reads; EventVocabularyTests holds the
       # event enum to the dictionary, to const.py and to each WAP module's
       # type_name (SenseModalityTests reads const.py too); ChirpAdvertTests
-      # holds the BLE chirp decoder to the firmware's layout; WapEventsTests
+      # holds the BLE chirp decoder to the firmware's layout (fleet_chirp.h,
+      # and the canary-wap sender's lines over it); WapEventsTests
       # holds the events-today reply and the radio-silent thresholds to the
       # WAP's handler and dashboard. (canary-local/devices/ecosystem.json is
       # left out: ecosystem.test.js already pins EcosystemMap.swift to it on
@@ -53,6 +54,7 @@ on:
       - "custom_components/securacv/const.py"
       - "firmware/projects/canary-wap/arduino/canary_wap/ble_chirp.h"
       - "firmware/projects/canary-wap/arduino/canary_wap/ble_config.h"
+      - "firmware/common/fleet_link/fleet_chirp.h"
       - "firmware/projects/canary-wap/arduino/canary_wap/acoustic_events_module.cpp"
       - "firmware/projects/canary-wap/arduino/canary_wap/vault_events_module.cpp"
       - "firmware/projects/canary-wap/arduino/canary_wap/tamper_events_module.cpp"

@@ -19,9 +19,10 @@
  *                     (firmware/common/fleet_link/fleet_beacon.h). The
  *                     version byte [3] is NOT read: a beacon from a newer
  *                     schema at either length is still another Canary.
- *   Chirp           — 17 bytes, type byte [2] 0x01..0x05 (the canary-wap's
- *                     ble_chirp.h / ble_config.h sender, and the shape
- *                     fleet_roster_feed.cpp tables).
+ *   Chirp           — 17 bytes, type byte [2] 0x01..0x05: exactly what
+ *                     fleet_chirp_matches() says (firmware/common/fleet_link/
+ *                     fleet_chirp.h, the layout the canary-wap's ble_chirp.h
+ *                     sends and fleet_roster_feed.cpp parses).
  *
  * Everything else is offerable: a different company, a different length, a
  * type outside those values, an advert with no manufacturer data at all.
@@ -42,15 +43,22 @@
  * headers into this one with nothing to hold the copies together, and would
  * still miss the name-only advert.
  *
- * test_ble_scout_pairing.cpp holds these constants to fleet_beacon.h (by
- * include) and to fleet_roster_feed.cpp's Chirp branch and the canary-wap's
- * ble_config.h sender (by reading them), and both trees' scan callbacks to
- * the read, classify and pass shape above (by reading them too).
+ * The Chirp rule is fleet_chirp.h's own predicate, so the classifier and
+ * every Chirp parser refuse and accept the same blobs by construction. The
+ * beacon rule stays spelled here: it deliberately does not read the version
+ * byte that fleet_beacon_parse() checks, so it cannot be that parser's
+ * answer. test_ble_scout_pairing.cpp holds the beacon constants to
+ * fleet_beacon.h, both rules to their parsers over every length and type
+ * byte, and both trees' scan callbacks to the read, classify and pass shape
+ * above (by reading them).
  *
- * PURE and self-contained: <stdint.h> and <stddef.h> only, no NimBLE, no
- * Arduino, no fleet_link include path. Committed byte-identically in both
- * trees (firmware/canary/lib/securacv_ble_scan/src/ and the canary-wap
- * sketch folder); firmware/scripts/check_ble_scan_sync.sh fails on drift.
+ * PURE: <stdint.h>, <stddef.h> and fleet_chirp.h (itself pure), no NimBLE,
+ * no Arduino. fleet_chirp.h is found on the fleet_link include path in the
+ * canary PlatformIO build (-I firmware/common/fleet_link, every env) and
+ * beside this file in the canary-wap sketch (its staged copy, held by
+ * check_fleet_beacon_sync.sh). Committed byte-identically in both trees
+ * (firmware/canary/lib/securacv_ble_scan/src/ and the canary-wap sketch
+ * folder); firmware/scripts/check_ble_scan_sync.sh fails on drift.
  */
 
 #ifndef SECURACV_BLE_SCOUT_ADVERT_KIND_H
@@ -58,6 +66,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "fleet_chirp.h"   /* the Chirp advert's wire format (common/fleet_link) */
 
 namespace ble_scout {
 namespace advert_kind {
@@ -70,11 +80,6 @@ constexpr uint8_t COMPANY_ID_HI = 0xFF;
 constexpr uint8_t BEACON_TYPE   = 0x10;
 constexpr size_t  BEACON_LEN_V1 = 11;
 constexpr size_t  BEACON_LEN_V2 = 13;
-
-/* Chirp: one length and a range of type bytes. */
-constexpr size_t  CHIRP_LEN        = 17;
-constexpr uint8_t CHIRP_TYPE_FIRST = 0x01;
-constexpr uint8_t CHIRP_TYPE_LAST  = 0x05;
 
 enum class Kind : uint8_t {
   NOT_FLEET       = 0,   /* offerable to the pairing window */
@@ -92,9 +97,7 @@ inline Kind classify(const uint8_t* mfg, size_t len) {
   if ((len == BEACON_LEN_V1 || len == BEACON_LEN_V2) && type == BEACON_TYPE) {
     return Kind::PRESENCE_BEACON;
   }
-  if (len == CHIRP_LEN && type >= CHIRP_TYPE_FIRST && type <= CHIRP_TYPE_LAST) {
-    return Kind::CHIRP_ADVERT;
-  }
+  if (fleet_chirp_matches(mfg, len)) return Kind::CHIRP_ADVERT;
   return Kind::NOT_FLEET;
 }
 

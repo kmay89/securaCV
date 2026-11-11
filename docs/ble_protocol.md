@@ -97,6 +97,11 @@ Chirp uses BLE manufacturer-specific advertising data (no connection required).
 
 Total manufacturer data: 17 bytes (fits within BLE advertising payload limit of 31 bytes).
 
+In code this layout is spelled once, in `firmware/common/fleet_link/fleet_chirp.h`
+(the builder the canary-wap sends with, the parser the receivers read with,
+host-tested by `test_fleet_chirp.cpp` beside it); see
+[parity by architecture](FLEET_PARITY.md) for how each tree reaches it.
+
 ### 5.2 Chirp Types
 
 | Value | Name | Description |

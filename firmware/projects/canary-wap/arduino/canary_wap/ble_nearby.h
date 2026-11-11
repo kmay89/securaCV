@@ -96,6 +96,22 @@ static int8_t currentRssi(const NearbyCanary* c) {
     return c->rssiHistory[idx];
 }
 
+// This parser reads fleet_chirp.h's layout (through ble_config.h) by offsets
+// into the payload after the company id, and on a wider rule than
+// fleet_chirp_parse(): any blob of at least 17 bytes on company 0xFFFF,
+// whatever its type byte, where fleet_chirp_parse() takes exactly 17 bytes
+// and types 0x01..0x05. What this scan lists is unchanged (repo sweep F316
+// moved the layout into the shared header and nothing else); these hold its
+// offsets to that header, so a layout change there fails this file's compile
+// instead of reading the wrong bytes.
+static_assert(CHIRP_PAYLOAD_SIZE + 2 == FLEET_CHIRP_MFG_LEN,
+              "the payload is the Chirp blob after its 2-byte company id");
+static_assert(FLEET_CHIRP_OFF_TYPE - 2 == 0, "the Chirp type is payload[0]");
+static_assert(FLEET_CHIRP_OFF_CHAIN - 2 == 5, "the chain prefix is payload[5..12]");
+static_assert(sizeof(NearbyCanary::chainHashPrefix) == FLEET_CHIRP_CHAIN_LEN,
+              "the chain prefix is FLEET_CHIRP_CHAIN_LEN bytes");
+static_assert(FLEET_CHIRP_OFF_FP - 2 == 13, "the device id prefix is payload[13..14]");
+
 // Parse chirp manufacturer data from a Canary device
 // Returns true if valid chirp data found
 static bool parseChirpData(const uint8_t* data, size_t len, NearbyCanary* canary) {

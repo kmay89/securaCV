@@ -749,13 +749,15 @@ jobs:
           firmware/scripts/check_boot_sync.sh
 
       - name: Verify fleet-link beacon header copies match the canonical wire format
-        # The fleet-link presence beacon (fleet_beacon.h) is a byte-exact BLE
-        # contract shared across firmwares: canonical at
-        # firmware/common/fleet_link/ (included directly by the canary PIO build
-        # via -I, and host-tested there) and committed byte-identical next to the
-        # canary-wap Arduino sketch. If the copies diverge, a canary and a
-        # canary-display silently stop understanding each other's beacon with no
-        # compile error — this guard catches the drift in either direction.
+        # The fleet-link presence beacon (fleet_beacon.h) and the Chirp advert
+        # (fleet_chirp.h) are byte-exact BLE contracts shared across firmwares:
+        # canonical at firmware/common/fleet_link/ (included directly by the
+        # canary, sense, vision and display PIO builds via -I, and host-tested
+        # there) and committed byte-identical next to the canary-wap Arduino
+        # sketch. If the copies diverge, a canary-wap and the Canaries and
+        # displays that hear it silently stop understanding each other's adverts
+        # with no compile error — this guard catches the drift in either
+        # direction, and a staged fleet-link header it does not hold.
         run: |
           chmod +x firmware/scripts/check_fleet_beacon_sync.sh
           firmware/scripts/check_fleet_beacon_sync.sh
@@ -1340,6 +1342,9 @@ jobs:
           # strong unpaired advert pairs, single-shot, no MAC in the
           # snapshot, dirty until the loop tick), so it links the same
           # Scout + chokepoint set as ble_scout_broadcast.
+          # ble_scout_advert_kind.h asks fleet_chirp.h whether an advert is
+          # a Chirp, so this one also takes the fleet_link include path the
+          # canary PIO build gives the library.
           run_test ble_scout_pairing \
             firmware/canary/lib/securacv_ble_scan/test_ble_scout_pairing.cpp \
             $BLE_SRC/ble_scan.cpp \
@@ -1351,7 +1356,7 @@ jobs:
             $COMMON_SRC/csi_module.cpp \
             $COMMON_SRC/csi_bundler.cpp \
             $COMMON_SRC/csi_witness_payload.cpp \
-            -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC
+            -I $BLE_SRC -I $MESH_SRC -I $COMMON_SRC -I firmware/common/fleet_link
 
           # ble_scout_registry_store — the versioned NVS blob the paired
           # registry persists as (round trip, all-or-nothing refusal).
@@ -1694,6 +1699,22 @@ jobs:
               -o /tmp/canonical_fleet_beacon
           /tmp/canonical_fleet_beacon | tee /tmp/canonical_fleet_beacon.log
           grep -q "ALL PASS" /tmp/canonical_fleet_beacon.log
+
+      - name: Build + run canonical fleet-chirp builder host test
+        # The Chirp advert (firmware/common/fleet_link/fleet_chirp.h) — the
+        # 17-byte layout the canary-wap sends and the canary Scout roster and
+        # pairing filter, canary-sense, canary-vision and the display read.
+        # Golden bytes (the sender's output before the header existed), the
+        # round trip, and every refusal. check_fleet_beacon_sync.sh keeps the
+        # canary-wap copy byte-identical, so this run covers both.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/common/fleet_link \
+              firmware/common/fleet_link/test_fleet_chirp.cpp \
+              -o /tmp/canonical_fleet_chirp
+          /tmp/canonical_fleet_chirp | tee /tmp/canonical_fleet_chirp.log
+          grep -q "ALL PASS" /tmp/canonical_fleet_chirp.log
 
       - name: Build + run canonical fleet-beacon LAN-multicast transport test
         # The third band the beacon travels on (firmware/common/fleet_link/

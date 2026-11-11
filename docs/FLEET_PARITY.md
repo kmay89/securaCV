@@ -54,6 +54,14 @@ behavior is a change to that one file — never a sweep across boards.
   `firmware/common/fleet_link/fleet_beacon.h`; guard:
   `check_fleet_beacon_sync.sh`; tested next to the canary PIO build.
 
+- **Fleet Chirp advert** — the 17-byte BLE alert the canary-wap sends on the
+  beacon's company id, and the one layout every receiver reads (the canary's
+  Scout roster feed, the Scout pairing filter in both trees, canary-sense,
+  canary-vision, the display). Core: `firmware/common/fleet_link/fleet_chirp.h`; guards:
+  `check_fleet_beacon_sync.sh` (wap byte-copy) +
+  `check_display_arduino_sync.sh` (display regen); test:
+  `firmware/common/fleet_link/test_fleet_chirp.cpp`.
+
 - **Device self-manifest** — the machine-readable JSON emitted over serial.
   Core: `firmware/common/attest/self_manifest.h`; test:
   `test_self_manifest.cpp`.
