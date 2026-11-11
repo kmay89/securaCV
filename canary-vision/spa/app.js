@@ -304,6 +304,45 @@ function isPrivateUrl(url) {
   }
 }
 
+// The Content-Security-Policy served with this page has connect-src
+// 'self' http://*.local (device-api/middleware/security-headers.js,
+// docs/security.md). CSP cannot name an IP range, so the browser refuses a
+// request to any address that is neither this page's own origin nor a
+// .local name before it leaves the page, and the page then sees the same
+// TypeError an unreachable device gives (sweeps F427, F448). Such an address
+// still passes isPrivateUrl(): an RFC 1918, link-local or loopback IPv4
+// literal, an IPv6 literal, or localhost. needsLocalName() names it: every
+// path that takes an address from the owner or a receipt answers
+// LOCAL_NAME_HINT instead of fetching it, a peer list never yields one
+// (peerBaseUrl()), and CanaryAPI.request() refuses it as the backstop. A
+// .local name, and this page's own address (an IP included), are never
+// refused here.
+var LOCAL_NAME_HINT = 'This app reaches another Canary only by its .local name, not by an IP address. ' +
+  'Enter its .local name (like canary-a3f7.local), or open this app from that Canary\'s own address.';
+
+// This page's origin, or '' when it has none an http URL can equal.
+function pageOrigin() {
+  var origin = window.location && window.location.origin;
+  return typeof origin === 'string' && origin !== 'null' ? origin : '';
+}
+
+function needsLocalName(url) {
+  var parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    return false;
+  }
+  if (parsed.hostname.endsWith('.local')) return false;
+  return parsed.origin !== pageOrigin();
+}
+
+function localNameError() {
+  var err = new Error(LOCAL_NAME_HINT);
+  err.code = 'needs_local_name';
+  return err;
+}
+
 // --------------- API Client ---------------
 
 var CanaryAPI = {
@@ -315,6 +354,11 @@ var CanaryAPI = {
 
     if (!isPrivateUrl(url)) {
       return Promise.reject(new Error('Refused: URL is not a private network address'));
+    }
+    // The backstop for every request this page makes: an address the served
+    // connect-src refuses is not fetched, and the caller gets the reason.
+    if (needsLocalName(url)) {
+      return Promise.reject(localNameError());
     }
 
     var device = CanaryStorage.getDevices().find(function (d) {
@@ -1552,7 +1596,10 @@ function renderCanariesView() {
         if (!document.body.contains(dc.card)) return;
 
         dc.dot.className = 'status-dot offline';
-        dc.label.textContent = err && err.status === 401 ? 'Auth Error' : 'Offline';
+        // A device stored under an IP this page's connect-src refuses was
+        // never asked (CanaryAPI.request), so it is not called offline.
+        dc.label.textContent = err && err.code === 'needs_local_name' ? 'Needs its .local name'
+          : err && err.status === 401 ? 'Auth Error' : 'Offline';
         dc.label.style.color = 'var(--color-error)';
 
         updateFleetSummary();
@@ -1579,15 +1626,21 @@ function renderCanariesView() {
 
 // --------------- Peer Discovery ---------------
 
-// Build the canonical base URL for a peer using its mDNS hostname when
-// available, falling back to its LAN IP. Hostname is preferred because
-// IPs change and mDNS doesn't.
+// Build a peer's base URL from its mDNS hostname, the one kind of name this
+// page's connect-src lets it reach (http://*.local; see needsLocalName()).
+// A peer's `ip` is never used: CSP refuses an IP that is not this page's own
+// origin, so an IP URL would only fail like a device that is not there
+// (sweep F448). A peer whose mdns_hostname is missing or is not a .local name
+// gets '' here, and the lists show it as not reachable by name.
 function peerBaseUrl(peer) {
-  var host = peer.mdns_hostname || peer.ip;
-  if (!host) return '';
-  if (host.indexOf('http') === 0) return host.replace(/\/+$/, '');
-  return 'http://' + host.replace(/\/+$/, '');
+  var baseUrl = normalizeBaseUrl(peer && peer.mdns_hostname);
+  if (!baseUrl || !isPrivateUrl(baseUrl)) return '';
+  if (!new URL(baseUrl).hostname.endsWith('.local')) return '';
+  return baseUrl;
 }
+
+var NOT_REACHABLE_BY_NAME = 'Not reachable by name: it lists no .local name, and this app reaches ' +
+  'another Canary only by its .local name.';
 
 // Returns the set of base_urls and device_ids already managed by the user,
 // so we can filter them out of the discovered list.
@@ -1623,8 +1676,10 @@ function fetchDiscoveredPeers() {
         var p = peers[j];
         if (!p || !p.device_id) continue;
         if (known.ids[p.device_id]) continue;
+        // A peer with no .local name stays on the list (as not reachable
+        // by name) rather than vanishing from it.
         var baseUrl = peerBaseUrl(p);
-        if (!baseUrl || known.urls[baseUrl]) continue;
+        if (baseUrl && known.urls[baseUrl]) continue;
         if (seen[p.device_id]) continue;
         seen[p.device_id] = true;
         discovered.push(p);
@@ -1664,6 +1719,11 @@ function renderDiscoveredPeerSection(peers) {
   peers.forEach(function (peer) {
     var baseUrl = peerBaseUrl(peer);
     var typeInfo = deviceTypeInfo(peerDeviceType(peer));
+    // An HTTP peer with no .local name has no address this page can reach,
+    // so it gets the reason in place of a Pair button that would lead to a
+    // capture CSP refuses. An MQTT peer pairs through Home Assistant and
+    // needs no address here.
+    var unreachable = !baseUrl && wizardPathForPeer(peer) !== 'mqtt';
     var row = el('div', { className: 'card' }, [
       el('div', { className: 'card-header' }, [
         el('div', {}, [
@@ -1676,7 +1736,7 @@ function renderDiscoveredPeerSection(peers) {
         ]),
         el('span', { className: 'status-dot' }),
       ]),
-      el('button', {
+      unreachable ? el('div', { className: 'alert alert-warning mt-12', textContent: NOT_REACHABLE_BY_NAME }) : el('button', {
         className: 'btn btn-primary btn-block mt-12',
         textContent: 'Pair this Canary',
         onClick: function () {
@@ -1711,8 +1771,11 @@ var RECEIPT_POLL_INTERVAL_MS = 2000;
 var RECEIPT_POLL_TICKS = 30; // x 2 s = 60 s listening window
 
 // SECURITY NOTE: HTTP is used for private-network device communication.
-// isPrivateUrl() ensures only RFC 1918 / link-local addresses are
-// accepted; public addresses are rejected before any request is made.
+// isPrivateUrl() accepts only private-network addresses (a .local name, or
+// an RFC 1918, link-local, loopback or IPv6 unique-local address); public
+// addresses are rejected before any request is made. Of those, needsLocalName()
+// refuses an IP that is not this page's own origin, which the served
+// connect-src would refuse anyway, so the owner is told to use its .local name.
 // The device API requires X-Canary-Token auth and CORS/PNA middleware
 // provides additional browser-level isolation.
 function normalizeBaseUrl(host) {
@@ -2048,6 +2111,10 @@ function renderAddCanaryView() {
       showError(alertSlot, new Error('Only private network addresses are allowed'));
       return;
     }
+    if (needsLocalName(baseUrl)) {
+      showError(alertSlot, localNameError());
+      return;
+    }
     if (!token) {
       showError(alertSlot, new Error('Receipt is missing a token'));
       return;
@@ -2084,21 +2151,29 @@ function renderAddCanaryView() {
         while (discoveredSlot.firstChild) discoveredSlot.removeChild(discoveredSlot.firstChild);
         peers.forEach(function (peer) {
           var baseUrl = peerBaseUrl(peer);
-          if (!baseUrl) return;
           var typeInfo = deviceTypeInfo(peerDeviceType(peer));
-          var row = el('div', { className: 'card cursor-pointer' }, [
+          // An HTTP peer with no .local name is listed with the reason and
+          // takes no click: there is no address this page could capture
+          // from. An MQTT peer needs none (it pairs through Home Assistant).
+          var unreachable = !baseUrl && wizardPathForPeer(peer) !== 'mqtt';
+          var row = el('div', { className: unreachable ? 'card' : 'card cursor-pointer' }, [
             el('div', { className: 'card-header' }, [
               el('div', {}, [
                 el('div', { className: 'card-title', textContent: peer.name || peer.device_id }),
                 renderDeviceTypeBadge(typeInfo.dt),
-                el('div', { className: 'card-subtitle', textContent: baseUrl }),
+                el('div', { className: 'card-subtitle', textContent: baseUrl || peer.device_id }),
                 typeInfo.tagline
                   ? el('div', { className: 'device-type-tagline', textContent: typeInfo.tagline })
                   : null,
               ]),
-              el('span', { className: 'arrow', textContent: '›' }),
+              unreachable ? null : el('span', { className: 'arrow', textContent: '›' }),
             ]),
+            unreachable ? el('div', { className: 'alert alert-warning mt-12', textContent: NOT_REACHABLE_BY_NAME }) : null,
           ]);
+          if (unreachable) {
+            discoveredSlot.appendChild(row);
+            return;
+          }
           row.addEventListener('click', function () {
             // Vision/sense have no HTTP server — the BOOT-tap flow would
             // dead-end, so route them to the Home Assistant path instead.
@@ -2122,7 +2197,7 @@ function renderAddCanaryView() {
     var hostInput = el('input', {
       className: 'form-input',
       type: 'text',
-      placeholder: 'e.g. canary-a3f7.local or 192.168.1.47',
+      placeholder: 'e.g. canary-a3f7.local',
     });
     content.appendChild(el('div', { className: 'form-group mt-12' }, [
       el('label', { className: 'form-label', textContent: 'Device address' }),
@@ -2139,6 +2214,10 @@ function renderAddCanaryView() {
         }
         if (!isPrivateUrl(baseUrl)) {
           showError(alertSlot, new Error('Only private network addresses are allowed'));
+          return;
+        }
+        if (needsLocalName(baseUrl)) {
+          showError(alertSlot, localNameError());
           return;
         }
         setStep(function (slot) { stepCapture(slot, baseUrl); });
@@ -2345,7 +2424,7 @@ function renderAddCanaryView() {
     var hostInput = el('input', {
       className: 'form-input',
       type: 'text',
-      placeholder: 'e.g. canary-a3f7.local or 192.168.1.47',
+      placeholder: 'e.g. canary-a3f7.local',
       value: prefillBaseUrl || '',
     });
     var tokenInput = el('input', {
@@ -2369,6 +2448,7 @@ function renderAddCanaryView() {
         var token = tokenInput.value.trim();
         if (!baseUrl) { showError(alertSlot, new Error('Device address is required')); return; }
         if (!isPrivateUrl(baseUrl)) { showError(alertSlot, new Error('Only private network addresses are allowed')); return; }
+        if (needsLocalName(baseUrl)) { showError(alertSlot, localNameError()); return; }
         if (!token) { showError(alertSlot, new Error('API token is required')); return; }
         handleReceipt(alertSlot, { token: token }, baseUrl);
       },
@@ -2558,6 +2638,10 @@ function renderAddCanaryView() {
   }
   if (prefillHost) {
     var prefillBase = normalizeBaseUrl(prefillHost);
+    if (prefillBase && isPrivateUrl(prefillBase) && needsLocalName(prefillBase)) {
+      setStep(function (slot) { stepChoose(slot); showError(slot, localNameError()); });
+      return;
+    }
     if (prefillBase && isPrivateUrl(prefillBase)) {
       setStep(function (slot) { stepCapture(slot, prefillBase); });
       return;
@@ -2756,7 +2840,7 @@ function renderDeviceView(deviceId) {
       var alertArea2 = document.getElementById('device-alert');
       if (alertArea2) {
         alertArea2.appendChild(el('div', { className: 'alert alert-error' }, [
-          err.status === 401 ? 'Invalid token.' : 'Device offline.',
+          err.code === 'needs_local_name' ? LOCAL_NAME_HINT : err.status === 401 ? 'Invalid token.' : 'Device offline.',
           el('button', {
             className: 'btn btn-secondary ml-12',
             textContent: 'Retry',
