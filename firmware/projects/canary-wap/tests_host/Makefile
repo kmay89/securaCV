@@ -1562,9 +1562,11 @@ clean: clean-chirp-suppress
 # callbacks change nothing until update() applies their events on the loop
 # task, the pending pairing's copy has one owner, and a full event queue
 # keeps a link's room and fails a pairing closed (sweep F143). And the
-# FULL profile's wiring (sweep F171): the channel's init() and Opera's
-# (ble_opera.h) in either order through one server-callback dispatcher
-# (ble_server_dispatch.h), so a passkey waits for the owner's confirm.
+# FULL profile's wiring (sweep F171): the channel's init() and then Opera's
+# (ble_opera.h) through one server-callback dispatcher
+# (ble_server_dispatch.h), so a passkey waits for the owner's confirm; the
+# other order, a tap's init() after Opera took NimBLE's one server, is
+# refused before it touches the stack (sweep F449).
 BT_CMD_BIN = test_bluetooth_commands_wap
 BT_CMD_SRC = test_bluetooth_commands_wap.cpp
 
