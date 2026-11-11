@@ -55,7 +55,7 @@
 #include <csi_types.h>
 #include <csi_module.h>
 #include "csi_module_settings_nvs.h"  // the module settings' NVS rule, shared with the canary (F93)
-#include "csi_settings_nvs.h"         // the modules' boot init (F93); stored Quiet Hours (F123, F128)
+#include "csi_settings_nvs.h"         // the modules' boot init (F93); stored Quiet Hours (F123, F128); the settings body's key reader (F462)
 #include "csi_tune_lab.h"             // the Tuning Lab's knobs and its POST (F123, F128)
 #include <csi_event.h>
 #include "csi_event_id_floor.h"   // when to write the id floor (common/csi, host-tested)
@@ -1157,9 +1157,11 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    *   "pet_mode":    true|false  → core.presence.pet_mode (bool)
    *   "preset":      "sensitive"|"balanced"|"quiet" → core.presence.preset (int 0..2)
    *   "sensitivity": 0..100      → core.presence.sensitivity (int)
-   * Hand-parse to keep ArduinoJson out of this TU. We search for the
-   * QUOTED key in every case so a body like {"not_pet_mode": true}
-   * doesn't accidentally match. Buffer sized for the full payload:
+   * Hand-parse to keep ArduinoJson out of this TU. Every key is found by
+   * json_object_member() (csi_settings_nvs.cpp, sweep F462): a member of
+   * the body's own object, never a strstr() of the quoted key, which read
+   * a value spelled like a key as the key ({"label":"privacy_ceiling",
+   * "x":"p2"} stored the ceiling P2). Buffer sized for the full payload:
    *   pet_mode + preset + sensitivity + quiet_hours{enabled, start, end}
    * is ~130 chars; 384 leaves room for the household time zone (F28:
    * "tz" up to 47 chars, "tz_iana" up to 47) on top. Read whole through
@@ -1199,18 +1201,20 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * (repo sweep F28); "tz":"" alone clears the zone (back to UTC). Handled
    * FIRST and all-or-nothing: an unknown zone or an invalid rule is refused
    * by name before any other key in the body is written, so a 400 never
-   * leaves half a settings change on disk. */
-  if (strstr(body, "\"tz\"") != nullptr || strstr(body, "\"tz_iana\"") != nullptr) {
-    char tz[tz_rule::MAX_POSIX_LEN + 1] = {0};
-    char tz_iana[tz_rule::MAX_IANA_LEN + 1] = {0};
-    const bool tz_key   = strstr(body, "\"tz\"") != nullptr;
-    const bool iana_key = strstr(body, "\"tz_iana\"") != nullptr;
-    if ((tz_key && !tz_rule::json_string_field(body, "\"tz\"", tz, sizeof(tz))) ||
-        (iana_key && !tz_rule::json_string_field(body, "\"tz_iana\"", tz_iana, sizeof(tz_iana)))) {
-      httpd_resp_set_status(req, "400 Bad Request");
-      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"bad time zone\"}", -1);
-      return ESP_OK;
-    }
+   * leaves half a settings change on disk. Each is a member of the body's
+   * own object, read from where its key stands (read_tz_from_settings(),
+   * sweep F462): {"note":"tz","pet_mode":true} names no zone, and answered
+   * 400 "bad time zone" when "tz" was found by strstr(). */
+  char tz[tz_rule::MAX_POSIX_LEN + 1] = {0};
+  char tz_iana[tz_rule::MAX_IANA_LEN + 1] = {0};
+  bool tz_key = false;
+  bool iana_key = false;
+  if (!read_tz_from_settings(body, tz, sizeof(tz), tz_iana, sizeof(tz_iana), &tz_key, &iana_key)) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"bad time zone\"}", -1);
+    return ESP_OK;
+  }
+  if (tz_key || iana_key) {
     const tz_rule::Resolve r = (tz_key && tz[0] == '\0' && tz_iana[0] == '\0')
                                    ? clear_tz()
                                    : store_tz(tz, tz_iana);
@@ -1257,19 +1261,17 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   const bool ceiling_changed = store_privacy_ceiling_from_settings(prefs, body);
   if (ceiling_changed) wrote_anything = true;
 
-  /* "filter_foreign": true|false → csi.ff (bool). Applied to the HAL below
-   * so the next frame sees it; no reboot. */
+  /* "filter_foreign": true|false → csi.ff (bool), the body's own member
+   * (json_object_member(), sweep F462). Applied to the HAL below so the
+   * next frame sees it; no reboot. */
   bool filter_changed = false;
-  if (const char* k = strstr(body, "\"filter_foreign\"")) {
-    if (const char* v = strchr(k, ':')) {
-      v++;
-      while (*v == ' ' || *v == '\t' || *v == '"') v++;
-      if (strncmp(v, "true", 4) == 0) {
-        prefs.putBool(NVS_KEY_FILTER_FOREIGN, true);  wrote_anything = true; filter_changed = true;
-      } else if (strncmp(v, "false", 5) == 0) {
-        prefs.putBool(NVS_KEY_FILTER_FOREIGN, false); wrote_anything = true; filter_changed = true;
-      }
-    }
+  JsonMember ff_member = {nullptr, nullptr, 0};
+  bool filter_on = true;
+  if (json_object_member(body, got, "filter_foreign", &ff_member) &&
+      json_member_bool(ff_member, &filter_on)) {
+    prefs.putBool(NVS_KEY_FILTER_FOREIGN, filter_on);
+    wrote_anything = true;
+    filter_changed = true;
   }
 
   prefs.end();

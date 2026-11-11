@@ -1,7 +1,8 @@
 /**
  * @file csi_settings_nvs.h
  * @brief The canary-wap's CSI settings in NVS: the modules' boot init
- *        (sweep F93) and the stored Quiet Hours (sweeps F123, F128).
+ *        (sweep F93), the stored Quiet Hours (sweeps F123, F128), and the
+ *        reader POST /api/settings finds its keys with (sweep F462).
  */
 
 #ifndef SECURACV_WAP_CSI_SETTINGS_NVS_H
@@ -11,6 +12,71 @@
 #include <stdint.h>
 
 class Preferences;
+
+/* ── Reading a POST /api/settings body (sweep F462) ───────────────────────
+ * The handler parses its small JSON body by hand (ArduinoJson is kept out
+ * of csi_integration.cpp). Each key used to be found with strstr() of the
+ * quoted key anywhere in the body, the value read after the next ':', so a
+ * value spelled like a key was read as the key:
+ * {"label":"privacy_ceiling","x":"p2"} stored the privacy ceiling P2,
+ * {"label":"pet_mode","x":true} turned pet mode on, and
+ * {"note":"preset","pet_mode":true,"preset":"quiet"} stored no preset. Every
+ * key the route reads is found here instead, where a JSON parser finds it.
+ * Pure: no NVS, no Arduino; test_wap_tune_lab.cpp runs it. */
+
+/** One member of a JSON object, as json_object_member() found it. */
+struct JsonMember {
+  const char* key;     /* the key's opening quote */
+  const char* value;   /* the value's first byte */
+  size_t value_len;    /* the value's bytes: a string with both quotes, an
+                          object or array to its closing bracket, a literal
+                          or number whole */
+};
+
+/** Deepest nesting json_object_member() reads; a deeper body is refused. */
+constexpr size_t kJsonMaxDepth = 16;
+
+/** Find the member `key` (spelled bare: "pet_mode") of the one JSON object
+ *  text[0, len) holds, whitespace around it and nothing else. Only the
+ *  object's own members count: a key spelled inside a string (escaped
+ *  quotes and all) or a member of an object or array nested in it is not
+ *  one. The whole text is read, never a byte past `len`, and it must be
+ *  JSON: strings closed, no raw control byte in one, each escape whole
+ *  (\" \\ \/ \b \f \n \r \t \uXXXX), brackets matched at most
+ *  kJsonMaxDepth deep, every value a string, an object, an array, true,
+ *  false, null or a number, commas and colons where they belong. False,
+ *  with *out untouched, when it is not, when no member has the key, and
+ *  when two do (parsers disagree on which one wins, so neither does). An
+ *  own member's key that holds an escape makes the text unreadable too:
+ *  none of the keys read here needs one, and the time zone's reader
+ *  (tz_rule::json_string_field()) takes its key as it is spelled. */
+bool json_object_member(const char* text, size_t len, const char* key, JsonMember* out);
+
+/** The member's value as a bool: true or false, or the same in quotes (a
+ *  value sent as a string reads as the bare one, as it always has). */
+bool json_member_bool(const JsonMember& m, bool* out);
+
+/** The member's value as an integer: a number with no fraction or
+ *  exponent, or the same digits in quotes, saturated at 999999999 either
+ *  side (every reader here clamps far inside that). */
+bool json_member_int(const JsonMember& m, int32_t* out);
+
+/** True when the member's value is the string `word`, exactly (a string
+ *  that holds an escape is none of the words read here). */
+bool json_member_is(const JsonMember& m, const char* word);
+
+/** The household time zone a POST /api/settings body names (sweep F28):
+ *  its "tz" (a POSIX rule) and "tz_iana" (a zone name), each a member of
+ *  the body's own object, found by json_object_member() and read by
+ *  tz_rule::json_string_field() from where that member's key stands, so a
+ *  value spelled "tz" is not the key. *tz_key / *iana_key say which of the
+ *  two the body has; each buffer holds its string, "" when absent. False
+ *  when one is there but its value is not a string json_string_field()
+ *  takes (not a string, an escape, longer than its buffer): the handler's
+ *  400 "bad time zone", before anything is stored. `body` is
+ *  NUL-terminated (http_body::read_all()'s) and read to its terminator. */
+bool read_tz_from_settings(const char* body, char* tz, size_t tz_cap, char* tz_iana,
+                           size_t iana_cap, bool* tz_key, bool* iana_key);
 
 /**
  * Run every registered module's init() once (csi_module_init_all), reading
@@ -54,14 +120,15 @@ QuietHours read_quiet_hours(Preferences& prefs);
  *  "end_min": M}, each field optional, minutes clamped to 0..1439, a value
  *  sent as a string read as the bare one. Only the object's own fields
  *  count, so a top-level "enabled" (or any other object's) is not read as
- *  Quiet Hours. Each field lands on the row read_quiet_hours() reads, through
- *  the shared key map. `prefs` is open read-write on the "csi" namespace;
- *  `body` is NUL-terminated, and is written to while the object is parsed
- *  and given back unchanged. Returns true when it stored any row (the caller
- *  then re-applies with apply_quiet_hours_from_nvs()). It lived in
+ *  Quiet Hours, and the object is the body's own "quiet_hours" member
+ *  (json_object_member(), sweep F462), not a key spelled in a value. Each
+ *  field lands on the row read_quiet_hours() reads, through the shared key
+ *  map. `prefs` is open read-write on the "csi" namespace; `body` is
+ *  NUL-terminated and only read. Returns true when it stored any row (the
+ *  caller then re-applies with apply_quiet_hours_from_nvs()). It lived in
  *  csi_integration.cpp's handle_settings_post(), which no host suite
  *  compiles, with the keys spelled by hand; test_wap_tune_lab.cpp runs it. */
-bool store_quiet_hours_from_settings(Preferences& prefs, char* body);
+bool store_quiet_hours_from_settings(Preferences& prefs, const char* body);
 
 /** Push the stored Quiet Hours into the chokepoint
  *  (csi_event_set_quiet_window, a pure state update the HTTP server task
@@ -103,9 +170,10 @@ PresenceSettings read_presence_settings(Preferences& prefs);
 /** Store a POST /api/settings body's "pet_mode" (true|false), "preset"
  *  ("sensitive"|"balanced"|"quiet", stored 0 / 1 / 2) and "sensitivity"
  *  (0..100, clamped; a value sent as a string read as the bare one), each
- *  key matched with its quotes. `prefs` is open read-write on the "csi"
- *  namespace. Returns true when it stored any row (the caller re-runs
- *  core.presence's init()). The parse is the handler's, moved unchanged. */
+ *  a member of the body's own object (json_object_member(), sweep F462).
+ *  `prefs` is open read-write on the "csi" namespace; `body` is
+ *  NUL-terminated. Returns true when it stored any row (the caller re-runs
+ *  core.presence's init()). */
 bool store_presence_from_settings(Preferences& prefs, const char* body);
 
 struct PresenceThresholds {
@@ -161,9 +229,11 @@ bool store_presence_thresholds(Preferences& prefs, const PresenceThresholds& thr
 /** The stored ceiling as stored (0 when absent: P0, privacy-first). */
 int32_t read_privacy_ceiling(Preferences& prefs);
 
-/** Store a POST /api/settings body's "privacy_ceiling" ("p0"|"p1"|"p2");
- *  anything else stores nothing. True when it stored the row (the caller
- *  then re-applies with apply_privacy_ceiling_from_nvs()). */
+/** Store a POST /api/settings body's "privacy_ceiling" ("p0"|"p1"|"p2"), a
+ *  member of the body's own object (json_object_member(), sweep F462);
+ *  anything else stores nothing. `body` is NUL-terminated. True when it
+ *  stored the row (the caller then re-applies with
+ *  apply_privacy_ceiling_from_nvs()). */
 bool store_privacy_ceiling_from_settings(Preferences& prefs, const char* body);
 
 /* ── The boot's first read of the namespace (sweep F150) ──────────────────

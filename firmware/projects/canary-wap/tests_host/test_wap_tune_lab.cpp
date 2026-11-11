@@ -56,6 +56,15 @@
 // and the answer is measured against its buffer from the source. The pins
 // fail on the code before F315 (the GET named no source).
 //
+// F462: POST /api/settings found each key with strstr() of the quoted key
+// anywhere in the body, so a value spelled like a key was read as the key
+// ({"label":"privacy_ceiling","x":"p2"} stored the ceiling P2). The stores
+// and the handler's own keys go through json_object_member()
+// (csi_settings_nvs.cpp), which reads a key only where a JSON parser does:
+// each key's cases, the reader's refusals and its length run here, pins
+// hold the handler and the stores to it, and the bodies fail on the code
+// before it.
+//
 // F300 (csi_integration.cpp's share): the events dismissal and the settings
 // POST parsed what one httpd_req_recv() returned, and the Lab's import
 // looped by hand and closed the socket unanswered at a timeout. Each reads
@@ -870,6 +879,366 @@ static int test_the_privacy_ceiling_is_one_row() {
   CHECK(csi_event_get_privacy_ceiling() == CSI_PRIVACY_P0);
   csi_event_set_privacy_ceiling(CSI_PRIVACY_P0);
   host_prefs().clear();
+  return 0;
+}
+
+// ── F462: POST /api/settings reads keys, not values spelled like keys ───
+//
+// Each key the route reads was found with strstr() of the quoted key
+// anywhere in the body and its value read after the next ':' (the stores
+// in csi_settings_nvs.cpp, and the handler's own "filter_foreign" and time
+// zone pair), so a value spelled like a key was read as the key:
+// {"label":"privacy_ceiling","x":"p2"} stored the privacy ceiling P2 though
+// the body has no such key, {"label":"pet_mode","x":true} turned pet mode
+// on, and {"note":"preset","pet_mode":true,"preset":"quiet"} stored no
+// preset (the value "preset" was taken for the key, and what came after it
+// is no preset's name); {"note":"tz","pet_mode":true} answered 400 "bad
+// time zone". Every key is found by json_object_member() now: a member of
+// the body's own object, where a JSON parser finds it, the whole text read
+// and never a byte past its length. Here: those bodies, each key's cases (a
+// value spelled like the key ahead of it, alone, the key inside another
+// object or an array, an escaped quote inside a value, whitespace before
+// the colon, a duplicate, a cut), the reader's refusals, and its length,
+// read with every byte after it holding the rest of a valid body. Against
+// the code before F462 the bodies fail (probed on c2741d9f's stores and
+// its handler's time zone read); the pins in pin_problems() and
+// settings_reader_problems() hold the handler and the stores to the reader.
+
+static bool ceiling_post(const char* json) {
+  Preferences prefs;
+  if (!prefs.begin("csi", /*readOnly=*/false)) return false;
+  const bool stored = store_privacy_ceiling_from_settings(prefs, json);
+  prefs.end();
+  return stored;
+}
+
+// "<namespace>/<key>" of a dotted key's NVS row.
+static std::string nvs_row(const char* full_key) {
+  const char* nvs = csi_module_settings_nvs::nvs_key_for(full_key);
+  return std::string(csi_module_settings_nvs::kNamespace) + "/" + (nvs ? nvs : "?");
+}
+
+// `s` as the inside of a JSON string: each quote and backslash escaped.
+static std::string json_escaped(const std::string& s) {
+  std::string out;
+  for (char c : s) {
+    if (c == '"' || c == '\\') out += '\\';
+    out += c;
+  }
+  return out;
+}
+
+// One key the route reads, and how a body's reading of it is seen: 1 when
+// the body stored (or, for the handler's own keys, read) `value`, -1 when
+// it stored and read nothing, 0 for anything else (a wrong value, or a
+// store that said it stored nothing but left a row).
+struct SettingsKey {
+  const char* key;
+  const char* value;          // as the body spells it
+  bool in_quiet_hours;        // a field of the "quiet_hours" object
+  int (*run)(const std::string& body);
+};
+
+static int run_pet_mode(const std::string& body) {
+  host_prefs().clear();
+  const bool stored = presence_post(body.c_str());
+  const std::string row = nvs_row("core.presence.pet_mode");
+  if (!stored) return host_prefs().flag.count(row) == 0 && host_prefs().i32.empty() ? -1 : 0;
+  return host_prefs().flag.count(row) == 1 && host_prefs().flag[row] ? 1 : 0;
+}
+static int run_preset(const std::string& body) {
+  host_prefs().clear();
+  const bool stored = presence_post(body.c_str());
+  const std::string row = nvs_row("core.presence.preset");
+  if (!stored) return host_prefs().i32.count(row) == 0 && host_prefs().flag.empty() ? -1 : 0;
+  return host_prefs().i32.count(row) == 1 && host_prefs().i32[row] == 2 ? 1 : 0;
+}
+static int run_sensitivity(const std::string& body) {
+  host_prefs().clear();
+  const bool stored = presence_post(body.c_str());
+  const std::string row = nvs_row("core.presence.sensitivity");
+  if (!stored) return host_prefs().i32.count(row) == 0 && host_prefs().flag.empty() ? -1 : 0;
+  return host_prefs().i32.count(row) == 1 && host_prefs().i32[row] == 75 ? 1 : 0;
+}
+static int run_privacy_ceiling(const std::string& body) {
+  host_prefs().clear();
+  const bool stored = ceiling_post(body.c_str());
+  const std::string row = nvs_row("core.privacy_ceiling");
+  if (!stored) return host_prefs().i32.count(row) == 0 ? -1 : 0;
+  return host_prefs().i32.count(row) == 1 && host_prefs().i32[row] == (int32_t)CSI_PRIVACY_P2 ? 1 : 0;
+}
+// Quiet Hours through the store the handler calls (dashboard_post() also
+// holds the body unchanged); each field's row is the one the reader reads.
+static int run_quiet_hours_row(const std::string& body, const char* full_key, int32_t want) {
+  host_prefs().clear();
+  const bool stored = dashboard_post(body.c_str());
+  const std::string row = nvs_row(full_key);
+  const size_t rows = host_prefs().i32.size() + host_prefs().flag.size();
+  if (!stored) return rows == 0 ? -1 : 0;
+  if (std::strcmp(full_key, "core.quiet_hours.enabled") == 0) {
+    return host_prefs().flag.count(row) == 1 && host_prefs().flag[row] == (want != 0) ? 1 : 0;
+  }
+  return host_prefs().i32.count(row) == 1 && host_prefs().i32[row] == want ? 1 : 0;
+}
+static int run_quiet_hours(const std::string& body) {
+  return run_quiet_hours_row(body, "core.quiet_hours.enabled", 1);
+}
+static int run_enabled(const std::string& body) {
+  return run_quiet_hours_row(body, "core.quiet_hours.enabled", 1);
+}
+static int run_start_min(const std::string& body) {
+  return run_quiet_hours_row(body, "core.quiet_hours.start_min", 600);
+}
+static int run_end_min(const std::string& body) {
+  return run_quiet_hours_row(body, "core.quiet_hours.end_min", 660);
+}
+// The handler's own read (pinned below): the member, as a bool.
+static int run_filter_foreign(const std::string& body) {
+  JsonMember m = {nullptr, nullptr, 0};
+  bool on = true;
+  if (!json_object_member(body.c_str(), body.size(), "filter_foreign", &m)) return -1;
+  return json_member_bool(m, &on) && !on ? 1 : 0;
+}
+static int run_tz_pair(const std::string& body, bool iana, const char* want) {
+  char tz[tz_rule::MAX_POSIX_LEN + 1];
+  char tz_iana[tz_rule::MAX_IANA_LEN + 1];
+  bool tz_key = true;
+  bool iana_key = true;
+  if (!read_tz_from_settings(body.c_str(), tz, sizeof(tz), tz_iana, sizeof(tz_iana), &tz_key, &iana_key)) {
+    return 0;                                   // the handler's 400 "bad time zone"
+  }
+  const bool has = iana ? iana_key : tz_key;
+  const bool other = iana ? tz_key : iana_key;
+  if (other) return 0;
+  if (!has) return tz[0] == '\0' && tz_iana[0] == '\0' ? -1 : 0;
+  return std::strcmp(iana ? tz_iana : tz, want) == 0 ? 1 : 0;
+}
+static int run_tz(const std::string& body) { return run_tz_pair(body, false, "EST5EDT"); }
+static int run_tz_iana(const std::string& body) { return run_tz_pair(body, true, "Europe/Berlin"); }
+
+static const SettingsKey kSettingsKeys[] = {
+  {"pet_mode", "true", false, run_pet_mode},
+  {"preset", "\"quiet\"", false, run_preset},
+  {"sensitivity", "75", false, run_sensitivity},
+  {"privacy_ceiling", "\"p2\"", false, run_privacy_ceiling},
+  {"quiet_hours", "{\"enabled\":true}", false, run_quiet_hours},
+  {"enabled", "true", true, run_enabled},
+  {"start_min", "600", true, run_start_min},
+  {"end_min", "660", true, run_end_min},
+  {"filter_foreign", "false", false, run_filter_foreign},
+  {"tz", "\"EST5EDT\"", false, run_tz},
+  {"tz_iana", "\"Europe/Berlin\"", false, run_tz_iana},
+};
+
+static int test_the_settings_post_reads_keys_not_values() {
+  reboot_and_boot();
+
+  // The three bodies the triage drove over c2741d9f's stores.
+  host_prefs().clear();
+  CHECK(presence_post("{\"note\":\"preset\",\"pet_mode\":true,\"preset\":\"quiet\"}"));
+  CHECK(host_prefs().i32.count(nvs_row("core.presence.preset")) == 1);
+  CHECK(host_prefs().i32[nvs_row("core.presence.preset")] == 2);       // the preset it names
+  CHECK(host_prefs().flag[nvs_row("core.presence.pet_mode")]);
+  host_prefs().clear();
+  CHECK(!ceiling_post("{\"label\":\"privacy_ceiling\",\"x\":\"p2\"}"));
+  CHECK(host_prefs().i32.count(nvs_row("core.privacy_ceiling")) == 0);   // no such key: P0 stays
+  host_prefs().clear();
+  CHECK(!presence_post("{\"label\":\"pet_mode\",\"x\":true}"));
+  CHECK(host_prefs().flag.empty() && host_prefs().i32.empty());
+  // And the time zone's: a value spelled "tz" is not the key, so the body
+  // is not refused as a bad zone (it was), and stores its pet mode.
+  {
+    char tz[tz_rule::MAX_POSIX_LEN + 1];
+    char tz_iana[tz_rule::MAX_IANA_LEN + 1];
+    bool tz_key = true;
+    bool iana_key = true;
+    CHECK(read_tz_from_settings("{\"note\":\"tz\",\"pet_mode\":true}", tz, sizeof(tz), tz_iana,
+                                sizeof(tz_iana), &tz_key, &iana_key));
+    CHECK(!tz_key && !iana_key && tz[0] == '\0' && tz_iana[0] == '\0');
+    CHECK(read_tz_from_settings("{\"label\":\"tz_iana\",\"tz\":\"\"}", tz, sizeof(tz), tz_iana,
+                                sizeof(tz_iana), &tz_key, &iana_key));
+    CHECK(tz_key && !iana_key && tz[0] == '\0');                         // "tz":"" alone: the clear
+    CHECK(!read_tz_from_settings("{\"tz\":5}", tz, sizeof(tz), tz_iana, sizeof(tz_iana), &tz_key, &iana_key));
+    CHECK(!read_tz_from_settings("{\"tz_iana\":\"Europe/\\\"Berlin\"}", tz, sizeof(tz), tz_iana,
+                                 sizeof(tz_iana), &tz_key, &iana_key));  // an escape: refused by name
+    const std::string long_rule(tz_rule::MAX_POSIX_LEN + 1, 'A');
+    CHECK(!read_tz_from_settings(("{\"tz\":\"" + long_rule + "\"}").c_str(), tz, sizeof(tz), tz_iana,
+                                 sizeof(tz_iana), &tz_key, &iana_key));  // past its buffer
+    CHECK(read_tz_from_settings("{\"tz\":\"UTC0\",\"tz_iana\":\"Europe/Berlin\"}", tz, sizeof(tz), tz_iana,
+                                sizeof(tz_iana), &tz_key, &iana_key));
+    CHECK(tz_key && iana_key && std::strcmp(tz, "UTC0") == 0 && std::strcmp(tz_iana, "Europe/Berlin") == 0);
+  }
+  host_prefs().clear();
+  CHECK(presence_post("{\"note\":\"tz\",\"pet_mode\":true}"));
+  CHECK(host_prefs().flag[nvs_row("core.presence.pet_mode")]);
+
+  // Every key, the same cases.
+  for (const SettingsKey& k : kSettingsKeys) {
+    const std::string K = k.key;
+    const std::string V = k.value;
+    const std::string q = "\"" + K + "\"";
+    struct Body { std::string object; int want; const char* what; };
+    const Body bodies[] = {
+      {"{" + q + ":" + V + "}", 1, "the key alone"},
+      {"{\"a\":" + q + "," + q + ":" + V + "}", 1, "a value spelled like the key ahead of it"},
+      {"{\"label\":" + q + ",\"x\":" + V + "}", -1, "a value spelled like the key, then another key's value"},
+      {"{\"a\":" + q + "}", -1, "a value spelled like the key, alone"},
+      {"{\"o\":{" + q + ":" + V + "}}", -1, "the key inside another object"},
+      {"{\"o\":[{" + q + ":" + V + "}]}", -1, "the key inside an array"},
+      {"{\"a\":\"" + json_escaped(q + ":" + V) + "\"}", -1, "the key and its value inside a string, quotes escaped"},
+      {"{\"a\":\"say \\\"" + K + "\\\"\"," + q + ":" + V + "}", 1, "an escaped quote inside a value ahead of it"},
+      {"{\"a\":\"\\\\\"," + q + ":" + V + "}", 1, "an escaped backslash ending a value ahead of it"},
+      {"{\"a\":\"\\\"," + q + ":" + V + "}", -1, "the key inside a value an escaped quote keeps open"},
+      {"{ " + q + " \n\t:\r\n " + V + " }", 1, "whitespace and a newline before the colon"},
+      {"{" + q + ":" + V + "," + q + ":" + V + "}", -1, "the key twice"},
+      {"{" + q + ":" + V, -1, "a body cut before the object closes"},
+      {"{" + q + ":" + V + ",\"a\":\"x", -1, "a body cut inside a string"},
+      {"{" + q + ":" + V + ",\"a\":\"\\", -1, "a body cut inside an escape"},
+      {"{" + q + ":" + V + "} x", -1, "something after the object"},
+    };
+    for (const Body& b : bodies) {
+      const std::string body = k.in_quiet_hours ? "{\"quiet_hours\":" + b.object + "}" : b.object;
+      const int got = k.run(body);
+      if (got != b.want) {
+        std::fprintf(stderr, "%s: %s (%s) read %d, not %d\n", k.key, b.what, body.c_str(), got, b.want);
+        CHECK(false);
+      }
+      // No body in which pet_mode, preset or privacy_ceiling is not a
+      // member of the body's own object stores any of the three.
+      const bool own_presence_key =
+          b.want == 1 && !k.in_quiet_hours && (K == "pet_mode" || K == "preset" || K == "privacy_ceiling");
+      if (!own_presence_key) {
+        host_prefs().clear();
+        (void)presence_post(body.c_str());
+        (void)ceiling_post(body.c_str());
+        CHECK(host_prefs().flag.count(nvs_row("core.presence.pet_mode")) == 0);
+        CHECK(host_prefs().i32.count(nvs_row("core.presence.preset")) == 0);
+        CHECK(host_prefs().i32.count(nvs_row("core.privacy_ceiling")) == 0);
+      }
+    }
+    // A Quiet Hours field read at the top level is not Quiet Hours.
+    if (k.in_quiet_hours) CHECK(k.run("{" + q + ":" + V + "}") == -1);
+  }
+  host_prefs().clear();
+  reboot_and_boot();                           // the chokepoint's Quiet Hours back to the default
+  return 0;
+}
+
+// json_object_member() over whole texts, cut texts and not-JSON.
+static bool member_of(const std::string& text, const char* key, std::string* value = nullptr) {
+  JsonMember m = {nullptr, nullptr, 0};
+  if (!json_object_member(text.data(), text.size(), key, &m)) return false;
+  if (m.key == nullptr || m.key < text.data() || m.value < m.key ||
+      m.value + m.value_len > text.data() + text.size() || *m.key != '"') {
+    return false;
+  }
+  if (value) *value = std::string(m.value, m.value_len);
+  return true;
+}
+
+static int test_the_settings_reader_reads_json() {
+  std::string v;
+  // What a member's value is: a string with its quotes, an object or an
+  // array to its bracket, a literal or a number whole.
+  CHECK(member_of("{\"a\":\"x\\\"y\",\"b\":{\"c\":[1,{}]},\"d\":-0.5e+3,\"e\":null}", "a", &v) && v == "\"x\\\"y\"");
+  CHECK(member_of("{\"a\":\"x\\\"y\",\"b\":{\"c\":[1,{}]},\"d\":-0.5e+3,\"e\":null}", "b", &v) && v == "{\"c\":[1,{}]}");
+  CHECK(member_of("{\"a\":\"x\\\"y\",\"b\":{\"c\":[1,{}]},\"d\":-0.5e+3,\"e\":null}", "d", &v) && v == "-0.5e+3");
+  CHECK(member_of("{\"a\":\"x\\\"y\",\"b\":{\"c\":[1,{}]},\"d\":-0.5e+3,\"e\":null}", "e", &v) && v == "null");
+  CHECK(!member_of("{\"a\":\"x\\\"y\",\"b\":{\"c\":[1,{}]}}", "c"));     // nested: not a member of the body
+  CHECK(member_of(" \r\n{\"a\":1}\n\t ", "a", &v) && v == "1");          // whitespace around the object
+  CHECK(!member_of("{}", "a") && !member_of("{\"a\":1}", "b") && !member_of("{\"a\":1}", "A"));
+  CHECK(!member_of("{\"ab\":1}", "a") && !member_of("{\"a\":1}", "ab"));  // the whole key, no prefix
+
+  // Not JSON: refused, whatever key is asked.
+  const char* const kNotJson[] = {
+    "", " ", "[]", "[{\"a\":1}]", "\"a\"", "{", "}", "{\"a\"}", "{\"a\":}", "{\"a\" 1}", "{a:1}",
+    "{\"a\":1,}", "{,\"a\":1}", "{\"a\":1 \"b\":2}", "{\"a\":1}}", "{\"a\":1}{}", "{\"a\":[1,]}",
+    "{\"a\":[1}", "{\"a\":{]}", "{\"a\":tru}", "{\"a\":truex}", "{\"a\":nul}", "{\"a\":01}",
+    "{\"a\":-}", "{\"a\":1.}", "{\"a\":.5}", "{\"a\":1e}", "{\"a\":+1}", "{\"a\":0x1}", "{\"a\":'x'}",
+    "{\"a\":\"\\x\"}", "{\"a\":\"\\u12\"}", "{\"a\":\"\\u12g4\"}", "{\"a\":\"tab\there\"}",
+    "{\"a\":\"line\nbreak\"}", "{\"k\\\"ey\":1,\"a\":1}", "{\"\\u0061\":1}",
+  };
+  for (const char* t : kNotJson) {
+    if (member_of(t, "a")) {
+      std::fprintf(stderr, "read a member of %s, which is not a JSON object\n", t);
+      CHECK(false);
+    }
+  }
+  // A NUL in the body is no JSON byte.
+  {
+    const char in_string[] = "{\"a\":1,\"b\":\"x\0y\"}";
+    const char after[] = "{\"a\":1}\0";
+    CHECK(!member_of(std::string(in_string, sizeof(in_string) - 1), "a"));
+    CHECK(!member_of(std::string(after, sizeof(after) - 1), "a"));
+    CHECK(member_of(std::string(after, sizeof(after) - 2), "a"));        // the same, the NUL left out
+  }
+  // Nesting to the reader's depth, and one past it.
+  {
+    std::string deep = "{\"a\":1,\"b\":";
+    for (size_t i = 1; i < kJsonMaxDepth; ++i) deep += "[";
+    for (size_t i = 1; i < kJsonMaxDepth; ++i) deep += "]";
+    deep += "}";
+    CHECK(member_of(deep, "a"));
+    std::string deeper = "{\"a\":1,\"b\":";
+    for (size_t i = 0; i < kJsonMaxDepth; ++i) deeper += "[";
+    for (size_t i = 0; i < kJsonMaxDepth; ++i) deeper += "]";
+    deeper += "}";
+    CHECK(!member_of(deeper, "a"));
+  }
+
+  // Never a byte past the length: every cut of a body, read with the rest
+  // of the body still in memory after the cut (a reader that ran on would
+  // find the key there), and again from a heap copy of exactly the cut's
+  // bytes (an AddressSanitizer build reports a read past it).
+  const std::string full =
+      "{\"note\":\"pet_mode \\\"x\\\" \\u00e9\",\"o\":{\"pet_mode\":false},\"l\":[1,-2.5e3,true,null],"
+      "\"pet_mode\":true,\"preset\":\"quiet\",\"privacy_ceiling\":\"p2\"}";
+  CHECK(member_of(full, "pet_mode", &v) && v == "true");
+  CHECK(member_of(full, "privacy_ceiling", &v) && v == "\"p2\"");
+  for (size_t cut = 0; cut < full.size(); ++cut) {
+    JsonMember m = {nullptr, nullptr, 0};
+    for (const char* key : {"pet_mode", "preset", "privacy_ceiling", "note"}) {
+      if (json_object_member(full.data(), cut, key, &m)) {
+        std::fprintf(stderr, "read %s from the first %zu bytes of %s\n", key, cut, full.c_str());
+        CHECK(false);
+      }
+      std::vector<char> exact(full.begin(), full.begin() + (long)cut);
+      if (json_object_member(exact.empty() ? "" : exact.data(), cut, key, &m)) {
+        std::fprintf(stderr, "read %s from a %zu-byte copy\n", key, cut);
+        CHECK(false);
+      }
+    }
+  }
+
+  // The value readers.
+  auto as = [](const char* text) {
+    JsonMember m = {nullptr, nullptr, 0};
+    (void)json_object_member(text, std::strlen(text), "v", &m);
+    return m;
+  };
+  bool b = false;
+  int32_t n = -1;
+  CHECK(json_member_bool(as("{\"v\":true}"), &b) && b);
+  CHECK(json_member_bool(as("{\"v\":\"false\"}"), &b) && !b);            // a string reads as the bare one
+  CHECK(!json_member_bool(as("{\"v\":1}"), &b) && !json_member_bool(as("{\"v\":\"TRUE\"}"), &b));
+  CHECK(!json_member_bool(as("{\"v\":null}"), &b) && !json_member_bool(as("{\"v\":{}}"), &b));
+  CHECK(json_member_int(as("{\"v\":75}"), &n) && n == 75);
+  CHECK(json_member_int(as("{\"v\":\"75\"}"), &n) && n == 75);
+  CHECK(json_member_int(as("{\"v\":-4}"), &n) && n == -4);
+  CHECK(json_member_int(as("{\"v\":\"-0\"}"), &n) && n == 0);
+  CHECK(json_member_int(as("{\"v\":99999999999999999999}"), &n) && n == 999999999);
+  CHECK(json_member_int(as("{\"v\":-99999999999999999999}"), &n) && n == -999999999);
+  CHECK(!json_member_int(as("{\"v\":75.5}"), &n) && !json_member_int(as("{\"v\":7e1}"), &n));
+  CHECK(!json_member_int(as("{\"v\":\"high\"}"), &n) && !json_member_int(as("{\"v\":\"7 5\"}"), &n));
+  CHECK(!json_member_int(as("{\"v\":\"\"}"), &n) && !json_member_int(as("{\"v\":\"-\"}"), &n));
+  CHECK(!json_member_int(as("{\"v\":true}"), &n) && !json_member_int(as("{\"v\":[75]}"), &n));
+  CHECK(json_member_is(as("{\"v\":\"quiet\"}"), "quiet"));
+  CHECK(!json_member_is(as("{\"v\":\"quietly\"}"), "quiet") && !json_member_is(as("{\"v\":\"qui\"}"), "quiet"));
+  CHECK(!json_member_is(as("{\"v\":\"qu\\u0069et\"}"), "quiet"));        // an escape is none of the words
+  CHECK(!json_member_is(as("{\"v\":true}"), "true"));                     // a word is a string
+  const JsonMember none = as("{\"w\":1}");
+  CHECK(none.value == nullptr && !json_member_bool(none, &b) && !json_member_int(none, &n) &&
+        !json_member_is(none, "x"));
   return 0;
 }
 
@@ -1743,6 +2112,144 @@ static int test_the_settings_answer_fits_its_buffer() {
   return 0;
 }
 
+// ── F462's pins: the settings POST and its stores find keys with the reader ──
+//
+// handle_settings_post() reads its own two keys (the time zone pair and
+// "filter_foreign") through json_object_member(), the time zone by
+// read_tz_from_settings() and refused before anything is stored, and calls
+// no strstr() (nor the strchr() / strncmp() it read a value with after one);
+// csi_settings_nvs.cpp calls none of them either, and hands
+// json_string_field() each member's own key, never the body. The stores
+// and the reader run above; these hold the handler's composition, which no
+// host suite compiles, and keep a key search from coming back beside the
+// reader. Each is checked against in-memory mutations of the two sources.
+
+static const char* const kKeySearches = R"(\b(strstr|strchr|strrchr|strncmp|strtol|sscanf|memmem)\s*\()";
+
+static std::vector<std::string> settings_reader_problems(const std::string& integ, const std::string& nvs) {
+  std::vector<std::string> out;
+  const std::string set = code_body(integ, kSettingsPost);
+  const std::string set_code = no_space(blank_comments_and_strings(raw_body(integ, kSettingsPost)));
+  if (set.empty() || std::regex_search(set_code, std::regex(kKeySearches))) {
+    out.push_back("POST /api/settings looks for a key in its body itself (strstr() and its kin)");
+  }
+  const size_t tz_at = set.find(
+      "chartz[tz_rule::MAX_POSIX_LEN+1]={0};chartz_iana[tz_rule::MAX_IANA_LEN+1]={0};"
+      "booltz_key=false;booliana_key=false;"
+      "if(!read_tz_from_settings(body,tz,sizeof(tz),tz_iana,sizeof(tz_iana),&tz_key,&iana_key)){"
+      "httpd_resp_set_status(req,\"400BadRequest\");"
+      "httpd_resp_send(req,\"{\\\"ok\\\":false,\\\"reason\\\":\\\"badtimezone\\\"}\",-1);returnESP_OK;}"
+      "if(tz_key||iana_key){");
+  const size_t open_at = set.find("Preferencesprefs;");
+  if (tz_at == std::string::npos || count_of(set, "read_tz_from_settings(") != 1 ||
+      set.find("json_string_field(") != std::string::npos || open_at == std::string::npos ||
+      !(tz_at < open_at)) {
+    out.push_back("POST /api/settings reads the time zone other than through read_tz_from_settings(), "
+                  "refused before anything is stored");
+  }
+  const size_t ff_at = set.find(
+      "JsonMemberff_member={nullptr,nullptr,0};boolfilter_on=true;"
+      "if(json_object_member(body,got,\"filter_foreign\",&ff_member)&&json_member_bool(ff_member,&filter_on)){"
+      "prefs.putBool(NVS_KEY_FILTER_FOREIGN,filter_on);wrote_anything=true;filter_changed=true;}");
+  if (ff_at == std::string::npos || count_of(set, "NVS_KEY_FILTER_FOREIGN") != 1 ||
+      count_of(set, "json_object_member(") != 1 || !(open_at < ff_at && ff_at < set.find("prefs.end();"))) {
+    out.push_back("POST /api/settings reads \"filter_foreign\" other than as the body's own member");
+  }
+  const std::string nvs_code = no_space(blank_comments_and_strings(nvs));
+  if (nvs.empty() || std::regex_search(nvs_code, std::regex(kKeySearches))) {
+    out.push_back("csi_settings_nvs.cpp looks for a key in a body itself (strstr() and its kin)");
+  }
+  if (count_of(nvs_code, "json_string_field(") != 2 || count_of(nvs_code, "json_string_field(zone.key,") != 1 ||
+      count_of(nvs_code, "json_string_field(iana.key,") != 1) {
+    out.push_back("read_tz_from_settings() hands json_string_field() something but the member's own key");
+  }
+  return out;
+}
+
+static int test_the_settings_post_finds_keys_with_the_reader() {
+  const std::string integ = read_source("csi_integration.cpp");
+  const std::string nvs = read_source("csi_settings_nvs.cpp");
+  CHECK(!integ.empty() && !nvs.empty());
+  const std::vector<std::string> problems = settings_reader_problems(integ, nvs);
+  for (const std::string& p : problems) std::fprintf(stderr, "pin: %s\n", p.c_str());
+  CHECK(problems.empty());
+  // A key search named in a comment or a message is not one.
+  {
+    std::string commented = nvs;
+    CHECK(mutate(commented, "bool json_member_bool(const JsonMember& m, bool* out) {",
+                 "/* not strstr(body, \"\\\"pet_mode\\\"\") */\n"
+                 "bool json_member_bool(const JsonMember& m, bool* out) {"));
+    CHECK(settings_reader_problems(integ, commented).empty());
+  }
+
+  struct Mutation { const char* name; const char* file; const char* from; const char* to; };
+  const Mutation kMutations[] = {
+    // The code before F462, piece by piece.
+    {"the time zone is found by strstr() again", "csi_integration.cpp",
+     "  bool tz_key = false;\n  bool iana_key = false;\n"
+     "  if (!read_tz_from_settings(body, tz, sizeof(tz), tz_iana, sizeof(tz_iana), &tz_key, &iana_key)) {",
+     "  const bool tz_key   = strstr(body, \"\\\"tz\\\"\") != nullptr;\n"
+     "  const bool iana_key = strstr(body, \"\\\"tz_iana\\\"\") != nullptr;\n"
+     "  if ((tz_key && !tz_rule::json_string_field(body, \"\\\"tz\\\"\", tz, sizeof(tz))) ||\n"
+     "      (iana_key && !tz_rule::json_string_field(body, \"\\\"tz_iana\\\"\", tz_iana, sizeof(tz_iana)))) {"},
+    {"filter_foreign is found by strstr() again", "csi_integration.cpp",
+     "  if (json_object_member(body, got, \"filter_foreign\", &ff_member) &&\n"
+     "      json_member_bool(ff_member, &filter_on)) {",
+     "  if (const char* k = strstr(body, \"\\\"filter_foreign\\\"\")) {\n"
+     "    filter_on = strncmp(strchr(k, ':') + 1, \"true\", 4) == 0;"},
+    {"the ceiling is found by strstr() again", "csi_settings_nvs.cpp",
+     "  if (!json_object_member(body, strlen(body), \"privacy_ceiling\", &m)) return false;",
+     "  const char* k = strstr(body, \"\\\"privacy_ceiling\\\"\");\n  if (k == nullptr) return false;"},
+    {"pet mode's value is read after a strchr()", "csi_settings_nvs.cpp",
+     "  if (json_object_member(body, len, \"pet_mode\", &m) && json_member_bool(m, &pet)) {",
+     "  if (json_object_member(body, len, \"pet_mode\", &m) && strchr(m.key, 't') != nullptr) {"},
+    {"a minute is read with strtol()", "csi_settings_nvs.cpp",
+     "    if (!json_object_member(qh.value, qh.value_len, field, &f) || !json_member_int(f, &n)) return;",
+     "    if (!json_object_member(qh.value, qh.value_len, field, &f)) return;\n"
+     "    n = (int32_t)strtol(f.value, nullptr, 10);"},
+    // The handler's composition.
+    {"a key search beside the reader", "csi_integration.cpp",
+     "  if (store_presence_from_settings(prefs, body)) wrote_anything = true;",
+     "  if (store_presence_from_settings(prefs, body)) wrote_anything = true;\n"
+     "  if (strstr(body, \"\\\"pet\\\"\") != nullptr) wrote_anything = true;"},
+    {"a bad time zone is not refused", "csi_integration.cpp",
+     "  if (!read_tz_from_settings(body, tz, sizeof(tz), tz_iana, sizeof(tz_iana), &tz_key, &iana_key)) {\n"
+     "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+     "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"bad time zone\\\"}\", -1);\n"
+     "    return ESP_OK;\n  }\n",
+     "  (void)read_tz_from_settings(body, tz, sizeof(tz), tz_iana, sizeof(tz_iana), &tz_key, &iana_key);\n"},
+    {"the time zone is read after NVS opens", "csi_integration.cpp",
+     "  if (store_presence_from_settings(prefs, body)) wrote_anything = true;",
+     "  if (store_presence_from_settings(prefs, body)) wrote_anything = true;\n"
+     "  (void)read_tz_from_settings(body, tz, sizeof(tz), tz_iana, sizeof(tz_iana), &tz_key, &iana_key);"},
+    {"filter_foreign is stored on whatever it read", "csi_integration.cpp",
+     "    prefs.putBool(NVS_KEY_FILTER_FOREIGN, filter_on);", "    prefs.putBool(NVS_KEY_FILTER_FOREIGN, true);"},
+    {"filter_foreign is read as a key of something else", "csi_integration.cpp",
+     "json_object_member(body, got, \"filter_foreign\", &ff_member)",
+     "json_object_member(body + 1, got - 1, \"filter_foreign\", &ff_member)"},
+    {"the time zone's string is read from the body's start", "csi_settings_nvs.cpp",
+     "tz_rule::json_string_field(zone.key, \"\\\"tz\\\"\", tz, tz_cap)",
+     "tz_rule::json_string_field(body, \"\\\"tz\\\"\", tz, tz_cap)"},
+    {"the zone name's string is read from the body's start", "csi_settings_nvs.cpp",
+     "tz_rule::json_string_field(iana.key, \"\\\"tz_iana\\\"\", tz_iana, iana_cap)",
+     "tz_rule::json_string_field(body, \"\\\"tz_iana\\\"\", tz_iana, iana_cap)"},
+  };
+  for (const Mutation& mu : kMutations) {
+    std::string a = integ;
+    std::string b = nvs;
+    std::string& src = std::strcmp(mu.file, "csi_integration.cpp") == 0 ? a : b;
+    if (!mutate(src, mu.from, mu.to)) {
+      std::fprintf(stderr, "mutation '%s' no longer applies: update it with the source\n", mu.name);
+      CHECK(false);
+    }
+    if (settings_reader_problems(a, b).empty()) {
+      std::fprintf(stderr, "mutation '%s' was not caught\n", mu.name);
+      CHECK(false);
+    }
+  }
+  return 0;
+}
+
 // ── F127: a Lab reset removes the row ───────────────────────────────────
 
 // The NVS row of a knob, "<namespace>/<key>".
@@ -2427,6 +2934,9 @@ int main(int argc, char** argv) {
      test_the_calibration_status_reports_the_thresholds_in_use},
     {"the_lab_reports_the_thresholds_in_use", test_the_lab_reports_the_thresholds_in_use},
     {"the_privacy_ceiling_is_one_row", test_the_privacy_ceiling_is_one_row},
+    {"the_settings_post_reads_keys_not_values", test_the_settings_post_reads_keys_not_values},
+    {"the_settings_reader_reads_json", test_the_settings_reader_reads_json},
+    {"the_settings_post_finds_keys_with_the_reader", test_the_settings_post_finds_keys_with_the_reader},
     {"no_sketch_source_spells_a_module_settings_key", test_no_sketch_source_spells_a_module_settings_key},
     {"csi_integration_is_thin_around_the_tested_code", test_csi_integration_is_thin_around_the_tested_code},
     {"csi_integration_reads_every_body_whole", test_csi_integration_reads_every_body_whole},
