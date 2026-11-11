@@ -1080,14 +1080,19 @@ bool sent_type(const Device& d, uint8_t type) {
 }
 
 const char kNotAdded[] = "opera: a member's key did not hash; not added";
+const char kRefusedAsRemoved[] = "opera: a key did not hash; refused as removed";
 
 void test_a_key_that_does_not_hash_is_not_added() {
   // add_peer: hash 0 is its deny-list check (is_revoked_pubkey), hash 1
   // its own fingerprint. Either one failing refuses the key, and the slot
-  // past the last member, the ESP-NOW list and NVS are as they were.
+  // past the last member, the ESP-NOW list and NVS are as they were. The
+  // deny-list's line is logged once per interval while its hash fails: the
+  // first failure logs it, the three after it (no hash between them
+  // worked, and no time passed) do not.
   fresh_opera();
   fresh_device(J);
   for (int hash = 0; hash <= 1; ++hash) {
+    bool first = true;
     for (const HashFail& f : kHashFails) {
       become(A);
       const uint8_t count = mn::g_peer_count;
@@ -1104,7 +1109,9 @@ void test_a_key_that_does_not_hash_is_not_added() {
       CHECK(memcmp(slots, mn::g_peers, sizeof slots) == 0);
       CHECK(A.espnow.peers == espnow_peers && !A.espnow.has(J.mac));
       CHECK(A.nvs == nvs);
-      CHECK(logged(kNotAdded) == (hash == 1 ? 1u : 0u));  // the deny-list check is silent
+      CHECK(logged(kNotAdded) == (hash == 1 ? 1u : 0u));
+      CHECK(logged(kRefusedAsRemoved) == (hash == 0 && first ? 1u : 0u));
+      first = false;
     }
   }
   become(A);
@@ -1193,6 +1200,153 @@ void test_a_device_whose_own_key_does_not_hash_starts_no_mesh() {
   CHECK(memcmp(self, want, sizeof self) == 0);
   CHECK(logged(kNotStarted) == 0);
   std::printf("PASS a_device_whose_own_key_does_not_hash_starts_no_mesh\n");
+}
+
+// The owner's command, as a REST handler hands it over: submit() waits, and
+// its first sleep is the loop task's update() pass, which drains it.
+bool owner_command(Device& d, const mn::Command& cmd) {
+  become(d);
+  bool turned = false;
+  host_sim::on_task_delay = [&turned](uint32_t ms) {
+    host_sim::now_ms += ms;
+    if (turned) return;
+    turned = true;
+    host_sim::on_httpd_task = false;              // the loop task's turn
+    mn::update();
+    host_sim::on_httpd_task = true;
+  };
+  host_sim::on_httpd_task = true;
+  bool ok = false;
+  const loop_command_ring::Wait w = mn::submit(cmd, &ok);
+  host_sim::on_httpd_task = false;
+  host_sim::on_task_delay = nullptr;
+  CHECK(w == loop_command_ring::Wait::kDone);
+  return ok;
+}
+
+mn::Command command_of(mn::CommandType type, bool flag = false, const char* name = "") {
+  mn::Command c = mn::make_command(type);
+  c.flag = flag;
+  strncpy(c.name, name, mn::MAX_OPERA_NAME_LEN);
+  return c;
+}
+
+// The sketch in safe mode: setup() never calls mesh_network::init(), so
+// nothing reads the store, and loop() still runs update() and the 5-minute
+// save (canary_wap.ino). RAM gone, flash and identity kept, as boot() has it.
+void boot_in_safe_mode(Device& d) {
+  if (g_cur != nullptr && g_cur != &d) save(*g_cur);
+  Device fresh;
+  fresh.name = d.name;
+  memcpy(fresh.priv, d.priv, sizeof fresh.priv);
+  memcpy(fresh.pub, d.pub, sizeof fresh.pub);
+  memcpy(fresh.mac, d.mac, sizeof fresh.mac);
+  fresh.nvs = d.nvs;
+  d = fresh;
+  load(d);
+  g_cur = &d;
+}
+
+const char kCommandRefused[] = "mesh: not started this boot; the owner's command changed nothing";
+
+void test_a_boot_that_did_not_read_the_store_writes_none() {
+  // F364's review. A boot whose init() was refused (this device's key does
+  // not hash), and one in safe mode (no init() at all), read nothing of the
+  // store: RAM holds no opera and no member. The sketch's 5-minute save and
+  // the owner's commands still ran, and wrote from that: the save removed
+  // the last-seen record, so the next boot took B's earlier frames as
+  // fresh, and an enable, rename or leave removed the stored opera (a
+  // pair/start founded a new one over it). Now nothing is written, every
+  // command but clearing the alerts answers false and changes nothing, and
+  // the next boot that reads the store finds it whole.
+  for (int safe_mode = 0; safe_mode < 2; ++safe_mode) {
+    fresh_opera();
+    deliver(A, B.mac, b_heartbeat_to(A));
+    deliver(A, B.mac, b_heartbeat_to(A));
+    const Frame heard = b_heartbeat_to(A);
+    deliver(A, B.mac, heard);
+    become(A);
+    const uint64_t rx = entry(A, B)->msg_counter_rx;
+    CHECK(rx == counter_of(heard));
+    CHECK(mn::save_replay_counters());            // the sketch's 5-minute save
+    const host_sim::NvsStore nvs = A.nvs;
+    CHECK(nvs.count("mesh/replay_ctrs") == 1 && nvs.count("mesh/opera_sec") == 1);
+
+    g_health.clear();
+    if (safe_mode) {
+      boot_in_safe_mode(A);
+    } else {
+      stub_sha256::arm(Step::Starts, 0, 0, Out::Digest);   // A's own key, at init
+      boot(A);
+      stub_sha256::disarm();
+    }
+    become(A);
+    const mn::MeshState state = mn::g_mesh_state;
+    CHECK(state == (safe_mode ? mn::MESH_DISABLED : mn::MESH_ERROR));
+    const mn::OperaConfig cfg = mn::g_opera_config;
+    CHECK(!cfg.configured && mn::g_peer_count == 0);
+
+    // The sketch's loop(), whatever init() answered: update(), and the
+    // 5-minute save, which saves nothing.
+    host_sim::now_ms += 300001;
+    mn::update();
+    CHECK(!mn::save_replay_counters());
+    CHECK(!mn::save_replay_counters_before_reboot());
+    CHECK(A.nvs == nvs);
+
+    // Every owner command that writes the store, or starts what will, is
+    // refused with nothing changed; the view keeps the state init() left.
+    mn::Command remove_b = command_of(mn::MESH_CMD_REMOVE_PEER);
+    CHECK(mn::compute_fingerprint(B.pub, remove_b.fingerprint));
+    const mn::Command refused[] = {
+        command_of(mn::MESH_CMD_SET_ENABLED, true),
+        command_of(mn::MESH_CMD_SET_ENABLED, false),
+        command_of(mn::MESH_CMD_RENAME, false, "renamed"),
+        command_of(mn::MESH_CMD_PAIR_START, true, "founded"),
+        command_of(mn::MESH_CMD_PAIR_START),
+        command_of(mn::MESH_CMD_PAIR_JOIN),
+        command_of(mn::MESH_CMD_PAIR_CONFIRM),
+        command_of(mn::MESH_CMD_PAIR_CANCEL),
+        command_of(mn::MESH_CMD_LEAVE),
+        remove_b,
+        command_of(mn::MESH_CMD_SAVE_REPLAY),
+    };
+    size_t n = 0;
+    for (const mn::Command& cmd : refused) {
+      CHECK(!owner_command(A, cmd));
+      ++n;
+      become(A);
+      CHECK(A.nvs == nvs);
+      CHECK(mn::g_mesh_state == state);
+      CHECK(memcmp(&mn::g_opera_config, &cfg, sizeof cfg) == 0);
+      CHECK(mn::g_peer_count == 0 && mn::g_pairing.role == mn::PAIR_ROLE_NONE);
+      CHECK(logged(kCommandRefused) == n);
+      mn::StatusView v;
+      mn::read_status(&v);
+      CHECK(v.status.state == state && !v.has_opera);
+    }
+    CHECK(owner_command(A, command_of(mn::MESH_CMD_CLEAR_ALERTS)));   // touches no store
+    CHECK(logged(kCommandRefused) == n);
+    become(A);
+    CHECK(A.nvs == nvs);
+    CHECK(A.espnow.sent.empty());
+
+    // The next boot that reads the store finds it whole: the opera, both
+    // members, and the last-seen record, so B's frame replayed is dropped.
+    g_health.clear();
+    boot(A);
+    CHECK(mn::g_initialized && mn::g_opera_config.configured && mn::g_peer_count == 2);
+    CHECK(strcmp(mn::g_opera_config.opera_name, "test") == 0);
+    CHECK(entry(A, B)->msg_counter_rx == rx);
+    const uint32_t received = mn::g_messages_received;
+    deliver(A, B.mac, heard);
+    become(A);
+    CHECK(entry(A, B)->msg_counter_rx == rx && mn::g_messages_received == received);
+    // And the owner's commands run again.
+    CHECK(owner_command(A, command_of(mn::MESH_CMD_SET_ENABLED, true)));
+    CHECK(logged(kCommandRefused) == 0);
+  }
+  std::printf("PASS a_boot_that_did_not_read_the_store_writes_none\n");
 }
 
 // A and B hold one session key (nothing opens one on canary-wap, F95: the
@@ -1331,6 +1485,68 @@ void test_a_rotation_whose_opera_id_does_not_hash_does_not_start() {
   std::printf("PASS a_rotation_whose_opera_id_does_not_hash_does_not_start\n");
 }
 
+// The last frame of `type` `from` sent to `to_mac`, or none.
+Frame last_of_type(const Device& from, const uint8_t to_mac[6], uint8_t type) {
+  Frame out;
+  for (const Frame& f : sent_to(from, to_mac)) {
+    if (f.size() >= 2 && f[1] == type) out = f;
+  }
+  return out;
+}
+
+void test_a_refused_rotation_leaves_the_one_in_flight_whole() {
+  // F364's review. A rotation in flight names its members by index (bit j
+  // of g_rekey.pending_acks is g_peers[j]). A removal that started one
+  // rebuilt the bits over the shifted table, so a removal whose own
+  // rotation is refused (its id does not hash: hash 0) must move them with
+  // the shift. Here A holds B@0 and C@1, both with a session; removing J
+  // starts R1 to both. Removing B shifts C to 0: C's bit goes with it, so
+  // C's ACK completes R1 at once, not at the timeout, and no member is
+  // marked stale for another's ACK. (Before, the bits stayed where they
+  // were: C's ACK cleared bit 0, B's, and bit 1 named no member.)
+  for (const HashFail& f : kHashFails) {
+    fresh_opera();
+    share_a_session(A, B);
+    share_a_session(A, C);
+    become(A);
+    CHECK(mn::add_peer(J.pub, J.mac, "J"));
+    uint8_t fp[mn::FINGERPRINT_SIZE];
+    CHECK(mn::compute_fingerprint(J.pub, fp));
+    A.espnow.sent.clear();
+    CHECK(mn::remove_peer(fp));                   // R1, to B and C
+    CHECK(mn::g_rekey.active && mn::g_rekey.pending_acks == 0x3);
+    const Frame r1_to_c = last_of_type(A, C.mac, mn::MSG_OPERA_REKEY);
+    CHECK(!r1_to_c.empty());
+    become(A);
+    const mn::RekeyState r1 = mn::g_rekey;
+    CHECK(mn::compute_fingerprint(B.pub, fp));
+    g_health.clear();
+    stub_sha256::arm(f.step, 0, f.update, Out::Digest);
+    CHECK(mn::remove_peer(fp));                   // B's removal; its rotation refused
+    CHECK(stub_sha256::fired && stub_sha256::live == 0);
+    stub_sha256::disarm();
+    CHECK(logged(kRekeyNotStarted) == 1);
+    become(A);
+    CHECK(mn::g_peer_count == 1 && entry(A, C) == &mn::g_peers[0]);
+    CHECK(mn::g_rekey.active && mn::g_rekey.rekey_id == r1.rekey_id);
+    CHECK(memcmp(mn::g_rekey.pending_opera_id, r1.pending_opera_id, mn::OPERA_ID_SIZE) == 0);
+    CHECK(mn::g_rekey.pending_acks == 0x1);       // C's bit, at C's index
+    // C takes R1 and ACKs it; A commits on that ACK.
+    C.espnow.sent.clear();
+    deliver(C, A.mac, r1_to_c);
+    const Frame ack = last_of_type(C, A.mac, mn::MSG_OPERA_REKEY_ACK);
+    CHECK(!ack.empty());
+    deliver(A, C.mac, ack);
+    become(A);
+    CHECK(!mn::g_rekey.active);
+    CHECK(memcmp(mn::g_opera_config.opera_id, r1.pending_opera_id, mn::OPERA_ID_SIZE) == 0);
+    CHECK(entry(A, C)->state == mn::PEER_AUTHENTICATING);   // ACKed: not stale
+    become(C);
+    CHECK(memcmp(mn::g_opera_config.opera_id, r1.pending_opera_id, mn::OPERA_ID_SIZE) == 0);
+  }
+  std::printf("PASS a_refused_rotation_leaves_the_one_in_flight_whole\n");
+}
+
 const char kNotCreated[] = "opera: not created: its opera id did not hash";
 
 void test_an_opera_whose_id_does_not_hash_is_not_created() {
@@ -1417,6 +1633,7 @@ void test_a_join_whose_opera_id_or_partner_does_not_hash_fails() {
       CHECK(mn::g_mesh_state == mn::MESH_NO_OPERA);
       CHECK(mn::g_pairing.role == mn::PAIR_ROLE_NONE);
       CHECK(logged(kJoinRefused) == (hash == 0 ? 1u : 0u));
+      CHECK(logged(kRefusedAsRemoved) == (hash == 1 ? 1u : 0u));   // J booted fresh each time
       CHECK(logged(kNotAdded) == (hash == 2 ? 1u : 0u));
     }
   }
@@ -1440,19 +1657,40 @@ void test_a_key_that_does_not_hash_counts_as_removed() {
   // is_revoked_pubkey() fails closed: a key it cannot hash counts as
   // removed, where its zeroed fingerprint was on no list and counted as
   // not removed. So a DISCOVER from it gets no OFFER, and an OFFER from it
-  // no ACCEPT (hash 0 at each: pair frames carry no signature).
+  // no ACCEPT (hash 0 at each: pair frames carry no signature). Each says
+  // why in the health log, once per interval while the failures last (the
+  // partner's DISCOVER repeats every 2 s), and again at the next failure
+  // after a hash that worked.
   fresh_opera();
   fresh_device(J);
   become(A);
+  g_health.clear();
   for (const HashFail& f : kHashFails) {
     stub_sha256::arm(f.step, 0, f.update, Out::Digest);
     CHECK(mn::is_revoked_pubkey(J.pub));
     CHECK(stub_sha256::fired && stub_sha256::live == 0);
     stub_sha256::disarm();
   }
+  CHECK(logged(kRefusedAsRemoved) == 1);
+  host_sim::now_ms += mn::KEY_HASH_WARN_INTERVAL_MS - 1;
+  stub_sha256::arm(Step::Starts, 0, 0, Out::Digest);
+  CHECK(mn::is_revoked_pubkey(J.pub));
+  stub_sha256::disarm();
+  CHECK(logged(kRefusedAsRemoved) == 1);          // inside the interval
+  host_sim::now_ms += 1;
+  stub_sha256::arm(Step::Starts, 0, 0, Out::Digest);
+  CHECK(mn::is_revoked_pubkey(J.pub));
+  stub_sha256::disarm();
+  CHECK(logged(kRefusedAsRemoved) == 2);          // the interval since the first line
   CHECK(!mn::is_revoked_pubkey(J.pub));
   CHECK(!mn::is_revoked_pubkey(B.pub));
+  stub_sha256::arm(Step::Starts, 0, 0, Out::Digest);
+  CHECK(mn::is_revoked_pubkey(J.pub));
+  stub_sha256::disarm();
+  CHECK(logged(kRefusedAsRemoved) == 3);          // a new run of failures
+  CHECK(!mn::is_revoked_pubkey(J.pub));
   // The DISCOVER, at A.
+  g_health.clear();
   become(A);
   CHECK(mn::start_pairing_initiator(nullptr));
   become(J);
@@ -1471,11 +1709,13 @@ void test_a_key_that_does_not_hash_counts_as_removed() {
     become(A);
     CHECK(mn::g_mesh_state == mn::MESH_PAIRING_INIT);
   }
+  CHECK(logged(kRefusedAsRemoved) == 1);
   A.espnow.sent.clear();
   deliver(A, J.mac, disc);
   const auto offer = sent_to(A, J.mac);
   CHECK(offer.size() == 1);
   // The OFFER, at J.
+  g_health.clear();
   for (const HashFail& f : kHashFails) {
     J.espnow.sent.clear();
     stub_sha256::arm(f.step, 0, f.update, Out::Digest);
@@ -1486,6 +1726,7 @@ void test_a_key_that_does_not_hash_counts_as_removed() {
     become(J);
     CHECK(mn::g_mesh_state == mn::MESH_PAIRING_JOIN && all_zero(mn::g_pairing.peer_pubkey, 32));
   }
+  CHECK(logged(kRefusedAsRemoved) == 1);
   J.espnow.sent.clear();
   deliver(J, A.mac, offer.back());
   CHECK(sent_to(J, A.mac).size() == 1);           // the ACCEPT
@@ -1532,9 +1773,13 @@ int main() {
   test_a_device_whose_own_key_does_not_hash_starts_no_mesh();
   test_a_rekey_whose_opera_id_does_not_hash_is_refused_before_its_ack();
   test_a_rotation_whose_opera_id_does_not_hash_does_not_start();
+  test_a_refused_rotation_leaves_the_one_in_flight_whole();
   test_an_opera_whose_id_does_not_hash_is_not_created();
   test_a_join_whose_opera_id_or_partner_does_not_hash_fails();
   test_a_key_that_does_not_hash_counts_as_removed();
+  // Last: it moves the clock past the 5-minute save, and the cases above
+  // assume no heartbeat falls due inside one deliver().
+  test_a_boot_that_did_not_read_the_store_writes_none();
   std::printf("ALL %d mesh address checks PASSED\n", g_checks);
   return 0;
 }

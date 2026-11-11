@@ -6971,6 +6971,11 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
   if (w != loop_command_ring::Wait::kDone) {
     return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
   }
+  // Refused, with nothing changed, when the mesh did not read its store
+  // this boot (a refused init, safe mode; the health log says so). It was
+  // answered ok whatever ran, and in that state the enable removed the
+  // stored opera (sweep F364's review).
+  if (!ok) return http_send_error(req, 400, "enable_failed");
   log_health(SCV_LOG_INFO, SCV_CAT_MESH, enabled ? "Mesh enabled" : "Mesh disabled", nullptr);
 
   return http_send_json(req, "{\"ok\":true}");

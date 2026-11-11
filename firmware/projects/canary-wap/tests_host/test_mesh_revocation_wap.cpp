@@ -20,8 +20,10 @@
 //   6. is_revoked_pubkey() fails closed on a key it cannot hash (sweep F364),
 //      and every call of compute_fingerprint() and compute_opera_id() in the
 //      file refuses on a false answer: the pin stands in for [[nodiscard]],
-//      which the helpers cannot carry while a host suite discards one answer
-//      (test_mesh_address_wap runs each caller's refusal).
+//      which the helpers cannot carry while test_opera_name_wap.cpp's
+//      opera-setup helper discards compute_opera_id()'s answer (every other
+//      host suite checks each one; test_mesh_address_wap runs each caller's
+//      refusal).
 // And, on the staged copy: a removal is refused for exactly
 // REVOCATION_GRACE_MS (7 days).
 
@@ -105,11 +107,18 @@ void test_mesh_network_uses_the_list() {
   CHECK(count(load, "if(!flash_encryption_enabled())return;") == 1);
   CHECK(count(load, "mesh_revocation::decode(g_revoked,blob,got,millis())") == 1);
 
+  // A key that does not hash: true (removed) before the list is read, with
+  // the ALERT line that says why (F364's review).
   const std::string isr = squeeze(function_body(code, "is_revoked_pubkey"));
-  const std::string closed = "if(!compute_fingerprint(pubkey,fp))returntrue;";
-  CHECK(count(isr, closed) == 1);
-  CHECK(count(isr, "returnmesh_revocation::contains(g_revoked,fp,millis());") == 1);
-  CHECK(isr.find(closed) < isr.find("mesh_revocation::contains("));
+  const std::string refused = "if(!compute_fingerprint(pubkey,fp)){";
+  const std::string lookup = "returnmesh_revocation::contains(g_revoked,fp,millis());";
+  CHECK(count(isr, refused) == 1);
+  CHECK(count(isr, lookup) == 1);
+  CHECK(isr.find(refused) < isr.find(lookup));
+  const std::string branch = isr.substr(isr.find(refused), isr.find(lookup) - isr.find(refused));
+  CHECK(count(branch, "returntrue;") == 1);
+  CHECK(count(branch, "return") == 1);
+  CHECK(count(branch, "health_log(SCV_LOG_ALERT,SCV_CAT_CRYPTO,") == 1);
   std::printf("PASS mesh_network_uses_the_list\n");
 }
 

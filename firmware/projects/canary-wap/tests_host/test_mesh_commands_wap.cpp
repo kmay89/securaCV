@@ -103,7 +103,7 @@ void fresh_opera(const std::vector<Device*>& all) {
   for (Device* d : all) {
     boot(*d);
     memcpy(mn::g_opera_config.opera_secret, secret, sizeof secret);
-    mn::compute_opera_id(secret, mn::g_opera_config.opera_id);
+    CHECK(mn::compute_opera_id(secret, mn::g_opera_config.opera_id));
     mn::g_opera_config.configured = true;
     mn::g_opera_config.enabled = true;
     strcpy(mn::g_opera_config.opera_name, "test");
@@ -178,7 +178,7 @@ mn::Command cmd_of(mn::CommandType t) { return mn::make_command(t); }
 
 mn::Command remove_of(const Device& member) {
   mn::Command c = mn::make_command(mn::MESH_CMD_REMOVE_PEER);
-  mn::compute_fingerprint(member.pub, c.fingerprint);
+  CHECK(mn::compute_fingerprint(member.pub, c.fingerprint));
   return c;
 }
 
@@ -201,7 +201,7 @@ std::string nvs_opera_name(Device& d) {
 bool revoked(Device& self, const Device& other) {
   become(self);
   uint8_t fp[mn::FINGERPRINT_SIZE];
-  mn::compute_fingerprint(other.pub, fp);
+  CHECK(mn::compute_fingerprint(other.pub, fp));
   return mesh_revocation::contains(mn::g_revoked, fp, host_sim::now_ms);
 }
 
@@ -622,7 +622,7 @@ void test_a_status_read_is_the_last_published_pass() {
   CHECK(v.peer_count == 2);
   CHECK(name_at(v, 0) == "B" && name_at(v, 1) == "C");
   uint8_t fp_b[mn::FINGERPRINT_SIZE];
-  mn::compute_fingerprint(B.pub, fp_b);
+  CHECK(mn::compute_fingerprint(B.pub, fp_b));
   CHECK(memcmp(v.peers[0].fingerprint, fp_b, sizeof fp_b) == 0);
   become(A);
   CHECK(mn::remove_peer(fp_b));                 // the loop task, mid-pass
