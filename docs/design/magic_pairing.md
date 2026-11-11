@@ -439,8 +439,9 @@ The link is a **connection generation**: the server callbacks bump it on
 every connect (32 bits, never 0, never reset inside a boot, so it cannot
 come round to an earlier link's), and each write callback stamps the write
 with the generation of the link it arrived on, on the NimBLE host task,
-where the connect edges land too (a handle that is not the connected link's
-is stamped 0, which nothing takes). The accepted `WIFI_SETTINGS` binds the
+where the connect edges land too (a write on a handle that is not the
+connected link's is stamped 0, and no HUB write stamped 0 is taken). The
+accepted `WIFI_SETTINGS` binds the
 join to its stamp (`Session::join_link`; a refused one, a second client's
 mid-join included, binds nothing), and `hub_gate()` in `improv_core.h`
 (host-tested in `test_improv_core.cpp`) refuses a HUB write stamped with
