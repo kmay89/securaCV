@@ -56,7 +56,18 @@
  * so the new broker is not sent stale history (the planner's rule, and the
  * canary's).
  *
- * The watermark is the highest event id handed to the broker. Across a
+ * The watermark is the highest event id handed to the MQTT layer, which is
+ * not the broker's receipt. Every row goes out at QoS 0
+ * (csi_mqtt::publish_raw), so EventSend::kSent means the row's bytes are in
+ * the TCP send buffer, never that the broker acknowledged them;
+ * csi_event_egress.cpp's to_sent() counts it sent (Sent::kYes), and the
+ * planner moves the watermark past it. When the link then stalls, the
+ * publish that next finds that buffer full waits out
+ * csi_mqtt::kNetworkTimeoutMs and aborts the connection: rows still in the
+ * buffer are lost, already past the watermark, and the backfill does not
+ * send them again (a row the card keeps is still in its SD log). Whether
+ * the watermark should wait for an acknowledgment from the broker is open
+ * (sweep F147; docs/FAULT_MODEL.md section 2.3). Across a
  * reboot it comes back from a CEILING in NVS (csi_mqtt::NVS_KEY_DELIVERED,
  * F47), written before an id is handed over and capped at the id
  * allocator's persisted floor (csi_event_backfill::ceiling_for); begin()

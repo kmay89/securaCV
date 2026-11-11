@@ -28,7 +28,7 @@ where that design is written down.
 | Host clock step (forward or back) | yes | §2.4 | the chain is not ordered by the wall clock; a step is sealed as `ClockSkew`; retention is bounded against both directions |
 | Device clock absent | yes | §2.4 | device buckets are uptime-based and say so; wall time comes from GPS (WAP, flagship) or SNTP (display, Sense, Vision, Sentinel); the records of the headless boards stay uptime-stamped |
 | Message loss, duplication, reordering (MQTT) | yes | §2.3 | at-most-once from a device; duplicates and losses are bounded and described, not prevented |
-| Broker outage, network partition | yes | §2.3 | devices keep sealing locally; the hub keeps sealing its own sources; nothing replays across a partition except the PlatformIO tree's bounded RAM queue and, when that product owns a card, its SD event backfill |
+| Broker outage, network partition | yes | §2.3 | devices keep sealing locally; the hub keeps sealing its own sources; nothing replays across a partition except the PlatformIO tree's bounded RAM queue and, on that product and on the canary-wap when each owns a card, the SD event backfill, which does not resend a row a QoS 0 publish lost |
 | Sensor silent, corrupt, stuck | yes | §2.7 | silent and corrupt are detected and reported; stuck is not |
 | Storage exhaustion (disk, NVS, card) | yes | §2.8 | detected and sealed on the hub; counted and retried on a Canary |
 | A device that lies (Byzantine) | **no**, beyond signatures | [`spec/threat_model.md`](../spec/threat_model.md), [`device_trust.md`](device_trust.md) | a signature proves *who* asserted a claim, never that it is true; there is no cross-device consensus |
@@ -163,21 +163,53 @@ or a duplicate, and it is lost on reboot. **With a card, the same tree
 recovers further:** its CSI event log's backfill (`csi_event_backfill.h`,
 driven by `csi_event_egress_pump()`; host-tested against a model of Home
 Assistant's replay gate) replays committed rows from `/EVENTS/today.ndjson`
-once the RAM queue has drained, across a reboot, never below the id
-watermark Home Assistant last verified (a ceiling persisted in NVS before
-an id is handed over, so a reboot never republishes one and skips at most a
-stride of undelivered ones), in id order so a newer row never overtakes an
+once the RAM queue has drained, across a reboot, never at or below the
+highest id already handed to the broker, the watermark (Home Assistant's
+replay gate refuses an id below the last one it verified; the watermark is
+a ceiling persisted in NVS before an id is handed over, so a reboot never
+republishes one and skips at most a stride of undelivered ones), in id
+order so a newer row never overtakes an
 older one (a row committed while the card is briefly out, or whose append
 failed, waits in RAM behind the card's rows, for at most 45 s while the
 card is out; sweeps F103, F104), and never for tamper alerts, which go at
 commit whatever the backlog. An outage longer than the RAM queue is therefore recovered from
 the card on that product; what it can still lose is a row that never
-reached the card, a row the ceiling skipped, and a row waiting in RAM when
-the device reboots or its broker changes. That last includes every row
+reached the card, a row the ceiling skipped, a row a QoS 0 publish lost
+(below), and a row waiting in RAM when the device reboots or its broker
+changes. That last includes every row
 committed in the first 45 s after a boot on a canary with an SD slot but
 no usable card, so such a canary in a boot loop shorter than 45 s delivers
 no events-topic row at all (tamper alerts, the boot's power verdict among
-them, do not wait). Sense, Vision and Sentinel
+them, do not wait). **The canary-wap has the same card backfill, with no
+RAM queue in front of it:** its egress (`csi_event_egress.h`, on a
+byte-gated staged copy of the same planner; host-tested against the real SD
+event log and CSI library in `tests_host/test_wap_event_egress.cpp`)
+appends each ring row to `/EVENTS/today.ndjson` and, on reconnect, replays
+the card in id order from its own NVS-ceiling watermark, a bounded amount
+per loop pass. A row the card does not keep (the card not open, a failed
+append) waits in RAM behind the card's rows, at most 8 of them
+(`kHeldMax`, the oldest dropped first), and a card that is not open is
+waited for at most the same 45 s; with no card, those 8 slots are all that
+holds rows while the broker is away. Otherwise it loses what the canary's
+backfill loses: a row that never reached the card, a row the ceiling
+skipped (the backfill's hand-over writes the ceiling up to a stride ahead
+of the row it sends, so a reboot mid-backfill can skip up to a stride of
+card rows), a row a QoS 0 publish lost, and a row waiting in RAM at a
+reboot or a broker change. **Neither backfill resends a row a QoS 0 publish
+lost.** Both trees move the watermark past a row when its publish returns
+success (the canary-wap's `to_sent()` counts `EventSend::kSent` as sent;
+the canary's port answers `Sent::kYes` when `mqtt_publish_event_live()`
+does), and at QoS 0 that means the bytes reached the TCP send buffer, never
+that the broker acknowledged them. A row whose bytes were still there when
+the connection dropped is gone from the wire: the watermark is past it, so
+the backfill starts after it (a row the card keeps is still in its SD log).
+On the canary-wap that drop is a stalled link: the publish that next finds
+the send buffer full waits out the 2 s network timeout (`csi_mqtt.h`,
+`kNetworkTimeoutMs`) and aborts the connection, and the rows still in the
+buffer go with it. One abort loses at most what the send buffer held, a
+number the device does not count. From esp-mqtt's source and F112's
+review, not probed (sweep F147; the stalled-broker bench row counts them).
+Sense, Vision and Sentinel
 have neither queue nor backfill: an event sealed while offline is not
 published at all, and the gap shows as a jump in the retained chain length
 (`canary-sense/src/main.cpp`, `record_event_now`). The record itself is
@@ -414,6 +446,8 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
 | Torn tail is sealed before the next append and read as a scar | **not on main** — `tail_is_torn` and the scar cases in `tools/test_verify_witness_log.py` arrive with #1739 |
 | Wi-Fi backoff bounded and jittered; never-online never reboots | `test_wifi_join_policy.cpp`, `scripts/lint_wifi_join_policy.py` |
 | Offline queue bounded, ordered, tamper-first | `test_mqtt_offline_queue.cpp` |
+| The canary-wap's card backfill: a reconnect with a backlog on the card delivers every row once, in id order | `test_wap_event_egress.cpp` (canary-wap `tests_host`, `make run-wap-egress`) |
+| A row a QoS 0 publish lost at a dropped connection is not resent (the watermark is already past it) | **not tested** — read from source (`csi_event_egress.h`, sweep F147); the stalled-broker bench row counts the loss |
 | Silent radar fails safe | `test_mr60_uart.cpp` (stall cases) |
 | A returning radar never signs "cleared" over a body | `test_mr60_uart.cpp` (`test_presence_fsm_stall_recovery_never_reports_clear_with_a_target`) |
 | Boot-time tail verification enters safe mode | `witnessd` boot path (#990); corrupt-store open is **not** covered |

@@ -71,8 +71,11 @@ void emit_summary() {
   v.present_fields = CSI_FIELD_NOTE | CSI_FIELD_BUNDLED_COUNT | CSI_FIELD_TIME_BUCKET;
   v.bundled_count  = (uint16_t)n;
 
-  /* The note carries a single short tag, ASCII only. We use a stable schema
-   * the dashboard's daily-summary card knows how to render. */
+  /* The note carries a single short tag, ASCII only, "a<A> q<Q> x<X>". No
+   * reader renders it yet: no published surface carries `note` (the MQTT
+   * events body, the SD event log line and /api/events/today leave it out;
+   * see meta_daily_summary.h), so a reader sees only the row's type. What
+   * the summary reports, and where a reader sees it, is open (sweep F219). */
   snprintf(v.note, sizeof(v.note), "a%u q%u x%u",
            (unsigned)active_periods, (unsigned)quiet_periods, (unsigned)anomaly_count);
 
