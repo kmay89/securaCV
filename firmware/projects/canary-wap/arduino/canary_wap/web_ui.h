@@ -2668,6 +2668,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <label class="form-label">Reason (optional)</label>
           <input type="text" class="form-input" id="ackReason" placeholder="e.g., Expected behavior">
         </div>
+        <p id="ackError" role="alert" style="display:none;margin:0.75rem 0 0;color:var(--danger);font-size:0.85rem;"></p>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeAckModal()">Cancel</button>
@@ -4701,11 +4702,26 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
-    function openAckModal(seq) { pendingAckSeq = seq; document.getElementById('ackReason').value = ''; document.getElementById('ackModal').classList.add('active'); }
+    function openAckModal(seq) { pendingAckSeq = seq; document.getElementById('ackReason').value = ''; showAckRefusal(''); document.getElementById('ackModal').classList.add('active'); }
     function closeAckModal() { pendingAckSeq = null; document.getElementById('ackModal').classList.remove('active'); }
+    // The device's answer to an acknowledgment (sweep F468). handle_log_ack
+    // answers ok:false "Log entry not found" for an entry that has left the
+    // log, and the page read no answer, so the dialog closed as if the entry
+    // were acknowledged. A refusal now keeps the dialog open and shows the
+    // device's words in it, as text; one that raised the sign-in shows nothing
+    // more (the sign-in sits above the dialog, and Acknowledge works after it).
+    function showAckRefusal(text) {
+      const el = document.getElementById('ackError');
+      el.textContent = text;
+      el.style.display = text ? '' : 'none';
+    }
     async function submitAck() {
       if (pendingAckSeq === null) return;
-      await api(`/api/logs/${pendingAckSeq}/ack`, 'POST', { reason: document.getElementById('ackReason').value });
+      const data = await api(`/api/logs/${pendingAckSeq}/ack`, 'POST', { reason: document.getElementById('ackReason').value });
+      if (!data || data.ok !== true) {
+        showAckRefusal(signInRaised(data) ? '' : 'Not acknowledged: ' + ((data && data.error) || 'no answer from the Canary'));
+        return;
+      }
       closeAckModal(); loadLogs(); refreshStatus();
     }
     async function ackAllLogs() { if (confirm('Mark all alerts as seen? They stay in the log, but stop showing as new.')) { await api('/api/logs/ack-all', 'POST', { level: 3 }); loadLogs(); refreshStatus(); } }
