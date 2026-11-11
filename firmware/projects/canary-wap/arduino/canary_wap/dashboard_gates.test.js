@@ -1238,3 +1238,173 @@ describe("The Fleet sheet shows the pairing QR's own refusal (F401)", () => {
     assert.match(said(await fleetSheet('no answer')), /Network error — is the Canary still reachable\?/);
   });
 });
+
+// ── The note under the sensitivity slider (F315) ────────────────────────
+
+// GET /api/settings names where the levels core.presence runs come from
+// (thresholds_source: "stored", "preset" or "mixed"), and a stored level
+// wins over the modes and the slider. The Sensing dashboard's COPY bank,
+// the stretch of its script from the Pet Mode switch's first state through
+// the load-time sync (syncSettingsFromServer), and the calibration's
+// Accept handler, cut out of csi_dashboard_html.h whole (the same markers
+// stand in the page before F315, so its old script runs here too), run
+// against a stub DOM and a recording cvFetch().
+const csiCopySrc = (() => {
+  const a = csi.indexOf('\nconst COPY = {');
+  assert.ok(a >= 0, 'the COPY bank is in csi_dashboard_html.h');
+  return csi.slice(a + 1, csi.indexOf('\n};\n', a) + 4);
+})();
+const csiSyncSrc = (() => {
+  const head = 'setSwitch(petSwitch, window.PET_MODE);\n';
+  const a = csi.indexOf(head);
+  assert.ok(a >= 0, "the Pet Mode switch's first state is in csi_dashboard_html.h");
+  const sync = csi.indexOf('(async function syncSettingsFromServer() {', a);
+  assert.ok(sync > a, 'the load-time settings sync follows it');
+  const b = csi.indexOf('\n})();\n', sync);
+  return csi.slice(a + head.length, b + 7);
+})();
+const csiAcceptSrc = (() => {
+  const head = "calibAcceptBtn.addEventListener('click', async () => {";
+  const a = csi.indexOf(head);
+  assert.ok(a >= 0, "the calibration's Accept handler is in csi_dashboard_html.h");
+  return csi.slice(a, csi.indexOf('\n});\n', a) + 5);
+})();
+// What GET /api/settings answers, the field aside (csi_integration.cpp's
+// handle_settings_get()).
+const SETTINGS = { pet_mode: false, preset: 'balanced', sensitivity: 50,
+                   quiet_hours: { enabled: false, start_min: 1380, end_min: 420 },
+                   privacy_ceiling: 'p0', filter_foreign: true, tz: '', tz_iana: '' };
+const withSource = (source) => ({ status: 200, body: JSON.stringify({ ...SETTINGS, thresholds_source: source }) });
+// The sources the device can send: the literals presence_thresholds_source()
+// returns (csi_settings_nvs.cpp), which the GET writes as they are.
+const SOURCES = (() => {
+  const nvs = fs.readFileSync(path.join(__dirname, 'csi_settings_nvs.cpp'), 'utf8');
+  const a = nvs.indexOf('const char* presence_thresholds_source(');
+  assert.ok(a >= 0, 'presence_thresholds_source() is in csi_settings_nvs.cpp');
+  const body = nvs.slice(a, nvs.indexOf('\n}\n', a));
+  return [...body.matchAll(/return "([^"]+)";/g)].map((m) => m[1]);
+})();
+
+// The page loaded against `routes` (a path to one answer, or to a list of
+// answers taken in turn, the last one kept), then settled.
+async function sensingPage(routes) {
+  const note = { id: 'sensNote', hidden: true, textContent: '' };   // as the markup ships it
+  const asked = [];
+  const ended = [];
+  const queue = new Map(Object.entries(routes).map(([k, v]) => [k, Array.isArray(v) ? [...v] : [v]]));
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+  const ctx = {
+    window: { PET_MODE: false },
+    document: { getElementById: (id) => (id === 'sensNote' ? note : null) },
+    cvFetch: async (url, opts) => {
+      asked.push(`${(opts && opts.method) || 'GET'} ${url}`);
+      const list = queue.get(url);
+      const res = !list ? { status: 404, body: 'Nothing matches the given URI' } : list.length > 1 ? list.shift() : list[0];
+      if (res === 'no answer') throw new TypeError('Failed to fetch');
+      return { status: res.status, ok: res.status >= 200 && res.status < 300,
+               json: async () => JSON.parse(res.body), text: async () => res.body };
+    },
+    setSwitch() {}, petSwitch: {}, lsGet: () => null, lsSet() {}, setMode() {},
+    sensitivitySlider: null, applyQhUiState() {}, applyZoneUi() {},
+    calibAcceptBtn: { addEventListener(type, fn) { this.on = this.on || {}; this.on[type] = fn; } },
+    endCalibration: (label) => ended.push(label),
+  };
+  vm.createContext(ctx);
+  vm.runInContext(csiCopySrc + csiSyncSrc + csiAcceptSrc + '\nglobalThis.__COPY = COPY;\n', ctx);
+  await settle();
+  return {
+    note, asked, ended, COPY: ctx.__COPY,
+    accept: async () => { await ctx.calibAcceptBtn.on.click(); await settle(); },
+  };
+}
+
+describe('the note under the sensitivity slider says when stored levels win (F315)', () => {
+  it('sits under the slider, which it describes, hidden until the device names a source', () => {
+    const a = csi.indexOf('<div class="tinker-row">');
+    assert.ok(a >= 0, 'the Details row is in csi_dashboard_html.h');
+    const row = parseFragment(csi.slice(a, csi.indexOf('</details>', a)));
+    const at = row.elements.findIndex((e) => e.tag === 'input' && attr(e, 'id') === 'sensitivitySlider');
+    assert.ok(at >= 0, 'the slider is in the Details row');
+    const next = row.elements[at + 1];
+    assert.ok(next && next.tag === 'p' && attr(next, 'id') === 'sensNote', 'the note is the element right under the slider');
+    assert.equal(attr(next, 'hidden'), '', 'it ships hidden');
+    assert.equal(next.text, '', 'and empty');
+    assert.equal(attr(row.elements[at], 'aria-describedby'), 'sensNote');
+  });
+
+  it('the device can send three sources, and the GET sends the one the page reads', () => {
+    assert.deepEqual([...SOURCES].sort(), ['mixed', 'preset', 'stored']);
+    const integ = fs.readFileSync(path.join(__dirname, 'csi_integration.cpp'), 'utf8');
+    const a = integ.indexOf('esp_err_t handle_settings_get(httpd_req_t* req) {');
+    assert.ok(a >= 0, 'handle_settings_get() is in csi_integration.cpp');
+    const get = integ.slice(a, integ.indexOf('\n}\n', a));
+    assert.ok(get.includes('\\"thresholds_source\\":\\"%s\\"'), 'GET /api/settings writes thresholds_source');
+    assert.ok(/thresholds_source = presence_thresholds_source\(/.test(get), 'from presence_thresholds_source()');
+  });
+
+  it('shows the words for a stored or mixed source, and nothing for the preset', async () => {
+    for (const source of SOURCES) {
+      const p = await sensingPage({ '/api/settings': withSource(source) });
+      assert.deepEqual(p.asked, ['GET /api/settings']);
+      if (source === 'preset') {
+        assert.equal(p.note.hidden, true, 'preset: no note');
+        assert.equal(p.note.textContent, '');
+      } else {
+        assert.equal(p.note.hidden, false, `${source}: the note shows`);
+        assert.equal(p.note.textContent, p.COPY.savedLevels[source], `${source}: its own words, from COPY`);
+      }
+    }
+  });
+
+  it('the words say what wins and name the way back', async () => {
+    const stored = (await sensingPage({ '/api/settings': withSource('stored') })).note.textContent;
+    const mixed = (await sensingPage({ '/api/settings': withSource('mixed') })).note.textContent;
+    assert.notEqual(stored, mixed);
+    for (const text of [stored, mixed]) {
+      assert.match(text, /calibration or the Tuning Lab/);
+      assert.match(text, /reset motion, active and breathing in the Tuning Lab\.$/);
+    }
+    assert.match(stored, /change nothing/);
+    assert.match(mixed, /set only the rest/);
+  });
+
+  it('shows nothing for an answer without the field, a value it does not know, or no answer', async () => {
+    const hidden = async (routes) => {
+      const p = await sensingPage(routes);
+      assert.equal(p.note.hidden, true, JSON.stringify(routes).slice(0, 80));
+      assert.equal(p.note.textContent, '');
+    };
+    await hidden({ '/api/settings': { status: 200, body: JSON.stringify(SETTINGS) } });
+    for (const odd of ['STORED', 'constructor', '__proto__', 'toString', '', 3, null, ['stored'], ...HOSTILE]) {
+      await hidden({ '/api/settings': withSource(odd) });
+    }
+    await hidden({ '/api/settings': { status: 503, body: '{"ok":false,"reason":"settings store unavailable"}' } });
+    await hidden({ '/api/settings': 'no answer' });
+  });
+
+  it('a calibration that applied re-reads the source, so the note is right without a reload', async () => {
+    const p = await sensingPage({
+      '/api/settings': [withSource('preset'), withSource('stored')],
+      '/api/csi/calibrate/apply': { status: 200, body: '{"ok":true}' },
+    });
+    assert.equal(p.note.hidden, true);
+    await p.accept();
+    assert.deepEqual(p.asked, ['GET /api/settings', 'POST /api/csi/calibrate/apply', 'GET /api/settings']);
+    assert.equal(p.note.hidden, false);
+    assert.equal(p.note.textContent, p.COPY.savedLevels.stored);
+    assert.deepEqual(p.ended, [p.COPY.calibrate.done]);
+  });
+
+  it('a calibration that did not apply asks nothing more and leaves the note', async () => {
+    for (const apply of [{ status: 409, body: '{"ok":false}' }, 'no answer']) {
+      const p = await sensingPage({
+        '/api/settings': [withSource('mixed'), withSource('stored')],
+        '/api/csi/calibrate/apply': apply,
+      });
+      await p.accept();
+      assert.deepEqual(p.asked, ['GET /api/settings', 'POST /api/csi/calibrate/apply']);
+      assert.equal(p.note.textContent, p.COPY.savedLevels.mixed);
+      assert.deepEqual(p.ended, [p.COPY.calibrate.error]);
+    }
+  });
+});

@@ -48,6 +48,21 @@
 // the row. The F127 tests below fail on the code before it (tune_post()
 // skipped a null as an unreadable value, and the page sent the default).
 //
+// F315: a stored threshold row wins over the dashboard's preset and slider,
+// and the dashboard did not say so. GET /api/settings now names the source
+// ("stored", "preset", "mixed") through read_presence_thresholds_in_use(),
+// which runs here through no rows, three, one and the Lab's reset with the
+// module's own reading at each step; a pin holds the handler to that read,
+// and the answer is measured against its buffer from the source. The pins
+// fail on the code before F315 (the GET named no source).
+//
+// F300 (csi_integration.cpp's share): the events dismissal and the settings
+// POST parsed what one httpd_req_recv() returned, and the Lab's import
+// looped by hand and closed the socket unanswered at a timeout. Each reads
+// through http_body::read_all() now; the pins (no httpd_req_recv() in the
+// file outside a read_all() call, each route's read and refusals) fail on
+// the code before it.
+//
 // Build/run: make -C firmware/projects/canary-wap/tests_host
 
 #include <algorithm>
@@ -58,6 +73,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 // g++ reports a false -Wmaybe-uninitialized inside libstdc++'s <regex> when
 // ASan is on (GCC PR 105562).
 #if defined(__GNUC__) && !defined(__clang__)
@@ -79,6 +95,7 @@
 #include "csi_module_settings_nvs.h"
 #include "csi_settings_nvs.h"
 #include "csi_tune_lab.h"
+#include "tz_rule.h"
 
 #include "anomaly_baseline.h"
 #include "core_breathing.h"
@@ -1136,6 +1153,20 @@ static std::vector<std::string> pin_problems(const std::string& integ) {
       count_of(get, "pet_mode?\"true\":\"false\",preset_str,(long)sensitivity,") != 1) {
     out.push_back("GET /api/settings reports a presence row under another's name");
   }
+  // F315: the thresholds' source, read as settings_thresholds_source()
+  // models it: through read_presence_thresholds_in_use() (the reader init()
+  // agrees with, its status's too) before NVS closes, named by
+  // presence_thresholds_source(), and sent under its own name, last.
+  if (count_of(get, "constPresenceThresholdsInUsethresholds=read_presence_thresholds_in_use(prefs);"
+                    "prefs.end();"
+                    "constchar*thresholds_source=presence_thresholds_source(thresholds);") != 1 ||
+      count_of(get, "read_presence_thresholds_in_use(") != 1 ||
+      count_of(get, "presence_thresholds_source(") != 1 || count_of(get, "prefs.end();") != 1 ||
+      count_of(get, "\\\"tz\\\":\\\"%s\\\",\\\"tz_iana\\\":\\\"%s\\\",\\\"thresholds_source\\\":\\\"%s\\\"}\",") != 1 ||
+      count_of(get, "privacy_str,filter_foreign?\"true\":\"false\",tz,tz_iana,thresholds_source);") != 1 ||
+      count_of(get, "thresholds_source") != 4) {   // declared, named, formatted, sent
+    out.push_back("GET /api/settings names the thresholds' source other than as read_presence_thresholds_in_use() reads it");
+  }
   const size_t presence_at = set.find("if(store_presence_from_settings(prefs,body))wrote_anything=true;");
   if (presence_at == std::string::npos || count_of(set, "store_presence_from_settings(") != 1 ||
       !(presence_at < end_at)) {
@@ -1204,6 +1235,512 @@ static bool mutate(std::string& s, const std::string& from, const std::string& t
   if (at == std::string::npos) return false;
   s.replace(at, from.size(), to);
   return true;
+}
+
+// mutate(), at the first `from` after `anchor` (a handler's own text, for
+// a line two handlers share).
+static bool mutate_after(std::string& s, const std::string& anchor, const std::string& from,
+                         const std::string& to) {
+  const size_t a = s.find(anchor);
+  if (a == std::string::npos) return false;
+  const size_t at = s.find(from, a);
+  if (at == std::string::npos) return false;
+  s.replace(at, from.size(), to);
+  return true;
+}
+
+// ── F300: every request body csi_integration.cpp reads, it reads whole ──
+//
+// esp_http_server's httpd_req_recv() returns what ONE socket read
+// delivered. POST /api/events/dismiss and POST /api/settings parsed after
+// one call, so a body in two TCP segments was parsed cut (the dismissal's
+// id a prefix of the one sent; a settings change's later keys lost without
+// a word) and a body past the buffer was cut at it and acted on; the
+// Tuning Lab's import (POST /api/tune/coefficients, /api/tune/preset)
+// looped by hand and closed the socket with no answer at the first socket
+// timeout. Each now reads through http_body::read_all() (http_body_reader.h,
+// whose loop test_http_body_reader.cpp drives over split, short, timed-out
+// and oversized reads), keeps its empty-body answer, and refuses an
+// oversized body and a failed read by name, in its own {"ok":false,
+// "reason":...} shape, before it parses anything. No host suite compiles
+// these handlers, so the pins below hold them to that, mutation-checked:
+// no httpd_req_recv() in the file outside a read_all() call, and each
+// route's read, refusals and order as they stand.
+
+// `s` with every comment and string or character literal blanked to
+// spaces, newlines and offsets kept, so a name in a comment or a message
+// is not taken for code.
+static std::string blank_comments_and_strings(const std::string& s) {
+  std::string out = s;
+  const size_t n = s.size();
+  size_t i = 0;
+  auto blank = [&](size_t from, size_t to) {
+    for (size_t k = from; k < to && k < n; ++k) {
+      if (out[k] != '\n') out[k] = ' ';
+    }
+  };
+  while (i < n) {
+    const char c = s[i];
+    if (c == '/' && i + 1 < n && s[i + 1] == '/') {
+      size_t e = s.find('\n', i);
+      if (e == std::string::npos) e = n;
+      blank(i, e);
+      i = e;
+      continue;
+    }
+    if (c == '/' && i + 1 < n && s[i + 1] == '*') {
+      size_t e = s.find("*/", i + 2);
+      e = (e == std::string::npos) ? n : e + 2;
+      blank(i, e);
+      i = e;
+      continue;
+    }
+    if (c == '"' || (c == '\'' && !(i > 0 && std::isxdigit((unsigned char)s[i - 1]) && i + 1 < n &&
+                                    std::isxdigit((unsigned char)s[i + 1])))) {
+      size_t j = i + 1;
+      for (; j < n && s[j] != c; ++j) {
+        if (s[j] == '\\') ++j;
+      }
+      blank(i + 1, j);
+      i = j + 1;
+      continue;
+    }
+    ++i;
+  }
+  return out;
+}
+
+static bool ident_char(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
+
+// The line of each httpd_req_recv in `src`, called or named, that is not
+// inside the parentheses of an http_body::read_all( call.
+static std::vector<int> recv_outside_read_all(const std::string& src) {
+  const std::string code = blank_comments_and_strings(src);
+  std::vector<std::pair<size_t, size_t>> spans;
+  const std::string call = "http_body::read_all(";
+  for (size_t at = code.find(call); at != std::string::npos; at = code.find(call, at + 1)) {
+    if (at > 0 && ident_char(code[at - 1])) continue;
+    const size_t open = at + call.size() - 1;
+    int depth = 0;
+    size_t j = open;
+    for (; j < code.size(); ++j) {
+      if (code[j] == '(') ++depth;
+      if (code[j] == ')' && --depth == 0) break;
+    }
+    spans.push_back({open, j});
+  }
+  std::vector<int> out;
+  const std::string name = "httpd_req_recv";
+  for (size_t at = code.find(name); at != std::string::npos; at = code.find(name, at + 1)) {
+    if ((at > 0 && ident_char(code[at - 1])) ||
+        (at + name.size() < code.size() && ident_char(code[at + name.size()]))) {
+      continue;
+    }
+    bool inside = false;
+    for (const auto& sp : spans) inside = inside || (sp.first < at && at < sp.second);
+    if (!inside) out.push_back(1 + (int)std::count(code.begin(), code.begin() + (long)at, '\n'));
+  }
+  return out;
+}
+
+static const char* const kEventsDismiss = R"(\besp_err_t\s+handle_events_dismiss\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
+
+// The three routes' reads, comments and whitespace out (code_body()'s form).
+#define PIN_EMPTY_BODY                                                                       \
+  R"PIN(if(req->content_len==0){httpd_resp_set_status(req,"400BadRequest");)PIN"            \
+  R"PIN(httpd_resp_send(req,"{\"ok\":false,\"reason\":\"emptybody\"}",-1);returnESP_OK;})PIN"
+#define PIN_READ_WHOLE                                                                       \
+  R"PIN(size_tgot=0;consthttp_body::Resultread=http_body::read_all()PIN"                     \
+  R"PIN([req](char*p,size_tn){returnhttpd_req_recv(req,p,n);},)PIN"                          \
+  R"PIN(req->content_len,body,sizeof(body),HTTPD_SOCK_ERR_TIMEOUT,3,&got);)PIN"
+#define PIN_REFUSALS                                                                         \
+  R"PIN(if(read==http_body::TOO_LARGE){httpd_resp_set_status(req,"400BadRequest");)PIN"      \
+  R"PIN(httpd_resp_send(req,"{\"ok\":false,\"reason\":\"bodytoolarge\"}",-1);returnESP_OK;})PIN" \
+  R"PIN(if(read!=http_body::OK){httpd_resp_set_status(req,"400BadRequest");)PIN"             \
+  R"PIN(httpd_resp_send(req,"{\"ok\":false,\"reason\":\"bodyreadfailed\"}",-1);returnESP_OK;})PIN"
+
+// Every way csi_integration.cpp could read a request body other than whole;
+// empty when it reads each one whole.
+static std::vector<std::string> body_read_problems(const std::string& integ) {
+  std::vector<std::string> out;
+  for (int line : recv_outside_read_all(integ)) {
+    out.push_back("csi_integration.cpp:" + std::to_string(line) +
+                  ": httpd_req_recv outside an http_body::read_all() call");
+  }
+  // POST /api/events/dismiss: its 96 bytes, the empty body answered as it
+  // was, the read, both refusals, then the parse.
+  const std::string dismiss = code_body(integ, kEventsDismiss);
+  if (count_of(dismiss, "charbody[96];" PIN_EMPTY_BODY PIN_READ_WHOLE PIN_REFUSALS
+                        R"PIN(constchar*k=strstr(body,"event_id");)PIN") != 1 ||
+      count_of(dismiss, "read_all(") != 1 || dismiss.find("ESP_FAIL") != std::string::npos) {
+    out.push_back("POST /api/events/dismiss does not read its body whole, answer a refusal by name, then parse");
+  }
+  // POST /api/settings: the same, before the time zone (the first key it
+  // stores) is looked for.
+  const std::string set = code_body(integ, kSettingsPost);
+  if (count_of(set, "charbody[384];" PIN_EMPTY_BODY PIN_READ_WHOLE PIN_REFUSALS
+                    "boolwrote_anything=false;") != 1 ||
+      count_of(set, "read_all(") != 1 || set.find("ESP_FAIL") != std::string::npos) {
+    out.push_back("POST /api/settings does not read its body whole, answer a refusal by name, then store");
+  }
+  // The Tuning Lab's import: its size check (the empty-body answer, and
+  // the 4 KB one) kept, the read into the body it allocated, each refusal
+  // answered and the buffer freed, then tune_post().
+  const std::string tune = code_body(integ, kTunePost);
+  if (count_of(tune,
+               R"PIN(size_ttotal=req->content_len;if(total==0||total>4096){)PIN"
+               R"PIN(httpd_resp_set_status(req,"400BadRequest");)PIN"
+               R"PIN(returnhttpd_resp_send(req,"{\"ok\":false,\"reason\":\"emptyortoolarge\"}",-1);})PIN"
+               R"PIN(char*body=(char*)malloc(total+1);)PIN") != 1 ||
+      count_of(tune,
+               R"PIN(size_tgot=0;consthttp_body::Resultread=http_body::read_all()PIN"
+               R"PIN([req](char*p,size_tn){returnhttpd_req_recv(req,p,n);},)PIN"
+               R"PIN(total,body,total+1,HTTPD_SOCK_ERR_TIMEOUT,3,&got);)PIN"
+               R"PIN(if(read==http_body::TOO_LARGE){free(body);httpd_resp_set_status(req,"400BadRequest");)PIN"
+               R"PIN(returnhttpd_resp_send(req,"{\"ok\":false,\"reason\":\"emptyortoolarge\"}",-1);})PIN"
+               R"PIN(if(read!=http_body::OK){free(body);httpd_resp_set_status(req,"400BadRequest");)PIN"
+               R"PIN(returnhttpd_resp_send(req,"{\"ok\":false,\"reason\":\"bodyreadfailed\"}",-1);})PIN"
+               R"PIN(constTunePostpost=tune_post(body,reinit_module);)PIN") != 1 ||
+      count_of(tune, "read_all(") != 1 || tune.find("ESP_FAIL") != std::string::npos) {
+    out.push_back("the Tuning Lab's import does not read its body whole and answer a refusal by name");
+  }
+  return out;
+}
+
+static int test_csi_integration_reads_every_body_whole() {
+  const std::string integ = read_source("csi_integration.cpp");
+  CHECK(!integ.empty());
+  const std::vector<std::string> problems = body_read_problems(integ);
+  for (const std::string& p : problems) std::fprintf(stderr, "pin: %s\n", p.c_str());
+  CHECK(problems.empty());
+  CHECK(count_of(blank_comments_and_strings(integ), "http_body::read_all(") == 3);
+
+  // The scan reads code: a name in a comment or a message is not a read,
+  // and an edit that only moves a comment passes.
+  CHECK(recv_outside_read_all("/* httpd_req_recv(req, b, n) */ x = \"httpd_req_recv(\"; // httpd_req_recv\n").empty());
+  CHECK((recv_outside_read_all("a\nb = httpd_req_recv(r, p, n);\n") == std::vector<int>{2}));
+  CHECK((recv_outside_read_all("f = &httpd_req_recv;") == std::vector<int>{1}));
+  CHECK(recv_outside_read_all("http_body::read_all([r](char* p, size_t n) { return httpd_req_recv(r, p, n); }, 1, b, 2, -3, 3, &g);").empty());
+  CHECK((recv_outside_read_all("read_all([r](char* p, size_t n) { return httpd_req_recv(r, p, n); });") ==
+         std::vector<int>{1}));   // not http_body's
+  {
+    std::string moved = integ;
+    CHECK(mutate(moved, "esp_err_t handle_events_dismiss(httpd_req_t* req) {",
+                 "/* was: httpd_req_recv(req, body, sizeof(body) - 1) */\n"
+                 "esp_err_t handle_events_dismiss(httpd_req_t* req) {"));
+    CHECK(body_read_problems(moved).empty());
+  }
+
+  struct Mutation { const char* name; const char* anchor; const char* from; const char* to; };
+  const char* const kDismiss = "esp_err_t handle_events_dismiss(httpd_req_t* req) {";
+  const char* const kPost = "esp_err_t handle_settings_post(httpd_req_t* req) {";
+  const char* const kImport = "esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {";
+  const char* const kOneRead =
+      "  size_t got = 0;\n"
+      "  const http_body::Result read = http_body::read_all(\n"
+      "      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },\n"
+      "      req->content_len, body, sizeof(body), HTTPD_SOCK_ERR_TIMEOUT, 3, &got);\n";
+  const char* const kOldRead =
+      "  const int got = httpd_req_recv(req, body, sizeof(body) - 1);\n"
+      "  body[got > 0 ? got : 0] = '\\0';\n"
+      "  const http_body::Result read = http_body::OK;\n";
+  const Mutation kMutations[] = {
+    // The code before F300, route by route.
+    {"the dismissal reads one segment again", kDismiss, kOneRead, kOldRead},
+    {"the settings POST reads one segment again", kPost, kOneRead, kOldRead},
+    {"the import loops by hand again", kImport,
+     "  size_t got = 0;\n"
+     "  const http_body::Result read = http_body::read_all(\n"
+     "      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },\n"
+     "      total, body, total + 1, HTTPD_SOCK_ERR_TIMEOUT, 3, &got);\n",
+     "  size_t got = 0;\n"
+     "  while (got < total) {\n"
+     "    int n = httpd_req_recv(req, body + got, total - got);\n"
+     "    if (n <= 0) { free(body); return ESP_FAIL; }\n"
+     "    got += (size_t)n;\n"
+     "  }\n"
+     "  const http_body::Result read = http_body::OK;\n"},
+    {"a read beside the routes", kDismiss, kDismiss,
+     "static int peek_byte(httpd_req_t* r) { char c; return httpd_req_recv(r, &c, 1); }\n"
+     "esp_err_t handle_events_dismiss(httpd_req_t* req) {"},
+    {"a read handed out by name", kDismiss, kDismiss,
+     "static int (*const g_recv)(httpd_req_t*, char*, size_t) = httpd_req_recv;\n"
+     "esp_err_t handle_events_dismiss(httpd_req_t* req) {"},
+    // The answers, each route's own.
+    {"the dismissal answers an empty body as a failed read", kDismiss,
+     "  if (req->content_len == 0) {\n"
+     "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+     "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"empty body\\\"}\", -1);\n"
+     "    return ESP_OK;\n"
+     "  }\n", ""},
+    {"the settings POST answers an oversized body as empty", kPost, "\\\"reason\\\":\\\"body too large\\\"",
+     "\\\"reason\\\":\\\"empty body\\\""},
+    {"the settings POST answers a failed read as an oversized body", kPost,
+     "\\\"reason\\\":\\\"body read failed\\\"", "\\\"reason\\\":\\\"body too large\\\""},
+    {"the dismissal parses after a refusal it did not answer", kDismiss,
+     "  if (read != http_body::OK) {\n"
+     "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+     "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body read failed\\\"}\", -1);\n"
+     "    return ESP_OK;\n"
+     "  }\n", ""},
+    {"the import closes the socket on a failed read", kImport,
+     "    free(body);\n"
+     "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+     "    return httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body read failed\\\"}\", -1);\n",
+     "    free(body);\n    return ESP_FAIL;\n"},
+    {"the import keeps its buffer on a refusal", kImport,
+     "  if (read == http_body::TOO_LARGE) {\n    free(body);\n", "  if (read == http_body::TOO_LARGE) {\n"},
+    {"the import stops answering an empty body", kImport, "if (total == 0 || total > 4096)",
+     "if (total > 4096)"},
+    // The read itself.
+    {"the dismissal reads past its buffer", kDismiss, "body, sizeof(body), HTTPD_SOCK_ERR_TIMEOUT",
+     "body, sizeof(body) + 32, HTTPD_SOCK_ERR_TIMEOUT"},
+    {"the settings POST sits out no socket timeout", kPost, "HTTPD_SOCK_ERR_TIMEOUT, 3, &got);",
+     "HTTPD_SOCK_ERR_TIMEOUT, 0, &got);"},
+    {"the import reads past the body it was sent", kImport, "      total, body, total + 1,",
+     "      total + 64, body, total + 65,"},
+  };
+  for (const Mutation& mu : kMutations) {
+    std::string src = integ;
+    if (!mutate_after(src, mu.anchor, mu.from, mu.to)) {
+      std::fprintf(stderr, "mutation '%s' no longer applies: update it with the source\n", mu.name);
+      CHECK(false);
+    }
+    if (body_read_problems(src).empty()) {
+      std::fprintf(stderr, "mutation '%s' was not caught\n", mu.name);
+      CHECK(false);
+    }
+  }
+  return 0;
+}
+
+// ── F315: GET /api/settings' answer fits its buffer ────────────────────
+//
+// F315 adds "thresholds_source" to the answer, written with snprintf()
+// into a fixed buf[448]. firmware/scripts/check_wap_json_answers.py
+// measures the snprintf() answers of the answer files (each *_api.h and
+// canary_wap.ino, its J5) against their buffers; csi_integration.cpp is
+// not one of them, and its J7 holds each %s here escaped, not the length
+// ("Their lengths are not computed"). So the answer is measured here: its
+// format, read from the source, at the widest value each argument can
+// take, every argument read as the handler spells it. An argument this
+// measure cannot bound fails, as a buffer it does not exceed does.
+
+// The body of the first definition whose header matches `head`, comments
+// blanked, whitespace kept; "" if none.
+static std::string raw_body(const std::string& src, const std::string& head) {
+  std::smatch m;
+  if (!std::regex_search(src, m, std::regex(head))) return "";
+  const size_t at = (size_t)(m.position(0) + m.length(0)) - 1;
+  int depth = 0;
+  for (size_t j = at; j < src.size(); ++j) {
+    if (src[j] == '{') ++depth;
+    if (src[j] == '}' && --depth == 0) {
+      std::string body = src.substr(at + 1, j - at - 1);
+      body = std::regex_replace(body, std::regex(R"(/\*[\s\S]*?\*/)"), " ");
+      return std::regex_replace(body, std::regex(R"(//[^\n]*)"), "");
+    }
+  }
+  return "";
+}
+
+static std::string no_space(const std::string& s) {
+  std::string out;
+  for (char c : s) {
+    if (!std::isspace((unsigned char)c)) out += c;
+  }
+  return out;
+}
+
+// The longest of the string literals in `expr` (escapes counted as the
+// byte they stand for).
+static long longest_literal(const std::string& expr) {
+  long best = -1;
+  for (const std::string& lit : string_literals(expr)) {
+    long n = 0;
+    for (size_t i = 0; i < lit.size(); ++i) {
+      if (lit[i] == '\\') ++i;
+      ++n;
+    }
+    best = std::max(best, n);
+  }
+  return best;
+}
+
+struct AnswerMeasure {
+  long longest = -1;   // bytes, without the NUL; -1 when not measured
+  long size = -1;      // the buffer's
+  std::string why;     // what could not be measured
+};
+
+// The widest spelling an argument of the settings answer can take, read
+// from the handler's body (`get`, code_body()'s form); -1 when this measure
+// cannot bound it.
+static long settings_arg_widest(const std::string& arg, const std::string& get) {
+  std::smatch m;
+  // cond ? "a" : "b"
+  if (std::regex_match(arg, m, std::regex(R"re(^[A-Za-z_][A-Za-z_0-9.]*\?("[^"]*"):("[^"]*")$)re"))) {
+    return std::max(longest_literal(m[1].str()), longest_literal(m[2].str()));
+  }
+  // (long)x: a long's widest spelling on this host (20 bytes; the ESP32's
+  // long is 32 bits, 11), wider than the int32_t each one is.
+  if (std::regex_match(arg, std::regex(R"(^\(long\)[A-Za-z_][A-Za-z_0-9.]*$)"))) {
+    return (long)std::to_string(std::numeric_limits<long>::min()).size();
+  }
+  // The thresholds' source: what presence_thresholds_source() returns, for
+  // every combination of stored rows (the function run, not read).
+  if (arg == "thresholds_source" &&
+      count_of(get, "constchar*thresholds_source=presence_thresholds_source(thresholds);") == 1 &&
+      count_of(get, "thresholds_source=") == 1) {
+    long best = 0;
+    for (int bits = 0; bits < 8; ++bits) {
+      PresenceThresholdsInUse t = presence_thresholds_in_use_unread();
+      t.motion_stored = (bits & 1) != 0;
+      t.active_stored = (bits & 2) != 0;
+      t.breathing_stored = (bits & 4) != 0;
+      best = std::max(best, (long)std::strlen(presence_thresholds_source(t)));
+    }
+    return best;
+  }
+  // A time zone: a char array of a tz_rule limit and its NUL.
+  if (std::regex_search(get, m, std::regex("char" + arg + R"(\[tz_rule::(MAX_POSIX_LEN|MAX_IANA_LEN)\+1\]=\{0\};)"))) {
+    return m[1].str() == "MAX_POSIX_LEN" ? (long)tz_rule::MAX_POSIX_LEN : (long)tz_rule::MAX_IANA_LEN;
+  }
+  // const char* x = <literals and the tests between them>; assigned once.
+  if (std::regex_search(get, m, std::regex("constchar\\*" + arg + "=([^;]*);")) &&
+      count_of(get, arg + "=") == 1 && longest_literal(m[1].str()) >= 0) {
+    return longest_literal(m[1].str());
+  }
+  return -1;
+}
+
+static AnswerMeasure measure_settings_answer(const std::string& integ) {
+  AnswerMeasure out;
+  const std::string raw = raw_body(integ, kSettingsGet);
+  const std::string get = code_body(integ, kSettingsGet);
+  std::smatch m;
+  if (!std::regex_search(get, m, std::regex(R"(charbuf\[(\d+)\];)"))) {
+    out.why = "no char buf[N] in the handler";
+    return out;
+  }
+  out.size = std::stol(m[1].str());
+  std::smatch call;
+  if (!std::regex_search(raw, call, std::regex(R"(snprintf\s*\(\s*buf\s*,\s*sizeof\s*\(\s*buf\s*\)\s*,)"))) {
+    out.why = "no snprintf(buf, sizeof(buf), ...) in the handler";
+    return out;
+  }
+  // The format: the adjacent literals after it.
+  size_t i = (size_t)(call.position(0) + call.length(0));
+  std::string fmt;
+  for (;;) {
+    while (i < raw.size() && std::isspace((unsigned char)raw[i])) ++i;
+    if (i >= raw.size() || raw[i] != '"') break;
+    for (++i; i < raw.size() && raw[i] != '"'; ++i) {
+      if (raw[i] == '\\' && i + 1 < raw.size()) ++i;   // \" and \\ are one byte
+      fmt += raw[i];
+    }
+    ++i;
+  }
+  // The arguments, to the call's close.
+  std::vector<std::string> args;
+  std::string cur;
+  int depth = 0;
+  bool in_str = false;
+  for (; i < raw.size(); ++i) {
+    const char c = raw[i];
+    if (in_str) {
+      cur += c;
+      if (c == '\\' && i + 1 < raw.size()) cur += raw[++i];
+      else if (c == '"') in_str = false;
+      continue;
+    }
+    if (c == '"') { in_str = true; cur += c; continue; }
+    if (c == '(') ++depth;
+    if (c == ')' && depth-- == 0) break;
+    if (c == ',' && depth == 0) {
+      if (!no_space(cur).empty()) args.push_back(no_space(cur));
+      cur.clear();
+      continue;
+    }
+    cur += c;
+  }
+  if (!no_space(cur).empty()) args.push_back(no_space(cur));
+  // Walk the format.
+  long len = 0;
+  size_t arg = 0;
+  for (size_t k = 0; k < fmt.size(); ++k) {
+    if (fmt[k] != '%') { ++len; continue; }
+    if (fmt.compare(k, 2, "%%") == 0) { ++len; ++k; continue; }
+    size_t spec = 0;
+    if (fmt.compare(k, 2, "%s") == 0) spec = 2;
+    else if (fmt.compare(k, 3, "%ld") == 0) spec = 3;
+    if (spec == 0) {
+      out.why = "a conversion this measure does not read: " + fmt.substr(k, 4);
+      return out;
+    }
+    if (arg >= args.size()) {
+      out.why = "more conversions than arguments";
+      return out;
+    }
+    const long w = settings_arg_widest(args[arg], get);
+    if (w < 0) {
+      out.why = "an argument this measure cannot bound: " + args[arg];
+      return out;
+    }
+    len += w;
+    ++arg;
+    k += spec - 1;
+  }
+  if (arg != args.size()) {
+    out.why = "more arguments than conversions";
+    return out;
+  }
+  out.longest = len;
+  return out;
+}
+
+static int test_the_settings_answer_fits_its_buffer() {
+  const std::string integ = read_source("csi_integration.cpp");
+  const AnswerMeasure m = measure_settings_answer(integ);
+  if (!m.why.empty()) std::fprintf(stderr, "measure: %s\n", m.why.c_str());
+  CHECK(m.why.empty() && m.longest > 0);
+  std::printf("GET /api/settings: longest answer %ld bytes and its NUL, of buf[%ld]\n", m.longest, m.size);
+  CHECK(m.longest + 1 <= m.size);
+  // Each conversion is counted: the answer without the field is shorter
+  // by its key and its widest value ("stored", "preset": six bytes).
+  {
+    std::string without = integ;
+    CHECK(mutate(without, ",\\\"thresholds_source\\\":\\\"%s\\\"}\",", "}\","));
+    CHECK(mutate(without, "tz, tz_iana, thresholds_source);", "tz, tz_iana);"));
+    const AnswerMeasure w = measure_settings_answer(without);
+    CHECK(w.why.empty());
+    CHECK(m.longest - w.longest == (long)std::strlen(",\"thresholds_source\":\"\"") + 6);
+  }
+
+  struct Mutation { const char* name; const char* from; const char* to; };
+  const Mutation kMutations[] = {
+    {"the buffer is cut under the answer", "char buf[448];", "char buf[320];"},
+    {"an argument it cannot bound", "tz, tz_iana, thresholds_source);", "tz, tz_iana, getenv(\"X\"));"},
+    {"a conversion it does not read", "\\\"sensitivity\\\":%ld,", "\\\"sensitivity\\\":%lu,"},
+    {"one argument too many", "tz, tz_iana, thresholds_source);", "tz, tz_iana, thresholds_source, tz);"},
+    {"a source assigned twice",
+     "const char* thresholds_source = presence_thresholds_source(thresholds);",
+     "const char* thresholds_source = presence_thresholds_source(thresholds);\n"
+     "  if (!pet_mode) thresholds_source = tz;"},
+  };
+  for (const Mutation& mu : kMutations) {
+    std::string src = integ;
+    if (!mutate(src, mu.from, mu.to)) {
+      std::fprintf(stderr, "mutation '%s' no longer applies: update it with the source\n", mu.name);
+      CHECK(false);
+    }
+    const AnswerMeasure bad = measure_settings_answer(src);
+    if (bad.why.empty() && bad.longest + 1 <= bad.size) {
+      std::fprintf(stderr, "mutation '%s' was not caught\n", mu.name);
+      CHECK(false);
+    }
+  }
+  return 0;
 }
 
 // ── F127: a Lab reset removes the row ───────────────────────────────────
@@ -1361,6 +1898,121 @@ static int test_after_a_reset_the_saved_preset_applies() {
   CHECK(presence_reads_as_subtle(30));
   reboot_and_boot();
   CHECK(presence_reads_as_subtle(30));
+  host_prefs().clear();
+  return 0;
+}
+
+// ── F315: GET /api/settings names where the thresholds come from ───────
+//
+// A stored threshold row wins over the dashboard's mode and slider (F127
+// kept that; a calibration stores all three), and nothing on the dashboard
+// said so: after a calibration an owner could pick "quiet" or drag the
+// slider and the canary ran exactly what it ran before. GET /api/settings
+// now carries "thresholds_source", read as the calibration's status reads
+// it, and the dashboard's note under the slider shows for any source but
+// "preset" (dashboard_gates.test.js). Here, through the real reader, the
+// real stores, the Lab's real reset and the real module: what the field
+// says is what core.presence runs, at every step (the handler is pinned to
+// settings_thresholds_source() in test_csi_integration_is_thin...).
+
+// thresholds_source as handle_settings_get() reads it (pinned), or nullptr
+// where NVS does not open: the GET then answers 503 and names nothing.
+static const char* settings_thresholds_source() {
+  Preferences prefs;
+  if (!csi_module_settings_nvs::begin_read_only(prefs)) return nullptr;
+  const PresenceThresholdsInUse thresholds = read_presence_thresholds_in_use(prefs);
+  prefs.end();
+  return presence_thresholds_source(thresholds);
+}
+// The GET's source is `want`, and the calibration's status names the same.
+static bool settings_say(const char* want) {
+  const char* got = settings_thresholds_source();
+  return got != nullptr && std::strcmp(got, want) == 0 &&
+         std::strcmp(presence_thresholds_source(status_current()), want) == 0;
+}
+static bool lab_clear(const char* full_key) {
+  const std::string body = "{\"" + std::string(full_key) + "\":null}";   // as tune_ui.h sends it
+  const TunePost post = tune_post(body.c_str(), reinit_module_model);
+  return post.nvs_ok && post.changed == 1 && post.reinit_presence && !has_row(full_key);
+}
+// The dashboard's mode and slider, saved and applied as POST /api/settings
+// saves and applies them.
+static bool dashboard_saves(const char* json) {
+  if (!presence_post(json)) return false;
+  reinit_module_model("core.presence");
+  return true;
+}
+
+static int test_the_settings_answer_names_the_thresholds_source() {
+  host_prefs().clear();
+  reboot_and_boot();
+  CHECK(settings_thresholds_source() == nullptr);       // NVS not open: a 503, no field
+  host_prefs().created.insert("csi");
+
+  // No rows: the mode and the slider are what runs. "sensitive" at 100 is
+  // 5 / 40 / 5, so a motion of 20 is subtle and 45 is past it.
+  CHECK(settings_say("preset"));
+  CHECK(dashboard_saves("{\"preset\":\"sensitive\",\"sensitivity\":100}"));
+  CHECK(settings_say("preset"));
+  CHECK(presence_reads_as_subtle(20));
+  CHECK(!presence_reads_as_subtle(45));
+
+  // Three rows (a calibration's apply, then its re-init): "stored", and the
+  // mode and the slider change nothing, at once and from the next boot.
+  {
+    Preferences prefs;
+    CHECK(prefs.begin("csi", /*readOnly=*/false));
+    const PresenceThresholds proposed = {41, 83, 27};
+    CHECK(store_presence_thresholds(prefs, proposed));
+    prefs.end();
+    reinit_module_model("core.presence");
+  }
+  CHECK(settings_say("stored"));
+  CHECK(!presence_reads_as_subtle(20));
+  CHECK(presence_reads_as_subtle(45));
+  CHECK(dashboard_saves("{\"preset\":\"quiet\",\"sensitivity\":0}"));
+  CHECK(dashboard_saves("{\"preset\":\"sensitive\",\"sensitivity\":100}"));
+  CHECK(settings_say("stored"));
+  CHECK(!presence_reads_as_subtle(20));
+  CHECK(presence_reads_as_subtle(45));
+  reboot_and_boot();
+  CHECK(settings_say("stored"));
+  CHECK(presence_reads_as_subtle(45));
+
+  // The Lab's reset of one row: "mixed", and the mode and the slider set
+  // that one (motion back to the preset's 5; active stays the stored 83,
+  // so 45 is subtle where the preset alone reads it as past it).
+  CHECK(lab_clear("core.presence.motion_threshold"));
+  CHECK(settings_say("mixed"));
+  CHECK(presence_reads_as_subtle(20));
+  CHECK(presence_reads_as_subtle(45));
+  // The other two: "preset" again, and the preset runs.
+  CHECK(lab_clear("core.presence.active_threshold"));
+  CHECK(settings_say("mixed"));
+  CHECK(lab_clear("core.presence.breathing_threshold"));
+  CHECK(settings_say("preset"));
+  CHECK(presence_reads_as_subtle(20));
+  CHECK(!presence_reads_as_subtle(45));
+
+  // One row alone (a Lab slider): "mixed"; its reset: "preset".
+  CHECK(tune_post("{\"core.presence.active_threshold\":100}", reinit_module_model).changed == 1);
+  CHECK(settings_say("mixed"));
+  CHECK(presence_reads_as_subtle(45));
+  CHECK(lab_clear("core.presence.active_threshold"));
+  CHECK(settings_say("preset"));
+  CHECK(!presence_reads_as_subtle(45));
+
+  // Every combination the reader can see names the one source the
+  // dashboard's note keys on: all three stored, none, or some.
+  static const char* const kRows[] = {"csi/cp.mt", "csi/cp.at", "csi/cp.bt"};
+  for (int bits = 0; bits < 8; ++bits) {
+    host_prefs().clear();
+    host_prefs().created.insert("csi");
+    for (int r = 0; r < 3; ++r) {
+      if (bits & (1 << r)) host_prefs().i32[kRows[r]] = 60;
+    }
+    CHECK(settings_say(bits == 7 ? "stored" : bits == 0 ? "preset" : "mixed"));
+  }
   host_prefs().clear();
   return 0;
 }
@@ -1619,6 +2271,28 @@ static int test_csi_integration_is_thin_around_the_tested_code() {
     {"the status names no source", "const char* cur_source = presence_thresholds_source(current);",
      "const char* cur_source = \"stored\";"},
     {"the status drops the source from the body", "\"\\\"current_source\\\":\\\"%s\\\"}\",", "\"}\","},
+    // F315: GET /api/settings names the thresholds' source as the model does.
+    {"GET names no thresholds source (the code before F315's field, kept compiling)",
+     "const char* thresholds_source = presence_thresholds_source(thresholds);",
+     "const char* thresholds_source = \"preset\"; (void)thresholds;"},
+    {"GET drops the thresholds source from the body",
+     "\"\\\"tz\\\":\\\"%s\\\",\\\"tz_iana\\\":\\\"%s\\\",\\\"thresholds_source\\\":\\\"%s\\\"}\",",
+     "\"\\\"tz\\\":\\\"%s\\\",\\\"tz_iana\\\":\\\"%s\\\"}\","},
+    {"GET sends the source under the time zone's name", "tz, tz_iana, thresholds_source);",
+     "thresholds_source, tz_iana, tz);"},
+    {"GET reads the source after NVS closes",
+     "  const PresenceThresholdsInUse thresholds = read_presence_thresholds_in_use(prefs);\n  prefs.end();\n",
+     "  prefs.end();\n  const PresenceThresholdsInUse thresholds = read_presence_thresholds_in_use(prefs);\n"},
+    {"GET reports the NVS-closed default whatever is stored",
+     "const PresenceThresholdsInUse thresholds = read_presence_thresholds_in_use(prefs);",
+     "const PresenceThresholdsInUse thresholds = presence_thresholds_in_use_unread();"},
+    {"GET reads a threshold row by hand",
+     "const PresenceThresholdsInUse thresholds = read_presence_thresholds_in_use(prefs);",
+     "PresenceThresholdsInUse thresholds = read_presence_thresholds_in_use(prefs);\n"
+     "  thresholds.motion_stored = prefs.isKey(\"cp.mt\");"},
+    {"GET names the source by the slider", "const char* thresholds_source = presence_thresholds_source(thresholds);",
+     "const char* thresholds_source = presence_thresholds_source(thresholds);\n"
+     "  if (sensitivity != 50) thresholds_source = \"mixed\";"},
     {"the calibration stores the motion proposal as active (g03)",
      "proposed.active    = (int32_t)g_calibration.proposed_active;",
      "proposed.active    = (int32_t)g_calibration.proposed_motion;"},
@@ -1755,8 +2429,11 @@ int main(int argc, char** argv) {
     {"the_privacy_ceiling_is_one_row", test_the_privacy_ceiling_is_one_row},
     {"no_sketch_source_spells_a_module_settings_key", test_no_sketch_source_spells_a_module_settings_key},
     {"csi_integration_is_thin_around_the_tested_code", test_csi_integration_is_thin_around_the_tested_code},
+    {"csi_integration_reads_every_body_whole", test_csi_integration_reads_every_body_whole},
+    {"the_settings_answer_fits_its_buffer", test_the_settings_answer_fits_its_buffer},
     {"a_lab_reset_removes_the_row", test_a_lab_reset_removes_the_row},
     {"after_a_reset_the_saved_preset_applies", test_after_a_reset_the_saved_preset_applies},
+    {"the_settings_answer_names_the_thresholds_source", test_the_settings_answer_names_the_thresholds_source},
     {"the_import_round_trip_still_stores_rows", test_the_import_round_trip_still_stores_rows},
     {"a_malformed_value_or_unknown_null_changes_nothing",
      test_a_malformed_value_or_unknown_null_changes_nothing},
