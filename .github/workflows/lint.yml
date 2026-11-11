@@ -175,6 +175,17 @@ jobs:
 
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
         run: python3 scripts/lint_dictionary_sync.py
+      - name: Device-details vocabulary — generated module current, every row emitted
+        # spec/device_details_vocabulary.json names each key a Canary's answers
+        # use, its class and the firmware sources that emit it. HACS ships
+        # custom_components/securacv/ alone, so the integration reads a
+        # generated copy, device_vocabulary.py, and diagnostics.py unions its
+        # redacted keys into TO_REDACT (sweep HA56). This byte-checks that
+        # copy (a hand edit, or a vocabulary edited without the run) and
+        # re-reads every named firmware source, refusing a row whose key its
+        # surface does not emit: a firmware edit that drops or renames such a
+        # key goes red here until the row moves with it.
+        run: python3 scripts/gen_device_vocabulary.py --check
       - name: Vehicle DBC signal math (golden vectors)
         run: python3 scripts/dbc_signal_resolve.py selftest
       - name: Vehicle profiles match their vendored DBC excerpts

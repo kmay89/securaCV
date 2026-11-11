@@ -55,6 +55,22 @@ the file still says them, in `lint.yml`, in `enclosure.yml` and through
 `canary_board_lib.scad`'s registry, so correcting a board dimension is an
 edit to the registry, never to the literal by hand).
 
+One reaches into the Home Assistant integration, and its inputs include
+firmware sources: `scripts/gen_device_vocabulary.py` writes
+`custom_components/securacv/device_vocabulary.py` from
+`spec/device_details_vocabulary.json`, the keys a Canary's answers use, each
+with its class and the firmware sources that emit it. `diagnostics.py`
+unions the module's redacted keys into the dump's `TO_REDACT`, so a row
+added in a redacted class is redacted with no edit there; HACS ships
+`custom_components/securacv/` alone, which is why the integration reads a
+generated copy rather than `spec/`. Edit the vocabulary, run the generator,
+commit both. Its `--check` (lint.yml) byte-checks the module and re-reads
+every firmware source a row names, refusing a row whose key that source no
+longer emits as a JSON key, so a firmware edit that renames or drops such a
+key (`doc["sd_writes"]` in `firmware/canary/src/main.cpp`, say) goes red
+there, in a job that names neither file, until the row moves with it. The
+same vocabulary is the input the identifier lint of ledger F430 is to read.
+
 Two of them are chained, and the order matters: `gen_csp.py` (every Lab page's
 Content-Security-Policy, from one policy table) hashes the firmware's captive
 page as `wap.html` embeds it, and it reads that page from
