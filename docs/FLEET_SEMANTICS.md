@@ -158,8 +158,13 @@ but presence beacons are unsigned (sweep F232), so one radio beacons any
 number of session ids at once and their ten minutes run together, up to the
 nearby table's free rows: the rule delays a device that wants many
 confirming keys by ten minutes, it does not price each key, and it proves
-nothing. It covers confirmations only: a suppress vote, which takes a chirp
-off a receiver, needs no presence row at all (sweep F234, open). Beacon's
+nothing. A suppress vote, which takes a chirp off a receiver, meets the same
+rule since sweep F234 (it counted from any key that signed it, row or not),
+so it is delayed the same way and priced no more: one radio's keys beaconed
+ten minutes still vote, and made-up rows still count toward the threshold
+and can keep a real neighbor out of a full table (F232). What a key or a
+row should cost, and whether an emergency template can be voted down at
+all, are open (F232, F234). Beacon's
 receive path has one more: when the receiver's
 clock is unsynced the freshness branch is empty ("accept but flag" —
 nothing is flagged), so a captured frame can be re-accepted after the
@@ -206,9 +211,11 @@ has not been measured.
 - No cross-device ordering, correlation, fusion or consensus; no
   partition-safe election.
 - No relay on Opera or Beacon. No Sybil resistance on Chirp in the sense of
-  a cost per identity: an ACK counts after ten minutes of unsigned beacons
-  from its key (F311, F232), and one radio runs those ten minutes for many
-  keys at once; a suppress vote needs no presence at all (F234, open).
+  a cost per identity: an ACK, and since F234 a suppress vote, counts after
+  ten minutes of unsigned beacons from its key (F311, F232), and one radio
+  runs those ten minutes for many keys at once. A stronger cost per key and
+  whether an emergency template can be voted down at all are open (F232,
+  F234).
 - No multi-node, partition, split-brain or two-hub test. The fixtures in
   `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json` pin the
   wire shape and parse semantics of one observer; `fleet_peers.rs`'s unit

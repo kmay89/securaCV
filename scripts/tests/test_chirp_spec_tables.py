@@ -55,6 +55,16 @@ were prose with nothing holding them to the code, so this test does:
     ACKs from other keys and the ten minutes (PRESENCE_REQUIRED_MS) as a
     delay, and the old phrases are gone.
 
+  * Who may vote (§2.5.3, §2.5.6, §3.4 rule 4, FLEET_SEMANTICS.md §6 and §8,
+    THREAT_MODEL.md, mesh_and_chirp_audit_v1.md; sweep F234). A suppress
+    vote counts only from a key whose nearby row passes
+    nearby_has_pubkey_with_presence(), the ten-minute rule an ACK meets:
+    handle_suppress_vote() calls it after the signature and session-id
+    checks and before it looks the chirp up. Every page says a vote needs
+    that row, none says it needs none, and each keeps the rest open: what a
+    key or a row should cost (F232) and whether an emergency template can be
+    voted down at all (F234). The audit doc's C7 row names cases that exist.
+
   * API examples, the receive mockup and the Replay cell (§8.2, §4.2, §5.3,
     §10.1, THREAT_MODEL.md; sweeps D19, F309). Each §8.2 example names a
     route chirp_api.h registers, and its keys are exactly the keys that
@@ -537,8 +547,8 @@ class ChirpSpecSybilCost(unittest.TestCase):
     Each confirmation and vote needs its own signed key, but a key is a
     random seed, so the threshold prices nothing per identity. What a
     confirming key waits is ten minutes of presence (§3.4 rule 4, F311), and
-    presence beacons are unsigned (F232), so one radio runs those minutes for
-    many keys at once; a suppress vote needs no presence (F234).
+    since F234 a voting key too; presence beacons are unsigned (F232), so one
+    radio runs those minutes for many keys at once.
     """
 
     def setUp(self):
@@ -561,8 +571,14 @@ class ChirpSpecSybilCost(unittest.TestCase):
         self.assertIn("one an attack can pay before it starts", section)
         self.assertNotIn("slows a device", section)
         # F232 and F234 are open: the bullet says so, and calls neither fixed.
+        # F234's floor is in (a vote waits the same ten minutes); its
+        # decision is not (an emergency template, a stronger cost).
         self.assertIn("(§3.2; sweep F232, open)", section)
         self.assertIn("(§2.5.6; sweep F234, open)", section)
+        self.assertIn("A suppress vote waits the same ten minutes since sweep F234, so it is delayed the "
+                      "same way and priced no more", section)
+        self.assertIn("whether an emergency template can be voted down at all, are open", section)
+        self.assertNotIn("A suppress vote needs no presence", section)
 
     def test_no_page_prices_a_sybil(self):
         for heading in ("2.5.3 Defense: Witness Requirement (Sybil Resistance) — v0.2",
@@ -579,6 +595,13 @@ class ChirpSpecSybilCost(unittest.TestCase):
         self.assertIn("one device makes any number of session keys", cell)
         for item in ("F232", "F311", "F234"):
             self.assertIn(item, cell)
+        # A vote waits the ACK's ten minutes since F234; what a key costs and
+        # the emergency template stay open, so the cell stays partial.
+        self.assertIn("the ten-minute wait an ACK (F311) and, since F234, a suppress vote must meet runs for "
+                      "many keys at once", cell)
+        self.assertIn("what a key or a row should cost and whether an emergency template can be voted down "
+                      "at all are open (F232, F234)", cell)
+        self.assertNotIn("need no presence", cell)
         # The rate limit holds per key, across uptime's wrap too (sweep
         # F416: pubkey_rate_check_and_record() gives up the row whose window
         # started longest ago, by unsigned elapsed time, and update() drops
@@ -595,6 +618,108 @@ class ChirpSpecSybilCost(unittest.TestCase):
         self.assertNotIn("F416, open", cell)
         self.assertNotIn("take turns past the limit", cell)
         self.assertIn("once per key and possibly before the chirp they confirm", cell)
+
+
+FLEET_SEMANTICS = REPO / "docs/FLEET_SEMANTICS.md"
+CHIRP_AUDIT = REPO / "docs/audit/mesh_and_chirp_audit_v1.md"
+SUPPRESS_TEST = REPO / "firmware/projects/canary-wap/tests_host/test_chirp_suppress_wap.cpp"
+
+
+def doc_section(text: str, heading: str) -> str:
+    """The body of the `## ` section of a docs page that starts `heading`."""
+    m = re.search(r"^## " + re.escape(heading) + r"[^\n]*$(.*?)(?=^## )", text, re.M | re.S)
+    assert m, f"section {heading!r} moved"
+    return m.group(1)
+
+
+class ChirpSpecWhoMayVote(unittest.TestCase):
+    """A suppress vote needs a presence row ten minutes old (sweep F234).
+
+    handle_suppress_vote() counted a signed vote from any key, row or not,
+    while an ACK needed a row ten minutes old (F311). It now asks the ACK's
+    question, through the same function, before it looks the chirp up; the
+    pages say so, and keep open what F234 and F232 leave to a decision.
+    """
+
+    def setUp(self):
+        self.spec = SPEC.read_text(encoding="utf-8")
+        self.cpp = (SKETCH / "chirp_channel.cpp").read_text(encoding="utf-8")
+
+    def test_the_vote_asks_the_acks_question_first(self):
+        vote = function_body(self.cpp, r"static void handle_suppress_vote\(const uint8_t\* data, size_t len\)")
+        ack = function_body(self.cpp, r"static void handle_ack\(const uint8_t\* data, size_t len\)")
+        gate = "if (!nearby_has_pubkey_with_presence(payload->voter_session_pubkey)) return;"
+        self.assertEqual(vote.count(gate), 1, "the vote's presence check moved or changed")
+        self.assertIn("if (!nearby_has_pubkey_with_presence(payload->confirmer_session_pubkey)) {", ack)
+        sid = vote.index("if (memcmp(derived_sid, hdr->session_id, SESSION_ID_SIZE) != 0) return;")
+        verify = vote.index("Ed25519::verify(payload->signature, payload->voter_session_pubkey")
+        at = vote.index(gate)
+        # After the signature and the session id, before the chirp is looked
+        # up: a refused vote counts nowhere and takes no slot.
+        self.assertLess(verify, at)
+        self.assertLess(sid, at)
+        self.assertLess(at, vote.index("recent_index_of(payload->original_nonce)"))
+        self.assertLess(at, vote.index("c.suppress_count++"))
+        # And it logs nothing (a line per refused vote is one radio's to send).
+        self.assertNotIn("health_log", vote[:vote.index("recent_index_of(payload->original_nonce)")])
+
+    def test_every_page_says_a_vote_needs_a_row(self):
+        mute = prose(spec_section(self.spec, "2.5.6 Defense: Community Mute Propagation — v0.2"))
+        self.assertIn("A vote counts only from a key whose nearby row went into the table at least "
+                      "`PRESENCE_REQUIRED_MS` (10 min) before, the rule an ACK meets (§3.4 rule 4; sweep F234)",
+                      mute)
+        self.assertIn("A receiver with fewer than 3 rows now suppresses nothing", mute)
+        self.assertIn("That rule is a delay, not a price.", mute)
+        self.assertIn("(sweep F232, open;", mute)
+        self.assertIn("whether an emergency template can be voted down at all are open (sweep F234)", mute)
+        self.assertIn("so one radio in range can still vote a chirp down; F232 and F234 are open", mute)
+        self.assertNotIn("Who may vote is open", mute)
+        ack = prose(spec_section(self.spec, "3.4 CHIRP_ACKNOWLEDGE — v0.2"))
+        self.assertIn("A suppress vote meets the same rule since sweep F234 (§2.5.6)", ack)
+        self.assertIn("whether an emergency template can be voted down at all are open (sweep F234)", ack)
+        self.assertNotIn("needs no presence", ack)
+        witness = prose(spec_section(self.spec, "2.5.3 Defense: Witness Requirement (Sybil Resistance) — v0.2"))
+        self.assertIn("Its suppress votes are counted on the same rule (§2.5.6; sweep F234).", witness)
+
+        fleet = FLEET_SEMANTICS.read_text(encoding="utf-8")
+        relay = prose(doc_section(fleet, "6. Relay"))
+        self.assertIn("A suppress vote, which takes a chirp off a receiver, meets the same rule since sweep F234",
+                      relay)
+        self.assertIn("whether an emergency template can be voted down at all, are open (F232, F234)", relay)
+        claimed = prose(doc_section(fleet, "8. What is not claimed"))
+        self.assertIn("an ACK, and since F234 a suppress vote, counts after ten minutes of unsigned beacons "
+                      "from its key (F311, F232)", claimed)
+        self.assertIn("whether an emergency template can be voted down at all are open (F232, F234)", claimed)
+        for name, text in (("§6", relay), ("§8", claimed)):
+            with self.subTest(section=name):
+                self.assertNotIn("needs no presence", text)
+                self.assertNotIn("F234, open", text)
+
+        threat = prose(THREAT_MODEL.read_text(encoding="utf-8"))
+        self.assertIn("Signed suppress voting wired (audit C7); a vote counts only from a key whose nearby row "
+                      "is ten minutes old, the rule an ACK meets (F234).", threat)
+        self.assertTrue(threat_model_cell(THREAT_MODEL.read_text(encoding="utf-8"), "Sybil flood", "Chirp")
+                        .startswith("partial: "))
+
+    def test_the_audit_names_cases_that_exist(self):
+        audit = CHIRP_AUDIT.read_text(encoding="utf-8")
+        rows = [ln for ln in audit.splitlines() if ln.startswith("| C7 |") and "handle_suppress_vote" in ln]
+        self.assertEqual(len(rows), 1, "the closure table's C7 row moved")
+        self.assertIn("F234: a voter's nearby row ten minutes old", rows[0])
+        self.assertIn("`nearby_has_pubkey_with_presence`", rows[0])
+        suite = SUPPRESS_TEST.read_text(encoding="utf-8")
+        registered = set(re.findall(r'\{"([a-z0-9_]+)",\s*test_\1\}', suite))
+        named = set(re.findall(r"`(?:test_chirp_suppress_wap::)?([a-z0-9_]+)`", rows[0].split("|")[5]))
+        self.assertIn("a_fresh_key_votes_for_nothing", named)
+        self.assertIn("a_vote_waits_for_ten_minutes_of_presence", named)
+        self.assertTrue(named <= registered, f"the C7 row names {sorted(named - registered)}, not cases")
+        note = prose(audit[audit.index("Sweep F234:"):])
+        for case in ("keys_beaconed_ten_minutes_still_vote", "a_padded_table_keeps_a_neighbor_out"):
+            with self.subTest(case=case):
+                self.assertIn(f"`{case}`", note)
+                self.assertIn(case, registered)
+        self.assertIn("whether an emergency template can be voted down at all (F234) are open", note)
+        self.assertIn("row stays partial", note)
 
 
 API_H = SKETCH / "chirp_api.h"
