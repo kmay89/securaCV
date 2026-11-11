@@ -1,6 +1,95 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap reads every request body whole and its mesh refuses a hash it could not make, one header spells the Chirp advert, Home Assistant redacts what the device vocabulary names, the SBOM tools are pinned, and the parity ledgers read the code (#1961, wave 24)
+
+- **canary-wap reads every POST body whole or refuses it by name (F300).**
+  The sketch's 18 single `httpd_req_recv()` reads and `/api/peek/sensor`'s
+  hand loop, and the Bluetooth, Chirp, household, audible-chirp, RF
+  presence and CSI routes, parsed what one socket read held, so a body
+  split across TCP segments was parsed from its first segment: a padded
+  vault key was registered from the cut, a two-segment chirp send sent the
+  default ALERT, and a CSI setting of 75 could be stored as 7. Each handler
+  now reads `Content-Length` bytes through `http_body::read_request()` or
+  `read_all()` and answers 400 `body_too_large` or `body_read_failed` (or
+  its own file's error shape). Peek resolution and sensor, Wi-Fi connect
+  and AP-only, device name, and vault config and key move from 200 to 400
+  for a body that does not fit; no client the repos ship sends one that
+  big. The log ack keeps its old answer on purpose: a reason too long for
+  its buffer acknowledges with no reason, since the device keeps none.
+- **canary-wap's mesh refuses a fingerprint or opera id it could not hash,
+  and a boot that did not read its store writes none of it (F364, the mesh
+  slice).** `compute_fingerprint()` and `compute_opera_id()` are
+  `[[nodiscard]] bool`, and all eight callers refuse with nothing half
+  done: no member is added, loaded or joined under a zeroed fingerprint,
+  and the deny-list counts a key it cannot hash as removed (it failed
+  open). A mesh that did not read its store this boot (its own key did not
+  hash, safe mode, a failed ESP-NOW start) refuses the 5-minute save and
+  every owner command but clearing alerts, where a safe-mode enable, rename
+  or leave used to remove the stored opera; `POST /api/mesh/enable` answers
+  400 `enable_failed` there. A rotation in flight keeps its pending ACKs on
+  the right members across a removal.
+- **The Sensing dashboard says when stored thresholds win (F315).** `GET
+  /api/settings` gains a read-only `thresholds_source` (`stored`, `preset`
+  or `mixed`), and under the sensitivity slider the page says when levels
+  a calibration or the Tuning Lab saved make Sensitive, Balanced, Quiet and
+  the slider change nothing, and how to get them back. `web_assets_gz.h`
+  is regenerated, and `docs/csi_developer_api.md` documents the field and
+  the CSI routes' refusals.
+- **One header spells the BLE Chirp advert (F316).**
+  `firmware/common/fleet_link/fleet_chirp.h` is the 17-byte layout the
+  canary-wap sends and every firmware receiver parses (the canary tree's
+  roster feed and Scout pairing filter, canary-sense, canary-vision, the
+  display), host-tested by `test_fleet_chirp.cpp` and staged byte-identical
+  in the canary-wap sketch (`check_fleet_beacon_sync.sh`) and the display
+  sketch (`setup.sh regen`). No wire change: a scratch differential against
+  the old sender and receivers is identical. The canary-wap's own nearby
+  scan keeps its wider rule, its offsets asserted to the header. The iPhone
+  app's chirp tests read the header and pin the sender's whole call.
+- **Home Assistant: the diagnostics redaction set reads the device-details
+  vocabulary (HA56).** `spec/device_details_vocabulary.json` names each key
+  a Canary's answers use, its class and the firmware sources that send it,
+  and reaches the integration as the generated `device_vocabulary.py`
+  (`scripts/gen_device_vocabulary.py`; `lint.yml` runs its `--check`, which
+  refuses a row its named source does not send). `TO_REDACT` is the
+  integration's own keys plus every key of a redacted class, so a new row
+  is redacted with no edit to `diagnostics.py`. The set is unchanged at 46
+  keys and can only grow: the generator will not drop a key the committed
+  module redacts, because older Canaries still send renamed keys.
+- **CI: the SBOM tools are pinned and read back (CI26, the code half).**
+  `sbom.yml` installs cargo-cyclonedx 0.5.9 and cdxgen 12.9.0 from one job
+  variable each, caches the binary under its version, and a new step fails
+  unless each document's `metadata.tools` names the pinned release.
+  `test_gen_firmware_sbom.py`'s `SbomToolPins` holds every way the job
+  could install a tool by name.
+- **Docs: the parity ledgers read the code (F20, gaps #14 and #15;
+  maintainer to confirm).** `firmware/canary/CONSOLIDATION.md`'s system
+  monitor gap reads ⚠️ with what is missing named, since the flagship
+  ships `securacv_diagnostics` and the thermal watchdog, and the log gap
+  names its real remainder: no tree ever persisted a log acknowledgment.
+  `firmware/FEATURES.md`'s Health Monitoring rows follow the code, and
+  `test_docs_claims.py`'s `TheParityLedgersReadTheCode` holds each verdict
+  to its source.
+- **Enclosure knob help (C31, C30, C10 in part).** The released doorbell's
+  and Vision's last four bare knobs and the combo's and fit coupon's seven
+  lone knobs carry help read off their geometry, and the paper templates'
+  12 mirrored knobs sit one per line, each naming its source and the
+  `gen_templates.py --check` that holds it equal. `HELP_DEBT` holds the
+  released four and the templates at zero. Comment-only: every edited
+  part's CSG is byte-identical; `catalog.json`'s templates count moves 4 to
+  16. The website's carried copies follow with the next `--site` carry.
+- **Backlog:** F300, F315, F316, HA56, C30 and C31 are closed; F364, F20,
+  C10 and CI26 now say what remains. New from the wave: F455 (the
+  flagship's and the common witness core's SHA-256 helpers check nothing),
+  F456-F468, HA62, HA63, C38 and CI27, ten of them decisions for a
+  maintainer.
+- Host-tested here: the canary-wap host suite under g++, clang++ 18 and
+  ASan/UBSan, the Sensing dashboard in Chromium, Home Assistant's tests on
+  real cores 2026.5.0 and 2026.10.1, and 63 OpenSCAD renders. The ESP32
+  PlatformIO and Arduino compiles, the iPhone app's first compile of the
+  Chirp test, the SBOM workflow itself, hassfest and the HACS validation
+  are CI's. Nothing was run on a device.
+
 ### rusqlite 0.41: SQLite 3.39.4 to 3.53.4 under SQLCipher, and what the audit pass does not mean
 
 - **`rusqlite` 0.31 to 0.41** (`libsqlite3-sys` 0.28 to 0.39.1; SQLCipher
