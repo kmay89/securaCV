@@ -1065,43 +1065,103 @@ fn anchor_select_sql(conn: &Connection) -> Result<String> {
     ))
 }
 
-type RawAnchorRow = (
-    i64,
-    Option<i64>,
-    Option<i64>,
-    Option<String>,
-    Option<Vec<u8>>,
-    Option<String>,
-    Option<String>,
-    Option<Vec<u8>>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<i64>,
-);
+/// One anchor row as SQLite stores it: twelve values in [`anchor_select_sql`]
+/// column order, read by storage class and not yet typed.
+type RawAnchorRow = [RawValue; 12];
 
-fn decode_anchor_row(raw: RawAnchorRow) -> std::result::Result<AnchorRecord, String> {
-    let (
-        id,
-        start,
-        size,
-        subject,
-        hash,
-        tsa_url,
-        gen_time,
-        token_der,
-        tsa_name,
-        signer_fingerprint,
-        signer_sid,
-        ledger_id,
-    ) = raw;
-    let start = start.ok_or("created_bucket_start is NULL")?;
-    let size = size.ok_or("created_bucket_size is NULL")?;
-    let subject = subject.ok_or("subject is NULL")?;
-    let hash = hash.ok_or("subject_hash is NULL")?;
-    let tsa_url = tsa_url.ok_or("tsa_url is NULL")?;
-    let gen_time = gen_time.ok_or("gen_time is NULL")?;
-    let token_der = token_der.ok_or("token_der is NULL")?;
+/// One stored value by storage class. `BadText` is TEXT that is not UTF-8;
+/// no column accepts it.
+#[derive(Clone, Debug, PartialEq)]
+enum RawValue {
+    Null,
+    Integer(i64),
+    Real,
+    Text(String),
+    Blob(Vec<u8>),
+    BadText,
+}
+
+/// The anchor columns in [`anchor_select_sql`] order, for the per-column
+/// reasons `decode_anchor_row` gives.
+const ANCHOR_COLUMN_NAMES: [&str; 12] = [
+    "id",
+    "created_bucket_start",
+    "created_bucket_size",
+    "subject",
+    "subject_hash",
+    "tsa_url",
+    "gen_time",
+    "token_der",
+    "tsa_name",
+    "signer_cert_sha256",
+    "signer_sid",
+    "ledger_id",
+];
+
+/// A required INTEGER column (`{name} is NULL` / `{name} is not an INTEGER`).
+fn col_i64(raw: &RawAnchorRow, idx: usize) -> std::result::Result<i64, String> {
+    let name = ANCHOR_COLUMN_NAMES[idx];
+    match &raw[idx] {
+        RawValue::Integer(v) => Ok(*v),
+        RawValue::Null => Err(format!("{name} is NULL")),
+        _ => Err(format!("{name} is not an INTEGER")),
+    }
+}
+
+/// An optional INTEGER column: NULL reads as `None`.
+fn col_opt_i64(raw: &RawAnchorRow, idx: usize) -> std::result::Result<Option<i64>, String> {
+    match &raw[idx] {
+        RawValue::Null => Ok(None),
+        _ => col_i64(raw, idx).map(Some),
+    }
+}
+
+/// A required TEXT column (`{name} is NULL` / `{name} is not TEXT`).
+fn col_text(raw: &RawAnchorRow, idx: usize) -> std::result::Result<String, String> {
+    let name = ANCHOR_COLUMN_NAMES[idx];
+    match &raw[idx] {
+        RawValue::Text(v) => Ok(v.clone()),
+        RawValue::Null => Err(format!("{name} is NULL")),
+        RawValue::BadText => Err(format!("{name} is TEXT that is not UTF-8")),
+        _ => Err(format!("{name} is not TEXT")),
+    }
+}
+
+/// An optional TEXT column: NULL reads as `None`.
+fn col_opt_text(raw: &RawAnchorRow, idx: usize) -> std::result::Result<Option<String>, String> {
+    match &raw[idx] {
+        RawValue::Null => Ok(None),
+        _ => col_text(raw, idx).map(Some),
+    }
+}
+
+/// A required BLOB column (`{name} is NULL` / `{name} is not a BLOB`).
+fn col_blob(raw: &RawAnchorRow, idx: usize) -> std::result::Result<Vec<u8>, String> {
+    let name = ANCHOR_COLUMN_NAMES[idx];
+    match &raw[idx] {
+        RawValue::Blob(v) => Ok(v.clone()),
+        RawValue::Null => Err(format!("{name} is NULL")),
+        _ => Err(format!("{name} is not a BLOB")),
+    }
+}
+
+/// Type a raw anchor row. Every column is checked by storage class before
+/// it is read, so a TEXT where a BLOB belongs (or any other class drift) is
+/// a per-column reason, never a `rusqlite` conversion error that would stop
+/// the whole read.
+fn decode_anchor_row(raw: &RawAnchorRow) -> std::result::Result<AnchorRecord, String> {
+    let id = col_i64(raw, 0)?;
+    let start = col_i64(raw, 1)?;
+    let size = col_i64(raw, 2)?;
+    let subject = col_text(raw, 3)?;
+    let hash = col_blob(raw, 4)?;
+    let tsa_url = col_text(raw, 5)?;
+    let gen_time = col_text(raw, 6)?;
+    let token_der = col_blob(raw, 7)?;
+    let tsa_name = col_opt_text(raw, 8)?;
+    let signer_fingerprint = col_opt_text(raw, 9)?;
+    let signer_sid = col_opt_text(raw, 10)?;
+    let ledger_id = col_opt_i64(raw, 11)?;
     let subject_hash: [u8; 32] = hash.try_into().map_err(|_| "subject_hash size")?;
     Ok(AnchorRecord {
         id,
@@ -1124,33 +1184,44 @@ fn decode_anchor_row(raw: RawAnchorRow) -> std::result::Result<AnchorRecord, Str
 /// Every anchor row in id order, with a malformed row surfaced as
 /// `(id, Err(reason))` instead of aborting the read. A verifier folding
 /// anchors into a verdict uses this so one corrupt auxiliary row cannot turn
-/// into an undiagnosed failure.
+/// into an undiagnosed failure. Lenient at the storage-class level too: each
+/// column is read as the `Value` SQLite holds (`get_ref`), and typing it is
+/// the row's own problem (`subject_hash is not a BLOB`,
+/// `created_bucket_start is not an INTEGER`, …). Only prepare/step errors —
+/// genuine SQLite errors — propagate. A row whose `id` itself is not an
+/// INTEGER is reported under id `-1`.
 pub fn list_anchors_lenient(conn: &Connection) -> Result<Vec<(i64, Result<AnchorRecord>)>> {
+    use rusqlite::types::ValueRef;
     let sql = anchor_select_sql(conn)?;
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, Option<i64>>(1)?,
-            row.get::<_, Option<i64>>(2)?,
-            row.get::<_, Option<String>>(3)?,
-            row.get::<_, Option<Vec<u8>>>(4)?,
-            row.get::<_, Option<String>>(5)?,
-            row.get::<_, Option<String>>(6)?,
-            row.get::<_, Option<Vec<u8>>>(7)?,
-            row.get::<_, Option<String>>(8)?,
-            row.get::<_, Option<String>>(9)?,
-            row.get::<_, Option<String>>(10)?,
-            row.get::<_, Option<i64>>(11)?,
-        ))
+        let mut raw: RawAnchorRow = std::array::from_fn(|_| RawValue::Null);
+        for (i, slot) in raw.iter_mut().enumerate() {
+            *slot = match row.get_ref(i)? {
+                ValueRef::Null => RawValue::Null,
+                ValueRef::Integer(v) => RawValue::Integer(v),
+                ValueRef::Real(_) => RawValue::Real,
+                ValueRef::Blob(b) => RawValue::Blob(b.to_vec()),
+                // TEXT that is not UTF-8 stays TEXT: the row reports the
+                // column instead of failing the whole read.
+                ValueRef::Text(t) => match std::str::from_utf8(t) {
+                    Ok(s) => RawValue::Text(s.to_owned()),
+                    Err(_) => RawValue::BadText,
+                },
+            };
+        }
+        Ok(raw)
     })?;
     let mut out = Vec::new();
     for row in rows {
         let raw = row?;
-        let id = raw.0;
+        let id = match &raw[0] {
+            RawValue::Integer(id) => *id,
+            _ => -1,
+        };
         out.push((
             id,
-            decode_anchor_row(raw).map_err(|reason| anyhow!("corrupt anchor {id}: {reason}")),
+            decode_anchor_row(&raw).map_err(|reason| anyhow!("corrupt anchor {id}: {reason}")),
         ));
     }
     Ok(out)
@@ -1920,6 +1991,53 @@ mod tests {
         );
         assert_eq!(last.ledger_id, None);
         assert_eq!(last.tsa_name, None);
+    }
+
+    #[test]
+    fn list_anchors_lenient_isolates_text_that_is_not_utf8() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_anchor_table(&conn).unwrap();
+        let token = parse_token(&fixture_token_der()).unwrap();
+        let good = insert_anchor(&conn, "digest", &fixture_digest(), "(offline)", &token).unwrap();
+        conn.execute(
+            "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject,
+                subject_hash, tsa_url, gen_time, token_der)
+             VALUES (0, 600, CAST(x'ff' AS TEXT), ?1, '(offline)', '20260610123324Z', x'00')",
+            [vec![0u8; 32]],
+        )
+        .unwrap();
+        let bad = conn.last_insert_rowid();
+
+        let rows = list_anchors_lenient(&conn).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, good);
+        assert!(rows[0].1.is_ok());
+        assert_eq!(rows[1].0, bad);
+        let reason = rows[1].1.as_ref().unwrap_err().to_string();
+        assert!(
+            reason.contains("subject is TEXT that is not UTF-8"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_blob_column_retyped_as_text_is_refused() {
+        // A token whose bytes survive but whose storage class became TEXT is
+        // a damaged row, in the lenient reader and the strict one.
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_anchor_table(&conn).unwrap();
+        let token = parse_token(&fixture_token_der()).unwrap();
+        let id = insert_anchor(&conn, "digest", &fixture_digest(), "(offline)", &token).unwrap();
+        conn.execute(
+            "UPDATE tsa_anchors SET token_der = CAST(token_der AS TEXT) WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+
+        let rows = list_anchors_lenient(&conn).unwrap();
+        let reason = rows[0].1.as_ref().unwrap_err().to_string();
+        assert!(reason.contains("token_der is not a BLOB"), "{reason}");
+        assert!(list_anchors(&conn).is_err());
     }
 
     #[test]

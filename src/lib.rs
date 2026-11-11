@@ -195,6 +195,7 @@ pub fn high_water_mark_path_from_env() -> Option<std::path::PathBuf> {
 /// to an independent secret (or rotate the independent secret) without data loss.
 /// Both keys are 64-char hex (32 raw bytes), as produced by the `derive_*` helpers.
 pub fn rekey_database_file(db_path: &str, old_key_hex: &str, new_key_hex: &str) -> Result<()> {
+    ensure_sqlcipher_ready()?;
     let conn = Connection::open(db_path)?;
     // Authenticate with the current key (also verifies it is correct).
     apply_sqlcipher_key(&conn, old_key_hex)?;
@@ -211,8 +212,38 @@ pub fn rekey_database_file(db_path: &str, old_key_hex: &str, new_key_hex: &str) 
     Ok(())
 }
 
+/// Finish SQLite's and SQLCipher's start-up before this thread opens or keys
+/// a database.
+///
+/// SQLCipher sets up its mutexes, private heap and cipher provider in
+/// SQLite's extra-init hook, which `sqlite3_initialize` runs after it has
+/// already marked the library initialized. A second thread opening its first
+/// database in that window gets through `sqlite3_initialize` at once and its
+/// `PRAGMA key` fails. `sqlcipher_extra_init` takes SQLite's main mutex and
+/// returns at once when start-up is complete, so calling it here waits out
+/// another thread's start-up. It is the hook SQLCipher requires by name at
+/// build time (`-DSQLITE_EXTRA_INIT=sqlcipher_extra_init`).
+fn ensure_sqlcipher_ready() -> Result<()> {
+    extern "C" {
+        fn sqlcipher_extra_init(arg: *const std::ffi::c_char) -> std::ffi::c_int;
+    }
+    // SAFETY: both calls take no pointers we own (the argument is unused and
+    // may be null), are safe to call from any thread, and are idempotent.
+    let rc = unsafe {
+        match rusqlite::ffi::sqlite3_initialize() {
+            rusqlite::ffi::SQLITE_OK => sqlcipher_extra_init(std::ptr::null()),
+            rc => rc,
+        }
+    };
+    if rc != rusqlite::ffi::SQLITE_OK {
+        return Err(anyhow!("SQLCipher start-up failed (SQLite code {rc})"));
+    }
+    Ok(())
+}
+
 /// Apply the SQLCipher encryption key to an open database connection.
 fn apply_sqlcipher_key(conn: &Connection, hex_key: &str) -> Result<()> {
+    ensure_sqlcipher_ready()?;
     conn.pragma_update(None, "key", format!("x'{}'", hex_key))?;
     // Verify the key works by reading a page
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
@@ -247,6 +278,7 @@ fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> 
     let encrypted_path = format!("{}.encrypted", db_path);
 
     // Open the unencrypted database (no key)
+    ensure_sqlcipher_ready()?;
     let plain_conn = Connection::open(db_path)?;
 
     // Attach the new encrypted database
@@ -339,6 +371,7 @@ pub(crate) fn open_db_connection_with_key(
     db_path: &str,
     encryption_key: Option<&str>,
 ) -> Result<Connection> {
+    ensure_sqlcipher_ready()?;
     if db_path.starts_with("file:") {
         let conn = Connection::open_with_flags(
             db_path,
@@ -4365,6 +4398,17 @@ pub(crate) fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
 
 fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+}
+
+/// Test helper. A row stamped with the current 10-minute bucket is still
+/// inside a zero retention during that bucket's first second, when its start
+/// equals the cutoff. Wait that second out before a test prunes with
+/// retention 0 and expects such a row to go.
+#[cfg(test)]
+pub(crate) fn wait_out_bucket_first_second() {
+    while now_s().is_ok_and(|s| s % u64::from(TEN_MINUTES_S) == 0) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Durable anti-replay ledger for break-glass tokens.
@@ -8581,6 +8625,7 @@ mod tests {
         seal_one_event(&mut kernel, &cfg, "zone:b")?;
         // Retention=0 checkpoints at the current head and prunes everything up to it (so the
         // pruned prefix includes the rotation; the checkpoint is signed by the new key).
+        wait_out_bucket_first_second();
         kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
         seal_one_event(&mut kernel, &cfg, "zone:c")?; // post-checkpoint, new key
 

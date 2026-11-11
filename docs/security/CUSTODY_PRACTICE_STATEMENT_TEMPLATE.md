@@ -143,7 +143,9 @@ meanings are restated because a CPS is read by people outside the project:
   key) versus `self-consistent; identity unverified` (the chains agree with
   themselves and with the key stored *inside* the database, which proves less).
 - `log_anchor verify` labels an anchor `UNVERIFIED` unless a TSA CA
-  certificate was supplied with `--ca` and the countersignature checked.
+  certificate was supplied with `--ca` and the countersignature checked. A
+  `valid` `log_verify` verdict means every anchor row still points at a state
+  the database holds (structural); it does not mean a TSA vouched for it.
 
 ## 2. Publication and repository responsibilities
 
@@ -180,7 +182,7 @@ meanings are restated because a CPS is read by people outside the project:
 | 4.9 | Disclosure packaging | shipped (event bundles only) | `court_export` assembles a disclosure kit for event-export bundles and warns loudly when the bundle is unanchored ([`../court_export.md`](../court_export.md)). It does **not** package vault unseal outputs. |
 | 4.10 | Receipt audit and review | procedural | Who reviews `break_glass receipts`, `policy history`, and `log_verify`, how often, and where the review is recorded: `{{ops.review_cadence}}`. A signed review attestation (`log_review attest`): **not provided** (§4). |
 | 4.11 | Rehearsal | shipped (primitives) / procedural (cadence) | Sandbox drills (`break_glass drill`, no ledger record) and recorded rehearsals (a real unseal with `--reason drill`, real receipt) are shipped; running a drill on every build change and the rehearsal cadence `{{ops.rehearsal_cadence}}` are human rules. Runbook C4. |
-| 4.12 | Incident and compromise handling | procedural | Device-key compromise → rotation (library API today; Runbook C7) plus relying-party notification `{{inc.device_key}}`; trustee-key compromise → C2 replace/remove `{{inc.trustee_key}}`; vault passphrase compromise → no rotation path; the deployment's response: `{{inc.passphrase}}`; suspected ledger tampering → `log_verify --high-water-mark`, `log_anchor verify --ca`, incident `{{inc.tamper}}`. |
+| 4.12 | Incident and compromise handling | procedural | Device-key compromise → rotation (library API today; Runbook C7) plus relying-party notification `{{inc.device_key}}`; trustee-key compromise → C2 replace/remove `{{inc.trustee_key}}`; vault passphrase compromise → no rotation path; the deployment's response: `{{inc.passphrase}}`; suspected ledger tampering → `log_verify --high-water-mark` (its verdict also checks every anchor row structurally: an anchored head missing from the ledger fails as `anchor_regression`), `log_anchor verify --ca` for the countersignatures, incident `{{inc.tamper}}`. Restoration check: after any restore from backup, `log_verify` on the restored copy — a copy older than its newest anchor fails the verdict (the anchored head is not in it), which is the rollback the anchors exist to show; record the result `{{inc.restore_check}}`. |
 | 4.13 | End of custody | procedural | Final anchor, `token_der` export, disposition of keys and passphrase, what relying parties receive: `{{ops.end_of_custody}}`. |
 
 ## 5. Facility, management, and operational controls
