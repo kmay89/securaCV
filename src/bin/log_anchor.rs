@@ -1444,3 +1444,38 @@ fn relabel(conn: &Connection, id: i64, subject: &str) -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `anchor-all` over empty ledgers: every head kind is planned over its
+    /// sentinel and STORED AS `digest`, so a sentinel row is never a head the
+    /// full verifier would look for in a ledger (it is in none by
+    /// construction).
+    #[test]
+    fn empty_ledger_sentinels_are_planned_as_digest_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        // The chain reader needs its two tables to exist; the receipt and
+        // policy readers tolerate a missing table. All four ledgers are empty.
+        conn.execute_batch(
+            "CREATE TABLE sealed_events (id INTEGER PRIMARY KEY, entry_hash BLOB);
+             CREATE TABLE checkpoints (id INTEGER PRIMARY KEY, chain_head_hash BLOB);",
+        )
+        .unwrap();
+        let policy: AnchorPolicy = serde_json::from_str(
+            r#"{"format":"securacv-anchor-policy:v1","tsas":[{"name":"a","role":"qualified",
+                "url":"https://a.example/tsr","ca":"a.pem"}],
+                "subjects":["chain_head","export_receipt_head","break_glass_receipt_head","policy_head"]}"#,
+        )
+        .unwrap();
+        let planned = plan_subjects(&conn, &policy).unwrap();
+        assert_eq!(planned.len(), 4);
+        for (p, subject) in planned.iter().zip(AnchorSubject::HEADS) {
+            assert_eq!(p.subject, subject);
+            assert!(p.sentinel);
+            assert_eq!(p.stored_as, AnchorSubject::Digest);
+            assert_eq!(p.hash, subject.empty_ledger_sentinel().unwrap());
+        }
+    }
+}
