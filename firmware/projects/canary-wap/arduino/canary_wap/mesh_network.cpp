@@ -589,9 +589,12 @@ static void release_mac(const uint8_t* mac, const OperaPeer* self) {
 // the member that holds the address. That is typically a device's own old
 // entry: an NVS erase or a reflash keeps its radio address and gives it a
 // new key, so it comes back as a new member where its old self still is.
+// Message and detail through log_health() (sweep F445): as one line it was
+// 80 bytes, and the ring keeps 79 of a message (see update()'s timeout line).
 static void log_held_address() {
-  health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
-             "opera: pairing refused: another member holds that radio address; remove it first");
+  log_health(SCV_LOG_WARNING, SCV_CAT_MESH,
+             "opera: pairing refused: another member holds that radio address",
+             "remove it first");
 }
 
 // A pairing with a device this one already holds moves that member to the
@@ -1639,6 +1642,26 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
   }
 }
 
+// The end of a pairing this device refused, once the refusal's line is
+// logged: the session wiped, the state the opera it still holds puts it in,
+// and the owner's callback told. Split out of fail_pairing() for the
+// joiner's refusal of another opera (handle_pair_complete, sweep F318),
+// which logs its own line, not fail_pairing()'s. Each caller writes its
+// line as literals at its own log_health() call, where the length guard
+// in test_opera_name_wap.cpp reads it (sweep F445).
+static void end_refused_pairing() {
+  const PairingRole role = g_pairing.role;
+  secure_wipe(&g_pairing, sizeof(g_pairing));
+  if (g_opera_config.configured) {
+    g_mesh_state = g_peer_count > 0 ? MESH_CONNECTING : MESH_NO_OPERA;
+  } else {
+    g_mesh_state = MESH_NO_OPERA;
+  }
+  if (g_pairing_callback) {
+    g_pairing_callback(role, 0, false);
+  }
+}
+
 // A pairing this device cannot finish because add_peer refused the partner:
 // a deny-listed key (spec §5.6), a new member for a full opera, a re-pair
 // onto an address another member holds, or an address ESP-NOW cannot
@@ -1647,20 +1670,13 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
 // the code on the screen led nowhere (sweep F73). The pairing handlers used
 // to ignore add_peer's result: they persisted, went MESH_ACTIVE and
 // reported success, and the initiator sealed the opera_secret to a partner
-// it then did not hold.
+// it then did not hold. Message and detail through log_health() (sweep
+// F445): as one line it was 84 bytes, cut at 79 in GET /api/logs, the
+// dashboard and the BLE log.
 static void fail_pairing() {
-  const PairingRole role = g_pairing.role;
-  secure_wipe(&g_pairing, sizeof(g_pairing));
-  if (g_opera_config.configured) {
-    g_mesh_state = g_peer_count > 0 ? MESH_CONNECTING : MESH_NO_OPERA;
-  } else {
-    g_mesh_state = MESH_NO_OPERA;
-  }
-  health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
-             "opera: pairing failed: partner refused (removed, opera full, or address unavailable)");
-  if (g_pairing_callback) {
-    g_pairing_callback(role, 0, false);
-  }
+  log_health(SCV_LOG_WARNING, SCV_CAT_MESH, "opera: pairing failed: partner refused",
+             "removed, opera full, or address unavailable");
+  end_refused_pairing();
 }
 
 // The initiator's half of a pairing both owners confirmed: add the joiner,
@@ -1840,6 +1856,35 @@ static void complete_resend_step() {
   }
 }
 
+// Whether a joiner's COMPLETE naming `opera_id` would install another opera
+// over the one this device holds (sweep F318's guard). It does when this
+// device holds an opera and a member of it, the COMPLETE names a different
+// opera_id, and its initiator is none of those members: the members would
+// stay in the table under an opera they are not in. Not when:
+//   - the opera_id is the one held: a re-pair into the same opera;
+//   - the initiator is a member held, whatever opera_id it seals: that is a
+//     re-pair too, and since F95 one into another opera_id is routine — a
+//     removal with a survivor rotates the remover alone (no session opens,
+//     so no REKEY reaches a member), and a device that left, or booted with
+//     flash encryption off, founds a new opera when it next starts a
+//     pairing as the initiator; its members never act on its LEAVE. That re-pair is the way back
+//     (test_mesh_liveness_wap.cpp's re-pair cases drive it), and it keeps
+//     this device's other members beside the new id as before: F318's
+//     decision;
+//   - no member is held (none founded or joined yet, or the last one
+//     removed): nobody would be left behind.
+// Whether a join on a Canary that holds an opera is refused outright, as the
+// PlatformIO tree refuses it (F136, 409 opera_exists), stays F318's open
+// decision.
+static bool complete_names_another_opera(const uint8_t* opera_id) {
+  if (!g_opera_config.configured || g_peer_count == 0) return false;
+  if (memcmp(opera_id, g_opera_config.opera_id, OPERA_ID_SIZE) == 0) return false;
+  for (uint8_t i = 0; i < g_peer_count; i++) {
+    if (memcmp(g_peers[i].pubkey, g_pairing.peer_pubkey, PUBKEY_SIZE) == 0) return false;
+  }
+  return true;
+}
+
 static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
   // Only after this device's owner confirmed the code (confirm_pairing):
   // a real initiator sends COMPLETE only once that CONFIRM arrived. This
@@ -1882,6 +1927,19 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
     health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
                "opera: pairing refused: the opera id did not hash");
     fail_pairing();
+    return;
+  }
+  // Nor is another opera installed under the members this device holds
+  // (sweep F318's guard; complete_names_another_opera()): it was, and they
+  // stayed in the table beside it, each one's frames now dropped at the
+  // opera_id check. Refused before add_peer(), so the members, the opera's
+  // secret, id and name, RAM and NVS, are as they were; the copies the
+  // initiator sends of this COMPLETE find no pairing and are dropped above.
+  if (complete_names_another_opera(opera_id)) {
+    secure_wipe(opera_secret, sizeof(opera_secret));
+    log_health(SCV_LOG_WARNING, SCV_CAT_MESH, "opera: pairing refused: the partner is in another opera",
+               "leave this one first to join it");
+    end_refused_pairing();
     return;
   }
   if (!add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "Opera Creator", opera_id)) {
