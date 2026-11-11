@@ -511,7 +511,11 @@ void handle_command(uint32_t now_ms) {
   }
   uint8_t frame[improv::MAX_COMMAND_LEN];
   const size_t n = s_rx_len;
-  const uint32_t link = s_rx_link;   // read before the mailbox is handed back
+  // The link is the host task's stamp (link_of() in the write callback),
+  // read before the mailbox is handed back; never s_conn_gen read here: by
+  // the loop task's turn the sender may have dropped and another link
+  // connected, and the join would bind to that one.
+  const uint32_t link = s_rx_link;
   memcpy(frame, s_rx, n);
   improv::wipe(s_rx, sizeof(s_rx));
   __atomic_store_n(&s_rx_pending, false, __ATOMIC_RELEASE);
@@ -548,8 +552,13 @@ void handle_command(uint32_t now_ms) {
       improv::wipe(&cmd.wifi, sizeof(cmd.wifi));
       publish_error();
       publish_state();
+      // The word is this write's verdict, not the session's state: a second
+      // write mid-join is refused while the first one's join keeps the
+      // session Provisioning; an accepted write the portal refused has left
+      // it (session_on_join_result(false)).
       Serial.printf("[IMPROV] Wi-Fi settings %s\n",
-                    s_session.state == State::Provisioning ? "accepted, joining" : "refused");
+                    e == Error::None && s_session.state == State::Provisioning ? "accepted, joining"
+                                                                               : "refused");
       break;
     }
     case Command::Identify:
@@ -592,7 +601,9 @@ void handle_hub(uint32_t now_ms) {
   }
   uint8_t doc[hub_handoff::MAX_PAYLOAD];
   const size_t n = s_hub_rx_len;
-  const uint32_t link = s_hub_rx_link;   // read before the mailbox is handed back
+  // The host task's stamp, as handle_command()'s, read before the mailbox
+  // is handed back.
+  const uint32_t link = s_hub_rx_link;
   const bool oversize = n > sizeof(doc);
   if (!oversize) memcpy(doc, s_hub_rx, n);
   improv::wipe(s_hub_rx, sizeof(s_hub_rx));

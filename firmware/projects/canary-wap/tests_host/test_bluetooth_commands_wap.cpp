@@ -5945,8 +5945,9 @@ void test_a_late_bring_up_says_what_it_left_out() {
   // refused instead (F449: a_late_init_on_discoverys_server_is_refused).
   boot_bring_up_refused(/*heap_low=*/true);
   // (boot_bring_up_refused() marks the end itself; the worker's report came before it on a device)
-  bc::g_boot_services_registered = bc::BT_BOOT_SVC_DISCOVERY;
   heap_recovers();
+  CHECK(NimBLEDevice::init("SCV-F6A7") && host_sim::server == nullptr);   // ble_manager's, no server
+  bc::g_boot_services_registered = bc::BT_BOOT_SVC_DISCOVERY;
   t = tap(bluetooth_api::handle_bluetooth_enable);
   CHECK(t.status == "200 OK" && t.body == succeeded_with("Bluetooth enabled") && t.inits == 1);
   bc::read_status(&st);
@@ -6013,8 +6014,10 @@ void boot_refused_then_discovery_takes_the_server(bool heap_low) {
 // advertising, and GET /api/bluetooth names the reason. Each tap asks
 // again and is refused again (a server stays until a reboot). The refusal
 // fires on nothing else: a clean boot, and a refused boot init() a tap
-// retries with no server of Discovery's, come up as before with no such
-// line, the latter's late bring-up still listing what it left out.
+// retries with no server of Discovery's (NimBLE left down, or brought up by
+// the Scout or by a ble_manager whose Opera made none), come up as before
+// with no such line, the latter's late bring-up still listing what it left
+// out.
 void test_a_late_init_on_discoverys_server_is_refused() {
   for (const bool heap_low : {true, false}) {
     for (const Handler first : {kPair, kAdvertise, bluetooth_api::handle_bluetooth_enable}) {
@@ -6051,8 +6054,9 @@ void test_a_late_init_on_discoverys_server_is_refused() {
   // boot: up, no such line.
   boot();
   CHECK(bc::is_initialized() && bc::g_initialized && health_says(kDiscoveryServerLog) == 0);
-  // A refused boot init() and no server of Discovery's (no ble_manager, or
-  // one that made none): the tap retries and comes up, late, as before.
+  // A refused boot init() and NimBLE left down (no ble_manager, or one
+  // whose own guard or init refused too): the tap retries and comes up,
+  // late, as before.
   boot_bring_up_refused(/*heap_low=*/true);
   CHECK(host_sim::server == nullptr);
   heap_recovers();
@@ -6070,6 +6074,25 @@ void test_a_late_init_on_discoverys_server_is_refused() {
   t = tap(kAdvertise);
   CHECK(t.body == succeeded_with("Advertising started") && t.inits == 1);
   CHECK(bc::is_initialized() && health_says(kDiscoveryServerLog) == 0);
+  // A refused boot init() and NimBLE up with no server: the Scout's
+  // nimble_scan_init() at finalize, on the loop task (it brings the stack
+  // up itself when it is down and the heap allows), or a ble_manager::init()
+  // whose NimBLE init passed while Opera made no server. The refusal is
+  // keyed on a server, not on the stack being up: the tap's init() skips
+  // its heap guard and comes up, late, with no Discovery-server line.
+  for (const bool heap_low : {true, false}) {
+    boot_bring_up_refused(heap_low);
+    heap_recovers();
+    host_sim::nimble_init_fails = false;
+    CHECK(NimBLEDevice::init("securacv-scout") && NimBLEDevice::isInitialized());
+    CHECK(host_sim::server == nullptr);
+    t = tap(kPair);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with("Pairing mode started") && t.inits == 1);
+    CHECK(bc::is_initialized() && bc::g_initialized && health_says(kDiscoveryServerLog) == 0);
+    CHECK(host_sim::server != nullptr && host_sim::count("svc_create") > 0);   // the channel's own server
+    bc::read_status(&st);
+    CHECK(st.late_bring_up && st.services_missing == bc::BOOT_SERVICES && health_says(kLateLog) == 1);
+  }
   // And a stack the channel brought up answers true at once, whoever
   // registered on its server afterwards (the worker's Opera, on FULL).
   boot();

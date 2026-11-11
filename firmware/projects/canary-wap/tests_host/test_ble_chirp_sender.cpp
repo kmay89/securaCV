@@ -120,8 +120,9 @@ void hour_is(const std::string& blob, uint32_t hour, const char* msg) {
 void a_heartbeat_is_the_golden_vector_but_its_own_hour() {
   fill_chain_head();
   CHECK(ble_chirp::init(kDeviceIdHex, g_chain_head), "init");
-  // Hour 0x0102 (258 h, the largest bucket whose two high bytes are 0
-  // and both low bytes not), 1234 ms into it.
+  // Hour 0x0102 (258 h: the golden's top two bytes as this bucket's low
+  // two, both nonzero; millis() never reaches the golden's 0x01020304),
+  // 1234 ms into it.
   const uint32_t hour = 0x0102;
   const std::string blob = chirp_at(CHIRP_HEARTBEAT, hour, 1234);
   CHECK(blob.size() == FLEET_CHIRP_MFG_LEN, "17 bytes: company id + 15");

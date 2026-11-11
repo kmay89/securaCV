@@ -1602,7 +1602,8 @@ clean: clean-bt-commands
 # layout and to fleet_chirp_parse(), the fingerprint suffix's byte order
 # and a null chain head included: the only guard on buildChirpPayload()'s
 # argument order had been an iPhone text pin compiled on macOS alone.
-# ASan and UBSan, as the other stubs/bt suites beside it.
+# ASan and UBSan (of the other stubs/bt suites, bt-commands runs plain and
+# under TSan, beacon-set-load and ble-provision under ASan).
 CHIRP_SENDER_BIN = test_ble_chirp_sender
 CHIRP_SENDER_SRC = test_ble_chirp_sender.cpp
 

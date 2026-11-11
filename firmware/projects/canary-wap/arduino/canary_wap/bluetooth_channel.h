@@ -299,8 +299,10 @@ typedef void (*DataCallback)(const uint8_t* data, size_t len);
 // touching the stack, with init_fail_reason() "Not started: Bluetooth
 // Discovery started its server this boot; restart to pair" and one health
 // WARNING. A clean boot never meets it (the channel's init() runs before
-// ble_manager's), and neither does a retry after the channel's own refusal
-// (its refusals leave no server behind).
+// ble_manager's), and a retry after the channel's own refusal meets it only
+// when Discovery made a server in between (the channel's refusals leave
+// none behind). NimBLE up with no server (the Scout's nimble_scan_init(),
+// a ble_manager::init() whose Opera made none) is not refused.
 bool init();
 void hold_scanners_on_init(bool held);
 inline bool init(bool scanners_held) {
