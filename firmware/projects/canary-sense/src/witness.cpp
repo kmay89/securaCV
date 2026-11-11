@@ -211,7 +211,8 @@ bool init() {
   // disables signing for this boot, the path a refused key takes: the key
   // is scrubbed before the signer sees it, and nothing is chained or stored.
   uint8_t fp_hash[32];
-  if (!sha256_domain(DOMAIN_FINGERPRINT, s_pub, sizeof(s_pub), fp_hash)) {
+  const bool fp_ok = sha256_domain(DOMAIN_FINGERPRINT, s_pub, sizeof(s_pub), fp_hash);
+  if (!fp_ok) {
     secure_zero(s_priv, sizeof(s_priv));
     log_line("WITNESS", "Fingerprint not computed (SHA-256 failed) — signing disabled this boot.");
     return false;

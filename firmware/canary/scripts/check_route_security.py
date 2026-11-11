@@ -1433,13 +1433,15 @@ SECRET_LOCAL_USES = {
             "announce_setup_network(m_ap_ssid, m_ap_password);",
         )),
     (_NET, "ScvNetworkManager::initTls"): (
-        "loads or makes the certificate and its key (kept for the TLS server), computes the pin "
-        "from the certificate and logs its first 16 digits",
+        "loads or makes the certificate and its key, computes the pin from the certificate "
+        "through tls_cert_fingerprint() before it keeps either (a hash that did not run keeps "
+        "neither and hands out no pin, F455), keeps the key for the TLS server and logs the "
+        "pin's first 16 digits",
         (
             "[within " + _TLS_BUILD + "] if (m_tls_cert_der && m_tls_key_der) return true;",
+            "[within " + _TLS_BUILD + "] if (!tls_cert_fingerprint(cert, cert_len, "
+            "m_tls_cert_fp_hex)) {",
             "[within " + _TLS_BUILD + "] m_tls_key_der = key;",
-            "[within " + _TLS_BUILD + "] canary::net::tls_policy::fingerprint_hex(digest, "
-            "m_tls_cert_fp_hex);",
             "[within " + _TLS_BUILD + '] Serial.printf("[TLS] Cert fingerprint: %.16s...\\n", '
             "m_tls_cert_fp_hex);",
         )),
