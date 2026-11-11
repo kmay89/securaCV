@@ -485,7 +485,8 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   .tinker-row label { display: flex; flex-direction: column; gap: 6px; }
   .tinker-row input[type="range"] { accent-color: var(--orb-3); }
   /* Under the slider: where the levels in use come from, when it is not
-   * the modes and the slider (COPY.savedLevels, sweep F315). */
+   * the Sensitive / Balanced / Quiet buttons and the slider
+   * (COPY.savedLevels, sweep F315). */
   .tinker-note {
     grid-column: 1 / -1;
     margin: -6px 0 0; font-size: 12px; line-height: 1.5; color: var(--fg-mute);
@@ -1429,14 +1430,17 @@ const COPY = {
   savedLevels: {
     /* The note under the sensitivity slider (sweep F315), keyed by the
      * source GET /api/settings names, see applyThresholdsSource below. A
-     * level a calibration or the Tuning Lab saved wins over the modes and
-     * the slider until its row is reset there: the per-row reset in the
-     * Lab removes it. The third source has no note: then the modes and the
-     * slider are what the canary runs. No apostrophe or quote in this
-     * comment: microcopy_fkgl.py reads every quoted span in COPY, comments
-     * too, so one would pair with the next string and skew the grade. */
-    stored: "Saved levels from a calibration or the Tuning Lab are in charge. The modes above and this slider change nothing. To use them again, reset motion, active and breathing in the Tuning Lab.",
-    mixed:  "Some saved levels from a calibration or the Tuning Lab are in charge. The modes above and this slider set only the rest. To use them fully, reset motion, active and breathing in the Tuning Lab.",
+     * level a calibration or the Tuning Lab saved wins over the Sensitive,
+     * Balanced and Quiet buttons and the slider until its row is reset
+     * there: the per-row reset in the Lab removes it. The words name those
+     * three buttons, not the modes: Pet Mode and Quiet hours keep working
+     * whatever is saved. The third source has no note: then the buttons
+     * and the slider are what the canary runs. No apostrophe or quote in
+     * this comment: microcopy_fkgl.py reads every quoted span in COPY,
+     * comments too, so one would pair with the next string and skew the
+     * grade. */
+    stored: "Saved levels from a calibration or the Tuning Lab are in charge. Sensitive, Balanced, Quiet and this slider change nothing. To get them back, reset motion, active and breathing in the Tuning Lab.",
+    mixed:  "Some saved levels from a calibration or the Tuning Lab are in charge. Sensitive, Balanced, Quiet and this slider set only the rest. To get them all back, reset motion, active and breathing in the Tuning Lab.",
   },
   what: {
     title: "What the sensor can and can't see",
@@ -2744,7 +2748,8 @@ setSwitch(petSwitch, window.PET_MODE);
 /* Where the levels core.presence runs come from (sweep F315): GET
  * /api/settings' thresholds_source, "stored" | "preset" | "mixed", read
  * through the reader the module's init() agrees with. A stored level wins
- * over the modes and the slider, so for "stored" and "mixed" the note under
+ * over the Sensitive / Balanced / Quiet buttons and the slider (not over
+ * Pet Mode or Quiet hours), so for "stored" and "mixed" the note under
  * the slider says so and names the way back; for "preset", or an answer
  * without the field, there is none. Read on load (syncSettingsFromServer)
  * and again after a calibration is applied, which stores all three. */

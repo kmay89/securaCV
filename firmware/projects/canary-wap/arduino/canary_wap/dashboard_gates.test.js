@@ -1243,12 +1243,13 @@ describe("The Fleet sheet shows the pairing QR's own refusal (F401)", () => {
 
 // GET /api/settings names where the levels core.presence runs come from
 // (thresholds_source: "stored", "preset" or "mixed"), and a stored level
-// wins over the modes and the slider. The Sensing dashboard's COPY bank,
-// the stretch of its script from the Pet Mode switch's first state through
-// the load-time sync (syncSettingsFromServer), and the calibration's
-// Accept handler, cut out of csi_dashboard_html.h whole (the same markers
-// stand in the page before F315, so its old script runs here too), run
-// against a stub DOM and a recording cvFetch().
+// wins over the Sensitive / Balanced / Quiet buttons and the slider. The
+// Sensing dashboard's COPY bank, the stretch of its script from the Pet
+// Mode switch's first state through the load-time sync
+// (syncSettingsFromServer), and the calibration's Accept handler, cut out
+// of csi_dashboard_html.h whole (the same markers stand in the page before
+// F315, so its old script runs here too), run against a stub DOM and a
+// recording cvFetch().
 const csiCopySrc = (() => {
   const a = csi.indexOf('\nconst COPY = {');
   assert.ok(a >= 0, 'the COPY bank is in csi_dashboard_html.h');
@@ -1366,6 +1367,29 @@ describe('the note under the sensitivity slider says when stored levels win (F31
     }
     assert.match(stored, /change nothing/);
     assert.match(mixed, /set only the rest/);
+  });
+
+  it('names the buttons the saved levels override, never "the modes": Pet Mode keeps working', async () => {
+    // Above the note sit the Sensitive / Balanced / Quiet picker, then Pet
+    // Mode and Quiet hours. A saved level overrides only what the picker and
+    // the slider set (core.presence's three levels, csi_settings_nvs.cpp's
+    // reader); Pet Mode's gate (core_presence.cpp's on_init) and Quiet hours
+    // apply whatever is saved. So the words name the picker's buttons as the
+    // markup labels them, and never say "mode", which an owner reads as Pet
+    // Mode too.
+    const a = csi.indexOf('id="modeGroup"');
+    assert.ok(a >= 0, 'the mode picker is in csi_dashboard_html.h');
+    const start = csi.lastIndexOf('<div', a);
+    const picker = parseFragment(csi.slice(start, csi.indexOf('</div>', a) + 6));
+    const labels = picker.elements.filter((e) => e.tag === 'button').map((e) => e.text.trim());
+    assert.deepEqual(labels, ['Sensitive', 'Balanced', 'Quiet']);
+    const after = csi.slice(a, csi.indexOf('id="sensNote"', a));
+    assert.match(after, /<span>Pet Mode<\/span>/, 'Pet Mode sits between the picker and the note');
+    for (const source of ['stored', 'mixed']) {
+      const text = (await sensingPage({ '/api/settings': withSource(source) })).note.textContent;
+      for (const label of labels) assert.match(text, new RegExp(`\\b${label}\\b`), `${source}: names ${label}`);
+      assert.doesNotMatch(text, /\bmodes?\b/i, `${source}: no "mode", which reads as Pet Mode too`);
+    }
   });
 
   it('shows nothing for an answer without the field, a value it does not know, or no answer', async () => {

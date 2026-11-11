@@ -861,7 +861,13 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
    * cut (its id a prefix of the one sent), and a body past the buffer was
    * cut at it, not refused. read_all() refuses a body that cannot fit
    * before reading any of it, loops until Content-Length bytes are in,
-   * sits out three socket timeouts, and never reads past the body. */
+   * sits out three socket timeouts, and never reads past the body. The
+   * cost: a stalled sender now holds the httpd task up to four
+   * recv_wait_timeout waits (30 s each in both of canary_wap.ino's
+   * configs) where it held it one, and a sender that trickles a byte per
+   * wait holds it a wait per byte (up to 95 here), the budget
+   * /api/mqtt/config and the Beacon routes already have, behind the same
+   * authorization (CSI_AUTH_OR_RETURN runs before the read). */
   char body[96];
   if (req->content_len == 0) {
     httpd_resp_set_status(req, "400 Bad Request");
@@ -1159,9 +1165,13 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * "tz" up to 47 chars, "tz_iana" up to 47) on top. Read whole through
    * http_body::read_all() (sweep F300), as handle_events_dismiss() reads
    * its body: one httpd_req_recv() parsed what one socket read held, so
-   * a body in two TCP segments stored its first keys and lost the rest
-   * without a word, and a body past the buffer was cut at it and stored
-   * cut. Now such a body is refused by name before any key is stored. */
+   * a body in two TCP segments stored its first keys (a key cut inside
+   * its number as a different value, 75 as 7) and lost the rest without
+   * a word, and a body past the buffer was cut at it and stored cut. Now
+   * such a body is refused by name before any key is stored, at the cost
+   * handle_events_dismiss() names: a stalled sender holds the httpd task
+   * up to four recv_wait_timeout waits, a trickling one a wait per byte
+   * (up to 383 here). */
   char body[384];
   if (req->content_len == 0) {
     httpd_resp_set_status(req, "400 Bad Request");
@@ -1527,10 +1537,11 @@ esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
    * the hand loop it replaces closed the socket with no answer at the
    * first socket timeout, error or early close (ESP_FAIL), where
    * read_all() sits out three timeouts and a failed read is answered by
-   * name. The size
-   * check above keeps the buffer the body and its NUL, so TOO_LARGE is
-   * not reached while it holds; if the two ever part, one limit keeps one
-   * reason. */
+   * name. So a stalled sender holds the httpd task up to four
+   * recv_wait_timeout waits where it held it one (the hand loop already
+   * waited a wait per byte for a trickling one). The size check above
+   * keeps the buffer the body and its NUL, so TOO_LARGE is not reached
+   * while it holds; if the two ever part, one limit keeps one reason. */
   size_t got = 0;
   const http_body::Result read = http_body::read_all(
       [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
