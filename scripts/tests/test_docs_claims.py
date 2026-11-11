@@ -9176,8 +9176,10 @@ class TheParityLedgersReadTheCode(unittest.TestCase):
                              ["auth_gate", "c_str", "for", "http_send_json", "if", "log_health", "rate_limit_check",
                               "serializeJson", "witness_get_health", "witness_get_health_log_count",
                               "witness_get_health_log_ring"]),
-            "canary-wap": (["acknowledge_log_entry", "c_str", "deserializeJson", "http_send_json", "httpd_req_recv",
-                            "httpd_resp_send_err", "if", "log_ack_seq_from_uri", "serializeJson", "sizeof"],
+            # The body is read whole (F300): read_request() and its refusal, not one httpd_req_recv().
+            "canary-wap": (["acknowledge_log_entry", "c_str", "deserializeJson", "http_body_refusal", "http_send_error",
+                            "http_send_json", "httpd_resp_send_err", "if", "log_ack_seq_from_uri", "read_request",
+                            "serializeJson", "sizeof"],
                            ["c_str", "for", "http_send_json", "if", "log_health", "serializeJson"]),
         }
         writes = {"canary (PIO)": ["entry.ack_status = ACK_STATUS_UNREAD;", "entry.ack_status = new_status;",
