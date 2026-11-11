@@ -948,8 +948,6 @@ const WAP_RAW_SPLICES = Object.freeze({
   'loadLogs | on:onclick | log.seq': 1,
   'loadWitness | text | r.type_name': 1,
   // Found by the scanner, not in F443's list.
-  "refreshVaultList | text | String(Math.floor(it.time_bucket / 6)).padStart(2, '0')": 1,
-  "refreshVaultList | text | String((it.time_bucket % 6) * 10).padStart(2, '0')": 1,
   'refreshVaultList | text | it.trigger': 1,
   'runSettingsSelftest | text | SELFTEST_GLYPH[p.status]': 1,
   'loadChain | text | truncateHash(b.hash, 8)': 1,
@@ -973,7 +971,6 @@ const WAP_RAW_SPLICES = Object.freeze({
   'refreshWifiPresence | attr:title | v': 1,
   'refreshBtStatus | text | data.tx_power': 1,
   'refreshBtStatus | text | data.mtu': 1,
-  'refreshBtStatus | text | data.battery_pct': 1,
   'btStartScan | text | start.error': 1,
   'renderBtScanList | attr:class | rssiBarCount(d.rssi)': 1,
   'renderBtScanList | text | deviceIcon(d)': 1,
@@ -1030,6 +1027,39 @@ describe('the page splices nothing raw into markup beyond its ledger (F443)', ()
       ["function plantM(x) { el.innerHTML = '<b>' + (x.a || x.b) + '</b>'; }", 'plantM | text | x.b'],
       // A spliced template inside a spliced template.
       ["function plantN(x) { return `<div>${x.on ? `<span>${x.tag}</span>` : ''}</div>`; }", 'plantN | text | x.tag'],
+      // Built one `+=` statement at a time: the value on a line of its own, a
+      // let with no markup that a sink takes, and a handler opened by one
+      // statement and filled by the next (its state carries over).
+      ["function plantE2(xs) { let h = '<ul>'; xs.forEach(x => { h += '<li>'; h += x.n; h += '</li>'; }); list.innerHTML = h; }", 'plantE2 | text | x.n'],
+      ['function plantE3(x) { let h = \'\'; h += x.n; list.innerHTML = h; }', 'plantE3 | text | x.n'],
+      ["function plantE4(x) { let h = ''; h += '<a onclick=\"go(\\''; h += escapeHtml(x.id) + '\\')\">x</a>'; list.innerHTML = h; }", 'plantE4 | on:onclick | escapeHtml(x.id)'],
+      // Spliced by name, an accumulator carries the state it was left in.
+      ["function plantE5(x) { let h = '<a onclick=\"go(\\''; list.innerHTML = h + escapeHtml(x.id) + '\\')\">x</a>'; }", 'plantE5 | on:onclick | escapeHtml(x.id)'],
+      // X = X.concat(...), .concat() on a parameter, an array literal joined,
+      // and rows pushed onto an array that is joined.
+      ["function plantF3(x) { let h = '<ul>'; h = h.concat('<li>', x.n, '</li>'); list.innerHTML = h; }", 'plantF3 | text | x.n'],
+      ["function plantF4(h, x) { return h.concat('<li>', x.n, '</li>'); }", 'plantF4 | text | x.n'],
+      ["function plantF5(x) { return ['<td>', x.v, '</td>'].join(''); }", 'plantF5 | text | x.v'],
+      ["function plantF6(x) { const parts = []; parts.push('<td>', x.v, '</td>'); return parts.join(''); }", 'plantF6 | text | x.v'],
+      // A const that opens a handler moves the state it is spliced into, and a
+      // const's markup makes the expression that names it a row.
+      ["function plantI3(x) { const open = '<a onclick=\"go(\\''; el.innerHTML = open + escapeHtml(x.id) + '\\')\">x</a>'; }", 'plantI3 | on:onclick | escapeHtml(x.id)'],
+      ["function plantI4(x) { const TD = '<td>'; return TD + x.v; }", 'plantI4 | text | x.v'],
+      // A name is what binds it nearest: a destructured parameter is no row
+      // index, an inner parameter shadows an outer index, and a parameter
+      // shadows a const of its name.
+      ["function plantO(rows) { list.innerHTML = rows.map(({ id, name, label }) => `<a onclick=\"go('${label}')\">x</a>`).join(''); }", 'plantO | on:onclick | label'],
+      ["function plantO2(rows) { list.innerHTML = rows.map((r, i) => r.tags.map(i => `<b>${i}</b>`).join('')).join(''); }", 'plantO2 | text | i'],
+      ["const plantLabel = 'Peers'; function plantO3(plantLabel) { el.innerHTML = '<b>' + plantLabel + '</b>'; }", 'plantO3 | text | plantLabel'],
+      // The sink by bracket.
+      ["function plantB2(x) { el['innerHTML'] = x.name; }", 'plantB2 | text | x.name'],
+      // What only looks like a number: String() of text, a pad on text, and a
+      // typeof guard that guards something else or the other branch.
+      ["function plantP(x) { el.innerHTML = '<b>' + String(x.name).padStart(8, ' ') + '</b>'; }", 'plantP | text | x.name'],
+      ["function plantP2(x) { const v = typeof x.v === 'string' ? x.v : 0; el.innerHTML = '<b>' + v + '</b>'; }", 'plantP2 | text | x.v'],
+      ["function plantP3(x) { const v = typeof x.v === 'number' ? x.w : 0; el.innerHTML = '<b>' + v + '</b>'; }", 'plantP3 | text | x.w'],
+      ["function plantP4(x) { const v = typeof x.v !== 'number' ? x.v : 0; el.innerHTML = '<b>' + v + '</b>'; }", 'plantP4 | text | x.v'],
+      ["function plantP5(x) { const v = typeof x.v === 'number' ? 0 : x.v; el.innerHTML = '<b>' + v + '</b>'; }", 'plantP5 | text | x.v'],
     ];
     for (const [js, entry] of cases) {
       const { added, gone } = verdict(planted(js));
@@ -1048,6 +1078,15 @@ describe('the page splices nothing raw into markup beyond its ledger (F443)', ()
       "function okC(x) { el.innerHTML = '<b class=\"' + (x.bad ? 'error' : 'ok') + '\">' + Math.round(x.v) + ' · ' + (x.kb / 1024).toFixed(1) + '</b>'; }",
       "function okD(x) { const cls = x.on ? 'on' : 'off'; el.innerHTML = `<i class=\"${cls}\">${x.n > 3}${x.ok && ' ✓'}${-x.d}</i>`; }",
       "function okE(x) { el.innerHTML = '<p>' + escapeHtml(x.why) + '</p>'; el.textContent = 'raw ' + x.why; }",
+      // An accumulator built of escaped text and row indexes, spliced by name.
+      "function okF(rows) { let h = '<ul>'; rows.forEach((r, i) => { h += '<li onclick=\"pick(' + i + ')\">'; h += escapeHtml(r.name); h += '</li>'; }); list.innerHTML = h + '</ul>'; }",
+      // Digits by construction: String() of arithmetic padded with a literal,
+      // and a value a typeof guard has made a number.
+      "function okG(x) { const pct = (typeof x.pct === 'number') ? x.pct : null; el.innerHTML = '<b>' + String(Math.floor(x.t / 6)).padStart(2, '0') + (pct === null ? '--' : pct) + '</b>'; }",
+      // A member an accumulator's or a const's markup is read through, and a
+      // const that holds a function, are not that markup.
+      "function okH(x) { let h = '<b>'; h += escapeHtml(x.n); el.innerHTML = h; console.log(h.length, h.trim()); }",
+      "const okRow = (r) => '<b>' + escapeHtml(r.n) + '</b>'; function okI(rows) { const TD = '<td>'; console.log(rows.map((r) => okRow(r)).length, okRow(rows[0]), TD.length); }",
     ].join('\n');
     const { added, gone } = verdict(planted(js));
     assert.deepEqual(added, []);
@@ -1070,6 +1109,13 @@ describe('the page splices nothing raw into markup beyond its ledger (F443)', ()
     const lowered = { ...WAP_RAW_SPLICES };
     delete lowered['refreshVault | text | d.key_id'];
     assert.deepEqual(splices.against(lowered, splices.rawSplices(fixed)), { added: [], gone: [] });
+  });
+
+  it('an escape undone on a += line of its own is new (the F423 row)', () => {
+    const before = "font-weight:600;color:var(--accent);\">SCV-' + escapeHtml(c.device_id_prefix) + '</div>';";
+    assert.equal(page.split(before).length, 2, 'the BLE discovery row is in the page once');
+    const split = page.replace(before, "font-weight:600;color:var(--accent);\">SCV-'; html += c.device_id_prefix; html += '</div>';");
+    assert.deepEqual(verdict(split), { added: ['refreshBleDiscovery | text | c.device_id_prefix (1 now, 0 recorded)'], gone: [] });
   });
 
   it('one more of a recorded splice is new', () => {

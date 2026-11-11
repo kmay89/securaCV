@@ -220,6 +220,17 @@ test("a raw splice planted in the C++ raw string's script is found (F443)", () =
     ["function plantB(p) { return `<button onclick=\"drop('${p.fp}')\">x</button>`; }", "plantB | on:onclick | p.fp"],
     ["function plantC(rows) { list.innerHTML = rows.map(r => `<li>\n            ${r.label}\n          </li>`).join(''); }", "plantC | text | r.label"],
     ["function plantD(xs) { let h = ''; for (const x of xs) h += '<td>' + x.v + '</td>'; return h; }", "plantD | text | x.v"],
+    // Built one `+=` statement at a time, the page's own idiom: the value on
+    // a line of its own, and a handler opened by one statement and filled by
+    // the next (escapeHtml() is decoded away before the handler runs).
+    ["function plantE(xs) { let h = '<ul>'; xs.forEach(x => { h += '<li>'; h += x.n; h += '</li>'; }); list.innerHTML = h; }",
+     "plantE | text | x.n"],
+    ["function plantF(x) { let h = ''; h += '<a onclick=\"go(\\''; h += escapeHtml(x.id) + '\\')\">x</a>'; list.innerHTML = h; }",
+     "plantF | on:onclick | escapeHtml(x.id)"],
+    // A const that opens a handler, and an array literal joined.
+    ["function plantG(x) { const open = '<a onclick=\"go(\\''; el.innerHTML = open + escapeHtml(x.id) + '\\')\">x</a>'; }",
+     "plantG | on:onclick | escapeHtml(x.id)"],
+    ["function plantH(x) { return ['<td>', x.v, '</td>'].join(''); }", "plantH | text | x.v"],
   ]) {
     const text = planted(js);
     assert.notStrictEqual(text, src, "the script's end is in the page");
@@ -227,6 +238,13 @@ test("a raw splice planted in the C++ raw string's script is found (F443)", () =
     assert.ok(added.some((a) => a.startsWith(entry + " (")), `${entry}: ${JSON.stringify(added)}`);
     assert.deepStrictEqual(gone, [], entry);
   }
+  // An escape undone in the page's own rows by splitting the value onto a
+  // `+=` line of its own is new.
+  const row = "html += '<strong>' + escapeHtml(dev.name || 'Unknown') + '</strong> ' + trustBadge + blockBadge;";
+  assert.strictEqual(src.split(row).length, 2, "the paired-device row is in the page once");
+  const split = src.replace(row, "html += '<strong>'; html += dev.name || 'Unknown'; html += '</strong> ' + trustBadge + blockBadge;");
+  assert.deepStrictEqual(splices.against(FLAGSHIP_RAW_SPLICES, splices.rawSplices(split)),
+                         { added: ["loadBtPairedDevices | text | dev.name (1 now, 0 recorded)"], gone: [] });
   // And one that is gone fails until its line is lowered.
   const fixed = src.replace("FP: ${peer.fingerprint || '--'}", "FP: ${escapeHtml(peer.fingerprint || '--')}");
   assert.notStrictEqual(fixed, src, "the fingerprint line is in the page");
