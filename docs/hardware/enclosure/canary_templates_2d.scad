@@ -33,7 +33,7 @@ br_screw_d = 4.8;         // the drill ring for the bracket's four #8 wall screw
 
 /* [Doorbell] — mirror canary_vision_doorbell plate defaults (gen_templates.py --check
    probes the doorbell and fails when one of these stops equaling its source) */
-db_out_x = 51.5;          // the doorbell plate's out_x, the shell/slab outline's width (its version echo prints both; gen_templates.py --check holds it equal)
+db_out_x = 51.5;          // the doorbell plate's out_x, the shell/slab outline's width (the doorbell's version echo prints out_x and out_y; gen_templates.py --check holds it equal)
 db_out_y = 169.2;         // the doorbell plate's out_y, the shell/slab outline's length (gen_templates.py --check holds it equal)
 db_screw_inset_x = 7.5;   // how far the plate's wall screws sit in from its side edges, the doorbell's plate_screw_inset()[0] (gen_templates.py --check holds it equal)
 db_screw_inset_y = 14.0;  // how far the plate's wall screws sit in from its end edges, the doorbell's plate_screw_inset()[1] (gen_templates.py --check holds it equal)

@@ -162,7 +162,7 @@ brand_sunk   = "SecuraCV";   // the DEBOSS station's wordmark
 // RAISED mark) — and nothing in the catalog embosses the mark any more, so it
 // was testing a treatment none of the cases print.
 emblem_h = 0;        // set >= mark_min_h(emblem_rib) to bring the station back
-emblem_rib = 0.7;    // the retired EMBLEM station's stroke width: no feature of its raised mark is thinner (asserted at least 0.4 when emblem_h > 0)
+emblem_rib = 0.7;    // the retired EMBLEM station's stroke width: no feature of its raised mark's footprint is thinner, and the crown draws each stroke's top in by emblem_crown a side (asserted at least 0.4 when emblem_h > 0)
 emblem_crown = 0.15; // the retired EMBLEM station's dome: each stroke's top draws in this far, its footprint a full rib (asserted under emblem_rib/2 when emblem_h > 0)
 
 /* [GLYPH station — the bird, debossed into the BED-SIDE face] */

@@ -4759,7 +4759,7 @@
         "glyph_rib": "mm",
         "glyph_depth": "mm"
       },
-      "sha256": "0ce1fb27bd0b5f76f0c6b158aa52ffefa2dbc07bd0f3630b68d731fb8f47701d",
+      "sha256": "e7088cfa66fabe9774c027103a08a6f7cb209d7a7200b5e7f47d4a3ae54d1c01",
       "groups": [
         {
           "name": "What to render",
@@ -5058,7 +5058,7 @@
               "name": "emblem_rib",
               "type": "number",
               "default": 0.7,
-              "desc": "the retired EMBLEM station's stroke width: no feature of its raised mark is thinner (asserted at least 0.4 when emblem_h > 0)"
+              "desc": "the retired EMBLEM station's stroke width: no feature of its raised mark's footprint is thinner, and the crown draws each stroke's top in by emblem_crown a side (asserted at least 0.4 when emblem_h > 0)"
             },
             {
               "name": "emblem_crown",

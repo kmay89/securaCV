@@ -16700,7 +16700,7 @@
       {
        "name": "emblem_rib",
        "default": "0.7",
-       "comment": "the retired EMBLEM station's stroke width: no feature of its raised mark is thinner (asserted at least 0.4 when emblem_h > 0)"
+       "comment": "the retired EMBLEM station's stroke width: no feature of its raised mark's footprint is thinner, and the crown draws each stroke's top in by emblem_crown a side (asserted at least 0.4 when emblem_h > 0)"
       },
       {
        "name": "emblem_crown",
@@ -17229,7 +17229,7 @@
       {
        "name": "db_out_x",
        "default": "51.5",
-       "comment": "the doorbell plate's out_x, the shell/slab outline's width (its version echo prints both; gen_templates.py --check holds it equal)"
+       "comment": "the doorbell plate's out_x, the shell/slab outline's width (the doorbell's version echo prints out_x and out_y; gen_templates.py --check holds it equal)"
       },
       {
        "name": "db_out_y",
