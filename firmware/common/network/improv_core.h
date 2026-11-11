@@ -95,6 +95,13 @@
  *   Connections Just Works, checked both by the characteristic's
  *   properties and again in the write handler).
  *
+ *   A join belongs to the link that sent its WIFI_SETTINGS (the glue's
+ *   connection generation, Session::join_link), and the hub hand-off that
+ *   follows it on a Sense or a Vision is taken from that link alone
+ *   (hub_gate): mid-join the door still advertises connectable, so a client
+ *   that connects after the phone dropped inherits the session, and is
+ *   refused the hand-off.
+ *
  * All time math is wrap-safe unsigned-delta (now - then), per the firmware
  * idiom for millis() arithmetic.
  */
@@ -414,6 +421,12 @@ struct Session {
   /// The one link: up, and when it last asked for anything.
   bool     link_up = false;
   uint32_t last_activity_ms = 0;
+  /// The link this session's join belongs to: the glue's connection
+  /// generation (next_link_gen) for the link whose accepted WIFI_SETTINGS
+  /// started it; 0 = none. Only that link may hand over a hub for the join
+  /// (hub_gate): a client that connects after the phone dropped inherits
+  /// the session, never its hand-off (docs/design/magic_pairing.md §3.6).
+  uint32_t join_link = 0;
   /// Set by a join result; cleared when the door reopens. Lets the glue
   /// keep the service in Provisioned long enough for the phone to read the
   /// result, then fall back to the beacon on its own terms.
@@ -536,8 +549,15 @@ inline bool count_attempt(Session& s, uint32_t now_ms, const Timing& t) {
 
 /// Credentials arrived. Returns the error to publish (None means the join
 /// is now in flight and the glue should start it).
+///
+/// `link` is the connection generation of the link the frame arrived on
+/// (next_link_gen; the glue stamps it on the host task as the write lands).
+/// An accepted write binds the join to it, so only that link may hand over
+/// a hub (hub_gate); a refused write binds nothing, so a second client's
+/// write mid-join leaves the join on the link that started it. 0 names no
+/// link: the join runs, and no hub is taken for it.
 inline Error session_on_wifi_settings(Session& s, uint32_t now_ms,
-                                      const Timing& t = Timing{}) {
+                                      const Timing& t = Timing{}, uint32_t link = 0) {
   if (!door_open(s) || s.state == State::AwaitingAuthorization) {
     s.error = Error::NotAuthorized;
     return s.error;
@@ -563,6 +583,7 @@ inline Error session_on_wifi_settings(Session& s, uint32_t now_ms,
   s.provisioning_at_ms = now_ms;
   s.error = Error::None;
   s.last_activity_ms = stamp(now_ms);
+  s.join_link = link;
   return Error::None;
 }
 
@@ -589,6 +610,7 @@ inline void session_on_join_result(Session& s, bool joined, uint32_t now_ms) {
   } else {
     s.state = door_open(s) ? State::Authorized : State::AwaitingAuthorization;
     s.error = Error::UnableToConnect;
+    s.join_link = 0;   // no join, no link to hand a hub over on
   }
 }
 
@@ -615,6 +637,37 @@ inline void session_link_down(Session& s) { s.link_up = false; }
 
 /// Any command the link sent (accepted or not) is activity.
 inline void session_touch(Session& s, uint32_t now_ms) { s.last_activity_ms = stamp(now_ms); }
+
+/// The connection generation after `gen`: the glue bumps it on every
+/// connect and stamps each write with the generation of the link it came
+/// on. 32 bits, so it cannot come round inside a boot (2^32 connects, each
+/// at least one 7.5 ms connection event, is more than a year), and it skips
+/// 0, the "no link" stamp, so a write is never mistaken for none or for the
+/// link a fresh session names.
+inline uint32_t next_link_gen(uint32_t gen) {
+  const uint32_t next = gen + 1u;
+  return next == 0 ? 1u : next;
+}
+
+/// What the gate answers a HUB write (the hub hand-off,
+/// docs/design/magic_pairing.md §3.6).
+enum class HubGate : uint8_t {
+  Take,       // the link that sent this join's WIFI_SETTINGS: parse it
+  NoJoin,     // no join this session (not Provisioning or Provisioned)
+  OtherLink,  // a join, but another link sent it: a client that connected
+              // after the phone dropped inherits the session, not the hand-off
+};
+
+/// May a HUB write that arrived on link `link` be taken? Only while the
+/// session has a join (Provisioning: a phone that writes a beat before the
+/// verdict; Provisioned: it gave the device its Wi-Fi), and only from the
+/// link whose accepted WIFI_SETTINGS started that join. A write stamped 0
+/// (a link the glue could not name) is never taken.
+inline HubGate hub_gate(const Session& s, uint32_t link) {
+  if (s.state != State::Provisioning && s.state != State::Provisioned) return HubGate::NoJoin;
+  if (link == 0 || link != s.join_link) return HubGate::OtherLink;
+  return HubGate::Take;
+}
 
 /// True when the glue should drop the connected client: it has been silent
 /// for the idle bound, or the join is done and the linger has passed. Never

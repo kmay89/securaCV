@@ -424,25 +424,46 @@ record. Host-tested in `firmware/tests_host/test_hub_handoff.cpp`.
 `WRITE_ENC` property, **and** the write handler checks the link's
 encryption again, as the RPC write does — **and** only while the Improv
 session is **Provisioned** (the device has the Wi-Fi this phone gave it) or
-**Provisioning** (a phone that writes a beat before the verdict lands). Any
+**Provisioning** (a phone that writes a beat before the verdict lands),
+**and** only on **the link that sent that join's `WIFI_SETTINGS`**. Any
 other time — the door open but no join, a tap's door that shut with no join
 while the client stayed connected, a stranger who paired and sent no
-Wi-Fi — the write stores nothing, logs one health line, and reads back as
+Wi-Fi — the write stores nothing, logs one health line
+(`[IMPROV] hub hand-off refused: no join this session`), and reads back as
 rejected. The shut door is not itself the gate: a Provisioned session
 already counts as shut (`door_open_now()` is false: it advertises the
-beacon) and still takes a write on the link that is up. Once the join has
-succeeded, that link is the one that provisioned it — the glue puts
-nothing on air while a client is connected, and when a Provisioned
-session's link drops the advert is non-connectable, so no later client
-reaches HUB until a new tap. Mid-join the rule is narrower: a Provisioning
-session still advertises connectable (`advert_for()` answers Improv), so a
-phone that drops before the verdict can be followed, inside the join's
-30 s (`provisioning_timeout_ms`), by another client that inherits the
-session, and once the join lands that client's HUB write is taken too.
-`handle_hub()` checks the session, not which link wrote. The write
-callback runs on the NimBLE host task and only copies the document into a
-mailbox (release/acquire, exactly like the RPC command's); the loop task
-parses and applies it in `tick()`.
+beacon) and still takes a write on the link that sent the Wi-Fi, while that
+link stays up (the glue drops it at the 20 s linger).
+
+The link is a **connection generation**: the server callbacks bump it on
+every connect (32 bits, never 0, never reset inside a boot, so it cannot
+come round to an earlier link's), and each write callback stamps the write
+with the generation of the link it arrived on, on the NimBLE host task,
+where the connect edges land too (a handle that is not the connected link's
+is stamped 0, which nothing takes). The accepted `WIFI_SETTINGS` binds the
+join to its stamp (`Session::join_link`; a refused one, a second client's
+mid-join included, binds nothing), and `hub_gate()` in `improv_core.h`
+(host-tested in `test_improv_core.cpp`) refuses a HUB write stamped with
+any other generation: Rejected, one health line
+(`[IMPROV] hub hand-off refused: not the link that sent the Wi-Fi
+settings`), nothing parsed or stored. That is the case it closes: mid-join
+a Provisioning session still advertises connectable (`advert_for()` answers
+Improv), so a phone that drops before the verdict can be followed, inside
+the join's 30 s (`provisioning_timeout_ms`), by another client; that client
+inherits the session (the state it reads, the verdict once the join lands)
+and not the hand-off, before the join lands or after. Once the join has
+succeeded nothing new can connect anyway — the glue puts nothing on air
+while a client is connected, and when a Provisioned session's link drops
+the advert is non-connectable, so no later client reaches HUB until a new
+tap. The iPhone writes HUB once, after the verdict, on the link it
+provisioned over (`ImprovClient.handOverHub()`), so it never meets the
+refusal; a client of its own whose link dropped mid-join cannot hand the
+hub over on a new one, and reads `2`. HUB has no time bound of its own:
+the provisioning link is bounded by the glue's 20 s linger drop, and a
+clock of HUB's own is not built (ledger F447). The write callback runs on
+the NimBLE host task and only copies the document (and its link's stamp)
+into a mailbox (release/acquire, exactly like the RPC command's); the loop
+task parses and applies it in `tick()`.
 
 **What "stored" means.** The glue hands the parsed record to the board
 (`Identity::store_hub`), which persists it through `runtime_config`'s
@@ -470,7 +491,7 @@ unit without one stays plain and still reports stored (the contract's
 |---|---|
 | `0` | nothing stored through the door this join (reset when a new `WIFI_SETTINGS` is accepted) |
 | `1` | stored — durably, by readback — and the MQTT manager re-pointed |
-| `2` | rejected: malformed, too long, a bad field, an unencrypted link, no join this session, or a store that would not hold it |
+| `2` | rejected: malformed, too long, a bad field, an unencrypted link, no join this session, a link other than the one that sent this join's Wi-Fi, or a store that would not hold it |
 | `3` | stored, but the broker refused the login on the first attempt — **never emitted by Sense or Vision today**: nothing in their MQTT managers reports the CONNACK reason cheaply, so the phone reads `1` and the device's health log carries the refusal |
 
 **Why the secret never reads back.** The document is the characteristic's
@@ -1240,15 +1261,17 @@ that writes the companion service's HUB characteristic
 (`8fc1cf02-b162-4401-9607-c8ac21383e90`) by hand, after sending
 `WIFI_SETTINGS` itself: the provisioning link lingers only 20 s after the
 join, so a short script (Python `bleak`) suits them better than nRF Connect
-by hand, one document per join. What gates a write is the session's join,
-not the open door (§3.6): `handle_hub()` takes a document only while the
-session is Provisioned or Provisioning, so a write on the provisioning link
-after the join is taken although `door_open_now()` is already false. Once
-the join has succeeded and that link drops, the advert is non-connectable
-(a Provisioned session advertises the beacon), so no later client reaches
-HUB until a new tap; mid-join the door still advertises connectable, so a
-phone that drops before the verdict can be followed by another client that
-inherits the session (§3.6).
+by hand, one document per join. What gates a write is the session's join
+and the link that sent it, not the open door (§3.6): `handle_hub()` takes a
+document only while the session is Provisioned or Provisioning, and only on
+the link whose `WIFI_SETTINGS` started that join (`hub_gate()`), so a write
+on the provisioning link after the join is taken although `door_open_now()`
+is already false. Once the join has succeeded and that link drops, the
+advert is non-connectable (a Provisioned session advertises the beacon), so
+no later client reaches HUB until a new tap; mid-join the door still
+advertises connectable, so a phone that drops before the verdict can be
+followed by another client, which inherits the session and is refused the
+hand-off (§3.6).
 
 - [ ] A fresh unit (no Wi-Fi, no broker in NVS) set up from the iPhone's
       card, with the hub already set up on the phone: after the join the
@@ -1274,6 +1297,15 @@ inherits the session (§3.6).
       refused: no join this session`, the byte reads `2`, and the unit keeps
       the broker it had. Keep the link up past the 60 s, so the door shuts,
       and write again: the same refusal.
+- [ ] Another link is refused: from the script, send `WIFI_SETTINGS`, drop
+      the link before the verdict, and connect and pair a second client (or
+      the same machine again: it is a new link) while the door is still on
+      air; write a well-formed document from it before the join lands and
+      again after: each time `[IMPROV] hub hand-off refused: not the link
+      that sent the Wi-Fi settings`, the byte reads `2`, and the unit keeps
+      the broker it had. The gate is host-tested (`test_improv_core.cpp`);
+      the stamp each write carries (`link_of()` in `improv_ble.cpp`) is the
+      glue's and is what this row proves.
 - [ ] A refused document keeps nothing: on the provisioning link after a
       join, one per join, write a duplicate key
       (`{"host":"a.local","host":"b.local"}`), a password holding `\n`, a

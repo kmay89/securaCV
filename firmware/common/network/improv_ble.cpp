@@ -136,9 +136,13 @@ NimBLECharacteristic* s_caps = nullptr;
 NimBLEService*        s_hub_service = nullptr;
 NimBLECharacteristic* s_hub = nullptr;
 
-// The mailbox: one command at a time, host task → loop task.
+// The mailbox: one command at a time, host task → loop task. The link it
+// came on (link_of()) rides with it, so the join a WIFI_SETTINGS starts is
+// bound to the link that sent it even when that link dropped and another
+// connected before the loop task's turn.
 uint8_t s_rx[improv::MAX_COMMAND_LEN];
 volatile size_t s_rx_len = 0;
+volatile uint32_t s_rx_link = 0;
 volatile bool s_rx_pending = false;
 
 // The hub hand-off's own mailbox, the same release/acquire discipline: one
@@ -146,6 +150,7 @@ volatile bool s_rx_pending = false;
 // an oversize write (nothing copied; the loop task answers TooLong).
 uint8_t  s_hub_rx[hub_handoff::MAX_PAYLOAD];
 volatile uint16_t s_hub_rx_len = 0;
+volatile uint32_t s_hub_rx_link = 0;   // the link it came on (link_of())
 volatile bool s_hub_rx_pending = false;
 volatile bool s_hub_rx_unencrypted = false;
 hub_handoff::Status s_hub_status = hub_handoff::Status::None;
@@ -154,8 +159,10 @@ volatile bool s_connected = false;
 volatile bool s_readvertise = false;   // a disconnect handed the radio back
 // The one link, as the host task reports it: connect/disconnect edges the
 // loop task folds into the session (link_up/link_down), and the handle an
-// idle disconnect needs.
-volatile uint8_t  s_conn_gen = 0;        // bumped by every connect
+// idle disconnect needs. The generation is improv::next_link_gen()'s: 32
+// bits, never 0, never reset inside a boot, so a later link cannot come
+// round to the one a join is bound to (Session::join_link, hub_gate()).
+volatile uint32_t s_conn_gen = 0;        // bumped by every connect
 volatile uint16_t s_conn_handle = 0;
 // A write that arrived on an unencrypted link: refused NotAuthorized on the
 // loop task (the characteristic's WRITE_ENC should already have stopped it;
@@ -237,12 +244,24 @@ const char* auth_name(wifi_auth_mode_t a) {
 
 // ── NimBLE callbacks (host task) ───────────────────────────────────────────
 
+// The generation of the link a write came on, read on the host task, where
+// the connect and disconnect edges land too: the current one when the
+// write's handle is the link the server callbacks last saw connect, else 0
+// (a link this glue cannot name; hub_gate() takes nothing stamped 0). One
+// link at a time is the rule (nothing goes on air while a client is
+// connected); the handle check keeps a write honest if a second link ever
+// slips in beside the first.
+uint32_t link_of(uint16_t handle) {
+  return (s_connected && handle == s_conn_handle) ? s_conn_gen : 0;
+}
+
 class CommandCb : public NimBLECharacteristicCallbacks {
   // The mailbox crosses tasks (and cores): the frame is written first and
   // the pending flag published with release; the loop task takes the flag
   // with acquire before it reads the frame.
-  void take(NimBLECharacteristic* c, bool encrypted) {
+  void take(NimBLECharacteristic* c, bool encrypted, uint32_t link) {
     if (__atomic_load_n(&s_rx_pending, __ATOMIC_ACQUIRE)) return;   // one at a time
+    s_rx_link = link;
     if (!encrypted) {
       // The second check (the first is the characteristic's WRITE_ENC):
       // nothing from a link that is not encrypted is parsed, let alone
@@ -267,13 +286,14 @@ class CommandCb : public NimBLECharacteristicCallbacks {
   }
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
-    take(c, !s_id.require_encryption || info.isEncrypted());
+    take(c, !s_id.require_encryption || info.isEncrypted(), link_of(info.getConnHandle()));
   }
 #else
   // 1.4.x calls both onWrite overloads; only the one with the descriptor is
   // overridden here, so a write is taken once.
   void onWrite(NimBLECharacteristic* c, ble_gap_conn_desc* desc) override {
-    take(c, !s_id.require_encryption || (desc && desc->sec_state.encrypted));
+    take(c, !s_id.require_encryption || (desc && desc->sec_state.encrypted),
+         desc ? link_of(desc->conn_handle) : 0);
   }
 #endif
 };
@@ -282,7 +302,7 @@ class ServerCb : public NimBLEServerCallbacks {
   void up(uint16_t handle) {
     s_conn_handle = handle;
     s_connected = true;
-    s_conn_gen = (uint8_t)(s_conn_gen + 1);
+    s_conn_gen = improv::next_link_gen(s_conn_gen);
   }
   void down() {
     s_connected = false;
@@ -304,8 +324,9 @@ class ServerCb : public NimBLEServerCallbacks {
 // The HUB write: the same mailbox discipline as the RPC command, a second
 // buffer so a hand-off and a command in the same instant lose neither.
 class HubCb : public NimBLECharacteristicCallbacks {
-  void take(NimBLECharacteristic* c, bool encrypted) {
+  void take(NimBLECharacteristic* c, bool encrypted, uint32_t link) {
     if (__atomic_load_n(&s_hub_rx_pending, __ATOMIC_ACQUIRE)) { scrub(c); return; }   // one at a time
+    s_hub_rx_link = link;
     if (!encrypted) {
       // The second check (the first is the characteristic's WRITE_ENC):
       // nothing from a link that is not encrypted is parsed. The loop task
@@ -343,13 +364,14 @@ class HubCb : public NimBLECharacteristicCallbacks {
   }
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
-    take(c, !s_id.require_encryption || info.isEncrypted());
+    take(c, !s_id.require_encryption || info.isEncrypted(), link_of(info.getConnHandle()));
   }
 #else
   // 1.4.x calls both onWrite overloads; only the one with the descriptor is
   // overridden here, so a write is taken once.
   void onWrite(NimBLECharacteristic* c, ble_gap_conn_desc* desc) override {
-    take(c, !s_id.require_encryption || (desc && desc->sec_state.encrypted));
+    take(c, !s_id.require_encryption || (desc && desc->sec_state.encrypted),
+         desc ? link_of(desc->conn_handle) : 0);
   }
 #endif
 };
@@ -489,6 +511,7 @@ void handle_command(uint32_t now_ms) {
   }
   uint8_t frame[improv::MAX_COMMAND_LEN];
   const size_t n = s_rx_len;
+  const uint32_t link = s_rx_link;   // read before the mailbox is handed back
   memcpy(frame, s_rx, n);
   improv::wipe(s_rx, sizeof(s_rx));
   __atomic_store_n(&s_rx_pending, false, __ATOMIC_RELEASE);
@@ -509,7 +532,9 @@ void handle_command(uint32_t now_ms) {
 
   switch (cmd.command) {
     case Command::WifiSettings: {
-      const Error e = improv::session_on_wifi_settings(s_session, now_ms, s_timing);
+      // Accepted, the join is bound to the link that sent it: only that
+      // link hands a hub over for it (improv::hub_gate()).
+      const Error e = improv::session_on_wifi_settings(s_session, now_ms, s_timing, link);
       if (e == Error::None) {
         // A new join is a new hand-off slot: the status reads None until the
         // phone writes the hub for this one.
@@ -567,6 +592,7 @@ void handle_hub(uint32_t now_ms) {
   }
   uint8_t doc[hub_handoff::MAX_PAYLOAD];
   const size_t n = s_hub_rx_len;
+  const uint32_t link = s_hub_rx_link;   // read before the mailbox is handed back
   const bool oversize = n > sizeof(doc);
   if (!oversize) memcpy(doc, s_hub_rx, n);
   improv::wipe(s_hub_rx, sizeof(s_hub_rx));
@@ -575,11 +601,17 @@ void handle_hub(uint32_t now_ms) {
 
   // Only the phone that has a join in this session may hand over a hub:
   // Provisioned (it gave the device its Wi-Fi), or Provisioning for a phone
-  // that writes a beat before the verdict lands.
-  if (s_session.state != State::Provisioned && s_session.state != State::Provisioning) {
+  // that writes a beat before the verdict lands; and only on the link whose
+  // WIFI_SETTINGS started that join (improv::hub_gate(), host-tested), so a
+  // client that connected after the phone dropped mid-join inherits the
+  // session, never the hand-off.
+  const improv::HubGate gate = improv::hub_gate(s_session, link);
+  if (gate != improv::HubGate::Take) {
     improv::wipe(doc, sizeof(doc));
     set_hub_status(Status::Rejected);
-    Serial.println("[IMPROV] hub hand-off refused: no join this session");
+    Serial.println(gate == improv::HubGate::NoJoin
+                       ? "[IMPROV] hub hand-off refused: no join this session"
+                       : "[IMPROV] hub hand-off refused: not the link that sent the Wi-Fi settings");
     return;
   }
 
@@ -766,9 +798,9 @@ void follow_link(uint32_t now_ms) {
   // drop and a reconnect inside one loop pass (a long inference, a TLS
   // connect right after the join) would otherwise apply up-then-down and
   // leave the session believing a live link is gone.
-  static uint8_t seen_gen = 0;
+  static uint32_t seen_gen = 0;
   const bool connected = s_connected;
-  const uint8_t gen = s_conn_gen;
+  const uint32_t gen = s_conn_gen;
   if (connected != s_session.link_up || gen != seen_gen) {
     seen_gen = gen;
     if (connected) improv::session_link_up(s_session, now_ms);
