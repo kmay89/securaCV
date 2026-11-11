@@ -89,7 +89,7 @@ Chirp uses BLE manufacturer-specific advertising data (no connection required).
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| 0-1 | 2 | Company ID | `0xFFFF` (testing) — little-endian, added by NimBLE |
+| 0-1 | 2 | Company ID | `0xFFFF` (testing) — little-endian, written by the sender in front of the 15-byte payload (`sendChirp()`), not by NimBLE |
 | 2 | 1 | Chirp Type | Message type enum |
 | 3-6 | 4 | Timestamp | Coarse hour bucket, **boot-relative** (`millis / 3600000` — hours since the device booted, not epoch time), big-endian. Receivers may only compare buckets from the same sender across a short window; the value carries no wall-clock meaning. |
 | 7-14 | 8 | Chain Hash | First 8 bytes of witness chain head hash |
@@ -97,10 +97,14 @@ Chirp uses BLE manufacturer-specific advertising data (no connection required).
 
 Total manufacturer data: 17 bytes (fits within BLE advertising payload limit of 31 bytes).
 
-In code this layout is spelled once, in `firmware/common/fleet_link/fleet_chirp.h`
-(the builder the canary-wap sends with, the parser the receivers read with,
-host-tested by `test_fleet_chirp.cpp` beside it); see
-[parity by architecture](FLEET_PARITY.md) for how each tree reaches it.
+In code this layout is spelled once, in `firmware/common/fleet_link/fleet_chirp.h`:
+the builder the canary-wap sends with, and the parser the canary, canary-sense,
+canary-vision and display receivers read with, host-tested by
+`test_fleet_chirp.cpp` beside it. The canary-wap's own nearby scan
+(`ble_nearby.h`) keeps a wider rule of its own (17 bytes or more, any type
+byte) over the same offsets. The header's opening comment names the include
+path each tree uses; [parity by architecture](FLEET_PARITY.md) names the
+guards that hold its copies.
 
 ### 5.2 Chirp Types
 

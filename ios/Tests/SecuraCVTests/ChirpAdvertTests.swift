@@ -130,7 +130,9 @@ final class ChirpAdvertTests: XCTestCase {
         for pin in ["#define FLEET_CHIRP_OFF_TYPE    2", "#define FLEET_CHIRP_OFF_HOUR    3",
                     "#define FLEET_CHIRP_OFF_CHAIN   7", "#define FLEET_CHIRP_CHAIN_LEN   8",
                     "#define FLEET_CHIRP_OFF_FP      15",
-                    "out[FLEET_CHIRP_OFF_HOUR - at]     = (uint8_t)((hour_bucket >> 24) & 0xFF);"] {
+                    "out[FLEET_CHIRP_OFF_HOUR - at]     = (uint8_t)((hour_bucket >> 24) & 0xFF);",
+                    "out[FLEET_CHIRP_OFF_FP - at]     = fp_b0;",
+                    "out[FLEET_CHIRP_OFF_FP - at + 1] = fp_b1;"] {
             XCTAssertTrue(wireSrc.contains(pin), "the chirp layout moved: \(pin)")
         }
         // The sender speaks it: its names are the header's, its builder the
@@ -144,8 +146,15 @@ final class ChirpAdvertTests: XCTestCase {
                     "CHIRP_BOOT      = FLEET_CHIRP_TYPE_BOOT"] {
             XCTAssertTrue(configSrc.contains(pin), "the sender's chirp names moved: \(pin)")
         }
-        XCTAssertTrue(chirpSrc.contains("*len = fleet_chirp_build(payload, (uint8_t)type, hourBucket, g_chainHead,"),
-                      "the sender stopped building with fleet_chirp.h — this belt no longer reads its bytes")
+        // The WHOLE call, whitespace collapsed, because its arguments are
+        // the wire: which fingerprint byte lands at air [15] and which at
+        // [16] is the order the sender passes them in, and no host test
+        // compiles ble_chirp.h. A sender that swaps them fails here.
+        let chirpFlat = chirpSrc.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        XCTAssertTrue(chirpFlat.contains("*len = fleet_chirp_build(payload, (uint8_t)type, hourBucket, "
+                                         + "g_chainHead, g_deviceIdPrefixBytes[0], g_deviceIdPrefixBytes[1]);"),
+                      "the sender's fleet_chirp_build() call moved (builder, argument order or the fingerprint "
+                      + "bytes) — the suffix decode reads air bytes 15-16 as [0] then [1]")
         // The bucket is boot-relative millis, whatever the draft doc says —
         // the reason hourBucket must never render as a time of day.
         XCTAssertTrue(chirpSrc.contains("millis() / 3600000UL"),
