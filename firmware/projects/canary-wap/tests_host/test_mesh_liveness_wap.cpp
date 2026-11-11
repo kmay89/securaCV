@@ -48,8 +48,9 @@
 // And F318's guard: a joiner that held an opera and its members took a
 // COMPLETE from another opera and kept the members beside it; now one from
 // an initiator it does not hold is refused before add_peer, while a
-// re-pair with a member it holds goes through whatever opera_id it seals
-// (pinned: the decision of whether to refuse a join outright stays open).
+// re-pair with a member it holds goes through whatever opera_id it seals,
+// and keeps the joiner's other members beside it (pinned: the decision of
+// whether to refuse a join outright stays open).
 // And F140, pinned, not fixed: a frame a removed member signed after its
 // removal, replayed at the re-pair, still ends the COMPLETE resend.
 // And F164: a boot with no "mesh" namespace (the first after an NVS erase,
@@ -816,7 +817,10 @@ void test_a_joiner_refuses_a_new_initiator_at_another_members_address() {
   // table it had. (Until F318's guard J founded an opera of its own here,
   // and B also took J's opera; a COMPLETE from another opera is now refused
   // before add_peer, a_joiner_refuses_a_complete_from_another_opera, so
-  // this refusal is reached from B's own opera.)
+  // this refusal is reached from B's own opera. Its opera_id check can no
+  // longer see a swap, since J's COMPLETE carries B's own id:
+  // a_joiner_refusing_a_held_member_from_another_opera_keeps_its_own is
+  // the case that still can.)
   fresh_opera({&A, &B, &C});
   fresh_device(J);
   re_pair(A, J);
@@ -846,12 +850,17 @@ void test_a_joiner_refuses_a_new_initiator_at_another_members_address() {
 
 void test_a_joiner_with_a_full_opera_keeps_its_own() {
   // B holds 16 members and pairs with J, a member of B's opera that B does
-  // not hold (J joined through A). Its add_peer refuses J, so B keeps the
-  // opera it had, in RAM and in NVS. The old handler (before F73) ignored
-  // the refusal, saved the COMPLETE's opera and reported success. (Until
-  // F318's guard J founded an opera of its own here; a COMPLETE from
-  // another opera is now refused before add_peer,
-  // a_joiner_refuses_a_complete_from_another_opera.)
+  // not hold (J joined through A). Its add_peer refuses J, and B reports
+  // the failure and keeps its 16 members. The old handler (before F73)
+  // ignored the refusal, saved the COMPLETE's opera and reported success.
+  // (Until F318's guard J founded an opera of its own here; a COMPLETE
+  // from another opera is now refused before add_peer,
+  // a_joiner_refuses_a_complete_from_another_opera. So the opera_id checks
+  // below can no longer see a swap: a full joiner's add_peer refuses only
+  // a new initiator, the guard stops one from another opera first, and the
+  // COMPLETE that reaches add_peer here carries B's own id.
+  // a_joiner_refusing_a_held_member_from_another_opera_keeps_its_own holds
+  // "the opera kept, RAM and NVS" through the held-member exemption.)
   fresh_opera({&A, &B, &C});
   fill_opera(B);
   boot(B);
@@ -1131,6 +1140,51 @@ void test_a_re_pair_into_another_opera_keeps_the_joiners_other_members() {
   CHECK(entry(B, C) != nullptr);                    // C stays, under the new id
   CHECK(!hears_next_heartbeat(B, C));               // and is not heard there
   std::printf("PASS a_re_pair_into_another_opera_keeps_the_joiners_other_members\n");
+}
+
+void test_a_joiner_refusing_a_held_member_from_another_opera_keeps_its_own() {
+  // The joiner's add_peer refusal of a COMPLETE from another opera, which
+  // the guard's held-member exemption still lets reach add_peer: B holds A
+  // and C; A leaves (B is not told), founds a new opera at its next
+  // pairing, and re-pairs B from C's address. A is held, so the guard
+  // passes it; add_peer refuses the address (F98). B keeps the opera it
+  // had, its secret, id and name, RAM and NVS, as F73 requires: nothing
+  // may install the COMPLETE's opera before add_peer has said yes. Since
+  // F318's guard this is the case that sees such a swap: the two F73
+  // joiner tests above now pair with a member of B's own opera, whose
+  // COMPLETE carries B's own id.
+  fresh_opera({&A, &B, &C});
+  const std::vector<uint8_t> b_opera = opera_id_of(B);
+  become(A);
+  CHECK(mn::leave_opera());
+  uint8_t a_mac[6];
+  memcpy(a_mac, A.mac, 6);
+  memcpy(A.mac, C.mac, 6);
+  const Frame complete = complete_for(A, B);
+  CHECK(opera_id_of(A) != b_opera);                 // A sealed a new opera
+  g_health.clear();
+  g_health_on.clear();
+  g_pair_events.clear();
+  const HeldOpera before = held_opera(B);
+  receive_only(B, A.mac, complete);
+  CHECK(held_opera(B) == before);                   // nothing moved, RAM or NVS
+  become(B);
+  CHECK(!mn::is_pairing());
+  CHECK(mn::g_mesh_state == mn::MESH_CONNECTING);
+  CHECK(same_mac(entry(B, A)->mac_addr, a_mac));    // A where B held it
+  CHECK(same_mac(entry(B, C)->mac_addr, C.mac) && B.espnow.has(C.mac));
+  const PairEvent* ev = last_event_of(B);
+  CHECK(g_pair_events.size() == 1 && ev != nullptr && ev->role == mn::PAIR_ROLE_JOINER && !ev->success);
+  CHECK(times_logged(kHeldAddress) == 1);           // add_peer's refusal, not the guard's
+  CHECK(last_detail_is(kHeldAddress, "remove it first"));
+  CHECK(logged("opera: pairing failed: partner refused"));
+  CHECK(!logged(kAnotherOpera));
+  boot(B);
+  CHECK(opera_id_of(B) == b_opera);
+  become(B);
+  CHECK(mn::g_peer_count == 2 && entry(B, A) != nullptr && entry(B, C) != nullptr);
+  memcpy(A.mac, a_mac, 6);
+  std::printf("PASS a_joiner_refusing_a_held_member_from_another_opera_keeps_its_own\n");
 }
 
 // ── F74: the DISCOVER registers the broadcast peer it is sent to ────────
@@ -2555,19 +2609,22 @@ void test_a_replayed_frame_does_not_end_a_re_added_members_complete_resend() {
 
 void test_a_frame_signed_after_the_removal_still_ends_the_complete_resend() {
   // Sweep F140, pinned as today's behavior, not a requirement: the lines
-  // marked F140 flip under its fix. A removal is one-sided: B, removed by
-  // A, keeps the opera and goes on signing heartbeats to A above the
+  // marked F140 flip under its fix, and only those (three in each shape,
+  // two more in the second). A removal is one-sided: B, removed by A,
+  // keeps the opera and goes on signing heartbeats to A above the
   // tombstone A kept for it (F116). One of them, recorded and replayed
   // from B's address at the re-pair into the same opera (removing the last
   // member rotates nothing), is fresh at A and counts as the joiner heard,
   // so A stops sending the COMPLETE again while B, which lost it, times
   // out. The two shapes F116's review probed on this file: B never removed
-  // A (B times out still holding A), and the owners removed each other a
-  // minute apart, the frame recorded in that minute (B times out holding
-  // no member, MESH_NO_OPERA, while A holds B). The fix (end the copies
-  // only on a frame that proves the joiner holds this COMPLETE, such as an
-  // acknowledgement under the pairing session key: a wire change) is
-  // F140's decision; no frame the joiner sends today proves it.
+  // A (B times out still holding A, in A's opera, so the two hear each
+  // other's next heartbeat and only B's owner is told the pairing failed),
+  // and the owners removed each other a minute apart, the frame recorded
+  // in that minute (B times out holding no member, MESH_NO_OPERA, while A
+  // holds B and reported success: the shape that strands B). The fix (end
+  // the copies only on a frame that proves the joiner holds this COMPLETE,
+  // such as an acknowledgement under the pairing session key: a wire
+  // change) is F140's decision; no frame the joiner sends today proves it.
   for (int both_removed = 0; both_removed < 2; ++both_removed) {
     fresh_opera({&A, &B});
     heard_heartbeats(A, B, 5);
@@ -2599,10 +2656,18 @@ void test_a_frame_signed_after_the_removal_still_ends_the_complete_resend() {
     CHECK(!mn::is_pairing());
     if (both_removed) {
       CHECK(mn::g_mesh_state == mn::MESH_NO_OPERA); // F140: B holds no member
-      CHECK(entry(B, A) == nullptr);
+      CHECK(entry(B, A) == nullptr);                // F140: no A; the fix has B hold it
+    } else {
+      CHECK(entry(B, A) != nullptr);                // B kept A, in A's opera
+      CHECK(opera_id_of(B) == opera_id_of(A));
     }
     const PairEvent* a_ev = last_event_of(A);
     CHECK(a_ev != nullptr && a_ev->success && entry(A, B) != nullptr);   // A holds B, said done
+    if (!both_removed) {
+      // So this shape heals: each hears the other's next heartbeat.
+      CHECK(hears_next_heartbeat(B, A));
+      CHECK(hears_next_heartbeat(A, B));
+    }
   }
   std::printf("PASS a_frame_signed_after_the_removal_still_ends_the_complete_resend\n");
 }
@@ -3655,6 +3720,8 @@ const Test kTests[] = {
     {"a_join_that_leaves_no_member_behind_goes_through", test_a_join_that_leaves_no_member_behind_goes_through},
     {"a_re_pair_into_another_opera_keeps_the_joiners_other_members",
      test_a_re_pair_into_another_opera_keeps_the_joiners_other_members},
+    {"a_joiner_refusing_a_held_member_from_another_opera_keeps_its_own",
+     test_a_joiner_refusing_a_held_member_from_another_opera_keeps_its_own},
     {"a_discover_goes_out_with_no_broadcast_peer_registered",
      test_a_discover_goes_out_with_no_broadcast_peer_registered},
     {"a_channel_change_re_adds_the_broadcast_peer", test_a_channel_change_re_adds_the_broadcast_peer},
