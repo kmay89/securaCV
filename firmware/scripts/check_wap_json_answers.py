@@ -118,12 +118,14 @@ J5. An answer spelled with `snprintf()` (F212): a call whose format is a JSON
     and function (F464: the CSI routes' module labels and table keys, the
     pairing token's hex, the MQTT test's transport and error). Such a %s is
     taken as escaped, as the record says why, and its length is still
-    judged: a char array (a local, a parameter, or a field reached from one,
-    `r->values.state_name`) by its size less its terminator (the record
-    vouches for the terminator as it does for the escape); anything else
-    leaves the answer unbounded, so only a length test after the call
-    (guarded or composed) passes it. A record J5 takes is in use, and J7
-    holds it to the code as it holds its own.
+    judged: a char array (a local, or a field reached from a local or a
+    parameter, `r->values.state_name`) by its size less its terminator (the
+    record vouches for the terminator as it does for the escape); anything
+    else, an array-declared parameter among them (`const char label[16]`,
+    a function's or a lambda's, is a pointer whatever N it spells), leaves
+    the answer unbounded, so only a length test after the call (guarded or
+    composed) passes it. A record J5 takes is in use, and J7 holds it to
+    the code as it holds its own.
 J6. The two answers that carry strings the check cannot read (F212), GET
     /api/device-info (`handle_device_info()`, the device name a person
     typed) and the provisioning receipt (`send_provisioning_receipt()`), are
@@ -1044,8 +1046,9 @@ def block_end(code: str, lo: int, hi: int, p: int) -> int:
     return hi
 
 
-def local_decl(ctx: Ctx, name: str, pos: int) -> tuple[str, list[str]] | None:
-    """The declaration of `name` in ctx's function that is in scope at `pos` (the innermost)."""
+def _local_decl_match(ctx: Ctx, name: str, pos: int) -> re.Match[str] | None:
+    """The match of local_decl()'s pattern (over ctx.code[body start:pos]) that declares `name` in
+    scope at `pos`: the innermost, or None."""
     lo, hi = ctx.fn.body
     region = ctx.code[lo:pos]
     pat = re.compile(r"(?:^|[;{}(,])\s*(?:static\s+)?(?P<const>const\s+)?(?P<type>(?:unsigned\s+)?[A-Za-z_][\w:]*"
@@ -1061,9 +1064,28 @@ def local_decl(ctx: Ctx, name: str, pos: int) -> tuple[str, list[str]] | None:
         # beside the 64-byte buf the answer is written into).
         if block_end(ctx.code, lo, hi, lo + m.start("type")) < pos:
             continue
-        found = (("const " if m.group("const") else "") + t + m.group("ptr"),
-                 re.findall(r"\[([^\]]*)\]", ctx.kept[lo + m.start("dims"):lo + m.end("dims")]))
+        found = m
     return found
+
+
+def local_decl(ctx: Ctx, name: str, pos: int) -> tuple[str, list[str]] | None:
+    """The declaration of `name` in ctx's function that is in scope at `pos` (the innermost)."""
+    m = _local_decl_match(ctx, name, pos)
+    if m is None:
+        return None
+    lo = ctx.fn.body[0]
+    return (("const " if m.group("const") else "") + m.group("type") + m.group("ptr"),
+            re.findall(r"\[([^\]]*)\]", ctx.kept[lo + m.start("dims"):lo + m.end("dims")]))
+
+
+def _param_match(ctx: Ctx, name: str) -> re.Match[str] | None:
+    """The parameter of ctx's function named `name`, as decl_type() reads it, or None."""
+    for p in split_top(ctx.fn.params):
+        m = re.match(r"^(?P<const>const\s+)?(?P<type>(?:unsigned\s+)?[A-Za-z_][\w:]*(?:\s*<[^>]*>)?)\s*(?P<ptr>[*&]*)\s*"
+                     + re.escape(name) + r"\s*(?P<dims>(?:\[[^\]]*\])*)\s*(?:=.*)?$", p.strip(), re.S)
+        if m:
+            return m
+    return None
 
 
 def decl_type(ctx: Ctx, name: str, pos: int) -> tuple[str, list[str]] | None:
@@ -1071,13 +1093,24 @@ def decl_type(ctx: Ctx, name: str, pos: int) -> tuple[str, list[str]] | None:
     found = local_decl(ctx, name, pos)
     if found is not None:
         return found
-    for p in split_top(ctx.fn.params):
-        m = re.match(r"^(?P<const>const\s+)?(?P<type>(?:unsigned\s+)?[A-Za-z_][\w:]*(?:\s*<[^>]*>)?)\s*(?P<ptr>[*&]*)\s*"
-                     + re.escape(name) + r"\s*(?P<dims>(?:\[[^\]]*\])*)\s*(?:=.*)?$", p.strip(), re.S)
-        if m:
-            return (("const " if m.group("const") else "") + m.group("type") + m.group("ptr"),
-                    re.findall(r"\[([^\]]*)\]", m.group("dims")))
+    m = _param_match(ctx, name)
+    if m is not None:
+        return (("const " if m.group("const") else "") + m.group("type") + m.group("ptr"),
+                re.findall(r"\[([^\]]*)\]", m.group("dims")))
     return None
+
+
+def declared_as_parameter(ctx: Ctx, name: str, pos: int) -> bool:
+    """Whether the declaration of `name` decl_type() reads at `pos` is a parameter's: the function's
+    own, or a lambda's inside the function (a local_decl() match that stands in a parameter list,
+    after `(` or `,` and closed by `)` or `,`, which no other declaration does). C++ adjusts an
+    array-declared parameter (`const char label[16]`) to a pointer, so the N it spells bounds
+    nothing a caller hands it (F464 review)."""
+    m = _local_decl_match(ctx, name, pos)
+    if m is not None:
+        text = m.group(0).strip()
+        return text[:1] in ("(", ",") and text[-1:] in (")", ",")
+    return _param_match(ctx, name) is not None
 
 
 def struct_of_var(ctx: Ctx, var: str, pos: int) -> Struct:
@@ -1984,9 +2017,11 @@ def in_json_string(fmt: bytes, upto: int) -> bool:
 
 
 def char_array_size(ctx: Ctx, expr: str, pos: int) -> int | None:
-    """N when `expr` names a `char x[N]`: a local or parameter of ctx's function, or a field reached
-    from one (`s->module_id`, `r->values.state_name`, `rows[i].name`), with N a constant the check
-    reads; None for anything else (a pointer, a table's `const char*`, a call, a global)."""
+    """N when `expr` names a `char x[N]`: a local of ctx's function, or a field reached from a local
+    or a parameter (`s->module_id`, `r->values.state_name`, `rows[i].name`), with N a constant the
+    check reads; None for anything else (a pointer, a table's `const char*`, a call, a global, and
+    an array-declared parameter, the function's or a lambda's: `const char label[16]` is a pointer
+    whatever N it spells, so the N bounds nothing its caller hands it)."""
     e = strip_parens(expr)
     chain = re.fullmatch(r"([A-Za-z_]\w*)\s*(\[[^\]]*\])?((?:\s*(?:\.|->)\s*[A-Za-z_]\w*)*)", e)
     if chain is None:
@@ -1995,6 +2030,8 @@ def char_array_size(ctx: Ctx, expr: str, pos: int) -> int | None:
     if t is None:
         return None
     typ, dims, ns = t[0], list(t[1]), ctx.fn.ns
+    if dims and not chain.group(2) and declared_as_parameter(ctx, chain.group(1), pos):
+        return None                 # a parameter's outermost [N] is a pointer's: it bounds nothing
     if chain.group(2):
         if not dims:
             return None             # an element of a pointer: no size to read
@@ -4854,6 +4891,23 @@ def drop_record(key: tuple[str, str], value: str) -> Mutation:
     return mutate
 
 
+def add_record(first: Mutation, key: tuple[str, str], values: tuple[str, ...], why: str) -> Mutation:
+    """`first`, run with a record for `key` added to this check's RECORDED (the F464 review: a helper
+    an edit adds, whose %s only a record lets J5 take). _case_problem() runs the check with the
+    record so added."""
+    def mutate(files: dict[str, str]) -> dict[str, str]:
+        return first(files)
+
+    def records(recorded: dict) -> dict:
+        if key in recorded:
+            raise AnchorMissing(f"{key} is already recorded")
+        out = dict(recorded)
+        out[key] = (values, why)
+        return out
+    mutate.records = records  # type: ignore[attr-defined]
+    return mutate
+
+
 LONG = "x" * 150
 INTEG = f"{SKETCH}/csi_integration.cpp"
 CSI_MQTT = f"{SKETCH}/csi_mqtt.cpp"
@@ -4882,6 +4936,33 @@ WINDOW_OFFSET = (
     "    if (off >= (int)sizeof(buf) - 8) break;\n  }\n"
     "  snprintf(buf + off, sizeof(buf) - off, \"]}\");\n"
     "  httpd_resp_set_type(req, \"application/json\");\n  httpd_resp_send(req, buf, -1);\n")
+# The events list's tamper tail, length-tested (F464), and the F464 review's spelling of it through
+# a lambda whose parameter is declared as an array: `const char active[16]` is a pointer, so its 16
+# bounds nothing the caller hands it, and a kind past the tail's 64 bytes would be sent cut.
+TAMPER_TAIL = ('  const char* active = tamper_events_active_kind();\n'
+               '  if (active && active[0]) {\n'
+               '    char tail[64];\n'
+               '    const int tn = snprintf(tail, sizeof(tail),\n'
+               '                            "],\\"tamper\\":{\\"kind\\":\\"%s\\"}}", active);\n'
+               '    /* A kind the tail cannot hold closes the answer without it, never cut\n'
+               '     * (check_wap_json_answers.py J5 judges this length test, F464). */\n'
+               '    if (tn <= 0 || (size_t)tn >= sizeof(tail)) {\n'
+               '      httpd_resp_send_chunk(req, "]}", 2);\n'
+               '      return httpd_resp_send_chunk(req, nullptr, 0);\n'
+               '    }\n'
+               '    httpd_resp_send_chunk(req, tail, tn);\n'
+               '  } else {\n')
+TAMPER_TAIL_ARRAY_PARAM = ('  auto zz_send_tail = [&](const char active[16]) {\n'
+                           '    char tail[64];\n'
+                           '    const int tn = snprintf(tail, sizeof(tail),\n'
+                           '                            "],\\"tamper\\":{\\"kind\\":\\"%s\\"}}", active);\n'
+                           '    httpd_resp_send_chunk(req, tail, tn);\n'
+                           '  };\n'
+                           '  const char* kind = tamper_events_active_kind();\n'
+                           '  if (kind && kind[0]) {\n'
+                           '    zz_send_tail(kind);\n'
+                           '  } else {\n')
+WINDOW_HEAD = "esp_err_t handle_window(httpd_req_t* req) {"
 # The Tuning Lab list's row guard, and the code before F464.
 TUNE_ROW_GUARD = ("    if (n <= 0 || (size_t)n >= sizeof(buf)) {\n      httpd_resp_send_chunk(req, \"]}\", -1);\n"
                   "      if (prefs_ok) prefs.end();\n      return httpd_resp_send_chunk(req, nullptr, 0);\n    }\n"
@@ -5062,6 +5143,15 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the events tail's tamper kind goes out untested",
      raw_in(INTEG, "    if (tn <= 0 || (size_t)tn >= sizeof(tail)) {\n      httpd_resp_send_chunk(req, \"]}\", 2);\n"
                    "      return httpd_resp_send_chunk(req, nullptr, 0);\n    }\n", "")),
+    # The F464 review: an array-declared parameter is a pointer, whatever N it spells.
+    ("the events tail's tamper kind goes through a lambda's array-declared parameter, untested",
+     raw_in(INTEG, TAMPER_TAIL, TAMPER_TAIL_ARRAY_PARAM)),
+    ("a recorded label goes through a function's array-declared parameter, untested",
+     add_record(raw_in(INTEG, WINDOW_HEAD,
+                       "static esp_err_t zz_send_label(httpd_req_t* req, const char label[16]) {\n  char buf[64];\n"
+                       "  snprintf(buf, sizeof(buf), \"{\\\"label\\\":\\\"%s\\\"}\", label);\n"
+                       "  return httpd_resp_send(req, buf, -1);\n}\n\n" + WINDOW_HEAD),
+                ("csi_integration.cpp", "zz_send_label"), ("label",), "a scratch record: a module label")),
     ("the MQTT test answer's guard is dropped",
      raw_in(CSI_MQTT, "  if (n <= 0 || (size_t)n >= sizeof(body)) {\n    httpd_resp_set_status(req, \"500 Internal Server Error\");\n",
             "  if (false) {\n    httpd_resp_set_status(req, \"500 Internal Server Error\");\n")),
@@ -5810,6 +5900,14 @@ ACCEPTED: list[tuple[str, Mutation]] = [
      raw_in(INTEG, TUNE_ROW_GUARD, TUNE_ROW_GUARD.replace("(size_t)n >= sizeof(buf)", "n >= (int)sizeof(buf)"))),
     ("the stream's supply piece gets a smaller buffer",
      raw_in(INTEG, "  char supply[112];", "  char supply[96];")),
+    # The F464 review: a char-array field reached through a pointer parameter is a real array, sized.
+    ("a recorded module id is read as a field through a function's pointer parameter",
+     add_record(raw_in(INTEG, WINDOW_HEAD,
+                       "static esp_err_t zz_send_module(httpd_req_t* req, const csi_event_record_t* rec) {\n"
+                       "  char buf[64];\n"
+                       "  snprintf(buf, sizeof(buf), \"{\\\"module\\\":\\\"%s\\\"}\", rec->module_id);\n"
+                       "  return httpd_resp_send(req, buf, -1);\n}\n\n" + WINDOW_HEAD),
+                ("csi_integration.cpp", "zz_send_module"), ("rec->module_id",), "a scratch record: a module id")),
     ("the scan list copies a name byte by byte into a C buffer, then shows that",
      raw_in(BT_API, BT_SHOWN, '    char zz_raw[bluetooth_channel::MAX_DEVICE_NAME_LEN + 1];\n'
             '    for (size_t k = 0; k < sizeof(zz_raw); ++k) zz_raw[k] = devices[i].name[k];\n'
@@ -5875,14 +5973,16 @@ def _case_problem(i: int) -> str | None:
         return (f"self-test: {'correct edit' if correct else 'mutation'} '{name}' no longer applies "
                 f"(anchor {missing}) — the source changed shape; update this guard's "
                 f"{'correct edits' if correct else 'mutations'} with it")
-    if recorded is not None:        # a mutation of RECORDED (F464): the check, run with it
+    if recorded is not None:        # a change to RECORDED (F464): the check, run with it
         saved = RECORDED
         RECORDED = recorded
         try:
-            bit = bool(check_files(m)[0])
+            refused = check_files(m)[0]
         finally:
             RECORDED = saved
-        return None if bit else f"self-test: the check did not bite on mutation '{name}'"
+        if correct:
+            return f"self-test: the check refused the correct edit '{name}': {refused[0]}" if refused else None
+        return None if refused else f"self-test: the check did not bite on mutation '{name}'"
     if correct:
         refused = check_files(m)[0] if m != files else ["it changed nothing"]
         return f"self-test: the check refused the correct edit '{name}': {refused[0]}" if refused else None
