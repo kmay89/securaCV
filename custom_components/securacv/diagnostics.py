@@ -10,10 +10,15 @@ an identifier the owner did not mean to publish (THREAT_MODEL.md principle
      event type / time bucket / attestation, evidence exports to a count;
   2. ``async_redact_data`` then sweeps the result for every key in
      ``TO_REDACT`` (tokens, the pairing token id, the kernel URL's host,
-     keys, hashes, entry ids, network and location identifiers, the
-     keys a Canary's answers use for its hardware, chip, module and radio
-     identifiers, and its health counters), so a value that reaches the
-     dump through a path this file did not foresee is still replaced.
+     keys, hashes, entry ids, network and location identifiers, a serial
+     number and a chip id, and every key the device-details vocabulary
+     puts in a redacted class: the keys a Canary's answers use for its
+     hardware, module and radio identifiers, and its health counters), so
+     a value that reaches the dump through a path this file did not
+     foresee is still replaced.
+     That vocabulary is ``spec/device_details_vocabulary.json``, read here
+     as the generated ``device_vocabulary`` module, so a key it gains is
+     redacted with no edit to this file.
 
 Both layers cover what this function returns. Home Assistant adds every
 Repairs issue it holds for the integration to the downloaded file itself,
@@ -69,13 +74,16 @@ from .const import (
 )
 from . import PLATFORMS
 from .data import SecuraCVConfigEntry, runtime_for
+from .device_vocabulary import REDACTED_DEVICE_KEYS
 from .entity import canary_registry_facts
 from .kernel_trust import kernel_key_fingerprint, normalize_kernel_key
 from .mqtt_payload import valid_device_id
 
-# Every key whose value is a secret, a credential, a stable identifier, a
-# network address or a location. Applied recursively by async_redact_data.
-TO_REDACT = {
+# The keys this integration owns: every key whose value is a secret, a
+# credential, a stable identifier, a network address or a location, named
+# here whatever the vocabulary says, so no vocabulary edit can take one out
+# of the dump's sweep.
+INTEGRATION_REDACT_KEYS: frozenset[str] = frozenset({
     CONF_TOKEN,
     "token_file",
     "token_id",
@@ -109,32 +117,29 @@ TO_REDACT = {
     "longitude",
     "seed",
     "sig",
-    # The identifier keys a Canary's answers use (device-details finding P18,
-    # ledger F391): the salted hardware token, the mDNS host name, a serial
-    # number, chip and module ids, and Bluetooth addresses (the radio's own,
-    # a connection's, a peer's). Named before any projection of those
-    # answers reaches a dump.
-    "hw_token",
-    "mdns_host",
+    # Two identifier keys the device-details review named (P18, ledger
+    # F391) that no Canary's answer emits today, so the vocabulary, which
+    # holds only keys a firmware source emits, cannot hold them yet: a
+    # serial number (also the device-registry field this integration fills
+    # with the kernel's id, entity.kernel_device_info) and a chip id. Named
+    # before any answer carrying one reaches a dump.
     "serial_number",
     "chip_id",
-    "module_id",
-    "local_address",
-    "address",
-    "peer_address",
-    # A Canary's health counters (device-details finding P18, ledger F391):
-    # how long it has been up, how often it booted, its card and web-server
-    # counts, how old its last camera frame is. Together they can single a
-    # device out across dumps and hint at when it reboots or is busy, so
-    # they are the second net behind the health projection device-details
-    # PR 16 is to add: no dump carries any of them today, and should a raw
-    # health payload ever reach one, these come out redacted.
-    "uptime",
-    "boot_count",
-    "sd_writes",
-    "http_requests",
-    "last_frame_age_ms",
-}
+})
+
+# Everything a dump's sweep replaces, applied recursively by
+# async_redact_data: the integration's own keys, and every key the
+# device-details vocabulary (spec/device_details_vocabulary.json, generated
+# into device_vocabulary.py) puts in a redacted class: the identifier keys a
+# Canary's answers use (the salted hardware token, the mDNS host name, the
+# AI module's id, Bluetooth addresses) and its health counters (how long it
+# has been up, how often it booted, its card and web-server counts, how old
+# its radar's last frame is; together they can single a device out across
+# dumps and hint at when it reboots or is busy). The counters are the second
+# net behind the health projection device-details PR 16 is to add: no dump
+# carries any of them today, and should a raw health payload ever reach one,
+# they come out redacted.
+TO_REDACT: frozenset[str] = INTEGRATION_REDACT_KEYS | REDACTED_DEVICE_KEYS
 
 # How many characters of the kernel id and of a Canary id the dump keeps.
 SHOWN_ID_CHARS = 8
