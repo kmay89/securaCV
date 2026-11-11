@@ -517,6 +517,9 @@ void suppressed_at_more_than_half(size_t rows, bool whole) {
   // a set's worth: none of it counts anywhere, stores anything or logs the
   // line again (every vote after the one that suppressed logged it once
   // more before F233's review; until F269 they went on filling the set).
+  // Since F234 a vote from a key with no row is refused before it looks the
+  // chirp up, so the rows' own later votes are what reach the suppressed
+  // chirp's empty slot (none at 3 rows, where all three suppressed it).
   for (size_t v = needed; v < rows; ++v) {
     host_sim::now_ms += 1000;
     deliver(nearby[v], vote_of(nearby[v], nonce));
@@ -1239,7 +1242,7 @@ void test_a_suppressed_chirp_stops_at_once() {
       boot_enabled();
       host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;   // this device may confirm
       const std::vector<Neighbor> nearby = fill_nearby(3);
-      stay_present(nearby);                           // and so may they (F311)
+      stay_present(nearby);                           // and so may they, and vote (F311, F234)
       const std::vector<uint8_t> w = witness_of(kOriginator, 0x50, k.tpl);
       uint8_t nonce[8];
       memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
@@ -1304,7 +1307,7 @@ void test_a_suppressed_chirp_stops_at_once() {
 void test_a_suppressed_row_leaves_its_neighbors_in_order() {
   boot_enabled();
   const std::vector<Neighbor> nearby = fill_nearby(3);
-  stay_present(nearby);   // their confirmations count below (F311)
+  stay_present(nearby);   // their confirmations and votes count below (F311, F234)
   std::vector<std::vector<uint8_t>> nonces;
   for (uint8_t i = 0; i < 5; ++i) {
     const Neighbor o = neighbor_of((uint8_t)(0xD0 + i));

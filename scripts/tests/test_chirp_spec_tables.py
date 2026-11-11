@@ -55,15 +55,16 @@ were prose with nothing holding them to the code, so this test does:
     ACKs from other keys and the ten minutes (PRESENCE_REQUIRED_MS) as a
     delay, and the old phrases are gone.
 
-  * Who may vote (§2.5.3, §2.5.6, §3.4 rule 4, FLEET_SEMANTICS.md §6 and §8,
-    THREAT_MODEL.md, mesh_and_chirp_audit_v1.md; sweep F234). A suppress
+  * Who may vote (§2.5.3, §2.5.6, §3.4 rule 4, FLEET_SEMANTICS.md §6, §8
+    and §9, THREAT_MODEL.md, mesh_and_chirp_audit_v1.md; sweep F234). A suppress
     vote counts only from a key whose nearby row passes
     nearby_has_pubkey_with_presence(), the ten-minute rule an ACK meets:
     handle_suppress_vote() calls it after the signature and session-id
     checks and before it looks the chirp up. Every page says a vote needs
     that row, none says it needs none, and each keeps the rest open: what a
     key or a row should cost (F232) and whether an emergency template can be
-    voted down at all (F234). The audit doc's C7 row names cases that exist.
+    voted down at all (F234). The audit doc's C7 row, and FLEET_SEMANTICS
+    §9's Chirp row, name suppress cases that exist.
 
   * API examples, the receive mockup and the Replay cell (§8.2, §4.2, §5.3,
     §10.1, THREAT_MODEL.md; sweeps D19, F309). Each §8.2 example names a
@@ -720,6 +721,26 @@ class ChirpSpecWhoMayVote(unittest.TestCase):
                 self.assertIn(case, registered)
         self.assertIn("whether an emergency template can be voted down at all (F234) are open", note)
         self.assertIn("row stays partial", note)
+
+    def test_the_fleet_pin_table_names_cases_that_exist(self):
+        # FLEET_SEMANTICS §9 says where each claim is pinned. Its Chirp row
+        # names the vote's rule beside the ACK's, and the suppress cases it
+        # names are registered in the suite (F234's review).
+        fleet = FLEET_SEMANTICS.read_text(encoding="utf-8")
+        pinned = fleet[fleet.index("## 9. Where each row is pinned"):]
+        rows = [ln for ln in pinned.splitlines() if ln.startswith("| Chirp: an ACK")]
+        self.assertEqual(len(rows), 1, "FLEET_SEMANTICS §9's Chirp row moved")
+        claim, where = (c.strip() for c in rows[0].strip().strip("|").split("|"))
+        self.assertIn("an ACK, and since F234 a suppress vote, counts from a key present ten minutes", claim)
+        self.assertIn("made-up rows can keep a neighbor out of a full table (F232)", claim)
+        self.assertIn("`test_chirp_suppress_wap.cpp`", where)
+        suite = set(re.findall(r'\{"([a-z0-9_]+)",\s*test_\1\}', SUPPRESS_TEST.read_text(encoding="utf-8")))
+        named = set(re.findall(r"`([a-z][a-z0-9_]+)`", where))
+        for case in ("a_fresh_key_votes_for_nothing", "a_vote_waits_for_ten_minutes_of_presence",
+                     "keys_beaconed_ten_minutes_still_vote", "a_padded_table_keeps_a_neighbor_out"):
+            with self.subTest(case=case):
+                self.assertIn(case, named)
+        self.assertTrue(named <= suite, f"§9 names {sorted(named - suite)}, not suppress cases")
 
 
 API_H = SKETCH / "chirp_api.h"

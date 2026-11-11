@@ -159,12 +159,12 @@ number of session ids at once and their ten minutes run together, up to the
 nearby table's free rows: the rule delays a device that wants many
 confirming keys by ten minutes, it does not price each key, and it proves
 nothing. A suppress vote, which takes a chirp off a receiver, meets the same
-rule since sweep F234 (it counted from any key that signed it, row or not),
-so it is delayed the same way and priced no more: one radio's keys beaconed
-ten minutes still vote, and made-up rows still count toward the threshold
-and can keep a real neighbor out of a full table (F232). What a key or a
-row should cost, and whether an emergency template can be voted down at
-all, are open (F232, F234). Beacon's
+rule since sweep F234 (before it, a vote counted from any key that signed
+it, row or not), so it is delayed the same way and priced no more: one
+radio's keys beaconed ten minutes still vote, and made-up rows still count
+toward the threshold and can keep a real neighbor out of a full table
+(F232). What a key or a row should cost, and whether an emergency template
+can be voted down at all, are open (F232, F234). Beacon's
 receive path has one more: when the receiver's
 clock is unsynced the freshness branch is empty ("accept but flag" —
 nothing is flagged), so a captured frame can be re-accepted after the
@@ -234,4 +234,4 @@ has not been measured.
 | Opera per-peer counter, pairing | `securacv_mesh` host tests; WAP mesh tests (source-text pins, not linked code, for the Beacon receive path — `beacon_source_scan.h` says so) |
 | Break-glass quorum counts distinct trustee keys, binds bucket and ruleset, replay ledger durable | `src/break_glass/core.rs` tests, `consumed_break_glass_tokens` tests in `src/lib.rs` |
 | No relay on Opera/Beacon, no election verification | **no test; established by reading the code** (this page's §5–6 cite the lines) |
-| Chirp: an ACK counts from a key present ten minutes, counted from its row's insert; the ten minutes run together for every key one radio beacons | canary-wap `test_chirp_security.cpp` (`c13_*`), on the real `chirp_channel.cpp` |
+| Chirp: an ACK, and since F234 a suppress vote, counts from a key present ten minutes, counted from its row's insert; the ten minutes run together for every key one radio beacons; made-up rows can keep a neighbor out of a full table (F232) | canary-wap `test_chirp_security.cpp` (`c13_*`) and `test_chirp_suppress_wap.cpp` (the "Who may vote" cases, among them `a_fresh_key_votes_for_nothing`, `a_vote_waits_for_ten_minutes_of_presence` and `keys_beaconed_ten_minutes_still_vote`, and `a_padded_table_keeps_a_neighbor_out`), on the real `chirp_channel.cpp` |

@@ -302,12 +302,12 @@ Device A sends chirp (hop 0) ──broadcast──→
   keys that began beaconing ten minutes before a chirp confirm it as soon
   as it arrives: a delay, not a price per identity, and one an attack can
   pay before it starts. A suppress vote waits the same ten minutes since
-  sweep F234, so it is delayed the same way and priced no more; it counted
-  from any key that signed it. What a key or a presence row should cost,
-  and whether an emergency template can be voted down at all, are open
-  (§2.5.6; sweep F234, open). This bullet said a coordinated attack needed
-  3 or more devices, each holding a distinct key, and that its cost was
-  real (sweep D16).
+  sweep F234, so it is delayed the same way and priced no more; before F234
+  it counted from any key that signed it. What a key or a presence row
+  should cost, and whether an emergency template can be voted down at all,
+  are open (§2.5.6; sweep F234, open). This bullet said a coordinated
+  attack needed 3 or more devices, each holding a distinct key, and that
+  its cost was real (sweep D16).
 - Real events naturally get confirmed by multiple witnesses.
 
 **Exception**: Safety-class templates (EMERGENCY, WEATHER) require only 1
@@ -714,9 +714,9 @@ Receivers MUST:
    ids at once and their ten minutes run together, up to the table's free
    rows: the rule delays a confirming key by ten minutes, it does not put a
    price on each key. A suppress vote meets the same rule since sweep F234
-   (§2.5.6): it counted from any key that signed it, row or not. A stronger
-   cost per voter (F232) and whether an emergency template can be voted
-   down at all are open (sweep F234).
+   (§2.5.6): before F234 it counted from any key that signed it, row or
+   not. A stronger cost per voter (F232) and whether an emergency template
+   can be voted down at all are open (sweep F234).
 5. Otherwise, add the pubkey to `confirmed_by[]`. If the chirp's confirmation
    threshold is now met, mark `validated = true` and (if `relay_enabled`)
    relay the chirp.

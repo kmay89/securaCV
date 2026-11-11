@@ -3804,9 +3804,11 @@
   (`NearbyDevice::first_seen_ms`, wrap-safe).
 - **Rule:** say what a rule buys. Presence beacons are unsigned (F232), so
   one radio runs the ten minutes for many keys at once: the wait delays a
-  Sybil and does not price one, and suppress votes still need no presence
-  (F234). The spec and `docs/FLEET_SEMANTICS.md` now say both, and since
-  D16 so do the threat model's Sybil row and the spec's §2.5.3.
+  Sybil and does not price one, and suppress votes needed no presence
+  (F234; since wave 25 a vote waits the same ten minutes, still a delay
+  rather than a price). The spec and `docs/FLEET_SEMANTICS.md` now say
+  both, and since D16 so do the threat model's Sybil row and the spec's
+  §2.5.3.
 - **Regression check:** `test_chirp_security.cpp`
   (`c4_a_relay_keeps_the_signed_ttl`, the three `c13_` presence cases),
   `test_chirp_suppress_wap.cpp` and `test_chirp_commands_wap.cpp`, on the
