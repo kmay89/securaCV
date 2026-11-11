@@ -387,12 +387,13 @@ Single-row-per-capability summary across every non-archived variant. This is the
 > under the profile each build selects: `arduino-cli` gets `build_config.h`'s
 > default, `BUILD_PROFILE_FULL`, as `canary-wap-default`, `-debug` and
 > `-usbdrive` do (`firmware/envs/platformio/canary-wap.ini`), and
-> `canary-wap-mobile`'s `BUILD_PROFILE_DEV` sets the same flags. One flag does
-> not follow its profile: `sys_monitor.h` defines `FEATURE_SYS_MONITOR` 1
-> again, unconditionally, and the sketch includes it after `build_config.h`,
-> so the monitor is compiled into the sketch under any profile,
-> `BUILD_PROFILE_MINIMAL`'s 0 included; no canary-wap env selects that profile
-> today. The compiles are CI's; none of these cells was bench-tested in this
+> `canary-wap-mobile`'s `BUILD_PROFILE_DEV` sets the same flags. Each of these
+> flags follows its profile: `sys_monitor.h` defines `FEATURE_SYS_MONITOR`
+> only where nothing defined it before (`#ifndef`, since sweep F467; it had
+> defined 1 unconditionally, over `BUILD_PROFILE_MINIMAL`'s 0), and the sketch
+> includes it after `build_config.h`, so the profile's value stands,
+> `BUILD_PROFILE_MINIMAL`'s 0 included; no canary-wap env selects that
+> profile, and no CI job compiles it. The compiles are CI's; none of these cells was bench-tested in this
 > pass. `scripts/tests/test_docs_claims.py` (`TheParityLedgersReadTheCode`)
 > holds each verdict to the code it rests on. The readings rejected: severity
 > levels, canary (PIO) kept at ⚠️, since ✅ would claim the canary-wap's

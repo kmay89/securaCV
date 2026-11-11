@@ -28,7 +28,14 @@
 // FEATURE FLAG
 // ════════════════════════════════════════════════════════════════════════════
 
+// The build profile owns this flag: build_config.h sets it (0 in
+// BUILD_PROFILE_MINIMAL, 1 in _DEV and _FULL), and the sketch includes
+// build_config.h before this header, so the profile's value stands. The 1
+// here is only for a translation unit that chose no profile. (It used to be
+// an unconditional define that forced 1 over MINIMAL's 0; sweep F467.)
+#ifndef FEATURE_SYS_MONITOR
 #define FEATURE_SYS_MONITOR 1
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // TEMPERATURE THRESHOLDS (Celsius)

@@ -9434,10 +9434,15 @@ class TheParityLedgersReadTheCode(unittest.TestCase):
             "FEATURE_WIFI_PRESENCE": ("wifi_presence.h", self.extra, "WiFi presence detection"),
             "FEATURE_AUDIBLE_CHIRP": ("audible_chirp.h", self.extra, "Audible chirp (buzzer/LED alerts)"),
         }
-        self.assertEqual({flag: forced[flag] for flag in rows if flag in forced},
-                         {"FEATURE_SYS_MONITOR": ("sys_monitor.h", "1")},
-                         "a sketch header forces another of these flags, or no longer forces FEATURE_SYS_MONITOR: "
+        # None does since sweep F467: sys_monitor.h's define, which forced 1
+        # over BUILD_PROFILE_MINIMAL's 0, is now a fallback under #ifndef.
+        self.assertEqual({flag: forced[flag] for flag in rows if flag in forced}, {},
+                         "a sketch header forces one of these flags over its profile: "
                          "restate the cells and the note's sentence about it")
+        sysmon = c_code((WAP / "sys_monitor.h").read_text(encoding="utf-8"))
+        self.assertRegex(sysmon, r"\n#ifndef FEATURE_SYS_MONITOR\n#define FEATURE_SYS_MONITOR 1\n#endif\n",
+                         "sys_monitor.h's FEATURE_SYS_MONITOR fallback moved: restate the note's sentence about it")
+        self.assertEqual(profiles["MINIMAL"].get("FEATURE_SYS_MONITOR"), "0")
         note = self.note()
         for flag, (header, table, label) in rows.items():
             with self.subTest(flag=flag):
@@ -9458,7 +9463,10 @@ class TheParityLedgersReadTheCode(unittest.TestCase):
                 self.assertEqual(sorted(p for p, fl in profiles.items() if fl.get(flag) == "1"), ["DEV", "FULL"])
                 self.assertIn("1 in `BUILD_PROFILE_FULL` and `_DEV`", self.flags[f"`{flag}`"][ARDUINO])
                 self.assertIn(f"`{flag}`", table[label][ARDUINO])
-        self.assertIn("`sys_monitor.h` defines `FEATURE_SYS_MONITOR` 1 again, unconditionally", note)
+        self.assertIn("Each of these flags follows its profile: `sys_monitor.h` defines `FEATURE_SYS_MONITOR` "
+                      "only where nothing defined it before (`#ifndef`, since sweep F467", note)
+        self.assertIn("so the profile's value stands, `BUILD_PROFILE_MINIMAL`'s 0 included", note)
+        self.assertNotIn("1 again, unconditionally", note)
         # The runtime the cells name: the monitor's 30 s line (held in the
         # system monitor test), presence started at boot outside safe mode.
         setup = c_body(self.ino, "void setup() {")
