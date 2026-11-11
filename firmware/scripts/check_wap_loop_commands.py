@@ -2188,7 +2188,9 @@ CHIRP_TABLE_CALLERS = {
     "handle_suppress_vote": ("on_espnow_recv",),
     "relay_chirp": ("handle_ack",),
     "priority_heap_insert": ("handle_witness",),
-    "nearby_has_pubkey_with_presence": ("handle_ack",),
+    # A confirmation's key and, since F234, a vote's must hold a row ten
+    # minutes old; both handlers are reached only from on_espnow_recv.
+    "nearby_has_pubkey_with_presence": ("handle_ack", "handle_suppress_vote"),
     # One nonce, one row (F270), and a suppressed chirp out at its vote (F269).
     "recent_index_of": ("handle_witness", "handle_suppress_vote"),
     "drop_recent_at": ("handle_suppress_vote",),

@@ -760,9 +760,12 @@ static bool pubkey_rate_check_and_record(const uint8_t* pubkey) {
 // own session the same way.
 // Presence beacons are unsigned (§3.2; sweep F232), so one radio beacons any
 // number of session ids at once, and their ten minutes run together, up to
-// the table's free rows: the rule delays a confirming key by ten minutes, it
-// does not put a price on each one. A suppress vote reads no presence at all
-// (handle_suppress_vote(); sweep F234, open).
+// the table's free rows: the rule delays a confirming or voting key by ten
+// minutes, it does not put a price on each one. A suppress vote meets the
+// same rule (handle_suppress_vote(); sweep F234): it counted from any key
+// that signed it, row or not. Whether a stronger cost is asked of a voter,
+// and whether an emergency template can be voted down at all, stay open
+// (F234, F232).
 static bool nearby_has_pubkey_with_presence(const uint8_t* pubkey) {
   uint8_t sid[SESSION_ID_SIZE];
   if (!session_id_from_pubkey(pubkey, sid)) return false;
@@ -1236,6 +1239,22 @@ static void handle_suppress_vote(const uint8_t* data, size_t len) {
   uint8_t derived_sid[SESSION_ID_SIZE];
   if (!session_id_from_pubkey(payload->voter_session_pubkey, derived_sid)) return;
   if (memcmp(derived_sid, hdr->session_id, SESSION_ID_SIZE) != 0) return;
+
+  // A vote counts only from a key whose nearby row is PRESENCE_REQUIRED_MS
+  // old, the rule an ACK has met since F311 (spec §3.4 rule 4, §2.5.6;
+  // sweep F234). A session key costs nothing to make, and a vote from any
+  // key that signed it counted, so one radio in range signed as many votes
+  // from made-up keys as the threshold asks (three at up to five rows,
+  // seventeen at 32) and took any chirp, an emergency one included, off
+  // that receiver within the vote window. Now each of those keys must have
+  // been beaconed here for ten minutes first, so a receiver with fewer than
+  // three rows suppresses nothing. Refused before the chirp is looked up:
+  // a refused vote counts for nothing, takes no slot, is not kept for when
+  // its row comes of age, and logs nothing (a line per refusal would let one
+  // radio push the health log's real entries out). It is a delay, not a
+  // price: unsigned beacons hold rows for any session id, and their ten
+  // minutes run together (F232).
+  if (!nearby_has_pubkey_with_presence(payload->voter_session_pubkey)) return;
 
   // A nonce has one row (sweep F270: handle_witness() refuses a frame whose
   // nonce a row holds), and none once its chirp is suppressed (F269), so a
