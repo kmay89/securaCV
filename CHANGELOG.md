@@ -1,6 +1,29 @@
 # Changelog
 
 ## [Unreleased]
+### rusqlite 0.41: SQLite 3.39.4 to 3.53.4 under SQLCipher, and what the audit pass does not mean
+
+- **`rusqlite` 0.31 to 0.41** (`libsqlite3-sys` 0.28 to 0.39.1; SQLCipher
+  4.5.3 to 4.19.0, SQLite 3.39.4 to 3.53.4). Cipher defaults are unchanged
+  and a database written by either version opens in the other. One source
+  change: `verify::count_alarms` reads the count as `i64` and converts it
+  checked. Dependabot's hold on the `rusqlite` major is lifted.
+- **Two threads opening their first database at once no longer race
+  SQLCipher's start-up.** SQLCipher 4.19 finishes its own start-up in a hook
+  SQLite runs after it has let other threads through, and `rusqlite` 0.41 no
+  longer serializes first use, so a second thread's `PRAGMA key` could fail
+  (about 3 runs in 1,000 of the bridge's parallel tests). The kernel now
+  waits for that start-up before it opens or keys a database
+  (`ensure_sqlcipher_ready`).
+- **A damaged anchor row is still one row's problem.** The lenient anchor
+  reader types each stored value itself; TEXT that is not UTF-8, in any
+  column, is reported for that row (the old conversion panicked on it).
+- **RUSTSEC-2026-0459 is not fixed by this.** `cargo audit` passes again,
+  because the advisory is keyed on the crate version, but the SQLCipher
+  build still carries SQLite 3.53.4 and the fix is 3.54.0. `SECURITY.md`
+  ("Group 5") says who is exposed and what to do until `libsqlite3-sys`
+  can select the fixed `sqlcipher-src`.
+
 ### The ledger verdict checks the anchors: a head that was anchored and is gone fails `log_verify`, witnessd's boot verify and `POST /verify`
 
 - **RFC 3161 anchors are part of the ledger verdict (structural).**
