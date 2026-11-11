@@ -83,8 +83,13 @@ other filtered workflow.
   that must tell a human something opens or refreshes ONE issue through
   `.github/actions/issue-dedup`. Rule R10 above.
 - **Rust** jobs use `Swatinem/rust-cache@v2`. Cargo *tools* built from
-  source (`cargo install <tool>`) cache the built binary under a weekly
-  key — pattern in audit.yml / sbom.yml.
+  source (`cargo install <tool>`) cache the built binary. A pinned tool keys
+  the cache on its version: `sbom.yml` installs cargo-cyclonedx with
+  `--version "$CARGO_CYCLONEDX_VERSION" --locked` and caches it under
+  `cargo-cyclonedx-<os>-<version>`, one build per bump and nothing to rotate.
+  A tool that takes crates.io latest keys it on the ISO week, so "latest"
+  never goes stale longer than that: `audit.yml`'s cargo-audit and cargo-deny
+  (`cargo install <tool> --locked`, key `<tool>-<os>-<week>`).
 - **Node** jobs installing from a lockfile use `setup-node`'s
   `cache: npm` with an explicit `cache-dependency-path`. A job that runs
   node at all (`node --test`, a `.mjs` generator, `npx`) sets it up with

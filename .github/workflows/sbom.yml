@@ -140,6 +140,14 @@ jobs:
       # .github/release-targets.yml (the target's name, a watch entry, its
       # tag_prefix).
       DESKTOP_APPS: "flasher:desktop:flasher-v lab:desktop-lab:app-v"
+      # The two tools that write the Rust and Node documents, each pinned to
+      # an exact release: the newest that was at least two weeks old when it
+      # was set. The install lines and the binary's cache key read these, so
+      # a bump is an edit here plus the tool's row in sbom/README.md;
+      # scripts/tests/test_gen_firmware_sbom.py holds every install line, the
+      # key and that row to them.
+      CARGO_CYCLONEDX_VERSION: "0.5.9"
+      CDXGEN_VERSION: "12.9.0"
 
     steps:
     - uses: actions/checkout@v7
@@ -205,21 +213,21 @@ jobs:
         echo "desktop apps described by this run: ${list:-none}"
 
     # ---- Rust SBOM ----
-    # Compiling cargo-cyclonedx from source cost ~5-10 min of every run.
-    # Cache the built binary under a weekly key: at most one build per
-    # week, and "latest" can never go stale longer than that.
-    - name: Weekly tool-cache stamp
-      id: week
-      run: echo "stamp=$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
+    # Compiling cargo-cyclonedx from source cost ~5-10 min of every run, so
+    # the built binary is cached under the version it was built at. A pinned
+    # version cannot go stale, so the key needs no weekly rotation: one build
+    # per bump, and the CARGO_CYCLONEDX_VERSION edit is what moves the key.
+    # `--version` with a bare x.y.z installs exactly that release, and
+    # --locked builds it from the lockfile the crate was published with.
     - name: Cache the cargo-cyclonedx binary
       id: tool
       uses: actions/cache@v6
       with:
         path: ~/.cargo/bin/cargo-cyclonedx
-        key: cargo-cyclonedx-${{ runner.os }}-${{ steps.week.outputs.stamp }}
+        key: cargo-cyclonedx-${{ runner.os }}-${{ env.CARGO_CYCLONEDX_VERSION }}
     - name: Install cargo-cyclonedx
       if: steps.tool.outputs.cache-hit != 'true'
-      run: cargo install cargo-cyclonedx --locked
+      run: cargo install cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION" --locked
 
     - name: Generate Rust SBOM (CycloneDX)
       # cargo-cyclonedx writes <package>.cdx.json next to Cargo.toml; it does
@@ -272,7 +280,11 @@ jobs:
       run: cd canary-vision && npm ci
 
     - name: Install cdxgen
-      run: npm install -g @cyclonedx/cdxgen
+      # The pin fixes cdxgen's own version (and its direct dependencies, which
+      # its package.json names exactly), not its whole tree: cdxgen publishes
+      # no npm-shrinkwrap.json, and a global install has no lockfile of ours,
+      # so the ranges inside those dependencies resolve at install time.
+      run: npm install -g "@cyclonedx/cdxgen@$CDXGEN_VERSION"
 
     - name: Generate Node.js SBOM (CycloneDX)
       run: cdxgen -t node -o sbom-node.cdx.json canary-vision/

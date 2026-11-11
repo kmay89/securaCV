@@ -24,6 +24,11 @@ What is pinned and why:
     FILE is one error line; bare --validate refuses a write flag beside it;
   • the validator's pip pin is one string across lint.yml, sbom.yml, the
     README and the generator;
+  • sbom.yml's own two tools are pinned exactly (CI26): every `cargo install`
+    and `npm install -g` names an x.y.z from the job env (cargo with
+    --locked), the cargo-cyclonedx binary is cached under that version and
+    nothing that rotates, the check refuses each way back to floating, and
+    the README's tool rows say the same versions;
   • the two Arduino axes: sketch.yaml profiles are read from YAML (the
     files' comments quote core numbers too), workflow rows carry their
     matrix-resolved library pins and the sketch they compile, the agreement
@@ -40,6 +45,7 @@ import importlib.util
 import io
 import json
 import re
+import shlex
 import sys
 import tempfile
 import textwrap
@@ -380,6 +386,190 @@ class ValidatorPin(unittest.TestCase):
         for path in [*sorted(gs.WORKFLOWS.glob("*.yml")), readme, SCRIPT]:
             for found in _PIN_RE.findall(path.read_text(encoding="utf-8")):
                 self.assertEqual(found, gs.VALIDATOR_PIP, path.name)
+
+
+SBOM_YML = gs.WORKFLOWS / "sbom.yml"
+# The tools sbom.yml installs to write the Rust and Node documents, each with
+# the job env variable that pins it. A new `cargo install` or `npm install -g`
+# in sbom.yml fails the test below until it is pinned the same way and named
+# here.
+SBOM_TOOLS = {"cargo-cyclonedx": "CARGO_CYCLONEDX_VERSION",
+              "@cyclonedx/cdxgen": "CDXGEN_VERSION"}
+# A bare x.y.z: `cargo install --version` installs exactly that release (an
+# operator or a partial version would be a requirement it resolves), and to
+# npm it is one version, not a range or a dist-tag.
+_EXACT_VERSION = re.compile(r"\d+\.\d+\.\d+")
+_ENV_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+_EXPR = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
+# cargo install options that take a value (the value is not the crate name)
+_CARGO_VALUED = {"--version", "--vers", "--root", "--target", "--target-dir",
+                 "--features", "-F", "--git", "--branch", "--tag", "--rev",
+                 "--path", "--registry", "--index", "--profile", "-j", "--jobs",
+                 "--config", "-Z", "--bin", "--example", "--color"}
+
+
+def _installs(line: str) -> list[tuple[str, str, str | None, set[str]]]:
+    """(manager, package, version token or None, flags) for each package a
+    `cargo install` or global `npm install` on this shell line installs."""
+    try:
+        words = shlex.split(line, comments=True)
+    except ValueError:  # a quote this line opens and a later one closes
+        words = [w.strip("'\"") for w in line.split()]
+    found = []
+    for i in range(len(words) - 1):
+        if words[i] == "cargo" and words[i + 1] == "install":
+            args, version, crates, j = words[i + 2:], None, [], 0
+            while j < len(args) and args[j] not in {"&&", "||", ";", "|"}:
+                arg = args[j]
+                if arg in _CARGO_VALUED:
+                    if arg in {"--version", "--vers"} and j + 1 < len(args):
+                        version = args[j + 1]
+                    j += 2
+                    continue
+                if arg.startswith(("--version=", "--vers=")):
+                    version = arg.split("=", 1)[1]
+                elif not arg.startswith("-"):
+                    crates.append(arg)
+                j += 1
+            flags = {a for a in args[:j] if a.startswith("-")}
+            for crate in crates:
+                name, at, ver = crate.partition("@")
+                found.append(("cargo", name, ver if at else version, flags))
+        if words[i] == "npm" and words[i + 1] in {"install", "i", "add"}:
+            args = []
+            for arg in words[i + 2:]:
+                if arg in {"&&", "||", ";", "|"}:
+                    break
+                args.append(arg)
+            if not {"-g", "--global"} & set(args):
+                continue
+            for spec in (a for a in args if not a.startswith("-")):
+                scoped = spec.startswith("@")
+                name, at, ver = spec[1:].partition("@") if scoped else spec.partition("@")
+                found.append(("npm", ("@" if scoped else "") + name, ver if at else None, set()))
+    return found
+
+
+def _sbom_tool_pin_findings(text: str) -> list[str]:
+    """What is wrong with how this sbom.yml pins the tools it installs; an
+    empty list is a workflow whose every tool install, and the cargo binary's
+    cache key, names an exact version from the job env."""
+    wf = gs._yaml().safe_load(text) or {}
+    findings: list[str] = []
+    installed = {tool: 0 for tool in SBOM_TOOLS}
+    cached: set[str] = set()
+    for job_name, job in (wf.get("jobs") or {}).items():
+        # what the install lines and the cache key read: the workflow's env
+        # under the job's; a step that sets a pin of its own is refused below
+        job_env = {k: str(v) for k, v in {**(wf.get("env") or {}),
+                                           **((job or {}).get("env") or {})}.items()}
+        for step in (job or {}).get("steps") or []:
+            step = step or {}
+            where = f"{job_name}: {step.get('name') or step.get('uses')}"
+            for var in sorted(set(SBOM_TOOLS.values()) & set(step.get("env") or {})):
+                findings.append(f"{where}: sets {var} for one step; the pin is the "
+                                "job's, which the cache key reads too")
+            run = str(step.get("run") or "").replace("\\\n", " ")  # join continued lines
+            for line in run.splitlines():
+                for manager, tool, token, flags in _installs(line):
+                    var = SBOM_TOOLS.get(tool)
+                    if var is None:
+                        findings.append(f"{where}: {manager} installs {tool}, which "
+                                        "SBOM_TOOLS does not pin")
+                        continue
+                    installed[tool] += 1
+                    ref = _ENV_REF.fullmatch(token or "")
+                    if not ref or (ref.group(1) or ref.group(2)) != var:
+                        findings.append(f"{where}: {tool} is installed at {token!r}, "
+                                        f"not at the job env's ${var}: {line.strip()}")
+                    elif not _EXACT_VERSION.fullmatch(job_env.get(var, "")):
+                        findings.append(f"{where}: the job env's {var} is "
+                                        f"{job_env.get(var)!r}, not an exact x.y.z")
+                    if manager == "cargo" and "--locked" not in flags:
+                        findings.append(f"{where}: cargo install {tool} without "
+                                        f"--locked: {line.strip()}")
+            uses = str(step.get("uses") or "")
+            if not uses.startswith("actions/cache@"):
+                continue
+            with_ = step.get("with") or {}
+            paths = str(with_.get("path") or "").split()
+            for tool, var in SBOM_TOOLS.items():
+                if f"~/.cargo/bin/{tool}" not in paths:
+                    continue
+                cached.add(tool)
+                key = _EXPR.sub(lambda m: "${{ " + m.group(1) + " }}",
+                                str(with_.get("key") or ""))
+                want = f"{tool}-${{{{ runner.os }}}}-${{{{ env.{var} }}}}"
+                if key != want:
+                    findings.append(f"{where}: the {tool} binary is cached under "
+                                    f"{key!r}, not {want!r} (a key on anything "
+                                    "but the version rebuilds the same release "
+                                    "or restores another one)")
+                if job_env.get(var) is None:
+                    findings.append(f"{where}: this job's env does not set {var}, "
+                                    f"the {tool} pin its cache key must read")
+                if with_.get("restore-keys"):
+                    findings.append(f"{where}: restore-keys on the {tool} binary "
+                                    "would restore another version's build")
+    for tool, count in installed.items():
+        if not count:
+            findings.append(f"no step installs {tool}")
+    if "cargo-cyclonedx" not in cached:
+        findings.append("no actions/cache step holds ~/.cargo/bin/cargo-cyclonedx")
+    return findings
+
+
+class SbomToolPins(unittest.TestCase):
+    """sbom.yml's two tools are pinned exactly, from one env per tool. Until
+    CI26 it ran `cargo install cargo-cyclonedx --locked` under a weekly cache
+    key (crates.io latest, a new build each ISO week) and an unpinned
+    `npm install -g @cyclonedx/cdxgen` (npm latest on every run), so which
+    tool wrote a release's bill of materials depended on the day it ran."""
+
+    def test_every_tool_install_and_the_binary_cache_carry_the_env_pin(self):
+        self.assertEqual(_sbom_tool_pin_findings(SBOM_YML.read_text(encoding="utf-8")), [])
+
+    def test_the_check_refuses_each_way_back_to_floating(self):
+        text = SBOM_YML.read_text(encoding="utf-8")
+        # built from today's pins, so a bump needs no edit in this test
+        env = gs._yaml().safe_load(text)["jobs"]["generate-sbom"]["env"]
+        cargo_pin = f'CARGO_CYCLONEDX_VERSION: "{env["CARGO_CYCLONEDX_VERSION"]}"'
+        cdxgen_pin = f'CDXGEN_VERSION: "{env["CDXGEN_VERSION"]}"'
+        week = "-${{ steps.week.outputs.stamp }}"
+        key = "key: cargo-cyclonedx-${{ runner.os }}-${{ env.CARGO_CYCLONEDX_VERSION }}"
+        for label, old, new in (
+            ("no --version", ' --version "$CARGO_CYCLONEDX_VERSION"', ""),
+            ("a typed version, not the env's", '--version "$CARGO_CYCLONEDX_VERSION"',
+             f'--version {env["CARGO_CYCLONEDX_VERSION"]}'),
+            ("no --locked", '"$CARGO_CYCLONEDX_VERSION" --locked', '"$CARGO_CYCLONEDX_VERSION"'),
+            ("no @version on cdxgen", '"@cyclonedx/cdxgen@$CDXGEN_VERSION"', "@cyclonedx/cdxgen"),
+            ("a dist-tag", cdxgen_pin, 'CDXGEN_VERSION: "latest"'),
+            ("a caret range", cargo_pin, 'CARGO_CYCLONEDX_VERSION: "^0.5"'),
+            ("a partial version", cdxgen_pin, 'CDXGEN_VERSION: "12"'),
+            ("the week stamp back in the key", key, key + week),
+            ("a key without the version", key, "key: cargo-cyclonedx-${{ runner.os }}" + week),
+            ("a restore-keys prefix", key, key + "\n        restore-keys: cargo-cyclonedx-"),
+            ("a step's own pin", "    - name: Install cdxgen\n",
+             "    - name: Install cdxgen\n      env:\n        CDXGEN_VERSION: latest\n"),
+        ):
+            with self.subTest(label):
+                self.assertEqual(text.count(old), 1, f"mutant {label!r} no longer applies")
+                self.assertNotEqual(_sbom_tool_pin_findings(text.replace(old, new)), [])
+        # and a third tool installed unpinned is not waved through
+        extra = text.replace('npm install -g "@cyclonedx/cdxgen@$CDXGEN_VERSION"',
+                             'npm install -g "@cyclonedx/cdxgen@$CDXGEN_VERSION" @cyclonedx/cyclonedx-cli')
+        self.assertNotEqual(extra, text)
+        self.assertNotEqual(_sbom_tool_pin_findings(extra), [])
+
+    def test_the_readme_names_the_pinned_versions(self):
+        job_env = gs._yaml().safe_load(SBOM_YML.read_text(encoding="utf-8"))[
+            "jobs"]["generate-sbom"]["env"]
+        readme = (REPO / "sbom" / "README.md").read_text(encoding="utf-8")
+        for tool, var in SBOM_TOOLS.items():
+            with self.subTest(tool):
+                said = re.findall(rf"\| `{re.escape(tool)}` \| ([^ |]+) \|", readme)
+                self.assertEqual(said, [str(job_env[var])], f"sbom/README.md's row for {tool}")
+                self.assertIn(f"`{var}`", readme)
 
 
 def _product_cores(doc: dict) -> dict[str, set[str]]:
