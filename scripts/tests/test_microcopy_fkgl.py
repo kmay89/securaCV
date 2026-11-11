@@ -8,8 +8,9 @@ What is pinned and why:
     quoted span in the block, comments included, so the apostrophe in the
     calibrate overlay's comment paired with the one in the tier note's and
     swallowed every string between them into one bogus "string" (sweep
-    F465): 84 strings graded at 3.46, five of them lost and one made of
-    comment text. Now it is 89 strings at 3.35, still under the 6.0 ceiling;
+    F465): 84 strings graded at 3.46, six real ones lost and one made of
+    comment text in their place. Now it is 89 strings at 3.35, still under
+    the 6.0 ceiling;
   • the strip knows strings: a // or /* inside a string is the string's
     ('https://' survives whole), and a quote or a brace inside a comment
     is the comment's (it opens no string and does not end the brace walk);
@@ -138,6 +139,7 @@ class RealDashboard(unittest.TestCase):
             "Step out for ten seconds.",
             "Calibrate empty room",
             "Got it. The canary knows your room now.",
+            "Sensing is offline. Try again in a moment.",
             "Quiet so far today. The canary is perched, head cocked.",
         ):
             self.assertIn(s, self.strings)

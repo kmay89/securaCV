@@ -61,9 +61,9 @@ def syllables(word: str) -> int:
 # comments between them. Comments are not copy. Graded as quoted spans, an
 # apostrophe in one comment paired with the next one and swallowed every string
 # between them into one bogus "string" (sweep F465: the calibrate overlay's
-# comment and the tier note's took the calibrate, today and tier labels with
-# them). So the block is cut out and stripped of comments by one scanner that
-# knows where strings are, and only then matched.
+# comment and the tier note's took the calibrate strings, the offline error
+# and today's empty line with them). So the block is cut out and stripped of
+# comments by one scanner that knows where strings are, and only then matched.
 #
 # The scanner knows the three JavaScript string forms ("...", '...' and `...`,
 # with backslash escapes and a template's ${...} code) and the two comment forms
