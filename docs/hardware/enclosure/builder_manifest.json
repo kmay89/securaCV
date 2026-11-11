@@ -1234,7 +1234,7 @@
         }
       },
       "units": {},
-      "sha256": "608e68f7ebbad6a4353ffb24c9b5a95c87ead3d9108a6d1d06f9e27147c36beb",
+      "sha256": "d820bfaf77f2896cf824228b8f59296947e10e8bd20e614530ef2fecb817109e",
       "groups": [
         {
           "name": "What to render",
@@ -2233,7 +2233,8 @@
             {
               "name": "span_max",
               "type": "number",
-              "default": 40
+              "default": 40,
+              "desc": "the clamp-spacing rule (DESIGN_RULES §6): in seal mode, neighboring screw centers along a wall stand no farther apart than this; each wall's mid posts are derived from it, and the longest span is asserted within it"
             }
           ]
         }
@@ -2342,7 +2343,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "cf3f265b0d96be3ecfe7a1734bae6fc18c9ef31ba5e2297f88e1b6c60808c69b",
+      "sha256": "dae48699326c3a740129c6870c4378dc67756c2f39dc4eac87e9325db8097845",
       "groups": [
         {
           "name": "What to render",
@@ -2873,7 +2874,8 @@
             {
               "name": "svc_pip_depth",
               "type": "number",
-              "default": 0.4
+              "default": 0.4,
+              "desc": "how deep each dimple is cut into the head's face: its first two 0.2 layers (the head prints face-down), under svc_web_t so the web stays whole"
             },
             {
               "name": "svc_sprue_t",
@@ -3200,7 +3202,8 @@
             {
               "name": "ant_rib_d",
               "type": "number",
-              "default": 0.4
+              "default": 0.4,
+              "desc": "how far each rib stands proud of the +X wall's inner face: above ant_t, so the ribs stand past the FPC's face and bracket its ends"
             }
           ]
         },
@@ -3686,7 +3689,8 @@
             {
               "name": "spk_post_dy",
               "type": "number",
-              "default": 16.0
+              "default": 16.0,
+              "desc": "a mid post on each long wall stands this far above the driver's axis (spk_cy), and one this far below; every post is asserted 0.5 clear of the Ø spk_d driver"
             },
             {
               "name": "sec_boss_d",
@@ -4755,7 +4759,7 @@
         "glyph_rib": "mm",
         "glyph_depth": "mm"
       },
-      "sha256": "6ea34cf7791ac5306d75784504b3abfeaf183978754ac4ef511ed19c4e835d0c",
+      "sha256": "0ce1fb27bd0b5f76f0c6b158aa52ffefa2dbc07bd0f3630b68d731fb8f47701d",
       "groups": [
         {
           "name": "What to render",
@@ -5017,7 +5021,8 @@
             {
               "name": "label_depth",
               "type": "number",
-              "default": 0.5
+              "default": 0.5,
+              "desc": "how deep every station label, the DEBOSS wordmark and the MATE's tag are sunk: the depth the DEBOSS station tests"
             },
             {
               "name": "emboss_h",
@@ -5028,7 +5033,8 @@
             {
               "name": "label_font",
               "type": "string",
-              "default": "Liberation Sans:style=Bold"
+              "default": "Liberation Sans:style=Bold",
+              "desc": "the font every label, both wordmarks and the MATE's tag are set in (it must be installed)"
             },
             {
               "name": "brand_raised",
@@ -5051,12 +5057,14 @@
             {
               "name": "emblem_rib",
               "type": "number",
-              "default": 0.7
+              "default": 0.7,
+              "desc": "the retired EMBLEM station's stroke width: no feature of its raised mark is thinner (asserted at least 0.4 when emblem_h > 0)"
             },
             {
               "name": "emblem_crown",
               "type": "number",
-              "default": 0.15
+              "default": 0.15,
+              "desc": "the retired EMBLEM station's dome: each stroke's top draws in this far, its footprint a full rib (asserted under emblem_rib/2 when emblem_h > 0)"
             }
           ]
         },

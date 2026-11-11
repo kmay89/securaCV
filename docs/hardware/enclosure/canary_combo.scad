@@ -141,7 +141,7 @@ cam_fov_margin = 4;  // degrees added to each side of the FOV cone the hole must
 cam_disc_d = 14.0;  cam_disc_t = 1.0;
 v_stack_sock = 6.5;    // brd_stack_sock_measured(), canary_board_lib — the XIAO ports are DERIVED
                        // from this, so the unmeasured 11.5 put them in the floor
-v_front_h = 5.0;
+v_front_h = 5.0;       // the Grove Vision AI V2 module's front-side component height above its PCB (the Vision case's vm_front_h): the cavity clears it by at least cav_extra
 xiao_w = 17.8;         // the measured XIAO — sets the corner pins that catch the module under it
 xiao_below = 5.5;      // air under a stacked XIAO's USB face: shell + half a plug overmold + clearance
 
@@ -149,8 +149,8 @@ xiao_below = 5.5;      // air under a stacked XIAO's USB face: shell + half a pl
 sm_l = 44.0;                 // MR60 carrier length — brd_l("mr60"), canary_board_lib
 sm_w = 36.0;                 // MR60 carrier width — brd_w("mr60"), canary_board_lib
 s_stack_sock = 6.5;          // brd_stack_sock_measured() — same decision as v_stack_sock
-s_front_h = 3.5;
-ant_h = 1.2;
+s_front_h = 3.5;            // the MR60 carrier's tallest front-side part above its PCB (connectors; the Sense case's radar_front_h): the cavity clears it by at least cav_extra
+ant_h = 1.2;                // the MR60 antenna (AiP package) top above the carrier's PCB: sets the radome air gap, asserted at least 3 mm
 radome_t = 1.5;   // ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); AVOID 0.7–1.1 mm
 rad_win_x = 24.0;  rad_win_y = 24.0;  rad_dx = 0.0;  rad_dy = 6.0;
 s_usb_z = 0.0;       // extra lift of the C6 port relative to its DERIVED axis (a measured correction)

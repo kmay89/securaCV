@@ -462,7 +462,7 @@ svc_proud   = 0.2;    // the head's face stands this far PROUD of the back face,
                       // rim is seated on a thin film of neutral-cure silicone (the clear disc's sealant; keep it off the web),
                       // and the continuous TPU web is the seal
 svc_pip_d   = 2.0;    // the dimples in the head's face that say which is which: one = R, two = B
-svc_pip_depth = 0.4;
+svc_pip_depth = 0.4; // how deep each dimple is cut into the head's face: its first two 0.2 layers (the head prints face-down), under svc_web_t so the web stays whole
 svc_sprue_t = 0.4;    // the sprue between the pair's rims: two layers, cut with scissors (TPU does not snap)
 xiao_rst_side = -1;   // MEASURE: the side (±X, this file's frame) whose switch is R — the vendor model has no silkscreen;
                       // confirm against the board before trusting the dimples  // [-1, 1]
@@ -544,7 +544,7 @@ ant_w      = 20.0;   // antenna FPC width (Z, across the cavity's depth) — the
 ant_t      = 0.3;    // FPC + its adhesive
 ant_post_gap = 1.0;  // a +X mid post's stand-off from the wall: ant_t plus air for the FPC's edge
 ant_rib_w  = 0.8;    // the two locating ribs along the landing's ends, proud of the wall by ant_rib_d
-ant_rib_d  = 0.4;
+ant_rib_d  = 0.4;    // how far each rib stands proud of the +X wall's inner face: above ant_t, so the ribs stand past the FPC's face and bracket its ends
 
 /* [Engineering] (see README "Engineering & materials") */
 screw_insert = false;  // M2 brass heat-set inserts in the post ends AND the security boss (the one
@@ -741,7 +741,7 @@ batt_pitch_y = batt_l + batt_pcm + 2*batt_clear + pd;    // post center to post 
 // the speaker zone carries a pair of mid posts each side of the cone, where
 // the circle leaves room at the wall (spk_post_dy from the axis, asserted
 // clear of the driver); with the bay off the zone still needs them
-spk_post_dy = 16.0;
+spk_post_dy = 16.0;  // a mid post on each long wall stands this far above the driver's axis (spk_cy), and one this far below; every post is asserted 0.5 clear of the Ø spk_d driver
 spk_mid_ys  = opt_spk ? [spk_cy - spk_post_dy, spk_cy + spk_post_dy] : [];
 bay_ys = opt_batt ? [batt_cy - batt_pitch_y/2, batt_cy + batt_pitch_y/2] : [];   // the bay's end-stop posts
 mid_ys = opt_batt ? concat(spk_mid_ys, bay_ys)

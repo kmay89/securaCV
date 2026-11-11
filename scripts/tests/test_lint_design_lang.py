@@ -303,12 +303,25 @@ def knobs_without_help(path: Path) -> list[str]:
 # (that split moved catalog.json's engineering_param_count for seven products,
 # +36 in all), and their boolean options have help too, which is also their
 # catalog label (21 labels moved from the bare knob name). They hold at zero.
+# C31: the released four (the WAP, the Sense, the Vision and its doorbell) have
+# help on every knob, read off the geometry that uses it, and they stay at zero:
+# a released case's new knob cannot land without help.
+# C10, the carried four (combo, fit_coupon, dash_display, watch_station, whose
+# bytes the website carries): every knob alone on its line has help except
+# two of watch_station's, which is not edited here: label_text, so a one-string
+# help does not force a re-render of its print STLs on the website
+# (gen_print_files.py pins the file's sha256), and opt_batt, a catalog option
+# whose help would become its label (C27's class). The rest share a line, as
+# C10c-1's do, and wait on the same split (C27), which moves catalog.json.
 HELP_DEBT = {
     "canary_bench_fixture.scad": 7,    # clip_w..clip_clear, tol_slide, tol_press (two shared lines)
     "canary_c3_lcd147.scad": 0,
     "canary_c6_display.scad": 0,
+    "canary_combo.scad": 30,           # carried: 30 on ten shared lines (cam_post_d/cam_screw_d .. hood_len/hood_t)
+    "canary_dash_display.scad": 6,     # carried: pilot_d/screw_c/cb_d, vent_n/vent_w/vent_l (two shared lines)
     "canary_dock.scad": 0,
     "canary_field_case.scad": 23,      # 22 on eight shared lines, and bez_on
+    "canary_fit_coupon.scad": 6,       # carried: screw_d/screw_head_d, mag_d/lp_d, lip_t/lip_h (three shared lines)
     "canary_hammond_chassis.scad": 0,
     "canary_hub_din.scad": 0,
     "canary_inserts.scad": 0,
@@ -319,12 +332,18 @@ HELP_DEBT = {
     "canary_s3_lcd147.scad": 0,
     "canary_s3_lcd7.scad": 0,
     "canary_s3_touch169.scad": 0,
+    "canary_sense_enclosure.scad": 0,  # released: stays at zero
     "canary_sense_gang.scad": 0,
     "canary_sense_stand.scad": 0,
     "canary_shop_tools.scad": 0,
     "canary_sign.scad": 0,
     "canary_vehicle_mount.scad": 0,
+    "canary_vision_doorbell.scad": 0,  # released: stays at zero
+    "canary_vision_enclosure.scad": 0, # released: stays at zero
     "canary_vision_pro_mount.scad": 0,
+    "canary_wap_enclosure.scad": 0,    # released: stays at zero
+    "canary_watch_station.scad": 5,    # carried: opt_batt (C27's label class), label_text (rides its next
+                                       # print-files re-render), label_size/label_depth/label_font (one shared line)
     "canary_wear_clip.scad": 0,
 }
 
