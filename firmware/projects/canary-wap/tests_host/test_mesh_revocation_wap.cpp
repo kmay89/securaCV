@@ -16,7 +16,12 @@
 //   3. add_peer() refuses a deny-listed pubkey;
 //   4. init() restores the list (before the peers load), update() expires it
 //      every pass and re-persists it every 5 minutes;
-//   5. persistence is flash-encryption gated, like the peer list.
+//   5. persistence is flash-encryption gated, like the peer list;
+//   6. is_revoked_pubkey() fails closed on a key it cannot hash (sweep F364),
+//      and every call of compute_fingerprint() and compute_opera_id() in the
+//      file refuses on a false answer: the pin stands in for [[nodiscard]],
+//      which the helpers cannot carry while a host suite discards one answer
+//      (test_mesh_address_wap runs each caller's refusal).
 // And, on the staged copy: a removal is refused for exactly
 // REVOCATION_GRACE_MS (7 days).
 
@@ -101,8 +106,26 @@ void test_mesh_network_uses_the_list() {
   CHECK(count(load, "mesh_revocation::decode(g_revoked,blob,got,millis())") == 1);
 
   const std::string isr = squeeze(function_body(code, "is_revoked_pubkey"));
+  const std::string closed = "if(!compute_fingerprint(pubkey,fp))returntrue;";
+  CHECK(count(isr, closed) == 1);
   CHECK(count(isr, "returnmesh_revocation::contains(g_revoked,fp,millis());") == 1);
+  CHECK(isr.find(closed) < isr.find("mesh_revocation::contains("));
   std::printf("PASS mesh_network_uses_the_list\n");
+}
+
+void test_every_fingerprint_and_opera_id_is_checked() {
+  bool ok = false;
+  const std::string raw = beacon_source_scan::read_source(MESH_NETWORK_CPP, &ok);
+  CHECK(ok);
+  const std::string code = squeeze(beacon_source_scan::strip_comments(raw));
+  for (const char* fn : {"compute_fingerprint(", "compute_opera_id("}) {
+    const std::string decl = std::string("staticbool") + fn;   // declaration, definition
+    const std::string refused = std::string("if(!") + fn;
+    CHECK(count(code, decl) == 2);
+    CHECK(count(code, refused) >= 1);
+    CHECK(count(code, fn) == count(code, refused) + 2);
+  }
+  std::printf("PASS every_fingerprint_and_opera_id_is_checked\n");
 }
 
 }  // namespace
@@ -110,6 +133,7 @@ void test_mesh_network_uses_the_list() {
 int main() {
   test_staged_grace();
   test_mesh_network_uses_the_list();
+  test_every_fingerprint_and_opera_id_is_checked();
   std::printf("\nALL mesh revocation (canary-wap) tests PASSED (%d checks)\n", g_checks);
   return 0;
 }
