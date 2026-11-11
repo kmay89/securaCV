@@ -10,7 +10,9 @@ description = "Privacy Witness Kernel (PWK) - witnessd + tools + break_glass"
 
 [dependencies]
 anyhow = "1.0"
-rusqlite = { version = "0.31", features = ["bundled-sqlcipher"] }
+# default-features off: the other default, `ffi-sqlite-wasm-rs`, only adds
+# wasm-only crates to the lockfile that no shipped target builds.
+rusqlite = { version = "0.41", default-features = false, features = ["bundled-sqlcipher", "cache"] }
 hkdf = "0.13"
 # Memory-hard KDF for the optional `seed-argon2id:v1:` device-seed format
 # (a passphrase seed must not be brute-forceable through the fast SHA-256

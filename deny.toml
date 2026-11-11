@@ -54,6 +54,9 @@ allow = [
     # Permissive licenses from the tract ONNX inference stack.
     "WTFPL",
     "CDLA-Permissive-2.0",
+    # SQLite's public-domain dedication, on `sqlcipher-src` (the SQLCipher
+    # amalgamation `rusqlite`'s `bundled-sqlcipher` builds).
+    "blessing",
 ]
 
 [bans]

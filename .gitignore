@@ -44,6 +44,8 @@ api_token
 .env.local
 secrets.h
 .device_key_seed
+# The seed witnessd keeps beside its database (<db>.ed25519.seed): a secret.
+*.ed25519.seed
 # Signing-key containers the release docs walk maintainers through creating
 # (desktop/SIGNING.md and ios/DEMO.md export a .p12 into the working
 # directory). Binary, so the content greps in secrets-scan.yml cannot see
