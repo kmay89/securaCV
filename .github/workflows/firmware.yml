@@ -187,7 +187,9 @@ jobs:
   #   size_guards        — list of {bin, slot_bytes, slot_name}: fail if
   #                        `bin` exceeds `slot_bytes` (an image bigger
   #                        than its OTA A/B slot can never be installed
-  #                        over the air). A LIST because one flavor can
+  #                        over the air), and warn when it fits with less
+  #                        than check_slot_budget.py's headroom floor (5%
+  #                        of the slot) free. A LIST because one flavor can
   #                        span boards with different slot budgets — the
   #                        v2.4.6 C6 nightstand shipped 5 KB over its
   #                        slot precisely because only the S3 watch bin
@@ -304,21 +306,29 @@ jobs:
           # size_guards is a LIST (one flavor can guard several bins with
           # different slot budgets); each entry fires right after the env
           # that produces its bin, before a later env can clobber .pio/build.
+          #
+          # The measuring is check_slot_budget.py's, the same script the
+          # release runs on the bytes it signs, so the budget, the over-slot
+          # failure and the headroom floor's ::warning:: (an image that fits
+          # with under 5% of its slot free, F367) live once. This wrapper
+          # keeps the two things the script does not do: an empty or absent
+          # bin fails here as it always did, and the script's refusal is
+          # re-emitted as an ::error:: annotation so the summary page still
+          # names it. --require-budget: this loop only asks about an env it
+          # holds a guard for, so "no budget" is a disagreement, not a pass.
           size_guard() {
-            local GUARD="$1" BIN SLOT SLOT_NAME SIZE
-            BIN=$(jq -r '.bin' <<< "$GUARD")
-            SLOT=$(jq -r '.slot_bytes' <<< "$GUARD")
-            SLOT_NAME=$(jq -r '.slot_name // "OTA slot"' <<< "$GUARD")
-            SIZE=$(stat -c%s "$BIN" 2>/dev/null || echo 0)
-            if [ "$SIZE" -eq 0 ]; then
+            local GENV="$1" BIN="$2" OUT
+            if [ ! -s "$BIN" ]; then
               echo "::error::$BIN not found — size guard cannot run."
               exit 1
             fi
-            if [ "$SIZE" -gt "$SLOT" ]; then
-              echo "::error::Firmware binary $BIN ($SIZE bytes) exceeds the $SLOT_NAME ($SLOT bytes). It could never be installed over the air — trim features or grow the slots."
+            if OUT=$(python3 "$GITHUB_WORKSPACE/firmware/scripts/check_slot_budget.py" \
+                --env "$GENV" --require-budget "$BIN" 2>&1); then
+              echo "$OUT"
+            else
+              echo "::error::$OUT"
               exit 1
             fi
-            echo "Firmware size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of $SLOT_NAME)"
           }
           for e in $(jq -r '.build_envs[]' <<< "$FLAVOR_JSON"); do
             GROUP=$(jq -r --arg e "$e" '(.core_dir_groups // {})[$e] // empty' <<< "$FLAVOR_JSON")
@@ -332,12 +342,12 @@ jobs:
               echo "── pio run -e $e ──"
               pio run -e "$e"
             fi
-            while IFS= read -r GUARD; do
-              [ -n "$GUARD" ] || continue
-              case "$(jq -r '.bin' <<< "$GUARD")" in
-                .pio/build/$e/*) size_guard "$GUARD" ;;
+            while IFS= read -r BIN; do
+              [ -n "$BIN" ] || continue
+              case "$BIN" in
+                .pio/build/$e/*) size_guard "$e" "$BIN" ;;
               esac
-            done < <(jq -c '.size_guards // [] | .[]' <<< "$FLAVOR_JSON")
+            done < <(jq -r '.size_guards // [] | .[].bin' <<< "$FLAVOR_JSON")
           done
 
       - name: Compile the enclosure tamper contact (canary dev, compile-only)

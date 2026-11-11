@@ -44,6 +44,15 @@ comfortable answer when FULL needs A/B **plus** a `witness_log`-style partition.
 > same `flavors.json` budgets (`firmware/scripts/check_slot_budget.py`) —
 > a tag build is not the branch build, which is how fw-v2.4.6 shipped an
 > oversized nightstand-c6 image past a green PR gate.
+>
+> **Headroom floor (F367, 2026-11):** both gates now run that one script, and
+> an image that fits its slot with less than 5% of it free
+> (`HEADROOM_FLOOR_PERCENT`) gets a `::warning::` naming the env, its free
+> bytes and the floor. It warns and never fails: what to trim is a
+> maintainer's call. fw-v2.4.16's nightstand-c6 fit its `0x1F0000` slot with
+> 2,832 bytes to spare (the floor is 101,581), so unless it has shrunk since,
+> its next build warns; a larger table is no answer for boards already in the
+> field.
 
 Note that **two** of the tables (`canary/partitions_ota.csv` and `partitions_secure.csv`) describe
 only a **4 MB** layout — on an 8 MB board they leave half the flash unused. They are correct for
