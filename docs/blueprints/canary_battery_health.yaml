@@ -126,13 +126,16 @@ condition: []
 action:
   - choose:
       # Low battery — only when the degradation is the battery's (the Health
-      # sensor also goes critical on low memory, a different runbook).
+      # sensor also goes critical on low memory, a different runbook), and
+      # only on a charge the unit sent: battery_percent is none for a battery
+      # that sent no number (sweep HA60), and no reading is not a low battery.
       - conditions:
           - condition: trigger
             id: low
           - condition: template
             value_template: >-
               {{ state_attr(health_sensor, 'battery_present') == true
+                 and state_attr(health_sensor, 'battery_percent') is number
                  and battery_pct < (low_threshold | int) }}
         sequence:
           - variables:

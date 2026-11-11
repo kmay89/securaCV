@@ -363,6 +363,27 @@ def _wants_radar_link(topic_type: str, device_type: str | None, payload: Any) ->
     return data is not None and isinstance(data.get("radar"), dict)
 
 
+def _battery_percent_attribute(data: dict[str, Any], battery: int | None) -> int | None:
+    """The Health sensor's ``battery_percent`` attribute (sweep HA60).
+
+    The charge the health sent (`battery`, battery_percent's reading) when
+    there is one. Without one, None on a unit that says it has a battery
+    (`battery_present` true, the key battery_percent itself gates on) and
+    sends no number for its charge: a bool, a non-finite, a negative, a
+    past-64-bit or a separator-spelled one (sweep HA57), or none at all.
+    That is no reading, as `memory_free_bytes` is None for none (HA53), not
+    the 100 nobody sent. Otherwise 100, as before: the canary-wap on mains
+    sends 100 with `battery_present` false, and a health that does not say
+    whether it has a battery has always read 100 here. The Health state is
+    not read from this: no reading is not a low battery there either.
+    """
+    if battery is not None:
+        return battery
+    if data.get("battery_present") is True:
+        return None
+    return 100
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -470,6 +491,21 @@ async def _setup_mqtt_sensors(
             new_entities.append(
                 SecuraCVCanaryGPSSensor(prefix, device_id, entry)
             )
+
+        # SD Wear Estimate (HA46): only for a device whose health carries the
+        # `sd` object (the canary base's diagnostics health), so a device that
+        # never sends one (the canary-wap's health carries only sd_mounted)
+        # grows no sensor that stays unknown. Created by the first health that
+        # carries it, a later one included (the canary base's health sends the
+        # object only once its SD diagnostics read), as Event ID Space Low
+        # (HA24) is; health is retained, so the new sensor's own subscription
+        # is sent the broker's copy of the health that created it.
+        if (
+            topic_type == TOPIC_HEALTH
+            and "sd_wear" not in entities_added[device_id]
+            and canary_sd(parse_mqtt_json(msg.payload)) is not None
+        ):
+            entities_added[device_id].add("sd_wear")
             new_entities.append(
                 SecuraCVCanarySDWearSensor(prefix, device_id, entry)
             )
@@ -1353,7 +1389,7 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
         if isinstance(public_key, str):
             public_key = normalize_hex(public_key)
         self._attr_extra_state_attributes = {
-            "battery_percent": 100 if battery is None else battery,
+            "battery_percent": _battery_percent_attribute(data, battery),
             # The reading, or None with none: never a 0 nobody sent.
             "memory_free_bytes": memory_free,
             "uptime_seconds": data.get("uptime", 0),
@@ -1397,8 +1433,9 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
     """Estimated SD-card wear reported by a Canary device.
 
     Conservative estimate from NVS-persisted lifetime write counters
-    against the configured endurance rating; stays empty on firmware
-    that does not yet report the `sd` health object.
+    against the configured endurance rating. Created only for a device
+    whose health carries the `sd` object (HA46, _setup_mqtt_sensors); a
+    later health without it leaves the sensor as it was.
     """
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC

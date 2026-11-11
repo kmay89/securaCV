@@ -1222,26 +1222,30 @@ def test_the_health_sensor_reads_only_a_memory_number_as_low_memory(
 # broker hands the text over, and what the Health sensor reads from it: its
 # state and its battery_percent attribute. The Health sensor reads critical
 # below CRITICAL_BATTERY_THRESHOLD_PERCENT (10) and warning below
-# WARNING_BATTERY_THRESHOLD_PERCENT (25); no reading is the no-battery
-# reading, healthy with a battery_percent of 100, as an absent key always was.
+# WARNING_BATTERY_THRESHOLD_PERCENT (25). No reading is not a low battery, so
+# it reads healthy, and since this unit says it has a battery its
+# battery_percent is None, no charge, rather than the 100 nobody sent (sweep
+# HA60; a mains unit still reads 100, test_a_present_battery_with_no_number_shows_no_charge).
 _BATTERY_READINGS = [
     # No reading: not a state of charge a unit's uint8_t can hold, a string
-    # int() reads only through its digit separator, or a finite number past
-    # 64 bits, which Home Assistant's JSON writer refuses in an attribute.
-    ("null", "healthy", 100),
-    ("true", "healthy", 100),
-    ("false", "healthy", 100),
-    ("NaN", "healthy", 100),
-    ("Infinity", "healthy", 100),
-    ("-Infinity", "healthy", 100),
-    ("1e400", "healthy", 100),
-    ("-1", "healthy", 100),
-    ("-0.5", "healthy", 100),
-    ('"-1"', "healthy", 100),
-    ('"junk"', "healthy", 100),
-    ('"5_0"', "healthy", 100),
-    ("1e300", "healthy", 100),
-    ("18446744073709551616", "healthy", 100),
+    # int() reads only through a sign or its digit separator, or a finite
+    # number past 64 bits, which Home Assistant's JSON writer refuses in an
+    # attribute.
+    ("null", "healthy", None),
+    ("true", "healthy", None),
+    ("false", "healthy", None),
+    ("NaN", "healthy", None),
+    ("Infinity", "healthy", None),
+    ("-Infinity", "healthy", None),
+    ("1e400", "healthy", None),
+    ("-1", "healthy", None),
+    ("-0.5", "healthy", None),
+    ('"-1"', "healthy", None),
+    ('"junk"', "healthy", None),
+    ('"+5"', "healthy", None),
+    ('"5_0"', "healthy", None),
+    ("1e300", "healthy", None),
+    ("18446744073709551616", "healthy", None),
     # A reading, truncated toward zero; minus zero is zero. Above 100 reads
     # as sent, up to the largest integer Home Assistant carries.
     ("-0.0", "critical", 0),
@@ -1275,8 +1279,9 @@ def test_the_health_sensor_reads_only_a_battery_number_as_a_charge(
     a negative charge read as critical too. A battery key's value is now read
     as the memory keys' are, under the canary-wap's `battery` and under
     firmware/canary's `battery_soc` alike (read with battery_present true).
-    Each body follows one that reads the other way, so the state shown is the
-    one this body set."""
+    A value that is no reading shows battery_percent None (HA60; it showed
+    100 before). Each body follows one that reads the other way, so the
+    state shown is the one this body set."""
     wap = _Wap(record, monkeypatch).replay("connect", "running")
     health = wap.entity("health_status")
     memory = wap.entity("tamper_memory_critical")
@@ -1293,8 +1298,9 @@ def test_the_health_sensor_reads_only_a_battery_number_as_a_charge(
     wap.broker.publish(topic, body, True)
     assert _value(health, "native_value") == state, body
     attrs = _attrs(health)
+    assert "battery_percent" in attrs
     assert attrs["battery_percent"] == attribute, body
-    assert type(attrs["battery_percent"]) is int, body
+    assert type(attrs["battery_percent"]) is type(attribute), body
     assert attrs["battery_present"] is True
     assert attrs["memory_free_bytes"] == 182000
     assert _value(memory, "is_on") is False, "the battery is not the memory"
@@ -1319,13 +1325,137 @@ def test_the_health_sensor_reads_battery_soc_past_a_battery_with_no_number(recor
         ('"battery_present": true, "battery": 50, "battery_soc": 8', "healthy", 50),
         ('"battery_present": false, "battery": 8, "battery_soc": 8', "healthy", 100),
         ('"battery_present": true, "battery": 8', "critical", 8),
-        ('"battery_present": true, "battery": 1e400, "battery_soc": 1e400', "healthy", 100),
+        # A present battery with no number in either key: no charge (HA60).
+        ('"battery_present": true, "battery": 1e400, "battery_soc": 1e400', "healthy", None),
     ):
         # Each body reads otherwise than the one before it, state or attribute.
         body = "{" + rest + ", " + spelled + "}"
         wap.broker.publish(topic, body, True)
         assert _value(health, "native_value") == state, body
         assert _attrs(health)["battery_percent"] == attribute, body
+
+
+# One value per kind of charge that is no reading (sweep HA57), sent by a unit
+# that says it has a battery, and that unit sending no battery key at all.
+_NO_CHARGE = [
+    ("bool", '"battery": true'),
+    ("non-finite", '"battery": Infinity'),
+    ("negative", '"battery": -1'),
+    ("past 64 bits", '"battery": 18446744073709551616'),
+    ("sign-spelled", '"battery": "+5"'),
+    ("separator-spelled", '"battery": "5_0"'),
+    ("no battery key", ""),
+]
+
+
+@pytest.mark.parametrize("spelled", [c[1] for c in _NO_CHARGE], ids=[c[0] for c in _NO_CHARGE])
+def test_a_present_battery_with_no_number_shows_no_charge(record, monkeypatch, spelled):
+    """Sweep HA60: the Health sensor's battery_percent read 100 whenever
+    battery_percent() had no reading, so a unit that says it has a battery
+    (battery_present true) and sends no number for its charge showed a full
+    battery nobody sent. It is now None there, as memory_free_bytes is None
+    for no reading (HA53). A real charge still reads as sent, the canary-wap
+    on mains (100 with battery_present false, the contract
+    test_health_and_egress_read_as_the_wap_sent_them pins) still reads 100,
+    and so does a health that does not say whether it has a battery. The
+    Health state does not move with the attribute: no reading is not a low
+    battery, so every body here reads healthy, as each did before."""
+    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    health = wap.entity("health_status")
+    topic = _topic(record, "health")
+    mains = _one(record, "running", "health")
+    assert (mains["battery"], mains["battery_present"]) == (100, False), "the running unit is on mains"
+    gone = ("battery", "battery_soc", "battery_present", "memory_free", "free_heap")
+    rest = json.dumps({k: v for k, v in mains.items() if k not in gone})[1:-1]
+    rest += ', "memory_free": 182000'
+    no_charge = "{" + rest + ', "battery_present": true' + (", " + spelled if spelled else "") + "}"
+    # Each body reads otherwise than the one before it.
+    for body, attribute in (
+        ("{" + rest + ', "battery_present": true, "battery": 37}', 37),
+        (no_charge, None),
+        ("{" + rest + ', "battery_present": false, "battery": 100}', 100),
+        (no_charge, None),
+        ("{" + rest + "}", 100),
+    ):
+        wap.broker.publish(topic, body, True)
+        assert _value(health, "native_value") == "healthy", body
+        attrs = _attrs(health)
+        assert "battery_percent" in attrs, body
+        assert attrs["battery_percent"] == attribute, body
+        assert type(attrs["battery_percent"]) is type(attribute), body
+
+
+# A Canary whose health carries the `sd` object, as the canary base's does once
+# its SD diagnostics read (firmware/canary/src/main.cpp, `doc["sd"]`), beside
+# the WAP on the same broker.
+_SD_DEVICE = "canary-base-01"
+_SD_OBJECT = {
+    "mounted": True,
+    "usage_pct": 12.5,
+    "writes": 4096,
+    "errors": 0,
+    "lifetime_kb": 524288,
+    "wear_pct": 2.8,
+    "replace_recommended": False,
+}
+
+
+def test_sd_wear_is_never_created_for_a_wap(record, monkeypatch):
+    """HA46: SD Wear reads the health's `sd` object, and the WAP's health
+    carries none (its card is `sd_mounted`), so a WAP gets no SD Wear: not
+    through its whole record, and not when Home Assistant starts after it
+    published and the broker's retained copies reach discovery first."""
+    bodies = [json.loads(b) for b in _bodies(record, _topic(record, "health"))]
+    assert bodies and not [b for b in bodies if "sd" in b], "the WAP's health carries no sd object"
+    assert any("sd_mounted" in b for b in bodies)
+    wap = _Wap(record, monkeypatch).replay()
+    assert wap.entity("health_status") is not None
+    assert wap.entity("sd_wear") is None
+    assert "sd_wear" not in wap.keys()
+    retained: dict[str, str] = {}
+    for pub in _publishes(record):
+        if pub["retain"] and pub["payload"]:
+            retained[pub["topic"]] = pub["payload"]
+        elif pub["retain"]:
+            retained.pop(pub["topic"], None)
+    assert _topic(record, "health") in retained
+    restarted = _Wap(record, monkeypatch, retained=retained)
+    assert restarted.entity("health_status") is not None
+    assert restarted.entity("sd_wear") is None
+
+
+def test_sd_wear_is_created_by_the_first_health_that_carries_the_sd_object(record, monkeypatch):
+    """HA46, as Event ID Space Low is created (HA24): a health without the
+    `sd` object, or with one that is not an object, creates no SD Wear; the
+    first that carries it does, a later one included, once, and the sensor
+    shows that health's wear from the broker's retained copy. Later healths
+    move it, and one without the object leaves it as it was."""
+    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    topic = f"{record['prefix']}/{_SD_DEVICE}/health"
+    base = {"uptime": 5, "free_heap": 182000, "firmware_version": record["firmware_version"]}
+    wap.broker.publish(topic, json.dumps(base), True)
+    assert wap.entity("health_status", _SD_DEVICE) is not None, "its first health creates Health"
+    assert wap.entity("sd_wear", _SD_DEVICE) is None, "a health without the sd object creates none"
+    for not_an_object in (None, True, 2.8, "sd", [_SD_OBJECT]):
+        wap.broker.publish(topic, json.dumps({**base, "sd": not_an_object}), True)
+        assert wap.entity("sd_wear", _SD_DEVICE) is None, not_an_object
+    wap.broker.publish(topic, json.dumps({**base, "uptime": 65, "sd": _SD_OBJECT}), True)
+    wear = wap.entity("sd_wear", _SD_DEVICE)
+    assert wear is not None, "the first health that carries the sd object creates SD Wear"
+    assert _value(wear, "native_value") == 2.8
+    attrs = _attrs(wear)
+    assert (attrs["mounted"], attrs["replace_recommended"]) == (True, False)
+    assert (attrs["verified"], attrs["trust_reason"]) == (False, "unsigned")
+    for uptime, body, shown in (
+        (125, {"sd": {**_SD_OBJECT, "wear_pct": 3.1}}, 3.1),
+        (185, {}, 3.1),
+        (245, {"sd": {**_SD_OBJECT, "wear_pct": 3.4}}, 3.4),
+    ):
+        wap.broker.publish(topic, json.dumps({**base, "uptime": uptime, **body}), True)
+        assert _value(wear, "native_value") == shown, body
+    uid = f"securacv_canary_{_SD_DEVICE}_sd_wear"
+    assert [e.unique_id for e in wap.broker.entities].count(uid) == 1, "created once"
+    assert wap.entity("sd_wear") is None, "the WAP beside it still has none"
 
 
 # ─── what the record shows is wrong today ──────────────────────────────
@@ -1363,31 +1493,52 @@ def test_tamper_stays_on_while_the_wap_says_the_lid_is_open(record, monkeypatch)
     assert _value(wap.entity("tamper"), "is_on") is True
 
 
-@pytest.mark.parametrize(
-    ("key", "topic"),
-    [
-        # Reads peer_count / peers / sent / received / relayed; the WAP's mesh
-        # body is its airtime governor's (and no firmware sends those keys).
-        ("mesh_connected", "mesh"),
-        # Reads the health's `gps` object; the WAP's health has none.
-        ("gps_fix", "health"),
-        # Read the health's `sd` object (wear_pct, replace_recommended); the
-        # WAP's health carries only sd_mounted.
-        ("sd_wear", "health"),
-        ("sd_replace", "health"),
-        # Read tamper.gpio / tamper_gpio, gps_fix_lost / gps_jamming and
-        # tamper.motion / unexpected_motion; the WAP's lid switch is
-        # enclosure_open, and it has no GPS and no motion sensor.
-        ("tamper_gpio", "health"),
-        ("tamper_gps_jamming", "health"),
-        ("tamper_motion", "health"),
-    ],
-)
-@pytest.mark.xfail(
+_FEEDS_NOTHING = pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
     reason="handed up (#1836): created for a canary-wap, reads nothing it sends",
 )
+
+_WAP_ENTITIES = [
+    # Reads peer_count / peers / sent / received / relayed; the WAP's mesh
+    # body is its airtime governor's (and no firmware sends those keys).
+    pytest.param("mesh_connected", "mesh", marks=_FEEDS_NOTHING, id="mesh_connected"),
+    # Reads the health's `gps` object; the WAP's health has none.
+    pytest.param("gps_fix", "health", marks=_FEEDS_NOTHING, id="gps_fix"),
+    # Read the health's `sd` object (wear_pct, replace_recommended); the WAP's
+    # health carries only sd_mounted. SD Wear is created only by a health that
+    # carries the object (HA46), so a WAP gets none and its case passes.
+    pytest.param("sd_wear", "health", id="sd_wear"),
+    pytest.param("sd_replace", "health", marks=_FEEDS_NOTHING, id="sd_replace"),
+    # Read tamper.gpio / tamper_gpio, gps_fix_lost / gps_jamming and
+    # tamper.motion / unexpected_motion; the WAP's lid switch is
+    # enclosure_open, and it has no GPS and no motion sensor.
+    pytest.param("tamper_gpio", "health", marks=_FEEDS_NOTHING, id="tamper_gpio"),
+    pytest.param("tamper_gps_jamming", "health", marks=_FEEDS_NOTHING, id="tamper_gps_jamming"),
+    pytest.param("tamper_motion", "health", marks=_FEEDS_NOTHING, id="tamper_motion"),
+]
+
+
+def test_the_entities_a_wap_still_gets_stay_strict_xfails():
+    """Each case still open is a strict xfail on AssertionError, so the day
+    one starts passing (its entity no longer created for a WAP, or fed) the
+    run fails until its marker is removed; only SD Wear's is resolved."""
+    open_cases = {
+        param.values[0]
+        for param in _WAP_ENTITIES
+        if [m for m in param.marks if m.name == "xfail"]
+    }
+    assert open_cases == {
+        "mesh_connected", "gps_fix", "sd_replace", "tamper_gpio", "tamper_gps_jamming", "tamper_motion",
+    }
+    for param in _WAP_ENTITIES:
+        for mark in param.marks:
+            assert mark.name == "xfail", param.id
+            assert mark.kwargs["strict"] is True, param.id
+            assert mark.kwargs["raises"] is AssertionError, param.id
+
+
+@pytest.mark.parametrize(("key", "topic"), _WAP_ENTITIES)
 def test_an_entity_a_wap_gets_moves_with_what_it_sends(record, monkeypatch, key, topic):
     """The entity is not created for a WAP, or its state moves when the WAP's
     publish on its topic changes (the healthy unit against the one in trouble)."""

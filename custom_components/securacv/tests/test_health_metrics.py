@@ -6,6 +6,7 @@ tests run directly under the stub conftest harness.
 from __future__ import annotations
 
 import json
+import types
 
 import pytest
 
@@ -306,3 +307,112 @@ def test_battery_charging_states():
     assert not battery_charging({"charge_state": "discharging"})
     assert not battery_charging({"charge_state": "critical"})
     assert not battery_charging({})
+
+
+# ─── what the Health and SD Wear sensors make of these readings ────────
+#
+# Read through sensor.py under the platform stubs, with no firmware harness,
+# so the HACS mirror holds sweeps HA60 and HA46 too: it carries this module
+# but no firmware source, and test_wap_mqtt_contract.py skips there.
+
+
+def _platform():
+    """sensor.py and the stub-entity helpers, imported once the sensor and
+    binary_sensor platform stubs are installed (test_mqtt_payload_hardening)."""
+    from . import test_mqtt_payload_hardening as stubs
+
+    return stubs
+
+
+@pytest.mark.parametrize("raw", _NO_BATTERY_NUMBER, ids=_NO_BATTERY_NUMBER)
+def test_the_health_sensor_shows_no_charge_for_a_present_battery_with_no_number(raw):
+    """Sweep HA60: the Health sensor's battery_percent attribute read 100
+    whenever battery_percent() had no reading, so a unit that says it has a
+    battery and sends no number for its charge (each value here, or no key)
+    showed a full battery nobody sent. It is None there now, as
+    memory_free_bytes is None for no reading (HA53). A mains unit
+    (battery_present false) and a health that does not say whether it has a
+    battery read 100 as before, and only a JSON true is a present battery,
+    the gate battery_percent() itself reads. No reading is not a low
+    battery: the Health state is healthy for every body here, as it was."""
+    stubs = _platform()
+    health = stubs._entity(stubs.sensor_platform.SecuraCVCanaryHealthSensor, hass=stubs._hass({}))
+    value = json.loads(raw)
+    cases = [
+        ({"battery_present": True, "battery": 37}, 37),
+        ({"battery_present": True, "battery": value}, None),
+        ({"battery_present": False, "battery": 100}, 100),
+        ({"battery_present": True, "battery_soc": value}, None),
+        ({"battery": value}, 100),
+        ({"battery_present": True}, None),
+        ({"battery_present": False, "battery": value}, 100),
+        ({"battery_present": True, "battery": value, "battery_soc": value}, None),
+        ({}, 100),
+        ({"battery_present": 1, "battery": value}, 100),
+        ({"battery_present": "true", "battery": value}, 100),
+    ]
+    for body, attribute in cases:
+        health._handle_message(stubs._msg(json.dumps({**body, "memory_free": 182000})))
+        assert health._attr_native_value == "healthy", body
+        attrs = health._attr_extra_state_attributes
+        assert "battery_percent" in attrs, body
+        assert attrs["battery_percent"] == attribute, body
+        assert type(attrs["battery_percent"]) is type(attribute), body
+
+
+def _discovered_sensors(monkeypatch, payloads: list[tuple[str, str]]) -> list:
+    """The sensors the MQTT discovery callback adds for `payloads`, in order."""
+    stubs = _platform()
+    sensor = stubs.sensor_platform
+    callbacks: dict[str, object] = {}
+
+    async def subscribe(hass, topic, callback, *args, **kwargs):
+        callbacks[topic] = callback
+        return lambda: None
+
+    monkeypatch.setattr(sensor.mqtt, "async_subscribe", subscribe)
+    hass = stubs._hass({})
+    created: list = []
+    stubs.conftest.run(sensor._setup_mqtt_sensors(hass, stubs.ENTRY, "securacv", created.extend))
+    for topic, payload in payloads:
+        suffix = topic.rsplit("/", 1)[1]
+        callbacks[f"securacv/+/{suffix}"](types.SimpleNamespace(topic=topic, payload=payload))
+    return created
+
+
+def _sd_wear(created: list, device_id: str) -> list:
+    sensor = _platform().sensor_platform
+    return [
+        e for e in created
+        if isinstance(e, sensor.SecuraCVCanarySDWearSensor) and e._device_id == device_id
+    ]
+
+
+def test_sd_wear_is_created_only_by_a_health_that_carries_the_sd_object(monkeypatch):
+    """Sweep HA46: SD Wear was created by any device's first health, so a
+    device whose health never carries the `sd` object (the canary-wap's
+    carries sd_mounted) grew a sensor that stayed unknown. It is created by
+    the first health that carries the object, a later one included, once,
+    as Event ID Space Low is (HA24); the Health sensor still comes with the
+    first health."""
+    sensor = _platform().sensor_platform
+    wap_health = json.dumps({"battery": 100, "battery_present": False, "sd_mounted": True})
+    created = _discovered_sensors(monkeypatch, [
+        ("securacv/wap01/health", wap_health),
+        ("securacv/wap01/health", wap_health),
+        ("securacv/base01/health", json.dumps({"uptime": 5})),
+        ("securacv/base01/health", json.dumps({"uptime": 6, "sd": True})),
+        ("securacv/base01/health", json.dumps({"uptime": 7, "sd": [CANARY_HEALTH["sd"]]})),
+        ("securacv/base01/health", "{not json"),
+    ])
+    assert not _sd_wear(created, "wap01")
+    assert not _sd_wear(created, "base01")
+    health = [e for e in created if isinstance(e, sensor.SecuraCVCanaryHealthSensor)]
+    assert sorted(e._device_id for e in health) == ["base01", "wap01"]
+    created = _discovered_sensors(monkeypatch, [
+        ("securacv/base01/health", json.dumps({"uptime": 5})),
+        ("securacv/base01/health", json.dumps(CANARY_HEALTH)),
+        ("securacv/base01/health", json.dumps(CANARY_HEALTH)),
+        ("securacv/base01/health", json.dumps({"uptime": 3700})),
+    ])
+    assert len(_sd_wear(created, "base01")) == 1

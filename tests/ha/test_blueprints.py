@@ -203,3 +203,58 @@ async def test_the_digest_renders_a_key_change_as_repairs_never_as_failed(
     if attributes.get("key_mismatch"):
         assert "FAILED" not in rendered["message"] and "altered" not in rendered["message"]
         assert rendered["chain_failed"] is False
+
+
+# ── the battery blueprint's low-battery condition, on the core's engine ──
+
+BATTERY = REPO_ROOT / "docs" / "blueprints" / "canary_battery_health.yaml"
+
+
+def _battery_low_alerts(hass: HomeAssistant) -> bool:
+    """Render the battery blueprint's `battery_pct` variable and its low-battery
+    condition the way the automation does, on `sensor.canary_health`."""
+    import yaml
+    from homeassistant.helpers.template import Template
+
+    class _Loader(yaml.SafeLoader):
+        pass
+
+    inputs = {"health_sensor": "sensor.canary_health", "low_threshold": 25}
+    _Loader.add_constructor("!input", lambda loader, node: inputs.get(loader.construct_scalar(node), ""))
+    document = yaml.load(BATTERY.read_text(encoding="utf-8"), Loader=_Loader)
+    context: dict[str, Any] = {name: inputs[name] for name in ("health_sensor", "low_threshold")}
+    context["battery_pct"] = Template(document["variables"]["battery_pct"], hass).async_render(variables=dict(context))
+    (low,) = [
+        option for option in document["action"][0]["choose"]
+        if {"condition": "trigger", "id": "low"} in option["conditions"]
+    ]
+    (condition,) = [c for c in low["conditions"] if c["condition"] == "template"]
+    return Template(condition["value_template"], hass).async_render(variables=dict(context))
+
+
+@pytest.mark.parametrize(
+    "state,attributes,alerts",
+    [
+        # A discharging battery below the threshold: the alert this exists for.
+        ("critical", {"battery_present": True, "battery_percent": 8}, True),
+        ("warning", {"battery_present": True, "battery_percent": 24}, True),
+        # Critical on low memory with the battery fine, or on mains: not a battery alert.
+        ("critical", {"battery_present": True, "battery_percent": 80}, False),
+        ("critical", {"battery_present": False, "battery_percent": 100}, False),
+        # A battery that sent no number for its charge (HA60): battery_percent
+        # None, which `| int(0)` reads as 0, so the template would have sent a
+        # "battery critical (0%)" push for a unit low on memory.
+        ("critical", {"battery_present": True, "battery_percent": None}, False),
+        ("critical", {"battery_present": True}, False),
+    ],
+    ids=["low", "warning", "memory", "mains", "no-charge", "no-attribute"],
+)
+async def test_the_battery_blueprint_alerts_only_on_a_charge_the_unit_sent(
+    hass: HomeAssistant, state: str, attributes: dict[str, Any], alerts: bool
+) -> None:
+    """The Health sensor shows battery_percent None for a present battery that
+    sent no number (sweep HA60) and reads healthy on it, so the blueprint's
+    low-battery branch fires only on a charge below the threshold."""
+    hass.states.async_set("sensor.canary_health", state, attributes)
+    await hass.async_block_till_done()
+    assert _battery_low_alerts(hass) is alerts
