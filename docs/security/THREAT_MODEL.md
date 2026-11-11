@@ -1151,8 +1151,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     every old member stayed registered, bound and stored, listed but never
     heard and counting against the eight slots. The cost: a Canary cannot
     pair with a second member of the opera it holds, so a changed radio
-    address is Leave then Join (F319). canary-wap's join is unchanged
-    (F318).
+    address is Leave then Join (F319). canary-wap's join still runs; since
+    wave 25 its joiner refuses a COMPLETE from another opera's initiator it
+    does not hold, before adding it (F318's guard), and whether a join is
+    refused outright is F318's decision.
   - *A member announces itself, and keeps doing so (F162, F324).* One
     signed `HEARTBEAT` (registry 16, empty payload) to bound members only,
     right after NOTIFY_PAIRED and once on the first pass after a boot that
