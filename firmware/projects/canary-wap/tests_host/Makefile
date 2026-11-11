@@ -337,8 +337,12 @@ clean: clean-beacon-cancel
 # does the same over a request (sweep F300) — and a source pin that every
 # httpd_req_recv( in canary_wap.ino and the sketch's *_api.h files (listed
 # from the directory at run time, so the binary needs no rebuild when they
-# move) is inside an http_body::read_all( call, every handler reading through
-# its file's wrapper over read_request(), the Beacon routes' read_body() too.
+# move) is inside an http_body::read_all( call. canary_wap.ino's handlers call
+# read_request() themselves and answer its refusal at once (handle_log_ack
+# by name refuses only a body that stops arriving); each *_api.h handler
+# reads through its file's read_body() over read_request(), whose two
+# refusals the pin holds to its whole shape, the Beacon routes' too.
+# csi_integration.cpp, in the same folder, is not scanned by this pin.
 HTTP_BODY_BIN = test_http_body_reader
 HTTP_BODY_SRC = test_http_body_reader.cpp
 

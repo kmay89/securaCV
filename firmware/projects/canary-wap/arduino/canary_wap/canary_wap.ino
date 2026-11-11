@@ -4080,10 +4080,14 @@ static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* 
 //   if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
 // (http_body_reader.h, host-tested: Content-Length bytes, a body that does
 // not fit refused before any of it is read) and keeps its own answer for no
-// body (body_len 0). tests_host/test_http_body_reader pins that shape at
-// every call and that no other httpd_req_recv() call is left in the sketch's
-// handlers. A function of literals, so check_wap_json_answers.py reads every
-// error code http_send_error() can be handed.
+// body (body_len 0). The one exception is handle_log_ack, whose optional
+// reason the device never keeps: it refuses only a body that stops
+// arriving, and acknowledges with no reason one that does not fit.
+// tests_host/test_http_body_reader pins that shape at every call (the
+// exception by name), and that no other httpd_req_recv() call is left in
+// canary_wap.ino or the sketch's *_api.h files (it does not scan
+// csi_integration.cpp). A function of literals, so check_wap_json_answers.py
+// reads every error code http_send_error() can be handed.
 static const char* http_body_refusal(http_body::Result r) {
   return r == http_body::TOO_LARGE ? "body_too_large" : "body_read_failed";
 }
@@ -5219,18 +5223,25 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
     return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, nullptr);
   }
   
-  // Read body for reason
+  // Read body for reason. The one handler that does not refuse a body too
+  // long for its buffer: it acknowledges the entry with no reason and leaves
+  // the body unread (httpd discards it), as it did before F300. The reason
+  // is optional and kept nowhere (acknowledge_log_entry() ignores it), while
+  // the dashboard's #ackReason input has no maxlength and submitAck() reads
+  // no answer, so refusing a long one left the entry unacknowledged with
+  // nothing shown. A body that stops arriving is still refused by name.
+  // firmware/tests_host/test_log_ack_route holds both.
   char content[128] = {0};
   size_t body_len = 0;
   const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
-  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
-  
+  if (read == http_body::READ_FAILED) return http_send_error(req, 400, http_body_refusal(read));
+
   // `reason` points into `body`'s strings (ArduinoJson 7 copies them into
   // the document), so the document outlives it: it was declared inside the
   // `if`, and the pointer handed on below dangled.
   const char* reason = "";
   JsonDocument body;
-  if (body_len > 0) {
+  if (read == http_body::OK && body_len > 0) {
     if (deserializeJson(body, content) == DeserializationError::Ok) {
       reason = body["reason"] | "";
     }

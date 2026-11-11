@@ -24,8 +24,9 @@
 //     "/api/logs/*" that body's atoi() read would have acknowledged entry
 //     42 for POST /api/logs/42 and entry 0 for POST /api/logs/x/ack;
 //   - canary-wap reads the reason from the body only for a log-ack request,
-//     whole across short reads, and refuses one past its buffer by name
-//     (sweep F300);
+//     whole across short reads (sweep F300); one past its buffer
+//     acknowledges with no reason, left unread, and one that stops arriving
+//     is refused by name;
 //   - the PlatformIO handler's rate limit and bearer gate still come first.
 // Which request reaches this handler at all is
 // test_dashboard_route_match.test.js's question (registration order through
@@ -317,19 +318,38 @@ static void test_wap_reads_the_reason() {
   // Sweep F300: the body is read whole. One httpd_req_recv() was parsed, so
   // a body that came in short segments lost its reason (the first segment
   // is not JSON); and one past the 128-byte buffer was cut there, parsed as
-  // no reason and acknowledged. Now it is read across the segments, and one
-  // that does not fit is refused by name (400 body_too_large) with nothing
-  // acknowledged.
+  // no reason and acknowledged. Now it is read across the segments. One
+  // that does not fit still acknowledges the entry with no reason, but
+  // unread: the reason is optional and kept nowhere, and the dashboard's
+  // reason field has no maxlength while its submitAck() reads no answer, so
+  // a refusal would leave the entry unacknowledged with nothing shown. A
+  // body that stops arriving is refused by name with nothing acknowledged.
   r = run(t, "/api/logs/5/ack", "{\"reason\":\"seen it\"}", /*segment=*/5);
   CHECK(g_acks.size() == 1 && g_acks[0].seq == 5 && g_acks[0].reason == "seen it" && r.recv_calls == 4,
         "wap: a body in 5-byte segments: reason %s after %d reads",
         g_acks.empty() ? "(none)" : g_acks[0].reason.c_str(), r.recv_calls);
   r = run(t, "/api/logs/5/ack", "{\"reason\":\"" + std::string(114, 'r') + "\"}");
   CHECK(g_acks.size() == 1 && g_acks[0].reason.size() == 114, "wap: a 127-byte body fits the buffer whole");
-  r = run(t, "/api/logs/5/ack", "{\"reason\":\"" + std::string(115, 'r') + "\"}");
-  CHECK(g_acks.empty() && r.status == "400 Bad Request" && r.json == "{\"ok\":false,\"error\":\"body_too_large\"}" &&
-        r.recv_calls == 0,
-        "wap: a 128-byte body is refused unread: %zu acks, %s %s", g_acks.size(), r.status.c_str(), r.json.c_str());
+  for (const size_t over : {size_t(115), size_t(4000)}) {
+    r = run(t, "/api/logs/5/ack", "{\"reason\":\"" + std::string(over, 'r') + "\"}");
+    CHECK(g_acks.size() == 1 && g_acks[0].seq == 5 && g_acks[0].reason.empty() && r.status == "200 OK" &&
+              r.json == "{\"ok\":true}" && r.recv_calls == 0,
+          "wap: a %zu-byte body acknowledges with no reason, unread: %zu acks, %d reads, %s %s", over + 13,
+          g_acks.size(), r.recv_calls, r.status.c_str(), r.json.c_str());
+  }
+  {
+    // Content-Length 40, and the peer closes after 20 bytes of it.
+    httpd_req_t req;
+    req.uri = "/api/logs/5/ack";
+    req.body = "{\"reason\":\"seen it\"}";
+    req.content_len = 40;
+    g_acks.clear();
+    t.handler(&req);
+    CHECK(g_acks.empty() && req.status == "400 Bad Request" &&
+              req.json == "{\"ok\":false,\"error\":\"body_read_failed\"}",
+          "wap: a body that stops arriving is refused by name: %zu acks, %s %s", g_acks.size(), req.status.c_str(),
+          req.json.c_str());
+  }
   // The PlatformIO handler never read one.
   r = run(kTrees[0], "/api/logs/5/ack", "{\"reason\":\"seen it\"}");
   CHECK(g_acks.size() == 1 && g_acks[0].reason.empty() && r.recv_calls == 0, "pio: reason is empty");

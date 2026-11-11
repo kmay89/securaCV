@@ -12,6 +12,7 @@
 #include "beacon_source_scan.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -229,14 +230,17 @@ static void test_read_request() {
 // directory, so a new one is scanned without an edit here): each
 // httpd_req_recv( in their code sits inside an http_body::read_all( call
 // (/api/ota/config's, read for its Content-Length). In an *_api.h file
-// every http_body::read_request( is the one in its read_body(), and every
-// read_body( call reads into the buffer it names by that buffer's own size
-// and answers the refusal it returns; in canary_wap.ino every
+// every http_body::read_request( is the one in its read_body(), which
+// answers each refusal by its own name and only a whole body with nullptr,
+// and every read_body( call reads into the buffer it names by that buffer's
+// own size and answers the refusal it returns; in canary_wap.ino every
 // http_body::read_request( call does that itself, answering through
 // http_send_error(req, 400, http_body_refusal(read)) (a function of
-// literals, which check_wap_json_answers.py reads). canary_wap.ino had 19
-// handlers that parsed what ONE httpd_req_recv() returned, and the *_api.h
-// files 20.
+// literals, which check_wap_json_answers.py reads), except handle_log_ack,
+// by name, which refuses only a body that stops arriving. canary_wap.ino
+// had 19 handlers that parsed what ONE httpd_req_recv() returned (one of
+// them, /api/peek/sensor, looped by hand), and the *_api.h files 20. The
+// sketch folder's csi_integration.cpp is not scanned here.
 static std::string sketch_path(const char* name) { return std::string(WAP_SKETCH_DIR) + "/" + name; }
 
 static size_t line_of(const std::string& code, size_t at) {
@@ -245,18 +249,55 @@ static size_t line_of(const std::string& code, size_t at) {
   return n;
 }
 
-// Each `name(` in `code` not preceded by an identifier character: every
-// call or definition of `name`, however it is qualified (`::httpd_req_recv(`
-// counts), and never a longer name's tail (`xread_body(` is not a
+// A call (or definition) of a name: where the name starts, and its '('.
+struct Call {
+  size_t at;
+  size_t open;
+};
+
+// Each `name` in `code` that is not preceded by an identifier character and
+// is followed, past any whitespace, by '(': every call or definition of
+// `name`, however it is qualified (`::httpd_req_recv(` counts) and however
+// it is spaced (`httpd_req_recv (req, ...)`, or the '(' on the next line),
+// and never a longer name (`xread_body(` and `read_body2(` are not a
 // `read_body(`).
-static std::vector<size_t> calls_of(const std::string& code, const std::string& name) {
-  std::vector<size_t> out;
-  const std::string needle = name + "(";
-  for (size_t at = code.find(needle); at != std::string::npos; at = code.find(needle, at + 1)) {
+static std::vector<Call> calls_of(const std::string& code, const std::string& name) {
+  std::vector<Call> out;
+  for (size_t at = code.find(name); at != std::string::npos; at = code.find(name, at + 1)) {
     if (at > 0 && beacon_source_scan::ident_char(code[at - 1])) continue;
-    out.push_back(at);
+    size_t open = at + name.size();
+    while (open < code.size() && std::isspace(static_cast<unsigned char>(code[open]))) open++;
+    if (open >= code.size() || code[open] != '(') continue;
+    out.push_back({at, open});
   }
   return out;
+}
+
+// An *_api.h file's read_body(), squeezed, is exactly
+//   {const http_body::Result r = http_body::read_request(req, buf, cap, len);
+//    if (r == http_body::TOO_LARGE) return "<a>";
+//    if (r == http_body::READ_FAILED) return "<b>";
+//    return nullptr;}
+// with <a> and <b> two different, non-empty plain literals: each refusal is
+// answered by its own name, and only a whole body is nullptr (the no-refusal
+// answer every caller reads as "the body is in buf"). True when it is; the
+// two refusals' squeezed text in *a and *b.
+static bool wrapper_shape(const std::string& wbody, std::string* a, std::string* b) {
+  const std::string head =
+      "{consthttp_body::Resultr=http_body::read_request(req,buf,cap,len);if(r==http_body::TOO_LARGE)return\"";
+  const std::string mid = "\";if(r==http_body::READ_FAILED)return\"";
+  const std::string tail = "\";returnnullptr;}";
+  if (wbody.compare(0, head.size(), head) != 0) return false;
+  const size_t m = wbody.find(mid, head.size());
+  if (m == std::string::npos) return false;
+  const size_t t = wbody.size() >= tail.size() ? wbody.size() - tail.size() : std::string::npos;
+  if (t == std::string::npos || t < m + mid.size() || wbody.compare(t, tail.size(), tail) != 0) return false;
+  *a = wbody.substr(head.size(), m - head.size());
+  *b = wbody.substr(m + mid.size(), t - (m + mid.size()));
+  const auto plain = [](const std::string& s) {
+    return !s.empty() && s.find('"') == std::string::npos && s.find('\\') == std::string::npos;
+  };
+  return plain(*a) && plain(*b) && *a != *b;
 }
 
 // The top-level comma-separated arguments of the call whose '(' is at `open`.
@@ -305,9 +346,10 @@ static void test_every_handler_reads_whole_bodies() {
 
     // The read_all( calls' spans: each reads for the request's Content-Length.
     std::vector<std::pair<size_t, size_t>> spans;
-    for (size_t at : calls_of(code, "http_body::read_all")) {
+    for (const Call& c : calls_of(code, "http_body::read_all")) {
+      const size_t at = c.at;
       size_t close = 0;
-      const auto a = args_of(code, at + std::strlen("http_body::read_all"), &close);
+      const auto a = args_of(code, c.open, &close);
       spans.emplace_back(at, close);
       EXPECT(a.size() == 7 && a[1] == "req->content_len",
              (f + ":" + std::to_string(line_of(code, at)) + " read_all reads req->content_len bytes").c_str());
@@ -316,7 +358,8 @@ static void test_every_handler_reads_whole_bodies() {
                "/api/ota/config's read_all sits out three timeouts (read_request's budget is no longer)");
       }
     }
-    for (size_t at : calls_of(code, "httpd_req_recv")) {
+    for (const Call& c : calls_of(code, "httpd_req_recv")) {
+      const size_t at = c.at;
       bool in = false;
       for (const auto& sp : spans) in = in || (at > sp.first && at < sp.second);
       if (in) ++inside;
@@ -324,14 +367,25 @@ static void test_every_handler_reads_whole_bodies() {
     }
 
     // The sketch's handlers: each read_request( call reads into the buffer it
-    // names, by that buffer's size, and answers a refusal at once.
+    // names, by that buffer's size, and answers a refusal at once. One
+    // exception, by name: handle_log_ack's reason is optional and kept
+    // nowhere, so a body too long for its buffer acknowledges with no reason,
+    // unread, and only a body that stops arriving is refused; it parses only
+    // a whole body (firmware/tests_host/test_log_ack_route drives it).
     if (f == "canary_wap.ino") {
       const std::string refusal = squeeze(function_body(code, "http_body_refusal"));
       EXPECT(refusal == "{returnr==http_body::TOO_LARGE?\"body_too_large\":\"body_read_failed\";}",
              "canary_wap.ino's http_body_refusal() names both refusals in http_send_error's words");
-      for (size_t at : calls_of(code, "http_body::read_request")) {
+      const std::string ack_body = function_body(code, "handle_log_ack");
+      const size_t ack_at = ack_body.empty() ? std::string::npos : code.find(ack_body);
+      EXPECT(ack_at != std::string::npos, "canary_wap.ino defines handle_log_ack (source pin fails closed)");
+      EXPECT(squeeze(ack_body).find("if(read==http_body::OK&&body_len>0){") != std::string::npos,
+             "handle_log_ack parses only a body read whole (a TOO_LARGE one is left unread, nothing in its buffer)");
+      size_t ack_sites = 0;
+      for (const Call& c : calls_of(code, "http_body::read_request")) {
+        const size_t at = c.at;
         size_t close = 0;
-        const auto a = args_of(code, at + std::strlen("http_body::read_request"), &close);
+        const auto a = args_of(code, c.open, &close);
         if (close == std::string::npos) continue;
         ++wrapped;
         const std::string where = f + ":" + std::to_string(line_of(code, at));
@@ -341,11 +395,18 @@ static void test_every_handler_reads_whole_bodies() {
                (where + ": the result is kept as `const http_body::Result read`").c_str());
         EXPECT(a.size() == 4 && a[0] == "req" && a[2] == "sizeof(" + a[1] + ")" && a[3].compare(0, 1, "&") == 0,
                (where + ": reads into the buffer it names, by that buffer's size").c_str());
+        const bool in_ack = ack_at != std::string::npos && at > ack_at && at < ack_at + ack_body.size();
+        if (in_ack) ++ack_sites;
         const std::string tail = squeeze(code.substr(close, 160));
-        const std::string answer = ";if(read!=http_body::OK)returnhttp_send_error(req,400,http_body_refusal(read));";
+        const std::string answer =
+            in_ack ? ";if(read==http_body::READ_FAILED)returnhttp_send_error(req,400,http_body_refusal(read));"
+                   : ";if(read!=http_body::OK)returnhttp_send_error(req,400,http_body_refusal(read));";
         EXPECT(tail.compare(0, answer.size(), answer) == 0,
-               (where + ": a refusal is answered at once with http_send_error(req, 400, http_body_refusal(read))").c_str());
+               (where + (in_ack ? ": handle_log_ack refuses a body that stops arriving at once, and only that"
+                                : ": a refusal is answered at once with http_send_error(req, 400, "
+                                  "http_body_refusal(read))")).c_str());
       }
+      EXPECT(ack_sites == 1, "handle_log_ack reads its body once, through http_body::read_request");
       continue;
     }
 
@@ -359,11 +420,14 @@ static void test_every_handler_reads_whole_bodies() {
     }
     EXPECT(wbody.find("http_body::read_request(req,buf,cap,len)") != std::string::npos && requests == 1,
            (f + "'s " + wrapper + "() is the one http_body::read_request() call, for its own buffer").c_str());
-    EXPECT(wbody.find("http_body::TOO_LARGE") != std::string::npos && wbody.find("http_body::READ_FAILED") != std::string::npos,
-           (f + "'s " + wrapper + "() names both refusals").c_str());
-    for (size_t at : calls_of(code, wrapper)) {
+    std::string too_large, read_failed;
+    EXPECT(wrapper_shape(wbody, &too_large, &read_failed),
+           (f + "'s " + wrapper + "() answers TOO_LARGE and READ_FAILED each with its own refusal, and only a whole "
+                "body with nullptr: " + wbody).c_str());
+    for (const Call& c : calls_of(code, wrapper)) {
+      const size_t at = c.at;
       size_t close = 0;
-      const auto a = args_of(code, at + wrapper.size(), &close);
+      const auto a = args_of(code, c.open, &close);
       if (close == std::string::npos) continue;
       if (squeeze(code.substr(close, 64)).compare(0, 1, "{") == 0) continue;   // the definition
       ++wrapped;
@@ -416,7 +480,7 @@ static void test_beacon_routes_read_whole_bodies() {
   if (!ok) return;
   const std::string code = strip_comments(src);
   const std::string rb = squeeze(function_body(code, "read_body"));
-  EXPECT(count(code, "httpd_req_recv(") == 0, "no httpd_req_recv call is left in beacon_api.h");
+  EXPECT(calls_of(code, "httpd_req_recv").empty(), "no httpd_req_recv call is left in beacon_api.h");
   EXPECT(rb.find("http_body::read_request(req,buf,cap,len)") != std::string::npos,
          "read_body reads through http_body::read_request");
   for (const char* h : {"handle_revoke", "handle_originate", "handle_originate_solo", "handle_cosign",
