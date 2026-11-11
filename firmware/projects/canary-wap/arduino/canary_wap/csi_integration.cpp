@@ -726,18 +726,36 @@ esp_err_t handle_window(httpd_req_t* req) {
     httpd_resp_send(req, nullptr, 0);
     return ESP_OK;
   }
+  /* Composed piece by piece (sweep F464): each piece's length is tested
+   * against the room left before the offset moves, and an answer that does
+   * not fit is refused whole, never sent cut. The pieces were added to an
+   * offset untested (`off += snprintf(buf + off, sizeof(buf) - off, ...)`),
+   * safe only because 32 values of at most 12 bytes and the header come to
+   * about 440 of the 768; a longer vector, or a header past the buffer,
+   * pushed `off` past it, and the next `sizeof(buf) - off` wrapped. A loop
+   * that stopped 8 bytes short also cut the vector without a word. */
   char buf[768];
-  int  off = snprintf(buf, sizeof(buf),
-    "{\"frames\":%u,\"time_bucket\":%u,\"v\":[",
-    (unsigned)g_latest_window.frames_in_window,
-    (unsigned)g_latest_window.time_bucket);
-  for (int i = 0; i < CSI_FEATURE_DIM; ++i) {
-    off += snprintf(buf + off, sizeof(buf) - off, "%s%d",
-                    i ? "," : "", (int)g_latest_window.v[i]);
-    if (off >= (int)sizeof(buf) - 8) break;
+  size_t pos = 0;
+  size_t left = sizeof(buf);
+  int n = snprintf(buf, left, "{\"frames\":%u,\"time_bucket\":%u,\"v\":[",
+                   (unsigned)g_latest_window.frames_in_window,
+                   (unsigned)g_latest_window.time_bucket);
+  bool ok = (n > 0 && (size_t)n < left);
+  if (ok) { pos += (size_t)n; left -= (size_t)n; }
+  for (int i = 0; ok && i < CSI_FEATURE_DIM; ++i) {
+    n = snprintf(buf + pos, left, "%s%d", i ? "," : "", (int)g_latest_window.v[i]);
+    ok = (n > 0 && (size_t)n < left);
+    if (ok) { pos += (size_t)n; left -= (size_t)n; }
   }
-  snprintf(buf + off, sizeof(buf) - off, "]}");
+  if (ok) {
+    n = snprintf(buf + pos, left, "]}");
+    ok = (n > 0 && (size_t)n < left);
+  }
   httpd_resp_set_type(req, "application/json");
+  if (!ok) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    return httpd_resp_send(req, "{\"error\":\"raw window does not fit its answer\"}", -1);
+  }
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
 }
@@ -840,11 +858,13 @@ esp_err_t handle_events_today(httpd_req_t* req) {
     char tail[64];
     const int tn = snprintf(tail, sizeof(tail),
                             "],\"tamper\":{\"kind\":\"%s\"}}", active);
-    if (tn > 0 && (size_t)tn < sizeof(tail)) {
-      httpd_resp_send_chunk(req, tail, tn);
-    } else {
+    /* A kind the tail cannot hold closes the answer without it, never cut
+     * (check_wap_json_answers.py J5 judges this length test, F464). */
+    if (tn <= 0 || (size_t)tn >= sizeof(tail)) {
       httpd_resp_send_chunk(req, "]}", 2);
+      return httpd_resp_send_chunk(req, nullptr, 0);
     }
+    httpd_resp_send_chunk(req, tail, tn);
   } else {
     httpd_resp_send_chunk(req, "]}", 2);
   }
@@ -1504,7 +1524,16 @@ esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
       first ? "" : ",",
       c.full_key, c.group, c.label, kind_str,
       (long)c.min_v, (long)c.max_v, (long)c.default_v, (long)v);
-    if (n > 0) httpd_resp_send_chunk(req, buf, n);
+    /* A row its buffer cannot hold ends the list there, whole (F464): a row
+     * snprintf() cut was sent at the length it reported, n bytes read from
+     * the 320-byte buffer, past its end. The table's literal keys, groups
+     * and labels are far under it. */
+    if (n <= 0 || (size_t)n >= sizeof(buf)) {
+      httpd_resp_send_chunk(req, "]}", -1);
+      if (prefs_ok) prefs.end();
+      return httpd_resp_send_chunk(req, nullptr, 0);
+    }
+    httpd_resp_send_chunk(req, buf, n);
     first = false;
   }
   httpd_resp_send_chunk(req, "]}", -1);
@@ -1601,7 +1630,15 @@ esp_err_t handle_tune_get_preset(httpd_req_t* req) {
     char buf[160];
     int n = snprintf(buf, sizeof(buf), "%s\"%s\":%ld",
                      first ? "" : ",", c.full_key, (long)v);
-    if (n > 0) httpd_resp_send_chunk(req, buf, n);
+    /* As the coefficients list: a row past its buffer ends the bundle
+     * there, whole, never sent as n bytes read from the 160-byte buffer
+     * (F464). */
+    if (n <= 0 || (size_t)n >= sizeof(buf)) {
+      httpd_resp_send_chunk(req, "}", -1);
+      if (prefs_ok) prefs.end();
+      return httpd_resp_send_chunk(req, nullptr, 0);
+    }
+    httpd_resp_send_chunk(req, buf, n);
     first = false;
   }
   httpd_resp_send_chunk(req, "}", -1);

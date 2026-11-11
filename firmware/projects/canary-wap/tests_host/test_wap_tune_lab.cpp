@@ -1886,14 +1886,16 @@ static int test_csi_integration_reads_every_body_whole() {
 // ── F315: GET /api/settings' answer fits its buffer ────────────────────
 //
 // F315 adds "thresholds_source" to the answer, written with snprintf()
-// into a fixed buf[448]. firmware/scripts/check_wap_json_answers.py
-// measures the snprintf() answers of the answer files (each *_api.h and
-// canary_wap.ino, its J5) against their buffers; csi_integration.cpp is
-// not one of them, and its J7 holds each %s here escaped, not the length
-// ("Their lengths are not computed"). So the answer is measured here: its
-// format, read from the source, at the widest value each argument can
-// take, every argument read as the handler spells it. An argument this
-// measure cannot bound fails, as a buffer it does not exceed does.
+// into a fixed buf[448]. When this measure was written,
+// firmware/scripts/check_wap_json_answers.py measured only the answer
+// files' snprintf() answers (each *_api.h and canary_wap.ino, its J5), and
+// its J7 held each %s here escaped, not the length. Since F464 J5 measures
+// csi_integration.cpp too (tz and tz_iana by their arrays' sizes, as
+// recorded), and comes to the same 360 bytes; this measure stays, the one
+// that runs presence_thresholds_source() rather than reading it. It reads
+// the format from the source, at the widest value each argument can take,
+// every argument read as the handler spells it. An argument this measure
+// cannot bound fails, as a buffer it does not exceed does.
 
 // The body of the first definition whose header matches `head`, comments
 // blanked, whitespace kept; "" if none.

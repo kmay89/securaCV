@@ -29,8 +29,9 @@ their strings with `%s` unescaped: GET /api/device-info wrote the device name
 a person typed, so a `"` in it broke the answer (F212).
 
 This check measures every one of them, in the canary-wap's REST answer files
-(`SCOPE`: every `*_api.h` of the sketch but the ones `EXCLUDED` names, and
-`canary_wap.ino`):
+(`SCOPE`: every `*_api.h` of the sketch but the ones `EXCLUDED` names,
+`canary_wap.ino`, and `ANSWER_CPP`: `csi_integration.cpp` and `csi_mqtt.cpp`,
+whose routes answer with snprintf(), F464):
 
 J1. Each `serializeJson(` serializes into a `String` or a `File` (they grow),
     into a heap buffer of `measureJson(doc) + 1` bytes (allocated from that
@@ -112,7 +113,17 @@ J5. An answer spelled with `snprintf()` (F212): a call whose format is a JSON
     given only those at every call) holds no byte JSON escapes (`"`, `\\`,
     a control byte); outside one, each is `true`, `false`, `null` or a
     number. A string the check cannot read (a char array, a person-typed
-    name) fails: such an answer goes through `wap_json_writer.h`.
+    name) fails: such an answer goes through `wap_json_writer.h`, unless
+    J7's `RECORDED` records it, spelled as the call spells it, for that file
+    and function (F464: the CSI routes' module labels and table keys, the
+    pairing token's hex, the MQTT test's transport and error). Such a %s is
+    taken as escaped, as the record says why, and its length is still
+    judged: a char array (a local, a parameter, or a field reached from one,
+    `r->values.state_name`) by its size less its terminator (the record
+    vouches for the terminator as it does for the escape); anything else
+    leaves the answer unbounded, so only a length test after the call
+    (guarded or composed) passes it. A record J5 takes is in use, and J7
+    holds it to the code as it holds its own.
 J6. The two answers that carry strings the check cannot read (F212), GET
     /api/device-info (`handle_device_info()`, the device name a person
     typed) and the provisioning receipt (`send_provisioning_receipt()`), are
@@ -144,8 +155,9 @@ J7. Every other JSON text the sketch spells with printf (F227: the
     that it is not (a known gap with its open item), or that the text is
     not JSON after all (a strstr() needle, a header). A `%s` the record does
     not name, a record the code no longer matches and a recorded function
-    with nothing left to record all fail. Their lengths are not computed:
-    where a cut matters, the record says what the builder does with one.
+    with nothing left to record all fail. Their lengths are not computed
+    (an answer's are, J5's): where a cut matters, the record says what the
+    builder does with one.
 J8. The device name holds no control byte (F226): ArduinoJson 7.4.1 writes
     one raw into POST /api/device-name's answer and GET /api/fleet/scan's
     self row, and JSON.parse refuses it. `setup_wizard::set_device_name()`
@@ -463,9 +475,14 @@ def sketch_files() -> dict[str, str]:
     return out
 
 
+# The sketch's .cpp files that answer REST routes with snprintf() (F464): their answers were J7's,
+# each %s held escaped and none measured, so a cut answer or a piece at an offset was never refused.
+ANSWER_CPP = (f"{SKETCH}/csi_integration.cpp", f"{SKETCH}/csi_mqtt.cpp")
+
+
 def scope_of(files: dict[str, str]) -> list[str]:
     names = sorted(n for n in files if re.search(r"/[^/]*_api\.h$", n) and n not in EXCLUDED)
-    return names + [INO]
+    return names + [INO] + [n for n in ANSWER_CPP if n in files]
 
 
 @functools.lru_cache(maxsize=CACHE_ENTRIES)
@@ -1950,6 +1967,7 @@ class Printf:
     verdict: str          # "guarded", "composed", "fits", or an error
     bound: int | None = None
     size: int | None = None
+    recorded: set[str] = field(default_factory=set)   # the RECORDED %s values it took (F464)
 
 
 def in_json_string(fmt: bytes, upto: int) -> bool:
@@ -1965,9 +1983,45 @@ def in_json_string(fmt: bytes, upto: int) -> bool:
     return inside
 
 
-def printf_conversions(ctx: Ctx, fmt: bytes, vals: list[str], pos: int) -> tuple[int | None, list[str], str]:
+def char_array_size(ctx: Ctx, expr: str, pos: int) -> int | None:
+    """N when `expr` names a `char x[N]`: a local or parameter of ctx's function, or a field reached
+    from one (`s->module_id`, `r->values.state_name`, `rows[i].name`), with N a constant the check
+    reads; None for anything else (a pointer, a table's `const char*`, a call, a global)."""
+    e = strip_parens(expr)
+    chain = re.fullmatch(r"([A-Za-z_]\w*)\s*(\[[^\]]*\])?((?:\s*(?:\.|->)\s*[A-Za-z_]\w*)*)", e)
+    if chain is None:
+        return None
+    t = decl_type(ctx, chain.group(1), pos)
+    if t is None:
+        return None
+    typ, dims, ns = t[0], list(t[1]), ctx.fn.ns
+    if chain.group(2):
+        if not dims:
+            return None             # an element of a pointer: no size to read
+        dims = dims[1:]
+    for fname in re.findall(r"[A-Za-z_]\w*", chain.group(3)):
+        if dims:
+            return None             # a field of an array, not of one element
+        base = re.sub(r"\bconst\b|[*&]|\bstruct\b", "", typ).strip()
+        parts = base.split("::")
+        cands = pick(ctx.idx.structs.get(parts[-1], []), ns, tuple(p for p in parts[:-1] if p))
+        if len(cands) != 1 or fname not in cands[0].fields:
+            return None
+        typ, dims = cands[0].fields[fname][0], list(cands[0].fields[fname][1])
+        ns = cands[0].ns
+    if re.sub(r"\bconst\b", "", typ).replace(" ", "") != "char" or len(dims) != 1:
+        return None
+    return const_value(ctx.idx, dims[0], ns)
+
+
+def printf_conversions(ctx: Ctx, fmt: bytes, vals: list[str], pos: int, recorded: tuple[str, ...] = (),
+                       used: set[str] | None = None) -> tuple[int | None, list[str], str]:
     """The format's longest output (None when the check cannot bound it, with why), and what is wrong
-    with its %s values: a string whose bytes the check cannot read, or one that needs escaping."""
+    with its %s values: a string whose bytes the check cannot read, or one that needs escaping. A %s
+    the check cannot read that J7's RECORDED records for this function (`recorded`) is taken as
+    escaped, as the record says, and added to `used`; its length is still judged (F464): a char
+    array by its size, and anything else leaves the answer unbounded, so only a length test after
+    the call passes it."""
     width, problems, arg = 0, [], 0
     unbounded = ""
     last = 0
@@ -1994,7 +2048,20 @@ def printf_conversions(ctx: Ctx, fmt: bytes, vals: list[str], pos: int) -> tuple
             try:
                 strings = literal_values(ctx, val, pos)
             except Unbounded as why:
-                problems.append(f"%s value {val}: a string whose bytes the check cannot read ({why})")
+                said = " ".join(val.split())
+                if said not in recorded:
+                    problems.append(f"%s value {val}: a string whose bytes the check cannot read ({why})")
+                    continue
+                if used is not None:
+                    used.add(said)
+                size = char_array_size(ctx, val, pos)
+                if size is None or size < 1:
+                    unbounded = unbounded or f"a recorded %s ({said}) that is not a char array it can size"
+                    continue
+                spell = size - 1
+                if m.group("width"):
+                    spell = max(spell, int(m.group("width")))
+                width += spell
                 continue
             spell = max(len(v) for v in strings)
             if in_json_string(fmt, m.start()):
@@ -2130,7 +2197,9 @@ def judge_printf(ctx: Ctx, call_at: int, answers: dict[str, bool]) -> Printf | N
     if fmt is None:
         pf.verdict = f"snprintf({args[0]}, …): a format the check cannot read (J5)"
         return pf
-    bound, problems, unbounded = printf_conversions(ctx, fmt, args[3:], call_at)
+    rec = RECORDED.get((ctx.file.rsplit("/", 1)[-1], ctx.fn.name))
+    bound, problems, unbounded = printf_conversions(ctx, fmt, args[3:], call_at, rec[0] if rec else (),
+                                                    pf.recorded)
     if problems:
         pf.verdict = f"{args[0]}: {problems[0]}; spell it with wap_json_writer.h (J5)"
         return pf
@@ -2386,7 +2455,9 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         "chokepoint's sanitize_string_field(): no '\"' or '\\', sweep F301; a row the boot load restored "
         "from the card passed csi_event_log_line::parse(), which refuses a backslash or a byte outside "
         "printable ASCII in its strings, sweep F264, and a string a quote cut short, F301) and active, "
-        "tamper_events_active_kind()'s literal kinds; each row is length-tested and a cut one skipped"),
+        "tamper_events_active_kind()'s literal kinds; each row is measured to fit its buffer and length-"
+        "tested, a cut one skipped, and the tamper tail is length-tested and closed without it past its "
+        "buffer (J5, F464)"),
     ("csi_integration.cpp", "handle_pair_token"): (
         ("hex",),
         "the pairing token answer: pair_token_issue() writes hex digits"),
@@ -2402,15 +2473,17 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     ("csi_integration.cpp", "handle_tune_get_preset"): (
         ("c.full_key",),
         "GET /api/tune/preset, chunked: each row's key is the coefficient table's literal full key "
-        "(TUNE_COEFFS, as handle_tune_get_coefficients' record says), the value a number; the longest "
-        "row (a 36-byte key, an 11-digit long) is far under buf[160]"),
+        "(TUNE_COEFFS, as handle_tune_get_coefficients' record says), the value a number; each row is "
+        "length-tested against buf[160] (J5, F464) and one past it ends the bundle, never sent cut"),
     ("csi_integration.cpp", "handle_tune_get_coefficients"): (
         ("c.full_key", "c.group", "c.label"),
-        "the Tuning Lab list: the coefficient table's literal keys, groups and labels"),
+        "the Tuning Lab list: the coefficient table's literal keys, groups and labels; each row is "
+        "length-tested against buf[320] (J5, F464) and one past it ends the list, never sent cut"),
     ("csi_mqtt.cpp", "handle_test"): (
         ("s_last_error", "transport_name()"),
         "POST /api/mqtt/test: s_last_error holds one of mqtt_transport_logic.h's constant messages (its "
-        "host suite holds them free of quotes and backslashes), transport_name() a literal"),
+        "host suite holds them free of quotes and backslashes), transport_name() a literal; the answer is "
+        "length-tested (J5, F464) and refused whole past its buffer"),
     ("csi_mqtt.cpp", "publish_beacon_state"): (
         ('active_template ? active_template : ""', 'state_name ? state_name : "unknown"'),
         "an MQTT body: Beacon's literal state names and template ids"),
@@ -2487,10 +2560,12 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
 }
 
 
-def check_recorded_json_texts(files: dict[str, str], idx: Index, judged: set[tuple[str, int]]) -> list[str]:
+def check_recorded_json_texts(files: dict[str, str], idx: Index, judged: set[tuple[str, int]],
+                              answered: list[Printf] | None = None) -> list[str]:
     """J7: every printf-spelled JSON text outside J5's answers is held or recorded: every call of the
     family and of each function or macro that forwards its format to it, at every format the call can
-    be given; a format the check cannot read fails."""
+    be given; a format the check cannot read fails. A record J5 took for an answer (`answered`, F464)
+    is a record in use, and is held to the code the same way."""
     global J7_STATS
     errors: list[str] = []
     seen: dict[tuple[str, str], set[str]] = {}
@@ -2550,6 +2625,10 @@ def check_recorded_json_texts(files: dict[str, str], idx: Index, judged: set[tup
                     if bad:
                         errors.append(f"{where}: {fn.name}(): %s value {bad[0]!r} is not a JSON token, outside "
                                       "a JSON string (J7)")
+    own = (sites, len(seen), sum(1 for k in seen if k in RECORDED))
+    for pf in answered or ():
+        if pf.recorded:
+            seen.setdefault((pf.file.rsplit("/", 1)[-1], pf.fn), set()).update(pf.recorded)
     for key, unread in sorted(seen.items()):
         rec = RECORDED.get(key)
         if not unread:
@@ -2571,7 +2650,7 @@ def check_recorded_json_texts(files: dict[str, str], idx: Index, judged: set[tup
     for key in RECORDED:
         if key not in seen:
             errors.append(f"{key[0]}: {key[1]}(): recorded, but it spells no JSON text any more (J7)")
-    J7_STATS = (sites, len(seen), sum(1 for k in seen if k in RECORDED))
+    J7_STATS = own
     return errors
 
 
@@ -4680,7 +4759,7 @@ def check_files(files: dict[str, str]) -> tuple[list[str], list[Site]]:
     errors += check_log_ring(files, idx)
     printf_errors, printfs = check_printf_answers(files, idx)
     errors += printf_errors
-    errors += check_recorded_json_texts(files, idx, {(pf.file, pf.line) for pf in printfs})
+    errors += check_recorded_json_texts(files, idx, {(pf.file, pf.line) for pf in printfs}, printfs)
     for name in scope_of(files):
         src = files[name]
         code = blank_comments_and_strings(src)
@@ -4754,7 +4833,59 @@ def add_file(path: str, text: str) -> Mutation:
     return mutate
 
 
+def drop_record(key: tuple[str, str], value: str) -> Mutation:
+    """A mutation of this check's own RECORDED, not of the sketch: `value` struck from `key`'s record
+    (F464: an answer's %s J5 takes as escaped only because the record names it). _case_problem()
+    runs the check with the record so changed; the sketch is left as it is."""
+    def mutate(files: dict[str, str]) -> dict[str, str]:
+        return files
+
+    def records(recorded: dict) -> dict:
+        if key not in recorded or value not in recorded[key][0]:
+            raise AnchorMissing(f"{key} {value}")
+        out = dict(recorded)
+        kept = tuple(v for v in recorded[key][0] if v != value)
+        if kept:
+            out[key] = (kept, recorded[key][1])
+        else:
+            del out[key]
+        return out
+    mutate.records = records  # type: ignore[attr-defined]
+    return mutate
+
+
 LONG = "x" * 150
+INTEG = f"{SKETCH}/csi_integration.cpp"
+CSI_MQTT = f"{SKETCH}/csi_mqtt.cpp"
+# F464: GET /api/csi/window, composed, and the lines its mutations put back.
+WINDOW_COMPOSED = (
+    "  char buf[768];\n  size_t pos = 0;\n  size_t left = sizeof(buf);\n"
+    "  int n = snprintf(buf, left, \"{\\\"frames\\\":%u,\\\"time_bucket\\\":%u,\\\"v\\\":[\",\n"
+    "                   (unsigned)g_latest_window.frames_in_window,\n"
+    "                   (unsigned)g_latest_window.time_bucket);\n"
+    "  bool ok = (n > 0 && (size_t)n < left);\n  if (ok) { pos += (size_t)n; left -= (size_t)n; }\n"
+    "  for (int i = 0; ok && i < CSI_FEATURE_DIM; ++i) {\n"
+    "    n = snprintf(buf + pos, left, \"%s%d\", i ? \",\" : \"\", (int)g_latest_window.v[i]);\n"
+    "    ok = (n > 0 && (size_t)n < left);\n    if (ok) { pos += (size_t)n; left -= (size_t)n; }\n  }\n"
+    "  if (ok) {\n    n = snprintf(buf + pos, left, \"]}\");\n    ok = (n > 0 && (size_t)n < left);\n  }\n"
+    "  httpd_resp_set_type(req, \"application/json\");\n"
+    "  if (!ok) {\n    httpd_resp_set_status(req, \"500 Internal Server Error\");\n"
+    "    return httpd_resp_send(req, \"{\\\"error\\\":\\\"raw window does not fit its answer\\\"}\", -1);\n  }\n"
+    "  httpd_resp_send(req, buf, -1);\n")
+WINDOW_OFFSET = (
+    "  char buf[768];\n  int  off = snprintf(buf, sizeof(buf),\n"
+    "    \"{\\\"frames\\\":%u,\\\"time_bucket\\\":%u,\\\"v\\\":[\",\n"
+    "    (unsigned)g_latest_window.frames_in_window,\n    (unsigned)g_latest_window.time_bucket);\n"
+    "  for (int i = 0; i < CSI_FEATURE_DIM; ++i) {\n"
+    "    off += snprintf(buf + off, sizeof(buf) - off, \"%s%d\",\n"
+    "                    i ? \",\" : \"\", (int)g_latest_window.v[i]);\n"
+    "    if (off >= (int)sizeof(buf) - 8) break;\n  }\n"
+    "  snprintf(buf + off, sizeof(buf) - off, \"]}\");\n"
+    "  httpd_resp_set_type(req, \"application/json\");\n  httpd_resp_send(req, buf, -1);\n")
+# The Tuning Lab list's row guard, and the code before F464.
+TUNE_ROW_GUARD = ("    if (n <= 0 || (size_t)n >= sizeof(buf)) {\n      httpd_resp_send_chunk(req, \"]}\", -1);\n"
+                  "      if (prefs_ok) prefs.end();\n      return httpd_resp_send_chunk(req, nullptr, 0);\n    }\n"
+                  "    httpd_resp_send_chunk(req, buf, n);\n")
 
 MUTATIONS: list[tuple[str, Mutation]] = [
     # J2: a fixed buffer under its longest answer.
@@ -4905,6 +5036,64 @@ MUTATIONS: list[tuple[str, Mutation]] = [
               "namespace zz_api {\ninline esp_err_t handle_zz(httpd_req_t* req) {\n  char name[33] = {0};\n  char buf[96];\n"
               "  int n = snprintf(buf, sizeof(buf), \"{\\\"name\\\":\\\"%s\\\"}\", name);\n"
               "  if (n < 0 || (size_t)n >= sizeof(buf)) return ESP_FAIL;\n  return httpd_resp_sendstr(req, buf);\n}\n}\n")),
+    # J5 over the CSI and MQTT routes (F464): the code before it, a guard dropped, a piece at an
+    # offset, a record dropped (from the code, and from RECORDED), a recorded char array sized past
+    # its answer, a recorded %s with no size and no guard.
+    ("GET /api/csi/window goes back to pieces at an offset (the code before F464)",
+     raw_in(INTEG, WINDOW_COMPOSED, WINDOW_OFFSET)),
+    ("a raw window piece moves its offset outside its length test",
+     raw_in(INTEG, "    ok = (n > 0 && (size_t)n < left);\n    if (ok) { pos += (size_t)n; left -= (size_t)n; }\n  }\n",
+            "    ok = (n > 0 && (size_t)n < left);\n    pos += (size_t)n; left -= (size_t)n;\n  }\n")),
+    ("a raw window piece is written with the whole buffer's size",
+     raw_in(INTEG, '    n = snprintf(buf + pos, left, "%s%d",', '    n = snprintf(buf + pos, sizeof(buf), "%s%d",')),
+    ("the raw window is sent when it does not fit",
+     raw_in(INTEG, "  if (!ok) {\n    httpd_resp_set_status(req, \"500 Internal Server Error\");\n"
+                   "    return httpd_resp_send(req, \"{\\\"error\\\":\\\"raw window does not fit its answer\\\"}\", -1);\n  }\n",
+            "")),
+    ("the Tuning Lab's list sends a cut row again (its guard dropped)",
+     raw_in(INTEG, TUNE_ROW_GUARD, "    if (n > 0) httpd_resp_send_chunk(req, buf, n);\n")),
+    ("the Tuning Lab's list tests its row and sends it anyway",
+     raw_in(INTEG, TUNE_ROW_GUARD, "    if (n <= 0 || (size_t)n >= sizeof(buf)) {\n      httpd_resp_send_chunk(req, \"]}\", -1);\n"
+                                   "    }\n    httpd_resp_send_chunk(req, buf, n);\n")),
+    ("the preset bundle's row guard is dropped",
+     raw_in(INTEG, "    if (n <= 0 || (size_t)n >= sizeof(buf)) {\n      httpd_resp_send_chunk(req, \"}\", -1);\n"
+                   "      if (prefs_ok) prefs.end();\n      return httpd_resp_send_chunk(req, nullptr, 0);\n    }\n",
+            "")),
+    ("the events tail's tamper kind goes out untested",
+     raw_in(INTEG, "    if (tn <= 0 || (size_t)tn >= sizeof(tail)) {\n      httpd_resp_send_chunk(req, \"]}\", 2);\n"
+                   "      return httpd_resp_send_chunk(req, nullptr, 0);\n    }\n", "")),
+    ("the MQTT test answer's guard is dropped",
+     raw_in(CSI_MQTT, "  if (n <= 0 || (size_t)n >= sizeof(body)) {\n    httpd_resp_set_status(req, \"500 Internal Server Error\");\n",
+            "  if (false) {\n    httpd_resp_set_status(req, \"500 Internal Server Error\");\n")),
+    ("the stream's supply piece grows past its answer's buffer",
+     raw_in(INTEG, "  char supply[112];", "  char supply[512];")),
+    ("the settings answer goes back to 320 bytes (its longest is 360)",
+     raw_in(INTEG, "  char buf[448];\n  snprintf(buf, sizeof(buf),\n    \"{\\\"pet_mode\\\":%s,",
+            "  char buf[320];\n  snprintf(buf, sizeof(buf),\n    \"{\\\"pet_mode\\\":%s,")),
+    ("the stream's recorded module label becomes a pointer, with no length test after the answer",
+     raw_in(INTEG, "  csi_event_values_t    values;\n  char                  module_id[CSI_EVENT_NAME_MAX];",
+            "  csi_event_values_t    values;\n  const char*           module_id;")),
+    ("the stream's recorded supply piece is sized by a constant the check cannot read",
+     raw_in(INTEG, "  char supply[112];", "  char supply[kSupplyLen];")),
+    ("the events row drops a recorded value, leaving its record behind",
+     both(raw_in(INTEG, "        \"\\\"confidence\\\":\\\"%s\\\",\"\n        \"\\\"motion\\\":%u,\"\n"
+                        "        \"\\\"breathing\\\":%u,\"\n        \"\\\"bpm\\\":%u,\"\n"
+                        "        \"\\\"duration_sec\\\":%u,\"\n        \"\\\"bundled\\\":%u,\"\n"
+                        "        \"\\\"time_bucket\\\":%u,\"\n        \"\\\"dismissed\\\":%u,\"",
+                 "        \"\\\"motion\\\":%u,\"\n"
+                 "        \"\\\"breathing\\\":%u,\"\n        \"\\\"bpm\\\":%u,\"\n"
+                 "        \"\\\"duration_sec\\\":%u,\"\n        \"\\\"bundled\\\":%u,\"\n"
+                 "        \"\\\"time_bucket\\\":%u,\"\n        \"\\\"dismissed\\\":%u,\""),
+          raw_in(INTEG, "      r->values.state_name, r->values.confidence,\n", "      r->values.state_name,\n"))),
+    ("the pairing token's answer takes an unrecorded char array",
+     raw_in(INTEG, "    hex, (unsigned long)(PAIR_TTL_MS / 1000UL), hex);",
+            "    hex, (unsigned long)(PAIR_TTL_MS / 1000UL), g_pair_tokens[0].hex);")),
+    ("the stream's record no longer names s->module_id",
+     drop_record(("csi_integration.cpp", "handle_stream"), "s->module_id")),
+    ("the preset bundle's record no longer names c.full_key",
+     drop_record(("csi_integration.cpp", "handle_tune_get_preset"), "c.full_key")),
+    ("the MQTT test's record no longer names transport_name()",
+     drop_record(("csi_mqtt.cpp", "handle_test"), "transport_name()")),
     # J6: the identity answers are built by identity_json.h at their measured length.
     ("GET /api/device-info goes back to snprintf() with the raw name",
      raw_in(INO, "  const size_t need = identity_json::device_info(in, nullptr, 0) + 1;\n  char* json = (char*)malloc(need);\n"
@@ -5616,6 +5805,11 @@ MUTATIONS: list[tuple[str, Mutation]] = [
 # review), so a rule that refuses correct code fails here as one that misses a defect fails above.
 BT_SHOWN = '    wap_json::shown_text(name, sizeof(name), devices[i].name);\n    dev["name"] = name;\n    dev["rssi"]'
 ACCEPTED: list[tuple[str, Mutation]] = [
+    # J5 over the CSI routes (F464): the guard's signed spelling, and a recorded char array that shrinks.
+    ("the Tuning Lab's list spells its row guard signed",
+     raw_in(INTEG, TUNE_ROW_GUARD, TUNE_ROW_GUARD.replace("(size_t)n >= sizeof(buf)", "n >= (int)sizeof(buf)"))),
+    ("the stream's supply piece gets a smaller buffer",
+     raw_in(INTEG, "  char supply[112];", "  char supply[96];")),
     ("the scan list copies a name byte by byte into a C buffer, then shows that",
      raw_in(BT_API, BT_SHOWN, '    char zz_raw[bluetooth_channel::MAX_DEVICE_NAME_LEN + 1];\n'
             '    for (size_t k = 0; k < sizeof(zz_raw); ++k) zz_raw[k] = devices[i].name[k];\n'
@@ -5672,12 +5866,23 @@ def _case_problem(i: int) -> str | None:
     files = _SELF_TEST_FILES
     correct = i < len(ACCEPTED)
     name, mutate = ACCEPTED[i] if correct else MUTATIONS[i - len(ACCEPTED)]
+    global RECORDED
     try:
         m = mutate(files)
+        records = getattr(mutate, "records", None)
+        recorded = records(RECORDED) if records is not None else None
     except AnchorMissing as missing:
         return (f"self-test: {'correct edit' if correct else 'mutation'} '{name}' no longer applies "
                 f"(anchor {missing}) — the source changed shape; update this guard's "
                 f"{'correct edits' if correct else 'mutations'} with it")
+    if recorded is not None:        # a mutation of RECORDED (F464): the check, run with it
+        saved = RECORDED
+        RECORDED = recorded
+        try:
+            bit = bool(check_files(m)[0])
+        finally:
+            RECORDED = saved
+        return None if bit else f"self-test: the check did not bite on mutation '{name}'"
     if correct:
         refused = check_files(m)[0] if m != files else ["it changed nothing"]
         return f"self-test: the check refused the correct edit '{name}': {refused[0]}" if refused else None
@@ -5743,12 +5948,14 @@ def main(argv: list[str]) -> int:
         return 1
     fits = [s for s in sites if s.verdict == "fits"]
     kinds = {k: sum(1 for p in printfs if p.verdict == k) for k in ("fits", "guarded", "composed")}
+    j5_recorded = sum(1 for p in printfs if p.recorded)
     j7_sites, j7_fns, j7_recorded = j7_stats
     print(f"canary-wap REST answers fit their buffers: {len(sites)} serializeJson() calls in "
           f"{len(scope_of(files))} files, {len(fits)} fixed buffers measured against their longest "
           f"answer, the rest grow or are sized by measureJson(); {len(printfs)} snprintf() answer pieces "
           f"({kinds['fits']} measured to fit, {kinds['guarded']} length-tested, {kinds['composed']} composed), "
-          f"every %s escaped by construction; the identity answers measured by identity_json.h; "
+          f"every %s escaped by construction or as RECORDED says ({j5_recorded} answer pieces), its length "
+          f"still judged; the identity answers measured by identity_json.h; "
           f"{j7_sites} other JSON texts spelled with printf in {j7_fns} functions, {j7_recorded} of them "
           f"recorded by the values the check cannot read; the device name's setter, loader and routes; "
           f"every SSID a JSON text carries written through replaced_text() ({len(SSID_RAW)} raw uses "
