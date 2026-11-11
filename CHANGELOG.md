@@ -8,6 +8,16 @@
   and a database written by either version opens in the other. One source
   change: `verify::count_alarms` reads the count as `i64` and converts it
   checked. Dependabot's hold on the `rusqlite` major is lifted.
+- **Two threads opening their first database at once no longer race
+  SQLCipher's start-up.** SQLCipher 4.19 finishes its own start-up in a hook
+  SQLite runs after it has let other threads through, and `rusqlite` 0.41 no
+  longer serializes first use, so a second thread's `PRAGMA key` could fail
+  (about 3 runs in 1,000 of the bridge's parallel tests). The kernel now
+  waits for that start-up before it opens or keys a database
+  (`ensure_sqlcipher_ready`).
+- **A damaged anchor row is still one row's problem.** The lenient anchor
+  reader types each stored value itself; TEXT that is not UTF-8, in any
+  column, is reported for that row (the old conversion panicked on it).
 - **RUSTSEC-2026-0459 is not fixed by this.** `cargo audit` passes again,
   because the advisory is keyed on the crate version, but the SQLCipher
   build still carries SQLite 3.53.4 and the fix is 3.54.0. `SECURITY.md`
