@@ -246,6 +246,11 @@ updates:
     groups:
       pip-test-deps:
         patterns: ["*"]
+    ignore:
+      # paho-mqtt is pinned by pytest-homeassistant-custom-component (it is
+      # Home Assistant's own mqtt requirement), so it moves only with that
+      # pin: a bump on its own cannot resolve.
+      - dependency-name: "paho-mqtt"
 
   # Docker base images (FROM lines in the root and sidecar Dockerfiles). The
   # bases are pinned by digest for reproducibility, so Dependabot is what keeps
