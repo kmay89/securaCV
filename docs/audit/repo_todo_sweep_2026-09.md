@@ -277,8 +277,12 @@ so — see D2 below.)
   (`test_a_refused_rotation_leaves_the_one_in_flight_whole`); if its REKEY
   reached the removed member, that member also holds the secret it commits.
   Decide whether the removal should instead fail as a whole when its rotation
-  cannot start. The hash's input runs in block mode on the ESP32, which has no
-  failing path. From code and the host suite. Found by F364's review (#1961).
+  cannot start. It is decided with F114, which asks whether a removal should
+  rotate at all while no survivor can be told (its skip-and-log option is the
+  state this leaves), and today no rotation reaches a member anyway (F95), so
+  the survivors keep trusting the removed device whether or not one starts.
+  The hash's input runs in block mode on the ESP32, which has no failing
+  path. From code and the host suite. Found by F364's review (#1961).
 
 - [ ] **F458 [decision] canary-wap: a stored mesh member whose key does not
   hash at boot is skipped, and a later save that boot can drop it.**
@@ -804,8 +808,10 @@ so — see D2 below.)
     `hash_beacon_id()` and `mesh_pair_crypto.h`'s `confirmation_code()` and
     `confirm_hash()` take a zeroed digest as a real one. Making it `bool`
     edits `canary/lib/securacv_mesh`, `securacv_ble_scan` and their WAP copies
-    together (`check_ble_scan_sync.sh` holds them), so it is one change over
-    that whole set.
+    together, so it is one change over that whole set
+    (`check_ble_scan_sync.sh` holds the two `ble_scan.cpp` copies
+    byte-identical; no guard holds the two `mesh_crypto` copies, and the
+    WAP's `mesh_crypto.h` is a shim).
   - The three `device_pseudonym.h` copies (`common/identity` and the display
     and WAP sketches; they move every display bundle, so the emulator dist)
     and the three `securacv_ota.cpp` copies (`common/ota` and the same two
@@ -1044,25 +1050,37 @@ so — see D2 below.)
   there). From code. Found by F300's review (#1961).
 
 - [ ] **F462 [code] canary-wap: the CSI settings POST can take a quoted value
-  for a key.** `csi_settings_nvs.cpp` finds each key with `strstr(body,
-  "\"<key>\"")` (`"quiet_hours"`, `"pet_mode"`, `"preset"`, `"sensitivity"`,
-  `"privacy_ceiling"`), which also matches a string value spelled like the
-  key, then reads the value after the next colon:
-  `{"note":"preset","pet_mode":true,"preset":"quiet"}` would read `true` as
-  the preset and store none. The dashboard never sends such a value, and
-  echoing `GET /api/settings`' answer back is safe because `"preset"` comes
-  first there. Anchor the scan on keys (or parse the body as JSON) and cover
-  it in `test_wap_tune_lab.cpp`. From reading; not driven. Found by F315
-  (#1961).
+  for a key.** `POST /api/settings` finds each key it reads by searching for
+  the quoted key anywhere in the body, which also matches a string value
+  spelled like the key. `csi_settings_nvs.cpp` does it for `"quiet_hours"`,
+  `"pet_mode"`, `"preset"`, `"sensitivity"` and `"privacy_ceiling"`
+  (`strstr(body, "\"preset\"")` and its siblings), and
+  `csi_integration.cpp`'s `handle_settings_post()` for `"filter_foreign"`
+  (`strstr(body, "\"filter_foreign\"")`); each then reads the value after
+  the next colon, so `{"note":"preset","pet_mode":true,"preset":"quiet"}`
+  would read `true` as the preset and store none. The same handler's `"tz"` and `"tz_iana"` tests
+  (`strstr(body, "\"tz\"")`, then `tz_rule::json_string_field()`, whose
+  lookup is the same `strstr`) refuse instead: a value spelled `"tz"` ahead
+  of the key, or alone, answers 400 `bad time zone` to a body that is valid
+  or names no zone. The dashboard never sends such a value, and echoing `GET
+  /api/settings`' answer back is safe because each key there comes before
+  any value spelled like it (`thresholds_source` can be `"preset"`, after the
+  `"preset"` key). Anchor the scan on keys (or parse the body as JSON) for
+  every key the route reads, and cover it in `test_wap_tune_lab.cpp`.
+  From reading; not driven. Found by F315 (#1961).
 
-- [ ] **F463 [decision] canary-wap spells a refused request body two ways.**
-  `csi_integration.cpp` answers `{"ok":false,"reason":"body too large"}` or
-  `"body read failed"`, as `csi_mqtt.cpp` does, while `canary_wap.ino`'s
-  routes answer `http_send_error(req, 400, "body_too_large")` or
-  `"body_read_failed"`, and each `*_api.h` file answers in its own error
-  shape. Each follows its own file, and `docs/csi_developer_api.md` documents
-  the CSI spelling. Decide whether a client should meet one spelling. From
-  code. Found by F315 (#1961).
+- [ ] **F463 [decision] canary-wap spells a refused request body several
+  ways.** `csi_integration.cpp`'s dismiss and settings routes answer
+  `{"ok":false,"reason":"body too large"}` and its Tuning Lab POSTs `"empty or
+  too large"`; `csi_mqtt.cpp`'s config POST answers `"body must be at most N
+  bytes"` (`answer_too_long(req, "body", MAX_CONFIG_BODY_LEN)`); both files
+  answer `"body read failed"` for a body the socket did not deliver whole.
+  `canary_wap.ino`'s routes answer `http_send_error(req, 400,
+  "body_too_large")` or `"body_read_failed"`, and each `*_api.h` file answers
+  in its own error shape. Each follows its own file, and
+  `docs/csi_developer_api.md` documents the CSI routes' spellings. Decide
+  whether a client should meet one spelling. From code. Found by F315
+  (#1961).
 
 - [ ] **F464 [code] `check_wap_json_answers.py` measures no
   `csi_integration.cpp` answer buffer.** Its J5 length measure covers the
@@ -1108,8 +1126,12 @@ so — see D2 below.)
     one receipt, a second GET → 403), and carrying over the WAP's
     session-cookie model, so a LAN reload stops needing a tap, is a Phase 6
     follow-up.
-  - #13 (WiFi presence, Medium), #3 and #8 are bench-bound; then the unstarted
-    phases.
+  - #13 (WiFi presence, Medium), #3 and #8 are bench-bound.
+  - The other open rows, as `CONSOLIDATION.md` states them: #4 (GPS motion
+    FSM: NMEA parse only), #5 (web UI tabs: partial), #6 (mesh body: header
+    only), #7 (BLE discovery: ❌), #9 (Chirp channel body: header only) and
+    #16 (CSI events over MQTT and the SD event log: CI compile only, bench
+    pending); then the unstarted phases.
 
 - [ ] **F21 [human] canary-wap enterprise readiness** —
   `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`. §1
@@ -1344,78 +1366,32 @@ so — see D2 below.)
   (strict xfail). Found by F34's contract fixture (#1836).
 
 - [ ] **F36 [code+human] Tighten Scout proximity pairing (F27 follow-up).**
-  The window pairs the first single qualifying advert. Two tightenings need
-  real advert data first (U1): an N-advert confirmation (several qualifying
-  adverts from one `hashed_id` before it pairs; N depends on real advert
-  rates), and a fleet-link / Chirp payload filter so a neighboring Canary's
-  advert cannot win the window (it needs the advert payload passed into
-  `ble_scout_on_advert()`, which today takes only MAC, RSSI and time). The
-  WAP carries the same pairing module and could adopt the route after.
-  *Partly done (#1802), the payload-filter half; option "only the fleet's own
-  formats", maintainer to confirm:* the Scout's proximity pairing window no
-  longer offers an advert in the fleet's own formats.
-  `ble_scout_advert_kind.h` (a pure header, committed byte-identically in
-  `firmware/canary/lib/securacv_ble_scan/src/` and the canary-wap sketch
-  folder, and in `check_ble_scan_sync.sh`'s BYTE_FILES) classifies an advert's
-  manufacturer data as a presence beacon (company 0xFFFF, type 0x10, 11 or 13
-  bytes; the version byte is not read, so a newer schema at either length is
-  still refused) or a Chirp (company 0xFFFF, 17 bytes, type 0x01..0x05).
-  `ble_scout_on_advert()` gains an `offerable` flag and hands
-  `pairing::offer()` only offerable adverts from unpaired devices; tracking a
-  paired device never reads it. Both trees' scan callbacks read the
-  manufacturer data once and pass `advert_kind::offerable()` (the canary's
-  fleet roster feed reuses the same read); the canary-wap has no pairing
-  route, and its copies match the canary's after the sync script's
-  normalization. Not excluded (a choice): any advert without fleet-format
-  manufacturer data, a Canary's included. Read from the source, a Canary sends
-  one in at least these cases: a canary-wap DEV-profile build's Bluetooth
-  channel advert (`bluetooth_channel.cpp`'s `SERVICE_UUID`; that profile has
-  no Opera beacon), the legacy service-UUID advert the beacon code falls back
-  to when its advert data is refused (`securacv_ble_status.cpp` in the canary;
-  `ble_opera.h`, and `ble_chirp.h`'s restore with Opera compiled out, in the
-  canary-wap), and a Sense or Vision Improv setup door's flags-and-name advert
-  when no beacon was handed to it (`common/network/improv_ble.cpp`). In a FULL
-  canary-wap the Opera beacon takes the primary advert and the service UUIDs
-  ride the scan response, which the passive Scout (`setActiveScan(false)`)
-  never requests. Rejected: a service-UUID rule (it would copy UUID strings
-  from canary-wap-only headers into the canary tree with nothing holding the
-  copies together, and would still miss the name-only advert), refusing every
-  company-0xFFFF advert (0xFFFF is the Bluetooth testing id, which other
-  people's hobby tags use too), and classifying with `fleet_beacon_parse()`
-  (it refuses a schema version it does not know, says nothing about Chirps,
-  and would need the fleet_link include path on firmware.yml's host compile
-  lines). Host-tested in plain g++ with firmware.yml's run_test recipe:
-  `test_ble_scout_pairing.cpp` holds the constants to `fleet_beacon.h` and to
-  the Chirp shape `fleet_roster_feed.cpp` tables and the canary-wap's
-  `ble_config.h` sends (both read from disk), refuses every blob
-  `fleet_beacon_parse()` accepts, counts refusals over every length 0..40 and
-  every type byte, classifies 19 near misses from exact-size heap copies,
-  drives `ble_scout_on_advert()` so strong beacon and Chirp adverts from
-  unpaired advertisers never pair while the near misses and adverts with no
-  manufacturer data still do, and reads both trees' `ble_scout_nimble.cpp`
-  (comments stripped) to hold each scan callback to one manufacturer-data
-  read, `advert_kind::offerable(mfg_bytes, mfg.size())` and the verdict passed
-  by the only `ble_scout_on_advert()` call; `test_ble_scout_broadcast.cpp`
-  shows a paired device whose adverts are not offerable arriving, departing
-  and broadcasting call for call like one whose adverts are. Both fail on the
-  old code (it does not compile against the new call; with the flag ignored,
-  the pairing test fails); 18 mutants of the filter, the gate and the pinned
-  sources, and 14 mutants of the scan callback written into both trees, each
-  fail a test or the sync check; before the callback pin, 10 of those 14
-  passed every gate. On the integrated tree the pairing suite passes with that
-  recipe and `check_ble_scan_sync.sh` holds. The `[env:full]` and canary-wap
-  Arduino compiles are CI's; no bench pass. A phone, a stranger's tag, or a
-  Canary advert without fleet-format manufacturer data held close can still
-  win the window: that is the documented limit. The Scout limits paragraph of
-  `docs/csi_developer_api.md` and the threat note in both copies of
-  `ble_scout_pairing.h` still say a neighboring Canary's advert can pair;
-  their new text, and a U1 row, are handed to the integrator (landed
-  2026-10-19 by the post-#1802 verification: both copies of the threat note,
-  the Scout limits paragraph, and the F36 section of
-  `hardware_verification_checklist.md`). Still open (U1):
-  the N-advert confirmation (several qualifying adverts from one `hashed_id`
-  before it pairs), which waits for real advert rates from the bench, and
-  whether the Canary adverts above reach a passive Scout at pairing strength.
+  The Scout's pairing window pairs the first single qualifying advert. Since
+  #1802 it refuses an advert in the fleet's own formats
+  (`ble_scout_advert_kind.h`: a presence beacon or a Chirp; option "only the
+  fleet's own formats", maintainer to confirm), and
+  `test_ble_scout_pairing.cpp` holds that classifier to `fleet_beacon.h` and
+  `fleet_chirp.h` (both included) over the compiled roster feed. What remains
+  needs real advert data (U1, the F36 section of
+  `hardware_verification_checklist.md`):
+  - An N-advert confirmation: several qualifying adverts from one
+    `hashed_id` before it pairs; N depends on real advert rates.
+  - Whether a Canary advert without fleet-format manufacturer data reaches a
+    passive Scout (`setActiveScan(false)`) at pairing strength. From the
+    source a Canary sends one in at least these cases: a canary-wap
+    DEV-profile build's Bluetooth channel advert (`bluetooth_channel.cpp`'s
+    `SERVICE_UUID`), the legacy service-UUID advert the beacon code falls
+    back to when its advert data is refused (`securacv_ble_status.cpp`;
+    `ble_opera.h`, and `ble_chirp.h`'s restore with Opera compiled out, in
+    the canary-wap), and a Sense or Vision Improv setup door's
+    flags-and-name advert when no beacon was handed to it
+    (`common/network/improv_ble.cpp`). Until then a phone, a stranger's tag,
+    or such a Canary advert held close can still win the window: the
+    documented limit (`docs/csi_developer_api.md`'s Scout limits paragraph,
+    the threat note in both copies of `ble_scout_pairing.h`).
+  - The canary-wap carries the same pairing module with no pairing route,
+    and could adopt the route after. The `[env:full]` and canary-wap Arduino
+    compiles are CI's; no bench pass.
 
 - [ ] **F79 [code+decision] Below the backfill's bound, the SD event log is
   trusted input.** Both backfills (the canary's
@@ -3693,22 +3669,6 @@ so — see D2 below.)
   holds it; `test_voice.py`'s docstring says the lowercase case is deliberate
   until then. From code. Found by HA58 (#1920).
 
-- [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
-  securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
-  files #1703, #1704 and #1718 had moved. The same PR brought the store
-  page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
-  and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
-  one and refuses "encrypted by default". PR #1725's carried files
-  followed in securacv-homeassistant#19 and PR #1727's in #20 (2026-10-01),
-  byte-identical again (U6). PR #1761 added one carried test (F46's
-  `tests/test_replay_one_id_space.py`), carried by hand in
-  securacv-homeassistant#21 (2026-10-02). #1762's carried files (waves
-  9-15, 12 files) followed by hand in securacv-homeassistant#24 (`034089c`,
-  2026-10-07; `check_mirror_sync.py`: 66 files match). Its health
-  items are U6, U7 and U10 above, plus the three monorepo-fixture tests its CI
-  deselects, which is by design. A few more tests skip themselves there
-  because they read firmware sources the mirror does not carry.)*
-
 - [ ] **HA62 [decision] The device-details vocabulary has no row state for a
   key no firmware sends yet, or sends no longer.**
   `spec/device_details_vocabulary.json` (#1961) holds only keys a named
@@ -3744,6 +3704,22 @@ so — see D2 below.)
   device-details privacy review's call (that design is not on main); adding
   one is a one-row vocabulary edit and a regeneration. From the generator's
   scan. Found by HA56 (#1961).
+
+- [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
+  securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
+  files #1703, #1704 and #1718 had moved. The same PR brought the store
+  page's watch-actions, key-pinning, broker-TLS and Apple Home sentences,
+  and a `lint_readme.py` overclaim check that reads a hard-wrapped claim as
+  one and refuses "encrypted by default". PR #1725's carried files
+  followed in securacv-homeassistant#19 and PR #1727's in #20 (2026-10-01),
+  byte-identical again (U6). PR #1761 added one carried test (F46's
+  `tests/test_replay_one_id_space.py`), carried by hand in
+  securacv-homeassistant#21 (2026-10-02). #1762's carried files (waves
+  9-15, 12 files) followed by hand in securacv-homeassistant#24 (`034089c`,
+  2026-10-07; `check_mirror_sync.py`: 66 files match). Its health
+  items are U6, U7 and U10 above, plus the three monorepo-fixture tests its CI
+  deselects, which is by design. A few more tests skip themselves there
+  because they read firmware sources the mirror does not carry.)*
 
 ---
 
@@ -4003,6 +3979,16 @@ major, by theme") — work its themes, then tick here.
     each); and it drops any trailing help that holds a comma or a colon
     (`Parameter("")`). So it shows little of the help the builder and Lab
     parsers read (`gen_enclosures.py` reads both forms).
+  - Landed and still "maintainer to confirm", each revertible alone: the
+    stud/keyhole group name and the doorbell's and the Sense's preset
+    contents (#1718; `DESIGN_RULES.md` §10 marks both), the Lab importing the
+    builder's `GROUP_RE` rather than copying it (C10a, #1802), the J-box's
+    `pigtail_w`/`pigtail_h` in place of `usb_w`/`usb_h` (C10b, #1802), and the
+    three dev cases held shrink-only in `HELP_DEBT` (C10c-1, #1802).
+  - `DESIGN_RULES.md` §10's "A knob name means one thing" table has no
+    `pigtail_w`/`pigtail_h` row, though `lint_design_lang.py`'s
+    `KNOB_MEANINGS` holds one (C10b handed the row to the integrator; it never
+    landed).
 
 - [ ] **C21 [code+decision] The Lab's knob list is not the builder's.** After
   C10a's group fix, `canary-local/tools/gen_enclosures.py`'s `parse_scad`
@@ -4065,22 +4051,31 @@ major, by theme") — work its themes, then tick here.
   `engineering_param_count`, or wire it where a fit needs it, which is a
   geometry change with previews. Found by C10c-2 (#1836).
 
-- [ ] **C33 [code] The 7-inch frame's brand-word width estimate reads about 25
-  % short.** `canary_s3_lcd7.scad` sizes the bottom-wall words with
-  `vword_half = 0.392 x edge_text_size x letters` (:2137), from '0.70 em x
-  1.12 tracking' (:2133), but OpenSCAD 2021.01's text size is not the em:
-  SECURACV at size 7, spacing 1.12, in Liberation Sans Bold inks 58.7 mm (x
-  -29.56..29.16 in a DXF export) against the 43.9 mm estimate. The asserts
-  that keep the leash anchor, the peel scoop, the port label and the dock keys
-  off the words (:2557, :2574, :2587, :2785) therefore guard a shorter word
-  than the one cut. At the defaults the cut word reaches x = 13.74, inside the
-  anchor's and the scoop's 1 mm keep-outs (bounds 15.2 and 15.44), though the
-  C10c-2 review's CGAL intersection with the scoop was empty, and `port_lbl_a`
-  ships empty. Calibrate the factor against a measured render (a DXF of the
-  default words) or carry measured widths, and fix the :1968 comment, which
-  calls 0.392 the advance where `_lbl_w` doubles it. Since #1836 (C10c-2) the
-  `edge_text_size` help says the estimate reads short. Found by the C10c-2
-  review (#1836).
+- [ ] **C33 [code+decision] The 7-inch frame's brand-word width estimate
+  reads about 25 % short.** `canary_s3_lcd7.scad` sizes the bottom-wall words
+  with `vword_half = 0.392 * edge_text_size * max(len(edge_text_l),
+  len(edge_text_r))`, from the comment's "bold caps advance ≈ 0.70 em ×
+  1.12", but OpenSCAD 2021.01's text size is not the em: SECURACV at size 7,
+  spacing 1.12, in Liberation Sans Bold inks 58.72 mm (x -29.56..29.16 in a
+  DXF export) against the 43.9 mm estimate, and CANARY 43.93 mm, about 0.528
+  x size x letters per half-width. The asserts that keep the leash anchor,
+  the peel scoop, the port label and the dock keys off the words (each reads
+  `vword_x - vword_half` or `vword_x + vword_half`) therefore guard a
+  shorter word than the one cut. At the defaults SECURACV, the word beside
+  the peel scoop, inks inward to x = 13.34 to 13.74, inside the scoop's 1 mm
+  keep-out (bound 15.44), though the C10c-2 review's CGAL intersection with
+  the scoop was empty; CANARY, beside the leash anchor, clears the anchor's
+  (bound 15.2); `port_lbl_a` ships empty. So the calibration cannot land
+  alone: with per-word widths the anchor-side assert passes and the
+  scoop-side one fails at the defaults by 1.7 to 2.1 mm, and SECURACV's ink
+  is wider than the 52.2 mm band it is centered in. A maintainer picks one visible change to the face first:
+  (a) `edge_text_size` 7 to about 6.2, the proposed default; (b) shift the
+  scoop-side word about 2.1 mm outboard; or (c) move `port_scoop_dx` inboard,
+  which changes the peel's undercut of the flange. Then: per-word factors
+  (`_lbl_w` and `rating_w` share 0.392), the comment that calls "0.392 per
+  character per mm of size" the advance where `_lbl_w` doubles it, the
+  `edge_text_size` and `label_font` helps, a DXF probe test, the frame's rN
+  bump (`gen_revisions.py`) and previews. Found by the C10c-2 review (#1836).
 
 - [ ] **C11 [decision] Raise the lid ribs, or leave them** (C3's rib half; the
   audit's "Ribs proportioned backwards"). The evidence is recorded and no rib

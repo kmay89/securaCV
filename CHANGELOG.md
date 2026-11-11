@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap reads every request body whole and its mesh refuses a hash it could not make, one header spells the Chirp advert, Home Assistant redacts what the device vocabulary names, the SBOM tools are pinned, and the parity ledgers read the code (#1961, wave 24)
+### canary-wap reads every request body whole and its mesh refuses a hash it could not make, the Sensing dashboard says when stored levels win, one header spells the Chirp advert, Home Assistant redacts what the device vocabulary names, the SBOM tools are pinned, the parity ledgers read the code, and the released cases' knobs carry help (#1961, wave 24)
 
 - **canary-wap reads every POST body whole or refuses it by name (F300).**
   The sketch's 18 single `httpd_req_recv()` reads and `/api/peek/sensor`'s
@@ -20,13 +20,14 @@
 - **canary-wap's mesh refuses a fingerprint or opera id it could not hash,
   and a boot that did not read its store writes none of it (F364, the mesh
   slice).** `compute_fingerprint()` and `compute_opera_id()` are
-  `[[nodiscard]] bool`, and all eight callers refuse with nothing half
-  done: no member is added, loaded or joined under a zeroed fingerprint,
-  and the deny-list counts a key it cannot hash as removed (it failed
-  open). A mesh that did not read its store this boot (its own key did not
-  hash, safe mode, a failed ESP-NOW start) refuses the 5-minute save and
-  every owner command but clearing alerts, where a safe-mode enable, rename
-  or leave used to remove the stored opera; `POST /api/mesh/enable` answers
+  `[[nodiscard]] bool`, and all eight callers refuse: no member is added,
+  loaded or joined under a zeroed fingerprint (a stored member skipped at
+  boot can still be dropped by a later save that boot, F458), and the
+  deny-list counts a key it cannot hash as removed (it failed open). A
+  mesh that did not read its store this boot (its own key did not hash,
+  safe mode, a failed ESP-NOW start) refuses the 5-minute save and every
+  owner command but clearing alerts, where a safe-mode enable, rename or
+  leave used to remove the stored opera; `POST /api/mesh/enable` answers
   400 `enable_failed` there. A rotation in flight keeps its pending ACKs on
   the right members across a removal.
 - **The Sensing dashboard says when stored thresholds win (F315).** `GET
@@ -60,8 +61,11 @@
   `sbom.yml` installs cargo-cyclonedx 0.5.9 and cdxgen 12.9.0 from one job
   variable each, caches the binary under its version, and a new step fails
   unless each document's `metadata.tools` names the pinned release.
-  `test_gen_firmware_sbom.py`'s `SbomToolPins` holds every way the job
-  could install a tool by name.
+  `test_gen_firmware_sbom.py`'s `SbomToolPins` holds every command that
+  installs or fetches a package by name (cargo, npm, npx, pnpm, yarn and
+  bun) and every `actions/cache` step that holds the binary; an install or
+  cache made another way is caught when it replaces the pinned one, and
+  the tool step reads what each document names.
 - **Docs: the parity ledgers read the code (F20, gaps #14 and #15;
   maintainer to confirm).** `firmware/canary/CONSOLIDATION.md`'s system
   monitor gap reads ⚠️ with what is missing named, since the flagship
@@ -79,10 +83,11 @@
   part's CSG is byte-identical; `catalog.json`'s templates count moves 4 to
   16. The website's carried copies follow with the next `--site` carry.
 - **Backlog:** F300, F315, F316, HA56, C30 and C31 are closed; F364, F20,
-  C10 and CI26 now say what remains. New from the wave: F455 (the
-  flagship's and the common witness core's SHA-256 helpers check nothing),
-  F456-F468, HA62, HA63, C38 and CI27, ten of them decisions for a
-  maintainer.
+  C10, CI26 and F36 now say what remains, and C33 waits on a maintainer's
+  pick (calibrating the frame's word width alone fails its scoop assert).
+  New from the wave: F455 (the flagship's and the common witness core's
+  SHA-256 helpers check nothing), F456-F468, HA62, HA63, C38 and CI27, ten
+  of them decisions for a maintainer.
 - Host-tested here: the canary-wap host suite under g++, clang++ 18 and
   ASan/UBSan, the Sensing dashboard in Chromium, Home Assistant's tests on
   real cores 2026.5.0 and 2026.10.1, and 63 OpenSCAD renders. The ESP32
