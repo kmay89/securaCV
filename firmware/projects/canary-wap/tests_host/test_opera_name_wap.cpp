@@ -257,7 +257,7 @@ void opera_named(Device& d, const char* name) {
   uint8_t secret[mn::OPERA_SECRET_SIZE];
   host_sim::fill_random(secret, sizeof secret);
   memcpy(mn::g_opera_config.opera_secret, secret, sizeof secret);
-  mn::compute_opera_id(secret, mn::g_opera_config.opera_id);
+  CHECK(mn::compute_opera_id(secret, mn::g_opera_config.opera_id));
   mn::g_opera_config.configured = true;
   mn::g_opera_config.enabled = true;
   snprintf(mn::g_opera_config.opera_name, sizeof mn::g_opera_config.opera_name, "%s", name);

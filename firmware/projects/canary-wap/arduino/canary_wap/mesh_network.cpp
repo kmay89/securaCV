@@ -335,8 +335,8 @@ static volatile bool g_rx_pending = false;
 // FORWARD DECLARATIONS
 // ════════════════════════════════════════════════════════════════════════════
 
-static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out);
-static bool compute_opera_id(const uint8_t* secret, uint8_t* id_out);
+[[nodiscard]] static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out);
+[[nodiscard]] static bool compute_opera_id(const uint8_t* secret, uint8_t* id_out);
 static bool derive_session_key(const uint8_t* local_priv, const uint8_t* peer_pub, uint8_t* key_out);
 static bool encrypt_message(const uint8_t* key, const uint8_t* plaintext, size_t len,
                            uint8_t* ciphertext, uint8_t* nonce_out, uint8_t* tag_out);
@@ -444,10 +444,10 @@ static void espnow_recv_cb(const esp_now_recv_info_t* info, const uint8_t* data,
 // False, with `fp_out` zeroed, when the hash fails, and every caller
 // refuses (sweep F364): a zeroed fingerprint is no key's, so it used to be
 // taken as one, and the deny-list answered "not removed" for it
-// (is_revoked_pubkey). Not [[nodiscard]] yet: test_opera_name_wap.cpp's
-// opera-setup helper discards compute_opera_id()'s answer under -Werror
-// (every other host suite checks each answer); test_mesh_revocation_wap
-// holds every call in this file to `if (!compute_...(` until it can be.
+// (is_revoked_pubkey). [[nodiscard]] (the declarations above), so a
+// caller that drops the answer does not compile under -Werror, and
+// test_mesh_revocation_wap still holds every call in this file to
+// `if (!compute_...(`.
 static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
   uint8_t hash[32];
   const bool ok = sha256_domain("securacv:pubkey:fingerprint", pubkey, PUBKEY_SIZE, hash);

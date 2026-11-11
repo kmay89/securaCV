@@ -19,11 +19,10 @@
 //   5. persistence is flash-encryption gated, like the peer list;
 //   6. is_revoked_pubkey() fails closed on a key it cannot hash (sweep F364),
 //      and every call of compute_fingerprint() and compute_opera_id() in the
-//      file refuses on a false answer: the pin stands in for [[nodiscard]],
-//      which the helpers cannot carry while test_opera_name_wap.cpp's
-//      opera-setup helper discards compute_opera_id()'s answer (every other
-//      host suite checks each one; test_mesh_address_wap runs each caller's
-//      refusal).
+//      file refuses on a false answer: beside the helpers' [[nodiscard]]
+//      (which catches a dropped answer, not one read and then ignored), the
+//      pin holds each call to `if (!compute_...(` (test_mesh_address_wap
+//      runs each caller's refusal).
 // And, on the staged copy: a removal is refused for exactly
 // REVOCATION_GRACE_MS (7 days).
 
