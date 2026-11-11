@@ -44,7 +44,9 @@ constexpr size_t kJsonMaxDepth = 16;
  *  JSON: strings closed, no raw control byte in one, each escape whole
  *  (\" \\ \/ \b \f \n \r \t \uXXXX), brackets matched at most
  *  kJsonMaxDepth deep, every value a string, an object, an array, true,
- *  false, null or a number, commas and colons where they belong. False,
+ *  false, null or a number, commas and colons where they belong. A byte
+ *  0x80 and above in a string is taken as it is (UTF-8 is not validated;
+ *  no word or bool read here can match one). False,
  *  with *out untouched, when it is not, when no member has the key, and
  *  when two do (parsers disagree on which one wins, so neither does). An
  *  own member's key that holds an escape makes the text unreadable too:
@@ -56,9 +58,13 @@ bool json_object_member(const char* text, size_t len, const char* key, JsonMembe
  *  value sent as a string reads as the bare one, as it always has). */
 bool json_member_bool(const JsonMember& m, bool* out);
 
+/** Where json_member_int() saturates, either side. */
+constexpr int32_t kJsonIntMax = 999999999;
+
 /** The member's value as an integer: a number with no fraction or
- *  exponent, or the same digits in quotes, saturated at 999999999 either
- *  side (every reader here clamps far inside that). */
+ *  exponent, or the same digits in quotes, saturated at kJsonIntMax either
+ *  side (a longer number reads as kJsonIntMax, never as its first digits;
+ *  every reader here clamps far inside that). */
 bool json_member_int(const JsonMember& m, int32_t* out);
 
 /** True when the member's value is the string `word`, exactly (a string
@@ -74,7 +80,9 @@ bool json_member_is(const JsonMember& m, const char* word);
  *  when one is there but its value is not a string json_string_field()
  *  takes (not a string, an escape, longer than its buffer): the handler's
  *  400 "bad time zone", before anything is stored. `body` is
- *  NUL-terminated (http_body::read_all()'s) and read to its terminator. */
+ *  NUL-terminated (http_body::read_all()'s) and read to its terminator;
+ *  the handler has refused a body that holds a NUL before it, so that is
+ *  the whole body, the text "filter_foreign" is read from too. */
 bool read_tz_from_settings(const char* body, char* tz, size_t tz_cap, char* tz_iana,
                            size_t iana_cap, bool* tz_key, bool* iana_key);
 

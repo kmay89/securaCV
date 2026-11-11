@@ -265,10 +265,15 @@ bool json_member_int(const JsonMember& m, int32_t* out) {
   const bool negative = (n > 0 && p[0] == '-');
   if (negative) i = 1;
   if (i >= n) return false;
+  /* Saturated at kJsonIntMax: once another digit would carry the value
+   * past it, it is kJsonIntMax, and the digits after are still read, to
+   * refuse one that is not a digit. It kept the first nine digits before
+   * (1234567890 read as 123456789, a different number; the F462 review). */
   int32_t v = 0;
   for (; i < n; ++i) {
     if (!json_digit(p[i])) return false;
-    if (v < 100000000) v = v * 10 + (int32_t)(p[i] - '0');   /* stops at 999999999 */
+    const int32_t d = (int32_t)(p[i] - '0');
+    v = (v > (kJsonIntMax - d) / 10) ? kJsonIntMax : v * 10 + d;
   }
   *out = negative ? -v : v;
   return true;

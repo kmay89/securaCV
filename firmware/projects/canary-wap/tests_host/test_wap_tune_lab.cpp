@@ -1172,6 +1172,26 @@ static int test_the_settings_reader_reads_json() {
     CHECK(!member_of(std::string(after, sizeof(after) - 1), "a"));
     CHECK(member_of(std::string(after, sizeof(after) - 2), "a"));        // the same, the NUL left out
   }
+  // The F462 review's two bodies: read over all their bytes (as the handler
+  // reads "filter_foreign", over `got`) no key is found, read to the first
+  // NUL (as the time zone and the stores read a NUL-terminated body) every
+  // key before it is. So the handler refuses a body that holds a NUL before
+  // any reader runs, 400 "body is not JSON" (settings_reader_problems() pins
+  // it); a body it reads holds none, so every reader reads the same text.
+  {
+    const char split[] = "{\"privacy_ceiling\":\"p2\",\"pet_mode\":true,\"filter_foreign\":false}\0junk";
+    const char trailing[] = "{\"filter_foreign\":false,\"tz\":\"UTC0\"}\0";
+    const std::string whole(split, sizeof(split) - 1);
+    const std::string zone(trailing, sizeof(trailing) - 1);
+    for (const char* key : {"privacy_ceiling", "pet_mode", "filter_foreign"}) {
+      CHECK(!member_of(whole, key));
+      CHECK(member_of(std::string(split), key));
+    }
+    CHECK(!member_of(zone, "filter_foreign") && !member_of(zone, "tz"));
+    CHECK(member_of(std::string(trailing), "tz"));
+    CHECK(std::memchr(whole.data(), '\0', whole.size()) != nullptr);
+    CHECK(std::memchr(zone.data(), '\0', zone.size()) != nullptr);
+  }
   // Nesting to the reader's depth, and one past it.
   {
     std::string deep = "{\"a\":1,\"b\":";
@@ -1228,6 +1248,18 @@ static int test_the_settings_reader_reads_json() {
   CHECK(json_member_int(as("{\"v\":\"-0\"}"), &n) && n == 0);
   CHECK(json_member_int(as("{\"v\":99999999999999999999}"), &n) && n == 999999999);
   CHECK(json_member_int(as("{\"v\":-99999999999999999999}"), &n) && n == -999999999);
+  // Saturated, not cut to its first nine digits (the F462 review: 1234567890
+  // read as 123456789, a different number).
+  CHECK(json_member_int(as("{\"v\":1234567890}"), &n) && n == kJsonIntMax);
+  CHECK(json_member_int(as("{\"v\":-1234567890}"), &n) && n == -kJsonIntMax);
+  CHECK(json_member_int(as("{\"v\":1000000000}"), &n) && n == kJsonIntMax);
+  CHECK(json_member_int(as("{\"v\":2147483648}"), &n) && n == kJsonIntMax);
+  CHECK(json_member_int(as("{\"v\":\"1234567890\"}"), &n) && n == kJsonIntMax);
+  CHECK(json_member_int(as("{\"v\":999999999}"), &n) && n == 999999999);
+  CHECK(json_member_int(as("{\"v\":999999998}"), &n) && n == 999999998);
+  CHECK(json_member_int(as("{\"v\":123456789}"), &n) && n == 123456789);
+  CHECK(json_member_int(as("{\"v\":-123456789}"), &n) && n == -123456789);
+  CHECK(!json_member_int(as("{\"v\":\"12345678901x\"}"), &n));        // digits after are still read
   CHECK(!json_member_int(as("{\"v\":75.5}"), &n) && !json_member_int(as("{\"v\":7e1}"), &n));
   CHECK(!json_member_int(as("{\"v\":\"high\"}"), &n) && !json_member_int(as("{\"v\":\"7 5\"}"), &n));
   CHECK(!json_member_int(as("{\"v\":\"\"}"), &n) && !json_member_int(as("{\"v\":\"-\"}"), &n));
@@ -1745,9 +1777,12 @@ static std::vector<std::string> body_read_problems(const std::string& integ) {
     out.push_back("POST /api/events/dismiss does not read its body whole, answer a refusal by name, then parse");
   }
   // POST /api/settings: the same, before the time zone (the first key it
-  // stores) is looked for.
+  // stores) is looked for, with one refusal more: a body that holds a NUL
+  // (the F462 review; settings_reader_problems() says why).
   const std::string set = code_body(integ, kSettingsPost);
   if (count_of(set, "charbody[384];" PIN_EMPTY_BODY PIN_READ_WHOLE PIN_REFUSALS
+                    R"PIN(if(memchr(body,'\0',got)!=nullptr){httpd_resp_set_status(req,"400BadRequest");)PIN"
+                    R"PIN(httpd_resp_send(req,"{\"ok\":false,\"reason\":\"bodyisnotJSON\"}",-1);returnESP_OK;})PIN"
                     "boolwrote_anything=false;") != 1 ||
       count_of(set, "read_all(") != 1 || set.find("ESP_FAIL") != std::string::npos) {
     out.push_back("POST /api/settings does not read its body whole, answer a refusal by name, then store");
@@ -2143,6 +2178,18 @@ static std::vector<std::string> settings_reader_problems(const std::string& inte
       "httpd_resp_send(req,\"{\\\"ok\\\":false,\\\"reason\\\":\\\"badtimezone\\\"}\",-1);returnESP_OK;}"
       "if(tz_key||iana_key){");
   const size_t open_at = set.find("Preferencesprefs;");
+  // A body that holds a NUL is refused before any key is read (the F462
+  // review): "filter_foreign" is read over `got` bytes and the time zone and
+  // the stores to the first NUL, so such a body was half applied.
+  const size_t read_at = set.find("if(read!=http_body::OK){");
+  const size_t nul_at = set.find(
+      "if(memchr(body,'\\0',got)!=nullptr){httpd_resp_set_status(req,\"400BadRequest\");"
+      "httpd_resp_send(req,\"{\\\"ok\\\":false,\\\"reason\\\":\\\"bodyisnotJSON\\\"}\",-1);returnESP_OK;}");
+  if (read_at == std::string::npos || nul_at == std::string::npos || count_of(set, "memchr(") != 1 ||
+      !(read_at < nul_at && nul_at < tz_at && nul_at < set.find("boolwrote_anything=false;"))) {
+    out.push_back("POST /api/settings reads its keys from a body that holds a NUL (refused, before any key is "
+                  "read, or its readers read different text)");
+  }
   if (tz_at == std::string::npos || count_of(set, "read_tz_from_settings(") != 1 ||
       set.find("json_string_field(") != std::string::npos || open_at == std::string::npos ||
       !(tz_at < open_at)) {
@@ -2229,6 +2276,19 @@ static int test_the_settings_post_finds_keys_with_the_reader() {
     {"filter_foreign is read as a key of something else", "csi_integration.cpp",
      "json_object_member(body, got, \"filter_foreign\", &ff_member)",
      "json_object_member(body + 1, got - 1, \"filter_foreign\", &ff_member)"},
+    // The F462 review: a NUL inside the body split it between the readers.
+    {"a body that holds a NUL is not refused", "csi_integration.cpp",
+     "  if (memchr(body, '\\0', got) != nullptr) {\n"
+     "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+     "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"
+     "    return ESP_OK;\n  }\n",
+     ""},
+    {"a NUL is looked for only up to the first NUL", "csi_integration.cpp",
+     "  if (memchr(body, '\\0', got) != nullptr) {", "  if (memchr(body, '\\0', strlen(body)) != nullptr) {"},
+    {"a body that holds a NUL is answered but not refused", "csi_integration.cpp",
+     "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"
+     "    return ESP_OK;\n",
+     "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"},
     {"the time zone's string is read from the body's start", "csi_settings_nvs.cpp",
      "tz_rule::json_string_field(zone.key, \"\\\"tz\\\"\", tz, tz_cap)",
      "tz_rule::json_string_field(body, \"\\\"tz\\\"\", tz, tz_cap)"},
@@ -2248,6 +2308,21 @@ static int test_the_settings_post_finds_keys_with_the_reader() {
       std::fprintf(stderr, "mutation '%s' was not caught\n", mu.name);
       CHECK(false);
     }
+  }
+  // The NUL refusal moved below the time zone's read: the zone would be
+  // read, and a bad one refused, from text the refusal then rejects.
+  {
+    const std::string refusal =
+        "  if (memchr(body, '\\0', got) != nullptr) {\n"
+        "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+        "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"
+        "    return ESP_OK;\n  }\n";
+    std::string moved = integ;
+    CHECK(mutate(moved, refusal, ""));
+    CHECK(mutate_after(moved, "esp_err_t handle_settings_post(httpd_req_t* req) {",
+                       "  Preferences prefs;\n  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) {",
+                       refusal + "  Preferences prefs;\n  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) {"));
+    CHECK(!settings_reader_problems(moved, nvs).empty());
   }
   return 0;
 }

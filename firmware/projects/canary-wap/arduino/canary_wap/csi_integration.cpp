@@ -1214,6 +1214,17 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
     return ESP_OK;
   }
+  /* A NUL inside the body is no JSON byte, and it would split the body in
+   * two: "filter_foreign" is read over all `got` bytes, the time zone and
+   * the stores to the first NUL, so {"pet_mode":true,"filter_foreign":false}
+   * followed by a NUL and junk stored pet mode and not the filter, and
+   * answered ok (the F462 review). Refused here, before any key is read,
+   * every reader below reads the same `got` bytes (strlen(body) == got). */
+  if (memchr(body, '\0', got) != nullptr) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body is not JSON\"}", -1);
+    return ESP_OK;
+  }
 
   bool wrote_anything = false;
 

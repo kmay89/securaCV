@@ -732,6 +732,16 @@ that trickles a byte per wait up to a wait per byte, the budget
 `POST /api/mqtt/config` and the Beacon routes already have, behind the same
 authorization.
 
+A body that holds a NUL byte is refused with `400`
+`{"ok":false,"reason":"body is not JSON"}` before any key is read, and nothing
+in it is written. Each key is then read as a member of the body's own JSON
+object (sweep F462), where a JSON parser finds it: a value spelled like a key
+is not the key (`{"label":"privacy_ceiling","x":"p2"}` stores no ceiling), a
+key inside a nested object or an array is not one of the body's, and a key the
+body names twice is read from neither copy. A body that is not one JSON object
+(cut, malformed, or with text after it) stores nothing and is answered `400`
+`{"ok":false,"reason":"no recognized keys"}`.
+
 Each module setting a POST carries is stored on the shared key map's row
 for its module key (`firmware/common/csi/src/csi_module_settings_nvs.h`):
 `pet_mode`, `preset` and `sensitivity` on `core.presence.pet_mode`,
