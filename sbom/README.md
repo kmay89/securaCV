@@ -39,15 +39,22 @@ when the pin was set, so which release of a tool writes a bill of materials no
 longer depends on the day it was built. A bump is an edit of that variable and
 of its row above. The install lines read the variable
 (`cargo install cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION" --locked`,
-`npm install -g "@cyclonedx/cdxgen@$CDXGEN_VERSION"`), and so does the key the built
-`cargo-cyclonedx` binary is cached under (`cargo-cyclonedx-<os>-<version>`:
-one build per bump, nothing that rotates). `--locked` builds `cargo-cyclonedx`
-from the lockfile it was published with. The `cdxgen` pin is narrower:
-`cdxgen` names its direct dependencies exactly but publishes no shrinkwrap, so
-the ranges inside those dependencies still resolve when the job installs it.
-Each document records the tool that wrote it in `metadata.tools`.
-`scripts/tests/test_gen_firmware_sbom.py` holds every install line, the cache
-key and this table to the two variables.
+`npm install -g --ignore-scripts "@cyclonedx/cdxgen@$CDXGEN_VERSION"`), and so
+does the key the built `cargo-cyclonedx` binary is cached under
+(`cargo-cyclonedx-<version>-<os>`, which moves only when the version does).
+`--locked` builds `cargo-cyclonedx` from the lockfile it was published with.
+The `cdxgen` pin is narrower: `cdxgen` names its direct dependencies exactly
+but publishes no shrinkwrap, so the ranges inside those dependencies still
+resolve when the job installs it (`--ignore-scripts` keeps any of them from
+running an install script there). Each document records the tool that wrote
+it in `metadata.tools`, and the step after the gate reads the pinned version
+back from there on every Rust and Node document the job uploads.
+`scripts/tests/test_gen_firmware_sbom.py` holds the install lines, the cache
+key and each row's version and variable to the two variables, and runs that
+step on documents in both tools' shapes. Nothing checks the "Writes" column:
+it is the spec version each tool writes by default at its pin, read off its
+output when the pin was set, so a bump that moves a tool's default has to
+edit it by hand.
 
 ## The firmware SBOM
 

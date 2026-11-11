@@ -136,6 +136,8 @@ jobs:
         #    schema check, so cyclonedx-python-lib is too, at the same exact
         #    pin as that step. The tests import it unconditionally: a
         #    skipTest on ImportError reads as covered while catching nothing.
+        #    They also run sbom.yml's tool-version step with bash and jq (both
+        #    on the image) on documents in cargo-cyclonedx's and cdxgen's shapes.
         #  • canary-sentinel's copy of canary-sense's net/witness stack
         #    (test_check_sentinel_net_sync.py) — runs the real sync script on a
         #    scratch copy of both trees: a TLS-gate bypass, a MAC client ID or

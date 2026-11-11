@@ -24,11 +24,15 @@ What is pinned and why:
     FILE is one error line; bare --validate refuses a write flag beside it;
   • the validator's pip pin is one string across lint.yml, sbom.yml, the
     README and the generator;
-  • sbom.yml's own two tools are pinned exactly (CI26): every `cargo install`
-    and `npm install -g` names an x.y.z from the job env (cargo with
-    --locked), the cargo-cyclonedx binary is cached under that version and
-    nothing that rotates, the check refuses each way back to floating, and
-    the README's tool rows say the same versions;
+  • sbom.yml's own two tools are pinned exactly (CI26): every command that
+    installs or fetches a package by name (cargo install, npm install, npx,
+    npm exec, pnpm/yarn/bun add and dlx) names an x.y.z from the job env
+    (cargo with --locked; cargo binstall is refused), every cache of the
+    cargo-cyclonedx binary keys on that version first and nothing that
+    rotates, the check refuses each listed way back to floating and its
+    guards an install or a cache it cannot read, the step that reads each
+    pin back off the documents is run on both tools' shapes, and the
+    README's tool rows say the same versions;
   • the two Arduino axes: sketch.yaml profiles are read from YAML (the
     files' comments quote core numbers too), workflow rows carry their
     matrix-resolved library pins and the sketch they compile, the agreement
@@ -41,11 +45,15 @@ Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
 from __future__ import annotations
 
+import fnmatch
 import importlib.util
 import io
 import json
+import os
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -390,77 +398,207 @@ class ValidatorPin(unittest.TestCase):
 
 SBOM_YML = gs.WORKFLOWS / "sbom.yml"
 # The tools sbom.yml installs to write the Rust and Node documents, each with
-# the job env variable that pins it. A new `cargo install` or `npm install -g`
-# in sbom.yml fails the test below until it is pinned the same way and named
-# here.
+# the job env variable that pins it. Any other package a run line installs or
+# runs by name (the forms _installs reads: cargo install, npm install/i/add,
+# npx, npm exec, pnpm/yarn/bun add, their dlx/x) fails the test below until it
+# is pinned the same way and named here, and cargo binstall is refused outright.
 SBOM_TOOLS = {"cargo-cyclonedx": "CARGO_CYCLONEDX_VERSION",
               "@cyclonedx/cdxgen": "CDXGEN_VERSION"}
-# A bare x.y.z: `cargo install --version` installs exactly that release (an
-# operator or a partial version would be a requirement it resolves), and to
-# npm it is one version, not a range or a dist-tag.
+# The built binaries the job caches, and where cargo puts them.
+SBOM_CACHED = {"cargo-cyclonedx": "~/.cargo/bin/cargo-cyclonedx"}
+# The step after the gate that reads each pin back off the documents.
+SBOM_TOOL_STEP = "Check each document names the pinned tool that wrote it"
+# A bare x.y.z. To `cargo install --version` that is exactly one release (an
+# operator makes it a requirement cargo resolves, and cargo refuses a partial
+# version outright); to npm it is one version, where a partial one is a range
+# and a word is a dist-tag.
 _EXACT_VERSION = re.compile(r"\d+\.\d+\.\d+")
 _ENV_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 _EXPR = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
-# cargo install options that take a value (the value is not the crate name)
+# in a run line, `${{ env.NAME }}` is the job env's value, as `$NAME` is
+_ENV_EXPR = re.compile(r"\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+_SHELL_OPS = set("();<>|&")
+# cargo options that take a value (the value is not the crate name), the
+# global ones before the subcommand included
 _CARGO_VALUED = {"--version", "--vers", "--root", "--target", "--target-dir",
                  "--features", "-F", "--git", "--branch", "--tag", "--rev",
                  "--path", "--registry", "--index", "--profile", "-j", "--jobs",
-                 "--config", "-Z", "--bin", "--example", "--color"}
+                 "--config", "-Z", "-C", "--bin", "--example", "--color"}
+# npm, pnpm, yarn and bun options that take a value (the value is not a
+# package; `-p`/`--package` names one, read on its own)
+_NPM_VALUED = {"--prefix", "--registry", "--location", "--cache", "--userconfig",
+               "--globalconfig", "--tag", "--before", "--omit", "--include",
+               "--install-strategy", "--loglevel", "-w", "--workspace", "-C",
+               "--dir", "--cwd", "--filter", "-c", "--call", "--shell"}
+_NPM_PACKAGE = {"-p", "--package"}
+# The commands that fetch an npm package by name. "install": every positional
+# is a package. "run": the first positional (or each --package) is fetched and
+# run, and the rest of the line is the tool's own arguments.
+_NPM_LIKE = {("npm", "install"): "install", ("npm", "i"): "install",
+             ("npm", "in"): "install", ("npm", "add"): "install",
+             ("npm", "install-test"): "install", ("npm", "it"): "install",
+             ("pnpm", "add"): "install", ("yarn", "add"): "install",
+             ("yarn", "global", "add"): "install", ("bun", "add"): "install",
+             ("npx",): "run", ("npm", "exec"): "run", ("npm", "x"): "run",
+             ("pnpm", "dlx"): "run", ("yarn", "dlx"): "run", ("bunx",): "run",
+             ("bun", "x"): "run"}
+
+
+def _commands(line: str) -> list[list[str]]:
+    """The simple commands on one shell line, each as its words: split at the
+    control operators, with a redirection and its target dropped, a command
+    substitution read as a command of its own, and `${{ env.NAME }}` read as
+    the `${NAME}` the job env exports (any other expression stays one word)."""
+    line = _ENV_EXPR.sub(r"${\1}", line)
+    line = _EXPR.sub(lambda m: "${{" + "".join(m.group(1).split()) + "}}", line)
+    lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    try:
+        tokens = list(lex)
+    except ValueError:  # a quote this line opens and a later one closes
+        tokens = [w.strip("'\"") for w in re.findall(r"[();<>|&]+|[^\s();<>|&]+", line)]
+    commands: list[list[str]] = []
+    words: list[str] = []
+    drop_target = False
+    for tok in tokens:
+        if drop_target:
+            drop_target = False
+            continue
+        if tok and set(tok) <= _SHELL_OPS:
+            if ("<" in tok or ">" in tok) and not ("(" in tok or ")" in tok):
+                if words and words[-1].isdigit():  # the fd in 2>&1
+                    words.pop()
+                drop_target = True
+                continue
+            if words:
+                commands.append(words)
+            words = []
+            continue
+        for sub in re.finditer(r"\$\(|`", tok):  # "$(npm i x)" is one quoted word
+            commands += _commands(tok[sub.end():])
+        words.append(tok.strip("`"))
+    if words:
+        commands.append(words)
+    return commands
+
+
+def _npm_spec(spec: str) -> tuple[str, str | None]:
+    """(package, version or None) of `name`, `name@version`, `@scope/name@version`."""
+    scoped = spec.startswith("@")
+    name, at, ver = (spec[1:] if scoped else spec).partition("@")
+    return ("@" if scoped else "") + name, ver if at else None
+
+
+def _npm_specs(args: list[str], mode: str) -> list[str]:
+    """The package specs an npm-like command (see _NPM_LIKE) fetches."""
+    named: list[str] = []
+    specs: list[str] = []
+    j = 0
+    while j < len(args):
+        arg = args[j]
+        if arg in _NPM_PACKAGE:
+            named += args[j + 1:j + 2]
+            j += 2
+        elif arg.startswith("--package="):
+            named.append(arg.split("=", 1)[1])
+            j += 1
+        elif arg in _NPM_VALUED:
+            j += 2
+        elif arg.startswith("-"):  # a flag, `--location=global` and `--` among them
+            j += 1
+        elif mode == "run":
+            return named or [arg]
+        else:
+            specs.append(arg)
+            j += 1
+    return named + specs
+
+
+def _cargo_installs(args: list[str], flags: set[str]) -> list[tuple[str, str, str | None, set[str]]]:
+    """The crates a `cargo install` with these arguments installs."""
+    version, crates, j = None, [], 0
+    while j < len(args):
+        arg = args[j]
+        if arg in _CARGO_VALUED:
+            if arg in {"--version", "--vers"} and j + 1 < len(args):
+                version = args[j + 1]
+            j += 2
+            continue
+        if arg.startswith(("--version=", "--vers=")):
+            version = arg.split("=", 1)[1]
+        elif arg.startswith("-"):
+            flags = flags | {arg}
+        else:
+            crates.append(arg)
+        j += 1
+    out = []
+    for crate in crates:
+        name, at, ver = crate.partition("@")
+        out.append(("cargo install", name, ver if at else version, flags))
+    return out
 
 
 def _installs(line: str) -> list[tuple[str, str, str | None, set[str]]]:
-    """(manager, package, version token or None, flags) for each package a
-    `cargo install` or global `npm install` on this shell line installs."""
-    try:
-        words = shlex.split(line, comments=True)
-    except ValueError:  # a quote this line opens and a later one closes
-        words = [w.strip("'\"") for w in line.split()]
-    found = []
-    for i in range(len(words) - 1):
-        if words[i] == "cargo" and words[i + 1] == "install":
-            args, version, crates, j = words[i + 2:], None, [], 0
-            while j < len(args) and args[j] not in {"&&", "||", ";", "|"}:
-                arg = args[j]
-                if arg in _CARGO_VALUED:
-                    if arg in {"--version", "--vers"} and j + 1 < len(args):
-                        version = args[j + 1]
-                    j += 2
-                    continue
-                if arg.startswith(("--version=", "--vers=")):
-                    version = arg.split("=", 1)[1]
-                elif not arg.startswith("-"):
-                    crates.append(arg)
-                j += 1
-            flags = {a for a in args[:j] if a.startswith("-")}
-            for crate in crates:
-                name, at, ver = crate.partition("@")
-                found.append(("cargo", name, ver if at else version, flags))
-        if words[i] == "npm" and words[i + 1] in {"install", "i", "add"}:
-            args = []
-            for arg in words[i + 2:]:
-                if arg in {"&&", "||", ";", "|"}:
-                    break
-                args.append(arg)
-            if not {"-g", "--global"} & set(args):
+    """(command, package, version token or None, flags) for each package a
+    command on this shell line installs or fetches by name. A cargo binstall
+    comes back as ("cargo binstall", "", None, set()), refused whatever it names."""
+    found: list[tuple[str, str, str | None, set[str]]] = []
+    for words in _commands(line):
+        for i, word in enumerate(words):
+            if word == "cargo":
+                j, flags = i + 1, set()
+                while j < len(words) and words[j].startswith(("+", "-")):  # +nightly, --locked
+                    flags.add(words[j])
+                    j += 2 if words[j] in _CARGO_VALUED else 1
+                sub = words[j] if j < len(words) else ""
+                if sub == "install":
+                    found += _cargo_installs(words[j + 1:], flags)
+                elif sub == "binstall":
+                    found.append(("cargo binstall", "", None, set()))
                 continue
-            for spec in (a for a in args if not a.startswith("-")):
-                scoped = spec.startswith("@")
-                name, at, ver = spec[1:].partition("@") if scoped else spec.partition("@")
-                found.append(("npm", ("@" if scoped else "") + name, ver if at else None, set()))
+            if word == "cargo-binstall":
+                found.append(("cargo binstall", "", None, set()))
+                continue
+            for command, mode in _NPM_LIKE.items():
+                if tuple(words[i:i + len(command)]) == command:
+                    for spec in _npm_specs(words[i + len(command):], mode):
+                        found.append((" ".join(command), *_npm_spec(spec), set()))
     return found
+
+
+def _cache_holds(path: str, target: str) -> bool:
+    """Whether an actions/cache `path` value holds target: the path itself, a
+    directory above it, or a glob that matches either, unless a `!` pattern
+    excludes it the same way. $HOME and the runner's home read as ~."""
+    def norm(p: str) -> str:
+        p = re.sub(r"^(?:\$HOME|\$\{HOME\}|\$\{\{\s*env\.HOME\s*\}\}|/home/runner)(?=/|$)", "~", p)
+        return p.rstrip("/") or "/"
+    parts = target.split("/")
+    above = ["/".join(parts[:k]) for k in range(1, len(parts) + 1)]
+    held = excluded = False
+    for raw in (p.strip() for p in path.splitlines()):
+        if not raw:
+            continue
+        pattern = norm(raw.lstrip("!"))
+        if any(fnmatch.fnmatchcase(p, pattern) for p in above):
+            if raw.startswith("!"):
+                excluded = True
+            else:
+                held = True
+    return held and not excluded
 
 
 def _sbom_tool_pin_findings(text: str) -> list[str]:
     """What is wrong with how this sbom.yml pins the tools it installs; an
-    empty list is a workflow whose every tool install, and the cargo binary's
-    cache key, names an exact version from the job env."""
+    empty list is a workflow whose every tool install, and every cache of the
+    cargo binary, names an exact version from the job env."""
     wf = gs._yaml().safe_load(text) or {}
     findings: list[str] = []
     installed = {tool: 0 for tool in SBOM_TOOLS}
     cached: set[str] = set()
     for job_name, job in (wf.get("jobs") or {}).items():
         # what the install lines and the cache key read: the workflow's env
-        # under the job's; a step that sets a pin of its own is refused below
+        # under the job's; a step or a run line that sets a pin is refused below
         job_env = {k: str(v) for k, v in {**(wf.get("env") or {}),
                                            **((job or {}).get("env") or {})}.items()}
         for step in (job or {}).get("steps") or []:
@@ -470,11 +608,21 @@ def _sbom_tool_pin_findings(text: str) -> list[str]:
                 findings.append(f"{where}: sets {var} for one step; the pin is the "
                                 "job's, which the cache key reads too")
             run = str(step.get("run") or "").replace("\\\n", " ")  # join continued lines
+            for var in sorted(SBOM_TOOLS.values()):
+                # VAR=, export VAR=, "VAR=..." >> "$GITHUB_ENV", unset VAR
+                if re.search(rf"(?<![\w${{]){var}=|\bunset\b[^\n;&|]*\b{var}\b", run):
+                    findings.append(f"{where}: changes {var} in a run line, past the "
+                                    "job env the cache key reads")
             for line in run.splitlines():
-                for manager, tool, token, flags in _installs(line):
+                for command, tool, token, flags in _installs(line):
+                    if command == "cargo binstall":
+                        findings.append(f"{where}: cargo binstall fetches a prebuilt "
+                                        "binary; sbom.yml builds its tools at the pin "
+                                        f"with cargo install --locked: {line.strip()}")
+                        continue
                     var = SBOM_TOOLS.get(tool)
                     if var is None:
-                        findings.append(f"{where}: {manager} installs {tool}, which "
+                        findings.append(f"{where}: {command} fetches {tool}, which "
                                         "SBOM_TOOLS does not pin")
                         continue
                     installed[tool] += 1
@@ -485,38 +633,48 @@ def _sbom_tool_pin_findings(text: str) -> list[str]:
                     elif not _EXACT_VERSION.fullmatch(job_env.get(var, "")):
                         findings.append(f"{where}: the job env's {var} is "
                                         f"{job_env.get(var)!r}, not an exact x.y.z")
-                    if manager == "cargo" and "--locked" not in flags:
+                    if command == "cargo install" and "--locked" not in flags:
                         findings.append(f"{where}: cargo install {tool} without "
                                         f"--locked: {line.strip()}")
-            uses = str(step.get("uses") or "")
-            if not uses.startswith("actions/cache@"):
+            if not re.match(r"actions/cache(?:/restore|/save)?@", str(step.get("uses") or "")):
                 continue
             with_ = step.get("with") or {}
-            paths = str(with_.get("path") or "").split()
-            for tool, var in SBOM_TOOLS.items():
-                if f"~/.cargo/bin/{tool}" not in paths:
+            for tool, binary in SBOM_CACHED.items():
+                if not _cache_holds(str(with_.get("path") or ""), binary):
                     continue
+                var = SBOM_TOOLS[tool]
                 cached.add(tool)
                 key = _EXPR.sub(lambda m: "${{ " + m.group(1) + " }}",
                                 str(with_.get("key") or ""))
-                want = f"{tool}-${{{{ runner.os }}}}-${{{{ env.{var} }}}}"
+                want = f"{tool}-${{{{ env.{var} }}}}-${{{{ runner.os }}}}"
                 if key != want:
-                    findings.append(f"{where}: the {tool} binary is cached under "
-                                    f"{key!r}, not {want!r} (a key on anything "
-                                    "but the version rebuilds the same release "
-                                    "or restores another one)")
+                    findings.append(f"{where}: {binary} is cached under {key!r}, not "
+                                    f"{want!r} (a key on anything but the version "
+                                    "rebuilds the same release or restores another "
+                                    "one, and a key that ends in the version is a "
+                                    "prefix of a longer version's)")
                 if job_env.get(var) is None:
                     findings.append(f"{where}: this job's env does not set {var}, "
                                     f"the {tool} pin its cache key must read")
                 if with_.get("restore-keys"):
-                    findings.append(f"{where}: restore-keys on the {tool} binary "
-                                    "would restore another version's build")
+                    findings.append(f"{where}: restore-keys on {binary} would "
+                                    "restore another version's build")
     for tool, count in installed.items():
         if not count:
             findings.append(f"no step installs {tool}")
-    if "cargo-cyclonedx" not in cached:
-        findings.append("no actions/cache step holds ~/.cargo/bin/cargo-cyclonedx")
+    for tool, binary in SBOM_CACHED.items():
+        if tool not in cached:
+            findings.append(f"no actions/cache step holds {binary}")
     return findings
+
+
+def _mutate(text: str, edits) -> str:
+    """text with each (old, new) applied; each old must occur exactly once."""
+    for old, new in edits:
+        if text.count(old) != 1:
+            raise AssertionError(f"{old!r} occurs {text.count(old)} times, not once")
+        text = text.replace(old, new)
+    return text
 
 
 class SbomToolPins(unittest.TestCase):
@@ -526,44 +684,187 @@ class SbomToolPins(unittest.TestCase):
     `npm install -g @cyclonedx/cdxgen` (npm latest on every run), so which
     tool wrote a release's bill of materials depended on the day it ran."""
 
-    def test_every_tool_install_and_the_binary_cache_carry_the_env_pin(self):
-        self.assertEqual(_sbom_tool_pin_findings(SBOM_YML.read_text(encoding="utf-8")), [])
+    def setUp(self):
+        self.text = SBOM_YML.read_text(encoding="utf-8")
+        self.job = gs._yaml().safe_load(self.text)["jobs"]["generate-sbom"]
 
-    def test_the_check_refuses_each_way_back_to_floating(self):
-        text = SBOM_YML.read_text(encoding="utf-8")
+    def test_every_tool_install_and_the_binary_cache_carry_the_env_pin(self):
+        self.assertEqual(_sbom_tool_pin_findings(self.text), [])
+
+    def test_the_check_refuses_each_listed_way_back_to_floating(self):
         # built from today's pins, so a bump needs no edit in this test
-        env = gs._yaml().safe_load(text)["jobs"]["generate-sbom"]["env"]
+        env = self.job["env"]
         cargo_pin = f'CARGO_CYCLONEDX_VERSION: "{env["CARGO_CYCLONEDX_VERSION"]}"'
         cdxgen_pin = f'CDXGEN_VERSION: "{env["CDXGEN_VERSION"]}"'
-        week = "-${{ steps.week.outputs.stamp }}"
-        key = "key: cargo-cyclonedx-${{ runner.os }}-${{ env.CARGO_CYCLONEDX_VERSION }}"
-        for label, old, new in (
-            ("no --version", ' --version "$CARGO_CYCLONEDX_VERSION"', ""),
-            ("a typed version, not the env's", '--version "$CARGO_CYCLONEDX_VERSION"',
-             f'--version {env["CARGO_CYCLONEDX_VERSION"]}'),
-            ("no --locked", '"$CARGO_CYCLONEDX_VERSION" --locked', '"$CARGO_CYCLONEDX_VERSION"'),
-            ("no @version on cdxgen", '"@cyclonedx/cdxgen@$CDXGEN_VERSION"', "@cyclonedx/cdxgen"),
-            ("a dist-tag", cdxgen_pin, 'CDXGEN_VERSION: "latest"'),
-            ("a caret range", cargo_pin, 'CARGO_CYCLONEDX_VERSION: "^0.5"'),
-            ("a partial version", cdxgen_pin, 'CDXGEN_VERSION: "12"'),
-            ("the week stamp back in the key", key, key + week),
-            ("a key without the version", key, "key: cargo-cyclonedx-${{ runner.os }}" + week),
-            ("a restore-keys prefix", key, key + "\n        restore-keys: cargo-cyclonedx-"),
-            ("a step's own pin", "    - name: Install cdxgen\n",
-             "    - name: Install cdxgen\n      env:\n        CDXGEN_VERSION: latest\n"),
+        cargo_install = 'run: cargo install cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION" --locked'
+        cdxgen_install = 'run: npm install -g --ignore-scripts "@cyclonedx/cdxgen@$CDXGEN_VERSION"'
+        node_doc = "run: cdxgen -t node -o sbom-node.cdx.json canary-vision/"
+        node_args = " -t node -o sbom-node.cdx.json canary-vision/"
+        path = "path: ~/.cargo/bin/cargo-cyclonedx"
+        key = "key: cargo-cyclonedx-${{ env.CARGO_CYCLONEDX_VERSION }}-${{ runner.os }}"
+        week = "key: cargo-cyclonedx-${{ runner.os }}-${{ steps.week.outputs.stamp }}"
+        second_cache = ("    - name: Install cargo-cyclonedx\n",
+                        "    - uses: actions/cache@v6\n      with:\n"
+                        "        path: @PATH@\n        " + week + "\n"
+                        "        restore-keys: cargo-cyclonedx-\n"
+                        "    - name: Install cargo-cyclonedx\n")
+        latest = "@cyclonedx/cdxgen is installed at 'latest'"
+        for label, edits, expected in (
+            # the install lines
+            ("no --version", [(' --version "$CARGO_CYCLONEDX_VERSION"', "")],
+             "cargo-cyclonedx is installed at None"),
+            ("a typed version, not the env's",
+             [('--version "$CARGO_CYCLONEDX_VERSION"', f'--version {env["CARGO_CYCLONEDX_VERSION"]}')],
+             f"cargo-cyclonedx is installed at '{env['CARGO_CYCLONEDX_VERSION']}'"),
+            ("no --locked", [('"$CARGO_CYCLONEDX_VERSION" --locked', '"$CARGO_CYCLONEDX_VERSION"')],
+             "without --locked"),
+            ("no @version on cdxgen", [('"@cyclonedx/cdxgen@$CDXGEN_VERSION"', "@cyclonedx/cdxgen")],
+             "@cyclonedx/cdxgen is installed at None"),
+            ("a second install, global by --location=",
+             [(cdxgen_install, cdxgen_install + " && npm i --location=global @cyclonedx/cdxgen@latest")],
+             latest),
+            ("a second install, global by --location",
+             [(cdxgen_install, cdxgen_install + " && npm i --location global @cyclonedx/cdxgen@latest")],
+             latest),
+            ("npx at a dist-tag", [(node_doc, "run: npx --yes @cyclonedx/cdxgen@latest" + node_args)],
+             latest),
+            ("npm exec at a dist-tag",
+             [(node_doc, "run: npm exec --yes -- @cyclonedx/cdxgen@latest" + node_args)], latest),
+            ("pnpm dlx, unpinned", [(node_doc, "run: pnpm dlx @cyclonedx/cdxgen" + node_args)],
+             "@cyclonedx/cdxgen is installed at None"),
+            ("inside a command substitution",
+             [(cdxgen_install, 'run: echo "$(npm install -g @cyclonedx/cdxgen@latest)"')], latest),
+            ("cargo binstall after the pinned build",
+             [(cargo_install, cargo_install + " && cargo binstall -y --force cargo-cyclonedx")],
+             "cargo binstall fetches a prebuilt binary"),
+            ("a third tool, unpinned",
+             [(cdxgen_install, cdxgen_install + " @cyclonedx/cyclonedx-cli")],
+             "fetches @cyclonedx/cyclonedx-cli, which SBOM_TOOLS does not pin"),
+            # the pins themselves
+            ("a dist-tag", [(cdxgen_pin, 'CDXGEN_VERSION: "latest"')],
+             "CDXGEN_VERSION is 'latest', not an exact x.y.z"),
+            ("a caret range", [(cargo_pin, 'CARGO_CYCLONEDX_VERSION: "^0.5"')],
+             "CARGO_CYCLONEDX_VERSION is '^0.5', not an exact x.y.z"),
+            ("a partial version", [(cdxgen_pin, 'CDXGEN_VERSION: "12"')],
+             "CDXGEN_VERSION is '12', not an exact x.y.z"),
+            ("the pin gone from the job env", [(cargo_pin, "")],
+             "this job's env does not set CARGO_CYCLONEDX_VERSION"),
+            ("a step's own pin", [("    - name: Install cdxgen\n",
+                                   "    - name: Install cdxgen\n      env:\n        CDXGEN_VERSION: latest\n")],
+             "sets CDXGEN_VERSION for one step"),
+            ("a pin rewritten through $GITHUB_ENV",
+             [("run: cd canary-vision && npm ci\n",
+               'run: cd canary-vision && npm ci && echo "CDXGEN_VERSION=latest" >> "$GITHUB_ENV"\n')],
+             "changes CDXGEN_VERSION in a run line"),
+            ("a pin unset", [(cargo_install, "run: unset CARGO_CYCLONEDX_VERSION; " + cargo_install[5:])],
+             "changes CARGO_CYCLONEDX_VERSION in a run line"),
+            # the guards behind the parser: an install or a cache it cannot read
+            ("cdxgen from a command the parser does not read",
+             [(cdxgen_install, "run: volta install @cyclonedx/cdxgen")],
+             "no step installs @cyclonedx/cdxgen"),
+            ("cargo-cyclonedx from a command the parser does not read",
+             [(cargo_install, "run: cargo quickinstall cargo-cyclonedx")],
+             "no step installs cargo-cyclonedx"),
+            ("a cache of something else", [(path, "path: ~/.cargo/registry")],
+             "no actions/cache step holds ~/.cargo/bin/cargo-cyclonedx"),
+            ("a cache that excludes the binary",
+             [(path, "path: |\n          ~/.cargo/bin\n          !~/.cargo/bin/cargo-cyclonedx")],
+             "no actions/cache step holds ~/.cargo/bin/cargo-cyclonedx"),
+            # the cache key
+            ("the week stamp back in the key", [(key, key + "-${{ steps.week.outputs.stamp }}")],
+             "is cached under"),
+            ("a key without the version", [(key, week)], "is cached under"),
+            ("the version after the OS",
+             [(key, "key: cargo-cyclonedx-${{ runner.os }}-${{ env.CARGO_CYCLONEDX_VERSION }}")],
+             "is cached under"),
+            ("a restore-keys prefix", [(key, key + "\n        restore-keys: cargo-cyclonedx-")],
+             "restore-keys on ~/.cargo/bin/cargo-cyclonedx"),
+            ("the directory above the binary, on a weekly key", [(path, "path: ~/.cargo/bin"), (key, week)],
+             "is cached under"),
+            ("a second cache over ~/.cargo/bin", [(second_cache[0], second_cache[1].replace("@PATH@", "~/.cargo/bin"))],
+             "restore-keys on ~/.cargo/bin/cargo-cyclonedx"),
+            ("a second cache over a glob of $HOME/.cargo",
+             [(second_cache[0], second_cache[1].replace("@PATH@", "$HOME/.cargo/*"))], "is cached under"),
         ):
             with self.subTest(label):
-                self.assertEqual(text.count(old), 1, f"mutant {label!r} no longer applies")
-                self.assertNotEqual(_sbom_tool_pin_findings(text.replace(old, new)), [])
-        # and a third tool installed unpinned is not waved through
-        extra = text.replace('npm install -g "@cyclonedx/cdxgen@$CDXGEN_VERSION"',
-                             'npm install -g "@cyclonedx/cdxgen@$CDXGEN_VERSION" @cyclonedx/cyclonedx-cli')
-        self.assertNotEqual(extra, text)
-        self.assertNotEqual(_sbom_tool_pin_findings(extra), [])
+                findings = _sbom_tool_pin_findings(_mutate(self.text, edits))
+                self.assertTrue(any(expected in f for f in findings),
+                                f"no finding says {expected!r}: {findings}")
+
+    def test_the_check_reads_a_pin_spelled_another_way_as_the_same_pin(self):
+        cargo_install = 'cargo install cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION" --locked'
+        cdxgen_install = 'npm install -g --ignore-scripts "@cyclonedx/cdxgen@$CDXGEN_VERSION"'
+        for label, edits in (
+            ("${{ env.VAR }}", [('"$CARGO_CYCLONEDX_VERSION" --locked',
+                                 '"${{ env.CARGO_CYCLONEDX_VERSION }}" --locked')]),
+            ("crate@version", [(cargo_install,
+                                'cargo install cargo-cyclonedx@"$CARGO_CYCLONEDX_VERSION" --locked')]),
+            ("a valued npm flag", [(cdxgen_install, cdxgen_install.replace(
+                "-g ", '-g --prefix "$HOME/.npm-global" '))]),
+            ("a redirection", [(cdxgen_install, cdxgen_install + " 2>&1 | tee cdxgen-install.log")]),
+            ("npx at the pin", [("run: cdxgen -t node", 'run: npx --yes "@cyclonedx/cdxgen@$CDXGEN_VERSION" -t node')]),
+        ):
+            with self.subTest(label):
+                self.assertEqual(_sbom_tool_pin_findings(_mutate(self.text, edits)), [])
+
+    def test_the_tool_step_reads_each_pin_back_off_the_documents(self):
+        """The step after the gate, run here with bash and jq on documents in
+        each tool's own shape (cargo-cyclonedx's 1.3 tools array, cdxgen's 1.7
+        tools.components): the pinned releases pass, and a document naming
+        another release, another tool or none fails it."""
+        self.assertIsNotNone(shutil.which("jq"), "jq (on the ubuntu runners) runs the step")
+        steps = [s for s in self.job["steps"] if s.get("name") == SBOM_TOOL_STEP]
+        self.assertEqual(len(steps), 1, f"sbom.yml has no single {SBOM_TOOL_STEP!r} step")
+        self.assertEqual(steps[0].get("env"), {"APPS": "${{ steps.apps.outputs.list }}"})
+        pins = {var: str(self.job["env"][var]) for var in SBOM_TOOLS.values()}
+
+        def rust(version, name="cargo-cyclonedx", shape="array"):
+            tool = {"vendor": "CycloneDX", "name": name, "version": version}
+            tools = [tool] if shape == "array" else {"components": [tool]}
+            return {"bomFormat": "CycloneDX", "specVersion": "1.3", "metadata": {"tools": tools}}
+
+        def node(version):
+            return {"bomFormat": "CycloneDX", "specVersion": "1.7", "metadata": {"tools": {
+                "components": [{"group": "@cyclonedx", "name": "cdxgen", "version": version,
+                                "type": "application"}], "services": []}}}
+
+        cv, cd = pins["CARGO_CYCLONEDX_VERSION"], pins["CDXGEN_VERSION"]
+        good = {"sbom-rust.cdx.json": rust(cv), "sbom-node.cdx.json": node(cd),
+                "sbom-flasher-rust.cdx.json": rust(cv), "sbom-flasher-node.cdx.json": node(cd)}
+
+        def run(docs, apps="flasher:desktop"):
+            with tempfile.TemporaryDirectory() as tmp:
+                for name, doc in docs.items():
+                    (Path(tmp) / name).write_text(json.dumps(doc), encoding="utf-8")
+                return subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", steps[0]["run"]],
+                    cwd=tmp, env={**os.environ, **pins, "APPS": apps},
+                    capture_output=True, text=True, timeout=60)
+
+        for label, docs, apps in (
+            ("the pinned releases", good, "flasher:desktop"),
+            ("no app this run", {k: good[k] for k in ("sbom-rust.cdx.json", "sbom-node.cdx.json")}, ""),
+            ("a Rust document with the 1.5 tools shape",
+             {**good, "sbom-rust.cdx.json": rust(cv, shape="object")}, "flasher:desktop"),
+        ):
+            with self.subTest(label):
+                done = run(docs, apps)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        for label, name, doc in (
+            ("the kernel's, another cargo-cyclonedx", "sbom-rust.cdx.json", rust("0.0.1")),
+            ("an app's, another cargo-cyclonedx", "sbom-flasher-rust.cdx.json", rust("0.0.1")),
+            ("the vision's, another cdxgen", "sbom-node.cdx.json", node("0.0.1")),
+            ("an app's, another cdxgen", "sbom-flasher-node.cdx.json", node("0.0.1")),
+            ("another tool at the pin", "sbom-rust.cdx.json", rust(cv, name="cdxgen")),
+            ("no tools", "sbom-node.cdx.json", {"bomFormat": "CycloneDX", "specVersion": "1.7"}),
+        ):
+            with self.subTest(label):
+                done = run({**good, name: doc})
+                self.assertNotEqual(done.returncode, 0, done.stdout)
+                self.assertIn(f"::error::{name} does not name", done.stdout)
 
     def test_the_readme_names_the_pinned_versions(self):
-        job_env = gs._yaml().safe_load(SBOM_YML.read_text(encoding="utf-8"))[
-            "jobs"]["generate-sbom"]["env"]
+        job_env = self.job["env"]
         readme = (REPO / "sbom" / "README.md").read_text(encoding="utf-8")
         for tool, var in SBOM_TOOLS.items():
             with self.subTest(tool):

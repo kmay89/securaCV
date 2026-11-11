@@ -86,10 +86,17 @@ other filtered workflow.
   source (`cargo install <tool>`) cache the built binary. A pinned tool keys
   the cache on its version: `sbom.yml` installs cargo-cyclonedx with
   `--version "$CARGO_CYCLONEDX_VERSION" --locked` and caches it under
-  `cargo-cyclonedx-<os>-<version>`, one build per bump and nothing to rotate.
-  A tool that takes crates.io latest keys it on the ISO week, so "latest"
-  never goes stale longer than that: `audit.yml`'s cargo-audit and cargo-deny
-  (`cargo install <tool> --locked`, key `<tool>-<os>-<week>`).
+  `cargo-cyclonedx-<version>-<os>`, so the key moves only when the version
+  does. The version comes first because actions/cache falls back to a prefix
+  match on a key it misses, and a key that ended in `0.5.1` would match
+  `0.5.10`'s. A cold cache rebuilds the same release: GitHub drops an entry
+  unused for 7 days, and an entry a pull request saved is not visible to
+  main. A tool that takes crates.io latest keys it on the ISO week, so
+  "latest" never goes stale longer than that: `audit.yml`'s cargo-audit and
+  cargo-deny (`cargo install <tool> --locked`, key `<tool>-<os>-<week>`).
+  `fuzz.yml`'s cargo-fuzz follows neither: it takes latest, cached with the
+  fuzz build under a key on `Cargo.toml` and `fuzz/Cargo.toml`, so its
+  "latest" moves only when one of those does.
 - **Node** jobs installing from a lockfile use `setup-node`'s
   `cache: npm` with an explicit `cache-dependency-path`. A job that runs
   node at all (`node --test`, a `.mjs` generator, `npx`) sets it up with
