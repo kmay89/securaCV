@@ -37,7 +37,7 @@ items below.
   *Note (2026-11-04, #1920):* wave 23 adds bench rows this session owns: the
   ESP32-S3's first real die-temperature readings (F438: `/api/thermal`, the
   envsens tamper counter and the camera state over a PEEK session on a XIAO
-  ESP32S3 Sense); the hub hand-off's six `magic_pairing.md` §9 rows (F254) and
+  ESP32S3 Sense); the hub hand-off's `magic_pairing.md` §9 rows (F254) and
   the flagship's one-asker tap (F409) in the checklist; whether NimBLE stores
   `authenticated == 0` for a Just Works bond on the WAP (F446); the RS485
   exception on a 4.3B's glass (F317); and the WAP dashboard's bond-store note,
@@ -134,27 +134,20 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
 
 - [ ] **F38 [code+decision] Roadmap item 18's hardware key protection is
   still open** (a P1 row, listed here beside its sibling F5). Its
-  host-testable parts have landed: (a) all five first-boot identity keygens
-  (the canary (PIO) tree, canary-sense, canary-vision, canary-sentinel and
-  canary-wap) run inside `bootloader_random_enable()` /
-  `bootloader_random_disable()` (F5, #1704), and since #1966 each refuses a
-  draw `key_draw_check::is_flat()` calls flat (every byte equal, or a
-  popcount outside 48..208; a uniform draw is refused with odds of about
-  2^-82.5): `firmware/common/identity/key_draw_check.h`, staged in the WAP
-  sketch and held by `check_csi_sync.sh`, with `regression_check.sh`
-  requiring both calls in all five keygen files; (b) `{seq, chain_head}`
-  persist as one CRC-sealed NVS blob (`firmware/common/witness/chain_state.h`;
-  the WAP carries it since F59, #1749). The refusal is host-tested, not
-  bench-tested; on the WAP it takes F58's no-halt path and refuses the
-  boot's chain (F419). Open, recorded in roadmap row 18 and not attempted:
-  (c) a DS/HMAC-bound key (the DS route is RSA-only and reserved by
-  `hardware_root_of_trust.md` §5.4 / §8 #4, and `key_at_rest.h` reserves its
-  `hw-bound` label) and (d) an eFuse/RTC rollback anchor (design only); both
-  need the IDF-component toolchain (roadmap item 9) and a bench. Bench (U1):
-  K1's fresh-unit step (the keygen's `bootloader_random` pair shares the SAR
-  ADC the battery monitor has already opened: does the reading survive?) and
-  K2 (a power cut between record and persist never leaves a torn seq/head
-  pair).
+  host-testable parts, (a) and (b), have landed (the keygens' entropy window,
+  F5, #1704, and its flat-draw refusal,
+  `firmware/common/identity/key_draw_check.h`, #1966; the sealed chain
+  blob, `firmware/common/witness/chain_state.h`, F59, #1749; see CHANGELOG).
+  The flat-draw refusal is host-tested, not bench-tested; on the WAP it takes
+  F58's no-halt path and refuses the boot's chain (F419). Open, recorded in
+  roadmap row 18 and not attempted: (c) a DS/HMAC-bound key (the DS route is
+  RSA-only and reserved by `hardware_root_of_trust.md` §5.4 / §8 #4, and
+  `key_at_rest.h` reserves its `hw-bound` label) and (d) an eFuse/RTC
+  rollback anchor (design only); both need the IDF-component toolchain
+  (roadmap item 9) and a bench. Bench (U1): K1's fresh-unit step (the
+  keygen's `bootloader_random` pair shares the SAR ADC the battery monitor
+  has already opened: does the reading survive?) and K2 (a power cut between
+  record and persist never leaves a torn seq/head pair).
 
 (Roadmap items 1 and 2 were confirmed **fixed**, and the roadmap doc now says
 so — see D2 below.)
@@ -526,8 +519,13 @@ so — see D2 below.)
   `witness_provision_device()`, stops provisioning on false ("provisioning
   cannot continue"), so an honest result there halts a device on a full NVS
   instead of booting it with a key the next boot will not find (a new device
-  id and a broken Home Assistant pin). Maintainer to choose: halt, or boot
-  with a loud, counted ephemeral identity. Found doing F55.
+  id and a broken Home Assistant pin). canary-wap has the same posture and
+  the same open call: its `nvs_store_key()` (`canary_wap.ino`) ignores
+  `putBytes`' result too, and when its provisioning fails on a key it could
+  not make or store (since #1966 also a first-boot draw refused as flat,
+  F38) `setup()` goes on without a halt ("Whether to halt instead is F58's
+  call"); F419 lists what that boot still serves. Maintainer to choose:
+  halt, or boot with a loud, counted ephemeral identity. Found doing F55.
 
 - [ ] **F251 [code+human] The flagship `firmware/canary` has no Bluetooth
   setup door.** Magic pairing (the Improv-over-BLE door,
@@ -1107,8 +1105,9 @@ so — see D2 below.)
   records Chromium refusing `http://<name>.local:8080`), and
   `needsLocalName()` (`spa/app.js`) passes any `.local` host whatever its
   port, so an entry such as `canary-a3f7.local:8080` that is not the page's
-  own origin is refused by the CSP after the request starts. Refuse a non-default port before the request, with its own message
-  (use its `.local` name without a port), and add a row to
+  own origin is refused by the CSP after the request starts. Refuse a
+  non-default port before the request, with its own message (use its
+  `.local` name without a port), and add a row to
   `tests/spa/peer-discovery.test.js`. From code. Found by F448 (#1966).
 
 - [ ] **F474 [code] canary-vision: views set inline styles the served
@@ -1478,9 +1477,10 @@ so — see D2 below.)
   not by the timeout. The reconnect burst no longer holds the loop (F112's
   review), and the connect is not a wait the loop meets. A publishing worker
   (the loop task hands rows to it and reads results back, keeping F78's
-  per-row outcome) would take esp_mqtt off the loop task. From esp-mqtt's
-  source at the IDF 5.5.4 pin and a host model; not probed. Found by F112
-  (#1762).
+  per-row outcome) would take esp_mqtt off the loop task; it keeps QoS 0
+  while F147 is undecided and restates `csi_event_egress.h`'s watermark
+  comment and `docs/FAULT_MODEL.md` §2.3 (F147). From esp-mqtt's source at
+  the IDF 5.5.4 pin and a host model; not probed. Found by F112 (#1762).
 
 - [ ] **F147 [decision] canary-wap event rows sent at QoS 0 can be lost
   at a connection abort with the egress watermark already past them.**
@@ -2284,8 +2284,9 @@ so — see D2 below.)
   presence row should cost (a beacon signed with the session key, a wire
   change; a per-sender-address cap; evicting the stalest row rather than
   refusing the newest) and whether the threshold should count only rows a
-  signed frame confirmed (not safe alone, by its triage). From code and host
-  tests. Found by F213 (#1762).
+  signed frame confirmed (not safe alone: keys one radio beacons for ten
+  minutes still vote, F234). From code and host tests. Found by F213
+  (#1762).
 
 - [ ] **F234 [decision] canary-wap Chirp: whether an emergency chirp can be
   voted down, and what a voter must cost.** Since #1966 a suppress vote
@@ -2890,7 +2891,7 @@ so — see D2 below.)
 - [ ] **F477 [decision] A SHA-256 failure at provisioning halts the
   flagship until a power cycle.** Since #1966 `witness_provision_device()`
   refuses a fingerprint or genesis head the hash engine did not compute, and
-  `setup()` halts on that false (`while (true) delay(1000);`), the path a
+  `setup()` halts on that false (`while (true) { delay(1000); }`), the path a
   refused key already takes (F58). If an engine fault proves transient on
   hardware, the unit stays halted until its power is cut. Decide whether
   `setup()` should reboot instead, and how many times before it stops

@@ -41,31 +41,33 @@
   answers. `GET /api/csi/window` is composed and refused whole if it cannot
   fit, the Tuning Lab's coefficient and preset GETs send no row past its
   buffer, and `POST /api/mqtt/test` refuses an answer past its buffer.
-- **Bluetooth refuses what its own link did not set up (F447, F449, F460).**
-  On a Sense or a Vision the hub hand-off is taken only from the link that
-  sent the Wi-Fi settings, so a client that connects after the phone dropped
-  mid-join is refused it, and a refused second Wi-Fi write is logged as
-  refused. On a canary-wap FULL build, after a refused boot bring-up, the
-  pairing channel refuses a server Bluetooth Discovery made ("Not started:
-  Bluetooth Discovery started its server this boot; restart to pair"), so a
-  late Pair or Advertise tap waits for a reboot. A new host suite holds the
-  WAP's Chirp sender to the golden advert bytes.
+- **Bluetooth refuses what its own link did not set up (F460; F447 and F449
+  in part).** On a Sense or a Vision the hub hand-off is taken only from the
+  link that sent the Wi-Fi settings, so a client that connects after the
+  phone dropped mid-join is refused it, and a refused second Wi-Fi write is
+  logged as refused. On a canary-wap FULL build, after a refused boot
+  bring-up, the pairing channel refuses a server Bluetooth Discovery made
+  ("Not started: Bluetooth Discovery started its server this boot; restart
+  to pair"), so a late Pair or Advertise tap waits for a reboot. A new host
+  suite holds the WAP's Chirp sender to the golden advert bytes.
 - **canary-wap Opera pairing (F318's guard, F140 and F445 in part).** A
   Canary that holds an opera and its members refuses a pairing COMPLETE from
   another opera's initiator it does not hold, before adding anyone, and logs
   why; a re-pair with a held member into another opera still goes through
   and keeps the joiner's other members (spec §5.2). Two pairing lines that
   reached `GET /api/logs` cut at 79 bytes are now message plus detail, no
-  word changed, and a host test holds every `mesh_network.cpp` log line to
-  the ring's fields.
+  word changed. A host test holds every other `mesh_network.cpp` health line
+  to the ring's fields; the CONFIRM-mismatch line, its one recorded
+  exception, still reaches `GET /api/logs` cut (F445).
 - **Dashboards (F465; F468 and F443 in part).** The WAP dashboard's
   acknowledge dialog shows a refused acknowledgment as text ("Not
   acknowledged: Log entry not found") and stays open, where it closed as if
   the entry were acknowledged. Both dashboards' raw splices into markup are
-  held by shrink-only ledgers (`html_splices.js`): a new one fails. The
+  held by shrink-only ledgers (`html_splices.js`): a new one in a shape the
+  scanner reads fails (the script's header names what it does not see). The
   Sensing dashboard's reading-grade gate strips `COPY`'s comments before it
   grades: 89 strings at 3.35, where it graded 84 at 3.46.
-- **Home Assistant reads only what was sent (HA60, HA46 in part).** The
+- **Home Assistant reads only what was sent (HA60 and HA46 in part).** The
   Health sensor's `battery_percent` no longer shows 100 for a unit that says
   it has a battery and sends no number for its charge (no shipping firmware
   sends that body); mains units read 100 as before. The battery blueprint
@@ -104,7 +106,7 @@
   flagship's `/EXPORT` (F476) and two calls on a hash that fails at
   provisioning or at a link (F477, F478).
 - Host-tested here: the canary-wap host suite under g++, clang++ 18 and
-  ASan/UBSan, the firmware host suites in both mbedTLS spellings, both
+  ASan/UBSan, `test_sha_fail_flagship` in both mbedTLS spellings, both
   dashboards' and the Vision app's node tests, the Vision app in headless
   Chromium, Home Assistant's tests on real cores 2026.10.1 and 2026.5.0, and
   the slot check's workflow steps under bash. The ESP32 PlatformIO and
