@@ -17202,9 +17202,75 @@
      ]
     },
     {
+     "name": "Bracket",
+     "note": "mirror canary_vision_enclosure bracket defaults (gen_templates.py --check)",
+     "params": [
+      {
+       "name": "br_x",
+       "default": "46.0",
+       "comment": "the Vision bracket plate's width along its hinge axis, its br_x (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "br_y",
+       "default": "34.0",
+       "comment": "the Vision bracket plate's height, its br_y (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "br_screw_d",
+       "default": "4.8",
+       "comment": "the drill ring for the bracket's four #8 wall screws, its br_screw_d (gen_templates.py --check holds it equal)"
+      }
+     ]
+    },
+    {
      "name": "Doorbell",
      "note": "mirror canary_vision_doorbell plate defaults (gen_templates.py --check probes the doorbell and fails when one of these stops equaling its source)",
      "params": [
+      {
+       "name": "db_out_x",
+       "default": "51.5",
+       "comment": "the doorbell plate's out_x, the shell/slab outline's width (its version echo prints both; gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_out_y",
+       "default": "169.2",
+       "comment": "the doorbell plate's out_y, the shell/slab outline's length (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_screw_inset_x",
+       "default": "7.5",
+       "comment": "how far the plate's wall screws sit in from its side edges, the doorbell's plate_screw_inset()[0] (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_screw_inset_y",
+       "default": "14.0",
+       "comment": "how far the plate's wall screws sit in from its end edges, the doorbell's plate_screw_inset()[1] (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_screw_d",
+       "default": "4.8",
+       "comment": "the drill ring for the plate's four #8 wall screws, the doorbell's plate_screw_d (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_dx",
+       "default": "2.2",
+       "comment": "the cable exit oval's X, the doorbell's exit_cx (the module's centerline, vm_cx; gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_cy",
+       "default": "-8.8",
+       "comment": "the cable exit oval's Y, the doorbell's exit_cy (v0.8: the well sits over the speaker zone; gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_w",
+       "default": "14.0",
+       "comment": "the cable exit oval's length, the doorbell's usb_exit_w (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_h",
+       "default": "10.0",
+       "comment": "the cable exit oval's height (Y), the doorbell's usb_exit_h (gen_templates.py --check holds it equal)"
+      },
       {
        "name": "db_exit_slide",
        "default": "8.0",

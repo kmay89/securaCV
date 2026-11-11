@@ -337,6 +337,11 @@ HELP_DEBT = {
     "canary_sense_stand.scad": 0,
     "canary_shop_tools.scad": 0,
     "canary_sign.scad": 0,
+    # C30: the paper templates stay in lint_design_lang.py's SKIP (not a case),
+    # but their knobs and help reach the Lab (enclosures.json; catalog.json
+    # counts them), so their help is held here too: each knob mirrors a part's
+    # number, names it, and gen_templates.py --check holds the two equal.
+    "canary_templates_2d.scad": 0,
     "canary_vehicle_mount.scad": 0,
     "canary_vision_doorbell.scad": 0,  # released: stays at zero
     "canary_vision_enclosure.scad": 0, # released: stays at zero

@@ -27,13 +27,21 @@ mode = "studs";      // ["studs","bracket","doorbell"]
 stud_gap = 30.0;     // set per case (the fit coupon's POCKET pair prints at 30)
 
 /* [Bracket] — mirror canary_vision_enclosure bracket defaults (gen_templates.py --check) */
-br_x = 46.0;  br_y = 34.0;  br_screw_d = 4.8;
+br_x = 46.0;              // the Vision bracket plate's width along its hinge axis, its br_x (gen_templates.py --check holds it equal)
+br_y = 34.0;              // the Vision bracket plate's height, its br_y (gen_templates.py --check holds it equal)
+br_screw_d = 4.8;         // the drill ring for the bracket's four #8 wall screws, its br_screw_d (gen_templates.py --check holds it equal)
 
 /* [Doorbell] — mirror canary_vision_doorbell plate defaults (gen_templates.py --check
    probes the doorbell and fails when one of these stops equaling its source) */
-db_out_x = 51.5;  db_out_y = 169.2;   // the shell/slab outline (its version echo prints both)
-db_screw_inset_x = 7.5;  db_screw_inset_y = 14.0;  db_screw_d = 4.8;
-db_exit_dx = 2.2;  db_exit_cy = -8.8;   db_exit_w = 14.0;  db_exit_h = 10.0;   // exit_cx (the module's centerline, vm_cx), exit_cy (v0.8: the well sits over the speaker zone)
+db_out_x = 51.5;          // the doorbell plate's out_x, the shell/slab outline's width (its version echo prints both; gen_templates.py --check holds it equal)
+db_out_y = 169.2;         // the doorbell plate's out_y, the shell/slab outline's length (gen_templates.py --check holds it equal)
+db_screw_inset_x = 7.5;   // how far the plate's wall screws sit in from its side edges, the doorbell's plate_screw_inset()[0] (gen_templates.py --check holds it equal)
+db_screw_inset_y = 14.0;  // how far the plate's wall screws sit in from its end edges, the doorbell's plate_screw_inset()[1] (gen_templates.py --check holds it equal)
+db_screw_d = 4.8;         // the drill ring for the plate's four #8 wall screws, the doorbell's plate_screw_d (gen_templates.py --check holds it equal)
+db_exit_dx = 2.2;         // the cable exit oval's X, the doorbell's exit_cx (the module's centerline, vm_cx; gen_templates.py --check holds it equal)
+db_exit_cy = -8.8;        // the cable exit oval's Y, the doorbell's exit_cy (v0.8: the well sits over the speaker zone; gen_templates.py --check holds it equal)
+db_exit_w = 14.0;         // the cable exit oval's length, the doorbell's usb_exit_w (gen_templates.py --check holds it equal)
+db_exit_h = 10.0;         // the cable exit oval's height (Y), the doorbell's usb_exit_h (gen_templates.py --check holds it equal)
 db_exit_slide = 8.0;                   // the wall plate's pass runs this far up the slide (mount_dt_travel)
 db_r = 12.0;                           // the plate outline's corner radius (the doorbell's rr)
 
