@@ -1385,9 +1385,10 @@ def test_a_present_battery_with_no_number_shows_no_charge(record, monkeypatch, s
         assert type(attrs["battery_percent"]) is type(attribute), body
 
 
-# A Canary whose health carries the `sd` object, as the canary base's does once
-# its SD diagnostics read (firmware/canary/src/main.cpp, `doc["sd"]`), beside
-# the WAP on the same broker.
+# A Canary whose health carries the `sd` object, as the canary base's does on
+# every health when it is built with diagnostics (firmware/canary/src/main.cpp,
+# `doc["sd"]`), beside the WAP on the same broker. Its first health here has
+# none, as a unit's does before an update to firmware that adds the object.
 _SD_DEVICE = "canary-base-01"
 _SD_OBJECT = {
     "mounted": True,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from homeassistant.const import EVENT_HOMEASSISTANT_START, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -432,9 +433,10 @@ async def test_sd_wear_appears_with_the_first_health_that_carries_the_sd_object(
     assert hass.states.get("sensor.kitchen_cam_health") is not None
     assert sd_wear_entity_ids(hass) == []
 
-    # The canary base's health sends the object once its SD diagnostics read:
-    # live to the standing subscriptions, then the broker's retained copy to
-    # the one the new sensor makes.
+    # A later health carries the object (a unit updated to firmware that adds
+    # it; the canary base sends it on every health from boot): live to the
+    # standing subscriptions, then the broker's retained copy to the one the
+    # new sensor makes.
     carrying = {**plain, "uptime": 65, "sd": SD}
     fire(hass, f"securacv/{CANARY}/health", carrying)
     await hass.async_block_till_done()
@@ -455,17 +457,32 @@ async def test_sd_wear_appears_with_the_first_health_that_carries_the_sd_object(
     assert sd_wear_entity_ids(hass) == [entity_id], "created once"
 
 
-async def test_an_sd_wear_entity_a_wap_was_given_is_no_longer_provided(
-    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
+# The health body each Canary but the canary base publishes, field for field
+# (canary-wap: csi_mqtt.cpp; the others: their mqtt_mgr.cpp
+# publish_health_retained). None carries the `sd` object.
+MAINS = {"battery": 100, "battery_present": False, "memory_free": 182000, "uptime": 5, "firmware_version": "2.4.16"}
+NO_SD_OBJECT = {
+    "canary-wap": {**MAINS, "public_key": CANARY_KEY, "sd_mounted": True, "enclosure_open": False},
+    "canary-display": {**MAINS, "power_loss_detected": False, "unexpected_reboot": False},
+    "canary-sense": {**MAINS, "public_key": CANARY_KEY, "radar": {"link_ok": True, "last_frame_age_ms": 40, "frame_errors": 0}},
+    "canary-vision": {**MAINS, "public_key": CANARY_KEY},
+    "canary-sentinel": {**MAINS, "public_key": CANARY_KEY},
+}
+
+
+@pytest.mark.parametrize("device_type", list(NO_SD_OBJECT))
+async def test_an_sd_wear_entity_a_unit_with_no_sd_object_was_given_is_no_longer_provided(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry, device_type: str
 ) -> None:
-    """What an existing canary-wap install's SD Wear entity shows after HA46.
-    The integration created it from the WAP's first health and it read
-    unknown forever (no WAP health carries the `sd` object). Now no health
-    of the WAP's creates it, so its registry entry is left without an entity:
-    at start the core writes it unavailable with `restored` set (its entity
-    registry's own start listener, fired here), which is how Home Assistant
-    marks an entity its integration no longer provides, until its owner
-    deletes it. A unit that later sends the object takes it back."""
+    """What an existing install's SD Wear entity shows after HA46, for every
+    Canary whose health has no `sd` object (all but the canary base). The
+    integration created it from the unit's first health and it read unknown
+    forever. Now no health of the unit's creates it, so its registry entry is
+    left without an entity: at start the core writes it unavailable with
+    `restored` set (its entity registry's own start listener, fired here),
+    which is how Home Assistant marks an entity its integration no longer
+    provides, until its owner deletes it. A unit that later sends the object
+    takes it back."""
     entry = await setup_kernel_entry(enable_mqtt=True)
     registry = er.async_get(hass)
     unique_id = f"{DOMAIN}_canary_{CANARY}_sd_wear"
@@ -473,11 +490,10 @@ async def test_an_sd_wear_entity_a_wap_was_given_is_no_longer_provided(
         "sensor", DOMAIN, unique_id, config_entry=entry, translation_key="sd_wear",
         entity_category=EntityCategory.DIAGNOSTIC,
     )
-    wap = {"public_key": CANARY_KEY, "battery": 100, "battery_present": False, "memory_free": 182000,
-           "uptime": 5, "firmware_version": "2.4.16", "sd_mounted": True, "enclosure_open": False}
-    fire(hass, f"securacv/{CANARY}/status", {**STATUS, "device_type": "canary-wap"}, retain=True)
+    health = NO_SD_OBJECT[device_type]
+    fire(hass, f"securacv/{CANARY}/status", {**STATUS, "device_type": device_type}, retain=True)
     for _ in range(2):
-        fire(hass, f"securacv/{CANARY}/health", wap, retain=True)
+        fire(hass, f"securacv/{CANARY}/health", health, retain=True)
         await hass.async_block_till_done()
     assert hass.states.get("sensor.kitchen_cam_health") is not None
     assert hass.states.get(old.entity_id) is None, "no entity took the registry entry"
@@ -489,7 +505,7 @@ async def test_an_sd_wear_entity_a_wap_was_given_is_no_longer_provided(
     assert state.attributes["restored"] is True
     assert sd_wear_entity_ids(hass) == [old.entity_id], "the entry stays until its owner deletes it"
 
-    carrying = {**wap, "uptime": 65, "sd": SD}
+    carrying = {**health, "uptime": 65, "sd": SD}
     fire(hass, f"securacv/{CANARY}/health", carrying)
     await hass.async_block_till_done()
     fire(hass, f"securacv/{CANARY}/health", carrying, retain=True)

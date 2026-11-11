@@ -493,13 +493,15 @@ async def _setup_mqtt_sensors(
             )
 
         # SD Wear Estimate (HA46): only for a device whose health carries the
-        # `sd` object (the canary base's diagnostics health), so a device that
-        # never sends one (the canary-wap's health carries only sd_mounted)
-        # grows no sensor that stays unknown. Created by the first health that
-        # carries it, a later one included (the canary base's health sends the
-        # object only once its SD diagnostics read), as Event ID Space Low
-        # (HA24) is; health is retained, so the new sensor's own subscription
-        # is sent the broker's copy of the health that created it.
+        # `sd` object, so a device that never sends one grows no sensor that
+        # stays unknown. Today only the canary base sends it, on every health
+        # from boot, built with diagnostics (FEATURE_DIAGNOSTICS, on by
+        # default); every other Canary's health has none (the canary-wap's
+        # carries only sd_mounted). Created by the first health that carries
+        # it, a later one included (a unit updated to firmware that adds the
+        # object, or a broker's older retained copy first), as Event ID Space
+        # Low (HA24) is; health is retained, so the new sensor's own
+        # subscription is sent the broker's copy of the health that created it.
         if (
             topic_type == TOPIC_HEALTH
             and "sd_wear" not in entities_added[device_id]

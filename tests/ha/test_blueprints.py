@@ -210,9 +210,10 @@ async def test_the_digest_renders_a_key_change_as_repairs_never_as_failed(
 BATTERY = REPO_ROOT / "docs" / "blueprints" / "canary_battery_health.yaml"
 
 
-def _battery_low_alerts(hass: HomeAssistant) -> bool:
-    """Render the battery blueprint's `battery_pct` variable and its low-battery
-    condition the way the automation does, on `sensor.canary_health`."""
+def _battery_branch(hass: HomeAssistant, trigger_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The battery blueprint's `trigger_id` branch, and the variables it reads
+    (`battery_pct` and `charge_state` rendered the way the automation renders
+    them), on `sensor.canary_health`."""
     import yaml
     from homeassistant.helpers.template import Template
 
@@ -223,13 +224,32 @@ def _battery_low_alerts(hass: HomeAssistant) -> bool:
     _Loader.add_constructor("!input", lambda loader, node: inputs.get(loader.construct_scalar(node), ""))
     document = yaml.load(BATTERY.read_text(encoding="utf-8"), Loader=_Loader)
     context: dict[str, Any] = {name: inputs[name] for name in ("health_sensor", "low_threshold")}
-    context["battery_pct"] = Template(document["variables"]["battery_pct"], hass).async_render(variables=dict(context))
-    (low,) = [
+    for name in ("battery_pct", "charge_state"):
+        context[name] = Template(document["variables"][name], hass).async_render(variables=dict(context))
+    (branch,) = [
         option for option in document["action"][0]["choose"]
-        if {"condition": "trigger", "id": "low"} in option["conditions"]
+        if {"condition": "trigger", "id": trigger_id} in option["conditions"]
     ]
+    return branch, context
+
+
+def _battery_low_alerts(hass: HomeAssistant) -> bool:
+    """Render the battery blueprint's low-battery condition the way the
+    automation does."""
+    from homeassistant.helpers.template import Template
+
+    low, context = _battery_branch(hass, "low")
     (condition,) = [c for c in low["conditions"] if c["condition"] == "template"]
     return Template(condition["value_template"], hass).async_render(variables=dict(context))
+
+
+def _battery_recovered_message(hass: HomeAssistant) -> str:
+    """Render the battery blueprint's recovered push message."""
+    from homeassistant.helpers.template import Template
+
+    recovered, context = _battery_branch(hass, "recovered")
+    (push,) = [step for step in recovered["sequence"] if step["service"] == "{{ notify_target }}"]
+    return Template(push["data"]["message"], hass).async_render(variables=dict(context))
 
 
 @pytest.mark.parametrize(
@@ -258,3 +278,28 @@ async def test_the_battery_blueprint_alerts_only_on_a_charge_the_unit_sent(
     hass.states.async_set("sensor.canary_health", state, attributes)
     await hass.async_block_till_done()
     assert _battery_low_alerts(hass) is alerts
+
+
+@pytest.mark.parametrize(
+    "attributes,says",
+    [
+        ({"battery_present": True, "battery_percent": 37, "charge_state": "charging"}, "Battery back to 37% (charging)"),
+        ({"battery_present": False, "battery_percent": 100}, "Battery back to 100% (unknown)"),
+        # A battery that sent no number (HA60): `| int(0)` reads it as 0, so
+        # the push said "Battery back to 0%", a charge nobody sent.
+        ({"battery_present": True, "battery_percent": None}, "Back to healthy, with no charge reading (unknown)"),
+        ({"battery_present": True}, "Back to healthy, with no charge reading (unknown)"),
+    ],
+    ids=["charge", "mains", "no-charge", "no-attribute"],
+)
+async def test_the_battery_blueprint_recovered_push_names_only_a_charge_the_unit_sent(
+    hass: HomeAssistant, attributes: dict[str, Any], says: str
+) -> None:
+    """The recovered push (any warning or critical back to healthy) names the
+    charge the Health sensor shows, and none for a battery that sent no number
+    (battery_percent None, sweep HA60). Which recoveries notify is unchanged."""
+    hass.states.async_set("sensor.canary_health", "healthy", attributes)
+    await hass.async_block_till_done()
+    message = _battery_recovered_message(hass)
+    assert message.startswith(says + " at "), message
+    assert "0%" not in message.replace("100%", ""), message

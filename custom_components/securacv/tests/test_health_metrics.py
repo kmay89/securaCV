@@ -388,27 +388,38 @@ def _sd_wear(created: list, device_id: str) -> list:
     ]
 
 
+# The health body each Canary but the canary base publishes, by its fields
+# (canary-wap: csi_mqtt.cpp; the others: their mqtt_mgr.cpp
+# publish_health_retained). None carries the `sd` object.
+_MAINS = {"battery": 100, "battery_present": False, "memory_free": 182000, "uptime": 5, "firmware_version": "2.4.16"}
+_NO_SD_OBJECT = {
+    "wap01": {**_MAINS, "public_key": "11" * 32, "sd_mounted": True, "enclosure_open": False},
+    "display01": {**_MAINS, "power_loss_detected": False, "unexpected_reboot": False},
+    "sense01": {**_MAINS, "public_key": "11" * 32, "radar": {"link_ok": True, "last_frame_age_ms": 40, "frame_errors": 0}},
+    "vision01": {**_MAINS, "public_key": "11" * 32},
+}
+
+
 def test_sd_wear_is_created_only_by_a_health_that_carries_the_sd_object(monkeypatch):
     """Sweep HA46: SD Wear was created by any device's first health, so a
-    device whose health never carries the `sd` object (the canary-wap's
-    carries sd_mounted) grew a sensor that stayed unknown. It is created by
-    the first health that carries the object, a later one included, once,
-    as Event ID Space Low is (HA24); the Health sensor still comes with the
-    first health."""
+    device whose health never carries the `sd` object (every Canary but the
+    canary base: the canary-wap's carries sd_mounted, the mains Canaries'
+    neither) grew a sensor that stayed unknown. It is created by the first
+    health that carries the object, a later one included, once, as Event ID
+    Space Low is (HA24); the Health sensor still comes with the first
+    health."""
     sensor = _platform().sensor_platform
-    wap_health = json.dumps({"battery": 100, "battery_present": False, "sd_mounted": True})
     created = _discovered_sensors(monkeypatch, [
-        ("securacv/wap01/health", wap_health),
-        ("securacv/wap01/health", wap_health),
+        *[(f"securacv/{device}/health", json.dumps(body)) for device, body in _NO_SD_OBJECT.items() for _ in range(2)],
         ("securacv/base01/health", json.dumps({"uptime": 5})),
         ("securacv/base01/health", json.dumps({"uptime": 6, "sd": True})),
         ("securacv/base01/health", json.dumps({"uptime": 7, "sd": [CANARY_HEALTH["sd"]]})),
         ("securacv/base01/health", "{not json"),
     ])
-    assert not _sd_wear(created, "wap01")
-    assert not _sd_wear(created, "base01")
+    for device in [*_NO_SD_OBJECT, "base01"]:
+        assert not _sd_wear(created, device), device
     health = [e for e in created if isinstance(e, sensor.SecuraCVCanaryHealthSensor)]
-    assert sorted(e._device_id for e in health) == ["base01", "wap01"]
+    assert sorted(e._device_id for e in health) == sorted([*_NO_SD_OBJECT, "base01"])
     created = _discovered_sensors(monkeypatch, [
         ("securacv/base01/health", json.dumps({"uptime": 5})),
         ("securacv/base01/health", json.dumps(CANARY_HEALTH)),

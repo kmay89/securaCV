@@ -192,6 +192,9 @@ action:
                 resets on reboot.
 
       # Recovered — clears the low-battery notification once power is back.
+      # It names a charge only when the unit sent one: battery_percent is none
+      # for a battery that sent no number (sweep HA60), which `| int(0)` would
+      # print as 0%.
       - conditions:
           - condition: trigger
             id: recovered
@@ -202,7 +205,8 @@ action:
           - service: "{{ notify_target }}"
             data:
               title: "SecuraCV — {{ device_name }} battery recovered"
-              message: "Battery back to {{ battery_pct }}% ({{ charge_state }}) at {{ now().strftime('%H:%M') }}."
+              message: >-
+                {% if state_attr(health_sensor, 'battery_percent') is number %}Battery back to {{ battery_pct }}%{% else %}Back to healthy, with no charge reading{% endif %} ({{ charge_state }}) at {{ now().strftime('%H:%M') }}.
               data:
                 tag: "securacv-battery-low"
                 group: "securacv-power"
