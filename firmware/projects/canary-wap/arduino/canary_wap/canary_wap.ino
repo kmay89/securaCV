@@ -5244,9 +5244,11 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
   // long for its buffer: it acknowledges the entry with no reason and leaves
   // the body unread (httpd discards it), as it did before F300. The reason
   // is optional and kept nowhere (acknowledge_log_entry() ignores it), while
-  // the dashboard's #ackReason input has no maxlength and submitAck() reads
-  // no answer, so refusing a long one left the entry unacknowledged with
-  // nothing shown. A body that stops arriving is still refused by name.
+  // the dashboard's #ackReason input has no maxlength, so refusing a long one
+  // would leave the entry unacknowledged over a reason nobody keeps. (Since
+  // F468's page half submitAck() shows a refusal in its dialog; before it the
+  // dialog closed with nothing shown.) A body that stops arriving is still
+  // refused by name.
   // firmware/tests_host/test_log_ack_route holds both.
   char content[128] = {0};
   size_t body_len = 0;
