@@ -250,6 +250,77 @@ so — see D2 below.)
   words, a wording call, one line each. From code. Found by F359's review
   (#1920).
 
+- [ ] **F456 [decision] canary-wap: in safe mode the owner can no longer turn
+  the mesh on or off.** Since #1961 a mesh that did not read its NVS store
+  this boot (`mesh_network.cpp`'s `g_store_loaded` false: its own key did not
+  hash, safe mode, a failed ESP-NOW start) writes none of it, and
+  `run_command()` refuses every owner command but clearing alerts, so `POST
+  /api/mesh/enable` answers 400 `enable_failed`. Before, in safe mode, where
+  the sketch still starts the AP, the HTTP server and the mesh routes and
+  `loop()` runs `mesh_network::update()` and the 5-minute save while `init()`
+  never ran, an enable, rename or leave removed the stored opera, a pair/start
+  founded a new one over it, and the save removed the last-seen record. Decide
+  whether an enable or disable there should still be stored. The small
+  follow-up is to write only the `enabled` key (flash-encryption gated, as
+  `persist_opera_config()` writes it) while the store is unread, and keep the
+  state the view shows; the dashboard ignores the enable answer and reloads
+  the opera panel. From code and the host suite; not bench-tested. Found by
+  F364's review (#1961).
+
+- [ ] **F457 [decision] canary-wap: a removal whose rotation cannot start
+  leaves the removed member holding the opera secret.** When `remove_peer()`'s
+  candidate opera id does not hash, the removal and the deny-list entry stand,
+  an ALERT is logged and no rotation starts, so the removed device keeps the
+  current `opera_secret` until the next rotation (the state a removal of the
+  last member, where nothing rotates, leaves today). A rotation already in
+  flight carries on, its pending-ACK bits moved with the peer-table shift
+  (`test_a_refused_rotation_leaves_the_one_in_flight_whole`); if its REKEY
+  reached the removed member, that member also holds the secret it commits.
+  Decide whether the removal should instead fail as a whole when its rotation
+  cannot start. The hash's input runs in block mode on the ESP32, which has no
+  failing path. From code and the host suite. Found by F364's review (#1961).
+
+- [ ] **F458 [decision] canary-wap: a stored mesh member whose key does not
+  hash at boot is skipped, and a later save that boot can drop it.**
+  `mesh_network.cpp`'s peer load skips the row with an ALERT, and that boot
+  saves nothing over its slot (the duplicate-fold and stale-slot saves are
+  deferred; `test_mesh_address_wap.cpp` pins it). Two later writes the same
+  boot still drop it: a membership change saves the peer list without the
+  slot, as for an unreadable one, and the sketch's 5-minute
+  `save_replay_counters()` rewrites the last-seen record without its counter,
+  so a later healthy boot loads that member at its tombstone or 0. The other
+  option is to fail mesh init when any stored member does not hash, as for the
+  device's own key: with the store guard (F456), such a boot reads and writes
+  no store and runs no owner command, so the next boot loads everything whole.
+  The inputs (a 32-byte key and a 27-byte domain) run in block mode on the
+  ESP32, which has no failing path. From code and the host suite. Found by
+  F364 (#1961).
+
+- [ ] **F459 [code+decision] canary-wap: the nearby scan takes any 0xFFFF
+  advert of 17 bytes or more as a Canary Chirp.** `ble_nearby.h`'s
+  `parseChirpData()` accepts a manufacturer blob of at least 17 bytes on
+  company 0xFFFF with any type byte, and lists it in `GET /api/nearby` under
+  the prefix in its last two payload bytes. `fleet_chirp_parse()`, which every
+  other firmware receiver reads with since #1961, takes exactly 17 bytes and
+  types 0x01..0x05: in a scratch differential, 18-byte blobs and types 0x00
+  and 0x06 were accepted by the nearby scan and by no other receiver. Its
+  offsets are `static_assert`ed equal to the header's. Decide whether a stray
+  0xFFFF advert may list as a Canary; if not, parse with
+  `fleet_chirp_parse()`, which changes what `GET /api/nearby` lists and moves
+  `check_wap_json_answers.py`'s J11 mutation anchor (the
+  `snprintf(canary->deviceIdPrefix, ...)` line) with it. From code and a
+  scratch differential. Found by F316 (#1961).
+
+- [ ] **F460 [code] No host test compiles the canary-wap's Chirp sender.**
+  `ble_chirp.h`'s `buildChirpPayload()` builds the advert with
+  `fleet_chirp_build()` (#1961), and the only off-device guard on that call's
+  argument order, the fingerprint's byte order included, is the iPhone app's
+  `ChirpAdvertTests`, which pins the call's text (whitespace collapsed) and is
+  compiled only by `ios-selfheal.yml` on macOS. Add a canary-wap `tests_host`
+  target that compiles the sender's builder and holds its bytes to
+  `test_fleet_chirp.cpp`'s golden vector. From code. Found by F316's review
+  (#1961).
+
 ### Network surface & provisioning
 
 - [ ] **F15 [code] No TLS on the canary.local HTTP/peek surface.** The one
@@ -717,30 +788,33 @@ so — see D2 below.)
   the decision. Host cases over the chain glue and `test_chain_state.cpp`'s
   decision. Found by F360's review (#1840).
 
-- [ ] **F364 [code] The last SHA-256 helpers that discard mbedTLS's return
+- [ ] **F364 [code] SHA-256 helpers that still discard mbedTLS's return
   codes.** On the ESP32's hardware SHA a failed step (the DMA path, inputs of
   192 bytes or more on the C3, 320 on the S3) leaves a digest that skipped
   blocks, so each helper must check `_starts()`, `_update()` and `_finish()`,
-  zero its output and have its caller refuse, as the canary-wap's sketch,
-  its WAP-only modules, `beacon_channel.cpp`, `mesh_network.cpp`'s
-  `sha256_domain` and `chirp_channel.cpp` now do (`test_wap_sha_fail.cpp`,
-  `test_wap_sha_fail_modules.cpp`). Still open, all on inputs short enough to
-  run in block mode, which has no failing path:
+  zero its output and have its caller refuse, as the canary-wap's sketch, its
+  WAP-only modules, `beacon_channel.cpp`, `chirp_channel.cpp` and
+  `mesh_network.cpp` (its `sha256_domain`, and since #1961
+  `compute_fingerprint()`, `compute_opera_id()` and their eight callers) now
+  do (`test_wap_sha_fail.cpp`, `test_wap_sha_fail_modules.cpp`,
+  `test_mesh_address_wap.cpp`). Still open, all on inputs short enough to run
+  in block mode, which has no failing path:
   - `mesh_crypto::sha256_domain()` stays `void`, because `ble_scan.cpp` is
     byte-identical with the canary tree's, whose API is `void`; so
     `hash_beacon_id()` and `mesh_pair_crypto.h`'s `confirmation_code()` and
     `confirm_hash()` take a zeroed digest as a real one. Making it `bool`
     edits `canary/lib/securacv_mesh`, `securacv_ble_scan` and their WAP copies
-    together.
-  - `mesh_network.cpp`'s `compute_fingerprint()` and `compute_opera_id()`
-    stay `void` and pass on a zeroed digest.
-  - The three `device_pseudonym.h` copies (they move the emulator dist) and
-    the three `securacv_ota.cpp` copies, which need the IDF 4.4 spelling
-    (`mbedtls_sha256_*_ret`) only CI's core 2.0.17 legs compile; the OTA image
-    hash already fails safe at the manifest compare. Do both with the next
-    version-bump dist rebuild.
+    together (`check_ble_scan_sync.sh` holds them), so it is one change over
+    that whole set.
+  - The three `device_pseudonym.h` copies (`common/identity` and the display
+    and WAP sketches; they move every display bundle, so the emulator dist)
+    and the three `securacv_ota.cpp` copies (`common/ota` and the same two
+    sketches), which need the IDF 4.4 spelling (`mbedtls_sha256_*_ret`) only
+    CI's core 2.0.17 legs compile; the OTA image hash already fails safe at
+    the manifest compare. Do both with the next version-bump dist rebuild.
   - `beacon_channel::init()`'s refusal on a failed hash is not run by a host
-    test.
+    test: `tests_host/Makefile`'s `SHAMOD_BEACON` cut takes no `bool init(`.
+  The flagship's and the common witness core's helpers are F455.
 
 - [ ] **F402 [decision] canary-wap: a stored token it cannot read or use keeps
   a release unit unprovisioned at every boot.** Since F365 (#1916) a stored
@@ -954,53 +1028,88 @@ so — see D2 below.)
   source in the probe, so listing one device's IP would be Chromium-only
   behavior. From code and a Chromium probe. Found by F427 (#1920).
 
+- [ ] **F461 [decision] canary-wap: three Wi-Fi routes hold the HTTP server
+  through four receive waits before any credential check.** Since #1961 every
+  POST handler in `canary_wap.ino` reads its body through
+  `http_body::read_request()`, which sits out three `HTTPD_SOCK_ERR_TIMEOUT`s
+  as `/api/ota/config` does. Each wait is `recv_wait_timeout`, 30 s in both of
+  `canary_wap.ino`'s server configs, so a sender that stops mid-body holds the
+  server task (one request at a time) for about 2 minutes where it used to
+  hold it for one wait. Every converted route reads after its credential check
+  except `/api/wifi/connect` and `/api/wifi/ap-only`, which take their token
+  from the parsed body (`wifi_change_authorize()` runs after the read) and
+  stay on the LAN after setup, and `/api/wifi/qr-scan` (setup only). Decide
+  whether those three get a lower budget (one sat-out timeout, or none). A
+  trickling sender is bounded by the buffer either way (512 bytes at most
+  there). From code. Found by F300's review (#1961).
+
+- [ ] **F462 [code] canary-wap: the CSI settings POST can take a quoted value
+  for a key.** `csi_settings_nvs.cpp` finds each key with `strstr(body,
+  "\"<key>\"")` (`"quiet_hours"`, `"pet_mode"`, `"preset"`, `"sensitivity"`,
+  `"privacy_ceiling"`), which also matches a string value spelled like the
+  key, then reads the value after the next colon:
+  `{"note":"preset","pet_mode":true,"preset":"quiet"}` would read `true` as
+  the preset and store none. The dashboard never sends such a value, and
+  echoing `GET /api/settings`' answer back is safe because `"preset"` comes
+  first there. Anchor the scan on keys (or parse the body as JSON) and cover
+  it in `test_wap_tune_lab.cpp`. From reading; not driven. Found by F315
+  (#1961).
+
+- [ ] **F463 [decision] canary-wap spells a refused request body two ways.**
+  `csi_integration.cpp` answers `{"ok":false,"reason":"body too large"}` or
+  `"body read failed"`, as `csi_mqtt.cpp` does, while `canary_wap.ino`'s
+  routes answer `http_send_error(req, 400, "body_too_large")` or
+  `"body_read_failed"`, and each `*_api.h` file answers in its own error
+  shape. Each follows its own file, and `docs/csi_developer_api.md` documents
+  the CSI spelling. Decide whether a client should meet one spelling. From
+  code. Found by F315 (#1961).
+
+- [ ] **F464 [code] `check_wap_json_answers.py` measures no
+  `csi_integration.cpp` answer buffer.** Its J5 length measure covers the
+  `*_api.h` files and `canary_wap.ino`; `csi_integration.cpp` falls under J7
+  only (each `%s` escaped, no length). `GET /api/settings`' buffer is measured
+  by `test_wap_tune_lab.cpp` (360 of 448 bytes with #1961's
+  `thresholds_source`), and the file's other fixed `snprintf` answers, the
+  calibration status's `buf[320]` among them, by nothing. Extend J5 to the
+  file. From code. Found by F315 (#1961).
+
 ### Parity & sub-projects
 
 - [ ] **F20 [code] Arduino↔PlatformIO parity debt.** Canonical ledgers:
   `firmware/FEATURES.md` (the ❌/⚠️ dashboard) and
-  `firmware/canary/CONSOLIDATION.md` (gap inventory, 16 rows since F29 added
-  one; phase 3 half done, phases 5–8 unstarted). Gap #11 is done (option D —
-  maintainer to confirm), its premise corrected: the canary never had an
-  unauthenticated receipt route — it had none at all; the real exposure was
-  `GET /` and `GET /setup` handing the bearer token to any home-LAN caller.
-  Now a short BOOT tap opens a 30 s gate
-  (`common/network/provisioning_gate.h`, host-tested) that admits exactly one
-  consumer — one `GET /api/provisioning-receipt` (the WAP's shape) or one page
-  load — and the pages carry the token only for first-boot setup, a
-  bearer-authenticated request, a SoftAP peer or a spent tap; a bare LAN load
-  gets an unlock banner instead. A fail-open found on the way is closed (with
-  no credential provisioned, `checkOptional` accepted a bare `Bearer` header
-  against the empty token), and
-  `firmware/canary/scripts/check_route_security.py` now fails CI on any route
-  that reaches no credential gate and is not on its public allowlist. The
-  dashboard's canary gate row had read ✅ before any canary code existed; it
-  reads ⚠️ until the U1 bench pass (one tap → one receipt, a second GET → 403)
-  (#1704). Carrying over the WAP's session-cookie model, so a LAN reload stops
-  needing a tap, is a Phase 6 follow-up.
-  *Partly done (#1802), gap #10 reconciled (slice a; option "⚠️ with what is
-  missing", maintainer to confirm):* `firmware/canary/CONSOLIDATION.md`'s row
-  reads ⚠️, as `FEATURES.md`'s Hardware state row has since
-  `common/health/boot_guard.h` landed: an NVS count of boots that never
-  reached healthy (a power-on reset does not count), started over by a
-  different image (an OTA install, a rollback, a re-flash; images are told
-  apart by `app_elf_sha256`, so two builds that both leave it zero look like
-  one image), and at 4 such boots a serial safe-mode console (never for an
-  image still pending OTA confirmation: the bootloader's rollback owns that
-  case) that brings nothing else up until the owner clears it (serial `c` then
-  `y`, or BOOT held 2 s); host-tested
-  (`firmware/tests_host/test_boot_policy.cpp`, `test_boot_guard.cpp`),
-  CI-compiled, no bench pass. The row names what is still missing against the
-  canary-wap's `hardware_state.h`: per-peripheral state (its GPS state machine
-  and camera present/standby record in one `HardwareState`) and its degraded
-  safe mode (optional peripherals off while the core witness runs, bounded
-  automatic recovery reboots, `POST /api/safe-mode/retry`); the SD three-state
-  is already ported (`securacv_storage`'s mount worker, `storage_sd_state()`).
-  Docs only. Rejected: ✅ (most of `hardware_state.h` is not ported) and
-  leaving ❌ (it contradicted FEATURES.md's Hardware state row and the code).
-  Not taken: the rest of that port, the other per-gap ports and Phase 8. Next:
-  the two Low-complexity rows still at ❌, #12 (audible chirp) and #14 (system
-  monitor), then #15 (log acknowledgment and categories, Medium, already
-  partial), then the unstarted phases.
+  `firmware/canary/CONSOLIDATION.md` (16 gap rows; phase 3 half done, phases
+  5–8 unstarted). Verdicts still "maintainer to confirm": gaps #10 ⚠️, #11 ✅
+  (option D), #14 ⚠️ and #15 ⚠️, and `FEATURES.md`'s Health Monitoring rows,
+  which #1961 read off the code (`scripts/tests/test_docs_claims.py`'s
+  `TheParityLedgersReadTheCode` holds each to it). What remains:
+  - The Low-complexity remainders. #12 (audible chirp) waits on a human
+    decision about a buzzer pin the flagship's board may not have (the
+    canary-wap's tones need the optional BZ1 piezo on GPIO 2). #14: `GET
+    /api/system`'s chip and build facts, the heap total and the PSRAM
+    low-water mark, and temperature and PSRAM on the periodic serial status
+    (`print_status()`). #10: `hardware_state.h`'s per-peripheral state (its
+    GPS state machine and camera record in one `HardwareState`) and its
+    degraded safe mode (optional peripherals off while the core witness runs,
+    bounded recovery reboots, `POST /api/safe-mode/retry`).
+  - #15 (Medium): the `RF` and `AUTH` log categories and the canary-wap's
+    owner-set log floor (`g_log_min_level`, `/api/config`'s `log_level`).
+    Whether an acknowledgment should survive a reboot is a decision for both
+    trees, not a port: no tree has ever persisted one.
+  - The flagship writes no health line to SD. It makes, counts and rotates
+    `/HEALTH` (`securacv_storage.cpp`, `securacv_data_mgmt`), and
+    `log_health()` writes only the RAM ring and Serial, where the canary-wap
+    appends each entry to `/HEALTH/boot_<n>.jsonl`. No `CONSOLIDATION.md` gap
+    row carries it yet, and the dashboard's "SD storage (append-only,
+    `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`)" row still reads canary (PIO) ✅;
+    a downgrade there needs an issue reference
+    (`features-dashboard-guard.yml`). Add the row and the qualifier, or port
+    the tier.
+  - #11: the dashboard's gate row reads ⚠️ until the U1 bench pass (one tap →
+    one receipt, a second GET → 403), and carrying over the WAP's
+    session-cookie model, so a LAN reload stops needing a tap, is a Phase 6
+    follow-up.
+  - #13 (WiFi presence, Medium), #3 and #8 are bench-bound; then the unstarted
+    phases.
 
 - [ ] **F21 [human] canary-wap enterprise readiness** —
   `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`. §1
@@ -1307,20 +1416,6 @@ so — see D2 below.)
   the N-advert confirmation (several qualifying adverts from one `hashed_id`
   before it pairs), which waits for real advert rates from the bench, and
   whether the Canary adverts above reach a passive Scout at pairing strength.
-  Found here: F316.
-
-- [ ] **F316 [code] One header for the BLE Chirp advert's shape.** The 17-byte
-  Chirp (company 0xFFFF, type 0x01..0x05, fp2 at [15-16]) is spelled out
-  separately by its sender (the canary-wap's `ble_config.h` / `ble_chirp.h`),
-  by each roster that reads it (`fleet_roster_feed.cpp` in the canary tree,
-  the canary-sense and canary-vision `fleet_roster_scan.cpp` copies, the
-  display's `chirp_scan.cpp`) and now by `ble_scout_advert_kind.h`; only
-  `test_ble_scout_pairing.cpp` holds two of those together, by reading their
-  source as text. A `fleet_link` header beside `fleet_beacon.h` (constants, a
-  builder and a parser, host round-tripped) would let every copy include one
-  definition, after which the pairing test includes it instead of reading
-  files. Wave 18's F272 does not cover it (it is the community Chirp channel's
-  C-ABI header, not this advert). Found by F36 (#1802).
 
 - [ ] **F79 [code+decision] Below the backfill's bound, the SD event log is
   trusted input.** Both backfills (the canary's
@@ -1511,16 +1606,6 @@ so — see D2 below.)
   `library.json` and `library.properties` still say 0.4.0; the bump, and the
   `sbom/sbom-firmware.cdx.json` regeneration it brings, stay this item's
   decision.
-
-- [ ] **F315 [code] The dashboard does not say when stored thresholds override
-  its preset.** The canary-wap's preset picker and sensitivity slider
-  (`csi_dashboard_html.h`) show nothing when a stored `core.presence`
-  threshold (a calibration's apply, a bundle import, a Tuning Lab slider) wins
-  over them, so an owner who moves the slider sees no change. The calibration
-  status carries `current_source` (`stored`, `preset` or `mixed`), but only in
-  its `ready` state, so the page has nothing to read at load: serve it with
-  the settings the page loads (`csi_integration.cpp`), show a short note when
-  it is not `preset`, and cover it in `test_wap_tune_lab.cpp`.
 
 - [ ] **F165 [decision] canary-wap's first boot after an NVS erase says its
   event-id floor is unreadable and skips the card log's reload.**
@@ -2159,18 +2244,6 @@ so — see D2 below.)
   reason. From a Chromium probe; Firefox and Safari not probed. Found by
   F241's review (#1802).
 
-- [ ] **F300 [code] canary-wap: about forty POST handlers still parse what one
-  `httpd_req_recv()` returns.** F266 moved POST `/api/mqtt/config` to
-  `http_body_reader.h`'s `read_all()`, as the Beacon routes read; 41
-  single-read call sites remain (`canary_wap.ino` 19, `bluetooth_api.h` 8,
-  `chirp_api.h` 6, `household_api.h` 3, `audible_chirp_api.h` 2,
-  `csi_integration.cpp` 2, `rf_presence_api.h` 1), each parsing whatever the
-  socket held and most cutting a longer body at its buffer without a word.
-  Their bodies are small, so a split is rarer than for a pasted CA, but one
-  that crosses a segment boundary is parsed cut. Give them one reader
-  (`read_all()` behind a helper that answers its TOO_LARGE and READ_FAILED in
-  each route's own error shape). From code; not probed. Found by F266 (#1802).
-
 - [ ] **F232 [code+decision] canary-wap Chirp: unsigned presence beacons fill
   the nearby table and steer two gates.** `handle_presence()` adds a row for
   any session id a beacon claims, up to `MAX_NEARBY_CACHE` (32), and refuses
@@ -2784,6 +2857,69 @@ so — see D2 below.)
   state over a PEEK session, and read the health `temp_c` against the room,
   before this reaches a release train; the S3 PlatformIO legs on #1920 are the
   compile proof. From code; not bench-tested. Found by F432's review (#1920).
+
+- [ ] **F455 [code] The flagship's and the common witness core's SHA-256
+  helpers discard mbedTLS's return codes on record payloads.**
+  `firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`'s
+  `sha256_raw()` and `sha256_domain()` are `void` and check no step, the class
+  F364 fixed in the canary-wap's helpers. `securacv_witness.cpp`'s
+  `witness_create_record_gps()` hashes each record payload with
+  `sha256_domain("securacv:fw:payload:v1", ...)` and chains the result, and
+  `main.cpp` builds its witness event in a 256-byte buffer (`uint8_t
+  payload[256]`), which can pass the C3's 192-byte DMA threshold; on the S3 it
+  stays under 320. `firmware/common/witness/witness_chain.h`'s
+  `wc_sha256_domain()` casts every step's answer away (the cast is there for
+  core 2.x's `void` API), and canary-sense, canary-vision and canary-sentinel
+  hash their fingerprint and record payload through it (each
+  `src/witness.cpp`'s `sha256_domain()` wrapper; canary-sense's canonical
+  record buffer in `chain_advance()` is 256 bytes). Which boards reach the DMA
+  path is part of the item. The fix is F364's: check each step, zero the
+  output, return `bool`, and have every caller refuse the record; the core 2.x
+  legs need the `_ret` spelling or a version guard. Neither file is compiled
+  by `canary-local/emulator/build.sh`, so no dist move is expected. From code;
+  not run on a device. Found by F364's triage (#1961).
+
+- [ ] **F465 [code] `microcopy_fkgl.py` grades comment text inside `COPY`.**
+  `firmware/scripts/microcopy_fkgl.py`'s `extract_copy_strings()` matches
+  every quoted span in `csi_dashboard_html.h`'s `COPY` block, comments
+  included, so the apostrophes in two `COPY` comments (calibrate's overlay
+  comment and tier's maintainer comment) pair into one bogus string that
+  swallows the calibrate and today strings, and the aggregate grade is partly
+  computed over comment text. Strip comments before matching, and hold it with
+  a case. From code. Found by F315 (#1961).
+
+- [ ] **F466 [decision] The Sensing dashboard's stored-levels note sits where
+  a preset tap does not see it.** Since #1961 the note that saved levels
+  outrank Sensitive, Balanced, Quiet and the slider sits under the sensitivity
+  slider, inside the collapsed Details disclosure, so an owner who taps a
+  preset without opening Details does not see it. It also says to reset
+  motion, active and breathing in the Tuning Lab without saying how to open it
+  (the Lab is hidden by design: a long press on the version chip, or
+  `?tune=1`). Decide whether a second line belongs by the mode picker, and
+  whether the note names the way in. From code and a Chromium probe. Found by
+  F315 (#1961).
+
+- [ ] **F467 [code] canary-wap's `sys_monitor.h` forces `FEATURE_SYS_MONITOR`
+  to 1.** `sys_monitor.h` defines `FEATURE_SYS_MONITOR 1` unconditionally.
+  `canary_wap.ino` pulls `build_config.h` in first (through `web_ui.h`) and
+  includes `sys_monitor.h` after it, so under `BUILD_PROFILE_MINIMAL` the
+  profile's 0 becomes 1 for the rest of the sketch, with a "redefined" warning
+  (shown with `g++ -E`). No canary-wap env selects MINIMAL today, so no
+  shipped build changes. Guard it with `#ifndef` or delete the line;
+  `scripts/tests/test_docs_claims.py`'s `TheParityLedgersReadTheCode` pins the
+  forced define, so it moves with the fix. The sketch is no emulator input;
+  the compile is CI's. From code. Found by F20 (#1961).
+
+- [ ] **F468 [code+decision] The WAP dashboard asks for a log acknowledgment's
+  reason, which the device never keeps.** `web_ui.h`'s acknowledge dialog has
+  an `#ackReason` field with no `maxlength`, and `submitAck()` posts it and
+  reads no answer. `acknowledge_log_entry()` ignores the reason, and since
+  #1961 `handle_log_ack` acknowledges with no reason, unread, a body past its
+  128-byte buffer (the one named exception in `test_http_body_reader.cpp`'s
+  pin). So a reason is kept nowhere, and a refused acknowledgment is not
+  shown. Decide whether the field stays (stored somewhere, with a `maxlength`
+  and the answer shown) or goes; either edit regenerates `web_assets_gz.h`.
+  From code. Found by F300's review (#1961).
 
 ---
 
@@ -3532,18 +3668,6 @@ so — see D2 below.)
   one while a camera is configured. Decide the precedence, then hold it with a
   `test_serve_wizard.py` case. From code. Found by HA38 (#1916).
 
-- [ ] **HA56 [code] Derive the diagnostics redaction set from the generated
-  device-details vocabulary.** F391 named `TO_REDACT`'s identifier keys
-  literally (#1891) and its health keys (#1916), and left its last clause:
-  derive the set from the generated vocabulary, so a key the vocabulary
-  gains is redacted with no edit to `diagnostics.py` (device-details PR 3).
-  No other item tracked that clause, and neither the design it comes from
-  (`docs/design/device_details.md`, §11, P18) nor a generated vocabulary is
-  on main. Land the vocabulary or say where it lives, then read `TO_REDACT`
-  from it and hold the literal keys to it in
-  `test_the_redaction_set_names_every_identifier_class`. Found by the review
-  of #1916's ledger (F391).
-
 - [ ] **HA60 [code+decision] Health's `battery_percent` attribute reads 100
   when a present battery sends no number.** `sensor.py` shows
   `battery_percent` 100 when `battery_percent()` is None. That is right on
@@ -3584,6 +3708,42 @@ so — see D2 below.)
   items are U6, U7 and U10 above, plus the three monorepo-fixture tests its CI
   deselects, which is by design. A few more tests skip themselves there
   because they read firmware sources the mirror does not carry.)*
+
+- [ ] **HA62 [decision] The device-details vocabulary has no row state for a
+  key no firmware sends yet, or sends no longer.**
+  `spec/device_details_vocabulary.json` (#1961) holds only keys a named
+  firmware source emits (`scripts/gen_device_vocabulary.py --check` refuses
+  any other), so F391's `serial_number` and `chip_id`, which no device source
+  emits (`chip_id` appears only in `firmware/provisioning/*.py` and
+  `firmware/scripts`, `serial_number` only in the integration's own device
+  registry entry), stay integration-owned literals in `diagnostics.py`'s
+  `INTEGRATION_REDACT_KEYS`. The other way round, a key firmware renames or
+  drops moves into `INTEGRATION_REDACT_KEYS` before its row goes, because
+  Canaries on the earlier release still send it. The generator refuses to
+  write a module that stops redacting a key the committed one redacts, but its
+  record is the committed module itself: a hand edit that makes both files
+  agree, or deleting the module before a run, gets past it, and `--check`
+  cannot see history. Decide whether rows get states (not yet emitted, held as
+  absent; retired, held as no longer emitted and still redacted) or a
+  committed list of every key ever redacted. From code and the generator's
+  tests. Found by HA56 (#1961).
+
+- [ ] **HA63 [decision] Four uptime counters a Canary sends are in no redacted
+  class.** The vocabulary's scanner finds firmware sources emitting `uptime_s`
+  (`common/network/node_status.h` and its display and WAP copies, the sense,
+  sentinel and vision `mqtt_mgr.cpp`, the WAP's `witness_page.h`), `uptime_ms`
+  (the WAP's `identity_json.h`, `selftest_api.h` and sketch,
+  `securacv_network.cpp`, `securacv_mesh`'s `mesh_api.cpp`), `uptime_sec`
+  (`diagnostics_json.h`, `securacv_network.cpp`, `wap_diagnostics.h`,
+  `rf_presence_api.h`, the WAP sketch) and `bucket_uptime_s` (the 10-minute
+  coarsened uptime Sense, Sentinel and Vision sign into an event, which
+  `signature.py` verifies); none is in `TO_REDACT`. By F391's reasoning the
+  first three are health counters; `bucket_uptime_s` is coarsened on purpose
+  and part of a signed event. No dump carries a raw device answer today (layer
+  1 projects everything), so no leak is known. Which class each takes is the
+  device-details privacy review's call (that design is not on main); adding
+  one is a one-row vocabulary edit and a regeneration. From the generator's
+  scan. Found by HA56 (#1961).
 
 ---
 
@@ -3819,172 +3979,30 @@ major, by theme") — work its themes, then tick here.
   (`scripts/regen_cad.py`). Every environmental rating in `field_ratings.md`
   is also still "untested" — that protocol needs real units too.
 
-- [ ] **C10 [code] C1's remaining waves.** Wave 1 (#1703) moved the help that
-  was already written; the rest is writing it. Help for the 536 knobs that
-  have none, the released four first (their help carries to the website
-  builder's Advanced accordion); `[min:step:max]` ranges where a range is
-  known; one group name for the two-stud interface; presets for the doorbell
-  and the Sense, modeled on `canary_wap_enclosure.scad`'s `preset` with
-  defaults unchanged so no STL moves. Also the 7" case
-  (`canary_s3_lcd7.scad`): its four shared-help lines (9 knobs) and its
-  above-line comments were left out of wave 1 by instruction and sit in
-  `lint_design_lang.py`'s `HELP_LINE_DEBT`; `gen_stamp`'s digest ignores
-  comments and whitespace, so splitting them needs no STAMP_REV bump — delete
-  the debt entries with the split. The Dash's and the J-box's `usb_w` /
-  `usb_h` still share a line (no help to lose). Mind the Sense's `usb_h`: its
-  help is only a `[4:0.5:8]` range, and `gen_enclosures.py` reads a range only
-  at the start of a comment, so wave 1 left it alone rather than risk its
-  slider. `DESIGN_RULES.md` §11 "Customizer help text" names the first four.
-  *Wave 2 done (#1718, website #203):*
-  - The 7" case's shared-help lines are split and `HELP_LINE_DEBT` is
-    empty. The Dash's and the J-box's `usb_w`/`usb_h` are split.
-  - Every knob in the released four (WAP, Vision, doorbell, Sense) has help
-    read off the geometry that uses it, except the option-list selectors.
-  - Stated ranges sit on their knob's line, and `gen_enclosures.py` reads a
-    range where the builder does (43 knobs had been a slider in one and raw
-    text in the other).
-  - One group name, "Stud/keyhole interface", across 16 files, held by a
-    new `lint_design_lang.py` rule.
-  - Presets for the doorbell (`doorbell_weather`) and the Sense
-    (`sense_wall`, `sense_ceiling`), with defaults unchanged (preset
-    contents and the group name: maintainer to confirm). A new check
-    refuses a preset that overrides a control the builder does not gray
-    out. It caught the WAP's and the Vision's presets leaving `opt_weep`
-    live.
-  - Knobs without help: 535 → 347 of 1743. The CSG of every touched part
-    is byte-identical to the base.
-
-  *Wave 3 (#1802):*
-  - The Lab's group headers (C10a): `canary-local/tools/gen_enclosures.py`
-    imports the web builder's own `GROUP_RE`, so the 52 multi-line `/* [Group]
-    ... */` headers in 10 case files group their knobs in the Lab too. A
-    header's continuation lines become the group's note, with only the comment
-    gutter stripped, and are never read as knobs. 335 Lab knobs changed group,
-    333 of them knobs the builder also reads; the WAP's `tol_slide` now sits
-    in "Print tolerances", not "Shell". One group drops out:
-    `canary_s3_touch169.scad`'s empty [Side cluster] header (C22).
-    `scripts/tests/test_enclosure_parsers.py` holds both parsers to one group
-    for all 1726 knobs they share, holds the committed `enclosures.json` to
-    the builder's groups (1723 knobs), and holds `gen_enclosures.py` to that
-    one import as `GROUP_RE`'s only binding. Only `enclosures.json` moved.
-    Decision (maintainer to confirm): one group rule, the builder's, imported
-    rather than copied. Rejected: a Lab-only multi-line matcher, which would
-    be a second rule to drift. The default "stop at the first module" was not
-    taken: it drops 317 Lab entries (230 names), none read by name by any
-    consumer, but it moves `catalog.json`'s `engineering_param_count` for 13
-    products, which this wave kept byte-identical (C21).
-  - The J-box's pass-through (C10b): `canary_jbox.scad`'s `usb_w`/`usb_h`, the
-    slot a pigtail cable runs out through, are now `pigtail_w`/`pigtail_h`
-    with help, and the file's comments call it the pigtail slot.
-    `KNOB_MEANINGS` refuses a pigtail help under `usb_*` and boot clearance
-    under `pigtail_*`. `opt_weep`'s help, which is also its catalog label,
-    still says "USB slot" and moves with the catalog decision below. Decision
-    (maintainer to confirm): a name of its own. Rejected: keeping `usb_w` with
-    a `deviates:` note, since a name with two meanings is what C2 removed. The
-    `DESIGN_RULES.md` §10 row for the new name is handed to the integrator.
-  - Help for the three monorepo-only dev cases (C10c-1): in
-    `canary_field_case.scad`, `canary_jbox.scad` and
-    `canary_bench_fixture.scad`, every knob alone on its line has help read
-    off the geometry that uses it (27), except the field case's `bez_on` (a
-    catalog option whose help would become its label) and the bare `part`
-    selectors. The bench fixture's `mag_h` says no geometry reads it and where
-    the slider's pocket sits. Writing it corrected one comment: the bench
-    fixture's reed channel axis sits `reed_d/2 - 0.3` below the face (the
-    comment said 0.3). The field case's [Screw lobes] header now says 8x
-    inserts, as `lobes()` places (two docs still say six, C23).
-    `scripts/tests/test_lint_design_lang.py`'s `HELP_DEBT` holds the rest
-    shrink-only at 23/12/7: 41 knobs that share a line, and `bez_on`. Decision
-    (maintainer to confirm): these three cases first, held by a shrink-only
-    table. Rejected: invented ranges (the geometry states none).
-  - No geometry moved: the CSG of all 12 part options of the three cases is
-    byte-identical to the base under OpenSCAD 2021.01, and their 24 PNG
-    previews show no change. The package left `catalog.json`, `build.json`,
-    `workshop.json` and `figures.json` byte-identical. On the integrated tree
-    `test_lint_design_lang.py` and `test_enclosure_parsers.py` pass (33).
-    Host-tested; nothing printed.
-
-  Still open: the remaining development-case knobs without help, the three dev
-  cases' 42 among them, whose shared lines must be split, which moves
-  `catalog.json`'s `engineering_param_count` (the package's patch for that
-  split, handed to the integrator with #1802 and not applied, also gives
-  `bez_on` and `opt_weep` their help, and those helps become their catalog
-  labels; decision pending); the Lab stopping at the first module like the
-  builder (C21, which also moves `engineering_param_count`); and the
-  maintainer call on the OpenSCAD 2021.01 desktop Customizer, which shows
-  plain boxes for the house `help // [range]` form (`DESIGN_RULES.md` §11).
-  *Correction to the wave 3 brief:* stopping the Lab parser at the first
-  module drops 317 entries (230 distinct names), not about 1015. The 1015
-  counts every name the old Lab parser read that the builder does not: 317
-  past the first module, 603 expression-valued (derived) assignments before
-  it, and 95 in [Hidden] groups. The C10c-1 counts (33/21/18) include each
-  file's `part` selector, which the house leaves bare; without the selectors
-  the three files had 32/20/17 knobs without help.
-
-  *Wave 4 (#1836):*
-  - Help for the next monorepo-only cases (C10c-2): in 19 case files (the C3
-    pocket case, the solar relay, the sign, the vehicle mount, the Hammond
-    plate, the wear clip, the Sense bedside stand and gang plate, the inserts,
-    the Pi hub, the mount adapters, the Vision Pro plate, the shop tools, the
-    dock, the outlet cradle, the 7-inch frame, the S3 stick, the 1.69 case and
-    the C6 display), every knob has help read off the geometry and asserts
-    that use it. That is 133 knobs: 76 alone on their lines, 36 on eleven
-    shared lines now split one knob per line, and 21 boolean options, whose
-    help is also their catalog label. Seven knobs that no geometry reads say
-    so (C29): the gang plate's `board_clear`, the mount adapters' `tol_slide`
-    and `tol_hole`, the vehicle mount's two tolerances, the S3 stick's
-    `tol_hole` and the C6's `snap_n`. Writing it found three things the help
-    now states: the solar relay's cavity, 17.7 deep at the defaults, clears
-    `bh_h` + 1.5 while an 18650 is 18 mm across (C28); the cable gland's
-    overfill assert compares `cg_fill` with itself (C34); and the 7-inch
-    frame's brand-word width estimate reads about 25 % short of the cut words
-    (C33). It also found the builder parser giving the 1.69 case's
-    `skirt_wall` the help of its computed neighbor `skirt_dep`, which the lint
-    and `HELP_DEBT` counted as help (no surface showed it: the Lab skipped the
-    line and the builder does not offer the case); that line is split too, a
-    twelfth, and a test on each parser holds it (the lint rule that let it
-    pass is C32). `scripts/tests/test_lint_design_lang.py`'s `HELP_DEBT` holds
-    all 19 at zero. Knobs without help: 246 -> 113 of 1807 (the 81 option
-    selectors are not counted). No geometry moved: the CSG of 104 part options
-    and 27 other selector sets is byte-identical to the base under OpenSCAD
-    2021.01, the comment-stripped token streams are identical, and 207 of the
-    208 PNG previews are byte-identical to base renders (the 7-inch frame's
-    underside view varies from run to run in both trees; 14 parts, 28 of the
-    208 PNGs, render blank at the defaults on the base too, nine of them gates
-    whose pass is an empty render). The wave leaves `build.json`, `workshop.json`,
-    `figures.json` and `builder_manifest.json` as they were; only
-    `enclosures.json` and `catalog.json` regenerate. Host-tested; nothing
-    printed.
-  - Two maintainer decisions ride on it, each in commits of its own so they
-    can be dropped alone (C27). The shared-line splits (the package's e29b9282
-    and 33433c38, cherry-picked here as 222f6827 and efb87fbd; the second's
-    cherry-pick conflicted in `catalog.json`, and the resolved counts are the
-    package's): the Lab lists the 36 knobs it skipped, three of them read by
-    nothing (the C6's `snap_n`, the vehicle mount's `tol_slide` and
-    `tol_press`), and the 1.69 case's `skirt_wall` and its computed
-    `skirt_dep`: 38 entries, 10 of them in three groups it never showed (the
-    C3 case's and the vehicle mount's Print tolerances, the Hammond plate's
-    Board snap clips) and 28 in groups it already showed, and `catalog.json`'s `engineering_param_count` moves for seven products
-    (c3_lcd147 176 -> 182, c6_display 88 -> 92, hammond_chassis 26 -> 31,
-    relay_solar 100 -> 107, s3_touch169 94 -> 100, vehicle_mount 19 -> 26,
-    wear_clip 15 -> 18), as it reads at this head. And the 21 boolean helps
-    (08e44df1, here c5abc963, with two labels reworded by the review fix, here
-    1c9f871d), which replace bare knob names such as `opt_btn` as Lab catalog
-    labels. Rejected: waiting for C21, which moves the same counts and leaves
-    the knobs without help. Two commit bodies overstate and cannot be amended:
-    efb87fbd says the builder and the Lab showed `skirt_dep`'s help on
-    `skirt_wall` (neither did), and b28df079 calls 0.392 x `edge_text_size`
-    the per-letter width (it is the half-width; the help says so since
-    1c9f871d).
-
-  Still open after wave 4: 113 knobs without help, namely the carried four's
-  55 (combo 33, fit_coupon 10, dash_display 7, watch_station 5; each edit
-  moves a website sha256 pin, and watch_station needs a `gen_print_files.py`
-  re-render), C10c-1's 42 (its handed-up shared-line patch for the field case,
-  the J-box and the bench fixture is C27's decision too, and is still not
-  applied), `canary_templates_2d.scad`'s 12 (C30) and 4 in the released
-  doorbell and Vision (C31); the Lab stopping at the first module like the
-  builder (C21); and the maintainer call on the OpenSCAD 2021.01 desktop
-  Customizer.
+- [ ] **C10 [code+decision] Knobs still without help: the carried cases'
+  shared lines and the dev cases'.** 89 knobs, each counted shrink-only in
+  `scripts/tests/test_lint_design_lang.py`'s `HELP_DEBT` (the released four
+  and `canary_templates_2d.scad` hold at 0 since #1961):
+  - The carried four's shared-line knobs: `canary_combo.scad` 30 on ten lines,
+    `canary_fit_coupon.scad` 6 on three, `canary_dash_display.scad` 6 on two,
+    `canary_watch_station.scad` 3 on one
+    (`label_size`/`label_depth`/`label_font`). They wait on C27's split, which
+    moves `catalog.json`'s `engineering_param_count`.
+  - `canary_watch_station.scad`'s `opt_batt`, whose help becomes its Lab label
+    (C27(2)'s class), and its `label_text`, which rides the file's next
+    `gen_print_files.py` re-render (any byte edit re-pins the website's
+    `print/print-files.json`).
+  - C10c-1's 42 (`canary_bench_fixture.scad` 7, `canary_field_case.scad` 23
+    with `bez_on`, `canary_jbox.scad` 12), C27's too.
+  - The maintainer's call on the OpenSCAD 2021.01 desktop Customizer
+    (`DESIGN_RULES.md` §11): option selectors stay a bare bracket so it draws
+    a dropdown; its `.ast` files every knob under a group header that spans
+    two lines into the group before it (50 such headers in 11 files:
+    `canary_templates_2d.scad`'s [Doorbell] knobs land under Bracket,
+    `canary_c6_display.scad`'s Board through Snap fit under the group before
+    each); and it drops any trailing help that holds a comma or a colon
+    (`Parameter("")`). So it shows little of the help the builder and Lab
+    parsers read (`gen_enclosures.py` reads both forms).
 
 - [ ] **C21 [code+decision] The Lab's knob list is not the builder's.** After
   C10a's group fix, `canary-local/tools/gen_enclosures.py`'s `parse_scad`
@@ -4046,31 +4064,6 @@ major, by theme") — work its themes, then tick here.
   says so. For each, either remove it, which moves `catalog.json`'s
   `engineering_param_count`, or wire it where a fit needs it, which is a
   geometry change with previews. Found by C10c-2 (#1836).
-
-- [ ] **C30 [code] The paper templates retype other cases' numbers.**
-  `canary_templates_2d.scad`'s [Bracket] and [Doorbell] knobs are hand copies
-  ('mirror canary_vision_enclosure bracket defaults', 'mirror
-  canary_vision_doorbell plate defaults'): 12 knobs on four shared lines with
-  no help, and the builder's parser drops two trailing notes on those lines.
-  Today `br_x`/`br_y`/`br_screw_d` (46/34/4.2) match the Vision bracket, and
-  `db_out_x`/`db_out_y` (51.5/169.2) and `db_exit_dx` (2.2) match the
-  doorbell's echo. The screw insets and `db_exit_cy` were not checked. Read
-  the values through `use <>` (the outlet cradle's `target_gap()` pattern), or
-  hold them to their sources with a check, then split and help the lines. The
-  file is in `lint_design_lang.py`'s SKIP list as not a case, so C10c-2 left
-  it out. Found by C10c-2 (#1836).
-
-- [ ] **C31 [code] The released doorbell and Vision have knobs without help
-  again.** C10 gave every knob in the released four help except the option
-  selectors. At #1836's head, `canary_vision_doorbell.scad` has
-  `svc_pip_depth` (:390), `ant_rib_d` (:472) and `spk_post_dy` (:669) without
-  help (added by the doorbell v0.8/v0.9 work), and
-  `canary_vision_enclosure.scad` has `span_max` (:436). Both files are
-  carried, so the fix rides the carried batch: the `gen_builder_manifest.py
-  --site` carry, the website's builder-facts pins and `builder_manifest.json`.
-  Add the released four to `test_lint_design_lang.py`'s `HELP_DEBT` at zero in
-  the same change, so a new released knob cannot land without help. Found by
-  C10c-2 (#1836).
 
 - [ ] **C33 [code] The 7-inch frame's brand-word width estimate reads about 25
   % short.** `canary_s3_lcd7.scad` sizes the bottom-wall words with
@@ -4208,6 +4201,16 @@ major, by theme") — work its themes, then tick here.
   decision. From the lint's `UNMAPPED` set (`scripts/lint_build_matrix.py`).
   Found by C36 (#1920).
 
+- [ ] **C38 [decision] Two released knobs sit under the builder's Quality
+  group.** `canary_vision_enclosure.scad`'s `span_max` and
+  `canary_vision_doorbell.scad`'s `spk_post_dy` (with `cam_cx` and
+  `sec_boss_d`) come after `/* [Quality] */` with no `[Hidden]` closer, so the
+  builder and the Lab file them as Quality settings; their help has said what
+  they are since #1961. Moving them to `[Hidden]` or a group of their own
+  drops or regroups them in the Customizer and moves `builder_manifest.json`
+  and `catalog.json`, so it is a maintainer call. From the files. Found by C31
+  (#1961).
+
 ---
 
 ## 6. Documentation hygiene (small, do alongside other work)
@@ -4322,18 +4325,39 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   acts on, never a cut); `test_release_plan.py`'s pins-file test scans only
   `.github/*.env`, so it does not flag it. From code. Found by CI21 (#1920).
 
-- [ ] **CI26 [code+decision] `sbom.yml`'s own tools are unpinned and its two
-  Rust documents differ in scope.** Untouched by CI20 (#1920): the workflow
-  installs cdxgen unpinned (`npm install -g @cyclonedx/cdxgen`), rebuilds
-  cargo-cyclonedx weekly from crates.io latest, and runs on Node 20 (`CI.md`
-  names Node 20 as the known exception); the kernel's `sbom-rust.cdx.json`
-  step is still the host-target resolution where the app steps use `--target
-  all` (the kernel is a Linux service, so that scope may be right; say so or
-  align them); and cargo-cyclonedx writes spec 1.3 unless told `--spec-version
-  1.5`, cdxgen 1.7, so the documents are on three spec versions
-  (`sbom/README.md` says which). Pin both tools (the code half), decide the
-  kernel step's scope, and unify the spec version if wanted (one flag per
-  step; the decision half). From the workflow. Found by CI20 (#1920).
+- [ ] **CI26 [decision] `sbom.yml`'s two Rust documents differ in scope, its
+  documents are on three spec versions, and it runs on Node 20.** The tools
+  are pinned (#1961: cargo-cyclonedx and cdxgen from `generate-sbom`'s job
+  env, read back off each document's `metadata.tools`, held by
+  `test_gen_firmware_sbom.py`'s `SbomToolPins`). Left to decide:
+  - The kernel's `sbom-rust.cdx.json` step resolves for the host target while
+    the app steps pass `--target all`. The kernel is a Linux service, so that
+    scope may be right: say so or align them.
+  - cargo-cyclonedx writes spec 1.3 unless told `--spec-version 1.5`, cdxgen
+    writes 1.7 and the firmware document is 1.5. `sbom/README.md`'s "Writes"
+    column says which, and nothing checks it. Unifying is one flag per step,
+    and the gate could then assert `.specVersion`.
+  - The job is on Node 20, the exception `.github/CI.md` names; cdxgen
+    12.9.0's engines allow 20 and 22.
+  - `cargo install cargo-cyclonedx --version 0.5.9 --locked` warns that the
+    lockfile it was published with holds `xml-rs` 0.8.19, which is yanked
+    (0.5.10 pins the same one). Accept it, as `--locked` now does, or build
+    without `--locked`, which floats the tool's tree. RustSec was not checked.
+  - The cdxgen pin fixes its version and its direct dependencies, not the
+    ranges beneath them: the package publishes no `npm-shrinkwrap.json`, so
+    they resolve at install time (`--ignore-scripts` keeps their install
+    scripts from running). Closing that is a committed lockfile for the tool,
+    run with `npm ci`.
+  From the workflow. Found by CI20 (#1920).
+
+- [ ] **CI27 [decision] Playwright floats in two workflows.**
+  `canary-local.yml` (the boot probes) and `backoffice.yml` run `npm i
+  --no-save playwright` unpinned under a weekly Chromium cache key, the
+  pattern `.github/CI.md` allows for a floating one-off download, so the
+  Playwright and the Chromium a probe runs on move from week to week: the
+  drift #1961 closed for `sbom.yml`'s tools (CI26). Decide whether these
+  test-only tools pin a version (a job env, carried in the cache key) or keep
+  floating as an early warning. From the workflows. Found by CI26 (#1961).
 
 ---
 
