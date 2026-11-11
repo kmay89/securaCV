@@ -82,7 +82,11 @@ from .mqtt_payload import valid_device_id
 # The keys this integration owns: every key whose value is a secret, a
 # credential, a stable identifier, a network address or a location, named
 # here whatever the vocabulary says, so no vocabulary edit can take one out
-# of the dump's sweep.
+# of the dump's sweep. A key a Canary once sent in a redacted class and
+# current firmware renamed or dropped belongs here too, with the release
+# that last sent it: Canaries on that release still send it, and
+# scripts/gen_device_vocabulary.py will not drop a redacted key from
+# device_vocabulary.py unless this set names it.
 INTEGRATION_REDACT_KEYS: frozenset[str] = frozenset({
     CONF_TOKEN,
     "token_file",
@@ -132,13 +136,13 @@ INTEGRATION_REDACT_KEYS: frozenset[str] = frozenset({
 # device-details vocabulary (spec/device_details_vocabulary.json, generated
 # into device_vocabulary.py) puts in a redacted class: the identifier keys a
 # Canary's answers use (the salted hardware token, the mDNS host name, the
-# AI module's id, Bluetooth addresses) and its health counters (how long it
-# has been up, how often it booted, its card and web-server counts, how old
-# its radar's last frame is; together they can single a device out across
-# dumps and hint at when it reboots or is busy). The counters are the second
-# net behind the health projection device-details PR 16 is to add: no dump
-# carries any of them today, and should a raw health payload ever reach one,
-# they come out redacted.
+# AI module's id slot, Bluetooth addresses) and its health counters (how
+# long it has been up, how often it booted, its card and web-server counts,
+# how old its radar's last frame is; together they can single a device out
+# across dumps and hint at when it reboots or is busy). The counters are the
+# second net behind the health projection device-details PR 16 is to add: no
+# dump carries any of them today, and should a raw health payload ever reach
+# one, they come out redacted.
 TO_REDACT: frozenset[str] = INTEGRATION_REDACT_KEYS | REDACTED_DEVICE_KEYS
 
 # How many characters of the kernel id and of a Canary id the dump keeps.

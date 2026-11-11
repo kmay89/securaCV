@@ -68,8 +68,15 @@ commit both. Its `--check` (lint.yml) byte-checks the module and re-reads
 every firmware source a row names, refusing a row whose key that source no
 longer emits as a JSON key, so a firmware edit that renames or drops such a
 key (`doc["sd_writes"]` in `firmware/canary/src/main.cpp`, say) goes red
-there, in a job that names neither file, until the row moves with it. The
-same vocabulary is the input the identifier lint of ledger F430 is to read.
+there, in a job that names neither file. Moving the row is not the whole
+fix: Canaries on the earlier release still send the old key, so it stays
+redacted. Add it to `INTEGRATION_REDACT_KEYS` in `diagnostics.py`, with the
+release that last sent it, then move or drop the row; the generator refuses
+to write a module that stops redacting a key the committed one redacts
+unless that set names it (or `--allow-drop KEY` records a decision that it
+need not be redacted). That guard reads the committed module as its record,
+so it stops the generator's run, not a hand edit of both files. The same
+vocabulary is the input the identifier lint of ledger F430 is to read.
 
 Two of them are chained, and the order matters: `gen_csp.py` (every Lab page's
 Content-Security-Policy, from one policy table) hashes the firmware's captive

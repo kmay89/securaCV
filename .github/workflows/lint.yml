@@ -184,7 +184,10 @@ jobs:
         # copy (a hand edit, or a vocabulary edited without the run) and
         # re-reads every named firmware source, refusing a row whose key its
         # surface does not emit: a firmware edit that drops or renames such a
-        # key goes red here until the row moves with it.
+        # key goes red here. The old key then joins INTEGRATION_REDACT_KEYS in
+        # diagnostics.py (Canaries on the earlier release still send it)
+        # before the row moves; the generator refuses to drop a redacted key
+        # otherwise.
         run: python3 scripts/gen_device_vocabulary.py --check
       - name: Vehicle DBC signal math (golden vectors)
         run: python3 scripts/dbc_signal_resolve.py selftest

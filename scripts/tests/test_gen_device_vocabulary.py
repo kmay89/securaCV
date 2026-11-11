@@ -1,8 +1,10 @@
 """scripts/gen_device_vocabulary.py — the device-details vocabulary's
-generator, pinned: the committed module is what it writes; the scanner
-finds a key a device sends and not one it reads, comments on or serves in a
-page; every row it cannot prove is refused by name and writes nothing; and
-the class decides the redaction.
+generator, pinned: the committed module is what it writes, byte for byte;
+the scanner finds a key a device sends and not one it reads, parses,
+comments on or serves in a page; every row it cannot prove is refused by
+name and writes nothing; the class decides the redaction; and a run never
+stops redacting a key the committed module redacts unless diagnostics.py
+keeps it or --allow-drop says so.
 
 Kept here rather than in custom_components/securacv/tests on purpose: the
 HACS mirror carries that directory and runs it standalone, without spec/ or
@@ -36,9 +38,11 @@ class CommittedModule(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
-    def test_every_seed_row_is_a_key_of_ledger_f391(self):
+    def test_the_seed_rows_of_ledger_f391_stay(self):
         # The seed is F391's keys that a firmware source emits; the two it
         # also named that none emits stay integration-owned in diagnostics.py.
+        # A floor, not the whole set: a row added after the seed is an edit
+        # to the vocabulary alone, never to this test.
         data = json.loads((REPO / gv.VOCABULARY).read_text(encoding="utf-8"))
         f391 = {
             "hw_token", "mdns_host", "serial_number", "chip_id", "module_id",
@@ -46,7 +50,8 @@ class CommittedModule(unittest.TestCase):
             "uptime", "boot_count", "sd_writes", "http_requests", "last_frame_age_ms",
         }
         keys = {row["key"] for row in data["keys"]}
-        self.assertEqual(keys, f391 - {"serial_number", "chip_id"})
+        self.assertLessEqual(f391 - {"serial_number", "chip_id"}, keys)
+        self.assertFalse({"serial_number", "chip_id"} & keys)
 
     def test_a_key_no_firmware_source_emits_is_refused_on_this_tree(self):
         # Why serial_number and chip_id are not rows: on this tree the check
@@ -84,6 +89,29 @@ class Scanner(unittest.TestCase):
         self.assertFalse(self.emits('const char* name = "k";'))
         self.assertFalse(self.emits('puts("\\"k\\" is a key");'))
 
+    def test_a_parse_of_an_answer_is_not_an_emission(self):
+        for src in (
+            'if (strncmp(line, "{\\"k\\":", 6) == 0) parse(line);',
+            'const char* at = strstr(body, "\\"k\\":");',
+            'if (strncmp_P(line, PSTR("{\\"k\\":"), 6) == 0) return;',
+            'if (body.indexOf(F("\\"k\\":")) >= 0) seen = true;',
+            'if (line.startsWith("{\\"k\\":")) return;',
+            'int n = sscanf(line, "{\\"k\\":%d}", &v);',
+            'if (memcmp(p, "\\"k\\":", 4) == 0 && (x = (y))) return;',
+            'const char* at = strstr(body, (const char*)("\\"k\\":"));',
+        ):
+            with self.subTest(src=src):
+                self.assertFalse(self.emits(src))
+
+    def test_a_write_beside_a_parse_still_emits(self):
+        # Only the literal that is the parse call's own argument is a parse:
+        # a format beside it, or a cast or grouping around the write, sends.
+        self.assertTrue(self.emits('if (strstr(b, "x")) snprintf(o, n, "{\\"k\\":%d}", v);'))
+        self.assertTrue(self.emits('n = snprintf(o, n, (const char*)("{\\"k\\":%d}"), v);'))
+        self.assertTrue(self.emits('server.sendContent(F("{\\"k\\":1}"));'))
+        self.assertTrue(self.emits('if (ok) { w.raw(",\\"k\\":"); }'))
+        self.assertTrue(self.emits('strcmp(a, b); out.print("{\\"k\\":1}");'))
+
     def test_a_comment_is_not_an_emission(self):
         self.assertFalse(self.emits('// doc["k"] = v;\nint x;'))
         self.assertFalse(self.emits('/* snprintf(b, n, "\\"k\\":%d", v); */ int x;'))
@@ -115,6 +143,14 @@ class Scanner(unittest.TestCase):
             "firmware/tests_host/test_x.cpp",
             "firmware/common/ota/test_ota_logic.cpp",
             "firmware/tests_host/stubs/Arduino.h",
+            "firmware/common/csi/host_stubs/Arduino.h",
+            "firmware/canary/lib/securacv_thermal_watchdog/src/thermal_wd_host_stubs.h",
+            "firmware/projects/canary-fence-guard/src/main_stub.cpp",
+            "firmware/examples/modules/stub_door_opens.cpp",
+            "firmware/examples/csi_minimal/csi_minimal.ino",
+            "firmware/x/sd_fake/a.cpp",
+            "firmware/x/fake_lvgl/a.h",
+            "firmware/x/Mock_Radio.cpp",
             "firmware/provisioning/create_manifest.py",
             "scripts/x.cpp",
             "./firmware/canary/src/main.cpp",
@@ -212,6 +248,18 @@ class Tree(unittest.TestCase):
         self.assertIn(f"{gv.OUTPUT} is stale or was edited by hand", text)
         self.assertIn('+    "uptime",', text)  # the diff shows what the edit dropped
 
+    def test_a_line_ending_conversion_of_the_module_fails_the_check(self):
+        self.vocabulary()
+        self.run_gen()
+        lf = self.output.read_bytes()
+        self.output.write_bytes(lf.replace(b"\n", b"\r\n"))
+        code, text = self.run_gen("--check")
+        self.assertEqual(code, 1, text)
+        self.assertIn("is stale or was edited by hand", text)
+        self.assertIn("line endings or encoding", text)
+        self.assertEqual(self.run_gen()[0], 0)
+        self.assertEqual(self.output.read_bytes(), lf)  # a run writes LF
+
     def test_a_missing_module_fails_the_check(self):
         self.vocabulary()
         code, text = self.run_gen("--check")
@@ -236,9 +284,11 @@ class Tree(unittest.TestCase):
         self.refused("row 'radio_id': surface firmware/a/answer.cpp does not emit 'radio_id'",
                      "'radio_id' is emitted by firmware/b/other.cpp")
 
-    def test_a_key_only_in_a_comment_or_a_read_is_refused(self):
+    def test_a_key_only_in_a_comment_a_read_or_a_parse_is_refused(self):
         self.source("firmware/c/quiet.cpp", '// doc["quiet_id"] = q;\n'
-                    'const char* q = in["quiet_id"].as<const char*>();\n')
+                    'const char* q = in["quiet_id"].as<const char*>();\n'
+                    'bool p(const char* l) { return strncmp(l, "{\\"quiet_id\\":", 13) == 0; }\n'
+                    'bool s(const char* b) { return strstr(b, "\\"quiet_id\\":") != nullptr; }\n')
         self.rows.append(_row("quiet_id", surfaces=["firmware/c/quiet.cpp"]))
         self.vocabulary()
         self.refused("no firmware device source emits 'quiet_id'")
@@ -283,6 +333,79 @@ class Tree(unittest.TestCase):
         self.assertEqual(module.DEVICE_KEY_CLASSES["radio_id"], "shown")
         self.assertNotIn("radio_id", module.REDACTED_DEVICE_KEYS)
         self.assertEqual(module.REDACTED_CLASSES, {"identifier", "health_counter"})
+
+    def diagnostics(self, *kept):
+        listed = "".join(f'    "{key}",\n' for key in kept)
+        self.source(str(gv.DIAGNOSTICS),
+                    "from .const import CONF_TOKEN\n"
+                    f"{gv.KEPT_NAME}: frozenset[str] = frozenset({{\n    CONF_TOKEN,\n{listed}}})\n")
+
+    def test_a_run_that_would_stop_redacting_a_key_is_refused_by_name(self):
+        # A firmware release renames uptime: the row moves to the new key,
+        # as a refusal for the old one asks. Canaries on the earlier release
+        # still send uptime, so the run that would write a module without it
+        # is refused and the committed module stays as it was.
+        self.source("firmware/a/answer.cpp", 'void f(JsonDocument& doc) { doc["hw_token"] = t; }\n'
+                    'int g(char* b) { return snprintf(b, 9, "{\\"uptime_s\\":%lu}", 1UL); }\n')
+        self.rows[1] = _row("uptime", "health_counter")
+        self.vocabulary()
+        self.refused("row 'uptime': no firmware device source emits 'uptime'",
+                     f"add 'uptime' to {gv.KEPT_NAME} in {gv.DIAGNOSTICS} so it stays redacted")
+        # The committed module (written before the release) redacts uptime.
+        self.source("firmware/a/answer.cpp", 'void f(JsonDocument& doc) { doc["hw_token"] = t; }\n'
+                    'int g(char* b) { return snprintf(b, 9, "{\\"uptime\\":%lu}", 1UL); }\n')
+        self.assertEqual(self.run_gen()[0], 0)
+        committed = self.output.read_bytes()
+        self.source("firmware/a/answer.cpp", 'void f(JsonDocument& doc) { doc["hw_token"] = t; }\n'
+                    'int g(char* b) { return snprintf(b, 9, "{\\"uptime_s\\":%lu}", 1UL); }\n')
+        self.rows[1] = _row("uptime_s", "health_counter")
+        self.vocabulary()
+        code, text = self.run_gen()
+        self.assertEqual(code, 1, text)
+        self.assertIn("the redaction set only grows; nothing written", text)
+        self.assertIn("'uptime': the committed module redacts it and this vocabulary would not", text)
+        self.assertIn(f"add 'uptime' to {gv.KEPT_NAME} in {gv.DIAGNOSTICS}", text)
+        self.assertEqual(self.output.read_bytes(), committed)
+        # diagnostics.py that names the old key lets the run through, and the
+        # old key stays in the sweep from there.
+        self.diagnostics("uptime")
+        code, text = self.run_gen()
+        self.assertEqual(code, 0, text)
+        self.assertIn(f"'uptime' leaves the vocabulary; {gv.DIAGNOSTICS} keeps it redacted", text)
+        self.assertEqual(self.load_output().REDACTED_DEVICE_KEYS, {"hw_token", "uptime_s"})
+
+    def test_a_diagnostics_file_that_does_not_name_the_key_does_not_keep_it(self):
+        self.vocabulary()
+        self.run_gen()
+        self.diagnostics("hw_token_old", "uptime_ms")  # neither is 'uptime'
+        self.rows.pop()
+        self.vocabulary()
+        code, text = self.run_gen()
+        self.assertEqual(code, 1, text)
+        self.assertIn("'uptime': the committed module redacts it", text)
+
+    def test_a_class_turned_unredacted_is_refused_unless_allowed_by_key(self):
+        self.vocabulary()
+        self.run_gen()
+        self.classes["health_counter"]["redacted"] = False
+        self.vocabulary()
+        code, text = self.run_gen()
+        self.assertEqual(code, 1, text)
+        self.assertIn("'uptime': the committed module redacts it", text)
+        self.assertIn("--allow-drop uptime", text)
+        code, text = self.run_gen("--allow-drop", "uptime")
+        self.assertEqual(code, 0, text)
+        self.assertIn("'uptime' is no longer redacted (--allow-drop)", text)
+        self.assertEqual(self.load_output().REDACTED_DEVICE_KEYS, {"hw_token"})
+
+    def test_an_unreadable_committed_module_is_refused_not_overwritten(self):
+        self.vocabulary()
+        self.run_gen()
+        self.output.write_text("REDACTED_DEVICE_KEYS = frozenset({\n", encoding="utf-8")
+        code, text = self.run_gen()
+        self.assertEqual(code, 1, text)
+        self.assertIn("cannot be read", text)
+        self.assertEqual(self.output.read_text(encoding="utf-8"), "REDACTED_DEVICE_KEYS = frozenset({\n")
 
     def test_the_order_of_the_rows_does_not_move_the_module(self):
         self.vocabulary()
