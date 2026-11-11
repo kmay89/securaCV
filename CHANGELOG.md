@@ -1,6 +1,116 @@
 # Changelog
 
 ## [Unreleased]
+### The witness refuses a hash that failed and a key draw that came out flat, a Chirp suppress vote needs a presence row, canary-wap reads settings keys as keys and measures its answers, Bluetooth refuses what its own link did not set up, an Opera joiner keeps its opera from a stranger, the dashboards hold their raw splices, Home Assistant reads only what was sent, the Vision app asks for a `.local` name, the slot check warns early, and the parity ledgers say what the code does (#1966, wave 25)
+
+- **The witness refuses a SHA-256 that failed (F455).** The canary (PIO)
+  tree's SHA-256 helpers and the common witness core (`witness_chain.h`)
+  report whether every mbedTLS step ran (the `_ret` names on core 2.0.17's
+  mbedTLS 2.28, the plain names on core 3, picked by
+  `MBEDTLS_VERSION_NUMBER`) and zero their output when one fails. A failed
+  hash makes no record, adopts no SD tail and reads red in `chain_ok`; a
+  fingerprint or genesis head that did not compute stops provisioning; a
+  certificate hash that did not compute means no HTTPS and no pin, where it
+  could hand out a pin of 32 zero bytes. canary-sense, canary-vision and
+  canary-sentinel turn signing off on a failed fingerprint or genesis head
+  and advance no chain on a failed link.
+- **A first-boot key draw that came out flat is refused (F38, in part).**
+  `firmware/common/identity/key_draw_check.h` makes all five keygens refuse
+  an identity key draw whose bytes are all equal or whose popcount is
+  outside 48..208 (a uniform draw is refused with odds of about 2^-82.5),
+  and `regression_check.sh` requires the check in every keygen file. On the
+  WAP a refused draw also refuses that boot's chain: nothing is signed under
+  the zeroed key and no chain state is persisted.
+- **canary-wap Chirp: a suppress vote needs a presence row (F234's floor,
+  F232 pinned).** A vote counts only from a session key whose nearby row is
+  ten minutes old, the rule an ACK has met since F311. Fresh keys suppress
+  nothing, and a receiver with 0 to 2 nearby rows can never suppress a
+  chirp; a receiver also ignores votes from neighbors it has heard for less
+  than ten minutes, for example right after it boots. That is the fail-safe
+  direction, and a delay rather than a price: keys one radio beacons for ten
+  minutes still vote, an emergency template included. Whether that can
+  happen at all stays a decision.
+- **canary-wap settings: keys are read as keys (F462).** `POST
+  /api/settings` reads each key only as a member of the body's own JSON
+  object, so a value spelled like a key no longer stores the privacy
+  ceiling, pet mode, the transmitter filter or a preset, and a value spelled
+  `"tz"` no longer answers 400. A body holding a NUL byte now answers 400
+  "body is not JSON" and stores nothing.
+- **canary-wap answers are measured (F464).** `check_wap_json_answers.py`
+  measures `csi_integration.cpp`'s and `csi_mqtt.cpp`'s `snprintf()`
+  answers. `GET /api/csi/window` is composed and refused whole if it cannot
+  fit, the Tuning Lab's coefficient and preset GETs send no row past its
+  buffer, and `POST /api/mqtt/test` refuses an answer past its buffer.
+- **Bluetooth refuses what its own link did not set up (F447, F449, F460).**
+  On a Sense or a Vision the hub hand-off is taken only from the link that
+  sent the Wi-Fi settings, so a client that connects after the phone dropped
+  mid-join is refused it, and a refused second Wi-Fi write is logged as
+  refused. On a canary-wap FULL build, after a refused boot bring-up, the
+  pairing channel refuses a server Bluetooth Discovery made ("Not started:
+  Bluetooth Discovery started its server this boot; restart to pair"), so a
+  late Pair or Advertise tap waits for a reboot. A new host suite holds the
+  WAP's Chirp sender to the golden advert bytes.
+- **canary-wap Opera pairing (F318's guard, F140 and F445 in part).** A
+  Canary that holds an opera and its members refuses a pairing COMPLETE from
+  another opera's initiator it does not hold, before adding anyone, and logs
+  why; a re-pair with a held member into another opera still goes through
+  and keeps the joiner's other members (spec §5.2). Two pairing lines that
+  reached `GET /api/logs` cut at 79 bytes are now message plus detail, no
+  word changed, and a host test holds every `mesh_network.cpp` log line to
+  the ring's fields.
+- **Dashboards (F465; F468 and F443 in part).** The WAP dashboard's
+  acknowledge dialog shows a refused acknowledgment as text ("Not
+  acknowledged: Log entry not found") and stays open, where it closed as if
+  the entry were acknowledged. Both dashboards' raw splices into markup are
+  held by shrink-only ledgers (`html_splices.js`): a new one fails. The
+  Sensing dashboard's reading-grade gate strips `COPY`'s comments before it
+  grades: 89 strings at 3.35, where it graded 84 at 3.46.
+- **Home Assistant reads only what was sent (HA60, HA46 in part).** The
+  Health sensor's `battery_percent` no longer shows 100 for a unit that says
+  it has a battery and sends no number for its charge (no shipping firmware
+  sends that body); mains units read 100 as before. The battery blueprint
+  alerts on low battery only for a charge the unit sent; a copy imported by
+  URL or placed by `scripts/install.sh` keeps the old text until you
+  re-import it. SD Wear Estimate is created only for a device whose health
+  carries the `sd` object, today the canary base alone; an existing install
+  keeps the entity each other Canary was given, shown unavailable and
+  restored until you delete it.
+- **canary-vision asks for a `.local` name instead of an IP its CSP refuses
+  (F448, the code half).** Manual entry, "Add with token", a pasted or
+  scanned receipt and a prefilled host answer "enter its .local name" for an
+  IP other than the page's own and make no request; a device already stored
+  under such an IP says it needs its `.local` name instead of calling itself
+  offline.
+- **CI: the OTA slot check warns before an image runs out of room (F367, the
+  code half).** `check_slot_budget.py` prints a `::warning::` when an image
+  fits its slot with less than 5% free, and firmware.yml's two PR size
+  checks run that script instead of their own copies, so the PR checks and
+  the release apply one budget and one floor. fw-v2.4.16's C6 nightstand
+  (2,832 B free) would have warned; what it drops is the open decision.
+- **Docs: the parity ledgers, a forced flag and two comments say what the
+  code does (F20 slice c, F467; the text halves of F219 and F147).**
+  `FEATURES.md`'s dashboard SD storage and export rows read canary (PIO) ⚠️
+  (the flagship makes `/HEALTH` and `/EXPORT` and writes neither), and
+  `CONSOLIDATION.md` gains gap #17, the SD health log tier. The canary-wap's
+  `sys_monitor.h` no longer forces `FEATURE_SYS_MONITOR` over
+  `BUILD_PROFILE_MINIMAL`'s 0 (no shipped build changes). The daily
+  summary's comments no longer claim a card renders its note, and
+  `FAULT_MODEL.md` §2.3 says the canary-wap's QoS 0 watermark loses the rows
+  a stalled link aborts.
+- **Backlog:** F455, F460, F462, F464, F465 and F467 are closed, and F250's
+  open half is F282's. F38, F232, F234, F140, F318, F445, F447, F448, F449,
+  F443, F468, F367, F20, F219, F147, F254, F364, HA60 and HA46 now say what
+  remains. New from the wave: F469-F478, D23 and CI28, among them the
+  flagship's `/EXPORT` (F476) and two calls on a hash that fails at
+  provisioning or at a link (F477, F478).
+- Host-tested here: the canary-wap host suite under g++, clang++ 18 and
+  ASan/UBSan, the firmware host suites in both mbedTLS spellings, both
+  dashboards' and the Vision app's node tests, the Vision app in headless
+  Chromium, Home Assistant's tests on real cores 2026.10.1 and 2026.5.0, and
+  the slot check's workflow steps under bash. The ESP32 PlatformIO and
+  Arduino compiles are CI's, and `BUILD_PROFILE_MINIMAL` is compiled by no
+  job. Nothing was run on a device, and no new bench row has been run.
+
 ### canary-wap reads every request body whole and its mesh refuses a hash it could not make, the Sensing dashboard says when stored levels win, one header spells the Chirp advert, Home Assistant redacts what the device vocabulary names, the SBOM tools are pinned, the parity ledgers read the code, and the released cases' knobs carry help (#1961, wave 24)
 
 - **canary-wap reads every POST body whole or refuses it by name (F300).**
