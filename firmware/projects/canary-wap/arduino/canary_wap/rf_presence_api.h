@@ -18,6 +18,7 @@
 #define SECURACV_RF_PRESENCE_API_H
 
 #include "esp_http_server.h"
+#include "http_body_reader.h"   // a POST body read whole, or refused by name (sweep F300)
 #include "rf_presence.h"
 #include "api_auth.h"
 #include <ArduinoJson.h>
@@ -75,6 +76,23 @@ static inline esp_err_t send_error(httpd_req_t* req, const char* error) {
   char buffer[128];
   serializeJson(doc, buffer);
   return send_json_response(req, buffer);
+}
+
+// A POST body, read whole or refused by name (sweep F300): nullptr when all
+// of it is in `buf` (NUL-terminated, *len bytes; 0 for no body, which each
+// route answers its own way), else the error this file answers with
+// send_error(). One httpd_req_recv() is one socket read: the handlers parsed
+// what it returned, so a body in two TCP segments was parsed cut and one past
+// the buffer was cut at it and parsed anyway. http_body::read_request()
+// (http_body_reader.h, host-tested) reads Content-Length bytes and refuses a
+// body that does not fit before reading any of it;
+// tests_host/test_http_body_reader pins that no other httpd_req_recv() call
+// is left in this file.
+static const char* read_body(httpd_req_t* req, char* buf, size_t cap, size_t* len) {
+  const http_body::Result r = http_body::read_request(req, buf, cap, len);
+  if (r == http_body::TOO_LARGE) return "Request body too large";
+  if (r == http_body::READ_FAILED) return "Request body read failed";
+  return nullptr;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -185,14 +203,11 @@ static inline T clamp(T value, T min_val, T max_val) {
 // All values are validated and clamped to safe ranges
 inline esp_err_t handle_rf_settings_set(httpd_req_t* req) {
   char content[256];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) return send_error(req, err);
+  if (content_len == 0) {
     return send_error(req, "Missing request body");
   }
-  if (content_len >= static_cast<int>(sizeof(content) - 1)) {
-    return send_error(req, "Request body too large");
-  }
-  content[content_len] = '\0';
 
   JsonDocument input;
   DeserializationError json_err = deserializeJson(input, content);

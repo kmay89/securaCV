@@ -408,23 +408,46 @@ namespace vault_snapshot {
 }  // namespace vault_snapshot
 
 // POST /api/vault/key's handler, handle_vault_key_set(), cut verbatim out of
-// canary_wap.ino (sweep F426), over the vault functions above and
-// stand-ins for what it names: esp_http_server's one body read, the
-// sketch's http_send_json() (the bytes it sends), g_health's request count
-// and ArduinoJson (arduinojson_tree.h, which writes as ArduinoJson does).
+// canary_wap.ino (sweep F426), with the sketch's http_body_refusal() and
+// http_send_error() it calls (sweep F300: the body read whole over the REAL
+// http_body_reader.h, or refused by name), over the vault functions above
+// and stand-ins for what they name: esp_http_server's body read (handed
+// over in short reads as a case plans them) and status line, the sketch's
+// http_send_json() (the bytes it sends), g_health's request count and
+// ArduinoJson (arduinojson_tree.h, which writes as ArduinoJson does).
 #ifndef ESP_OK
 typedef int esp_err_t;
 #define ESP_OK 0
 #endif
+#define HTTPD_SOCK_ERR_TIMEOUT -3   // what httpd_req_recv() returns for a read that timed out
 struct httpd_req_t {
-  std::string body;   // what the client sent
-  std::string resp;   // what the handler answered
+  size_t content_len = 0;      // the request's Content-Length, as IDF fills it
+  std::string body;            // what the client sent
+  size_t body_off = 0;         // how much of it the handler has read
+  std::vector<int> recv_plan;  // each read's cap (a short read); a negative entry is returned as it is
+  size_t recv_calls = 0;
+  std::string status = "200 OK";
+  std::string resp;            // what the handler answered
   int sends = 0;
 };
+// As IDF's: at most `len` bytes, never past content_len, as the plan allows.
 static int httpd_req_recv(httpd_req_t* r, char* buf, size_t len) {
-  const size_t n = std::min(len, r->body.size());
-  std::memcpy(buf, r->body.data(), n);
+  const size_t call = r->recv_calls++;
+  size_t cap = len;
+  if (call < r->recv_plan.size()) {
+    const int step = r->recv_plan[call];
+    if (step <= 0) return step;
+    cap = std::min(cap, (size_t)step);
+  }
+  cap = std::min(cap, r->content_len - std::min(r->content_len, r->body_off));
+  const size_t n = std::min(cap, r->body.size() - r->body_off);
+  std::memcpy(buf, r->body.data() + r->body_off, n);
+  r->body_off += n;
   return (int)n;
+}
+static esp_err_t httpd_resp_set_status(httpd_req_t* r, const char* line) {
+  r->status = line;
+  return ESP_OK;
 }
 static esp_err_t http_send_json(httpd_req_t* req, const char* json) {
   req->resp = json ? json : "";
@@ -435,6 +458,8 @@ static struct {
   uint32_t http_requests;
 } g_health;
 #include "arduinojson_tree.h"
+#include "http_body_reader.h"
+#include "http_status_line.h"
 #include WAP_SHAMOD_VAULT_KEY_INC
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -787,12 +812,17 @@ static const char* const kNotSavedText =
     "The device could not save this key (its key id did not compute, or storage refused the "
     "write). Nothing changed. Try again, and check the health log if it repeats.";
 
-// POST /api/vault/key with `body`; its answer, parsed under JSON.parse's rules.
-static json_strict::Value post_vault_key(const std::string& body, const std::string& label) {
+// POST /api/vault/key with `body` (its Content-Length, handed over as
+// `plan` says); its answer, parsed under JSON.parse's rules.
+static json_strict::Value post_vault_key(const std::string& body, const std::string& label,
+                                         std::vector<int> plan = {}, std::string* status = nullptr) {
   httpd_req_t req;
+  req.content_len = body.size();
   req.body = body;
+  req.recv_plan = std::move(plan);
   handle_vault_key_set(&req);
   CHECK_MSG(req.sends == 1, label + ": one answer");
+  if (status) *status = req.status;
   json_strict::Value v;
   CHECK_MSG(json_strict::parse(req.resp, &v), label + ": the answer parses: " + req.resp);
   return v;
@@ -905,6 +935,58 @@ static void test_vault_key_route() {
     check_other_key_kept(label);
     CHECK_MSG(!log_has("Vault unlock key refused"), label + ": no device refusal is logged");
   }
+
+  // The body as the socket hands it over (sweep F300). The handler parsed
+  // what ONE httpd_req_recv() returned, so a key posted in short reads was
+  // parsed from its first segment and refused as "Invalid JSON". Now it is
+  // read whole; one past the 160-byte buffer, or one that stops arriving, is
+  // refused by name with a 400 and nothing changes.
+  const struct {
+    const char* name;
+    std::string body;
+    std::vector<int> plan;
+  } whole[] = {
+      {"the key in three short reads and a timeout", key_body(hex(kOperatorPub, 32)),
+       {12, HTTPD_SOCK_ERR_TIMEOUT, 30}},
+      {"a 159-byte body (it just fits the buffer) in two reads", key_body(hex(kOperatorPub, 32)) + std::string(82, ' '),
+       {100}},
+  };
+  for (const auto& c : whole) {
+    const std::string label = std::string("vault key route, ") + c.name;
+    register_other_key();
+    stub_sha256::arm();
+    std::string status;
+    const json_strict::Value v = post_vault_key(c.body, label, c.plan, &status);
+    const json_strict::Value* ok = v.get("ok");
+    CHECK_MSG(status == "200 OK" && ok != nullptr && ok->kind == json_strict::Value::Bool && ok->b,
+              label + ": registered, not parsed from its first segment: " + error_of(v));
+    CHECK_MSG(has_pubkey() && std::memcmp(g_pubkey, kOperatorPub, 32) == 0, label + ": the posted key, whole");
+  }
+  const struct {
+    const char* name;
+    std::string body;
+    std::vector<int> plan;
+    const char* error;
+  } unread[] = {
+      {"a body one byte past the 160-byte buffer", key_body(hex(kOperatorPub, 32)) + std::string(83, ' '), {},
+       "body_too_large"},
+      {"four timeouts in a row", key_body(hex(kOperatorPub, 32)),
+       {HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT},
+       "body_read_failed"},
+  };
+  for (const auto& c : unread) {
+    const std::string label = std::string("vault key route, ") + c.name;
+    register_other_key();
+    const int writes_before = g_nvs.writes;
+    stub_sha256::arm();
+    std::string status;
+    const json_strict::Value v = post_vault_key(c.body, label, c.plan, &status);
+    CHECK_MSG(status == "400 Bad Request" && error_of(v) == c.error,
+              label + ": refused by name: " + status + " " + error_of(v));
+    CHECK_MSG(stub_sha256::hashes == 0 && g_nvs.writes == writes_before, label + ": nothing tried or written");
+    check_other_key_kept(label);
+  }
+  CHECK(key_body(hex(kOperatorPub, 32)).size() + 83 == 160);
 
   // A key the device keeps: ok, its key id, in RAM and NVS.
   {

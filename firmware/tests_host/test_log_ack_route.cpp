@@ -23,7 +23,9 @@
 //     literal text, so no other path ever reached the old body, but behind
 //     "/api/logs/*" that body's atoi() read would have acknowledged entry
 //     42 for POST /api/logs/42 and entry 0 for POST /api/logs/x/ack;
-//   - canary-wap reads the reason from the body only for a log-ack request;
+//   - canary-wap reads the reason from the body only for a log-ack request,
+//     whole across short reads, and refuses one past its buffer by name
+//     (sweep F300);
 //   - the PlatformIO handler's rate limit and bearer gate still come first.
 // Which request reaches this handler at all is
 // test_dashboard_route_match.test.js's question (registration order through
@@ -48,13 +50,17 @@ typedef int esp_err_t;
 static const esp_err_t ESP_OK = 0;
 typedef enum { HTTPD_400_BAD_REQUEST = 400, HTTPD_404_NOT_FOUND = 404 } httpd_err_code_t;
 
+#define HTTPD_SOCK_ERR_TIMEOUT -3   // what httpd_req_recv() returns for a read that timed out
 struct httpd_req_t {
   const char* uri;
+  size_t content_len = 0;       // the request's Content-Length, as IDF fills it
   std::string body;
   size_t body_read = 0;
+  size_t segment = 0;           // the most one read hands over (a TCP segment); 0 is no cap
   int recv_calls = 0;
   int err_status = 0;           // httpd_resp_send_err's code, 0 if none
   std::string err_msg;
+  std::string status = "200 OK";   // httpd_resp_set_status's line
   std::string json;             // http_send_json's body, empty if none
 };
 
@@ -69,6 +75,8 @@ static esp_err_t httpd_resp_send_err(httpd_req_t* req, httpd_err_code_t code, co
 
 static int httpd_req_recv(httpd_req_t* req, char* buf, size_t len) {
   req->recv_calls++;
+  if (req->segment && len > req->segment) len = req->segment;
+  len = std::min(len, req->content_len - std::min(req->content_len, req->body_read));
   const size_t n = std::min(len, req->body.size() - req->body_read);
   memcpy(buf, req->body.data() + req->body_read, n);
   req->body_read += n;
@@ -77,6 +85,11 @@ static int httpd_req_recv(httpd_req_t* req, char* buf, size_t len) {
 
 static esp_err_t http_send_json(httpd_req_t* req, const char* json) {
   req->json = json;
+  return ESP_OK;
+}
+
+static esp_err_t httpd_resp_set_status(httpd_req_t* req, const char* line) {
+  req->status = line;
   return ESP_OK;
 }
 
@@ -191,6 +204,11 @@ static bool auth_gate(httpd_req_t*) { gate_calls++; return auth_ok; }
 }  // namespace pio
 
 // ── canary-wap's handler ─────────────────────────────────────────────────
+// With the sketch's http_send_error() and http_body_refusal() (sweep F300: the
+// body read whole for its Content-Length or refused by name), cut beside it,
+// over the sketch's own http_body_reader.h and http_status_line.h.
+#include "../projects/canary-wap/arduino/canary_wap/http_body_reader.h"
+#include "../projects/canary-wap/arduino/canary_wap/http_status_line.h"
 namespace wap {
 static Health g_health;
 #include "log_ack_wap.inc"
@@ -209,10 +227,12 @@ static const Tree kTrees[] = {
   {"wap", wap::handle_log_ack, wap::log_ack_seq_from_uri},
 };
 
-static httpd_req_t run(const Tree& t, const char* uri, const char* body = "") {
+static httpd_req_t run(const Tree& t, const char* uri, const std::string& body = "", size_t segment = 0) {
   httpd_req_t req;
   req.uri = uri;
+  req.content_len = body.size();
   req.body = body;
+  req.segment = segment;
   g_acks.clear();
   t.handler(&req);
   return req;
@@ -294,6 +314,22 @@ static void test_wap_reads_the_reason() {
   CHECK(r.recv_calls == 1, "wap: read the body %d times", r.recv_calls);
   r = run(t, "/api/logs/5/ack");
   CHECK(g_acks.size() == 1 && g_acks[0].reason.empty(), "wap: no body, empty reason");
+  // Sweep F300: the body is read whole. One httpd_req_recv() was parsed, so
+  // a body that came in short segments lost its reason (the first segment
+  // is not JSON); and one past the 128-byte buffer was cut there, parsed as
+  // no reason and acknowledged. Now it is read across the segments, and one
+  // that does not fit is refused by name (400 body_too_large) with nothing
+  // acknowledged.
+  r = run(t, "/api/logs/5/ack", "{\"reason\":\"seen it\"}", /*segment=*/5);
+  CHECK(g_acks.size() == 1 && g_acks[0].seq == 5 && g_acks[0].reason == "seen it" && r.recv_calls == 4,
+        "wap: a body in 5-byte segments: reason %s after %d reads",
+        g_acks.empty() ? "(none)" : g_acks[0].reason.c_str(), r.recv_calls);
+  r = run(t, "/api/logs/5/ack", "{\"reason\":\"" + std::string(114, 'r') + "\"}");
+  CHECK(g_acks.size() == 1 && g_acks[0].reason.size() == 114, "wap: a 127-byte body fits the buffer whole");
+  r = run(t, "/api/logs/5/ack", "{\"reason\":\"" + std::string(115, 'r') + "\"}");
+  CHECK(g_acks.empty() && r.status == "400 Bad Request" && r.json == "{\"ok\":false,\"error\":\"body_too_large\"}" &&
+        r.recv_calls == 0,
+        "wap: a 128-byte body is refused unread: %zu acks, %s %s", g_acks.size(), r.status.c_str(), r.json.c_str());
   // The PlatformIO handler never read one.
   r = run(kTrees[0], "/api/logs/5/ack", "{\"reason\":\"seen it\"}");
   CHECK(g_acks.size() == 1 && g_acks[0].reason.empty() && r.recv_calls == 0, "pio: reason is empty");

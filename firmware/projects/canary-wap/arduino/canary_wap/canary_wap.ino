@@ -4071,6 +4071,23 @@ static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* 
   return http_send_json(req, response);
 }
 
+// The error code a handler answers a refused POST body with (sweep F300),
+// through http_send_error(req, 400, ...) as handle_ota_config does. One
+// httpd_req_recv() is one socket read: the handlers parsed what it returned,
+// so a body in two TCP segments was parsed cut and one past the buffer was
+// cut at it and parsed anyway. Each now reads
+//   const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+//   if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+// (http_body_reader.h, host-tested: Content-Length bytes, a body that does
+// not fit refused before any of it is read) and keeps its own answer for no
+// body (body_len 0). tests_host/test_http_body_reader pins that shape at
+// every call and that no other httpd_req_recv() call is left in the sketch's
+// handlers. A function of literals, so check_wap_json_answers.py reads every
+// error code http_send_error() can be handed.
+static const char* http_body_refusal(http_body::Result r) {
+  return r == http_body::TOO_LARGE ? "body_too_large" : "body_read_failed";
+}
+
 // The dashboard/settings/companion pages ship only as gzip (the uncompressed
 // copies are compiled out to save flash). Every browser sends
 // "Accept-Encoding: gzip", but a client that doesn't (e.g. plain `curl`
@@ -4864,9 +4881,10 @@ static esp_err_t handle_audio_mute(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[64];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok ||
@@ -4949,9 +4967,10 @@ static esp_err_t handle_audio_selftest_post(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[96];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
@@ -5001,9 +5020,10 @@ static esp_err_t handle_audio_config_post(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[96];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok ||
@@ -5201,11 +5221,16 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
   
   // Read body for reason
   char content[128] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   
+  // `reason` points into `body`'s strings (ArduinoJson 7 copies them into
+  // the document), so the document outlives it: it was declared inside the
+  // `if`, and the pointer handed on below dangled.
   const char* reason = "";
-  if (ret > 0) {
-    JsonDocument body;
+  JsonDocument body;
+  if (body_len > 0) {
     if (deserializeJson(body, content) == DeserializationError::Ok) {
       reason = body["reason"] | "";
     }
@@ -5384,9 +5409,11 @@ static esp_err_t handle_config_post(httpd_req_t* req) {
   g_health.http_requests++;
 
   char content[256] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   JsonDocument body;
-  if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
+  if (body_len == 0 || deserializeJson(body, content) != DeserializationError::Ok) {
     httpd_resp_set_status(req, "400 Bad Request");
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
@@ -6582,9 +6609,11 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
   
   // Read body
   char content[64] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   
-  if (ret <= 0) {
+  if (body_len == 0) {
     const char* resp = "{\"ok\":false,\"error\":\"No body\"}";
     return http_send_json(req, resp);
   }
@@ -6720,14 +6749,13 @@ static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
   }
 
   // Read body — generous limit to allow tuning multiple fields atomically.
+  // Read whole or refused (sweep F300): the loop here read until the buffer
+  // filled, so a body past 511 bytes was cut there and parsed anyway.
   char content[512] = {0};
-  int total = 0;
-  while (total < (int)sizeof(content) - 1) {
-    int r = httpd_req_recv(req, content + total, sizeof(content) - 1 - total);
-    if (r <= 0) break;
-    total += r;
-  }
-  if (total <= 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) {
     const char* resp = "{\"ok\":false,\"error\":\"No body\"}";
     return http_send_json(req, resp);
   }
@@ -6954,9 +6982,10 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[64];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
@@ -6985,16 +7014,18 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[128];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  buf[ret > 0 ? ret : 0] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
 
   // No body keeps the default name. A body that does not parse is refused
   // (sweep F303): it was read as no name, so a request whose name did not
   // fit the buffer (cut there, so no longer JSON) founded an opera under
-  // the default without a word.
+  // the default without a word. A body that does not fit is now refused
+  // before it is read (body_too_large, sweep F300), never cut.
   const char* opera_name = nullptr;
   JsonDocument body;
-  if (ret > 0) {
+  if (body_len > 0) {
     if (deserializeJson(body, buf) != DeserializationError::Ok) {
       return http_send_error(req, 400, "invalid_json");
     }
@@ -7090,9 +7121,10 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[64];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
@@ -7127,9 +7159,10 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[128];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
@@ -7558,9 +7591,11 @@ static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
   setup_wizard::touch();
 
   char content[256] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   JsonDocument body;
-  if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
+  if (body_len == 0 || deserializeJson(body, content) != DeserializationError::Ok) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
   // During setup: the wizard's pair token, or a lockout-throttled admin
@@ -7610,9 +7645,11 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // optional tz_iana — a maximal escaped password and SSID alone approach
   // the old 384, so the zone got its own headroom rather than a squeeze).
   char content[512] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
 
-  if (ret <= 0) {
+  if (body_len == 0) {
     JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "No body";
@@ -9133,12 +9170,13 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
 #endif
 
   char body[256];
-  int len = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (len <= 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, body, sizeof(body), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) {
     httpd_resp_set_status(req, "400 Bad Request");
     return http_send_json(req, "{\"ok\":false,\"error\":\"Missing request body\"}");
   }
-  body[len] = '\0';
 
   JsonDocument doc;
   if (deserializeJson(doc, body)) {
@@ -9283,11 +9321,12 @@ static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
 
   // Parse request body for chirp type
   char content[64];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   ChirpType chirpType = CHIRP_ALERT;  // Default
 
-  if (content_len > 0) {
-    content[content_len] = '\0';
+  if (body_len > 0) {
     JsonDocument doc;
     if (deserializeJson(doc, content) == DeserializationError::Ok) {
       const char* typeStr = doc["type"] | "";
@@ -9887,8 +9926,10 @@ static esp_err_t handle_identify(httpd_req_t* req) {
 
   uint32_t duration_ms = 15000;  // default ~15s, like Hue's identify
   char content[128] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (ret > 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len > 0) {
     JsonDocument body;
     if (deserializeJson(body, content) == DeserializationError::Ok && body["duration_ms"].is<uint32_t>()) {
       duration_ms = body["duration_ms"].as<uint32_t>();
@@ -9982,9 +10023,11 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
   g_health.http_requests++;
 
   char content[128] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   JsonDocument doc;
-  if (ret <= 0) { doc["ok"] = false; doc["error"] = "No body"; }
+  if (body_len == 0) { doc["ok"] = false; doc["error"] = "No body"; }
   else {
     JsonDocument body;
     const char* name = nullptr;
@@ -10313,8 +10356,10 @@ static esp_err_t handle_vault_status(httpd_req_t* req) {
 static esp_err_t handle_vault_config(httpd_req_t* req) {
   g_health.http_requests++;
   char content[192] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (ret <= 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"No body\"}");
   }
   JsonDocument body;
@@ -10361,8 +10406,10 @@ static esp_err_t handle_vault_config(httpd_req_t* req) {
 static esp_err_t handle_vault_key_set(httpd_req_t* req) {
   g_health.http_requests++;
   char content[160] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (ret <= 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"No body\"}");
   }
   JsonDocument body;

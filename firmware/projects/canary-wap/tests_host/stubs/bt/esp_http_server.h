@@ -13,17 +13,34 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 typedef int esp_err_t;
 #ifndef ESP_OK
 #define ESP_OK 0
 #define ESP_FAIL -1
 #endif
+/* esp_http_server.h's socket error codes, as httpd_req_recv() returns them. */
+#define HTTPD_SOCK_ERR_FAIL    -1
+#define HTTPD_SOCK_ERR_INVALID -2
+#define HTTPD_SOCK_ERR_TIMEOUT -3
 typedef void* httpd_handle_t;
 
 struct httpd_req {
+  /* The request line's Content-Length, as IDF fills it (0 when the client
+   * sent none): the handlers read exactly this much (sweep F300,
+   * http_body::read_request()). The test sets it beside `body`. */
+  size_t content_len = 0;
   std::string body;
   size_t body_off = 0;
+  /* How the socket hands the body over, as stubs/mqtt's request does: each
+   * entry is the next httpd_req_recv() call's answer. A positive entry caps
+   * what that call returns, as one TCP segment would (a short read); a
+   * negative one is returned as it is (HTTPD_SOCK_ERR_TIMEOUT, a socket
+   * error) and reads nothing. Once the plan is spent each call returns all
+   * it may. */
+  std::vector<int> recv_plan;
+  size_t recv_calls = 0;
   std::string status = "200 OK";
   std::string type;
   std::map<std::string, std::string> resp_hdrs;
@@ -32,9 +49,21 @@ struct httpd_req {
 };
 typedef struct httpd_req httpd_req_t;
 
+/* As IDF's httpd_req_recv(): at most `len` bytes of the body, never past
+ * content_len, whatever one socket read delivered; 0 once the peer has
+ * nothing more. */
 inline int httpd_req_recv(httpd_req_t* r, char* buf, size_t len) {
+  const size_t call = r->recv_calls++;
+  size_t cap = len;
+  if (call < r->recv_plan.size()) {
+    const int step = r->recv_plan[call];
+    if (step <= 0) return step;
+    if ((size_t)step < cap) cap = (size_t)step;
+  }
+  const size_t owed = r->content_len > r->body_off ? r->content_len - r->body_off : 0;
+  if (owed < cap) cap = owed;
   const size_t left = r->body.size() - r->body_off;
-  const size_t n = left < len ? left : len;
+  const size_t n = left < cap ? left : cap;
   if (n == 0) return 0;
   memcpy(buf, r->body.data() + r->body_off, n);
   r->body_off += n;
@@ -69,7 +98,6 @@ struct httpd_uri_t {
 };
 // The routes register_routes() made, so a test drives the handler a route
 // actually has (sweep F346: the bond confirm's gate is the registration's).
-#include <vector>
 inline std::vector<httpd_uri_t>& registered_routes() {
   static std::vector<httpd_uri_t> routes;
   return routes;
