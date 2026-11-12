@@ -435,7 +435,24 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
   // Extract optional fields
   const char* urgency_str = input["urgency"] | "info";
   uint8_t detail_raw = input["detail"] | 0;
-  uint8_t ttl = input["ttl_minutes"] | 15;
+
+  // ttl_minutes: absent (or null) is 15; a present value goes out only as an
+  // integer 5..60 (spec §3.3), and anything else is refused here, before the
+  // uint8_t the frame carries: `| 15` into a uint8_t signed 300 as 44 and -1
+  // as 255 (sweep F412; mesh_network.h's ttl_from_request(), host-tested).
+  JsonVariantConst ttl_in = input["ttl_minutes"];
+  uint8_t ttl = 0;
+  if (!chirp_channel::ttl_from_request(!ttl_in.isNull(), ttl_in.is<int32_t>(),
+                                       ttl_in.as<int32_t>(), &ttl)) {
+    JsonDocument doc;
+    doc["success"] = false;
+    doc["error"] = chirp_channel::send_refusal_error(chirp_channel::SEND_REFUSED_TTL);
+    doc["message"] = chirp_channel::send_refusal_message(chirp_channel::SEND_REFUSED_TTL);
+    char buffer[256];
+    serializeJson(doc, buffer);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, buffer);
+  }
 
   // Map urgency string to enum
   chirp_channel::ChirpUrgency urgency = chirp_channel::CHIRP_URG_INFO;
