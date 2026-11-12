@@ -5,6 +5,14 @@
 //! - Each receipt entry is signed by the device key (Ed25519)
 //! - The bundle file bytes hash to a receipt recorded in the DB
 //!
+//! "The device key" holds only when the verifying key came from out of band
+//! (`--public-key`, `--public-key-file`, `--device-key-seed` or
+//! `DEVICE_KEY_SEED`). With none of them the key is read from the database
+//! under audit, which proves the bundle and the receipt chain agree with each
+//! other, not whose device signed them, and the final line says so:
+//! `SELF-CONSISTENT, IDENTITY UNVERIFIED`, the label `log_verify` prints for
+//! the same case (its B3 rule).
+//!
 //! It does not attempt to reserialize or canonicalize JSON: raw file bytes are hashed.
 
 use anyhow::{anyhow, Result};
@@ -158,6 +166,22 @@ fn main() -> Result<()> {
         )),
         _ => None,
     };
+    // B3 honesty, the rule log_verify applies (verify_runner sets
+    // identity_verified = public_key_hex.is_some()): "signed by the device
+    // key" in the module doc is true only of a key that came from outside the
+    // database under audit. --public-key and --public-key-file are that;
+    // --device-key-seed / DEVICE_KEY_SEED derive it (public_key_hex is Some for
+    // the seed only when no key file is given, and then the file anchors). The
+    // seed file beside the database never sets either: it only opens the
+    // database (see seed_for_db_key above). With none of them,
+    // load_verifying_key falls through to device_metadata.public_key, so a
+    // wholesale rewrite under another key passes, and the verdict must say it
+    // is self-consistent, not identity-bound. One path differs from
+    // log_verify: a seed that derives a later lineage epoch's key (after
+    // rotate-identity) is downgraded to self-anchored there, while here it is
+    // taken as genesis and the lineage check refuses the run before any label
+    // (the open decision in docs/db_key_rotation.md, "Verifier CLIs").
+    let identity_anchored = public_key_hex.is_some() || args.public_key_file.is_some();
     let verifying_key = {
         let _stage = ui.stage("Load verifying key");
         verify_helpers::load_verifying_key(
@@ -178,7 +202,8 @@ fn main() -> Result<()> {
     println!("export_verify: checking {}", args.bundle);
     println!();
 
-    // Entry hashes verified below against the TRUSTED key (from DB/CLI/seed).
+    // Entry hashes verified below against the key resolved above (out of band
+    // when identity_anchored, else the database's own; never the bundle's).
     // Bundle files are later required to reference one of these entries, so a
     // bundle re-signed under an attacker-chosen key can never pass.
     let mut verified_entry_hashes: Vec<[u8; 32]> = Vec::new();
@@ -354,10 +379,24 @@ fn main() -> Result<()> {
                 "TAMPER: C2PA witness assertion artifact hash does not match the receipt"
             ));
         }
-        println!("c2pa: witness binding matches this bundle's verified receipt");
+        // "Checked above", not "verified": unanchored, that chain was checked
+        // against the database's own key, and the final line says so.
+        println!("c2pa: witness binding matches this bundle's receipt in the chain checked above");
     }
 
-    println!("OK: export bundle hash verified.");
+    // Exit 0 on both paths, as log_verify: the label changes what the verdict
+    // claims, not whether the checks passed.
+    if identity_anchored {
+        println!("OK: export bundle hash verified (identity anchored out-of-band).");
+    } else {
+        println!(
+            "OK: export bundle hash matches the receipt chain — SELF-CONSISTENT, IDENTITY \
+             UNVERIFIED. The verifying key was taken from the database under audit, so this \
+             proves internal consistency, not identity. Supply --public-key / \
+             --public-key-file / --device-key-seed from an out-of-band source for an \
+             evidentiary verdict."
+        );
+    }
     Ok(())
 }
 

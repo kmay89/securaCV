@@ -38,6 +38,12 @@ printf "\n" >> demo_out/export_bundle.json
 cargo run --bin export_verify -- --db demo_witness.db --bundle demo_out/export_bundle.json  # should FAIL
 ```
 
+An unpinned pass (only `--db-key`, or the seed file witnessd keeps beside the database, which
+opens it and nothing more) takes the verifying key from the database under audit, so
+`export_verify` reports it `SELF-CONSISTENT, IDENTITY UNVERIFIED`, as `log_verify` does,
+and only a key from out of band (`--public-key`, `--public-key-file`, `--device-key-seed` or
+`DEVICE_KEY_SEED`) earns `verified (identity anchored out-of-band)`.
+
 ## Device public key location
 
 The device Ed25519 **verifying key** is stored locally in the witness database at
