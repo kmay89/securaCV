@@ -133,6 +133,38 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq openscad admesh
 
+      # The font the 7-inch case cuts its brand words in, installed rather
+      # than trusted to be there. The openscad package depends on no
+      # Liberation font (`apt-cache depends openscad` on noble names none),
+      # so the image carries it only because something else pulled it in,
+      # and OpenSCAD cuts fontconfig's best match without a word when it is
+      # missing. fonts-liberation is the 2.x package on noble
+      # (fonts-liberation2 is a transitional dummy that depends on it);
+      # fontconfig carries the fc-match the check below asks. It goes in
+      # before every render in this job, not just that check: eleven .scad
+      # files here name Liberation Sans Bold for their labels. Its own clock,
+      # like the OpenSCAD install's: the install is not the gate.
+      - name: Install the brand words' font (Liberation Sans Bold)
+        timeout-minutes: 15
+        run: sudo apt-get install -y -qq fonts-liberation fontconfig
+
+      # The 7-inch frame's brand words, measured (C33). canary_s3_lcd7.scad
+      # asserts every keep-out around them (port flange, leash anchor, peel
+      # scoop, port label, landscape dock keys, the wall's flat span) against
+      # an ESTIMATE of their width that reads short: SECURACV inks 58.72 mm
+      # at size 7 against 43.90 estimated. This reads the case's values
+      # through a probe, renders each word to DXF in the case's font, places
+      # it as frame() does and holds the same five asserts against the ink.
+      # It passes with one KNOWN failure, the scoop's keep-out 1.70 mm into
+      # the S, and fails on any new failure or when the known one stops
+      # happening: the fix is the maintainer's pick, and the change that
+      # makes it takes the entry out. It refuses (exit 2) rather than
+      # measure a fallback font, a dirty render, or a placement or assert it
+      # no longer models. Echo plus two 2D renders: about a second.
+      - name: The 7-inch brand words' ink clears the keep-outs (one known failure)
+        timeout-minutes: 5
+        run: python3 check_word_ink.py --check
+
       # The 1:1 paper drill templates. render.sh rewrites template_*.svg, but
       # nothing compared them with the committed files, so the doorbell's stayed
       # the v0.6 drawing (82 x 135 mm) under a 172.7 mm v0.9 plate for three
