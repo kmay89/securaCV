@@ -2062,6 +2062,52 @@ test("self-update: each app's updater endpoint names the pointer its workflow ad
     "lab no longer builds updater artifacts");
 });
 
+test("both apps' policies let Tauri's IPC through, and the Flasher's grants nothing more", () => {
+  // Tauri 2 sends every invoke() as a fetch to its own IPC origin first
+  // (ipc://localhost on macOS and Linux, http://ipc.localhost on Windows;
+  // tauri's scripts/ipc-protocol.js) and only when that is refused falls back
+  // to window.ipc.postMessage, with a CSP error and "IPC custom protocol
+  // failed" in the console on every launch. Tauri adds nothing to
+  // connect-src, so the policy as written here is the one the webview
+  // enforces: without the two sources, default-src 'self' refuses both
+  // shapes ('self' never matches another scheme).
+  const directives = (csp) => new Map(csp.split(";").map((d) => d.trim().split(/\s+/))
+    .filter((d) => d[0]).map(([name, ...sources]) => [name, sources]));
+  // A platform file is merged over the base one, so a csp there would be the
+  // policy that platform runs: each is held to the same rule.
+  const policies = [];
+  for (const f of [
+    "desktop/src-tauri/tauri.conf.json",
+    "desktop/src-tauri/tauri.macos.conf.json",
+    "desktop-lab/src-tauri/tauri.conf.json",
+    "desktop-lab/src-tauri/tauri.macos.conf.json",
+    "desktop-lab/src-tauri/tauri.linux.conf.json",
+  ]) {
+    const csp = ((JSON.parse(read(join(ROOT, f))).app || {}).security || {}).csp;
+    if (f.endsWith("/tauri.conf.json")) assert.ok(csp, `${f} lost its csp`);
+    if (csp) policies.push([f, directives(csp)]);
+  }
+  for (const [where, d] of policies) {
+    const connect = d.get("connect-src") || [];
+    for (const s of ["ipc:", "http://ipc.localhost"]) {
+      assert.ok(connect.includes(s),
+        `${where}: connect-src lacks ${s}, so Tauri's IPC is refused and every invoke falls back to postMessage`);
+    }
+    for (const name of ["object-src", "base-uri"]) {
+      assert.deepStrictEqual(d.get(name), ["'none'"], `${where}: ${name} must be 'none'`);
+    }
+  }
+  // The Flasher's own pages fetch only same-origin files (the fig3d models);
+  // every device and release call goes through Rust. So its connect-src is
+  // 'self' and the IPC, nothing else. A LAN or internet source here would be
+  // a decision, not a fix: the Witness Wall emulator's canary.local probes
+  // are refused under this policy, as they were before it.
+  const flasher = policies.find(([where]) => where === "desktop/src-tauri/tauri.conf.json")[1];
+  assert.deepStrictEqual([...flasher.get("connect-src")].sort(),
+    ["'self'", "http://ipc.localhost", "ipc:"],
+    "the Flasher's connect-src grants a source beyond its own files and Tauri's IPC");
+});
+
 test("hub first-boot watch: the escalation countdown is wired on both paths", () => {
   // The 25-minute troubleshooting escalation is visible-in-advance: a
   // countdown painted from the SAME deadline the watch checks, on the live

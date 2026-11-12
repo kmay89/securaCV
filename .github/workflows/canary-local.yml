@@ -164,6 +164,9 @@ on:
       # the workflows that publish the rolling updater pointers
       - "desktop/src-tauri/tauri.conf.json"
       - "desktop-lab/src-tauri/tauri.conf.json"
+      # the IPC policy: a platform file merged over the base csp is held to
+      # it too (the Lab's two platform files are listed above)
+      - "desktop/src-tauri/tauri.macos.conf.json"
       - ".github/workflows/desktop-flasher-release.yml"
       - ".github/workflows/desktop-lab-updater-pointer.yml"
       - "desktop-lab/scripts/**"
@@ -442,6 +445,9 @@ on:
       # the workflows that publish the rolling updater pointers
       - "desktop/src-tauri/tauri.conf.json"
       - "desktop-lab/src-tauri/tauri.conf.json"
+      # the IPC policy: a platform file merged over the base csp is held to
+      # it too (the Lab's two platform files are listed above)
+      - "desktop/src-tauri/tauri.macos.conf.json"
       - ".github/workflows/desktop-flasher-release.yml"
       - ".github/workflows/desktop-lab-updater-pointer.yml"
       - "desktop-lab/scripts/**"
