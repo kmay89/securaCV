@@ -210,36 +210,38 @@ async fn resolve_local(host: &str) -> Result<Vec<std::net::SocketAddr>, String> 
     addrs_all_local(&bare, addrs)
 }
 
-/// The host of `http://host[:port][/…]` (or https), brackets kept on an
-/// IPv6 literal. `None` for anything that isn't such a URL.
-fn base_host(base: &str) -> Option<&str> {
-    let rest = base
-        .strip_prefix("http://")
-        .or_else(|| base.strip_prefix("https://"))?;
-    let host_port = rest.split('/').next().unwrap_or_default();
-    if host_port.is_empty() {
+/// The host a connection to `base` would dial, as the url crate reads it
+/// (`reqwest::Url`, the parse reqwest dials with): lowercased,
+/// percent-decoded, punycoded, an IPv4 in any spelling written dotted, an
+/// IPv6 literal kept in its brackets. `None` unless `base` is an `http` or
+/// `https` URL with a host, no user or password, no query, no fragment and
+/// no space or control character (the calls append to `base` as written,
+/// so a base the parser had to clean is refused). Lockstep twin of the Flasher's `fleet::base_host`
+/// (`desktop/src-tauri/src/fleet.rs`), whose doc says why a hand split on
+/// `/` was not the judge: it read `http://8.8.8.8?.local:8080` as a `.local`
+/// name while the connection dialed 8.8.8.8:80.
+fn base_host(base: &str) -> Option<String> {
+    if base.chars().any(|c| c == ' ' || c.is_ascii_control()) {
         return None;
     }
-    // Split a trailing :port (careful with bracketed IPv6).
-    let host = if let Some(end) = host_port.rfind(']') {
-        &host_port[..=end]
-    } else if let Some((h, port)) = host_port.rsplit_once(':') {
-        if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() {
-            h
-        } else {
-            host_port
-        }
-    } else {
-        host_port
-    };
-    Some(host)
+    let url = reqwest::Url::parse(base).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    url.host_str().map(str::to_string)
 }
 
 /// `http://host[:port]` (or https) with a local host — anything else is
-/// refused before a socket opens. Lockstep twin of the Flasher's
-/// `fleet::base_ok` (`desktop/src-tauri/src/fleet.rs`).
+/// refused before a socket opens. The host is `base_host`'s, the one the
+/// connection dials. Lockstep twin of the Flasher's `fleet::base_ok`
+/// (`desktop/src-tauri/src/fleet.rs`).
 fn base_ok(base: &str) -> bool {
-    base_host(base).is_some_and(host_is_local)
+    base_host(base).is_some_and(|h| host_is_local(&h))
 }
 
 /// A client for ONE local base: proxy-free, timeout-bounded, and pinned to
@@ -260,13 +262,15 @@ async fn pinned_client(
 ) -> Result<reqwest::Client, String> {
     let host =
         base_host(base).ok_or_else(|| "device address must be a local/private host".to_string())?;
-    let addrs = resolve_local(host).await?;
+    let addrs = resolve_local(&host).await?;
     let bare = host.trim_matches(['[', ']']);
     let mut builder = reqwest::Client::builder()
         .user_agent("SecuraCV-Lab")
         .timeout(timeout)
         .no_proxy();
     if bare.parse::<std::net::IpAddr>().is_err() {
+        // Keyed on the URL's host as `base_host` read it, by the parser
+        // reqwest dials with, so the override is the one hyper's lookup finds.
         builder = builder.resolve_to_addrs(bare, &addrs);
     }
     builder.build().map_err(|e| e.to_string())
@@ -581,9 +585,95 @@ mod tests {
         assert!(base_ok("http://canary-3f2a.local:80"));
         assert!(base_ok("https://canary.local"));
         assert!(base_ok("http://10.0.0.7:8099/"));
+        assert!(base_ok("http://[fe80::1]:80/"));
         assert!(!base_ok("http://example.com"));
         assert!(!base_ok("ftp://192.168.1.40"));
         assert!(!base_ok("192.168.1.40"));
         assert!(!base_ok("http://"));
+        assert_eq!(
+            base_host("http://canary.local:80/x").as_deref(),
+            Some("canary.local")
+        );
+        assert_eq!(
+            base_host("http://[fe80::1]:80").as_deref(),
+            Some("[fe80::1]")
+        );
+    }
+
+    /// The Flasher's `fleet::tests::SPLIT_BASES`, row for row: bases whose
+    /// text reads as a local host while the url crate, the parser reqwest
+    /// dials with, reads another. Every one must be refused.
+    const SPLIT_BASES: [&str; 15] = [
+        "http://8.8.8.8?.local:8080",
+        "http://example.com#.local",
+        "http://example.com\\.local",
+        "http://8.8.8.8#.local",
+        "http://8.8.8.8\\.local",
+        "http://1.2.3.4:25?.local:80",
+        "http://8.8.8.8@offlan.local:8080",
+        "http://user:pw@canary.local",
+        "http://8%2E8%2E8%2E8:8080",
+        "http://134744072",
+        "http://0x08080808",
+        "http://[fe80::1%25eth0]",
+        "http://canary\t.local",
+        "http://canary.local ",
+        " http://canary.local",
+    ];
+
+    #[test]
+    fn a_base_is_judged_by_the_host_it_dials() {
+        let passed: Vec<&str> = SPLIT_BASES.into_iter().filter(|b| base_ok(b)).collect();
+        assert!(
+            passed.is_empty(),
+            "these bases passed the gate while reqwest dials a host it never judged: {passed:?}"
+        );
+        assert_eq!(base_host("http://134744072").as_deref(), Some("8.8.8.8"));
+        assert_eq!(
+            base_host("http://8%2E8%2E8%2E8.local:8080").as_deref(),
+            Some("8.8.8.8.local"),
+            "the pin must be keyed on the name hyper looks up, not the encoded text"
+        );
+        assert_eq!(
+            base_host("http://C%41NARY.Local:80/").as_deref(),
+            Some("canary.local")
+        );
+        assert_eq!(base_host("http://[FE80::1]").as_deref(), Some("[fe80::1]"));
+        assert_eq!(
+            base_host("http://3232235777").as_deref(),
+            Some("192.168.1.1")
+        );
+    }
+
+    #[test]
+    fn a_passed_base_dials_the_host_it_was_judged_by() {
+        let client = reqwest::Client::new();
+        for base in [
+            "http://192.168.1.40",
+            "http://canary-3f2a.local:80",
+            "https://canary.local",
+            "http://10.0.0.7:8099/",
+            "http://[fe80::1]:80/",
+            "http://8%2E8%2E8%2E8.local:8080",
+            "http://C%41NARY.Local:80/",
+            "http://3232235777",
+        ]
+        .into_iter()
+        .chain(SPLIT_BASES)
+        {
+            if !base_ok(base) {
+                continue;
+            }
+            let url = format!("{}/api/fleet", base.trim_end_matches('/'));
+            let req = client
+                .get(&url)
+                .build()
+                .expect("a passed base builds a request");
+            assert_eq!(
+                req.url().host_str(),
+                base_host(base).as_deref(),
+                "{base}: judged one host, dials another"
+            );
+        }
     }
 }

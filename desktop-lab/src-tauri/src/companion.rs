@@ -754,6 +754,9 @@ mod tests {
             " http://canary.local ".into(),
             "http://example.com".into(),
             "ftp://10.0.0.1".into(),
+            // Reads as a `.local` name to a split on `/`; the url crate,
+            // which reqwest dials with, reads 8.8.8.8:80 (lib.rs base_host).
+            "http://8.8.8.8?.local:8080".into(),
             "http://192.168.1.40:8099".into(),
         ]);
         assert_eq!(got, ["http://192.168.1.40:8099", "http://canary.local"]);
