@@ -673,7 +673,7 @@
   `mbedtls/version.h` included (2.28's `sha256.h` does not define the number).
 - **Regression check:** `regression_check.sh` greps for `_ret(` and fails every
   hit outside the `#else` branch of that exact guard. Its first catch (F364,
-  wave 27): the canary library's `mesh_crypto::sha256_domain()` picked the
+  #W26PR): the canary library's `mesh_crypto::sha256_domain()` picked the
   `_ret` names under `#if ESP_IDF_VERSION_MAJOR >= 5`, which compiles the same
   on both cores but is not that guard, so the job failed; one guard, spelled
   the one way. The same commit's new host test passed the include-order lint
@@ -1072,7 +1072,7 @@
   fingerprint and opera id, every caller refusing
   (`test_mesh_address_wap.cpp`); the flagship's and the common witness
   core's helpers followed in #1966 (F455, in `CHANGELOG.md`), and
-  `mesh_crypto`'s in both trees in wave 27 (`test_mesh_crypto_lines.cpp`
+  `mesh_crypto`'s in both trees in #W26PR (`test_mesh_crypto_lines.cpp`
   builds the canary library's body on both IDF lines); the OTA and pseudonym
   hashes are open (backlog F364). F403 put the
   BLE status service, the witness export's HEAD and the signer behind the
