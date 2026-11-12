@@ -1780,9 +1780,11 @@ firmware or UI source.
   a bench). canary-wap's AUTH session keys still run X25519 over the
   long-term Ed25519 keys (spec §5.3 note).
 - Beacon pairing flow (spec §3.3: `PAIR_OFFER`, ephemeral X25519 +
-  confirmation code) is a stub. Nothing writes a beacon-set entry or a peer's
-  X25519 key, so the two-device co-sign path — whose transport is encrypted —
-  has no reachable input on any device.
+  confirmation code) is not built: since F30 the four `/api/beacon/pair/*`
+  routes answer `pairing_not_built` (they answered "started" and
+  "confirmed" for a pairing that never ran). Nothing writes a beacon-set
+  entry or a peer's X25519 key, so the two-device co-sign path — whose
+  transport is encrypted — has no reachable input on any device.
 - Persistent origin signature across Chirp relays: a v0.2 relay that names
   an origin key and carries no origin signature is soft-accepted on its
   relayer's signature and stored as that origin's chirp (the Chirp

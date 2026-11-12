@@ -44,8 +44,10 @@
  *     confirm_pair refuse (false, the state left as it was) and the
  *     /api/beacon/pair/* routes answer pairing_not_built (sweep F30: they
  *     answered "started" and "confirmed" for a pairing that never ran);
- *     PAIR_OFFER and REVOKE frames are dropped, and nothing writes a
- *     beacon-set entry or sets has_x25519_pubkey. So
+ *     PAIR_OFFER frames are dropped, and nothing writes a beacon-set entry
+ *     or sets has_x25519_pubkey. (REVOKE frames are dropped too, for
+ *     another reason: spec §3.4 makes revocation local, with no broadcast,
+ *     so nothing here reads one.) So
  *     pick_cosign_candidate() has no input and the (implemented, encrypted)
  *     two-device path cannot run on any device.
  *  3. Not implemented by decision (spec/beacon_cap_gateway_v0.md §6): the
@@ -1161,8 +1163,9 @@ static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int
       handle_cosign_resp_frame(data, (size_t)len);
       break;
     default:
-      // PAIR_OFFER and REVOKE are dropped: the spec §3.3 pairing flow is not
-      // built (start_pair_init() below; sweep F30).
+      // PAIR_OFFER is dropped because the spec §3.3 pairing flow is not
+      // built (start_pair_init() below; sweep F30). REVOKE has no receiver
+      // because spec §3.4 revocation is local, with no broadcast.
       break;
   }
 }

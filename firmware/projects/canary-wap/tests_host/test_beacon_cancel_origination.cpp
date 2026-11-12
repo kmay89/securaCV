@@ -24,9 +24,10 @@
 //     solo path's BOOT gate, the cosigner gate before a request is stashed, no
 //     rate charge on adoption, and the AEAD associated data at all four COSIGN
 //     call sites. A test of a helper alone passes whatever its caller does.
-//   - and, reading beacon_channel.cpp, beacon_api.h and canary_wap.ino, that
-//     the pairing stubs refuse and touch no state and the four pair routes
-//     answer pairing_not_built, since the spec §3.3 flow is not built (F30).
+//   - and, reading beacon_channel.cpp, beacon_api.h and every other sketch
+//     source, that the pairing stubs refuse, touch no state and have no
+//     caller, and the four pair routes answer pairing_not_built, since the
+//     spec §3.3 flow is not built (F30).
 //
 /* Build & run (the canary-wap tests_host Makefile's `run` target does this):
  *
@@ -38,11 +39,15 @@
  *       -o /tmp/test_beacon_cancel_origination && /tmp/test_beacon_cancel_origination
  */
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
+#include <system_error>
+#include <vector>
 
 #include "beacon_wire.h"
 #include "beacon_cancel_policy.h"
@@ -622,29 +627,42 @@ void test_source_call_sites_follow_the_policy() {
 }
 // ── Pairing is not built, and says so (sweep F30) ─────────────────────────
 
+// How many times `name` occurs in `code` as a whole identifier (neither
+// side an identifier character), so cancel_pair is not counted inside
+// mesh_network's cancel_pairing or a longer name.
+size_t count_identifier(const std::string& code, const std::string& name) {
+  size_t n = 0;
+  for (size_t at = code.find(name); at != std::string::npos; at = code.find(name, at + 1)) {
+    const bool open_before = at == 0 || !beacon_source_scan::ident_char(code[at - 1]);
+    const size_t end = at + name.size();
+    const bool open_after = end >= code.size() || !beacon_source_scan::ident_char(code[end]);
+    if (open_before && open_after) n++;
+  }
+  return n;
+}
+
 // The spec §3.3 pairing flow is not built. start_pair_init(),
 // start_pair_join() and confirm_pair() returned true having only moved the
 // state (PAIR_INIT, PAIR_JOIN, then NORMAL), and the routes answered
 // "pair_init started", "pair_join started" and "pair confirmed" for a
 // pairing that never ran; cancel_pair() set NORMAL whatever the state was,
 // an ALARM or a disabled channel included, and its route said "pair
-// canceled". Read from the REAL beacon_channel.cpp, beacon_api.h and
-// canary_wap.ino (comments stripped): each of the three refuses and touches
-// no state, nothing anywhere sets a pairing state, cancel_pair() changes the
-// state only out of one, nothing calls any of the four, and each of the four
-// routes answers send_error()'s pairing_not_built and nothing else (the
-// answer itself, through the real send_error(), is test_beacon_set_load's).
+// canceled". Read from the REAL beacon_channel.cpp, beacon_api.h and every
+// other source in the sketch directory (comments stripped): each of the
+// three refuses and touches no state, nothing anywhere sets a pairing state,
+// cancel_pair() changes the state only out of one, no sketch file calls or
+// names any of the four, and each of the four routes answers send_error()'s
+// pairing_not_built and nothing else (the answer itself, through the real
+// send_error(), is test_beacon_set_load's).
 void test_source_pairing_is_refused() {
   using namespace beacon_source_scan;
-  bool ok_cpp = false, ok_api = false, ok_ino = false;
+  bool ok_cpp = false, ok_api = false;
   const std::string cpp = strip_comments(read_source(BEACON_CHANNEL_CPP, &ok_cpp));
   const std::string api = strip_comments(read_source(BEACON_API_H, &ok_api));
-  std::string ino_path = BEACON_API_H;
-  ino_path.erase(ino_path.rfind('/') + 1);
-  ino_path += "canary_wap.ino";
-  const std::string ino = squeeze(strip_comments(read_source(ino_path.c_str(), &ok_ino)));
-  EXPECT(ok_cpp && ok_api && ok_ino, "beacon_channel.cpp, beacon_api.h and canary_wap.ino are readable (pins fail closed)");
-  if (!ok_cpp || !ok_api || !ok_ino) return;
+  std::string sketch_dir = BEACON_API_H;
+  sketch_dir.erase(sketch_dir.rfind('/') + 1);
+  EXPECT(ok_cpp && ok_api, "beacon_channel.cpp and beacon_api.h are readable (pins fail closed)");
+  if (!ok_cpp || !ok_api) return;
   const std::string all = squeeze(cpp);
   const std::string api_all = squeeze(api);
 
@@ -672,15 +690,41 @@ void test_source_pairing_is_refused() {
              "{returng_state==BEACON_STATE_PAIR_INIT||g_state==BEACON_STATE_PAIR_JOIN;}",
          "is_pairing() is the two pairing states");
 
-  // Nothing calls them: the routes were the only callers, and canary_wap.ino
-  // (its loop, the BOOT button, the self-test) names none.
+  // Nothing calls them: the routes were the only callers. beacon_channel.cpp
+  // defines each once and names it nowhere else, beacon_channel.h declares
+  // each once, and no other file the sketch compiles (every .c, .cpp, .h and
+  // .ino in its directory: beacon_api.h, canary_wap.ino's loop, BOOT button
+  // and self-test, mesh_network.cpp, which already calls into the namespace
+  // for on_peer_tampered(), and the rest) names any of the four at all, as
+  // a call, an address taken or a declaration of its own.
   for (const char* fn : {"start_pair_init(", "start_pair_join(", "confirm_pair(", "cancel_pair("}) {
-    const bool defined_once = count(all, fn) == 1;
-    const bool no_api_call = count(api_all, fn) == 0;
-    const bool no_ino_call = count(ino, fn) == 0;
-    if (!defined_once || !no_api_call || !no_ino_call) std::fprintf(stderr, "  %s is called\n", fn);
-    EXPECT(defined_once && no_api_call && no_ino_call,
-           "each of the four is defined in beacon_channel.cpp and called nowhere in it, beacon_api.h or canary_wap.ino");
+    EXPECT(count(all, fn) == 1, "each of the four is defined in beacon_channel.cpp and called nowhere in it");
+  }
+  std::vector<std::string> scanned;
+  std::error_code ec;
+  for (const auto& e : std::filesystem::directory_iterator(sketch_dir, ec)) {
+    const std::string n = e.path().filename().string();
+    const std::string ext = e.path().extension().string();
+    if (ext != ".c" && ext != ".cpp" && ext != ".h" && ext != ".ino") continue;
+    if (n == "beacon_channel.cpp") continue;
+    bool ok = false;
+    const std::string code = strip_comments(read_source(e.path().string().c_str(), &ok));
+    EXPECT(ok, "every sketch source is readable (the no-caller pin fails closed)");
+    if (!ok) continue;
+    scanned.push_back(n);
+    const size_t allowed = n == "beacon_channel.h" ? 1 : 0;   // its declaration
+    for (const char* fn : {"start_pair_init", "start_pair_join", "confirm_pair", "cancel_pair"}) {
+      const size_t named = count_identifier(code, fn);
+      if (named != allowed) std::fprintf(stderr, "  %s names %s %zu time(s)\n", n.c_str(), fn, named);
+      EXPECT(named == allowed,
+             "no sketch file but beacon_channel.cpp names a pairing stub (beacon_channel.h declares each once)");
+    }
+  }
+  EXPECT(!ec, "the sketch directory lists (the no-caller pin fails closed)");
+  for (const char* must : {"beacon_channel.h", "beacon_api.h", "canary_wap.ino", "mesh_network.cpp"}) {
+    const bool there = std::find(scanned.begin(), scanned.end(), must) != scanned.end();
+    if (!there) std::fprintf(stderr, "  %s was not scanned\n", must);
+    EXPECT(there, "the no-caller scan reads beacon_channel.h, beacon_api.h, canary_wap.ino and mesh_network.cpp");
   }
   EXPECT(count(all, "is_pairing(") == 2, "is_pairing() is read by cancel_pair() alone");
 
