@@ -19,7 +19,12 @@ What is pinned and why:
   • a probe count a matrix string states is the flagship self-test's, read
     from its TESTS[] table (a row with no probe function is not a probe): the
     display lane's note kept "the canary tree's 10-probe suite" after the
-    suite became nine probes, and that note reaches the website's /checkup.
+    suite became nine probes, and that note reaches the website's /checkup;
+  • each UNMAPPED claim names the code it rests on (sweep C37): EVIDENCE and
+    UNMAPPED hold the same keys, and a needle that is deleted, moved under
+    an #if (or #if 0, or two #ifdefs deep, or an #else), left only in a
+    comment, a string or a #define body, or named in a file outside its
+    tree fails naming C37, through the lint's own entry point too.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -32,8 +37,9 @@ import json
 import re
 import sys
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "lint_build_matrix.py"
@@ -301,6 +307,252 @@ class ProbeCountsAreTheSuites(unittest.TestCase):
             mutated = copy.deepcopy(matrix)
             mutated["products"][0]["note"] = fine
             self.assertEqual(lbm.probe_count_errors(mutated, 9), [], fine)
+
+
+def _site_line(rel, needle):
+    """The one line the committed source has `needle` on as code."""
+    good, why = lbm.needle_sites((REPO / rel).read_text(encoding="utf-8"), needle)
+    assert len(good) == 1 and not why, (rel, needle, good, why)
+    return good[0]
+
+
+def _mutated(rel, needle, block):
+    """The committed `rel` with the needle's line replaced by block(line):
+    (the mutated text, the needle's 1-based line before the mutation)."""
+    lines = (REPO / rel).read_text(encoding="utf-8").split("\n")
+    no = _site_line(rel, needle)
+    lines[no - 1:no] = block(lines[no - 1]).split("\n")
+    return "\n".join(lines), no
+
+
+def _reading(rel, text):
+    """A `read` seam: `rel` reads as `text`, every other source from disk
+    (the lint's own reader, taken before a test patches it)."""
+    target = (REPO / rel).resolve()
+    disk = lbm._read_source
+
+    def read(path):
+        return text if Path(path).resolve() == target else disk(path)
+    return read
+
+
+def _one_row(key, **kw):
+    """evidence_errors over the one row `key`, the 685 KB sketch read once."""
+    return lbm.evidence_errors(evidence={key: lbm.EVIDENCE[key]}, unmapped={key}, **kw)
+
+
+def _lost(tree, feat, rel, detail):
+    return (f"EVIDENCE ({tree!r}, {feat!r}): {rel} {detail} — the claim lost the code it rests "
+            f"on: drop it or map it (sweep C37)")
+
+
+# Each way a needle can stop being compiled code: (name, block(line), the
+# error's detail given the needle and its old line no). Every block but the
+# deletion keeps the needle's text, so only the lint's reading of where that
+# text stands can fail it.
+def _raw(line):
+    return f'static const char* k_moved = R"c37({line})c37";'
+
+
+MUTATIONS = (
+    ("deleted", lambda line: "",
+     lambda nd, no: f"has no {nd!r} outside comments and string literals"),
+    ("under #if FEATURE_X", lambda line: f"#if FEATURE_X\n{line}\n#endif",
+     lambda nd, no: f"has {nd!r} only where it is not unconditional code "
+                    f"(line {no + 1} is under `#if FEATURE_X` (line {no}))"),
+    ("in a // comment", lambda line: f"// {line}",
+     lambda nd, no: f"has no {nd!r} outside comments and string literals"),
+    ("in a /* */ comment", lambda line: f"/*\n{line}\n*/",
+     lambda nd, no: f"has no {nd!r} outside comments and string literals"),
+    ("in a raw string literal", _raw,
+     lambda nd, no: f"has no {nd!r} outside comments and string literals"),
+    ("in an #if 0 block", lambda line: f"#if 0\n{line}\n#endif",
+     lambda nd, no: f"has {nd!r} only where it is not unconditional code "
+                    f"(line {no + 1} is under `#if 0` (line {no}))"),
+    ("two #ifdefs deep", lambda line: f"#ifdef A\n#ifdef B\n{line}\n#endif\n#endif",
+     lambda nd, no: f"has {nd!r} only where it is not unconditional code "
+                    f"(line {no + 2} is under `#ifdef B` (line {no + 1}), inside "
+                    f"`#ifdef A` (line {no}))"),
+    ("in an #else branch", lambda line: f"#if FEATURE_X\n#else\n{line}\n#endif",
+     lambda nd, no: f"has {nd!r} only where it is not unconditional code "
+                    f"(line {no + 2} is under `#else` (line {no + 1}) of `#if FEATURE_X` "
+                    f"(line {no}))"),
+    ("under an #ifndef", lambda line: f"#ifndef NO_X\n{line}\n#endif",
+     lambda nd, no: f"has {nd!r} only where it is not unconditional code "
+                    f"(line {no + 1} is under `#ifndef NO_X` (line {no}))"),
+    ("in a #define body", lambda line: f"#define C37_UNUSED() \\\n  {line}",
+     lambda nd, no: f"has {nd!r} only where it is not unconditional code "
+                    f"(line {no + 1} is inside the directive on line {no}, not code "
+                    f"(a #define body compiles only where it is used))"),
+)
+
+
+class UnmappedClaimsNameTheirCode(unittest.TestCase):
+    """Sweep C37: an UNMAPPED claim rests on the negative direction alone,
+    so EVIDENCE names the code it rests on today, and the lint goes red when
+    that code goes, or stops being unconditional compiled code."""
+
+    def test_the_committed_evidence_holds(self):
+        self.assertEqual(lbm.evidence_errors(), [])
+        self.assertEqual(set(lbm.EVIDENCE), set(lbm.UNMAPPED))
+        suite = lbm.tree_suite()
+        for (tree, feat), (rel, needle) in lbm.EVIDENCE.items():
+            with self.subTest(tree=tree, feat=feat):
+                self.assertIn((REPO / rel).resolve(),
+                              {p.resolve() for p in suite.tree_files(tree)})
+                _site_line(rel, needle)  # one unconditional site, nothing else
+
+    def test_every_way_a_needle_stops_being_code_fails(self):
+        for (tree, feat), (rel, needle) in sorted(lbm.EVIDENCE.items()):
+            for name, block, detail in MUTATIONS:
+                with self.subTest(tree=tree, feat=feat, mutation=name):
+                    text, no = _mutated(rel, needle, block)
+                    # Every mutation but the deletion keeps the needle's text.
+                    self.assertEqual(needle in text, name != "deleted")
+                    self.assertEqual(_one_row((tree, feat), read=_reading(rel, text)),
+                                     [_lost(tree, feat, rel, detail(needle, no))])
+
+    def test_a_string_literal_is_not_code(self):
+        # The quote-free needles in an ordinary string (the include needles
+        # carry their own quotes, so a raw string is their case above).
+        for (tree, feat), (rel, needle) in sorted(lbm.EVIDENCE.items()):
+            if '"' in needle:
+                continue
+            with self.subTest(tree=tree, feat=feat):
+                text, _no = _mutated(rel, needle, lambda line: f'const char* s = "{line}";')
+                self.assertIn(needle, text)
+                self.assertEqual(_one_row((tree, feat), read=_reading(rel, text)), [_lost(
+                    tree, feat, rel, f"has no {needle!r} outside comments and string literals")])
+
+    def test_the_needle_in_a_file_outside_its_tree_fails(self):
+        # Each of these has the needle as unconditional code, but is not a
+        # file of the claim's tree: a host test beside the WAP (tests_host is
+        # not firmware), and the Sense's copy of the Vision's OTA manager.
+        for key, rel in (
+                (("canary-wap", "csi"),
+                 "firmware/projects/canary-wap/tests_host/test_wap_event_egress.cpp"),
+                (("canary-vision", "selftest"),
+                 "firmware/projects/canary-sense/src/net/ota_mgr.cpp")):
+            with self.subTest(key=key):
+                needle = lbm.EVIDENCE[key][1]
+                _site_line(rel, needle)
+                evidence = {**lbm.EVIDENCE, key: (rel, needle)}
+                self.assertEqual(lbm.evidence_errors(evidence=evidence), [_lost(
+                    *key, rel, f"is not a source of the {key[0]} tree (its flavor dir, the "
+                               f"firmware/common files it includes, its build_src_filter)")])
+        # A header of the tree is refused: it compiles only where included.
+        key = ("canary-wap", "selftest")
+        rel = "firmware/projects/canary-wap/arduino/canary_wap/selftest_api.h"
+        evidence = {**lbm.EVIDENCE, key: (rel, "inline void probe_wifi(")}
+        self.assertEqual(lbm.evidence_errors(evidence=evidence), [_lost(
+            *key, rel, "is not a translation unit (.ino, .c, .cc, .cpp): a header compiles only "
+                       "where it is included, so name the source that holds the code")])
+        # And the right file, when the tree stops holding it.
+        rel = lbm.EVIDENCE[("canary-wap", "gps")][0]
+        suite = lbm.tree_suite()
+        errors = lbm.evidence_errors(tree_files=lambda tree: [
+            p for p in suite.tree_files(tree) if p.name != "canary_wap.ino"])
+        self.assertEqual(len(errors), 3, errors)
+        self.assertTrue(all(e.startswith("EVIDENCE ('canary-wap', ") and
+                            "is not a source of the canary-wap tree" in e for e in errors), errors)
+
+    def test_the_tables_cover_each_other_both_ways(self):
+        unmapped, evidence = set(lbm.UNMAPPED), dict(lbm.EVIDENCE)
+        row = evidence[("canary-wap", "gps")]
+        # An UNMAPPED claim with no EVIDENCE row: added bare, or its row dropped.
+        self.assertEqual(lbm.evidence_errors(unmapped=unmapped | {("canary-wap", "thermal")}), [
+            "UNMAPPED lists ('canary-wap', 'thermal'), but EVIDENCE names no code it rests on — "
+            "add its (source path, needle) row, or map the claim (sweep C37)"])
+        dropped = {k: v for k, v in evidence.items() if k != ("canary-wap", "gps")}
+        self.assertEqual(lbm.evidence_errors(evidence=dropped), [
+            "UNMAPPED lists ('canary-wap', 'gps'), but EVIDENCE names no code it rests on — "
+            "add its (source path, needle) row, or map the claim (sweep C37)"])
+        # An EVIDENCE row for a claim UNMAPPED does not list: added stray, or
+        # left behind when the claim is mapped out of UNMAPPED.
+        self.assertEqual(lbm.evidence_errors(evidence={**evidence, ("canary", "gps"): row}), [
+            "EVIDENCE has a row for ('canary', 'gps'), which UNMAPPED does not list — "
+            "drop the row (sweep C37)"])
+        self.assertEqual(lbm.evidence_errors(unmapped=unmapped - {("canary-wap", "gps")}), [
+            "EVIDENCE has a row for ('canary-wap', 'gps'), which UNMAPPED does not list — "
+            "drop the row (sweep C37)"])
+        # A row for a tree flavors.json does not list is named, not crashed on.
+        both = {("canary-nope", "gps")}
+        self.assertEqual(lbm.evidence_errors(evidence={**evidence, ("canary-nope", "gps"): row},
+                                             unmapped=unmapped | both), [
+            f"EVIDENCE ('canary-nope', 'gps'): 'canary-nope' is not a flavors.json product, so "
+            f"it has no tree to hold {row[0]} to — the claim lost the code it rests on: drop it "
+            f"or map it (sweep C37)"])
+
+    def test_the_lint_itself_goes_red(self):
+        # Through collect() and main(), as lint.yml runs it: the WAP's
+        # csi_integration.h include wrapped in `#if FEATURE_X` (section 2a-ter
+        # reads sources through _read_source), and an EVIDENCE row dropped.
+        rel, needle = lbm.EVIDENCE[("canary-wap", "csi")]
+        text, no = _mutated(rel, needle, lambda line: f"#if FEATURE_X\n{line}\n#endif")
+        want = _lost("canary-wap", "csi", rel, MUTATIONS[1][2](needle, no))
+        with mock.patch.object(lbm, "_read_source", _reading(rel, text)):
+            self.assertEqual(lbm.collect(), [want])
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(lbm.main(), 1)
+            self.assertIn("(sweep C37)", err.getvalue())
+        dropped = {k: v for k, v in lbm.EVIDENCE.items() if k != ("canary-sense", "selftest")}
+        with mock.patch.object(lbm, "EVIDENCE", dropped):
+            self.assertEqual(lbm.collect(), [
+                "UNMAPPED lists ('canary-sense', 'selftest'), but EVIDENCE names no code it "
+                "rests on — add its (source path, needle) row, or map the claim (sweep C37)"])
+
+
+class NeedleSitesReadsCLikeTheCompiler(unittest.TestCase):
+    """The reader under evidence_errors, on small sources."""
+
+    N = "securacv_ota_boot_self_test();"
+
+    def sites(self, src, needle=None):
+        return lbm.needle_sites(src, needle or self.N)
+
+    def test_plain_code_counts_and_a_closed_block_ends(self):
+        self.assertEqual(self.sites(f"void f() {{\n  {self.N}\n}}\n"), ([2], []))
+        src = f"#if A\nint x;\n#elif B\nint y;\n#else\nint z;\n#endif\n{self.N}\n"
+        self.assertEqual(self.sites(src), ([8], []))
+
+    def test_a_longer_name_is_not_the_needle(self):
+        self.assertEqual(self.sites(f"my_{self.N}\nx{self.N}\n"), ([], []))
+        self.assertEqual(self.sites("Serial1.begin(GPS_BAUD_2, 1);", "Serial1.begin(GPS_BAUD"),
+                         ([], []))
+        self.assertEqual(self.sites("Serial1.begin(GPS_BAUD, 1);", "Serial1.begin(GPS_BAUD"),
+                         ([1], []))
+
+    def test_a_stray_quote_is_held_to_its_line(self):
+        # An apostrophe in an #if 0 block's prose, and a C++14 digit
+        # separator, must not swallow the code after them as a literal.
+        src = f"#if 0\nthe wizard's probes\n#endif\nint n = 1'000'000;\n{self.N}\n"
+        self.assertEqual(self.sites(src), ([5], []))
+        self.assertEqual(self.sites(f"char c = '\\'';\nconst char* s = \"\\\"\";\n{self.N}\n"),
+                         ([3], []))
+
+    def test_a_spliced_line_comment_and_a_digraph_directive_are_read_as_the_compiler_does(self):
+        # A `//` comment ending in a backslash swallows the next line; `%:`
+        # is `#` (a digraph), so `%:if 0` opens a conditional like `#if 0`.
+        self.assertEqual(self.sites(f"// was here \\\n{self.N}\n{self.N}\n"), ([3], []))
+        self.assertEqual(self.sites(f"%:if 0\n{self.N}\n%:endif\n"), ([], [
+            "line 2 is under `%:if 0` (line 1)"]))
+
+    def test_a_directive_in_a_comment_or_a_raw_string_is_not_one(self):
+        src = (f"/* #if 0\n*/\nconst char* h = R\"x(\n#if 0\n)x\";\n// #if 0\n{self.N}\n")
+        self.assertEqual(self.sites(src), ([7], []))
+
+    def test_the_needle_may_be_its_own_directive_but_not_another_ones_body(self):
+        inc = '#include "csi_integration.h"'
+        self.assertEqual(self.sites(f"  {inc}  // the CSI library\n", inc), ([1], []))
+        self.assertEqual(self.sites(f"#define X {self.N}\n{self.N}\n"), ([2], [
+            "line 1 is inside the directive on line 1, not code (a #define body compiles "
+            "only where it is used)"]))
+
+    def test_a_raw_string_with_a_delimiter_runs_to_its_own_close(self):
+        src = f'auto p = u8R"js(\n)"\n{self.N}\n)js";\n{self.N}\n'
+        self.assertEqual(self.sites(src), ([5], []))
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

@@ -15,14 +15,17 @@ through scripts/_device_join.py, so the two lints cannot disagree). Each
 product's feature claims are held to its own tree (section 2a-bis): the flag
 the tree spells the feature with (featureCatalog's, or FLAG_ALIASES') must be
 #define'd there, and a reading must be under it (thermal: a die-temperature
-read), read by the sweep-C35 suite's tree reader. Every count of the flagship
-self-test's probes a note states is held to the suite itself
-(securacv_diagnostics.cpp's TESTS[]: a lane's note reaches the website's
-/checkup page). It is a cheap grep-style check (no PlatformIO), run in
-.github/workflows/lint.yml.
+read), read by the sweep-C35 suite's tree reader. A claim no flag is mapped
+for (UNMAPPED) names the code it rests on instead (EVIDENCE, section
+2a-ter), which must stay in its tree as unconditional compiled code. Every
+count of the flagship self-test's probes a note states is held to the suite
+itself (securacv_diagnostics.cpp's TESTS[]: a lane's note reaches the
+website's /checkup page). It is a cheap grep-style check (no PlatformIO), run
+in .github/workflows/lint.yml.
 
 Exit non-zero on any drift, printing every problem.
 """
+import bisect
 import functools
 import importlib.util
 import json
@@ -68,6 +71,37 @@ UNMAPPED = {
     ("canary-sense", "selftest"),
     ("canary-display", "selftest"),
 }
+
+# The code each UNMAPPED claim rests on today (sweep C37): a source of that
+# tree (test_board_thermal_notes.tree_files) and a needle that must stand in
+# it as compiled code, under no #if / #ifdef / #ifndef (evidence_errors says
+# exactly what counts). It names the code; it maps nothing, so the claim
+# stays in UNMAPPED and the copy question stays open. When the code goes, or
+# goes conditional, the lint says to drop the claim or map it. The table and
+# UNMAPPED must hold the same keys, so neither can rot.
+EVIDENCE = {
+    # The CSI library and its HTTP endpoints (csi_integration::init in setup()).
+    ("canary-wap", "csi"): ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+                            '#include "csi_integration.h"'),
+    # The wizard's on-demand self-test, GET /api/selftest — not a boot one.
+    ("canary-wap", "selftest"): ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+                                 '#include "selftest_api.h"'),
+    # The GNSS UART setup() opens for an optional module (PHASE 4).
+    ("canary-wap", "gps"): ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+                            "Serial1.begin(GPS_BAUD"),
+    # The OTA engine's boot self-test: one required wifi probe, then confirm
+    # or roll back the image (ota_boot_validate).
+    ("canary-vision", "selftest"): ("firmware/projects/canary-vision/src/net/ota_mgr.cpp",
+                                    "securacv_ota_boot_self_test();"),
+    ("canary-sense", "selftest"): ("firmware/projects/canary-sense/src/net/ota_mgr.cpp",
+                                   "securacv_ota_boot_self_test();"),
+    # The canary-display-watch lane builds src/ (src_dir = src).
+    ("canary-display", "selftest"): ("firmware/projects/canary-display/src/net/ota_mgr.cpp",
+                                     "securacv_ota_boot_self_test();"),
+}
+
+# The words every evidence_errors failure ends with: the item it closes.
+LOST_CODE = "the claim lost the code it rests on: drop it or map it (sweep C37)"
 
 _TREE_SUITE = ROOT / "scripts" / "tests" / "test_board_thermal_notes.py"
 
@@ -165,6 +199,208 @@ def feature_flag_errors(matrix: dict, tree_facts, env_flags, aliases=None,
                           f"{flag} — the claim can be held to it; drop it from UNMAPPED")
     for tree, feat in sorted(set(aliases) - claimed):
         errors.append(f"FLAG_ALIASES maps ({tree!r}, {feat!r}), which no lane claims — drop it")
+    return errors
+
+
+# ── the code an UNMAPPED claim rests on (sweep C37) ──────────────────────────
+
+_LEX_RE = re.compile(r"//|/\*|[\"']")
+_WORD_BEFORE_RE = re.compile(r"\w{1,16}\Z")
+_LITERAL_PREFIXES = ("u8", "u", "U", "L")
+_RAW_PREFIXES = ("R", "u8R", "uR", "UR", "LR")
+_DIRECTIVE_RE = re.compile(r"(?:#|%:)\s*(\w+)")  # %: is the digraph for #
+# A translation unit: what a build compiles on its own. A header is compiled
+# only where something includes it, so it cannot be a claim's evidence.
+_UNIT_SUFFIXES = (".ino", ".c", ".cc", ".cpp")
+
+
+def lex_c(src: str) -> tuple[str, bytearray]:
+    """C/C++ source as (text, in_literal): `text` is `src` with every comment
+    blanked to spaces (newlines kept, so offsets and line numbers hold), and
+    `in_literal[i]` is 1 where offset i is inside a string or character
+    literal, its quotes and any prefix included. A line comment ending in a
+    backslash takes the next line with it, as the compiler's line splice
+    does. A raw string (R"d(...)d", with the u8/u/U/L prefixes) runs to its
+    own close, across lines; an ordinary literal stops at an unescaped
+    newline, so one stray quote (an apostrophe in an #if 0 block) cannot
+    swallow the rest of the file. A quote after a digit is a C++14 digit
+    separator, not a literal."""
+    out = list(src)
+    lit = bytearray(len(src))
+    n = len(src)
+    i = 0
+    while True:
+        m = _LEX_RE.search(src, i)
+        if m is None:
+            break
+        i, tok = m.start(), m.group()
+        if tok == "//":
+            # A line comment ending in a backslash runs on to the next line
+            # (the splice happens before comments are removed).
+            j = src.find("\n", i)
+            while j >= 0 and src[i:j].rstrip("\r").endswith("\\"):
+                j = src.find("\n", j + 1)
+            j = n if j < 0 else j
+            out[i:j] = ["\n" if ch == "\n" else " " for ch in src[i:j]]
+            i = j
+            continue
+        if tok == "/*":
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out[i:j] = ["\n" if ch == "\n" else " " for ch in src[i:j]]
+            i = j
+            continue
+        before = _WORD_BEFORE_RE.search(src, max(0, i - 16), i)
+        word = before.group() if before else ""
+        if tok == "'" and word[:1].isdigit():
+            i += 1  # 1'000'000: a digit separator
+            continue
+        start = i - len(word) if word in _LITERAL_PREFIXES + _RAW_PREFIXES else i
+        k = src.find("(", i + 1, i + 18) if tok == '"' and word in _RAW_PREFIXES else -1
+        if k >= 0 and not re.search(r"[\s\\)\"]", src[i + 1:k]):
+            close = ")" + src[i + 1:k] + '"'
+            j = src.find(close, k + 1)
+            j = n if j < 0 else j + len(close)
+        else:
+            j = i + 1
+            while j < n and src[j] != tok and src[j] != "\n":
+                j += 2 if src[j] == "\\" else 1
+            j = min(j + 1, n)
+        lit[start:j] = b"\x01" * (j - start)
+        i = j
+    return "".join(out), lit
+
+
+def needle_sites(src: str, needle: str) -> tuple[list[int], list[str]]:
+    """Where `needle` stands in `src` as compiled code: (the 1-based lines it
+    does, why each other occurrence does not count).
+
+    It counts only where it starts outside a comment and outside a string or
+    character literal (lex_c), whole at both ends (`foo()` is not in
+    `my_foo()`), on a line no #if / #ifdef / #ifndef / #elif / #else encloses
+    (an #if 0 block, an #if 1 block and an include guard all count as
+    conditional: the needle belongs at a call site in a .ino / .cpp, and a
+    false red is the safe way to be wrong), and not inside a directive unless
+    it IS that directive (`#include "x.h"` counts; the same text in a
+    #define body compiles only where the macro is used, so it does not).
+    It proves the code is compiled into every build of the tree, not that
+    anything calls it at run time."""
+    text, lit = lex_c(src)
+    lines = text.split("\n")
+    starts = [0]
+    for ln in lines[:-1]:
+        starts.append(starts[-1] + len(ln) + 1)
+    # The conditionals open at the start of each line, and the directive (its
+    # `#` offset and first line) each line belongs to, continuations included.
+    frames: list[tuple[str, int, str, int]] = []
+    open_at: list[tuple[tuple[str, int, str, int], ...]] = []
+    directive_of: dict[int, tuple[int, int]] = {}
+    cont = None
+    for no, ln in enumerate(lines, 1):
+        open_at.append(tuple(frames))
+        stripped = ln.lstrip()
+        hash_at = starts[no - 1] + len(ln) - len(stripped)
+        if cont is not None:
+            directive_of[no] = cont
+        elif stripped.startswith(("#", "%:")) and not lit[hash_at]:
+            directive_of[no] = (hash_at, no)
+            m = _DIRECTIVE_RE.match(stripped)
+            kw = m.group(1) if m else ""
+            said = " ".join(stripped.split())
+            if kw in ("if", "ifdef", "ifndef"):
+                frames.append((said, no, said, no))
+            elif kw in ("elif", "elifdef", "elifndef", "else") and frames:
+                frames[-1] = (frames[-1][0], frames[-1][1], said, no)
+            elif kw == "endif" and frames:
+                frames.pop()
+        cont = directive_of.get(no) if ln.rstrip().endswith("\\") else None
+    head = r"(?<!\w)" if re.match(r"\w", needle) else ""
+    tail = r"(?!\w)" if re.search(r"\w$", needle) else ""
+    good: list[int] = []
+    why: list[str] = []
+    for m in re.finditer(head + re.escape(needle) + tail, text):
+        at = m.start()
+        if lit[at]:
+            continue  # in a string or character literal: not code at all
+        no = bisect.bisect_right(starts, at)
+        ctx = open_at[no - 1]
+        directive = directive_of.get(no)
+        if directive and directive[0] != at:
+            why.append(f"line {no} is inside the directive on line {directive[1]}, "
+                       f"not code (a #define body compiles only where it is used)")
+        elif ctx:
+            chain = ", inside ".join(
+                f"`{branch}` (line {bno}) of `{opened}` (line {ono})" if bno != ono
+                else f"`{opened}` (line {ono})"
+                for opened, ono, branch, bno in reversed(ctx))
+            why.append(f"line {no} is under {chain}")
+        else:
+            good.append(no)
+    return good, why
+
+
+@functools.lru_cache(maxsize=None)
+def _read_source(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def evidence_errors(evidence=None, unmapped=None, tree_files=None, read=None,
+                    trees=None) -> list[str]:
+    """Each UNMAPPED claim still has the code EVIDENCE says it rests on.
+
+    The two tables hold the same keys (a claim with no row, or a row for a
+    claim UNMAPPED does not list, is named). For each row, the source path is
+    a translation unit (a .ino / .c / .cc / .cpp: a header compiles only
+    where it is included) among its tree's files (`tree_files`, the
+    sweep-C35 suite's reader by default), and the needle stands in it as
+    compiled code (needle_sites). `read` reads a source (the file on disk by
+    default) and `trees` is the trees there are (the suite's flavor_dirs by
+    default): seams the tests inject sources through."""
+    evidence = EVIDENCE if evidence is None else evidence
+    unmapped = UNMAPPED if unmapped is None else unmapped
+    tree_files = tree_suite().tree_files if tree_files is None else tree_files
+    read = _read_source if read is None else read
+    trees = frozenset(tree_suite().flavor_dirs() if trees is None else trees)
+    errors: list[str] = []
+    files_of: dict[str, set[Path]] = {}
+    for tree, feat in sorted(set(unmapped) - set(evidence)):
+        errors.append(f"UNMAPPED lists ({tree!r}, {feat!r}), but EVIDENCE names no code it rests "
+                      f"on — add its (source path, needle) row, or map the claim (sweep C37)")
+    for tree, feat in sorted(set(evidence) - set(unmapped)):
+        errors.append(f"EVIDENCE has a row for ({tree!r}, {feat!r}), which UNMAPPED does not "
+                      f"list — drop the row (sweep C37)")
+    for (tree, feat), (rel, needle) in sorted(evidence.items()):
+        if (tree, feat) not in unmapped:
+            continue
+        where = f"EVIDENCE ({tree!r}, {feat!r})"
+        if tree not in trees:
+            errors.append(f"{where}: '{tree}' is not a flavors.json product, so it has no tree "
+                          f"to hold {rel} to — {LOST_CODE}")
+            continue
+        path = (ROOT / rel).resolve()
+        if path.suffix not in _UNIT_SUFFIXES:
+            units = ", ".join(_UNIT_SUFFIXES)
+            errors.append(f"{where}: {rel} is not a translation unit ({units}): a header "
+                          f"compiles only where it is included, so name the source that "
+                          f"holds the code — {LOST_CODE}")
+            continue
+        if tree not in files_of:
+            files_of[tree] = {Path(p).resolve() for p in tree_files(tree)}
+        if path not in files_of[tree]:
+            errors.append(f"{where}: {rel} is not a source of the {tree} tree (its flavor dir, "
+                          f"the firmware/common files it includes, its build_src_filter) — "
+                          f"{LOST_CODE}")
+            continue
+        good, why = needle_sites(read(path), needle)
+        if good:
+            continue
+        if why:
+            more = f"; and {len(why) - 3} more" if len(why) > 3 else ""
+            errors.append(f"{where}: {rel} has {needle!r} only where it is not unconditional "
+                          f"code ({'; '.join(why[:3])}{more}) — {LOST_CODE}")
+        else:
+            errors.append(f"{where}: {rel} has no {needle!r} outside comments and string "
+                          f"literals — {LOST_CODE}")
     return errors
 
 
@@ -440,6 +676,17 @@ def collect(root: Path = ROOT) -> list[str]:
     # being on, and a build profile a sketch header chooses (the canary-wap's
     # build_config.h) is not modeled: only an env's -D flags are.
     for e in feature_flag_errors(matrix, tree_suite().tree_facts, tree_suite().env_flags):
+        err(e)
+
+    # ── 2a-ter. an UNMAPPED claim still has the code it rests on (C37) ───────
+    # Each UNMAPPED claim names, in EVIDENCE, the code it rests on today, and
+    # that code must stay in its tree as unconditional compiled code. Deleting
+    # the canary-wap's csi_integration.h include, or wrapping it in an #if,
+    # used to leave the csi claim green; now it says to drop or map the
+    # claim. It holds presence only: whether that code earns the catalog's
+    # words (a wizard or OTA self-test as "Boot self-test", a GNSS UART for
+    # an optional module as "GPS fix") is the open copy question, not this.
+    for e in evidence_errors():
         err(e)
 
     # ── 2b. flasher deep-link can't rot: every product must resolve to a real
