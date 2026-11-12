@@ -36,10 +36,11 @@
     #include <mbedtls/sha256.h>
     #include <esp_system.h>      /* esp_fill_random */
     #include <esp_idf_version.h> /* ESP_IDF_VERSION_MAJOR — picks between
-                                    mbedTLS 2.x void-return (IDF 4.x;
-                                    arduino-esp32 2.0.x, the canary PIO
-                                    target today) and mbedTLS 3.x int-
-                                    return (IDF 5.x; arduino-esp32 3.x). */
+                                    mbedTLS 2.28's answering _ret names
+                                    (IDF 4.x; arduino-esp32 2.0.17, the
+                                    canary PIO envs on [platform_s3c3])
+                                    and mbedTLS 3.x's answering plain
+                                    names (IDF 5.x; arduino-esp32 3.x). */
   }
   /* rweather/Crypto is pulled in by canary platformio.ini. Headers are
    * top-level on the include path. */
@@ -329,11 +330,38 @@ static bool eval(uint8_t result[32], const uint8_t s[32], const uint8_t* u) {
  * SHA-256 (domain-separated)
  * ────────────────────────────────────────────────────────────────────────── */
 
-void sha256_domain(const char* domain,
+#ifdef CSI_TEST_HOST_BUILD
+namespace test {
+static const char* s_fail_domain = nullptr;
+static int s_fail_left = 0;
+static int s_failed = 0;
+void fail_sha256_domain(const char* domain, int count) {
+  s_fail_domain = domain;
+  s_fail_left = count;
+  s_failed = 0;
+}
+int sha256_domain_failures() { return s_failed; }
+}  /* namespace test */
+
+/* Whether test::fail_sha256_domain() armed this hash to fail (host only). */
+static bool host_hash_fails(const char* domain) {
+  if (test::s_fail_left <= 0) return false;
+  if (test::s_fail_domain != nullptr &&
+      strcmp(test::s_fail_domain, domain != nullptr ? domain : "") != 0) {
+    return false;
+  }
+  --test::s_fail_left;
+  ++test::s_failed;
+  return true;
+}
+#endif
+
+bool sha256_domain(const char* domain,
                    const uint8_t* data, size_t data_len,
                    uint8_t out[SHA256_OUT_LEN]) {
-  if (out == nullptr) return;
+  if (out == nullptr) return false;
   const size_t domain_len = (domain != nullptr) ? strlen(domain) : 0;
+  int rc = 0;
 
 #ifdef CSI_TEST_HOST_BUILD
   host_sha256::Ctx ctx;
@@ -341,23 +369,30 @@ void sha256_domain(const char* domain,
   if (domain_len > 0) host_sha256::update(&ctx, (const uint8_t*)domain, domain_len);
   if (data != nullptr && data_len > 0) host_sha256::update(&ctx, data, data_len);
   host_sha256::final_out(&ctx, out);
+  if (host_hash_fails(domain)) {
+    memset(out, 0xA5, SHA256_OUT_LEN);
+    rc = -1;
+  }
 #else
-  /* mbedTLS API differs between IDF 4.x and IDF 5.x:
-   *   • IDF 5.x (mbedTLS 3.x; arduino-esp32 3.x): non-suffixed names
-   *     return int — error-checking path.
-   *   • IDF 4.x (mbedTLS 2.x; arduino-esp32 2.0.x, this build today):
-   *     non-suffixed names return void; the _ret variants are the
-   *     int-returning ones but were REMOVED in mbedTLS 3.x. To stay
-   *     portable across both, we branch on ESP_IDF_VERSION_MAJOR.
-   * The same domain-separation contract holds either way:
+  /* mbedTLS answers each step differently on the two IDF lines (sweep
+   * F364), and both are built:
+   *   • IDF 5.x (mbedTLS 3.x; arduino-esp32 3.x): the plain names return
+   *     int, and the _ret names are gone.
+   *   • IDF 4.x (mbedTLS 2.28; arduino-esp32 2.0.17, IDF 4.4.7: the canary
+   *     PIO envs on [platform_s3c3]): the plain names return void, and only
+   *     the _ret names answer.
+   * ESP_IDF_VERSION_MAJOR picks the spelling; with it unset the _ret names
+   * are picked, which a 3.x core does not compile, so the wrong spelling
+   * never builds silently. Either way a step after a failed one is not run,
+   * the context is freed, and the shared tail below zeroes `out`: IDF's
+   * hardware port keeps no error in the context, so a finish after a
+   * failed update would write a digest of the bytes that did go in. The
+   * same domain-separation contract holds on both lines:
    * SHA-256("<domain>" || data) → out[32]. */
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
 #if ESP_IDF_VERSION_MAJOR >= 5
-  /* mbedTLS 3.x — defensive return checks so a future upstream API
-   * tightening or stack-use-after-free trap leaves the output buffer
-   * zeroed rather than uninitialized. */
-  int rc = mbedtls_sha256_starts(&ctx, 0);
+  rc = mbedtls_sha256_starts(&ctx, 0);
   if (rc == 0 && domain_len > 0) {
     rc = mbedtls_sha256_update(&ctx, (const uint8_t*)domain, domain_len);
   }
@@ -367,42 +402,52 @@ void sha256_domain(const char* domain,
   if (rc == 0) {
     rc = mbedtls_sha256_finish(&ctx, out);
   }
-  if (rc != 0) {
-    secure_zero(out, SHA256_OUT_LEN);
-  }
 #else
-  /* mbedTLS 2.x — void return. The whole arduino-esp32 2.0.x project
-   * (beacon_channel.cpp, rf_presence.cpp, ble_ota.cpp, canary-wap's
-   * mesh_network.cpp) calls these without checks; we match that
-   * convention here. */
-  mbedtls_sha256_starts(&ctx, 0);
-  if (domain_len > 0) {
-    mbedtls_sha256_update(&ctx, (const uint8_t*)domain, domain_len);
+  rc = mbedtls_sha256_starts_ret(&ctx, 0);
+  if (rc == 0 && domain_len > 0) {
+    rc = mbedtls_sha256_update_ret(&ctx, (const uint8_t*)domain, domain_len);
   }
-  if (data != nullptr && data_len > 0) {
-    mbedtls_sha256_update(&ctx, data, data_len);
+  if (rc == 0 && data != nullptr && data_len > 0) {
+    rc = mbedtls_sha256_update_ret(&ctx, data, data_len);
   }
-  mbedtls_sha256_finish(&ctx, out);
+  if (rc == 0) {
+    rc = mbedtls_sha256_finish_ret(&ctx, out);
+  }
 #endif
   mbedtls_sha256_free(&ctx);
 #endif  /* CSI_TEST_HOST_BUILD */
+
+  if (rc != 0) {
+    secure_zero(out, SHA256_OUT_LEN);
+    return false;
+  }
+  return true;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
  * IDENTITY DERIVATION
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* A failed hash leaves the output all zeros (sha256_domain() zeroed the
+ * digest); the void API and what its callers refuse are the follow-up item
+ * mesh_crypto.h names. */
 void compute_fingerprint(const uint8_t pubkey[PUBKEY_LEN],
                          uint8_t fp_out[FINGERPRINT_LEN]) {
   uint8_t hash[SHA256_OUT_LEN];
-  sha256_domain(DOMAIN_FINGERPRINT, pubkey, PUBKEY_LEN, hash);
+  if (!sha256_domain(DOMAIN_FINGERPRINT, pubkey, PUBKEY_LEN, hash)) {
+    secure_zero(fp_out, FINGERPRINT_LEN);
+    return;
+  }
   memcpy(fp_out, hash, FINGERPRINT_LEN);
 }
 
 void compute_opera_id(const uint8_t secret[OPERA_SECRET_LEN],
                       uint8_t id_out[OPERA_ID_LEN]) {
   uint8_t hash[SHA256_OUT_LEN];
-  sha256_domain(DOMAIN_OPERA_ID, secret, OPERA_SECRET_LEN, hash);
+  if (!sha256_domain(DOMAIN_OPERA_ID, secret, OPERA_SECRET_LEN, hash)) {
+    secure_zero(id_out, OPERA_ID_LEN);
+    return;
+  }
   memcpy(id_out, hash, OPERA_ID_LEN);
 }
 
@@ -428,7 +473,10 @@ bool ed25519_generate_keypair(uint8_t pubkey[PUBKEY_LEN],
    * here we just need a value that's distinct and reproducible from
    * the priv, so verify() can roundtrip. */
   uint8_t h[SHA256_OUT_LEN];
-  sha256_domain("securacv:host-shim:pub", privkey, PRIVKEY_LEN, h);
+  if (!sha256_domain("securacv:host-shim:pub", privkey, PRIVKEY_LEN, h)) {
+    secure_zero(privkey, PRIVKEY_LEN);
+    return false;
+  }
   memcpy(pubkey, h, PUBKEY_LEN);
   return true;
 #else
@@ -448,7 +496,10 @@ bool ed25519_sign(const uint8_t privkey[PRIVKEY_LEN],
   if (msg == nullptr && msg_len > 0) return false;
 
   uint8_t msg_hash[SHA256_OUT_LEN];
-  sha256_domain(DOMAIN_MESSAGE, msg, msg_len, msg_hash);
+  if (!sha256_domain(DOMAIN_MESSAGE, msg, msg_len, msg_hash)) {
+    secure_zero(sig_out, SIGNATURE_LEN);
+    return false;
+  }
 
 #ifdef CSI_TEST_HOST_BUILD
   /* Deterministic non-cryptographic signature for the host shim.
@@ -462,13 +513,17 @@ bool ed25519_sign(const uint8_t privkey[PRIVKEY_LEN],
   memcpy(buf, "sign-shim:v1", 12);
   memcpy(buf + 12, privkey, PRIVKEY_LEN);
   memcpy(buf + 12 + PRIVKEY_LEN, msg_hash, SHA256_OUT_LEN);
-  sha256_domain("", buf, sizeof(buf), sig_out);
+  const bool first = sha256_domain("", buf, sizeof(buf), sig_out);
+  secure_zero(buf, sizeof(buf));
 
   uint8_t buf2[16 + PUBKEY_LEN + SHA256_OUT_LEN];
   memcpy(buf2, "sign-shim:v1:tag", 16);
   memcpy(buf2 + 16, pubkey, PUBKEY_LEN);
   memcpy(buf2 + 16 + PUBKEY_LEN, msg_hash, SHA256_OUT_LEN);
-  sha256_domain("", buf2, sizeof(buf2), sig_out + 32);
+  if (!first || !sha256_domain("", buf2, sizeof(buf2), sig_out + 32)) {
+    secure_zero(sig_out, SIGNATURE_LEN);
+    return false;
+  }
   return true;
 #else
   Ed25519::sign(sig_out, privkey, pubkey, msg_hash, SHA256_OUT_LEN);
@@ -483,7 +538,7 @@ bool ed25519_verify(const uint8_t pubkey[PUBKEY_LEN],
   if (msg == nullptr && msg_len > 0) return false;
 
   uint8_t msg_hash[SHA256_OUT_LEN];
-  sha256_domain(DOMAIN_MESSAGE, msg, msg_len, msg_hash);
+  if (!sha256_domain(DOMAIN_MESSAGE, msg, msg_len, msg_hash)) return false;
 
 #ifdef CSI_TEST_HOST_BUILD
   /* Host shim: recompute the pubkey-derivable second half and check it
@@ -497,7 +552,7 @@ bool ed25519_verify(const uint8_t pubkey[PUBKEY_LEN],
   memcpy(buf, "sign-shim:v1:tag", 16);
   memcpy(buf + 16, pubkey, PUBKEY_LEN);
   memcpy(buf + 16 + PUBKEY_LEN, msg_hash, SHA256_OUT_LEN);
-  sha256_domain("", buf, sizeof(buf), expected_tag);
+  if (!sha256_domain("", buf, sizeof(buf), expected_tag)) return false;
   return ct_equal(sig + 32, expected_tag, SHA256_OUT_LEN);
 #else
   return Ed25519::verify(sig, pubkey, msg_hash, SHA256_OUT_LEN);
@@ -595,8 +650,9 @@ void fill_random(uint8_t* out, size_t len) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 #ifdef CSI_TEST_HOST_BUILD
-/* Host shim helpers. */
-static void shim_aead_keystream(const uint8_t key[AEAD_KEY_LEN],
+/* Host shim helpers. Each answers false when a hash it runs fails, and
+ * aead_encrypt() / aead_decrypt() refuse then (sweep F364). */
+static bool shim_aead_keystream(const uint8_t key[AEAD_KEY_LEN],
                                 const uint8_t nonce[AEAD_NONCE_LEN],
                                 uint8_t* out, size_t len) {
   /* keystream[i] = first byte of SHA-256("aead-shim:v1" || key ||
@@ -613,12 +669,13 @@ static void shim_aead_keystream(const uint8_t key[AEAD_KEY_LEN],
     buf[12 + AEAD_KEY_LEN + AEAD_NONCE_LEN + 2] = (uint8_t)(i >> 8);
     buf[12 + AEAD_KEY_LEN + AEAD_NONCE_LEN + 3] = (uint8_t)i;
     uint8_t h[SHA256_OUT_LEN];
-    sha256_domain("", buf, sizeof(buf), h);
+    if (!sha256_domain("", buf, sizeof(buf), h)) return false;
     out[i] = h[0];
   }
+  return true;
 }
 
-static void shim_aead_tag(const uint8_t key[AEAD_KEY_LEN],
+static bool shim_aead_tag(const uint8_t key[AEAD_KEY_LEN],
                           const uint8_t nonce[AEAD_NONCE_LEN],
                           const uint8_t* aad, size_t aad_len,
                           const uint8_t* ciphertext, size_t ct_len,
@@ -636,7 +693,7 @@ static void shim_aead_tag(const uint8_t key[AEAD_KEY_LEN],
     /* Out-of-memory shouldn't happen in a host test, but if it does,
      * zero the tag so any verify will fail loudly. */
     memset(tag_out, 0, AEAD_TAG_LEN);
-    return;
+    return false;
   }
   size_t off = 0;
   memcpy(buf + off, "aead-shim:v1:tag", 16);                       off += 16;
@@ -652,10 +709,11 @@ static void shim_aead_tag(const uint8_t key[AEAD_KEY_LEN],
   buf[off++] = (uint8_t)(ct_len >> 8);
   buf[off++] = (uint8_t)ct_len;
   if (ciphertext != nullptr && ct_len > 0) { memcpy(buf + off, ciphertext, ct_len); off += ct_len; }
-  sha256_domain("", buf, off, h);
+  const bool hashed = sha256_domain("", buf, off, h);
   secure_zero(buf, total);
   free(buf);
-  memcpy(tag_out, h, AEAD_TAG_LEN);
+  memcpy(tag_out, h, AEAD_TAG_LEN);   /* zeros when the hash failed */
+  return hashed;
 }
 #endif
 
@@ -674,12 +732,20 @@ bool aead_encrypt(const uint8_t key[AEAD_KEY_LEN],
   if (pt_len > 0) {
     uint8_t* stream = (uint8_t*)malloc(pt_len);
     if (stream == nullptr) return false;
-    shim_aead_keystream(key, nonce, stream, pt_len);
+    const bool streamed = shim_aead_keystream(key, nonce, stream, pt_len);
     for (size_t i = 0; i < pt_len; ++i) ciphertext_out[i] = plaintext[i] ^ stream[i];
     secure_zero(stream, pt_len);
     free(stream);
+    if (!streamed) {
+      secure_zero(ciphertext_out, pt_len);
+      secure_zero(tag_out, AEAD_TAG_LEN);
+      return false;
+    }
   }
-  shim_aead_tag(key, nonce, aad, aad_len, ciphertext_out, pt_len, tag_out);
+  if (!shim_aead_tag(key, nonce, aad, aad_len, ciphertext_out, pt_len, tag_out)) {
+    if (pt_len > 0) secure_zero(ciphertext_out, pt_len);
+    return false;
+  }
   return true;
 #else
   /* Match canary-wap's pattern: check setKey/setIV returns, always
@@ -711,18 +777,22 @@ bool aead_decrypt(const uint8_t key[AEAD_KEY_LEN],
 #ifdef CSI_TEST_HOST_BUILD
   /* Verify tag BEFORE decrypting to avoid releasing forged plaintext. */
   uint8_t computed_tag[AEAD_TAG_LEN];
-  shim_aead_tag(key, nonce, aad, aad_len, ciphertext, ct_len, computed_tag);
-  if (!ct_equal(computed_tag, tag, AEAD_TAG_LEN)) {
+  if (!shim_aead_tag(key, nonce, aad, aad_len, ciphertext, ct_len, computed_tag) ||
+      !ct_equal(computed_tag, tag, AEAD_TAG_LEN)) {
     if (ct_len > 0) memset(plaintext_out, 0, ct_len);
     return false;
   }
   if (ct_len > 0) {
     uint8_t* stream = (uint8_t*)malloc(ct_len);
     if (stream == nullptr) return false;
-    shim_aead_keystream(key, nonce, stream, ct_len);
+    const bool streamed = shim_aead_keystream(key, nonce, stream, ct_len);
     for (size_t i = 0; i < ct_len; ++i) plaintext_out[i] = ciphertext[i] ^ stream[i];
     memset(stream, 0, ct_len);
     free(stream);
+    if (!streamed) {
+      memset(plaintext_out, 0, ct_len);
+      return false;
+    }
   }
   return true;
 #else

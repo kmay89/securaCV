@@ -14,6 +14,15 @@
  * error in the context. Armed, the stub also counts the contexts inited and
  * not freed (live), so a test can see each one freed on every path.
  *
+ * Or by domain (sweep F364's pairing slice, test_mesh_liveness_wap.cpp):
+ * arm_domain() fails every hash whose first update begins with the bytes of
+ * `prefix`, at that update, until the next arm() or disarm(). It is not
+ * once: on the image a multi-device test runs, every device's hash under
+ * that domain fails, which is the case it is for (two sides whose pairing
+ * hashes both fail). domain_failures counts them. mesh_crypto::
+ * sha256_domain() feeds the domain as its first update; mesh_network.cpp's
+ * own sha256_domain() does too, under its own domains.
+ *
  * Not armed — the default, and what every other suite that includes this
  * header runs on — the knob counts nothing and fails nothing: each step
  * answers 0 (or -1 if OpenSSL itself fails) over exactly what it is fed,
@@ -39,6 +48,8 @@ inline Out fail_out = Out::Scribble;
 inline int hashes = 0;   // hashes begun since arm()
 inline int live = 0;     // contexts inited since arm() and not freed
 inline bool fired = false;  // the armed step was reached
+inline const char* fail_prefix = nullptr;  // arm_domain(): the domain whose hashes fail
+inline int domain_failures = 0;            // hashes arm_domain() failed since it was called
 
 /* Count from here; fail `step` of hash `hash` (its update `update`, from 0),
  * once. arm() with Step::None counts and fails nothing. */
@@ -50,10 +61,26 @@ inline void arm(Step step = Step::None, int hash = 0, int update = 0, Out out = 
   fail_out = out;
   hashes = live = 0;
   fired = false;
+  fail_prefix = nullptr;
+  domain_failures = 0;
 }
 inline void disarm() {
   arm();
   armed = false;
+}
+/* Fail every hash whose first update begins with `prefix`, at that update,
+ * until the next arm() or disarm(); nothing else fails. */
+inline void arm_domain(const char* prefix) {
+  arm();
+  fail_prefix = prefix;
+}
+/* True at the first update of a hash under arm_domain()'s prefix. */
+inline bool failing_by_domain(int update, const unsigned char* d, size_t n) {
+  if (!armed || fail_prefix == nullptr || update != 0) return false;
+  const size_t len = strlen(fail_prefix);
+  if (n < len || memcmp(d, fail_prefix, len) != 0) return false;
+  ++domain_failures;
+  return true;
 }
 /* True once, at the armed step of the armed hash. */
 inline bool failing_here(Step step, int index, int update = 0) {
@@ -86,7 +113,8 @@ inline int mbedtls_sha256_starts(mbedtls_sha256_context* c, int /*is224*/) {
   return ok ? 0 : -1;
 }
 inline int mbedtls_sha256_update(mbedtls_sha256_context* c, const unsigned char* d, size_t n) {
-  const bool fail = stub_sha256::failing_here(stub_sha256::Step::Update, c->index, c->updates);
+  const bool fail = stub_sha256::failing_here(stub_sha256::Step::Update, c->index, c->updates) ||
+                    stub_sha256::failing_by_domain(c->updates, d, n);
   c->updates++;
   if (fail) return stub_sha256::kFailed;  // these bytes never reach the hash
   return EVP_DigestUpdate(c->md, d, n) == 1 ? 0 : -1;

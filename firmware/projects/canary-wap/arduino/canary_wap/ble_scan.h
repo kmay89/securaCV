@@ -80,13 +80,15 @@ constexpr size_t MAX_PAIRED_BEACONS = 16;
  * in NVS on every tier today; mesh_state.h, common/identity/key_at_rest.h).
  * This module does NOT generate or store the key — caller-supplied.
  *
- * Returns false on null pointer inputs; otherwise fills `out` and
- * returns true.
+ * Returns false on null pointer inputs, and false with `out` zeroed when
+ * the hash fails (sweep F364: mesh_crypto::sha256_domain() answers);
+ * otherwise fills `out` and returns true. A caller that gets false has no
+ * id for the beacon and drops it.
  * ────────────────────────────────────────────────────────────────────────── */
 
-bool hash_beacon_id(const uint8_t per_device_key[PER_DEVICE_KEY_LEN],
-                    const uint8_t mac[MAC_LEN],
-                    uint8_t       out[HASHED_ID_LEN]);
+[[nodiscard]] bool hash_beacon_id(const uint8_t per_device_key[PER_DEVICE_KEY_LEN],
+                                  const uint8_t mac[MAC_LEN],
+                                  uint8_t       out[HASHED_ID_LEN]);
 
 /* Constant-time equality for hashed IDs. Returns true if the 16-byte
  * IDs match. */

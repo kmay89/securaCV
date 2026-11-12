@@ -68,12 +68,20 @@ bool derive_key(const uint8_t our_eph_priv[mesh_crypto::PRIVKEY_LEN],
   memcpy(kdf_in + off, initiator_eph_pub, EPH_LEN);        off += EPH_LEN;
   memcpy(kdf_in + off, survivor_eph_pub, EPH_LEN);         off += EPH_LEN;
   uint8_t digest[mesh_crypto::SHA256_OUT_LEN];
-  mesh_crypto::sha256_domain(DOMAIN_REKEY_KEY, kdf_in, off, digest);
-  memcpy(key_out, digest, mesh_crypto::AEAD_KEY_LEN);
+  /* A KDF hash that failed gives no key (sweep F364): its zeroed digest is
+   * the same "key" for every rotation and every survivor, so a SECRET
+   * sealed under it opens for anyone who knows that, and a survivor whose
+   * own hash failed would open it. Both callers refuse on false. */
+  const bool hashed = mesh_crypto::sha256_domain(DOMAIN_REKEY_KEY, kdf_in, off, digest);
+  if (hashed) {
+    memcpy(key_out, digest, mesh_crypto::AEAD_KEY_LEN);
+  } else {
+    secure_zero(key_out, mesh_crypto::AEAD_KEY_LEN);
+  }
   secure_zero(shared, sizeof(shared));
   secure_zero(kdf_in, sizeof(kdf_in));
   secure_zero(digest, sizeof(digest));
-  return true;
+  return hashed;
 }
 
 /* rekey_id LE || initiator_fp || survivor_fp */

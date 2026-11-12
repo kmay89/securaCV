@@ -89,9 +89,18 @@ constexpr uint32_t CONFIRMATION_CODE_MODULUS = 1000000;
  * attacker cannot fake the code without breaking the underlying X25519
  * exchange. Truncation to ~20 bits gives a 1-in-10^6 collision chance,
  * which is the standard 6-digit-OOB-confirmation level.
+ *
+ * Answers false, with *code_out set to 0, for a null argument or when the
+ * hash fails (sweep F364). Before, a failed hash's zeroed digest gave the
+ * code 0 whatever the session key was, so two sides whose hashes both
+ * failed showed the same 000000 over any two keys, a man in the middle's
+ * included, and the comparison the code exists for checked nothing. The
+ * state machine fails the pairing (FailReason::CRYPTO) instead: no ACCEPT
+ * is sent and no code is shown.
  * ────────────────────────────────────────────────────────────────────────── */
 
-uint32_t compute_confirmation_code(const uint8_t session_key[SESSION_KEY_LEN]);
+[[nodiscard]] bool compute_confirmation_code(const uint8_t session_key[SESSION_KEY_LEN],
+                                             uint32_t*     code_out);
 
 /* A pairing side's role, on the wire as uint8_t (PairDiscoverPayload::role;
  * matches canary-wap's PairingRole enum), and the CONFIRM hash's sender. */
@@ -143,12 +152,15 @@ enum Role : uint8_t {
  * without also seeing both peers' randomly-chosen ephemeral keys (which
  * is what determines the 6-digit code).
  *
- * Returns false, with `out` zeroed, for a null argument or a sender that
- * is neither role; a caller that verifies must treat that as a mismatch
- * (an all-zero hash is not a CONFIRM).
+ * Returns false, with `out` zeroed, for a null argument, a sender that
+ * is neither role, or a hash that failed (sweep F364; it answered true
+ * over the zeroed digest before, so two sides whose hashes both failed
+ * sent and expected the same 32 zero bytes and completed); every caller
+ * fails the pairing (FailReason::CRYPTO) then, so an all-zero hash is never
+ * sent as a CONFIRM nor taken as one.
  * ────────────────────────────────────────────────────────────────────────── */
 
-bool compute_confirmation_hash(Role          sender,
+[[nodiscard]] bool compute_confirmation_hash(Role          sender,
                                const uint8_t session_key[SESSION_KEY_LEN],
                                uint32_t      code,
                                uint8_t       out[mesh_crypto::SHA256_OUT_LEN]);

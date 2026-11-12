@@ -22,6 +22,9 @@
  *      ble_scout_on_advert() a strong beacon or Chirp from an unpaired
  *      advertiser never pairs while every near miss, and an advert with no
  *      manufacturer data, still does.
+ *   And sweep F364: an advert whose hashed id does not hash
+ *      (hash_beacon_id() answers false) pairs nothing, takes no window and
+ *      lists nothing, never a zero id.
  *
  * Every advert in B and C goes through scan_advert(), which does what
  * ble_scout_nimble.cpp does with one: classify its manufacturer data and
@@ -56,6 +59,7 @@
 #include "ble_scout_pairing.h"
 #include "ble_scout_advert_kind.h"
 #include "ble_scan.h"
+#include "mesh_crypto.h"   /* mesh_crypto::test::fail_sha256_domain (sweep F364) */
 
 /* The fleet's two advert contracts (firmware/common/fleet_link/, on the
  * -I path ble_scout_advert_kind.h needs for fleet_chirp.h anyway). */
@@ -800,6 +804,33 @@ void test_paired_beacon_does_not_consume_window() {
   std::printf("PASS test_paired_beacon_does_not_consume_window\n");
 }
 
+/* Sweep F364: hash_beacon_id() answered true over whatever a failed hash
+ * left, so on the IDF 5 line (a zeroed digest) every beacon whose hash
+ * failed was the one id of 16 zero bytes, paired, tracked and listed as the
+ * one before. Now it answers false and the Scout drops the advert: the
+ * window stays armed for a beacon that does hash, and a direct pair is
+ * refused. mesh_crypto::test::fail_sha256_domain() fails the hash. */
+void test_a_beacon_whose_id_does_not_hash_pairs_and_lists_nothing() {
+  namespace t = mesh_crypto::test;
+  const uint8_t mac[MAC_LEN] = {0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F};
+  const uint8_t zero_id[HASHED_ID_LEN] = {};
+  const size_t before = ble_scout::ble_scout_count();
+  CHECK(ble_scout::ble_scout_pair_window_start("bolt", 30000, -45, 15000) == P::ArmResult::OK);
+  t::fail_sha256_domain(ble_scan::DOMAIN_HASHED_ID, 1);
+  scan_advert(mac, -30, 15100);   /* strong, unpaired: what the window takes */
+  CHECK(t::sha256_domain_failures() == 1);
+  CHECK(ble_scout::ble_scout_count() == before);
+  CHECK(ble_scout::ble_scout_pair_window_status(15100).state == P::State::ARMED);
+  CHECK(!snapshot_has(zero_id, nullptr));
+  t::fail_sha256_domain(ble_scan::DOMAIN_HASHED_ID, 1);
+  CHECK(!ble_scout::ble_scout_pair(mac, "bolt"));
+  CHECK(ble_scout::ble_scout_count() == before && !snapshot_has(zero_id, nullptr));
+  CHECK(!ble_scout::ble_scout_registry_dirty());
+  t::fail_sha256_domain(nullptr, 0);
+  CHECK(ble_scout::ble_scout_pair_window_cancel(15200));
+  std::printf("PASS test_a_beacon_whose_id_does_not_hash_pairs_and_lists_nothing\n");
+}
+
 void test_canceled_and_expired_windows_pair_nothing() {
   const uint8_t mac[MAC_LEN] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
 
@@ -989,6 +1020,7 @@ int main() {
   test_window_before_init_is_not_ready();
   test_window_pairs_first_strong_unpaired_advert();
   test_paired_beacon_does_not_consume_window();
+  test_a_beacon_whose_id_does_not_hash_pairs_and_lists_nothing();
   test_canceled_and_expired_windows_pair_nothing();
   test_bad_label_refused_at_start();
   test_unpair_marks_dirty();

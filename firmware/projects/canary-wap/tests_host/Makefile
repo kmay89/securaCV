@@ -2424,12 +2424,15 @@ clean: clean-fleet-qr-query
 # image hash (usb_evidence_drive.cpp's dep_sha256() under
 # evidence_update::verify()), the familiar filters' index hash
 # (familiar.cpp), Wi-Fi presence's MAC hash (wifi_presence.h) and
-# mesh_crypto::sha256_domain(). Each helper answers whether every mbedTLS
-# step ran and zeroes its output when one did not, and each caller refuses:
-# no sealed file, ct_hash or key id, no verdict but sha_failed, no learned
-# or matched bit, no counted capture, a zeroed mesh digest. mesh_crypto.cpp
-# is compiled whole and evidence_update_verify.cpp and securacv_ota.cpp's
-# pure subset are linked; the rest is cut verbatim out of the sketch's files
+# mesh_crypto::sha256_domain() with what stands on it (ble_scan.cpp's hashed
+# beacon id, mesh_pair_crypto.h's pairing code and CONFIRM hash). Each helper
+# answers whether every mbedTLS step ran and zeroes its output when one did
+# not, and each caller refuses: no sealed file, ct_hash or key id, no verdict
+# but sha_failed, no learned or matched bit, no counted capture, no hashed
+# id, code or CONFIRM. mesh_crypto.cpp and ble_scan.cpp are compiled whole,
+# mesh_pair_crypto.h is included, and evidence_update_verify.cpp and
+# securacv_ota.cpp's pure subset are linked; the rest is cut verbatim out of
+# the sketch's files
 # — each module's state block by its first and last line (the awk below,
 # which fails unless it finds each exactly once), the functions by
 # firmware/tests_host/cut_functions.awk. Under them: stubs/mesh_net's
@@ -2440,8 +2443,8 @@ clean: clean-fleet-qr-query
 # it re-runs on every `make`: no bare call of a SHA step or of the helpers.
 SHAMOD_BIN          = test_wap_sha_fail_modules
 SHAMOD_SRC          = test_wap_sha_fail_modules.cpp
-SHAMOD_LINK         = $(SRC_DIR)/mesh_crypto.cpp $(SRC_DIR)/evidence_update_verify.cpp \
-                      $(SRC_DIR)/securacv_ota.cpp
+SHAMOD_LINK         = $(SRC_DIR)/mesh_crypto.cpp $(SRC_DIR)/ble_scan.cpp \
+                      $(SRC_DIR)/evidence_update_verify.cpp $(SRC_DIR)/securacv_ota.cpp
 SHAMOD_VAULT_STATE  = test_wap_sha_fail_modules_vault_state.inc
 SHAMOD_VAULT        = test_wap_sha_fail_modules_vault.inc
 SHAMOD_FAM_STATE    = test_wap_sha_fail_modules_familiar_state.inc
@@ -2461,8 +2464,11 @@ SHAMOD_USB          = test_wap_sha_fail_modules_usb.inc
 # arriving is refused by name (sweep F300).
 SHAMOD_VAULT_KEY    = test_wap_sha_fail_modules_vault_key.inc
 # And beacon_channel.cpp's hash helper with what stands on it: the co-sign
-# session key, the fingerprint, the audit chain's head (load and append) and
-# the tamper auto-revoke.
+# session key, the fingerprint, the audit chain's head (load and append), the
+# tamper auto-revoke, and init(), which refuses a device key whose
+# fingerprint does not hash (sweep F364; the harness stands in the beacon
+# set's load, the SD log's head and the state callback, and runs the real
+# audit-log load cut here).
 SHAMOD_BEACON       = test_wap_sha_fail_modules_beacon.inc
 SHAMOD_INCS         = $(SHAMOD_VAULT_STATE) $(SHAMOD_VAULT) $(SHAMOD_FAM_STATE) $(SHAMOD_FAM) \
                       $(SHAMOD_WP_STATE) $(SHAMOD_WP) $(SHAMOD_USB) $(SHAMOD_VAULT_KEY) $(SHAMOD_BEACON)
@@ -2506,11 +2512,11 @@ $(SHAMOD_VAULT_KEY): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(SHAMOD_BEACON): $(SRC_DIR)/beacon_channel.cpp $(HMACFAIL_CUT) Makefile
-	awk -v 'sigs=[[nodiscard]] static bool sha256_two(|static bool ecdh_session_key(|[[nodiscard]] static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {|static bool persist_audit_entry(|[[nodiscard]] static bool audit_head_after(|[[nodiscard]] static bool rederive_audit_head(|static bool load_audit_log(|static bool chain_audit_entry(BeaconAuditEntry* entry) {|bool revoke_beacon_set_entry(|bool on_peer_tampered(' \
+	awk -v 'sigs=[[nodiscard]] static bool sha256_two(|static bool ecdh_session_key(|[[nodiscard]] static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {|static bool persist_audit_entry(|[[nodiscard]] static bool audit_head_after(|[[nodiscard]] static bool rederive_audit_head(|static bool load_audit_log(|static bool chain_audit_entry(BeaconAuditEntry* entry) {|bool revoke_beacon_set_entry(|bool on_peer_tampered(|bool init(' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/beacon_channel.cpp > $@.tmp && mv $@.tmp $@
 
 $(SHAMOD_BIN): $(SHAMOD_SRC) $(SHAMOD_INCS) $(SHAMOD_LINK) arduino_globals.h arduinojson_tree.h json_strict.h \
-               $(SRC_DIR)/vault_snapshot.h
+               $(SRC_DIR)/vault_snapshot.h $(SRC_DIR)/ble_scan.h $(SRC_DIR)/mesh_pair_crypto.h
 	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I stubs/sd_fake \
 	  -I $(SRC_DIR) -I . -DSECURACV_OTA_HOST_BUILD \
 	  -DWAP_SHAMOD_VAULT_STATE_INC='"$(SHAMOD_VAULT_STATE)"' -DWAP_SHAMOD_VAULT_INC='"$(SHAMOD_VAULT)"' \
@@ -2529,6 +2535,49 @@ clean-wap-sha-fail-modules:
 
 run: run-wap-sha-fail-modules
 clean: clean-wap-sha-fail-modules
+
+# The two mesh_crypto::sha256_domain() bodies on both IDF lines (sweep F364):
+# the canary library's (firmware/canary/lib/securacv_mesh/src/mesh_crypto.cpp)
+# and this sketch's shim, one function in two copies that no sync check
+# covers. The library's sha256_domain() and secure_zero() are cut verbatim
+# (cut_functions.awk) and compiled with CSI_TEST_HOST_BUILD unset, so its
+# device branches build, over firmware/tests_host/stubs/sha_fail's failing
+# mbedTLS stand-in: once as IDF 4 over its mbedTLS 2.28 spelling (plain
+# names void, the _ret names answer) and once as IDF 5 over 3.6 (plain names
+# answer, no _ret names). The IDF 5 build also compiles the sketch's shim
+# against the same stand-in and holds the two copies' answers and outputs
+# equal. Both binaries run on every `make`.
+MCLINES_SRC  = test_mesh_crypto_lines.cpp
+MCLINES_PIO  = ../../../canary/lib/securacv_mesh/src/mesh_crypto.cpp
+MCLINES_INC  = test_mesh_crypto_lines_pio.inc
+MCLINES_STUB = ../../../tests_host/stubs/sha_fail
+MCLINES_IDF4 = test_mesh_crypto_lines_idf4
+MCLINES_IDF5 = test_mesh_crypto_lines_idf5
+CUT_INCS    += $(MCLINES_INC)
+
+$(MCLINES_INC): $(MCLINES_PIO) $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static void secure_zero(|bool sha256_domain(' \
+	  -f $(HMACFAIL_CUT) $(MCLINES_PIO) > $@.tmp && mv $@.tmp $@
+
+$(MCLINES_IDF4): $(MCLINES_SRC) $(MCLINES_INC)
+	$(CXX) $(CXXFLAGS) -Werror -I $(MCLINES_STUB) -DESP_IDF_VERSION_MAJOR=4 \
+	  -DSHA_STUB_MBEDTLS_VERSION=0x021C0700 -DMCLINES_PIO_INC='"$(MCLINES_INC)"' \
+	  -o $@ $(MCLINES_SRC) -lcrypto
+
+$(MCLINES_IDF5): $(MCLINES_SRC) $(MCLINES_INC) $(SRC_DIR)/mesh_crypto.cpp $(SRC_DIR)/mesh_crypto.h
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I $(MCLINES_STUB) -I $(SRC_DIR) -DESP_IDF_VERSION_MAJOR=5 \
+	  -DSHA_STUB_MBEDTLS_VERSION=0x03060300 -DMCLINES_PIO_INC='"$(MCLINES_INC)"' -DMCLINES_WAP_SHIM \
+	  -o $@ $(MCLINES_SRC) $(SRC_DIR)/mesh_crypto.cpp -lcrypto)
+
+.PHONY: run-mesh-crypto-lines clean-mesh-crypto-lines
+run-mesh-crypto-lines: $(MCLINES_IDF4) $(MCLINES_IDF5)
+	$(call run_marked,$(MCLINES_IDF4))
+	$(call run_marked,$(MCLINES_IDF5))
+clean-mesh-crypto-lines:
+	rm -f $(MCLINES_IDF4) $(MCLINES_IDF5) $(MCLINES_INC)
+
+run: run-mesh-crypto-lines
+clean: clean-mesh-crypto-lines
 
 # Every suite compiles the sketch's code after Arduino.h's names (sweep
 # F229): check_arduino_globals.py asks make for every compile of `run` and

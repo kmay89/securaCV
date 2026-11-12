@@ -667,10 +667,11 @@ Frame accept_from(Device& x, const Frame& offer, const uint8_t to[6], uint8_t se
 // code, for the joiner's role, F94: the one an initiator takes).
 Frame confirm_from(Device& x, const uint8_t session_key[32], const uint8_t to[6]) {
   become(x);
-  const uint32_t code = mesh_pair_crypto::confirmation_code(session_key);
+  uint32_t code = 0;
+  CHECK(mesh_pair_crypto::confirmation_code(session_key, &code));
   mn::PairConfirmPayload cf;
-  mesh_pair_crypto::confirm_hash(mesh_pair_crypto::ConfirmSender::JOINER, session_key, code,
-                                 cf.confirmation_hash);
+  CHECK(mesh_pair_crypto::confirm_hash(mesh_pair_crypto::ConfirmSender::JOINER, session_key, code,
+                                       cf.confirmation_hash));
   x.espnow.sent.clear();
   CHECK(mn::send_pair_frame(to, mn::MSG_PAIR_CONFIRM, &cf, sizeof cf));
   return sent_to(x, to).back();

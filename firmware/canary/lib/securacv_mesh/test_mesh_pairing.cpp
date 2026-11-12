@@ -48,6 +48,10 @@
  *      a role-free CONFIRM, as firmware before F94 sends it, fails closed.
  *      The pre-F97 models in 7, 8 and 11 run on today's hash: they pin the
  *      ordering rules, and no firmware before F94 pairs with this one.
+ *  13. A pairing hash that fails is refused (sweep F364): the code and the
+ *      CONFIRM hash answer false, and each step fails the pairing (CRYPTO):
+ *      no ACCEPT or code, no CONFIRM sent, none checked, nothing sealed, a
+ *      zeroed CONFIRM not taken by a side whose check did not hash.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -74,11 +78,23 @@ extern "C" int test_mesh_pairing_run() { return 0; }
 
 namespace {
 
+/* The code for a session key whose hash runs: compute_confirmation_code()
+ * answers false when the hash fails (sweep F364), and a known-answer check
+ * needs it to have hashed, under NDEBUG too. */
+uint32_t code_of(const uint8_t key[mesh_pairing::SESSION_KEY_LEN]) {
+  uint32_t code = 0xFFFFFFFFu;
+  if (!mesh_pairing::compute_confirmation_code(key, &code)) {
+    std::fprintf(stderr, "FATAL: compute_confirmation_code answered false\n");
+    std::abort();
+  }
+  return code;
+}
+
 void test_code_deterministic() {
   uint8_t session_key[mesh_pairing::SESSION_KEY_LEN];
   for (size_t i = 0; i < sizeof(session_key); ++i) session_key[i] = (uint8_t)(i * 7);
-  uint32_t a = mesh_pairing::compute_confirmation_code(session_key);
-  uint32_t b = mesh_pairing::compute_confirmation_code(session_key);
+  const uint32_t a = code_of(session_key);
+  const uint32_t b = code_of(session_key);
   assert(a == b);
   assert(a < mesh_pairing::CONFIRMATION_CODE_MODULUS);
   std::printf("PASS test_code_deterministic  (code=%06u)\n", a);
@@ -88,8 +104,8 @@ void test_code_distinct_inputs_distinct_outputs() {
   uint8_t k1[mesh_pairing::SESSION_KEY_LEN] = {0};
   uint8_t k2[mesh_pairing::SESSION_KEY_LEN] = {0};
   k2[0] = 1;   /* differ in one bit */
-  uint32_t c1 = mesh_pairing::compute_confirmation_code(k1);
-  uint32_t c2 = mesh_pairing::compute_confirmation_code(k2);
+  const uint32_t c1 = code_of(k1);
+  const uint32_t c2 = code_of(k2);
   assert(c1 != c2);  /* 1-in-10^6 chance of accidental collision */
   std::printf("PASS test_code_distinct_inputs_distinct_outputs  (c1=%06u c2=%06u)\n", c1, c2);
 }
@@ -100,7 +116,7 @@ void test_code_range() {
   for (int seed = 0; seed < 256; ++seed) {
     uint8_t k[mesh_pairing::SESSION_KEY_LEN];
     for (size_t i = 0; i < sizeof(k); ++i) k[i] = (uint8_t)((seed * 13 + i) & 0xFF);
-    uint32_t c = mesh_pairing::compute_confirmation_code(k);
+    const uint32_t c = code_of(k);
     assert(c < mesh_pairing::CONFIRMATION_CODE_MODULUS);
   }
   std::printf("PASS test_code_range  (256 seeds, all in [0, 999999])\n");
@@ -119,7 +135,7 @@ void test_wire_compat_code_zero_session_key() {
    * canary-wap — paired canary + canary-wap nodes would display
    * different 6-digit codes and pairing would fail user verification. */
   uint8_t zero_key[mesh_pairing::SESSION_KEY_LEN] = {0};
-  uint32_t code = mesh_pairing::compute_confirmation_code(zero_key);
+  const uint32_t code = code_of(zero_key);
   if (code != 884555u) {
     std::printf("  got code=%06u, expected 884555\n", code);
     assert(false);
@@ -143,8 +159,8 @@ void test_symmetric_mutual_dh_produces_same_code() {
   assert(mesh_crypto::x25519_derive(priv_b, pub_a, session_b));
   assert(std::memcmp(session_a, session_b, mesh_pairing::SESSION_KEY_LEN) == 0);
 
-  uint32_t code_a = mesh_pairing::compute_confirmation_code(session_a);
-  uint32_t code_b = mesh_pairing::compute_confirmation_code(session_b);
+  const uint32_t code_a = code_of(session_a);
+  const uint32_t code_b = code_of(session_b);
   assert(code_a == code_b);
   std::printf("PASS test_symmetric_mutual_dh_produces_same_code  (code=%06u)\n", code_a);
 }
@@ -168,7 +184,7 @@ void pre_f94_confirmation_hash(const uint8_t key[mesh_pairing::SESSION_KEY_LEN],
   uint8_t in[mesh_pairing::SESSION_KEY_LEN + 4];
   std::memcpy(in, key, mesh_pairing::SESSION_KEY_LEN);
   for (int i = 0; i < 4; ++i) in[mesh_pairing::SESSION_KEY_LEN + i] = (uint8_t)(code >> (8 * i));
-  mesh_crypto::sha256_domain(mesh_pairing::DOMAIN_PAIR_CONFIRM, in, sizeof(in), out);
+  if (!mesh_crypto::sha256_domain(mesh_pairing::DOMAIN_PAIR_CONFIRM, in, sizeof(in), out)) std::abort();
 }
 
 void test_confirmation_hash_is_bound_to_its_senders_role() {
@@ -486,7 +502,7 @@ void test_pairing_codes_match_through_real_x25519() {
     /* The property the user checks by eye — and the session keys behind it. */
     assert(code_i == code_j);
     assert(std::memcmp(ci.session_key, cj.session_key, mesh_pairing::SESSION_KEY_LEN) == 0);
-    assert(code_i == mesh_pairing::compute_confirmation_code(ci.session_key));
+    assert(code_i == code_of(ci.session_key));
 
     /* And the handshake completes: the joiner decrypts the secret. */
     a = mesh_pairing::confirm_code(ci, 50);
@@ -2267,6 +2283,161 @@ void test_a_cancel_with_nothing_running_does_nothing() {
 
 }  /* namespace */
 
+/* ── F364 — a pairing hash that fails is refused ────────────────────────
+ *
+ * compute_confirmation_code() returned a code from whatever its hash left
+ * and compute_confirmation_hash() answered true over it: on the IDF 5 line
+ * a failed step left 32 zero bytes, so two sides whose hashes both failed
+ * showed the same code over any keys, and a side whose check failed took a
+ * zeroed CONFIRM from the partner's address for the joiner's and sealed the
+ * opera_secret. Now each answers false and the pairing fails (CRYPTO).
+ * mesh_crypto::test::fail_sha256_domain() fails the hashes a case names. */
+
+bool zeros(const uint8_t* p, size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    if (p[i] != 0) return false;
+  }
+  return true;
+}
+
+void expect_failed_crypto(const mesh_pairing::Action& a, const mesh_pairing::PairingContext& c) {
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+  assert(a.fail_reason == mesh_pairing::FailReason::CRYPTO);
+  assert(c.state == mesh_pairing::State::FAILED);
+  assert(zeros(c.session_key, sizeof(c.session_key)));
+}
+
+void test_the_code_and_the_confirm_hash_refuse_a_failed_hash() {
+  namespace t = mesh_crypto::test;
+  uint8_t key[mesh_pairing::SESSION_KEY_LEN];
+  for (size_t i = 0; i < sizeof(key); ++i) key[i] = (uint8_t)(0x61 + i);
+  uint32_t code = 123456u;
+  t::fail_sha256_domain(mesh_pairing::DOMAIN_PAIR_CONFIRM, 1);
+  must(!mesh_pairing::compute_confirmation_code(key, &code));
+  must(code == 0 && t::sha256_domain_failures() == 1);
+  code = 7;
+  must(!mesh_pairing::compute_confirmation_code(nullptr, &code) && code == 0);
+  must(!mesh_pairing::compute_confirmation_code(key, nullptr));
+  const mesh_pairing::Role roles[] = {mesh_pairing::ROLE_INITIATOR, mesh_pairing::ROLE_JOINER};
+  for (mesh_pairing::Role r : roles) {
+    uint8_t h[mesh_crypto::SHA256_OUT_LEN];
+    std::memset(h, 0x5C, sizeof(h));
+    t::fail_sha256_domain(r == mesh_pairing::ROLE_INITIATOR ? mesh_pairing::DOMAIN_PAIR_CONFIRM_INIT
+                                                            : mesh_pairing::DOMAIN_PAIR_CONFIRM_JOIN,
+                          1);
+    must(!mesh_pairing::compute_confirmation_hash(r, key, 884555u, h));
+    must(zeros(h, sizeof(h)) && t::sha256_domain_failures() == 1);
+  }
+  t::fail_sha256_domain(nullptr, 0);
+  std::printf("PASS test_the_code_and_the_confirm_hash_refuse_a_failed_hash\n");
+}
+
+void test_a_code_that_does_not_hash_fails_the_pairing() {
+  namespace t = mesh_crypto::test;
+  for (int initiator_side = 0; initiator_side < 2; ++initiator_side) {
+    t::fail_sha256_domain(nullptr, 0);
+    Pair p;
+    mesh_pairing::context_init(p.ci);
+    mesh_pairing::context_init(p.cj);
+    uint8_t pub_i[32], priv_i[32], pub_j[32], priv_j[32];
+    must(mesh_crypto::ed25519_generate_keypair(pub_i, priv_i));
+    must(mesh_crypto::ed25519_generate_keypair(pub_j, priv_j));
+    mesh_pairing::Action a = mesh_pairing::start_initiator(p.ci, pub_i, priv_i, p.secret, "Home", 10);
+    a = mesh_pairing::start_joiner(p.cj, pub_j, priv_j, 10);
+    InFlight dj; must(action_to_inflight(a, &dj));
+    a = deliver(p.ci, p.mac_j, dj, 20);
+    InFlight of; must(action_to_inflight(a, &of));
+    /* Both sides' code hashes fail: the joiner's comes first. */
+    if (!initiator_side) t::fail_sha256_domain(mesh_pairing::DOMAIN_PAIR_CONFIRM, 2);
+    a = deliver(p.cj, p.mac_i, of, 30);
+    if (!initiator_side) {
+      /* No ACCEPT and no code: the joiner fails, and the initiator, sent
+       * nothing, is still waiting for one. */
+      expect_failed_crypto(a, p.cj);
+      assert(a.confirmation_code == 0 && p.cj.confirmation_code == 0);
+      assert(t::sha256_domain_failures() == 1);
+      assert(p.ci.state == mesh_pairing::State::AWAITING_ACCEPT);
+      continue;
+    }
+    /* Only the initiator's fails: the joiner's code is shown, the
+     * initiator's is not, and no CONFIRM can pass. */
+    assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT && a.confirmation_code == p.cj.confirmation_code);
+    InFlight ac; must(action_to_inflight(a, &ac));
+    t::fail_sha256_domain(mesh_pairing::DOMAIN_PAIR_CONFIRM, 1);
+    a = deliver(p.ci, p.mac_j, ac, 40);
+    expect_failed_crypto(a, p.ci);
+    assert(a.confirmation_code == 0);
+    a = mesh_pairing::confirm_code(p.cj, 50);
+    InFlight cfj; must(action_to_inflight(a, &cfj));
+    assert(deliver(p.ci, p.mac_j, cfj, 60).type == mesh_pairing::ActionType::NONE);
+    assert(p.ci.state == mesh_pairing::State::FAILED);
+  }
+  t::fail_sha256_domain(nullptr, 0);
+  std::printf("PASS test_a_code_that_does_not_hash_fails_the_pairing\n");
+}
+
+void test_a_confirm_that_does_not_hash_fails_the_pairing() {
+  namespace t = mesh_crypto::test;
+  /* Each side's own CONFIRM: no SEND_CONFIRM, the pairing fails. */
+  const mesh_pairing::Role roles[] = {mesh_pairing::ROLE_INITIATOR, mesh_pairing::ROLE_JOINER};
+  for (mesh_pairing::Role r : roles) {
+    Pair p;
+    pair_to_code(p);
+    mesh_pairing::PairingContext& me = r == mesh_pairing::ROLE_INITIATOR ? p.ci : p.cj;
+    t::fail_sha256_domain(r == mesh_pairing::ROLE_INITIATOR ? mesh_pairing::DOMAIN_PAIR_CONFIRM_INIT
+                                                            : mesh_pairing::DOMAIN_PAIR_CONFIRM_JOIN,
+                          1);
+    expect_failed_crypto(mesh_pairing::confirm_code(me, 50), me);
+    assert(t::sha256_domain_failures() == 1);
+  }
+
+  /* The initiator's owner confirmed; its check of the joiner's CONFIRM
+   * does not hash, and 32 zero bytes arrive from the joiner's address (what
+   * a joiner whose own hash failed sent on the IDF 5 line, or any radio's
+   * forgery). They matched the zeroed expected hash and the initiator
+   * sealed the opera_secret; now it fails, and nothing is sent. */
+  {
+    Pair p;
+    pair_to_code(p);
+    mesh_pairing::Action a = mesh_pairing::confirm_code(p.ci, 50);
+    assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+    InFlight zero;
+    zero.type = mesh_pairing::MsgType::CONFIRM;
+    zero.bytes.assign(sizeof(mesh_pairing::PairConfirmPayload), 0);
+    t::fail_sha256_domain(mesh_pairing::DOMAIN_PAIR_CONFIRM_JOIN, 1);
+    a = deliver(p.ci, p.mac_j, zero, 60);
+    expect_failed_crypto(a, p.ci);
+    assert(mesh_pairing::tick(p.ci, 70).type == mesh_pairing::ActionType::NONE);
+  }
+
+  /* The joiner checks the initiator's CONFIRM, and that check does not
+   * hash: it fails too, and never takes the COMPLETE. */
+  {
+    Pair p;
+    pair_to_code(p);
+    mesh_pairing::Action a = mesh_pairing::confirm_code(p.ci, 50);
+    InFlight cfi; must(action_to_inflight(a, &cfi));
+    t::fail_sha256_domain(mesh_pairing::DOMAIN_PAIR_CONFIRM_INIT, 1);
+    expect_failed_crypto(deliver(p.cj, p.mac_i, cfi, 60), p.cj);
+  }
+
+  /* The joiner confirmed first; at the initiator's confirm its own CONFIRM,
+   * sent in front of the COMPLETE, does not hash: no COMPLETE, the secret
+   * not sealed. */
+  {
+    Pair p;
+    pair_to_code(p);
+    mesh_pairing::Action a = mesh_pairing::confirm_code(p.cj, 50);
+    InFlight cfj; must(action_to_inflight(a, &cfj));
+    assert(deliver(p.ci, p.mac_j, cfj, 60).type == mesh_pairing::ActionType::NONE && p.ci.peer_confirmed);
+    t::fail_sha256_domain(mesh_pairing::DOMAIN_PAIR_CONFIRM_INIT, 1);
+    expect_failed_crypto(mesh_pairing::confirm_code(p.ci, 70), p.ci);
+    assert(!p.ci.complete_resend_armed);
+  }
+  t::fail_sha256_domain(nullptr, 0);
+  std::printf("PASS test_a_confirm_that_does_not_hash_fails_the_pairing\n");
+}
+
 int main() {
   std::srand(0xC5101);
   test_code_deterministic();
@@ -2314,6 +2485,9 @@ int main() {
   test_a_cancel_after_the_complete_leaves_the_pairing_paired();
   test_a_cancel_on_a_failed_pairing_reports_nothing_again();
   test_a_cancel_with_nothing_running_does_nothing();
+  test_the_code_and_the_confirm_hash_refuse_a_failed_hash();
+  test_a_code_that_does_not_hash_fails_the_pairing();
+  test_a_confirm_that_does_not_hash_fails_the_pairing();
   std::printf("\nALL MESH_PAIRING TESTS PASSED\n");
   return 0;
 }
