@@ -1292,7 +1292,8 @@ static int test_the_settings_reader_reads_json() {
   for (const char* t : kNotJson) CHECK(find(t, "a") == JsonFind::kUnreadable);
   {
     JsonMember m = {nullptr, nullptr, 0};
-    CHECK(!json_object_member("{\"a\":1,\"a\":2}", 15, "a", &m) && m.value == nullptr);
+    const char twice[] = "{\"a\":1,\"a\":2}";
+    CHECK(!json_object_member(twice, sizeof(twice) - 1, "a", &m) && m.value == nullptr);
   }
   // raw_controls: a raw 0x01 to 0x1f in a string is taken; a NUL never is,
   // and outside a string none is.
