@@ -13,6 +13,7 @@
 #include "mesh_network.h"
 #include "mesh_pair_frame.h"       // F14: [type][payload] pairing framing + classifier
 #include "mesh_pair_crypto.h"      // F33: clamped X25519 pairing keys, session key, 6-digit code
+#include "ct_compare.h"           // the CONFIRM hash is compared in constant time (staged from firmware/common/core)
 #include "mesh_revocation.h"       // F33: spec §5.6 REVOCATION_GRACE_MS deny-list (staged, shared)
 #include "mesh_channel_policy.h"
 #include "loop_snapshot.h"        // F110: what the status routes read
@@ -1807,7 +1808,12 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
     return;
   }
 
-  if (memcmp(confirm->confirmation_hash, expected_hash, 32) != 0) {
+  // In constant time (ct_compare.h): the expected hash is derived from the
+  // session key, and memcmp() would refuse a forged CONFIRM sooner the fewer
+  // of its leading bytes were right. The canary (PIO) twin uses ct_equal().
+  static_assert(sizeof(confirm->confirmation_hash) == sizeof(expected_hash),
+                "the CONFIRM carries a whole 32-byte hash");
+  if (!ct_compare::equal(confirm->confirmation_hash, expected_hash, sizeof(expected_hash))) {
     // Confirmation failed: a tampered exchange (possible MITM), this side's
     // own CONFIRM reflected, or a partner on firmware before F94. Logged,
     // since the owner otherwise sees only a pairing that ended.

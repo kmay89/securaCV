@@ -2278,7 +2278,7 @@ $(HMACFAIL_DM): $(SRC_DIR)/data_mgmt_api.h $(HMACFAIL_CUT) Makefile
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/data_mgmt_api.h >> $@.tmp && mv $@.tmp $@
 
 $(HMACFAIL_BIN): $(HMACFAIL_SRC) $(HMACFAIL_INCS) arduino_globals.h $(SRC_DIR)/log_level.h \
-                 $(SRC_DIR)/chain_state.h $(SRC_DIR)/nvs_store.h \
+                 $(SRC_DIR)/chain_state.h $(SRC_DIR)/nvs_store.h $(SRC_DIR)/ct_compare.h \
                  $(wildcard $(HMACFAIL_MD)/mbedtls/*.h stubs/sd_fake/*.h stubs/first_boot/*.h) \
                  stubs/nvs_store/Arduino.h $(wildcard $(NVSLOCK_FREERTOS)/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations \

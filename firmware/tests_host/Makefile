@@ -981,6 +981,25 @@ KEYDRAW_READS       = $(KEYDRAW_CRYPTO_SRC) $(WITKEY_SRCS) $(KEYDRAW_WAP_SRC) \
                       ../canary/lib/securacv_witness/src/securacv_witness.cpp
 KEYDRAW_BIN         = $(BUILD_DIR)/test_key_draw_check
 
+# The constant-time byte compare (test_ct_compare.cpp):
+# common/core/ct_compare.h's answers, a fault trap on each buffer's last byte
+# (a compare that stops early never reads it), and the text of its loop; and
+# its canary (PIO) caller, run on its own code: datamgmt_backup_chain() and
+# datamgmt_restore_chain() cut out of securacv_data_mgmt.cpp
+# (cut_functions.awk) with the backup format's four constants (the awk below
+# takes each line once, or the build fails), over the canary-wap suites' fake
+# SD card (stubs/sd_fake) and OpenSSL's HMAC-SHA256. It reads the source and
+# the header (argv) to pin the call site and the loop. The canary-wap's two
+# callers are its own suites' (test_mesh_pair_crypto, test_mesh_liveness_wap,
+# test_wap_hmac_fail).
+CTCMP_HDR        = ../common/core/ct_compare.h
+CTCMP_DM_SRC     = ../canary/lib/securacv_data_mgmt/src/securacv_data_mgmt.cpp
+CTCMP_DM_SIGS    = bool datamgmt_backup_chain(void) {|bool datamgmt_restore_chain(void) {
+CTCMP_DM_CONSTS  = $(BUILD_DIR)/ct_compare_datamgmt_consts.inc
+CTCMP_DM_INC     = $(BUILD_DIR)/ct_compare_datamgmt.inc
+CTCMP_SD_FAKE    = ../projects/canary-wap/tests_host/stubs/sd_fake
+CTCMP_BIN        = $(BUILD_DIR)/test_ct_compare
+
 # The flagship's and the common witness core's SHA-256 fail closed (repo
 # sweep F455, test_sha_fail_flagship.cpp; the canary-wap's F364 rule on the
 # other trees). The helpers answer whether each mbedTLS step ran and zero
@@ -1784,6 +1803,25 @@ $(KEYDRAW_BIN): test_key_draw_check.cpp $(KEYDRAW_CRYPTO_INC) $(KEYDRAW_WAP_INC)
 run-key-draw-check: $(KEYDRAW_BIN)
 	./$(KEYDRAW_BIN) $(KEYDRAW_READS)
 run: run-key-draw-check
+
+$(CTCMP_DM_CONSTS): $(CTCMP_DM_SRC) Makefile | $(BUILD_DIR)
+	awk '/^static constexpr (uint32_t|size_t) +BACKUP_(MAGIC|VERSION|PAYLOAD|SIZE) +=/ { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
+	  END { if (n != 4) { print "securacv_data_mgmt.cpp: " n + 0 " BACKUP_ constant line(s), expected 4" > "/dev/stderr"; exit 1 } }' \
+	  $(CTCMP_DM_SRC) > $@.tmp && mv $@.tmp $@
+
+$(CTCMP_DM_INC): $(CTCMP_DM_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(CTCMP_DM_SIGS)' -f cut_functions.awk $(CTCMP_DM_SRC) > $@.tmp && mv $@.tmp $@
+
+$(CTCMP_BIN): test_ct_compare.cpp $(CTCMP_HDR) $(CTCMP_DM_CONSTS) $(CTCMP_DM_INC) \
+              $(wildcard $(CTCMP_SD_FAKE)/*.h) ../canary/include/log_level.h Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common -I ../canary/include -I $(CTCMP_SD_FAKE) \
+	  -I $(BUILD_DIR) -DCT_DATAMGMT_CONSTS_INC='"$(notdir $(CTCMP_DM_CONSTS))"' \
+	  -DCT_DATAMGMT_INC='"$(notdir $(CTCMP_DM_INC))"' test_ct_compare.cpp -lcrypto -o $@
+
+.PHONY: run-ct-compare
+run-ct-compare: $(CTCMP_BIN)
+	./$(CTCMP_BIN) $(CTCMP_DM_SRC) $(CTCMP_HDR)
+run: run-ct-compare
 
 $(BUILD_DIR)/sha_fail_crypto.inc: $(SHAFL_CRYPTO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(SHAFL_CRYPTO_SIGS)' -f cut_functions.awk $(SHAFL_CRYPTO_SRC) > $@.tmp && mv $@.tmp $@

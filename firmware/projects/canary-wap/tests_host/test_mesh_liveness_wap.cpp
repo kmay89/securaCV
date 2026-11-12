@@ -63,6 +63,10 @@
 // even with no peers) logged an error line for each read-only open of it
 // (stubs/mesh_net's Preferences models NVS namespaces and counts the
 // refused opens); now it logs none.
+// And the CONFIRM compare, now ct_compare::equal() over all 32 bytes where
+// it was memcmp(): the partner's genuine hash is taken, and one bit off at
+// its first, a middle or its last byte ends the pairing on either side
+// (the answers memcmp() gave too; how long a refusal takes is not measured).
 //
 // Host-tested only: the stubs stand in for the radio and the flash, so
 // this says nothing about two real boards (U1 Track C2), and the Arduino
@@ -1601,6 +1605,74 @@ void test_a_role_free_confirm_fails_closed() {
     ended_on_a_bad_confirm(me, partner);
   }
   std::printf("PASS a_role_free_confirm_fails_closed\n");
+}
+
+// ── The CONFIRM compare reads the whole hash ─────────────────────────────
+//
+// handle_pair_confirm compares the partner's hash with ct_compare::equal()
+// (ct_compare.h) over all 32 bytes, where it used memcmp(), which returned
+// at the first byte that differed. The answers are meant to be the same, and
+// this holds them on the real handler: the partner's genuine hash is taken,
+// and the same hash one bit off at its first, a middle or its last byte
+// ends the pairing on either side, before or after this side's owner
+// confirmed, with the mismatch line once and nothing added, sealed or sent.
+// How long a refusal takes is not measured (no host test can);
+// test_mesh_pair_crypto pins the call, test_ct_compare the helper.
+size_t times_logged(const Device& d, const char* message);   // below, with the F364 tests
+
+void test_a_confirm_one_bit_off_ends_the_pairing() {
+  const char* const kMismatch =
+      "opera: pairing failed: the partner's CONFIRM did not match (a different code, or the "
+      "partner runs older pairing firmware)";
+  const size_t positions[] = {0, 1, 15, 16, 30, 31};
+  const uint8_t masks[] = {0x01, 0x80};
+  int ended = 0;
+  for (int run = 0; run < 4; ++run) {
+    const bool on_joiner = (run & 1) != 0;
+    const bool owner_first = (run & 2) != 0;
+    const mesh_pair_crypto::ConfirmSender partner_role =
+        on_joiner ? mesh_pair_crypto::ConfirmSender::INITIATOR : mesh_pair_crypto::ConfirmSender::JOINER;
+    Device& me = on_joiner ? J : A;
+    Device& partner = on_joiner ? A : J;
+
+    // The genuine hash is taken: no mismatch, and the pairing goes on (an
+    // initiator whose owner confirmed first completes on it).
+    fresh_device(A);
+    fresh_device(J);
+    pair_to_codes(A, J);
+    g_health.clear();
+    g_health_on.clear();
+    become(me);
+    if (owner_first) CHECK(mn::confirm_pairing());
+    deliver(me, partner.mac, confirm_frame(role_hash(me, partner_role)));
+    become(me);
+    CHECK(times_logged(me, kMismatch) == 0);
+    CHECK(mn::is_pairing() || (entry(me, partner) != nullptr && !on_joiner && owner_first));
+    if (!on_joiner) CHECK(mn::g_pairing.peer_confirmed || entry(me, partner) != nullptr);
+
+    for (size_t at : positions) {
+      for (uint8_t mask : masks) {
+        fresh_device(A);
+        fresh_device(J);
+        pair_to_codes(A, J);
+        g_health.clear();
+        g_health_on.clear();
+        become(me);
+        if (owner_first) CHECK(mn::confirm_pairing());
+        Frame bad = role_hash(me, partner_role);
+        bad[at] ^= mask;
+        deliver(me, partner.mac, confirm_frame(bad));
+        become(me);
+        if (!owner_first) CHECK(!mn::confirm_pairing());   // the pairing has ended: nothing to send
+        mn::update();
+        ended_on_a_bad_confirm(me, partner);
+        CHECK(times_logged(me, kMismatch) == 1);
+        ++ended;
+      }
+    }
+  }
+  CHECK(ended == 4 * 6 * 2);
+  std::printf("PASS a_confirm_one_bit_off_ends_the_pairing  (%d flips, both roles, either order)\n", ended);
 }
 
 void test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing() {
@@ -3967,6 +4039,7 @@ const Test kTests[] = {
     {"each_side_sends_its_own_roles_confirm", test_each_side_sends_its_own_roles_confirm},
     {"a_reflected_confirm_does_not_count", test_a_reflected_confirm_does_not_count},
     {"a_role_free_confirm_fails_closed", test_a_role_free_confirm_fails_closed},
+    {"a_confirm_one_bit_off_ends_the_pairing", test_a_confirm_one_bit_off_ends_the_pairing},
     {"two_devices_whose_code_does_not_hash_show_no_code_and_do_not_pair",
      test_two_devices_whose_code_does_not_hash_show_no_code_and_do_not_pair},
     {"two_devices_whose_confirm_does_not_hash_do_not_pair",

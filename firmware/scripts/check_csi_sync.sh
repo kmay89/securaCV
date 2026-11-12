@@ -211,6 +211,30 @@ else
     drift=1
 fi
 
+# Constant-time byte compare: same single-source pattern. The canonical,
+# header-only ct_compare (equal() reads every byte of both buffers, so a
+# secret-dependent compare takes as long whatever bytes match) lives at
+# firmware/common/core/; the PIO canary tree includes it directly for its
+# chain-backup HMAC check, and the canary-wap sketch carries a byte-identical
+# staged copy for its own backup HMAC check and its pairing CONFIRM check.
+CTCMP_CANONICAL="firmware/common/core/ct_compare.h"
+CTCMP_STAGED="$STAGED/ct_compare.h"
+if [ -f "$CTCMP_CANONICAL" ]; then
+    if [ ! -f "$CTCMP_STAGED" ]; then
+        echo "::error::Missing staged copy: $CTCMP_STAGED"
+        echo "         Run: cp $CTCMP_CANONICAL $CTCMP_STAGED"
+        drift=1
+    elif ! cmp -s "$CTCMP_CANONICAL" "$CTCMP_STAGED"; then
+        echo "::error::Drift detected: $CTCMP_STAGED differs from $CTCMP_CANONICAL"
+        echo "--- diff ($CTCMP_CANONICAL vs $CTCMP_STAGED) ---"
+        diff -u "$CTCMP_CANONICAL" "$CTCMP_STAGED" || true
+        drift=1
+    fi
+else
+    echo "::error::Canonical constant-time compare header not found: $CTCMP_CANONICAL"
+    drift=1
+fi
+
 # NvsManager session depth (repo sweep F53): same single-source pattern. The
 # canonical, header-only nvs_session_depth (the per-task session count under
 # the cross-task lock NvsManager holds from begin() to end()) lives at
@@ -475,4 +499,4 @@ if [ "$drift" -ne 0 ]; then
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth + key-draw-check library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order on both devices; the CSI modules run their boot init once, after the floor and before the first tick, on both devices; the chokepoint commits in id order; the canary ticks its bundles."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth + key-draw-check + ct-compare library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order on both devices; the CSI modules run their boot init once, after the floor and before the first tick, on both devices; the chokepoint commits in id order; the canary ticks its bundles."

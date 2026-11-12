@@ -40,6 +40,12 @@
 //      pins). test_mesh_liveness_wap runs two devices through it: whose
 //      hashes both failed, they show no code, send no CONFIRM and complete
 //      no pairing.
+//   9. handle_pair_confirm compares the partner's hash in constant time:
+//      ct_compare::equal() over the whole 32-byte hash, ending the pairing
+//      with the line it logged before, and no memcmp() but the address
+//      check (source pin; fails on the memcmp() it replaced). The helper is
+//      firmware/tests_host/test_ct_compare's; test_mesh_liveness_wap runs a
+//      CONFIRM one bit off at its first, a middle and its last byte.
 
 #include "mesh_pair_crypto.h"
 #include "beacon_source_scan.h"
@@ -407,7 +413,27 @@ void test_mesh_network_calls_this_header() {
               "opera: pairing ended: this side's CONFIRM did not hash",
               "end_refused_pairing(); return false;");
   CHECK(count(hpc, check_refused) == 1);
-  CHECK(hpc.find(check_refused) < hpc.find("memcmp(confirm->confirmation_hash"));
+  // The partner's hash is compared in constant time (ct_compare.h, the
+  // staged copy of firmware/common/core's): memcmp() returned at the first
+  // byte that differed, so a refusal's time said how many leading bytes of
+  // a forged CONFIRM were right. Over the whole 32-byte hash, ending the
+  // pairing with the same line as before, and after the hash that could not
+  // be computed is refused. The one memcmp() left is the address check.
+  const std::string compared =
+      squeeze("if (!ct_compare::equal(confirm->confirmation_hash, expected_hash, sizeof(expected_hash))) {");
+  CHECK(count(hpc, compared) == 1);
+  CHECK(hpc.find(check_refused) < hpc.find(compared));
+  CHECK(count(hpc, "memcmp(") == 1);
+  CHECK(count(hpc, "memcmp(mac,g_pairing.peer_mac,6)") == 1);
+  CHECK(count(hpc, "uint8_texpected_hash[32];") == 1);
+  CHECK(count(hpc, squeeze("static_assert(sizeof(confirm->confirmation_hash) == sizeof(expected_hash),")) == 1);
+  const size_t mismatch = hpc.find(compared);
+  CHECK(mismatch != std::string::npos &&
+        hpc.find(squeeze("health_log(SCV_LOG_WARNING, SCV_CAT_MESH, \"opera: pairing failed: the partner's "
+                         "CONFIRM did not match (a different \" \"code, or the partner runs older pairing "
+                         "firmware)\"); cancel_pairing(); return; }"),
+                 mismatch) == mismatch + compared.size());
+  CHECK(count(sq, "#include\"ct_compare.h\"") == 1);
   CHECK(count(cp, send_refused) == 1);
   CHECK(cp.find(send_refused) < cp.find("send_pair_frame("));
   CHECK(count(sq, "mesh_pair_crypto::confirm_hash(") == 2);
