@@ -96,41 +96,27 @@ static int8_t currentRssi(const NearbyCanary* c) {
     return c->rssiHistory[idx];
 }
 
-// This parser reads fleet_chirp.h's layout (through ble_config.h) by offsets
-// into the payload after the company id, and on a wider rule than
-// fleet_chirp_parse(): any blob of at least 17 bytes on company 0xFFFF,
-// whatever its type byte, where fleet_chirp_parse() takes exactly 17 bytes
-// and types 0x01..0x05. What this scan lists is unchanged (repo sweep F316
-// moved the layout into the shared header and nothing else); these hold its
-// offsets to that header, so a layout change there fails this file's compile
-// instead of reading the wrong bytes.
-static_assert(CHIRP_PAYLOAD_SIZE + 2 == FLEET_CHIRP_MFG_LEN,
-              "the payload is the Chirp blob after its 2-byte company id");
-static_assert(FLEET_CHIRP_OFF_TYPE - 2 == 0, "the Chirp type is payload[0]");
-static_assert(FLEET_CHIRP_OFF_CHAIN - 2 == 5, "the chain prefix is payload[5..12]");
+// Parse a Chirp advert with fleet_chirp_parse() (fleet_chirp.h, through
+// ble_config.h), the one rule for "this advert is a Chirp" every other
+// receiver has read by since #1961: exactly FLEET_CHIRP_MFG_LEN (17) bytes,
+// company id included, on company 0xFFFF, with a type byte 0x01..0x05
+// (sweep F459). This scan read the layout by offsets on a wider rule, any
+// blob of 17 bytes or more on company 0xFFFF whatever its type byte, so an
+// 18-byte blob or a type 0x00 or 0x06 was listed in GET /api/nearby as a
+// Canary under the prefix its bytes 15 and 16 spell. No sender in the tree
+// builds another shape (every one goes through fleet_chirp_build()).
+// Returns true and fills the chirp's fields on a Chirp.
 static_assert(sizeof(NearbyCanary::chainHashPrefix) == FLEET_CHIRP_CHAIN_LEN,
               "the chain prefix is FLEET_CHIRP_CHAIN_LEN bytes");
-static_assert(FLEET_CHIRP_OFF_FP - 2 == 13, "the device id prefix is payload[13..14]");
-
-// Parse chirp manufacturer data from a Canary device
-// Returns true if valid chirp data found
 static bool parseChirpData(const uint8_t* data, size_t len, NearbyCanary* canary) {
-    // Manufacturer data: company ID (2 bytes, stripped by NimBLE) + payload
-    // We expect at least CHIRP_PAYLOAD_SIZE bytes after company ID
-    if (len < CHIRP_PAYLOAD_SIZE + 2) return false;
+    FleetChirpFields chirp;
+    if (!fleet_chirp_parse(data, len, &chirp)) return false;
 
-    // Skip company ID (first 2 bytes)
-    const uint8_t* payload = data + 2;
+    canary->lastChirpType = (ChirpType)chirp.type;
+    memcpy(canary->chainHashPrefix, chirp.chain8, sizeof(canary->chainHashPrefix));
 
-    // Validate company ID
-    uint16_t companyId = data[0] | (data[1] << 8);
-    if (companyId != CHIRP_COMPANY_ID) return false;
-
-    canary->lastChirpType = (ChirpType)payload[0];
-    memcpy(canary->chainHashPrefix, &payload[5], 8);
-
-    // Device ID prefix: last 2 bytes → 4 hex chars
-    snprintf(canary->deviceIdPrefix, 5, "%02x%02x", payload[13], payload[14]);
+    // Device ID prefix: the fingerprint suffix's 2 bytes -> 4 hex chars
+    snprintf(canary->deviceIdPrefix, 5, "%02x%02x", chirp.fp_b0, chirp.fp_b1);
 
     return true;
 }
@@ -171,7 +157,8 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
         }
 
         // Check manufacturer data for a fleet-link presence beacon (11-byte,
-        // type 0x10 — rich status) or a chirp (17-byte — presence + chain).
+        // type 0x10 — rich status) or a chirp (exactly 17 bytes — presence +
+        // chain; any other length is no Chirp, F459).
         bool hasChirpData = false;
         bool hasBeaconData = false;
         NearbyCanary tempCanary;
@@ -191,7 +178,7 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
                 mfgLen == FLEET_BEACON_MFG_V2_LEN) {
                 hasBeaconData = parseBeaconData(mfgBytes, mfgLen, &tempCanary);
                 if (hasBeaconData) isCanary = true;
-            } else if (mfgLen >= (size_t)(CHIRP_PAYLOAD_SIZE + 2)) {
+            } else if (mfgLen == FLEET_CHIRP_MFG_LEN) {
                 hasChirpData = parseChirpData(mfgBytes, mfgLen, &tempCanary);
                 if (hasChirpData) isCanary = true;
             }

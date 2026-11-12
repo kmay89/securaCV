@@ -5780,8 +5780,8 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw_in(NEARBY, NEARBY_GATE, NEARBY_GATE.replace("if (!nearby", "memcpy(prefix, name.data() + 4, 4);\n"
                                                                      "                    if (!nearby"))),
     ("the chirp parser prints its prefix as characters",
-     raw_in(NEARBY, 'snprintf(canary->deviceIdPrefix, 5, "%02x%02x", payload[13], payload[14]);',
-            'snprintf(canary->deviceIdPrefix, 5, "%c%c", payload[13], payload[14]);')),
+     raw_in(NEARBY, 'snprintf(canary->deviceIdPrefix, 5, "%02x%02x", chirp.fp_b0, chirp.fp_b1);',
+            'snprintf(canary->deviceIdPrefix, 5, "%c%c", chirp.fp_b0, chirp.fp_b1);')),
     ("a prefix byte is set from the advert",
      raw_in(NEARBY, NEARBY_TERM, NEARBY_TERM + "                prefix[0] = (char)advertisedDevice->getRSSI();\n")),
     ("a kept prefix byte is changed in place",
