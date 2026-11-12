@@ -1073,7 +1073,8 @@ def _local_decl_match(ctx: Ctx, name: str, pos: int) -> re.Match[str] | None:
             continue
         # A condition is not a declaration (F470): `if (active && active[0])` matches the pattern
         # as `active&& active[0]` after the real `const char* active = ...;`, and the innermost
-        # match wins. A type is never the name it declares, and a `&&` between two names is a
+        # match wins. A type is never the name it declares (`(cur * cur)` is no `cur*` named
+        # cur; the self-test's squared-RSSI case holds it), and a `&&` between two names is a
         # logical and unless the first is a type: `auto&&` or a struct or enum the index
         # declares (the sketch declares no rvalue-reference local; its forwarding references
         # are parameters, which _param_match() reads).
@@ -5988,6 +5989,13 @@ ACCEPTED: list[tuple[str, Mutation]] = [
      raw_in(NEARBY, NEARBY_TERM, "                if (prefix[0] == '\\0') strcpy(prefix, \"0000\");\n" + NEARBY_TERM)),
     ("the answer appends String() of a cast and of arithmetic",
      raw_in(NEARBY, "            json += String(cur);\n", "            json += String((int)cur * 1);\n")),
+    # F470, the type == name rule: `(cur * cur)` matches the declaration pattern as a `cur*` named
+    # cur after the real `int8_t cur`, and the `&&` rule does not reach it, so without the rule the
+    # append below reads String() of a pointer and is refused.
+    ("the answer squares the current RSSI before it appends String() of it",
+     raw_in(NEARBY, "            json += String(cur);\n",
+            "            const int zz_power = (cur * cur);\n            (void)zz_power;\n"
+            "            json += String(cur);\n")),
     # J11, the F405 review: a pointer to const (assigned or brace-initialized), a dereference and a
     # paren-initialized String are reads.
     ("a pointer to const takes a kept prefix's first byte's address",

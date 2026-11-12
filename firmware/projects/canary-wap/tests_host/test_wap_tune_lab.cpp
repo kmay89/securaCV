@@ -2478,7 +2478,7 @@ static const char* const kMqttPost = R"(\besp_err_t\s+handle_config_post\s*\(\s*
 static const char* const kMqttReaders[] = {
   R"(\bstatic\s+bool\s+json_extract_string\s*\([^)]*\)\s*\{)",
   R"(\bstatic\s+bool\s+json_extract_bool\s*\([^)]*\)\s*\{)",
-  R"(\bstatic\s+bool\s+json_extract_int\s*\([^)]*\)\s*\{)",
+  R"(\bstatic\s+ConfigInt\s+json_extract_int\s*\([^)]*\)\s*\{)",
 };
 static const char* const kMqttMember = R"(\bstatic\s+bool\s+config_member\s*\([^)]*\)\s*\{)";
 static const char* const kMqttCheck = R"(\bstatic\s+ConfigBody\s+config_body_check\s*\([^)]*\)\s*\{)";
@@ -2626,8 +2626,8 @@ static int test_the_wire_readers_find_keys_with_the_reader() {
      "  if (m.value_len == 4 && memcmp(m.value, \"true\", 4) == 0) { *out = true;  return true; }\n",
      "  if (strncmp(m.value, \"true\", 4) == 0) { *out = true;  return true; }\n"},
     {"an MQTT number is read with strtol()", "csi_mqtt.cpp",
-     "  if (!config_member(body, len, key, &m) || !json_member_int(m, &n)) return false;\n",
-     "  if (!config_member(body, len, key, &m)) return false;\n  n = (int32_t)strtol(m.value, nullptr, 10);\n"},
+     "  if (!json_member_int(m, &n)) return ConfigInt::kUnreadable;\n",
+     "  n = (int32_t)strtol(m.value, nullptr, 10);\n"},
     {"a knob is found with a snprintf()ed needle again", "csi_tune_lab.cpp",
      "    JsonMember m = {nullptr, nullptr, 0};\n    if (!json_object_member(body, len, c.full_key, &m)) continue;\n",
      "    char needle[80];\n    int nl = snprintf(needle, sizeof(needle), \"\\\"%s\\\"\", c.full_key);\n"

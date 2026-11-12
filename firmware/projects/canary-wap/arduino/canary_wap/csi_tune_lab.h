@@ -107,8 +107,10 @@ struct TunePost {
  * names a knob (a whole number, or true / false / 1 / 0 for a bool; each
  * clamped to the knob's range; any other key ignored), remove the row of
  * every knob whose value is null (the Lab's reset, sweep F127; any other
- * value it cannot read is ignored, as before: a fraction, a string; JSON
- * whitespace, newlines included, may sit on either side of the colon),
+ * value it cannot read is ignored: a string, as before, and since F469 a
+ * number written with a fraction or an exponent, 40.0 among them, where
+ * strtol() stored its whole part; JSON whitespace, newlines included, may
+ * sit on either side of the colon),
  * close NVS, then apply what changed: each module
  * touched once through `reinit` (csi_integration.cpp's reinit_module()), and
  * the stored Quiet Hours once through apply_quiet_hours_from_nvs() when a

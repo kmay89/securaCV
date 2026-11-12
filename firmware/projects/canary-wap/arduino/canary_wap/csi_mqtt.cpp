@@ -2330,15 +2330,27 @@ static bool json_extract_bool(const char* body, size_t len, const char* key, boo
   return false;
 }
 
+/* What json_extract_int() read of a key. */
+enum class ConfigInt : uint8_t {
+  kAbsent,      /* the body has no member of that name */
+  kNumber,      /* *out is its value */
+  kUnreadable,  /* it has one, and json_member_int() cannot read it */
+};
+
 /* An integer, bare or in quotes ("port":"8883" reads as 8883, as before),
  * by json_member_int(): no fraction or exponent, saturated at
- * kJsonIntMax, far past every range the handler checks. */
-static bool json_extract_int(const char* body, size_t len, const char* key, long* out) {
+ * kJsonIntMax, far past every range the handler checks. A member it cannot
+ * read (1.0, 1e0, null, true, "x") is kUnreadable, not kAbsent, so the
+ * handler refuses it by name (the F469 review): read as absent, a body
+ * asking for {"tls_mode":1.0} was answered saved with the stored mode, plain
+ * text, kept, where strtol() had read it as 1. */
+static ConfigInt json_extract_int(const char* body, size_t len, const char* key, long* out) {
   JsonMember m = {nullptr, nullptr, 0};
+  if (!config_member(body, len, key, &m)) return ConfigInt::kAbsent;
   int32_t n = 0;
-  if (!config_member(body, len, key, &m) || !json_member_int(m, &n)) return false;
+  if (!json_member_int(m, &n)) return ConfigInt::kUnreadable;
   *out = n;
-  return true;
+  return ConfigInt::kNumber;
 }
 
 /* Answer a setting longer than the device keeps (sweep F241), or a body
@@ -2543,14 +2555,18 @@ esp_err_t handle_config_post(httpd_req_t* req) {
       c.tls_mode = legacy_tls ? (uint8_t)canary::net::mqtt_tls::Mode::Ca : 0;
     }
     long mode_l = -1;
-    if (json_extract_int(body, got, "tls_mode", &mode_l)) {
-      if (mode_l == (long)canary::net::mqtt_tls::Mode::Fingerprint) {
+    const ConfigInt mode_read = json_extract_int(body, got, "tls_mode", &mode_l);
+    if (mode_read != ConfigInt::kAbsent) {
+      /* A tls_mode it cannot read (1.0, 2.0, null) is refused below with the
+       * modes it takes: never read as absent, the stored mode kept. */
+      const bool number = mode_read == ConfigInt::kNumber;
+      if (number && mode_l == (long)canary::net::mqtt_tls::Mode::Fingerprint) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_send(req,
           "{\"ok\":false,\"reason\":\"fingerprint pinning is not available on this device - use the CA mode\"}", -1);
         return ESP_OK;
       }
-      if (mode_l == (long)canary::net::mqtt_tls::Mode::InsecureLab) {
+      if (number && mode_l == (long)canary::net::mqtt_tls::Mode::InsecureLab) {
         /* Same reason init() would refuse it (caps.insecure = false): the
          * core's esp-tls cannot skip verification, so saving the mode would
          * only surface later as "won't connect". */
@@ -2560,8 +2576,8 @@ esp_err_t handle_config_post(httpd_req_t* req) {
         return ESP_OK;
       }
       bool known = false;
-      (void)canary::net::mqtt_tls::mode_from_u8((uint8_t)(mode_l & 0xFF), &known);
-      if (mode_l < 0 || mode_l > 255 || !known) {
+      if (number) (void)canary::net::mqtt_tls::mode_from_u8((uint8_t)(mode_l & 0xFF), &known);
+      if (!number || mode_l < 0 || mode_l > 255 || !known) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_send(req, "{\"ok\":false,\"reason\":\"tls_mode must be 0 (off) or 1 (CA)\"}", -1);
         return ESP_OK;
@@ -2594,8 +2610,18 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     }
     ca_changed = true;
   }
+  /* A port it cannot read (8883.0, null) or cannot use (0, 70000, -1) is
+   * refused by name (the F469 review). It was read as absent and answered
+   * saved with the stored port kept: a fraction since F469 (strtol() read
+   * 8883.0 as 8883), a number out of range always. */
   long port_l = c.port;
-  if (json_extract_int(body, got, "port", &port_l) && port_l > 0 && port_l <= 65535) {
+  const ConfigInt port_read = json_extract_int(body, got, "port", &port_l);
+  if (port_read != ConfigInt::kAbsent) {
+    if (port_read != ConfigInt::kNumber || port_l < 1 || port_l > 65535) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"port must be a whole number from 1 to 65535\"}", -1);
+      return ESP_OK;
+    }
     c.port = (uint16_t)port_l;
   }
   /* Empty string in any field clears it; missing field leaves it as-is.

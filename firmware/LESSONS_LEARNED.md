@@ -292,8 +292,9 @@
   includes the header instead of reading files. A scratch differential
   against the old sender and receivers found no difference (83,200 builder
   inputs: every type byte crossed with edge values of each field), so
-  nothing on the air changed. One receiver keeps its wider rule on purpose,
-  its offsets `static_assert`ed to the header (backlog F459).
+  nothing on the air changed. One receiver kept a wider rule of its own
+  until F459 (the canary-wap nearby scan), its offsets `static_assert`ed to
+  the header.
 - **Rule:** give a wire format one header before its third reader, and
   when you move a layout into it, move every cross-tree test that pinned
   the old spelling in the same change: the iPhone belt that read
@@ -5585,7 +5586,11 @@
 - **Fix:** the reader moved to a header-only `json_member.h` and says which
   of four it found (`json_object_find()`: found, absent, twice, unreadable).
   The MQTT POST refuses a body that is not one JSON object, or names a key
-  it reads twice, before any field is applied (400); the dismissal answers
+  it reads twice, before any field is applied (400), and a `tls_mode` or
+  `port` it cannot read or use (`1.0`, `null`, `70000`) by name: the
+  stricter number reader had made `{"tls_mode":1.0,"ca":...}`, which
+  `strtol()` read as 1, an absent mode, answered saved on plain text (the
+  F469 review); the dismissal answers
   each case by name and dismisses nothing; the Lab keeps the F462 posture
   (a knob named twice is neither), since none of its knobs is a secret.
 - **Rule:** when a read can come back "absent", ask what the route answers

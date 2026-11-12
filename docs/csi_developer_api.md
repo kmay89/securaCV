@@ -588,9 +588,11 @@ dashboard's own preset and sensitivity among them (the Lab lists them), so
 it returns the device to balanced at sensitivity 50, and Quiet Hours go
 back to off (23:00 to 07:00, disabled), as before. Either reset first drops
 a slider or toggle save still waiting to be sent, then reloads the rows
-from the device. A value `tune_post()` cannot read (not a whole number,
-`true` / `false` / `1` / `0` for a bool, or `null`) is ignored, as before; a
-fraction is one since sweep F469 (`40.5` was stored as 40). JSON whitespace,
+from the device. A value `tune_post()` cannot read (not an integer
+literal, `true` / `false` / `1` / `0` for a bool, or `null`) is ignored, as
+before; a number written with a fraction or an exponent is one since sweep
+F469, a whole one too (`40.5` was stored as 40; `40.0` and `4e1` are
+ignored now, and `40` is stored). JSON whitespace,
 newlines included, may sit on either side of the colon. Each knob is a member
 of the body's own object (sweep F469, `json_member.h`): a knob inside a nested
 object or an array is not one of the body's, a knob named twice is neither,

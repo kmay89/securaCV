@@ -2463,11 +2463,53 @@ void test_the_config_post_reads_the_bodys_own_keys() {
     const Stored was = stored();
     expect_bad_request(bearer_post(body), was, kNotJson);
   }
-  // A number with a fraction or an exponent is no port (strtol() read 1883.5
-  // as 1883): the stored one stays, as a port out of range always did.
-  boot_with_broker("10.0.0.1");
-  expect_saved(session_post("{\"port\":1884.5,\"user\":\"ada\"}"), "mqtt://10.0.0.1:1883", "");
-  CHECK(stored().port == 1883 && stored().user == "ada");
+  // A tls_mode or a port the reader cannot read is refused by name, nothing
+  // written (the F469 review). json_member_int() reads no fraction or
+  // exponent, so read as absent, {"tls_mode":1.0,"ca":...} was answered
+  // saved with the CA stored and the mode kept at plain text (strtol() had
+  // read 1.0 as 1, and 2.0 and 3.0 as the refused 2 and 3); a port out of
+  // range was answered saved with the stored one kept, always.
+  boot_with_password();
+  CHECK(csi_mqtt::ca_save(pem.c_str()));
+  const std::string ca_json = std::string(",\"ca\":\"") + other + "\"";
+  const std::string kModes = "tls_mode must be 0 (off) or 1 (CA)";
+  const std::string kPort = "port must be a whole number from 1 to 65535";
+  for (const auto& row : std::vector<std::pair<std::string, std::string>>{
+           {"{\"tls_mode\":1.0" + ca_json + "}", kModes},
+           {"{\"tls_mode\":1e0" + ca_json + "}", kModes},
+           {"{\"tls_mode\":1E0" + ca_json + "}", kModes},
+           {"{\"tls_mode\":\"1.0\"" + ca_json + "}", kModes},
+           {"{\"tls_mode\":2.0}", kModes},
+           {"{\"tls_mode\":3.0}", kModes},
+           {"{\"tls_mode\":null}", kModes},
+           {"{\"tls_mode\":true}", kModes},
+           {"{\"tls_mode\":\"\"}", kModes},
+           {"{\"tls_mode\":7}", kModes},                 // read, and no mode (as before)
+           {"{\"port\":8883.0,\"tls_mode\":1" + ca_json + "}", kPort},
+           {"{\"port\":1884.5,\"user\":\"ada\"}", kPort},
+           {"{\"port\":1e3}", kPort},
+           {"{\"port\":null}", kPort},
+           {"{\"port\":\"8883x\"}", kPort},
+           {"{\"port\":0}", kPort},
+           {"{\"port\":-1}", kPort},
+           {"{\"port\":65536}", kPort},
+           {"{\"port\":99999999999}", kPort},            // saturated, still out of range
+       }) {
+    const Stored was = stored();
+    CHECK(was.pass == kStoredPass && was.ca == pem && was.tls_mode == 0 && was.port == 1883);
+    expect_bad_request(bearer_post(row.first), was, row.second);
+  }
+  // The ends of the range, bare or quoted, and the modes the route has
+  // always taken, read as before.
+  boot_with_password();
+  expect_saved(bearer_post("{\"port\":65535}"), "mqtt://10.0.0.1:65535", kStoredPass);
+  boot_with_password();
+  expect_saved(bearer_post("{\"port\":\"1\"}"), "mqtt://10.0.0.1:1", kStoredPass);
+  CHECK(stored().port == 1);
+  boot_with_password();
+  expect_saved(bearer_post("{\"port\":1883,\"tls_mode\":\"1\"" + ca_json + "}"), "mqtts://10.0.0.1:1883",
+               kStoredPass);
+  CHECK(stored().tls_mode == 1 && stored().ca == pem_of(400, 'B') + "\n");
   power_cycle();
   std::printf("PASS the_config_post_reads_the_bodys_own_keys\n");
 }
