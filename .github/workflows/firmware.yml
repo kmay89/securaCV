@@ -1762,9 +1762,10 @@ jobs:
         #       easy to ship without this guard).
         #
         #   (3) Reading-grade FKGL — aggregate Flesch-Kincaid across the
-        #       COPY corpus stays at or below 7th grade. The plan's
-        #       target is 6th; one grade of slack absorbs noisy short
-        #       strings.
+        #       COPY corpus stays at or below microcopy_fkgl.py's
+        #       DEFAULT_MAX_GRADE: microcopy_lint.sh passes no
+        #       --max-grade, so the checker's default is the ceiling
+        #       (its docstring says why that value).
         run: |
           chmod +x firmware/scripts/microcopy_lint.sh
           firmware/scripts/microcopy_lint.sh
