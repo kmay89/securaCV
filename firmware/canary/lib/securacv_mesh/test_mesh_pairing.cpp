@@ -50,8 +50,9 @@
  *      ordering rules, and no firmware before F94 pairs with this one.
  *  13. A pairing hash that fails is refused (sweep F364): the code and the
  *      CONFIRM hash answer false, and each step fails the pairing (CRYPTO):
- *      no ACCEPT or code, no CONFIRM sent, none checked, nothing sealed, a
- *      zeroed CONFIRM not taken by a side whose check did not hash.
+ *      no ACCEPT or code, no CONFIRM sent (or sent again), none checked,
+ *      nothing sealed, a zeroed CONFIRM not taken by a side whose check did
+ *      not hash.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -2438,6 +2439,34 @@ void test_a_confirm_that_does_not_hash_fails_the_pairing() {
   std::printf("PASS test_a_confirm_that_does_not_hash_fails_the_pairing\n");
 }
 
+/* The joiner's CONFIRM sent again (F117) is hashed again at each copy, and
+ * a copy whose hash fails is not sent: the joiner's owner confirmed first
+ * (that CONFIRM is lost), the initiator's CONFIRM moves the joiner to
+ * AWAITING_COMPLETE with the re-send armed, and the first copy's hash
+ * fails. It used to answer true over the zeroed digest and send 32 zero
+ * bytes; now the pairing fails (CRYPTO) and no copy goes out, then or
+ * later. */
+void test_the_joiners_confirm_resend_refuses_a_failed_hash() {
+  namespace t = mesh_crypto::test;
+  Pair p;
+  pair_to_code(p);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.cj, 50);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);   /* lost: never delivered */
+  a = mesh_pairing::confirm_code(p.ci, 1000);
+  InFlight cfi; must(action_to_inflight(a, &cfi));
+  assert(deliver(p.cj, p.mac_i, cfi, 1010).type == mesh_pairing::ActionType::NONE);
+  assert(p.cj.state == mesh_pairing::State::AWAITING_COMPLETE && p.cj.confirm_resend_armed);
+  t::fail_sha256_domain(mesh_pairing::DOMAIN_PAIR_CONFIRM_JOIN, 1);
+  a = mesh_pairing::tick(p.cj, 1010 + mesh_pairing::CONFIRM_RESEND_FIRST_MS);
+  assert(t::sha256_domain_failures() == 1);                    /* the copy's hash ran */
+  expect_failed_crypto(a, p.cj);
+  assert(mesh_pairing::tick(p.cj, 1010 + mesh_pairing::CONFIRM_RESEND_FIRST_MS +
+                                      2 * mesh_pairing::CONFIRM_RESEND_INTERVAL_MS).type ==
+         mesh_pairing::ActionType::NONE);
+  t::fail_sha256_domain(nullptr, 0);
+  std::printf("PASS test_the_joiners_confirm_resend_refuses_a_failed_hash\n");
+}
+
 int main() {
   std::srand(0xC5101);
   test_code_deterministic();
@@ -2488,6 +2517,7 @@ int main() {
   test_the_code_and_the_confirm_hash_refuse_a_failed_hash();
   test_a_code_that_does_not_hash_fails_the_pairing();
   test_a_confirm_that_does_not_hash_fails_the_pairing();
+  test_the_joiners_confirm_resend_refuses_a_failed_hash();
   std::printf("\nALL MESH_PAIRING TESTS PASSED\n");
   return 0;
 }

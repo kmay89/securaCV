@@ -2544,7 +2544,8 @@ clean: clean-wap-sha-fail-modules
 # device branches build, over firmware/tests_host/stubs/sha_fail's failing
 # mbedTLS stand-in: once as IDF 4 over its mbedTLS 2.28 spelling (plain
 # names void, the _ret names answer) and once as IDF 5 over 3.6 (plain names
-# answer, no _ret names). The IDF 5 build also compiles the sketch's shim
+# answer, no _ret names), the library picking the spelling by the stand-in's
+# MBEDTLS_VERSION_NUMBER as it does on a device. The IDF 5 build also compiles the sketch's shim
 # against the same stand-in and holds the two copies' answers and outputs
 # equal. Both binaries run on every `make`.
 MCLINES_SRC  = test_mesh_crypto_lines.cpp
@@ -2560,12 +2561,12 @@ $(MCLINES_INC): $(MCLINES_PIO) $(HMACFAIL_CUT) Makefile
 	  -f $(HMACFAIL_CUT) $(MCLINES_PIO) > $@.tmp && mv $@.tmp $@
 
 $(MCLINES_IDF4): $(MCLINES_SRC) $(MCLINES_INC)
-	$(CXX) $(CXXFLAGS) -Werror -I $(MCLINES_STUB) -DESP_IDF_VERSION_MAJOR=4 \
+	$(CXX) $(CXXFLAGS) -Werror -I $(MCLINES_STUB) \
 	  -DSHA_STUB_MBEDTLS_VERSION=0x021C0700 -DMCLINES_PIO_INC='"$(MCLINES_INC)"' \
 	  -o $@ $(MCLINES_SRC) -lcrypto
 
 $(MCLINES_IDF5): $(MCLINES_SRC) $(MCLINES_INC) $(SRC_DIR)/mesh_crypto.cpp $(SRC_DIR)/mesh_crypto.h
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I $(MCLINES_STUB) -I $(SRC_DIR) -DESP_IDF_VERSION_MAJOR=5 \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I $(MCLINES_STUB) -I $(SRC_DIR) \
 	  -DSHA_STUB_MBEDTLS_VERSION=0x03060300 -DMCLINES_PIO_INC='"$(MCLINES_INC)"' -DMCLINES_WAP_SHIM \
 	  -o $@ $(MCLINES_SRC) $(SRC_DIR)/mesh_crypto.cpp -lcrypto)
 

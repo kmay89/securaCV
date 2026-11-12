@@ -70,9 +70,12 @@ constexpr const char* DOMAIN_MESSAGE     = "securacv:mesh:message:v0";
  * one the digest skipped bytes or was never written; then `out` is zeroed
  * and the answer is false, and every caller refuses what the hash was for
  * (a pairing code, a CONFIRM, a rekey key, a signature, a hashed beacon
- * id) instead of using 32 zero bytes as a digest. [[nodiscard]], so a
- * caller that drops the answer does not compile under -Werror. False also
- * for a null `out`.
+ * id) instead of using 32 zero bytes as a digest. [[nodiscard]]: a caller
+ * that drops the answer draws -Wunused-result, a warning only, since
+ * neither CI's host builds of this library (firmware.yml's mesh and
+ * ble_scan suites) nor its PlatformIO envs pass -Werror; the host cases
+ * that run each caller's refusal are the guard. False also for a null
+ * `out`.
  * ────────────────────────────────────────────────────────────────────────── */
 
 [[nodiscard]] bool sha256_domain(const char* domain,

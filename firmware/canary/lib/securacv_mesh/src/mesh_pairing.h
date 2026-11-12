@@ -91,12 +91,15 @@ constexpr uint32_t CONFIRMATION_CODE_MODULUS = 1000000;
  * which is the standard 6-digit-OOB-confirmation level.
  *
  * Answers false, with *code_out set to 0, for a null argument or when the
- * hash fails (sweep F364). Before, a failed hash's zeroed digest gave the
- * code 0 whatever the session key was, so two sides whose hashes both
- * failed showed the same 000000 over any two keys, a man in the middle's
- * included, and the comparison the code exists for checked nothing. The
- * state machine fails the pairing (FailReason::CRYPTO) instead: no ACCEPT
- * is sent and no code is shown.
+ * hash fails (sweep F364). Before, a failed hash still gave a code that
+ * did not depend on the session key: on the IDF 5 line its zeroed digest
+ * gave 000000, and on the IDF 4 line, whose hash checked no step, a digest
+ * that skipped the failed step's bytes gave one (for a failed key update,
+ * the code of the domain alone). So two sides whose hashes both failed
+ * showed the same code over any two keys, a man in the middle's included,
+ * and the comparison the code exists for checked nothing. The state
+ * machine fails the pairing (FailReason::CRYPTO) instead: no ACCEPT is
+ * sent and no code is shown.
  * ────────────────────────────────────────────────────────────────────────── */
 
 [[nodiscard]] bool compute_confirmation_code(const uint8_t session_key[SESSION_KEY_LEN],
@@ -154,16 +157,18 @@ enum Role : uint8_t {
  *
  * Returns false, with `out` zeroed, for a null argument, a sender that
  * is neither role, or a hash that failed (sweep F364; it answered true
- * over the zeroed digest before, so two sides whose hashes both failed
- * sent and expected the same 32 zero bytes and completed); every caller
- * fails the pairing (FailReason::CRYPTO) then, so an all-zero hash is never
- * sent as a CONFIRM nor taken as one.
+ * over what a failed hash left before, which on the IDF 5 line was 32 zero
+ * bytes, so two sides whose hashes both failed sent and expected the same
+ * zeroed CONFIRM and completed). Every caller fails the pairing then:
+ * CRYPTO for a hash that failed, and a side with no role refuses the
+ * CONFIRM as BAD_CONFIRM (either_handle_confirm). So an all-zero hash is
+ * never sent as a CONFIRM nor taken as one.
  * ────────────────────────────────────────────────────────────────────────── */
 
 [[nodiscard]] bool compute_confirmation_hash(Role          sender,
-                               const uint8_t session_key[SESSION_KEY_LEN],
-                               uint32_t      code,
-                               uint8_t       out[mesh_crypto::SHA256_OUT_LEN]);
+                                             const uint8_t session_key[SESSION_KEY_LEN],
+                                             uint32_t      code,
+                                             uint8_t       out[mesh_crypto::SHA256_OUT_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * WIRE-FORMAT PAYLOADS

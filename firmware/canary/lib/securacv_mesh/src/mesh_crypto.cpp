@@ -35,12 +35,13 @@
   extern "C" {
     #include <mbedtls/sha256.h>
     #include <esp_system.h>      /* esp_fill_random */
-    #include <esp_idf_version.h> /* ESP_IDF_VERSION_MAJOR — picks between
-                                    mbedTLS 2.28's answering _ret names
-                                    (IDF 4.x; arduino-esp32 2.0.17, the
-                                    canary PIO envs on [platform_s3c3])
-                                    and mbedTLS 3.x's answering plain
-                                    names (IDF 5.x; arduino-esp32 3.x). */
+    #include <mbedtls/version.h> /* MBEDTLS_VERSION_NUMBER — picks
+                                    between mbedTLS 2.28's answering _ret
+                                    names (IDF 4.x; arduino-esp32 2.0.17,
+                                    the canary PIO envs on
+                                    [platform_s3c3]) and mbedTLS 3.x's
+                                    answering plain names (IDF 5.x;
+                                    arduino-esp32 3.x). */
   }
   /* rweather/Crypto is pulled in by canary platformio.ini. Headers are
    * top-level on the include path. */
@@ -381,17 +382,19 @@ bool sha256_domain(const char* domain,
    *   • IDF 4.x (mbedTLS 2.28; arduino-esp32 2.0.17, IDF 4.4.7: the canary
    *     PIO envs on [platform_s3c3]): the plain names return void, and only
    *     the _ret names answer.
-   * ESP_IDF_VERSION_MAJOR picks the spelling; with it unset the _ret names
-   * are picked, which a 3.x core does not compile, so the wrong spelling
-   * never builds silently. Either way a step after a failed one is not run,
-   * the context is freed, and the shared tail below zeroes `out`: IDF's
-   * hardware port keeps no error in the context, so a finish after a
-   * failed update would write a digest of the bytes that did go in. The
-   * same domain-separation contract holds on both lines:
-   * SHA-256("<domain>" || data) → out[32]. */
+   * MBEDTLS_VERSION_NUMBER picks the spelling, through the version guard
+   * securacv_crypto.cpp's steps use (sweep F455; regression_check.sh allows
+   * a _ret name only in that guard's 2.x branch). mbedtls/version.h defines
+   * it on both majors; were it unset, the _ret names are picked, which a 3.x
+   * core does not compile, so the wrong spelling never builds silently.
+   * Either way a step after a failed one is not run, the context is freed,
+   * and the shared tail below zeroes `out`: IDF's hardware port keeps no
+   * error in the context, so a finish after a failed update would write a
+   * digest of the bytes that did go in. The same domain-separation contract
+   * holds on both lines: SHA-256("<domain>" || data) → out[32]. */
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-#if ESP_IDF_VERSION_MAJOR >= 5
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03000000
   rc = mbedtls_sha256_starts(&ctx, 0);
   if (rc == 0 && domain_len > 0) {
     rc = mbedtls_sha256_update(&ctx, (const uint8_t*)domain, domain_len);

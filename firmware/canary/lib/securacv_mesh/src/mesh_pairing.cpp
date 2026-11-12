@@ -569,9 +569,9 @@ Action either_handle_confirm(PairingContext& ctx,
   /* The partner's role's hash (F94): this side's own CONFIRM, reflected
    * from the partner's address, does not match, and ends the pairing like
    * any wrong hash from there. An expected hash that did not hash ends it
-   * too, as CRYPTO (sweep F364): it was compared as 32 zero bytes, which a
-   * partner whose own hash failed sent, and the pairing completed with
-   * neither CONFIRM checked. A side with no role (no reachable state has
+   * too, as CRYPTO (sweep F364): on the IDF 5 line it was compared as 32
+   * zero bytes, which a partner whose own hash failed sent, and the pairing
+   * completed with neither CONFIRM checked. A side with no role (no reachable state has
    * none) has no partner role to check for, and refuses every CONFIRM as
    * BAD_CONFIRM, as before. */
   const Role partner = partner_role(ctx.role);

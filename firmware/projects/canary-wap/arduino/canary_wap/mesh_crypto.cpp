@@ -33,9 +33,10 @@ bool sha256_domain(const char* domain,
 
   /* This sketch builds on arduino-esp32 3.x only (mbedTLS 3.x, where the
    * non-suffixed names return int and the `_ret` variants are gone), so
-   * this is the canary library's ESP_IDF_VERSION_MAJOR >= 5 body, step for
-   * step: every answer checked, a step after a failed one not run, and the
-   * output zeroed and false answered when one is an error (sweep F364), so
+   * this is the canary library's mbedTLS 3.x body (its
+   * MBEDTLS_VERSION_NUMBER >= 0x03000000 branch), step for step: every
+   * answer checked, a step after a failed one not run, and the output
+   * zeroed and false answered when one is an error (sweep F364), so
    * it never holds a part-written digest or the stack's old bytes and no
    * caller takes 32 zero bytes for a hash. Neither check_mesh_sync.sh nor
    * check_ble_scan_sync.sh covers mesh_crypto.*, so a change to either copy

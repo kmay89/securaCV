@@ -3,10 +3,12 @@
 // The canary library's (firmware/canary/lib/securacv_mesh/src/mesh_crypto.cpp)
 // and this sketch's shim (mesh_crypto.cpp beside the sketch) are one
 // function in two copies, and neither check_mesh_sync.sh nor
-// check_ble_scan_sync.sh covers them. Both used to be void: the library's
-// IDF 4 branch checked no step and its IDF 5 branch and the shim zeroed the
-// digest without saying so, so every caller took 32 zero bytes for a hash.
-// Now each answers whether every mbedTLS step ran, zeroes its output when
+// check_ble_scan_sync.sh covers them. Both used to be void, and a caller
+// took what a failed step left for a hash: on the library's IDF 5 line and
+// in the shim, which zeroed the digest without saying so, 32 zero bytes; on
+// the IDF 4 line, whose branch checked no step, a digest that skipped the
+// failed step's bytes (for a failed data update, SHA-256 of the domain
+// alone, the same for every key). Now each answers whether every mbedTLS step ran, zeroes its output when
 // one did not, runs no step after a failed one and frees the context on
 // every path; and the library's IDF 4 branch asks the step through the
 // names mbedTLS 2.28 answers on (the _ret ones; its plain names return
@@ -18,9 +20,12 @@
 // device branches are the ones built, over firmware/tests_host/stubs/
 // sha_fail's mbedTLS stand-in (a real SHA-256 over OpenSSL that fails the
 // step a case names, once). The Makefile builds it twice: as IDF 4 over the
-// stand-in's 2.28 spelling (ESP_IDF_VERSION_MAJOR=4), where a plain name
-// returns void and a call that read its answer would not compile, and as
-// IDF 5 over its 3.6 spelling, where the _ret names do not exist. The IDF 5
+// stand-in's mbedTLS 2.28 spelling (SHA_STUB_MBEDTLS_VERSION=0x021C0700),
+// where a plain name returns void and a call that read its answer would not
+// compile, and as IDF 5 over its 3.6 spelling (0x03060300), where the _ret
+// names do not exist. The library picks the spelling by the stand-in's
+// mbedtls/version.h, as it does on a device (MBEDTLS_VERSION_NUMBER, the
+// F455 guard regression_check.sh allows _ret names under). The IDF 5
 // build also compiles the sketch's shim against the same stand-in and runs
 // the same cases through it, and holds the two copies' answers and outputs
 // equal. What it pins, for a failing start, each update and the finish:
@@ -41,17 +46,19 @@
 #include <string>
 #include <vector>
 
-#include <mbedtls/sha256.h>  // firmware/tests_host/stubs/sha_fail, in the spelling the build names
+// firmware/tests_host/stubs/sha_fail, in the spelling the build names, and
+// the version header the library's device include block reads.
+#include <mbedtls/sha256.h>
+#include <mbedtls/version.h>
 
 #ifndef MCLINES_PIO_INC
 #error "MCLINES_PIO_INC must name the cut of the canary library's mesh_crypto.cpp (the Makefile passes it)"
 #endif
-#ifndef ESP_IDF_VERSION_MAJOR
-#error "build with -DESP_IDF_VERSION_MAJOR=4 or 5 (the Makefile builds both)"
-#endif
-#if (ESP_IDF_VERSION_MAJOR >= 5) != (SHA_STUB_MBEDTLS_VERSION >= 0x03000000)
-#error "IDF 5 ships mbedTLS 3.x and IDF 4.4 mbedTLS 2.28: build the two together"
-#endif
+static_assert(MBEDTLS_VERSION_NUMBER == 0x021C0700 || MBEDTLS_VERSION_NUMBER == 0x03060300,
+              "build as mbedTLS 2.28.7 (IDF 4.4) or 3.6.3 (IDF 5.5): the Makefile builds both");
+
+// The IDF line the build stands for: IDF 5 ships mbedTLS 3.x, IDF 4.4 2.28.
+constexpr int kIdfLine = MBEDTLS_VERSION_NUMBER >= 0x03000000 ? 5 : 4;
 
 // The canary library's body, in a namespace of its own beside the shim's.
 namespace pio_mesh_crypto {
@@ -194,19 +201,18 @@ void check_copies_agree() {
 }  // namespace
 
 int main() {
-  check_copy(ESP_IDF_VERSION_MAJOR >= 5 ? "the canary library's IDF 5 body"
-                                        : "the canary library's IDF 4 body (the _ret names)",
+  check_copy(kIdfLine == 5 ? "the canary library's IDF 5 body"
+                           : "the canary library's IDF 4 body (the _ret names)",
              pio_mesh_crypto::sha256_domain);
 #ifdef MCLINES_WAP_SHIM
   check_copy("the sketch's shim", mesh_crypto::sha256_domain);
   check_copies_agree();
 #endif
   if (g_failures != 0) {
-    std::printf("test_mesh_crypto_lines (IDF %d): %d of %d checks FAILED\n", ESP_IDF_VERSION_MAJOR,
-                g_failures, g_checks);
+    std::printf("test_mesh_crypto_lines (IDF %d): %d of %d checks FAILED\n", kIdfLine, g_failures,
+                g_checks);
     return 1;
   }
-  std::printf("ALL mesh_crypto lines (IDF %d) TESTS PASSED (%d checks)\n", ESP_IDF_VERSION_MAJOR,
-              g_checks);
+  std::printf("ALL mesh_crypto lines (IDF %d) TESTS PASSED (%d checks)\n", kIdfLine, g_checks);
   return 0;
 }
