@@ -53,6 +53,13 @@
 // for ten minutes every 2^32 ms of a session on without a break, a known
 // limit that fails closed, held here as it is.
 //
+// A send names a template and a detail slot the tables list (sweep F485):
+// the send route's readers refuse a template_id or a detail that is not an
+// integer naming a row before it is narrowed to the frame's byte (256 went
+// out signed as "police activity in area", and 272 as detail 16), and the
+// loop task's send refuses a slot no row lists before the TTL and every
+// gate, spending nothing.
+//
 // The harness is one thread, so "the HTTP server's task" is a role the test
 // plays: rest() sets host_sim::on_httpd_task and calls submit() the way a
 // handler does. submit() waits in vTaskDelay, and the stub's vTaskDelay is
@@ -617,12 +624,14 @@ cc::ChirpWitnessPayload witness_at(size_t index) {
   return p;
 }
 
-// A send whose TTL is outside 5..60 is refused on the loop task, first,
-// as invalid_ttl: no gate is asked (a TTL of 4 on a channel that is off,
-// or in its cooldown, is still named for the TTL), no cooldown slot is
-// spent, nothing is signed or sent and nothing else changes, so the next
-// send in range goes out at once, at tier 1. The bounds themselves go out,
-// each carried in the frame as sent. It signed every byte it was handed.
+// A send whose TTL is outside 5..60 is refused on the loop task, before
+// every gate (after only an unlisted detail slot, sweep F485, which these
+// sends do not name), as invalid_ttl: no gate is asked (a TTL of 4 on a
+// channel that is off, or in its cooldown, is still named for the TTL), no
+// cooldown slot is spent, nothing is signed or sent and nothing else
+// changes, so the next send in range goes out at once, at tier 1. The
+// bounds themselves go out, each carried in the frame as sent. It signed
+// every byte it was handed.
 void test_a_send_outside_5_to_60_minutes_is_refused() {
   boot();
   cc::Command c = send_of(cc::TPL_INFRA_POWER_OUT);
@@ -791,6 +800,299 @@ void test_the_dashboards_ttl_still_sends() {
   CHECK(r.r.ok && r.r.refusal == cc::SEND_REFUSED_NONE);
   CHECK(witness_at(before).ttl_minutes == 15);
   std::printf("PASS the_dashboards_ttl_still_sends\n");
+}
+
+// ── A send names a template and a detail slot the tables list (sweep F485) ─
+
+// The detail slots DETAIL_TABLE lists, as the enum names them.
+bool listed_slot(unsigned b) {
+  switch (b) {
+    case cc::DETAIL_NONE:
+    case cc::DETAIL_SCALE_FEW:
+    case cc::DETAIL_SCALE_MANY:
+    case cc::DETAIL_SCALE_MASSIVE:
+    case cc::DETAIL_STATUS_ONGOING:
+    case cc::DETAIL_STATUS_CONTAINED:
+    case cc::DETAIL_STATUS_SPREADING:
+    case cc::DETAIL_DIR_NORTH:
+    case cc::DETAIL_DIR_SOUTH:
+    case cc::DETAIL_DIR_EAST:
+    case cc::DETAIL_DIR_WEST:
+      return true;
+  }
+  return false;
+}
+
+// A send whose detail slot no row of the detail table lists is refused on
+// the loop task, first, as invalid_detail: before the TTL (a slot of 4 with
+// a TTL of 4 is named for the slot) and before every gate (on a channel that
+// is off it is still named for the slot), with nothing spent, signed, sent
+// or stored, so the next send that names a listed slot goes out at once, at
+// tier 1. Every one of the 256 bytes: on a channel that is off, a listed
+// slot reaches the gate (chirp_disabled) and an unlisted one does not; on
+// one that is on, each of the 245 unlisted bytes is refused with nothing
+// changed. Then each of the 11 listed slots goes out, carried in its frame
+// as sent. send_chirp() signed whatever byte it was handed: 4, 16 and 255
+// went out signed, and a receiver's get_detail_text() shows them as "".
+void test_a_send_naming_no_detail_slot_is_refused() {
+  boot();
+  cc::Command c = send_of(cc::TPL_INFRA_POWER_OUT);
+  c.detail = (cc::ChirpDetailSlot)4;
+  Rest r = rest(c);                                     // the channel off: the slot is named first
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == cc::SEND_REFUSED_DETAIL);
+  c.ttl_minutes = 4;                                    // and before the TTL
+  r = rest(c);
+  CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_DETAIL);
+  c.ttl_minutes = 15;
+  unsigned listed = 0;
+  for (unsigned b = 0; b < 256; ++b) {
+    c.detail = (cc::ChirpDetailSlot)b;
+    CHECK(cc::is_valid_detail(c.detail) == listed_slot(b));
+    listed += listed_slot(b) ? 1 : 0;
+    r = rest(c);
+    CHECK(!r.r.ok && r.r.refusal == (listed_slot(b) ? cc::SEND_REFUSED_DISABLED : cc::SEND_REFUSED_DETAIL));
+  }
+  CHECK(listed == cc::DETAIL_COUNT && listed == 11);
+  CHECK(cc::g_state == cc::CHIRP_DISABLED && host_sim::espnow->sent.empty());
+
+  enabled_channel();
+  host_sim::espnow->sent.clear();
+  g_health.clear();
+  host_sim::nvs_writes.clear();
+  for (unsigned b = 0; b < 256; ++b) {
+    if (listed_slot(b)) continue;
+    const SendState before = send_state();
+    c.detail = (cc::ChirpDetailSlot)b;
+    r = rest(c);
+    CHECK(r.wait == lcr::Wait::kDone && r.loop_turns == 1);
+    const bool refused = !r.r.ok && r.r.refusal == cc::SEND_REFUSED_DETAIL;
+    if (!refused) std::fprintf(stderr, "detail slot %u was not refused\n", b);
+    CHECK(refused);
+    CHECK(error_of(r.r.refusal) == "invalid_detail");
+    CHECK(r.r.cooldown_tier == 0 && r.r.cooldown_remaining_ms == 0);
+    CHECK(same_state(before, send_state()));              // nothing spent, signed, sent or stored
+  }
+  CHECK(host_sim::espnow->sent.empty());
+  CHECK(cc::get_cooldown_remaining_ms() == 0 && cc::get_cooldown_tier() == 0);
+
+  // The next send that names a listed slot goes out at once, at tier 1.
+  c.detail = cc::DETAIL_SCALE_MANY;
+  r = rest(c);
+  CHECK(r.r.ok && r.r.refusal == cc::SEND_REFUSED_NONE && r.r.cooldown_tier == 1);
+  CHECK(sent_types() == std::vector<uint8_t>{cc::CHIRP_MSG_WITNESS});
+  CHECK(witness_at(0).detail_slot == (uint8_t)cc::DETAIL_SCALE_MANY);
+
+  // Each listed slot, on a fresh device, goes out as it was sent, with any
+  // template (which slot suits which template is decided nowhere).
+  for (unsigned b = 0; b < 256; ++b) {
+    if (!listed_slot(b)) continue;
+    boot();
+    enabled_channel();
+    const size_t before = host_sim::espnow->sent.size();
+    cc::Command s = send_of(b % 2 ? cc::TPL_EMERG_FIRE_VISIBLE : cc::TPL_AUTH_HELICOPTER);
+    s.detail = (cc::ChirpDetailSlot)b;
+    r = rest(s);
+    CHECK(r.r.ok && r.r.refusal == cc::SEND_REFUSED_NONE);
+    CHECK(witness_at(before).detail_slot == b);
+    CHECK(std::string(cc::get_detail_text(s.detail)).empty() == (b == cc::DETAIL_NONE));
+  }
+
+  // The answer the handler sends for it, short of its 256-byte buffer.
+  CHECK(message_of(cc::SEND_REFUSED_DETAIL) == "Unknown detail slot");
+  const std::string answer = std::string("{\"success\":false,\"error\":\"") + error_of(cc::SEND_REFUSED_DETAIL) +
+                             "\",\"message\":\"" + message_of(cc::SEND_REFUSED_DETAIL) + "\"}";
+  CHECK(answer.size() < 256);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_send_naming_no_detail_slot_is_refused\n");
+}
+
+// One request value, as POST /api/chirp/send's handler reads it: its three
+// ArduinoJson readings, and what the reader under test does with them.
+struct RequestRow {
+  const char* json;   // the request's value, as it is written
+  bool present;       // !isNull()
+  bool is_integer;    // is<int32_t>()
+  int32_t value;      // as<int32_t>()
+  bool sent;
+  uint8_t byte;       // what goes in the frame, when sent
+};
+
+// POST /api/chirp/send's template_id, read as its handler reads it
+// (template_from_request(), with ArduinoJson's isNull(), is<int32_t>() and
+// as<int32_t>() of the request's value; check_wap_loop_commands.py holds the
+// handler to that call): sent only when it is an integer that names a row of
+// the template table, and refused as invalid_template otherwise, before it is
+// narrowed to the frame's byte. A body with no template_id at all is answered
+// "template_id is required" before this read, so its row is a JSON null.
+//
+// The readings are ArduinoJson 7.4.1's, taken as the TTL rows' were (a
+// scratch harness outside this suite that ran the real handler over each
+// body, with the library the Lab emulator pins; 0x10 is not JSON and is
+// answered 400 "Invalid JSON" before any read). The old read, `uint8_t
+// template_id_raw = input["template_id"]`, signed 256, 272, -240, 300, -1,
+// 4294967296, 1e300, null, [], {}, false and "0" as 0, "police activity in
+// area"; true as 1, "heavy law enforcement response"; and 16.9 and "16" as
+// 16, "power outage". The suite holds what template_from_request() does with
+// the readings; a later ArduinoJson that read a value differently would not
+// fail here.
+void test_the_send_handler_reads_template_id() {
+  const RequestRow rows[] = {
+      {"0", true, true, 0, true, cc::TPL_AUTH_POLICE_ACTIVITY},
+      {"-0", true, true, 0, true, cc::TPL_AUTH_POLICE_ACTIVITY},   // the integer 0
+      {"16", true, true, 16, true, cc::TPL_INFRA_POWER_OUT},
+      {"130", true, true, 130, true, cc::TPL_CLR_FALSE_ALARM},
+      {"4", true, true, 4, false, 0},              // reserved (C17): no row
+      {"255", true, true, 255, false, 0},          // TPL_INVALID: no row
+      {"256", true, true, 256, false, 0},
+      {"272", true, true, 272, false, 0},
+      {"-240", true, true, -240, false, 0},
+      {"300", true, true, 300, false, 0},
+      {"-1", true, true, -1, false, 0},
+      {"2147483647", true, true, 2147483647, false, 0},
+      {"-2147483648", true, true, INT32_MIN, false, 0},
+      {"16.9", true, false, 16, false, 0},         // a float: is<int32_t>() is false
+      {"16.0", true, false, 16, false, 0},         // a float too, whatever its value
+      {"255.0", true, false, 255, false, 0},
+      {"1e2", true, false, 100, false, 0},
+      {"\"16\"", true, false, 16, false, 0},       // a string
+      {"\"0\"", true, false, 0, false, 0},
+      {"true", true, false, 1, false, 0},
+      {"false", true, false, 0, false, 0},
+      {"[]", true, false, 0, false, 0},
+      {"{}", true, false, 0, false, 0},
+      {"4294967296", true, false, 0, false, 0},    // past int32_t
+      {"4294967312", true, false, 0, false, 0},
+      {"2147483648", true, false, 0, false, 0},
+      {"1e300", true, false, 0, false, 0},
+      {"null", false, false, 0, false, 0},
+  };
+  for (const RequestRow& row : rows) {
+    cc::ChirpTemplate t = (cc::ChirpTemplate)0xEE;
+    const bool sent = cc::template_from_request(row.present, row.is_integer, row.value, &t);
+    if (sent != row.sent) std::fprintf(stderr, "template_id %s\n", row.json);
+    CHECK(sent == row.sent);
+    CHECK((uint8_t)t == (row.sent ? row.byte : 0xEE));   // written only for a send
+  }
+  for (int32_t v = -300; v <= 300; ++v) {
+    cc::ChirpTemplate t = cc::TPL_INVALID;
+    const bool named = v >= 0 && v <= 0xFF && cc::is_valid_template((cc::ChirpTemplate)v);
+    CHECK(cc::template_from_request(true, true, v, &t) == named);
+    CHECK(!cc::template_from_request(false, false, v, &t) && !cc::template_from_request(true, false, v, &t));
+  }
+  std::printf("PASS the_send_handler_reads_template_id\n");
+}
+
+// POST /api/chirp/send's detail, read as its handler reads it
+// (detail_from_request(), the same three readings; check_wap_loop_commands.py
+// holds the handler to the call): absent or null is DETAIL_NONE; a present
+// value is sent only when it is an integer that names a row of the detail
+// table, and anything else is refused as invalid_detail before it is narrowed
+// to the frame's byte. The old `uint8_t detail_raw = input["detail"] | 0`
+// signed 4, 16, 24 and 255 as they were, 272 and -240 as 16, 300 as 44, -1 as
+// 255, 256 as 0, and a value it did not read as an int (16.9, "16", true,
+// 1e300) as 0. Readings as above.
+void test_the_send_handler_reads_detail() {
+  const RequestRow rows[] = {
+      {"(absent)", false, false, 0, true, cc::DETAIL_NONE},
+      {"null", false, false, 0, true, cc::DETAIL_NONE},
+      {"0", true, true, 0, true, cc::DETAIL_NONE},
+      {"-0", true, true, 0, true, cc::DETAIL_NONE},
+      {"1", true, true, 1, true, cc::DETAIL_SCALE_FEW},
+      {"11", true, true, 11, true, cc::DETAIL_STATUS_CONTAINED},
+      {"23", true, true, 23, true, cc::DETAIL_DIR_WEST},
+      {"4", true, true, 4, false, 0},              // no row
+      {"16", true, true, 16, false, 0},
+      {"24", true, true, 24, false, 0},
+      {"255", true, true, 255, false, 0},
+      {"256", true, true, 256, false, 0},
+      {"272", true, true, 272, false, 0},
+      {"-240", true, true, -240, false, 0},
+      {"300", true, true, 300, false, 0},
+      {"-1", true, true, -1, false, 0},
+      {"16.9", true, false, 16, false, 0},
+      {"11.0", true, false, 11, false, 0},         // a float, whatever its value
+      {"255.0", true, false, 255, false, 0},
+      {"1e2", true, false, 100, false, 0},
+      {"\"16\"", true, false, 16, false, 0},
+      {"\"0\"", true, false, 0, false, 0},
+      {"true", true, false, 1, false, 0},
+      {"[]", true, false, 0, false, 0},
+      {"4294967296", true, false, 0, false, 0},
+      {"4294967307", true, false, 0, false, 0},    // 2^32 + 11
+      {"1e300", true, false, 0, false, 0},
+  };
+  for (const RequestRow& row : rows) {
+    cc::ChirpDetailSlot d = (cc::ChirpDetailSlot)0xEE;
+    const bool sent = cc::detail_from_request(row.present, row.is_integer, row.value, &d);
+    if (sent != row.sent) std::fprintf(stderr, "detail %s\n", row.json);
+    CHECK(sent == row.sent);
+    CHECK((uint8_t)d == (row.sent ? row.byte : 0xEE));
+  }
+  for (int32_t v = -300; v <= 300; ++v) {
+    cc::ChirpDetailSlot d = cc::DETAIL_NONE;
+    CHECK(cc::detail_from_request(true, true, v, &d) == (v >= 0 && v <= 0xFF && listed_slot((unsigned)v)));
+    CHECK(!cc::detail_from_request(true, false, v, &d));
+  }
+  // What the handler hands the loop task is always a listed slot, so the
+  // loop task's own refusal (above) is the second line, for a caller that
+  // is not this handler.
+  for (const RequestRow& row : rows) {
+    cc::ChirpDetailSlot d = cc::DETAIL_NONE;
+    if (cc::detail_from_request(row.present, row.is_integer, row.value, &d)) CHECK(cc::is_valid_detail(d));
+  }
+  std::printf("PASS the_send_handler_reads_detail\n");
+}
+
+// The dashboard's Send (web_ui.h's sendChirp()) posts one of its select's
+// option values as template_id and names no detail: every option is a
+// template the handler's reading names, the absent detail is DETAIL_NONE,
+// and each goes out signed as that template with no detail.
+void test_the_dashboards_templates_still_send() {
+  std::string dir = CHIRP_CHANNEL_CPP;
+  dir.erase(dir.rfind('/') + 1);
+  std::FILE* f = std::fopen((dir + "web_ui.h").c_str(), "rb");
+  CHECK(f != nullptr);
+  std::string page;
+  char buf[65536];
+  for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) page.append(buf, n);
+  std::fclose(f);
+  const std::string call = "api('/api/chirp/send', 'POST', {";
+  const size_t at = page.find(call);
+  CHECK(at != std::string::npos && page.find(call, at + 1) == std::string::npos);
+  const std::string body = page.substr(at + call.size(), page.find('}', at) - at - call.size());
+  CHECK(body.find("detail") == std::string::npos);      // the page names no detail
+  CHECK(body.find("template_id") != std::string::npos);
+  cc::ChirpDetailSlot d = (cc::ChirpDetailSlot)0xEE;
+  CHECK(cc::detail_from_request(false, false, 0, &d) && d == cc::DETAIL_NONE);
+
+  const std::string open = "<select class=\"form-input\" id=\"chirpTemplate\"";
+  const size_t s = page.find(open);
+  CHECK(s != std::string::npos && page.find(open, s + 1) == std::string::npos);
+  const size_t e = page.find("</select>", s);
+  CHECK(e != std::string::npos);
+  const std::string select = page.substr(s, e - s);
+  std::vector<int32_t> values;
+  const std::string opt = "<option value=\"";
+  for (size_t o = select.find(opt); o != std::string::npos; o = select.find(opt, o + 1)) {
+    char* end = nullptr;
+    const char* v = select.c_str() + o + opt.size();
+    values.push_back((int32_t)std::strtol(v, &end, 10));
+    CHECK(end != v && *end == '"');                     // a plain integer, as parseInt() reads it
+  }
+  CHECK(values.size() == 13);
+  for (int32_t v : values) {
+    cc::ChirpTemplate t = cc::TPL_INVALID;
+    CHECK(cc::template_from_request(true, true, v, &t) && (int32_t)t == v);
+    boot();
+    enabled_channel();
+    const size_t before = host_sim::espnow->sent.size();
+    cc::Command c = send_of(t);
+    c.detail = d;
+    const Rest r = rest(c);
+    CHECK(r.r.ok && r.r.refusal == cc::SEND_REFUSED_NONE);
+    CHECK(witness_at(before).template_id == (uint8_t)v && witness_at(before).detail_slot == 0);
+  }
+  std::printf("PASS the_dashboards_templates_still_send\n");
 }
 
 // POST /api/chirp/settings changes only the fields it names: the filter
@@ -3445,6 +3747,10 @@ const Test kTests[] = {
     {"a_send_outside_5_to_60_minutes_is_refused", test_a_send_outside_5_to_60_minutes_is_refused},
     {"the_send_handler_reads_ttl_minutes", test_the_send_handler_reads_ttl_minutes},
     {"the_dashboards_ttl_still_sends", test_the_dashboards_ttl_still_sends},
+    {"a_send_naming_no_detail_slot_is_refused", test_a_send_naming_no_detail_slot_is_refused},
+    {"the_send_handler_reads_template_id", test_the_send_handler_reads_template_id},
+    {"the_send_handler_reads_detail", test_the_send_handler_reads_detail},
+    {"the_dashboards_templates_still_send", test_the_dashboards_templates_still_send},
     {"a_settings_post_changes_only_what_it_names", test_a_settings_post_changes_only_what_it_names},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},
     {"a_full_ring_answers_busy", test_a_full_ring_answers_busy},

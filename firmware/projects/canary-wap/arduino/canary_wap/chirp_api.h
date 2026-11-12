@@ -417,11 +417,15 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "template_id is required");
     return ESP_FAIL;
   }
-  uint8_t template_id_raw = input["template_id"];
-  chirp_channel::ChirpTemplate template_id = (chirp_channel::ChirpTemplate)template_id_raw;
-
-  // Validate template exists
-  if (!chirp_channel::is_valid_template(template_id)) {
+  // template_id: an integer that names a template, judged before it is
+  // narrowed to the byte the frame carries (template_from_request(),
+  // mesh_network.h, host-tested). `uint8_t template_id_raw =
+  // input["template_id"]` read every integer past a byte, and a null, as 0:
+  // 256 went out signed as "police activity in area" (sweep F485).
+  JsonVariantConst template_in = input["template_id"];
+  chirp_channel::ChirpTemplate template_id = chirp_channel::TPL_INVALID;
+  if (!chirp_channel::template_from_request(!template_in.isNull(), template_in.is<int32_t>(),
+                                            template_in.as<int32_t>(), &template_id)) {
     JsonDocument doc;
     doc["success"] = false;
     doc["error"] = "invalid_template";
@@ -434,7 +438,25 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
 
   // Extract optional fields
   const char* urgency_str = input["urgency"] | "info";
-  uint8_t detail_raw = input["detail"] | 0;
+
+  // detail: absent (or null) is DETAIL_NONE; a present value goes out only
+  // as an integer that names a detail slot, and anything else is refused
+  // here, before the uint8_t the frame carries: `| 0` into a uint8_t signed
+  // the unlisted slot 4 as 4 and 272 as 16 (sweep F485; mesh_network.h's
+  // detail_from_request(), host-tested).
+  JsonVariantConst detail_in = input["detail"];
+  chirp_channel::ChirpDetailSlot detail = chirp_channel::DETAIL_NONE;
+  if (!chirp_channel::detail_from_request(!detail_in.isNull(), detail_in.is<int32_t>(),
+                                          detail_in.as<int32_t>(), &detail)) {
+    JsonDocument doc;
+    doc["success"] = false;
+    doc["error"] = chirp_channel::send_refusal_error(chirp_channel::SEND_REFUSED_DETAIL);
+    doc["message"] = chirp_channel::send_refusal_message(chirp_channel::SEND_REFUSED_DETAIL);
+    char buffer[256];
+    serializeJson(doc, buffer);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, buffer);
+  }
 
   // ttl_minutes: absent (or null) is 15; a present value goes out only as an
   // integer 5..60 (spec §3.3), and anything else is refused here, before the
@@ -458,8 +480,6 @@ inline esp_err_t handle_chirp_send(httpd_req_t* req) {
   chirp_channel::ChirpUrgency urgency = chirp_channel::CHIRP_URG_INFO;
   if (strcmp(urgency_str, "caution") == 0) urgency = chirp_channel::CHIRP_URG_CAUTION;
   else if (strcmp(urgency_str, "urgent") == 0) urgency = chirp_channel::CHIRP_URG_URGENT;
-
-  chirp_channel::ChirpDetailSlot detail = (chirp_channel::ChirpDetailSlot)detail_raw;
 
   // Attempt to send, on the loop task; the refusal is read there too.
   chirp_channel::Command cmd = chirp_channel::make_command(chirp_channel::CHIRP_CMD_SEND);

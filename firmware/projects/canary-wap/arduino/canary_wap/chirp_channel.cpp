@@ -1679,13 +1679,13 @@ static Result run_command(const Command& cmd) {
       break;
     case CHIRP_CMD_SEND:
       // Why it was refused is the check that refused it, read once in the
-      // send: a TTL outside 5-60 first (sweep F412), then the channel off,
-      // the presence requirement, the cooldown (the
-      // timer, not the state, sweep F178, with its time left), a wall clock
-      // not set yet (answered as a cooldown with 0 s left until sweep F146),
-      // or night. Named after the send from fresh reads, a gate that opened
-      // in between was missed: a send refused as the cooldown ran out
-      // answered no reason, or a cooldown with 0 s left.
+      // send: a detail slot no row lists first (sweep F485), a TTL outside
+      // 5-60 (sweep F412), then the channel off, the presence requirement,
+      // the cooldown (the timer, not the state, sweep F178, with its time
+      // left), a wall clock not set yet (answered as a cooldown with 0 s
+      // left until sweep F146), or night. Named after the send from fresh
+      // reads, a gate that opened in between was missed: a send refused as
+      // the cooldown ran out answered no reason, or a cooldown with 0 s left.
       r.ok = send_chirp(cmd.template_id, cmd.urgency, cmd.detail, cmd.ttl_minutes,
                         &r.refusal, &r.cooldown_remaining_ms);
       r.cooldown_tier = get_cooldown_tier();
@@ -1872,6 +1872,14 @@ bool is_night_mode() {
 }
 
 bool is_valid_template(ChirpTemplate template_id) { return find_template(template_id) != nullptr; }
+// A slot DETAIL_TABLE lists (sweep F485): the send signed any byte it was
+// handed, and get_detail_text() shows one it does not list as "".
+bool is_valid_detail(ChirpDetailSlot detail) {
+  for (size_t i = 0; i < DETAIL_COUNT; i++) {
+    if (DETAIL_TABLE[i].id == detail) return true;
+  }
+  return false;
+}
 // The template table's category, as handle_ack() reads it (sweep F307).
 ChirpCategory template_category(ChirpTemplate template_id) { return template_to_category(template_id); }
 const char* get_template_text(ChirpTemplate template_id) {
@@ -1919,13 +1927,19 @@ const char* get_validation_status(const RecentView* chirp) {
 // an unknown template (the handler refuses one first) or a frame that could
 // not be signed.
 //
-// A TTL outside spec §3.3's 5-60 minutes is refused first, before anything
-// here reads or writes the channel: no gate is asked, no tier expires, no
-// cooldown starts and nothing is signed or sent, so the next send in range
-// goes out at once (sweep F412). It signed whatever byte it was handed.
+// A detail slot the detail table does not list (sweep F485), then a TTL
+// outside spec §3.3's 5-60 minutes (sweep F412), is refused first, in the
+// order the handler refuses them, before anything here reads or writes the
+// channel: no gate is asked, no tier expires, no cooldown starts and nothing
+// is signed or sent, so the next send that names a listed slot and a TTL in
+// range goes out at once. It signed whatever bytes it was handed.
 static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
                        ChirpDetailSlot detail, uint8_t ttl_minutes,
                        SendRefusal* why, uint32_t* cooldown_left) {
+  if (!is_valid_detail(detail)) {
+    if (why != nullptr) *why = SEND_REFUSED_DETAIL;
+    return false;
+  }
   if (!witness_ttl_in_range(ttl_minutes)) {
     if (why != nullptr) *why = SEND_REFUSED_TTL;
     return false;

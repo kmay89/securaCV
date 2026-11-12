@@ -4778,14 +4778,23 @@
   it is narrowed. The loop task's `send_chirp()` refuses a byte outside the
   range first, before any tier expires or any cooldown, nonce, signature or
   frame, so a refused send spends nothing. The same handler's `template_id`
-  and `detail` still narrow (backlog F485).
+  and `detail` narrowed too, and were read the same way in F485
+  (`template_from_request()`, `detail_from_request()`, a loop-task refusal of
+  an unlisted slot): the template's `uint8_t t = input["template_id"]` read
+  every integer past a byte, and a null, as 0 (ArduinoJson's `as<uint8_t>()`
+  answers 0 out of range, it does not wrap), and 0 is a real template,
+  "police activity in area"; the brief had assumed 272 became 16. A zero a
+  conversion falls back to is a value, not a refusal, whenever the enum
+  names 0.
 - **Rule:** read a wire integer as `is<int32_t>()`, range-check it, then
   narrow; `| default` is for an absent key only. Check a claim about a
   library's coercion by running the library, not by reading the call.
 - **Regression check:** canary-wap `tests_host/test_chirp_commands_wap.cpp`
   (`a_send_outside_5_to_60_minutes_is_refused`,
-  `the_send_handler_reads_ttl_minutes`, `a_ttl_refusal_expires_no_tier`) and
-  `check_wap_loop_commands.py`'s CV7 pin on the handler's read.
+  `the_send_handler_reads_ttl_minutes`, `a_ttl_refusal_expires_no_tier`;
+  for F485 `a_send_naming_no_detail_slot_is_refused`,
+  `the_send_handler_reads_template_id`, `the_send_handler_reads_detail`) and
+  `check_wap_loop_commands.py`'s CV7 pins on the handler's reads.
 - **Date learned:** 2026-11
 
 ### A stub that answers "started" claims work nobody built, and a cancel of nothing must not reset the state (canary-wap Beacon pairing, F30)
