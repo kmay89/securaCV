@@ -134,11 +134,19 @@ hop would leave the disc) and keeps its seat, its bubble's top a few pixels
 into the foot of the bird's box, below the drawn bird; but the tail now
 drawn there reaches into the bird itself, up to 16 px into its box under
 Heirloom, hiding as many as 30 of its drawn pixels (filed). The landscape nightlight keeps
-its hung bubble, the tail in the empty foot of the box. Hello again draws on
-every canvas as it always did. The bubble is as wide as
+its hung bubble, the tail in the empty foot of the box. Hello again seats the
+bird on every canvas as it always did. The bubble is as wide as
 the glass family asks (196 px on small glass), and no wider than the canvas
 less 4 px a side: on the 172 and 180 px wide portrait glass it is 164 and
-172 px, so its border and rounded corners are on the glass (F160). Its tail,
+172 px, so its border and rounded corners are on the glass (F160). The
+wordmark, on both splashes, keeps `kWordMargin` (8 px) of the canvas clear a
+side (F373): `splash.cpp` reads its width as LVGL lays it out, and where the
+Character's title face at 2 px letter spacing would not fit, it steps to
+Montserrat 28 (where that face is narrower), then sets it with no letter
+spacing; a canvas too narrow for any step shows no wordmark rather than a cut
+one. On shipped glass only the 172 px S3 nightstand under Heirloom steps, from
+Montserrat 36 to 28, and there the first meeting's bird now stands 2 px
+further above its name. The bubble's tail,
 the small square under the bird, turned 45 degrees about its center with
 square corners, is aligned again whenever the typed line changes, so it
 stays on the bubble's top edge as a centered bubble grows both ways (F158).
@@ -155,7 +163,11 @@ nightlight's, which it pins as the two that are not;
 `tests_host/test_splash_scenes.cpp` holds `splash.cpp` to them, compiling it
 against the host tests' fake LVGL and playing both splashes on the same
 canvases to read where the bird, the bubble and the tail object land (the
-object's box: nothing is drawn there). The drawn tail is read off the frame
+object's box: nothing is drawn there). The two also hold the wordmark
+(F373): the first its fit and the ladder's model on every canvas up to 1000
+px wide, the second `splash.cpp`'s wordmark on every canvas and on a sweep of
+widths from 100 to 260 px. The drawn tail, and the wordmark's ink kept
+`kWordMargin` inside the glass's edge columns, are read off the frame
 natively, through the real LVGL 8.4 (`canary-local/emulator/test/glass_splash_test.cpp`,
 in every 8.4 env's config and the emulator's dash, which `build.sh` compiles
 against 8.4 too) and LVGL 9.5 (`glass_splash_lvgl9_test.cpp`, the dash

@@ -130,8 +130,10 @@ int word_width(lv_obj_t* scr, lv_obj_t* word) {
 // that overflows, in Montserrat 28 (on in lv_conf.h for every build, the lean
 // one too), taken only where it is the narrower face; then that face set
 // tight. True when one of those fits. Where none does (a canvas narrower than
-// any display's: 28 set tight is 137 px), the caller shows no wordmark rather
-// than a cut one.
+// any display's: the narrower of the title face and Montserrat 28, set tight,
+// plus kWordMargin a side; 134 px under the lean ladders' Montserrat 24 title,
+// whose 118 px is the last rung there, and 153 px under 28 and up, which end
+// on 28's 137), the caller shows no wordmark rather than a cut one.
 bool fit_word(lv_obj_t* scr, lv_obj_t* word, int canvas_w) {
   int w = word_width(scr, word);
   if (splashlayout::word_fits(canvas_w, w)) return true;
