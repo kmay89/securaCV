@@ -345,6 +345,25 @@ var SAVED_UNDER_IP = 'Saved under an IP address this app cannot reach: it reache
   'its .local name. Remove it below and add it again by its .local name, or open this app from that ' +
   'Canary\'s own address.';
 
+// The same for its sub-views (config, logs, witness), which have neither an
+// address field nor the Remove button, so they point at the device page.
+var SAVED_UNDER_IP_SUBVIEW = 'Saved under an IP address this app cannot reach: it reaches another Canary ' +
+  'only by its .local name. Remove it on its device page and add it again by its .local name, or open ' +
+  'this app from that Canary\'s own address.';
+
+// What a stored device's sub-view shows for a request that failed. One that
+// CanaryAPI.request() refused for its address (err.code needs_local_name)
+// was never made, and LOCAL_NAME_HINT's "Enter its .local name" names a
+// field these views do not have, so it reads SAVED_UNDER_IP_SUBVIEW. Any
+// other failure reads as the error says, after `prefix`, or `fallback` when
+// it says nothing (sweep F475). Every sub-view reads its failures here, so a
+// variant of the saved-under text (sweep F473's .local name on another
+// port) has one place to go.
+function storedDeviceErrorText(err, fallback, prefix) {
+  if (err && err.code === 'needs_local_name') return SAVED_UNDER_IP_SUBVIEW;
+  return (prefix || '') + ((err && err.message) || fallback || '');
+}
+
 function localNameError() {
   var err = new Error(LOCAL_NAME_HINT);
   err.code = 'needs_local_name';
@@ -2895,7 +2914,7 @@ function renderConfigView(deviceId, section) {
     })
     .catch(function (err) {
       while (formArea.firstChild) formArea.removeChild(formArea.firstChild);
-      formArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+      formArea.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
     });
 }
 
@@ -2974,7 +2993,7 @@ function renderConfigForm(container, device, section, config) {
           }
         })
         .catch(function (err) {
-          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
         });
     },
   }));
@@ -3001,7 +3020,7 @@ function renderConfigForm(container, device, section, config) {
             while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
             alertArea.appendChild(el('div', {
               className: 'alert alert-error',
-              textContent: 'Webhook test failed: ' + err.message,
+              textContent: storedDeviceErrorText(err, '', 'Webhook test failed: '),
             }));
           });
       },
@@ -3049,7 +3068,7 @@ function renderLogsView(deviceId) {
     })
     .catch(function (err) {
       while (logContainer.firstChild) logContainer.removeChild(logContainer.firstChild);
-      logContainer.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+      logContainer.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
     });
 }
 
@@ -3220,7 +3239,7 @@ function renderWitnessView(deviceId) {
         })
         .catch(function (err) {
           while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
-          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
         });
     },
   }));
@@ -3244,7 +3263,7 @@ function renderWitnessView(deviceId) {
         })
         .catch(function (err) {
           while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
-          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
         });
     },
   }));
@@ -3271,7 +3290,7 @@ function renderWitnessView(deviceId) {
         .catch(function (err) {
           while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
           // A 422 means coarsening refused to emit (precise data still in the raw chain).
-          var msg = err.message || 'Envelope export failed';
+          var msg = storedDeviceErrorText(err, 'Envelope export failed');
           alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: msg }));
         });
     },
@@ -3306,7 +3325,7 @@ function renderWitnessView(deviceId) {
         timelineBtn.disabled = false;
         while (timelineSection.firstChild) timelineSection.removeChild(timelineSection.firstChild);
         timelineSection.appendChild(el('div', { className: 'alert alert-error',
-          textContent: err.message || 'Failed to load verified timeline' }));
+          textContent: storedDeviceErrorText(err, 'Failed to load verified timeline') }));
       });
     },
   });
@@ -3349,7 +3368,7 @@ function renderWitnessView(deviceId) {
     })
     .catch(function (err) {
       while (recordList.firstChild) recordList.removeChild(recordList.firstChild);
-      recordList.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+      recordList.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
     });
 }
 
