@@ -1522,6 +1522,36 @@
   constant time is not measurable meaningfully on a host.
 - **Date learned:** 2026-11
 
+### Two sides whose hash failed agree on the zeros (mesh pairing code and CONFIRM, F364)
+- **What happened:** `mesh_crypto::sha256_domain()` returned `void` in both
+  trees, and on a failed step it left zeros, so the 6-digit pairing code and
+  the CONFIRM hash were made from a zeroed digest as from a real one. In a
+  host run of two canary-wap devices over a failing mbedTLS stand-in, with
+  the old call sites, a pairing whose code did not hash completed on 000000,
+  and a zeroed CONFIRM was matched by a side whose own check had failed: the
+  initiator added the joiner and sealed the opera secret to it. The canary
+  tree's initiator, given 32 zero bytes with its check failing, answered
+  `SEND_COMPLETE` the same way.
+- **Root cause:** a check that compares two derived values passes when both
+  derivations fail to the same constant. Zeroing the output on failure, the
+  right move for any one reader, made two failures agree.
+- **Fix:** `sha256_domain()` is `[[nodiscard]] bool` in both trees, and the
+  pairing code, the CONFIRM hash (sent, sent again or checked), the rekey
+  key, the signed message hash and the hashed beacon id refuse a failed hash
+  (backlog F364): the pairing ends (`FailReason::CRYPTO` on the canary tree,
+  an ALERT on the canary-wap), no zeroed code is shown and no zeroed CONFIRM
+  is sent or matched.
+- **Rule:** a value that stands for "the hash failed" must never be one a
+  peer can also produce; refuse before the compare, on both sides.
+- **Regression check:** canary-wap `tests_host/test_mesh_liveness_wap.cpp`
+  (`two_devices_whose_code_does_not_hash_show_no_code_and_do_not_pair`,
+  `two_devices_whose_confirm_does_not_hash_do_not_pair`,
+  `a_zeroed_confirm_is_not_matched_by_a_side_whose_check_did_not_hash`),
+  `test_wap_sha_fail_modules.cpp`, `test_mesh_pair_crypto.cpp`,
+  `test_mesh_crypto_lines.cpp` (the library's body on both IDF lines), and the
+  securacv_mesh and securacv_ble_scan suites.
+- **Date learned:** 2026-11
+
 ---
 
 ## Web UI (web_ui.h)
@@ -3654,8 +3684,72 @@
   `onboard_probe.mjs` fails on LONG_DOT's three baseline dots in each
   emulated flavor's Join scene and reads the firmware's own labels
   (`emu_screen_labels`) for the name and key it printed, with and without
-  the stuck-phone hint.
+  the stuck-phone hint. The splash's wordmark had the same fault, cut at both
+  edges rather than ellipsized (F373, #W26PR): set in the Character's title
+  face, "SecuraCV" was 191 px on the 172 px glass under Heirloom, and the
+  host fake LVGL modeled no letter spacing, so no host suite could see it.
+  `splash.cpp` now reads the laid-out label's width (`lv_obj_get_width()`)
+  and steps the face, then the spacing, down until `splash_layout.h`'s
+  `word_fits()` keeps `kWordMargin` a side, showing no wordmark where no step
+  fits; the fake now models letter spacing (`test_splash_scenes.cpp`), and
+  `glass_splash_test.cpp`'s hold 9 holds the ink on the real LVGL 8.4.
 - **Date learned:** 2026-09
+
+### A twin's flash that hears writes but not erases brings back what the firmware erased (the Lab's bench, A127)
+- **What happened:** on the Lab's bench a display twin's 10 s BOOT hold ran
+  the firmware's factory reset, and the bench's restart booted it straight
+  back onto the home network. The page keeps its own copy of each twin's
+  flash and restores it on a restart ("booting again with its memory
+  intact"), and `emu_support.cpp`'s `Preferences::remove` and `::clear` never
+  told it: a native run of the erase boot over the old source showed the
+  page hearing 0 of the four erases (`wifi_ssid`, `wifi_pass`, the ring and
+  `ap_pass`), and `emu-shell.js` then seeded the home network into the
+  restored copy as for any boot. The review found a "meet again" had the same
+  hole across a later bench power event.
+- **Root cause:** the twin's persistence was a write-through copy, and an
+  erase is not a write: the page never learned a key was gone, so its copy
+  outlived the firmware's own flash.
+- **Fix:** `Preferences::remove` and `::clear` report each key they erase
+  (`js_nvs_remove` to `Module.onNvsRemove`); the page drops it from its copy
+  and marks it erased, and `start()` seeds no default the flash erased. A
+  meet again forgets the network and the hello the same way (`app.js`
+  `stageFlash`) until the firmware writes them again. The emulator half
+  reaches the Lab with the dist rebuild.
+- **Rule:** a mirror of a store hears every change the store can make,
+  deletes included, or it is a backup that restores what the device threw
+  away.
+- **Regression check:** `canary-local/emulator/test/runtime_turn.sh`'s erase
+  boot (`runtime_turn_test.cpp`: the page hears exactly the four erases),
+  `canary-local/tests/bench.test.js`'s A127 rows, and `bench_probe.mjs`'s
+  10 s-hold check, which fails on a dist built before the fix.
+- **Date learned:** 2026-11
+
+### A turn made from off the panel must lay out the view already open on it (dash settings sheet, F370)
+- **What happened:** the phone app turns a dash's glass through `/api/set`,
+  which only stores the choice; `main.cpp`'s render hands it to the port on
+  its next pass whether or not the settings sheet is open. Nothing laid the
+  open sheet out again: a native run over the old `settings_ui.cpp` left the
+  sheet at its 620x440 landscape layout on the 480x800 canvas, and an open
+  Orientation page kept its check on "Landscape". The on-glass Orientation
+  tap and the reset path re-measured as they turned, so only the turn from
+  off the panel was missed.
+- **Root cause:** each path that turned the glass from the panel laid out its
+  own view, and the path that turned it from the network had no view to tell.
+- **Fix:** the sheet remembers the turn it was laid out at (`s_laid_rot`),
+  and `settings_ui_tick()`, when the glass wears another, runs
+  `layout_host()` and rebuilds the open page at the same scroll offset, never
+  under a finger (the turn waits for the lift); dash7 and nightstand7 keep
+  the Location page's draft across it (`CD_SET_WX`). Every `CD_FLAVOR_DASH`
+  firmware builds it.
+- **Rule:** when something that shapes the canvas can change from off the
+  panel, the view open on it compares what it was laid out for with what the
+  glass wears, each frame; do not count on the path that changed it to call
+  back.
+- **Regression check:** `canary-local/emulator/test/runtime_turn.sh`'s dash
+  pass (`dash_sheet_turn_test.cpp`: the sheet, the open page, and no rebuild
+  under a finger). The dash7 and nightstand7 builds (LVGL 9.5) are
+  compile-tested by CI only.
+- **Date learned:** 2026-11
 
 ---
 
@@ -4634,10 +4728,60 @@
   parameter (`declared_as_parameter()`) and never sizes one by its N.
 - **Rule:** a bound a checker trusts must be one the compiler enforces.
   Read the declaration the way the language does, then prove the reading
-  with a mutation the old reading passes. The same function still takes
-  `if (active && active[0])` for a declaration (backlog F470).
+  with a mutation the old reading passes. The same function also took
+  `if (active && active[0])` for a declaration until F470 (#W26PR): a match
+  whose type is the name itself, or whose `&&` follows a word that is not
+  `auto` or a declared struct or enum, is now read past.
 - **Regression check:** the checker's self-test (the "WAP guard self-tests"
   job), whose mutations include both planted cases.
+- **Date learned:** 2026-11
+
+### A JSON default is a fallback for a missing key, not a range check (canary-wap Chirp TTL, F412)
+- **What happened:** `POST /api/chirp/send` read `uint8_t ttl =
+  input["ttl_minutes"] | 15;` for a field spec §3.3 bounds to 5-60. A scratch
+  ArduinoJson 7.4.1 harness (the emulator's pinned copy) running that line
+  verbatim signed 300 as 44, 256 as 0 and -1 as 255; only a float, a string
+  or a bool fell back to 15. The backlog item that sent the fix assumed 300
+  became 15.
+- **Root cause:** `x | 15` answers the default only when the value is not of
+  the default's type; an integer of any size is taken as it is and then
+  narrowed into the byte without a word. The `|` read as validation and was
+  a type test.
+- **Fix:** `ttl_from_request()` (`mesh_network.h`): absent or null is 15, and
+  anything that is not an integer from 5 to 60 answers `invalid_ttl` before
+  it is narrowed. The loop task's `send_chirp()` refuses a byte outside the
+  range first, before any tier expires or any cooldown, nonce, signature or
+  frame, so a refused send spends nothing. The same handler's `template_id`
+  and `detail` still narrow (backlog F485).
+- **Rule:** read a wire integer as `is<int32_t>()`, range-check it, then
+  narrow; `| default` is for an absent key only. Check a claim about a
+  library's coercion by running the library, not by reading the call.
+- **Regression check:** canary-wap `tests_host/test_chirp_commands_wap.cpp`
+  (`a_send_outside_5_to_60_minutes_is_refused`,
+  `the_send_handler_reads_ttl_minutes`, `a_ttl_refusal_expires_no_tier`) and
+  `check_wap_loop_commands.py`'s CV7 pin on the handler's read.
+- **Date learned:** 2026-11
+
+### A stub that answers "started" claims work nobody built, and a cancel of nothing must not reset the state (canary-wap Beacon pairing, F30)
+- **What happened:** Beacon's spec §3.3 pairing was never built, but
+  `start_pair_init()` set the state to `PAIR_INIT` and answered true, and the
+  four `/api/beacon/pair/*` routes answered "started", "confirmed" and "pair
+  canceled" for a pairing that never ran. `cancel_pair()` set the state to
+  Normal whatever it was, so a cancel during an ALARM, a TROUBLE or with the
+  channel disabled read as Normal in `GET /api/beacon`.
+- **Root cause:** the stubs were written as placeholders for a flow, with
+  the flow's success answers, and nothing told a caller the difference.
+- **Fix:** `start_pair_init()`, `start_pair_join()` and `confirm_pair()`
+  return false and touch no state, `cancel_pair()` changes the state only out
+  of a pairing state, and the four routes answer `pairing_not_built`. The
+  spec, the audit doc and the threat model say not built (backlog F30).
+- **Rule:** a stub refuses, by a name that says why, and changes nothing; a
+  cancel changes only the state it cancels.
+- **Regression check:** canary-wap `tests_host/test_beacon_cancel_origination.cpp`
+  (`test_source_pairing_is_refused`, and source pins over every sketch file:
+  no caller of a pairing stub) and `test_beacon_set_load.cpp`
+  (`the_pair_routes_answer_pairing_not_built`, the real `send_error()` over
+  each route's literal).
 - **Date learned:** 2026-11
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots
