@@ -81,12 +81,24 @@ pub enum WebhookAuth {
     Bearer(String),
     /// Require `X-Signature: sha256=<hex>` HMAC of the request, keyed by `secret`.
     ///
-    /// With `replay_window = None` the signature covers the body only (simplest scheme). With
-    /// `replay_window = Some(w)` the request must also carry `X-Timestamp` (unix seconds, within
-    /// `±w` of now) and a unique `X-Nonce`, and the signature covers
-    /// `"<timestamp>.<nonce>.<path>.<body>"` — binding the timestamp, nonce, and request path into
-    /// the MAC so a captured request cannot be replayed (the nonce is rejected on reuse, the
-    /// timestamp expires, and a signature for one route can't be reused against another).
+    /// With `replay_window = None` the signature covers the body only (simplest scheme). The
+    /// secret never crosses the wire, but the signature binds no time, no nonce and no route: a
+    /// captured request verifies again at any later time, and on every route that shares the
+    /// secret, where the route (not the body) picks the claim kind and zone. Anyone who can see
+    /// one request can replay it, so `adapter_host` refuses this mode on a plain-HTTP non-loopback
+    /// bind: there it needs TLS, or a replay window.
+    ///
+    /// With `replay_window = Some(w)` the request must also carry `X-Timestamp` (unix seconds,
+    /// within `±w` of now) and a unique `X-Nonce`, and the signature covers
+    /// `"<timestamp>.<nonce>.<path>.<body>"` (the path without its query string, which routing
+    /// ignores too). That binds the timestamp, nonce, route and body into the MAC: a replay to
+    /// another route fails the MAC, a replay of the same request fails on its remembered nonce,
+    /// and after the window it fails on the timestamp. What it does not cover: nonces are
+    /// remembered in memory, per listener, so a request whose timestamp still passes after a
+    /// restart can be replayed once after it, and one webhook adapter does not know the nonces
+    /// another has seen (give each its own secret); and the timestamp is read on the wall clock
+    /// while nonces age on the monotonic one, so a backward step of the wall clock can let an
+    /// aged-out request pass again.
     Hmac {
         secret: Vec<u8>,
         replay_window: Option<Duration>,
@@ -863,7 +875,8 @@ mod tests {
             signature: Some(sig),
             ..Default::default()
         };
-        // Body-only mode ignores the path argument.
+        // Body-only mode ignores the path argument (replayable and route-free; see
+        // body_only_hmac_replays_at_any_time_and_on_any_route).
         assert!(shared.verify_hmac(&headers, "/p", body));
         // Tampered body invalidates the signature.
         assert!(!shared.verify_hmac(&headers, "/p", br#"{"confidence":0.9}"#));
@@ -937,6 +950,34 @@ mod tests {
             path,
             br#"{"confidence":0.9}"#
         ));
+    }
+
+    #[test]
+    fn body_only_hmac_replays_at_any_time_and_on_any_route() {
+        // The premise adapter_host's bind gate rests on (`webhook_bind_refusal`): a body-only
+        // signature binds no time, no nonce and no route, so one captured request verifies again
+        // and again, and on every route that shares the secret. If this mode ever binds the path
+        // or a timestamp, this test fails and the gate's refusal of a plain-HTTP non-loopback
+        // body-only HMAC is worth revisiting.
+        let secret = b"shared-key".to_vec();
+        let body = br#"{"confidence":0.8}"#;
+        let captured = AuthHeaders {
+            signature: Some(format!(
+                "sha256={}",
+                hex::encode(hmac_sha256(&secret, body))
+            )),
+            ..Default::default()
+        };
+        let shared = test_shared(
+            WebhookAuth::Hmac {
+                secret,
+                replay_window: None,
+            },
+            None,
+        );
+        assert!(shared.verify_hmac(&captured, "/sensors/garage/acoustic", body));
+        assert!(shared.verify_hmac(&captured, "/sensors/garage/acoustic", body));
+        assert!(shared.verify_hmac(&captured, "/sensors/front/tamper", body));
     }
 
     #[cfg(feature = "adapter-webhook-tls")]

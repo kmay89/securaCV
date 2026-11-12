@@ -62,9 +62,19 @@ reCamera Pro is configured, not flashed:
 4. Add matching `[[adapter.route]]` entries to `adapter_host.toml` — see the
    worked example in
    [`adapter_host.example.toml`](../../adapter_host.example.toml).
-5. Set `auth_token` or `hmac_secret` on the webhook adapter (required for
-   anything off loopback) and, if the camera and host aren't on the same
-   trusted LAN, TLS.
+5. Authenticate the webhook adapter: off loopback, `adapter_host` refuses to
+   start it with any setting that lets one captured request be replayed. On plain HTTP
+   that is `hmac_secret` **with** `hmac_replay_window_secs`, and the flow then
+   sends `X-Timestamp`, `X-Nonce` and a signature over
+   `<timestamp>.<nonce>.<path>.<body>` (the recipe is in
+   [`adapter_host.example.toml`](../../adapter_host.example.toml)). A bare
+   `hmac_secret` signs the body only and `auth_token` travels in the clear:
+   anyone on the LAN who sees one request could replay it later, or to
+   another route, so either one needs `tls_cert`/`tls_key` as well. Mutual
+   TLS (`tls_client_ca` with `tls_cert`/`tls_key`) is the other way. Whether
+   the flow editor can compute a fresh per-request signature, or speak
+   TLS to the adapter, is not bench-checked yet
+   ([§5](#5--open-items-before-calling-this-supported-not-just-concept)).
 
 Because this rides the existing webhook adapter, it inherits everything that
 adapter already does for free: rate limiting, bearer/HMAC auth, TLS/mTLS,
@@ -159,8 +169,10 @@ that already run RS485/Modbus/CAN.
   block is the integration *design*, not a verified build. Follow the
   `boards.json` tier convention (`compile-tested` → `verified`) once a real
   unit is on the bench: confirm the flow editor's HTTP action node actually
-  produces the documented payload shape, and that auth/TLS survive a
-  restart.
+  produces the documented payload shape, that it can either sign each
+  request with a fresh timestamp and nonce (`hmac_replay_window_secs`, the
+  plain-HTTP option in §2 step 5) or reach the adapter over TLS, and that
+  auth/TLS survive a restart.
 - Sound-classification class taxonomy (glass break, alarm, raised voice,
   etc.) needs to be pinned to specific SenseCraft audio model IDs once
   trained — this doc describes the target `ClaimKind` mapping, not a
@@ -220,6 +232,9 @@ symptoms the first time someone actually wires one up.
   just a classifier — the camera doing inference is not the same as it POSTing anywhere.
 - Check the camera and `adapter_host` are on the same reachable network; the webhook listener
   defaults to loopback (`127.0.0.1:8800`) — a camera on a different host can't reach that.
+- If `adapter_host` exits at start with `refusing to bind non-loopback address`, the webhook's
+  auth would let a captured request be replayed (no auth, `auth_token` on plain HTTP, or a bare
+  `hmac_secret` on plain HTTP); the message names what to set, and §2 step 5 explains each.
 - `curl` the same URL manually with a matching JSON body first, to isolate "camera can't reach
   the listener" from "listener rejects the camera's request."
 
