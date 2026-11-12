@@ -4,6 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const SPA_DIR = path.join(__dirname, '..', '..', 'spa');
 
@@ -86,6 +87,95 @@ describe('SPA CSP Compliance', () => {
     assert.ok(placeholders.length > 0);
     assert.deepEqual(placeholders.filter((p) => /\b\d{1,3}(?:\.\d{1,3}){3}\b|\[[0-9a-f:]+\]/i.test(p)), [],
       'a placeholder suggests an IP address');
+  });
+
+  // The served CSP has style-src 'self', which refuses a style attribute
+  // (style-src-attr): Chromium drops it and logs a violation, so the layout
+  // it carried never shows. app.js once set sixteen through el()'s `style:`
+  // key, among them the Settings view's Quiet Hours row and the fleet card's
+  // RSSI chip (sweep F474). A view's layout is now a class in styles.css.
+  // This row refuses every way app.js could still write a style attribute:
+  // a `style:` key (el() turns any key it does not know into an attribute),
+  // setAttribute('style', ...), a ['style'] key, an assignment to cssText or
+  // to node.style itself (the same declarations as a string), and parsing
+  // markup, which can carry a style="" of its own. Writing one property
+  // through the CSSOM (node.style.color = ...) is not an attribute, and the
+  // CSP allows it. The row below holds setAttr(), the one place an attribute
+  // named by a variable is set.
+  it("app.js sets no style attribute, which the served style-src 'self' refuses", () => {
+    const securityHeaders = require('../../device-api/middleware/security-headers');
+    const headers = {};
+    securityHeaders()({}, { setHeader: (k, v) => { headers[k.toLowerCase()] = v; } }, () => {});
+    const styleSrc = headers['content-security-policy'].split(';').map((d) => d.trim().split(/\s+/))
+      .find((d) => d[0] === 'style-src');
+    assert.deepEqual(styleSrc.slice(1), ["'self'"],
+      'style-src changed: this row and setAttr() in spa/app.js are written for style-src \'self\'');
+
+    const js = fs.readFileSync(path.join(SPA_DIR, 'app.js'), 'utf8');
+    const lineOf = (i) => js.slice(0, i).split('\n').length;
+    const found = [];
+    for (const [what, re] of [
+      ['a style: key', /(?:^|[{,(\s])['"]?style['"]?\s*:/gm],
+      ["setAttribute('style')", /setAttribute\(\s*['"`]style['"`]|setAttributeNS\([^,)]*,\s*['"`]style['"`]/gi],
+      ["a ['style'] key", /\[\s*['"`]style['"`]\s*\]/g],
+      ['cssText', /\bcssText\b/g],
+      ['an assignment to .style', /\.style\s*=(?!=)/g],
+      ['markup parsing', /\binsertAdjacentHTML\b|\.outerHTML\b|\bDOMParser\b|\bcreateContextualFragment\b|\.srcdoc\b/g],
+    ]) {
+      for (const m of js.matchAll(re)) found.push(what + ' at app.js:' + lineOf(m.index + m[0].length - 1));
+    }
+    assert.deepEqual(found, [], found.length + ' way(s) to a style attribute the served CSP refuses: ' +
+      'move the declarations to a class in spa/styles.css');
+
+    // An attribute named by a variable is set only by setAttr(), which
+    // refuses a style name; a literal name is read by the rows above.
+    const byVariable = [...js.matchAll(/\.setAttribute(?:NS)?\(\s*(?!['"`])/g)].map((m) => lineOf(m.index));
+    const setAttr = js.indexOf('function setAttr(node, name, value) {');
+    assert.ok(setAttr >= 0, 'setAttr() is gone');
+    assert.deepEqual(byVariable, [lineOf(js.indexOf('node.setAttribute(name, value);', setAttr))],
+      'an attribute named by a variable is set outside setAttr()');
+
+    const html = fs.readFileSync(path.join(SPA_DIR, 'index.html'), 'utf8');
+    assert.doesNotMatch(html, /\sstyle\s*=|<style\b/i, 'index.html carries an inline style');
+  });
+
+  it('el() and the device-type icons refuse a style attribute when they run', () => {
+    const made = [];
+    const node = (tag) => {
+      const n = { tag, attrs: {}, children: [], setAttribute(k, v) { this.attrs[k] = String(v); },
+        addEventListener() {}, appendChild(c) { this.children.push(c); return c; } };
+      made.push(n);
+      return n;
+    };
+    const noop = () => {};
+    const sandbox = {
+      document: { addEventListener: noop, getElementById: () => null, createElement: node,
+        createElementNS: (_ns, tag) => node(tag), createTextNode: (t) => ({ t }) },
+      window: { addEventListener: noop, location: { hash: '' }, history: {},
+        matchMedia: () => ({ matches: false, addEventListener: noop }) },
+      localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+      sessionStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+      navigator: { onLine: true },
+      setInterval: noop, clearInterval: noop, setTimeout: noop, clearTimeout: noop,
+      fetch: noop, console,
+    };
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(fs.readFileSync(path.join(SPA_DIR, 'app.js'), 'utf8'), sandbox);
+    const app = sandbox;
+    const refused = /style-src 'self'/;
+
+    for (const name of ['style', 'Style', 'STYLE']) {
+      assert.throws(() => app.el('div', { [name]: 'margin-top: 1rem' }), refused, name);
+    }
+    assert.throws(() => app.deviceTypeIcon({ icon: [{ tag: 'rect', attrs: { style: 'fill: #000' } }] }),
+      refused);
+    const div = app.el('div', { className: 'card', title: 'Garage', 'data-room': 'garage' });
+    assert.deepEqual(div.attrs, { title: 'Garage', 'data-room': 'garage' });
+    for (const [dt, info] of Object.entries(app.DEVICE_TYPES)) {
+      if (info.icon) assert.ok(app.deviceTypeIcon(info), dt + ' has no icon');
+    }
+    assert.ok(made.every((n) => !Object.keys(n.attrs).some((k) => k.toLowerCase() === 'style')));
   });
 
   it('SPA does not include tracking or analytics', () => {

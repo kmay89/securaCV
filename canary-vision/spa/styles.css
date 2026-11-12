@@ -1635,3 +1635,65 @@ html, body {
     grid-template-columns: repeat(4, 1fr);
   }
 }
+
+/* ───────────── Layout the views once set inline ─────────────
+   The CSP served with this page has style-src 'self', which refuses a
+   style attribute (style-src-attr), so app.js sets none (its setAttr()
+   throws on one). Each class below carries the declarations a view once
+   wrote as an inline style, which the browser dropped (sweep F474). They
+   come last, and each is at least as specific as any rule above that
+   sets the same property on its element, so each wins as the inline
+   style would have. */
+
+/* A block button stacked under another (Test Webhook, the witness exports
+   and the verified timeline) */
+.btn-stacked {
+  margin-top: 0.5rem;
+}
+
+/* A digest or key printed under a heading, smaller than token-display */
+.token-display.hash-line {
+  font-size: 0.7rem;
+  word-break: break-all;
+  margin-top: 0.25rem;
+}
+
+/* A section heading set off from the card above it */
+.section-gap {
+  margin-top: 1rem;
+}
+
+/* The Events list's empty message */
+.empty-state .events-empty-msg {
+  padding: 20px 0;
+}
+
+/* A clustered event's sub-event time, at the row's end */
+.event-detail-subevent .subevent-time {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+/* Settings group headings, heavier and brighter than card-subtitle */
+.card-subtitle.settings-heading {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+/* The Quiet Hours start and end fields, side by side */
+.form-group.quiet-hours-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
+/* The fleet card's RSSI chip, by strength (app.js: above -50 dBm good,
+   above -70 fair, else poor) */
+.fleet-stat-chip.rssi-good { color: var(--color-success); }
+.fleet-stat-chip.rssi-fair { color: var(--color-warning); }
+.fleet-stat-chip.rssi-poor { color: var(--color-error); }
