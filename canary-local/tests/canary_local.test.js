@@ -461,25 +461,55 @@ test("no Lab page decodes a visitor-typed address outside a try (the A62 class)"
 // Sweep LP3: a sheet a deep link opens at load (fleet.html#<id>, or index.html#
 // forwarded there) built its Web Audio voice with no press on the page, so the
 // browser refused every resume() (59 to 84 console warnings per load) and the
-// power-on chirp went unheard. The display sheet's audio block is run here as
-// shipped (lifted out of app.js and evaluated against a stand-in document and
-// a stand-in AudioContext that, like Chromium's, starts only once the page has
-// been activated), so the test is the code, not a description of it.
-function displayVoice({ activation = "none", muted = false } = {}) {
+// power-on chirp went unheard. The display sheet's audio block and its corner
+// sound toggle are run here as shipped (lifted out of app.js), with the boot's
+// own priming lifted out of bootInner, against a stand-in document and a
+// stand-in AudioContext, so the test is the code, not a description of it.
+//
+// The stand-in plays by the rules headless Chromium 153 was measured to keep
+// (--autoplay-policy=document-user-activation-required): a context made with
+// no activation logs nothing and starts held ("suspended"), unless the browser
+// lets the tab sound without one (a new tab a click on a Lab page opened
+// starts "running" while hasBeenActive is false); resume() or a source's
+// start() on a held context is refused with a console warning. `firefox`
+// models the other documented answer: navigator.getAutoplayPolicy, and a
+// warning at a refused creation.
+function displayVoice({ activation = "none", autoplay = false, firefox = false, muted = false } = {}) {
   const vm = require("node:vm");
   const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
   const start = app.indexOf("  // Web Audio chime");
-  const end = app.indexOf("  // A small, unobtrusive corner toggle");
+  const end = app.indexOf("  // The page ships only the watch/dash twins");
   assert.ok(start > 0 && end > start, "app.js lost the display sheet's Web Audio block");
   const block = app.slice(start, end);
+  assert.match(block, /canary-sound-toggle/, "the corner sound toggle is part of the lifted block");
+  // bootInner's body up to the emulator it starts: what a boot does to the
+  // voice before the firmware's first note.
+  const bootAt = app.indexOf("const bootInner = async (opts = {}) => {");
+  const bootEnd = app.indexOf("ctx.emu = new CanaryEmulator(factory", bootAt);
+  assert.ok(bootAt > end && bootEnd > bootAt, "app.js lost bootInner's priming");
+  const bootPrime = app.slice(app.indexOf("=> {", bootAt) + 4, bootEnd);
   const page = { active: false, hidden: false };
   const listeners = new Map();              // "type/capture" -> Set(fn)
   const key = (t, c) => `${t}/${c === true || c?.capture === true}`;
+  const body = {
+    children: [],
+    append(n) { this.children.push(n); },
+  };
   const document = {
+    body,
     get hidden() { return page.hidden; },
+    getElementById(id) { return body.children.find((n) => n.id === id) || null; },
     addEventListener(t, fn, c) { (listeners.get(key(t, c)) || listeners.set(key(t, c), new Set()).get(key(t, c))).add(fn); },
     removeEventListener(t, fn, c) { listeners.get(key(t, c))?.delete(fn); },
   };
+  const el = (tag) => ({
+    tag, id: "", textContent: "", attrs: {}, handlers: [],
+    setAttribute(k, v) { this.attrs[k] = v; },
+    getAttribute(k) { return this.attrs[k] ?? null; },
+    addEventListener(t, fn) { if (t === "click") this.handlers.push(fn); },
+    remove() { const i = body.children.indexOf(this); if (i >= 0) body.children.splice(i, 1); },
+    click() { for (const fn of this.handlers) fn({ type: "click" }); },
+  });
   // Dispatch a trusted event: `activates` says whether the browser counts it
   // as an activation (a mouse pointerdown and a key do; a touch pointerdown
   // does not, its pointerup does; Esc does not), set before listeners run.
@@ -490,63 +520,75 @@ function displayVoice({ activation = "none", muted = false } = {}) {
   const count = (types = ["pointerdown", "pointerup", "keydown"]) =>
     types.reduce((n, t) => n + (listeners.get(`${t}/true`)?.size || 0), 0);
   const total = () => [...listeners.values()].reduce((n, set) => n + set.size, 0);
-  const log = { contexts: 0, refused: 0, notes: [] };
-  const node = () => ({
-    connect(n) { return n; },
-    start() { if (ctx0.state !== "running") log.refused++; },
-    stop() {},
-    frequency: { value: 0, setValueAtTime(f) { log.notes.push(f); } },
-    gain: { value: 0, setTargetAtTime() {} },
-    Q: { value: 0 },
-  });
-  let ctx0 = null;
+  // notes: heard (written to a running context); held: written to a held one
+  const log = { contexts: [], refused: 0, notes: [], held: [] };
+  const allowed = () => page.active || autoplay;
   class AudioContext {
     constructor() {
-      log.contexts++;
-      this.state = page.active ? "running" : "suspended";
-      if (!page.active) log.refused++;   // Chromium warns at creation, too
+      log.contexts.push(this);
+      this.state = allowed() ? "running" : "suspended";
+      if (firefox && !allowed()) log.refused++;
       this.currentTime = 0;
       this.destination = {};
-      ctx0 = this;
     }
-    resume() { if (page.active) this.state = "running"; else log.refused++; }
+    resume() { if (allowed()) this.state = "running"; else log.refused++; }
     close() { this.state = "closed"; }
-    createOscillator() { return node(); }
-    createGain() { return node(); }
-    createBiquadFilter() { return node(); }
+    createOscillator() { return this.node(); }
+    createGain() { return this.node(); }
+    createBiquadFilter() { return this.node(); }
+    node() {
+      const ac = this;
+      return {
+        connect(n) { return n; },
+        // a source's start() starts a held context where the page may sound
+        start() { if (ac.state !== "running") { if (allowed()) ac.state = "running"; else log.refused++; } },
+        stop() {},
+        frequency: { value: 0, setValueAtTime(f) { (ac.state === "running" ? log.notes : log.held).push(f); } },
+        gain: { value: 0, setTargetAtTime() {} },
+        Q: { value: 0 },
+      };
+    }
   }
   const navigator = activation === "absent" ? {} : { userActivation: { get hasBeenActive() { return page.active; } } };
-  if (activation === "clicked") page.active = true;
-  const localStorage = { getItem: (k) => (k === "canary-sound" && muted ? "off" : null), setItem() {} };
+  if (firefox) navigator.getAutoplayPolicy = (t) => (t === "audiocontext" && !allowed() ? "disallowed" : "allowed");
+  // "absent": a browser without navigator.userActivation, on a page that was
+  // pressed (the code cannot ask it, so it does not gate)
+  if (activation === "clicked" || activation === "absent") page.active = true;
+  const store = new Map(muted ? [["canary-sound", "off"]] : []);
+  const localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) };
   const ctx = { dispose: [] };
   const build = () => vm.runInNewContext(
-    `(() => {\n${block}\nreturn { tone, setSound, get audio() { return audio; } };\n})()`,
-    { document, navigator, AudioContext, localStorage, ctx },
+    `(() => {\n${block}\nconst setShade = () => {};\nconst boot = () => {${bootPrime}};\n` +
+      "return { tone, boot, get audio() { return audio; } };\n})()",
+    { document, navigator, AudioContext, localStorage, ctx, el },
   );
-  const v = { api: build(), press, count, total, log, page };
+  const v = { api: build(), press, count, total, log, page, body };
+  v.toggle = () => document.getElementById("canary-sound-toggle");
+  v.live = () => log.contexts.filter((c) => c.state !== "closed");
   v.dispose = () => { for (const d of ctx.dispose.splice(0)) d(); };
   v.reopen = () => { v.api = build(); };
   return v;
 }
 
-test("a deep-linked display sheet asks for no audio before a press, and the first press wakes it (LP3)", () => {
-  // At load: the firmware writes its power-on chirp, and nothing is asked of
-  // a browser that would refuse it.
+test("a deep-linked display sheet asks nothing of the browser before a press, and the first press wakes it (LP3)", () => {
+  // At load: the boot primes the voice and the firmware writes its power-on
+  // chirp, and nothing is asked of a browser that would refuse it.
   const v = displayVoice();
+  v.api.boot();
   for (let i = 0; i < 60; i++) v.api.tone(1046 + i, 0.5);
-  assert.strictEqual(v.log.contexts, 0, "no AudioContext before the page has had a press");
-  assert.strictEqual(v.log.refused, 0, "no resume() or start() the browser would refuse (the console warnings)");
-  assert.deepStrictEqual(v.log.notes, [], "the notes before the first press go unheard: no code can play them");
+  assert.strictEqual(v.log.refused, 0, "no resume(), start() or note the browser would refuse (the console warnings)");
+  assert.deepStrictEqual([...v.log.notes, ...v.log.held], [], "the notes before the first press go unheard, and none is written to a held context");
+  assert.ok(v.log.contexts.length <= 1, "at most one context, made at boot and left held");
   assert.strictEqual(v.count(), 3, "one capture listener per waking event");
   // A touch's pointerdown does not activate the page, and Esc activates
   // nothing: the listener waits for the event that does.
   v.press("pointerdown", false);
   v.press("keydown", false);
-  assert.strictEqual(v.log.contexts, 0, "an event that did not activate the page wakes nothing");
+  assert.ok(v.live().every((c) => c.state === "suspended"), "an event that did not activate the page wakes nothing");
   assert.strictEqual(v.count(), 3, "and the listener is still there for the one that will");
   v.press("pointerup");
-  assert.strictEqual(v.log.contexts, 1, "the activating press makes the voice inside the gesture");
-  assert.strictEqual(v.api.audio.state, "running");
+  assert.strictEqual(v.log.contexts.length, 1, "the activating press wakes one voice");
+  assert.strictEqual(v.api.audio.state, "running", "inside the gesture");
   assert.strictEqual(v.count(), 0, "the first-press listener removes itself");
   v.api.tone(1318, 0.5);
   assert.deepStrictEqual(v.log.notes, [1318], "the next note the firmware writes is heard");
@@ -555,49 +597,106 @@ test("a deep-linked display sheet asks for no audio before a press, and the firs
 
 test("the first key press wakes a deep-linked sheet's voice too (LP3)", () => {
   const v = displayVoice();
+  v.api.boot();
   v.api.tone(1046, 0.5);
   v.press("keydown");
   assert.strictEqual(v.api.audio?.state, "running", "a key press is an activation, and wakes the voice");
   assert.strictEqual(v.count(), 0);
   v.api.tone(1568, 0.5);
   assert.deepStrictEqual(v.log.notes, [1568]);
+  assert.strictEqual(v.log.refused, 0);
+});
+
+test("a sheet the browser lets sound without a press plays its power-on chirp (LP3 review)", () => {
+  // The flasher's "boot its screen" links open fleet.html#<id> in a new tab
+  // (target=_blank): that tab has had no press (hasBeenActive is false), yet
+  // Chromium starts its audio. Activation is not the browser's verdict; the
+  // context's state is.
+  const v = displayVoice({ autoplay: true });
+  v.api.boot();
+  v.api.tone(1046, 0.5);
+  v.api.tone(1318, 0.5);
+  assert.deepStrictEqual(v.log.notes, [1046, 1318], "the chirp the firmware writes at boot is heard");
+  assert.strictEqual(v.api.audio?.state, "running");
+  assert.strictEqual(v.log.contexts.length, 1);
+  assert.strictEqual(v.log.refused, 0);
+});
+
+test("where the browser says beforehand it would refuse, no context is made until the press (LP3)", () => {
+  // Firefox answers navigator.getAutoplayPolicy("audiocontext") and warns at a
+  // refused creation, so a held context is not free there.
+  const v = displayVoice({ firefox: true });
+  v.api.boot();
+  v.api.tone(1046, 0.5);
+  assert.strictEqual(v.log.contexts.length, 0, "no context the browser said it would refuse");
+  assert.strictEqual(v.log.refused, 0);
+  v.press("pointerdown");
+  assert.strictEqual(v.api.audio?.state, "running", "the first press makes the voice inside the gesture");
+  v.api.tone(1318, 0.5);
+  assert.deepStrictEqual(v.log.notes, [1318]);
+  assert.strictEqual(v.log.refused, 0);
 });
 
 test("a click-opened sheet, and a browser without userActivation, play at once as before (LP3)", () => {
   for (const activation of ["clicked", "absent"]) {
     const v = displayVoice({ activation });
     assert.strictEqual(v.count(), 0, `${activation}: no first-press listener when the page may already play`);
+    v.api.boot();
+    assert.strictEqual(v.api.audio?.state, "running", `${activation}: the boot from a press primes the voice`);
     v.api.tone(1046, 0.5);
-    assert.strictEqual(v.log.contexts, 1, `${activation}: the first note makes the voice`);
-    assert.deepStrictEqual(v.log.notes, [1046], `${activation}: and is heard`);
+    assert.strictEqual(v.log.contexts.length, 1, `${activation}: one voice`);
+    assert.deepStrictEqual(v.log.notes, [1046], `${activation}: and the chirp is heard`);
   }
 });
 
 test("mute holds through the first press, and open/close never stacks the listener (LP3)", () => {
   const m = displayVoice({ muted: true });
+  m.api.boot();
   m.press("pointerdown");
   m.api.tone(1046, 0.5);
-  assert.strictEqual(m.log.contexts, 0, "a muted sheet makes no voice on the first press, nor after it");
+  assert.strictEqual(m.log.contexts.length, 0, "a muted sheet makes no voice at boot, on the first press, nor after it");
   assert.strictEqual(m.count(), 0, "the listener is gone once the page is activated, muted or not");
   // Twenty deep-linked opens and closes on one document, none pressed: each
   // sheet's closure hooks the document and its dispose unhooks it, so the
   // twenty-first open finds one first-press listener per event, not 21.
   const v = displayVoice();
   for (let i = 0; i < 20; i++) {
+    v.api.boot();
     assert.strictEqual(v.count(), 3, `open ${i + 1}: one first-press listener per waking event`);
     v.dispose();
     assert.strictEqual(v.total(), 0, `close ${i + 1}: every listener the sheet added is gone (visibilitychange too)`);
+    assert.strictEqual(v.live().length, 0, `close ${i + 1}: the sheet's context is closed with it`);
     v.reopen();
   }
+  v.api.boot();
   assert.strictEqual(v.count(), 3, "after twenty cycles the document still holds one per event");
   // And the press that finally comes wakes exactly one voice.
   v.press("pointerdown");
-  assert.strictEqual(v.log.contexts, 1, "one voice, made by the one listener left");
+  assert.deepStrictEqual(v.live().map((c) => c.state), ["running"], "one voice, woken by the one listener left");
+  assert.strictEqual(v.log.refused, 0, "and not one refusal over twenty-one boots");
 });
 
-test("a deep-linked boot does not prime the voice before a press (LP3 source pin)", () => {
-  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
-  const boot = app.slice(app.indexOf("const bootInner = async"), app.indexOf("ctx.emu = new CanaryEmulator(factory"));
-  assert.match(boot, /if \(!soundMuted && mayPlay\(\)\) \{ try \{ ensureVoice\(\); audioResume\(\); \} catch \{\} \}/,
-    "bootInner primes the voice only when the page may play (a boot from a press), never at load from a deep link");
+test("the corner sound toggle mutes the sheet that is open, after a close and a reopen (LP3 review)", () => {
+  // The toggle used to be made once per document: its click drove the FIRST
+  // sheet's closure, so after a close and a reopen, muting flipped the button
+  // and the stored choice while the open sheet kept sounding.
+  const v = displayVoice({ activation: "clicked" });
+  v.api.boot();
+  v.dispose();
+  v.reopen();
+  v.api.boot();
+  v.api.tone(1046, 0.5);
+  assert.deepStrictEqual(v.log.notes, [1046], "the reopened sheet sounds");
+  v.toggle().click();
+  assert.strictEqual(v.toggle().getAttribute("aria-pressed"), "false", "the button reads muted");
+  v.api.tone(1318, 0.5);
+  v.api.tone(1568, 0.5);
+  assert.deepStrictEqual(v.log.notes, [1046], "and the open sheet is silent after the mute");
+  v.toggle().click();
+  v.api.tone(1760, 0.5);
+  assert.deepStrictEqual(v.log.notes, [1046, 1760], "unmuting it sounds again");
+  // One toggle per open sheet, and none once it closes.
+  assert.strictEqual(v.body.children.filter((n) => n.id === "canary-sound-toggle").length, 1, "the open sheet has one toggle");
+  v.dispose();
+  assert.strictEqual(v.toggle(), null, "closing the sheet takes its toggle with it");
 });
