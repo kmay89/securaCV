@@ -209,6 +209,14 @@ Whichever way you grant it, the rest stays as it is: the picker never offers
 your system disk or an internal fixed disk, the write still asks you to type
 ERASE, and every byte is read back afterwards.
 
+While it writes, the Flasher keeps the unpacked card image in its own cache
+folder (`~/.cache/com.securacv.flasher/hub-images` on most Linux systems;
+your temp folder only if it has no cache folder). Once your Wi-Fi password
+and hub account are added, that file holds both, so it is created under a
+random name that only your account can read (mode 0600). It is deleted when
+the write ends, fails or is canceled; if the app is killed mid-write, the
+next launch deletes it.
+
 ---
 
 ## Updating

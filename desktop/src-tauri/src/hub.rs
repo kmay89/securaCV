@@ -475,8 +475,8 @@ pub async fn hub_flash(
 /// is shared with every account on the machine — a predictable name there
 /// was readable by any of them for the minutes a card takes, and a plant
 /// target besides. Falls back to the temp dir only when the app has no cache
-/// dir at all (xz.rs then still creates the file 0600 and refuses a planted
-/// one).
+/// dir at all (the raw image is then still created 0600, exclusively, under
+/// a random name: `private_raw_image`).
 fn staging_dir(app: &AppHandle) -> std::path::PathBuf {
     match app.path().app_cache_dir() {
         Ok(d) => {
@@ -488,26 +488,57 @@ fn staging_dir(app: &AppHandle) -> std::path::PathBuf {
     }
 }
 
+/// The raw image's staging file name: `securacv-hub-` + random + `.img`.
+/// `cleanup_orphans` sweeps by this prefix and suffix, which also catch the
+/// `securacv-hub-<pid>.img` name builds before this one used.
+const RAW_IMAGE_PREFIX: &str = "securacv-hub-";
+const RAW_IMAGE_SUFFIX: &str = ".img";
+
+/// Make the file the raw image is decompressed into: atomically created
+/// (`O_EXCL`, so a file or link someone planted at a guessable name is never
+/// written through), randomly named, and owner-only (0600 on Unix) from the
+/// moment it exists. Step 5b seeds the Wi-Fi passphrase and the owner's
+/// bcrypt hash into this file, and it sits in the staging dir (on Linux the
+/// shared 1777 `/tmp` when the app has no cache dir) for the whole multi-GB
+/// write and read-back. The same rule as the
+/// Canary path's `stage_firmware`. The returned path deletes the file when it
+/// drops, on success and on every early return; a killed process leaves it
+/// for the next launch's `cleanup_orphans`.
+fn private_raw_image(dir: &std::path::Path) -> Result<tempfile::TempPath, String> {
+    tempfile::Builder::new()
+        .prefix(RAW_IMAGE_PREFIX)
+        .suffix(RAW_IMAGE_SUFFIX)
+        .tempfile_in(dir)
+        .map(tempfile::NamedTempFile::into_temp_path)
+        .map_err(|e| format!("couldn't create a private staging file for the raw image: {e}"))
+}
+
+/// Remove every raw staging image in `dir` (a crash or a pulled plug skips
+/// the drop that would have). Quiet: a file this account can't remove,
+/// another account's, is skipped.
+fn sweep_raw_images(dir: &std::path::Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with(RAW_IMAGE_PREFIX) && name.ends_with(RAW_IMAGE_SUFFIX) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
 /// Sweep files a crash or pulled plug could have orphaned: the ~2.5 GB raw
-/// images we stage in the temp dir (whose RaiiPath cleanup can't run if the
+/// images we stage in the temp dir (whose drop-time cleanup can't run if the
 /// process is killed) and any half-finished `.partial` downloads in the image
 /// cache. Best-effort and quiet — a file we can't remove is simply skipped.
 /// Run once at startup, before this process flashes anything of its own, so it
 /// never races its own work.
 pub fn cleanup_orphans(app: &AppHandle) {
-    // Raw staging images: securacv-hub-<pid>.img in the staging dir — and in
-    // the OS temp dir too, where versions before 0.12.6 staged them. Swept
-    // before this process stages anything, so the `create_new` open in
-    // xz.rs never meets a stale orphan at its own name.
+    // Raw staging images: securacv-hub-<random>.img (and the pid-named ones
+    // builds before this one used) in the staging dir — and in the OS temp
+    // dir too, where versions before 0.12.6 staged them.
     for dir in [staging_dir(app), std::env::temp_dir()] {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if name.starts_with("securacv-hub-") && name.ends_with(".img") {
-                    let _ = std::fs::remove_file(e.path());
-                }
-            }
-        }
+        sweep_raw_images(&dir);
     }
     // Half-finished downloads: <image>.partial in the image cache dir.
     if let Ok(dir) = app.path().app_cache_dir() {
@@ -1085,13 +1116,11 @@ fn hub_flash_blocking(
 
     // 5) Decompress to a raw image in the user-private staging dir (it's
     //    ~2.5 GB — the cached .xz is the artifact worth keeping, not the
-    //    expanded image). xz.rs creates it 0600 and refuses a file already
-    //    at the name.
-    let raw_path = CleanupPath {
-        path: staging_dir(app).join(format!("securacv-hub-{}.img", std::process::id())),
-        active: true,
-    };
-    let raw = hub_io::xz::decompress(&xz_path, &raw_path.path, cancel, &mut progress)?;
+    //    expanded image): created exclusively under a random name, owner-only
+    //    (0600) — it carries the Wi-Fi passphrase and the owner's bcrypt hash
+    //    once 5b seeds it — and deleted when `raw_path` drops.
+    let raw_path = private_raw_image(&staging_dir(app))?;
+    let raw = hub_io::xz::decompress_into(&xz_path, &raw_path, cancel, &mut progress)?;
     log(format!("✓ raw image ready: {} bytes", raw.bytes));
     if raw.bytes > target.size_bytes {
         return Err(format!(
@@ -1134,7 +1163,7 @@ fn hub_flash_blocking(
         mut provision_note,
     ) = if want_wifi || want_account || want_provision {
         let report = hub_io::seed::inject_into_image(
-            &raw_path.path,
+            &raw_path,
             wifi_seed.as_ref(),
             &account_files,
             &provision_files,
@@ -1172,7 +1201,7 @@ fn hub_flash_blocking(
                 "→ the experimental self-setup seed didn't apply: {note}"
             ));
         }
-        image_sha = hub_io::seed::rehash_image(&raw_path.path, cancel, &mut progress)?;
+        image_sha = hub_io::seed::rehash_image(&raw_path, cancel, &mut progress)?;
         (
             report.wifi_written,
             report.account_written,
@@ -1234,8 +1263,7 @@ fn hub_flash_blocking(
                 .to_string(),
         );
     }
-    let receipt =
-        hub_io::write::write_image(authz, &raw_path.path, &image_sha, cancel, &mut progress)?;
+    let receipt = hub_io::write::write_image(authz, &raw_path, &image_sha, cancel, &mut progress)?;
     log("✓ written and read back — every byte on the card matches the image".to_string());
     if wifi_seeded {
         // Worth saying plainly: the settings are not a separate step that could
@@ -1703,12 +1731,10 @@ fn run_ssh(log: &dyn Fn(String), args: &[String]) -> Result<(i32, String), Strin
     Ok((status.code().unwrap_or(-1), t))
 }
 
-/// A path that deletes its file when dropped — used for the ~2.5 GB raw image
-/// so it never lingers, on the happy path or any early return.
-/// A path whose file is deleted on drop when `active` — used for the ~2.5 GB
-/// raw image (always) and a temp-dir `.xz` fallback (only when there's no
-/// persistent cache dir to keep it in). Cleans up on the happy path and on
-/// every early return alike.
+/// A path whose file is deleted on drop when `active` — used for a temp-dir
+/// `.xz` fallback (only when there's no persistent cache dir to keep it in).
+/// Cleans up on the happy path and on every early return alike. The raw image
+/// has its own owner-only temp file (`private_raw_image`).
 struct CleanupPath {
     path: std::path::PathBuf,
     active: bool,
@@ -1784,5 +1810,104 @@ mod tests {
         ] {
             assert!(local_hub_host(h).is_err(), "{h:?} should be refused");
         }
+    }
+}
+
+#[cfg(test)]
+mod staging_tests {
+    use super::{private_raw_image, sweep_raw_images, RAW_IMAGE_PREFIX, RAW_IMAGE_SUFFIX};
+
+    /// The name the raw image was staged under before it moved to a random
+    /// one: guessable, so another account could plant something there first.
+    fn pid_name(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join(format!("securacv-hub-{}.img", std::process::id()))
+    }
+
+    /// Step 5's staging file (the Wi-Fi passphrase and the owner's bcrypt hash
+    /// go into it at 5b) is owner-only, randomly named, and gone when the
+    /// pipeline lets go of it.
+    #[test]
+    fn the_raw_image_is_staged_owner_only_under_a_random_name() {
+        let dir = tempfile::tempdir().unwrap();
+        // The usual desktop umask, so a plain create would come out 0644 here
+        // on every runner. SAFETY: umask(2) swaps the process's file-creation
+        // mask; it cannot fail and touches no memory.
+        #[cfg(unix)]
+        let previous = unsafe { libc::umask(0o022) };
+        let a = private_raw_image(dir.path());
+        #[cfg(unix)]
+        unsafe {
+            libc::umask(previous)
+        };
+        let a = a.expect("staged");
+        let b = private_raw_image(dir.path()).expect("staged");
+
+        assert_ne!(a.to_path_buf(), b.to_path_buf(), "two runs, two names");
+        assert_ne!(
+            a.to_path_buf(),
+            pid_name(dir.path()),
+            "not the guessable name"
+        );
+        let name = a.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            name.starts_with(RAW_IMAGE_PREFIX) && name.ends_with(RAW_IMAGE_SUFFIX),
+            "{name}: the next launch's sweep must still recognize it"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&a).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "staged image mode {mode:o}");
+        }
+
+        let path = a.to_path_buf();
+        drop(a);
+        assert!(!path.exists(), "dropping the staging path removes the file");
+    }
+
+    /// What someone else put at the old, guessable name is left alone: the
+    /// staging file is a new one, created exclusively, never that file and
+    /// never what a link there points at.
+    #[test]
+    fn a_planted_file_or_link_is_never_written_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let planted = pid_name(dir.path());
+        std::fs::write(&planted, b"planted").unwrap();
+        #[cfg(unix)]
+        let target = dir.path().join("victim.txt");
+        #[cfg(unix)]
+        {
+            std::fs::write(&target, b"victim").unwrap();
+            std::os::unix::fs::symlink(&target, dir.path().join("securacv-hub-1.img")).unwrap();
+        }
+
+        let staged = private_raw_image(dir.path()).expect("staged");
+        std::fs::write(&staged, b"secret image").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&planted).unwrap(), "planted");
+        #[cfg(unix)]
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "victim");
+    }
+
+    /// A killed run never drops its staging path, so the file outlives it; the
+    /// next launch's sweep removes it (and an old pid-named one), and nothing
+    /// else.
+    #[test]
+    fn the_next_launch_sweeps_what_a_killed_run_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = private_raw_image(dir.path())
+            .expect("staged")
+            .keep()
+            .expect("kept, as a kill would");
+        let old_style = pid_name(dir.path());
+        std::fs::write(&old_style, b"old").unwrap();
+        let unrelated = dir.path().join("haos_rpi5-64-18.1.img");
+        std::fs::write(&unrelated, b"not ours").unwrap();
+
+        sweep_raw_images(dir.path());
+
+        assert!(!orphan.exists(), "the random-named orphan is swept");
+        assert!(!old_style.exists(), "an older build's pid-named orphan too");
+        assert!(unrelated.exists(), "nothing else in the temp dir");
     }
 }
