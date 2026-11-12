@@ -697,6 +697,15 @@ void test_a_send_outside_5_to_60_minutes_is_refused() {
 // before it is narrowed to the frame's byte. The old `| 15` into a uint8_t
 // sent 300 as 44, 256 as 0 and -1 as 255, all three signed and broadcast,
 // and a 15.5 or a "30" as 15.
+//
+// No ArduinoJson is compiled here: each row's present / is_integer / value
+// columns are ArduinoJson 7.4.1's readings of that request (the version
+// the Lab emulator pins), taken by a scratch harness outside this suite
+// that ran the handler's own three calls over each JSON value. The suite
+// holds what ttl_from_request() does with those readings, and
+// check_wap_loop_commands.py holds the handler to the call; a later
+// ArduinoJson that read a value differently would not fail here (CI's
+// Arduino build installs the library unpinned).
 void test_the_send_handler_reads_ttl_minutes() {
   struct Row {
     const char* json;   // the request's value, as it is written
@@ -2709,6 +2718,48 @@ void test_a_send_that_ends_a_quiet_day_counts_from_tier_1() {
   std::printf("PASS a_send_that_ends_a_quiet_day_counts_from_tier_1\n");
 }
 
+// A TTL refused in that same drain (sweep F412) is refused before
+// send_chirp() reads the channel at all: the tiers are not expired by the
+// refusal, only by update()'s own reset later in the pass, so the next send
+// in range counts from tier 1 just the same. The drain alone is the
+// refusal's whole effect: a whole pass expires the tiers right after it, so
+// only a drain-only turn can tell a send that expired them from one that
+// did not.
+void test_a_ttl_refusal_expires_no_tier() {
+  const uint32_t clock_was = host_sim::now_ms;
+  host_sim::now_ms = 1000;
+  boot();
+  enabled_channel();
+  CHECK(send_when_due().cooldown_tier == 1);
+  CHECK(send_when_due().cooldown_tier == 2);
+  const uint32_t last = cc::g_cooldown.last_chirp_ms;
+  host_sim::now_ms = last + 1000;
+  cc::update();                                     // a pass well inside the day
+  host_sim::now_ms = last + cc::COOLDOWN_RESET_MS + 1 - cc::COMMAND_POLL_MS;
+  cc::Command c = send_of(cc::TPL_INFRA_POWER_OUT);
+  for (uint8_t ttl : {uint8_t{4}, uint8_t{61}}) {
+    const SendState before = send_state();
+    c.ttl_minutes = ttl;
+    const Rest r = rest(c, 1, Turn::kDrain);
+    CHECK(r.wait == lcr::Wait::kDone && r.loop_turns == 1);
+    CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_TTL);
+    // Past 24 quiet hours and still at tier 2 (the tier the result reads
+    // after the send): the refusal expired nothing.
+    CHECK(r.r.cooldown_tier == 2);
+    CHECK(host_sim::now_ms - cc::g_cooldown.last_chirp_ms > cc::COOLDOWN_RESET_MS);
+    CHECK(cc::g_cooldown.chirps_sent_today == 2 && cc::g_cooldown.last_chirp_ms == last);
+    CHECK(same_state(before, send_state()));
+  }
+  cc::update();                                     // update()'s own reset
+  CHECK(cc::g_cooldown.chirps_sent_today == 0 && cc::g_cooldown.last_chirp_ms == 0);
+  c.ttl_minutes = 30;
+  const Rest r = rest(c);
+  CHECK(r.r.ok && r.r.refusal == cc::SEND_REFUSED_NONE && r.r.cooldown_tier == 1);
+  CHECK(host_sim::httpd_side_effects == 0);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS a_ttl_refusal_expires_no_tier\n");
+}
+
 // A disable and an enable keep the tiers: the new session (a new key,
 // session id and emoji, spec 2.3) waits out the presence requirement, and
 // then the cooldown's rest. enable() zeroed them, so the send 10 minutes
@@ -3377,6 +3428,7 @@ const Test kTests[] = {
     {"the_tiers_reset_24_quiet_hours_after_the_last_send",
      test_the_tiers_reset_24_quiet_hours_after_the_last_send},
     {"a_send_that_ends_a_quiet_day_counts_from_tier_1", test_a_send_that_ends_a_quiet_day_counts_from_tier_1},
+    {"a_ttl_refusal_expires_no_tier", test_a_ttl_refusal_expires_no_tier},
     {"a_disable_keeps_the_tiers", test_a_disable_keeps_the_tiers},
     {"a_new_session_beacons_no_last_send", test_a_new_session_beacons_no_last_send},
     {"the_beacon_age_stops_at_254_across_the_wrap", test_the_beacon_age_stops_at_254_across_the_wrap},

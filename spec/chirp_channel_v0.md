@@ -665,13 +665,14 @@ On relay (hop_count > 0):
   any other value that is not an integer from 5 to 60 as `invalid_ttl`
   before it narrows the value to the byte the frame carries; the loop
   task's send refuses a byte outside the range before any gate, so such a
-  send spends no cooldown and nothing is signed. The route took any value
-  into that byte and signed what was left of it: 300 went out as 44, -1 as
-  255. Its receiver does not read the TTL as a display time: it keeps
-  every chirp `DEFAULT_DISPLAY_MS` (30 min), whatever the TTL says, and a
-  relay carries a TTL outside the range as its origin signed it. Whether a
-  receiver honors the TTL, or refuses one outside the range, is not decided
-  yet.
+  send spends no cooldown and nothing is signed. Before F412 the route
+  narrowed an integer into that byte and signed what was left of it (300
+  went out as 44, -1 as 255), and sent a value it did not read as an `int`
+  (a 15.5, a `"30"`) as 15. Its receiver does not read the TTL as a
+  display time: it keeps every chirp `DEFAULT_DISPLAY_MS` (30 min),
+  whatever the TTL says, and a relay carries a TTL outside the range as
+  its origin signed it. Whether a receiver honors the TTL, or refuses one
+  outside the range, is not decided yet.
 - Receivers verify both signatures and that `origin_pubkey != session_pubkey`.
 
 **Categories**:
@@ -1057,9 +1058,11 @@ task has not started within 2 s is withdrawn and answers `503
 others are waiting answers `409 {"success":false,"error":"chirp_busy"}`.
 Neither changed anything. Every other answer keeps its shape.
 
-A send that does not go out says why, in this order: `invalid_ttl` (a
-`ttl_minutes` outside §3.3's 5 to 60, refused before every gate, so it
-spends no cooldown; sweep F412), `chirp_disabled`,
+A send that does not go out says why, in this order: `invalid_template`
+(a `template_id` with no template, which the handler refuses before it
+submits), `invalid_ttl` (a `ttl_minutes` outside §3.3's 5 to 60, refused by
+the handler before it submits and by the loop task's send before every
+gate, so it spends no cooldown; sweep F412), `chirp_disabled`,
 `presence_required` (ten minutes on), `cooldown` (with
 `cooldown_remaining_sec` and `cooldown_tier`), `clock_unsynced` (the wall
 clock is not set yet: the canary-wap sets it from GPS and has no SNTP, and
