@@ -8,12 +8,10 @@
 #include "csi_tune_lab.h"
 
 #include <Preferences.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "csi_module_settings_nvs.h"
-#include "csi_settings_nvs.h"
+#include "csi_settings_nvs.h"   /* and json_member.h: the POST's keys (F469) */
 
 using csi_module_settings_nvs::nvs_key_for;
 
@@ -135,20 +133,12 @@ void tune_clear_value(Preferences& prefs, const TuneCoeff& c) {
   if (prefs.isKey(nvs)) prefs.remove(nvs);
 }
 
-/* Is `p` a JSON null, a whole token (not "nullx")? */
-static bool is_json_null(const char* p) {
-  if (strncmp(p, "null", 4) != 0) return false;
-  const char next = p[4];
-  return next == '\0' || next == ',' || next == '}' || next == ' ' || next == '\t' ||
-         next == '\r' || next == '\n';
-}
-
 /* Find one or more "key":value pairs in the body and write each. The
- * parser is intentionally minimal — it walks the body looking for
- * keys we recognize from TUNE_COEFFS and a numeric or true/false RHS, or
- * null, which removes the knob's row (the Lab's reset, sweep F127).
- * Any unrecognized key is silently ignored (P2; tinkerers are not
- * expected to need detailed feedback on typos). */
+ * keys we recognize are TUNE_COEFFS' full keys, each a member of the body's
+ * own object (json_member.h's json_object_member(), sweep F469): a number or
+ * true/false (1/0) for a bool, or null, which removes the knob's row (the
+ * Lab's reset, sweep F127). Any unrecognized key is silently ignored (P2;
+ * tinkerers are not expected to need detailed feedback on typos). */
 TunePost tune_post(const char* body, void (*reinit)(const char* module_id)) {
   TunePost post;
   memset(&post, 0, sizeof(post));
@@ -161,40 +151,39 @@ TunePost tune_post(const char* body, void (*reinit)(const char* module_id)) {
   /* Track what to apply. A small fixed set keeps us from reinit-spamming
    * when one POST changes several coefficients under the same module, or
    * re-applying Quiet Hours once per knob. */
+  const size_t len = strlen(body);
   for (size_t i = 0; i < TUNE_COEFF_COUNT; ++i) {
     const TuneCoeff& c = TUNE_COEFFS[i];
-    /* Locate "<full_key>" in the body, then walk to the colon and
-     * the value. We require the surrounding quotes so that
-     * "core.presence.pet_mode" doesn't accidentally match
-     * "not_pet_mode" or similar substrings. */
-    char needle[80];
-    int nl = snprintf(needle, sizeof(needle), "\"%s\"", c.full_key);
-    if (nl <= 0 || nl >= (int)sizeof(needle)) continue;
-    const char* p = strstr(body, needle);
-    if (!p) continue;
-    p += nl;
-    /* JSON whitespace on both sides of the colon, newlines included: a
-     * null or a bool on the next line is read, as a number there always
-     * was (strtol skips them itself). */
-    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
-    if (*p != ':') continue;
-    p++;
-    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    /* The body's own "<full_key>" member (sweep F469). The key used to be
+     * found with strstr() of "<full_key>" in quotes anywhere in the body,
+     * a ':' after it, so a nested object's member ({"x":{"<full_key>":1}})
+     * was read as the body's, and of two the first won. Two now read as
+     * neither (parsers disagree on which one wins), and a body the reader
+     * does not take reads as no knob. JSON whitespace, newlines included,
+     * may sit on either side of the colon. */
+    JsonMember m = {nullptr, nullptr, 0};
+    if (!json_object_member(body, len, c.full_key, &m)) continue;
+    /* A value in quotes is none of a knob's (as before: the old reader read
+     * a number or a word, never a string). */
+    if (m.value[0] == '"') continue;
 
     /* null: the Lab's reset, the row goes whatever the knob's kind. */
-    const bool reset = is_json_null(p);
+    const bool reset = m.value_len == 4 && memcmp(m.value, "null", 4) == 0;
     int32_t v = 0;
     if (!reset && c.kind == TK_BOOL) {
-      if      (strncmp(p, "true",  4) == 0) v = 1;
-      else if (strncmp(p, "false", 5) == 0) v = 0;
-      else if (strncmp(p, "1",     1) == 0) v = 1;
-      else if (strncmp(p, "0",     1) == 0) v = 0;
-      else continue;
+      bool on = false;
+      int32_t n = 0;
+      if (json_member_bool(m, &on)) {
+        v = on ? 1 : 0;
+      } else if (json_member_int(m, &n) && (n == 0 || n == 1)) {
+        v = n;
+      } else {
+        continue;
+      }
     } else if (!reset) {
-      char* end = nullptr;
-      long n = strtol(p, &end, 10);
-      if (end == p) continue;
-      v = (int32_t)n;
+      /* A whole number (json_member_int(): no fraction or exponent, past
+       * kJsonIntMax saturated), clamped to the knob's range when stored. */
+      if (!json_member_int(m, &v)) continue;
     }
 
     if (reset) {

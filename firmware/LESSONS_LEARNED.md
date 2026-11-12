@@ -4537,9 +4537,10 @@
   key is read (400 "body is not JSON"), and the integer reader saturates
   instead of keeping a long number's first nine digits.
 - **Rule:** find a JSON key where a JSON parser would, and give every
-  reader of a request the same bytes. The same class still reads
+  reader of a request the same bytes. The same class still read
   `/api/events/dismiss`, `/api/mqtt/config` and the Tuning Lab's POSTs
-  (backlog F469).
+  until F469 moved them, and the reader, to `json_member.h` (the entry
+  below).
 - **Regression check:** canary-wap `tests_host/test_wap_tune_lab.cpp`
   (`test_the_settings_post_reads_keys_not_values`,
   `test_the_settings_reader_reads_json`, and the pins in
@@ -5564,6 +5565,37 @@
   the guard), `a_joiner_refusing_a_held_member_from_another_opera_keeps_its_own`
   (fails on a mutant that installs the COMPLETE's opera before `add_peer()`)
   and `a_re_pair_into_another_opera_keeps_the_joiners_other_members`.
+- **Date learned:** 2026-11
+
+### A reader that answers "no key" for a key it could not read must not let the route answer "saved" (canary-wap POST readers, F469)
+- **What happened:** after F462 three more POST readers found a key with
+  `strstr()` anywhere in the body: the events dismissal
+  (`{"note":"event_id 7","event_id":9}` dismissed event 7), the MQTT config
+  POST (`{"x":{"host":"inner"},"host":"outer"}` saved the host inner, and a
+  `"password"` nested in another object passed as the caller typing one, so
+  a session's move of the broker was saved with that value in place of the
+  stored password where the F289 gate answers 403) and the Tuning Lab's
+  POST (a nested knob was stored; of two, the first). Moving them to the
+  F462 reader, which reads a key named twice or a body it cannot parse as
+  no key, would have left `{"password":"a","password":"b"}` answered
+  `{"ok":true}` with the stored password kept: the route asked to change a
+  secret, said it did, and did not.
+- **Root cause:** "no key" is a fine answer for a reader and a wrong one for
+  a route that saves what it read; the two must be told apart.
+- **Fix:** the reader moved to a header-only `json_member.h` and says which
+  of four it found (`json_object_find()`: found, absent, twice, unreadable).
+  The MQTT POST refuses a body that is not one JSON object, or names a key
+  it reads twice, before any field is applied (400); the dismissal answers
+  each case by name and dismisses nothing; the Lab keeps the F462 posture
+  (a knob named twice is neither), since none of its knobs is a secret.
+- **Rule:** when a read can come back "absent", ask what the route answers
+  then; if that answer is "saved" and the absent key was a secret, refuse
+  the request instead.
+- **Regression check:** canary-wap `tests_host/test_mqtt_reinit.cpp`
+  (`the_config_post_reads_the_bodys_own_keys`), `test_wap_tune_lab.cpp`
+  (`the_dismissal_reads_its_own_event_id`,
+  `the_post_reads_the_bodys_own_knobs`, and the pins in
+  `the_wire_readers_find_keys_with_the_reader`).
 - **Date learned:** 2026-11
 
 ## The 2.4.20 audit: one owner for a fact, one door for a field

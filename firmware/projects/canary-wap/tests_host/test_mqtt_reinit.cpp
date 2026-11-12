@@ -2348,6 +2348,130 @@ void test_a_stored_snapshot_sees_a_rewrite_of_the_same_row() {
   std::printf("PASS a_stored_snapshot_sees_a_rewrite_of_the_same_row\n");
 }
 
+// ── POST /api/mqtt/config reads the body's own keys (sweep F469) ──────────
+//
+// Each key was found with strstr() of the quoted key anywhere in the body
+// and read after the next ':' anywhere after it (json_extract_string /
+// _bool / _int), so a value spelled like a key was read as the key
+// ({"note":"host","x":"evil.example"} saved the host evil.example,
+// {"label":"port","x":1} the port 1), a nested object's member was the
+// body's ({"x":{"host":"inner"},"host":"outer"} saved inner, and a nested
+// "password" was read as the caller typing one: the session's move was
+// saved with that password in place of the stored one, where F289's gate
+// answers 403), and the first of two was taken. Each is a member of the body's own object now
+// (json_member.h's json_object_find()). A body that names a key twice, or
+// that the reader does not take (cut, trailing bytes, a NUL, an own key with
+// an escape, an escape JSON does not have), is refused 400 before any field
+// is applied, so none is answered saved with the stored host, password or
+// CA kept. The bodies the page and the wizard send, the escapes, the raw
+// control bytes and the limits above read as they did.
+
+const char* const kNamedTwice = "a setting is named more than once";
+const char* const kNotJson = "body is not JSON";
+
+// A 400 with `reason`, NVS as it was (byte for byte, no write taken), the
+// open client untouched, and no re-init asked for.
+void expect_bad_request(const Http& h, const Stored& was, const std::string& reason) {
+  if (h.req.status != "400 Bad Request") {
+    std::printf("FAIL the body answered %s %s\n", h.req.status.c_str(), h.req.resp.c_str());
+  }
+  CHECK(h.req.status == "400 Bad Request");
+  CHECK(h.req.resp == "{\"ok\":false,\"reason\":\"" + reason + "\"}");
+  CHECK(h.delays == 0);
+  CHECK(stored() == was);
+  reinit_turns();
+  CHECK(fake::count("init") == 0 && fake::count("stop") == 0 && fake::count("destroy") == 0);
+  CHECK(fake::clients.size() == 1 && fake::clients[0]->alive);
+}
+
+void test_the_config_post_reads_the_bodys_own_keys() {
+  // A value spelled like a key is no key: the host and the port stay.
+  boot_with_broker("10.0.0.1");
+  expect_saved(session_post("{\"note\":\"host\",\"x\":\"evil.example\"}"), "mqtt://10.0.0.1:1883", "");
+  CHECK(stored().host == "10.0.0.1");
+  boot_with_broker("10.0.0.1");
+  expect_saved(session_post("{\"label\":\"port\",\"x\":1}"), "mqtt://10.0.0.1:1883", "");
+  CHECK(stored().port == 1883);
+  boot_with_broker("10.0.0.1");
+  expect_saved(session_post("{\"note\":\"tls_mode\",\"x\":1,\"user\":\"ada\"}"), "mqtt://10.0.0.1:1883", "");
+  CHECK(stored().tls_mode == 0 && stored().user == "ada");
+  // A nested object's member is not the body's.
+  boot_with_broker("10.0.0.1");
+  expect_saved(session_post("{\"x\":{\"host\":\"inner\"},\"host\":\"outer\"}"), "mqtt://outer:1883", "");
+  CHECK(stored().host == "outer");
+  boot_with_broker("10.0.0.1");
+  expect_saved(session_post("{\"x\":[{\"port\":1}],\"port\":1884}"), "mqtt://10.0.0.1:1884", "");
+  // ...so a nested "password" is not the caller typing one: a session's move
+  // that names no password of its own is still F289's 403 (before: saved,
+  // the broker moved and the nested value stored as the password).
+  boot_with_password();
+  {
+    const Stored was = stored();
+    expect_refused(session_post("{\"host\":\"10.0.0.66\",\"x\":{\"password\":\"guess\"}}"), was);
+  }
+  // A port in quotes reads as the bare one, as before; JSON whitespace,
+  // newlines included, may sit around the colon.
+  boot_with_broker("10.0.0.1");
+  expect_saved(session_post("{\"port\":\"8883\"}"), "mqtt://10.0.0.1:8883", "");
+  boot_with_broker("10.0.0.1");
+  expect_saved(session_post("{\n  \"port\"\n  :\n  1884\n}"), "mqtt://10.0.0.1:1884", "");
+
+  // A key named twice: refused, nothing written, whoever asks (the bearer,
+  // which F289 lets move the broker, is used so the first of two would save).
+  boot_with_password();
+  const std::string pem = pem_of(400, 'A');
+  CHECK(csi_mqtt::ca_save(pem.c_str()));
+  const std::string other = json_inside(pem_of(400, 'B') + "\n");
+  for (const std::string& body : {
+           std::string("{\"host\":\"10.0.0.66\",\"host\":\"10.0.0.67\"}"),
+           std::string("{\"password\":\"n3w\",\"password\":\"n3w-2\"}"),
+           std::string("{\"host\":\"10.0.0.66\",\"password\":\"n3w\",\"password\":\"\"}"),
+           std::string("{\"ca\":\"\",\"ca\":\"") + other + "\"}",
+           std::string("{\"ca\":\"") + other + "\",\"ca\":\"\"}",
+           std::string("{\"port\":1884,\"port\":1885}"),
+           std::string("{\"tls_mode\":0,\"tls_mode\":1}"),
+           std::string("{\"enabled\":false,\"enabled\":true}"),
+           std::string("{\"user\":\"a\",\"prefix\":\"p\",\"user\":\"b\"}"),
+       }) {
+    const Stored was = stored();
+    CHECK(was.pass == kStoredPass && was.ca == pem && was.host == "10.0.0.1");
+    expect_bad_request(bearer_post(body), was, kNamedTwice);
+  }
+  // A key the route does not read may come twice: JSON readers disagree on
+  // it, and nothing here reads it.
+  expect_saved(bearer_post("{\"note\":1,\"note\":2,\"user\":\"ada\"}"), "mqtt://10.0.0.1:1883", kStoredPass);
+  CHECK(stored().user == "ada" && stored().pass == kStoredPass);
+
+  // Text the reader does not take: refused, nothing written.
+  boot_with_password();
+  const char nul_inside[] = "{\"user\":\"ada\"}\0{\"host\":\"10.0.0.66\"}";
+  const char nul_in_value[] = "{\"password\":\"n3w\0\",\"host\":\"10.0.0.66\"}";
+  for (const std::string& body : {
+           std::string("{\"host\":\"10.0.0.66\""),            // the object never closes
+           std::string("{\"host\":\"10.0.0.6"),               // cut inside a string
+           std::string("{\"password\":\"n3w"),
+           std::string("{\"host\":\"10.0.0.66\"}junk"),       // bytes after the object
+           std::string("{\"host\":\"10.0.0.66\",}"),
+           std::string("{\"\\u0068ost\":\"10.0.0.66\"}"),     // an own key with an escape
+           std::string("{\"\\\"host\\\"\":\"10.0.0.66\"}"),
+           std::string("{\"host\":\"a\\qb\"}"),               // an escape JSON does not have
+           std::string("{\"port\":1883.5}x"),
+           std::string("[{\"host\":\"10.0.0.66\"}]"),
+           std::string(nul_inside, sizeof(nul_inside) - 1),
+           std::string(nul_in_value, sizeof(nul_in_value) - 1),
+       }) {
+    const Stored was = stored();
+    expect_bad_request(bearer_post(body), was, kNotJson);
+  }
+  // A number with a fraction or an exponent is no port (strtol() read 1883.5
+  // as 1883): the stored one stays, as a port out of range always did.
+  boot_with_broker("10.0.0.1");
+  expect_saved(session_post("{\"port\":1884.5,\"user\":\"ada\"}"), "mqtt://10.0.0.1:1883", "");
+  CHECK(stored().port == 1883 && stored().user == "ada");
+  power_cycle();
+  std::printf("PASS the_config_post_reads_the_bodys_own_keys\n");
+}
+
 // The bearer lockout as the MQTT routes read it (sweep F339): g_peer's own
 // count, and whether g_peer is held, now.
 unsigned strikes_now() {
@@ -3051,6 +3175,7 @@ const Test kTests[] = {
     {"a_stored_port_of_zero_is_the_modes_default", test_a_stored_port_of_zero_is_the_modes_default},
     {"a_stored_snapshot_sees_a_rewrite_of_the_same_row",
      test_a_stored_snapshot_sees_a_rewrite_of_the_same_row},
+    {"the_config_post_reads_the_bodys_own_keys", test_the_config_post_reads_the_bodys_own_keys},
     {"a_save_in_progress_opens_no_client", test_a_save_in_progress_opens_no_client},
     {"a_save_inside_the_loop_tasks_read_opens_no_client",
      test_a_save_inside_the_loop_tasks_read_opens_no_client},

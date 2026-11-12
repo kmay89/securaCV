@@ -101,12 +101,15 @@ struct TunePost {
 
 /**
  * POST /api/tune/coefficients and POST /api/tune/preset: store every
- * "<full_key>": value pair in `body` that names a knob (a number, or
- * true / false / 1 / 0 for a bool; each clamped to the knob's range; any
- * other key ignored), remove the row of every knob whose value is null (the
- * Lab's reset, sweep F127; any other value it cannot read is ignored, as
- * before; JSON whitespace, newlines included, may sit on either side of the
- * colon), close NVS, then apply what changed: each module
+ * "<full_key>": value member of the body's own object (json_member.h's
+ * json_object_member(), sweep F469: a key nested in another object, or
+ * named twice, or in a body the reader does not take, is no knob's) that
+ * names a knob (a whole number, or true / false / 1 / 0 for a bool; each
+ * clamped to the knob's range; any other key ignored), remove the row of
+ * every knob whose value is null (the Lab's reset, sweep F127; any other
+ * value it cannot read is ignored, as before: a fraction, a string; JSON
+ * whitespace, newlines included, may sit on either side of the colon),
+ * close NVS, then apply what changed: each module
  * touched once through `reinit` (csi_integration.cpp's reinit_module()), and
  * the stored Quiet Hours once through apply_quiet_hours_from_nvs() when a
  * core.quiet_hours.* knob was stored (sweep F128). Nothing is signed or

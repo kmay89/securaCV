@@ -2586,10 +2586,6 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         ("prefix", "s_device_id", "s_firmware_version", "slug"),
         "an MQTT discovery body: the topic prefix (its safe character set), the device id and its slug, "
         "the firmware version"),
-    ("csi_tune_lab.cpp", "tune_post"): (
-        ("c.full_key",),
-        "not a text: the strstr() needle a Tuning Lab POST body is searched for, the coefficient table's "
-        "literal full key between quotes; a needle that does not fit is skipped"),
     ("device_signature.cpp", "handle_enroll_json"): (
         ("nonce", "sig_hex"),
         "the enrollment answer: the nonce is accepted only as hex, the signature written as hex"),

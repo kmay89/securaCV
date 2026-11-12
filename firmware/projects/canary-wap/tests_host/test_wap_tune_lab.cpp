@@ -1271,6 +1271,128 @@ static int test_the_settings_reader_reads_json() {
   const JsonMember none = as("{\"w\":1}");
   CHECK(none.value == nullptr && !json_member_bool(none, &b) && !json_member_int(none, &n) &&
         !json_member_is(none, "x"));
+
+  // json_object_find() says which of the four it is (F469): the routes that
+  // must not answer a body they could not read as one that named nothing
+  // tell them apart. *out is set only on kFound.
+  auto find = [](const std::string& text, const char* key, bool raw = false) {
+    JsonMember m = {nullptr, nullptr, 0};
+    const JsonFind f = json_object_find(text.data(), text.size(), key, &m, raw);
+    if (f != JsonFind::kFound && m.value != nullptr) return JsonFind::kFound;   // never: *out untouched
+    return f;
+  };
+  CHECK(find("{\"a\":1}", "a") == JsonFind::kFound);
+  CHECK(find("{\"a\":1}", "b") == JsonFind::kAbsent);
+  CHECK(find("{\"x\":{\"a\":1}}", "a") == JsonFind::kAbsent);            // nested: absent
+  CHECK(find("{\"a\":1,\"a\":2}", "a") == JsonFind::kTwice);
+  CHECK(find("{\"a\":1,\"b\":0,\"a\":1}", "a") == JsonFind::kTwice);      // the same value twice too
+  CHECK(find("{\"a\":1,\"a\":2}", "b") == JsonFind::kAbsent);              // another key's twice
+  CHECK(find("{\"a\":1,\"a\":2,}", "a") == JsonFind::kUnreadable);         // unreadable wins
+  CHECK(find("{\"a\":1", "a") == JsonFind::kUnreadable);
+  for (const char* t : kNotJson) CHECK(find(t, "a") == JsonFind::kUnreadable);
+  {
+    JsonMember m = {nullptr, nullptr, 0};
+    CHECK(!json_object_member("{\"a\":1,\"a\":2}", 15, "a", &m) && m.value == nullptr);
+  }
+  // raw_controls: a raw 0x01 to 0x1f in a string is taken; a NUL never is,
+  // and outside a string none is.
+  {
+    const std::string raw = std::string("{\"a\":\"x") + '\x01' + "\t\n" + '\x1f' + "y\"}";
+    CHECK(find(raw, "a") == JsonFind::kUnreadable);
+    CHECK(find(raw, "a", true) == JsonFind::kFound);
+    const char nul[] = "{\"a\":\"x\0y\"}";
+    CHECK(find(std::string(nul, sizeof(nul) - 1), "a", true) == JsonFind::kUnreadable);
+    CHECK(find(std::string("{\"a\":1,") + '\x01' + "\"b\":2}", "a", true) == JsonFind::kUnreadable);
+    CHECK(find(std::string("{\"k") + '\x02' + "\":1,\"a\":2}", "a", true) == JsonFind::kFound);
+  }
+
+  // json_member_u32(): whole digits to 4294967295, or the same in quotes;
+  // never a sign, a fraction, an exponent or a number past it, never its
+  // first digits.
+  uint32_t u = 7;
+  CHECK(json_member_u32(as("{\"v\":0}"), &u) && u == 0);
+  CHECK(json_member_u32(as("{\"v\":9}"), &u) && u == 9);
+  CHECK(json_member_u32(as("{\"v\":3221225472}"), &u) && u == 0xC0000000u);   // kIdSpaceBase
+  CHECK(json_member_u32(as("{\"v\":4294967295}"), &u) && u == 4294967295u);
+  CHECK(json_member_u32(as("{\"v\":\"4294967295\"}"), &u) && u == 4294967295u);
+  u = 7;
+  for (const char* t : {"{\"v\":4294967296}", "{\"v\":42949672950}", "{\"v\":99999999999999999999}",
+                        "{\"v\":-1}", "{\"v\":-0}", "{\"v\":7.0}", "{\"v\":7e0}", "{\"v\":\"+7\"}",
+                        "{\"v\":\"7 \"}", "{\"v\":\"\"}", "{\"v\":\"0x7\"}", "{\"v\":true}", "{\"v\":null}",
+                        "{\"v\":[7]}", "{\"v\":\"\\u0037\"}", "{\"w\":7}"}) {
+    if (json_member_u32(as(t), &u)) {
+      std::fprintf(stderr, "json_member_u32 read %u from %s\n", (unsigned)u, t);
+      CHECK(false);
+    }
+  }
+  CHECK(u == 7);                                                           // untouched on a refusal
+  return 0;
+}
+
+// ── F469: POST /api/events/dismiss reads its own "event_id" ─────────────
+//
+// The handler took the first digits after the first "event_id" anywhere in
+// the body (strstr(body, "event_id"), unquoted), so a string spelled
+// event_id named the event: {"note":"event_id 7","event_id":9} dismissed 7,
+// {"x":{"event_id":7}} dismissed 7, {"event_id":7.0} 7 and {"event_id":-1}
+// 1, and an id past 4294967295 read as strtoul()'s ULONG_MAX. Event ids
+// start at kIdSpaceBase 0xC0000000, past json_member_int()'s saturation, so
+// the id is json_member_u32()'s. dismiss_event_id() is what the handler
+// calls (pinned below); these are its answers.
+static int test_the_dismissal_reads_its_own_event_id() {
+  struct Row { const char* body; DismissRead want; uint32_t id; };
+  const Row kRows[] = {
+    {"{\"event_id\":9}", DismissRead::kId, 9},
+    {"{\"note\":\"event_id 7\",\"event_id\":9}", DismissRead::kId, 9},
+    {"{\"event_id\":9,\"note\":\"event_id 7\"}", DismissRead::kId, 9},
+    {"{\"event_id\":3221225472}", DismissRead::kId, 0xC0000000u},
+    {"{\"event_id\":3221225473}", DismissRead::kId, 0xC0000001u},
+    {"{\"event_id\":4294967295}", DismissRead::kId, 4294967295u},
+    {"{\"event_id\":\"3221225472\"}", DismissRead::kId, 0xC0000000u},   // in quotes, as before
+    {"{\"event_id\":0}", DismissRead::kId, 0},
+    {" {\n  \"event_id\" :\r\n 12\t} ", DismissRead::kId, 12},
+    {"{\"note\":\"event_id\"}", DismissRead::kMissing, 0},       // a string spelled event_id
+    {"{\"x\":{\"event_id\":7}}", DismissRead::kMissing, 0},      // a nested object's
+    {"{\"ids\":[{\"event_id\":7}]}", DismissRead::kMissing, 0},
+    {"{}", DismissRead::kMissing, 0},
+    {"{\"event_id\":7,\"event_id\":9}", DismissRead::kTwice, 0},
+    {"{\"event_id\":4294967296}", DismissRead::kNotId, 0},
+    {"{\"event_id\":99999999999999999999}", DismissRead::kNotId, 0},
+    {"{\"event_id\":7.0}", DismissRead::kNotId, 0},
+    {"{\"event_id\":7e0}", DismissRead::kNotId, 0},
+    {"{\"event_id\":-1}", DismissRead::kNotId, 0},
+    {"{\"event_id\":\"7a\"}", DismissRead::kNotId, 0},
+    {"{\"event_id\":null}", DismissRead::kNotId, 0},
+    {"{\"event_id\":true}", DismissRead::kNotId, 0},
+    {"{\"event_id\":9", DismissRead::kNotJson, 0},                 // cut
+    {"{\"event_id\":\"9", DismissRead::kNotJson, 0},              // cut inside a string
+    {"{\"event_id\":9}x", DismissRead::kNotJson, 0},
+    {"{\"\\u0065vent_id\":7}", DismissRead::kNotJson, 0},        // an own key with an escape
+    {"event_id=7", DismissRead::kNotJson, 0},
+    {"", DismissRead::kNotJson, 0},
+  };
+  for (const Row& r : kRows) {
+    uint32_t id = 0x5A5A5A5Au;
+    const DismissRead got = dismiss_event_id(r.body, std::strlen(r.body), &id);
+    const bool right = got == r.want && (r.want == DismissRead::kId ? id == r.id : id == 0x5A5A5A5Au);
+    if (!right) std::fprintf(stderr, "dismiss_event_id(%s) = %d, id %u\n", r.body, (int)got, (unsigned)id);
+    CHECK(right);
+  }
+  // Over the bytes it is given, never to a NUL: a body that holds one is
+  // not JSON, and the bytes past a cut are not read.
+  {
+    const char nul[] = "{\"event_id\":7}\0{\"event_id\":9}";
+    uint32_t id = 0;
+    CHECK(dismiss_event_id(nul, sizeof(nul) - 1, &id) == DismissRead::kNotJson);
+    const char full[] = "{\"event_id\":3221225472}";
+    for (size_t cut = 0; cut + 1 < sizeof(full) - 1; ++cut) {
+      std::vector<char> exact(full, full + cut);
+      if (dismiss_event_id(exact.empty() ? "" : exact.data(), cut, &id) == DismissRead::kId) {
+        std::fprintf(stderr, "read an id from the first %zu bytes of %s\n", cut, full);
+        CHECK(false);
+      }
+    }
+  }
   return 0;
 }
 
@@ -1769,10 +1891,11 @@ static std::vector<std::string> body_read_problems(const std::string& integ) {
                   ": httpd_req_recv outside an http_body::read_all() call");
   }
   // POST /api/events/dismiss: its 96 bytes, the empty body answered as it
-  // was, the read, both refusals, then the parse.
+  // was, the read, both refusals, then the parse (its own "event_id", F469;
+  // wire_reader_problems() holds the rest).
   const std::string dismiss = code_body(integ, kEventsDismiss);
   if (count_of(dismiss, "charbody[96];" PIN_EMPTY_BODY PIN_READ_WHOLE PIN_REFUSALS
-                        R"PIN(constchar*k=strstr(body,"event_id");)PIN") != 1 ||
+                        R"PIN(uint32_tevent_id=0;constDismissReadid_read=dismiss_event_id(body,got,&event_id);)PIN") != 1 ||
       count_of(dismiss, "read_all(") != 1 || dismiss.find("ESP_FAIL") != std::string::npos) {
     out.push_back("POST /api/events/dismiss does not read its body whole, answer a refusal by name, then parse");
   }
@@ -2225,9 +2348,9 @@ static int test_the_settings_post_finds_keys_with_the_reader() {
   // A key search named in a comment or a message is not one.
   {
     std::string commented = nvs;
-    CHECK(mutate(commented, "bool json_member_bool(const JsonMember& m, bool* out) {",
+    CHECK(mutate(commented, "bool read_tz_from_settings(const char* body, char* tz, size_t tz_cap, char* tz_iana,",
                  "/* not strstr(body, \"\\\"pet_mode\\\"\") */\n"
-                 "bool json_member_bool(const JsonMember& m, bool* out) {"));
+                 "bool read_tz_from_settings(const char* body, char* tz, size_t tz_cap, char* tz_iana,"));
     CHECK(settings_reader_problems(integ, commented).empty());
   }
 
@@ -2285,9 +2408,13 @@ static int test_the_settings_post_finds_keys_with_the_reader() {
      ""},
     {"a NUL is looked for only up to the first NUL", "csi_integration.cpp",
      "  if (memchr(body, '\\0', got) != nullptr) {", "  if (memchr(body, '\\0', strlen(body)) != nullptr) {"},
+    // (Anchored on the memchr() line: the dismissal answers "body is not
+    // JSON" too since F469, above the settings POST.)
     {"a body that holds a NUL is answered but not refused", "csi_integration.cpp",
+     "  if (memchr(body, '\\0', got) != nullptr) {\n    httpd_resp_set_status(req, \"400 Bad Request\");\n"
      "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"
      "    return ESP_OK;\n",
+     "  if (memchr(body, '\\0', got) != nullptr) {\n    httpd_resp_set_status(req, \"400 Bad Request\");\n"
      "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"},
     {"the time zone's string is read from the body's start", "csi_settings_nvs.cpp",
      "tz_rule::json_string_field(zone.key, \"\\\"tz\\\"\", tz, tz_cap)",
@@ -2323,6 +2450,238 @@ static int test_the_settings_post_finds_keys_with_the_reader() {
                        "  Preferences prefs;\n  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) {",
                        refusal + "  Preferences prefs;\n  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) {"));
     CHECK(!settings_reader_problems(moved, nvs).empty());
+  }
+  return 0;
+}
+
+// ── F469's pins: the dismissal, the MQTT config POST and the Lab's POST
+//    find their keys with the reader ──────────────────────────────────────
+//
+// The three POST readers F462 left found a key with strstr() anywhere in
+// the body: handle_events_dismiss()'s strstr(body, "event_id") and the
+// strtoul() after it, csi_mqtt.cpp's json_extract_string / _bool / _int
+// (strstr() of the quoted key, strchr() for the colon, strncmp() and
+// strtol() for the value), and tune_post()'s snprintf()ed "<full_key>"
+// needle. Each reads through json_member.h now (the reader and the rows
+// above run it); these hold the composition, which test_mqtt_reinit.cpp
+// drives for the MQTT POST and no host suite compiles for the dismissal,
+// and keep a key search from coming back beside the reader: none of the
+// readers, nor json_member.h, calls strstr() or its kin; the dismissal
+// refuses what is not an id before it dismisses one; the MQTT POST checks
+// the body (not JSON, a key twice) before its row is loaded, and reads every
+// key it reads, over all `got` bytes, through the one member lookup, every
+// one of them in the check's list. Each is checked against in-memory
+// mutations of the four sources.
+
+static const char* const kMqttPost = R"(\besp_err_t\s+handle_config_post\s*\(\s*httpd_req_t\s*\*\s*req\s*\)\s*\{)";
+static const char* const kMqttReaders[] = {
+  R"(\bstatic\s+bool\s+json_extract_string\s*\([^)]*\)\s*\{)",
+  R"(\bstatic\s+bool\s+json_extract_bool\s*\([^)]*\)\s*\{)",
+  R"(\bstatic\s+bool\s+json_extract_int\s*\([^)]*\)\s*\{)",
+};
+static const char* const kMqttMember = R"(\bstatic\s+bool\s+config_member\s*\([^)]*\)\s*\{)";
+static const char* const kMqttCheck = R"(\bstatic\s+ConfigBody\s+config_body_check\s*\([^)]*\)\s*\{)";
+static const char* const kTunePostFn =
+    R"(\bTunePost\s+tune_post\s*\(\s*const\s+char\s*\*\s*body\s*,\s*void\s*\(\s*\*\s*reinit\s*\)\s*)"
+    R"(\(\s*const\s+char\s*\*\s*module_id\s*\)\s*\)\s*\{)";
+
+// The keys a list `static const char* const <name>[] = { ... };` of `src`
+// spells, in order; empty if there is none.
+static std::vector<std::string> key_list(const std::string& src, const std::string& name) {
+  const size_t at = src.find("static const char* const " + name + "[] = {");
+  if (at == std::string::npos) return {};
+  const size_t end = src.find("};", at);
+  if (end == std::string::npos) return {};
+  return string_literals(src.substr(at, end - at));
+}
+
+static std::vector<std::string> wire_reader_problems(const std::string& integ, const std::string& mqtt,
+                                                     const std::string& tune, const std::string& member) {
+  std::vector<std::string> out;
+  const std::regex searches(kKeySearches);
+  auto searches_in = [&](const std::string& src, const char* head) {
+    const std::string body = raw_body(src, head);
+    return body.empty() || std::regex_search(no_space(blank_comments_and_strings(body)), searches);
+  };
+  if (member.empty() || std::regex_search(no_space(blank_comments_and_strings(member)), searches)) {
+    out.push_back("json_member.h looks for a key in a body itself (strstr() and its kin)");
+  }
+
+  // POST /api/events/dismiss: its own "event_id", over `got` bytes, and
+  // nothing dismissed that is not an id.
+  const std::string dismiss = code_body(integ, kEventsDismiss);
+  if (searches_in(integ, kEventsDismiss)) {
+    out.push_back("POST /api/events/dismiss looks for its key in its body itself (strstr() and its kin)");
+  }
+  const size_t read_at = dismiss.find("constDismissReadid_read=dismiss_event_id(body,got,&event_id);");
+  const size_t missing_at = dismiss.find(
+      R"PIN(if(id_read==DismissRead::kMissing){httpd_resp_set_status(req,"400BadRequest");)PIN"
+      R"PIN(httpd_resp_send(req,"{\"ok\":false,\"reason\":\"missingevent_id\"}",-1);returnESP_OK;})PIN");
+  const size_t gate_at = dismiss.find(
+      R"PIN(if(id_read!=DismissRead::kId){httpd_resp_set_status(req,"400BadRequest");)PIN"
+      R"PIN(httpd_resp_send(req,"{\"ok\":false,\"reason\":\"event_idmustbeawholenumber0to4294967295\"}",-1);)PIN"
+      R"PIN(returnESP_OK;})PIN");
+  const size_t use_at = dismiss.find("constboolok=csi_event_dismiss(event_id);");
+  if (read_at == std::string::npos || missing_at == std::string::npos || gate_at == std::string::npos ||
+      use_at == std::string::npos || count_of(dismiss, "dismiss_event_id(") != 1 ||
+      count_of(dismiss, "csi_event_dismiss(") != 1 || !(read_at < missing_at && missing_at < gate_at && gate_at < use_at)) {
+    out.push_back("POST /api/events/dismiss reads its id other than as dismiss_event_id() reads it, over got "
+                  "bytes, refusing what is not an id before it dismisses one");
+  }
+
+  // POST /api/mqtt/config: each reader through config_member(), the one
+  // lookup, over the length it is given.
+  for (const char* head : kMqttReaders) {
+    const std::string body = code_body(mqtt, head);
+    if (searches_in(mqtt, head) || count_of(body, "config_member(body,len,key,&m)") != 1 ||
+        body.find("json_object_find(") != std::string::npos) {
+      out.push_back("an MQTT config reader looks for its key other than through config_member()");
+    }
+  }
+  if (code_body(mqtt, kMqttMember) != "returnjson_object_find(body,len,key,m,true)==JsonFind::kFound;") {
+    out.push_back("config_member() is not the body's own member, raw control bytes taken");
+  }
+  if (code_body(mqtt, kMqttCheck) !=
+      "for(constchar*key:kConfigKeys){JsonMemberm={nullptr,nullptr,0};"
+      "constJsonFindf=json_object_find(body,len,key,&m,true);"
+      "if(f==JsonFind::kUnreadable)returnConfigBody::kNotJson;"
+      "if(f==JsonFind::kTwice)returnConfigBody::kTwice;}returnConfigBody::kOk;") {
+    out.push_back("config_body_check() does not refuse unreadable text and a key named twice");
+  }
+  const std::string post = code_body(mqtt, kMqttPost);
+  if (searches_in(mqtt, kMqttPost)) {
+    out.push_back("POST /api/mqtt/config looks for a key in its body itself (strstr() and its kin)");
+  }
+  const size_t check_at = post.find(
+      "constConfigBodyshape=config_body_check(body,got);"
+      R"PIN(if(shape==ConfigBody::kNotJson){httpd_resp_set_status(req,"400BadRequest");)PIN"
+      R"PIN(httpd_resp_send(req,"{\"ok\":false,\"reason\":\"bodyisnotJSON\"}",-1);returnESP_OK;})PIN"
+      R"PIN(if(shape!=ConfigBody::kOk){httpd_resp_set_status(req,"400BadRequest");)PIN"
+      R"PIN(httpd_resp_send(req,"{\"ok\":false,\"reason\":\"asettingisnamedmorethanonce\"}",-1);returnESP_OK;})PIN");
+  const size_t load_at = post.find("Configc;config_load(&c);");
+  if (check_at == std::string::npos || load_at == std::string::npos || !(check_at < load_at) ||
+      count_of(post, "config_body_check(") != 1) {
+    out.push_back("POST /api/mqtt/config applies a field before refusing a body it cannot read or that names "
+                  "a key twice");
+  }
+  // Every key it reads, it reads over `got` bytes, and the check covers it.
+  std::vector<std::string> read;
+  const std::regex extract(R"PIN(json_extract_(?:string|bool|int)\(body,got,"(\w+)")PIN");
+  for (std::sregex_iterator it(post.begin(), post.end(), extract), end; it != end; ++it) {
+    read.push_back((*it)[1].str());
+  }
+  std::vector<std::string> listed = key_list(mqtt, "kConfigKeys");
+  std::vector<std::string> sorted_read = read;
+  std::sort(sorted_read.begin(), sorted_read.end());
+  std::sort(listed.begin(), listed.end());
+  if (read.empty() || count_of(post, "json_extract_") != read.size() || sorted_read != listed) {
+    out.push_back("POST /api/mqtt/config reads a key other than over got bytes, or one config_body_check() "
+                  "does not check");
+  }
+
+  // tune_post(): each knob the body's own member, no needle.
+  const std::string tp = code_body(tune, kTunePostFn);
+  if (searches_in(tune, kTunePostFn) || tp.find("snprintf(") != std::string::npos ||
+      count_of(tp, "json_object_member(body,len,c.full_key,&m)") != 1 ||
+      count_of(tp, "constsize_tlen=strlen(body);") != 1) {
+    out.push_back("tune_post() looks for a knob in its body other than as the body's own member");
+  }
+  return out;
+}
+
+static int test_the_wire_readers_find_keys_with_the_reader() {
+  const std::string integ = read_source("csi_integration.cpp");
+  const std::string mqtt = read_source("csi_mqtt.cpp");
+  const std::string tune = read_source("csi_tune_lab.cpp");
+  const std::string member = read_source("json_member.h");
+  CHECK(!integ.empty() && !mqtt.empty() && !tune.empty() && !member.empty());
+  const std::vector<std::string> problems = wire_reader_problems(integ, mqtt, tune, member);
+  for (const std::string& p : problems) std::fprintf(stderr, "pin: %s\n", p.c_str());
+  CHECK(problems.empty());
+  CHECK(key_list(mqtt, "kConfigKeys").size() == 10);
+  // A key search named in a comment or a message is not one.
+  {
+    std::string commented = mqtt;
+    CHECK(mutate(commented, "static bool json_extract_bool(const char* body, size_t len, const char* key, bool* out) {\n",
+                 "static bool json_extract_bool(const char* body, size_t len, const char* key, bool* out) {\n"
+                 "  /* not strstr(body, \"\\\"enabled\\\"\") */\n"));
+    CHECK(wire_reader_problems(integ, commented, tune, member).empty());
+  }
+
+  struct Mutation { const char* name; const char* file; const char* from; const char* to; };
+  const Mutation kMutations[] = {
+    // The code before F469, reader by reader.
+    {"the dismissal finds event_id with strstr() again", "csi_integration.cpp",
+     "  uint32_t event_id = 0;\n  const DismissRead id_read = dismiss_event_id(body, got, &event_id);\n",
+     "  const char* k = strstr(body, \"event_id\");\n  const char* digit = k ? k : body;\n"
+     "  while (*digit && (*digit < '0' || *digit > '9')) digit++;\n"
+     "  uint32_t event_id = (uint32_t)strtoul(digit, nullptr, 10);\n"
+     "  const DismissRead id_read = k ? DismissRead::kId : DismissRead::kMissing;\n"},
+    {"an MQTT string is found with strstr() again", "csi_mqtt.cpp",
+     "  if (!config_member(body, len, key, &m) || m.value[0] != '\"') return false;\n",
+     "  const char* k = strstr(body, key);\n  if (!k) return false;\n"
+     "  m.value = strchr(k, ':') + 1;\n  m.value_len = len;\n  if (m.value[0] != '\"') return false;\n"},
+    {"an MQTT bool is read with strncmp() after the key", "csi_mqtt.cpp",
+     "  if (m.value_len == 4 && memcmp(m.value, \"true\", 4) == 0) { *out = true;  return true; }\n",
+     "  if (strncmp(m.value, \"true\", 4) == 0) { *out = true;  return true; }\n"},
+    {"an MQTT number is read with strtol()", "csi_mqtt.cpp",
+     "  if (!config_member(body, len, key, &m) || !json_member_int(m, &n)) return false;\n",
+     "  if (!config_member(body, len, key, &m)) return false;\n  n = (int32_t)strtol(m.value, nullptr, 10);\n"},
+    {"a knob is found with a snprintf()ed needle again", "csi_tune_lab.cpp",
+     "    JsonMember m = {nullptr, nullptr, 0};\n    if (!json_object_member(body, len, c.full_key, &m)) continue;\n",
+     "    char needle[80];\n    int nl = snprintf(needle, sizeof(needle), \"\\\"%s\\\"\", c.full_key);\n"
+     "    if (nl <= 0 || nl >= (int)sizeof(needle)) continue;\n"
+     "    JsonMember m = {strstr(body, needle), nullptr, 0};\n    if (!m.key) continue;\n"},
+    {"a knob's value is read with strtol()", "csi_tune_lab.cpp",
+     "      if (!json_member_int(m, &v)) continue;\n", "      v = (int32_t)strtol(m.value, nullptr, 10);\n"},
+    {"a key search beside the reader", "json_member.h",
+     "inline bool json_object_member(const char* text, size_t len, const char* key, JsonMember* out) {\n",
+     "inline bool json_object_member(const char* text, size_t len, const char* key, JsonMember* out) {\n"
+     "  if (strstr(text, key) == nullptr) return false;\n"},
+    // The dismissal's composition.
+    {"the dismissal dismisses what is not an id", "csi_integration.cpp",
+     "  if (id_read != DismissRead::kId) {", "  if (id_read == DismissRead::kNotJson && false) {"},
+    {"the dismissal reads to the body's first NUL", "csi_integration.cpp",
+     "dismiss_event_id(body, got, &event_id)", "dismiss_event_id(body, strlen(body), &event_id)"},
+    {"the dismissal answers a missing id as a bad one", "csi_integration.cpp",
+     "  if (id_read == DismissRead::kMissing) {", "  if (id_read == DismissRead::kMissing && false) {"},
+    // The MQTT POST's composition.
+    {"a key is named twice and the first is read", "csi_mqtt.cpp",
+     "  if (shape != ConfigBody::kOk) {", "  if (shape == ConfigBody::kNotJson) {"},
+    {"the body is not checked at all", "csi_mqtt.cpp",
+     "  const ConfigBody shape = config_body_check(body, got);\n", "  const ConfigBody shape = ConfigBody::kOk;\n"},
+    {"the check reads to the body's first NUL", "csi_mqtt.cpp",
+     "config_body_check(body, got);", "config_body_check(body, strlen(body));"},
+    {"a key is read that the check does not cover", "csi_mqtt.cpp",
+     "\"port\", \"host\", \"user\",", "\"port\", \"user\","},
+    {"a reader reads to the body's first NUL", "csi_mqtt.cpp",
+     "json_extract_string(body, got, \"password\",", "json_extract_string(body, strlen(body), \"password\","},
+    {"the lookup takes the first of two", "csi_mqtt.cpp",
+     "  return json_object_find(body, len, key, m, /*raw_controls=*/true) == JsonFind::kFound;",
+     "  return json_object_find(body, len, key, m, /*raw_controls=*/true) != JsonFind::kAbsent;"},
+    {"the check lets a key named twice through", "csi_mqtt.cpp",
+     "    if (f == JsonFind::kTwice) return ConfigBody::kTwice;\n", ""},
+    {"the lookup takes no raw control byte", "csi_mqtt.cpp",
+     "  return json_object_find(body, len, key, m, /*raw_controls=*/true) == JsonFind::kFound;",
+     "  return json_object_find(body, len, key, m) == JsonFind::kFound;"},
+    // The Lab's.
+    {"a knob is read from the body's second byte", "csi_tune_lab.cpp",
+     "json_object_member(body, len, c.full_key, &m)", "json_object_member(body + 1, len - 1, c.full_key, &m)"},
+  };
+  for (const Mutation& mu : kMutations) {
+    std::string a = integ, b = mqtt, t = tune, h = member;
+    std::string& src = std::strcmp(mu.file, "csi_integration.cpp") == 0 ? a
+                       : std::strcmp(mu.file, "csi_mqtt.cpp") == 0     ? b
+                       : std::strcmp(mu.file, "csi_tune_lab.cpp") == 0 ? t
+                                                                        : h;
+    if (!mutate(src, mu.from, mu.to)) {
+      std::fprintf(stderr, "mutation '%s' no longer applies: update it with the source\n", mu.name);
+      CHECK(false);
+    }
+    if (wire_reader_problems(a, b, t, h).empty()) {
+      std::fprintf(stderr, "mutation '%s' was not caught\n", mu.name);
+      CHECK(false);
+    }
   }
   return 0;
 }
@@ -2651,6 +3010,71 @@ static int test_a_malformed_value_or_unknown_null_changes_nothing() {
   CHECK(host_prefs().flag == before.flag);
   CHECK(host_prefs().removes == before.removes);
   CHECK(host_prefs().error_logs == before.error_logs);
+  host_prefs().clear();
+  return 0;
+}
+
+// F469: tune_post() reads each knob as a member of the body's own object.
+// It found "<full_key>" in quotes anywhere in the body with a ':' after it,
+// so a nested object's knob was the body's ({"x":{"core.presence.pet_mode":
+// true}} turned pet mode on), of two the first was stored, and a key that
+// holds an escaped quote before a knob's name ({"\"core.presence.preset":2},
+// valid JSON whose key is not the knob's) stored the preset. Now each of
+// those stores nothing; a value spelled like a key never was read (a string
+// followed by a ':' is a key in JSON), and stays unread.
+static int test_the_post_reads_the_bodys_own_knobs() {
+  struct Row { const char* body; int changed; };
+  const Row kNone[] = {
+    {"{\"x\":{\"core.presence.pet_mode\":true}}", 0},
+    {"{\"bundle\":[{\"core.presence.active_threshold\":99}]}", 0},
+    {"{\"core.presence.active_threshold\":40,\"core.presence.active_threshold\":99}", 0},
+    {"{\"core.quiet_hours.enabled\":true,\"core.quiet_hours.enabled\":false}", 0},
+    {"{\"\\\"core.presence.preset\":2}", 0},
+    {"{\"note\":\"core.presence.pet_mode\",\"x\":true}", 0},
+    {"{\"core.presence.pet_mode\":true", 0},                         // cut: the object never closes
+    {"{\"core.presence.pet_mode\":true}junk", 0},
+    {"{\"core.presence.pet_mode\":true,\"note\":\"cut", 0},          // cut inside a string
+    {"{\"core.presence.active_threshold\":\"40\"}", 0},              // a string is no knob's value
+    {"{\"core.presence.active_threshold\":40.5}", 0},                // strtol() read 40
+    {"{\"core.presence.pet_mode\":10}", 0},                          // strncmp(p, "1", 1) read 1
+  };
+  for (const Row& r : kNone) {
+    host_prefs().clear();
+    reboot_and_boot();
+    const TunePost post = tune_post(r.body, reinit_module_model);
+    if (post.changed != r.changed) std::fprintf(stderr, "tune_post(%s) changed %d\n", r.body, post.changed);
+    CHECK(post.nvs_ok && post.changed == r.changed);
+    CHECK(!has_row("core.presence.pet_mode") && !has_row("core.presence.active_threshold") &&
+          !has_row("core.presence.preset") && !has_row("core.quiet_hours.enabled"));
+    CHECK(g_reinits.empty() && !post.quiet_hours);
+  }
+  // A knob named twice is neither, and the knobs beside it are stored.
+  host_prefs().clear();
+  reboot_and_boot();
+  TunePost post = tune_post("{\"core.presence.active_threshold\":40,\"core.presence.motion_threshold\":50,"
+                            "\"core.presence.active_threshold\":99}",
+                            reinit_module_model);
+  CHECK(post.nvs_ok && post.changed == 1);
+  CHECK(!has_row("core.presence.active_threshold") && has_row("core.presence.motion_threshold"));
+  CHECK(lab_value("core.presence.motion_threshold") == 50);
+  // The body's own knob beside a nested one of the same name is read.
+  host_prefs().clear();
+  reboot_and_boot();
+  post = tune_post("{\"x\":{\"core.presence.active_threshold\":99},\"core.presence.active_threshold\":40}",
+                   reinit_module_model);
+  CHECK(post.changed == 1 && lab_value("core.presence.active_threshold") == 40);
+  // What the Lab and its bundle send reads as it did: a number, a bool's
+  // word or 1 / 0, null, whitespace and newlines around the colon.
+  host_prefs().clear();
+  reboot_and_boot();
+  post = tune_post("{\n  \"core.presence.active_threshold\" :\n 99,\n  \"core.presence.pet_mode\": 1,\n"
+                   "  \"core.presence.shimmer_enabled\":false\n}",
+                   reinit_module_model);
+  CHECK(post.changed == 3);
+  CHECK(lab_value("core.presence.active_threshold") == 99 && lab_value("core.presence.pet_mode") == 1 &&
+        lab_value("core.presence.shimmer_enabled") == 0);
+  post = tune_post("{\"core.presence.active_threshold\":null}", reinit_module_model);
+  CHECK(post.changed == 1 && !has_row("core.presence.active_threshold"));
   host_prefs().clear();
   return 0;
 }
@@ -3013,7 +3437,9 @@ int main(int argc, char** argv) {
     {"the_privacy_ceiling_is_one_row", test_the_privacy_ceiling_is_one_row},
     {"the_settings_post_reads_keys_not_values", test_the_settings_post_reads_keys_not_values},
     {"the_settings_reader_reads_json", test_the_settings_reader_reads_json},
+    {"the_dismissal_reads_its_own_event_id", test_the_dismissal_reads_its_own_event_id},
     {"the_settings_post_finds_keys_with_the_reader", test_the_settings_post_finds_keys_with_the_reader},
+    {"the_wire_readers_find_keys_with_the_reader", test_the_wire_readers_find_keys_with_the_reader},
     {"no_sketch_source_spells_a_module_settings_key", test_no_sketch_source_spells_a_module_settings_key},
     {"csi_integration_is_thin_around_the_tested_code", test_csi_integration_is_thin_around_the_tested_code},
     {"csi_integration_reads_every_body_whole", test_csi_integration_reads_every_body_whole},
@@ -3024,6 +3450,7 @@ int main(int argc, char** argv) {
     {"the_import_round_trip_still_stores_rows", test_the_import_round_trip_still_stores_rows},
     {"a_malformed_value_or_unknown_null_changes_nothing",
      test_a_malformed_value_or_unknown_null_changes_nothing},
+    {"the_post_reads_the_bodys_own_knobs", test_the_post_reads_the_bodys_own_knobs},
     {"wifi_channel_activity_has_no_lab_knob", test_wifi_channel_activity_has_no_lab_knob},
     {"the_lab_page_resets_with_null", test_the_lab_page_resets_with_null},
   };
