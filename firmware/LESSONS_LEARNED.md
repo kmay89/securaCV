@@ -1458,6 +1458,44 @@
   `firmware/projects/canary-wap/tests_host/`.
 - **Date learned:** 2026-09
 
+### A constant-time compare for tokens did not make the tag compares constant time
+- **What happened:** the bearer token was compared without an early exit on
+  both Canaries, and `regression_check.sh` said "Auth appears to use
+  constant-time comparison". Three secret-dependent compares were still
+  `memcmp()`: both trees' chain-backup restore checked the backup's
+  HMAC-SHA256 (keyed by the device private key) with it, and the canary-wap's
+  `handle_pair_confirm()` checked the partner's CONFIRM hash (SHA-256 over the
+  X25519 session key) with it. `memcmp()` returns at the first byte that
+  differs, so a refusal's time says how many leading bytes of a forged tag
+  were right. The PIO tree's own CONFIRM check used `ct_equal()`; the WAP's
+  twin did not. And the regression check could not have caught any of it:
+  its grep `"constant_time_compare\|volatile.*result.*\|=\|crypto_verify"`
+  meant `|=` as text, but in a basic regex `\|` is an alternative, so one
+  of its alternatives was `=` and it matched every assignment in the tree.
+- **Root cause:** the rule was kept where it was first written down (the
+  token compare) and checked by a grep that could not fail; a new compare
+  of a tag reached for the nearest byte compare, `memcmp()`.
+- **Fix:** one helper, `firmware/common/core/ct_compare.h`
+  (`ct_compare::equal()`: volatile reads into a volatile accumulator, no
+  early exit, `n == 0` and null answer unequal), staged by the WAP sketch
+  (`check_csi_sync.sh`); the three compares call it, outcomes and log
+  lines unchanged. `regression_check.sh` now fails a `memcmp` / `bcmp` /
+  `strcmp` / `strncmp` whose arguments name an HMAC, a CONFIRM hash or an
+  expected or computed tag, and its auth grep reads `[|]=`.
+- **Rule:** a compare where one side is a secret, or derived from one, is
+  `ct_compare::equal()` (or a tree's own constant-time compare), never
+  `memcmp()`. And a guard that greps for a fix must be shown failing once on
+  the code it is meant to catch; one that cannot fail is decoration.
+- **Regression check:** `firmware/tests_host/test_ct_compare.cpp` (the
+  helper's answers, a fault trap that sees each buffer's last byte read, the
+  loop's text, the PIO restore run over the fake card, its call site);
+  canary-wap `tests_host/test_mesh_pair_crypto.cpp` and
+  `test_wap_hmac_fail.cpp` (the call sites), `test_mesh_liveness_wap.cpp`
+  (`a_confirm_one_bit_off_ends_the_pairing`); `regression_check.sh`'s
+  secret-compare check, which lists the three on the code before the fix.
+  None of these measures time: constant time is not measurable on a host.
+- **Date learned:** 2026-11
+
 ---
 
 ## Web UI (web_ui.h)

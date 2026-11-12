@@ -386,7 +386,9 @@ section "Security: Auth implementation"
 # If Bearer auth exists, it MUST use constant-time comparison
 AUTH_PRESENT=$(grep -rn "Bearer\|Authorization\|authenticate" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" | head -1 || true)
 if [ -n "$AUTH_PRESENT" ]; then
-  CT_COMPARE=$(grep -rn "constant_time_compare\|volatile.*result.*\|=\|crypto_verify" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" || true)
+  # "[|]=" is the accumulator's literal |= (a "\|=" here was an alternative
+  # matching any line with "=" in it, so this check could not fail).
+  CT_COMPARE=$(grep -rn "constant_time_compare\|volatile.*result.*[|]=\|crypto_verify" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" || true)
   if [ -n "$CT_COMPARE" ]; then
     check_pass "Auth appears to use constant-time comparison"
   else
@@ -400,6 +402,30 @@ if [ -n "$AUTH_PRESENT" ]; then
   fi
 else
   blue "Auth not yet implemented (expected if pre-token-generation)"
+fi
+
+# A compare of secret-dependent bytes — an HMAC, a MAC tag, a pairing CONFIRM
+# hash — runs in constant time: ct_compare::equal()
+# (firmware/common/core/ct_compare.h, staged by the canary-wap sketch) or a
+# tree's own constant-time compare, never memcmp() / bcmp() / strcmp() /
+# strncmp(), which return at the first byte that differs, so a refusal's time
+# says how many leading bytes of a forged tag were right. Matched by line: a
+# call whose arguments name an hmac, a CONFIRM hash or an expected/computed
+# tag (comment lines and host tests skipped). It found the three it replaced:
+# both trees' chain-backup restore and the canary-wap's handle_pair_confirm(),
+# whose call sites test_ct_compare, test_wap_hmac_fail and
+# test_mesh_pair_crypto pin.
+VT_SECRET_RE='(^|[^A-Za-z0-9_])(memcmp|bcmp|strcmp|strncmp)[[:space:]]*\([^;]*([Hh][Mm][Aa][Cc]|confirmation_hash|confirm_hash|(expected|computed|auth|mac|want)_tag)'
+VT_SECRET=$(grep -rnE --include='*.c' --include='*.cpp' --include='*.h' --include='*.hpp' --include='*.ino' \
+              "$VT_SECRET_RE" "${SRC_DIRS[@]}" 2>/dev/null \
+            | grep -vE '/tests_host/|/test/|/tests/|_test\.c(pp)?:|/test_[A-Za-z0-9_]+\.c(pp)?:' \
+            | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|/\*|\*)' || true)
+if [ -n "$VT_SECRET" ]; then
+  check_fail "A secret-dependent compare (HMAC, MAC tag, CONFIRM hash) uses memcmp/strcmp — it returns at the first differing byte, a timing oracle"
+  echo "$VT_SECRET" | while read -r line; do blue "  $line"; done
+  blue "  Fix: compare with ct_compare::equal() (firmware/common/core/ct_compare.h)"
+else
+  check_pass "Secret-dependent compares (HMAC, MAC tag, CONFIRM hash) avoid memcmp/strcmp"
 fi
 
 echo ""
