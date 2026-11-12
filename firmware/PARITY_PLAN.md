@@ -29,24 +29,35 @@
 > sync set so one release signature serves pull-OTA on both trees AND the
 > WAP's BLE OTA. End-to-end flow: `docs/firmware_ota.md`.
 >
-> **Rollback note (2026-09-29):** the "OTA A/B with rollback safety" rows
-> below still read the Arduino side as ❌ / ☐. The code is there — the WAP
-> links the shared engine, and its `verifyRollbackLater()` override is live
-> because the Arduino core's own precompiled `sdkconfig` enables the
-> bootloader rollback config (the engine now `#error`s on a core that does
-> not). The cells stay open because the "Bench-proven" column is the
-> closure rule: nobody has yet reverted a bad image on either tree. The
-> bench procedure is `docs/V1_BENCH_TEST_RUNBOOK.md` Track E (written
-> against canary (PIO); the WAP confirms at the end of `setup()`, so the
-> same bad-image flash applies).
+> **Rollback note (2026-09-29, restated 2026-11, sweep D23):** the
+> dashboard reads "OTA A/B with rollback safety" ✅ for both trees, so §1
+> no longer lists it and its §4 row's "Dashboard ✅" cell is ticked. The
+> code is there — the WAP links the shared engine, and its
+> `verifyRollbackLater()` override is live because the Arduino core's own
+> precompiled `sdkconfig` enables the bootloader rollback config (the
+> engine now `#error`s on a core that does not). The §4 row's
+> "Bench-proven" cell stays open, because that column is the closure rule:
+> nobody has yet reverted a bad image on either tree. The bench procedure
+> is `docs/V1_BENCH_TEST_RUNBOOK.md` Track E (written against canary (PIO);
+> the WAP confirms at the end of `setup()`, so the same bad-image flash
+> applies).
 
 ---
 
 ## 1. Where the two trees disagree today
 
-Pulled directly from the `FEATURES.md` dashboard (canary **PIO/ACTIVE** vs canary-wap
-**Arduino**). Cells where both are equal (the entire core crypto/GPS/SD/CSI/health/battery suite
-is already at parity ✅) are omitted.
+The two tables below are the rows of the [`FEATURES.md` dashboard](FEATURES.md#feature-parity-dashboard)
+where its **canary (PIO)** column (ACTIVE here) and its **canary-wap** column (Arduino here)
+differ, leaving out a row with a ➖ in either column: ➖ means the capability is out of that
+tree's scope, so there is nothing to port. Group A holds the rows where the Arduino cell is ahead
+and Group B those where the ACTIVE cell is (✅ over ⚠️ over ❌). A row whose two cells are equal is
+not listed, whatever they read: both ⚠️ or both ❌ is a gap the trees share, not a parity item (TLS,
+after the tables, is the shared gap this plan tracks). Each row names its dashboard row (the
+capability text whole, or the text before its closing parenthetical) and carries that row's two
+cells. The dashboard stays the source: `scripts/tests/test_parity_plan.py` (`lint.yml`'s unittest
+step) fails when a row here, its cells or its group no longer match it, or when a dashboard row
+the two trees differ on is missing, so a PR that flips one of those cells restates this list in
+the same commit.
 
 > **Status reconciliation (2026-06-09):** a spot-audit against current code found that
 > **MQTT publish + HA Discovery is already present in the Arduino tree**
@@ -77,31 +88,44 @@ is already at parity ✅) are omitted.
 
 | Capability | ACTIVE | Arduino | Closure is… |
 |---|:---:|:---:|---|
+| SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`) | ⚠️ | ✅ | code (the `/HEALTH` writer, [`canary/CONSOLIDATION.md`](canary/CONSOLIDATION.md) gap #17) + bench (SD card); `/EXPORT` rides the export row |
 | Web UI (embedded PROGMEM dashboard) | ⚠️ | ✅ | code (compile + `selftest-ui`) |
-| Camera peek (MJPEG, no frame storage) | ⚠️ | ✅ | code + **bench** (needs camera) |
+| Camera peek (MJPEG stream, no frame storage) | ⚠️ | ✅ | code + **bench** (needs camera) |
 | Mesh network (Opera / ESP-NOW) | ⚠️ | ✅ | wired already; **bench** (#610) |
 | Mesh RSSI from ESP-NOW radio | ⚠️ | ✅ | code + bench |
 | BLE discovery (Opera/Chirp/Nearby) | ❌ | ✅ | code + bench |
 | RF presence detection | ❌ | ✅ | code + bench |
 | Hub failover election | ⚠️ | ✅ | code + **multi-board bench** |
+| Bluetooth setup door — Improv Wi-Fi over BLE | ❌ | ✅ | code + a decision (which envs carry it) + **bench** (U1, a phone): sweep F251 |
+| Witness record export to /EXPORT/ | ⚠️ | ✅ | a decision first (sweep F476: port the canary-wap's staging write, or drop the directory and restate the row), then code + bench (SD card) |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | code + **two-board bench** |
+| mDNS fleet advert (`_securacv._tcp`, canonical TXT schema incl. `dt`/`role` + broker gossip) | ⚠️ | ✅ | code (the canonical TXT keys, the note under the dashboard) + bench |
+| Remote identify blink (HA `Identify` button on MQTT variants; HTTP `/api/identify` on WAP) | ❌ | ✅ | code (compile + hassfest) + bench (the blink) |
+| Provisioning gate | ⚠️ | ✅ | **bench** (U1: one tap, one receipt); the code landed and CI-compiles |
 
-### Group B — ACTIVE has it, Arduino absent → **port INTO Arduino**
+### Group B — ACTIVE has it, Arduino partial/absent → **port INTO Arduino**
 
 | Capability | ACTIVE | Arduino | Closure is… |
 |---|:---:|:---:|---|
-| MQTT publish + HA Discovery | ✅ | ✅ | **✅ landed** (compile + hassfest) — see note above |
-| OTA A/B with rollback safety | ✅ | ❌ | code + bench (rollback) |
-| Acoustic alarm-cadence (T3 smoke / T4 CO) | ✅ | ❌ | code + **bench** (mic) |
-| Capacitive touch (panic / tamper) | ✅ | ❌ | code + bench |
+| BLE Scout pairing surface (proximity window, no MAC on the API, NVS-persisted registry) | ⚠️ | ❌ | code + bench (a beacon tag); the ACTIVE cell is ⚠️ as well |
+| Capacitive touch (silent panic / enclosure tamper) | ✅ | ❌ | code + bench |
 | Native deep-sleep HAL | ✅ | ❌ | code + bench |
-| IR appliance activity (RMT) | ✅ | ❌ | code + bench |
-| Internal temp drift tamper | ✅ | ❌ | code + bench |
-| Sensing events signed into chain | ✅ | ❌ | code + host test |
-| HA MQTT discovery for sensing (11 entities) | ✅ | ❌ | code (compile + hassfest) |
-| Sensing dashboard panel | ✅ | ❌ | code + `selftest-ui` |
-| WiFi power save (modem sleep / TX ctl) | ✅ | ❌ | code + bench |
-| WiFi auto-reconnect (exp. backoff) | ✅ | ❌ | code (compile) |
+| IR appliance activity (RMT NEC/RC5/Sony, salted-hash buckets) | ✅ | ❌ | code + bench |
+| Internal temp drift tamper (ESP32-S3 die sensor) | ✅ | ❌ | code + bench |
+| Sensing events signed into Ed25519 witness chain (T3/T4/panic/tamper/temp) | ✅ | ❌ | code + host test |
+| Home Assistant MQTT auto-discovery for sensing entities (11 entities) | ✅ | ❌ | code (compile + hassfest) |
+| Sensing dashboard panel (gauges + acoustic + touch + IR + temp + power) | ✅ | ❌ | code + `selftest-ui` |
+| SD endurance wear estimate | ✅ | ❌ | code + host test |
+| WiFi power save (modem sleep on battery, TX power control) | ✅ | ❌ | code + bench |
+| WiFi auto-reconnect with exponential backoff | ✅ | ❌ | code (compile) |
+| MQTT broker TLS — CA-verified or SHA-256-pinned socket, fail-closed, lab opt-in warns every connect | ✅ | ⚠️ | code + bench (a TLS broker): the CA mode is there; the pin and lab modes are refused, since esp_mqtt has no fingerprint hook and the pinned core builds esp-tls without its insecure mode ([per-variant audit](../docs/FIRMWARE_VARIANT_AUDIT.md)) |
+
+**At parity on the dashboard, so not listed:** MQTT publish + HA Discovery (✅ / ✅ since the
+2026-06-09 reconciliation above; its bar was compile + hassfest), OTA A/B with rollback safety
+(the rollback note above) and Acoustic alarm-cadence detection (T3 smoke / T4 CO) (`FEATURES.md`'s
+canary-wap acoustic note). The last two left Group B in sweep D23: the dashboard reads them ✅ for
+both trees, and their §4 rows keep the "Bench-proven" cell open. The bench runbook's Track E is
+the bad-image test; it has no acoustic track yet.
 
 ### Shared gap (neither tree, not a parity item but on the v1 path)
 - **TLS (HTTPS self-signed): ⚠️ / ⚠️ in the dashboard** (canary (PIO) since #1704, the F15
@@ -161,7 +185,7 @@ Parity is **not** copy-paste in either direction, because the two trees are stru
 ## 3. Sequenced closure program
 
 **Step 0 — Baseline & scorecard (pre-bench, safe, do first).**
-- Re-audit the eight Group-A ⚠️ cells against current code (mesh is now *wired* in
+- Re-audit the Group-A cells against current code (mesh is now *wired* in
   `main.cpp` — its ⚠️ reflects "unproven on hardware," not "absent"; don't pre-flip to ✅).
 - Stand up the parity scorecard (§4) and link it from `FEATURES.md`.
 
@@ -196,9 +220,15 @@ cell to ✅ only after the matching bench-runbook track passes** and an artifact
 | →ACTIVE | RF presence | ☐ | ☐ | ☐ |
 | →ACTIVE | Hub failover | ☐ | ☐ | ☐ |
 | →ACTIVE | Chirp channel | ☐ | ☐ | ☐ |
+| →ACTIVE | SD storage (`/HEALTH` writer) | ☐ (gap #17) | ☐ | ☐ |
+| →ACTIVE | Bluetooth setup door | ☐ (sweep F251) | ☐ | ☐ |
+| →ACTIVE | Witness export to `/EXPORT` | ☐ (sweep F476 decides first) | ☐ | ☐ |
+| →ACTIVE | mDNS fleet advert (canonical TXT) | ☐ | ☐ | ☐ |
+| →ACTIVE | Remote identify | ☐ | ☐ | ☐ |
+| →ACTIVE | Provisioning gate | ☑ (CI-compiled, host-tested; sweep F354) | ☐ (U1) | ☐ |
 | →Arduino | MQTT + HA Discovery | ☑ | n/a | ☑ |
-| →Arduino | OTA A/B rollback | ☑ (shared engine; rollback note above) | ☐ | ☐ |
-| →Arduino | Acoustic T3/T4 | ☐ | ☐ | ☐ |
+| →Arduino | OTA A/B rollback | ☑ (shared engine; rollback note above) | ☐ | ☑ |
+| →Arduino | Acoustic T3/T4 | ☑ (`securacv_audio`; `FEATURES.md`'s canary-wap acoustic note) | ☐ | ☑ |
 | →Arduino | Capacitive touch | ☐ | ☐ | ☐ |
 | →Arduino | Deep-sleep HAL | ☐ | ☐ | ☐ |
 | →Arduino | IR appliance | ☐ | ☐ | ☐ |
@@ -208,6 +238,9 @@ cell to ✅ only after the matching bench-runbook track passes** and an artifact
 | →Arduino | Sensing dashboard panel | ☐ | n/a | ☐ |
 | →Arduino | WiFi power save | ☐ | ☐ | ☐ |
 | →Arduino | WiFi auto-reconnect | ☐ | n/a | ☐ |
+| →Arduino | BLE Scout pairing surface | ☐ | ☐ | ☐ |
+| →Arduino | SD endurance wear estimate | ☐ | n/a | ☐ |
+| →Arduino | MQTT broker TLS (pin and lab modes) | ☐ (CA mode landed) | ☐ | ☐ |
 | shared | TLS (HTTPS) enabled | ☐ ACTIVE: code in dev/full (2026-09, F15) — compiles, but no stock core generates the certificate (the 2026-10-22 correction above), so a green `firmware.yml` run does not tick it · ☐ WAP default builds | ☐ | ☐ |
 
 **Exit:** every row ✅ in `FEATURES.md` for both `canary (PIO)` and `canary-wap (Arduino)` columns,
