@@ -1289,15 +1289,18 @@ test("A99: the Lab's bench offers the press beside the strap where the firmware 
   assert.match(shellSrc, /if \(provisioned && !firstMeeting\) \{\n\s*this\._nvsPut\("securacv", "wifi_ssid", HOME_LAN\.ssid\);/,
     "a provisioned boot still seeds the home network the flash did not erase");
   // app.js: the erase leaves the image and is marked; a later write of the
-  // key clears the mark; every preserved boot passes the marks; a fresh or
-  // "meet again" boot starts the record over
+  // key clears the mark; every boot is staged by stageFlash (its behavior is
+  // the "meet again" test below): a preserved one passes the marks, a fresh
+  // one starts the record over
   assert.ok(app.includes("    nvsErased: new Set(),\n"), "the sheet keeps the erased keys beside its image");
   assert.match(app, /onNvsWrite: \(ns, key, hexVal\) => \{\n\s*ctx\.nvsImage\.set\(`\$\{ns\}\/\$\{key\}`, hexVal\);\n\s*ctx\.nvsErased\.delete\(`\$\{ns\}\/\$\{key\}`\);\n\s*\},/,
     "a write puts the key in the image and clears its erase");
   assert.match(app, /onNvsRemove: \(ns, key\) => \{\n\s*ctx\.nvsImage\.delete\(`\$\{ns\}\/\$\{key\}`\);\n\s*ctx\.nvsErased\.add\(`\$\{ns\}\/\$\{key\}`\);\n\s*\},/,
     "an erase takes the key out of the image and marks it");
-  assert.ok(app.includes("    if (!opts.preserve || opts.firstMeeting) ctx.nvsErased.clear();\n"), "a fresh or meet-again boot starts the record over");
-  assert.ok(app.includes("      erased: opts.preserve ? ctx.nvsErased : null,\n"), "a preserved boot passes the erased keys");
+  assert.match(app, /\n    const flash = stageFlash\(ctx\.nvsImage, ctx\.nvsErased, opts\);\n    await ctx\.emu\.start\(\{\n      provisioned: true,\n      firstMeeting: !!opts\.firstMeeting,\n      seed: 20260719,\n      nvsImage: flash\.nvsImage,\n      erased: flash\.erased,\n    \}\);\n/,
+    "every boot starts the twin from the page's copy of the flash as stageFlash stages it");
+  assert.strictEqual((app.match(/stageFlash\(/g) || []).length, 1, "bootInner is stageFlash's one caller");
+  assert.strictEqual((app.match(/ctx\.nvsErased\.clear\(\)|nvsErased\.clear\(\)/g) || []).length, 0, "no boot clears the marks but stageFlash");
   assert.strictEqual((app.match(/boot\(\{ preserve: true \}\)/g) || []).length, 2,
     "the two preserved boots (the bench's power events and the firmware's restart) go through bootInner");
   assert.ok(app.includes("booting again with its memory intact"), "the bench's reboot restores the page's copy of the flash");
@@ -1448,6 +1451,99 @@ test("A127: start() seeds no default the flash erased, every one it did not, and
   assert.deepStrictEqual(heard, ["securacv/wifi_nets"]);
   const quiet = await boot({});
   assert.doesNotThrow(() => quiet.emu.module.onNvsRemove("securacv", "ap_pass"));
+});
+
+// Sweep A127, review: a "meet again" forgets the hello and the Wi-Fi network,
+// and that forget lasts like the firmware's own erase does. app.js stages
+// every boot's flash in stageFlash (its one caller is pinned above): the
+// keys a meeting forgets leave the page's copy of the flash and are marked
+// erased, with the defaults that would put them back, so a bench power event
+// or the firmware's restart before the phone walks the portal brings the
+// twin back into it, not onto the home network; the firmware's own write
+// (the portal's credentials, the hello's mark) clears each mark. Before, a
+// meet again cleared the marks and forgot only from that one boot's copy, so
+// the next preserved boot seeded the home network and the hello's mark again
+// and restored a walked network: a met-again twin joined its home network
+// after a bench RESET (bench_probe.mjs drives that in Chromium).
+test("A127: a meet again forgets its keys for every boot after it, until the firmware writes them", async () => {
+  const { CanaryEmulator, HOME_LAN } = await import("../emulator/web/emu-shell.js");
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  const from = app.indexOf("const firstMeetingForgets = (nsKey) =>");
+  const at = app.indexOf("const stageFlash = (");
+  assert.ok(from >= 0 && at > from, "app.js stages a boot's flash in stageFlash, defined after firstMeetingForgets");
+  const { firstMeetingForgets, FIRST_MEETING_SEEDS, stageFlash } =
+    new Function(`${app.slice(from, app.indexOf("\n};\n", at) + 4)}\nreturn { firstMeetingForgets, FIRST_MEETING_SEEDS, stageFlash };`)();
+  // the shell's own start() on a fake module: every key it preseeds, in order
+  const start = async (opts) => {
+    const seeded = [];
+    const factory = async (imports) => ({
+      ...imports,
+      cwrap: (name) => (...a) => {
+        if (name === "emu_nvs_preseed_hex") seeded.push(`${a[0]}/${a[1]}=${Buffer.from(a[2], "hex").toString()}`);
+        return 0;
+      },
+      HEAPU8: new Uint8Array(16),
+      UTF8ToString: () => "[]",
+    });
+    await new CanaryEmulator(factory, { canvas: { getContext: () => ({}), addEventListener: () => {} } }).start(opts);
+    return seeded;
+  };
+  const names = (seeded) => seeded.map((s) => s.slice(0, s.indexOf("=")));
+  // the seeds a meeting marks are exactly the defaults start() gives a
+  // provisioned unit that has met and leaves out of a first meeting, each a
+  // key a meeting forgets, and a first meeting seeds no key one forgets
+  const metSeeds = names(await start({ provisioned: true }));
+  const firstSeeds = names(await start({ provisioned: true, firstMeeting: true }));
+  assert.deepStrictEqual([...FIRST_MEETING_SEEDS].sort(), metSeeds.filter((k) => !firstSeeds.includes(k)).sort(),
+    "FIRST_MEETING_SEEDS is the defaults a first meeting does not seed");
+  for (const k of FIRST_MEETING_SEEDS) assert.ok(firstMeetingForgets(k), `${k} is a key a meeting forgets`);
+  for (const k of firstSeeds) assert.ok(!firstMeetingForgets(k), `a first meeting seeds ${k}, which a meeting forgets`);
+
+  // one sheet's flash, as app.js keeps it (onNvsWrite / onNvsRemove, pinned above)
+  const image = new Map();
+  const erased = new Set();
+  const wrote = (k, v) => { image.set(k, Buffer.from(v).toString("hex")); erased.delete(k); };
+  const erase = (k) => { image.delete(k); erased.add(k); };
+  const boot = async (opts = {}) => {
+    const flash = stageFlash(image, erased, opts);
+    return start({ provisioned: true, firstMeeting: !!opts.firstMeeting, nvsImage: flash.nvsImage, erased: flash.erased });
+  };
+  const HOME = [`securacv/wifi_ssid=${HOME_LAN.ssid}`, `securacv/wifi_pass=${HOME_LAN.pass}`];
+  const BROKER = ["securacv/mqtt_host=hub.local", "securacv/mqtt_user=fleet", "securacv/mqtt_pass=fleet"];
+  const HELLO = ["scv-hello/met=\x01"];
+  // the sheet opens on a fresh boot, every default; the firmware writes keys of its own
+  assert.deepStrictEqual(await boot(), [...HOME, ...BROKER, ...HELLO]);
+  wrote("securacv/wifi_nets", "ring");
+  wrote("scv-glass/s", "blob");
+  const KEPT = ["securacv/wifi_nets=ring", "scv-glass/s=blob"];
+  // meet again: no network, no hello; the broker and the rest of the flash stay
+  assert.deepStrictEqual(await boot({ preserve: true, firstMeeting: true }), [...BROKER, ...KEPT]);
+  // a bench power event, then the firmware's restart, before the phone walks
+  // the portal: still no network and no hello (before: both seeded again)
+  assert.deepStrictEqual(await boot({ preserve: true }), [...BROKER, ...KEPT],
+    "a preserved boot after a meet again seeds neither the home network nor the hello's mark");
+  assert.deepStrictEqual(await boot({ preserve: true }), [...BROKER, ...KEPT], "...nor does the one after it");
+  // the hello's mark and the portal's credentials, written by the firmware:
+  // the marks clear, and the next boot restores what it wrote over the defaults
+  wrote("scv-hello/met", "\x01");
+  wrote("securacv/wifi_ssid", "Cafe");
+  wrote("securacv/wifi_pass", "latte");
+  assert.deepStrictEqual(await boot({ preserve: true }),
+    [...HOME, ...BROKER, ...HELLO, ...KEPT, "scv-hello/met=\x01", "securacv/wifi_ssid=Cafe", "securacv/wifi_pass=latte"]);
+  // a meet again forgets a walked network from the page's copy itself, and a
+  // hello key of any name (before: from that one boot's copy only, and the
+  // next boot restored the network)
+  wrote("scv-hello/seen", "x");
+  assert.deepStrictEqual(await boot({ preserve: true, firstMeeting: true }), [...BROKER, ...KEPT]);
+  assert.deepStrictEqual([...image.keys()].filter(firstMeetingForgets), [], "the page's copy holds no key a meeting forgets");
+  assert.deepStrictEqual(await boot({ preserve: true }), [...BROKER, ...KEPT], "a walked network a meet again forgot is not restored");
+  // every other mark stays through a meet again, as the rest of the flash does
+  erase("securacv/mqtt_host");
+  erase("securacv/wifi_nets");
+  assert.deepStrictEqual(await boot({ preserve: true, firstMeeting: true }), [...BROKER.slice(1), "scv-glass/s=blob"]);
+  // a fresh boot starts the record over: no image, no marks
+  assert.deepStrictEqual(stageFlash(image, erased, {}), { nvsImage: null, erased: null });
+  assert.strictEqual(erased.size, 0, "a fresh boot clears the marks");
 });
 
 // Sweep A101: the Nightlight's ESP32-C3 has no download-mode banner the Lab

@@ -36,6 +36,37 @@ import {
 const firstMeetingForgets = (nsKey) =>
   nsKey.startsWith("scv-hello/") ||
   nsKey === "securacv/wifi_ssid" || nsKey === "securacv/wifi_pass";
+// ...and the names among them a boot seeds as defaults (emu-shell.js start()
+// gives a provisioned unit that has met the home network and the hello's
+// mark; bench.test.js holds this list to start()'s own seeds).
+const FIRST_MEETING_SEEDS = ["securacv/wifi_ssid", "securacv/wifi_pass", "scv-hello/met"];
+
+// The page's copy of the flash a boot starts from (sweep A127): `image`
+// holds every key the firmware wrote, `erased` every key it erased and has
+// not written since. A preserved boot (the firmware's restart, a bench power
+// event) restores the image and hands start() the erased keys, which it seeds
+// none of back as a default. A "meet again" is a preserved boot that forgets
+// first: its keys leave the image and are marked erased, with the defaults
+// that would put them back, so a later preserved boot of a unit that has not
+// yet walked its portal (or finished its hello) comes back into them again,
+// not onto the home network a provisioned boot seeds; the firmware's own
+// write (the portal's credentials, the hello's mark) clears each mark. The
+// other marks stay, as the rest of the flash does. A fresh boot starts the
+// record over. Returns what start() takes.
+const stageFlash = (image, erased, { preserve = false, firstMeeting = false } = {}) => {
+  if (!preserve) {
+    erased.clear();
+    return { nvsImage: null, erased: null };
+  }
+  if (firstMeeting) {
+    for (const k of [...image.keys(), ...FIRST_MEETING_SEEDS]) {
+      if (!firstMeetingForgets(k)) continue;
+      image.delete(k);
+      erased.add(k);
+    }
+  }
+  return { nvsImage: image, erased };
+};
 
 // The device a fleet.html#<id> link names. A hand-typed or truncated link
 // (fleet.html#%E0) is not valid percent-encoding and decodeURIComponent throws
@@ -591,20 +622,17 @@ async function buildDisplaySheet(ctx, side, stage) {
     // provision_needed() opens its setup portal (the phone in "Try it").
     // The keys the firmware erased stay erased across every preserved boot
     // (sweep A127): the 10 s hold's factory reset comes back unprovisioned,
-    // into its setup portal. A fresh or "meet again" boot stages the unit's
-    // memory itself and starts the record over.
-    const img = !opts.preserve
-      ? null
-      : opts.firstMeeting
-        ? new Map([...ctx.nvsImage].filter(([k]) => !firstMeetingForgets(k)))
-        : ctx.nvsImage;
-    if (!opts.preserve || opts.firstMeeting) ctx.nvsErased.clear();
+    // into its setup portal. The keys a "meet again" forgets stay forgotten
+    // the same way, so a bench power event before the phone walks the
+    // portal raises it again (stageFlash above). A fresh boot stages the
+    // unit's memory itself and starts the record over.
+    const flash = stageFlash(ctx.nvsImage, ctx.nvsErased, opts);
     await ctx.emu.start({
       provisioned: true,
       firstMeeting: !!opts.firstMeeting,
       seed: 20260719,
-      nvsImage: img,
-      erased: opts.preserve ? ctx.nvsErased : null,
+      nvsImage: flash.nvsImage,
+      erased: flash.erased,
     });
     ctx.emu.setLocalHour(10);
     // The fleet outlives display reboots: real witnesses keep their keys

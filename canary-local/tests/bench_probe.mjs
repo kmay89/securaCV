@@ -16,7 +16,9 @@
 // another tab replacing the bench mid-press, the window left, the page
 // hidden, RESET mid-press, a double press, touch then mouse, the keyboard;
 // held past 10 s the firmware's factory reset runs and the bench restarts
-// the twin on its home network, as the control's title says; no press
+// the twin into its setup portal, as the control's title says, and a bench
+// RESET after it raises the portal again (sweep A127), as one after a "meet
+// again" does (A127 review); no press
 // reaches a ROM in download mode, the dash (whose firmware never reads BOOT)
 // offers none, and a dist without emu_button offers one that cannot press.
 // The Nightlight's screen-dark flow stages its download-mode guess in the
@@ -619,6 +621,40 @@ await portalAfter("※ ── reset ── ※")
   if (t.indexOf(JOINED, t.lastIndexOf("※ ── reset ── ※")) >= 0) await fail("after the factory reset, a bench RESET brought the twin back on its home network");
 }
 console.log("bench_probe: a bench RESET after the factory reset boots the watch into its setup portal again: the erase lasts");
+// ...and so does a "meet again" (sweep A127, review): the page takes the
+// hello and the network out of its copy of the flash and marks them erased
+// (app.js stageFlash), so a bench RESET of a met-again watch that has not
+// walked its portal raises the portal again. Before, the RESET seeded the
+// home network back and the twin joined it. The forget is the page's, not
+// the firmware's, so this holds on any dist. Which line comes first after
+// the newest `mark`, the portal's or a join's, so a join fails at once.
+const portalOrJoin = (mark) => page
+  .waitForFunction(([mark, portal, joined]) => {
+    const t = document.querySelector("pre.log")?.textContent || "";
+    const at = t.lastIndexOf(mark);
+    if (at < 0) return null;
+    const p = t.indexOf(portal, at);
+    const j = t.indexOf(joined, at);
+    if (p < 0 && j < 0) return null;
+    return p >= 0 && (j < 0 || p < j) ? "portal" : "joined";
+  }, [mark, PORTAL, JOINED], { timeout: 90000 })
+  .then((h) => h.jsonValue(), () => "neither");
+await openTab("Try it");
+await page.locator("button", { hasText: "meet the bird again" }).first().click();
+await openTab("Wire");
+{
+  const met = await portalOrJoin("※ ── power cycle (first meeting) ── ※");
+  if (met !== "portal") await fail(`"meet the bird again" did not raise the watch's setup portal (${met}): ${(await serial()).slice(-1500)}`);
+}
+await openTab("Bench");
+await chip("RESET").click();
+await openTab("Wire");
+{
+  const after = await portalOrJoin("※ ── reset ── ※");
+  if (after === "joined") await fail("a bench RESET of a met-again watch that never walked its portal brought it back on its home network: the meet again's forget did not last");
+  if (after !== "portal") await fail(`a bench RESET of a met-again watch raised no setup portal: ${(await serial()).slice(-1500)}`);
+}
+console.log("bench_probe: a bench RESET of a met-again watch that has not walked its portal raises the portal again: the meet again's forget lasts");
 await openTab("Bench");
 
 if (SHOTS) await page.screenshot({ path: `${SHOTS}/bench_ok.png` });

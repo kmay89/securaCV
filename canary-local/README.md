@@ -247,7 +247,9 @@ Three doors into the same live device, all driven by one scenario API
 - **Try it** — free play: link switches, time controls, staged events,
   tamper, household ack-sync from a "sibling display". And the first
   boot: "meet the bird again" reboots a factory-fresh unit (no Wi-Fi
-  stored), the real `net/provision.cpp` raises its `SecuraCV-display-XXXX`
+  stored, and none seeded again by a bench power event or a restart until
+  the portal stores one: `assets/app.js` `stageFlash`, held by
+  `tests/bench.test.js` and `tests/bench_probe.mjs`), the real `net/provision.cpp` raises its `SecuraCV-display-XXXX`
   SoftAP, and a phone (`assets/onboard-phone.js`) walks the display's own
   portal — join with the key from the glass's QR, the captive DNS answer,
   the firmware's page in a sandboxed `srcdoc` frame, `/scan`, `/join`,
