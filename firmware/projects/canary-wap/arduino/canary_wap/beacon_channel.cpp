@@ -40,11 +40,14 @@
  *     COSIGN_REQ that fits the shared receive path: its frame is 310 bytes
  *     (ciphertext[160] reserved for a 72-byte canonical), over the 250-byte
  *     ESP-NOW v1 payload that mesh_network's receive buffer holds.
- *  2. The spec §3.3 pairing flow is a stub. start_pair_init/join and
- *     confirm_pair only move the state machine, PAIR_OFFER and REVOKE frames
- *     are dropped, and nothing writes a beacon-set entry or sets
- *     has_x25519_pubkey. So pick_cosign_candidate() has no input and the
- *     (implemented, encrypted) two-device path cannot run on any device.
+ *  2. The spec §3.3 pairing flow is not built. start_pair_init/join and
+ *     confirm_pair refuse (false, the state left as it was) and the
+ *     /api/beacon/pair/* routes answer pairing_not_built (sweep F30: they
+ *     answered "started" and "confirmed" for a pairing that never ran);
+ *     PAIR_OFFER and REVOKE frames are dropped, and nothing writes a
+ *     beacon-set entry or sets has_x25519_pubkey. So
+ *     pick_cosign_candidate() has no input and the (implemented, encrypted)
+ *     two-device path cannot run on any device.
  *  3. Not implemented by decision (spec/beacon_cap_gateway_v0.md §6): the
  *     CAP gateway upstream-attestation path. Gateway-trust entries are
  *     ordinary two-pubkey signers here and receive no solo or rate privilege,
@@ -1158,7 +1161,8 @@ static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int
       handle_cosign_resp_frame(data, (size_t)len);
       break;
     default:
-      // PAIR_OFFER / REVOKE paths are deferred to v0.3 pairing implementation.
+      // PAIR_OFFER and REVOKE are dropped: the spec §3.3 pairing flow is not
+      // built (start_pair_init() below; sweep F30).
       break;
   }
 }
@@ -1696,25 +1700,28 @@ bool on_peer_tampered(const uint8_t* device_pubkey) {
   return revoked;
 }
 
-bool start_pair_init() {
-  // Pairing flow implementation deferred to v0.3.
-  set_state(BEACON_STATE_PAIR_INIT);
-  return true;
-}
+// The spec §3.3 pairing flow (PAIR_OFFER, the ephemeral X25519 exchange
+// and its 6-digit code, the flash-encryption-gated set write with
+// has_x25519_pubkey, and spec/beacon_cap_gateway_v0.md §2.2's cap of three
+// gateway entries) is not built. Each of these refuses, and leaves the
+// state as it was: nothing enters BEACON_STATE_PAIR_INIT or _JOIN. They
+// returned true having only set the state (start_pair_init(), "deferred to
+// v0.3") or set NORMAL (confirm_pair(), "Stub."), and the routes answered
+// "pair_init started", "pair_join started" and "pair confirmed" for a
+// pairing that never ran (sweep F30). The routes no longer call them: they
+// answer pairing_not_built (beacon_api.h).
+bool start_pair_init() { return false; }
 
-bool start_pair_join() {
-  set_state(BEACON_STATE_PAIR_JOIN);
-  return true;
-}
+bool start_pair_join() { return false; }
 
-bool confirm_pair() {
-  // Stub.
-  set_state(BEACON_STATE_NORMAL);
-  return true;
-}
+bool confirm_pair() { return false; }
 
+// Ends a pairing in progress, and nothing else. It set NORMAL whatever the
+// state was, so a cancel with no pairing to end read an ALARM, a TROUBLE or
+// a disabled channel as Normal (sweep F30). Nothing enters a pairing state
+// while pairing is not built, so today it changes nothing.
 void cancel_pair() {
-  set_state(BEACON_STATE_NORMAL);
+  if (is_pairing()) set_state(BEACON_STATE_NORMAL);
 }
 
 bool is_pairing() {

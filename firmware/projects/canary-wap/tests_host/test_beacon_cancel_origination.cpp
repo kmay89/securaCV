@@ -24,6 +24,9 @@
 //     solo path's BOOT gate, the cosigner gate before a request is stashed, no
 //     rate charge on adoption, and the AEAD associated data at all four COSIGN
 //     call sites. A test of a helper alone passes whatever its caller does.
+//   - and, reading beacon_channel.cpp, beacon_api.h and canary_wap.ino, that
+//     the pairing stubs refuse and touch no state and the four pair routes
+//     answer pairing_not_built, since the spec §3.3 flow is not built (F30).
 //
 /* Build & run (the canary-wap tests_host Makefile's `run` target does this):
  *
@@ -617,6 +620,90 @@ void test_source_call_sites_follow_the_policy() {
          dec.find("memset(") == std::string::npos,
          "no key wipe in the COSIGN crypto path is a plain memset");
 }
+// ── Pairing is not built, and says so (sweep F30) ─────────────────────────
+
+// The spec §3.3 pairing flow is not built. start_pair_init(),
+// start_pair_join() and confirm_pair() returned true having only moved the
+// state (PAIR_INIT, PAIR_JOIN, then NORMAL), and the routes answered
+// "pair_init started", "pair_join started" and "pair confirmed" for a
+// pairing that never ran; cancel_pair() set NORMAL whatever the state was,
+// an ALARM or a disabled channel included, and its route said "pair
+// canceled". Read from the REAL beacon_channel.cpp, beacon_api.h and
+// canary_wap.ino (comments stripped): each of the three refuses and touches
+// no state, nothing anywhere sets a pairing state, cancel_pair() changes the
+// state only out of one, nothing calls any of the four, and each of the four
+// routes answers send_error()'s pairing_not_built and nothing else (the
+// answer itself, through the real send_error(), is test_beacon_set_load's).
+void test_source_pairing_is_refused() {
+  using namespace beacon_source_scan;
+  bool ok_cpp = false, ok_api = false, ok_ino = false;
+  const std::string cpp = strip_comments(read_source(BEACON_CHANNEL_CPP, &ok_cpp));
+  const std::string api = strip_comments(read_source(BEACON_API_H, &ok_api));
+  std::string ino_path = BEACON_API_H;
+  ino_path.erase(ino_path.rfind('/') + 1);
+  ino_path += "canary_wap.ino";
+  const std::string ino = squeeze(strip_comments(read_source(ino_path.c_str(), &ok_ino)));
+  EXPECT(ok_cpp && ok_api && ok_ino, "beacon_channel.cpp, beacon_api.h and canary_wap.ino are readable (pins fail closed)");
+  if (!ok_cpp || !ok_api || !ok_ino) return;
+  const std::string all = squeeze(cpp);
+  const std::string api_all = squeeze(api);
+
+  // The three refuse, and name no state.
+  for (const char* fn : {"start_pair_init", "start_pair_join", "confirm_pair"}) {
+    const std::string b = squeeze(function_body(cpp, fn));
+    if (b != "{returnfalse;}") std::fprintf(stderr, "  %s() is %s\n", fn, b.c_str());
+    EXPECT(b == "{returnfalse;}", "start_pair_init(), start_pair_join() and confirm_pair() each refuse and change nothing");
+  }
+  // Nothing sets a pairing state, and the state is written only by
+  // set_state() (its one assignment, beside the boot value), so the state
+  // never leaves what update(), recompute_trouble_reasons() and the
+  // enable/disable paths set.
+  EXPECT(count(all, "set_state(BEACON_STATE_PAIR_") == 0, "no set_state() names a pairing state");
+  size_t writes = 0;
+  for (size_t at = all.find("g_state="); at != std::string::npos; at = all.find("g_state=", at + 1)) {
+    if (at + 8 < all.size() && all[at + 8] != '=') writes++;
+  }
+  EXPECT(writes == 2 && all.find("staticBeaconStateg_state=BEACON_STATE_DISABLED;") != std::string::npos &&
+             squeeze(function_body(cpp, "set_state")).find("g_state=new_state;") != std::string::npos,
+         "g_state is written at its definition and in set_state() alone");
+  EXPECT(squeeze(function_body(cpp, "cancel_pair")) == "{if(is_pairing())set_state(BEACON_STATE_NORMAL);}",
+         "cancel_pair() changes the state only out of a pairing state");
+  EXPECT(squeeze(function_body(cpp, "is_pairing")) ==
+             "{returng_state==BEACON_STATE_PAIR_INIT||g_state==BEACON_STATE_PAIR_JOIN;}",
+         "is_pairing() is the two pairing states");
+
+  // Nothing calls them: the routes were the only callers, and canary_wap.ino
+  // (its loop, the BOOT button, the self-test) names none.
+  for (const char* fn : {"start_pair_init(", "start_pair_join(", "confirm_pair(", "cancel_pair("}) {
+    const bool defined_once = count(all, fn) == 1;
+    const bool no_api_call = count(api_all, fn) == 0;
+    const bool no_ino_call = count(ino, fn) == 0;
+    if (!defined_once || !no_api_call || !no_ino_call) std::fprintf(stderr, "  %s is called\n", fn);
+    EXPECT(defined_once && no_api_call && no_ino_call,
+           "each of the four is defined in beacon_channel.cpp and called nowhere in it, beacon_api.h or canary_wap.ino");
+  }
+  EXPECT(count(all, "is_pairing(") == 2, "is_pairing() is read by cancel_pair() alone");
+
+  // Each pair route answers pairing_not_built and does nothing else.
+  for (const char* route : {"handle_pair_start", "handle_pair_join", "handle_pair_confirm", "handle_pair_cancel"}) {
+    const std::string b = squeeze(function_body(api, route));
+    if (b != "{returnsend_error(req,\"pairing_not_built\");}") std::fprintf(stderr, "  %s is %s\n", route, b.c_str());
+    EXPECT(b == "{returnsend_error(req,\"pairing_not_built\");}",
+           "each pair route answers send_error(req, \"pairing_not_built\") and nothing else");
+  }
+  EXPECT(count(api_all, "\"pairing_not_built\"") == 4, "pairing_not_built is answered by the four pair routes alone");
+  for (const char* claim : {"\"pair_init started\"", "\"pair_join started\"", "\"pair confirmed\"",
+                            "\"pair canceled\"", "\"pair_init failed\"", "\"pair_join failed\"",
+                            "\"pair confirm failed\""}) {
+    EXPECT(api.find(claim) == std::string::npos, "no route answers the old pairing claims");   // not squeezed: they hold spaces
+  }
+  for (const char* path : {"\"/api/beacon/pair/start\",HTTP_POST,bcn_bearer_gated<handle_pair_start>);",
+                           "\"/api/beacon/pair/join\",HTTP_POST,bcn_bearer_gated<handle_pair_join>);",
+                           "\"/api/beacon/pair/confirm\",HTTP_POST,bcn_bearer_gated<handle_pair_confirm>);",
+                           "\"/api/beacon/pair/cancel\",HTTP_POST,bcn_bearer_gated<handle_pair_cancel>);"}) {
+    EXPECT(count(api_all, path) == 1, "each pair route is still registered once, behind the bearer");
+  }
+}
 }  // namespace
 
 int main() {
@@ -632,6 +719,7 @@ int main() {
   test_originator_adopts_its_own_frame();
   test_wire_layout();
   test_source_call_sites_follow_the_policy();
+  test_source_pairing_is_refused();
 
   if (failures == 0) {
     std::printf("ALL %d beacon cancel origination checks PASSED\n", checks);

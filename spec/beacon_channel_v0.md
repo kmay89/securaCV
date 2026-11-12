@@ -116,6 +116,8 @@ Pairing flow:
 6. Each device verifies the offer's signature and adds the other's pubkey to its beacon set.
 7. Pairing complete in ≤120 s or aborts.
 
+**Not built.** The canary-wap implements none of this flow: no `BEACON_PAIR_OFFER` is sent or read (a received one is dropped), there is no X25519 exchange or confirmation code, and nothing writes a beacon-set entry or its X25519 key, so no board can add a member and the two-device path (§6) has no cosigner to ask. `start_pair_init()`, `start_pair_join()` and `confirm_pair()` refuse and leave the state as it was, and the four `/api/beacon/pair/*` routes (§10) answer `{"success":false,"error":"pairing_not_built"}`. They answered `pair_init started`, `pair_join started` and `pair confirmed` on stubs that only moved the state, and `pair canceled` after setting the state to Normal whatever it had been, an alarm included (sweep F30). The flow above, with the three-gateway cap of `spec/beacon_cap_gateway_v0.md` §2.2 enforced where an entry is added, is still to be designed and built.
+
 ### 3.4 Revocation
 
 Any device can unilaterally remove another device from its own beacon set. Removal is local — no broadcast, no propagation. The removed device's Beacon frames stop being accepted by this device.
@@ -542,10 +544,10 @@ The reads (`GET`) take `api_auth_check()`: a bearer, or the dashboard session co
 |---|---|---|
 | `/api/beacon` | GET | Status (state, beacon_set_size, active_alarm, trouble_reasons) |
 | `/api/beacon/set` | GET | List beacon set entries (no full pubkeys, only fingerprints + names) |
-| `/api/beacon/pair/start` | POST | Enter pair-init mode |
-| `/api/beacon/pair/join` | POST | Enter pair-join mode |
-| `/api/beacon/pair/confirm` | POST | Confirm pair code |
-| `/api/beacon/pair/cancel` | POST | Abort pairing |
+| `/api/beacon/pair/start` | POST | Enter pair-init mode. **Not built** (§3.3): answers `{"success":false,"error":"pairing_not_built"}` and changes nothing |
+| `/api/beacon/pair/join` | POST | Enter pair-join mode. **Not built**: answers `pairing_not_built`, as above |
+| `/api/beacon/pair/confirm` | POST | Confirm pair code. **Not built**: answers `pairing_not_built`, as above |
+| `/api/beacon/pair/cancel` | POST | Abort pairing. **Not built**: there is no pairing to abort; answers `pairing_not_built`, as above |
 | `/api/beacon/revoke` | POST | Set a beacon-set entry to `trust_level = 2` (revoked) |
 | `/api/beacon/originate` | POST | Begin two-pubkey origination flow (template_id, urgency, severity) |
 | `/api/beacon/originate-solo` | POST | Solo-degraded origination (§6.2) — the BOOT button must be held |

@@ -225,28 +225,29 @@ inline esp_err_t handle_set_list(httpd_req_t* req) {
   return rc;
 }
 
-// POST /api/beacon/pair/start
+// POST /api/beacon/pair/start, /join, /confirm and /cancel. The spec §3.3
+// pairing flow is not built (beacon_channel.cpp's start_pair_init() names
+// what it lacks), so there is no pairing to start, join, confirm or cancel:
+// each route answers {"success":false,"error":"pairing_not_built"} and
+// changes nothing. They answered "pair_init started", "pair_join started"
+// and "pair confirmed" on stubs that only moved the state, and "pair
+// canceled" for a pairing that never was, after setting the state to
+// Normal whatever it had been, an alarm included (sweep F30). The pairing
+// PR writes what each answers once there is a flow behind it.
 inline esp_err_t handle_pair_start(httpd_req_t* req) {
-  return beacon_channel::start_pair_init() ? send_success(req, "pair_init started")
-                                            : send_error(req, "pair_init failed");
+  return send_error(req, "pairing_not_built");
 }
 
-// POST /api/beacon/pair/join
 inline esp_err_t handle_pair_join(httpd_req_t* req) {
-  return beacon_channel::start_pair_join() ? send_success(req, "pair_join started")
-                                            : send_error(req, "pair_join failed");
+  return send_error(req, "pairing_not_built");
 }
 
-// POST /api/beacon/pair/confirm
 inline esp_err_t handle_pair_confirm(httpd_req_t* req) {
-  return beacon_channel::confirm_pair() ? send_success(req, "pair confirmed")
-                                         : send_error(req, "pair confirm failed");
+  return send_error(req, "pairing_not_built");
 }
 
-// POST /api/beacon/pair/cancel
 inline esp_err_t handle_pair_cancel(httpd_req_t* req) {
-  beacon_channel::cancel_pair();
-  return send_success(req, "pair canceled");
+  return send_error(req, "pairing_not_built");
 }
 
 // Read a request body completely (NUL-terminated), or refuse it by name.
