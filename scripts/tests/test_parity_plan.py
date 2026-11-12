@@ -7,12 +7,14 @@ ACTIVE) and the canary-wap column (the plan's Arduino) disagree, leaving out
 a row with a ➖ in either column. It used to say it was "pulled directly"
 from the dashboard and that the core SD/health suite was "already at
 parity", and by wave 25 it missed nine of the dashboard's 26 such rows and
-still listed two (OTA A/B, acoustic) the dashboard read at parity (sweep
-D23). Nothing read the plan, so nothing noticed. This test holds the two
+still listed three the dashboard read at parity (MQTT publish + HA
+Discovery, OTA A/B, acoustic), two of them with stale Arduino ❌ cells
+(sweep D23). Nothing read the plan, so nothing noticed. This test holds the
 group tables of section 1 to the dashboard:
 
-* every group row names one dashboard row: its capability text whole, or
-  the text before its closing parenthetical;
+* every row of every table under a "### Group A" or "### Group B" heading
+  (up to the next heading) names one dashboard row: its capability text
+  whole, or the text before its closing parenthetical;
 * the row's ACTIVE and Arduino cells carry that dashboard row's canary (PIO)
   and canary-wap symbols;
 * the dashboard row is a parity row: the two symbols differ and neither is ➖;
@@ -21,9 +23,12 @@ group tables of section 1 to the dashboard:
 * every parity row of the dashboard is listed.
 
 So a PR that flips one of those dashboard cells restates section 1 in the
-same commit. The dashboard is read as `features_dashboard_guard.py` reads it
-(the first table under the "Feature-Parity Dashboard" heading), and a test
-below holds the two readers to the same cells.
+same commit, and that is all it has to do: the tests that prove the check
+bites edit a small fixture below (FIXTURE_FEATURES, FIXTURE_PLAN), never a
+live row, so closing a parity item never breaks them. The dashboard is read
+as `features_dashboard_guard.py` reads it (the first table under the
+"Feature-Parity Dashboard" heading), and a test below holds the two readers
+to the same cells.
 
 Run:  python3 -m unittest scripts/tests/test_parity_plan.py -v
 CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests)
@@ -152,15 +157,25 @@ class PlanRow:
     closure: str
 
 
-def table_after(lines: list[str], start: int, stop: int) -> list[tuple[int, str]]:
-    """(line number, text) of the first contiguous table in lines[start:stop]."""
-    rows: list[tuple[int, str]] = []
+def tables_in(lines: list[str], start: int, stop: int) -> list[list[tuple[int, str]]]:
+    """Every contiguous table in lines[start:stop], as (line number, text) rows."""
+    tables: list[list[tuple[int, str]]] = []
+    cur: list[tuple[int, str]] = []
     for i in range(start, stop):
         if lines[i].lstrip().startswith("|"):
-            rows.append((i + 1, lines[i]))
-        elif rows:
-            break
-    return rows
+            cur.append((i + 1, lines[i]))
+        elif cur:
+            tables.append(cur)
+            cur = []
+    if cur:
+        tables.append(cur)
+    return tables
+
+
+def table_after(lines: list[str], start: int, stop: int) -> list[tuple[int, str]]:
+    """(line number, text) of the first contiguous table in lines[start:stop]."""
+    tables = tables_in(lines, start, stop)
+    return tables[0] if tables else []
 
 
 def dashboard_rows(features_text: str) -> list[DashRow]:
@@ -196,7 +211,13 @@ def dashboard_rows(features_text: str) -> list[DashRow]:
 
 
 def plan_groups(plan_text: str) -> tuple[dict[str, list[PlanRow]], list[str]]:
-    """Section 1's group tables, and what could not be read."""
+    """Section 1's group rows, and what could not be read.
+
+    A group's rows are those of every table between its "### Group X"
+    heading and the next heading, so a row in a second table under the same
+    heading is read and checked like the rest; each table carries the plan's
+    header.
+    """
     lines = plan_text.splitlines()
     problems: list[str] = []
     start = next((i for i, ln in enumerate(lines) if re.match(r"## 1\.", ln)), None)
@@ -226,36 +247,41 @@ def plan_groups(plan_text: str) -> tuple[dict[str, list[PlanRow]], list[str]]:
         end = next(
             (j for j in range(at + 1, end) if lines[j].startswith("### ")), end
         )
-        table = table_after(lines, at + 1, end)
-        if len(table) < 2:
+        tables = tables_in(lines, at + 1, end)
+        if not tables:
             problems.append(f"PARITY_PLAN.md:{at + 1}: Group {group} has no table")
-            groups[group] = []
-            continue
-        header = split_row(table[0][1])
-        if header != PLAN_HEADER:
-            problems.append(
-                f"PARITY_PLAN.md:{table[0][0]}: Group {group}'s header reads "
-                f"{header}, not {PLAN_HEADER}"
-            )
-            groups[group] = []
-            continue
-        rows = []
-        for number, text in table[2:]:
-            cells = split_row(text)
-            if len(cells) != len(PLAN_HEADER):
+        rows: list[PlanRow] = []
+        for table in tables:
+            header = split_row(table[0][1])
+            if len(table) < 2:
                 problems.append(
-                    f"PARITY_PLAN.md:{number}: Group {group} row has "
-                    f"{len(cells)} cells, not {len(PLAN_HEADER)}"
+                    f"PARITY_PLAN.md:{table[0][0]}: a table under Group {group} "
+                    f"has no separator row, so its rows are not read"
                 )
                 continue
-            row = PlanRow(number, group, cells[0], symbol(cells[1]),
-                          symbol(cells[2]), cells[3])
-            if not row.closure:
+            if header != PLAN_HEADER:
                 problems.append(
-                    f"PARITY_PLAN.md:{number}: {row.capability!r} has an empty "
-                    f"'Closure is…' cell"
+                    f"PARITY_PLAN.md:{table[0][0]}: a table under Group {group} "
+                    f"opens with {header}, not the plan's header {PLAN_HEADER}, "
+                    f"so its rows are not read"
                 )
-            rows.append(row)
+                continue
+            for number, text in table[2:]:
+                cells = split_row(text)
+                if len(cells) != len(PLAN_HEADER):
+                    problems.append(
+                        f"PARITY_PLAN.md:{number}: Group {group} row has "
+                        f"{len(cells)} cells, not {len(PLAN_HEADER)}"
+                    )
+                    continue
+                row = PlanRow(number, group, cells[0], symbol(cells[1]),
+                              symbol(cells[2]), cells[3])
+                if not row.closure:
+                    problems.append(
+                        f"PARITY_PLAN.md:{number}: {row.capability!r} has an empty "
+                        f"'Closure is…' cell"
+                    )
+                rows.append(row)
         groups[group] = rows
     for group in GROUP_LEAD:
         if group not in groups:
@@ -353,13 +379,101 @@ def problems(plan_text: str, features_text: str) -> list[str]:
 
 
 # --- synthetic edits, for the tests that prove the check bites -------------
+#
+# The edits run on the fixture below, never on a live row: a PR that closes
+# a parity item (the port lands, the dashboard cell moves, section 1 is
+# restated) changes the live files these tests would otherwise pick their
+# rows from. The fixture keeps the live files' shapes: the dashboard heading
+# and its first table among others, a symbol cell with a note, a ⚠ with no
+# variation selector, a `|` in backticks, a closing parenthetical with a
+# link, a ➖ row, a group table followed by prose and a table that is no
+# group's.
+
+FIXTURE_FEATURES = """\
+# Fixture features
+
+## Build lanes
+
+| Capability | canary (PIO) | canary-wap |
+|---|:---:|:---:|
+| Not the dashboard | ❌ | ✅ |
+
+## Feature-Parity Dashboard
+
+| Capability | canary (PIO) | canary-wap | canary-vision |
+|---|:---:|:---:|:---:|
+| Alpha storage (append-only, `/A` `/B`) | ⚠️ (writer pending; ✅ once landed) | ✅ | ❌ |
+| Beta radio | ❌ | ✅ | ➖ |
+| Gamma sensor ([note](notes.md); host-tested) | ✅ | ❌ | ✅ |
+| Delta TLS — pinned socket | ✅ | ⚠ | ❌ |
+| Eta pipe `a|b` reader | ⚠️ | ✅ | ✅ |
+| Epsilon reboot | ✅ | ✅ | ✅ |
+| Zeta lamp | ✅ | ➖ | ✅ |
+| Theta shared gap | ⚠️ | ⚠️ | ❌ |
+
+A note under the dashboard.
+
+## Next section
+"""
+
+FIXTURE_PLAN = """\
+# Fixture plan
+
+## 1. Where the two trees disagree today
+
+The lead.
+
+### Group A — Arduino has it, ACTIVE is partial/absent
+
+| Capability | ACTIVE | Arduino | Closure is… |
+|---|:---:|:---:|---|
+| Alpha storage | ⚠️ | ✅ | code + bench |
+| Beta radio | ❌ | ✅ | code + bench |
+| Eta pipe `a|b` reader | ⚠️ | ✅ | code (compile) |
+
+### Group B — ACTIVE has it, Arduino partial/absent
+
+| Capability | ACTIVE | Arduino | Closure is… |
+|---|:---:|:---:|---|
+| Gamma sensor | ✅ | ❌ | code + host test |
+| Delta TLS — pinned socket | ✅ | ⚠️ | code + bench (a TLS broker) |
+
+**At parity on the dashboard, so not listed:** Epsilon reboot.
+
+### Shared gap (no group's table, so not read)
+
+| Capability | ACTIVE | Arduino | Closure is… |
+|---|:---:|:---:|---|
+| Theta shared gap | ⚠️ | ⚠️ | bench, once, in both trees |
+| Epsilon reboot | ✅ | ❌ | a stale row this test does not read |
+
+## 2. Next section
+"""
+
+
+def line_of(text: str, prefix: str) -> int:
+    """The line number of the one line of text that starts with prefix."""
+    hits = [i + 1 for i, ln in enumerate(text.splitlines()) if ln.startswith(prefix)]
+    if len(hits) != 1:
+        raise AssertionError(f"{len(hits)} lines start with {prefix!r}")
+    return hits[0]
+
+
+BETA_AT = line_of(FIXTURE_FEATURES, "| Beta radio |")
+EPSILON_AT = line_of(FIXTURE_FEATURES, "| Epsilon reboot |")
+GAMMA = "Gamma sensor ([note](notes.md); host-tested)"
+
 
 def set_dashboard_cell(features_text: str, capability: str, column: str,
                        value: str) -> str:
+    """Set one cell of the dashboard row whose capability text is `capability`."""
     lines = features_text.splitlines(keepends=True)
+    start = next(i for i, ln in enumerate(lines)
+                 if ln.startswith("## ") and DASHBOARD_HEADING in ln)
     header = None
-    for i, ln in enumerate(lines):
-        if ln.startswith(f"| Capability | {PIO} |"):
+    for i in range(start, len(lines)):
+        ln = lines[i]
+        if header is None and ln.startswith(f"| Capability | {PIO} |"):
             header = split_row(ln)
             continue
         if header and ln.startswith("|") and split_row(ln)[0] == capability:
@@ -368,6 +482,14 @@ def set_dashboard_cell(features_text: str, capability: str, column: str,
             lines[i] = "| " + " | ".join(row) + " |\n"
             return "".join(lines)
     raise AssertionError(f"no dashboard row {capability!r}")
+
+
+def add_dashboard_row(features_text: str, row: str) -> str:
+    """Append a row after the dashboard table's last row."""
+    last = dashboard_rows(features_text)[-1].line
+    lines = features_text.splitlines(keepends=True)
+    lines.insert(last, row + "\n")
+    return "".join(lines)
 
 
 def drop_plan_row(plan_text: str, capability: str) -> str:
@@ -379,7 +501,7 @@ def drop_plan_row(plan_text: str, capability: str) -> str:
 
 
 def add_plan_row(plan_text: str, group: str, row: str) -> str:
-    """Append a row to the end of a group's table."""
+    """Append a row to the end of a group's first table."""
     lines = plan_text.splitlines(keepends=True)
     at = next(i for i, ln in enumerate(lines) if ln.startswith(f"### Group {group}"))
     i = at + 1
@@ -388,6 +510,19 @@ def add_plan_row(plan_text: str, group: str, row: str) -> str:
     while i < len(lines) and lines[i].startswith("|"):
         i += 1
     lines.insert(i, row + "\n")
+    return "".join(lines)
+
+
+def add_plan_text_after_group(plan_text: str, group: str, text: str) -> str:
+    """Insert text after a group's first table (and the blank line after it)."""
+    lines = plan_text.splitlines(keepends=True)
+    at = next(i for i, ln in enumerate(lines) if ln.startswith(f"### Group {group}"))
+    i = at + 1
+    while not lines[i].startswith("|"):
+        i += 1
+    while i < len(lines) and lines[i].startswith("|"):
+        i += 1
+    lines.insert(i, "\n" + text)
     return "".join(lines)
 
 
@@ -444,6 +579,8 @@ class DashboardReaderTest(unittest.TestCase):
 
 
 class ParityPlanTest(unittest.TestCase):
+    """The live plan against the live dashboard."""
+
     def setUp(self) -> None:
         self.features = FEATURES.read_text(encoding="utf-8")
         self.plan = PLAN.read_text(encoding="utf-8")
@@ -456,68 +593,163 @@ class ParityPlanTest(unittest.TestCase):
             "dashboard; restate the groups from it:\n  " + "\n  ".join(found),
         )
 
-    def test_both_groups_hold_rows(self) -> None:
+    def test_a_group_holds_rows_when_the_dashboard_has_rows_for_it(self) -> None:
+        # Not vacuous: when the dashboard has rows for a group, the reader
+        # found that group's rows in the plan (and none when it has none, so
+        # closing the last item of a group is a restated section 1, too).
         groups, _ = plan_groups(self.plan)
+        dash = dashboard_rows(self.features)
         for group in GROUP_LEAD:
-            self.assertTrue(groups.get(group), f"Group {group} is empty")
+            want = sum(1 for r in dash if r.is_parity_row and r.lead == group)
+            self.assertEqual(len(groups.get(group, [])), want, f"Group {group}")
 
-    # The check bites: each edit below must be caught, by row.
+
+class CheckBitesTest(unittest.TestCase):
+    """Each edit to the fixture must be caught, by row."""
+
+    def test_the_fixture_is_clean(self) -> None:
+        self.assertEqual(problems(FIXTURE_PLAN, FIXTURE_FEATURES), [])
+        groups, _ = plan_groups(FIXTURE_PLAN)
+        self.assertEqual([r.capability for r in groups["A"]],
+                         ["Alpha storage", "Beta radio", "Eta pipe `a|b` reader"])
+        self.assertEqual([r.capability for r in groups["B"]],
+                         ["Gamma sensor", "Delta TLS — pinned socket"])
 
     def test_a_flipped_dashboard_cell_fails(self) -> None:
-        cap = "RF presence detection"
-        found = problems(self.plan, set_dashboard_cell(self.features, cap, WAP, "⚠️"))
-        self.assertTrue(any(cap in p and "❌ / ⚠️" in p for p in found), found)
+        features = set_dashboard_cell(FIXTURE_FEATURES, "Beta radio", WAP, "⚠️")
+        found = problems(FIXTURE_PLAN, features)
+        self.assertTrue(
+            any("'Beta radio' reads ACTIVE / Arduino ❌ / ✅" in p and "❌ / ⚠️" in p
+                for p in found), found)
 
     def test_a_dashboard_row_that_starts_to_differ_fails(self) -> None:
-        cap = "Watchdog timer"
-        found = problems(self.plan, set_dashboard_cell(self.features, cap, WAP, "❌"))
-        self.assertTrue(any(cap in p and "neither group" in p for p in found), found)
+        features = set_dashboard_cell(FIXTURE_FEATURES, "Epsilon reboot", WAP, "❌")
+        found = problems(FIXTURE_PLAN, features)
+        self.assertEqual(found, [
+            f"FEATURES.md:{EPSILON_AT}: 'Epsilon reboot' reads canary (PIO) / canary-wap ✅ / ❌ "
+            "and is in neither group of PARITY_PLAN.md section 1 (it belongs in Group B)",
+        ])
 
     def test_a_dropped_group_row_fails(self) -> None:
-        cap = "Remote identify blink (HA `Identify` button on MQTT variants; HTTP `/api/identify` on WAP)"
-        found = problems(drop_plan_row(self.plan, cap), self.features)
+        found = problems(drop_plan_row(FIXTURE_PLAN, "Beta radio"), FIXTURE_FEATURES)
+        self.assertEqual(found, [
+            f"FEATURES.md:{BETA_AT}: 'Beta radio' reads canary (PIO) / canary-wap ❌ / ✅ "
+            "and is in neither group of PARITY_PLAN.md section 1 (it belongs in Group A)",
+        ])
+
+    def test_a_dropped_row_named_by_its_short_name_is_reported_by_it(self) -> None:
+        found = problems(drop_plan_row(FIXTURE_PLAN, "Alpha storage"), FIXTURE_FEATURES)
         self.assertTrue(
-            any("'Remote identify blink' reads" in p and "neither group" in p
+            any("'Alpha storage' reads" in p and "neither group" in p
                 and "Group A" in p for p in found), found)
 
-    def test_the_stale_ota_row_fails(self) -> None:
-        cap = "OTA A/B with rollback safety"
-        plan = add_plan_row(self.plan, "B", f"| {cap} | ✅ | ❌ | code + bench (rollback) |")
-        found = problems(plan, self.features)
-        self.assertTrue(any(cap in p and "reads ACTIVE / Arduino ✅ / ❌" in p for p in found), found)
-        self.assertTrue(any(cap in p and "at parity" in p for p in found), found)
+    def test_a_stale_row_at_parity_fails(self) -> None:
+        plan = add_plan_row(FIXTURE_PLAN, "B", "| Epsilon reboot | ✅ | ❌ | code + bench |")
+        found = problems(plan, FIXTURE_FEATURES)
+        self.assertTrue(any("'Epsilon reboot' reads ACTIVE / Arduino ✅ / ❌" in p
+                            and "✅ / ✅" in p for p in found), found)
+        self.assertTrue(any("'Epsilon reboot'" in p and "at parity" in p for p in found), found)
 
     def test_a_row_at_parity_fails_even_with_its_cells_right(self) -> None:
-        cap = "OTA A/B with rollback safety"
-        plan = add_plan_row(self.plan, "B", f"| {cap} | ✅ | ✅ | bench (Track E) |")
-        found = problems(plan, self.features)
-        self.assertTrue(any(cap in p and "at parity" in p for p in found), found)
+        plan = add_plan_row(FIXTURE_PLAN, "B", "| Epsilon reboot | ✅ | ✅ | bench |")
+        found = problems(plan, FIXTURE_FEATURES)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("'Epsilon reboot'", found[0])
+        self.assertIn("the two trees at parity", found[0])
+
+    def test_a_shared_gap_is_not_a_parity_item(self) -> None:
+        plan = add_plan_row(FIXTURE_PLAN, "A", "| Theta shared gap | ⚠️ | ⚠️ | bench |")
+        found = problems(plan, FIXTURE_FEATURES)
+        self.assertTrue(any("'Theta shared gap'" in p and "at parity" in p for p in found), found)
 
     def test_a_row_in_the_wrong_group_fails(self) -> None:
-        cap = "SD endurance wear estimate"
-        plan = add_plan_row(drop_plan_row(self.plan, cap), "A",
-                            f"| {cap} | ✅ | ❌ | code + host test |")
-        found = problems(plan, self.features)
-        self.assertTrue(any(cap in p and "belongs in Group B" in p for p in found), found)
+        plan = add_plan_row(drop_plan_row(FIXTURE_PLAN, "Gamma sensor"), "A",
+                            "| Gamma sensor | ✅ | ❌ | code + host test |")
+        found = problems(plan, FIXTURE_FEATURES)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("'Gamma sensor'", found[0])
+        self.assertIn("belongs in Group B", found[0])
+
+    def test_a_row_listed_twice_fails(self) -> None:
+        plan = add_plan_row(FIXTURE_PLAN, "A", "| Beta radio | ❌ | ✅ | code + bench |")
+        found = problems(plan, FIXTURE_FEATURES)
+        self.assertTrue(any(f"'Beta radio' repeats FEATURES.md:{BETA_AT}" in p for p in found), found)
 
     def test_a_misnamed_row_fails_and_names_the_row_it_means(self) -> None:
-        plan = self.plan.replace("| RF presence detection |", "| RF presence |", 1)
-        found = problems(plan, self.features)
+        plan = FIXTURE_PLAN.replace("| Beta radio |", "| Beta radio link |", 1)
+        found = problems(plan, FIXTURE_FEATURES)
         self.assertTrue(
-            any("'RF presence' names no dashboard row; the closest is "
-                "'RF presence detection'" in p for p in found), found)
+            any("'Beta radio link' names no dashboard row; the closest is "
+                f"'Beta radio' (FEATURES.md:{BETA_AT})" in p for p in found), found)
 
-    def test_a_row_with_a_na_cell_is_not_required(self) -> None:
-        # Appended after the dashboard's last row, so no other line moves.
-        last = dashboard_rows(self.features)[-1].line
-        lines = self.features.splitlines(keepends=True)
-        lines.insert(last, "| Made-up capability | ❌ | ➖ | ✅ | ✅ | ✅ | ➖ | ❌ |\n")
-        features = "".join(lines)
+    def test_a_name_two_dashboard_rows_answer_to_fails(self) -> None:
+        features = add_dashboard_row(FIXTURE_FEATURES, "| Beta radio (a second one) | ✅ | ✅ | ✅ |")
+        found = problems(FIXTURE_PLAN, features)
+        self.assertTrue(any("'Beta radio' names 2 dashboard rows" in p for p in found), found)
+
+    def test_a_row_with_a_na_cell_is_not_required_and_not_allowed(self) -> None:
+        features = add_dashboard_row(FIXTURE_FEATURES, "| Made-up capability | ❌ | ➖ | ✅ |")
         self.assertEqual(dashboard_rows(features)[-1].capability, "Made-up capability")
-        self.assertEqual(problems(self.plan, features), problems(self.plan, self.features))
-        plan = add_plan_row(self.plan, "B", "| Made-up capability | ❌ | ➖ | n/a |")
-        found = problems(plan, features)
-        self.assertTrue(any("Made-up capability" in p and "a ➖ cell" in p for p in found), found)
+        self.assertEqual(problems(FIXTURE_PLAN, features), [])
+        plan = add_plan_row(FIXTURE_PLAN, "B", "| Zeta lamp | ✅ | ➖ | n/a |")
+        found = problems(plan, FIXTURE_FEATURES)
+        self.assertTrue(any("'Zeta lamp'" in p and "a ➖ cell" in p for p in found), found)
+
+    def test_a_new_dashboard_row_the_trees_differ_on_is_required(self) -> None:
+        features = add_dashboard_row(FIXTURE_FEATURES, "| Made-up capability | ✅ | ❌ | ✅ |")
+        found = problems(FIXTURE_PLAN, features)
+        self.assertTrue(any("'Made-up capability'" in p and "neither group" in p
+                            and "Group B" in p for p in found), found)
+
+    def test_a_cell_with_no_symbol_fails(self) -> None:
+        features = set_dashboard_cell(FIXTURE_FEATURES, "Epsilon reboot", PIO, "yes")
+        found = problems(FIXTURE_PLAN, features)
+        self.assertTrue(any("'Epsilon reboot'" in p and "no dashboard symbol" in p
+                            for p in found), found)
+
+    def test_a_row_in_a_second_table_under_a_group_is_read(self) -> None:
+        second = ("Rows still to port (continued):\n\n"
+                  "| Capability | ACTIVE | Arduino | Closure is… |\n"
+                  "|---|:---:|:---:|---|\n"
+                  "| Epsilon reboot | ✅ | ❌ | code + bench (rollback) |\n")
+        found = problems(add_plan_text_after_group(FIXTURE_PLAN, "B", second),
+                         FIXTURE_FEATURES)
+        self.assertTrue(any("'Epsilon reboot' reads ACTIVE / Arduino ✅ / ❌" in p
+                            for p in found), found)
+        self.assertTrue(any("'Epsilon reboot'" in p and "at parity" in p for p in found), found)
+
+    def test_a_second_table_with_another_header_under_a_group_fails(self) -> None:
+        second = ("| Row | Note |\n|---|---|\n| Epsilon reboot | ✅ ❌ |\n")
+        found = problems(add_plan_text_after_group(FIXTURE_PLAN, "A", second),
+                         FIXTURE_FEATURES)
+        self.assertTrue(any("a table under Group A opens with ['Row', 'Note']" in p
+                            for p in found), found)
+
+    def test_a_table_under_another_heading_is_not_read(self) -> None:
+        # The fixture's "Shared gap" table holds a stale Epsilon row, and
+        # test_the_fixture_is_clean passes: only group sections are read.
+        self.assertIn("| Epsilon reboot | ✅ | ❌ |", FIXTURE_PLAN)
+        self.assertEqual(problems(FIXTURE_PLAN, FIXTURE_FEATURES), [])
+
+    def test_only_the_dashboard_table_is_read(self) -> None:
+        caps = [r.capability for r in dashboard_rows(FIXTURE_FEATURES)]
+        self.assertNotIn("Not the dashboard", caps)
+        self.assertEqual(len(caps), 8)
+
+    def test_a_missing_group_fails(self) -> None:
+        plan = FIXTURE_PLAN.replace("### Group B", "### Group Bee", 1)
+        found = problems(plan, FIXTURE_FEATURES)
+        self.assertIn("PARITY_PLAN.md section 1 has no Group B table", found)
+
+    def test_closing_an_item_needs_only_section_one_restated(self) -> None:
+        # The port lands: the dashboard cell moves to parity and the plan
+        # row goes, in one edit. Nothing else needs to change.
+        features = set_dashboard_cell(FIXTURE_FEATURES, "Beta radio", PIO, "✅")
+        plan = drop_plan_row(FIXTURE_PLAN, "Beta radio")
+        self.assertEqual(problems(plan, features), [])
+        features = set_dashboard_cell(FIXTURE_FEATURES, GAMMA, WAP, "✅")
+        plan = drop_plan_row(FIXTURE_PLAN, "Gamma sensor")
+        self.assertEqual(problems(plan, features), [])
 
 
 if __name__ == "__main__":

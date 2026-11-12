@@ -200,9 +200,10 @@ WiFi auto-reconnect, sensing dashboard panel, capacitive touch / IR / temp-tampe
 scaffolding. Land behind `#if FEATURE_*`; verify the size gate and `hassfest`/`selftest-ui` jobs.
 
 **Tranche A2 / B2 — bench-gated behavior:**
-Everything marked "**bench**" above (mesh, RSSI, BLE discovery, RF presence, hub failover, chirp,
-camera peek, acoustic, OTA rollback, power save). Land the code in A1/B1; **flip the dashboard
-cell to ✅ only after the matching bench-runbook track passes** and an artifact is captured.
+Every §1 row whose "Closure is…" cell names a bench step, and the two rows the dashboard already
+reads at parity with their §4 "Bench-proven" cell open (acoustic and OTA rollback, the line after
+the Group B table). Land the code in A1/B1; **flip the dashboard cell to ✅ only after the
+matching bench-runbook track passes** and an artifact is captured.
 
 **Shared — TLS:** execute runbook Track D once; mirror the enablement into both trees.
 
