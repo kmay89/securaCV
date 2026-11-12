@@ -107,11 +107,12 @@ for (const [dev, d] of Object.entries(asm.devices)) {
 // with the reason. Shrink-only: a listed part that compares now, or that is
 // gone, fails until its entry goes.
 const NOT_COMPARED = new Map([
-  // bom_canary_vision.csv's SCR5 (x 18) bills the Vision case's screws (its
-  // four plate screws and its four camera screws) and the doorbell's in one
-  // quantity, so no single product's count can equal it. Splitting that row
-  // per product is the BOM owner's call (C12), and both entries go when it
-  // splits; the CAD leg below still holds all eight to the case's HARDWARE echo.
+  // bom_canary_vision.csv's SCR5 is one row for two products: its x 18 is the
+  // doorbell's count (4 + 2 + 12), and the same row describes the Vision
+  // case's own (on the preset the tab shows, four plate screws and four camera
+  // screws), so neither Vision part can be held to it. Splitting that row per
+  // product is the BOM owner's call (C12), and both entries go when it splits;
+  // the CAD leg below still holds all eight to the case's HARDWARE echo.
   ["canary-vision/screws", "SCR5 bills two products in one quantity"],
   ["canary-vision/cam_screws", "SCR5 bills two products in one quantity"],
 ]);
@@ -643,7 +644,10 @@ test("canary-vision: the camera screws land on the front STL's camera posts", as
 // the front before the shell is lowered over the plate, and the tab drives
 // them with the camera, so they are declared internal hardware (`class`), held
 // to the internal rule instead: in before the shell closes. The fastener
-// comparison above still counts them; it reads what is drawn (`part`).
+// comparison above still counts them; it reads what is drawn (`part`). In the
+// exploded drawing they hang on their own axis between the back and the
+// camera they fix, short of it; +6 keeps their item balloon off the camera's
+// in the tab's opening view (at +20 it covered it).
 test("canary-vision: the camera screws go in with the camera, before the front closes", async () => {
   const { classifyPart } = await import("../assets/assembly-rules.js");
   const by = Object.fromEntries(asm.devices["canary-vision"].parts.map((p) => [p.id, p]));
@@ -652,4 +656,7 @@ test("canary-vision: the camera screws go in with the camera, before the front c
   assert.strictEqual(classifyPart(by.cam_screws), "internal", "the camera screws are held to the internal rule");
   assert.strictEqual(by.cam_screws.part, "screw", "the fastener comparison counts them as screws");
   assert.strictEqual(classifyPart(by.screws), "fastener", "the plate screws still close the build, last and outermost");
+  const [ex, ey, ez] = by.cam_screws.explode;
+  assert.ok(ex === 0 && ey === 0 && ez > 0 && ez < by.cam.explode[2],
+    "the camera screws explode along the assembly axis, toward the camera and short of it");
 });
