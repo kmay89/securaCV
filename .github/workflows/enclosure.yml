@@ -153,14 +153,17 @@ jobs:
       # scoop, port label, landscape dock keys, the wall's flat span) against
       # an ESTIMATE of their width that reads short: SECURACV inks 58.72 mm
       # at size 7 against 43.90 estimated. This reads the case's values
-      # through a probe, renders each word to DXF in the case's font, places
-      # it as frame() does and holds the same five asserts against the ink.
-      # It passes with one KNOWN failure, the scoop's keep-out 1.70 mm into
-      # the S, and fails on any new failure or when the known one stops
-      # happening: the fix is the maintainer's pick, and the change that
-      # makes it takes the entry out. It refuses (exit 2) rather than
-      # measure a fallback font, a dirty render, or a placement or assert it
-      # no longer models. Echo plus two 2D renders: about a second.
+      # through a probe, renders each word (and the port label, when one is
+      # cut) to DXF in the case's font, places it as frame() does and holds
+      # the same five asserts against the ink. It passes with one KNOWN
+      # failure, the scoop's 1 mm keep-out 1.70 mm past the inner edge of
+      # SECURACV's V (the dish itself clears the glyph), and fails on any new
+      # failure, when the known one moves more than 0.05 mm from that record
+      # either way, or when it stops happening: the fix is the maintainer's
+      # pick, and the change that makes it takes the entry out. It refuses
+      # (exit 2) rather than measure a fallback font, a dirty render, or a
+      # cut or assert it no longer models. Echo plus two 2D renders: about a
+      # second.
       - name: The 7-inch brand words' ink clears the keep-outs (one known failure)
         timeout-minutes: 5
         run: python3 check_word_ink.py --check
