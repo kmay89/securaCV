@@ -3684,15 +3684,17 @@
   `onboard_probe.mjs` fails on LONG_DOT's three baseline dots in each
   emulated flavor's Join scene and reads the firmware's own labels
   (`emu_screen_labels`) for the name and key it printed, with and without
-  the stuck-phone hint. The splash's wordmark had the same fault, cut at both
-  edges rather than ellipsized (F373, #W26PR): set in the Character's title
-  face, "SecuraCV" was 191 px on the 172 px glass under Heirloom, and the
-  host fake LVGL modeled no letter spacing, so no host suite could see it.
-  `splash.cpp` now reads the laid-out label's width (`lv_obj_get_width()`)
-  and steps the face, then the spacing, down until `splash_layout.h`'s
-  `word_fits()` keeps `kWordMargin` a side, showing no wordmark where no step
-  fits; the fake now models letter spacing (`test_splash_scenes.cpp`), and
-  `glass_splash_test.cpp`'s hold 9 holds the ink on the real LVGL 8.4.
+  the stuck-phone hint.
+- **Amended, 2026-11 (sweep F373, #W26PR):** the splash's wordmark had the
+  same fault, cut at both edges rather than ellipsized: set in the
+  Character's title face, "SecuraCV" was 191 px on the 172 px glass under
+  Heirloom, and the host fake LVGL modeled no letter spacing, so no host
+  suite could see it. `splash.cpp` now reads the laid-out label's width
+  (`lv_obj_get_width()`) and steps the face, then the spacing, down until
+  `splash_layout.h`'s `word_fits()` keeps `kWordMargin` a side, showing no
+  wordmark where no step fits. Check: the fake now models letter spacing
+  (`test_splash_scenes.cpp`), and `glass_splash_test.cpp`'s hold 9 holds the
+  ink on the real LVGL 8.4.
 - **Date learned:** 2026-09
 
 ### A twin's flash that hears writes but not erases brings back what the firmware erased (the Lab's bench, A127)
@@ -4741,8 +4743,8 @@
   input["ttl_minutes"] | 15;` for a field spec §3.3 bounds to 5-60. A scratch
   ArduinoJson 7.4.1 harness (the emulator's pinned copy) running that line
   verbatim signed 300 as 44, 256 as 0 and -1 as 255; only a float, a string
-  or a bool fell back to 15. The backlog item that sent the fix assumed 300
-  became 15.
+  or a bool fell back to 15. The brief that sent the fix assumed 300 became
+  15.
 - **Root cause:** `x | 15` answers the default only when the value is not of
   the default's type; an integer of any size is taken as it is and then
   narrowed into the byte without a word. The `|` read as validation and was

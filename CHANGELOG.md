@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap reads each POST body by its own members and refuses a Chirp TTL, a Beacon pairing and a mesh hash it cannot honor, four secret compares run in constant time, the setup doors log what they refused, the Vision app keeps to its CSP, the dash sheet, the watch's boot log and the splash wordmark follow their glass, the Lab's bench keeps an erase, and the 7-inch frame's words, the build matrix's claims and the parity plan are held to what they rest on (#W26PR, wave 26)
+### canary-wap reads each POST body by its own members and refuses a Chirp TTL, a Beacon pairing and a mesh hash it cannot honor, four secret compares go through a constant-time helper, the setup doors log what they refused, the Vision app keeps to its CSP, the dash sheet, the watch's boot log and the splash wordmark follow their glass, the Lab's bench keeps an erase, and the 7-inch frame's words, the build matrix's claims and the parity plan are held to what they rest on (#W26PR, wave 26)
 
 - **canary-wap reads a POST body by its own members (F469, F470; F459's code
   half).** `POST /api/events/dismiss`, `POST /api/mqtt/config` and the Tuning
@@ -26,25 +26,32 @@
   routes answer `pairing_not_built`, where they answered "started" and
   "confirmed" for a pairing that never ran, and a cancel no longer turns an
   ALARM or a TROUBLE into Normal. Beacon is off in every stock build.
-- **A mesh SHA-256 that fails is refused in both trees (F364, in part).**
-  `mesh_crypto::sha256_domain()` says whether every mbedTLS step ran, in the
-  canary library (both IDF lines, the spelling picked by F455's
-  `MBEDTLS_VERSION_NUMBER` guard) and in the canary-wap shim. A pairing code,
-  CONFIRM hash, rekey key, signed message or hashed beacon id that did not
-  hash is refused: the pairing ends (`FailReason::CRYPTO` on the canary tree;
-  an ALERT on the canary-wap, whose `POST /api/mesh/pair/confirm` answers 400
+- **A mesh pairing code or CONFIRM that fails to hash is refused in both
+  trees (F364, in part).** `mesh_crypto::sha256_domain()` says whether every
+  mbedTLS step ran, in the canary library (both IDF lines, the spelling picked
+  by F455's `MBEDTLS_VERSION_NUMBER` guard) and in the canary-wap shim. A
+  pairing code or CONFIRM hash in either tree, a rekey key or signed message
+  on the canary tree, or a hashed beacon id that did not hash is refused: the
+  pairing ends (`FailReason::CRYPTO` on the canary tree; an ALERT on the
+  canary-wap, whose `POST /api/mesh/pair/confirm` answers 400
   `confirm_failed`), no zeroed code is shown, no zeroed CONFIRM is sent or
   matched, and the BLE Scout lists no zero id. `beacon_channel::init()`'s
-  refusal of a key whose fingerprint does not hash is run by a host case.
-- **Four secret-dependent compares run in constant time (found in this PR's
-  review; no backlog id).** The canary-wap's pairing CONFIRM check, both
-  trees' chain-backup HMAC check and the canary-wap's household RPA hash
+  refusal of a key whose fingerprint does not hash is run by a host case. The
+  canary tree's mesh fingerprint and opera id still take zeros when they do
+  not hash (F484).
+- **Four secret-dependent compares use a constant-time helper (found in
+  this PR's review; no backlog id).** The canary-wap's pairing CONFIRM check,
+  both trees' chain-backup HMAC check and the canary-wap's household RPA hash
   check returned at the first byte that differed; they now call one helper,
-  `ct_compare::equal()` (`firmware/common/core/ct_compare.h`), and every
+  `ct_compare::equal()` (`firmware/common/core/ct_compare.h`), whose loop
+  runs the whole length with no branch on the bytes (its x86-64 and riscv32
+  assembly read; the Xtensa build not read; no timing measured), and every
   outcome and log line is unchanged. `regression_check.sh`'s auth check,
   which could not fail, now names each tree's bearer compare and fails one
-  that stops being constant time, and a new check fails a variable-time
-  compare of an HMAC, a tag, a CONFIRM hash or the expected token.
+  whose body loses its volatile `|=` fold or gains an early exit, and a new
+  check fails a `memcmp()`/`strcmp()`-family or String `.equals()` compare
+  whose line names an HMAC, a tag, a CONFIRM hash or the expected token (it
+  reads one line at a time, so a byte-by-byte `==` chain passes it).
 - **The Bluetooth setup door logs what it refused (F471, F472).** The
   canary-wap logs a second Wi-Fi write refused mid-join as a WARNING, "Setup
   door: Wi-Fi settings refused", not "accepted, joining". The Sense and Vision
@@ -101,15 +108,18 @@
   used as zeros when they do not hash (F484), the Chirp send's other narrowed
   fields (F485) and the compares left as `memcmp()` (F486).
 - Host-tested here: the canary-wap host suite under g++, clang++ 18 and
-  ASan/UBSan, firmware.yml's mesh + ble_scan step, `firmware/tests_host` (the
-  Improv glue and constant-time suites, ASan/UBSan included), the
+  ASan/UBSan, firmware.yml's mesh + ble_scan step, `firmware/tests_host`
+  (the Improv glue and constant-time suites, ASan/UBSan included), the
   canary-display host suites with native LVGL 8.4 and 9.5 renders, the Lab's
   native turn and backlight runs, its node suites and Chromium runs of
-  `bench_probe.mjs`, the Vision app's node tests and a headless Chromium CSP
-  probe, `check_word_ink.py` under OpenSCAD 2021.01, and the `scripts/tests`
-  suite. The ESP32 PlatformIO and Arduino compiles are CI's (dash7 and
-  nightstand7, on LVGL 9.5, are compile-tested only), no timing was measured
-  for the constant-time compares, and nothing was run on a device or a bench.
+  `bench_probe.mjs` on the committed (pre-rebuild) dist, with its watch
+  Button-line and 10 s-hold checks relaxed and the rebuilt dist's erases
+  injected (the committed probe's two checks wait on the Actions rebuild), the
+  Vision app's node tests and a headless Chromium CSP probe,
+  `check_word_ink.py` under OpenSCAD 2021.01, and the `scripts/tests` suite.
+  The ESP32 PlatformIO and Arduino compiles are CI's (dash7 and nightstand7,
+  on LVGL 9.5, are compile-tested only), no timing was measured for the
+  constant-time compares, and nothing was run on a device or a bench.
 
 ### Trustee keys can be wrapped at rest: `trustee keygen`, `wrap` and `pubkey`; a passphrase comes from the terminal or `--passphrase-fd`, never argv or the environment
 

@@ -213,11 +213,8 @@ so — see D2 below.)
   `test_source_grants_gateway_trust_nothing`.
 
 - [ ] **F412 [decision] canary-wap Chirp: no receiver reads a chirp's
-  `ttl_minutes`.** Since #W26PR the send holds it to spec §3.3's 5-60: `POST
-  /api/chirp/send` takes 15 when the key is absent or null and refuses
-  anything but an integer from 5 to 60 as `invalid_ttl` before it is narrowed
-  to the frame's byte, and the loop task's `send_chirp()` refuses a byte
-  outside the range before any gate. No receiver reads it: every row lives
+  `ttl_minutes`.** Since #W26PR the send refuses a TTL outside spec §3.3's
+  5-60 (`invalid_ttl`). No receiver reads it: every row lives
   `DEFAULT_DISPLAY_MS` (30 minutes), and a relay carries a TTL outside the
   range as its origin signed it (F306). Decide whether a receiver honors the
   TTL as the row's display time, refuses a frame whose TTL is outside 5-60, or
@@ -307,8 +304,8 @@ so — see D2 below.)
   ESP32, which has no failing path. From code and the host suite. Found by
   F364 (#1961).
 
-- [ ] **F459 [decision] canary-wap: whether a stray 0xFFFF advert should be
-  listed in `GET /api/nearby` at all.** Since #W26PR the nearby scan
+- [ ] **F459 [code+decision] canary-wap: whether a stray 0xFFFF advert should
+  be listed in `GET /api/nearby` at all.** Since #W26PR the nearby scan
   (`ble_nearby.h`'s `parseChirpData()`) reads a Chirp only through
   `fleet_chirp_parse()` (exactly 17 bytes, types 0x01..0x05), the rule every
   other receiver applies, so an 18-byte blob or a type 0x00 or 0x06 on company
@@ -874,19 +871,16 @@ so — see D2 below.)
   zero its output and have its caller refuse, as the canary-wap's sketch, its
   WAP-only modules, `beacon_channel.cpp`, `chirp_channel.cpp`,
   `mesh_network.cpp` and, since #W26PR, `mesh_crypto::sha256_domain()` in both
-  trees and what stands on it do (the hashed beacon id, both trees' pairing
-  code and CONFIRM hash, the canary tree's rekey key and Ed25519 message hash;
-  `test_wap_sha_fail.cpp`, `test_wap_sha_fail_modules.cpp`,
-  `test_mesh_crypto_lines.cpp`, and `beacon_channel::init()`'s refusal run by
-  the `SHAMOD_BEACON` cut). Still open, on inputs short enough to run in block
-  mode, which has no failing path: the three `device_pseudonym.h` copies
-  (`common/identity` and the display and WAP sketches; they move every display
-  bundle, so the emulator dist) and the three `securacv_ota.cpp` copies
-  (`common/ota` and the same two sketches), which need the IDF 4.4 spelling
-  (`mbedtls_sha256_*_ret`) only CI's core 2.0.17 legs compile; the OTA image
-  hash already fails safe at the manifest compare. Do both with the next
-  version-bump dist rebuild. The canary tree's `compute_fingerprint()` and
-  `compute_opera_id()` callers are F484.
+  trees and the pairing, rekey, signing and beacon-id code on it do. Still
+  open, on inputs short enough to run in block mode, which has no failing
+  path: the three `device_pseudonym.h` copies (`common/identity` and the
+  display and WAP sketches; they move every display bundle, so the emulator
+  dist) and the three `securacv_ota.cpp` copies (`common/ota` and the same two
+  sketches), which need the IDF 4.4 spelling (`mbedtls_sha256_*_ret`) only
+  CI's core 2.0.17 legs compile; the OTA image hash already fails safe at the
+  manifest compare. Do both with the next version-bump dist rebuild. The
+  canary tree's `compute_fingerprint()` and `compute_opera_id()` callers are
+  F484.
 
 - [ ] **F402 [decision] canary-wap: a stored token it cannot read or use keeps
   a release unit unprovisioned at every boot.** Since F365 (#1916) a stored
@@ -1166,11 +1160,13 @@ so — see D2 below.)
   (the canary-wap's pairing CONFIRM and household RPA hash, both trees'
   chain-backup HMAC) call `ct_compare::equal()`
   (`firmware/common/core/ct_compare.h`), and `regression_check.sh` fails a
-  variable-time compare of an HMAC, a tag, a CONFIRM hash or the expected
-  token. Left as they were, each comparing values the node itself holds, so no
-  party presents a guess: `common/network/peer_link.cpp`'s fleet-key change
-  check when arming (`memcmp(s_key, key, ...)`) and the Wi-Fi ring readback
-  compares (`common/network/wifi_supervisor.cpp`, the display's
+  `memcmp()`/`strcmp()`-family or String `.equals()` compare whose line names
+  an HMAC, a tag, a CONFIRM hash or the expected token (it reads one line at a
+  time, so a call split across lines, an unlisted name or a byte-by-byte `==`
+  chain passes it). Left as they were, each comparing values the node itself
+  holds, so no party presents a guess: `common/network/peer_link.cpp`'s
+  fleet-key change check when arming (`memcmp(s_key, key, ...)`) and the Wi-Fi
+  ring readback compares (`common/network/wifi_supervisor.cpp`, the display's
   `runtime_config.cpp`, the canary-wap's `wifi_store_note_joined()`, the
   canary's `securacv_network.cpp`). Decide whether to convert `peer_link.cpp`
   too, a one-line change only the sense, vision and sentinel CI builds
@@ -1178,10 +1174,11 @@ so — see D2 below.)
   (`mesh_crypto::ct_equal()`, `fleet_key`'s `tag_equal()`, `claim_ticket`'s
   `hex_equal()`, the display's `csrf_matches()`, `csi_integration`'s
   `ct_eq()`, `household`'s `irks_equal_ct()`) use a plain accumulator, and
-  `ct_equal()` answers true for a zero length; their -O2 code under GCC 13 and
-  clang 18 has no branch on the bytes, so folding them onto one helper is
-  tidiness, not a fix. The survey was a search of every firmware tree, not a
-  proof. From code. Found by the constant-time pass (#W26PR).
+  `ct_equal()` answers true for a zero length; their x86-64 -O2 code (GCC 13,
+  clang 18, the loop shape compiled alone) has no branch on the bytes, and
+  their Xtensa and RISC-V builds were not read, so folding them onto one
+  helper is tidiness, not a fix. The survey was a search of every firmware
+  tree, not a proof. From code. Found by the constant-time pass (#W26PR).
 
 - [ ] **F487 [code+decision] canary-wap: `POST /api/mqtt/config` reads a
   setting of the wrong type as absent.** The route refuses an unreadable body,
@@ -1238,24 +1235,24 @@ so — see D2 below.)
   returns `void` in NimBLE-Arduino 2.3.8 and 2.3.9 and `bool` from 2.4.0, and
   `improv_ble.cpp` tests its result under `ESP_ARDUINO_VERSION_MAJOR >= 3`.
   The caret in `firmware/envs/platformio/canary-sense.ini` resolves to the
-  newest 2.x today (CI installs 2.5.0), so nothing fails, but a build that
-  resolved 2.3.x would not compile the glue. Raise the floor to `^2.4.0` (or
-  `^2.5.0`, the release `test_improv_glue.cpp`'s stand-in follows) and
+  newest 2.x when PlatformIO builds it in CI, so nothing fails, but a build
+  that resolved 2.3.x would not compile the glue. Raise the floor to `^2.4.0`
+  (or `^2.5.0`, the release `test_improv_glue.cpp`'s stand-in follows) and
   regenerate the firmware SBOM. From the releases' headers. Found by F472
   (#W26PR).
 
-- [ ] **F492 [decision] canary-vision: three calls F474 left.** `spa/app.js`
-  sets no inline style, and `el()` throws on a `style` key, so an untested one
-  stops that view rendering where a browser would drop it and log a violation;
-  the other option is to drop the key and warn. Six `className` tokens in
-  `app.js` match no rule in `spa/styles.css` (`btn-sm`,
+- [ ] **F492 [decision] canary-vision: three calls the CSP class move left.**
+  `spa/app.js` sets no inline style, and `el()` throws on a `style` key, so an
+  untested one stops that view rendering where a browser would drop it and log
+  a violation; the other option is to drop the key and warn. Six `className`
+  tokens in `app.js` match no rule in `spa/styles.css` (`btn-sm`,
   `session-expiry-warning`, `fleet-device-card`, `pair-expander`, `ptr-label`,
   `events-list`, the last a `querySelector` hook); `btn-sm` leaves the
   session-expiry warning's Re-authenticate button at the full `.btn` size, a
-  design call. And the cascade order of the F474 classes is proven only by a
-  headless Chromium probe; holding it in CI would need a browser or a CSS
-  engine in canary-vision's test deps. From code and Chromium probes. Found by
-  F474 (#W26PR).
+  design call. And the cascade order of the classes that replaced the inline
+  styles is proven only by a headless Chromium probe; holding it in CI would
+  need a browser or a CSS engine in canary-vision's test deps. From code and
+  Chromium probes. Found by F474 (#W26PR).
 
 - [ ] **F375 [code+human] Every Bluetooth advertiser sends the chip's public
   address, which the factory MAC fixes, and two security docs call it the
@@ -2899,7 +2896,7 @@ so — see D2 below.)
   (`glass_splash_test.cpp` prints it on every play) the bird's ink now ends 69
   to 91 px above the wordmark's on the 172 px, 180 px and touch169 glass (the
   top is the 172 px glass under Heirloom with "WWWW...", whose wordmark is set
-  in Montserrat 28 since F373), 87 to 125 px on the AMOLED (the most under
+  in Montserrat 28 since #W26PR), 87 to 125 px on the AMOLED (the most under
   Heirloom with "WWWW...") and 76 to 78 on the dash under Heirloom with
   "WWWW...", where the seats before F159 kept 60 to 67 on every portrait
   canvas and 67 to 70 on the dash; the round watch and the landscape
@@ -3963,16 +3960,15 @@ so — see D2 below.)
 - [ ] **A136 [code] The Lab's native glass runs do not name the wordmark hold
   or the dash pass.** `canary-local/tests/onboard.test.js` pins
   `glass_splash_test.cpp`'s holds 1 to 8 by source text but not hold 9, the
-  wordmark's fit (F373), or its step-down pin, so either could be deleted
-  silently (a line such as `t.includes("HOLD(c.x1 >= sl::kWordMargin") &&
+  wordmark's fit, or its step-down pin, so either could be deleted silently (a
+  line such as `t.includes("HOLD(c.x1 >= sl::kWordMargin") &&
   t.includes("want_stepped")` holds both). canary-local.yml's two "Turned
   glass" step comments (LVGL 8.4, and 9.5's `glass_turn_lvgl9.sh`) and
   `canary-local/tests/native/README.md` describe those suites as reading the
   tail and the seat, and `glass_turn.sh`'s end-of-run line says "the splash's
   tail FAILED in:" when the wordmark hold fails. canary-local.yml's "Runtime
-  turn" step also runs the dash sheet pass (F370), and its name and comment
-  say only the nightlight. Name each. From code. Found by F373 and F370
-  (#W26PR).
+  turn" step also runs the dash sheet pass, and its name and comment say only
+  the nightlight. Name each. From code. Found by F373 and F370 (#W26PR).
 
 - [ ] **A137 [decision] A bench "meet again" keeps the flash's other erase
   marks.** A meet again forgets the network and the hello from the page's copy
@@ -4917,9 +4913,9 @@ major, by theme") — work its themes, then tick here.
   `scripts/tests/test_parity_plan.py`, and §4's OTA A/B and acoustic rows tick
   "Dashboard ✅" because the dashboard reads ✅ for both trees, while §2 and §3
   (and Tranche A2/B2) say a behavioral cell flips only after a bench pass;
-  "Bench-proven" stays unticked. The tension predates D23. Keep the dashboard
-  tick, or untick it for OTA A/B and acoustic until a bench pass (U1). From
-  the docs. Found by D23 (#W26PR).
+  "Bench-proven" stays unticked. The tension predates #W26PR's restatement of
+  §1. Keep the dashboard tick, or untick it for OTA A/B and acoustic until a
+  bench pass (U1). From the docs. Found by D23 (#W26PR).
 
 ---
 
