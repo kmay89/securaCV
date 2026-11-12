@@ -972,14 +972,23 @@ fails on byte drift.
   y, LVGL 8.4's animation list, the glass's shape and turn, and the
   firmware's `[orient]` serial lines: every boot's last announcement, and
   one made after each turn, must carry the quarter turns the glass is worn
-  at (A81: `Orient`'s R90, R180 and R270 as 1, 2 and 3). Fetches LVGL,
+  at (A81: `Orient`'s R90, R180 and R270 as 1, 2 and 3). One more boot runs
+  the 10 s hold's erase (A127): `forget_wifi_credentials()` must reach the
+  page as `js_nvs_remove` for exactly `wifi_ssid`, `wifi_pass`, the ring and
+  `ap_pass`, and a `Preferences::clear()` once per key it erased. Then the
+  same script builds `build.sh`'s dash TU list and defines with
+  `dash_sheet_turn_test.cpp` (F370): a settings sheet open when the phone
+  turns the glass (the stored rotation, as `/api/set` writes it) must be laid
+  out for the 480x800 column it then wears, its Orientation row and page
+  naming the turn worn, and nothing is rebuilt while a finger is down. Both
+  drivers run, and the script fails at its end if either did. Fetches LVGL,
   Crypto and
   ArduinoJson at `build.sh`'s pins when absent, and CI runs it right after
   `glass_turn.sh`.
   `tests/onboard.test.js` holds its TU lists, defines and language flags to
-  what `build.sh` hands em++ for the nightlight, and each page call it (and
-  `glass_turn.sh`'s two tests) defines to the signature of the `EM_JS` it
-  stands in for. Both scripts build in `GLASS_TURN_OUT` /
+  what `build.sh` hands em++ for the nightlight and for the dash, and each
+  page call its two drivers (and `glass_turn.sh`'s two tests) define to the
+  signature of the `EM_JS` it stands in for. Both scripts build in `GLASS_TURN_OUT` /
   `RUNTIME_TURN_OUT` when set and leave it there; otherwise in a temporary
   directory they remove on exit, pass or fail (A82).
 
