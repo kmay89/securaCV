@@ -27,6 +27,16 @@ committed enclosures.json (CI's "Enclosure catalog drift" step keeps it equal
 to the real generator's output) to the builder's groups, and Binding holds
 the generator to that one import as GROUP_RE's only binding.
 
+The two lists of knobs still differ (C21): the Lab reads one `name = value;`
+per line, so it misses a knob that shares its line, and it lists [Hidden]
+groups, derived values and assignments past the first module, which the
+builder does not. The direction that hides a real knob is the first, and it
+is already counted: the builder keeps no help on a line that assigns two
+knobs, so every knob the Lab misses has no help, and test_lint_design_lang.py's
+HELP_DEBT holds the count of knobs without help per file, exactly.
+LabMisses holds that coupling, so a parser change that gave such a knob help
+cannot take it out of HELP_DEBT's count while the Lab still misses it.
+
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 """
 
@@ -39,11 +49,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 ENC = ROOT / "docs" / "hardware" / "enclosure"
 sys.path.insert(0, str(ENC))
 import gen_builder_manifest  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_lint_design_lang import HELP_DEBT, knobs_without_help  # noqa: E402
 
 
 LAB_SRC = ROOT / "canary-local" / "tools" / "gen_enclosures.py"
@@ -202,6 +216,105 @@ class SplitLines(unittest.TestCase):
         help_text = lab["skirt_wall"].get("comment", "")
         self.assertIn("skirt", help_text)
         self.assertNotIn("back_stack", help_text)
+
+
+def lab_misses(path: Path, lab_names: set[str]) -> list[tuple[int, str]]:
+    """(line, knob) for each knob gen_builder_manifest.parse_scad reads that
+    is not in lab_names (the Lab's list for the file), in file order."""
+    return [(p["line"], p["name"])
+            for g in gen_builder_manifest.parse_scad(path, with_lines=True)
+            for p in g["params"] if p["name"] not in lab_names]
+
+
+def lab_misses_with_help(path: Path, lab_names: set[str]) -> list[tuple[int, str]]:
+    """The knobs the Lab misses that test_lint_design_lang.knobs_without_help
+    does not count: the builder's parser reads them with help, so HELP_DEBT
+    cannot see that the Lab lists none of them."""
+    unhelped = set(knobs_without_help(path))
+    return [(line, name) for line, name in lab_misses(path, lab_names) if name not in unhelped]
+
+
+class LabMisses(unittest.TestCase):
+    """C21: every knob the builder reads and the Lab does not is one HELP_DEBT
+    counts. The Lab's parser skips a line that assigns two knobs, and the
+    builder's keeps no help on one, so each knob the Lab misses has no help
+    (86 in seven files when this test landed, every one on a shared line).
+    What breaks that is a knob the builder reads with help and the Lab
+    cannot read: a parser change (the builder keeping a shared line's help),
+    or a knob the Lab's line match refuses (indented, or above the first
+    group header). A new shared-line knob does not (it has no help, so
+    HELP_DEBT moves), nor does a new derived value (it only grows the
+    Lab-only list, which this class does not judge)."""
+
+    def test_every_knob_the_lab_misses_is_one_help_debt_counts(self):
+        scads = json.loads(ENCLOSURES_JSON.read_text(encoding="utf-8"))["scads"]
+        self.assertGreater(len(scads), 20, "enclosures.json should list the case files")
+        bad = []
+        for scad, parsed in sorted(scads.items()):
+            lab = {p["name"] for g in parsed["groups"] for p in g["params"]}
+            for line, name in lab_misses_with_help(ENC / scad, lab):
+                bad.append(f"{scad}:{line}: `{name}` is a knob gen_builder_manifest.parse_scad "
+                           "reads with help (the parser the web builder and the design lint "
+                           "share), but enclosures.json does not list it, and HELP_DEBT "
+                           "(test_lint_design_lang.py) counts only knobs without help, so "
+                           "nothing sees the Lab miss it. Put the knob alone on its line "
+                           "under a group header, where gen_enclosures.py's parse_scad reads it")
+        self.assertEqual(bad, [], "\n".join(bad))
+
+    def test_every_lab_file_is_held_by_help_debt(self):
+        # The count above only binds where HELP_DEBT holds the file: a Lab
+        # file with no entry would let its shared-line knobs grow unseen.
+        scads = json.loads(ENCLOSURES_JSON.read_text(encoding="utf-8"))["scads"]
+        self.assertEqual(sorted(set(scads) - set(HELP_DEBT)), [],
+                         "every file enclosures.json lists needs a HELP_DEBT entry in "
+                         "test_lint_design_lang.py")
+
+    SHARED = ("/* [G] */\n"
+              "alone = 1.0;   // its own help\n"
+              "a = 1.0;  b = 2.0;   // help for both, which neither keeps\n")
+
+    def _lab_and_probe(self, d: str) -> tuple[Path, set[str]]:
+        p = Path(d) / "canary_probe.scad"
+        p.write_text(self.SHARED, encoding="utf-8")
+        return p, {x["name"] for g in LAB_PARSE(p)["groups"] for x in g["params"]}
+
+    def test_a_shared_line_reaches_neither_the_lab_nor_the_builder_help(self):
+        with tempfile.TemporaryDirectory() as d:
+            p, lab = self._lab_and_probe(d)
+            self.assertEqual(lab, {"alone"})
+            self.assertEqual(lab_misses(p, lab), [(3, "a"), (3, "b")])
+            self.assertEqual(knobs_without_help(p), ["a", "b"])
+            self.assertEqual(lab_misses_with_help(p, lab), [])
+
+    def test_a_helped_knob_the_lab_cannot_read_is_caught(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "canary_probe.scad"
+            p.write_text("top = 1.0;   // above any group header\n"
+                         "/* [G] */\n"
+                         "  ind = 2.0;   // indented\n"
+                         "ok = 3.0;   // alone, at the margin\n", encoding="utf-8")
+            lab = {x["name"] for g in LAB_PARSE(p)["groups"] for x in g["params"]}
+            self.assertEqual(lab, {"ok"})
+            self.assertEqual(lab_misses_with_help(p, lab), [(1, "top"), (3, "ind")])
+
+    def test_a_builder_that_kept_shared_help_is_caught(self):
+        # The parser change this class exists for: the builder starts keeping
+        # a shared line's help. knobs_without_help (and so HELP_DEBT) stops
+        # counting a and b, while the Lab still lists neither.
+        real = gen_builder_manifest.parse_scad
+
+        def keeps_shared_help(path, with_lines=False):
+            groups = real(path, with_lines)
+            for g in groups:
+                for x in g["params"]:
+                    x.setdefault("desc", "help for both, which neither keeps")
+            return groups
+
+        with tempfile.TemporaryDirectory() as d:
+            p, lab = self._lab_and_probe(d)
+            with mock.patch.object(gen_builder_manifest, "parse_scad", keeps_shared_help):
+                self.assertEqual(knobs_without_help(p), [])
+                self.assertEqual(lab_misses_with_help(p, lab), [(3, "a"), (3, "b")])
 
 
 class Binding(unittest.TestCase):
