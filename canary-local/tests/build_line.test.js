@@ -153,11 +153,10 @@ test("every room station slug resolves; stations are exactly 1..6", () => {
 
 // ── the completeness gate: no committed page may be off the line ────────────
 
-// Pages that are legitimately not navigable surfaces: generator inputs and
+// Pages that are legitimately not navigable surfaces: embedded documents and
 // test fixtures. Everything else committed under canary-local must be a
 // bench, a depth, the onramp, or an htmlDocumentation entry.
 const NOT_A_SURFACE = new Set([
-  "voice/template.html",
   // The vendored Witness Wall emulator (see witness/PROVENANCE.txt): an
   // embedded asset iframed by the witness-wall.html bench, not a nav surface.
   // scripts/check_witness_emulator_sync.sh keeps it byte-identical to the

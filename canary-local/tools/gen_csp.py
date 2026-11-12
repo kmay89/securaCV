@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """canary-local/tools/gen_csp.py — one policy table, every Lab page's CSP.
 
-Every page under canary-local/ (plus the emulator harness) carries a
-Content-Security-Policy as a <meta http-equiv> — GitHub Pages cannot set
+Every page under canary-local/ (the top-level pages, the emulator harness and
+the Canary Voice sound board) carries a Content-Security-Policy as a
+<meta http-equiv> — GitHub Pages cannot set
 response headers, and the desktop Lab (desktop-lab/) serves the same files
 from a Tauri webview. This tool is the ONE place that policy is written:
 
@@ -62,11 +63,14 @@ Consistency checks the tool also enforces, so the table cannot rot:
   * every table key names a page that exists.
 
 Out of scope, on purpose: canary-local/witness/witness.html is vendored
-byte-for-byte from the website repo (scripts/check_witness_emulator_sync.sh)
-and canary-local/voice/index.html is emitted by gen_voice_preview.mjs — both
-are documents of their own inside an iframe / a generated tree, and neither is
-edited here. tests/csp.test.js mirrors these rules in the page-logic job and
-tests/csp_probe.mjs loads every page in Chromium and fails on any violation.
+byte-for-byte from the website repo (scripts/check_witness_emulator_sync.sh),
+a document of its own inside the witness-wall.html bench's iframe, and is not
+edited here. The sound board (voice/index.html) is in scope: the page is
+hand-written and loads its styles, its UI and its generated data
+(voice-data.js, from gen_voice_preview.mjs) as files, so it gets BASE + SHARED
+like any page with no row. tests/csp.test.js mirrors these rules in the
+page-logic job and tests/csp_probe.mjs loads every page in Chromium and fails
+on any violation.
 """
 import base64
 import hashlib
@@ -78,6 +82,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 LAB = REPO / "canary-local"
 HARNESS = "emulator/web/harness.html"
+# The one page in a subfolder that is ours: the Canary Voice sound board. Its
+# data file is generated (tools/gen_voice_preview.mjs); the page is not.
+VOICE = "voice/index.html"
 
 # ── the policy table ────────────────────────────────────────────────────────
 
@@ -234,6 +241,7 @@ def strip_js_comments(src):
 def lab_pages():
     pages = sorted(p.name for p in LAB.glob("*.html"))
     pages.append(HARNESS)
+    pages.append(VOICE)
     return pages
 
 
@@ -367,7 +375,7 @@ def policy_for(page, html):
         if page not in INLINE_SCRIPT_OK:
             fail(
                 f"{page}: {len(scripts)} inline <script> block(s). Move them into "
-                "assets/<page>.js (or emulator/web/<page>.js) — script hashes are reserved "
+                "assets/<page>.js (or a .js file beside the page) — script hashes are reserved "
                 "for the scripts that cannot move (INLINE_SCRIPT_OK in this tool, with a reason)."
             )
         add("script-src", [sha256_source(body) for body in scripts])
@@ -377,7 +385,7 @@ def policy_for(page, html):
         if page not in INLINE_STYLE_OK:
             fail(
                 f"{page}: {len(styles)} inline <style> block(s). Move them into a stylesheet "
-                "under assets/ (or emulator/web/) and <link> it — INLINE_STYLE_OK exists for a "
+                "under assets/ (or beside the page) and <link> it — INLINE_STYLE_OK exists for a "
                 "block that genuinely cannot move, with a reason."
             )
         add("style-src", [sha256_source(body) for body in styles])

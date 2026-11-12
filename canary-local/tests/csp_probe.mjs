@@ -3,10 +3,20 @@
 //
 // tests/csp.test.js proves each page's policy is the one tools/gen_csp.py
 // writes. This proves the pages still WORK under it: serve the repo over
-// loopback, open every canary-local/*.html and the emulator harness (once per
-// committed display flavor), listen for `securitypolicyviolation` in every
-// frame from before the first byte of page script runs, wait for load plus a
-// settle, and fail on any violation, page error or console error.
+// loopback, open every canary-local/*.html, the Canary Voice sound board
+// (voice/index.html) and the emulator harness (once per committed display
+// flavor), listen for `securitypolicyviolation` in every frame from before the
+// first byte of page script runs, wait for load plus a settle, and fail on any
+// violation, page error or console error, or on a document in quirks mode or
+// not decoded as UTF-8 (this server sends a bare text/html, as
+// `python3 -m http.server` does, so only the page's own <meta charset> sets it).
+//
+// The sound board is also PLAYED: every card is clicked, and the probe fails
+// unless the Web Audio graph reaches the speakers (a connect() to the
+// context's destination), the scope's analyzer node carries the signal, and
+// the scope draws a trace. A one-word slip in a Web Audio method name once
+// left the board throwing on the first click and silent after it, with every
+// load-only gate green.
 //
 // A synthetic page with a deliberate violation runs FIRST: a listener that has
 // silently stopped hearing violations would otherwise pass every real page.
@@ -71,7 +81,11 @@ const port = server.address().port;
 const url = (rel) => `http://127.0.0.1:${port}/${rel}`;
 
 // What every page loads, plus the harness once per committed display flavor.
-const pages = (await readdir(join(ROOT, LAB))).filter((f) => f.endsWith(".html")).sort();
+// The sound board is the one Lab page in a subfolder; it is on the list by
+// name, as in gen_csp.py's lab_pages() (tests/csp.test.js holds the two lists
+// together and fails on a subfolder page neither names).
+const VOICE = "voice/index.html";
+const pages = [...(await readdir(join(ROOT, LAB))).filter((f) => f.endsWith(".html")).sort(), VOICE];
 const flavors = (await readdir(join(ROOT, LAB, "emulator/dist")))
   .map((f) => /^canary-display-([a-z0-9]+)\.js$/.exec(f)?.[1]).filter(Boolean).sort();
 if (!flavors.length) { console.error("CSP_PROBE_FAIL: no canary-display-*.js in emulator/dist/"); process.exit(1); }
@@ -83,10 +97,67 @@ if (!flavors.length) { console.error("CSP_PROBE_FAIL: no canary-display-*.js in 
 // own eval as the page's violation) (sweep A44). index.html redirects by script — proof the external
 // redirect module ran under the policy is where it lands: a device hash goes
 // to fleet.html, which only the script does (the meta refresh goes to lab.html).
+// Installed before the sound board's own script: counts every AudioNode
+// connect(), the ones that reach the context's destination, and keeps the
+// AnalyserNode (the Web Audio interface's own name) the scope reads, so the
+// probe can ask it whether sound is flowing.
+function countAudioConnects() {
+  window.__audio = { connects: 0, toDestination: 0, analyzer: null };
+  const connect = AudioNode.prototype.connect;
+  AudioNode.prototype.connect = function (dest, ...rest) {
+    window.__audio.connects++;
+    if (dest instanceof AudioDestinationNode) window.__audio.toDestination++;
+    if (this instanceof AnalyserNode) window.__audio.analyzer = this;
+    return connect.call(this, dest, ...rest);
+  };
+}
+
+// Click every card on the board, then every control, and return what is wrong.
+// The first card is the alarm (the longest signature): while it plays, read the
+// analyzer's time-domain buffer and the scope canvas.
+async function playVoiceBoard(page) {
+  const problems = [];
+  const cards = page.locator("button.card");
+  const n = await cards.count();
+  if (n < 12) problems.push(`expected the 12 signature cards, found ${n}`);
+  if (!n) return problems;
+  await cards.nth(0).click();
+  await new Promise((r) => setTimeout(r, 300));
+  const live = await page.evaluate(() => {
+    const a = window.__audio;
+    let peak = 0;
+    if (a.analyzer) {
+      const buf = new Uint8Array(a.analyzer.fftSize);
+      a.analyzer.getByteTimeDomainData(buf);
+      for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+    }
+    const cv = document.getElementById("scope");
+    const px = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+    const colors = new Set();
+    for (let i = 0; i < px.length; i += 4) colors.add((px[i] << 24) | (px[i + 1] << 16) | (px[i + 2] << 8) | px[i + 3]);
+    return { peak, colors: colors.size, state: a.analyzer?.context.state || "none" };
+  });
+  for (let i = 1; i < n; i++) { await cards.nth(i).click(); await new Promise((r) => setTimeout(r, 60)); }
+  for (const sel of ["#volseg button", "#nightBtn", "#themebtn"]) {
+    const c = page.locator(sel);
+    for (let i = 0; i < await c.count(); i++) await c.nth(i).click();
+  }
+  await new Promise((r) => setTimeout(r, 600));
+  const audio = await page.evaluate(() => ({ connects: window.__audio.connects, toDestination: window.__audio.toDestination }));
+  if (audio.toDestination < 1) problems.push(`no connect() reached the speakers (${audio.connects} connects, 0 to the destination): the board is silent`);
+  if (live.state !== "running") problems.push(`the scope's analyzer node is missing or its context is not running (${live.state})`);
+  if (live.peak < 1) problems.push("the analyzer node heard nothing while the alarm played");
+  // The cleared canvas plus the grid line is 2 colors; a drawn trace is many more.
+  if (live.colors <= 2) problems.push(`the scope drew no trace while the alarm played (${live.colors} colors on the canvas)`);
+  if (!problems.length) console.log(`csp_probe: ${VOICE} played ${n} cards: ${audio.connects} connects, ${audio.toDestination} to the destination, analyzer peak ${live.peak}, scope ${live.colors} colors`);
+  return problems;
+}
+
 const WASM_PAGES = new Set(["eyes.html", "fleet.html", "senselab.html", "smoke.html", "vision.html"]);
 const targets = [];
 for (const p of pages) {
   if (p === "index.html") targets.push({ name: p, path: `${LAB}/index.html#securacv-canary`, redirect: /\/fleet\.html#securacv-canary$/ });
+  else if (p === VOICE) targets.push({ name: p, path: `${LAB}/${p}`, init: countAudioConnects, act: playVoiceBoard });
   else targets.push({ name: p, path: `${LAB}/${p}`, settle: WASM_PAGES.has(p) ? 5000 : 1500 });
 }
 for (const f of flavors) {
@@ -166,7 +237,10 @@ for (const t of run) {
   });
   let violations = [];
   let hasMeta = false;
+  let doc = null;
+  let acted = [];
   try {
+    if (t.init) await page.addInitScript(t.init);
     await page.goto(url(t.path), { waitUntil: "load", timeout: 60000 });
     if (t.redirect) {
       await page.waitForURL(t.redirect, { timeout: 15000 });
@@ -176,6 +250,8 @@ for (const t of run) {
     await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
     await new Promise((r) => setTimeout(r, t.settle || 1500));
     hasMeta = await page.evaluate(() => !!document.querySelector('meta[http-equiv="Content-Security-Policy"]'));
+    doc = await page.evaluate(() => ({ mode: document.compatMode, charset: document.characterSet }));
+    if (t.act) acted = await t.act(page);
     violations = await violationsIn(page);
   } catch (e) {
     errors.push(`did not load: ${e}`);
@@ -184,6 +260,8 @@ for (const t of run) {
 
   if (errors.length) { fail(t.name, "page errors:\n  " + errors.slice(0, 8).join("\n  ")); continue; }
   if (!hasMeta) { fail(t.name, "the loaded document carries no CSP <meta> (gen_csp.py did not run on it, or the redirect landed off the Lab)"); continue; }
+  if (doc.mode !== "CSS1Compat" || doc.charset !== "UTF-8") { fail(t.name, `the document is ${doc.mode}, decoded as ${doc.charset} — it needs <!DOCTYPE html> and <meta charset="utf-8">`); continue; }
+  if (acted.length) { fail(t.name, "played wrong:\n  " + acted.join("\n  ")); continue; }
   if (violations.length) { fail(t.name, `${violations.length} CSP violation(s):\n  ` + violations.slice(0, 12).map(fmt).join("\n  ")); continue; }
   console.log(`CSP_PROBE_OK[${t.name}]`);
 }
