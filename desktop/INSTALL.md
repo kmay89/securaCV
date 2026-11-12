@@ -250,7 +250,13 @@ sensitive, so here is the complete list:
   - `backups/` — the automatic pre-flash **full-chip safety copies**. Each is
     everything that was on a board, including its settings partition — which
     can carry the board's saved Wi-Fi credentials and its device identity
-    key. Treat these files like the board itself.
+    key. Treat these files like the board itself. On macOS and Linux the
+    folder opens for your account only (mode 0700) and each copy is
+    readable by your account only (0600), set before the first byte is
+    written; a folder an older version left open to other accounts is
+    closed the next time a copy is taken. A backup you save from the Rescue
+    bench gets the same 0600, except on a drive that keeps no per-file
+    permissions (a FAT or exFAT stick), where the app says so in its log.
   - `hub-ssh/` — the **maintenance SSH keypair** minted for hub self-setup.
     The private key grants root console access (port 22222) to any hub whose
     card was seeded with its public half. Deleting the folder removes the key

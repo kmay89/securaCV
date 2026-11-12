@@ -939,6 +939,9 @@ async fn run_sidecar_streaming(
 /// `rescue::next_backup_filename` — the browser's `canary-…-backup.bin`
 /// scheme, with the next free counter because every copy shares this folder.
 ///
+/// The folder is owner-only (`owner_only_dir`): every copy in it is a board's
+/// identity key and Wi-Fi in the clear.
+///
 /// Not a command: this used to answer the webview, which handed the string
 /// straight back to `backup_flash` as its write target — so the "automatic"
 /// destination was whatever a script in the webview said it was.
@@ -950,7 +953,8 @@ fn auto_backup_path(app: &AppHandle, day: &str) -> Result<std::path::PathBuf, St
         .app_data_dir()
         .map_err(|e| format!("no app data dir: {e}"))?
         .join("backups");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create backups dir: {e}"))?;
+    owner_only_dir(&dir)
+        .map_err(|e| format!("couldn't make the backups folder private to this account: {e}"))?;
     let taken: Vec<String> = std::fs::read_dir(&dir)
         .map_err(|e| format!("couldn't read the backups dir: {e}"))?
         .filter_map(|e| e.ok())
@@ -959,6 +963,94 @@ fn auto_backup_path(app: &AppHandle, day: &str) -> Result<std::path::PathBuf, St
     let name = rescue::next_backup_filename(day, &taken)
         .ok_or_else(|| format!("not a date the backup can be named by: {day:?}"))?;
     Ok(dir.join(name))
+}
+
+/// Make `dir`, and any parent it is missing, a folder only this account can
+/// open: 0700 on Unix (a parent this creates gets 0700 too, as XDG asks of a
+/// data folder). The mode is set again on every call, so a `backups/` an
+/// older build made 0755 is tightened as well, which also puts the copies
+/// already in it out of other accounts' reach. Elsewhere it is a plain
+/// create (Windows is neither built nor tested).
+fn owner_only_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(dir)
+    }
+}
+
+/// How `owner_only_file` left a backup's destination.
+struct BackupFile {
+    /// No file was there, so it made one: a read that fails may remove it.
+    created: bool,
+    /// Another account can still read it after the tightening: the drive's
+    /// file system keeps no per-file modes (a FAT or exFAT stick, whose mode
+    /// comes from the mount) or another account owns the file.
+    readable_by_others: bool,
+}
+
+/// Get `path` ready for a full-chip dump before espflash opens it, so the
+/// dump is never readable by another account, even for a moment: espflash
+/// 3.3.0's `read-flash` opens its output create+truncate with no mode of its
+/// own, which keeps the mode of a file that is already there (and would make
+/// a new one `0666 & !umask`). On Unix a new file is created exclusively at
+/// 0600; an existing one (a Rescue-bench save over an earlier copy) is
+/// tightened to 0600 but not truncated, so a read that fails before espflash
+/// gets to it still leaves the earlier copy whole. Elsewhere nothing is done
+/// and nothing is judged.
+fn owner_only_file(path: &std::path::Path) -> std::io::Result<BackupFile> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let (file, created) = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+        {
+            Ok(file) => (file, true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                (std::fs::OpenOptions::new().write(true).open(path)?, false)
+            }
+            Err(e) => return Err(e),
+        };
+        // A refusal here (no per-file modes, or not our file) is judged by
+        // the mode the file is left with, just below.
+        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+        let mode = file.metadata()?.permissions().mode();
+        Ok(BackupFile {
+            created,
+            readable_by_others: mode & 0o077 != 0,
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(BackupFile {
+            created: false,
+            readable_by_others: false,
+        })
+    }
+}
+
+/// After a read that failed (espflash exited non-zero, or never started),
+/// remove the file `owner_only_file` made for it: espflash writes the dump in
+/// one go at the end of a good read, so that file is empty or a fragment, not
+/// a copy of anything. A file that was already there is left as espflash left
+/// it (untouched if the read failed before espflash opened it, emptied if it
+/// failed after), the same as before the file was made ahead of the run.
+fn discard_failed_copy(prepared: &BackupFile, ran: &Result<i32, String>, out: &std::path::Path) {
+    if prepared.created && !matches!(ran, Ok(0)) {
+        let _ = std::fs::remove_file(out);
+    }
 }
 
 /// Raise the OS save panel from HERE and answer the path it gave, validated
@@ -1009,7 +1101,9 @@ async fn ask_save_path(
 /// panel opens on (`suggested_file_name` holds it to one plain `.bin` name).
 /// Neither is a path. Answers the path written, for display and for the
 /// change map, or `None` when the user canceled the panel — nothing is read
-/// off the board in that case.
+/// off the board in that case. The file is made owner-only before espflash
+/// writes it (`owner_only_file`), whether it is the automatic copy or the
+/// file chosen in the save panel.
 #[tauri::command]
 async fn backup_flash(
     app: AppHandle,
@@ -1042,7 +1136,20 @@ async fn backup_flash(
         }
         _ => return Err(format!("unknown backup destination {dest:?}")),
     };
+    let prepared = owner_only_file(&out)
+        .map_err(|e| format!("couldn't create the backup file {}: {e}", out.display()))?;
     let out_path = out.to_string_lossy().into_owned();
+    if prepared.readable_by_others {
+        let _ = app.emit(
+            "rescue:log",
+            format!(
+                "⚠ {out_path} can't be kept to your account alone: this drive keeps no \
+                 per-file permissions (a FAT or exFAT stick), or the file belongs to another \
+                 account. The copy holds the board's identity key and Wi-Fi, so keep the drive \
+                 like the board itself."
+            ),
+        );
+    }
     let _ = app.emit(
         "rescue:log",
         format!(
@@ -1050,12 +1157,14 @@ async fn backup_flash(
             rescue::human_bytes(flash_size)
         ),
     );
-    let code = run_sidecar_streaming(
+    let ran = run_sidecar_streaming(
         &app,
         rescue::read_flash_args(&port, flash_size, &out_path, baud),
         "rescue:log",
     )
-    .await?;
+    .await;
+    discard_failed_copy(&prepared, &ran, &out);
+    let code = ran?;
     if code == 0 {
         let _ = app.emit(
             "rescue:log",
@@ -2159,5 +2268,130 @@ mod webview_boundary_tests {
             assert!(err.contains("implausible size"), "{err}");
             assert!(err.contains(&VISION_MODEL_MAX_BYTES.to_string()), "{err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod failed_copy_tests {
+    use super::{discard_failed_copy, BackupFile};
+
+    /// Only a file this run made is removed, and only when the run failed.
+    #[test]
+    fn a_failed_read_removes_only_the_file_it_made() {
+        let dir = tempfile::tempdir().unwrap();
+        let made = BackupFile {
+            created: true,
+            readable_by_others: false,
+        };
+        let was_there = BackupFile {
+            created: false,
+            readable_by_others: false,
+        };
+        for (prepared, ran, kept) in [
+            (&made, Ok(0), true),
+            (&made, Ok(1), false),
+            (&made, Err("espflash didn't start".to_string()), false),
+            (&was_there, Ok(1), true),
+            (&was_there, Err("espflash didn't start".to_string()), true),
+        ] {
+            let out = dir.path().join("canary-backup.bin");
+            std::fs::write(&out, b"").unwrap();
+            discard_failed_copy(prepared, &ran, &out);
+            assert_eq!(
+                out.exists(),
+                kept,
+                "created={} ran={ran:?}",
+                prepared.created
+            );
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod owner_only_tests {
+    use super::{owner_only_dir, owner_only_file};
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(p: &std::path::Path) -> u32 {
+        std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+
+    /// Run `f` under the usual desktop umask (022), so a plain create comes
+    /// out 0755 (folder) or 0644 (file) on every runner, whatever its own
+    /// umask. SAFETY: umask(2) swaps the process's file-creation mask; it
+    /// cannot fail and touches no memory.
+    fn under_umask_022<T>(f: impl FnOnce() -> T) -> T {
+        let previous = unsafe { libc::umask(0o022) };
+        let out = f();
+        unsafe { libc::umask(previous) };
+        out
+    }
+
+    #[test]
+    fn a_fresh_backups_folder_is_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("com.securacv.flasher");
+        let backups = app_data.join("backups");
+        under_umask_022(|| owner_only_dir(&backups)).expect("made");
+        assert_eq!(mode(&backups), 0o700, "backups/");
+        assert_eq!(mode(&app_data), 0o700, "a parent this call made");
+    }
+
+    /// An older build made `backups/` with the umask's default (0755) and left
+    /// its copies 0644 inside. The next backup tightens the folder, which puts
+    /// those copies out of every other account's reach too.
+    #[test]
+    fn an_older_builds_open_folder_is_tightened() {
+        let dir = tempfile::tempdir().unwrap();
+        let backups = dir.path().join("backups");
+        std::fs::create_dir(&backups).unwrap();
+        std::fs::set_permissions(&backups, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let old_copy = backups.join("canary-aabbcc-1700000000-backup.bin");
+        std::fs::write(&old_copy, b"old dump").unwrap();
+        std::fs::set_permissions(&old_copy, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        owner_only_dir(&backups).expect("tightened");
+        assert_eq!(mode(&backups), 0o700);
+        assert_eq!(std::fs::read(&old_copy).unwrap(), b"old dump", "left whole");
+    }
+
+    /// A new copy is created 0600 before espflash runs, and espflash's own
+    /// open (3.3.0's `read_flash`: write + truncate + create, no mode) keeps
+    /// it 0600 while it writes the dump.
+    #[test]
+    fn a_new_copy_is_owner_only_before_and_after_espflash_writes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("canary-aabbcc-backup.bin");
+        let prepared = under_umask_022(|| owner_only_file(&out)).expect("made");
+        assert!(prepared.created && !prepared.readable_by_others);
+        assert_eq!(mode(&out), 0o600, "pre-created");
+
+        let mut f = under_umask_022(|| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(&out)
+        })
+        .unwrap();
+        std::io::Write::write_all(&mut f, b"FAKE-NVS wifi.pass=hunter2").unwrap();
+        drop(f);
+        assert_eq!(mode(&out), 0o600, "after espflash's open and write");
+    }
+
+    /// A Rescue-bench save over an earlier copy: that file is tightened to
+    /// 0600 but not truncated, so a read that fails before espflash opens it
+    /// still leaves the earlier copy whole.
+    #[test]
+    fn an_existing_copy_is_tightened_not_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("canary-backup.bin");
+        std::fs::write(&out, b"earlier copy").unwrap();
+        std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let prepared = owner_only_file(&out).expect("tightened");
+        assert!(!prepared.created && !prepared.readable_by_others);
+        assert_eq!(mode(&out), 0o600);
+        assert_eq!(std::fs::read(&out).unwrap(), b"earlier copy");
     }
 }
