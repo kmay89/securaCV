@@ -1460,6 +1460,35 @@ static int test_the_post_stores_only_known_knobs() {
   return 0;
 }
 
+// A body that holds a NUL (sweep F488). tune_post() reads its body to the
+// first NUL (strlen()), so the import's bytes {"core.presence.preset":2},
+// a NUL and junk reach it as the object alone, which it stores; the same
+// bytes with the NUL left out are refused, since nothing but whitespace may
+// follow the object (json_member.h). The handler, the one caller, refuses a
+// body that holds a NUL before tune_post() is called, 400 "body is not
+// JSON", as the settings POST does (body_read_problems() pins it, with
+// mutations); this case is why the refusal is the handler's to make.
+static int test_a_body_with_a_nul_is_the_handlers_to_refuse() {
+  host_prefs().clear();
+  reboot_and_boot();
+  CHECK(lab_value("core.presence.preset") != 2);
+  const char bytes[] = "{\"core.presence.preset\":2}\0junk";
+  const std::string body(bytes, sizeof(bytes) - 1);
+  CHECK(std::memchr(body.data(), '\0', body.size()) != nullptr);   // what the handler now refuses
+
+  std::string joined = body;                                       // the NUL left out
+  joined.erase(joined.find('\0'), 1);
+  TunePost post = tune_post(joined.c_str(), reinit_module_model);
+  CHECK(post.nvs_ok && post.changed == 0);
+  CHECK(lab_value("core.presence.preset") != 2 && g_reinits.empty());
+
+  post = tune_post(body.c_str(), reinit_module_model);             // what it was handed before F488
+  CHECK(post.nvs_ok && post.changed == 1 && post.reinit_presence);
+  CHECK(lab_value("core.presence.preset") == 2);
+  host_prefs().clear();
+  return 0;
+}
+
 // ── Source pins: csi_integration.cpp is thin around the above ───────────
 static std::string read_source(const char* name) {
   std::ifstream in(std::string(WAP_SKETCH_DIR) + "/" + name);
@@ -1913,7 +1942,10 @@ static std::vector<std::string> body_read_problems(const std::string& integ) {
   }
   // The Tuning Lab's import: its size check (the empty-body answer, and
   // the 4 KB one) kept, the read into the body it allocated, each refusal
-  // answered and the buffer freed, then tune_post().
+  // answered and the buffer freed, then a body that holds a NUL refused and
+  // freed as the settings POST refuses one (sweep F488: tune_post() reads
+  // to the first NUL, so {"core.presence.preset":2}, a NUL and junk stored
+  // the preset), then tune_post(). /api/tune/preset is this handler.
   const std::string tune = code_body(integ, kTunePost);
   if (count_of(tune,
                R"PIN(size_ttotal=req->content_len;if(total==0||total>4096){)PIN"
@@ -1928,9 +1960,13 @@ static std::vector<std::string> body_read_problems(const std::string& integ) {
                R"PIN(returnhttpd_resp_send(req,"{\"ok\":false,\"reason\":\"emptyortoolarge\"}",-1);})PIN"
                R"PIN(if(read!=http_body::OK){free(body);httpd_resp_set_status(req,"400BadRequest");)PIN"
                R"PIN(returnhttpd_resp_send(req,"{\"ok\":false,\"reason\":\"bodyreadfailed\"}",-1);})PIN"
+               R"PIN(if(memchr(body,'\0',got)!=nullptr){free(body);httpd_resp_set_status(req,"400BadRequest");)PIN"
+               R"PIN(returnhttpd_resp_send(req,"{\"ok\":false,\"reason\":\"bodyisnotJSON\"}",-1);})PIN"
                R"PIN(constTunePostpost=tune_post(body,reinit_module);)PIN") != 1 ||
-      count_of(tune, "read_all(") != 1 || tune.find("ESP_FAIL") != std::string::npos) {
-    out.push_back("the Tuning Lab's import does not read its body whole and answer a refusal by name");
+      count_of(tune, "read_all(") != 1 || count_of(tune, "memchr(") != 1 ||
+      tune.find("ESP_FAIL") != std::string::npos) {
+    out.push_back("the Tuning Lab's import does not read its body whole, answer a refusal by name and refuse "
+                  "a body that holds a NUL before tune_post() reads it");
   }
   return out;
 }
@@ -2027,6 +2063,24 @@ static int test_csi_integration_reads_every_body_whole() {
      "HTTPD_SOCK_ERR_TIMEOUT, 0, &got);"},
     {"the import reads past the body it was sent", kImport, "      total, body, total + 1,",
      "      total + 64, body, total + 65,"},
+    // A body that holds a NUL (sweep F488): the code before it, then each
+    // piece of the refusal.
+    {"the import hands tune_post() a body that holds a NUL", kImport,
+     "  if (memchr(body, '\\0', got) != nullptr) {\n"
+     "    free(body);\n"
+     "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+     "    return httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"
+     "  }\n", ""},
+    {"the import looks for a NUL only up to the first NUL", kImport,
+     "  if (memchr(body, '\\0', got) != nullptr) {", "  if (memchr(body, '\\0', strlen(body)) != nullptr) {"},
+    {"the import keeps its buffer on a NUL refusal", kImport,
+     "  if (memchr(body, '\\0', got) != nullptr) {\n    free(body);\n",
+     "  if (memchr(body, '\\0', got) != nullptr) {\n"},
+    {"the import answers a NUL body but goes on", kImport,
+     "    return httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n",
+     "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"},
+    {"the import answers a NUL body as a failed read", kImport,
+     "\\\"reason\\\":\\\"body is not JSON\\\"", "\\\"reason\\\":\\\"body read failed\\\""},
   };
   for (const Mutation& mu : kMutations) {
     std::string src = integ;
@@ -2038,6 +2092,21 @@ static int test_csi_integration_reads_every_body_whole() {
       std::fprintf(stderr, "mutation '%s' was not caught\n", mu.name);
       CHECK(false);
     }
+  }
+  // The NUL refusal moved below tune_post(): the keys before the NUL would
+  // be stored, and the body refused after.
+  {
+    const std::string refusal =
+        "  if (memchr(body, '\\0', got) != nullptr) {\n"
+        "    free(body);\n"
+        "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+        "    return httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"
+        "  }\n";
+    const std::string call = "  const TunePost post = tune_post(body, reinit_module);\n";
+    std::string moved = integ;
+    CHECK(mutate_after(moved, kImport, refusal, ""));
+    CHECK(mutate_after(moved, kImport, call, call + refusal));
+    CHECK(!body_read_problems(moved).empty());
   }
   return 0;
 }
@@ -3428,6 +3497,7 @@ int main(int argc, char** argv) {
     {"the_quiet_hours_rows_keep_their_stored_names", test_the_quiet_hours_rows_keep_their_stored_names},
     {"every_knob_applies_at_once_to_its_group", test_every_knob_applies_at_once_to_its_group},
     {"the_post_stores_only_known_knobs", test_the_post_stores_only_known_knobs},
+    {"a_body_with_a_nul_is_the_handlers_to_refuse", test_a_body_with_a_nul_is_the_handlers_to_refuse},
     {"the_dashboard_writes_the_presence_rows_the_module_reads",
      test_the_dashboard_writes_the_presence_rows_the_module_reads},
     {"the_calibration_writes_the_thresholds_the_module_reads",
