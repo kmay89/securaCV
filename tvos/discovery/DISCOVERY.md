@@ -400,9 +400,10 @@ one-header change instead of a per-board copy-paste.
     bridge remembers the length it verified. A displaced id keeps that
     length (the cap, below), so making an old capture count as fresh again
     takes a flood that also pushes the id out of the displaced ledger, a
-    few hundred publishes; a peer that pays that again every window can
-    still hold a powered-off Canary `online` from one capture, so the bound
-    is a cost, not a guarantee. The same peer can also invent device ids
+    few hundred publishes; a peer that pays that again every window — or
+    published it retained once and makes the bridge re-subscribe (below) —
+    can still hold a powered-off Canary `online` from one capture, so the
+    bound is a cost, not a guarantee. The same peer can also invent device ids
     and sign for them with its own key, and trust-on-first-use cannot tell
     those rows from real Canaries. A
     challenge–response (the firmware's `whoami` canonical) would close that;
@@ -435,23 +436,32 @@ one-header change instead of a per-board copy-paste.
     still proves nothing; a conflict still reads `degraded`. The ledger
     drops its oldest displacement first, so a displaced id's pin is let go
     only after 256 more ids that held a pin or a verified length were
-    displaced after it and not heard since — once every resident holds a
-    pin, one fresh `health` publish each — and only then does its next
-    `health` pin whatever key it carries, as on first sight. A Canary that
-    keeps publishing returns to the table, and to the newest end of the
-    ledger, each time it is heard. The bound is a cost a broker peer can
-    pay, not a wall: a flood of about 64 proven ids to displace a quiet
-    Canary, then 256 `health` publishes, re-open first sight for it, and the
-    peer can then pin its own key under that Canary's id — its row reads
-    `ok`, `online` and its words under the real name until the real Canary
-    signs again and latches the conflict. Never displacing a proven id
-    would close that, at the price of letting a flood of proven ids shut new
-    Canaries out until the file is deleted; the roll-call does not make that
-    trade. An id that holds neither a pin nor a verified chain length
-    (heard only on `status`, `availability` or `meta`) is forgotten after 30
-    days unheard; an id with a pin is never expired by the clock — it
-    leaves the table only by displacement at the cap and the ledger only by
-    the count above, or when the operator deletes the file — so a host
+    displaced after it and not heard since, whoever displaced them — once
+    every resident holds a pin, at most one fresh `health` publish each for
+    a broker peer, fewer where the fleet itself displaces ids meanwhile (a
+    Canary joining at the cap, or one displaced before it coming back) —
+    and only then does its next `health` pin whatever key it carries, as on
+    first sight. A Canary that keeps publishing returns to the table, and to
+    the newest end of the ledger, each time it is heard. The bound is a cost
+    a broker peer can pay, not a wall: a flood that displaces a quiet Canary
+    (about 64 proven ids into a table that holds little else; one newcomer
+    is enough when the table is full and that Canary is its least recently
+    heard proven id), then at most 256 `health` publishes, re-open first
+    sight for it, and the peer can then pin its own key under that Canary's
+    id — its row reads `ok`, `online` and its words under the real name
+    until the real Canary signs again and latches the conflict. Nor need
+    the peer pay twice: publishes it made retained are delivered again by
+    the broker to every new subscription, and the bridge subscribes with a
+    clean start and re-subscribes on each reconnect, so a restart, a
+    dropped link or another client on the broker login taking the bridge's
+    session replays the same churn with no new publish. Never displacing a
+    proven id would close that, at the price of letting a flood of proven
+    ids shut new Canaries out until the file is deleted; the roll-call does
+    not make that trade. An id that holds neither a pin nor a verified chain
+    length (heard only on `status`, `availability` or `meta`) is forgotten
+    after 30 days unheard; an id with a pin is never expired by the clock —
+    it leaves the table only by displacement at the cap and the ledger only
+    by the count above, or when the operator deletes the file — so a host
     whose clock lands weeks ahead keeps every pin it had (the expiry pass
     that straddles the jump is skipped as well; the passes after it run on
     whatever clock the host then has and can forget only unpinned ghosts).
