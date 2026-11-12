@@ -74,8 +74,12 @@ to 180 s, then stale, then lost.
 What the window does **not** give you: the chain canonical binds no nonce or
 timestamp, so a broker publisher can replay a captured signed publish. The
 length-must-advance rule bounds that to one window per chain advance the
-bridge did not itself see. A liveness challenge (the firmware's `whoami`
-canonical) exists on the device side and nothing drives it from the bridge.
+bridge did not itself see, while the bridge holds the length it verified,
+which a displaced id keeps in the 256-entry ledger; a broker peer that
+churns that ledger (or has the broker replay a retained churn) can replay
+a capture as fresh again (§2, `tvos/discovery/DISCOVERY.md`). A liveness
+challenge (the firmware's `whoami` canonical) exists on the device side and
+nothing drives it from the bridge.
 
 ## 4. Trust: TOFU, three stores, the broker as the boundary
 
@@ -205,7 +209,9 @@ has not been measured.
 - No fleet-wide membership, no authoritative roster, no reconciliation
   between the four views.
 - No liveness proof: `online` is "claimed present within one window",
-  replayable for one window per missed chain advance.
+  replayable for one window per missed chain advance while the bridge holds
+  the length it verified, and as fresh again once a broker peer has churned
+  a displaced id out of the 256-entry ledger.
 - No key distribution, no revocation list, no pairing-grade pins outside
   Opera.
 - No cross-device ordering, correlation, fusion or consensus; no
@@ -227,7 +233,7 @@ has not been measured.
 
 | Claim | Test or gate |
 |---|---|
-| Roll-call: replay bounded to one window per missed advance while the verified length is held; second signing key is sticky; cap eviction order; a displaced id keeps its pin, length and conflict until 256 later displacements; clock-jump pass skipped; retained never advances presence | `src/fleet_peers.rs` unit tests |
+| Roll-call: replay bounded to one window per missed advance while the verified length is held; second signing key is sticky; cap eviction order; a displaced id keeps its pin, length and conflict until 256 later displacements of pinned ids not heard since; clock-jump pass skipped; retained never advances presence | `src/fleet_peers.rs` unit tests; the 64 and 256 in this file and in `DISCOVERY.md`: `scripts/tests/test_docs_claims.py` |
 | Wire shape of `GET /api/fleet`; silence is not absence | `src/api/mod.rs` fleet tests; `fleet_contract_vectors.json` (replayed by the Wall's `parseFleet`) |
 | Display deadlines and beacon model | `test_fleet_beacon_model`, `test_espnow_peer`, `test_beacon_parse` (display host tests) |
 | Device roster expiry | `firmware/common/fleet_link` host tests |

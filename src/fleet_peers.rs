@@ -83,15 +83,25 @@
 //! every new subscription, and the bridge subscribes with a clean start and
 //! re-subscribes on each reconnect, so a restart, a dropped link or another
 //! client on the broker login taking the bridge's session replays the same
-//! churn with no new publish. That is the real bound, and it is a cost,
-//! not a wall: a broker peer that displaces a quiet Canary and then pays
-//! those publishes (or has the broker replay them) gets a first sight
-//! again, so it can pin its own key for the id (and serve a row under the
-//! real id that reads `ok`, online and with words), or replay that
-//! Canary's captured `health` and chain as fresh — and by doing it again
-//! every window, hold a powered-off Canary "online" from one capture. A
-//! Canary that keeps publishing returns to the table, and to the newest end
-//! of the ledger, each time it is heard.
+//! churn with no new publish. The same re-subscribe delivers the quiet
+//! Canary's own retained copies too: its will (on `availability` or
+//! `status`, both subscribed before `health`) brings it back from the
+//! ledger before the churn lands, and its retained `health` does the same
+//! or pins its real key afresh. So the replay re-opens first sight only
+//! once the peer has cleared those copies, one zero-length retained publish
+//! each (two where the Canary keeps its `health` retained, as every
+//! product under `firmware/projects/` does; one for the flagship, which
+//! keeps only its will), made once and before the flood, since a clear
+//! heard while the Canary is displaced is itself a return. That is the
+//! real bound, and it is a cost, not a wall: a broker peer that displaces
+//! a quiet Canary and then pays those publishes (or has the broker replay
+//! them) gets a first sight again, so it can pin its own key for the id
+//! (and serve a row under the real id that reads `ok`, online and with
+//! words), or replay that Canary's captured `health` and chain as fresh —
+//! and by doing it again every window, hold a powered-off Canary "online"
+//! from one capture. A Canary that keeps publishing leaves the ledger each
+//! time it is heard, and re-enters it at the newest end if it is displaced
+//! again.
 //! Never displacing an id that holds a pin and a verified length would close
 //! that, at the price of letting a flood of proven ids shut new Canaries out
 //! until the file is deleted; this table does not make that trade.
@@ -113,7 +123,8 @@
 //! (so they age out of [`fleet_rows`] on the usual clock); it never sets
 //! them, and never clears what the real device said. The same bound as the
 //! chain applies: a captured publish buys at most one window per pair the
-//! bridge itself missed, never a standing claim.
+//! bridge itself missed, for as long as the bridge holds the pair it
+//! verified — a displaced id keeps it in the ledger, up to the bound above.
 //!
 //! The pin is TOFU, not pairing: "chain: ok" means the last chain publish
 //! verified against the first key this bridge ever saw for that device id,
@@ -185,9 +196,12 @@ pub const FLEET_PEER_MAX: usize = 64;
 /// displacement the fleet makes meanwhile that leaves an entry behind (a
 /// Canary joining at the cap, or one displaced before it coming back).
 /// Publishes the peer made retained cost it nothing the next time: the
-/// broker delivers them again whenever the bridge re-subscribes. The tests
-/// pin all three numbers. The ledger rides in the summary file and is
-/// never projected by [`fleet_rows`].
+/// broker delivers them again whenever the bridge re-subscribes, once the
+/// peer has cleared the quiet Canary's own retained will and `health`,
+/// which the same re-subscribe also delivers and which bring it back or
+/// re-pin its real key (one or two publishes, made once). The tests pin
+/// all of these numbers. The ledger
+/// rides in the summary file and is never projected by [`fleet_rows`].
 pub const FLEET_PEER_DISPLACED_MAX: usize = 4 * FLEET_PEER_MAX;
 
 /// How long an id that holds NOTHING WORTH KEEPING — no pinned key and no
@@ -227,6 +241,13 @@ pub const FLEET_PEERS_MAX_FILE_BYTES: u64 = 256 * 1024;
 /// device's public key (stored locally, never projected), and `chain`, the
 /// signed publish the display verifies too, so presence is proven the same
 /// way on both.
+///
+/// The order is the order the bridge subscribes in on every ConnAck, and it
+/// matters: `availability` and `status`, where every Canary keeps its will
+/// retained, come before `health`, so on a re-subscribe a displaced Canary's
+/// own retained will brings it back from the displaced ledger before a
+/// retained churn replayed on `health` can push it out (see
+/// [`FLEET_PEER_DISPLACED_MAX`]; a test fails if `health` moves first).
 pub const FLEET_PEER_TOPIC_FILTERS: &[&str] = &[
     "securacv/+/availability",
     "securacv/+/status",
@@ -2670,51 +2691,170 @@ mod tests {
         );
     }
 
+    /// The broker as far as the roll-call sees it: a retained publish
+    /// replaces its topic's copy (a zero-length one clears it), every
+    /// publish reaches the bridge's standing subscription live (retain flag
+    /// clear), and a new subscription gets every retained copy again,
+    /// filter by filter in the order the bridge subscribes them
+    /// ([`FLEET_PEER_TOPIC_FILTERS`], one SUBSCRIBE each on every ConnAck).
+    #[derive(Default)]
+    struct RetainedBroker {
+        retained: BTreeMap<String, Vec<u8>>,
+    }
+
+    impl RetainedBroker {
+        fn publish(
+            &mut self,
+            table: &mut PeerTable,
+            topic: &str,
+            payload: &[u8],
+            retain: bool,
+            t: u64,
+        ) {
+            if retain && payload.is_empty() {
+                self.retained.remove(topic);
+            } else if retain {
+                self.retained.insert(topic.to_string(), payload.to_vec());
+            }
+            table.observe(topic, payload, false, t);
+        }
+
+        /// A clean-start re-subscribe. Within one filter the order is the
+        /// broker's own, so `id` is delivered either before or after every
+        /// other id there.
+        fn resubscribe(&self, table: &mut PeerTable, id: &str, id_first: bool, t: u64) {
+            for filter in FLEET_PEER_TOPIC_FILTERS {
+                let suffix = filter.rsplit('/').next().unwrap_or_default();
+                let mut phase: Vec<(&String, &Vec<u8>)> = self
+                    .retained
+                    .iter()
+                    .filter(|(topic, _)| split_topic(topic).is_some_and(|(_, s)| s == suffix))
+                    .collect();
+                phase.sort_by_key(|(topic, _)| {
+                    split_topic(topic).is_some_and(|(of, _)| of == id) != id_first
+                });
+                for (topic, payload) in phase {
+                    table.observe(topic, payload, true, t);
+                }
+            }
+        }
+    }
+
     #[test]
-    fn a_retained_churn_paid_once_runs_again_on_every_resubscribe() {
-        // What the bound does not stop, measured so the docs stay honest:
-        // the churn can be published retained, and the broker delivers every
-        // retained publish again to each new subscription. The bridge
-        // subscribes with a clean start and re-subscribes on every
-        // reconnect, so a restart, a dropped link or another client taking
-        // its session replays the whole churn with no new publish.
-        let real = signer();
-        let attacker = other_key();
-        let mut table = PeerTable::default();
-        proven_porch(&mut table, &real, NOW);
-        // Paid once: one retained `health` per fresh id, the stated number
-        // of them, delivered live as they are published. Unproven, they
-        // displace one another, never the proven porch.
-        let seeded: Vec<(String, Vec<u8>)> = (0..FLEET_PEER_DISPLACED_MAX)
-            .map(|i| (format!("seed-{i:04}"), health(&other_key())))
-            .collect();
-        let mut t = NOW + 10;
-        for (id, body) in &seeded {
-            table.observe(&format!("securacv/{id}/health"), body, false, t);
-            t += 1;
+    fn a_retained_churn_replays_on_resubscribe_once_the_canarys_own_copies_are_cleared() {
+        // What the bound does not stop, measured so the docs stay honest. A
+        // churn published retained is handed again to every new
+        // subscription, and the bridge subscribes with a clean start and
+        // re-subscribes on every reconnect, so a restart, a dropped link or
+        // another client taking its session replays it with no new publish.
+        // The same replay carries the displaced Canary's own retained
+        // copies: its will (on `availability` or `status`, both subscribed
+        // before `health`) brings it back from the ledger before the churn
+        // lands, and its retained `health` either does the same or, after
+        // the churn, pins its real key afresh. So the replay re-opens first
+        // sight only once the peer has cleared those copies — one
+        // zero-length retained publish each, made before the flood (a clear
+        // heard while the Canary is displaced is itself a return) — and
+        // then whichever order the broker delivers one filter's copies in.
+        let sense_will =
+            br#"{"device_id":"porch","device_type":"canary-sense","status":"offline","ts_ms":0}"#;
+        // A canary-sense keeps its will on `status` and its health, chain
+        // and state retained (every product under `firmware/projects/`
+        // keeps its will and health so); the flagship keeps only its will,
+        // on `availability`, retained.
+        for keeps_health in [true, false] {
+            let (will_topic, will): (&str, &[u8]) = if keeps_health {
+                ("securacv/porch/status", sense_will)
+            } else {
+                ("securacv/porch/availability", b"offline")
+            };
+            for (clear_will, clear_health) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                if clear_health && !keeps_health {
+                    continue; // no retained `health` of porch's to clear
+                }
+                for porch_first in [true, false] {
+                    let case = format!(
+                        "keeps_health={keeps_health} clear_will={clear_will} \
+                         clear_health={clear_health} porch_first={porch_first}"
+                    );
+                    let real = signer();
+                    let attacker = other_key();
+                    let mut broker = RetainedBroker::default();
+                    let mut table = PeerTable::default();
+                    // porch proven as `proven_porch` does, under its own
+                    // retain flags; then it goes quiet and the broker
+                    // publishes its will.
+                    let porch = [
+                        ("securacv/porch/health", health(&real)),
+                        ("securacv/porch/chain", signed_chain(&real, "porch", 5)),
+                        (
+                            "securacv/porch/state",
+                            signed_state(&real, "porch", (5, 1), "present", "1", Some(true)),
+                        ),
+                    ];
+                    for (topic, body) in &porch {
+                        broker.publish(&mut table, topic, body, keeps_health, NOW);
+                    }
+                    broker.publish(&mut table, will_topic, will, true, NOW + 1);
+                    // The peer pays once: its clears, then one retained
+                    // `health` per fresh id, the stated number of them.
+                    // Unproven, they displace one another, never porch.
+                    let mut clears = 0;
+                    for (clear, topic) in [
+                        (clear_will, will_topic),
+                        (clear_health, "securacv/porch/health"),
+                    ] {
+                        if clear {
+                            broker.publish(&mut table, topic, b"", true, NOW + 2);
+                            clears += 1;
+                        }
+                    }
+                    let mut t = NOW + 10;
+                    for i in 0..FLEET_PEER_DISPLACED_MAX {
+                        let topic = format!("securacv/seed-{i:04}/health");
+                        broker.publish(&mut table, &topic, &health(&other_key()), true, t);
+                        t += 1;
+                    }
+                    assert!(record(&table, "porch", t).is_some(), "{case}");
+                    let t = displace_porch(&mut table, "fake", t);
+                    assert!(
+                        !first_sight_open(&table, "porch", &attacker, t),
+                        "{case}: the flood alone re-opened porch's first sight"
+                    );
+                    // The bridge restarts (or its session is taken) and
+                    // subscribes again: nothing new is published.
+                    let mut table = PeerTable::from_summary(table.summary(t));
+                    broker.resubscribe(&mut table, "porch", porch_first, t);
+                    let cleared = clear_will && (clear_health || !keeps_health);
+                    assert_eq!(
+                        first_sight_open(&table, "porch", &attacker, t),
+                        cleared,
+                        "{case}: the replay re-opened porch's first sight only if \
+                         its own retained copies were cleared"
+                    );
+                    if cleared {
+                        assert_eq!(clears, 1 + usize::from(keeps_health), "{case}");
+                    } else {
+                        let summary = table.summary(t);
+                        let held = summary
+                            .peers
+                            .iter()
+                            .find(|p| p.device_id == "porch")
+                            .and_then(|p| p.pinned_key_hex.clone())
+                            .or_else(|| {
+                                summary
+                                    .displaced
+                                    .iter()
+                                    .find(|d| d.device_id == "porch")
+                                    .and_then(|d| d.pinned_key_hex.clone())
+                            });
+                        assert_eq!(held, Some(pubkey_hex(&real)), "{case}");
+                    }
+                }
+            }
         }
-        assert!(record(&table, "porch", t).is_some());
-        let t = displace_porch(&mut table, "fake", t);
-        assert!(
-            !first_sight_open(&table, "porch", &attacker, t),
-            "the flood alone re-opened porch's first sight"
-        );
-        // The bridge restarts (or its session is taken) and subscribes
-        // again; the broker hands it every retained publish, nothing new.
-        let mut table = PeerTable::from_summary(table.summary(t));
-        let before = table.evictions();
-        for (id, body) in &seeded {
-            table.observe(&format!("securacv/{id}/health"), body, true, t);
-        }
-        assert_eq!(
-            table.evictions() - before,
-            FLEET_PEER_DISPLACED_MAX as u64,
-            "each replayed id displaced one"
-        );
-        assert!(
-            first_sight_open(&table, "porch", &attacker, t),
-            "the replayed churn did not let porch's pin go"
-        );
     }
 
     #[test]
@@ -3023,48 +3163,6 @@ mod tests {
         assert_eq!(newer.displaced[0].last_verified_length, Some(2));
         let table = PeerTable::from_summary(newer);
         assert_eq!((table.len(), table.displaced_len()), (1, 1));
-        Ok(())
-    }
-
-    #[test]
-    fn the_contract_states_the_bound_the_tests_measure() -> Result<()> {
-        // DISCOVERY.md (the Wall's contract) and FLEET_SEMANTICS.md spell the
-        // numbers out; the tests above measure them from these constants. A
-        // change to either constant fails here until the prose follows.
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let read = |rel: &str| -> Result<String> {
-            let text = std::fs::read_to_string(root.join(rel))
-                .with_context(|| format!("reading {rel}"))?;
-            Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
-        };
-        let discovery = read("tvos/discovery/DISCOVERY.md")?;
-        let semantics = read("docs/FLEET_SEMANTICS.md")?;
-        let (cap, ledger) = (FLEET_PEER_MAX, FLEET_PEER_DISPLACED_MAX);
-        for (doc, text, phrase) in [
-            ("DISCOVERY.md", &discovery, format!("holds at most {cap} ids (`FLEET_PEER_MAX`)")),
-            (
-                "DISCOVERY.md",
-                &discovery,
-                format!("in a ledger of {ledger} displaced ids (`FLEET_PEER_DISPLACED_MAX`)"),
-            ),
-            (
-                "DISCOVERY.md",
-                &discovery,
-                format!("let go only after {ledger} more ids that held a pin or a verified length were displaced after it and not heard since"),
-            ),
-            ("DISCOVERY.md", &discovery, format!("then at most {ledger} `health` publishes")),
-            ("DISCOVERY.md", &discovery, format!("about {cap} proven ids")),
-            ("FLEET_SEMANTICS.md", &semantics, format!("at the cap ({cap})")),
-            ("FLEET_SEMANTICS.md", &semantics, format!("in a ledger of {ledger} displaced ids")),
-            (
-                "FLEET_SEMANTICS.md",
-                &semantics,
-                format!("let go only after {ledger} later displacements"),
-            ),
-            ("FLEET_SEMANTICS.md", &semantics, format!("until {ledger} later displacements")),
-        ] {
-            assert!(text.contains(&phrase), "{doc} no longer says {phrase:?}");
-        }
         Ok(())
     }
 

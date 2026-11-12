@@ -441,37 +441,44 @@ one-header change instead of a per-board copy-paste.
     a broker peer, fewer where the fleet itself displaces ids meanwhile (a
     Canary joining at the cap, or one displaced before it coming back) —
     and only then does its next `health` pin whatever key it carries, as on
-    first sight. A Canary that keeps publishing returns to the table, and to
-    the newest end of the ledger, each time it is heard. The bound is a cost
-    a broker peer can pay, not a wall: a flood that displaces a quiet Canary
-    (about 64 proven ids into a table that holds little else; one newcomer
-    is enough when the table is full and that Canary is its least recently
-    heard proven id), then at most 256 `health` publishes, re-open first
-    sight for it, and the peer can then pin its own key under that Canary's
-    id — its row reads `ok`, `online` and its words under the real name
-    until the real Canary signs again and latches the conflict. Nor need
-    the peer pay twice: publishes it made retained are delivered again by
-    the broker to every new subscription, and the bridge subscribes with a
-    clean start and re-subscribes on each reconnect, so a restart, a
-    dropped link or another client on the broker login taking the bridge's
-    session replays the same churn with no new publish. Never displacing a
-    proven id would close that, at the price of letting a flood of proven
-    ids shut new Canaries out until the file is deleted; the roll-call does
-    not make that trade. An id that holds neither a pin nor a verified chain
-    length (heard only on `status`, `availability` or `meta`) is forgotten
-    after 30 days unheard; an id with a pin is never expired by the clock —
-    it leaves the table only by displacement at the cap and the ledger only
-    by the count above, or when the operator deletes the file — so a host
-    whose clock lands weeks ahead keeps every pin it had (the expiry pass
-    that straddles the jump is skipped as well; the passes after it run on
-    whatever clock the host then has and can forget only unpinned ghosts).
-    Membership is therefore broker-writable: a flood of invented ids can
-    crowd the Wall while it lasts, and the ids it leaves behind stay on the
-    Wall as `online: false` rows until a newcomer displaces them (or, if
-    they acquired neither a pin nor a verified length — an invented id that
-    published a `health` with a key holds a pin and is kept — until they go
-    unheard for 30 days) — what ends with the flood is the crowding of real
-    Canaries off the Wall, not the ghosts' rows.
+    first sight. A Canary that keeps publishing leaves the ledger each time
+    it is heard, and re-enters it at the newest end if it is displaced
+    again. The bound is a cost a broker peer can pay, not a wall: a flood
+    that displaces a quiet Canary (about 64 proven ids into a table that
+    holds little else; one newcomer is enough when every resident is proven
+    and that Canary is the least recently heard), then at most 256 `health`
+    publishes, re-open first sight for it, and the peer can then pin its own
+    key under that Canary's id — its row reads `ok`, `online` and its words
+    under the real name until the real Canary signs again and latches the
+    conflict. Nor need the peer pay twice: publishes it made retained are
+    delivered again by the broker to every new subscription, and the bridge
+    subscribes with a clean start and re-subscribes on each reconnect, so a
+    restart, a dropped link or another client on the broker login taking the
+    bridge's session replays the same churn with no new publish. The same
+    re-subscribe delivers that Canary's own retained copies too — its will
+    (on `availability` or `status`, both subscribed before `health`) and its
+    `health` where it keeps that retained — which bring it back from the
+    ledger or re-pin its real key, so the replay re-opens first sight only
+    once the peer has cleared them: one zero-length retained publish each
+    (two for every product under `firmware/projects/`, one for the flagship,
+    which keeps only its will), made once, before the flood. Never
+    displacing a proven id would close that, at the price of letting a flood
+    of proven ids shut new Canaries out until the file is deleted; the
+    roll-call does not make that trade. An id that holds neither a pin nor a
+    verified chain length (heard only on `status`, `availability` or `meta`)
+    is forgotten after 30 days unheard; an id with a pin is never expired by
+    the clock — it leaves the table only by displacement at the cap and the
+    ledger only by the count above, or when the operator deletes the file —
+    so a host whose clock lands weeks ahead keeps every pin it had (the
+    expiry pass that straddles the jump is skipped as well; the passes after
+    it run on whatever clock the host then has and can forget only unpinned
+    ghosts). Membership is therefore broker-writable: a flood of invented
+    ids can crowd the Wall while it lasts, and the ids it leaves behind stay
+    on the Wall as `online: false` rows until a newcomer displaces them (or,
+    if they acquired neither a pin nor a verified length — an invented id
+    that published a `health` with a key holds a pin and is kept — until
+    they go unheard for 30 days) — what ends with the flood is the crowding
+    of real Canaries off the Wall, not the ghosts' rows.
   - The wellbeing words (`presence`, `occupants`, `breathing`) ride on a
     peer's row only while it is proven online **and** the reading is fresh
     (a live `state` publish within the same window) **and the reading is
@@ -492,7 +499,9 @@ one-header change instead of a per-board copy-paste.
     no verified pair in the summary file) are served by nobody after the
     upgrade: the kernel projects none, and the bridge forgets them on its
     first write. The bound is the chain's: a captured publish buys at most one
-    window per pair the bridge itself missed, never a standing claim. A
+    window per pair the bridge itself missed, for as long as the bridge holds
+    the pair it verified — a displaced id keeps it in the ledger, up to the
+    bound above. A
     retained `state` advances the pair (so the broker's own retained head
     cannot be replayed live later) but is history, not a reading. Only the
     contract's words cross — an unknown word, even a signed one, is dropped
