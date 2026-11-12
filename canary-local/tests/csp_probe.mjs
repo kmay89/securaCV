@@ -3,9 +3,9 @@
 //
 // tests/csp.test.js proves each page's policy is the one tools/gen_csp.py
 // writes. This proves the pages still WORK under it: serve the repo over
-// loopback, open every canary-local/*.html, the Canary Voice sound board
-// (voice/index.html) and the emulator harness (once per committed display
-// flavor), listen for `securitypolicyviolation` in every frame from before the
+// loopback, open every page tools/gen_csp.py writes a policy into (every
+// canary-local/*.html, the Canary Voice sound board voice/index.html, and the
+// emulator harness once per committed display flavor), listen for `securitypolicyviolation` in every frame from before the
 // first byte of page script runs, wait for load plus a settle, and fail on any
 // violation, page error or console error, or on a document in quirks mode or
 // not decoded as UTF-8 (this server sends a bare text/html, as
@@ -21,19 +21,21 @@
 // A synthetic page with a deliberate violation runs FIRST: a listener that has
 // silently stopped hearing violations would otherwise pass every real page.
 //
-//   node canary-local/tests/csp_probe.mjs [--only <page.html>]
+//   node canary-local/tests/csp_probe.mjs [--only <page.html>] [--list]
+//
+// --list names every page it would open, one per line, without a browser.
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set). Prints
 // CSP_PROBE_OK / exits 0 on success.
 
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { indexTree, lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
-const FILES = indexTree(ROOT);
 const LAB = "canary-local";
 const TYPES = {
   ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
@@ -43,11 +45,6 @@ const TYPES = {
   ".3mf": "application/octet-stream", ".scad": "text/plain", ".txt": "text/plain",
   ".md": "text/markdown", ".woff2": "font/woff2", ".woff": "font/woff",
 };
-
-const pw = await (async () => {
-  try { return await import("playwright"); }
-  catch { return await import("playwright-core"); }
-})();
 
 const onlyIdx = process.argv.indexOf("--only");
 const ONLY = onlyIdx > 0 ? process.argv[onlyIdx + 1] : null;
@@ -59,33 +56,24 @@ const SELFTEST_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'" />
 <title>csp probe self-test</title></head><body><p>self-test</p><script>window.__ran = true;</script></body></html>`;
 
-const server = createServer(async (req, res) => {
-  try {
-    const path = req.url.split("?")[0];
-    if (path === "/favicon.ico") { res.writeHead(204); return res.end(); }
-    if (path === SELFTEST_PATH) {
-      res.writeHead(200, { "content-type": "text/html" });
-      return res.end(SELFTEST_HTML);
-    }
-    // the URL never becomes a path: it is looked up in the tree's index
-    // (probe_server.mjs), so the path that reaches readFile is the index's
-    const file = lookup(FILES, req.url);
-    if (!file) { res.writeHead(404); return res.end("not found"); }
-    const body = await readFile(file);
-    res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
-    res.end(body);
-  } catch { res.writeHead(404); res.end("not found"); }
-});
-await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
-const port = server.address().port;
-const url = (rel) => `http://127.0.0.1:${port}/${rel}`;
-
-// What every page loads, plus the harness once per committed display flavor.
-// The sound board is the one Lab page in a subfolder; it is on the list by
-// name, as in gen_csp.py's lab_pages() (tests/csp.test.js holds the two lists
-// together and fails on a subfolder page neither names).
+// Every page tools/gen_csp.py writes a policy into, read from its --explain
+// (each page on an unindented line), so a page registered there is a page
+// opened here; tests/csp.test.js holds that list to every .html under the Lab
+// bar the one it names as out of scope, and holds this probe's --list to it.
+// The emulator harness is the one page loaded once per committed display
+// flavor instead of once.
+const HARNESS = "emulator/web/harness.html";
 const VOICE = "voice/index.html";
-const pages = [...(await readdir(join(ROOT, LAB))).filter((f) => f.endsWith(".html")).sort(), VOICE];
+const explain = spawnSync("python3", [join(ROOT, LAB, "tools/gen_csp.py"), "--explain"], { encoding: "utf8" });
+if (explain.status !== 0) {
+  console.error(`CSP_PROBE_FAIL: tools/gen_csp.py --explain exited ${explain.status}: ${explain.stderr || explain.error}`);
+  process.exit(1);
+}
+const listed = explain.stdout.split("\n").filter((l) => l && !/^\s/.test(l));
+for (const must of ["index.html", VOICE, HARNESS]) {
+  if (!listed.includes(must)) { console.error(`CSP_PROBE_FAIL: gen_csp.py --explain no longer names ${must}`); process.exit(1); }
+}
+const pages = listed.filter((p) => p !== HARNESS);
 const flavors = (await readdir(join(ROOT, LAB, "emulator/dist")))
   .map((f) => /^canary-display-([a-z0-9]+)\.js$/.exec(f)?.[1]).filter(Boolean).sort();
 if (!flavors.length) { console.error("CSP_PROBE_FAIL: no canary-display-*.js in emulator/dist/"); process.exit(1); }
@@ -165,6 +153,40 @@ for (const f of flavors) {
 }
 const run = ONLY ? targets.filter((t) => t.name === ONLY || t.name.startsWith(ONLY)) : targets;
 if (!run.length) { console.error(`CSP_PROBE_FAIL: --only ${ONLY} matches no page`); process.exit(1); }
+// --list: name what would be opened, one per line, and stop (no browser, no
+// server, and no index of the tree: csp.test.js runs this under the
+// path-filter recorder, which would hold every file the index stats).
+if (process.argv.includes("--list")) {
+  for (const t of run) console.log(t.name);
+  process.exit(0);
+}
+
+const FILES = indexTree(ROOT);
+const server = createServer(async (req, res) => {
+  try {
+    const path = req.url.split("?")[0];
+    if (path === "/favicon.ico") { res.writeHead(204); return res.end(); }
+    if (path === SELFTEST_PATH) {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(SELFTEST_HTML);
+    }
+    // the URL never becomes a path: it is looked up in the tree's index
+    // (probe_server.mjs), so the path that reaches readFile is the index's
+    const file = lookup(FILES, req.url);
+    if (!file) { res.writeHead(404); return res.end("not found"); }
+    const body = await readFile(file);
+    res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
+    res.end(body);
+  } catch { res.writeHead(404); res.end("not found"); }
+});
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
+const port = server.address().port;
+const url = (rel) => `http://127.0.0.1:${port}/${rel}`;
+
+const pw = await (async () => {
+  try { return await import("playwright"); }
+  catch { return await import("playwright-core"); }
+})();
 
 const browser = await pw.chromium.launch(
   process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {},

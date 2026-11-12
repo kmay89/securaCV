@@ -5,6 +5,7 @@
 //   · a page ships without a policy, or with two          → "exactly one CSP meta"
 //   · a page in a subfolder escapes the policy (the        → "every Lab document is in scope"
 //     sound board did: no meta, an inline script)
+//   · a page on the list is never opened in a browser      → "the browser probe opens every page"
 //   · a page renders in quirks mode or guesses its        → "standards mode, UTF-8"
 //     encoding (the sound board did both)
 //   · a page or the table changed and nobody regenerated  → "--check passes"
@@ -132,6 +133,25 @@ test("every Lab document is in scope: a page in any folder is on the list, or na
   assert.strictEqual(r.status, 0, r.stderr);
   const explained = r.stdout.split("\n").filter((l) => l && !/^\s/.test(l));
   assert.deepStrictEqual(explained, PAGES, "gen_csp.py's lab_pages() and this test's PAGES disagree");
+});
+
+test("the browser probe opens every page the generator writes a policy into", () => {
+  // csp_probe.mjs is the only gate that loads a page in Chromium; a page that
+  // joined lab_pages() and PAGES (as the walk above demands) but not the
+  // probe's own list once shipped a runtime violation with every gate green.
+  // The probe reads gen_csp.py --explain; --list says what it would open.
+  const r = spawnSync(process.execPath, [join(ROOT, "tests/csp_probe.mjs"), "--list"], { encoding: "utf8" });
+  assert.strictEqual(r.status, 0, `csp_probe.mjs --list failed (status ${r.status}):\n${r.stdout}${r.stderr}`);
+  const opened = r.stdout.split("\n").filter(Boolean);
+  const flavors = readdirSync(join(ROOT, "emulator/dist"))
+    .map((f) => /^canary-display-([a-z0-9]+)\.js$/.exec(f)?.[1]).filter(Boolean).sort();
+  assert.ok(flavors.length, "no committed display flavor to load the harness with");
+  const expected = [
+    ...PAGES.filter((p) => p !== HARNESS),
+    ...flavors.map((f) => `${HARNESS}?flavor=${f}`),
+  ];
+  assert.deepStrictEqual([...opened].sort(), [...expected].sort(),
+    "csp_probe.mjs must open every page in gen_csp.py's lab_pages() (the harness once per display flavor)");
 });
 
 test("every Lab page is a standards-mode UTF-8 document: <!DOCTYPE html> first, <meta charset=\"utf-8\"> early", () => {
