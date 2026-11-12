@@ -457,3 +457,147 @@ test("no Lab page decodes a visitor-typed address outside a try (the A62 class)"
     "decode inside a try on the same line (malformed input opens nothing), " +
       "or allowlist the file here with the reason its input is not an address");
 });
+
+// Sweep LP3: a sheet a deep link opens at load (fleet.html#<id>, or index.html#
+// forwarded there) built its Web Audio voice with no press on the page, so the
+// browser refused every resume() (59 to 84 console warnings per load) and the
+// power-on chirp went unheard. The display sheet's audio block is run here as
+// shipped (lifted out of app.js and evaluated against a stand-in document and
+// a stand-in AudioContext that, like Chromium's, starts only once the page has
+// been activated), so the test is the code, not a description of it.
+function displayVoice({ activation = "none", muted = false } = {}) {
+  const vm = require("node:vm");
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  const start = app.indexOf("  // Web Audio chime");
+  const end = app.indexOf("  // A small, unobtrusive corner toggle");
+  assert.ok(start > 0 && end > start, "app.js lost the display sheet's Web Audio block");
+  const block = app.slice(start, end);
+  const page = { active: false, hidden: false };
+  const listeners = new Map();              // "type/capture" -> Set(fn)
+  const key = (t, c) => `${t}/${c === true || c?.capture === true}`;
+  const document = {
+    get hidden() { return page.hidden; },
+    addEventListener(t, fn, c) { (listeners.get(key(t, c)) || listeners.set(key(t, c), new Set()).get(key(t, c))).add(fn); },
+    removeEventListener(t, fn, c) { listeners.get(key(t, c))?.delete(fn); },
+  };
+  // Dispatch a trusted event: `activates` says whether the browser counts it
+  // as an activation (a mouse pointerdown and a key do; a touch pointerdown
+  // does not, its pointerup does; Esc does not), set before listeners run.
+  const press = (type, activates = true) => {
+    if (activates) page.active = true;
+    for (const fn of [...(listeners.get(`${type}/true`) || [])]) fn({ type });
+  };
+  const count = (types = ["pointerdown", "pointerup", "keydown"]) =>
+    types.reduce((n, t) => n + (listeners.get(`${t}/true`)?.size || 0), 0);
+  const total = () => [...listeners.values()].reduce((n, set) => n + set.size, 0);
+  const log = { contexts: 0, refused: 0, notes: [] };
+  const node = () => ({
+    connect(n) { return n; },
+    start() { if (ctx0.state !== "running") log.refused++; },
+    stop() {},
+    frequency: { value: 0, setValueAtTime(f) { log.notes.push(f); } },
+    gain: { value: 0, setTargetAtTime() {} },
+    Q: { value: 0 },
+  });
+  let ctx0 = null;
+  class AudioContext {
+    constructor() {
+      log.contexts++;
+      this.state = page.active ? "running" : "suspended";
+      if (!page.active) log.refused++;   // Chromium warns at creation, too
+      this.currentTime = 0;
+      this.destination = {};
+      ctx0 = this;
+    }
+    resume() { if (page.active) this.state = "running"; else log.refused++; }
+    close() { this.state = "closed"; }
+    createOscillator() { return node(); }
+    createGain() { return node(); }
+    createBiquadFilter() { return node(); }
+  }
+  const navigator = activation === "absent" ? {} : { userActivation: { get hasBeenActive() { return page.active; } } };
+  if (activation === "clicked") page.active = true;
+  const localStorage = { getItem: (k) => (k === "canary-sound" && muted ? "off" : null), setItem() {} };
+  const ctx = { dispose: [] };
+  const build = () => vm.runInNewContext(
+    `(() => {\n${block}\nreturn { tone, setSound, get audio() { return audio; } };\n})()`,
+    { document, navigator, AudioContext, localStorage, ctx },
+  );
+  const v = { api: build(), press, count, total, log, page };
+  v.dispose = () => { for (const d of ctx.dispose.splice(0)) d(); };
+  v.reopen = () => { v.api = build(); };
+  return v;
+}
+
+test("a deep-linked display sheet asks for no audio before a press, and the first press wakes it (LP3)", () => {
+  // At load: the firmware writes its power-on chirp, and nothing is asked of
+  // a browser that would refuse it.
+  const v = displayVoice();
+  for (let i = 0; i < 60; i++) v.api.tone(1046 + i, 0.5);
+  assert.strictEqual(v.log.contexts, 0, "no AudioContext before the page has had a press");
+  assert.strictEqual(v.log.refused, 0, "no resume() or start() the browser would refuse (the console warnings)");
+  assert.deepStrictEqual(v.log.notes, [], "the notes before the first press go unheard: no code can play them");
+  assert.strictEqual(v.count(), 3, "one capture listener per waking event");
+  // A touch's pointerdown does not activate the page, and Esc activates
+  // nothing: the listener waits for the event that does.
+  v.press("pointerdown", false);
+  v.press("keydown", false);
+  assert.strictEqual(v.log.contexts, 0, "an event that did not activate the page wakes nothing");
+  assert.strictEqual(v.count(), 3, "and the listener is still there for the one that will");
+  v.press("pointerup");
+  assert.strictEqual(v.log.contexts, 1, "the activating press makes the voice inside the gesture");
+  assert.strictEqual(v.api.audio.state, "running");
+  assert.strictEqual(v.count(), 0, "the first-press listener removes itself");
+  v.api.tone(1318, 0.5);
+  assert.deepStrictEqual(v.log.notes, [1318], "the next note the firmware writes is heard");
+  assert.strictEqual(v.log.refused, 0);
+});
+
+test("the first key press wakes a deep-linked sheet's voice too (LP3)", () => {
+  const v = displayVoice();
+  v.api.tone(1046, 0.5);
+  v.press("keydown");
+  assert.strictEqual(v.api.audio?.state, "running", "a key press is an activation, and wakes the voice");
+  assert.strictEqual(v.count(), 0);
+  v.api.tone(1568, 0.5);
+  assert.deepStrictEqual(v.log.notes, [1568]);
+});
+
+test("a click-opened sheet, and a browser without userActivation, play at once as before (LP3)", () => {
+  for (const activation of ["clicked", "absent"]) {
+    const v = displayVoice({ activation });
+    assert.strictEqual(v.count(), 0, `${activation}: no first-press listener when the page may already play`);
+    v.api.tone(1046, 0.5);
+    assert.strictEqual(v.log.contexts, 1, `${activation}: the first note makes the voice`);
+    assert.deepStrictEqual(v.log.notes, [1046], `${activation}: and is heard`);
+  }
+});
+
+test("mute holds through the first press, and open/close never stacks the listener (LP3)", () => {
+  const m = displayVoice({ muted: true });
+  m.press("pointerdown");
+  m.api.tone(1046, 0.5);
+  assert.strictEqual(m.log.contexts, 0, "a muted sheet makes no voice on the first press, nor after it");
+  assert.strictEqual(m.count(), 0, "the listener is gone once the page is activated, muted or not");
+  // Twenty deep-linked opens and closes on one document, none pressed: each
+  // sheet's closure hooks the document and its dispose unhooks it, so the
+  // twenty-first open finds one first-press listener per event, not 21.
+  const v = displayVoice();
+  for (let i = 0; i < 20; i++) {
+    assert.strictEqual(v.count(), 3, `open ${i + 1}: one first-press listener per waking event`);
+    v.dispose();
+    assert.strictEqual(v.total(), 0, `close ${i + 1}: every listener the sheet added is gone (visibilitychange too)`);
+    v.reopen();
+  }
+  assert.strictEqual(v.count(), 3, "after twenty cycles the document still holds one per event");
+  // And the press that finally comes wakes exactly one voice.
+  v.press("pointerdown");
+  assert.strictEqual(v.log.contexts, 1, "one voice, made by the one listener left");
+});
+
+test("a deep-linked boot does not prime the voice before a press (LP3 source pin)", () => {
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  const boot = app.slice(app.indexOf("const bootInner = async"), app.indexOf("ctx.emu = new CanaryEmulator(factory"));
+  assert.match(boot, /if \(!soundMuted && mayPlay\(\)\) \{ try \{ ensureVoice\(\); audioResume\(\); \} catch \{\} \}/,
+    "bootInner primes the voice only when the page may play (a boot from a press), never at load from a deep link");
+});

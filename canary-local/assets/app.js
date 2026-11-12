@@ -419,11 +419,19 @@ async function buildDisplaySheet(ctx, side, stage) {
   // Web Audio chime — a persistent square "piezo" voice whose frequency AND
   // gain follow the firmware's real per-control-tick writes (onTone), so the
   // in-browser display reproduces the actual Canary Voice envelope, glissando,
-  // warble, and volume model — not a flat beep. Created lazily on first gesture
-  // (autoplay policy); muteable and remembered across visits.
+  // warble, and volume model — not a flat beep. Muteable and remembered across
+  // visits. The browser starts audio only once the page has had a press
+  // (autoplay policy). A sheet opened by a card click has had one; a sheet a
+  // deep link opens at load (fleet.html#<id>, or index.html#<id> forwarded
+  // here) has not, and every resume() before that press would be refused with
+  // a console warning. So the voice is made only once the page has been
+  // activated (`mayPlay`): until then the firmware's notes go unheard (no code
+  // can play them), and the first press anywhere wakes it (`onFirstPress`).
+  // A browser without navigator.userActivation plays as it always did.
   let audio = null, voiceOsc = null, voiceGain = null;
   let soundMuted = false;
   try { soundMuted = localStorage.getItem("canary-sound") === "off"; } catch {}
+  const mayPlay = () => navigator.userActivation?.hasBeenActive ?? true;
   const audioResume = () => { try { if (audio && audio.state === "suspended") audio.resume(); } catch {} };
   const ensureVoice = () => {
     if (!audio) audio = new AudioContext();
@@ -448,6 +456,9 @@ async function buildDisplaySheet(ctx, side, stage) {
     // no new ones. The firmware keeps ticking; a background tab or window must
     // never sing to an empty room.
     if (document.hidden) { if (voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.004); } catch {} } return; }
+    // No press on the page yet (a deep-linked sheet at load): a note now could
+    // only be refused, so take none.
+    if (!mayPlay()) return;
     try {
       ensureVoice(); audioResume();
       const t = audio.currentTime;
@@ -474,8 +485,24 @@ async function buildDisplaySheet(ctx, side, stage) {
     if (document.hidden && voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.01); } catch {} }
   };
   document.addEventListener("visibilitychange", onHidden);
+  // The first press on a page that opened without one wakes the voice inside
+  // that gesture (Safari starts a context only there), so the firmware's next
+  // note is heard. Captured on the document, so a handler that stops the event
+  // cannot hide it; and it waits for the event that actually activates the
+  // page (a touch activates on pointerup, not pointerdown; Esc activates
+  // nothing). Removed on first wake and on dispose, so open/close cycles never
+  // stack it.
+  const WAKE_ON = ["pointerdown", "pointerup", "keydown"];
+  const unhookFirstPress = () => { for (const t of WAKE_ON) document.removeEventListener(t, onFirstPress, true); };
+  const onFirstPress = () => {
+    if (!mayPlay()) return;
+    unhookFirstPress();
+    if (!soundMuted && !document.hidden) { try { ensureVoice(); audioResume(); } catch {} }
+  };
+  if (!mayPlay()) for (const t of WAKE_ON) document.addEventListener(t, onFirstPress, true);
   ctx.dispose.push(() => {
     document.removeEventListener("visibilitychange", onHidden);
+    unhookFirstPress();
     // and full quiet on close: this sheet's context is unreachable after
     // teardown, so a note held mid-close would otherwise ring forever
     try { if (voiceGain) voiceGain.gain.value = 0; } catch {}
@@ -547,9 +574,12 @@ async function buildDisplaySheet(ctx, side, stage) {
   };
   const bootInner = async (opts = {}) => {
     setShade(null);
-    // Boot is a user gesture; prime the audio voice now so the firmware's
-    // power-on chirp isn't swallowed by a still-suspended AudioContext.
-    if (!soundMuted) { try { ensureVoice(); audioResume(); } catch {} }
+    // A boot from a press (a card click, RESET, the power plane) follows a
+    // gesture: prime the voice now so the firmware's power-on chirp isn't
+    // swallowed by a still-suspended AudioContext. A boot at load from a deep
+    // link has had none, so its chirp goes unheard (`mayPlay` above) and the
+    // first press wakes the voice for what follows.
+    if (!soundMuted && mayPlay()) { try { ensureVoice(); audioResume(); } catch {} }
     ctx.emu = new CanaryEmulator(factory, {
       canvas: glass,
       onSerial: serialAppend,
