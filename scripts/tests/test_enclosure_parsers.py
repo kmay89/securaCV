@@ -32,10 +32,16 @@ per line, so it misses a knob that shares its line, and it lists [Hidden]
 groups, derived values and assignments past the first module, which the
 builder does not. The direction that hides a real knob is the first, and it
 is already counted: the builder keeps no help on a line that assigns two
-knobs, so every knob the Lab misses has no help, and test_lint_design_lang.py's
-HELP_DEBT holds the count of knobs without help per file, exactly.
-LabMisses holds that coupling, so a parser change that gave such a knob help
-cannot take it out of HELP_DEBT's count while the Lab still misses it.
+knobs, so every knob the Lab misses on a shared line has no help, and
+test_lint_design_lang.py's HELP_DEBT holds the count of knobs without help
+per file, exactly. LabMisses holds that coupling for every knob the Lab
+misses, whatever the reason: a knob the builder reads with help on a line
+the Lab's match refuses (indented, above the first group header, with a
+block comment or a second statement after its `;`, or with a `;` inside its
+value) fails it. HELP_DEBT does not count such a knob, and the Groups tests compare only the knobs both
+parsers list, so before LabMisses the Lab could lose it unseen. (A builder
+that kept a shared line's help is caught here too, but HelpLines in
+test_lint_design_lang.py already pins that.)
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 """
@@ -234,15 +240,31 @@ def lab_misses_with_help(path: Path, lab_names: set[str]) -> list[tuple[int, str
     return [(line, name) for line, name in lab_misses(path, lab_names) if name not in unhelped]
 
 
+# The one line form gen_enclosures.py's parse_scad reads a knob from (its
+# `^(\w+)\s*=\s*([^;]+);\s*(?://\s*(.*))?$` match, once a group header has
+# opened). The tree case's failure message gives it as the remedy, and
+# LabMisses' synthetic cases prove each form it names is refused as written
+# and read once rewritten the way it says.
+LAB_LINE = ("gen_enclosures.py's parse_scad reads a knob only from a line that starts with "
+            "its name at the left margin, below the file's first `/* [Group] */` header, "
+            "written `name = value;` with no `;` inside the value and nothing after the `;` "
+            "but an optional `// help` (no block comment, no second statement)")
+
+
 class LabMisses(unittest.TestCase):
     """C21: every knob the builder reads and the Lab does not is one HELP_DEBT
     counts. The Lab's parser skips a line that assigns two knobs, and the
     builder's keeps no help on one, so each knob the Lab misses has no help
     (86 in seven files when this test landed, every one on a shared line).
     What breaks that is a knob the builder reads with help and the Lab
-    cannot read: a parser change (the builder keeping a shared line's help),
-    or a knob the Lab's line match refuses (indented, or above the first
-    group header). A new shared-line knob does not (it has no help, so
+    cannot read: a parser change (the builder keeping a shared line's help,
+    which HelpLines in test_lint_design_lang.py pins as well), or a knob on a
+    line the Lab's match refuses (LAB_LINE above says which line it reads:
+    an indented knob is refused, and so is one above the first group header,
+    one with a block comment or a second statement after its `;`, or one
+    whose value holds a `;`). The tree case sees the second, which HELP_DEBT
+    does not count and Groups, comparing only the knobs both parsers list,
+    does not see. A new shared-line knob does not break it (it has no help, so
     HELP_DEBT moves), nor does a new derived value (it only grows the
     Lab-only list, which this class does not judge)."""
 
@@ -257,8 +279,11 @@ class LabMisses(unittest.TestCase):
                            "reads with help (the parser the web builder and the design lint "
                            "share), but enclosures.json does not list it, and HELP_DEBT "
                            "(test_lint_design_lang.py) counts only knobs without help, so "
-                           "nothing sees the Lab miss it. Put the knob alone on its line "
-                           "under a group header, where gen_enclosures.py's parse_scad reads it")
+                           f"nothing else sees the Lab miss it. {LAB_LINE}. Write the line "
+                           "that way and rerun canary-local/tools/gen_enclosures.py; if it "
+                           "already reads that way, the committed enclosures.json is stale "
+                           "(or the generator's parse_scad changed): rerun the generator "
+                           "and commit what it writes")
         self.assertEqual(bad, [], "\n".join(bad))
 
     def test_every_lab_file_is_held_by_help_debt(self):
@@ -286,21 +311,54 @@ class LabMisses(unittest.TestCase):
             self.assertEqual(knobs_without_help(p), ["a", "b"])
             self.assertEqual(lab_misses_with_help(p, lab), [])
 
+    # Each line form the Lab refuses and the builder reads with help, as
+    # written and as LAB_LINE says to write it (the knob above the first
+    # header is the fifth; it moves below the header).
+    REFUSED = (
+        ("  ind = 2.0;   // indented",
+         "ind = 2.0;   // indented"),
+        ("blk = 4.0;  /* mm */  // a block comment after its ;",
+         "blk = 4.0;   // a block comment after its ;, in mm"),
+        ("two = 5.0; echo(two);   // a second statement",
+         "two = 5.0;   // a second statement\necho(two);"),
+        ('txt = "a;b";   // a ; inside the value',
+         'txt = "a,b";   // a ; inside the value'),
+    )
+    TOP = "top = 1.0;   // above any group header"
+    OK = "ok = 3.0;   // alone, at the margin"
+
+    def _probe(self, d: str, lines: list[str]) -> tuple[Path, set[str]]:
+        p = Path(d) / "canary_probe.scad"
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return p, {x["name"] for g in LAB_PARSE(p)["groups"] for x in g["params"]}
+
     def test_a_helped_knob_the_lab_cannot_read_is_caught(self):
         with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "canary_probe.scad"
-            p.write_text("top = 1.0;   // above any group header\n"
-                         "/* [G] */\n"
-                         "  ind = 2.0;   // indented\n"
-                         "ok = 3.0;   // alone, at the margin\n", encoding="utf-8")
-            lab = {x["name"] for g in LAB_PARSE(p)["groups"] for x in g["params"]}
+            p, lab = self._probe(d, [self.TOP, "/* [G] */",
+                                     *(w for w, _ in self.REFUSED), self.OK])
             self.assertEqual(lab, {"ok"})
-            self.assertEqual(lab_misses_with_help(p, lab), [(1, "top"), (3, "ind")])
+            self.assertEqual(knobs_without_help(p), [], "the builder reads each with help")
+            self.assertEqual(lab_misses_with_help(p, lab),
+                             [(1, "top"), (3, "ind"), (4, "blk"), (5, "two"), (6, "txt")])
+
+    def test_the_remedy_reads_every_form_it_names(self):
+        # The tree case's message gives LAB_LINE as the fix: following it
+        # must make the Lab read the knob, with the builder's help intact.
+        for form in ("left margin", "below the file's first", "no `;` inside the value",
+                     "block comment", "second statement"):
+            self.assertIn(form, LAB_LINE)
+        with tempfile.TemporaryDirectory() as d:
+            p, lab = self._probe(d, ["/* [G] */", self.TOP,
+                                     *(r for _, r in self.REFUSED), self.OK])
+            self.assertEqual(lab, {"top", "ind", "blk", "two", "txt", "ok"})
+            self.assertEqual(knobs_without_help(p), [])
+            self.assertEqual(lab_misses(p, lab), [])
 
     def test_a_builder_that_kept_shared_help_is_caught(self):
-        # The parser change this class exists for: the builder starts keeping
-        # a shared line's help. knobs_without_help (and so HELP_DEBT) stops
-        # counting a and b, while the Lab still lists neither.
+        # One parser change this class catches (HelpLines pins it too): the
+        # builder starts keeping a shared line's help. knobs_without_help
+        # (and so HELP_DEBT) stops counting a and b, while the Lab still
+        # lists neither.
         real = gen_builder_manifest.parse_scad
 
         def keeps_shared_help(path, with_lines=False):
