@@ -1468,32 +1468,58 @@
   X25519 session key) with it. `memcmp()` returns at the first byte that
   differs, so a refusal's time says how many leading bytes of a forged tag
   were right. The PIO tree's own CONFIRM check used `ct_equal()`; the WAP's
-  twin did not. And the regression check could not have caught any of it:
-  its grep `"constant_time_compare\|volatile.*result.*\|=\|crypto_verify"`
-  meant `|=` as text, but in a basic regex `\|` is an alternative, so one
-  of its alternatives was `=` and it matched every assignment in the tree.
+  twin did not. A fourth, found by review after the survey that found the
+  three: the canary-wap's household RPA check (`resolve_rpa_detailed()`)
+  compared the AES-128 hash under an enrolled IRK with
+  `computed_hash[0] == expected_hash[0] && ...`, a branch on each byte. And
+  the regression check could not have caught any of it: its grep
+  `"constant_time_compare\|volatile.*result.*\|=\|crypto_verify"` meant
+  `|=` as text, but in a basic regex `\|` is an alternative, so one of its
+  alternatives was `=` and it matched every assignment in the tree. With that
+  alternative gone it still passed on `crypto_verify` (an Ed25519 verify,
+  not a byte compare) and on comment text naming `constant_time_compare()`,
+  this fix's own header comment among them: still a check that could not
+  fail.
 - **Root cause:** the rule was kept where it was first written down (the
   token compare) and checked by a grep that could not fail; a new compare
-  of a tag reached for the nearest byte compare, `memcmp()`.
+  of a tag reached for the nearest byte compare, `memcmp()`, or wrote the
+  bytes out with `&&`. The survey searched for `memcmp()`-family calls
+  first, so the `&&` chain was a spelling it did not look for.
 - **Fix:** one helper, `firmware/common/core/ct_compare.h`
   (`ct_compare::equal()`: volatile reads into a volatile accumulator, no
   early exit, `n == 0` and null answer unequal), staged by the WAP sketch
-  (`check_csi_sync.sh`); the three compares call it, outcomes and log
+  (`check_csi_sync.sh`); the four compares call it, outcomes and log
   lines unchanged. `regression_check.sh` now fails a `memcmp` / `bcmp` /
-  `strcmp` / `strncmp` whose arguments name an HMAC, a CONFIRM hash or an
-  expected or computed tag, and its auth grep reads `[|]=`.
+  `strcmp` / `strncmp` / `strcasecmp` or a String `.equals()` whose
+  arguments name an HMAC, a CONFIRM hash, an expected or computed tag or the
+  expected bearer token, and its auth check names each tree's bearer
+  compare (`api_auth.h`'s `constant_time_compare()`, `securacv_auth.cpp`'s
+  `constantTimeCompare()`) and fails unless that file defines it with a
+  volatile read, a `|=` fold and one return and no `break`, and calls it as
+  `NAME(token, expected_token, ...)` on a line of code. Shown failing on
+  eight scratch mutants (a `strncmp()` bearer compare, a renamed helper, an
+  early return, a `break`, no `volatile`, a `memcmp()` and a String
+  `.equals()` canary compare, a renamed file), every one of which the grep
+  before it passed.
 - **Rule:** a compare where one side is a secret, or derived from one, is
   `ct_compare::equal()` (or a tree's own constant-time compare), never
-  `memcmp()`. And a guard that greps for a fix must be shown failing once on
-  the code it is meant to catch; one that cannot fail is decoration.
+  `memcmp()` or an `&&` of bytes. A survey for a pattern finds the
+  spellings it searched for: search for the shapes too (a chain of indexed
+  `==`, a loop that returns). And a guard that greps for a fix must be shown
+  failing once on the code it is meant to catch; one that cannot fail is
+  decoration.
 - **Regression check:** `firmware/tests_host/test_ct_compare.cpp` (the
-  helper's answers, a fault trap that sees each buffer's last byte read, the
-  loop's text, the PIO restore run over the fake card, its call site);
-  canary-wap `tests_host/test_mesh_pair_crypto.cpp` and
+  helper's answers, a fault trap that sees each buffer's first and last
+  byte read, the loop's text, the PIO restore run over the fake card, its
+  call site); canary-wap `tests_host/test_mesh_pair_crypto.cpp` and
   `test_wap_hmac_fail.cpp` (the call sites), `test_mesh_liveness_wap.cpp`
-  (`a_confirm_one_bit_off_ends_the_pairing`); `regression_check.sh`'s
-  secret-compare check, which lists the three on the code before the fix.
-  None of these measures time: constant time is not measurable on a host.
+  (`a_confirm_one_bit_off_ends_the_pairing`), `test_household_rpa.cpp` (the
+  real `household.cpp`: the spec's `ah()` sample, every one-bit-off hash
+  refused, the call site); `regression_check.sh`'s bearer-compare and
+  secret-compare checks, the second of which lists the three `memcmp()`
+  calls on the code before the fix. It reads one line at a time, so the
+  `&&` chain is the host pin's to hold. None of these measures time:
+  constant time is not measurable meaningfully on a host.
 - **Date learned:** 2026-11
 
 ---

@@ -383,49 +383,104 @@ echo ""
 # ── Check: Constant-time comparison for auth ───────────────────
 section "Security: Auth implementation"
 
-# If Bearer auth exists, it MUST use constant-time comparison
-AUTH_PRESENT=$(grep -rn "Bearer\|Authorization\|authenticate" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" | head -1 || true)
-if [ -n "$AUTH_PRESENT" ]; then
-  # "[|]=" is the accumulator's literal |= (a "\|=" here was an alternative
-  # matching any line with "=" in it, so this check could not fail).
-  CT_COMPARE=$(grep -rn "constant_time_compare\|volatile.*result.*[|]=\|crypto_verify" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" || true)
-  if [ -n "$CT_COMPARE" ]; then
-    check_pass "Auth appears to use constant-time comparison"
-  else
-    STRCMP_AUTH=$(grep -rn "strcmp.*token\|== token\|\.equals.*token" "${SRC_DIRS[@]}" 2>/dev/null | grep -v "//" || true)
-    if [ -n "$STRCMP_AUTH" ]; then
-      check_fail "Token comparison uses strcmp/equals — vulnerable to timing attacks"
-      blue "  Fix: Use constant_time_compare() with volatile accumulator"
-    else
-      check_warn "Auth present but couldn't verify constant-time comparison"
-    fi
+# Each tree's bearer check compares the presented token with the expected
+# one through its own constant-time compare. One row per tree: the file and
+# the compare's name. A row passes when that file defines the compare with a
+# body that reads through volatile, folds the differences with |=, and has
+# one return and no break (no early exit), and when a line of code there
+# calls it as NAME(token, expected_token, ...). A row whose file is gone
+# fails: a rename moves its row. Comments are not code here: a line whose
+# text starts as a comment is dropped, and // and /* */ text is cut from the
+# body. (The grep this replaced passed on any line naming
+# constant_time_compare or crypto_verify, an Ed25519 verify, comment lines
+# included, and until wave 26 on any line with an "=" in it, so it could not
+# fail.) A variable-time compare of the expected token (memcmp/strcmp of it,
+# a String .equals()) fails the secret-compare check below.
+BEARER_COMPARES="projects/canary-wap/arduino/canary_wap/api_auth.h	constant_time_compare
+canary/lib/securacv_auth/src/securacv_auth.cpp	constantTimeCompare"
+
+# bearer_compare_problems <file> <name>: one line per problem with <name>()'s
+# definition in <file>, nothing when it holds. Word tests by splitting, not
+# by an anchored alternation, so mawk and gawk read them alike.
+bearer_compare_problems() {
+  awk -v name="$2" '
+    function code(s) {
+      if (s ~ /^[[:space:]]*(\/\/|\/\*|\*)/) return ""
+      sub(/\/\/.*/, "", s); gsub(/\/\*.*\*\//, "", s); return s
+    }
+    function words(s, w,   t) { t = s; gsub(/[^A-Za-z0-9_]/, " ", t); return split(t, w, " ") }
+    !inbody {
+      s = code($0); n = words(s, w); hit = 0
+      for (i = 2; i <= n; i++) if (w[i] == name && w[i - 1] == "bool") hit = 1
+      for (i = 3; i <= n; i++) if (w[i] == name && w[i - 2] == "bool") hit = 1  # bool Class::name(
+      if (hit && s ~ ("[[:space:]:]" name "[[:space:]]*[(]") && s !~ /;[[:space:]]*$/) {
+        found = 1; inbody = 1; depth = 0; opened = 0; body = ""
+      }
+    }
+    inbody {
+      s = code($0); body = body s "\n"
+      t = s; depth += gsub(/[{]/, "", t); t = s; depth -= gsub(/[}]/, "", t)
+      if (depth > 0) opened = 1
+      if (opened && depth == 0) { inbody = 0; done = 1; exit }
+    }
+    END {
+      if (!found) { print "no definition of " name "()"; exit }
+      if (!done) { print name "(): its body does not close"; exit }
+      n = words(body, w); r = 0; b = 0; v = 0
+      for (i = 1; i <= n; i++) { r += (w[i] == "return"); b += (w[i] == "break"); v += (w[i] == "volatile") }
+      if (v == 0) print name "(): reads nothing through volatile"
+      if (body !~ /[|]=/) print name "(): folds nothing with |="
+      if (r != 1) print name "(): " r " returns, not one (an early exit)"
+      if (b != 0) print name "(): a break (an early exit)"
+    }' "$1"
+}
+
+while IFS=$'\t' read -r rel name; do
+  [ -n "$rel" ] || continue
+  f="$FIRMWARE_DIR/$rel"
+  if [ ! -f "$f" ]; then
+    check_fail "Bearer compare row names $rel, which is gone (move the row with the file)"
+    continue
   fi
-else
-  blue "Auth not yet implemented (expected if pre-token-generation)"
-fi
+  PROBLEMS=$(bearer_compare_problems "$f" "$name")
+  CALLS=$(grep -nE "(^|[^A-Za-z0-9_])${name}[[:space:]]*\([[:space:]]*token[[:space:]]*,[[:space:]]*expected_token[[:space:]]*," "$f" 2>/dev/null \
+          | drop_comment_lines || true)
+  [ -n "$CALLS" ] || PROBLEMS="${PROBLEMS:+$PROBLEMS
+}no line of code calls ${name}(token, expected_token, ...)"
+  if [ -n "$PROBLEMS" ]; then
+    check_fail "Bearer token compare in $rel is not the constant-time ${name}()"
+    echo "$PROBLEMS" | while read -r line; do blue "  $line"; done
+  else
+    check_pass "Bearer token compare in $rel is the constant-time ${name}() ($(echo "$CALLS" | wc -l | tr -d ' ') call(s))"
+  fi
+done <<< "$BEARER_COMPARES"
 
 # A compare of secret-dependent bytes — an HMAC, a MAC tag, a pairing CONFIRM
-# hash — runs in constant time: ct_compare::equal()
+# hash, the expected bearer token — runs in constant time: ct_compare::equal()
 # (firmware/common/core/ct_compare.h, staged by the canary-wap sketch) or a
 # tree's own constant-time compare, never memcmp() / bcmp() / strcmp() /
-# strncmp(), which return at the first byte that differs, so a refusal's time
-# says how many leading bytes of a forged tag were right. Matched by line: a
-# call whose arguments name an hmac, a CONFIRM hash or an expected/computed
-# tag (comment lines and host tests skipped). It found the three it replaced:
-# both trees' chain-backup restore and the canary-wap's handle_pair_confirm(),
-# whose call sites test_ct_compare, test_wap_hmac_fail and
-# test_mesh_pair_crypto pin.
-VT_SECRET_RE='(^|[^A-Za-z0-9_])(memcmp|bcmp|strcmp|strncmp)[[:space:]]*\([^;]*([Hh][Mm][Aa][Cc]|confirmation_hash|confirm_hash|(expected|computed|auth|mac|want)_tag)'
+# strncmp() / strcasecmp() or a String .equals(), which return at the first
+# byte that differs, so a refusal's time says how many leading bytes of a
+# forged tag were right. Matched by line: a call whose arguments name an
+# hmac, a CONFIRM hash, an expected/computed tag or expected_token (comment
+# lines and host tests skipped). It found the three memcmp() calls it
+# replaced: both trees' chain-backup restore and the canary-wap's
+# handle_pair_confirm(), whose call sites test_ct_compare, test_wap_hmac_fail
+# and test_mesh_pair_crypto pin. One line at a time: a call whose arguments
+# span lines, a secret under a name it does not list, or a byte-by-byte ==
+# chain (household.cpp's RPA check was one; test_household_rpa pins its
+# replacement) passes it.
+VT_SECRET_RE='(^|[^A-Za-z0-9_])(memcmp|bcmp|strcmp|strncmp|strcasecmp|strncasecmp)[[:space:]]*\([^;]*([Hh][Mm][Aa][Cc]|confirmation_hash|confirm_hash|(expected|computed|auth|mac|want)_tag|expected_token)|\.equals(IgnoreCase)?\([^)]*expected_token|expected_token[[:space:]]*\.[[:space:]]*equals'
 VT_SECRET=$(grep -rnE --include='*.c' --include='*.cpp' --include='*.h' --include='*.hpp' --include='*.ino' \
               "$VT_SECRET_RE" "${SRC_DIRS[@]}" 2>/dev/null \
             | grep -vE '/tests_host/|/test/|/tests/|_test\.c(pp)?:|/test_[A-Za-z0-9_]+\.c(pp)?:' \
             | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|/\*|\*)' || true)
 if [ -n "$VT_SECRET" ]; then
-  check_fail "A secret-dependent compare (HMAC, MAC tag, CONFIRM hash) uses memcmp/strcmp — it returns at the first differing byte, a timing oracle"
+  check_fail "A secret-dependent compare (HMAC, MAC tag, CONFIRM hash, expected bearer token) uses memcmp/strcmp/equals — it returns at the first differing byte, a timing oracle"
   echo "$VT_SECRET" | while read -r line; do blue "  $line"; done
   blue "  Fix: compare with ct_compare::equal() (firmware/common/core/ct_compare.h)"
 else
-  check_pass "Secret-dependent compares (HMAC, MAC tag, CONFIRM hash) avoid memcmp/strcmp"
+  check_pass "Secret-dependent compares (HMAC, MAC tag, CONFIRM hash, expected bearer token) avoid memcmp/strcmp/equals"
 fi
 
 echo ""
