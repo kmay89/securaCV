@@ -14,6 +14,7 @@
 #include "dp.h"
 #include "nvs_store.h"
 #include "health_log.h"
+#include "ct_compare.h"
 
 #include <string.h>
 #include <mbedtls/aes.h>
@@ -353,13 +354,17 @@ ResolveResult resolve_rpa_detailed(const uint8_t mac[6]) {
   const uint8_t expected_hash[3] = { mac[0], mac[1], mac[2] };
 
   uint8_t computed_hash[3];
+  static_assert(sizeof(computed_hash) == sizeof(expected_hash),
+                "the RPA hash compare takes one length for both");
   for (uint8_t i = 0; i < MAX_HOUSEHOLD_DEVICES; i++) {
     if (!slot_is_used(i)) continue;
     if (!ah(s_slots[i].irk, prand, computed_hash)) continue;
 
-    if (computed_hash[0] == expected_hash[0] &&
-        computed_hash[1] == expected_hash[1] &&
-        computed_hash[2] == expected_hash[2]) {
+    // computed_hash is AES-128 under the enrolled IRK; compare it without
+    // an early exit (ct_compare.h), not byte by byte with &&, which
+    // branches on each byte. Which slot matched still ends the loop: the
+    // answer is the match.
+    if (ct_compare::equal(computed_hash, expected_hash, sizeof(expected_hash))) {
       r.matched = true;
       r.slot = (int8_t)i;
       s_total_resolves_matched++;

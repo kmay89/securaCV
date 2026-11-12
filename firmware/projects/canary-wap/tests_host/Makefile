@@ -1069,6 +1069,37 @@ clean-dp-budget:
 run: run-dp-budget
 clean: clean-dp-budget
 
+# Household device recognition resolves an RPA against the enrolled IRKs,
+# and compares the hash without an early exit (the wave 26 ct-compare
+# package): the REAL household.cpp over the real nvs_store.h on the
+# first-boot suite's fake NVS (stubs/first_boot, the recursive mutex from the
+# canary suite's stubs/nvs_manager), with Arduino.h (a settable millis()) and
+# mbedtls/aes.h (OpenSSL's AES-128) from stubs/household. The spec's ah()
+# sample, three enrolled IRKs (and after a reboot), every one-bit-off hash
+# refused, non-RPA addresses and a refused AES; household.cpp is passed in
+# for the source pin on its ct_compare::equal() call, so the pin fails
+# closed. -Wno-unused-variable: nvs_store.h's NVS_MESH_NS, which
+# household.cpp does not name, as the CSI suites above.
+HOUSEHOLD_BIN = test_household_rpa
+HOUSEHOLD_SRC = test_household_rpa.cpp
+
+$(HOUSEHOLD_BIN): $(HOUSEHOLD_SRC) $(SRC_DIR)/household.cpp $(SRC_DIR)/household.h $(SRC_DIR)/ct_compare.h \
+                  $(SRC_DIR)/nvs_store.h $(SRC_DIR)/dp.h $(SRC_DIR)/health_log.h beacon_source_scan.h \
+                  $(wildcard stubs/household/*.h stubs/household/mbedtls/*.h stubs/first_boot/*.h) \
+                  stubs/nvs_store/Arduino.h
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -I stubs/household -I stubs/first_boot -I stubs/nvs_store \
+	  -I $(NVSLOCK_FREERTOS) -I $(SRC_DIR) -I . \
+	  -DHOUSEHOLD_CPP='"$(abspath $(SRC_DIR))/household.cpp"' \
+	  -o $@ $(HOUSEHOLD_SRC) $(SRC_DIR)/household.cpp -lcrypto)
+
+.PHONY: run-household-rpa clean-household-rpa
+run-household-rpa: $(HOUSEHOLD_BIN)
+	$(call run_marked,$(HOUSEHOLD_BIN))
+clean-household-rpa:
+	rm -f $(HOUSEHOLD_BIN)
+run: run-household-rpa
+clean: clean-household-rpa
+
 $(BEACON_TAMPER_BIN): $(BEACON_TAMPER_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(BEACON_TAMPER_SRC) -lcrypto
 

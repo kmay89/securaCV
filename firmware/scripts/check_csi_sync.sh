@@ -216,7 +216,8 @@ fi
 # secret-dependent compare takes as long whatever bytes match) lives at
 # firmware/common/core/; the PIO canary tree includes it directly for its
 # chain-backup HMAC check, and the canary-wap sketch carries a byte-identical
-# staged copy for its own backup HMAC check and its pairing CONFIRM check.
+# staged copy for its own backup HMAC check, its pairing CONFIRM check and
+# its household RPA hash check.
 CTCMP_CANONICAL="firmware/common/core/ct_compare.h"
 CTCMP_STAGED="$STAGED/ct_compare.h"
 if [ -f "$CTCMP_CANONICAL" ]; then

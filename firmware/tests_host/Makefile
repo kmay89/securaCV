@@ -982,8 +982,9 @@ KEYDRAW_READS       = $(KEYDRAW_CRYPTO_SRC) $(WITKEY_SRCS) $(KEYDRAW_WAP_SRC) \
 KEYDRAW_BIN         = $(BUILD_DIR)/test_key_draw_check
 
 # The constant-time byte compare (test_ct_compare.cpp):
-# common/core/ct_compare.h's answers, a fault trap on each buffer's last byte
-# (a compare that stops early never reads it), and the text of its loop; and
+# common/core/ct_compare.h's answers, a fault trap on each buffer's first and
+# last byte (a forward early exit never reads the last, a backward one the
+# first), and the text of its loop; and
 # its canary (PIO) caller, run on its own code: datamgmt_backup_chain() and
 # datamgmt_restore_chain() cut out of securacv_data_mgmt.cpp
 # (cut_functions.awk) with the backup format's four constants (the awk below

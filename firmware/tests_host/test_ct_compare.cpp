@@ -17,11 +17,16 @@
  *     flip at the first, a middle and the last byte of other lengths, is
  *     not; n == 0 is not equal (a check of no bytes proves nothing), nor is
  *     a null buffer; a buffer is equal to itself;
- *   - that it reads every byte of both buffers, whatever they hold: each
- *     buffer's last byte sits at the start of a page with no access, and a
- *     fault handler records the read and opens the page. A compare that
- *     stops at the first difference, or skips the last byte, never reads
- *     it, so the record stays empty and the check fails;
+ *   - that it reads each end of both buffers, whatever they hold: in one
+ *     layout each buffer's last byte sits at the start of a page with no
+ *     access, in the other its first byte sits at the end of one, and a
+ *     fault handler records the read and opens the page. A forward compare
+ *     that stops at the first difference, or skips the last byte, never
+ *     reads the last byte; a backward one that stops at the first
+ *     difference it meets (a last-byte difference) never reads the first.
+ *     Either way the record stays empty and the check fails. A compare that
+ *     exits early but reads both ends first (a chunked memcmp() can) is
+ *     refused by the text pin below, not by the trap;
  *   - its text: both buffers and the accumulator are read through volatile,
  *     and the loop holds no branch (no if, ?:, &&, ||, break, return, goto);
  *   - datamgmt_restore_chain() and datamgmt_backup_chain(), cut verbatim
@@ -160,13 +165,17 @@ static void zero_length_and_null_are_unequal() {
   CHECK_MSG(equal(a, b, 4), "the same four bytes answered unequal");
 }
 
-// ── equal() reads every byte of both buffers ────────────────────────────────
+// ── equal() reads both ends of both buffers ─────────────────────────────────
 //
-// Each buffer's last byte is the first byte of a page with no access. The
-// first read of it faults; the handler records which page, opens it for
-// reading and returns, and the read runs again and succeeds. So a compare
-// that reads that byte leaves a record, and one that never reads it (an
-// early exit at a first or middle difference, a loop one short) leaves none.
+// Two layouts. Tail: each buffer's last byte is the first byte of a page
+// with no access. Head: each buffer's first byte is the last byte of one.
+// The first read of the guarded byte faults; the handler records which
+// page, opens it for reading and returns, and the read runs again and
+// succeeds. So a compare that reads that byte leaves a record, and one that
+// never reads it leaves none: a forward early exit at a first or middle
+// difference, or a loop one short, misses the tail; a backward early exit
+// at a last or middle difference misses the head. An early exit that reads
+// both ends before it stops is the loop-text pin's to refuse.
 
 static long g_page = 0;
 static uint8_t* volatile g_guard[2] = {nullptr, nullptr};
@@ -188,27 +197,32 @@ static void on_fault(int, siginfo_t* info, void*) {
 }
 
 struct Guarded {
-  uint8_t* map = nullptr;   // two pages: the buffer's head, then the guard
-  uint8_t* buf = nullptr;   // n bytes, the last at the guard page's start
+  uint8_t* map = nullptr;     // two pages: the buffer and its guard
+  uint8_t* guard = nullptr;   // the page with no access once armed
+  uint8_t* buf = nullptr;     // n bytes, one end on the guard page
 };
 
-static Guarded guarded(size_t n, int k) {
+// tail: the buffer's last byte at the second page's start, the second page
+// the guard. head: its first byte at the first page's end, the first page
+// the guard.
+static Guarded guarded(size_t n, int k, bool tail) {
   Guarded g;
   void* m = mmap(nullptr, 2 * (size_t)g_page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (m == MAP_FAILED) return g;
   g.map = static_cast<uint8_t*>(m);
-  g.buf = g.map + g_page - (n - 1);
-  g_guard[k] = g.map + g_page;
+  g.guard = tail ? g.map + g_page : g.map;
+  g.buf = tail ? g.map + g_page - (n - 1) : g.map + g_page - 1;
+  g_guard[k] = g.guard;
   return g;
 }
 
 // Open the guard page for writing (the handler left it read-only, or it is
-// new), so the case can write its last byte.
-static void open_guard(Guarded& g) { mprotect(g.map + g_page, (size_t)g_page, PROT_READ | PROT_WRITE); }
+// new), so the case can write the byte on it.
+static void open_guard(Guarded& g) { mprotect(g.guard, (size_t)g_page, PROT_READ | PROT_WRITE); }
 
 static void arm(Guarded& g, int k) {
   g_faulted[k] = 0;
-  mprotect(g.map + g_page, (size_t)g_page, PROT_NONE);
+  mprotect(g.guard, (size_t)g_page, PROT_NONE);
 }
 
 static void every_byte_is_read() {
@@ -222,8 +236,10 @@ static void every_byte_is_read() {
   sigaction(SIGSEGV, &sa, nullptr);
   sigaction(SIGBUS, &sa, nullptr);   // macOS reports a protected page as SIGBUS
 
+  for (const bool tail : {true, false})
   for (size_t n : {1u, 2u, 16u, 32u, 64u}) {
-    Guarded a = guarded(n, 0), b = guarded(n, 1);
+    const char* end = tail ? "last" : "first";
+    Guarded a = guarded(n, 0, tail), b = guarded(n, 1, tail);
     CHECK_MSG(a.map != nullptr && b.map != nullptr, "mmap failed");
     if (a.map == nullptr || b.map == nullptr) return;
     struct Case {
@@ -247,10 +263,10 @@ static void every_byte_is_read() {
       const bool answer = equal(a.buf, b.buf, n);
       CHECK_MSG(g_stray == 0, "a fault outside the guard pages");
       CHECK_MSG(answer == !c.differ, std::to_string(n) + " bytes, " + c.what + ": wrong answer");
-      CHECK_MSG(g_faulted[0] == 1, std::to_string(n) + " bytes, " + c.what +
-                                       ": the first buffer's last byte was never read");
-      CHECK_MSG(g_faulted[1] == 1, std::to_string(n) + " bytes, " + c.what +
-                                       ": the second buffer's last byte was never read");
+      CHECK_MSG(g_faulted[0] == 1, std::to_string(n) + " bytes, " + c.what + ": the first buffer's " + end +
+                                       " byte was never read");
+      CHECK_MSG(g_faulted[1] == 1, std::to_string(n) + " bytes, " + c.what + ": the second buffer's " + end +
+                                       " byte was never read");
       if (g_stray) return;
     }
     g_guard[0] = g_guard[1] = nullptr;
@@ -526,7 +542,7 @@ int main(int argc, char** argv) {
     std::printf("test_ct_compare: %d of %d checks FAILED\n", g_failures, g_checks);
     return 1;
   }
-  std::printf("test_ct_compare: ALL %d CHECKS PASSED (equal()'s answers, every byte of both buffers "
+  std::printf("test_ct_compare: ALL %d CHECKS PASSED (equal()'s answers, both ends of both buffers "
               "read, no branch in its loop, the canary (PIO) chain restore over the fake card, its "
               "call site)\n",
               g_checks);

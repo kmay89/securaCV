@@ -366,10 +366,11 @@ setup_arduino() {
         print_warn "key_draw_check not found at ${identity_src} — sketch will not compile until firmware/common/identity/ is restored"
     fi
 
-    # The constant-time byte compare (ct_compare::equal(): the backup HMAC
-    # and the pairing CONFIRM checks) is a single canonical, header-only
-    # source shared with the PIO canary tree. Stage a byte-identical copy
-    # next to the sketch; check_csi_sync.sh guards the two against drift.
+    # The constant-time byte compare (ct_compare::equal(): the backup HMAC,
+    # pairing CONFIRM and household RPA checks) is a single canonical,
+    # header-only source shared with the PIO canary tree. Stage a
+    # byte-identical copy next to the sketch; check_csi_sync.sh guards the
+    # two against drift.
     local core_src="${FIRMWARE_ROOT}/common/core"
     if [ -f "${core_src}/ct_compare.h" ]; then
         cp "${core_src}/ct_compare.h" "${arduino_dir}/" 2>/dev/null || true
