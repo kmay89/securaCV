@@ -94,14 +94,20 @@ describe('SPA CSP Compliance', () => {
   // it carried never shows. app.js once set sixteen through el()'s `style:`
   // key, among them the Settings view's Quiet Hours row and the fleet card's
   // RSSI chip (sweep F474). A view's layout is now a class in styles.css.
-  // This row refuses every way app.js could still write a style attribute:
-  // a `style:` key (el() turns any key it does not know into an attribute),
-  // setAttribute('style', ...), a ['style'] key, an assignment to cssText or
-  // to node.style itself (the same declarations as a string), and parsing
-  // markup, which can carry a style="" of its own. Writing one property
-  // through the CSSOM (node.style.color = ...) is not an attribute, and the
-  // CSP allows it. The row below holds setAttr(), the one place an attribute
-  // named by a variable is set.
+  // This row refuses the ways to a style attribute that app.js's source
+  // shows: a `style:` key (el() turns any key it does not know into an
+  // attribute), setAttribute('style', ...) or toggleAttribute('style'), a
+  // ['style'] key, an assignment to cssText or to node.style itself (the
+  // same declarations as a string), and parsing markup, which can carry a
+  // style="" of its own. It also refuses the paths that hide an attribute's
+  // name from such a scan, which app.js has no use for: an attribute node
+  // (createAttribute, setAttributeNode) and setAttribute reached through
+  // .call, .apply or .bind. A name assembled at run time (node['set' +
+  // 'Attribute']) is out of a static scan's reach; setAttr(), which el()
+  // and the device-type icons use for every attribute a variable names,
+  // throws on a style name (the row below).
+  // Writing one property through the CSSOM (node.style.color = ...) is not
+  // an attribute, and the CSP allows it.
   it("app.js sets no style attribute, which the served style-src 'self' refuses", () => {
     const securityHeaders = require('../../device-api/middleware/security-headers');
     const headers = {};
@@ -116,7 +122,9 @@ describe('SPA CSP Compliance', () => {
     const found = [];
     for (const [what, re] of [
       ['a style: key', /(?:^|[{,(\s])['"]?style['"]?\s*:/gm],
-      ["setAttribute('style')", /setAttribute\(\s*['"`]style['"`]|setAttributeNS\([^,)]*,\s*['"`]style['"`]/gi],
+      ["setAttribute('style')", /(?:set|toggle)Attribute\(\s*['"`]style['"`]|setAttributeNS\([^,)]*,\s*['"`]style['"`]/gi],
+      ['an attribute node', /\b(?:createAttribute|setAttributeNode)(?:NS)?\b/g],
+      ['setAttribute by .call, .apply or .bind', /\b(?:set|toggle)Attribute(?:NS)?\s*\.\s*(?:call|apply|bind)\b/g],
       ["a ['style'] key", /\[\s*['"`]style['"`]\s*\]/g],
       ['cssText', /\bcssText\b/g],
       ['an assignment to .style', /\.style\s*=(?!=)/g],
@@ -129,7 +137,7 @@ describe('SPA CSP Compliance', () => {
 
     // An attribute named by a variable is set only by setAttr(), which
     // refuses a style name; a literal name is read by the rows above.
-    const byVariable = [...js.matchAll(/\.setAttribute(?:NS)?\(\s*(?!['"`])/g)].map((m) => lineOf(m.index));
+    const byVariable = [...js.matchAll(/\.(?:set|toggle)Attribute(?:NS)?\(\s*(?!['"`])/g)].map((m) => lineOf(m.index));
     const setAttr = js.indexOf('function setAttr(node, name, value) {');
     assert.ok(setAttr >= 0, 'setAttr() is gone');
     assert.deepEqual(byVariable, [lineOf(js.indexOf('node.setAttribute(name, value);', setAttr))],
@@ -176,6 +184,75 @@ describe('SPA CSP Compliance', () => {
       if (info.icon) assert.ok(app.deviceTypeIcon(info), dt + ' has no icon');
     }
     assert.ok(made.every((n) => !Object.keys(n.attrs).some((k) => k.toLowerCase() === 'style')));
+  });
+
+  // The other half of F474: the layout comes back. Each class that took the
+  // place of an inline style is declared in a top-level rule of styles.css
+  // (not under @media, so it holds at every width) with exactly the
+  // declarations the style attribute carried, and app.js puts it on the same
+  // elements, as many times as it once set the style. The source fragments
+  // show the compound or ancestor class each selector needs. Whether each
+  // rule then wins the cascade over the rules above it was proven in
+  // headless Chromium (computed styles and boxes equal to the inline
+  // layout's), not here.
+  it('the classes that replaced the inline styles are declared and used', () => {
+    const LAYOUT = [
+      ['.btn-stacked', { 'margin-top': '0.5rem' }, [["className: 'btn btn-block btn-stacked'", 4]]],
+      ['.token-display.hash-line', { 'font-size': '0.7rem', 'word-break': 'break-all', 'margin-top': '0.25rem' },
+        [["className: 'token-display hash-line'", 3]]],
+      ['.section-gap', { 'margin-top': '1rem' }, [["className: 'card-title mb-8 section-gap'", 1]]],
+      ['.empty-state .events-empty-msg', { padding: '20px 0' },
+        [["el('div', { className: 'empty-state' }, [ el('p', { className: 'events-empty-msg'", 1]]],
+      ['.event-detail-subevent .subevent-time',
+        { 'margin-left': 'auto', color: 'var(--color-text-muted)', 'font-size': '11px' },
+        [["var subRow = el('div', { className: 'event-detail-subevent' });", 1],
+          ["subRow.appendChild(el('span', { className: 'subevent-time'", 1]]],
+      ['.card-subtitle.settings-heading', { 'font-weight': '500', color: 'var(--color-text)' },
+        [["className: 'card-subtitle settings-heading mt-12 mb-8'", 2]]],
+      ['.form-group.quiet-hours-row', { display: 'flex', gap: '12px', 'margin-top': '8px' },
+        [["el('div', { className: 'form-group quiet-hours-row' })", 1]]],
+      ['.flex-1', { flex: '1' }, [["el('div', { className: 'flex-1' })", 2]]],
+      ['.fleet-stat-chip.rssi-good', { color: 'var(--color-success)' }, [["rssiVal > -50 ? 'rssi-good'", 1]]],
+      ['.fleet-stat-chip.rssi-fair', { color: 'var(--color-warning)' }, [["rssiVal > -70 ? 'rssi-fair'", 1]]],
+      ['.fleet-stat-chip.rssi-poor', { color: 'var(--color-error)' }, [[": 'rssi-poor';", 1]]],
+    ];
+
+    // styles.css's top-level rules: selector list and declarations, with
+    // @media, @keyframes and their contents left out.
+    const css = fs.readFileSync(path.join(SPA_DIR, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = [];
+    for (let i = 0; i < css.length;) {
+      const open = css.indexOf('{', i);
+      if (open < 0) break;
+      let close = open + 1;
+      for (let depth = 1; depth; close++) {
+        assert.ok(close < css.length, 'styles.css: an unclosed block');
+        if (css[close] === '{') depth++;
+        else if (css[close] === '}') depth--;
+      }
+      const prelude = css.slice(i, open).trim();
+      if (!prelude.startsWith('@')) {
+        rules.push({
+          selectors: prelude.split(',').map((s) => s.trim().replace(/\s+/g, ' ')),
+          decls: Object.fromEntries(css.slice(open + 1, close - 1).split(';').map((d) => d.trim()).filter(Boolean)
+            .map((d) => [d.slice(0, d.indexOf(':')).trim(), d.slice(d.indexOf(':') + 1).trim()])),
+        });
+      }
+      i = close;
+    }
+    const flat = fs.readFileSync(path.join(SPA_DIR, 'app.js'), 'utf8').replace(/\s+/g, ' ');
+    const count = (needle) => flat.split(needle.replace(/\s+/g, ' ')).length - 1;
+
+    for (const [selector, decls, uses] of LAYOUT) {
+      const declared = rules.filter((r) => r.selectors.includes(selector));
+      assert.equal(declared.length, 1, selector + ': ' + declared.length + ' top-level rules in styles.css');
+      assert.deepEqual(declared[0].decls, decls, selector + ' carries other declarations than the inline style did');
+      for (const [fragment, times] of uses) {
+        assert.equal(count(fragment), times, selector + ': app.js has `' + fragment + '` ' + count(fragment) +
+          ' time(s), not ' + times);
+      }
+    }
+    assert.equal(count("className: 'fleet-stat-chip ' + rssiClass"), 1, 'the RSSI chip lost fleet-stat-chip');
   });
 
   it('SPA does not include tracking or analytics', () => {

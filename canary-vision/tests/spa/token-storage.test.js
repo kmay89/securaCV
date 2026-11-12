@@ -53,4 +53,38 @@ describe('SPA Token Storage', () => {
       'a token reached localStorage');
     assert.equal(sandbox.CanaryStorage.getDevice('canary-b1c2').token, 'cv_b1c2_secret');
   });
+
+  // The same list names every key app.js writes to localStorage: the device
+  // list and two view preferences, none a credential. A key app.js starts
+  // writing without a word there fails, and so does a key the doc forgets
+  // (it once said localStorage keeps only the device list).
+  it("every localStorage key app.js writes is one docs/security.md's SPA list names", () => {
+    const js = fs.readFileSync(path.join(__dirname, '..', '..', 'spa', 'app.js'), 'utf8');
+    const constant = (re, what) => {
+      const m = js.match(re);
+      assert.ok(m, what + ' is gone');
+      return m[1];
+    };
+    const named = {
+      'CanaryStorage.KEY': constant(/^\s*KEY:\s*'([^']+)'/m, 'CanaryStorage.KEY'),
+      NOTIF_PREFS_KEY: constant(/^var NOTIF_PREFS_KEY = '([^']+)';/m, 'NOTIF_PREFS_KEY'),
+    };
+    const written = [...js.matchAll(/localStorage\.setItem\(\s*([^,]+?)\s*,/g)].map((m) => {
+      const arg = m[1];
+      const literal = arg.match(/^'([^']+)'$/);
+      if (literal) return literal[1];
+      assert.ok(arg in named, 'localStorage.setItem() with a key this row cannot read: ' + arg);
+      return named[arg];
+    });
+    assert.deepEqual([...new Set(written)].sort(),
+      ['canary_devices', 'canary_notif_prefs', 'cv_coverage_hint_dismissed']);
+
+    const doc = fs.readFileSync(path.join(__dirname, '..', '..', 'docs', 'security.md'), 'utf8');
+    const line = doc.split('\n').find((l) => l.startsWith('- Tokens held per device in `sessionStorage`'));
+    assert.ok(line, "docs/security.md's SPA list lost its token line");
+    for (const key of new Set(written)) {
+      assert.ok(line.includes('`' + key + '`'), 'docs/security.md does not name localStorage key ' + key);
+    }
+    assert.ok(line.includes('`canary_token:<device id>`'), 'docs/security.md does not name the token key');
+  });
 });

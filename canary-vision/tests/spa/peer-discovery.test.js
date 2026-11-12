@@ -146,10 +146,11 @@ function cspRefuses(url) {
 }
 
 // `peers` is what GET /api/v1/peers answers; a URL matching `unreachable`
-// rejects like a device that is not there; every other route stays in
-// flight, so a step that asks shows up in `fetches` and nothing settles it.
-// `local` seeds localStorage.
-function loadApp({ prefillHost, devices, peers, unreachable, local } = {}) {
+// rejects like a device that is not there, and one matching `silent` with
+// an error that carries no message; every other route stays in flight, so
+// a step that asks shows up in `fetches` and nothing settles it. `local`
+// seeds localStorage.
+function loadApp({ prefillHost, devices, peers, unreachable, silent, local } = {}) {
   const body = new FakeNode('body');
   const appRoot = body.appendChild(new FakeNode('div'));
   const noop = () => {};
@@ -190,6 +191,7 @@ function loadApp({ prefillHost, devices, peers, unreachable, local } = {}) {
       if (cspRefuses(String(url)) || (unreachable && unreachable.test(String(url)))) {
         return Promise.reject(new TypeError('Failed to fetch'));
       }
+      if (silent && silent.test(String(url))) return Promise.reject(new Error(''));
       if (/\/api\/v1\/peers$/.test(String(url))) {
         return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ peers: peers || [] }) });
       }
@@ -585,6 +587,27 @@ describe('a device stored under a refused IP', () => {
     h.appRoot.button('Test Webhook').click();
     await settleAll();
     assert.deepEqual(errorsIn(h, 'config-alert'), ['Webhook test failed: ' + OWN]);
+    assert.ok(h.fetches.length > 0 && h.fetches.every((f) => UNREACHABLE.test(f.url)),
+      JSON.stringify(h.fetches));
+  });
+
+  // Two witness actions have a text of their own for an error that says
+  // nothing, and storedDeviceErrorText() is handed each (before F475 they
+  // read `err.message || ...` in place). Every error CanaryAPI.request()
+  // makes carries a message; a fetch that rejects with an empty one is what
+  // reaches these.
+  it("an error that says nothing still reads each witness action's own fallback", async () => {
+    const h = loadApp({ devices: [CELLAR], silent: UNREACHABLE, local: HINT_DISMISSED });
+    h.app.renderWitnessView('canary-b1c2');
+    await settleAll();
+    for (const [label, id, text] of [
+      ['Export Evidence Envelope', 'witness-alert', 'Envelope export failed'],
+      ['View Verified Timeline', 'witness-timeline', 'Failed to load verified timeline'],
+    ]) {
+      h.appRoot.button(label).click();
+      await settleAll();
+      assert.deepEqual(errorsIn(h, id), [text], label);
+    }
     assert.ok(h.fetches.length > 0 && h.fetches.every((f) => UNREACHABLE.test(f.url)),
       JSON.stringify(h.fetches));
   });
