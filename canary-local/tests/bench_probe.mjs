@@ -118,11 +118,14 @@ page.on("pageerror", (e) => errors.push(String(e)));
 // [module, level], recorded by wrapping each display factory the registry
 // names before the page's scripts run (the bundle's top-level var assigns
 // through the setter). sessionStorage "probe:noButton" serves a module with
-// no _emu_button, as a dist built before it would be.
+// no _emu_button, as a dist built before it would be. Sweep A127: every
+// erase a twin reports to the page (onNvsRemove), as [module, "ns/key"],
+// recorded the same way, on its way to the page's own handler.
 const REGISTRY = JSON.parse(await readFile(join(ROOT, "canary-local/devices/registry.json"), "utf8"));
 const FACTORIES = [...new Set(REGISTRY.devices.filter((d) => d.emulator).map((d) => d.emulator.factory))];
 await page.addInitScript((names) => {
   window.__emuButton = [];
+  window.__nvsRemoved = [];
   let modules = 0;
   for (const name of names) {
     let real;
@@ -131,8 +134,13 @@ await page.addInitScript((names) => {
       get: () => real,
       set: (f) => {
         real = typeof f !== "function" ? f : async (...args) => {
-          const M = await f(...args);
           const id = ++modules;
+          const imports = args[0];
+          if (imports && typeof imports.onNvsRemove === "function") {
+            const page = imports.onNvsRemove;
+            imports.onNvsRemove = (ns, key) => { window.__nvsRemoved.push([id, `${ns}/${key}`]); return page(ns, key); };
+          }
+          const M = await f(...args);
           if (sessionStorage.getItem("probe:noButton") === "1") delete M._emu_button;
           const cwrap = M.cwrap;
           M.cwrap = (sym, ...rest) => {
@@ -146,6 +154,7 @@ await page.addInitScript((names) => {
   }
 }, FACTORIES);
 const buttonLog = () => page.evaluate(() => window.__emuButton.slice());
+const removedLog = () => page.evaluate(() => window.__nvsRemoved.slice());
 // Every module's calls alternate press, release, starting with a press and
 // ending released: no press without its release, none doubled.
 const allReleased = (log) => {
@@ -532,19 +541,26 @@ await waitSings(watchBoots2);
   console.log(`bench_probe: ${log.length / 2} presses on the watch's bench, each released on the twin it pressed`);
 }
 // held past 10 s: the firmware runs its factory reset and restarts, and the
-// bench restarts it from the page's copy of its flash (no erase reaches it),
-// so it comes back on its home network: what the control's title says
-// (review of A99: the title promised a lasting erase)
+// erase reaches the page's copy of its flash the bench restarts it from
+// (sweep A127: emu_support.cpp's js_nvs_remove -> onNvsRemove), so it comes
+// back without a network and raises its setup portal, provision.cpp's
+// "First boot - onboarding AP" line, as a board does: what the control's
+// title says. Before A127 it came back on its home network (A99's title said
+// so). On a dist built before A127 this fails by construction: such a twin
+// never reports an erase.
 const RESET_LINE = "[input] BOOT held 10 s -> factory reset (credentials + settings, identity kept)";
 const FORGOT = "[CFG] WiFi credentials forgotten - setup opens on next boot.";
+const PORTAL = 'First boot - onboarding AP "SecuraCV-';
+const JOINED = "[WiFi] Connected (emulated).";
 const resets0 = await serialCount(RESET_LINE);
 await openTab("Bench");
 await page.waitForFunction(() => !document.querySelector(".bench-press")?.disabled, null, { timeout: 10000 }).catch(() => fail("the press control is not live again"));
 {
   const title = (await pressCtl().getAttribute("title")) || "";
-  if (!title.includes("this bench restarts it from the page's copy of its flash, which no erase reaches, so it comes back on its home network"))
+  if (!title.includes("and the erase lasts: this bench restarts it from the page's copy of its flash, which the erase reached, so it comes back without a network and raises its setup portal"))
     await fail(`the press's title does not say what the bench does after the 10 s hold: ${title}`);
 }
+const removed0 = (await removedLog()).length;
 await step("a hold past 10 s", async () => {
   await page.mouse.move(on.x, on.y);
   await page.mouse.down();
@@ -552,19 +568,46 @@ await step("a hold past 10 s", async () => {
   await page.mouse.up();
 }, [1, 0]);
 await openTab("Wire");
-await page
-  .waitForFunction(([reset, forgot]) => {
+// the portal after the forget, and no join to the home network after it
+const portalAfter = (mark) => page
+  .waitForFunction(([mark, portal]) => {
     const t = document.querySelector("pre.log")?.textContent || "";
-    const at = t.lastIndexOf(forgot);
-    return t.includes(reset) && at >= 0 && t.indexOf("[WiFi] Connected (emulated).", at) > at && t.indexOf("The canary is singing", at) > at;
-  }, [RESET_LINE, FORGOT], { timeout: 90000 })
-  .catch(async () => fail(`held past 10 s, the serial never said the factory reset and then the twin back on its home network: ${(await serial()).slice(-1500)}`));
+    const at = t.lastIndexOf(mark);
+    return at >= 0 && t.indexOf(portal, at) > at;
+  }, [mark, PORTAL], { timeout: 90000 });
+await portalAfter(FORGOT)
+  .catch(async () => fail(`held past 10 s, the serial never said the factory reset and then the twin's setup portal (a dist built before A127 brings it back on its home network): ${(await serial()).slice(-1500)}`));
+{
+  const t = await serial();
+  if (!t.includes(RESET_LINE)) await fail("held past 10 s, the firmware never said its factory reset");
+  if (t.indexOf(JOINED, t.lastIndexOf(FORGOT)) >= 0) await fail("held past 10 s, the twin came back on its home network: the erase did not last");
+}
 if ((await serialCount(RESET_LINE)) !== resets0 + 1) await fail("held past 10 s, the firmware's factory reset did not run once");
-console.log("bench_probe: held 11 s, the watch's firmware ran its factory reset and the bench restarted it on its home network, as the press's title says");
+{
+  // the page heard the erase, key by key, from the twin that ran it: the
+  // network pair the bench seeded and the ring the boot wrote (this unit
+  // never walked its portal, so it holds no ap_pass to erase)
+  const heard = (await removedLog()).slice(removed0).map(([, k]) => k);
+  const want = ["securacv/wifi_ssid", "securacv/wifi_pass", "securacv/wifi_nets"];
+  if (JSON.stringify(heard) !== JSON.stringify(want)) await fail(`held past 10 s, the page heard the erases ${JSON.stringify(heard)}, not ${JSON.stringify(want)}`);
+}
+console.log("bench_probe: held 11 s, the watch's firmware ran its factory reset, the page heard it erase its network, and the bench restarted it into its setup portal, as the press's title says");
 {
   const bad = allReleased(await buttonLog());
   if (bad) await fail(`a twin was left with BOOT pressed after the 10 s hold: ${bad}`);
 }
+// ...and the erase outlasts a bench reset too: RESET boots the twin from the
+// same copy, into the portal again, not onto the home network
+await openTab("Bench");
+await chip("RESET").click();
+await openTab("Wire");
+await portalAfter("※ ── reset ── ※")
+  .catch(async () => fail(`after the factory reset, a bench RESET never raised the setup portal again: ${(await serial()).slice(-1500)}`));
+{
+  const t = await serial();
+  if (t.indexOf(JOINED, t.lastIndexOf("※ ── reset ── ※")) >= 0) await fail("after the factory reset, a bench RESET brought the twin back on its home network");
+}
+console.log("bench_probe: a bench RESET after the factory reset boots the watch into its setup portal again: the erase lasts");
 await openTab("Bench");
 
 if (SHOTS) await page.screenshot({ path: `${SHOTS}/bench_ok.png` });

@@ -1206,23 +1206,63 @@ test("A99: the Lab's bench offers the press beside the strap where the firmware 
   assert.ok(app.includes("    ctx.leaveView = unhook;\n"), "the bench view leaves its release for the tab that replaces it");
   assert.match(app, /const leave = ctx\.leaveView;\n\s*ctx\.leaveView = null;\n\s*leave\?\.\(\);\n\s*panel\.innerHTML = "";/,
     "the display sheet's tabs let the old view go before they replace it");
-  // the 10 s hold: the firmware erases its networks, but the bench restarts
-  // the twin from the page's copy of its flash, which no erase reaches, so
-  // the title says it comes back on its home network (bench_probe holds it
-  // past 10 s and reads the serial). Should the twin's erase ever reach that
-  // copy, or a provisioned boot stop seeding the network, this fails first.
-  assert.match(app, /held 10 s the firmware erases its saved networks and screen settings \(the identity stays\) and " \+\n\s*"restarts, but this bench restarts it from the page's copy of its flash, which no erase reaches, so it comes " \+\n\s*"back on its home network\."/,
-    "the press's title says the bench gives the twin its network back after a factory reset");
+  // the 10 s hold (sweep A127, which turned A99's pins around): the firmware
+  // erases its networks, and the erase reaches the page's copy of the flash
+  // the bench restarts the twin from, so the title says the erase lasts and
+  // the twin comes back into its setup portal (bench_probe holds it past
+  // 10 s and waits for the portal's serial line). Should an erase stop
+  // reaching that copy, or a preserved boot seed an erased network back,
+  // this fails first.
+  assert.match(app, /held 10 s the firmware erases its saved networks and screen settings \(the identity stays\) and " \+\n\s*"restarts, and the erase lasts: this bench restarts it from the page's copy of its flash, which the erase " \+\n\s*"reached, so it comes back without a network and raises its setup portal, as a board does\."/,
+    "the press's title says a factory reset lasts across the bench's restart");
+  assert.ok(!app.includes("which no erase reaches"), "no copy says the bench undoes the erase any more");
   const support = readFileSync(join(ROOT, "emulator/src/emu_support.cpp"), "utf8");
-  for (const fn of ["bool Preferences::remove(const char* key) {", "bool Preferences::clear() {"]) {
+  assert.match(support, /EM_JS\(void, js_nvs_remove, \(const char\* ns, const char\* key\), \{\n\s*if \(Module\.onNvsRemove\) Module\.onNvsRemove\(UTF8ToString\(ns\), UTF8ToString\(key\)\);\n\}\);/,
+    "an erase is a page call of its own, js_nvs_remove -> Module.onNvsRemove");
+  const fnBody = (fn) => {
     const at = support.indexOf(fn);
     assert.ok(at >= 0, `emu_support.cpp still defines ${fn}`);
-    const body = support.slice(at, support.indexOf("\n}\n", at));
-    assert.ok(!body.includes("js_nvs_write"), `${fn} now reaches the page's copy of the flash: the press's title must say a factory reset lasts`);
-  }
+    return support.slice(at, support.indexOf("\n}\n", at));
+  };
+  // remove(): the page hears only a key the map held (a remove of a key that
+  // never existed is not an erase), and after the map lets it go
+  assert.match(fnBody("bool Preferences::remove(const char* key) {"),
+    /\n  if \(nvs\(\)\.erase\(nvs_key\(ns_, key\)\) == 0\) return false;\n  js_nvs_remove\(ns_, key\);[^\n]*\n  return true;$/,
+    "Preferences::remove tells the page of each key it erased, and only those");
+  // clear(): each key of the namespace it erased, by its own name
+  const clear = fnBody("bool Preferences::clear() {");
+  assert.match(clear, /const std::string key = it->first\.substr\(prefix\.size\(\)\);\n\s*it = nvs\(\)\.erase\(it\);\n\s*js_nvs_remove\(ns_, key\.c_str\(\)\);/,
+    "Preferences::clear tells the page of every key it erased");
+  for (const fn of ["bool Preferences::remove(const char* key) {", "bool Preferences::clear() {"])
+    assert.ok(!fnBody(fn).includes("js_nvs_write"), `${fn} reports an erase, not a write`);
   const shellSrc = readFileSync(join(ROOT, "emulator/web/emu-shell.js"), "utf8");
+  // emu-shell: the call passes through, start() takes the erased keys, and
+  // its defaults skip each of them (the provisioned seed of the home network
+  // included), while every default the flash did not erase is seeded as
+  // before
+  assert.ok(shellSrc.includes("onNvsRemove: (ns, key) => shell.opts.onNvsRemove?.(ns, key),"), "emu-shell passes the erase to the page");
+  assert.match(shellSrc, /nvsImage = null, erased = null, rotation = null, timeScale = null \} = \{\}\) \{/, "start() takes the page's erased keys");
+  assert.ok(shellSrc.includes("this._erased = new Set(erased || []);"), "start() records them before it seeds a default");
+  assert.match(shellSrc, /\n  _nvsPut\(ns, key, str\) \{\n    if \(this\._erased\?\.has\(`\$\{ns\}\/\$\{key\}`\)\) return;\n    this\.c\.nvsPreseed\(/,
+    "a default the flash erased is not seeded again");
+  const startBody = shellSrc.slice(shellSrc.indexOf("  async start({"), shellSrc.indexOf("\n  _nvsPut(ns, key, str) {"));
+  assert.ok(startBody.indexOf("this._erased = new Set(erased || []);") < startBody.indexOf('this._nvsPut("securacv", "wifi_ssid", HOME_LAN.ssid);'),
+    "the erased keys are in place before the first default");
+  assert.strictEqual((startBody.match(/this\.c\.nvsPreseed\(/g) || []).length, 0, "every default goes through _nvsPut");
   assert.match(shellSrc, /if \(provisioned && !firstMeeting\) \{\n\s*this\._nvsPut\("securacv", "wifi_ssid", HOME_LAN\.ssid\);/,
-    "a provisioned boot seeds the home network: the press's title leans on it");
+    "a provisioned boot still seeds the home network the flash did not erase");
+  // app.js: the erase leaves the image and is marked; a later write of the
+  // key clears the mark; every preserved boot passes the marks; a fresh or
+  // "meet again" boot starts the record over
+  assert.ok(app.includes("    nvsErased: new Set(),\n"), "the sheet keeps the erased keys beside its image");
+  assert.match(app, /onNvsWrite: \(ns, key, hexVal\) => \{\n\s*ctx\.nvsImage\.set\(`\$\{ns\}\/\$\{key\}`, hexVal\);\n\s*ctx\.nvsErased\.delete\(`\$\{ns\}\/\$\{key\}`\);\n\s*\},/,
+    "a write puts the key in the image and clears its erase");
+  assert.match(app, /onNvsRemove: \(ns, key\) => \{\n\s*ctx\.nvsImage\.delete\(`\$\{ns\}\/\$\{key\}`\);\n\s*ctx\.nvsErased\.add\(`\$\{ns\}\/\$\{key\}`\);\n\s*\},/,
+    "an erase takes the key out of the image and marks it");
+  assert.ok(app.includes("    if (!opts.preserve || opts.firstMeeting) ctx.nvsErased.clear();\n"), "a fresh or meet-again boot starts the record over");
+  assert.ok(app.includes("      erased: opts.preserve ? ctx.nvsErased : null,\n"), "a preserved boot passes the erased keys");
+  assert.strictEqual((app.match(/boot\(\{ preserve: true \}\)/g) || []).length, 2,
+    "the two preserved boots (the bench's power events and the firmware's restart) go through bootInner");
   assert.ok(app.includes("booting again with its memory intact"), "the bench's reboot restores the page's copy of the flash");
   assert.ok(app.includes('window.addEventListener("blur", letGo);') && app.includes('document.addEventListener("visibilitychange", hidden);'),
     "a hand that leaves the window or the page lets go");
@@ -1244,6 +1284,71 @@ test("A99: the Lab's bench offers the press beside the strap where the firmware 
   }
   const read = BENCH_FIXES.find((f) => f.symptom === "Pressing BOOT does nothing").steps.find((st) => st.boot === "read");
   assert.match(read.body, /the press control beside it presses the twin's button while the app runs/, "the read story points to the press");
+});
+
+// Sweep A127: the bench restarts the twin from the page's copy of its flash,
+// and an erase now reaches that copy (emu_support.cpp's js_nvs_remove ->
+// Module.onNvsRemove). start() is handed the keys the page heard erased and
+// seeds none of them back as a default, and every default the flash did not
+// erase exactly as before. Before A127 start() took no erased keys and seeded
+// the home network on every provisioned boot, so a factory reset came back
+// on it.
+test("A127: start() seeds no default the flash erased, every one it did not, and passes the erase to the page", async () => {
+  const { CanaryEmulator, HOME_LAN } = await import("../emulator/web/emu-shell.js");
+  const boot = async (opts, page = {}) => {
+    const seeded = [];
+    const factory = async (imports) => ({
+      ...imports,
+      cwrap: (name) => (...args) => {
+        if (name === "emu_nvs_preseed_hex") seeded.push(`${args[0]}/${args[1]}=${Buffer.from(args[2], "hex").toString()}`);
+        return 0;
+      },
+      HEAPU8: new Uint8Array(16),
+      UTF8ToString: () => "[]",
+    });
+    const canvas = { getContext: () => ({}), addEventListener: () => {} };
+    const emu = new CanaryEmulator(factory, { canvas, ...page });
+    await emu.start(opts);
+    return { seeded, emu };
+  };
+  const DEFAULTS = [
+    `securacv/wifi_ssid=${HOME_LAN.ssid}`, `securacv/wifi_pass=${HOME_LAN.pass}`,
+    "securacv/mqtt_host=hub.local", "securacv/mqtt_user=fleet", "securacv/mqtt_pass=fleet", "scv-hello/met=\x01",
+  ];
+  // no erase heard: every default, as before A127 (and an erased list that
+  // is empty, or absent, is the same boot)
+  assert.deepStrictEqual((await boot({ provisioned: true })).seeded, DEFAULTS);
+  assert.deepStrictEqual((await boot({ provisioned: true, erased: new Set() })).seeded, DEFAULTS);
+  // the factory reset's erase (runtime_config.cpp's forget_wifi_credentials):
+  // the network stays gone, the broker and the remembered hello are seeded
+  const FORGOT = ["securacv/wifi_ssid", "securacv/wifi_pass", "securacv/wifi_nets", "securacv/ap_pass"];
+  const reset = await boot({ provisioned: true, erased: new Set(FORGOT) });
+  assert.deepStrictEqual(reset.seeded, DEFAULTS.slice(2), "an erased network is not seeded back; every other default is");
+  // ...an array serves as well, and the image still lands over the defaults
+  const img = new Map([["securacv/wifi_nets", Buffer.from("ring").toString("hex")], ["scv-glass/s", Buffer.from("blob").toString("hex")]]);
+  assert.deepStrictEqual((await boot({ provisioned: true, erased: ["securacv/mqtt_host"], nvsImage: img })).seeded,
+    [...DEFAULTS.filter((d) => !d.startsWith("securacv/mqtt_host=")), "securacv/wifi_nets=ring", "scv-glass/s=blob"],
+    "one erased default is the only one skipped, and the image is restored after the defaults");
+  // a first meeting seeds neither the network nor the hello, erased or not
+  assert.deepStrictEqual((await boot({ provisioned: true, firstMeeting: true, erased: new Set(FORGOT) })).seeded, DEFAULTS.slice(2, 5));
+  // a later start without the list is not haunted by the earlier one's
+  {
+    const { emu } = reset;
+    const again = [];
+    emu.factory = async (imports) => ({ ...imports, cwrap: (name) => (...a) => { if (name === "emu_nvs_preseed_hex") again.push(`${a[0]}/${a[1]}`); return 0; }, HEAPU8: new Uint8Array(16), UTF8ToString: () => "[]" });
+    await emu.start({ provisioned: true });
+    assert.deepStrictEqual(again, DEFAULTS.map((d) => d.split("=")[0]), "a start without erased keys seeds every default");
+  }
+  // the module's erase reaches the page's handler, by name; with no handler
+  // (a page that never asked) it is a no-op, and a dist that never calls it
+  // changes nothing above
+  const heard = [];
+  const { emu } = await boot({}, { onNvsRemove: (ns, key) => heard.push(`${ns}/${key}`) });
+  assert.strictEqual(typeof emu.module.onNvsRemove, "function", "the shell hands the module an onNvsRemove import");
+  emu.module.onNvsRemove("securacv", "wifi_nets");
+  assert.deepStrictEqual(heard, ["securacv/wifi_nets"]);
+  const quiet = await boot({});
+  assert.doesNotThrow(() => quiet.emu.module.onNvsRemove("securacv", "ap_pass"));
 });
 
 // Sweep A101: the Nightlight's ESP32-C3 has no download-mode banner the Lab
