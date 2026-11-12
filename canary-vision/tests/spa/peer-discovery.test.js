@@ -503,8 +503,8 @@ describe('a device stored under a refused IP', () => {
   }
 
   for (const [view, open, id] of [
-    ['config (network)', (app) => app.renderConfigView('canary-9999', 'network'), 'config-form'],
-    ['config (integrations)', (app) => app.renderConfigView('canary-9999', 'integrations'), 'config-form'],
+    ...['network', 'privacy', 'detection', 'integrations'].map((section) =>
+      ['config (' + section + ')', (app) => app.renderConfigView('canary-9999', section), 'config-form']),
     ['logs', (app) => app.renderLogsView('canary-9999'), 'log-list'],
     ['witness', (app) => app.renderWitnessView('canary-9999'), 'witness-records'],
   ]) {
