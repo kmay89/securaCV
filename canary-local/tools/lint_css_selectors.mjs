@@ -15,8 +15,13 @@
 // USED: written as a whole token in a page
 // (canary-local/*.html) or a first-party script
 // (canary-local/assets/*.js, *.mjs). Those are the only files that put a
-// class or id on an element the stylesheets reach; nested pages
-// (voice/, witness/, the emulator harness) load stylesheets of their own.
+// class or id on an element the stylesheets reach. The Canary Voice sound
+// board is a scope of its own: voice/voice.css is held to the one page and the
+// one script that use it (voice/index.html, voice/voice.js; voice-data.js is
+// the generated score, which names no element), so a name only the Lab's
+// other pages write cannot keep a dead board rule alive. The other nested
+// documents (witness/, vendored from the website; the emulator harness) style
+// themselves inline or in the emulator's own tree.
 //
 // The stylesheet is read in ONE pass that knows strings (with their backslash
 // escapes) and comments, so a quote inside a comment or a comment opener
@@ -53,6 +58,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LAB = join(HERE, '..');
 const ASSETS = join(LAB, 'assets');
+const VOICE = join(LAB, 'voice');
 
 // Built at run time from data the scripts transform, so the suffix is in no
 // page or script. Each entry: the selector name, and where it is built.
@@ -331,12 +337,23 @@ function main(argv) {
   ];
   const consumers = consumerFiles.map((f) => readFileSync(f, 'utf8')).join('\n');
   const { errors, names } = verdict(sheets, consumers);
+  // The sound board's own scope, with no ALLOW entries of its own (an entry
+  // above names an assets/ selector, and would read as stale here).
+  const voiceSheets = readdirSync(VOICE).filter((f) => f.endsWith('.css')).sort()
+    .map((f) => ({ file: `canary-local/voice/${f}`, text: readFileSync(join(VOICE, f), 'utf8') }));
+  const voiceUsers = readdirSync(VOICE)
+    .filter((f) => f.endsWith('.html') || (/\.m?js$/.test(f) && f !== 'voice-data.js')).sort();
+  const voice = verdict(voiceSheets,
+    voiceUsers.map((f) => readFileSync(join(VOICE, f), 'utf8')).join('\n'), new Map());
+  errors.push(...voice.errors);
   if (errors.length) {
     console.error(errors.join('\n'));
     return 1;
   }
   console.log(`unused CSS OK — ${names} class/id names in ${sheets.length} stylesheets, each named `
-    + `by one of ${consumerFiles.length} pages and scripts (${ALLOW.size} built from data, allowed)`);
+    + `by one of ${consumerFiles.length} pages and scripts (${ALLOW.size} built from data, allowed); `
+    + `the sound board's ${voice.names} in ${voiceSheets.length} stylesheet, each named by `
+    + `${voiceUsers.join(' or ')}`);
   return 0;
 }
 

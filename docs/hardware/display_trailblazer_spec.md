@@ -159,8 +159,8 @@ unencumbered, and provably *not* confusable with a regulated life-safety
 cadence (fire T3 / CO T4) — the audit and its CI-checked guard live in
 [`display_sound_clearance.md`](./display_sound_clearance.md). You can *hear*
 the whole palette before the piezo pad exists in the browser preview
-(`canary-local/voice/`), which is **generated from `voice_score.h`** and
-CI-gated so it can never drift from the firmware.
+(`canary-local/voice/`), which plays data **generated from `voice_score.h`**
+(`voice/voice-data.js`), CI-gated so it can never drift from the firmware.
 
 ---
 
