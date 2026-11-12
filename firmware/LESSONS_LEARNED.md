@@ -3049,9 +3049,10 @@
 - **Regression check:** `firmware/tests_host/test_improv_core.cpp`
   (`a_hub_write_from_another_link_is_refused_in_both_join_states`,
   `the_link_generation_cannot_come_round_to_the_join`). The glue's stamp
-  (`link_of()` in `improv_ble.cpp`) was proved only by scratch harnesses; a
-  committed one is open (backlog F472), and the `magic_pairing.md` §9 row
-  is unrun.
+  (`link_of()` in `improv_ble.cpp`) is held on the host by
+  `firmware/tests_host/test_improv_glue.cpp` (`race`, `wrap` and `beside`,
+  both NimBLE majors, over stand-ins); on the radio it is the
+  `magic_pairing.md` §9 row, which is unrun.
 - **Date learned:** 2026-11
 
 ---

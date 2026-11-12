@@ -1326,7 +1326,8 @@ hand-off (§3.6).
       that sent the Wi-Fi settings`, the byte reads `2`, and the unit keeps
       the broker it had. The gate is host-tested (`test_improv_core.cpp`);
       the stamp each write carries (`link_of()` in `improv_ble.cpp`) is the
-      glue's and is what this row proves.
+      glue's, host-tested over stand-ins (`test_improv_glue.cpp`'s `race`,
+      `wrap` and `beside`), and on a real radio is what this row proves.
 - [ ] A refused document keeps nothing: on the provisioning link after a
       join, one per join, write a duplicate key
       (`{"host":"a.local","host":"b.local"}`), a password holding `\n`, a
@@ -1341,8 +1342,10 @@ hand-off (§3.6).
       each reads `2`; the unit keeps the broker it had before the write
       (or none). The wipe of the record is host-tested
       (`test_hub_handoff.cpp`); the mailbox's and the attribute's
-      (`handle_hub()`, `HubCb::scrub()` in `improv_ble.cpp`) are the glue's
-      and not host-tested; the bench sees that nothing was kept.
+      (`handle_hub()`, `HubCb::scrub()` in `improv_ble.cpp`) are the glue's:
+      `test_improv_glue.cpp` holds that a read answers the status byte and
+      never the document, over stand-ins, not that the bytes are gone from
+      the stack's memory; the bench sees that nothing was kept.
 - [ ] A unit already talking to a broker (seeded by the Flasher) that takes
       a different hub through a tap and the iPhone's card: the card says it
       reports to the new hub (the byte read `1`), and the unit ends up
@@ -1494,7 +1497,7 @@ hand-off (§3.6).
 | What | Where | Tested by |
 |---|---|---|
 | The wire, the session, the rules (pure) | [`firmware/common/network/improv_core.h`](../../firmware/common/network/improv_core.h) | `firmware/tests_host/test_improv_core.cpp` |
-| The NimBLE glue, both majors (Sense, Vision) | [`firmware/common/network/improv_ble.h`](../../firmware/common/network/improv_ble.h), `improv_ble.cpp` | CI-compiled; bench |
+| The NimBLE glue, both majors (Sense, Vision) | [`firmware/common/network/improv_ble.h`](../../firmware/common/network/improv_ble.h), `improv_ble.cpp` | `firmware/tests_host/test_improv_glue.cpp` (both majors, over stand-ins); CI-compiled; bench |
 | The short BOOT tap (pure) | [`firmware/common/io/short_tap.h`](../../firmware/common/io/short_tap.h) | `firmware/tests_host/test_short_tap.cpp` |
 | The claim ticket (pure) | [`firmware/common/network/claim_ticket.h`](../../firmware/common/network/claim_ticket.h) | `firmware/tests_host/test_claim_ticket.cpp` |
 | The hub hand-off's document and status byte (pure) | [`firmware/common/network/hub_handoff.h`](../../firmware/common/network/hub_handoff.h) | `firmware/tests_host/test_hub_handoff.cpp` |

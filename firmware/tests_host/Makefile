@@ -220,10 +220,31 @@ PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 # session — the door that is open exactly while the device has no working
 # Wi-Fi of its own, a tap that opens it for a minute, the join timeout, and
 # which advert is on air in each state. The NimBLE glue (improv_ble.cpp) is
-# compiled by the family envs; the iOS twin is pinned to the same vectors in
-# ImprovWireTests.swift.
+# compiled by the family envs and driven here by test_improv_glue.cpp (below);
+# the iOS twin is pinned to the same vectors in ImprovWireTests.swift.
 IMPROV_HDR = ../common/network/improv_core.h
 IMPROV_BIN = $(BUILD_DIR)/test_improv_core
+
+# The Sense and Vision Improv glue (common/network/improv_ble.cpp, sweep
+# F472), compiled unedited over the NimBLE / Arduino / WiFi / esp stand-ins
+# in stubs/improv_glue/ for both NimBLE majors the families build (2.x on
+# core 3.3.8 for ESP_ARDUINO_VERSION_MAJOR 3, 1.4.x on core 2.0.17 for 2)
+# and driven as the radio drives it: the host task's write stamp and
+# mailboxes, the 32-bit connect generation, link_of()'s handle check, the
+# hub hand-off's gate and the board's store verdict, the Wi-Fi settings
+# verdict's words and the portal's join verdicts, the unencrypted and
+# malformed-write refusals, the network scan's stream under each core's scan
+# rules, the glue's own link drops, the first-boot window across each reset
+# reason, and the refused GATT start. Every scenario runs in its own process
+# (the glue's state is file-static and begin() runs once a boot; `reset`
+# forks one per boot it plays); the recipe first holds each binary's --list
+# to IMPROVGLUE_SCENARIOS, so a scenario added on one side only fails the
+# build.
+IMPROVGLUE_SRC       = ../common/network/improv_ble.cpp
+IMPROVGLUE_BIN       = $(BUILD_DIR)/test_improv_glue
+IMPROVGLUE_BINS      = $(IMPROVGLUE_BIN)_core3 $(IMPROVGLUE_BIN)_core2
+IMPROVGLUE_SCENARIOS = drop nodrop race secondwifi wrap beside portalrefused joinfail storerefused \
+                       unencrypted commands scan linger reset companion startfail init
 
 # The claim ticket (common/network/claim_ticket.h): how a phone that handed
 # a WAP its Wi-Fi over the Bluetooth setup door is paired without the bearer
@@ -257,7 +278,8 @@ AUTHBACKOFF_BIN = $(BUILD_DIR)/test_auth_backoff
 # five keys, each once; a DNS name or IPv4 literal; a plain integer port; user
 # and pass together, 64 bytes each; the three escapes a password can need and
 # no other; 240 bytes at most), every refusal wiping the record, and the one
-# status byte the phone reads back. The NimBLE glue is improv_ble.cpp's.
+# status byte the phone reads back. The NimBLE glue is improv_ble.cpp's
+# (test_improv_glue.cpp drives it).
 HUBHO_HDR = ../common/network/hub_handoff.h
 HUBHO_BIN = $(BUILD_DIR)/test_hub_handoff
 
@@ -1360,6 +1382,25 @@ $(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) $(P
 
 $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_improv_core.cpp
+
+$(IMPROVGLUE_BIN)_core3: IMPROVGLUE_MAJOR = 3
+$(IMPROVGLUE_BIN)_core2: IMPROVGLUE_MAJOR = 2
+$(IMPROVGLUE_BINS): test_improv_glue.cpp $(IMPROVGLUE_SRC) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DFEATURE_IMPROV=1 -DESP_ARDUINO_VERSION_MAJOR=$(IMPROVGLUE_MAJOR) \
+	    -I stubs/improv_glue -I ../common test_improv_glue.cpp $(IMPROVGLUE_SRC) -o $@)
+
+# Each binary's scenario list must be this file's; then each scenario runs
+# alone, and one that fails, crashes or trips a sanitizer stops make, named.
+.PHONY: run-improv-glue
+run-improv-glue: $(IMPROVGLUE_BINS)
+	@for b in $(IMPROVGLUE_BINS); do \
+	  test "$$(./$$b --list)" = "$(IMPROVGLUE_SCENARIOS)" || \
+	    { echo "$$b --list: '$$(./$$b --list)'; the Makefile runs '$(IMPROVGLUE_SCENARIOS)'" >&2; exit 1; }; \
+	done
+	@for b in $(IMPROVGLUE_BINS); do for s in $(IMPROVGLUE_SCENARIOS); do \
+	  ./$$b $$s || { echo "$$b $$s: exit $$?" >&2; exit 1; }; \
+	done; done
+run: run-improv-glue
 
 $(CLAIM_BIN): test_claim_ticket.cpp $(CLAIM_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_claim_ticket.cpp
