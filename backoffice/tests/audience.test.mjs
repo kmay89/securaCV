@@ -79,8 +79,10 @@ test('automations: enrolled once per thing, sent after the delay, skipped withou
   const db = testDb(); const cfg = testCfg(); const cat = catalog(); const now = Date.now();
   seedAutomations(db); assert.equal(listAutomations(db).length, 3);
   const a = optIn(db, 'a@example.test', 'Ada Lovelace'); upsertContact(db, { email: 'n@example.test', name: 'No Consent' });
-  const o = recordOrder(db, sampleOrder({ email: 'a@example.test' }), { catalog: cat }).order; transition(db, o.id, 'packed'); transition(db, o.id, 'shipped', { cfg }); transition(db, o.id, 'delivered');
-  const o2 = recordOrder(db, sampleOrder({ external_id: 'cs_n', email: 'n@example.test' }), { catalog: cat }).order; transition(db, o2.id, 'packed'); transition(db, o2.id, 'shipped', { cfg }); transition(db, o2.id, 'delivered');
+  // paid on this test's clock, like the opt-in and the deliveries: a fixed paid_at would turn idle 180 days after it and enroll one more
+  const paid_at = new Date(now).toISOString();
+  const o = recordOrder(db, sampleOrder({ email: 'a@example.test', paid_at }), { catalog: cat }).order; transition(db, o.id, 'packed'); transition(db, o.id, 'shipped', { cfg }); transition(db, o.id, 'delivered');
+  const o2 = recordOrder(db, sampleOrder({ external_id: 'cs_n', email: 'n@example.test', paid_at }), { catalog: cat }).order; transition(db, o2.id, 'packed'); transition(db, o2.id, 'shipped', { cfg }); transition(db, o2.id, 'delivered');
   let r = runAutomations(db, cfg, { now }); assert.equal(r.enrolled, 3, 'welcome for the opt-in, settled-in for both deliveries'); assert.equal(r.sent, 0, 'the delays have not passed');
   r = runAutomations(db, cfg, { now }); assert.equal(r.enrolled, 0, 'enrollment is idempotent');
   r = runAutomations(db, cfg, { now: now + 2 * 3600000 }); assert.equal(r.sent, 1, 'the welcome, an hour later');

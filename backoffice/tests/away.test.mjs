@@ -83,11 +83,11 @@ test('the store follows it: the catalog, the estimate, the Checkout Session Stri
   assert.equal(orderPromise(db.get('SELECT * FROM orders WHERE external_id = ?', 'cs_test_away1'), cfg).ship_on, '2026-11-10', 'the promise is stored on the order, not recomputed');
   assert.equal(sessionStatus(db, cfg, 'cs_test_away1', { now: NOW }).ships.ships_on, '2026-11-10', 'the thanks page repeats the stored promise, not the cadence of the moment');
   // a session opened while away whose webhook lands after "I'm back" keeps the date the shopper saw (metadata.ships_on); the reverse too
-  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away2', line_items_present: true, ships_on: '2026-11-10' }) });
+  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away2', line_items_present: true, ships_on: '2026-11-10' }) }, null, { now: NOW });
   const o2 = db.get('SELECT * FROM orders WHERE external_id = ?', 'cs_test_away2'); assert.equal(o2.promised_ship_on, '2026-11-10');
   assert.match(db.get("SELECT body_text FROM mail_outbox WHERE ref = ? ORDER BY id DESC LIMIT 1", `order:${o2.number}`).body_text, /Tue, Nov 10/);
   setAway(db, { until: '2026-11-02' }, { cfg, now: NOW.getTime() });
-  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away3', line_items_present: true, ships_on: '2026-10-27' }) });
+  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away3', line_items_present: true, ships_on: '2026-10-27' }) }, null, { now: NOW });
   assert.equal(db.get('SELECT promised_ship_on FROM orders WHERE external_id = ?', 'cs_test_away3').promised_ship_on, '2026-10-27', 'a purchase made before the trip is not postponed by it');
   await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away4', line_items_present: true, ships_on: 'next week' }) }, null, { now: NOW });
   assert.equal(db.get('SELECT promised_ship_on FROM orders WHERE external_id = ?', 'cs_test_away4').promised_ship_on, '2026-11-10', 'no usable date from the session (a Payment Link): the cadence of now, away included');
