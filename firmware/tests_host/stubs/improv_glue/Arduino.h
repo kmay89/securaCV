@@ -1,8 +1,8 @@
 #pragma once
-// Arduino-ESP32 stand-in for the Improv glue host test (test_improv_glue.cpp
-// over firmware/common/network/improv_ble.cpp): only the surface it reaches,
-// in the core's shape (cores/esp32 WString.h and Print.h, the same in 2.0.17
-// and 3.x).
+// Arduino-ESP32 stand-in for the Improv glue host tests (test_improv_glue.cpp
+// over firmware/common/network/improv_ble.cpp, test_ble_improv_command_wap.cpp
+// over the WAP's health_log.h): only the surface those reach, in the core's
+// shape (cores/esp32 WString.h and Print.h, the same in 2.0.17 and 3.x).
 // Serial keeps every line it is handed, so a test reads the glue's words.
 #include <cstdarg>
 #include <cstddef>

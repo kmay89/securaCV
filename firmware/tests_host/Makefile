@@ -246,6 +246,22 @@ IMPROVGLUE_BINS      = $(IMPROVGLUE_BIN)_core3 $(IMPROVGLUE_BIN)_core2
 IMPROVGLUE_SCENARIOS = drop nodrop race secondwifi wrap beside portalrefused joinfail storerefused \
                        unencrypted commands scan linger reset companion startfail init
 
+# canary-wap's own Improv door glue (projects/canary-wap/arduino/canary_wap/
+# ble_improv.cpp, sweep F471): handle_command() and the two helpers it calls
+# (same_addr(), note_link_wrote()) cut verbatim by cut_functions.awk, so the
+# file's NimBLE half never compiles, over the sketch's staged improv_core.h
+# and its health_log.h, and stand-ins for the mailbox statics,
+# publish_error() / publish_state(), log_health() and the sketch's bridges.
+# It holds the rule test_improv_glue.cpp's secondwifi holds on the common
+# glue: the WIFI_SETTINGS line's level and words are the write's verdict, so
+# a second write refused mid-join logs WARNING "refused" (and counts in
+# s_refused), never INFO "accepted, joining".
+BLEIMPW_DIR  = ../projects/canary-wap/arduino/canary_wap
+BLEIMPW_SRC  = $(BLEIMPW_DIR)/ble_improv.cpp
+BLEIMPW_SIGS = bool same_addr(const ble_addr_t& a, const ble_addr_t& b) {|void note_link_wrote(uint16_t conn, const ble_addr_t& addr, uint32_t now_ms) {|void handle_command(uint32_t now_ms) {
+BLEIMPW_INC  = $(BUILD_DIR)/ble_improv_command_wap.inc
+BLEIMPW_BIN  = $(BUILD_DIR)/test_ble_improv_command_wap
+
 # The claim ticket (common/network/claim_ticket.h): how a phone that handed
 # a WAP its Wi-Fi over the Bluetooth setup door is paired without the bearer
 # token ever riding Bluetooth — 16 random bytes minted on join success, read
@@ -1401,6 +1417,18 @@ run-improv-glue: $(IMPROVGLUE_BINS)
 	  ./$$b $$s || { echo "$$b $$s: exit $$?" >&2; exit 1; }; \
 	done; done
 run: run-improv-glue
+
+$(BLEIMPW_INC): $(BLEIMPW_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(BLEIMPW_SIGS)' -f cut_functions.awk $(BLEIMPW_SRC) > $@.tmp && mv $@.tmp $@
+
+$(BLEIMPW_BIN): test_ble_improv_command_wap.cpp $(BLEIMPW_INC) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/improv_glue -I $(BLEIMPW_DIR) \
+	    -DBLEIMPW_INC='"$(abspath $(BLEIMPW_INC))"' test_ble_improv_command_wap.cpp -o $@
+
+.PHONY: run-ble-improv-command-wap
+run-ble-improv-command-wap: $(BLEIMPW_BIN)
+	./$(BLEIMPW_BIN)
+run: run-ble-improv-command-wap
 
 $(CLAIM_BIN): test_claim_ticket.cpp $(CLAIM_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_claim_ticket.cpp
