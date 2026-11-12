@@ -44,10 +44,10 @@ uint32_t micros(void);
 
 // ── GPIO: the BOOT/user button, and nothing else ────────────────────────
 // The display firmware reads exactly one digital input (io/boot_button.h:
-// tap = peek, double = lantern, hold = acknowledge). A browser has no
-// button, so JS pushes the level in through emu_button(), the same way
-// pointer events push touch — and digitalRead idles HIGH (released),
-// since BOOT_BUTTON_ACTIVE is LOW on every board that carries one.
+// tap = peek, hold = acknowledge, double = lantern with FEATURE_LANTERN).
+// A browser has no button, so JS pushes the level in through emu_button(),
+// the same way pointer events push touch — and digitalRead idles HIGH
+// (released), since BOOT_BUTTON_ACTIVE is LOW on every board that has one.
 #define LOW           0x0
 #define HIGH          0x1
 #define INPUT         0x01

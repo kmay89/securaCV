@@ -1286,6 +1286,68 @@ test("A99: the Lab's bench offers the press beside the strap where the firmware 
   assert.match(read.body, /the press control beside it presses the twin's button while the app runs/, "the read story points to the press");
 });
 
+// Sweep F413: main.cpp's boot log names the BOOT gestures, and the double
+// press is the lantern's: main.cpp's Double case does nothing without
+// FEATURE_LANTERN, which the watch does not set, so the watch's line offered
+// a gesture its button ignores. Every Button line that names the lantern now
+// sits under FEATURE_LANTERN, beside a line for the glass without one. The
+// walk below follows main.cpp's own #if nesting: a string is under the
+// lantern only inside the true branch of an #if that tests FEATURE_LANTERN.
+// bench_probe.mjs reads the watch twin's line itself once the dist is
+// rebuilt.
+test("F413: a Button boot line names the lantern only where FEATURE_LANTERN builds it", () => {
+  const mainCpp = readFileSync(join(ROOT, "..", "firmware/projects/canary-display/src/main.cpp"), "utf8");
+  const lines = mainCpp.split("\n");
+  const stack = [];   // { cond, elseBranch }
+  const found = [];   // { text, lantern: under the lantern's true branch, button: under BOOT_BUTTON_PIN }
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    let m;
+    if ((m = /^#\s*(if|ifdef|ifndef)\b(.*)$/.exec(l))) { stack.push({ cond: `${m[1]} ${m[2].trim()}`, elseBranch: false }); continue; }
+    if (/^#\s*elif\b/.test(l)) { stack[stack.length - 1] = { cond: l.replace(/^#\s*elif\s*/, "if "), elseBranch: false }; continue; }
+    if (/^#\s*else\b/.test(l)) { stack[stack.length - 1].elseBranch = true; continue; }
+    if (/^#\s*endif\b/.test(l)) { stack.pop(); continue; }
+    if (!l.startsWith('boot_kv("Button"')) continue;
+    let call = l;
+    while (!/\);\s*$/.test(call) && i + 1 < lines.length) call += " " + lines[++i].trim();
+    const text = [...call.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1]).slice(1).join("");
+    const holds = (re) => stack.some((f) => re.test(f.cond) && !/!\s*defined/.test(f.cond) && !f.elseBranch);
+    found.push({ text, lantern: holds(/^if defined\(FEATURE_LANTERN\) && FEATURE_LANTERN$/), button: holds(/BOOT_BUTTON_PIN/) });
+  }
+  assert.ok(found.length > 0, "main.cpp's Button boot lines were found");
+  for (const f of found) {
+    assert.ok(f.button, `a Button line outside the BOOT_BUTTON_PIN gate: ${f.text}`);
+    if (/lantern/.test(f.text)) assert.ok(f.lantern, `a Button line offers the lantern on a glass built without it: ${f.text}`);
+    else assert.ok(!f.lantern, `a Button line under the lantern does not name it: ${f.text}`);
+  }
+  assert.strictEqual(found.length, 4, `main.cpp's Button boot lines: ${JSON.stringify(found.map((f) => f.text))}`);
+  const texts = found.map((f) => f.text);
+  assert.deepStrictEqual(texts.filter((t) => !/lantern/.test(t)).sort(), [
+    "BOOT: tap = peek, hold = acknowledge, keep holding 10 s = factory reset (identity kept)",
+    "BOOT: tap = peek, hold = acknowledge, keep holding 5 s = pair demo, 10 s = factory reset (identity kept)",
+  ], "the glass without a lantern is offered tap, hold and the reset hold (and the pair demo where it is built)");
+  assert.deepStrictEqual(texts.filter((t) => /lantern/.test(t)).sort(), [
+    "BOOT: tap = peek, double = lantern, hold = acknowledge, keep holding 10 s = factory reset (identity kept)",
+    "BOOT: tap = peek, double = lantern, hold = acknowledge, keep holding 5 s = pair demo, 10 s = factory reset (identity kept)",
+  ], "a lantern glass's line is unchanged");
+  // ...because the double press is the lantern's alone
+  const dbl = /case canary::io::ButtonEvent::Double: \{\n#if defined\(FEATURE_LANTERN\) && FEATURE_LANTERN\n[\s\S]*?\n#endif\n\s*break;\n\s*\}/.exec(mainCpp);
+  assert.ok(dbl, "main.cpp's Double case answers only under FEATURE_LANTERN");
+  // the watch builds no lantern, and its pin map carries BOOT: its twin prints
+  // the line without one; every other BOOT glass builds the lantern
+  const cfg = (f) => readFileSync(join(ROOT, "..", `firmware/configs/canary-display/${f}/config.h`), "utf8");
+  assert.ok(!/^#define FEATURE_LANTERN\b/m.test(cfg("watch")), "the watch's config builds no lantern");
+  for (const f of ["nightlight", "nightstand", "touch169", "amoled241"])
+    assert.match(cfg(f), /^#define FEATURE_LANTERN\s+1\b/m, `${f} builds the lantern`);
+  // the reset line bench_probe.mjs pins is unchanged: the display keeps its
+  // device id, pseudonym salt and pins, and holds no witness key
+  assert.ok(mainCpp.includes('boot_line("[input] BOOT held 10 s -> factory reset (credentials + settings, identity kept)");'));
+  assert.ok(!mainCpp.includes("the witness identity stays"), "the 10 s hold's comment no longer says a display keeps a witness identity");
+  assert.ok(mainCpp.includes("A\n    // display holds no witness key of its own"), "...it says a display holds none");
+  const support = readFileSync(join(ROOT, "emulator/src/emu_support.cpp"), "utf8");
+  assert.ok(!support.includes("tap = peek, double = lantern, hold = acknowledge"), "emu_support.cpp no longer offers every twin the lantern");
+});
+
 // Sweep A127: the bench restarts the twin from the page's copy of its flash,
 // and an erase now reaches that copy (emu_support.cpp's js_nvs_remove ->
 // Module.onNvsRemove). start() is handed the keys the page heard erased and

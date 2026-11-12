@@ -81,7 +81,9 @@ uint32_t micros(void) { return millis() * 1000u; }
 
 // ── GPIO: the BOOT/user button ───────────────────────────────────────────
 // The only digital input the display firmware reads (io/boot_button.h —
-// tap = peek, double = lantern, hold = acknowledge). A browser has no
+// tap = peek, hold = acknowledge, and a double press for the lantern on a
+// glass built with FEATURE_LANTERN; the watch has none, and main.cpp's
+// boot line offers it only where it answers). A browser has no
 // button, so the level is pushed in by JS through emu_button() below, the
 // same way pointer events push touch. Released is the honest resting
 // state: BOOT_BUTTON_ACTIVE is LOW on every board that carries one, so

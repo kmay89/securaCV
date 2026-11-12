@@ -237,6 +237,17 @@ await openTab("Wire");
 await waitSerial("The canary is singing");
 if (!(await serial()).includes("ESP-ROM:esp32s3-20210327"))
   await fail("power-on ROM banner missing before the app's own boot log");
+// The boot log's Button line names the gestures this glass's BOOT answers
+// (sweep F413): the watch builds no lantern, so its line offers no double
+// press for one. On a dist built before F413 this fails by construction: that
+// watch twin printed "double = lantern" for a press its firmware ignores.
+const buttonLine = async () => (await serial()).split("\n").find((l) => /^\s*Button\s+BOOT:/.test(l)) || "";
+{
+  const line = await buttonLine();
+  if (!line.includes("BOOT: tap = peek, hold = acknowledge, keep holding 10 s = factory reset (identity kept)") || /lantern/.test(line))
+    await fail(`the watch's Button boot line should offer tap, hold and the reset hold, and no lantern: ${JSON.stringify(line)}`);
+  console.log(`bench_probe: the watch's boot log offers ${JSON.stringify(line.trim())}`);
+}
 
 // ── The Bench tab: lights on, app running ───────────────────────────────
 await openTab("Bench");
@@ -634,6 +645,10 @@ await openTab("Wire");
 const nlBoots0 = await sings();
 await waitSerial("The canary is singing");
 await waitSerial("backlight duty capped at 50%");   // the firmware's own boot line, on the twin
+// ...and the Nightlight builds the lantern, so its Button line offers the
+// double press (F413's other branch, on any dist)
+if (!(await buttonLine()).includes("BOOT: tap = peek, double = lantern, hold = acknowledge"))
+  await fail(`the Nightlight's Button boot line should offer the lantern: ${JSON.stringify(await buttonLine())}`);
 if (!(await serial()).includes("ESP-ROM:esp32c3-api1-20210207\nBuild:Feb  7 2021\nrst:0x1 (POWERON)"))
   await fail("the Nightlight's power-on banner is not the ESP32-C3's");
 await openTab("Try it");
