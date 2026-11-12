@@ -33,7 +33,7 @@ companion page `FAULT_MODEL.md`; the roll-call wire contract is
 
 | View | Where | How an id gets in | How it leaves | Authenticated? |
 |---|---|---|---|---|
-| Hub roll-call (`GET /api/fleet`) | `src/fleet_peers.rs`, fed by `event_mqtt_bridge --fleet-peers-path` | any id seen on `securacv/+/{availability,status,health,chain,state,meta}` | at the cap (64), the never-proven then least-recently-heard id is displaced; an unpinned id is forgotten after 30 days; a pinned id never expires by the clock | the `chain` publish is signature-checked against a TOFU pin; everything else is not |
+| Hub roll-call (`GET /api/fleet`) | `src/fleet_peers.rs`, fed by `event_mqtt_bridge --fleet-peers-path` | any id seen on `securacv/+/{availability,status,health,chain,state,meta}` | at the cap (64), the never-proven then least-recently-heard id is displaced, its pin and verified chain length kept in a ledger of 256 displaced ids and restored when it is heard again (let go only after 256 later displacements of pinned ids); an unpinned id is forgotten after 30 days; a pinned id never expires by the clock | the `chain` publish is signature-checked against a TOFU pin; everything else is not |
 | Display glass | `canary-display/.../fleet_model.h` | any MQTT traffic, an mDNS `_securacv._tcp` advert, or a BLE/ESP-NOW/UDP beacon | `stale` after 180 s of silence, `lost` after 600 s (raises an alert) | no: "any traffic proves liveness", and the mDNS input is commented `UNAUTHENTICATED LAN input` |
 | Device roster | `firmware/common/fleet_link/fleet_roster.h` | a beacon carrying a 16-bit fingerprint suffix | not heard for 120 s (16 entries) | no: the beacon has no signature, nonce or timestamp, and the header says "never a verified trust claim" |
 | Opera (WAP household mesh) | `canary-wap/.../mesh_network.{h,cpp}` | pairing (pubkey pinned) | stale at 90 s, offline at 300 s, 16 peers | yes: per-message Ed25519 and a per-peer monotonic counter |
@@ -227,7 +227,7 @@ has not been measured.
 
 | Claim | Test or gate |
 |---|---|
-| Roll-call: replay bounded to one window; second signing key is sticky; cap eviction order; clock-jump pass skipped; retained never advances presence | `src/fleet_peers.rs` unit tests |
+| Roll-call: replay bounded to one window per missed advance while the verified length is held; second signing key is sticky; cap eviction order; a displaced id keeps its pin, length and conflict until 256 later displacements; clock-jump pass skipped; retained never advances presence | `src/fleet_peers.rs` unit tests |
 | Wire shape of `GET /api/fleet`; silence is not absence | `src/api/mod.rs` fleet tests; `fleet_contract_vectors.json` (replayed by the Wall's `parseFleet`) |
 | Display deadlines and beacon model | `test_fleet_beacon_model`, `test_espnow_peer`, `test_beacon_parse` (display host tests) |
 | Device roster expiry | `firmware/common/fleet_link` host tests |

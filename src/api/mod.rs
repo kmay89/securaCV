@@ -3124,6 +3124,44 @@ mod tests {
         Ok(())
     }
 
+    /// The displaced ledger the bridge keeps in the same file
+    /// (`fleet_peers::DisplacedPin`: pins and verified lengths of ids it
+    /// displaced at the cap) is bookkeeping, never wire: with a ledger in the
+    /// summary the served bytes are still exactly the shared vector's.
+    #[test]
+    fn fleet_document_bytes_are_unchanged_by_a_displaced_ledger() -> Result<()> {
+        const NAME: &str =
+            "the kernel's aggregated document (fleet_document, verbatim): itself plus one Canary the bridge heard";
+        const NOW: u64 = 1_700_000_000;
+        let mut summary = planted_peer_summary(NOW);
+        summary.peers.truncate(1);
+        let without = fleet_document(Some(true), &crate::fleet_peers::fleet_rows(&summary, NOW));
+        summary.displaced = vec![crate::fleet_peers::DisplacedPin {
+            device_id: "canary-wap-displaced".to_string(),
+            pinned_key_hex: Some(
+                "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29".to_string(),
+            ),
+            last_verified_length: Some(9),
+            last_verified_state: Some(crate::fleet_peers::StateMark {
+                chain_length: 9,
+                seq: 4,
+            }),
+            pin_conflict: true,
+        }];
+        let with = fleet_document(Some(true), &crate::fleet_peers::fleet_rows(&summary, NOW));
+        assert_eq!(with, without);
+        assert!(!with.contains("displaced"), "{with}");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tvos/witness-core/tests/fixtures/fleet_contract_vectors.json");
+        let vectors: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        let vector = vectors["vectors"]
+            .as_array()
+            .and_then(|v| v.iter().find(|v| v["name"] == NAME))
+            .unwrap_or_else(|| panic!("no vector named {NAME:?} in {}", path.display()));
+        assert_eq!(vector["input"].as_str().unwrap_or(""), with);
+        Ok(())
+    }
+
     /// The shared anti-drift vector for the WHOLE sealed-log document, not
     /// just the domain-separated hash: three planted entries under the test
     /// seed, serialized exactly as `/api/sealed-log` serves them. The Apple TV
