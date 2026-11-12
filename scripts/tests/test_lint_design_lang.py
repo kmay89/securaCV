@@ -8,7 +8,8 @@ builder and the Lab catalog carry — so each test writes a tiny case file and
 asks the lint what that parser would have dropped (the third rule), which
 meaning it would have carried (the fourth), which group it would have filed
 a knob under (the fifth), where a ranged knob's help stops (the sixth) or
-which group header heads nothing (the seventh).
+which group header heads nothing (the seventh). MeaningTable holds the
+fourth rule's table to the one DESIGN_RULES.md §10 prints for people.
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 """
@@ -16,6 +17,7 @@ Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 from __future__ import annotations
 
 import importlib.util
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -272,6 +274,95 @@ class Meanings(_Case):
         for path in sorted(L.ENC.glob("canary_*.scad")):
             if path.name not in L.SKIP:
                 self.assertEqual(L.lint_meanings(path), [], path.name)
+
+
+# The fourth rule twice over: KNOB_MEANINGS is what the lint enforces, and
+# DESIGN_RULES.md §10's "A knob name means one thing" table is what a person
+# reads. C10b added the J-box's pigtail_w / pigtail_h to the first and never
+# to the second; nothing tied the two together but prose cites.
+DESIGN_RULES = L.ENC / "DESIGN_RULES.md"
+MEANING_TABLE_HEAD = re.compile(r"^\|\s*Name\s*\|\s*Means\s*\|\s*Not to be confused with\s*\|\s*$")
+BACKTICKED_NAME = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)`")
+
+
+def meaning_table_names(text: str) -> set[str]:
+    """Every backticked name in the table's Name and 'Not to be confused with'
+    columns. The Means column is prose and may cite a module
+    (`snap_boardclip`), so it is not read. A table that cannot be read
+    whole raises rather than passing short: no such table or a second one,
+    a row that does not split into three cells (a stray `|`), or a row whose
+    Name cell holds no backticked name."""
+    lines = text.splitlines()
+    heads = [i for i, ln in enumerate(lines) if MEANING_TABLE_HEAD.match(ln)]
+    if len(heads) != 1:
+        raise ValueError(f"expected one '| Name | Means | Not to be confused with |' table, "
+                         f"found {len(heads)}")
+    names: set[str] = set()
+    for ln in lines[heads[0] + 2:]:          # past the header and its |---| rule
+        if not ln.startswith("|"):
+            break
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if len(cells) != 3:
+            raise ValueError(f"a row of {len(cells)} cells, not 3: {ln}")
+        named = BACKTICKED_NAME.findall(cells[0])
+        if not named:
+            raise ValueError(f"a row whose Name cell holds no backticked knob name: {ln}")
+        names.update(named, BACKTICKED_NAME.findall(cells[2]))
+    return names
+
+
+def meaning_table_drift(text: str, meanings) -> tuple[list[str], list[str]]:
+    """(the KNOB_MEANINGS keys the table never names, the names the table
+    gives that KNOB_MEANINGS does not hold), each sorted."""
+    named, keys = meaning_table_names(text), set(meanings)
+    return sorted(keys - named), sorted(named - keys)
+
+
+class MeaningTable(unittest.TestCase):
+    """DESIGN_RULES.md §10's table names exactly KNOB_MEANINGS' knobs, both ways."""
+
+    def test_every_knob_meaning_has_a_row(self):
+        missing, _ = meaning_table_drift(DESIGN_RULES.read_text(encoding="utf-8"), L.KNOB_MEANINGS)
+        self.assertEqual(missing, [], "lint_design_lang.py's KNOB_MEANINGS holds a meaning for "
+                         f"{missing}, but DESIGN_RULES.md §10's 'A knob name means one thing' "
+                         "table never names them: add a row (or name them in a row's 'Not to be "
+                         "confused with' column) so a person reads the rule the lint enforces")
+
+    def test_every_name_in_the_table_has_a_knob_meaning(self):
+        _, extra = meaning_table_drift(DESIGN_RULES.read_text(encoding="utf-8"), L.KNOB_MEANINGS)
+        self.assertEqual(extra, [], f"DESIGN_RULES.md §10's table names {extra}, which "
+                         "lint_design_lang.py's KNOB_MEANINGS does not hold: the table states a "
+                         "meaning no lint enforces. Add the KNOB_MEANINGS entry, or drop the name")
+
+    TABLE = ("| Name | Means | Not to be confused with |\n"
+             "|---|---|---|\n"
+             "| `a_w` / `a_h` | the a slot (cut by `a_slot()`) "
+             "| `b_w` / `b_h` — the b slot; `c_t` — c |\n"
+             "| `d_t` | the d wall | `a_w` — the a slot |\n"
+             "\n"
+             "| Other | table |\n")
+
+    def test_both_name_columns_and_every_name_in_a_row_are_read(self):
+        self.assertEqual(meaning_table_names("prose\n\n" + self.TABLE),
+                         {"a_w", "a_h", "b_w", "b_h", "c_t", "d_t"})
+
+    def test_the_drift_is_seen_both_ways(self):
+        keys = {"a_w", "a_h", "b_w", "b_h", "c_t", "d_t"}
+        self.assertEqual(meaning_table_drift(self.TABLE, keys), ([], []))
+        # a row dropped: its names are missing (a_w is still named in d_t's row)
+        dropped = self.TABLE.replace(self.TABLE.splitlines()[2] + "\n", "")
+        self.assertEqual(meaning_table_drift(dropped, keys), (["a_h", "b_h", "b_w", "c_t"], []))
+        # a key with no row, and a name with no key
+        self.assertEqual(meaning_table_drift(self.TABLE, keys | {"e_w"}), (["e_w"], []))
+        self.assertEqual(meaning_table_drift(self.TABLE, keys - {"c_t"}), ([], ["c_t"]))
+
+    def test_a_table_it_cannot_read_whole_is_refused(self):
+        for bad in ("no table here\n",
+                    self.TABLE + "\n" + self.TABLE,
+                    self.TABLE.replace("| `d_t` |", "| d_t |"),
+                    self.TABLE.replace("the d wall", "the d | wall")):
+            with self.subTest(bad=bad[:60]), self.assertRaises(ValueError):
+                meaning_table_names(bad)
 
 
 def knobs_without_help(path: Path) -> list[str]:
