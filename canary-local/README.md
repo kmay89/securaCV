@@ -949,7 +949,10 @@ fails on byte drift.
   `duty >> 5`, raised to 1 when a glow was asked for, clipped at the cap,
   then `<< 5`): 128 steps 32 apart from dark to 4064, so a glow under 32
   shows at 32 and a duty past the cap's byte at 4064 (the twin's own duty is
-  checked, not only the byte the board would make of it); in the dash's
+  checked, not only the byte the board would make of it); in the AMOLED
+  2.41's config (A100) every day level passes as asked and every night duty
+  steps to the byte its RM690B0's brightness command takes, the same `>> 5`
+  with no ceiling, 256 steps up to 8160; in the dash's
   config every one passes through as asked. With no argument
   it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
   absent, so CI runs it before any step that reads the committed dist (a

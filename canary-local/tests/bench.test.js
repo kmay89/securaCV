@@ -146,7 +146,7 @@ test("bench facts cite files that still say them; the Nightlight's says what its
 // leans on: its restatement of the board's path is the board's source, the
 // script runs it in both configs, and the page says what the emulator in use
 // does (backlightCapNote, run as app.js ships it).
-test("A61, A79: the twin clips the Nightlight's backlight and steps its night floor where the board's HAL does, and the bench row says which", () => {
+test("A61, A79, A100: the twin clips the Nightlight's backlight and steps its night floor, and the AMOLED's, where the board's HAL does, and the bench row says which", () => {
   const REPO = join(ROOT, "..");
   const board = readFileSync(join(REPO, "firmware/projects/canary-display/src/hal/display_1in47.cpp"), "utf8");
   const native = readFileSync(join(ROOT, "emulator/test/backlight_cap_test.cpp"), "utf8");
@@ -176,14 +176,40 @@ test("A61, A79: the twin clips the Nightlight's backlight and steps its night fl
     native.includes("CHECK(((unsigned)got >> 5) <= kCap,") &&
     native.includes("CHECK(steps == (int)kCap + 1 && lowest_glow == 32 && step_seen[kNightTop13] && night_stepped > 0,"),
   "backlight_cap_test.cpp holds the night duty the twin applies to the board's byte, step by step");
+  // The AMOLED 2.41's night path (sweep A100), line for line, and the test's
+  // restatement of it: the same byte, written as the panel's brightness
+  // command, with no ceiling.
+  const amoled = readFileSync(join(REPO, "firmware/projects/canary-display/src/hal/display_amoled241.cpp"), "utf8");
+  const amNight = /void backlight_night_set\(uint16_t duty13\) \{\n([\s\S]*?)\n\}/.exec(amoled)?.[1] || "";
+  assert.strictEqual(amNight, "  constexpr uint16_t NIGHT_DUTY_MAX = 8191;\n" +
+    "  if (duty13 > NIGHT_DUTY_MAX) duty13 = NIGHT_DUTY_MAX;\n" +
+    "  uint8_t d8 = (uint8_t)(duty13 >> 5);\n  if (d8 == 0 && duty13 > 0) d8 = 1;\n  panel_brightness(d8);",
+  "display_amoled241.cpp's night path changed: restate it in backlight_cap_test.cpp's amoled_byte_night()");
+  assert.ok(/void backlight_set\(uint8_t level\) \{\n  panel_brightness\(level\);\n\}/.test(amoled),
+    "the AMOLED's day path writes the level as asked (no ceiling), as the twin passes it");
+  assert.ok(/void panel_brightness\(uint8_t v\) \{[\s\S]*?s_bus->writeC8D8\(0x51, v\);/.test(amoled), "...through the RM690B0's one brightness byte");
+  const amTest = /unsigned amoled_byte_night\(uint16_t duty13\) \{\n([\s\S]*?)\n\}/.exec(native)?.[1] || "";
+  assert.strictEqual(amTest, amNight.replace("  panel_brightness(d8);", "  return d8;"),
+    "backlight_cap_test.cpp's amoled_byte_night() is the board's night path, returning the byte it writes");
+  assert.ok(native.includes("#if defined(CD_AMOLED_GLASS) && CD_AMOLED_GLASS\nconstexpr bool kAmoled = true;") &&
+    native.includes("#if (defined(TFT_USE_EXIO) && TFT_USE_EXIO) || (defined(CD_AMOLED_GLASS) && CD_AMOLED_GLASS)\nconstexpr bool kNightBytes = true;") &&
+    native.includes("  if (kAmoled) return amoled_byte_night("),
+  "the test steps the night floor on both one-byte boards, apart from the expander's ceiling");
+  const amCfg = readFileSync(join(REPO, "firmware/configs/canary-display/amoled241/config.h"), "utf8");
+  assert.match(amCfg, /^#define CD_AMOLED_GLASS\s+1\b/m, "the amoled241 config builds the AMOLED glass");
+  assert.ok(!/^#define (?:TFT_USE_EXIO|CD_BL_MAX_PCT)\b/m.test(amCfg), "...with no expander and no ceiling");
   // the twin's night step, as the board's backlight_night_set() makes the
-  // byte, on the expander board alone
+  // byte, on the expander board and the AMOLED
   const nightBody = /int capped_night\(uint16_t duty13\) \{\n([\s\S]*?)\n\}/.exec(hal)?.[1] || "";
-  assert.strictEqual(nightBody, "#if defined(TFT_USE_EXIO) && TFT_USE_EXIO\n" +
+  assert.strictEqual(nightBody, "#if (defined(TFT_USE_EXIO) && TFT_USE_EXIO) || (defined(CD_AMOLED_GLASS) && CD_AMOLED_GLASS)\n" +
     "  const int duty = duty13 > 8191 ? 8191 : duty13;  // NIGHT_DUTY_MAX\n" +
     "  int byte = duty >> 5;\n  if (byte == 0 && duty > 0) byte = 1;\n" +
     "  if (byte > kBacklightCap8) byte = kBacklightCap8;\n  return byte << 5;\n#else\n  return duty13;\n#endif",
-  "the twin steps the night floor to the expander's byte on the expander board, and passes it elsewhere");
+  "the twin steps the night floor to the board's byte on the expander board and the AMOLED, and passes it elsewhere");
+  // ...and the AMOLED's has no ceiling: the cap stays the expander's alone,
+  // so its top step is 255 << 5 = 8160
+  assert.match(hal, /#if defined\(TFT_USE_EXIO\) && TFT_USE_EXIO\n#ifndef CD_BL_MAX_PCT\n#define CD_BL_MAX_PCT 100[^\n]*\n#endif\nconstexpr int kBacklightCapPct = CD_BL_MAX_PCT;\n#else\nconstexpr int kBacklightCapPct = 100;\n#endif/,
+    "the ceiling is the expander's alone");
   // the twin's HAL: the board's gate, the board's byte, both sinks through it,
   // and the binding the page asks
   assert.ok(hal.includes("#if defined(TFT_USE_EXIO) && TFT_USE_EXIO\n#ifndef CD_BL_MAX_PCT\n#define CD_BL_MAX_PCT 100"));
@@ -199,6 +225,17 @@ test("A61, A79: the twin clips the Nightlight's backlight and steps its night fl
     gt.includes('\n"$OUT/backlight_cap_test"\n'), "glass_turn.sh runs the backlight test in the dash config");
   assert.ok(gt.includes('"${NL_CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/nl_backlight_cap_test.o"') &&
     gt.includes('\n"$OUT/nl_backlight_cap_test"\n'), "...and in the nightlight's");
+  // ...and in the AMOLED 2.41's (sweep A100), against a HAL built there
+  assert.ok(gt.includes('AM_CFG="$FW/configs/canary-display/amoled241"') &&
+    gt.includes('AM_PINS="$FW/boards/waveshare-esp32s3-amoled241/pins"') &&
+    gt.includes('-I "$AM_CFG" -I "$AM_PINS"') &&
+    gt.includes('"${AM_CXX[@]}" -c "$EMU/src/emu_hal_display.cpp" -o "$OUT/am_emu_hal_display.o"') &&
+    gt.includes('"${AM_CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/am_backlight_cap_test.o"') &&
+    gt.includes('g++ -o "$OUT/am_backlight_cap_test" "$OUT/am_backlight_cap_test.o" "$OUT/am_emu_hal_display.o"') &&
+    gt.includes('\n"$OUT/am_backlight_cap_test"\n'), "...and in the AMOLED's, against the HAL built in its config");
+  const buildSh = readFileSync(join(ROOT, "emulator/build.sh"), "utf8");
+  assert.ok(buildSh.includes('PINS_DIR="$FW/boards/waveshare-esp32s3-amoled241/pins"\n  CFG_DIR="$FW/configs/canary-display/amoled241"'),
+    "build.sh's amoled241 flavor is that pin map and config");
   // the bench row's word, as app.js ships it
   const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
   const at = app.indexOf("function backlightCapNote(");
