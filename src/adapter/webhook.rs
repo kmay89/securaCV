@@ -242,10 +242,18 @@ impl Shared {
             return false;
         }
 
-        // Signature is valid: reject if the nonce was already used inside the window.
+        // Signature is valid: reject if the nonce was already seen while its timestamp can still
+        // pass. The check above compares whole seconds, so one timestamp passes for 2*window + 1 s
+        // of real time, and its nonce is first seen inside that span: remembering every nonce for
+        // 2*window + 1 s outlasts each replay the timestamp still admits (2*window alone let one
+        // through at the edge, and with window 0 remembered nothing). The memory runs on the
+        // monotonic clock and lives in this process only; `WebhookAuth::Hmac` says what that leaves.
+        let keep = window
+            .saturating_mul(2)
+            .saturating_add(Duration::from_secs(1));
         let mut seen = self.seen_nonces.lock_tolerant();
         let now = Instant::now();
-        seen.retain(|_, &mut t| now.saturating_duration_since(t) < window.saturating_mul(2));
+        seen.retain(|_, &mut t| now.saturating_duration_since(t) < keep);
         if seen.contains_key(nonce) {
             return false;
         }
@@ -978,6 +986,48 @@ mod tests {
         assert!(shared.verify_hmac(&captured, "/sensors/garage/acoustic", body));
         assert!(shared.verify_hmac(&captured, "/sensors/garage/acoustic", body));
         assert!(shared.verify_hmac(&captured, "/sensors/front/tamper", body));
+    }
+
+    #[test]
+    fn hmac_nonce_is_remembered_while_its_timestamp_still_passes() {
+        // The timestamp check compares whole seconds, so a timestamp passes for 2*window + 1 s of
+        // real time. A nonce kept for only 2*window ages out while its request still passes; with
+        // window 0 it was never kept at all, and a captured request replayed inside its second.
+        let secret = b"shared-key".to_vec();
+        let body = br#"{"confidence":0.8}"#;
+        let path = "/sensors/garage/acoustic";
+        let shared = test_shared(
+            WebhookAuth::Hmac {
+                secret: secret.clone(),
+                replay_window: Some(Duration::ZERO),
+            },
+            None,
+        );
+        let headers = |ts: u64, nonce: &str| {
+            let mut m = Vec::new();
+            m.extend_from_slice(format!("{ts}.{nonce}.{path}.").as_bytes());
+            m.extend_from_slice(body);
+            AuthHeaders {
+                signature: Some(format!("sha256={}", hex::encode(hmac_sha256(&secret, &m)))),
+                timestamp: Some(ts.to_string()),
+                nonce: Some(nonce.to_string()),
+                ..Default::default()
+            }
+        };
+        // Retry if the second turns over between reading the clock and verifying (the first
+        // verify then refuses on the timestamp, which proves nothing either way).
+        for attempt in 0..20 {
+            let captured = headers(now_epoch_s(), &format!("nonce-{attempt}"));
+            if !shared.verify_hmac(&captured, path, body) {
+                continue;
+            }
+            assert!(
+                !shared.verify_hmac(&captured, path, body),
+                "a replay inside the second its timestamp passes must be refused"
+            );
+            return;
+        }
+        panic!("no attempt verified inside one wall-clock second");
     }
 
     #[cfg(feature = "adapter-webhook-tls")]
