@@ -258,7 +258,7 @@ IMPROVGLUE_SRC       = ../common/network/improv_ble.cpp
 IMPROVGLUE_BIN       = $(BUILD_DIR)/test_improv_glue
 IMPROVGLUE_BINS      = $(IMPROVGLUE_BIN)_core3 $(IMPROVGLUE_BIN)_core2
 IMPROVGLUE_SCENARIOS = drop nodrop race secondwifi wrap beside portalrefused joinfail storerefused \
-                       unencrypted commands scan linger reset companion startfail init
+                       unencrypted commands scan linger latedrop reset companion startfail init
 
 # canary-wap's own Improv door glue (projects/canary-wap/arduino/canary_wap/
 # ble_improv.cpp, sweep F471): handle_command() and the two helpers it calls

@@ -821,17 +821,25 @@ void follow_link(uint32_t now_ms) {
   // connect right after the join) would otherwise apply up-then-down and
   // leave the session believing a live link is gone.
   static uint32_t seen_gen = 0;
-  const bool connected = s_connected;
+  // The link this glue last asked the stack to drop. s_connected falls only
+  // when the host task's disconnect event lands, a pass or more after the
+  // ask, so until then that link reads as down here: the session is not
+  // re-upped for it and the drop is asked (and logged) once (sweep F489).
+  // A new connect is a new generation (next_link_gen() skips 0 and repeats
+  // none until 2^32 - 1 connects later), so it is never mistaken for it.
+  static uint32_t dropped_gen = 0;
   const uint32_t gen = s_conn_gen;
+  const bool connected = s_connected && gen != dropped_gen;
   if (connected != s_session.link_up || gen != seen_gen) {
     seen_gen = gen;
     if (connected) improv::session_link_up(s_session, now_ms);
     else improv::session_link_down(s_session);
   }
-  if (s_connected && improv::idle_disconnect_due(s_session, now_ms, s_timing) && s_server) {
+  if (connected && improv::idle_disconnect_due(s_session, now_ms, s_timing) && s_server) {
     // A client that asked for nothing, or one whose join is done and
     // answered: hand the radio back so the beacon returns and nobody can
     // park on the single link.
+    dropped_gen = gen;
     s_server->disconnect(s_conn_handle);
     improv::session_link_down(s_session);
     Serial.printf("[IMPROV] link dropped (%s)\n",

@@ -47,6 +47,11 @@
 //   linger      the glue's own drops (180 s idle, 20 s after the verdict):
 //               asked once, and the right advert back on air after the
 //               stack's disconnect event;
+//   latedrop    the same drops with that event landing three loop passes
+//               after the ask (host_turn()'s g_hold): asked and logged once,
+//               the session not re-upped for the link going, the right
+//               advert after the event, and a link that connects in the
+//               pass that sees the event taken as a new one (sweep F489);
 //   reset       the first-boot window across a reset: a software reset, a
 //               panic, a watchdog or a deep-sleep wake carries what a
 //               previous boot spent; a power-on, a brownout, an unnameable
@@ -58,9 +63,8 @@
 //   startfail, init  a refused GATT start or NimBLE that will not come up.
 // Not driven: the reset reasons the glue's comment names no rule for (EXT,
 // SDIO, eFuse, CPU lockup: kept today, by the switch's default), reach_url
-// (both families pass null), a stack that refuses to drop a link, and a
-// disconnect event that lands after the loop's next pass (host_turn()
-// delivers it before every pass).
+// (both families pass null), and a stack that refuses to drop a link (the
+// glue asks once and then waits on the event).
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <WiFi.h>
@@ -185,12 +189,22 @@ static void disconnect(uint16_t h, int reason = REASON_REMOTE_USER) {
 }
 // The host task's turn: the disconnect event for each link the glue asked
 // the stack to drop (NimBLEServer::disconnect() only starts the terminate).
-// A second ask for a link already going raises no second event.
+// The stack sits on each ask for g_hold loop passes first (0: the event
+// lands before the loop's next pass; a real terminate waits on the
+// controller, a connection event or more). A second ask for a link already
+// going raises no second event.
 static size_t g_drops_seen = 0;
+static int g_hold = 0;   // loop passes the stack sits on an asked drop
+static int g_held = 0;   // passes the oldest undelivered ask has sat so far
 static void host_turn() {
   NimBLEServer* sv = NimBLEDevice::g_server;
   if (!sv) return;
   while (g_drops_seen < sv->disconnects.size()) {
+    if (g_held < g_hold) {
+      ++g_held;
+      return;
+    }
+    g_held = 0;
     const uint16_t h = sv->disconnects[g_drops_seen++];
     if (live(h)) disconnect(h, REASON_LOCAL);
   }
@@ -781,6 +795,91 @@ static void linger() {
         "the beacon alone back on air, not connectable: a provisioned device offers no door");
 }
 
+static void latedrop() {
+  // The glue's own drops again, with the stack's disconnect event landing
+  // three loop passes after the ask (sweep F489): until it lands the link
+  // still reads connected on the host task's side (s_connected), and the
+  // glue must neither re-up the session for it nor ask and log the drop
+  // again. A link that connects after the drop is a new one and is taken.
+  boot();
+  const uint8_t beacon[4] = {0xFF, 0xFF, 0x01, 0x02};
+  improv_ble::advertise(beacon, sizeof beacon);
+  NimBLEServer* sv = NimBLEDevice::g_server;
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  g_hold = 3;
+  // The 180 s idle drop.
+  connect(1); tick();
+  const uint32_t up = g_now;
+  mark();
+  tick_to(up + 179000, 1000);
+  CHECK(sv->disconnects.empty(), "179 s of silence: still connected");
+  tick(1000);   // 180 s: the ask
+  CHECK(sv->disconnects == std::vector<uint16_t>({1}), "180 s of silence: the drop asked");
+  tick(); tick(); tick();   // the stack sits on it three passes
+  CHECK(live(1), "three passes on, the stack still holds the link");
+  CHECK(sv->disconnects.size() == 1, "idle: asked once while the event is late");
+  CHECK(!adv->on, "nothing on air while the link is held");
+  tick();   // the event lands, then the pass puts the door back
+  CHECK(!live(1), "the event lands: the link is gone");
+  CHECK(sv->disconnects.size() == 1, "idle: still one ask after the event");
+  CHECK(lines_equal("[IMPROV] link dropped (idle)") == 1, "one 'link dropped (idle)' line");
+  CHECK(adv->on && adv->mode == BLE_GAP_CONN_MODE_UND && adv->adv.name == "Sense-AB12" &&
+            adv->scan.services.size() == 1 && adv->scan.services[0] == improv::SERVICE_UUID,
+        "after the event: the door back on air, connectable");
+  // The same idle drop, and in the one pass that sees its late event a new
+  // link connects: that link is up to the session (its own 180 s runs, and
+  // its drop is asked), never taken for the one dropped.
+  connect(2); tick();
+  const uint32_t up2 = g_now;
+  mark();
+  tick_to(up2 + 180000, 1000);
+  CHECK(sv->disconnects == std::vector<uint16_t>({1, 2}), "link 2 idle: its drop asked");
+  g_hold = 1000;   // the test delivers this one by hand
+  tick(); tick(); tick();
+  CHECK(live(2) && sv->disconnects.size() == 2, "link 2 held: no second ask");
+  disconnect(2, REASON_LOCAL);   // the late event, and before the loop's next pass ...
+  connect(3);                    // ... a new link
+  tick();
+  const uint32_t up3 = g_now;
+  g_hold = 0;
+  tick_to(up3 + 179000, 1000);
+  CHECK(sv->disconnects.size() == 2, "link 3, 179 s of silence: still connected");
+  tick_to(up3 + 181000, 1000);
+  CHECK(sv->disconnects == std::vector<uint16_t>({1, 2, 3}),
+        "link 3, past 180 s: its own drop asked, so the session took it as up");
+  CHECK(lines_equal("[IMPROV] link dropped (idle)") == 2, "one idle line each for links 2 and 3");
+  CHECK(!live(3), "link 3 gone");
+  // The provisioning link's 20 s linger drop.
+  g_hold = 3;
+  connect(4); tick();
+  wifi(4); tick();
+  g_join = SetupPortalJoin::Success; tick();
+  CHECK(improv_ble::state() == improv::State::Provisioned, "joined");
+  const uint32_t joined = g_now;
+  mark();
+  tick_to(joined + 19000, 1000);
+  CHECK(sv->disconnects.size() == 3, "19 s after the verdict: still connected");
+  tick(1000);   // 20 s: the ask
+  CHECK(sv->disconnects.size() == 4 && sv->disconnects[3] == 4, "20 s after the verdict: the drop asked");
+  tick(); tick(); tick();
+  CHECK(live(4), "three passes on, the stack still holds the provisioning link");
+  CHECK(sv->disconnects.size() == 4, "joined: asked once while the event is late");
+  CHECK(lines_equal("[IMPROV] link dropped (joined, verdict delivered)") == 1,
+        "joined: one 'link dropped (joined, verdict delivered)' line while the event is late");
+  tick();   // the event lands
+  CHECK(!live(4), "the event lands: the provisioning link is gone");
+  tick_to(g_now + 5000, 1000);
+  char m[160];
+  snprintf(m, sizeof m, "joined: one ask in all (got %zu asks of link 4)",
+           (size_t)std::count(sv->disconnects.begin(), sv->disconnects.end(), (uint16_t)4));
+  CHECK(sv->disconnects.size() == 4, m);
+  CHECK(lines_equal("[IMPROV] link dropped (joined, verdict delivered)") == 1, "joined: one line in all");
+  CHECK(adv->on && adv->mode == BLE_GAP_CONN_MODE_NON &&
+            adv->adv.mfg == std::string((const char*)beacon, sizeof beacon) && adv->adv.name.empty() &&
+            adv->scan.services.empty(),
+        "after the event: the beacon alone back on air, not connectable");
+}
+
 // ── The first-boot window across a reset ──────────────────────────────────
 
 // improv_ble.cpp's RTC record, as it lays it out: the stand-in's
@@ -1037,6 +1136,7 @@ static const Scenario SCENARIOS[] = {
     {"commands", commands},
     {"scan", scan},
     {"linger", linger},
+    {"latedrop", latedrop},
     {"reset", reset},
     {"companion", companion},
     {"startfail", startfail},
