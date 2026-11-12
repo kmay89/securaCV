@@ -258,7 +258,7 @@ for (const t of run) {
   }
   await page.close();
 
-  if (errors.length) { fail(t.name, "page errors:\n  " + errors.slice(0, 8).join("\n  ")); continue; }
+  if (errors.length) { fail(t.name, "page errors:\n  " + [...errors.slice(0, 8), ...acted.map((a) => "played wrong: " + a)].join("\n  ")); continue; }
   if (!hasMeta) { fail(t.name, "the loaded document carries no CSP <meta> (gen_csp.py did not run on it, or the redirect landed off the Lab)"); continue; }
   if (doc.mode !== "CSS1Compat" || doc.charset !== "UTF-8") { fail(t.name, `the document is ${doc.mode}, decoded as ${doc.charset} — it needs <!DOCTYPE html> and <meta charset="utf-8">`); continue; }
   if (acted.length) { fail(t.name, "played wrong:\n  " + acted.join("\n  ")); continue; }
