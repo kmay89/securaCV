@@ -125,7 +125,12 @@ J5. An answer spelled with `snprintf()` (F212): a call whose format is a JSON
     a function's or a lambda's, is a pointer whatever N it spells), leaves
     the answer unbounded, so only a length test after the call (guarded or
     composed) passes it. A record J5 takes is in use, and J7 holds it to
-    the code as it holds its own.
+    the code as it holds its own. A value's type is read from its
+    declaration in scope at the call, the innermost; a condition is not
+    one (F470: `if (active && active[0])` read as a declaration of `active`
+    after the real one): a type is never the name it declares, and a `&&`
+    between two names is a logical and unless the first is `auto` or a
+    struct or enum of the sketch.
 J6. The two answers that carry strings the check cannot read (F212), GET
     /api/device-info (`handle_device_info()`, the device name a person
     typed) and the provisioning receipt (`send_provisioning_receipt()`), are
@@ -1046,6 +1051,13 @@ def block_end(code: str, lo: int, hi: int, p: int) -> int:
     return hi
 
 
+def is_declared_type(idx: Index, t: str) -> bool:
+    """Whether `t` (`ns::Name` or `Name`, template arguments dropped) names a struct, class or
+    enum the index declares."""
+    base = re.sub(r"<.*$", "", t, flags=re.S).strip().rsplit("::", 1)[-1]
+    return base in idx.structs or base in idx.enums
+
+
 def _local_decl_match(ctx: Ctx, name: str, pos: int) -> re.Match[str] | None:
     """The match of local_decl()'s pattern (over ctx.code[body start:pos]) that declares `name` in
     scope at `pos`: the innermost, or None."""
@@ -1058,6 +1070,16 @@ def _local_decl_match(ctx: Ctx, name: str, pos: int) -> re.Match[str] | None:
     for m in pat.finditer(region):
         t = m.group("type")
         if t in KEYWORDS or t in ("return", "else"):
+            continue
+        # A condition is not a declaration (F470): `if (active && active[0])` matches the pattern
+        # as `active&& active[0]` after the real `const char* active = ...;`, and the innermost
+        # match wins. A type is never the name it declares, and a `&&` between two names is a
+        # logical and unless the first is a type: `auto&&` or a struct or enum the index
+        # declares (the sketch declares no rvalue-reference local; its forwarding references
+        # are parameters, which _param_match() reads).
+        if t == name:
+            continue
+        if m.group("ptr") == "&&" and t != "auto" and not is_declared_type(ctx.idx, t):
             continue
         # A declaration in a block that closed before `pos` is another
         # variable of the same name, out of scope here (`{ char buf[768]; }`
@@ -4873,12 +4895,13 @@ def add_file(path: str, text: str) -> Mutation:
     return mutate
 
 
-def drop_record(key: tuple[str, str], value: str) -> Mutation:
-    """A mutation of this check's own RECORDED, not of the sketch: `value` struck from `key`'s record
-    (F464: an answer's %s J5 takes as escaped only because the record names it). _case_problem()
-    runs the check with the record so changed; the sketch is left as it is."""
+def drop_record(key: tuple[str, str], value: str, first: Mutation | None = None) -> Mutation:
+    """A mutation of this check's own RECORDED: `value` struck from `key`'s record (F464: an
+    answer's %s J5 takes as escaped only because the record names it). _case_problem() runs the
+    check with the record so changed; the sketch is left as it is, or edited by `first` (F470: an
+    edit that makes a recorded value one the check reads leaves its record stale)."""
     def mutate(files: dict[str, str]) -> dict[str, str]:
-        return files
+        return first(files) if first is not None else files
 
     def records(recorded: dict) -> dict:
         if key not in recorded or value not in recorded[key][0]:
@@ -4965,6 +4988,29 @@ TAMPER_TAIL_ARRAY_PARAM = ('  auto zz_send_tail = [&](const char active[16]) {\n
                            '  if (kind && kind[0]) {\n'
                            '    zz_send_tail(kind);\n'
                            '  } else {\n')
+
+
+# F470: the tail with no length test, its kind one of tamper_events_module's literal kinds behind
+# the real `if (active && active[0])`, and the tail sized for the longest ("unexpected_reboot", 17
+# bytes: 23 of the format and 17, under 41). Before F470 the check read that condition as the
+# innermost declaration of `active` (type `active&&`, dims [0]), so it could read none of the kinds
+# and refused the tail it sizes; a tail one byte short is refused either way. `cond` spelled
+# `zz_have && active[0]` is the shape whose misread type is another variable (canary_wap.ino's
+# `have && snap[0]`), which only the `&&` rule refuses.
+def tamper_tail_literal(size: int, cond: str = "active && active[0]") -> str:
+    return ('  const uint8_t zz_code = tamper_events_active_code();\n'
+            '  const bool zz_have = zz_code != 0;\n'
+            '  const char* active = zz_code == 1 ? "watchdog" : zz_code == 2 ? "power_loss"\n'
+            '                     : zz_code == 3 ? "unexpected_reboot" : zz_code == 4 ? "sd_error"\n'
+            '                     : zz_code == 5 ? "sd_remove" : zz_code == 6 ? "enclosure" : "";\n'
+            f'  if ({cond}) {{\n'
+            f'    char tail[{size}];\n'
+            '    const int tn = snprintf(tail, sizeof(tail),\n'
+            '                            "],\\"tamper\\":{\\"kind\\":\\"%s\\"}}", active);\n'
+            '    httpd_resp_send_chunk(req, tail, tn);\n'
+            '  } else {\n')
+
+
 WINDOW_HEAD = "esp_err_t handle_window(httpd_req_t* req) {"
 # The Tuning Lab list's row guard, and the code before F464.
 TUNE_ROW_GUARD = ("    if (n <= 0 || (size_t)n >= sizeof(buf)) {\n      httpd_resp_send_chunk(req, \"]}\", -1);\n"
@@ -5149,6 +5195,11 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     # The F464 review: an array-declared parameter is a pointer, whatever N it spells.
     ("the events tail's tamper kind goes through a lambda's array-declared parameter, untested",
      raw_in(INTEG, TAMPER_TAIL, TAMPER_TAIL_ARRAY_PARAM)),
+    # F470: the condition `active && active[0]` is not a declaration of active; read past it, the
+    # tail's literal kinds are measured, and a tail one byte under the longest is refused.
+    ("the events tail drops its length test with a tail one byte short of its longest literal kind",
+     drop_record(("csi_integration.cpp", "handle_events_today"), "active",
+                 raw_in(INTEG, TAMPER_TAIL, tamper_tail_literal(40)))),
     ("a recorded label goes through a function's array-declared parameter, untested",
      add_record(raw_in(INTEG, WINDOW_HEAD,
                        "static esp_err_t zz_send_label(httpd_req_t* req, const char label[16]) {\n  char buf[64];\n"
@@ -5903,6 +5954,14 @@ ACCEPTED: list[tuple[str, Mutation]] = [
      raw_in(INTEG, TUNE_ROW_GUARD, TUNE_ROW_GUARD.replace("(size_t)n >= sizeof(buf)", "n >= (int)sizeof(buf)"))),
     ("the stream's supply piece gets a smaller buffer",
      raw_in(INTEG, "  char supply[112];", "  char supply[96];")),
+    # F470: past `if (active && active[0])`, active is the const char* declared above it, so a tail
+    # sized for its longest literal kind is measured to fit and needs no length test.
+    ("the events tail drops its length test, sized for its longest literal kind",
+     drop_record(("csi_integration.cpp", "handle_events_today"), "active",
+                 raw_in(INTEG, TAMPER_TAIL, tamper_tail_literal(41)))),
+    ("the events tail tests another flag before its kind, sized for its longest literal kind",
+     drop_record(("csi_integration.cpp", "handle_events_today"), "active",
+                 raw_in(INTEG, TAMPER_TAIL, tamper_tail_literal(41, "zz_have && active[0]")))),
     # The F464 review: a char-array field reached through a pointer parameter is a real array, sized.
     ("a recorded module id is read as a field through a function's pointer parameter",
      add_record(raw_in(INTEG, WINDOW_HEAD,
