@@ -58,7 +58,21 @@
 //     (pinned), and on the nightlight's hung bubble the tail hides none of
 //     the bird's drawn pixels at any tick;
 //  8. the bubble typed every line story::kHello has, whole and in order,
-//     and the meeting was remembered.
+//     and the meeting was remembered;
+//  9. through the wordmark's beat after the bubble bows out (F373), at every
+//     read, the wordmark is as wide as LVGL measures its text in the face and
+//     letter spacing it wears (lv_txt_get_size: the box splash.cpp fits is
+//     the drawn one), its box keeps kWordMargin of the canvas a side, and its
+//     ink stands inside that box and kWordMargin inside the canvas's edge
+//     columns, on every canvas, both Characters and both pseudonyms. Under
+//     Heirloom on the 172 px glass, Montserrat 36 at 2 px spacing (191 px)
+//     inked the canvas from its first column to its last before F373. Pinned:
+//     the only play whose wordmark steps down from the Character's title face
+//     at kWordSpacing is the 172 px glass under Heirloom; and LVGL's measure
+//     of the wordmark in each face this build enables (24, 28 and 36 at 2 px
+//     and 0) is the one test_splash_layout pins from LVGL's font data, both
+//     as lv_txt_get_size gives it and as splash.cpp reads it (a label set to
+//     it, laid out by lv_obj_update_layout, read by lv_obj_get_width).
 //
 // Printed, not held: the tail's ink, its offset from the bubble's center
 // line and its reach; where seat() leaves the bird within the tail's reach,
@@ -67,10 +81,9 @@
 // found it, read again whenever it moves, against the bird's box at every
 // tick) and the most of the bird's drawn pixels it hides at any tick (the
 // bird drawn with the bubble and the tail hidden, against the same frame with
-// the tail shown); and, through the wordmark's beat after the bubble bows
-// out, how far the bird's ink ends above the wordmark's (F159 keeps the
-// first meeting's raised bird where it rose) and whether the wordmark's ink
-// reaches the canvas's edge columns.
+// the tail shown); and, through the wordmark's beat, how far the bird's ink
+// ends above the wordmark's (F159 keeps the first meeting's raised bird where
+// it rose), where the wordmark's ink runs across the canvas, and its face.
 //
 // Prints "ALL LVGL 8 SPLASH TAIL TESTS PASSED" on success.
 #include <Arduino.h>
@@ -85,6 +98,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -99,6 +113,7 @@
 #include "canary/ui/lvgl_port.h"
 #include "canary/ui/splash.h"
 #include "canary/ui/splash_layout.h"
+#include "canary/ui/theme.h"
 
 #if LVGL_VERSION_MAJOR != 8
 #error "glass_splash_test.cpp builds against LVGL 8.4 (glass_turn.sh); its 9.x sibling is glass_splash_lvgl9_test.cpp"
@@ -365,11 +380,14 @@ struct Watch {
                             // hid at any tick
   // The wordmark's beat: the bird's ink bottom against the wordmark's ink
   // top (read again whenever the bird's box moves), and the wordmark's ink
-  // across the canvas.
+  // across the canvas, its box, face and spacing (9).
   int word_reads = 0;
   int word_gap_lo = 1 << 30, word_gap_hi = -(1 << 30);
   int word_x0 = 1 << 30, word_x1 = -(1 << 30);
   int word_bird_y = -(1 << 30);
+  int word_box_x0 = 0, word_box_x1 = -1, word_face = -1, word_spacing = -1;
+  bool word_stepped = false;  // not the title face at kWordSpacing
+  int word_measure_fails = 0, word_box_fails = 0, word_ink_fails = 0;
   std::string last_text;
   std::vector<std::string> typed;
   bool emptied = false;
@@ -455,6 +473,24 @@ void capture(lv_obj_t* tail, lv_obj_t* bub) {
   if (own.b.y0 < W.ink_top_lo) W.ink_top_lo = own.b.y0;
 }
 
+// The Montserrat face `f` is, by size (each face this build enables of the
+// ladders' title faces and the one the wordmark steps down to); -1 for none.
+int face_px(const lv_font_t* f) {
+  if (f == &lv_font_montserrat_24) return 24;
+  if (f == &lv_font_montserrat_28) return 28;
+#if LV_FONT_MONTSERRAT_36
+  if (f == &lv_font_montserrat_36) return 36;
+#endif
+  return -1;
+}
+
+// LVGL 8.4's measure of the wordmark (lv_txt_get_size, one line).
+int measure_word(const lv_font_t* f, int spacing) {
+  lv_point_t sz;
+  lv_txt_get_size(&sz, "SecuraCV", f, (lv_coord_t)spacing, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return sz.x;
+}
+
 // The wordmark: the label the splash sets "SecuraCV".
 lv_obj_t* find_word(const lv_obj_t* scr) {
   const uint32_t n = lv_obj_get_child_cnt(scr);
@@ -481,6 +517,30 @@ void read_word(lv_obj_t* bird, lv_obj_t* word, const lv_area_t& m) {
   if (gap > W.word_gap_hi) W.word_gap_hi = gap;
   if (wi.b.x0 < W.word_x0) W.word_x0 = wi.b.x0;
   if (wi.b.x1 > W.word_x1) W.word_x1 = wi.b.x1;
+  // 9 (F373): as wide as LVGL measures it, its box and its ink kWordMargin
+  // clear of the canvas's sides, the ink inside the box.
+  lv_area_t c;
+  lv_obj_get_coords(word, &c);
+  const lv_font_t* f = lv_obj_get_style_text_font(word, LV_PART_MAIN);
+  const int spacing = lv_obj_get_style_text_letter_space(word, LV_PART_MAIN);
+  const int measured = measure_word(f, spacing);
+  W.word_box_x0 = c.x1;
+  W.word_box_x1 = c.x2;
+  W.word_face = face_px(f);
+  W.word_spacing = spacing;
+  W.word_stepped = W.word_stepped || f != canary::ui::font_title() || spacing != sl::kWordSpacing;
+  HOLD(lv_obj_get_width(word) == measured, W.word_measure_fails,
+       "%s: the wordmark is laid out %d px wide; lv_txt_get_size measures \"SecuraCV\" in "
+       "montserrat_%d at %d px spacing %d", W.tag.c_str(), (int)lv_obj_get_width(word),
+       face_px(f), spacing, measured);
+  HOLD(c.x1 >= sl::kWordMargin && c.x2 <= g_lw - 1 - sl::kWordMargin, W.word_box_fails,
+       "%s: the wordmark's box spans x %d..%d of the canvas's 0..%d; it keeps kWordMargin (%d) "
+       "a side", W.tag.c_str(), (int)c.x1, (int)c.x2, g_lw - 1, sl::kWordMargin);
+  HOLD(wi.b.x0 >= c.x1 && wi.b.x1 <= c.x2 && wi.b.x0 >= sl::kWordMargin &&
+           wi.b.x1 <= g_lw - 1 - sl::kWordMargin,
+       W.word_ink_fails, "%s: the wordmark's ink spans x %d..%d (its box x %d..%d) of the "
+       "canvas's 0..%d; it stands in its box, kWordMargin (%d) inside both edge columns",
+       W.tag.c_str(), wi.b.x0, wi.b.x1, (int)c.x1, (int)c.x2, g_lw - 1, sl::kWordMargin);
 }
 
 void observe() {
@@ -577,6 +637,7 @@ std::vector<std::string> hello_lines() {
 }
 
 std::vector<std::string> g_unclear;  // the plays seat() leaves within the tail's reach
+std::vector<std::string> g_stepped;  // the plays whose wordmark stepped down (F373)
 
 void play(const char* canvas, canary::ui::Character ch, char letter) {
   Watch& W = g_w;
@@ -657,12 +718,21 @@ void play(const char* canvas, canary::ui::Character ch, char letter) {
          W.seat_fails + W.ink_fails + W.land_fails + W.center_fails + W.rise_fails + W.mismatched);
   if (W.word_reads > 0)
     printf("    the wordmark's beat (%d reads): the bird's ink ends %d..%d px above the "
-           "wordmark's; the wordmark's ink spans x %d..%d of the canvas's 0..%d%s\n",
+           "wordmark's; the wordmark's ink spans x %d..%d of the canvas's 0..%d, its box x "
+           "%d..%d, montserrat_%d at %d px spacing; %d checks failed\n",
            W.word_reads, W.word_gap_lo, W.word_gap_hi, W.word_x0, W.word_x1, g_lw - 1,
-           W.word_x0 <= 0 || W.word_x1 >= g_lw - 1 ? ", reaching its edge (cut)" : "");
+           W.word_box_x0, W.word_box_x1, W.word_face, W.word_spacing,
+           W.word_measure_fails + W.word_box_fails + W.word_ink_fails);
   else
     printf("    the wordmark's beat: never read\n");
   CHECK(W.word_reads > 0, "%s: the wordmark's beat was never read", tag);
+  if (W.word_stepped) {
+    char one[96];
+    snprintf(one, sizeof(one), "%s/%s", canvas,
+             ch == canary::ui::Character::Heirloom ? "heirloom" : "default");
+    if (std::find(g_stepped.begin(), g_stepped.end(), one) == g_stepped.end())
+      g_stepped.push_back(one);
+  }
   (void)t0;
 }
 
@@ -678,6 +748,49 @@ int main() {
          LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH, PW, PH);
   CHECK(canary::ui::lvgl_port_init(), "lvgl_port_init failed");
   if (lv_disp_get_default() == nullptr) return 1;
+  // 9: LVGL's measure of the wordmark in each face this build enables, the
+  // numbers test_splash_layout pins from LVGL's font data (F373).
+  struct Measure {
+    const lv_font_t* f;
+    int face, at2, at0;
+  };
+  const Measure measures[] = {
+    {&lv_font_montserrat_24, 24, 132, 118},
+    {&lv_font_montserrat_28, 28, 151, 137},
+#if LV_FONT_MONTSERRAT_36
+    {&lv_font_montserrat_36, 36, 191, 177},
+#endif
+  };
+  printf("  lv_txt_get_size(\"SecuraCV\"):");
+  for (const Measure& m : measures) {
+    const int a = measure_word(m.f, sl::kWordSpacing), b = measure_word(m.f, 0);
+    printf(" montserrat_%d %d px at %d, %d at 0;", m.face, a, sl::kWordSpacing, b);
+    CHECK(a == m.at2 && b == m.at0, "lv_txt_get_size measures \"SecuraCV\" in montserrat_%d "
+          "%d px at %d px spacing and %d at 0; test_splash_layout pins %d and %d", m.face, a,
+          sl::kWordSpacing, b, m.at2, m.at0);
+  }
+  printf("\n");
+  // ...and splash.cpp's own measure gives the same (F373): a content-sized
+  // label set to the wordmark, laid out by lv_obj_update_layout on a scratch
+  // screen and read by lv_obj_get_width, in each face and both spacings.
+  lv_obj_t* scratch = lv_obj_create(NULL);
+  lv_obj_t* probe = lv_label_create(scratch);
+  lv_label_set_text(probe, "SecuraCV");
+  printf("  lv_obj_get_width after lv_obj_update_layout:");
+  for (const Measure& m : measures) {
+    for (int sp : {sl::kWordSpacing, 0}) {
+      lv_obj_set_style_text_font(probe, m.f, 0);
+      lv_obj_set_style_text_letter_space(probe, sp, 0);
+      lv_obj_update_layout(scratch);
+      const int laid = (int)lv_obj_get_width(probe);
+      const int want = sp ? m.at2 : m.at0;
+      printf(" montserrat_%d at %d: %d px;", m.face, sp, laid);
+      CHECK(laid == want, "a label set to \"SecuraCV\" in montserrat_%d at %d px spacing is laid "
+            "out %d px wide; lv_txt_get_size measures %d", m.face, sp, laid, want);
+    }
+  }
+  printf("\n");
+  lv_obj_del(scratch);
   char canvas[32];
   snprintf(canvas, sizeof(canvas), "%dx%d", PW, PH);
   play_all(canvas);
@@ -714,6 +827,15 @@ int main() {
   printf("  not clear of the tail: %s\n", unclear.empty() ? "none" : unclear.c_str());
   CHECK(unclear == want, "the canvases seat() leaves within the tail's reach are \"%s\"; only "
         "\"%s\" should be", unclear.c_str(), want);
+  // Pinned (F373): only the 172 px glass under Heirloom steps its wordmark
+  // down from the Character's title face at kWordSpacing (Montserrat 36, 191
+  // px, to 28 at kWordSpacing, 151); every other play keeps it as set.
+  std::string stepped;
+  for (const std::string& u : g_stepped) stepped += (stepped.empty() ? "" : ", ") + u;
+  const char* want_stepped = PW == 172 ? "172x320/heirloom" : "";
+  printf("  the wordmark steps down on: %s\n", stepped.empty() ? "none" : stepped.c_str());
+  CHECK(stepped == want_stepped, "the plays whose wordmark steps down are \"%s\"; only \"%s\" "
+        "should be", stepped.c_str(), want_stepped);
   if (g_fail) {
     printf("%d of %d LVGL 8 splash tail checks FAILED\n", g_fail, g_checks);
     return 1;

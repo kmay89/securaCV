@@ -35,6 +35,55 @@ inline sl::Family sized(const sl::Family& f, int canvas_w) {
   return s;
 }
 
+// ── the wordmark (F373) ──────────────────────────────────────────────────
+// The text splash.cpp sets the wordmark to.
+const char* const kWordmark = "SecuraCV";
+
+// LVGL's measure of the wordmark in face `f` at `spacing` px of letter
+// spacing (lv_txt_get_width: the spacing after each glyph that has a width,
+// the last one's taken off), from LVGL's own font data. The LVGL 8.4
+// numbers test_splash_layout pins it to are the ones the native renders
+// read off lv_txt_get_size (and LVGL 9.5's lv_text_get_size gives too).
+inline int word_px(const Face& f, int spacing) {
+  int glyphs = 0;
+  for (const char* p = kWordmark; *p; ++p)
+    if (glyph_px(f, (unsigned char)*p, (unsigned char)p[1]) > 0) glyphs++;
+  const int w = text_px(f, kWordmark);
+  return w > 0 ? w + (glyphs - 1) * spacing : 0;
+}
+
+// The wordmark as splash.cpp's ladder fits it on a canvas `canvas_w` px
+// wide, the Character's title face `title` px (F373): that face at
+// kWordSpacing where word_fits() holds it; else Montserrat 28 where it is the
+// narrower, at kWordSpacing; else that face at 0; else not shown.
+struct WordSet {
+  int face;      // the face's px size (lv_font_montserrat_<face>)
+  int spacing;   // its letter spacing
+  int w;         // its laid-out width
+  bool shown;    // false: no rung fits, and the wordmark is not shown
+};
+
+inline WordSet word_set(int canvas_w, int title) {
+  const Face* t = face_of(title);
+  const Face* f28 = face_of(28);
+  WordSet s = {title, sl::kWordSpacing, t ? word_px(*t, sl::kWordSpacing) : 0, true};
+  if (t == nullptr || f28 == nullptr) {
+    s.shown = false;  // a face the metrics do not carry: the caller fails it
+    return s;
+  }
+  if (sl::word_fits(canvas_w, s.w)) return s;
+  const int w28 = word_px(*f28, sl::kWordSpacing);
+  if (w28 < s.w) {
+    s.face = 28;
+    s.w = w28;
+  }
+  if (sl::word_fits(canvas_w, s.w)) return s;
+  s.spacing = 0;
+  s.w = word_px(*face_of(s.face), 0);
+  s.shown = sl::word_fits(canvas_w, s.w);
+  return s;
+}
+
 // The pseudonym's length (device_pseudonym.h: HEX_LEN = TOKEN_BYTES * 2;
 // read, since its host branch wants OpenSSL).
 static int g_hex_len = 0;

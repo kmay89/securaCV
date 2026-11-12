@@ -115,6 +115,38 @@ int tallest_bubble(lv_obj_t* scr, lv_obj_t* bub, lv_obj_t* line,
   return tallest;
 }
 
+// The wordmark's width as LVGL lays it out (F373). The label is content
+// sized, so its laid-out width is its text's, letter spacing included; the
+// same two calls on LVGL 8.4 and 9.5, where the text measure itself is named
+// differently (lv_txt_get_size, lv_text_get_size). lv_obj_update_layout lays
+// out the whole screen the label is on, so it is handed the screen.
+int word_width(lv_obj_t* scr, lv_obj_t* word) {
+  lv_obj_update_layout(scr);
+  return (int)lv_obj_get_width(word);
+}
+
+// The wordmark fitted to a canvas `canvas_w` px wide (F373; splash_layout.h's
+// word_fits): as set, in the Character's title face at kWordSpacing; where
+// that overflows, in Montserrat 28 (on in lv_conf.h for every build, the lean
+// one too), taken only where it is the narrower face; then that face set
+// tight. True when one of those fits. Where none does (a canvas narrower than
+// any display's: 28 set tight is 137 px), the caller shows no wordmark rather
+// than a cut one.
+bool fit_word(lv_obj_t* scr, lv_obj_t* word, int canvas_w) {
+  int w = word_width(scr, word);
+  if (splashlayout::word_fits(canvas_w, w)) return true;
+  lv_obj_set_style_text_font(word, &lv_font_montserrat_28, 0);
+  const int w28 = word_width(scr, word);
+  if (w28 < w) {
+    w = w28;
+  } else {
+    lv_obj_set_style_text_font(word, font_title(), 0);
+  }
+  if (splashlayout::word_fits(canvas_w, w)) return true;
+  lv_obj_set_style_text_letter_space(word, 0, 0);
+  return splashlayout::word_fits(canvas_w, word_width(scr, word));
+}
+
 }  // namespace
 
 // The exit curtain: an opaque layer-top overlay dropped by splash_play and
@@ -175,11 +207,15 @@ void splash_play(uint32_t hold_ms) {
   // bubble draws over it.
   lv_obj_t* bird = canary_mark_create(scr, BIRD);
 
+  // The wordmark, fitted to the canvas before it is placed (F373: under
+  // Heirloom, Montserrat 36 ran past both sides of the 172 px glass).
   lv_obj_t* word = lv_label_create(scr);
   lv_obj_set_style_text_font(word, font_title(), 0);
   lv_obj_set_style_text_color(word, col_text(), 0);
-  lv_obj_set_style_text_letter_space(word, 2, 0);
+  lv_obj_set_style_text_letter_space(word, splashlayout::kWordSpacing, 0);
   lv_label_set_text(word, "SecuraCV");
+  const bool word_shown = fit_word(scr, word, (int)lv_disp_get_hor_res(NULL));
+  if (!word_shown) lv_obj_add_flag(word, LV_OBJ_FLAG_HIDDEN);
   lv_obj_align(word, LV_ALIGN_CENTER, 0, WORD_Y);
 
   lv_obj_t* tag = lv_label_create(scr);
@@ -379,7 +415,7 @@ void splash_play(uint32_t hold_ms) {
     // the name lands AFTER the friend does.
     lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(word, LV_OBJ_FLAG_HIDDEN);
+    if (word_shown) lv_obj_clear_flag(word, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(tag, LV_OBJ_FLAG_HIDDEN);
     pump(900, true);
 

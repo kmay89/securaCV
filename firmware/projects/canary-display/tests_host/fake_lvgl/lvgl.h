@@ -34,9 +34,13 @@
 //    TOP_LEFT offset from obj's parent's content origin (lv_obj_pos.c).
 //    LV_PCT sizes resolve against the parent's content box when set (every
 //    caller here sizes a child of an already-sized parent).
-//  * Text width is lv_txt_get_width at letter_space 0: each glyph's
-//    lv_font_get_glyph_width given the letter after it. A test supplies the
+//  * Text width is lv_txt_get_width: each glyph's lv_font_get_glyph_width
+//    given the letter after it, plus the label's letter spacing after each
+//    glyph that has a width, the last one's taken off. A test supplies the
 //    font's glyph widths (lv_font_t::glyph_w) from LVGL's own font data.
+//    Letter spacing is modeled on a one-line, content-sized label (the
+//    splash's wordmark, F373); a wrapped label is measured at letter_space 0,
+//    and one given a spacing aborts the test.
 // Timers are recorded, never fired by the fake (the blink/flourish cadence
 // places nothing); a test may fire one itself from fake_lvgl::timers().
 // lv_timer_handler() is a refresh: it calls the test's
@@ -214,6 +218,7 @@ struct _lv_obj_t {
   lv_coord_t arc_w_main, arc_w_ind;  // LV_STYLE_ARC_WIDTH per part
   uint8_t opa;                // LV_STYLE_OPA (the whole object's)
   lv_coord_t line_space;      // LV_STYLE_TEXT_LINE_SPACE as set on the label
+  lv_coord_t letter_space;    // LV_STYLE_TEXT_LETTER_SPACE as set on the label
 };
 
 namespace fake_lvgl {
@@ -249,6 +254,7 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   o->arc_w_main = o->arc_w_ind = 0;
   o->opa = 255;  // LV_OPA_COVER, LVGL's default
   o->line_space = 0;
+  o->letter_space = 0;
   if (parent == nullptr) {
     // A screen: the display's size, at the origin. The first one is active
     // (lv_obj_constructor: the display's act_scr when it has none).
@@ -438,9 +444,15 @@ inline void lv_obj_set_style_text_color(lv_obj_t* o, lv_color_t c,
   o->text_color_set = true;
 }
 inline void lv_obj_set_style_text_opa(lv_obj_t*, lv_opa_t, lv_style_selector_t) {}
-// Not modeled: text widths are measured at letter_space 0 (no caller here
-// reads a spaced label's box).
-inline void lv_obj_set_style_text_letter_space(lv_obj_t*, lv_coord_t, lv_style_selector_t) {}
+// Set on the label itself (LVGL inherits it from a parent too; no caller here
+// sets it on one). A content-sized label's width counts it (text_width); only
+// splash.cpp sets it among the TUs compiled against this file (F373).
+inline void lv_obj_set_style_text_letter_space(lv_obj_t* o, lv_coord_t v, lv_style_selector_t) {
+  o->letter_space = v;
+}
+inline lv_coord_t lv_obj_get_style_text_letter_space(const lv_obj_t* o, uint32_t) {
+  return o->letter_space;
+}
 // Set on the label itself (LVGL inherits it from a parent too; no caller here
 // sets it on one).
 inline void lv_obj_set_style_text_line_space(lv_obj_t* o, lv_coord_t v, lv_style_selector_t) {
@@ -473,8 +485,11 @@ inline lv_res_t lv_qrcode_update(lv_obj_t* o, const void* data, uint32_t n) {
 inline void lv_obj_center(lv_obj_t* o);  // below, after lv_obj_align
 
 namespace fake_lvgl {
-// lv_txt_get_width at letter_space 0, one line (UTF-8 as lv_txt_utf8_next).
-inline int text_width(const lv_font_t* f, const std::string& t) {
+// lv_txt_get_width, one line (UTF-8 as lv_txt_utf8_next): each glyph's width
+// and, after each glyph that has one, `letter_space`; the last letter space is
+// taken off ("Trim the last letter space", lv_txt.c), so a one-glyph line is
+// the glyph alone.
+inline int text_width(const lv_font_t* f, const std::string& t, int letter_space = 0) {
   std::vector<uint32_t> cps;
   for (size_t i = 0; i < t.size();) {
     const unsigned char c = (unsigned char)t[i];
@@ -485,8 +500,11 @@ inline int text_width(const lv_font_t* f, const std::string& t) {
     cps.push_back(cp);
   }
   int w = 0;
-  for (size_t k = 0; k < cps.size(); ++k)
-    w += lv_font_get_glyph_width(f, cps[k], k + 1 < cps.size() ? cps[k + 1] : 0);
+  for (size_t k = 0; k < cps.size(); ++k) {
+    const int g = lv_font_get_glyph_width(f, cps[k], k + 1 < cps.size() ? cps[k + 1] : 0);
+    if (g > 0) w += g + letter_space;
+  }
+  if (w > 0) w -= letter_space;
   return w;
 }
 }  // namespace fake_lvgl
@@ -521,10 +539,16 @@ inline void refr_size(lv_obj_t* c) {
   if (c->kind == kLabel) {
     if (!c->content_w && !c->content_h) return;
     const lv_font_t* f = lv_obj_get_style_text_font(c, LV_PART_MAIN);
-    if (c->content_w) c->w = (lv_coord_t)(f ? text_width(f, c->text) : 0);
+    if (c->content_w) c->w = (lv_coord_t)(f ? text_width(f, c->text, c->letter_space) : 0);
     if (c->content_h) {
       int lines = 1;
       if (f != nullptr && !c->content_w && c->long_mode == LV_LABEL_LONG_WRAP) {
+        if (c->letter_space != 0) {
+          fprintf(stderr, "fake_lvgl: a wrapped label's letter spacing (%d) is "
+                          "not modeled (lv_txt_wrap.h wraps at 0)\n",
+                  (int)c->letter_space);
+          abort();
+        }
         FontGlyphW g = {f};
         lines = lvwrap::line_count(c->text.c_str(), g, c->w - 2 * inset(c));
       }
