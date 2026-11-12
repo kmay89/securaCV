@@ -18,11 +18,15 @@ export class HttpError extends Error {
   constructor(status, message, extra = {}) { super(message); this.status = status; Object.assign(this, extra); }
 }
 
+// The browser sends every cookie it holds for the host, ours or not: a parent domain's (Domain=), another
+// dev server's on another port (cookies ignore ports), an extension's. One that does not percent-decode is
+// kept as written, never a refusal of the request: ours are written by cookie() below and always decode.
 export function parseCookies(req) {
   const out = {};
   for (const part of (req.headers.cookie || '').split(';')) {
     const i = part.indexOf('='); if (i < 0) continue;
-    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    const raw = part.slice(i + 1).trim(); let v = raw; try { v = decodeURIComponent(raw); } catch { /* not ours: kept as written */ }
+    out[part.slice(0, i).trim()] = v;
   }
   return out;
 }
