@@ -69,7 +69,11 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   again after the wait, before anything opens: a person disabled, a token
   revoked, a code spent by a login that finished meanwhile, or either
   lockout armed by failures queued ahead, refuses the request when it
-  lands.
+  lands. A session or an invitation link holds at most one password job
+  at a time: a second password re-check from the same person, or a second
+  post of the same link, while the first is still being derived is refused
+  (429), not queued, so neither can line up derivations ahead of anyone's
+  login. A re-sent link is a new link and is never refused for the old one.
 - **A code is good for one login.** The 30-second step an authenticator
   code matched is remembered per person; the same code presented again, at
   or before that step, is refused. A code read over a shoulder or off a
@@ -106,11 +110,33 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   (the current one is required) and sets up a new authenticator there: the
   password again to begin, then a code from the old authenticator and one
   from the new to confirm, so a stolen session alone cannot swap the second
-  factor for a thief's; the old authenticator keeps working until that
+  factor for a thief's, nor guess its way past either: the password asked
+  again and the old authenticator's code share the door's per-address lock
+  (the next paragraph). The old authenticator keeps working until that
   confirmation, so a half-finished switch locks nobody out. Each step is
   in the audit log with its address. *Log out everywhere else* ends their
   other sessions, for the password again. The Health page warns when the oldest owner
   password is a year old.
+- **The re-checks answer to the door's lock.** The password asked again
+  (to change it, to begin a new authenticator, to end the other sessions)
+  and the old authenticator's code are guesses a stolen cookie could
+  otherwise make as fast as it likes. They count against the door's own
+  lock, per person and per address: a wrong one is a failed try, eight in
+  fifteen minutes from one address lock that person there, and while the
+  lock stands every re-check and every sign-in of that person from that
+  address is refused before any password work or code compare, the right
+  secret included, with one answer whatever was typed. A right re-check
+  resets nothing (only a full sign-in, password and code, does, as at the
+  door), so proving the password between code guesses buys no more
+  guesses. For the re-checks the bound is the door's count: eight wrong
+  tries per person per address in fifteen minutes (a wrong try at the door
+  counts toward the same eight), plus at most one password check already
+  being derived when the eighth landed (its answer is then the refusal).
+  A guesser with many addresses gets eight at each, as at the door;
+  `SESSION_BIND_IP=1` ends a session that moves. A lock armed this way
+  shows on the People page and in the audit log, and the Health page's
+  failed-login row counts the wrong re-checks with the door's failures; it
+  does not push to the phone, as the door's per-address lockout does.
 - **A sign-in link, in place of the password.** With a mail relay, the
   login page offers "Email me a sign-in link". The link stands in for the
   password, never for the authenticator: it opens a page that asks for the

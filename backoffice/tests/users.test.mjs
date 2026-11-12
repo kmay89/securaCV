@@ -193,6 +193,85 @@ test('over HTTP: eight wrong codes in flight and the right login behind them —
   } finally { await b.close(); }
 });
 
+// BO-A1: the re-checks a live session asks for (the password again, a code from the current authenticator) answer to
+// the door's own lock for this person and this address. Eight wrong tries from one address and every re-check from it
+// is refused for fifteen minutes, the right secret included; the door and the re-checks share one count; a right
+// re-check resets nothing and a full login does; the Health row counts them. `from(ip)` is the session's cookie and
+// token sent from another address (the suite's peer is loopback, a trusted proxy, so X-Forwarded-For names the client).
+const wrongCode = (secret, time = Date.now()) => { const near = new Set([-1, 0, 1].map(w => totp(secret, { time: time + w * 30_000 }))); for (let n = 0; ; n++) { const c = String(n).padStart(6, '0'); if (!near.has(c)) return c; } };
+const fromAddress = (b, s) => (ip) => (p, body = {}) => fetch(b.base + p, { method: 'POST', redirect: 'manual', headers: { cookie: s.cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': ip }, body: form({ _csrf: s.csrf, ...body }) });
+const statuses = async (n, send) => { const out = []; for (let i = 0; i < n; i++) out.push((await send(i)).status); return out; };
+
+test('a stolen session cannot guess the current authenticator: eight wrong codes from one address and the right one is refused there for fifteen minutes, at the door too', async () => {
+  const b = await boot();
+  try {
+    const me = userByEmail(b.db, 'owner@errer.test'); const s = await b.signIn('owner@errer.test', 'owner password 1234', totp(b.secret)); const from = fromAddress(b, s);
+    const A = from('203.0.113.9'), B = from('198.51.100.20');
+    assert.equal((await A('/me/totp', { current: 'owner password 1234' })).status, 303); const next = pendingTotp(b.db, me.id);
+    assert.deepEqual(await statuses(8, () => A('/me/totp/confirm', { current_code: wrongCode(b.secret), code: totp(next) })), [400, 400, 400, 400, 400, 400, 400, 429], 'seven wrong codes are answered; the eighth arms the lock and is answered by it');
+    b.fresh(); const right = await A('/me/totp/confirm', { current_code: totp(b.secret), code: totp(next) }); const wrong = await A('/me/totp/confirm', { current_code: wrongCode(b.secret), code: totp(next) });
+    assert.equal(right.status, 429, 'the right code is refused while the lock stands'); const said = await right.json(); assert.match(said.error, /too many wrong tries from this address/);
+    assert.deepEqual([wrong.status, await wrong.json()], [429, said], 'and a wrong one gets the very same answer');
+    assert.equal(pendingTotp(b.db, me.id), next, 'nothing was swapped');
+    assert.equal((await A('/me/sessions/end', { current: 'owner password 1234' })).status, 429, 'the password re-check from that address is refused as well');
+    b.fresh(); assert.equal(await login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(b.secret) }, { ip: '203.0.113.9' }), null, 'and so is the door: it is one lock');
+    const rec = userByEmail(b.db, 'owner@errer.test'); assert.equal(rec.failed_logins, 8); assert.ok(rec.locked_until > new Date().toISOString(), 'the People page can say so');
+    const rows = b.db.all("SELECT actor, action, detail FROM audit_log WHERE action IN ('auth.totp.failed', 'auth.login.locked') ORDER BY id").map(x => `${x.actor} ${x.action} ${x.detail}`);
+    assert.deepEqual(rows, [...Array(8).fill('owner@errer.test auth.totp.failed {"ip":"203.0.113.9","why":"current"}'), 'owner@errer.test auth.login.locked {"ip":"203.0.113.9","via":"totp"}', 'owner@errer.test auth.login.locked {"ip":"203.0.113.9","via":"totp"}', 'owner@errer.test auth.login.locked {"ip":"203.0.113.9","via":"first factor"}', 'web auth.login.locked {"ip":"203.0.113.9"}'], 'each wrong code is a failure under the person\'s name, each refusal a locked attempt');
+    // the lock is the person's for that address: the same session elsewhere is not held
+    assert.equal((await B('/me/totp', { current: 'owner password 1234' })).status, 303, 'from another address the same session re-checks as usual'); const next2 = pendingTotp(b.db, me.id);
+    const T = Date.now(); const at = (min) => ({ code: totp(next2, { time: T + min * 60_000 }), opts: { current: totp(b.secret, { time: T + min * 60_000 }), ip: '203.0.113.9', now: T + min * 60_000 } });
+    b.fresh(); let t = at(14); assert.throws(() => confirmTotp(b.db, me.id, t.code, t.opts), (e) => e.status === 429, 'fourteen minutes on, the right codes are still refused from that address');
+    b.fresh(); t = at(16); assert.equal(confirmTotp(b.db, me.id, t.code, t.opts), true, 'after fifteen minutes they are accepted');
+    assert.equal(pendingTotp(b.db, me.id), null);
+  } finally { await b.close(); }
+});
+
+test('a stolen session cannot guess the password: eight wrong re-checks from one address and the right one is refused there, on every route that asks', async () => {
+  const b = await boot();
+  try {
+    const me = userByEmail(b.db, 'owner@errer.test'); const s = await b.signIn('owner@errer.test', 'owner password 1234', totp(b.secret)); const A = fromAddress(b, s)('203.0.113.10');
+    assert.deepEqual(await statuses(8, (i) => A('/me/password', { current: `a wrong guess ${i}`, next: 'a brand new password 9' })), [400, 400, 400, 400, 400, 400, 400, 429], 'seven wrong passwords are answered; the eighth arms the lock');
+    for (const [p, body] of [['/me/password', { current: 'owner password 1234', next: 'a brand new password 9' }], ['/me/totp', { current: 'owner password 1234' }], ['/me/sessions/end', { current: 'owner password 1234' }]]) {
+      const r = await A(p, body); assert.equal(r.status, 429, `${p}: the right password is refused while the lock stands`); assert.match((await r.json()).error, /too many wrong tries from this address/);
+    }
+    assert.equal(pendingTotp(b.db, me.id), null, 'no rotation was begun');
+    b.fresh(); assert.ok(await login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(b.secret) }, { ip: '198.51.100.21' }), 'the password was not changed (the person still signs in with it, from another address)');
+    assert.deepEqual(b.db.all("SELECT detail FROM audit_log WHERE action = 'auth.password.failed'").map(x => x.detail), Array(8).fill('{"ip":"203.0.113.10"}'), 'eight failures, each with its address');
+    assert.deepEqual(b.db.all("SELECT detail FROM audit_log WHERE action = 'auth.login.locked'").map(x => x.detail), Array(3).fill('{"ip":"203.0.113.10","via":"first factor"}'), 'and the three refusals, each a locked attempt');
+  } finally { await b.close(); }
+});
+
+test('one count for the door and the re-checks: seven typos are forgiven, a right re-check resets nothing, a full login does, and the Health row sees it all', async () => {
+  const b = await boot();
+  try {
+    const me = userByEmail(b.db, 'owner@errer.test'); const s = await b.signIn('owner@errer.test', 'owner password 1234', totp(b.secret)); const from = fromAddress(b, s);
+    const A = from('203.0.113.30'), C = from('203.0.113.31'), D = from('203.0.113.32');
+    // seven typos, then the right codes: the person is not locked out
+    assert.equal((await A('/me/totp', { current: 'owner password 1234' })).status, 303); let next = pendingTotp(b.db, me.id);
+    assert.deepEqual(await statuses(7, () => A('/me/totp/confirm', { current_code: wrongCode(b.secret), code: totp(next) })), Array(7).fill(400));
+    b.fresh(); assert.equal((await A('/me/totp/confirm', { current_code: totp(b.secret), code: totp(next) })).status, 303, 'after seven typos the right codes still switch the authenticator'); let cur = next;
+    // a right password and a right code between guesses reset nothing: the next wrong one is the eighth
+    assert.equal((await A('/me/totp', { current: 'owner password 1234' })).status, 303); next = pendingTotp(b.db, me.id);
+    assert.equal((await A('/me/totp/confirm', { current_code: wrongCode(cur), code: totp(next) })).status, 429, 'the eighth wrong try from the address arms the lock, right answers in between notwithstanding');
+    b.fresh(); assert.equal(await login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(cur) }, { ip: '203.0.113.30' }), null, 'the door from that address is locked too');
+    // a full login (both factors) clears the count for its address, as it always has
+    assert.deepEqual(await statuses(5, () => C('/me/totp/confirm', { current_code: wrongCode(cur), code: totp(next) })), Array(5).fill(400));
+    b.fresh(); assert.ok(await login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(cur) }, { ip: '203.0.113.31' }), 'five wrong, then a full login from the same address');
+    assert.deepEqual(await statuses(8, () => C('/me/totp/confirm', { current_code: wrongCode(cur), code: totp(next) })), [400, 400, 400, 400, 400, 400, 400, 429], 'the count started over at that login');
+    // the door's failures and the re-checks' are one count
+    for (let i = 0; i < 4; i++) assert.equal(await login(b.db, { email: 'owner@errer.test', password: `wrong at the door ${i}`, code: '000000' }, { ip: '203.0.113.32' }), null);
+    assert.deepEqual(await statuses(4, () => D('/me/totp/confirm', { current_code: wrongCode(cur), code: totp(next) })), [400, 400, 400, 429], 'four at the door and four here make eight');
+    // seven typos in the re-checks and the person still signs in at the door from that address
+    const E = from('203.0.113.33'); assert.deepEqual(await statuses(7, () => E('/me/totp/confirm', { current_code: wrongCode(cur), code: totp(next) })), Array(7).fill(400));
+    b.fresh(); assert.ok(await login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(cur) }, { ip: '203.0.113.33' }), 'seven wrong, and the door still opens');
+    // the Health row counts the re-checks with the door's failures (8 + 13 + 8 + 7 here) and turns red past twenty
+    const n = b.db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action IN ('auth.login.failed', 'auth.totp.failed', 'auth.password.failed')").n; assert.equal(n, 36);
+    const row = doctor(b.db, b.cfg).checks.find(c => c.key === 'logins');
+    assert.equal(row.ok, false, 'thirty-six failures in a day are red'); assert.match(row.detail, /^36 · last from 203\.0\.113\.33 /); assert.match(row.label, /re-checks/);
+  } finally { await b.close(); }
+});
+
 test('the operator from before people existed is carried over as the first owner, once; the demo seeds one of each role', async () => {
   const db = testDb();
   db.setSetting('auth:password', hashPasswordSync('legacy operator pw 1')); db.setSetting('auth:totp', base32Encode(Buffer.from('12345678901234567890'))); db.setSetting('auth:password_set_at', '2026-01-01T00:00:00.000Z');
