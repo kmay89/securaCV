@@ -948,11 +948,7 @@ async fn run_sidecar_streaming(
 /// `backup_flash` now calls this itself (`dest: "auto"`), and `day` only ever
 /// reaches a file NAME, which the engine's helper refuses unless it is a date.
 fn auto_backup_path(app: &AppHandle, day: &str) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("no app data dir: {e}"))?
-        .join("backups");
+    let dir = backups_dir(app)?;
     owner_only_dir(&dir)
         .map_err(|e| format!("couldn't make the backups folder private to this account: {e}"))?;
     let taken: Vec<String> = std::fs::read_dir(&dir)
@@ -963,6 +959,47 @@ fn auto_backup_path(app: &AppHandle, day: &str) -> Result<std::path::PathBuf, St
     let name = rescue::next_backup_filename(day, &taken)
         .ok_or_else(|| format!("not a date the backup can be named by: {day:?}"))?;
     Ok(dir.join(name))
+}
+
+/// The folder every automatic safety copy goes in.
+fn backups_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("no app data dir: {e}"))?
+        .join("backups"))
+}
+
+/// At every launch, close a `backups/` folder an older build left open (0755,
+/// with 0644 copies in it): the folder to 0700 and each copy in it to 0600,
+/// whether or not this run ever takes a safety copy. `auto_backup_path`
+/// tightens the folder too, but only an install that takes a safety copy
+/// calls it, so someone who turned the copy off, or saves backups only from
+/// the Rescue bench, would otherwise keep the open folder. Only a folder that
+/// is already there is touched, and only the regular files in it (a link is
+/// not followed). Best-effort and quiet, like the launch's other sweeps.
+/// Elsewhere it does nothing.
+fn close_backups_folder(backups: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if !backups.is_dir() {
+            return;
+        }
+        let _ = std::fs::set_permissions(backups, std::fs::Permissions::from_mode(0o700));
+        if let Ok(entries) = std::fs::read_dir(backups) {
+            for e in entries.flatten() {
+                if e.file_type().is_ok_and(|t| t.is_file()) {
+                    let _ =
+                        std::fs::set_permissions(e.path(), std::fs::Permissions::from_mode(0o600));
+                }
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = backups;
+    }
 }
 
 /// Make `dir`, and any parent it is missing, a folder only this account can
@@ -1820,13 +1857,20 @@ pub fn run() {
         .manage(fleet::SealState::default())
         .manage(ChosenFiles::default())
         // On launch, reclaim anything a crash or pulled plug orphaned (a
-        // ~2.5 GB raw staging image, a half-finished .partial download). Off
-        // the main thread so it never delays the window. Orphaned *processes*
-        // are already gone by now — the launch guard reaps those first, before
-        // the UI enumerates ports and finds the board still held.
+        // ~2.5 GB raw staging image, a half-finished .partial download), and
+        // close a safety-copy folder an older build left open to other
+        // accounts. Off the main thread so it never delays the window.
+        // Orphaned *processes* are already gone by now — the launch guard
+        // reaps those first, before the UI enumerates ports and finds the
+        // board still held.
         .setup(move |app| {
             let handle = app.handle().clone();
-            std::thread::spawn(move || hub::cleanup_orphans(&handle));
+            std::thread::spawn(move || {
+                hub::cleanup_orphans(&handle);
+                if let Ok(backups) = backups_dir(&handle) {
+                    close_backups_folder(&backups);
+                }
+            });
             guard.note(launch_guard::Stage::WindowUp);
             launch_guard::report(app.handle(), &guard);
             launch_guard::watch(app.handle(), &guard);
@@ -2309,7 +2353,7 @@ mod failed_copy_tests {
 
 #[cfg(all(test, unix))]
 mod owner_only_tests {
-    use super::{owner_only_dir, owner_only_file};
+    use super::{close_backups_folder, owner_only_dir, owner_only_file};
     use std::os::unix::fs::PermissionsExt;
 
     fn mode(p: &std::path::Path) -> u32 {
@@ -2353,6 +2397,41 @@ mod owner_only_tests {
         owner_only_dir(&backups).expect("tightened");
         assert_eq!(mode(&backups), 0o700);
         assert_eq!(std::fs::read(&old_copy).unwrap(), b"old dump", "left whole");
+    }
+
+    /// Every launch closes a folder an older build left open, and tightens
+    /// the copies in it, whether or not this run takes a safety copy (the
+    /// Rescue bench and an install with the copy turned off never reach
+    /// `owner_only_dir`). A link in the folder is not followed.
+    #[test]
+    fn every_launch_closes_an_older_builds_open_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let backups = dir.path().join("backups");
+        std::fs::create_dir(&backups).unwrap();
+        std::fs::set_permissions(&backups, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let old_copy = backups.join("canary-aabbcc-1700000000-backup.bin");
+        std::fs::write(&old_copy, b"old dump").unwrap();
+        std::fs::set_permissions(&old_copy, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let elsewhere = dir.path().join("notes.txt");
+        std::fs::write(&elsewhere, b"not a copy").unwrap();
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, backups.join("link.bin")).unwrap();
+
+        close_backups_folder(&backups);
+
+        assert_eq!(mode(&backups), 0o700, "backups/");
+        assert_eq!(mode(&old_copy), 0o600, "a copy an older build left 0644");
+        assert_eq!(std::fs::read(&old_copy).unwrap(), b"old dump", "left whole");
+        assert_eq!(mode(&elsewhere), 0o644, "a link's target is not touched");
+    }
+
+    /// A launch only closes a folder that is there; it makes none.
+    #[test]
+    fn a_launch_makes_no_backups_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let backups = dir.path().join("backups");
+        close_backups_folder(&backups);
+        assert!(!backups.exists());
     }
 
     /// A new copy is created 0600 before espflash runs, and espflash's own
