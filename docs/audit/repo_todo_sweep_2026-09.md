@@ -430,9 +430,10 @@ so — see D2 below.)
   `handle_originate_solo()` (`beacon_api.h`) read
   `(uint8_t)doc["template_id"].as<int>()` and `(uint8_t)(doc["detail"] | 0)`,
   so a `template_id` of 0x110 would read as template 0x10 and a detail of 272
-  as 16, the class F485 closed for Chirp's send. Read each whole, as `template_from_request()` and
-  `detail_from_request()` (`mesh_network.h`) do, and refuse by name, under
-  Beacon's own invariants (two-pubkey co-signing, no automatic origination;
+  as 16, the class F485 closed for Chirp's send. Read each whole, as
+  `template_from_request()` and `detail_from_request()` (`mesh_network.h`)
+  do, and refuse by name, under Beacon's own invariants (two-pubkey
+  co-signing, no automatic origination;
   `firmware/projects/canary-wap/AGENTS.md`). Beacon is off in every stock
   build. From code, not yet run. Found by F485's triage (#W27PR).
 
@@ -918,9 +919,8 @@ so — see D2 below.)
   manifest compare. Do both with the next version-bump dist rebuild, so the
   Actions rebuild is paid once: `canary-local/emulator/build.sh` compiles
   `device_pseudonym.h`'s `ARDUINO` branch, so that copy needs a shim
-  `mbedtls/version.h` in the emulator build. The
-  canary tree's `compute_fingerprint()` and `compute_opera_id()` callers are
-  F484.
+  `mbedtls/version.h` in the emulator build. The canary tree's
+  `compute_fingerprint()` and `compute_opera_id()` callers are F484.
 
 - [ ] **F402 [decision] canary-wap: a stored token it cannot read or use keeps
   a release unit unprovisioned at every boot.** Since F365 (#1916) a stored
@@ -4153,14 +4153,17 @@ so — see D2 below.)
 - [ ] **A146 [code] A second Flasher launch still sweeps a live run's files.**
   `cleanup_orphans()` (`desktop/src-tauri/src/hub.rs`) runs at every launch.
   Since #W27PR a live run's raw staging image is held under an exclusive
-  `flock(2)` on Unix and the sweep skips it, but on Windows (the per-user app
-  cache, no lock) a second Flasher opened during a hub write can still
-  delete the staging file between steps and fail that write, and on every
-  platform the sweep removes a live run's `<image>.partial` download, so its
-  final rename fails. Neither exposes a secret. `launch_guard` already detects
-  a live instance ("standing down"); gating `cleanup_orphans()` on it would
-  cover both. From code; not testable on Windows from a Linux container. Found
-  by the Flasher's owner-only fix (#W27PR).
+  `flock(2)` and the sweep skips it, but the sweep still removes a live run's
+  `<image>.partial` download on Linux and macOS, the platforms that write a
+  hub card today, so that run's final rename fails. On Windows the staging
+  file has no lock (it sits in the per-user app cache), so a second Flasher
+  could delete it between steps and fail the write; that half is latent
+  until A9 enables the Windows write backend (`write_backend_available()` in
+  `desktop/hub-io/src/write.rs` refuses before any download there). Neither
+  exposes a secret. `launch_guard` already detects a live instance
+  ("standing down"); gating `cleanup_orphans()` on it would cover both. From
+  code; the Windows half is not testable from a Linux container. Found by
+  the Flasher's owner-only fix (#W27PR).
 
 - [ ] **A147 [code] hub-io's onboarding agents follow redirects with no host
   check.** In `desktop/hub-io/src/onboarding.rs`, `agent()` (the Home
@@ -4170,7 +4173,8 @@ so — see D2 below.)
   follows a redirect only back to the host it judged. Whether a 3xx from a
   hub address can carry the owner's login elsewhere was not examined: read
   each call, then refuse an off-host redirect as the pinned client does, or
-  say why none is needed. From code. Found by the device-base host fix's review (#W27PR).
+  say why none is needed. From code. Found by the device-base host fix's
+  review (#W27PR).
 
 - [ ] **A148 [decision] One device-base host rule for both schemes.** Since
   #W27PR both desktop apps' `base_host()` (`desktop/src-tauri/src/fleet.rs`
@@ -4185,8 +4189,8 @@ so — see D2 below.)
   `canary-local/tests/desktop_parity.test.js` holds the twins equal, so change
   both. From code. Found by the device-base host fix's review (#W27PR).
 
-- [ ] **A149 [code] The desktop apps' Witness Wall cannot reach a kernel, and
-  blames the network.** Both apps run the vendored Wall
+- [ ] **A149 [code, gated by W44] The desktop apps' Witness Wall cannot
+  reach a kernel, and blames the network.** Both apps run the vendored Wall
   (`desktop/src/witness/`, `canary-local/witness/`) under the app's CSP,
   which Tauri 2.12.5 sends as a header on every HTML asset, iframe pages
   included, and neither policy lists a LAN host. So the Wall's `canary.local`
@@ -4760,12 +4764,13 @@ so — see D2 below.)
   integrator left both), then run `node scripts/make-agent-entrypoints.mjs`.
 
 - [ ] **W43 [code] The Pro camera page's webhook sentence names setups
-  `adapter_host` now refuses.** `pro-camera.html` says to "set an
-  `auth_token` or `hmac_secret`, and add TLS if the camera isn't on a trusted
-  LAN". Since securaCV #W27PR both are refused at start off loopback on plain
-  HTTP. Say what `docs/hardware/canary_vision_pro_recamera.md` step 5 says
-  now: on plain HTTP, `hmac_secret` with `hmac_replay_window_secs` (the flow
-  then sends `X-Timestamp`, `X-Nonce` and the windowed signature); an
+  `adapter_host` refuses.** `pro-camera.html` says to "set an `auth_token` or
+  `hmac_secret`, and add TLS if the camera isn't on a trusted LAN". Off
+  loopback on plain HTTP, `adapter_host` already refused an `auth_token` at
+  start, and since securaCV #W27PR it refuses a bare `hmac_secret` too. Say
+  what `docs/hardware/canary_vision_pro_recamera.md` step 5 says now: on
+  plain HTTP, `hmac_secret` with `hmac_replay_window_secs` (the flow then
+  sends `X-Timestamp`, `X-Nonce` and the windowed signature); an
   `auth_token` or a bare `hmac_secret` only behind `tls_cert`/`tls_key`; or
   mutual TLS. From the page and the monorepo's gate. Found by securaCV's
   webhook gate fix (#W27PR).
@@ -4773,12 +4778,13 @@ so — see D2 below.)
 - [ ] **W44 [code] The Witness Wall emulator blames the network for a refused
   origin, and has no host mode.** `js/tv-emulator.js` answers every failed
   fetch with "Couldn't reach a kernel there (…) — showing the demo fleet",
-  including a hub the page's own CSP refused (the 2026-11 header audit's
-  st-S5: its hub links and `canary.local` probes are refused by `connect-src`
-  by design), and its 12 s detect loop re-probes refused origins forever.
-  Record the origins `securitypolicyviolation` reports for `connect-src`, as
-  `tv/app.js` does, and say the page cannot fetch that host itself; stop the
-  detect loop once every well-known probe was refused; leave a fleet the host
+  including a hub the page's own CSP refused (its hub links and
+  `canary.local` probes are refused by `connect-src` by design), and its 12 s
+  detect loop re-probes refused origins forever. Record the origins
+  `securitypolicyviolation` reports for `connect-src`, as `tv/app.js` does
+  once the website's open CSP pass lands (not yet on the website's main),
+  and say the page cannot fetch that host itself; stop the detect loop once
+  every well-known probe was refused; leave a fleet the host
   posted alone. Add a host mode (`witness.html?host=native` or a `witness:host`
   message) in which the Wall skips detection and posts `{type:
   'witness:connect-request', url}` to its parent instead of fetching; securaCV
@@ -5272,10 +5278,11 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   `WASM32_CLANGXX=clang++-18` for `cores_wasm32.test.js`: the input, the pin
   and the job's `runs-on` move together, and that file's CI test fails by name
   on a `runs-on` change until they do. The trial includes firmware.yml's
-  `common-host-test-lanes` (#W27PR): its sanitized legs rely on the image's
-  `libclang-rt-18-dev` and on `vm.mmap_rnd_bits` at 28 or below, and its
-  15-minute timeout was set from legs of 280 to 509 s on a contended 4-CPU
-  host.
+  `common-host-test-lanes` (#W27PR), not yet run on GitHub: its clang++-18
+  sanitized leg relies on the image's `libclang-rt-18-dev` and both
+  sanitized legs on `vm.mmap_rnd_bits` at 28 or below (from the
+  runner-images build scripts), and its 15-minute timeout is a starting
+  value, not fitted: the legs took 280 to 509 s on a contended 4-CPU host.
 
 - [ ] **CI25 [decision] The AppImage runtime and plugin now ship from dated
   releases, and `pins.txt` is outside the release watches.** Two calls CI21
@@ -5383,10 +5390,11 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   both comments to what the script runs. From code. Found by CI28 (#2013).
 
 - [ ] **CI34 [code] `backoffice.yml` never runs the suite under a shifted
-  clock.** Since #W27PR the backoffice suite passes at any date
-  (`applyStripeEvent` takes an optional clock since #1967, and the dated tests
-  carry their own), shown under a Date shim at 2026-10-21, 2027-01-01, 2027-03-15,
-  2027-06-01 and 2028-01-01. CI runs it only at the wall clock, so nothing
+  clock.** Since #W27PR the dated tests carry their own clock
+  (`applyStripeEvent` has taken an optional one since #1967). Under a Date
+  shim the dated tests passed at 2026-10-21, 2027-01-01, 2027-03-15,
+  2027-06-01 and 2028-01-01, and the whole suite at 2028-01-01; no other
+  date was run. CI runs it only at the wall clock, so nothing
   caught the four dates that turned it red or would have (away 2026-11-09,
   orders 2027-01-01, audience about 2027-04-17, listing 2027-10-16). Add a
   step: a four-line Date shim passed with `--import` (only a no-argument `new

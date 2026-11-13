@@ -8,11 +8,11 @@
   `ADAPTER_WEBHOOK_ALLOW_INSECURE=1`, a bare `hmac_secret` (no
   `hmac_replay_window_secs`) is refused at start, as a plain-HTTP bearer token
   already was: it signs the body only, so a captured request could be
-  replayed at any time and onto any route sharing the secret. A blank `auth_token` or
-  `hmac_secret` is refused there too unless mutual TLS authenticates the
-  client. **This refuses configs that started before**; the refusal names the
-  client change (`X-Timestamp`, `X-Nonce` and a signature over
-  `<timestamp>.<nonce>.<path>.<body>`). In windowed mode the listener
+  replayed at any time and onto any route sharing the secret. A blank
+  `auth_token` or `hmac_secret` is refused there too unless mutual TLS
+  authenticates the client. **This refuses configs that started before**; the
+  refusal names the client change (`X-Timestamp`, `X-Nonce` and a signature
+  over `<timestamp>.<nonce>.<path>.<body>`). In windowed mode the listener
   remembers each accepted MAC beside its nonce for 2 × window + 1 s, so a
   request repeated, or its signed bytes re-split onto another route, inside
   that time is refused, a window of 0 included. The wire calls left open are
@@ -39,17 +39,18 @@
 - **The desktop apps (audit; no ids).** The Flasher stages the unpacked hub
   card image, which holds the Wi-Fi passphrase and the owner's bcrypt hash,
   in the app's own cache at 0600 (since 0.12.6) and now under a random name
-  created exclusively and held under an exclusive file lock until it is
-  deleted, so a second launch's sweep leaves a running write's image alone;
-  it was `securacv-hub-<pid>.img`. Safety copies are created 0600 before
-  espflash writes them, `backups/` is 0700, and every launch closes a folder
-  an older build left open. Both apps parse a device base with reqwest's url
-  crate, so `http://8.8.8.8?.local:8080` no longer passes as a `.local`
-  name while 8.8.8.8 is dialed: a user, password, query, fragment,
-  whitespace or a host no request can carry is refused, and a pinned client
-  follows a redirect only back to the host it judged. The Flasher's policy
-  names Tauri's IPC, so its commands no longer fall back to `postMessage` at
-  every launch. What remains is A145-A149.
+  created exclusively and, on Linux and macOS (Windows writes no card yet),
+  held under an exclusive file lock until it is deleted, so a second launch's
+  sweep leaves a running write's image alone; it was
+  `securacv-hub-<pid>.img`. Safety copies are created 0600 before espflash
+  writes them, `backups/` is 0700, and every launch closes a folder an older
+  build left open. Both apps parse a device base with reqwest's url crate, so
+  `http://8.8.8.8?.local:8080` no longer passes as a `.local` name while
+  8.8.8.8 is dialed: a user, password, query, fragment, whitespace or a host
+  no request can carry is refused, and a pinned client follows a redirect
+  only back to the host it judged. The Flasher's policy names Tauri's IPC, so
+  its commands no longer fall back to `postMessage` at every launch. What
+  remains is A145-A149.
 - **The backoffice (audit; the re-checks and the clock in part, A150, A151,
   CI34).** The password and authenticator re-checks on *Your account* count
   against the sign-in's lock for that person at that address: eight wrong
@@ -61,14 +62,15 @@
   its own caching; the JSON API and the CSV exports carried none. The status
   probe connects only to the addresses its check judged, so a rebinding name
   cannot point it at the box. A foreign cookie that does not percent-decode
-  no longer turns every route into `400 URI malformed`, and the suite passes
-  on any date. `backoffice/CHANGELOG.md` 0.9.0 has the details.
+  no longer turns every route into `400 URI malformed`, and the dated tests
+  carry their own clock (passed under a Date shim at five dates from
+  2026-10-21 to 2028-01-01). `backoffice/CHANGELOG.md` 0.9.0 has the details.
 - **Firmware host lanes and the Improv glue (CI33, F489, F490).**
   firmware.yml's new `common-host-test-lanes` job runs `firmware/tests_host`
   under g++ and clang++-18 with ASan and UBSan, and under plain clang++-18; a
   test's leaked `Heartbeat` is fixed. The Sense and Vision glue's RTC
-  first-boot window record is `volatile`, so clang at -O2, -Os and -O3 no
-  longer splits it (the plain clang leg holds that). When the stack took a
+  first-boot window record is `volatile`, so clang no longer splits it (shown
+  at -O2, -Os and -O3; the plain clang leg holds -O2). When the stack took a
   link drop and its event is late, the glue asks and logs once, and a drop the
   stack refused is asked again when due (F497 holds the open calls).
 - **canary-wap POST refusals (F485, F488).** `POST /api/chirp/send` read
