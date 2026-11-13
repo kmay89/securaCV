@@ -8,14 +8,16 @@
 // saved, through the linker's section bounds (__start_ / __stop_ on ELF,
 // section$start$ / section$end$ on Mach-O).
 //
-// `used` says what RTC memory is: written by something this translation
-// unit cannot see (the previous boot; here, the test). Without it clang -O2
-// sees the record's magic stored only as 0 or WINDOW_MAGIC, splits the
-// struct and shrinks the magic to a one-byte bool, so any nonzero byte reads
-// back as the magic; GCC keeps the 8 bytes. IDF's own RTC_NOINIT_ATTR is the
-// section alone (the device builds are GCC's).
+// The section alone, as IDF's own RTC_NOINIT_ATTR is: what keeps the
+// record's 8 bytes as the glue writes them is the glue's own `volatile`
+// (improv_ble.cpp, sweep F490), not this macro. Without it clang -O2 sees
+// the magic stored only as 0 or WINDOW_MAGIC, splits the struct and shrinks
+// the magic to a one-byte bool, so any nonzero byte a previous boot left
+// reads back as the magic; `reset` then fails under clang++ (-O2, -Os and
+// -O3 alike). Host g++ 13 (x86-64) kept the 8 bytes at all three either
+// way; the device builds' esp xtensa and riscv GCCs were not checked.
 #if defined(__APPLE__)
-#define RTC_NOINIT_ATTR __attribute__((used, section("__DATA,rtc_noinit")))
+#define RTC_NOINIT_ATTR __attribute__((section("__DATA,rtc_noinit")))
 #else
-#define RTC_NOINIT_ATTR __attribute__((used, section("rtc_noinit")))
+#define RTC_NOINIT_ATTR __attribute__((section("rtc_noinit")))
 #endif

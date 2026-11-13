@@ -77,7 +77,9 @@ struct WindowRecord {
   uint32_t used_ms;
 };
 constexpr uint32_t WINDOW_MAGIC = 0x1D00u * 0x10000u + 0x5E7Fu;   // "door" + "self"
-RTC_NOINIT_ATTR WindowRecord s_window_rtc;
+// volatile: the bytes a previous boot wrote are a store this boot's compiler
+// never sees, so every access is kept as written, all 8 bytes of it.
+RTC_NOINIT_ATTR volatile WindowRecord s_window_rtc;
 constexpr uint32_t WINDOW_SAVE_PERIOD_MS = 2000;
 uint32_t s_window_saved_ms = 0;
 

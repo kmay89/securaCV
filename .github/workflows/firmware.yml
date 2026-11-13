@@ -1748,7 +1748,10 @@ jobs:
   #     plain build passes it by luck. -fno-sanitize-recover=undefined
   #     makes UBSan fatal, as ASan already is.
   #   clang++-18 at the Makefile's own flags: clang -O2 optimizes what GCC
-  #     keeps, so code that works only as GCC compiles it fails here.
+  #     keeps. Without the `volatile` on improv_ble.cpp's RTC window record
+  #     (sweep F490) it shrinks the record's magic to a bool and the glue
+  #     suite's `reset` fails here; the sanitized legs keep every global
+  #     whole, so only this leg sees it.
   # The Makefile's one sanitized-lane flag (WNO_REGEX_SAN, a libstdc++
   # <regex> false positive under GCC's instrumentation) keys on a CXXFLAGS
   # that names -fsanitize. ASan needs vm.mmap_rnd_bits at 28 or below on
