@@ -90,18 +90,18 @@
 //! or pins its real key afresh. So the replay re-opens first sight only
 //! once the peer has cleared those copies, one zero-length retained publish
 //! each (two where the Canary keeps its `health` retained, as every
-//! product under `firmware/projects/` does; one for the flagship, which
-//! keeps only its will), made once and before the flood, since a clear
-//! heard while the Canary is displaced is itself a return. That is the
-//! real bound, and it is a cost, not a wall: a broker peer that displaces
-//! a quiet Canary and then pays those publishes (or has the broker replay
-//! them) gets a first sight again, so it can pin its own key for the id
-//! (and serve a row under the real id that reads `ok`, online and with
-//! words), or replay that Canary's captured `health` and chain as fresh —
-//! and by doing it again every window, hold a powered-off Canary "online"
-//! from one capture. A Canary that keeps publishing leaves the ledger each
-//! time it is heard, and re-enters it at the newest end if it is displaced
-//! again.
+//! product under `firmware/projects/` that talks to the broker does; one
+//! for the flagship, which keeps only its will), made once and before the
+//! flood, since a clear heard while the Canary is displaced is itself a
+//! return. That is the real bound, and it is a cost, not a wall: a broker
+//! peer that displaces a quiet Canary and then pays those publishes (or
+//! has the broker replay them) gets a first sight again, so it can pin its
+//! own key for the id (and serve a row under the real id that reads `ok`,
+//! online and with words), or replay that Canary's captured `health` and
+//! chain as fresh — and by doing it again every window, hold a powered-off
+//! Canary "online" from one capture. A Canary that keeps publishing leaves
+//! the ledger each time it is heard, and re-enters it at the newest end if
+//! it is displaced again.
 //! Never displacing an id that holds a pin and a verified length would close
 //! that, at the price of letting a flood of proven ids shut new Canaries out
 //! until the file is deleted; this table does not make that trade.
@@ -2760,8 +2760,8 @@ mod tests {
             br#"{"device_id":"porch","device_type":"canary-sense","status":"offline","ts_ms":0}"#;
         // A canary-sense keeps its will on `status` and its health, chain
         // and state retained (every product under `firmware/projects/`
-        // keeps its will and health so); the flagship keeps only its will,
-        // on `availability`, retained.
+        // that talks to the broker keeps its will and health so); the
+        // flagship keeps only its will, on `availability`, retained.
         for keeps_health in [true, false] {
             let (will_topic, will): (&str, &[u8]) = if keeps_health {
                 ("securacv/porch/status", sense_will)

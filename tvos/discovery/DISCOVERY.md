@@ -460,8 +460,9 @@ one-header change instead of a per-board copy-paste.
     `health` where it keeps that retained — which bring it back from the
     ledger or re-pin its real key, so the replay re-opens first sight only
     once the peer has cleared them: one zero-length retained publish each
-    (two for every product under `firmware/projects/`, one for the flagship,
-    which keeps only its will), made once, before the flood. Never
+    (two for every product under `firmware/projects/` that talks to the
+    broker, one for the flagship, which keeps only its will), made once,
+    before the flood. Never
     displacing a proven id would close that, at the price of letting a flood
     of proven ids shut new Canaries out until the file is deleted; the
     roll-call does not make that trade. An id that holds neither a pin nor a
