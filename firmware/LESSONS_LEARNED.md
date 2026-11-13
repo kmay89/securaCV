@@ -3438,6 +3438,34 @@
   `firmware.yml`, and `firmware/tests_host`'s `run-syntax-checks`.
 - **Date learned:** 2026-10
 
+### Bytes an earlier boot left are a store the compiler never saw, and a sanitized build keeps what the optimizer would cut (Improv glue RTC record, F490, CI33)
+- **What happened:** `improv_ble.cpp` declared its first-boot window record
+  `RTC_NOINIT_ATTR WindowRecord s_window_rtc;` (sweep F490). On the host,
+  clang++-18 at -O2, -Os and -O3 split the struct and shrank `magic` to a
+  one-byte bool, since the file only ever stores 0 or `WINDOW_MAGIC`, so any
+  nonzero byte a previous boot left would read as the magic, and the glue
+  suite's `reset` failed; g++ 13 kept the 8 bytes. The brief for the new CI
+  lanes expected the sanitized clang leg to catch it, and it could not: under
+  `-fsanitize=address` clang instruments globals and keeps the record whole,
+  so that leg passed `reset` with or without the fix (sweep CI33).
+- **Root cause:** memory a previous boot wrote is outside the C++ abstract
+  machine, so without `volatile` the compiler reasons only from this
+  program's own stores. And a sanitized build is a different program to the
+  optimizer: a bug that lives in an optimization can vanish under it.
+- **Fix:** the record is `volatile` (`firmware/common/network/improv_ble.cpp`;
+  the host stand-in `tests_host/stubs/improv_glue/esp_attr.h` places the
+  section only), and firmware.yml's `common-host-test-lanes` runs a plain
+  clang++-18 leg at the Makefile's own flags beside the g++ and clang++-18
+  ASan + UBSan legs.
+- **Rule:** declare `volatile` any memory another boot, another image or the
+  hardware writes. Keep one unsanitized second-compiler leg: a sanitizer
+  catches memory errors and can hide an optimizer's.
+- **Regression check:** firmware.yml's plain clang++-18 leg fails
+  `test_improv_glue_core3`'s `reset` without the `volatile`. The device
+  toolchains' (xtensa and riscv GCC) output was not checked, so no device
+  build is known to have shrunk the record, and nothing was bench-tested.
+- **Date learned:** 2026-11
+
 ---
 
 ## Memory Budget
@@ -4735,7 +4763,11 @@
   reader of a request the same bytes. The same class still read
   `/api/events/dismiss`, `/api/mqtt/config` and the Tuning Lab's POSTs
   until F469 moved them, and the reader, to `json_member.h` (the entry
-  below).
+  below). The NUL refusal stayed in the settings handler and did not travel
+  with the reader, so the Tuning Lab's import stored a preset from the bytes
+  before a NUL until F488 refused one there too (#W27PR): a guard that lives
+  in one handler, not in the shared reader, has to be carried to every
+  handler that reads the same way.
 - **Regression check:** canary-wap `tests_host/test_wap_tune_lab.cpp`
   (`test_the_settings_post_reads_keys_not_values`,
   `test_the_settings_reader_reads_json`, and the pins in
