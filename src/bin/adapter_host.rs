@@ -497,16 +497,24 @@ const REFUSE_BEARER_PLAIN: &str = "with a bearer token over plain HTTP (the toke
                                    in cleartext and be replayable)";
 /// The bind gate's reason for a body-only HMAC on a plain-HTTP non-loopback webhook.
 const REFUSE_HMAC_BODY_ONLY: &str = "with a body-only hmac_secret over plain HTTP (a captured \
-                                     signature replays at any time and on any route; set \
-                                     hmac_replay_window_secs)";
+                                     signature replays at any time and on any route)";
+/// The bind gate's reason for a blank `auth_token` or `hmac_secret` on a non-loopback webhook.
+const REFUSE_BLANK_SECRET: &str = "with an empty or all-whitespace auth_token or hmac_secret \
+                                   (that is no secret: anyone can sign with an empty HMAC key, \
+                                   and a blank token matches no request)";
 /// What the bind gate tells the operator to do. Each option, followed literally, is a
-/// configuration [`webhook_bind_refusal`] lets bind (`tests::webhook_bind_remedy_*`).
+/// configuration [`webhook_bind_refusal`] lets bind (`tests::webhook_bind_remedy_*`). The first
+/// also changes what the client sends, so it says what: an operator who only adds the setting
+/// gets a listener that answers the old body-only signer 401, and logs nothing about it.
 const WEBHOOK_BIND_REMEDY: &str = "a request anyone on the network can send or replay forges \
-                                   witness events. Set hmac_secret with hmac_replay_window_secs \
-                                   (or mutual TLS: tls_client_ca with tls_cert/tls_key; or \
-                                   auth_token, or a bare hmac_secret, together with \
-                                   tls_cert/tls_key), bind a loopback address, or set \
-                                   ADAPTER_WEBHOOK_ALLOW_INSECURE=1 to override explicitly.";
+                                   witness events. Set hmac_secret with hmac_replay_window_secs, \
+                                   and have the client send X-Timestamp and X-Nonce and sign \
+                                   <timestamp>.<nonce>.<path>.<body> (the recipe is in \
+                                   adapter_host.example.toml); or use mutual TLS: tls_client_ca \
+                                   with tls_cert/tls_key; or auth_token, or a bare hmac_secret, \
+                                   together with tls_cert/tls_key; or bind a loopback address; \
+                                   or set ADAPTER_WEBHOOK_ALLOW_INSECURE=1 to override \
+                                   explicitly.";
 
 /// [`webhook_bind_refusal`] for one parsed `type = "webhook"` adapter, exactly as `main` applies
 /// it before the listener binds.
@@ -539,6 +547,10 @@ fn resolves_non_loopback(listen_addr: &str) -> bool {
 /// forges witness events. On a non-loopback bind the gate therefore requires a client credential
 /// that one captured request does not hand over:
 ///
+/// - an empty or all-whitespace `auth_token` or `hmac_secret` is no credential at all (anyone
+///   computes an HMAC with an empty key; a blank token matches no request), so it is refused
+///   with every scheme unless mutual TLS authenticates the client. The gate checks that a secret
+///   is there, not how strong it is;
 /// - a bearer token rides every request in cleartext on plain HTTP, so anyone who observes one
 ///   request replays it; it counts only when TLS terminates here (`tls_cert`/`tls_key`);
 /// - a body-only HMAC (`hmac_secret` without `hmac_replay_window_secs`) keeps the secret off the
@@ -568,9 +580,12 @@ fn webhook_bind_refusal(
     if !non_loopback || allow_insecure || (tls_client_ca && tls_cert) {
         return None;
     }
+    let blank = |secret: &[u8]| std::str::from_utf8(secret).is_ok_and(|s| s.trim().is_empty());
     // No wildcard arm: a new scheme must say here whether a captured request replays.
     match auth {
         WebhookAuth::None => Some(REFUSE_NO_AUTH),
+        WebhookAuth::Bearer(token) if blank(token.as_bytes()) => Some(REFUSE_BLANK_SECRET),
+        WebhookAuth::Hmac { secret, .. } if blank(secret) => Some(REFUSE_BLANK_SECRET),
         WebhookAuth::Bearer(_) if !tls_cert => Some(REFUSE_BEARER_PLAIN),
         WebhookAuth::Hmac {
             replay_window: None,
@@ -1296,34 +1311,41 @@ mod tests {
     //
     // A captured request must not be enough to forge an event on a routable
     // bind: no auth, a cleartext bearer token and a body-only HMAC each fail
-    // that on plain HTTP. Every verdict below is written out by hand, never
-    // computed from the rule under test.
+    // that on plain HTTP, and a blank secret fails it with any server TLS.
+    // Every verdict below is written out by hand, never computed from the
+    // rule under test.
 
     use super::{
         resolves_non_loopback, webhook_bind_refusal, webhook_cfg_refusal, AdapterCfg, WebhookCfg,
-        REFUSE_BEARER_PLAIN, REFUSE_HMAC_BODY_ONLY, REFUSE_NO_AUTH, WEBHOOK_BIND_REMEDY,
+        REFUSE_BEARER_PLAIN, REFUSE_BLANK_SECRET, REFUSE_HMAC_BODY_ONLY, REFUSE_NO_AUTH,
+        WEBHOOK_BIND_REMEDY,
     };
     use std::time::Duration;
     use witness_kernel::adapter::webhook::WebhookAuth;
 
-    /// The four schemes, by the label the rows below use.
+    /// The schemes, by the label the rows below use: the four with a real
+    /// secret, and the three secret-bearing ones with a blank secret.
     fn scheme(label: &str) -> WebhookAuth {
-        let hmac = |replay_window| WebhookAuth::Hmac {
-            secret: b"s3cret".to_vec(),
+        let hmac = |secret: &[u8], replay_window| WebhookAuth::Hmac {
+            secret: secret.to_vec(),
             replay_window,
         };
+        let window = Some(Duration::from_secs(300));
         match label {
             "none" => WebhookAuth::None,
             "bearer" => WebhookAuth::Bearer("tok".to_string()),
-            "hmac body-only" => hmac(None),
-            "hmac windowed" => hmac(Some(Duration::from_secs(300))),
+            "hmac body-only" => hmac(b"s3cret", None),
+            "hmac windowed" => hmac(b"s3cret", window),
+            "blank bearer" => WebhookAuth::Bearer(String::new()),
+            "blank body-only" => hmac(b"", None),
+            "blank windowed" => hmac(b" \t\n", window),
             other => panic!("no scheme {other:?}"),
         }
     }
 
-    /// The 16 rows of scheme x tls_cert x tls_client_ca, each with its verdict
+    /// The 28 rows of scheme x tls_cert x tls_client_ca, each with its verdict
     /// on a non-loopback bind without the override.
-    const NON_LOOPBACK_ROWS: [(&str, bool, bool, Option<&str>); 16] = [
+    const NON_LOOPBACK_ROWS: [(&str, bool, bool, Option<&str>); 28] = [
         // (scheme, tls_cert, tls_client_ca, verdict)
         ("none", false, false, Some(REFUSE_NO_AUTH)),
         ("none", true, false, Some(REFUSE_NO_AUTH)),
@@ -1343,6 +1365,20 @@ mod tests {
         // tls_client_ca without tls_cert/tls_key on any bind.
         ("hmac windowed", false, true, None),
         ("hmac windowed", true, true, None),
+        // A blank secret is no credential, whatever TLS the server has;
+        // only mutual TLS, which authenticates the client, binds.
+        ("blank bearer", false, false, Some(REFUSE_BLANK_SECRET)),
+        ("blank bearer", true, false, Some(REFUSE_BLANK_SECRET)),
+        ("blank bearer", false, true, Some(REFUSE_BLANK_SECRET)),
+        ("blank bearer", true, true, None),
+        ("blank body-only", false, false, Some(REFUSE_BLANK_SECRET)),
+        ("blank body-only", true, false, Some(REFUSE_BLANK_SECRET)),
+        ("blank body-only", false, true, Some(REFUSE_BLANK_SECRET)),
+        ("blank body-only", true, true, None),
+        ("blank windowed", false, false, Some(REFUSE_BLANK_SECRET)),
+        ("blank windowed", true, false, Some(REFUSE_BLANK_SECRET)),
+        ("blank windowed", false, true, Some(REFUSE_BLANK_SECRET)),
+        ("blank windowed", true, true, None),
     ];
 
     #[test]
@@ -1352,6 +1388,21 @@ mod tests {
         assert_eq!(
             webhook_bind_refusal(&scheme("hmac body-only"), false, false, true, false),
             Some(REFUSE_HMAC_BODY_ONLY)
+        );
+    }
+
+    #[test]
+    fn webhook_bind_gate_refuses_a_blank_secret() {
+        // An empty hmac_secret with a replay window used to count as a
+        // credential and bind a routable plain-HTTP listener that took a
+        // request anyone signed with the empty key, no capture needed.
+        let empty_windowed = WebhookAuth::Hmac {
+            secret: Vec::new(),
+            replay_window: Some(Duration::from_secs(300)),
+        };
+        assert_eq!(
+            webhook_bind_refusal(&empty_windowed, false, false, true, false),
+            Some(REFUSE_BLANK_SECRET)
         );
     }
 
@@ -1436,6 +1487,27 @@ mod tests {
                 " hmac_replay_window_secs = 300\n".to_string(),
                 Some(REFUSE_NO_AUTH),
             ),
+            (
+                "an empty hmac_secret with hmac_replay_window_secs",
+                " hmac_secret = \"\"\n hmac_replay_window_secs = 300\n".to_string(),
+                Some(REFUSE_BLANK_SECRET),
+            ),
+            (
+                "an all-whitespace hmac_secret behind tls_cert/tls_key",
+                format!("{TLS} hmac_secret = \"  \"\n"),
+                Some(REFUSE_BLANK_SECRET),
+            ),
+            (
+                "an empty auth_token behind tls_cert/tls_key",
+                format!("{TLS} auth_token = \"\"\n"),
+                Some(REFUSE_BLANK_SECRET),
+            ),
+            (
+                // Mutual TLS authenticates the client; the blank secret adds nothing.
+                "an empty hmac_secret with mutual TLS",
+                format!("{TLS} tls_client_ca = \"ca.pem\"\n hmac_secret = \"\"\n"),
+                None,
+            ),
         ];
         for (row, body, want) in cases {
             assert_eq!(
@@ -1444,11 +1516,15 @@ mod tests {
                 "{row} on 0.0.0.0"
             );
         }
-        // The listen_addr default is loopback: a bare hmac_secret there binds.
-        assert_eq!(
-            webhook_cfg_refusal(&webhook_cfg(" hmac_secret = \"s3cret\"\n"), false),
-            None
-        );
+        // The listen_addr default is loopback: a bare hmac_secret binds there,
+        // and so does a blank one (loopback is never refused).
+        for body in [" hmac_secret = \"s3cret\"\n", " hmac_secret = \"\"\n"] {
+            assert_eq!(
+                webhook_cfg_refusal(&webhook_cfg(body), false),
+                None,
+                "{body}"
+            );
+        }
     }
 
     #[test]
@@ -1497,6 +1573,34 @@ mod tests {
             None,
             "the override"
         );
+    }
+
+    #[test]
+    fn webhook_bind_remedy_names_the_client_side_change() {
+        // Setting hmac_replay_window_secs alone strands a body-only signer:
+        // every request then gets 401, which adapter_host does not log. So the
+        // refusal says what the client must send, and the example it points to
+        // carries that recipe.
+        let example = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/adapter_host.example.toml"
+        ))
+        .expect("read adapter_host.example.toml");
+        for needle in [
+            "X-Timestamp",
+            "X-Nonce",
+            "<timestamp>.<nonce>.<path>.<body>",
+        ] {
+            assert!(
+                WEBHOOK_BIND_REMEDY.contains(needle),
+                "the remedy does not name {needle:?}: {WEBHOOK_BIND_REMEDY}"
+            );
+            assert!(
+                example.contains(needle),
+                "adapter_host.example.toml does not carry {needle:?}"
+            );
+        }
+        assert!(WEBHOOK_BIND_REMEDY.contains("adapter_host.example.toml"));
     }
 
     #[test]

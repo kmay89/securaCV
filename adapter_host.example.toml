@@ -190,7 +190,7 @@ listen_addr = "127.0.0.1:8800"   # loopback by default
 #
 # Authentication — REQUIRED on anything but loopback (the webhook is the one untrusted, network-
 # facing ingress), and on plain HTTP it must be one a captured request cannot replay. Pick ONE;
-# hmac_secret wins if both are set.
+# hmac_secret wins if both are set. An empty or all-whitespace secret counts as none.
 # auth_token = "change-me"       # require: Authorization: Bearer change-me
 #                                #   travels in the clear: off loopback it needs tls_cert/tls_key
 # hmac_secret = "change-me"      # require: X-Signature: sha256=<HMAC-SHA256(secret, body)>
