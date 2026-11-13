@@ -545,9 +545,11 @@ fn resolves_non_loopback(listen_addr: &str) -> bool {
 ///   wire but binds neither the time nor the route: a captured `X-Signature` verifies forever,
 ///   on every route that shares the secret, and the route (not the body) picks the claim kind and
 ///   zone. It too counts only behind TLS;
-/// - an HMAC with a replay window binds `X-Timestamp`, `X-Nonce`, the request path and the body
-///   into the MAC and refuses a reused nonce ([`WebhookAuth::Hmac`] says what that does not
-///   cover); it counts on plain HTTP;
+/// - an HMAC with a replay window signs `X-Timestamp`, `X-Nonce`, the request path and the body,
+///   and the listener refuses a nonce or a MAC it already accepted while the timestamp passes,
+///   so a passively captured request does not replay, re-split or not. It counts on plain HTTP;
+///   [`WebhookAuth::Hmac`] says what it does not cover (one use more after a restart, and a
+///   re-split delivered by a party on the path that stops the original);
 /// - mutual TLS (`tls_client_ca` together with `tls_cert`) authenticates the client and counts
 ///   with any scheme. A `tls_client_ca` without `tls_cert` authenticates nobody (and the TLS
 ///   pairing check refuses it on any bind).

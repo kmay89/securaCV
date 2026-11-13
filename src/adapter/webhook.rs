@@ -91,14 +91,20 @@ pub enum WebhookAuth {
     /// With `replay_window = Some(w)` the request must also carry `X-Timestamp` (unix seconds,
     /// within `±w` of now) and a unique `X-Nonce`, and the signature covers
     /// `"<timestamp>.<nonce>.<path>.<body>"` (the path without its query string, which routing
-    /// ignores too). That binds the timestamp, nonce, route and body into the MAC: a replay to
-    /// another route fails the MAC, a replay of the same request fails on its remembered nonce,
-    /// and after the window it fails on the timestamp. What it does not cover: nonces are
-    /// remembered in memory, per listener, so a request whose timestamp still passes after a
-    /// restart can be replayed once after it, and one webhook adapter does not know the nonces
-    /// another has seen (give each its own secret); and the timestamp is read on the wall clock
-    /// while nonces age on the monotonic one, so a backward step of the wall clock can let an
-    /// aged-out request pass again.
+    /// ignores too). That input has no length framing and the nonce is free text, so the same
+    /// signed bytes can be split into another nonce, path and body under the same signature: the
+    /// MAC alone does not pin the route. The listener therefore remembers the nonce and the MAC
+    /// of every request it accepts, for as long as that request's timestamp can pass, and
+    /// refuses a second use of either. A captured request is then refused as sent, sent to
+    /// another route, and re-split (on its MAC), and after the window it fails on the timestamp.
+    /// What it does not cover: that memory lives in this process, per listener, so a request
+    /// whose timestamp still passes after a restart can be used once more after it (as sent or
+    /// re-split), and one webhook adapter does not know what another has seen (give each its own
+    /// secret); a party on the path who stops a signed request from arriving can deliver it
+    /// re-split instead, onto another route on this listener whose path the signed bytes carry
+    /// between two dots (`.<route>.`, for example inside a body field); and the timestamp is read
+    /// on the wall clock while the memory ages on the monotonic one, so a backward step of the
+    /// wall clock can let an aged-out request pass again.
     Hmac {
         secret: Vec<u8>,
         replay_window: Option<Duration>,
@@ -139,8 +145,21 @@ struct Shared {
     rate_limit: Option<RateLimit>,
     /// per-path token buckets: path -> (tokens, last_refill).
     buckets: Mutex<HashMap<String, (f64, Instant)>>,
-    /// recently-seen HMAC nonces (for replay rejection): nonce -> first-seen instant.
-    seen_nonces: Mutex<HashMap<String, Instant>>,
+    /// What the windowed HMAC has accepted, for replay rejection: each nonce and each MAC ->
+    /// first-seen instant.
+    seen: Mutex<HashMap<Seen, Instant>>,
+}
+
+/// What the windowed HMAC remembers of each request it accepts, so neither can be used twice
+/// while that request's timestamp can still pass.
+#[derive(PartialEq, Eq, Hash)]
+enum Seen {
+    /// The `X-Nonce`, trimmed as it was signed.
+    Nonce(String),
+    /// The MAC itself. The MAC input `"<timestamp>.<nonce>.<path>.<body>"` has no length framing
+    /// and the nonce is free text, so the same signed bytes can be split into another nonce, path
+    /// and body under the same `X-Signature`, and every such split carries this one MAC.
+    Mac([u8; 32]),
 }
 
 impl Shared {
@@ -186,8 +205,10 @@ impl Shared {
 
     /// Verify the HMAC scheme for a request, including replay protection when configured.
     ///
-    /// In the replay-protected mode the request `path` is bound into the MAC, so a signed payload
-    /// captured for one route cannot be replayed against a different route sharing the same secret.
+    /// In the replay-protected mode the request `path` is signed with the body, and both the
+    /// nonce and the MAC of every accepted request are remembered, so a signed request captured
+    /// for one route is refused on that route and on any other, under any split of its signed
+    /// bytes, while its timestamp can still pass ([`WebhookAuth::Hmac`] says what that leaves).
     fn verify_hmac(&self, h: &AuthHeaders, path: &str, body: &[u8]) -> bool {
         let WebhookAuth::Hmac {
             secret,
@@ -226,8 +247,8 @@ impl Shared {
             return false;
         }
 
-        // Sign "<timestamp>.<nonce>.<path>.<body>" — binding the route so a captured signature
-        // cannot be replayed against a different path.
+        // Sign "<timestamp>.<nonce>.<path>.<body>", binding the route with the body. The input
+        // has no length framing, so these bytes alone do not fix the split: see `Seen::Mac`.
         let mut signed =
             Vec::with_capacity(ts_raw.len() + nonce.len() + path.len() + body.len() + 3);
         signed.extend_from_slice(ts_raw.as_bytes());
@@ -237,27 +258,32 @@ impl Shared {
         signed.extend_from_slice(path.as_bytes());
         signed.push(b'.');
         signed.extend_from_slice(body);
-        let expected = hex::encode(hmac_sha256(secret, &signed));
-        if !ct_eq_str(provided, &expected) {
+        let mac = hmac_sha256(secret, &signed);
+        if !ct_eq_str(provided, &hex::encode(mac)) {
             return false;
         }
 
-        // Signature is valid: reject if the nonce was already seen while its timestamp can still
-        // pass. The check above compares whole seconds, so one timestamp passes for 2*window + 1 s
-        // of real time, and its nonce is first seen inside that span: remembering every nonce for
-        // 2*window + 1 s outlasts each replay the timestamp still admits (2*window alone let one
-        // through at the edge, and with window 0 remembered nothing). The memory runs on the
-        // monotonic clock and lives in this process only; `WebhookAuth::Hmac` says what that leaves.
+        // Signature is valid: reject if the nonce or the MAC was already seen while its timestamp
+        // can still pass. Remembering the MAC refuses every re-split of signed bytes this
+        // listener already accepted (a body that carried ".<other route>." moved onto that route
+        // under a new-looking nonce; the tests hold that case). The check above compares whole
+        // seconds, so one timestamp passes for 2*window + 1 s of real time, and its request is
+        // first seen inside that span: remembering both for 2*window + 1 s outlasts each replay
+        // the timestamp still admits (2*window alone let one through at the edge, and with window
+        // 0 remembered nothing). The memory runs on the monotonic clock and lives in this process
+        // only; `WebhookAuth::Hmac` says what that leaves.
         let keep = window
             .saturating_mul(2)
             .saturating_add(Duration::from_secs(1));
-        let mut seen = self.seen_nonces.lock_tolerant();
+        let mut seen = self.seen.lock_tolerant();
         let now = Instant::now();
         seen.retain(|_, &mut t| now.saturating_duration_since(t) < keep);
-        if seen.contains_key(nonce) {
+        let (nonce, mac) = (Seen::Nonce(nonce.to_string()), Seen::Mac(mac));
+        if seen.contains_key(&nonce) || seen.contains_key(&mac) {
             return false;
         }
-        seen.insert(nonce.to_string(), now);
+        seen.insert(nonce, now);
+        seen.insert(mac, now);
         true
     }
 }
@@ -465,7 +491,7 @@ pub fn serve_listener_with_options(
         auth: options.auth,
         rate_limit: options.rate_limit,
         buckets: Mutex::new(HashMap::new()),
-        seen_nonces: Mutex::new(HashMap::new()),
+        seen: Mutex::new(HashMap::new()),
     });
     run_pool(listener, shared, options.workers, plain_wrap())
 }
@@ -787,7 +813,7 @@ pub mod tls {
             auth: options.auth,
             rate_limit: options.rate_limit,
             buckets: Mutex::new(HashMap::new()),
-            seen_nonces: Mutex::new(HashMap::new()),
+            seen: Mutex::new(HashMap::new()),
         });
         let wrap: StreamWrap = Arc::new(move |tcp: crate::api::DeadlineStream| {
             let conn = rustls::ServerConnection::new(Arc::clone(&config))
@@ -848,7 +874,7 @@ mod tests {
             auth,
             rate_limit,
             buckets: Mutex::new(HashMap::new()),
-            seen_nonces: Mutex::new(HashMap::new()),
+            seen: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1028,6 +1054,95 @@ mod tests {
             return;
         }
         panic!("no attempt verified inside one wall-clock second");
+    }
+
+    #[test]
+    fn windowed_hmac_refuses_a_re_split_of_signed_bytes_it_accepted() {
+        // "<ts>.<nonce>.<path>.<body>" has no length framing and the nonce is free text, so a
+        // signed body that carries ".<route>." splits again under the same X-Signature into a
+        // new-looking nonce, that route and a suffix of the body. Remembering the accepted MAC
+        // refuses every such split; remembering the nonce alone did not.
+        let secret = b"shared-key".to_vec();
+        let window = Duration::from_secs(300);
+        let auth = WebhookAuth::Hmac {
+            secret: secret.clone(),
+            replay_window: Some(window),
+        };
+        let garage = "/sensors/garage/acoustic";
+        let front = "/sensors/front/tamper";
+        let ts = now_epoch_s().to_string();
+        let sign = |nonce: &str, path: &str, body: &[u8]| {
+            let mut m = format!("{ts}.{nonce}.{path}.").into_bytes();
+            m.extend_from_slice(body);
+            let sig = format!("sha256={}", hex::encode(hmac_sha256(&secret, &m)));
+            (m, sig)
+        };
+        let headers = |sig: &str, nonce: &str| AuthHeaders {
+            signature: Some(sig.to_string()),
+            timestamp: Some(ts.clone()),
+            nonce: Some(nonce.to_string()),
+            ..Default::default()
+        };
+        // Split `signed` at the last ".<route>." (the one inside the body): the forged nonce is
+        // what lies between it and the timestamp, the forged body what follows.
+        let re_split = |signed: &[u8], route: &str| {
+            let needle = format!(".{route}.").into_bytes();
+            let at = signed[ts.len() + 1..]
+                .windows(needle.len())
+                .rposition(|w| w == needle.as_slice())
+                .expect("the signed bytes carry the route between dots")
+                + ts.len()
+                + 1;
+            let nonce = String::from_utf8(signed[ts.len() + 1..at].to_vec()).unwrap();
+            let body = signed[at + needle.len()..].to_vec();
+            // The forged request signs exactly the captured bytes.
+            let mut again = format!("{ts}.{nonce}.{route}.").into_bytes();
+            again.extend_from_slice(&body);
+            assert_eq!(again, signed);
+            (nonce, body)
+        };
+
+        for (row, route, body) in [
+            (
+                "to another route",
+                front,
+                &br#"{"confidence":0.8,"note":"see ../sensors/front/tamper.log"}"#[..],
+            ),
+            (
+                "to the same route under a new nonce",
+                garage,
+                &br#"{"confidence":0.8,"note":"see ../sensors/garage/acoustic.log"}"#[..],
+            ),
+        ] {
+            let nonce = "a1b2c3d4e5f60718";
+            let (signed, sig) = sign(nonce, garage, body);
+            let (forged_nonce, forged_body) = re_split(&signed, route);
+            assert_ne!(forged_nonce, nonce, "{row}");
+
+            let shared = test_shared(auth.clone(), None);
+            assert!(
+                shared.verify_hmac(&headers(&sig, nonce), garage, body),
+                "{row}: the legit request verifies"
+            );
+            assert!(
+                !shared.verify_hmac(&headers(&sig, &forged_nonce), route, &forged_body),
+                "{row}: re-split accepted on {route}: nonce {forged_nonce:?}, body {:?}",
+                String::from_utf8_lossy(&forged_body)
+            );
+
+            // What it leaves (WebhookAuth::Hmac says so): on a listener that has not seen the
+            // signed bytes (a restart, or a party on the path that stopped the legit request),
+            // the re-split verifies once, and then the request as sent is the replay.
+            let fresh = test_shared(auth.clone(), None);
+            assert!(
+                fresh.verify_hmac(&headers(&sig, &forged_nonce), route, &forged_body),
+                "{row}: the MAC alone does not pin the split"
+            );
+            assert!(
+                !fresh.verify_hmac(&headers(&sig, nonce), garage, body),
+                "{row}: the request as sent, after its re-split, is a replay"
+            );
+        }
     }
 
     #[cfg(feature = "adapter-webhook-tls")]

@@ -204,14 +204,18 @@ listen_addr = "127.0.0.1:8800"   # loopback by default
 #
 # HMAC replay protection (only with hmac_secret). When set, the client must also send X-Timestamp
 # (unix seconds, within the window) and a unique X-Nonce, and sign "<timestamp>.<nonce>.<path>.<body>"
-# (the path is bound in so a signature can't be replayed against a different route; a reused nonce
-# and an expired timestamp are refused):
+# (a client that keeps signing the body only gets 401, and adapter_host logs nothing about it):
 #   ts=$(date +%s); nonce=$(openssl rand -hex 8); path=/sensors/garage/acoustic
 #   sig=$(printf '%s.%s.%s.%s' "$ts" "$nonce" "$path" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
 #   curl -H "X-Timestamp: $ts" -H "X-Nonce: $nonce" -H "X-Signature: sha256=$sig" -d "$BODY" "http://host:8800$path"
-# Nonces are remembered in memory, per webhook adapter: a request whose timestamp still passes
-# after a restart can be replayed once after it, so keep the window short, and give each webhook
-# adapter its own secret.
+# adapter_host remembers the nonce and the signature of every request it accepts until its timestamp
+# expires, and refuses either one used again: a captured request is refused as sent, on another
+# route, and split differently (the signed string has no length fields, so the same bytes can be
+# read as another nonce, path and body). What that leaves: the memory is per webhook adapter and in
+# memory only, so after a restart a request whose timestamp still passes can be used once more;
+# and someone on the network path who stops a signed request from arriving can deliver it re-split
+# onto another route whose path the signed bytes carry between two dots (".<route>."). So keep the
+# window short, give each webhook adapter its own secret, and use TLS where that path is not yours.
 # hmac_replay_window_secs = 300
 #
 # TLS — strongly recommended for any non-loopback listener, and what lets auth_token or a bare
