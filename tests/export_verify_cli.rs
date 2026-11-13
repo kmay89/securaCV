@@ -7,9 +7,13 @@
 //! key passes that way too, so the run must say `SELF-CONSISTENT, IDENTITY
 //! UNVERIFIED`, never "verified" bare.
 //!
-//! Every row runs `log_verify` on the same database with the same key source
-//! and requires the same label from it, so the two verifiers cannot drift
-//! apart on what anchors identity.
+//! Every row `check_rows` takes runs `log_verify` on the same database with
+//! the same key source and requires the same label from it, so the two
+//! verifiers cannot drift apart on what anchors identity. Two runs sit outside
+//! it: the rotated database's current seed, the one documented divergence
+//! (`log_verify` verifies self-anchored, `export_verify` refuses; the test
+//! holds only that it never reads as anchored), and the C2PA test, which
+//! drives `export_verify` alone because `log_verify` has no sidecar flags.
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};

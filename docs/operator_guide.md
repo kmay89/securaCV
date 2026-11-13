@@ -41,8 +41,13 @@ cargo run --bin export_verify -- --db demo_witness.db --bundle demo_out/export_b
 An unpinned pass (only `--db-key`, or the seed file witnessd keeps beside the database, which
 opens it and nothing more) takes the verifying key from the database under audit, so
 `export_verify` reports it `SELF-CONSISTENT, IDENTITY UNVERIFIED`, as `log_verify` does,
-and only a key from out of band (`--public-key`, `--public-key-file`, `--device-key-seed` or
-`DEVICE_KEY_SEED`) earns `verified (identity anchored out-of-band)`.
+and a key passed with `--public-key`, `--public-key-file`, `--device-key-seed` or
+`DEVICE_KEY_SEED` earns `verified (identity anchored out-of-band)`. That label records which
+flag carried the key, not where the key came from: a seed copied out of the file beside the
+database (as the `DEVICE_KEY_SEED=$(cat /data/witness.ed25519.seed)` commands in
+[`container.md`](container.md) do) earns it but anchors nothing, since whoever rewrote the
+database could have swapped that file too. For an evidentiary verdict, pin the genesis key with
+`--public-key` or `--public-key-file` from a record kept outside the device.
 
 ## Device public key location
 

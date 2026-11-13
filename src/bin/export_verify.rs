@@ -1,9 +1,10 @@
-//! export_verify - Verify export bundle bytes against export receipts.
+//! export_verify - Verify an export bundle against export receipts.
 //!
 //! This tool proves:
 //! - The export receipt log is hash-chained (tamper-evident)
 //! - Each receipt entry is signed by the device key (Ed25519)
-//! - The bundle file bytes hash to a receipt recorded in the DB
+//! - The bundle's artifact hashes to a receipt recorded in the DB (how much of
+//!   the file that covers is below)
 //!
 //! "The device key" holds only when the verifying key came from out of band
 //! (`--public-key`, `--public-key-file`, `--device-key-seed` or
@@ -11,9 +12,17 @@
 //! under audit, which proves the bundle and the receipt chain agree with each
 //! other, not whose device signed them, and the final line says so:
 //! `SELF-CONSISTENT, IDENTITY UNVERIFIED`, the label `log_verify` prints for
-//! the same case (its B3 rule).
+//! the same case (its B3 rule). The label follows the flag, not the key's
+//! source: a seed copied out of the file beside the database into
+//! `DEVICE_KEY_SEED` reads as anchored without being out of band.
 //!
-//! It does not attempt to reserialize or canonicalize JSON: raw file bytes are hashed.
+//! What the bundle check covers depends on the file. A full `ExportBundle`
+//! (what `export_events` writes) is parsed, not hashed whole: its receipt
+//! entry must be one of the entries in the checked receipt chain, and its
+//! artifact, re-serialized, must hash to that receipt's `artifact_hash`.
+//! Whitespace, key order and any field the structs do not carry are
+//! therefore outside the verdict. Only a bare-artifact file (no receipt
+//! wrapper) is hashed byte for byte.
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, ValueEnum};
@@ -30,7 +39,7 @@ mod ui;
 #[derive(Parser, Debug)]
 #[command(
     name = "export_verify",
-    about = "Verify export bundle bytes against export receipts"
+    about = "Verify an export bundle against export receipts"
 )]
 struct Args {
     /// Path to the witness SQLite DB
@@ -74,9 +83,15 @@ struct Args {
     db_key: Option<String>,
     /// Device key seed (as used by the kernel/bridges). Derives the SQLCipher
     /// key (when --db-key is not given) and the verifying key (when no
-    /// --public-key/--public-key-file is given) — same semantics as
-    /// log_verify, so `DEVICE_KEY_SEED=... export_verify --db witness.db
-    /// --bundle ...` verifies an owner self-export with the seed alone.
+    /// --public-key/--public-key-file is given) — the semantics log_verify
+    /// uses, so `DEVICE_KEY_SEED=... export_verify --db witness.db
+    /// --bundle ...` verifies an owner self-export with the seed alone. One
+    /// exception: after `break_glass rotate-identity` the current seed
+    /// derives a later epoch's key, which log_verify verifies self-anchored
+    /// and export_verify refuses (docs/db_key_rotation.md, "Verifier CLIs").
+    /// The anchored label records which flag carried the seed, not where the
+    /// seed came from: one copied out of the seed file beside the database
+    /// under audit earns the label but anchors nothing.
     #[arg(
         long,
         value_name = "SEED",
@@ -241,11 +256,12 @@ fn main() -> Result<()> {
     // key, which an attacker could swap alongside a re-signed receipt, so
     // bundle-internal checks (verify_export_bundle: artifact binding + receipt
     // signature) prove only internal consistency. Trust comes from requiring
-    // the bundled receipt entry to be one of the entries verified above under
-    // the trusted key — that entry hash commits to the full receipt payload,
-    // including auth_mode and window, so none of it can be rewritten.
-    // A bare-artifact file (no receipt wrapper) is matched by its whole-file
-    // hash against the trusted chain, as older exports produced.
+    // the bundled receipt entry to be one of the entries checked above under
+    // the key resolved above — that entry hash commits to the full receipt
+    // payload, including auth_mode and window, so none of it can be
+    // rewritten. A bare-artifact file (no receipt wrapper) is matched by its
+    // whole-file hash against the chain checked above, as older exports
+    // produced.
     #[cfg_attr(not(feature = "c2pa-export"), allow(unused_variables))]
     let (artifact_hash, bundle_entry_hash): ([u8; 32], Option<[u8; 32]>) =
         match serde_json::from_slice::<ExportBundle>(&bundle_bytes) {
@@ -352,9 +368,9 @@ fn main() -> Result<()> {
         // to point at THIS disclosure. Sidecars only exist for full
         // ExportBundle files, and the binding must name exactly the receipt
         // entry embedded in this bundle (already proven above to be in the
-        // verified chain), with the artifact hash that receipt committed to.
-        // Identity, not membership: a trusted manifest naming any *other*
-        // verified receipt is a graft and fails.
+        // chain checked above), with the artifact hash that receipt committed
+        // to. Identity, not membership: a trusted manifest naming any *other*
+        // receipt in that chain is a graft and fails.
         let expected_entry = bundle_entry_hash.ok_or_else(|| {
             anyhow!(
                 "C2PA verification requires a full export bundle (this file is a bare \
