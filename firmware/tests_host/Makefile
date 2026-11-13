@@ -42,6 +42,20 @@ with_deps = $(1) && $(filter-out -o $@ -MMD -l% -Wl%,$(1)) -MM -MT $@ > $@.d
 ifeq ($(shell $(CXX) --version 2>/dev/null | grep -ci clang),0)
 # GCC only: a bounded strncpy in the CSI library, not a test's to fix.
 WNO_STRINGOP = -Wno-stringop-truncation
+# GCC only, and only in the sanitized lane (a CXXFLAGS that names -fsanitize,
+# as firmware.yml's sanitized host-test job passes): under
+# -fsanitize=address,undefined at -O2, GCC 13 reports libstdc++'s own <regex>
+# compiler as maybe-uninitialized (sweep CI33). Its _State holds a
+# std::function matcher in raw storage built only for a match state;
+# _NFA::_M_insert_alt() moves an alternative state, whose storage was never
+# built, through a move constructor that tests the opcode before it touches
+# the matcher, and the instrumented flow analysis loses that test, so it warns
+# in std_function.h, the library's code and not a test's. The two suites that
+# include <regex> take it (TZRULE_BIN, CANDIAG_BIN); the plain lane keeps the
+# warning on every suite, and clang, which never raised it, takes nothing.
+ifneq ($(findstring -fsanitize,$(CXXFLAGS)),)
+WNO_REGEX_SAN = -Wno-maybe-uninitialized
+endif
 else
 # clang's -Wall, not GCC's: constants the CSI library names and leaves unread,
 # and a loop whose variable only the lambda it calls advances.
@@ -1309,7 +1323,7 @@ $(WITHBR_BIN): test_witness_history_bridge.cpp $(WITHBR_HDRS) Makefile | $(BUILD
 	$(CXX) $(CXXFLAGS) -pthread -I ../common/witness test_witness_history_bridge.cpp -o $@
 
 $(TZRULE_BIN): test_tz_rule.cpp $(TZRULE_HDR) $(TZRULE_PORTAL) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I ../common '-DPORTAL_SRC="$(TZRULE_PORTAL)"' test_tz_rule.cpp -o $@
+	$(CXX) $(CXXFLAGS) $(WNO_REGEX_SAN) -I ../common '-DPORTAL_SRC="$(TZRULE_PORTAL)"' test_tz_rule.cpp -o $@
 
 $(USBONB_BIN): test_usb_onboard_logic.cpp $(USBONB_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_usb_onboard_logic.cpp -o $@
@@ -1571,7 +1585,7 @@ $(CANEGR_BIN): test_canary_event_egress.cpp $(CANEGR_SRC) $(CANEGR_HDRS) Makefil
 	    test_canary_event_egress.cpp $(CANEGR_SRC) -o $@)
 
 $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD \
+	$(CXX) $(CXXFLAGS) $(WNO_REGEX_SAN) -DCSI_TEST_HOST_BUILD \
 	    -I ../canary/include -I ../canary/src -I ../canary/lib/securacv_diagnostics/src \
 	    -I ../common/csi/src \
 	    -DCANARY_MAIN_CPP='"$(abspath ../canary/src/main.cpp)"' \

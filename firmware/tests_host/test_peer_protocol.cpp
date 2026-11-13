@@ -70,7 +70,8 @@ static void the_event_round_trips() {
   Frame back; Event eb;
   CHECK(decode(buf, n, KEY, back) == Verdict::Ok && get_event(back, eb), "decodes");
   CHECK(eb.kind == EV_DETECT_EDGE && eb.object_class == 1 && eb.score == 87 && eb.bucket == 77, "event fields");
-  CHECK(!get_heartbeat(back, *(new Heartbeat)), "an event is not a heartbeat");
+  Heartbeat hb;
+  CHECK(!get_heartbeat(back, hb), "an event is not a heartbeat");
 }
 
 static void only_the_paired_verify() {

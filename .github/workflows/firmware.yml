@@ -1736,6 +1736,66 @@ jobs:
         # non-zero on any failure.
         run: make -C firmware/tests_host
 
+  # ──────────────────────────────────────────────────────────────────
+  # firmware/common host tests, three more lanes (sweep CI33)
+  #
+  # The step above builds firmware/tests_host with g++ at the Makefile's
+  # own flags. Each leg here builds the same Makefile, every suite, on a
+  # runner of its own:
+  #   g++ and clang++-18 under ASan + UBSan: a heap overflow, a use after
+  #     free, a leak at exit or undefined behavior (a signed overflow, a
+  #     misaligned load) stops the suite that did it, named, where the
+  #     plain build passes it by luck. -fno-sanitize-recover=undefined
+  #     makes UBSan fatal, as ASan already is.
+  #   clang++-18 at the Makefile's own flags: clang -O2 optimizes what GCC
+  #     keeps, so code that works only as GCC compiles it fails here.
+  # The Makefile's one sanitized-lane flag (WNO_REGEX_SAN, a libstdc++
+  # <regex> false positive under GCC's instrumentation) keys on a CXXFLAGS
+  # that names -fsanitize. ASan needs vm.mmap_rnd_bits at 28 or below on
+  # the 24.04 kernel, which the runner image sets; recheck it when the
+  # image moves.
+  # ──────────────────────────────────────────────────────────────────
+  common-host-test-lanes:
+    name: Common Host Tests (${{ matrix.lane.name }})
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        lane:
+          - name: g++ ASan + UBSan
+            cxx: g++
+            cc: gcc
+            cxxflags: -std=c++17 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined
+          - name: clang++-18 ASan + UBSan
+            cxx: clang++-18
+            cc: clang-18
+            cxxflags: -std=c++17 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined
+          - name: clang++-18
+            cxx: clang++-18
+            cc: clang-18
+            cxxflags: ""
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        # The Makefile's `node --test` suites. node from the runner image
+        # moves with the image, like its compilers.
+        with:
+          node-version: "22"
+
+      - name: Build + run firmware/common host tests (${{ matrix.lane.name }})
+        # An empty cxxflags passes no CXXFLAGS, so the Makefile's own apply
+        # (-Werror included); an empty CXXFLAGS would replace them.
+        env:
+          LANE_CXX: ${{ matrix.lane.cxx }}
+          LANE_CC: ${{ matrix.lane.cc }}
+          LANE_CXXFLAGS: ${{ matrix.lane.cxxflags }}
+        run: |
+          set -euo pipefail
+          args=(-C firmware/tests_host -j"$(nproc)" --output-sync=target CXX="$LANE_CXX" CC="$LANE_CC")
+          if [ -n "$LANE_CXXFLAGS" ]; then args+=(CXXFLAGS="$LANE_CXXFLAGS"); fi
+          make "${args[@]}"
+
   microcopy-lint:
     name: Dashboard Microcopy Lint
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
