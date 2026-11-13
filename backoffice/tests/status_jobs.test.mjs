@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { upsertProbe, runProbe, runDueProbes, publicStatus, openIncident, updateIncident, uptime } from '../src/modules/status.mjs';
+import { upsertProbe, runProbe, runDueProbes, publicStatus, openIncident, updateIncident, uptime, pinnedFetch } from '../src/modules/status.mjs';
 import { raise, resolve, openExceptions } from '../src/modules/exceptions.mjs';
 import { backup, listBackups } from '../src/modules/backup.mjs';
 import { createApp } from '../src/server.mjs';
 import { runJob, ingestInbox } from '../src/jobs.mjs';
 import { createServer } from 'node:http';
-import { isPrivateAddress } from '../src/net.mjs';
+import { isPrivateAddress, readCapped } from '../src/net.mjs';
 import { upsertItem } from '../src/modules/inventory.mjs';
 import { testDb, testCfg } from './helpers.mjs';
 
@@ -110,9 +110,46 @@ test('a probe is checked at every run: a name that resolves inward is refused, a
     // a body past the budget is abandoned, so the text after three megabytes is never waited for
     const big = upsertProbe(db, { name: 'big', url: base + '/big', expect_text: 'SecuraCV' }); const rg = await runProbe(db, big, { lookup: pub, cfg }); assert.ok(!rg.ok); assert.match(rg.detail, /over 2097152 bytes/);
     assert.ok((await runProbe(db, big, { lookup: pub, cfg, maxBytes: 4 * 1024 * 1024 })).ok, 'under a larger budget the same page passes');
+    // a rebinding name: public to the one lookup the check makes, the inside to any later one (localhost, to the
+    // system resolver). The GET goes to the address the check judged, so the listener behind the name is never asked.
+    // That dial to 203.0.113.9 (TEST-NET-3, never routed) fails on any network, refused, unreachable or out of time,
+    // so only that it is not the inside's 200 is asserted; no test here needs the network to answer.
+    let looked = 0; const once = async () => { looked++; return [{ address: '203.0.113.9', family: 4 }]; };
+    const seen = hits.length; const rebind = upsertProbe(db, { name: 'rebind', url: `http://localhost:${srv.address().port}/`, expect_text: 'SecuraCV' });
+    const rr = await runProbe(db, rebind, { lookup: once, cfg, timeoutMs: 300 }); assert.ok(!rr.ok, rr.detail);
+    assert.equal(hits.length, seen, 'the inside listener was never asked'); assert.equal(looked, 1, 'one lookup: the one that was judged');
+    // and the list handed to the GET is that lookup's answer, every address of it
+    let handed = null; const both = async () => [{ address: '203.0.113.9', family: 4 }, { address: '2001:4860::8888', family: 6 }];
+    await runProbe(db, rebind, { lookup: both, cfg, fetchImpl: async (u, init) => { handed = init.addrs; return { status: 200, text: async () => 'SecuraCV' }; } });
+    assert.deepEqual(handed, await both());
+    // a connect that fails at once (no route, no IPv6 on the box, an egress firewall) is the probe's result, written
+    // down like any other failure, and the process lives on: a v4 address handed as family 6 fails in connect() itself
+    const nr = await runProbe(db, rebind, { lookup: async () => [{ address: '203.0.113.9', family: 6 }], cfg }); assert.ok(!nr.ok); assert.match(nr.detail, /^connect EINVAL/);
+    assert.match(db.get('SELECT detail FROM probe_results WHERE probe_id = ? ORDER BY id DESC LIMIT 1', rebind.id).detail, /^connect EINVAL/);
   } finally { srv.close(); db.close(); }
   for (const a of ['127.0.0.1', '10.1.1.1', '172.16.0.1', '192.168.0.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', '::ffff:127.0.0.1', '64:ff9b::7f00:1', 'fc00::1', 'fd12::1', 'fe80::1%eth0', 'fec0::1', 'not-an-address']) assert.ok(isPrivateAddress(a), a);
   for (const a of ['8.8.8.8', '203.0.113.9', '172.32.0.1', '::ffff:8.8.8.8', '64:ff9b::808:808', '2606:4700::1111', '[2606:4700::1111]']) assert.ok(!isPrivateAddress(a), a);
+});
+
+test('pinnedFetch dials the addresses it is handed and nothing else: no resolver, no pooled socket, no redirect followed, only http and https', async () => {
+  const seen = [];
+  const srv = createServer((req, res) => { seen.push({ url: req.url, host: req.headers.host, connection: req.headers.connection, port: req.socket.remotePort }); if (req.url === '/away') { res.writeHead(302, { location: `http://127.0.0.1:${srv.address().port}/inside` }); return res.end(); } res.writeHead(200); res.end('SecuraCV ok'); });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r)); const port = srv.address().port; const at = [{ address: '127.0.0.1', family: 4 }];
+  try {
+    // a .invalid name never resolves (RFC 6761): reaching the listener at all means the handed address was dialed, not a lookup's answer
+    const r = await pinnedFetch(`http://pinned.invalid:${port}/`, { addrs: at, headers: { 'user-agent': 'probe-test' } }); assert.equal(r.status, 200); assert.equal(await readCapped(r), 'SecuraCV ok');
+    const r2 = await pinnedFetch(`http://pinned.invalid:${port}/`, { addrs: [{ address: '127.0.0.1' }] }); assert.equal(r2.status, 200); await readCapped(r2);   // a family the lookup left out is read off the address
+    assert.deepEqual(seen.map(s => [s.host, s.connection]), [[`pinned.invalid:${port}`, 'close'], [`pinned.invalid:${port}`, 'close']], 'the name rides in Host; the socket closes after the answer');
+    assert.notEqual(seen[0].port, seen[1].port, 'a second GET opens its own socket, never one pooled from an earlier answer');
+    // a redirect to the inside is the answer, never followed
+    const rb = await pinnedFetch(`http://pinned.invalid:${port}/away`, { addrs: at }); assert.equal(rb.status, 302); await rb.body.cancel();
+    assert.ok(!seen.some(s => s.url === '/inside'));
+    await assert.rejects(pinnedFetch('ftp://example.test/', { addrs: at }), /http or https/);
+    // a connect the kernel refuses at once is a rejected GET, never an uncaught socket error that ends the process:
+    // a v4 address handed as family 6 (EINVAL on any host) and a multicast address, which TCP has no route to
+    for (const a of [{ address: '127.0.0.1', family: 6 }, { address: '224.0.0.1', family: 4 }]) await assert.rejects(pinnedFetch(`http://pinned.invalid:${port}/`, { addrs: [a] }), { syscall: 'connect' }, JSON.stringify(a));
+    assert.equal(seen.length, 3, 'neither reached the listener');
+  } finally { srv.close(); }
 });
 
 test('the inbox loop files each mail on its own: one the parser chokes on is written down as an exception and the rest of the batch still lands', async () => {

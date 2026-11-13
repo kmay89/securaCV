@@ -51,7 +51,8 @@ import { isPrivateAddress } from './net.mjs';
 // A probe URL may not point at the box itself, a container beside it, a private network or the cloud
 // metadata address: an ops login is not a port scanner.
 // A literal address is judged by isPrivateAddress (net.mjs), v6 included: a mapped or NAT64 form of the inside
-// is the inside. A name that resolves to the inside is the status job's to refuse, at connect time.
+// is the inside. A name is the status job's to judge, at every run: every address it resolves to is checked, and
+// the GET goes only to the addresses checked (runProbe, pinnedFetch), never to a second lookup's answer.
 export function isInternalHost(url) {
   let h; try { h = new URL(url).hostname.replace(/^\[|\]$/g, '').toLowerCase(); } catch { return true; }
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.internal') || h.endsWith('.local')) return true;

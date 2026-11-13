@@ -3,6 +3,10 @@
 // exception, recovery resolves it. The public page says what is up with
 // 90-day uptime from the probe log, and incidents the operator writes.
 import { lookup as dnsLookup } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { Readable } from 'node:stream';
+import { isIP } from 'node:net';
 import { nowIso } from '../db.mjs';
 import { raise, resolve } from './exceptions.mjs';
 import { readCapped, isPrivateAddress } from '../net.mjs';
@@ -24,17 +28,38 @@ export function upsertProbe(db, p) {
 export const listProbes = (db, { publicOnly = false } = {}) => db.all('SELECT * FROM probes WHERE (? = 0 OR public = 1) ORDER BY id', publicOnly ? 1 : 0);
 export const deleteProbe = (db, id) => db.run('DELETE FROM probes WHERE id = ?', id).changes;
 
-export async function runProbe(db, p, { fetchImpl = fetch, lookup = (h) => dnsLookup(h, { all: true }), cfg = {}, now = nowIso, timeoutMs = 15_000, maxBytes = 2 * 1024 * 1024 } = {}) {
+// A probe's GET, dialed at the addresses runProbe just judged and never at a second lookup's answer: a name that
+// answers public to the check and private a moment later (DNS rebinding) is connected to at the public one. The
+// socket's resolver is handed the judged list, so no other lookup happens; a literal address is dialed as written,
+// and the check's own lookup of a literal answers the literal. No keep-alive pool, so no socket outlives the answer
+// it was pinned to, and a redirect is returned, never followed. https still checks the certificate against the
+// name in the URL (SNI and the hostname check are the name's, not the address's). Without addresses (the demo)
+// the name is resolved as usual. The answer is the slice of a fetch Response the probe reads: status, web-stream body.
+// The handed list is answered on a later turn, as a real resolver answers: a connect that fails at once (no route,
+// no IPv6, an egress firewall) then reaches the request's error listener and is a rejected GET, the probe's
+// result, where an answer in the same turn would fail the socket before the request listens and end the process.
+export const pinnedFetch = (url, { signal, headers, addrs } = {}) => new Promise((ok, no) => {
+  const u = new URL(url); if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error(`a probe is http or https, not ${u.protocol}`);
+  const judged = (addrs || []).map(a => ({ address: a.address, family: a.family || isIP(a.address) }));
+  const pin = judged.length ? { lookup: (h, o, cb) => setImmediate(() => o.all ? cb(null, judged) : cb(null, judged[0].address, judged[0].family)) } : {};
+  const req = (u.protocol === 'https:' ? httpsRequest : httpRequest)(u, { method: 'GET', headers, signal, agent: false, ...pin }, (res) => ok({ status: res.statusCode, body: Readable.toWeb(res) }));
+  req.on('error', no); req.end();
+});
+
+export async function runProbe(db, p, { fetchImpl = pinnedFetch, lookup = (h) => dnsLookup(h, { all: true }), cfg = {}, now = nowIso, timeoutMs = 15_000, maxBytes = 2 * 1024 * 1024 } = {}) {
   const t0 = Date.now(); let ok = false, detail = '';
   const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     // Checked at every run, not only when the probe was saved: the name is resolved here and now, and if any address
-    // it resolves to is the box's own, a neighbor's or a private network's, nothing is sent. (The demo's probes watch
-    // its own loopback listener, by design.) A redirect is the probe's result, never followed, so a public name cannot
-    // bounce the probe inward; the body is read up to a budget, so a target cannot stream the scheduler out of memory.
+    // it resolves to is the box's own, a neighbor's or a private network's, nothing is sent; otherwise the GET goes to
+    // those same addresses (pinnedFetch), never to a second lookup's. (The demo's probes watch its own loopback
+    // listener, by design.) A redirect is the probe's result, never followed, so a public name cannot bounce the probe
+    // inward; the body is read up to a budget, so a target cannot stream the scheduler out of memory.
     const host = new URL(p.url).hostname.replace(/^\[|\]$/g, '');
-    if (!cfg.demo) { const addrs = await lookup(host); if (!addrs.length || addrs.some(a => isPrivateAddress(a.address))) throw new Error(`${host} resolves to a private or internal address — refused`); }
-    const r = await fetchImpl(p.url, { signal: ctl.signal, redirect: 'manual', headers: { 'user-agent': 'securacv-backoffice-probe/1' } });
+    let addrs;
+    if (!cfg.demo) { addrs = await lookup(host); if (!addrs.length || addrs.some(a => isPrivateAddress(a.address))) throw new Error(`${host} resolves to a private or internal address — refused`); }
+    const r = await fetchImpl(p.url, { signal: ctl.signal, redirect: 'manual', headers: { 'user-agent': 'securacv-backoffice-probe/1' }, addrs });
+    if (!p.expect_text) r.body?.cancel?.().catch(() => {});   // a status-only probe does not hold the socket open for a page it never reads
     const body = p.expect_text ? await Promise.race([readCapped(r, maxBytes), new Promise((_, rej) => ctl.signal.addEventListener('abort', () => rej(Object.assign(new Error('timeout'), { name: 'AbortError' }))))]) : '';
     ok = r.status === p.expect_status && (!p.expect_text || body.includes(p.expect_text));
     detail = ok ? `${r.status}` : `${r.status}${p.expect_text && !body.includes(p.expect_text) ? ` (missing "${p.expect_text}")` : ''}`;
