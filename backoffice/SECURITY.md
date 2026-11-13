@@ -69,11 +69,20 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   again after the wait, before anything opens: a person disabled, a token
   revoked, a code spent by a login that finished meanwhile, or either
   lockout armed by failures queued ahead, refuses the request when it
-  lands. A session or an invitation link holds at most one password job
-  at a time: a second password re-check from the same person, or a second
-  post of the same link, while the first is still being derived is refused
-  (429), not queued, so neither can line up derivations ahead of anyone's
-  login. A re-sent link is a new link and is never refused for the old one.
+  lands. A person and an invitation link each hold at most one password
+  job at a time: a second password re-check from the same person (from any
+  of their sessions), or a second post of the same link, while the first
+  is still being derived is refused (429), not queued, so neither can line
+  up derivations ahead of anyone's login. A re-sent link is a new link and
+  is never refused for the old one. The slot is the person's, not the
+  session's or the address's (keyed by address, a thief with many
+  addresses would line up a derivation at each): while a stolen session
+  keeps it busy with wrong guesses, the person's own re-checks, *Log out
+  everywhere else* among them, are told one is already running, for as
+  long as the thief has addresses that have not yet spent their eight
+  (below). An owner who disables that person ends every one of their
+  sessions at once, and the lockdown (below) everyone's, with no
+  re-check; `SESSION_BIND_IP=1` ends a stolen session that moves.
 - **A code is good for one login.** The 30-second step an authenticator
   code matched is remembered per person; the same code presented again, at
   or before that step, is refused. A code read over a shoulder or off a
@@ -111,9 +120,10 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   password again to begin, then a code from the old authenticator and one
   from the new to confirm, so a stolen session alone cannot swap the second
   factor for a thief's, nor guess its way past either: the password asked
-  again and the old authenticator's code share the door's per-address lock
-  (the next paragraph). The old authenticator keeps working until that
-  confirmation, so a half-finished switch locks nobody out. Each step is
+  again and the old authenticator's code share the door's lock for one
+  person at one address (the next paragraph). The old authenticator keeps
+  working until that confirmation, so a half-finished switch locks nobody
+  out. Each step is
   in the audit log with its address. *Log out everywhere else* ends their
   other sessions, for the password again. The Health page warns when the oldest owner
   password is a year old.
@@ -121,17 +131,25 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   (to change it, to begin a new authenticator, to end the other sessions)
   and the old authenticator's code are guesses a stolen cookie could
   otherwise make as fast as it likes. They count against the door's own
-  lock, per person and per address: a wrong one is a failed try, eight in
-  fifteen minutes from one address lock that person there, and while the
-  lock stands every re-check and every sign-in of that person from that
-  address is refused before any password work or code compare, the right
-  secret included, with one answer whatever was typed. A right re-check
-  resets nothing (only a full sign-in, password and code, does, as at the
+  lock for one person at one address (the pair lock under *Lockout,
+  twice*, not the address-wide one): a wrong one is a failed try, and
+  eight from one address lock that person there for fifteen minutes. The
+  count has no window: it stands until a full sign-in from that address,
+  the lock running out, or a restart, so typos spread over a long session
+  add up, as wrong tries at the door always have. While the lock stands
+  every re-check of that person from that address is refused before any
+  password work or code compare, the right secret included, with one 429
+  answer whatever was typed, and the door refuses that person there with
+  its usual wrong-login answer. A right re-check resets nothing (only a
+  full sign-in, password and code, from that address does, as at the
   door), so proving the password between code guesses buys no more
-  guesses. For the re-checks the bound is the door's count: eight wrong
-  tries per person per address in fifteen minutes (a wrong try at the door
-  counts toward the same eight), plus at most one password check already
-  being derived when the eighth landed (its answer is then the refusal).
+  guesses. For the re-checks the bound is the door's: eight answered wrong
+  tries per person per address, then fifteen minutes of refusals (a wrong
+  try at the door counts toward the same eight). A password check already
+  being derived when the eighth lands is answered and recorded as the
+  refusal, whichever was typed: the same answer, the same locked-attempt
+  row in the audit log (which every role can read), and neither the count
+  nor the lock's end moved. It costs a derivation and tells nothing.
   A guesser with many addresses gets eight at each, as at the door;
   `SESSION_BIND_IP=1` ends a session that moves. A lock armed this way
   shows on the People page and in the audit log, and the Health page's

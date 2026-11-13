@@ -50,7 +50,7 @@ test('a session holds one password check at a time, and an invitation link one h
     // the same rule for an invitation link: one hash at a time
     const inv2 = inviteUser(b.db, { email: 'new@errer.test', name: 'New Hire', role: 'support' }); const k1 = work.kdf;
     const acc2 = await Promise.allSettled(Array.from({ length: 4 }, (_, i) => acceptInvite(b.db, inv2.invite_token, `a password of mine ${i}`)));
-    assert.equal(acc2.filter(x => x.status === 'fulfilled').length, 1); assert.ok(acc2.filter(x => x.status === 'rejected').every(x => x.reason.status === 429 && /already being set up/.test(x.reason.message)));
+    assert.equal(acc2.filter(x => x.status === 'fulfilled').length, 1); assert.ok(acc2.filter(x => x.status === 'rejected').every(x => x.reason.status === 429 && x.reason.message === 'this invitation is already being set up — reload this page in a moment'));
     assert.equal(work.kdf - k1, 1); assert.ok(inviteFor(b.db, inv2.invite_token), 'the link still works');
     // the owner's own login is untouched
     const o = await b.ownerLogin(); assert.equal(o.status, 303); assert.equal(o.headers.get('location'), '/');
@@ -87,7 +87,8 @@ test('fifty wrong secrets from one stolen cookie on two addresses, with an invit
     assert.equal(invite.filter(r => r.headers.get('location') === link).length, 1, 'one post of the link set the password');
     assert.ok(invite.every(r => r.status === 303) && invite.filter(r => /already%20being%20set%20up/.test(r.headers.get('location') || '')).length === 4, 'four were told the link is busy');
     const rows = (ip) => b.db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action IN ('auth.totp.failed', 'auth.password.failed') AND json_extract(detail, '$.ip') = ?", ip).n;
-    assert.deepEqual([rows(A), rows(B)], [9, 8], 'eight failures per address, and at A the one check that was in flight when its lock armed: nine');
+    assert.deepEqual([rows(A), rows(B)], [8, 8], 'eight failures per address: the check in flight at A when its lock armed is not a ninth (its record is the refusal\'s)');
+    assert.equal(b.db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'auth.login.locked' AND json_extract(detail, '$.ip') = ? AND json_extract(detail, '$.via') = 'first factor'", A).n, 1, 'the held check wrote one locked attempt at A');
     // locked now at both addresses: the right secret and a wrong one get one answer, and neither runs any work
     b.db.run('UPDATE users SET totp_last_step = NULL'); const curCode = totp(b.viewer.secret); const k1 = work.kdf, h1 = work.sha1;
     const answer = async (r) => [r.status, await r.json()];
@@ -134,4 +135,63 @@ test('a new database never inherits a lock or a pending key from another in the 
     const other = checkPassword(two, u2.id, 'owner password 1234', { ip: '203.0.113.71' });
     gate.open(); assert.ok(await held); assert.ok(await other, 'a job pending in one database is no pending key in the other');
   } finally { gate.open(); one.close(); two.close(); }
+});
+
+// The check that is mid-derivation when the eighth wrong try arms the lock: its answer, its audit row, the users row
+// and the lock's end are the same whichever password it carried (every role reads the audit log, so a row that differed
+// would tell the cookie what the answer does not), and a right one does nothing it asked for. Held on each of the three
+// routes that ask for the password, each from its own address, once with the right password and once with a wrong one.
+test('a password check in flight when the lock arms is the refusal in every way, whichever was typed: one answer, one record, the count and the lock\'s end untouched; the right one ends, changes and begins nothing', async () => {
+  const pw = 'viewer password 1234'; const seen = {};
+  for (const right of [true, false]) {
+    const b = await boot();
+    try {
+      b.db.run('UPDATE users SET totp_last_step = NULL');
+      assert.equal((await b.post('/login', { email: 'vic@errer.test', password: pw, code: totp(b.viewer.secret) }, { 'x-forwarded-for': '198.51.100.61' })).status, 303, 'a second session of the same person, for /me/sessions/end to end');
+      assert.equal((await b.asViewer('/me/totp', { current: pw }, '198.51.100.60')).status, 303, 'a rotation begun from a third address, so /me/totp/confirm compares the current code');
+      const next = pendingTotp(b.db, b.viewer.id); const bad = wrongCode(b.viewer.secret);
+      const sessions = () => b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', b.viewer.id).n; assert.equal(sessions(), 2);
+      const record = [];
+      for (const [k, [route, body]] of [['/me/sessions/end', (p) => ({ current: p })], ['/me/password', (p) => ({ current: p, next: 'a brand new password 9' })], ['/me/totp', (p) => ({ current: p })]].entries()) {
+        const A = `203.0.113.8${k}`; const confirm = () => b.asViewer('/me/totp/confirm', { current_code: bad, code: totp(next) }, A);
+        for (let i = 0; i < 7; i++) assert.equal((await confirm()).status, 400, `${route}: seven wrong codes from ${A} are answered`);
+        const k0 = work.kdf; gate.closed = true;
+        const held = b.asViewer(route, body(right ? pw : 'not the password at all'), A);
+        assert.ok(await until(() => work.kdf - k0 === 1), `${route}: the check is in its derivation`);
+        assert.equal((await confirm()).status, 429, `${route}: the eighth wrong code arms the lock while the check is held`);
+        const user = () => b.db.get('SELECT failed_logins, locked_until FROM users WHERE id = ?', b.viewer.id); const before = user();
+        const last = b.db.get('SELECT MAX(id) AS id FROM audit_log').id;
+        gate.open(); const r = await held;
+        assert.equal(r.status, 429, `${route}: the held check is answered by the lock`); const said = await r.json(); assert.match(said.error, /too many wrong tries from this address/);
+        assert.deepEqual(user(), before, `${route}: the count and the lock's end are as the eighth left them`);
+        const rows = b.db.all('SELECT actor, action, detail FROM audit_log WHERE id > ? ORDER BY id', last).map(x => `${x.actor} ${x.action} ${x.detail}`);
+        assert.deepEqual(rows, [`vic@errer.test auth.login.locked {"ip":"${A}","via":"first factor"}`], `${route}: one locked attempt, nothing else`);
+        record.push([route, r.status, said, rows]);
+      }
+      seen[right] = record;
+      assert.equal(sessions(), 2, 'no session was ended'); assert.equal(pendingTotp(b.db, b.viewer.id), next, 'no new rotation was begun');
+      assert.ok(await checkPassword(b.db, b.viewer.id, pw, { ip: '198.51.100.62' }), 'the password is unchanged');
+    } finally { await b.close(); }
+  }
+  assert.deepEqual(seen.true, seen.false, 'the right password and a wrong one leave the very same trace');
+});
+
+// Not a fix: a guard on what SECURITY.md says of the count the re-checks share with the door. It has no window (it
+// stands until a full sign-in from that address, the lock running out, or a restart), and a full sign-in clears it
+// only for the address it came from.
+test('the count is the door\'s, as SECURITY.md states it: no window (seven wrong, and the eighth a day later locks), and a full sign-in clears only its own address', async () => {
+  const db = testDb();
+  try {
+    const secret = setupOperator(db, 'owner password 1234', { email: 'owner@errer.test' }); const u = userByEmail(db, 'owner@errer.test');
+    const X = '203.0.113.90', Y = '198.51.100.90', Z = '203.0.113.91'; const T = Date.now(); const day = 24 * 3600_000;
+    const tryAt = (ip, now, pw = 'a wrong guess here') => checkPassword(db, u.id, pw, { ip, now }).then(() => 'ok', (e) => e.status || 400);
+    const seven = async (ip) => { const out = []; for (let i = 0; i < 7; i++) out.push(await tryAt(ip, T)); return out; };
+    assert.deepEqual(await seven(X), Array(7).fill(400));
+    assert.equal(await tryAt(X, T + day), 429, 'the eighth, a day later, arms the lock: the count has no window');
+    assert.equal(await tryAt(X, T + day + 1000, 'owner password 1234'), 429, 'and the right password is refused there');
+    assert.equal(await tryAt(X, T + day + 16 * 60_000, 'owner password 1234'), 'ok', 'until the lock runs out');
+    assert.deepEqual(await seven(Z), Array(7).fill(400));
+    db.run('UPDATE users SET totp_last_step = NULL'); assert.ok(await login(db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(secret) }, { ip: Y, now: T }), 'a full sign-in from another address');
+    assert.equal(await tryAt(Z, T), 429, 'clears nothing at this one: the eighth here still locks');
+  } finally { db.close(); }
 });

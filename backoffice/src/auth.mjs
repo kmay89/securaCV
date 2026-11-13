@@ -170,9 +170,11 @@ export const inviteFor = (db, tok) => { const u = db.get(`SELECT ${PUBLIC} FROM 
 // Step one of accepting: the person's own password. Step two (confirmTotp) proves the authenticator before the account opens.
 // One hash per link at a time (oneAtATime, below): the link is public for 48 hours, and thirty posts of it at once would
 // otherwise hold every login behind thirty derivations. A re-sent link is a new key, so it is never refused for the old one.
+// The refusal's text is for a double click: the first post goes on and sets the password, and the browser shows the
+// second's answer, so it asks for a reload (which shows the authenticator step once the first has landed), not a wait.
 export async function acceptInvite(db, tok, password) {
   const u = inviteFor(db, tok); if (!u) throw new Error('this invitation is not valid any more — ask for a new one'); if (String(password).length < 12) throw new Error('use at least 12 characters');
-  const secret = base32Encode(randomBytes(20)); const hash = await oneAtATime(`invite:${pendingKey(db, u)}:${sha(String(tok))}`, () => hashPassword(password), 'this invitation is already being set up — wait for that answer');
+  const secret = base32Encode(randomBytes(20)); const hash = await oneAtATime(`invite:${pendingKey(db, u)}:${sha(String(tok))}`, () => hashPassword(password), 'this invitation is already being set up — reload this page in a moment');
   if (!inviteFor(db, tok)) throw new Error('this invitation is not valid any more — ask for a new one');   // withdrawn while the hash was derived
   db.run('UPDATE users SET password_hash = ?, totp_pending = ?, password_set_at = ? WHERE id = ?', hash, secret, nowIso(), u.id);
   db.audit(u.email, 'user.accept', 'user', u.email); return { ...u, totp_pending: secret };
@@ -180,17 +182,21 @@ export async function acceptInvite(db, tok, password) {
 // --- the re-checks: what a live session alone must not do asks for a secret again (the password, or a code from
 // the current authenticator), and a stolen cookie must not make that a free oracle. Two bounds, both here:
 // - The rate. A re-check answers to the door's own lock for this person and this address (lockState, below): a
-//   wrong password or current code counts exactly as a wrong try at the door does (recordFailure: the same eight
-//   in fifteen minutes, the same counter, the same record in the users table), and while that lock stands every
-//   re-check from the address is refused before any derivation or code compare, the right secret included, with
-//   one answer whatever was typed. A right answer here neither lifts the lock nor resets the count; only a full
-//   login (both factors) does, as before. Otherwise a session that knows the password could prove it between code
-//   guesses and guess forever.
+//   wrong password or current code counts exactly as a wrong try at the door does (recordFailure: the same count of
+//   eight, kept until a full login from that address, the lock running out or a restart, not over a window; the
+//   same counter and record in the users table), and while that lock stands (fifteen minutes) every re-check from
+//   the address is refused before any derivation or code compare, the right secret included, with one answer
+//   whatever was typed. A right answer here neither lifts the lock nor resets the count; only a full login (both
+//   factors) from that address does, as before. Otherwise a session that knows the password could prove it
+//   between code guesses and guess forever.
 // - The concurrency. One password job per person, and per invitation link, at a time (oneAtATime). The lane is the
 //   door's (one derivation at a time), so a session that queued a hundred wrong guesses would hold every other
 //   person's login behind them; a second job while one is pending is refused (429), not queued. It also keeps the
 //   count honest: a person's password re-checks run one at a time, so each reads the lock the one before it left,
-//   and a burst of them cannot all pass the lock at entry before the first failure is counted.
+//   and a burst of them cannot all pass the lock at entry before the first failure is counted. The key is the person,
+//   not the session or the address: keyed by address, a thief with many addresses would line up a derivation at
+//   each. The price, written down in SECURITY.md: while a stolen session keeps the slot busy, the person's own
+//   re-checks are told one is already running, until the thief's addresses have each spent their eight.
 const RECHECK_LOCKED = 'too many wrong tries from this address — try again in fifteen minutes';
 const PENDING = new Set();
 // The key is the database and the person's id and email, like the lock's (below), so a fresh database never meets a key left by a previous one.
@@ -231,16 +237,19 @@ export function confirmTotp(db, userId, code, { current = '', ip = null, now = D
 export const pendingTotp = (db, userId) => secretRow(db, userId)?.totp_pending || null;
 // The person's own password again, for what a live session alone must not do: begin a new authenticator, end
 // the other sessions, change the password. A wrong one is written down with its address and counts against the
-// lock. Async: the KDF runs off the event loop, so the lock is read again after it, as the door reads it after its
-// wait: a wrong try queued meanwhile at the door or in a code re-check may have armed it, and then the answer is the
-// refusal, the same whichever was typed. `recheck` is the unguarded form, for a caller already holding the person's key.
+// lock. Async: the KDF runs off the event loop, so the lock is read again after it, before the result is used or
+// counted, as the door reads it after its wait: a wrong try meanwhile at the door or in a code re-check may have
+// armed it, and then this try is the refusal in every way, whichever was typed: the same answer, the same one
+// locked-attempt row, and neither the count nor the lock's end touched (every role can read the audit log, so a
+// row that differed would tell a stolen cookie what the answer would not). `recheck` is the unguarded form, for a
+// caller already holding the person's key.
 async function recheck(db, r, password, ip, now) {
   refuseWhileLocked(db, r, ip, now, 'first factor');
   const right = await verifyPassword(String(password || ''), r.password_hash);
-  if (!right) recordFailure(db, r, ip, now, undefined, 'recheck');
-  refuseWhileLocked(db, r, ip, now, 'first factor', !right);
-  if (!right) throw new Error('the current password is wrong');
-  return r;
+  refuseWhileLocked(db, r, ip, now, 'first factor');
+  if (right) return r;
+  recordFailure(db, r, ip, now, undefined, 'recheck'); refuseWhileLocked(db, r, ip, now, 'first factor', true);   // the eighth: counted, then answered by the lock it armed
+  throw new Error('the current password is wrong');
 }
 export async function checkPassword(db, userId, password, { ip = null, now = Date.now() } = {}) {
   const r = secretRow(db, userId); if (!r) throw new Error('no such person');

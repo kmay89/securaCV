@@ -76,7 +76,7 @@ export function doctor(db, cfg) {
   add('stripe_api', 'Stripe API key (line items, reconciliation)', demo ? null : !!cfg.stripeApiKey, demo ? 'demo mode' : cfg.stripeApiKey ? 'set' : 'orders without inline line items stay empty; no reconciliation', 'set STRIPE_API_KEY (a restricted key: read charges/payouts, read checkout sessions)');
   add('operator_email', 'Morning digest recipient', !!cfg.operatorEmail, cfg.operatorEmail || 'nobody gets the daily summary', 'set OPERATOR_EMAIL');
   // the door, and the re-checks a session asks for (the password again, the current authenticator's code): they count
-  // against the same per-address lock, so a guesser with a stolen cookie turns this row red as one at the door does
+  // against the same lock for one person at one address, so a guesser with a stolen cookie turns this row red as one at the door does
   const FAILS = "action IN ('auth.login.failed', 'auth.password.failed', 'auth.totp.failed')";
   const fails24 = db.get(`SELECT COUNT(*) AS n FROM audit_log WHERE ${FAILS} AND at >= ?`, new Date(Date.now() - 86400000).toISOString()).n;
   add('logins', 'Failed logins and re-checks (password, code), 24 h', fails24 <= 20, `${fails24}${fails24 ? ` · last from ${(() => { try { return JSON.parse(db.get(`SELECT detail FROM audit_log WHERE ${FAILS} ORDER BY id DESC LIMIT 1`)?.detail || '{}').ip || '?'; } catch { return '?'; } })()}` : ''} · lockout after 8 in 15 min per address`, 'read the audit log; if it is you, use `backoffice code`; if not, the lockout is already holding');
