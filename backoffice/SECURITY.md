@@ -449,10 +449,13 @@ anchor, an intruder cannot touch without the anchor saying so.
   same check runs again at every probe, not only when it was saved: the name
   is resolved then and there, and if any address it resolves to is one of
   those, nothing is sent. A redirect is the probe's result, never followed.
-  What this does not cover: a resolver that answers one address to the
-  check and another to the connection a moment later (the two lookups are
-  not pinned to each other), so the box should not sit on a network where
-  that address is worth reaching.
+  The GET then goes only to the addresses that check just judged
+  (`pinnedFetch` in `status.mjs`): the connection is handed that list
+  instead of asking the resolver again, so a name that answers public to
+  the check and the inside a moment later (DNS rebinding) is dialed at the
+  public address. No pooled socket outlives its answer, over https the
+  certificate is still checked against the name in the URL, and a connect
+  that fails (no route, no IPv6 on the box) is the probe's recorded result.
 - **A malicious reviewer.** Nobody outside this repository has audited the
   code. The tests pin every control above; read them before trusting it
   with real orders, and send findings to the support address.
