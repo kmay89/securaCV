@@ -3149,6 +3149,30 @@
   `magic_pairing.md` §9 row, which is unrun.
 - **Date learned:** 2026-11
 
+### Waiting on a stack's event is right only when the stack took the ask
+- **What happened:** the Sense/Vision Improv glue asked the stack to drop a
+  link and, until the disconnect event landed, re-upped the session and
+  asked again every loop pass (sweep F489). The first fix remembered the
+  link it had asked to drop and waited for its event, whatever the ask
+  answered, so a terminate the stack refused would have left a client
+  parked on the single link until it chose to leave (found in review, not
+  on a device).
+- **Root cause:** `NimBLEServer::disconnect()` only starts a terminate;
+  the event follows only when one started (or one was already going, or
+  the link was already gone). Its answer says which, and the glue threw it
+  away.
+- **Fix:** `ask_drop()` in `firmware/common/network/improv_ble.cpp` reads
+  the answer (2.x's bool; 1.4.x's code, read as 2.5.0 reads it), and the
+  link is held as down only when the ask was taken. A refused drop is asked
+  again when next due and logged once a link.
+- **Rule:** before a loop waits on an asynchronous event, read the call's
+  answer that says whether the event is coming; an ask the callee refused
+  is still yours to retry.
+- **Regression check:** `firmware/tests_host/test_improv_glue.cpp`
+  (`latedrop`, `refuseddrop`, both NimBLE majors, over stand-ins whose
+  `disconnect()` answers what the test sets). Not bench-tested.
+- **Date learned:** 2026-11
+
 ---
 
 ## Sensing & Signal Processing

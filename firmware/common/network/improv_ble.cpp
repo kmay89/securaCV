@@ -676,6 +676,23 @@ void follow_join(uint32_t now_ms) {
   }
 }
 
+// Asks the stack to drop link `h`; true when it took the ask. A terminate
+// it started, one already going, or a link it no longer holds each end in
+// the host task's disconnect event; any other answer means no terminate
+// started and no event is coming. 2.x reads ble_gap_terminate()'s code
+// itself (NimBLEServer::disconnect(): true on 0, ENOTCONN, EALREADY and the
+// controller's unknown connection); 1.4.x hands the code back, read here the
+// same way.
+bool ask_drop(uint16_t h) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  return s_server->disconnect(h);
+#else
+  const int rc = s_server->disconnect(h);
+  return rc == 0 || rc == BLE_HS_ENOTCONN || rc == BLE_HS_EALREADY ||
+         rc == BLE_HS_HCI_ERR(BLE_ERR_UNK_CONN_ID);
+#endif
+}
+
 }  // namespace
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -821,13 +838,18 @@ void follow_link(uint32_t now_ms) {
   // connect right after the join) would otherwise apply up-then-down and
   // leave the session believing a live link is gone.
   static uint32_t seen_gen = 0;
-  // The link this glue last asked the stack to drop. s_connected falls only
+  // The link whose drop the stack took (ask_drop()). s_connected falls only
   // when the host task's disconnect event lands, a pass or more after the
   // ask, so until then that link reads as down here: the session is not
   // re-upped for it and the drop is asked (and logged) once (sweep F489).
-  // A new connect is a new generation (next_link_gen() skips 0 and repeats
-  // none until 2^32 - 1 connects later), so it is never mistaken for it.
+  // A drop the stack refused has no event coming, so that link is not held:
+  // the next pass re-ups the session and the drop is asked again when it is
+  // due (the next pass after a verdict, the next idle bound otherwise), as
+  // it was before F489. A new connect is a new generation (next_link_gen()
+  // skips 0 and repeats none until 2^32 - 1 connects later), so it is never
+  // mistaken for the link dropped, whatever handle the controller gives it.
   static uint32_t dropped_gen = 0;
+  static uint32_t refused_gen = 0;   // the link whose refused drop was logged
   const uint32_t gen = s_conn_gen;
   const bool connected = s_connected && gen != dropped_gen;
   if (connected != s_session.link_up || gen != seen_gen) {
@@ -838,12 +860,16 @@ void follow_link(uint32_t now_ms) {
   if (connected && improv::idle_disconnect_due(s_session, now_ms, s_timing) && s_server) {
     // A client that asked for nothing, or one whose join is done and
     // answered: hand the radio back so the beacon returns and nobody can
-    // park on the single link.
-    dropped_gen = gen;
-    s_server->disconnect(s_conn_handle);
+    // park on the single link (a drop the stack refuses is asked again).
+    const char* why = s_session.state == State::Provisioned ? "joined, verdict delivered" : "idle";
     improv::session_link_down(s_session);
-    Serial.printf("[IMPROV] link dropped (%s)\n",
-                  s_session.state == State::Provisioned ? "joined, verdict delivered" : "idle");
+    if (ask_drop(s_conn_handle)) {
+      dropped_gen = gen;
+      Serial.printf("[IMPROV] link dropped (%s)\n", why);
+    } else if (refused_gen != gen) {
+      refused_gen = gen;
+      Serial.printf("[IMPROV] link drop refused by the stack (%s) — asking again\n", why);
+    }
   }
 }
 
