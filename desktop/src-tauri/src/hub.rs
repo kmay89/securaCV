@@ -494,37 +494,132 @@ fn staging_dir(app: &AppHandle) -> std::path::PathBuf {
 const RAW_IMAGE_PREFIX: &str = "securacv-hub-";
 const RAW_IMAGE_SUFFIX: &str = ".img";
 
+/// The raw image's staging file for one run, used as its path (it derefs to
+/// one). Dropping it deletes the file, on success and on every early return;
+/// `path` is declared first so the file is unlinked while the lock below
+/// still holds. A killed process leaves the file for the next launch's
+/// `cleanup_orphans`.
+struct StagedImage {
+    path: tempfile::TempPath,
+    /// The descriptor the file was created through, holding an exclusive
+    /// `flock(2)` on it for the whole run. Every step after this one opens
+    /// the image again by name (decompress, seed, rehash, write and
+    /// read-back), so the name must stay this run's to the end: the lock is
+    /// how another launch's sweep tells this live file from a killed run's
+    /// orphan and leaves it alone. The kernel drops the lock when the process
+    /// dies, so an orphan's lock is free.
+    #[cfg(unix)]
+    _held: std::fs::File,
+}
+
+impl std::ops::Deref for StagedImage {
+    type Target = std::path::Path;
+    fn deref(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl AsRef<std::path::Path> for StagedImage {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
 /// Make the file the raw image is decompressed into: atomically created
 /// (`O_EXCL`, so a file or link someone planted at a guessable name is never
-/// written through), randomly named, and owner-only (0600 on Unix) from the
-/// moment it exists. Step 5b seeds the Wi-Fi passphrase and the owner's
+/// written through), randomly named, owner-only (0600 on Unix) from the
+/// moment it exists, and, on Unix, locked as this run's until it is gone
+/// (`StagedImage`). Step 5b seeds the Wi-Fi passphrase and the owner's
 /// bcrypt hash into this file, and it sits in the staging dir (on Linux the
 /// shared 1777 `/tmp` when the app has no cache dir) for the whole multi-GB
-/// write and read-back. The same rule as the
-/// Canary path's `stage_firmware`. The returned path deletes the file when it
-/// drops, on success and on every early return; a killed process leaves it
-/// for the next launch's `cleanup_orphans`.
-fn private_raw_image(dir: &std::path::Path) -> Result<tempfile::TempPath, String> {
-    tempfile::Builder::new()
+/// write and read-back. The same rule as the Canary path's `stage_firmware`.
+fn private_raw_image(dir: &std::path::Path) -> Result<StagedImage, String> {
+    let made = tempfile::Builder::new()
         .prefix(RAW_IMAGE_PREFIX)
         .suffix(RAW_IMAGE_SUFFIX)
         .tempfile_in(dir)
-        .map(tempfile::NamedTempFile::into_temp_path)
-        .map_err(|e| format!("couldn't create a private staging file for the raw image: {e}"))
+        .map_err(|e| format!("couldn't create a private staging file for the raw image: {e}"))?;
+    #[cfg(unix)]
+    {
+        let (held, path) = made.into_parts();
+        hold_as_live(&held, &path)
+            .map_err(|e| format!("couldn't hold the raw image's staging file for this run: {e}"))?;
+        Ok(StagedImage { path, _held: held })
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(StagedImage {
+            path: made.into_temp_path(),
+        })
+    }
 }
 
-/// Remove every raw staging image in `dir` (a crash or a pulled plug skips
-/// the drop that would have). Quiet: a file this account can't remove,
-/// another account's, is skipped.
+/// Take the exclusive lock that marks `file` as a live run's, then check that
+/// `path` still names it. Another launch's sweep that got in between the
+/// create and the lock (it locked the file first, as an orphan, and removed
+/// it) would leave the name free for any account to fill, and every later
+/// step opens the image by name; that run stops here instead.
+#[cfg(unix)]
+fn hold_as_live(file: &std::fs::File, path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::io::AsRawFd;
+    // SAFETY: flock(2) on a descriptor `file` owns for the whole call.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let held = file.metadata()?;
+    let named = std::fs::symlink_metadata(path)?;
+    if (held.dev(), held.ino()) != (named.dev(), named.ino()) {
+        return Err(std::io::Error::other(
+            "another launch of the Flasher removed it while it was being made; try again",
+        ));
+    }
+    Ok(())
+}
+
+/// Remove every raw staging image in `dir` that a killed run left (a crash or
+/// a pulled plug skips the drop that would have). On Unix a file another
+/// running Flasher still holds (`StagedImage`) is skipped, so a second launch
+/// mid-write leaves that run's image alone; so is anything that is not a
+/// regular file. Quiet: a file this account can't remove, another
+/// account's, is skipped too.
 fn sweep_raw_images(dir: &std::path::Path) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with(RAW_IMAGE_PREFIX) && name.ends_with(RAW_IMAGE_SUFFIX) {
-                let _ = std::fs::remove_file(e.path());
+            if !(name.starts_with(RAW_IMAGE_PREFIX) && name.ends_with(RAW_IMAGE_SUFFIX)) {
+                continue;
             }
+            // Held through the removal: a file whose lock this takes belongs
+            // to no running Flasher.
+            #[cfg(unix)]
+            let Some(_orphan) = lock_orphan(&e.path()) else {
+                continue;
+            };
+            let _ = std::fs::remove_file(e.path());
         }
     }
+}
+
+/// Open the staging image at `path` and take its lock, or `None` when a live
+/// run holds it, or it is not a regular file. Opened without following a
+/// link and without waiting on a FIFO, so nothing planted under a staging
+/// name can redirect or stall the sweep.
+#[cfg(unix)]
+fn lock_orphan(path: &std::path::Path) -> Option<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    // SAFETY: flock(2) on a descriptor `file` owns for the whole call.
+    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+    locked.then_some(file)
 }
 
 /// Sweep files a crash or pulled plug could have orphaned: the ~2.5 GB raw
@@ -532,7 +627,8 @@ fn sweep_raw_images(dir: &std::path::Path) {
 /// process is killed) and any half-finished `.partial` downloads in the image
 /// cache. Best-effort and quiet — a file we can't remove is simply skipped.
 /// Run once at startup, before this process flashes anything of its own, so it
-/// never races its own work.
+/// never races its own work; a raw image another running instance still
+/// holds is skipped (`sweep_raw_images`).
 pub fn cleanup_orphans(app: &AppHandle) {
     // Raw staging images: securacv-hub-<random>.img (and the pid-named ones
     // builds before this one used) in the staging dir — and in the OS temp
@@ -1118,7 +1214,9 @@ fn hub_flash_blocking(
     //    ~2.5 GB — the cached .xz is the artifact worth keeping, not the
     //    expanded image): created exclusively under a random name, owner-only
     //    (0600) — it carries the Wi-Fi passphrase and the owner's bcrypt hash
-    //    once 5b seeds it — and deleted when `raw_path` drops.
+    //    once 5b seeds it — held as this run's until it is gone, so a second
+    //    launch's sweep leaves it alone while every step below reopens it by
+    //    name, and deleted when `raw_path` drops.
     let raw_path = private_raw_image(&staging_dir(app))?;
     let raw = hub_io::xz::decompress_into(&xz_path, &raw_path, cancel, &mut progress)?;
     log(format!("✓ raw image ready: {} bytes", raw.bytes));
@@ -1815,12 +1913,22 @@ mod tests {
 
 #[cfg(test)]
 mod staging_tests {
-    use super::{private_raw_image, sweep_raw_images, RAW_IMAGE_PREFIX, RAW_IMAGE_SUFFIX};
+    use super::{
+        private_raw_image, sweep_raw_images, StagedImage, RAW_IMAGE_PREFIX, RAW_IMAGE_SUFFIX,
+    };
 
     /// The name the raw image was staged under before it moved to a random
     /// one: guessable, so another account could plant something there first.
     fn pid_name(dir: &std::path::Path) -> std::path::PathBuf {
         dir.join(format!("securacv-hub-{}.img", std::process::id()))
+    }
+
+    /// What a killed run leaves: its staging file, never deleted (no drop
+    /// runs) and no longer locked (the kernel drops a dead process's locks;
+    /// here the lock's descriptor closes as `staged` goes out of scope).
+    fn as_if_killed(staged: StagedImage) -> std::path::PathBuf {
+        let StagedImage { path, .. } = staged;
+        path.keep().expect("kept, as a kill would")
     }
 
     /// Step 5's staging file (the Wi-Fi passphrase and the owner's bcrypt hash
@@ -1865,28 +1973,60 @@ mod staging_tests {
         assert!(!path.exists(), "dropping the staging path removes the file");
     }
 
-    /// What someone else put at the old, guessable name is left alone: the
-    /// staging file is a new one, created exclusively, never that file and
-    /// never what a link there points at.
+    /// A file someone else put at the old, guessable name is left alone: the
+    /// staging file is a new one, created exclusively, never that file.
     #[test]
-    fn a_planted_file_or_link_is_never_written_through() {
+    fn a_file_planted_at_the_old_name_is_left_alone() {
         let dir = tempfile::tempdir().unwrap();
         let planted = pid_name(dir.path());
         std::fs::write(&planted, b"planted").unwrap();
-        #[cfg(unix)]
-        let target = dir.path().join("victim.txt");
-        #[cfg(unix)]
-        {
-            std::fs::write(&target, b"victim").unwrap();
-            std::os::unix::fs::symlink(&target, dir.path().join("securacv-hub-1.img")).unwrap();
-        }
 
         let staged = private_raw_image(dir.path()).expect("staged");
         std::fs::write(&staged, b"secret image").unwrap();
 
         assert_eq!(std::fs::read_to_string(&planted).unwrap(), "planted");
-        #[cfg(unix)]
+    }
+
+    /// A link someone else put at the old, guessable name is never followed:
+    /// the image is not written into whatever file the link points at.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_planted_at_the_old_name_is_never_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("victim.txt");
+        std::fs::write(&target, b"victim").unwrap();
+        std::os::unix::fs::symlink(&target, pid_name(dir.path())).unwrap();
+
+        let staged = private_raw_image(dir.path()).expect("staged");
+        std::fs::write(&staged, b"secret image").unwrap();
+
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "victim");
+    }
+
+    /// A second launch while this run writes a card: its startup sweep must
+    /// leave the live staging file alone. Every step after decompress opens
+    /// the image again by name, so a sweep that removed it would free the
+    /// name for another account to fill, and the seeded passphrase and hash
+    /// would go into that account's file. The sweep here runs through its
+    /// own descriptor, as another process's would; once the run is gone
+    /// (killed, so its file stays but its lock does not), the sweep takes it.
+    #[cfg(unix)]
+    #[test]
+    fn a_live_runs_image_survives_another_launchs_sweep() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = private_raw_image(dir.path()).expect("staged");
+        std::fs::write(&live, b"seeded image").unwrap();
+
+        sweep_raw_images(dir.path());
+        assert_eq!(
+            std::fs::read(&live).unwrap(),
+            b"seeded image",
+            "the live run's image is still at its name"
+        );
+
+        let orphan = as_if_killed(live);
+        sweep_raw_images(dir.path());
+        assert!(!orphan.exists(), "a dead run's image is swept");
     }
 
     /// A killed run never drops its staging path, so the file outlives it; the
@@ -1895,10 +2035,7 @@ mod staging_tests {
     #[test]
     fn the_next_launch_sweeps_what_a_killed_run_left() {
         let dir = tempfile::tempdir().unwrap();
-        let orphan = private_raw_image(dir.path())
-            .expect("staged")
-            .keep()
-            .expect("kept, as a kill would");
+        let orphan = as_if_killed(private_raw_image(dir.path()).expect("staged"));
         let old_style = pid_name(dir.path());
         std::fs::write(&old_style, b"old").unwrap();
         let unrelated = dir.path().join("haos_rpi5-64-18.1.img");
@@ -1909,5 +2046,49 @@ mod staging_tests {
         assert!(!orphan.exists(), "the random-named orphan is swept");
         assert!(!old_style.exists(), "an older build's pid-named orphan too");
         assert!(unrelated.exists(), "nothing else in the temp dir");
+    }
+
+    /// The sweep opens each staging name to take its lock, so what is planted
+    /// under one must neither redirect it nor stall it: a link is not
+    /// followed, and a FIFO (whose plain open would wait for a writer
+    /// forever) is not waited on. Neither is a regular file, so neither is
+    /// taken for a staging image.
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_neither_follows_a_link_nor_waits_on_a_fifo() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("victim.txt");
+        std::fs::write(&target, b"victim").unwrap();
+        let link = dir.path().join("securacv-hub-link.img");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let fifo = dir.path().join("securacv-hub-fifo.img");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: mkfifo(3) with a NUL-terminated path that outlives the call.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+
+        sweep_raw_images(dir.path());
+
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "victim");
+        assert!(std::fs::symlink_metadata(&link).is_ok(), "the link is left");
+        assert!(std::fs::symlink_metadata(&fifo).is_ok(), "the FIFO is left");
+    }
+
+    /// A sweep from another launch that got in between the create and the
+    /// lock took the name away; the run must stop rather than go on opening
+    /// the image by a name that is no longer its file's.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_lost_before_the_lock_stops_the_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let made = tempfile::Builder::new()
+            .prefix(RAW_IMAGE_PREFIX)
+            .suffix(RAW_IMAGE_SUFFIX)
+            .tempfile_in(dir.path())
+            .unwrap();
+        let (file, path) = made.into_parts();
+        std::fs::remove_file(&path).unwrap();
+        assert!(super::hold_as_live(&file, &path).is_err(), "name gone");
+        std::fs::write(&path, b"someone else's").unwrap();
+        assert!(super::hold_as_live(&file, &path).is_err(), "name refilled");
     }
 }
