@@ -547,12 +547,13 @@ timeout passes) with `400` `{"ok":false,"reason":"body read failed"}`. Before
 F300 the handler closed the connection with no answer at the first socket
 timeout, error or early close. A body that holds a NUL byte anywhere is
 refused with `400` `{"ok":false,"reason":"body is not JSON"}` before any
-knob is read, as `POST /api/settings` refuses one (sweep F488), and nothing
-is stored. Before F488 the knobs were read only up to the first NUL, so
-`{"core.presence.preset":2}`, a NUL and junk stored the preset and answered
-ok, where the same body with the junk and no NUL is refused, since nothing
-but whitespace may follow the object; a body whose NUL came before any knob
-was answered `400` `{"ok":false,"reason":"no recognized keys"}`.
+knob is read (sweep F488), as `POST /api/settings` has refused one since
+the F462 review, and nothing is stored. Before F488 the knobs were read
+only up to the first NUL, so `{"core.presence.preset":2}`, a NUL and junk
+stored the preset and answered ok, where the same body with the junk and no
+NUL is refused, since nothing but whitespace may follow the object; a body
+whose NUL came before any knob was answered `400`
+`{"ok":false,"reason":"no recognized keys"}`.
 
 A tuning bundle is that flat object, one `"<full_key>": value` pair per
 knob (`{"core.presence.preset":1,"core.presence.sensitivity":50,...}`). It

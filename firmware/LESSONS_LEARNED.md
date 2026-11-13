@@ -4780,12 +4780,14 @@
   frame, so a refused send spends nothing. The same handler's `template_id`
   and `detail` narrowed too, and were read the same way in F485
   (`template_from_request()`, `detail_from_request()`, a loop-task refusal of
-  an unlisted slot): the template's `uint8_t t = input["template_id"]` read
-  every integer past a byte, and a null, as 0 (ArduinoJson's `as<uint8_t>()`
-  answers 0 out of range, it does not wrap), and 0 is a real template,
-  "police activity in area"; the brief had assumed 272 became 16. A zero a
-  conversion falls back to is a value, not a refusal, whenever the enum
-  names 0.
+  an unlisted slot): the template's `uint8_t template_id_raw =
+  input["template_id"]` read every integer past a byte, and a null, as 0
+  (ArduinoJson's `as<uint8_t>()` answers 0 out of range, it does not wrap),
+  and 0 is a real template, "police activity in area"; the brief had assumed
+  272 became 16. The detail's `uint8_t detail_raw = input["detail"] | 0` was
+  this entry's own mistake again, a default taken for a range check: it
+  signed the unlisted slot 4 as 4 and 272 as 16. A zero a conversion falls
+  back to is a value, not a refusal, whenever the enum names 0.
 - **Rule:** read a wire integer as `is<int32_t>()`, range-check it, then
   narrow; `| default` is for an absent key only. Check a claim about a
   library's coercion by running the library, not by reading the call.
