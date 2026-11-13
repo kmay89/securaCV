@@ -75,22 +75,24 @@ pub fn decompress_into(
 }
 
 /// Open `dest`, which the caller made, for the raw image: written from the
-/// start (truncated) and, on Unix, readable and writable by this account only
+/// start (emptied) and, on Unix, readable and writable by this account only
 /// (0600). The image stops being public bytes the moment
 /// [`crate::seed::inject_into_image`] writes the Wi-Fi passphrase and the
 /// owner's bcrypt hash into it, and it sits in the staging dir (the OS temp
 /// dir, on Linux the shared 1777 `/tmp`, when the app has no cache dir) for
 /// the whole multi-GB write and read-back, so its mode is set before the
 /// first byte lands. The file is tightened to 0600 through its own
-/// descriptor, and one this account cannot chmod (another account owns it)
-/// fails here, before anything is written. What this cannot undo is a reader
-/// that opened the file before it was tightened, so a caller staging a secret
-/// hands in a file it just created owner-only and exclusively, as the
-/// Flasher's hub writer does (`tempfile`, random name, `O_EXCL`). Elsewhere
-/// the mode is the platform's default.
+/// descriptor and only then emptied, so one this account cannot chmod
+/// (another account owns it) is refused untouched. What this cannot undo is
+/// a reader that opened the file before it was tightened, so a caller
+/// staging a secret hands in a file it just created owner-only and
+/// exclusively, as the Flasher's hub writer does (`tempfile`, random name,
+/// `O_EXCL`). Elsewhere the mode is the platform's default.
 fn open_owner_only(dest: &Path) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).truncate(true);
+    // Not truncated by the open: emptied below, once the mode is this
+    // account's.
+    options.write(true).truncate(false);
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -106,6 +108,7 @@ fn open_owner_only(dest: &Path) -> std::io::Result<std::fs::File> {
         use std::os::unix::fs::PermissionsExt;
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
+    file.set_len(0)?;
     Ok(file)
 }
 
@@ -276,11 +279,29 @@ mod tests {
         std::fs::write(&dest, b"stale").unwrap();
         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        decompress_into(&src, &dest, &CancelToken::default(), |_| {})
-            .expect("decompress succeeds");
+        decompress_into(&src, &dest, &CancelToken::default(), |_| {}).expect("decompress succeeds");
 
         let mode = std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "raw image mode {mode:o}");
+        assert_eq!(std::fs::read(&dest).unwrap(), vec![7u8; 4096]);
+    }
+
+    /// The open no longer truncates (the file is emptied only after its mode
+    /// is set), so a stale file longer than the image must still end up
+    /// exactly the image, with no stale tail for the write to carry onto a
+    /// card.
+    #[test]
+    fn a_longer_stale_dest_ends_up_exactly_the_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("image.img.xz");
+        let dest = dir.path().join("image.img");
+        std::fs::write(&src, xz_bytes(&[7u8; 4096])).unwrap();
+        std::fs::write(&dest, vec![0xEEu8; 3 * 4096]).unwrap();
+
+        let out =
+            decompress_into(&src, &dest, &CancelToken::default(), |_| {}).expect("decompress");
+
+        assert_eq!(out.bytes, 4096);
         assert_eq!(std::fs::read(&dest).unwrap(), vec![7u8; 4096]);
     }
 
