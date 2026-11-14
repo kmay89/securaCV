@@ -71,7 +71,7 @@ body:
     attributes:
       label: If it's a remix, what's the original?
       description: Link the gallery card / issue / STL you started from, or just name it. Leave blank if it's novel.
-      placeholder: "e.g., https://securacv.com/gallery#doorway-vision  ·  or: stock doorway bracket"
+      placeholder: "e.g., a link to the build or issue you started from  ·  or: stock doorway bracket"
     validations:
       required: false
   - type: markdown

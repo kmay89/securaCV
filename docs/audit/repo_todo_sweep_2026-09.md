@@ -3659,6 +3659,12 @@ so — see D2 below.)
   (`data-hero="b"`, "Three things. One witness.", `js/exp-hero.js`
   `ROLLOUT = 0`) is the cheapest place to try it (open item 2 in
   `docs/ia-homepage-2026-09.md`).
+  **2026-11-14, part decided:** the hedge is taken. The public hierarchy is
+  built around *witness*, with *Canary* kept as the device's name
+  (`docs/BRAND.md`, `docs/strategy/32-one-story-every-surface.md`,
+  Decision 2), and the dormant hero experiment is removed: the site has no
+  analytics, so it could never have been read. The clearance question is
+  untouched and still open, which is why this box stays unticked.
 
 - [ ] **W16 [code+human] The claims-audit rows W7 did not cover**, listed in
   `docs/claims-audit-2026-07.md`'s "Status 2026-09-22" block: "architecturally

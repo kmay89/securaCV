@@ -25,12 +25,12 @@ follows.
 
 | Name | What it is | Not |
 |---|---|---|
-| **SecuraCV** | The **platform** — the witness kernel plus the signed evidence log. The "how." | Not the device, not the company |
-| **Canary** | The **device**, and the brand people say out loud. The hero noun. | Not the software |
+| **SecuraCV** | The **witness** — open-source software for the cameras and sensors you already own (the witness kernel plus the signed evidence log), and the platform a Canary runs. The name on the door. | Not the device, not the company |
+| **Canary** | The **device**, and the name people say out loud for one. | Not the software |
 | **Errer Labs** | The **company** that makes it and holds the trademarks. | Not the product |
 
 Say "a Canary," "your fleet of Canaries," "SecuraCV runs on it." Don't make
-someone learn "witness kernel" before they understand what they're buying.
+someone learn "witness kernel" before they understand what they're getting.
 Canonical rules: [`docs/BRAND.md`](BRAND.md).
 
 **Casing.** The platform is written **`SecuraCV`** in all prose, UI, store
