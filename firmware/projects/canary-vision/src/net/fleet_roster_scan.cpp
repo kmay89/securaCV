@@ -27,6 +27,7 @@
 #include <NimBLEDevice.h>
 #include <esp_heap_caps.h>
 #include <fleet_beacon.h>   // presence-beacon wire format (common/fleet_link)
+#include <fleet_chirp.h>    // Chirp advert wire format    (common/fleet_link)
 #include <fleet_roster.h>   // shared pure roster           (common/fleet_link)
 #include <string>
 
@@ -122,15 +123,14 @@ void handle_advert(const NimBLEAdvertisedDevice* d, int8_t rssi) {
     return;
   }
 
-  // Chirp (17-byte mfg, company 0xFFFF LE, type 0x01..0x05) — presence + type
-  // only. fp2 rides at [15-16], same 2 bytes the beacon carries.
-  if (m.size() == 17) {
-    if (p[0] != 0xFF || p[1] != 0xFF) return;
-    const uint8_t type = p[2];
-    if (type < 0x01 || type > 0x05) return;
+  // Chirp (fleet_chirp.h: 17-byte mfg, company 0xFFFF LE, type 0x01..0x05) —
+  // presence + type only. fp2 rides at [15-16], same 2 bytes the beacon
+  // carries.
+  FleetChirpFields c;
+  if (fleet_chirp_parse(p, m.size(), &c)) {
     RosterMsg msg;
-    fp4_from_bytes(p[15], p[16], msg.fp4);
-    msg.type        = type;
+    fp4_from_bytes(c.fp_b0, c.fp_b1, msg.fp4);
+    msg.type        = c.type;
     msg.battery_pct = -1;   // status-less: the roster keeps last known
     msg.health_pct  = -1;
     msg.chain_lo    = 0;

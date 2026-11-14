@@ -333,13 +333,21 @@ clean: clean-beacon-cancel
 
 # Full-body HTTP reads (http_body_reader.h): a body split across TCP reads is
 # reassembled, an oversized one is refused before any read (never truncated),
-# timeouts are bounded, nothing past content_len is read — and a source pin
-# that every Beacon route in beacon_api.h reads its body through read_body().
+# timeouts are bounded, nothing past content_len is read; read_request()
+# does the same over a request (sweep F300) — and a source pin that every
+# httpd_req_recv( in canary_wap.ino and the sketch's *_api.h files (listed
+# from the directory at run time, so the binary needs no rebuild when they
+# move) is inside an http_body::read_all( call. canary_wap.ino's handlers call
+# read_request() themselves and answer its refusal at once (handle_log_ack
+# by name refuses only a body that stops arriving); each *_api.h handler
+# reads through its file's read_body() over read_request(), whose two
+# refusals the pin holds to its whole shape, the Beacon routes' too.
+# csi_integration.cpp, in the same folder, is not scanned by this pin.
 HTTP_BODY_BIN = test_http_body_reader
 HTTP_BODY_SRC = test_http_body_reader.cpp
 
-$(HTTP_BODY_BIN): $(HTTP_BODY_SRC) $(SRC_DIR)/http_body_reader.h $(SRC_DIR)/beacon_api.h beacon_source_scan.h
-	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_API_H='"$(abspath $(SRC_DIR))/beacon_api.h"' -o $@ $(HTTP_BODY_SRC)
+$(HTTP_BODY_BIN): $(HTTP_BODY_SRC) $(SRC_DIR)/http_body_reader.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(HTTP_BODY_SRC)
 
 .PHONY: run-http-body clean-http-body
 run-http-body: $(HTTP_BODY_BIN)
@@ -1445,9 +1453,12 @@ clean: clean-mesh-commands
 # line to the staging lock, by the awk below, which fails unless it finds
 # each end once) and, by firmware/tests_host/cut_functions.awk,
 # log_health_ssid(), log_health(), health_log(), http_send_json(),
-# http_send_error(), handle_logs(), handle_mesh_status(),
+# http_send_error(), http_body_refusal(), handle_logs(), handle_mesh_status(),
 # handle_mesh_pair_start() and handle_mesh_name(), over stand-ins for
-# esp_http_server's request and arduinojson_tree.h. Both routes refuse a
+# esp_http_server's request (its body handed over in short reads as a test
+# plans them, sweep F300: the rename reads it whole, refuses one past its
+# buffer or one that stops arriving by name) and arduinojson_tree.h, and the
+# REAL http_body_reader.h. Both routes refuse a
 # name with a byte below 0x20, past 32 bytes or not whole UTF-8 in the
 # rule's words and keep one at the cap whole; GET /api/mesh and GET
 # /api/logs parse strictly and carry well-formed UTF-8 for every name and
@@ -1464,7 +1475,7 @@ $(OPNAME_RING_INC): $(SRC_DIR)/canary_wap.ino Makefile
 	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(OPNAME_INC): $(SRC_DIR)/canary_wap.ino $(OPNAME_CUT) Makefile
-	awk -v 'sigs=static void log_health_ssid(LogLevel level, LogCategory category, const char* message, const char* ssid) {|void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {|void health_log(LogLevel level, LogCategory category, const char* message) {|static esp_err_t http_send_json(httpd_req_t* req, const char* json) {|static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {|static esp_err_t handle_logs(httpd_req_t* req) {|static esp_err_t handle_mesh_status(httpd_req_t* req) {|static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {|static esp_err_t handle_mesh_name(httpd_req_t* req) {' \
+	awk -v 'sigs=static void log_health_ssid(LogLevel level, LogCategory category, const char* message, const char* ssid) {|void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {|void health_log(LogLevel level, LogCategory category, const char* message) {|static esp_err_t http_send_json(httpd_req_t* req, const char* json) {|static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {|static const char* http_body_refusal(http_body::Result r) {|static esp_err_t handle_logs(httpd_req_t* req) {|static esp_err_t handle_mesh_status(httpd_req_t* req) {|static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {|static esp_err_t handle_mesh_name(httpd_req_t* req) {' \
 	  -f $(OPNAME_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(OPNAME_BIN): $(OPNAME_SRC) $(OPNAME_RING_INC) $(OPNAME_INC) mesh_net_sim.h arduinojson_tree.h json_strict.h browser_utf8.h \
@@ -2411,11 +2422,15 @@ SHAMOD_WP_STATE     = test_wap_sha_fail_modules_presence_state.inc
 SHAMOD_WP           = test_wap_sha_fail_modules_presence.inc
 SHAMOD_USB          = test_wap_sha_fail_modules_usb.inc
 # And POST /api/vault/key's handler (sweep F426): handle_vault_key_set(), cut
-# verbatim out of canary_wap.ino, over the vault's cut functions, a stand-in
-# for its one body read and http_send_json(), and arduinojson_tree.h. A key
-# whose key id did not compute, and one NVS did not open for or refused,
-# answer the device's refusal (not the 64-hex shape text) and leave the key
-# registered before in RAM and NVS; a malformed key answers the shape text.
+# verbatim out of canary_wap.ino with the http_body_refusal() and
+# http_send_error() it calls, over the vault's cut functions, the REAL
+# http_body_reader.h, stand-ins for its body read (short reads as a case
+# plans them) and http_send_json(), and arduinojson_tree.h. A key whose key
+# id did not compute, and one NVS did not open for or refused, answer the
+# device's refusal (not the 64-hex shape text) and leave the key registered
+# before in RAM and NVS; a malformed key answers the shape text; a key in
+# short reads is read whole, and a body past the buffer or one that stops
+# arriving is refused by name (sweep F300).
 SHAMOD_VAULT_KEY    = test_wap_sha_fail_modules_vault_key.inc
 # And beacon_channel.cpp's hash helper with what stands on it: the co-sign
 # session key, the fingerprint, the audit chain's head (load and append) and
@@ -2459,7 +2474,7 @@ $(SHAMOD_USB): $(SRC_DIR)/usb_evidence_drive.cpp $(HMACFAIL_CUT) Makefile
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/usb_evidence_drive.cpp > $@.tmp && mv $@.tmp $@
 
 $(SHAMOD_VAULT_KEY): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
-	awk -v 'sigs=static esp_err_t handle_vault_key_set(httpd_req_t* req) {' \
+	awk -v 'sigs=static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {|static const char* http_body_refusal(http_body::Result r) {|static esp_err_t handle_vault_key_set(httpd_req_t* req) {' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(SHAMOD_BEACON): $(SRC_DIR)/beacon_channel.cpp $(HMACFAIL_CUT) Makefile

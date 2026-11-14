@@ -39,6 +39,14 @@ Canonical specification documents (authoritative sources; do not duplicate witho
 | [`household_keys_v0.md`](household_keys_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — household keys, the signed household-posture statement and the hub's attention rules; the hub side (checker, LAN API, attention engine, vectors) is host-tested, while the key satellite, the phone and watch clients and every witness-side consumer are **not built**, and nothing has been on a bench or had an external security review |
 | [`beacon_cap_gateway_v0.md`](beacon_cap_gateway_v0.md) | Draft v0.1, **specification only** | Informational | ⚪ Spec-only — explicitly **not implemented** until a future release |
 
+Machine-readable vocabularies (JSON, read by generators and lints, not prose):
+[`witness_dictionary.json`](witness_dictionary.json), the event, failure, attestation, claim and
+modality vocabularies `scripts/lint_dictionary_sync.py` holds every copy to; and
+[`device_details_vocabulary.json`](device_details_vocabulary.json), the keys a Canary's answers
+use, each with its class and the firmware sources that emit it, which
+`scripts/gen_device_vocabulary.py` writes into the Home Assistant integration's diagnostics
+redaction set.
+
 External canonical source (not under `spec/`): [`kernel/architecture.md`](../kernel/architecture.md).
 
 Per-module conformance specs (the "Hello, World" module templates) live under

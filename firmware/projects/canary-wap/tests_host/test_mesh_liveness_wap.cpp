@@ -180,7 +180,7 @@ void fresh_opera(const std::vector<Device*>& all) {
   for (Device* d : all) {
     boot(*d);
     memcpy(mn::g_opera_config.opera_secret, secret, sizeof secret);
-    mn::compute_opera_id(secret, mn::g_opera_config.opera_id);
+    CHECK(mn::compute_opera_id(secret, mn::g_opera_config.opera_id));
     mn::g_opera_config.configured = true;
     mn::g_opera_config.enabled = true;
     strcpy(mn::g_opera_config.opera_name, "test");
@@ -732,7 +732,7 @@ void test_an_initiator_refuses_a_partner_removed_during_the_pairing() {
   g_health.clear();
   become(A);
   uint8_t fp[mn::FINGERPRINT_SIZE];
-  mn::compute_fingerprint(B.pub, fp);
+  CHECK(mn::compute_fingerprint(B.pub, fp));
   CHECK(mn::remove_peer(fp));
   confirm_initiator_first(A, B);
   check_initiator_refused(A, B, 1);
@@ -862,7 +862,7 @@ void test_a_joiner_refuses_an_initiator_removed_during_the_pairing() {
   CHECK(mn::confirm_pairing());
   const Frame confirm_b = last_pair(B, A.mac, mn::MSG_PAIR_CONFIRM);
   uint8_t fp[mn::FINGERPRINT_SIZE];
-  mn::compute_fingerprint(A.pub, fp);
+  CHECK(mn::compute_fingerprint(A.pub, fp));
   become(B);
   CHECK(mn::remove_peer(fp));
   deliver(A, B.mac, confirm_b);
@@ -1479,7 +1479,7 @@ void opera_of_one(Device& d) {
   fresh_device(d);
   become(d);
   host_sim::fill_random(mn::g_opera_config.opera_secret, mn::OPERA_SECRET_SIZE);
-  mn::compute_opera_id(mn::g_opera_config.opera_secret, mn::g_opera_config.opera_id);
+  CHECK(mn::compute_opera_id(mn::g_opera_config.opera_secret, mn::g_opera_config.opera_id));
   mn::g_opera_config.configured = true;
   mn::g_opera_config.enabled = true;
   strcpy(mn::g_opera_config.opera_name, "alone");
@@ -1559,7 +1559,7 @@ bool hears_next_heartbeat(Device& self, Device& from) {
 
 void remove_member(Device& self, const Device& gone) {
   uint8_t fp[mn::FINGERPRINT_SIZE];
-  mn::compute_fingerprint(gone.pub, fp);
+  CHECK(mn::compute_fingerprint(gone.pub, fp));
   become(self);
   CHECK(mn::remove_peer(fp));
 }
@@ -1856,7 +1856,7 @@ void test_a_device_back_with_a_new_key_rejoins_once_its_old_entry_is_removed() {
   // with it.
   fresh_opera({&A, &B, &C});
   uint8_t old_fp[mn::FINGERPRINT_SIZE];
-  mn::compute_fingerprint(C.pub, old_fp);
+  CHECK(mn::compute_fingerprint(C.pub, old_fp));
   make_device(C, "C", 0xC1);                        // same address, new key
   fresh_device(C);
   pair_to_codes(A, C);
@@ -2255,7 +2255,7 @@ constexpr size_t kTombBytes = mn::FINGERPRINT_SIZE + mn::OPERA_ID_SIZE + 8;
 uint64_t tombstone_of(Device& self, const Device& other, const std::vector<uint8_t>& opera = {}) {
   become(self);
   uint8_t fp[mn::FINGERPRINT_SIZE];
-  mn::compute_fingerprint(other.pub, fp);
+  CHECK(mn::compute_fingerprint(other.pub, fp));
   const mn::RxTombstone* t =
       mn::find_rx_tombstone(fp, opera.empty() ? mn::g_opera_config.opera_id : opera.data());
   return t == nullptr ? 0 : t->last_seen;
@@ -2548,7 +2548,7 @@ std::vector<std::string> keys_holding(const Device& d, const uint8_t* bytes, siz
 
 std::vector<std::string> keys_holding_fingerprint(const Device& d, const Device& of) {
   uint8_t fp[mn::FINGERPRINT_SIZE];
-  mn::compute_fingerprint(of.pub, fp);
+  CHECK(mn::compute_fingerprint(of.pub, fp));
   return keys_holding(d, fp, sizeof fp);
 }
 

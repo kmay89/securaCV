@@ -1,11 +1,11 @@
 /*
  * fleet_roster_feed.cpp — parse fleet-link adverts into the shared roster.
  *
- * See fleet_roster_feed.h. Pure: includes only the header-only wire format
- * (fleet_beacon.h) and roster (fleet_roster.h) from common/fleet_link — no
- * NimBLE/Arduino. Compiled only in the `full` env (FEATURE_BLE_SCAN), which is
- * where the Scout scan that feeds it exists; the `release` size guard is
- * therefore untouched.
+ * See fleet_roster_feed.h. Pure: includes only the header-only wire formats
+ * (fleet_beacon.h, fleet_chirp.h) and roster (fleet_roster.h) from
+ * common/fleet_link — no NimBLE/Arduino. Compiled only in the `full` env
+ * (FEATURE_BLE_SCAN), which is where the Scout scan that feeds it exists; the
+ * `release` size guard is therefore untouched.
  */
 
 /* FEATURE_BLE_SCAN comes from platformio.ini build_flags in the canary PIO
@@ -22,6 +22,7 @@
 #include "fleet_roster_feed.h"
 
 #include <fleet_beacon.h>   // presence-beacon wire format (common/fleet_link)
+#include <fleet_chirp.h>    // Chirp advert wire format    (common/fleet_link)
 #include <fleet_roster.h>   // shared pure roster           (common/fleet_link)
 
 namespace fleet_roster_feed {
@@ -69,16 +70,15 @@ void on_advert(const uint8_t* mfg, size_t len, int8_t rssi, uint32_t now_ms) {
     return;
   }
 
-  // Chirp (17-byte mfg, company 0xFFFF LE, type 0x01..0x05) — presence + type
-  // only; fp2 rides at [15-16], the same 2 bytes the beacon carries. Pass -1
-  // for battery/health so the roster keeps the last known status.
-  if (len == 17) {
-    if (mfg[0] != 0xFF || mfg[1] != 0xFF) return;
-    const uint8_t type = mfg[2];
-    if (type < 0x01 || type > 0x05) return;
+  // Chirp (fleet_chirp.h: 17-byte mfg, company 0xFFFF LE, type 0x01..0x05) —
+  // presence + type only; fp2 rides at [15-16], the same 2 bytes the beacon
+  // carries. Pass -1 for battery/health so the roster keeps the last known
+  // status.
+  FleetChirpFields c;
+  if (fleet_chirp_parse(mfg, len, &c)) {
     char fp4[5];
-    fp4_from_bytes(mfg[15], mfg[16], fp4);
-    fleet_roster_note(&s_roster, fp4, type, /*battery=*/-1, /*health=*/-1,
+    fp4_from_bytes(c.fp_b0, c.fp_b1, fp4);
+    fleet_roster_note(&s_roster, fp4, c.type, /*battery=*/-1, /*health=*/-1,
                       /*chain_lo=*/0, /*flags=*/0, rssi, now_ms);
     s_seen++;
     return;

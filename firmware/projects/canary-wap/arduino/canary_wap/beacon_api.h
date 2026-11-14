@@ -253,12 +253,10 @@ inline esp_err_t handle_pair_cancel(httpd_req_t* req) {
 // One httpd_req_recv() is one socket read, so parsing after a single call
 // rejects a body the client sent in two segments and silently truncates one
 // longer than the buffer (http_body_reader.h, host-tested). Every Beacon
-// route reads its body here; tests_host pins that no bare httpd_req_recv
-// remains in this file.
+// route reads its body here, through http_body::read_request(); tests_host
+// pins that no bare httpd_req_recv remains in this file.
 static const char* read_body(httpd_req_t* req, char* buf, size_t cap, size_t* len) {
-  const http_body::Result r = http_body::read_all(
-      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
-      req->content_len, buf, cap, HTTPD_SOCK_ERR_TIMEOUT, 3, len);
+  const http_body::Result r = http_body::read_request(req, buf, cap, len);
   if (r == http_body::TOO_LARGE) return "body too large";
   if (r == http_body::READ_FAILED) return "body read failed";
   return nullptr;

@@ -6,7 +6,13 @@ firmware / hardware / online, the latest witness event to type / bucket /
 attestation (never the zone label), the digest to counts, the kernel URL
 to scheme and port. Then ``async_redact_data`` sweeps the result with
 ``TO_REDACT``, so a secret that reached the dump through a path this file
-did not foresee is still replaced. A Canary's key fingerprint keeps none of
+did not foresee is still replaced. ``TO_REDACT`` is the integration's own
+keys and every key the generated device-details vocabulary
+(``device_vocabulary.py``, from ``spec/device_details_vocabulary.json``)
+puts in a redacted class; whether that module is what the vocabulary
+generates is ``scripts/tests/test_gen_device_vocabulary.py``'s question,
+outside this suite, so the HACS mirror runs this file as it is. A Canary's
+key fingerprint keeps none of
 its digits (device-details finding P19, ledger F392): a per-dump salted
 correlation id stands in for it. The old regression (a fingerprint
 "truncated" to its own full length) is a special case of that rule.
@@ -14,8 +20,10 @@ correlation id stands in for it. The old regression (a fingerprint
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
+import sys
 import types
 
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
@@ -38,7 +46,17 @@ from ..const import (  # noqa: E402
     SETUP_MODE_BOTH,
 )
 from .. import _async_device_status_received, _async_record_health_firmware  # noqa: E402
-from ..diagnostics import TO_REDACT, async_get_config_entry_diagnostics  # noqa: E402
+from .. import device_vocabulary, diagnostics  # noqa: E402
+from ..device_vocabulary import (  # noqa: E402
+    DEVICE_KEY_CLASSES,
+    REDACTED_CLASSES,
+    REDACTED_DEVICE_KEYS,
+)
+from ..diagnostics import (  # noqa: E402
+    INTEGRATION_REDACT_KEYS,
+    TO_REDACT,
+    async_get_config_entry_diagnostics,
+)
 from ..entity import canary_device_info, kernel_device_info  # noqa: E402
 from ..kernel_trust import kernel_key_fingerprint  # noqa: E402
 
@@ -564,6 +582,92 @@ def test_the_redaction_set_names_every_identifier_class() -> None:
         "last_frame_age_ms",
     ):
         assert key in TO_REDACT, key
+    # And every key the device-details vocabulary puts in a redacted class
+    # (sweep HA56): a key it gains is in the sweep with no edit here.
+    assert REDACTED_DEVICE_KEYS, "the vocabulary redacts nothing"
+    for key in REDACTED_DEVICE_KEYS:
+        assert key in TO_REDACT, key
+
+
+def test_the_redaction_set_is_the_integration_s_keys_and_the_vocabulary_s() -> None:
+    """TO_REDACT is read from the vocabulary, not restated: exactly the
+    integration's own keys and every key of a redacted class, and the
+    generated module's two views of that class agree."""
+    assert TO_REDACT == INTEGRATION_REDACT_KEYS | REDACTED_DEVICE_KEYS
+    assert REDACTED_DEVICE_KEYS == {
+        key for key, cls in DEVICE_KEY_CLASSES.items() if cls in REDACTED_CLASSES
+    }
+    assert REDACTED_CLASSES <= set(DEVICE_KEY_CLASSES.values())
+
+
+def _diagnostics_beside(monkeypatch, redacted_keys) -> types.ModuleType:
+    """diagnostics.py as committed, executed afresh beside a stand-in
+    device_vocabulary whose REDACTED_DEVICE_KEYS is `redacted_keys`: what
+    the integration reads after the vocabulary gains or loses a row and is
+    regenerated. The package's own modules are left as they are."""
+    stand_in = types.ModuleType(device_vocabulary.__name__)
+    stand_in.DEVICE_KEY_CLASSES = DEVICE_KEY_CLASSES
+    stand_in.REDACTED_CLASSES = REDACTED_CLASSES
+    stand_in.REDACTED_DEVICE_KEYS = frozenset(redacted_keys)
+    monkeypatch.setitem(sys.modules, device_vocabulary.__name__, stand_in)
+    package = diagnostics.__name__.rpartition(".")[0]
+    spec = importlib.util.spec_from_file_location(f"{package}._diagnostics_probe", diagnostics.__file__)
+    assert spec is not None and spec.loader is not None
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    return probe
+
+
+def test_a_key_the_vocabulary_gains_is_redacted_with_no_edit_to_diagnostics(monkeypatch) -> None:
+    """The point of the vocabulary (ledger F391's last clause): a row added
+    in a redacted class reaches the sweep, and a dump, through the
+    generated module alone. The value rides in on a value the dump copies
+    as the coordinator holds it (key_mismatch), at depth, as a string and
+    as a number: a path this file did not foresee."""
+    gained = "scratch_unit_identifier"
+    assert gained not in TO_REDACT
+    probe = _diagnostics_beside(monkeypatch, REDACTED_DEVICE_KEYS | {gained})
+    assert gained in probe.TO_REDACT
+    assert probe.TO_REDACT == TO_REDACT | {gained}
+    hass = HomeAssistant()
+    entry = _entry_with_kernel(hass)
+    entry.runtime_data.coordinator.data["key_mismatch"] = {
+        gained: "UNIT-7F3A-0042",
+        "seen": [{gained: 918273645}],
+    }
+    hass.data.setdefault(DOMAIN, {})
+    dump = run(probe.async_get_config_entry_diagnostics(hass, entry))
+    assert dump["kernel"]["key_mismatch"][gained] == "**REDACTED**"
+    assert dump["kernel"]["key_mismatch"]["seen"] == [{gained: "**REDACTED**"}]
+    text = repr(dump)
+    assert "UNIT-7F3A-0042" not in text and "918273645" not in text
+    # The same dump from the committed module, whose vocabulary has no such
+    # row, carries both values: the row is what redacts them.
+    plain = repr(_diag(hass, entry))
+    assert "UNIT-7F3A-0042" in plain and "918273645" in plain
+
+
+def test_no_vocabulary_edit_takes_an_integration_key_out_of_the_sweep(monkeypatch) -> None:
+    """The integration's own keys are named in diagnostics.py, so even a
+    vocabulary that redacts nothing leaves every one of them in TO_REDACT;
+    a vocabulary row can only add a key."""
+    probe = _diagnostics_beside(monkeypatch, frozenset())
+    assert probe.TO_REDACT == INTEGRATION_REDACT_KEYS
+    for key in ("token", "url", "host", "device_id", "ip", "mac", "ssid", "serial_number", "chip_id"):
+        assert key in probe.TO_REDACT, key
+
+
+def test_every_redacted_vocabulary_key_is_replaced_wherever_it_lands() -> None:
+    """Each key of a redacted class, seeded at depth with a value of its
+    own, comes out redacted: the literal tests below cover the seed, this
+    one covers every row the vocabulary gains."""
+    from homeassistant.components.diagnostics import async_redact_data
+
+    values = {key: f"value-of-{key}-{n:04d}" for n, key in enumerate(sorted(REDACTED_DEVICE_KEYS))}
+    seeded = {"answers": [{"nested": {key: value}} for key, value in values.items()]}
+    text = repr(async_redact_data(seeded, TO_REDACT))
+    for key, value in values.items():
+        assert value not in text, key
 
 
 def test_an_identifier_key_is_replaced_wherever_it_lands() -> None:

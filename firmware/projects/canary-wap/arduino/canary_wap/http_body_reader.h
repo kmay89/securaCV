@@ -16,12 +16,35 @@
 // Pure and Arduino-free: the socket read is injected (`recv(buf, n)` returns
 // the bytes read, 0 when the peer closed, or a negative error code), so the
 // loop is host-tested (tests_host/test_http_body_reader.cpp).
+//
+// read_request() is the call a handler makes (sweep F300): read_all() over
+// esp_http_server's own request, for exactly its Content-Length, with the
+// timeout code and the three retries every handler uses. It is a template
+// over the request so this header still needs no IDF include: it asks the
+// request type for `content_len` and finds `httpd_req_recv(req, buf, n)`
+// where the request type is declared (IDF's header, or a host suite's
+// stand-in). Every handler in canary_wap.ino and the sketch's *_api.h files
+// reads its body here or through read_all() itself; test_http_body_reader
+// pins that no other httpd_req_recv() call is left in them.
 
 #pragma once
 
 #include <stddef.h>
 
 namespace http_body {
+
+// The code httpd_req_recv() returns for a socket read that timed out:
+// esp_http_server.h's HTTPD_SOCK_ERR_TIMEOUT. Spelled here so this header
+// needs no IDF include; a translation unit that includes the IDF header
+// first (canary_wap.ino, beacon_api.h, csi_mqtt.cpp, a host stand-in) holds
+// the two equal at the end of this file.
+constexpr int REQUEST_TIMEOUT_CODE = -3;
+// How many timed-out reads read_request() sits out before it refuses: a body
+// that stops arriving is refused at the fourth wait. Each wait is the
+// server's recv_wait_timeout (30 s in both of canary_wap.ino's configs), so
+// a stalled sender holds the httpd task up to about two minutes, the budget
+// /api/ota/config, /api/mqtt/config and the Beacon routes already had.
+constexpr int REQUEST_MAX_TIMEOUTS = 3;
 
 enum Result {
   OK = 0,
@@ -51,4 +74,20 @@ inline Result read_all(Recv recv, size_t content_len, char* buf, size_t cap,
   return OK;
 }
 
+// A handler's body, read whole (NUL-terminated, *out_len bytes) or refused:
+// read_all() over httpd_req_recv(), for exactly req->content_len bytes. A
+// refusal leaves *out_len 0; on TOO_LARGE nothing was read and `buf` is
+// untouched, so a caller never parses it unless this returned OK. An empty
+// body is OK with *out_len 0: each route keeps its own answer for that.
+template <typename Req>
+inline Result read_request(Req* req, char* buf, size_t cap, size_t* out_len) {
+  return read_all([req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
+                  req->content_len, buf, cap, REQUEST_TIMEOUT_CODE, REQUEST_MAX_TIMEOUTS, out_len);
+}
+
 }  // namespace http_body
+
+#ifdef HTTPD_SOCK_ERR_TIMEOUT
+static_assert(http_body::REQUEST_TIMEOUT_CODE == HTTPD_SOCK_ERR_TIMEOUT,
+              "http_body::REQUEST_TIMEOUT_CODE is esp_http_server.h's HTTPD_SOCK_ERR_TIMEOUT");
+#endif

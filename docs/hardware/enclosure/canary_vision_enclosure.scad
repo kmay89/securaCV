@@ -507,7 +507,7 @@ col_dk  = dk_w + 2*(clip_stack + board_clear) + 0.5;
 // between screw centers along any wall. A devkit body's ±Y walls are ~66 mm
 // between the corner screws, so they get a mid post each — standing in the
 // gap between the two board columns, which grows from 2.0 to seat it
-span_max = 40;
+span_max = 40;      // the clamp-spacing rule (DESIGN_RULES §6): in seal mode, neighboring screw centers along a wall stand no farther apart than this; each wall's mid posts are derived from it, and the longest span is asserted within it
 inner_x0 = col_cam + 2.0 + col_dk + 2*post_corner;     // the devkit body at the plain 2.0 column gap
 dk_mid   = has_dk && e_seal && (inner_x0 - 2*post_in > span_max);
 mid_gap  = dk_mid ? pd + 1.0 : 2.0;   // devkit host: gap between the camera + module column and the DevKit column
