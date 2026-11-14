@@ -70,7 +70,9 @@ test('the store follows it: the catalog, the estimate, the Checkout Session Stri
   assert.equal(r.ships.ships_on, '2026-11-10'); assert.equal(posted.get('shipping_options[0][shipping_rate_data][display_name]'), 'USPS Ground Advantage · ships Tue, Nov 10'); assert.equal(posted.get('metadata[ships_on]'), '2026-11-10');
   // the webhook's order is promised the same day, and the "we have it" mail says it
   const app = createApp({ db, cfg });
-  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away1', line_items_present: true }) });
+  // This order carries no ship date of its own, so its promise is "the cadence of now" — and "now" has to be
+  // the test's clock, not the wall's: read from the real one, this line was green from 21 Oct to 8 Nov 2026 and red after.
+  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away1', line_items_present: true }) }, null, { now: NOW });
   const o = db.get('SELECT * FROM orders WHERE external_id = ?', 'cs_test_away1'); assert.ok(o); assert.equal(o.promised_ship_on, '2026-11-10');
   assert.equal(orderPromise(o, cfg).ship_on, '2026-11-10');
   const mail = db.get("SELECT body_text FROM mail_outbox WHERE ref = ? ORDER BY id DESC LIMIT 1", `order:${o.number}`); assert.match(mail.body_text, /Tue, Nov 10/);
@@ -87,7 +89,7 @@ test('the store follows it: the catalog, the estimate, the Checkout Session Stri
   setAway(db, { until: '2026-11-02' }, { cfg, now: NOW.getTime() });
   await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away3', line_items_present: true, ships_on: '2026-10-27' }) });
   assert.equal(db.get('SELECT promised_ship_on FROM orders WHERE external_id = ?', 'cs_test_away3').promised_ship_on, '2026-10-27', 'a purchase made before the trip is not postponed by it');
-  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away4', line_items_present: true, ships_on: 'next week' }) });
+  await applyStripeEvent(app, { kind: 'order', ...sampleOrder({ external_id: 'cs_test_away4', line_items_present: true, ships_on: 'next week' }) }, null, { now: NOW });
   assert.equal(db.get('SELECT promised_ship_on FROM orders WHERE external_id = ?', 'cs_test_away4').promised_ship_on, '2026-11-10', 'no usable date from the session (a Payment Link): the cadence of now, away included');
   // the mapping carries the date from the session's metadata, and only a date
   assert.equal(eventToOrder({ type: 'checkout.session.completed', data: { object: { id: 'cs_x', payment_status: 'paid', metadata: { ships_on: '2026-11-10' }, line_items: { data: [] } } } }).ships_on, '2026-11-10');
