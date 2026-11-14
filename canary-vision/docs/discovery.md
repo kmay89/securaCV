@@ -95,15 +95,17 @@ No firmware in this monorepo serves `GET /api/v1/info` or reads `X-Canary-Token`
    automatically via MQTT discovery. Each HTTP peer is independently
    authenticated — knowing a peer exists does not grant API access.
 
-The SPA prefers `mdns_hostname` over `ip` when constructing the peer's
-`base_url` because IPs change over DHCP leases but mDNS names don't. The
-field is optional; clients fall back to `ip` when absent, and a peer listed
-with only an `ip` is not reachable from the SPA this server serves. The
-server's CSP `connect-src` is `'self' http://*.local`: CSP cannot name an IP range, so a
-request to `http://192.168.1.103` is refused by the browser before it is
-sent ([security.md](security.md#security-headers)), and to the page that
-looks like an unreachable device (the fetch rejects with the same
-`TypeError`). Such a peer has to be added by its `.local` name (§3).
+The SPA builds a peer's `base_url` from its `mdns_hostname` alone, never
+from `ip`: IPs change over DHCP leases but mDNS names don't, and the
+server's CSP `connect-src` is `'self' http://*.local`. CSP cannot name an IP
+range, so a request to `http://192.168.1.103` would be refused by the browser
+before it is sent ([security.md](security.md#security-headers)), and to the
+page that looks like an unreachable device (the fetch rejects with the same
+`TypeError`). The field is optional. A peer listed without a `.local`
+`mdns_hostname` stays on the list: one that pairs over HTTP is shown as not
+reachable by name, with no Pair button, and has to be added by its `.local`
+name (§3); a vision/sense peer keeps its button, since its Home Assistant
+steps need no address.
 
 The peer list is read-only. There is no endpoint to add or remove peers via the API. Peers are discovered by the device itself through mDNS and stored in device state.
 
@@ -113,10 +115,10 @@ The peer list is read-only. There is no endpoint to add or remove peers via the 
 
 The SPA allows the user to manually add a device by entering:
 
-- **Device address:** mDNS hostname (e.g., `canary-a3f7.local`). The form also takes a LAN IP (e.g., `192.168.1.47`), but the SPA reaches an IP only when it is the address the SPA itself was opened from.
+- **Device address:** mDNS hostname (e.g., `canary-a3f7.local`). The form takes a LAN IP (e.g., `192.168.1.47`) only when it is the address the SPA itself was opened from; any other IP is answered with a message to enter the device's `.local` name, and no request is made.
 - **API token:** The device's `X-Canary-Token` value
 
-The SPA checks that the entered address is a private-network one (an RFC 1918, link-local, loopback or IPv6 unique-local address, or a `.local` name) before making any request, and rejects public internet addresses. The browser then holds every request to the CSP the server sends with the SPA, whose `connect-src` is `'self' http://*.local` ([security.md](security.md#security-headers)): a `.local` name on port 80 is let through, and an IP that is not the SPA's own origin is refused before the request is sent, though it passed the SPA's own check. Enter a device by its `.local` name.
+The SPA checks that the entered address is a private-network one (an RFC 1918, link-local, loopback or IPv6 unique-local address, or a `.local` name) before making any request, and rejects public internet addresses. The browser then holds every request to the CSP the server sends with the SPA, whose `connect-src` is `'self' http://*.local` ([security.md](security.md#security-headers)): a `.local` name on port 80 is let through, and an IP that is not the SPA's own origin would be refused before the request is sent. So the SPA refuses such an IP itself, before any request, and says to enter the device's `.local` name (`needsLocalName()` in `spa/app.js`, sweep F448). Enter a device by its `.local` name.
 
 After entry, the SPA calls `GET /api/v1/info` with the provided token to verify connectivity and retrieve device metadata. That is the reference device-api's contract: a canary-wap's address and token fail here, since the WAP serves no `/api/v1/info` and reads no `X-Canary-Token` (§2).
 
@@ -136,7 +138,7 @@ During physical provisioning (first-time setup), each device generates a JSON pr
 
 Alternative field names `host` (for `base_url`) and `api_token` (for `token`) are also accepted.
 
-The SPA parses the receipt, validates the URL is a private-network address, and tests the connection before saving; a receipt whose `base_url` is an IP fails that test under the CSP the way §3's IP entry does. A canary-wap's receipt (its recovery kit, or the QR its dashboard shows) fails that test the way §3's entry does; the kit belongs in the SecuraCV iPhone app.
+The SPA parses the receipt, validates the URL is a private-network address, and tests the connection before saving; a receipt whose `base_url` (or `host`) is an IP other than the SPA's own origin is refused before that test, with the message §3's IP entry gets. A canary-wap's receipt (its recovery kit, or the QR its dashboard shows) fails that test the way §3's entry does; the kit belongs in the SecuraCV iPhone app.
 
 ---
 

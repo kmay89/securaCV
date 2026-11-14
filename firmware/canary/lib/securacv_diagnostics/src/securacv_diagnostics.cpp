@@ -312,9 +312,11 @@ static bool test_chain() {
                                         * record itself is not in RAM to
                                         * re-verify (boot reconciliation
                                         * already vetted it) */
+  /* A recompute the engine did not run (sweep F455) is a mismatch: the
+   * test does not vouch for a link from bytes it never computed. */
   uint8_t recomputed[32];
-  compute_chain_hash(last.prev_hash, last.payload_hash, last.seq,
-                     last.time_bucket, recomputed);
+  if (!compute_chain_hash(last.prev_hash, last.payload_hash, last.seq,
+                          last.time_bucket, recomputed)) return false;
   if (memcmp(recomputed, last.chain_hash, 32) != 0) return false;
   if (memcmp(last.chain_hash, d.chain_head, 32) != 0) return false;
   return witness_verify_record(&last);

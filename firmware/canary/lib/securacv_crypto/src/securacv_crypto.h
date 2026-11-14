@@ -98,11 +98,15 @@ private:
 // SHA-256 WITH DOMAIN SEPARATION
 // ════════════════════════════════════════════════════════════════════════════
 
+// Both answer whether every mbedTLS step ran (sweep F455): false, with `out`
+// zeroed, when a start, an update or the finish failed. [[nodiscard]]: a
+// caller that ignores the answer uses bytes the engine never wrote.
+
 // Raw SHA-256 hash
-void sha256_raw(const uint8_t* data, size_t n, uint8_t out[32]);
+[[nodiscard]] bool sha256_raw(const uint8_t* data, size_t n, uint8_t out[32]);
 
 // Domain-separated SHA-256: H(domain || 0x00 || data)
-void sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]);
+[[nodiscard]] bool sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]);
 
 // ════════════════════════════════════════════════════════════════════════════
 // ED25519 CRYPTO
@@ -118,8 +122,9 @@ void crypto_sign(const uint8_t priv[32], const uint8_t pub[32],
 // Verify Ed25519 signature
 bool crypto_verify(const uint8_t pub[32], const uint8_t* msg, size_t len, const uint8_t sig[64]);
 
-// Compute 8-byte fingerprint from public key
-void crypto_fingerprint(const uint8_t pub[32], uint8_t fp[8]);
+// Compute 8-byte fingerprint from public key. False, with fp zeroed, when
+// the hash did not run (sweep F455).
+[[nodiscard]] bool crypto_fingerprint(const uint8_t pub[32], uint8_t fp[8]);
 
 // ════════════════════════════════════════════════════════════════════════════
 // HMAC-SHA256 + HKDF-STYLE API TOKEN DERIVATION
@@ -153,8 +158,9 @@ bool derive_api_token(const uint8_t privkey[32],
 // ════════════════════════════════════════════════════════════════════════════
 
 // Compute chain hash: H("securacv:fw:chain:v1" || 0x00 || prev || payload_hash || seq || time_bucket)
-void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
-                        uint32_t seq, uint32_t time_bucket, uint8_t out[32]);
+// False, with out zeroed, when the hash did not run (sweep F455).
+[[nodiscard]] bool compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
+                                      uint32_t seq, uint32_t time_bucket, uint8_t out[32]);
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS PERSISTENCE HELPERS

@@ -19,14 +19,34 @@ images are arduino-cli builds of the same product an env guards in PR CI).
     python3 firmware/scripts/check_slot_budget.py --env canary-display-nightstand-c6 \
         /tmp/release/canary-display-nightstand-c6-2.4.6.bin
 
-Exit 0: the image fits its declared budget, or the env declares none (same
-semantics as the PR gate — unguarded envs pass). The absence is a GitHub
-`::warning::` annotation, not a plain log line: every caller is the release
-workflow, about to sign an OTA manifest, and the plain note let 9 of the 17
-published OTA products (fw-v2.4.16) ship unmeasured with nothing on the
-run's summary page to say so. Exit 1: the file is missing or the image
-exceeds the budget — the caller decides whether that sinks the release
-(flagship products) or skips the variant (the per-variant loops).
+Exit 0: the image fits its declared budget, or the env declares none and
+--require-budget is absent (the release path: an unbudgeted env passes,
+unmeasured). That absence is a GitHub `::warning::` annotation, not a plain
+log line: the release workflow calls this about to sign an OTA manifest,
+and the plain note let 9 of the 17 published OTA products (fw-v2.4.16) ship
+unmeasured with nothing on the run's summary page to say so. Exit 1: the
+file is missing, the image exceeds the budget, the env declares no budget
+and --require-budget was passed, or flavors.json holds two different
+budgets for one env. The release caller decides whether that sinks the
+release (flagship products) or skips the variant (the per-variant loops).
+
+The headroom floor (F367): an image that fits but leaves less than
+HEADROOM_FLOOR_PERCENT of its slot free is a `::warning::` naming the env,
+its free bytes and the floor, and the exit status does not move (it still
+fits, so it still passes; over the slot still fails). fw-v2.4.16's
+canary-display-nightstand-c6 fit its 2,031,616-byte slot with 2,832 bytes
+to spare, and nothing warned while it still fit: the first sign would have
+been a failing build, a red PR leg or a release display loop that skips its
+OTA manifest. The warning is the sign that comes while it still fits, on
+the PR and on the release run alike.
+
+firmware.yml's PR checks call this too, with --require-budget: size_guard
+for each PlatformIO guard it walks, and the WAP arduino-cli job for its
+sketch image under canary-wap-default (the env the release keys its own
+arduino-cli build of that sketch by).
+Each asks only about an env it expects a budget for, so an env this script
+cannot find one for is a disagreement with flavors.json, and it fails there
+rather than passing as unmeasured.
 """
 from __future__ import annotations
 
@@ -39,6 +59,21 @@ import sys
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 FLAVORS = REPO_ROOT / "firmware" / "flavors.json"
 ENV_RE = re.compile(r"^\.pio/build/([^/]+)/")
+
+# The headroom floor, as a whole-number percentage of the slot that should
+# stay free. Below it a fitting image is warned about, never failed: the
+# decision about what to drop is a maintainer's, and the warning is there so
+# it is made before a release skips a product rather than after.
+HEADROOM_FLOOR_PERCENT = 5
+
+
+def floor_bytes(slot: int) -> int:
+    """The fewest free bytes that clear the floor: HEADROOM_FLOOR_PERCENT of
+    the slot, rounded UP to a whole byte, in integer arithmetic (no float
+    can round a slot's 5% the wrong way). A slot whose 5% is not a whole
+    byte (2,031,616 B: 101,580.8) needs the next byte free to clear it, so
+    `free < floor_bytes(slot)` is exactly `free * 100 < slot * percent`."""
+    return -(-slot * HEADROOM_FLOOR_PERCENT // 100)
 
 
 def load_budgets() -> dict[str, dict]:
@@ -62,9 +97,19 @@ def main(argv: list[str] | None = None) -> None:
                     help="the PlatformIO env that produced (or in PR CI would "
                          "produce) this image, e.g. canary-display-nightstand-c6")
     ap.add_argument("bin", type=pathlib.Path, help="the built image to measure")
+    ap.add_argument("--require-budget", action="store_true",
+                    help="fail (exit 1) when the env declares no budget, "
+                         "instead of the release path's warning; firmware.yml's "
+                         "PR checks pass it, since each asks only about an env "
+                         "it expects a budget for")
     args = ap.parse_args(argv)
 
     guard = load_budgets().get(args.env)
+    if guard is None and args.require_budget:
+        sys.exit(f"check_slot_budget: no size_guards budget declared for env "
+                 f"'{args.env}' in {FLAVORS}, but the caller requires one "
+                 f"(--require-budget: it holds a guard for this env or "
+                 f"measures it by name), so this image was NOT measured.")
     if guard is None:
         # Non-fatal on purpose (an unguarded env passes, as in the PR gate),
         # but an annotation, so "skipped" reads differently from "checked".
@@ -85,6 +130,19 @@ def main(argv: list[str] | None = None) -> None:
                  f"(the OTA write fails on every board). Trim features or "
                  f"grow the slots (firmware/PARTITIONS.md).")
     print(f"Firmware size: {size} / {slot} bytes ({size * 100 // slot}% of {name})")
+    free = slot - size
+    floor = floor_bytes(slot)
+    if free < floor:
+        # One line, so GitHub reads it as one annotation; the exit stays 0.
+        print(f"::warning::check_slot_budget: env '{args.env}' fits its "
+              f"{name} with only {free} bytes free, under the "
+              f"{HEADROOM_FLOOR_PERCENT} percent headroom floor of {floor} "
+              f"bytes ({size} of {slot}). A build that grows it by more "
+              f"than {free} bytes no longer fits the slot and cannot "
+              f"install over the air: decide what it drops or puts behind "
+              f"a flag now (its linker map, largest contributors first); a "
+              f"larger table reaches only boards flashed over USB "
+              f"(firmware/PARTITIONS.md).")
 
 
 if __name__ == "__main__":

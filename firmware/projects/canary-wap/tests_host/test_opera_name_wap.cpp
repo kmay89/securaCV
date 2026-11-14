@@ -43,6 +43,15 @@
 // writer: the seven escapes, every other byte as it is). check_wap_json_answers.py
 // rule J12 holds the ring's text fields to log_health()'s two writes.
 //
+// And sweep F445: three pairing lines of mesh_network.cpp were longer than
+// the ring's 79-byte message field, so GET /api/logs carried them cut. Two
+// are now message and detail with no word changed; the guard here reads the
+// file's every health_log()/log_health() call, joins each argument's
+// literals as the compiler does, and fails a line over its field that is
+// not on its one-entry record (the CONFIRM-mismatch line, whose words are
+// the maintainer's call), then logs each through the real log_health() to
+// show the measure is the ring's.
+//
 // Host-tested only; the Arduino compile of the sketch is CI's.
 //
 // Run: ./test_opera_name_wap
@@ -73,9 +82,13 @@
 
 #include <sys/types.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -719,10 +732,11 @@ void test_every_log_line_reaches_the_ring_clean() {
   }
 
   // And the line mesh_network.cpp logs when a pairing times out after this
-  // side confirmed (sweep F359), the one line of the mesh layer written as
+  // side confirmed (sweep F359), the first line of the mesh layer written as
   // message and detail: each reaches GET /api/logs whole, under the fields'
   // 79 and 47 bytes (the F359 review: one longer line reached the owner cut
-  // before its reason).
+  // before its reason). every_mesh_health_line_fits_the_ring below holds
+  // every line of the file to the fields (sweep F445).
   opera_named(A, "test");
   reset_log();
   become(A);
@@ -745,6 +759,484 @@ void test_every_log_line_reaches_the_ring_clean() {
   std::printf("PASS every_log_line_reaches_the_ring_clean\n");
 }
 
+// ── mesh_network.cpp's health-log lines fit the ring (sweep F445) ────────
+//
+// The ring keeps 79 bytes of a message and 47 of a detail
+// (HealthLogRingEntry), and GET /api/logs, the dashboard and the BLE log
+// read it, so a longer line reached the owner cut on a character, before
+// its reason; Serial and /HEALTH carry it whole. Three pairing lines did
+// (80, 84 and 121 bytes) until two were split into message and detail
+// with no word changed. This reads mesh_network.cpp itself: every
+// health_log() and log_health() call, its message and detail arguments
+// joined as the compiler joins adjacent literals (a line split across
+// source lines is one line), each arm of a ?: on its own. A line over its
+// field fails unless kOverCap records it, a record that no longer matches
+// an over-long line fails, and so does an argument this reader cannot
+// measure (anything but literals, a ?: of them, or a detail's nullptr), so
+// no line reaches the ring through a variable the guard never saw. Each
+// line it measured is then logged through the REAL log_health() and read
+// back from GET /api/logs: whole exactly when the measure says it fits.
+
+struct LogLiteral {
+  int line = 0;          // where the call starts, 1-based
+  std::string fn;        // health_log or log_health
+  bool detail = false;   // the detail argument, not the message
+  std::string text;      // the bytes the compiler emits for it
+};
+struct LogScan {
+  size_t calls = 0;
+  std::vector<LogLiteral> literals;
+  std::vector<std::string> unreadable;   // "line N: why"
+};
+
+bool ident_char(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// The end (one past the closing quote) of the string or character literal
+// at `i`, raw strings included, or npos if it does not close.
+size_t literal_end(const std::string& s, size_t i) {
+  if (s[i] == 'R' && i + 1 < s.size() && s[i + 1] == '"') {   // R"delim( ... )delim"
+    const size_t open = s.find('(', i + 2);
+    if (open == std::string::npos) return std::string::npos;
+    const std::string close = ")" + s.substr(i + 2, open - (i + 2)) + "\"";
+    const size_t end = s.find(close, open + 1);
+    return end == std::string::npos ? end : end + close.size();
+  }
+  const char q = s[i];
+  for (size_t j = i + 1; j < s.size(); ++j) {
+    if (s[j] == '\\') {
+      ++j;
+    } else if (s[j] == q) {
+      return j + 1;
+    } else if (s[j] == '\n') {
+      return std::string::npos;
+    }
+  }
+  return std::string::npos;
+}
+
+// Whether a literal starts at `i`: a quote, or R" not inside an identifier.
+bool literal_at(const std::string& s, size_t i) {
+  if (s[i] == '"' || s[i] == '\'') return true;
+  return s[i] == 'R' && i + 1 < s.size() && s[i + 1] == '"' && (i == 0 || !ident_char(s[i - 1]));
+}
+
+// `src` with every comment blanked to spaces (newlines kept, so offsets and
+// line numbers hold), literals left as they are.
+std::string blank_comments(const std::string& src) {
+  std::string s = src;
+  for (size_t i = 0; i < s.size();) {
+    if (literal_at(s, i)) {
+      const size_t e = literal_end(s, i);
+      i = e == std::string::npos ? s.size() : e;
+    } else if (s.compare(i, 2, "//") == 0) {
+      while (i < s.size() && s[i] != '\n') s[i++] = ' ';
+    } else if (s.compare(i, 2, "/*") == 0) {
+      const size_t e = s.find("*/", i + 2);
+      const size_t stop = e == std::string::npos ? s.size() : e + 2;
+      for (; i < stop; ++i) {
+        if (s[i] != '\n') s[i] = ' ';
+      }
+    } else {
+      ++i;
+    }
+  }
+  return s;
+}
+
+int line_at(const std::string& s, size_t off) {
+  return 1 + (int)std::count(s.begin(), s.begin() + (std::ptrdiff_t)off, '\n');
+}
+
+std::string trimmed(const std::string& s) {
+  const size_t b = s.find_first_not_of(" \t\r\n");
+  if (b == std::string::npos) return "";
+  return s.substr(b, s.find_last_not_of(" \t\r\n") - b + 1);
+}
+
+// The bytes one plain "..." literal emits (C escapes decoded; source bytes,
+// UTF-8 included, as they are). False for any other literal.
+bool decode_literal(const std::string& lit, std::string* out) {
+  if (lit.size() < 2 || lit.front() != '"' || lit.back() != '"') return false;
+  for (size_t i = 1; i + 1 < lit.size(); ++i) {
+    const char c = lit[i];
+    if (c != '\\') {
+      *out += c;
+      continue;
+    }
+    const char e = lit[++i];
+    switch (e) {
+      case 'n': *out += '\n'; break;
+      case 't': *out += '\t'; break;
+      case 'r': *out += '\r'; break;
+      case 'a': *out += '\a'; break;
+      case 'b': *out += '\b'; break;
+      case 'f': *out += '\f'; break;
+      case 'v': *out += '\v'; break;
+      case 'x': {
+        unsigned v = 0;
+        size_t n = 0;
+        while (i + 1 < lit.size() - 1 && std::isxdigit((unsigned char)lit[i + 1])) {
+          const char h = (char)std::tolower((unsigned char)lit[++i]);
+          v = v * 16 + (unsigned)(h <= '9' ? h - '0' : h - 'a' + 10);
+          ++n;
+        }
+        if (n == 0) return false;
+        *out += (char)(v & 0xff);
+        break;
+      }
+      default:
+        if (e >= '0' && e <= '7') {
+          unsigned v = (unsigned)(e - '0');
+          for (int k = 0; k < 2 && i + 1 < lit.size() - 1 && lit[i + 1] >= '0' && lit[i + 1] <= '7'; ++k) {
+            v = v * 8 + (unsigned)(lit[++i] - '0');
+          }
+          *out += (char)(v & 0xff);
+        } else if (e == '\\' || e == '"' || e == '\'' || e == '?') {
+          *out += e;
+        } else {
+          return false;   // \u, \U and the rest: not in this file; refuse rather than guess
+        }
+    }
+  }
+  return true;
+}
+
+// The ')' that closes the '(' at `open`, or npos.
+size_t close_of(const std::string& s, size_t open) {
+  int depth = 0;
+  for (size_t i = open; i < s.size(); ++i) {
+    if (literal_at(s, i)) {
+      const size_t e = literal_end(s, i);
+      if (e == std::string::npos) return std::string::npos;
+      i = e - 1;
+    } else if (s[i] == '(') {
+      ++depth;
+    } else if (s[i] == ')' && --depth == 0) {
+      return i;
+    }
+  }
+  return std::string::npos;
+}
+
+// The first `sep` in `expr` from `from` outside brackets and literals, or
+// npos. A ':' that is half of "::" is not one.
+size_t top_level(const std::string& expr, size_t from, char sep) {
+  int depth = 0;
+  for (size_t i = from; i < expr.size(); ++i) {
+    if (literal_at(expr, i)) {
+      const size_t e = literal_end(expr, i);
+      if (e == std::string::npos) return std::string::npos;
+      i = e - 1;
+      continue;
+    }
+    const char c = expr[i];
+    if (c == '(' || c == '[' || c == '{') ++depth;
+    else if (c == ')' || c == ']' || c == '}') --depth;
+    else if (depth == 0 && c == sep) {
+      if (sep == ':' && ((i + 1 < expr.size() && expr[i + 1] == ':') || (i > 0 && expr[i - 1] == ':'))) continue;
+      return i;
+    }
+  }
+  return std::string::npos;
+}
+
+// The texts `expr` can be: each arm of a ?:, each arm joined from its
+// adjacent literals. nullptr counts as no text when `null_ok`. False when
+// any arm is something else.
+bool arm_texts(std::string expr, bool null_ok, std::vector<std::string>* out, std::string* why) {
+  expr = trimmed(expr);
+  while (expr.size() >= 2 && expr.front() == '(' && close_of(expr, 0) == expr.size() - 1) {
+    expr = trimmed(expr.substr(1, expr.size() - 2));
+  }
+  const size_t q = top_level(expr, 0, '?');
+  if (q != std::string::npos) {
+    // The ':' that closes this '?': past every nested ?: in the true arm.
+    int pending = 1;
+    size_t colon = std::string::npos;
+    for (size_t i = q + 1; i < expr.size();) {
+      const size_t nq = top_level(expr, i, '?');
+      const size_t nc = top_level(expr, i, ':');
+      if (nc == std::string::npos) break;
+      if (nq != std::string::npos && nq < nc) {
+        ++pending;
+        i = nq + 1;
+      } else {
+        if (--pending == 0) {
+          colon = nc;
+          break;
+        }
+        i = nc + 1;
+      }
+    }
+    if (colon == std::string::npos) {
+      *why = "a ?: without its ':'";
+      return false;
+    }
+    return arm_texts(expr.substr(q + 1, colon - q - 1), null_ok, out, why) &&
+           arm_texts(expr.substr(colon + 1), null_ok, out, why);
+  }
+  if (expr == "nullptr" && null_ok) return true;
+  std::string text;
+  bool any = false;
+  for (size_t i = 0; i < expr.size();) {
+    if (std::isspace((unsigned char)expr[i])) {
+      ++i;
+      continue;
+    }
+    if (expr[i] != '"') {
+      *why = "not a literal: " + expr.substr(0, 60);
+      return false;
+    }
+    const size_t e = literal_end(expr, i);
+    if (e == std::string::npos || !decode_literal(expr.substr(i, e - i), &text)) {
+      *why = "a literal this reader cannot decode: " + expr.substr(i, 60);
+      return false;
+    }
+    any = true;
+    i = e;
+  }
+  if (!any) {
+    *why = "an empty argument";
+    return false;
+  }
+  out->push_back(text);
+  return true;
+}
+
+// Every health_log()/log_health() call in `src` and the texts its message
+// and detail can be.
+LogScan scan_log_calls(const std::string& src) {
+  LogScan scan;
+  const std::string s = blank_comments(src);
+  std::string prev_ident;
+  for (size_t i = 0; i < s.size();) {
+    if (literal_at(s, i)) {
+      const size_t e = literal_end(s, i);
+      i = e == std::string::npos ? s.size() : e;
+      prev_ident.clear();
+      continue;
+    }
+    if (!ident_char(s[i]) || (i > 0 && ident_char(s[i - 1]))) {
+      if (!std::isspace((unsigned char)s[i])) prev_ident.clear();
+      ++i;
+      continue;
+    }
+    size_t j = i;
+    while (j < s.size() && ident_char(s[j])) ++j;
+    const std::string id = s.substr(i, j - i);
+    size_t k = j;
+    while (k < s.size() && std::isspace((unsigned char)s[k])) ++k;
+    const bool decl = prev_ident == "void" || prev_ident == "extern" || prev_ident == "static" ||
+                      prev_ident == "inline";
+    if ((id == "health_log" || id == "log_health") && k < s.size() && s[k] == '(' && !decl) {
+      ++scan.calls;
+      const int line = line_at(s, i);
+      // The arguments, split at top-level commas, up to the matching ')'.
+      std::vector<std::string> args;
+      int depth = 0;
+      size_t start = k + 1, end = std::string::npos;
+      for (size_t m = k + 1; m < s.size(); ++m) {
+        if (literal_at(s, m)) {
+          const size_t e = literal_end(s, m);
+          if (e == std::string::npos) break;
+          m = e - 1;
+          continue;
+        }
+        const char c = s[m];
+        if (c == '(' || c == '[' || c == '{') {
+          ++depth;
+        } else if ((c == ')' || c == ']' || c == '}') && depth > 0) {
+          --depth;
+        } else if (c == ')') {
+          args.push_back(s.substr(start, m - start));
+          end = m;
+          break;
+        } else if (c == ',' && depth == 0) {
+          args.push_back(s.substr(start, m - start));
+          start = m + 1;
+        }
+      }
+      const size_t want = id == "health_log" ? 3 : 4;
+      if (end == std::string::npos || args.size() != want) {
+        scan.unreadable.push_back("line " + std::to_string(line) + ": " + id + "() with " +
+                                  std::to_string(args.size()) + " arguments, not " + std::to_string(want));
+        i = j;
+        continue;
+      }
+      for (size_t a = 2; a < want; ++a) {
+        std::vector<std::string> texts;
+        std::string why;
+        if (!arm_texts(args[a], a == 3, &texts, &why)) {
+          scan.unreadable.push_back("line " + std::to_string(line) + ": " + id + "()'s " +
+                                    (a == 3 ? "detail" : "message") + ": " + why);
+          continue;
+        }
+        for (const std::string& t : texts) scan.literals.push_back({line, id, a == 3, t});
+      }
+      i = end + 1;
+      prev_ident.clear();
+      continue;
+    }
+    prev_ident = id;
+    i = j;
+  }
+  return scan;
+}
+
+// The lines kept over their field, each with why: the guard's one recorded
+// exception. Its words are the maintainer's call (sweep F445): split as
+// the other two were, its message would end at "did not match (a" and its
+// detail start inside the parenthesis, so it fits only in new words.
+struct OverCap {
+  const char* text;
+  const char* why;
+};
+const OverCap kOverCap[] = {
+    {"opera: pairing failed: the partner's CONFIRM did not match (a different code, or the partner runs older "
+     "pairing firmware)",
+     "121 bytes; it fits the ring only reworded (F445 leaves the words to the maintainer)"},
+};
+
+const OverCap* over_cap_record(const std::string& text) {
+  for (const OverCap& o : kOverCap) {
+    if (text == o.text) return &o;
+  }
+  return nullptr;
+}
+
+// The lines of `scan` over their field and not recorded, as "line N: ...".
+std::vector<std::string> unrecorded_over_cap(const LogScan& scan, size_t msg_cap, size_t det_cap) {
+  std::vector<std::string> out;
+  for (const LogLiteral& l : scan.literals) {
+    const size_t cap = l.detail ? det_cap : msg_cap;
+    if (l.text.size() > cap && over_cap_record(l.text) == nullptr) {
+      out.push_back("line " + std::to_string(l.line) + ": " + l.fn + "()'s " + (l.detail ? "detail" : "message") +
+                    " is " + std::to_string(l.text.size()) + " bytes, over " + std::to_string(cap) + ": " + l.text);
+    }
+  }
+  return out;
+}
+
+void test_the_guard_reads_every_shape_a_line_is_written_in() {
+  // The reader itself, on sources written for it: a line split across
+  // source lines is measured joined, each arm of a ?: on its own, a comment
+  // or a string is not a call, escapes count as the bytes they emit, and
+  // what it cannot measure it says.
+  const size_t msg_cap = sizeof(HealthLogRingEntry::message) - 1;
+  const size_t det_cap = sizeof(HealthLogRingEntry::detail) - 1;
+  const std::string fits(msg_cap, 'm'), over(msg_cap + 1, 'm');
+  const std::string half1(msg_cap / 2, 'a'), half2(msg_cap + 1 - msg_cap / 2, 'b');
+  struct Case {
+    const char* why;
+    std::string src;
+    size_t over;        // lines over their field
+    size_t unreadable;  // arguments it cannot measure
+    size_t calls;
+  };
+  const std::vector<Case> cases = {
+      {"a message at the field's size", "health_log(L, C, \"" + fits + "\");", 0, 0, 1},
+      {"a planted message one byte over", "health_log(L, C, \"" + over + "\");", 1, 0, 1},
+      {"one over, split across two source lines",
+       "health_log(L, C,\n    \"" + half1 + "\"\n    \"" + half2 + "\");", 1, 0, 1},
+      {"one over in a ?:'s second arm", "health_log(L, C, x ? \"short\" : \"" + over + "\");", 1, 0, 1},
+      {"one over in a nested ?:", "health_log(L, C, x ? (y ? \"" + over + "\" : \"b\") : \"c\");", 1, 0, 1},
+      {"a detail one byte over", "log_health(L, C, \"m\", \"" + std::string(det_cap + 1, 'd') + "\");", 1, 0, 1},
+      {"a detail at its size, and nullptr", "log_health(L, C, \"m\", x ? \"" + std::string(det_cap, 'd') +
+                                                "\" : nullptr);", 0, 0, 1},
+      {"commented out, both ways", "// health_log(L, C, \"" + over + "\");\n/* log_health(L, C, \"" + over +
+                                       "\", nullptr); */", 0, 0, 0},
+      {"named inside a string", "puts(\"health_log(L, C, \\\"" + over + "\\\")\");", 0, 0, 0},
+      {"a message from a variable", "health_log(L, C, buf);", 0, 1, 1},
+      {"a nullptr message", "log_health(L, C, nullptr, \"d\");", 0, 1, 1},
+      {"the wrong argument count", "log_health(L, C, \"m\");", 0, 1, 1},
+      {"log_health_ssid() is another function", "log_health_ssid(L, C, \"" + over + "\", ssid);", 0, 0, 0},
+      {"a declaration is not a call", "void log_health(LogLevel l, LogCategory c, const char* m, const char* d);",
+       0, 0, 0},
+      {"\\x41 is one byte, \\\" one", "health_log(L, C, \"" + std::string(msg_cap - 2, 'm') + "\\x41\\\"\");", 0, 0, 1},
+      {"\\x41 one over", "health_log(L, C, \"" + std::string(msg_cap - 1, 'm') + "\\x41\\\"\");", 1, 0, 1},
+      {"a three-byte character counts three", "health_log(L, C, \"" + std::string(msg_cap - 2, 'm') +
+                                                  "\xE2\x80\x94\");", 1, 0, 1},
+      {"two calls on one line", "health_log(L, C, \"a\"); health_log(L, C, \"" + over + "\");", 1, 0, 2},
+  };
+  for (const Case& c : cases) {
+    const LogScan scan = scan_log_calls(c.src);
+    CHECK_MSG(scan.calls == c.calls, std::string(c.why) + ": calls " + std::to_string(scan.calls));
+    CHECK_MSG(unrecorded_over_cap(scan, msg_cap, det_cap).size() == c.over, std::string(c.why) + ": over");
+    CHECK_MSG(scan.unreadable.size() == c.unreadable, std::string(c.why) + ": unreadable");
+  }
+  // The joined measure is the compiler's: the split line is one text.
+  const LogScan split = scan_log_calls("health_log(L, C,\n  \"" + half1 + "\"\n  \"" + half2 + "\");");
+  CHECK(split.literals.size() == 1 && split.literals[0].text == half1 + half2 && split.literals[0].line == 1);
+  std::printf("PASS the_guard_reads_every_shape_a_line_is_written_in\n");
+}
+
+void test_every_mesh_health_line_fits_the_ring() {
+  const size_t msg_cap = sizeof(HealthLogRingEntry::message) - 1;   // 79
+  const size_t det_cap = sizeof(HealthLogRingEntry::detail) - 1;    // 47
+  std::ifstream in(MESH_NETWORK_CPP, std::ios::binary);
+  CHECK_MSG(in.good(), std::string("read ") + MESH_NETWORK_CPP);
+  std::stringstream buf;
+  buf << in.rdbuf();
+  const std::string src = buf.str();
+  const LogScan scan = scan_log_calls(src);
+
+  // Every call the file holds was read: a plain search of the code with
+  // its comments blanked (each name as a whole word, then '(') finds as
+  // many. It does not skip literals as the reader does, so a name inside a
+  // string would show here as a call the reader did not count.
+  const std::string code = blank_comments(src);
+  size_t searched = 0;
+  for (const char* name : {"health_log", "log_health"}) {
+    const size_t len = strlen(name);
+    for (size_t at = code.find(name); at != std::string::npos; at = code.find(name, at + 1)) {
+      if (at > 0 && ident_char(code[at - 1])) continue;
+      size_t k = at + len;
+      if (k < code.size() && ident_char(code[k])) continue;
+      while (k < code.size() && std::isspace((unsigned char)code[k])) ++k;
+      searched += k < code.size() && code[k] == '(' ? 1 : 0;
+    }
+  }
+  CHECK_MSG(scan.calls == searched && searched > 0,
+            "calls read " + std::to_string(scan.calls) + ", found " + std::to_string(searched));
+  for (const std::string& u : scan.unreadable) CHECK_MSG(false, "mesh_network.cpp " + u);
+  for (const std::string& o : unrecorded_over_cap(scan, msg_cap, det_cap)) {
+    CHECK_MSG(false, "mesh_network.cpp " + o + " (the ring keeps " + std::to_string(msg_cap) + " of a message, " +
+                         std::to_string(det_cap) + " of a detail: split it into message and detail, F445)");
+  }
+  // Each record still names a line in the file, and one over its field.
+  for (const OverCap& o : kOverCap) {
+    bool found = false;
+    for (const LogLiteral& l : scan.literals) {
+      found |= l.text == o.text && l.text.size() > (l.detail ? det_cap : msg_cap);
+    }
+    CHECK_MSG(found, std::string("kOverCap names no over-long line of mesh_network.cpp: ") + o.text);
+  }
+
+  // The measure is the ring's: each text logged through the REAL
+  // log_health() reaches GET /api/logs whole exactly when it fits.
+  for (const LogLiteral& l : scan.literals) {
+    const std::string label = "mesh_network.cpp:" + std::to_string(l.line) + " " + (l.detail ? "detail" : "message");
+    no_opera(A);
+    reset_log();
+    if (l.detail) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_MESH, "m", l.text.c_str());
+    } else {
+      log_health(SCV_LOG_WARNING, SCV_CAT_MESH, l.text.c_str(), nullptr);
+    }
+    const std::vector<LogLine> lines = logs(A, label);
+    CHECK_MSG(lines.size() == 1, label + ": one line");
+    if (lines.size() != 1) continue;
+    const std::string& kept = l.detail ? lines[0].detail : lines[0].message;
+    const bool fits_field = l.text.size() <= (l.detail ? det_cap : msg_cap);
+    CHECK_MSG((kept == l.text) == fits_field, label + ": kept " + std::to_string(kept.size()) + " of " +
+                                                  std::to_string(l.text.size()) + " bytes");
+  }
+  std::printf("PASS every_mesh_health_line_fits_the_ring (%zu calls, %zu texts, %zu recorded over)\n", scan.calls,
+              scan.literals.size(), sizeof kOverCap / sizeof kOverCap[0]);
+}
+
 }  // namespace opera_name
 
 int main() {
@@ -760,6 +1252,8 @@ int main() {
   test_the_setters_hold_the_name_to_the_rule();
   test_a_name_stored_before_the_rule_reads_back_clean();
   test_every_log_line_reaches_the_ring_clean();
+  test_the_guard_reads_every_shape_a_line_is_written_in();
+  test_every_mesh_health_line_fits_the_ring();
   if (g_failures != 0) {
     std::printf("test_opera_name_wap: %d of %d checks FAILED\n", g_failures, g_checks);
     return 1;

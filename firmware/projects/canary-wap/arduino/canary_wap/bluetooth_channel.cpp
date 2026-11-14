@@ -1797,6 +1797,31 @@ bool init() {
   b.applied = kDefaultSettings;
   (void)load_settings(&b.applied);   // a refused saved name: load_saved() logs it (F261)
 
+  // A server the channel did not make (sweep F449). On FULL, when the boot
+  // worker's init() was refused, the worker goes on to ble_manager::init(),
+  // whose own heap guard and NimBLEDevice::init() can pass where ours did
+  // not (a heap that recovered in between, a retryable NimBLE failure); Opera
+  // then takes NimBLE's one server (createServer() is a singleton,
+  // ble_opera.h) and the finalize stage starts its advertising. A later
+  // tap's init() found NimBLE up, skipped the heap guard below, set the
+  // stack's security, power and PHY under Opera's links, and registered the
+  // channel's service and every export on that server, which may already
+  // have started (F167's case from the other side; F260's services_missing
+  // lists only the worker's services). Refused here, before any of it. The
+  // channel's own server never reaches this line: once its createServer()
+  // succeeds this function returns true and g_stack_up is set, and a
+  // createServer() that failed is followed by NimBLEDevice::deinit(), which
+  // deletes the server. Whether the worker should instead skip ble_manager
+  // after a refused init() (boot Discovery traded for a late tap that
+  // works; under it this guard never fires) is the maintainer's call.
+  if (NimBLEDevice::getServer() != nullptr) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "BLE not started: Bluetooth Discovery started its server this boot",
+               "restart to pair");
+    set_init_fail_reason("%s", "Not started: Bluetooth Discovery started its server this boot; restart to pair");
+    return false;
+  }
+
   // Initialize NimBLE. This is the single NimBLEDevice::init() owner for the
   // firmware: it runs before ble_manager::init() in setup() and owns the GAP
   // device name, TX power, MTU and security config. NimBLE 2.x init() returns

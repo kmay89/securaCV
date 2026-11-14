@@ -1562,9 +1562,11 @@ clean: clean-chirp-suppress
 # callbacks change nothing until update() applies their events on the loop
 # task, the pending pairing's copy has one owner, and a full event queue
 # keeps a link's room and fails a pairing closed (sweep F143). And the
-# FULL profile's wiring (sweep F171): the channel's init() and Opera's
-# (ble_opera.h) in either order through one server-callback dispatcher
-# (ble_server_dispatch.h), so a passkey waits for the owner's confirm.
+# FULL profile's wiring (sweep F171): the channel's init() and then Opera's
+# (ble_opera.h) through one server-callback dispatcher
+# (ble_server_dispatch.h), so a passkey waits for the owner's confirm; the
+# other order, a tap's init() after Opera took NimBLE's one server, is
+# refused before it touches the stack (sweep F449).
 BT_CMD_BIN = test_bluetooth_commands_wap
 BT_CMD_SRC = test_bluetooth_commands_wap.cpp
 
@@ -1590,6 +1592,32 @@ clean-bt-commands:
 
 run: run-bt-commands
 clean: clean-bt-commands
+
+# The BLE Chirp sender (sweep F460): the REAL ble_chirp.h, FEATURE_BLE and
+# FEATURE_BLE_CHIRP on, over stubs/bt (whose advertiser keeps the data it
+# was given) and a one-function ble_opera stand-in (refreshBeacon, the
+# restore after a chirp; the suite takes ble_opera.h's include guard, since
+# a quoted include finds the sketch's own header first). sendChirp()'s
+# manufacturer blob for every type is held to test_fleet_chirp.cpp's golden
+# layout and to fleet_chirp_parse(), the fingerprint suffix's byte order
+# and a null chain head included: the only guard on buildChirpPayload()'s
+# argument order had been an iPhone text pin compiled on macOS alone.
+# ASan and UBSan (of the other stubs/bt suites, bt-commands runs plain and
+# under TSan, beacon-set-load and ble-provision under ASan).
+CHIRP_SENDER_BIN = test_ble_chirp_sender
+CHIRP_SENDER_SRC = test_ble_chirp_sender.cpp
+
+$(CHIRP_SENDER_BIN): $(CHIRP_SENDER_SRC)
+	$(CXX) $(CXXFLAGS) -g -Werror -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -I stubs/bt -I $(SRC_DIR) -o $@ $(CHIRP_SENDER_SRC)
+
+.PHONY: run-ble-chirp-sender clean-ble-chirp-sender
+run-ble-chirp-sender: $(CHIRP_SENDER_BIN)
+	$(call run_marked,$(CHIRP_SENDER_BIN))
+clean-ble-chirp-sender:
+	rm -f $(CHIRP_SENDER_BIN)
+
+run: run-ble-chirp-sender
+clean: clean-ble-chirp-sender
 
 # The Beacon set as it loads from NVS and as GET /api/beacon/set answers it
 # (sweep F408): load_beacon_set(), get_beacon_set_size() and

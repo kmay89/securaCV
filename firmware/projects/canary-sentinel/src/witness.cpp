@@ -14,6 +14,7 @@
 #include "canary/log.h"
 #include "canary/runtime_config.h"
 #include "identity/device_signature.h"  // shared signer (common/identity)
+#include "identity/key_draw_check.h"    // a flat first-boot key draw is refused (sweep F38)
 #include "witness/witness_chain.h"       // canonical chain core (common/witness)
 
 namespace canary::witness {
@@ -43,10 +44,11 @@ bool     s_ready      = false;
 
 // Domain-separated SHA-256 — thin local alias over the shared core's
 // wc_sha256_domain (witness/witness_chain.h) kept for the fingerprint
-// and payload hashes below.
-void sha256_domain(const char* domain, const uint8_t* data, size_t n,
-                   uint8_t out[32]) {
-  wc_sha256_domain(domain, data, n, out);
+// and payload hashes below. False, with out zeroed, when the hash did not
+// run (sweep F455); every caller refuses what it was for.
+[[nodiscard]] bool sha256_domain(const char* domain, const uint8_t* data, size_t n,
+                                 uint8_t out[32]) {
+  return wc_sha256_domain(domain, data, n, out);
 }
 
 // Reliable scrub for key material (volatile pointer defeats dead-store
@@ -128,10 +130,20 @@ bool load_or_generate_keypair() {
   // WiFi/BT start, so the RNG has no RF entropy source yet — gate the one-time
   // identity draw with bootloader_random_enable()/_disable() to seed it
   // properly (ESP-IDF's documented early-entropy pattern). The RF subsystem
-  // seeds the RNG for every later draw.
+  // seeds the RNG for every later draw. The draw is looked at before it is
+  // stored (sweep F38, key_draw_check.h): a flat one (every byte equal, or
+  // too few or too many one bits) disables signing for this boot and writes
+  // nothing, so the next boot draws again.
   bootloader_random_enable();
   esp_fill_random(s_priv, sizeof(s_priv));
+  const bool flat = key_draw_check::is_flat(s_priv);
   bootloader_random_disable();
+  if (flat) {
+    secure_zero(s_priv, sizeof(s_priv));
+    prefs.end();
+    log_line("WITNESS", "Key draw came out flat — no key stored, signing disabled this boot.");
+    return false;
+  }
   if (prefs.putBytes(KEY_PRIV, s_priv, sizeof(s_priv)) != sizeof(s_priv)) {
     // An unpersisted key would rotate on every reboot, and each
     // rotation reads as a "Fingerprint changed without rotation"
@@ -150,7 +162,10 @@ bool load_or_generate_keypair() {
   return true;
 }
 
-void load_or_start_chain() {
+// False only when no chain was read and the genesis head did not compute
+// (sweep F455): s_head is then zero, and init() refuses the boot's chain
+// rather than chain records from it.
+bool load_or_start_chain() {
   Preferences prefs;
   bool loaded = false;
   if (prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) {
@@ -167,9 +182,10 @@ void load_or_start_chain() {
     // upgraded from the older pubkey-bound genesis keep their stored
     // head and continue forward — no external verifier recomputes
     // sense's historical links (HA verifies the signed head envelope).
-    wc_genesis(canary::cfg::get().device_id, s_head);
     s_length = 0;
+    return wc_genesis(canary::cfg::get().device_id, s_head);
   }
+  return true;
 }
 
 void persist_chain() {
@@ -191,8 +207,23 @@ bool init() {
   }
 
   // Fingerprint: wap formula — SHA256(domain || 0x00 || pubkey)[0..8] hex.
+  // A fingerprint or a genesis head the hash did not compute (sweep F455)
+  // disables signing for this boot, the path a refused key takes: the key
+  // is scrubbed before the signer sees it, and no chain head or length is
+  // stored. (On a first boot the new key is already stored by then; the
+  // next boot loads it and computes both again.)
   uint8_t fp_hash[32];
-  sha256_domain(DOMAIN_FINGERPRINT, s_pub, sizeof(s_pub), fp_hash);
+  const bool fp_ok = sha256_domain(DOMAIN_FINGERPRINT, s_pub, sizeof(s_pub), fp_hash);
+  if (!fp_ok) {
+    secure_zero(s_priv, sizeof(s_priv));
+    log_line("WITNESS", "Fingerprint not computed (SHA-256 failed) — signing disabled this boot.");
+    return false;
+  }
+  if (!load_or_start_chain()) {
+    secure_zero(s_priv, sizeof(s_priv));
+    log_line("WITNESS", "Genesis head not computed (SHA-256 failed) — signing disabled this boot.");
+    return false;
+  }
   char fp_hex[17];
   static const char H[] = "0123456789abcdef";
   for (int i = 0; i < 8; i++) {
@@ -205,7 +236,6 @@ bool init() {
   // device_signature keeps its own copy; scrub ours so exactly one copy
   // of the private key stays resident.
   secure_zero(s_priv, sizeof(s_priv));
-  load_or_start_chain();
   s_ready = true;
 
   log_header("WITNESS");
@@ -269,21 +299,27 @@ void chain_advance(uint32_t             seq,
       device_signature::device_id(), canonical, sizeof(canonical));
   if (n == 0) return;
 
+  // A hash the engine did not compute, the payload's or the link's, chains
+  // nothing (sweep F455): the head and the length stay as they were and
+  // nothing is persisted, so the next record links from the same head.
   uint8_t payload_hash[32];
-  sha256_domain(DOMAIN_PAYLOAD,
-                reinterpret_cast<const uint8_t*>(canonical), n, payload_hash);
+  if (!sha256_domain(DOMAIN_PAYLOAD,
+                     reinterpret_cast<const uint8_t*>(canonical), n, payload_hash)) {
+    return;
+  }
 
   // Canonical advance (witness_chain.h): seq and the coarse time bucket
   // are part of the hash, so a record cannot be silently renumbered or
   // time-shifted. This replaced the older head||payload-only form, which
   // omitted both (the divergence flagged in the witness audit).
   uint8_t new_head[32];
-  wc_chain_advance(s_head, payload_hash, seq, bucket_uptime_s, new_head);
+  const bool linked = wc_chain_advance(s_head, payload_hash, seq, bucket_uptime_s, new_head);
+  secure_zero(payload_hash, sizeof(payload_hash));
+  if (!linked) return;
   memcpy(s_head, new_head, sizeof(s_head));
   s_length++;
 
   persist_chain();
-  secure_zero(payload_hash, sizeof(payload_hash));
 }
 
 uint32_t chain_length() { return s_length; }

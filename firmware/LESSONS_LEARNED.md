@@ -664,7 +664,14 @@
 - **Root cause:** ESP32 Arduino Core 3.x (built on ESP-IDF 5.x) removed the
   `_ret` suffix from all mbedTLS functions
 - **Fix:** `mbedtls_sha256_ret()` → `mbedtls_sha256()`, etc.
-- **Regression check:** `regression_check.sh` greps for `_ret(`
+- **The other half (2026-11, sweep F455):** core 2.0.17's mbedTLS 2.28 keeps
+  the plain names but makes them return `void`, so code that must check a
+  step's answer on both cores calls the `_ret` names on 2.x and the plain ones
+  on 3.x, behind `#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER
+  >= 0x03000000` (the plain names) `#else` (the `_ret` names) `#endif`, with
+  `mbedtls/version.h` included (2.28's `sha256.h` does not define the number).
+- **Regression check:** `regression_check.sh` greps for `_ret(` and fails every
+  hit outside the `#else` branch of that exact guard
 - **Date learned:** 2026-01
 
 ### `esp_camera.h` include order matters
@@ -1056,12 +1063,12 @@
   Beacon and Chirp hashes followed, and then `mesh_network.cpp`'s
   fingerprint and opera id, every caller refusing
   (`test_mesh_address_wap.cpp`); `mesh_crypto`'s, the OTA and pseudonym
-  hashes, and the flagship's and the common witness core's helpers, are
-  open (backlog F364, F455). F403 put the BLE status service, the
-  witness export's HEAD and the signer behind the same gate as BLE discovery;
-  the MQTT bridge's identity, mDNS, the Improv door, the Bluetooth and console
-  metadata, the mesh, the hourly chain backup and the HTTP routes still read a
-  refused boot's identity (open).
+  hashes are open (backlog F364), and the flagship's and the common witness
+  core's helpers followed in #1966 (F455, in `CHANGELOG.md`). F403 put the
+  BLE status service, the witness export's HEAD and the signer behind the
+  same gate as BLE discovery; the MQTT bridge's identity, mDNS, the Improv
+  door, the Bluetooth and console metadata, the mesh, the hourly chain
+  backup and the HTTP routes still read a refused boot's identity (open).
 - **Date learned:** 2026-11
 
 ### A module that did not read its store this boot must not write it (canary-wap mesh, F364)
@@ -1914,6 +1921,47 @@
   decides whether to stop there).
 - **Regression check:** `dashboard_gates.test.js` drives the page's own
   function over an empty, a refused and a missing answer.
+- **Date learned:** 2026-11
+
+### A splice guard that reads one statement misses markup built across several (both dashboards, F443)
+- **What happened:** the guard that holds both dashboards' raw splices into
+  markup (`html_splices.js`) first read a value only where one expression
+  put it into `innerHTML` or an `on*=` handler. Review planted 40 shapes the
+  pages could use, and its first version missed 32: markup built one `+=`
+  statement at a time, `.concat()`, a joined array, `push()`, a const that
+  opens a handler, a name bound in an outer scope.
+- **Root cause:** a page builds markup in more ways than a grep for its sink
+  sees, and a guard written from the sink outward holds only the shapes its
+  author thought of.
+- **Fix:** the scanner follows an accumulator through its statements and
+  resolves names by scope, and two shrink-only ledgers (`WAP_RAW_SPLICES`,
+  `FLAGSHIP_RAW_SPLICES`) hold what it finds: a new splice fails, and one
+  that is gone fails until its line is lowered. Its header names what it
+  still does not see.
+- **Rule:** prove a guard against the old code and against planted shapes,
+  not only against today's page: run against `web_ui.h` from before #1919's
+  escapes, it fails with exactly the rows those fixes moved.
+- **Regression check:** `web_ui_logic.test.js` and
+  `firmware/tests_host/test_canary_mesh_alerts.test.js` (the planted cases
+  and the ledgers); nine scanner mutations each fail a planted case.
+- **Date learned:** 2026-11
+
+### A grader that reads quoted spans grades comments too, and an apostrophe pairs them (Sensing dashboard, F465)
+- **What happened:** the Sensing dashboard's reading-grade gate
+  (`microcopy_fkgl.py`) took every quoted span in `COPY`, comments included.
+  Two apostrophes in two comments paired into one span that swallowed six
+  real strings and graded comment text instead: 84 strings at 3.46, where
+  the copy is 89 strings at 3.35.
+- **Root cause:** a regex over source that does not know the source's
+  grammar reads comments as code.
+- **Fix:** the grader strips `COPY`'s comments with a string-aware scanner
+  (`"`, `'` and backticks) before it matches.
+- **Rule:** strip comments before extracting anything from source, and test
+  the extracted list itself, not only the score computed from it.
+- **Regression check:** `scripts/tests/test_microcopy_fkgl.py`
+  (`test_exact_extracted_list`, `test_no_extracted_string_spans_a_comment`,
+  `test_the_strings_the_comments_used_to_swallow_are_graded`), which fails
+  on the extractor before F465.
 - **Date learned:** 2026-11
 
 ---
@@ -2967,6 +3015,35 @@
   runs out.
 - **Date learned:** 2026-10-15
 
+### A session outlives the link that started it: bind a write to its link, by a generation that never comes round (Improv hub hand-off, F447)
+- **What happened:** the Sense and Vision setup door took a HUB write (the
+  hub's host, port and login) while the session was Provisioning or
+  Provisioned and never asked which link wrote. Mid-join the door still
+  advertises connectable, so a phone that dropped before the verdict could
+  be followed, inside the join's 30 s, by another client that inherited the
+  session and whose HUB write was taken once the join landed.
+- **Root cause:** the session models one join, and the code assumed one
+  link per session. A drop and a reconnect keep the session and change the
+  link.
+- **Fix:** `improv_core.h`'s `hub_gate()` takes HUB only from the link whose
+  `WIFI_SETTINGS` started the join. A link is a 32-bit connection
+  generation that every connect bumps, never 0 and never reset inside a
+  boot, stamped on each write by the NimBLE host task, where the connect
+  edges land; a write on a handle that is not the connected link's is
+  stamped 0 and refused. The old rule shimmed into the new API failed 13
+  checks, among them an 8-bit generation that came round to the join's link
+  256 and 65536 reconnects later.
+- **Rule:** a grant a session holds names the link it was granted on, and a
+  link id that can wrap is one a later stranger can be handed. Stamp the id
+  where the connect edges land, not on the task that reads the write later.
+- **Regression check:** `firmware/tests_host/test_improv_core.cpp`
+  (`a_hub_write_from_another_link_is_refused_in_both_join_states`,
+  `the_link_generation_cannot_come_round_to_the_join`). The glue's stamp
+  (`link_of()` in `improv_ble.cpp`) was proved only by scratch harnesses; a
+  committed one is open (backlog F472), and the `magic_pairing.md` §9 row
+  is unrun.
+- **Date learned:** 2026-11
+
 ---
 
 ## Sensing & Signal Processing
@@ -3797,9 +3874,11 @@
   (`NearbyDevice::first_seen_ms`, wrap-safe).
 - **Rule:** say what a rule buys. Presence beacons are unsigned (F232), so
   one radio runs the ten minutes for many keys at once: the wait delays a
-  Sybil and does not price one, and suppress votes still need no presence
-  (F234). The spec and `docs/FLEET_SEMANTICS.md` now say both, and since
-  D16 so do the threat model's Sybil row and the spec's §2.5.3.
+  Sybil and does not price one, and suppress votes needed no presence
+  (F234; since wave 25 a vote waits the same ten minutes, still a delay
+  rather than a price). The spec and `docs/FLEET_SEMANTICS.md` now say
+  both, and since D16 so do the threat model's Sybil row and the spec's
+  §2.5.3.
 - **Regression check:** `test_chirp_security.cpp`
   (`c4_a_relay_keeps_the_signed_ttl`, the three `c13_` presence cases),
   `test_chirp_suppress_wap.cpp` and `test_chirp_commands_wap.cpp`, on the
@@ -4441,6 +4520,50 @@
   `cv_wrong` stays refused on a page whose cookie answers 200).
 - **Date learned:** 2026-10
 
+### A key found by searching for its quoted name is also a value spelled like it (canary-wap settings POST, F462)
+- **What happened:** `POST /api/settings` found each key with `strstr()` of
+  the quoted key and read the value after the next colon, so
+  `{"label":"privacy_ceiling","x":"p2"}` stored the privacy ceiling P2,
+  `{"label":"pet_mode","x":true}` turned pet mode on, and a value spelled
+  `"tz"` answered 400 "bad time zone" to a valid body. The review of the fix
+  found a second split: the transmitter filter was read over the bytes
+  received and the stores to the first NUL, so a body holding a NUL showed
+  two readers two different bodies.
+- **Root cause:** a substring is not a member. And two readers of one
+  buffer that stop at different ends read two documents.
+- **Fix:** one reader, `json_object_member()` (`csi_settings_nvs.h`), finds
+  a key only as a member of the body's own object, the whole text read and
+  never a byte past its length; a body holding a NUL is refused before any
+  key is read (400 "body is not JSON"), and the integer reader saturates
+  instead of keeping a long number's first nine digits.
+- **Rule:** find a JSON key where a JSON parser would, and give every
+  reader of a request the same bytes. The same class still reads
+  `/api/events/dismiss`, `/api/mqtt/config` and the Tuning Lab's POSTs
+  (backlog F469).
+- **Regression check:** canary-wap `tests_host/test_wap_tune_lab.cpp`
+  (`test_the_settings_post_reads_keys_not_values`,
+  `test_the_settings_reader_reads_json`, and the pins in
+  `settings_reader_problems()`), which fails on the code before F462.
+- **Date learned:** 2026-11
+
+### A parameter declared as an array is a pointer, whatever N it spells (check_wap_json_answers.py J5, F464)
+- **What happened:** when J5 was extended to `csi_integration.cpp` and
+  `csi_mqtt.cpp`, its buffer sizer read a parameter declared `const char
+  label[16]` (a function's or a lambda's) as a 16-byte array, so it judged
+  an answer by a bound the callee never has: the review's two planted
+  cases, with no length test, passed as fitting.
+- **Root cause:** in C and C++ an array parameter decays to a pointer; the
+  N is a comment the compiler ignores, and so does `sizeof`.
+- **Fix:** the checker asks whether the declaration in scope is a
+  parameter (`declared_as_parameter()`) and never sizes one by its N.
+- **Rule:** a bound a checker trusts must be one the compiler enforces.
+  Read the declaration the way the language does, then prove the reading
+  with a mutation the old reading passes. The same function still takes
+  `if (active && active[0])` for a declaration (backlog F470).
+- **Regression check:** the checker's self-test (the "WAP guard self-tests"
+  job), whose mutations include both planted cases.
+- **Date learned:** 2026-11
+
 ## Build profiles: a configuration nobody compiles is a configuration that rots
 
 ### Every offered BUILD_PROFILE and hardware target needs its own CI leg
@@ -4475,6 +4598,30 @@
   compiles BLE in too, so with MINIMAL unverified the honest fix is to
   install NimBLE.
 - **Date learned:** 2026-09
+
+### A header that defines the flag it reads overrides the profile, and an `#ifndef` leaves that to include order (canary-wap `sys_monitor.h`, F467)
+- **What happened:** `sys_monitor.h` defined `FEATURE_SYS_MONITOR 1` itself,
+  so under `BUILD_PROFILE_MINIMAL` the profile's 0 became 1 for the rest of
+  the sketch, with a "redefined" warning nobody read (no env selects
+  MINIMAL, so no shipped build changed). The first fix wrapped the define in
+  `#ifndef`; both reviews and a `g++ -E` probe showed that only moved the
+  fault: with `sys_monitor.h` included before `build_config.h`, MINIMAL
+  compiled the monitor with the fallback 1 again.
+- **Root cause:** a fallback define in the header that reads a flag is a
+  second definition, and which one wins depends on which header a
+  translation unit includes first.
+- **Fix:** the header defines no value of its own and includes
+  `build_config.h` itself, as `wifi_presence.h` and `audible_chirp.h` do;
+  the probe reads 0, 1, 1 under MINIMAL, DEV and FULL in either order, with
+  no "redefined".
+- **Rule:** one file defines a profile's flags, and every header that reads
+  one includes that file before it reads it. The `#ifndef` rule above is for
+  a flag a `-D` may also set, not for a flag a profile owns.
+- **Regression check:** `scripts/tests/test_docs_claims.py`'s
+  `test_the_canary_wap_cells_read_the_profile_each_env_selects`: only
+  `build_config.h` defines each of the three flags, and each flag's header
+  includes it ahead of the flag's first use.
+- **Date learned:** 2026-11
 
 ## OTA: every install channel runs the same policy, or the policy is prose
 
@@ -5389,6 +5536,34 @@
   `test_a_refused_rotation_leaves_the_one_in_flight_whole` (B at slot 0
   removed with a rotation to B and C in flight: C's ACK commits it at once
   and C is not marked stale). It fails on the slice before the remap.
+- **Date learned:** 2026-11
+
+### "Refuse a join that swaps the opera" cannot be an id comparison: the held opera's id moves under its own members (canary-wap Opera, F318)
+- **What happened:** the guard was asked to refuse a pairing COMPLETE that
+  would install a different opera over one already held, while every
+  re-pair test stayed unchanged. Built as an opera_id comparison, it refused
+  seven of `test_mesh_liveness_wap`'s re-pair tests. Six re-pair into an id
+  the joiner does not hold: a removal with a survivor rotates the remover
+  alone (F95), and a held partner that left (canary-wap acts on no
+  `LEAVE_OPERA`) or booted with flash encryption off founds a new opera at
+  its next pairing. The seventh joins from an opera with no member left.
+- **Root cause:** an opera's id is not stable across its own members, so
+  "the opera already held" is a question about who is pairing, not about
+  which id the frame carries.
+- **Fix:** `complete_names_another_opera()` refuses another id only from an
+  initiator the joiner does not hold while it holds a member, before
+  `add_peer()`; a held member's re-pair into another id goes through and
+  keeps the joiner's other members beside it, pinned and stated in spec
+  §5.2, and whether to refuse that too is the open decision.
+- **Rule:** before writing a guard, list the paths the existing tests drive
+  and why each reaches the state the guard would refuse; a guard that
+  breaks a passing re-pair test is usually a premise to correct, not a test
+  to rewrite.
+- **Regression check:** `test_mesh_liveness_wap.cpp`'s
+  `a_joiner_refuses_a_complete_from_another_opera` (fails on the code before
+  the guard), `a_joiner_refusing_a_held_member_from_another_opera_keeps_its_own`
+  (fails on a mutant that installs the COMPLETE's opera before `add_peer()`)
+  and `a_re_pair_into_another_opera_keeps_the_joiners_other_members`.
 - **Date learned:** 2026-11
 
 ## How to Add an Entry

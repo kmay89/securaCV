@@ -25,7 +25,11 @@
 //     per open door that shuts it (malformed attempts count too), and an
 //     idle disconnect for a client that parks on the link;
 //   * what goes on air follows the state: Improv while the door is open or
-//     a join is in flight, the beacon otherwise.
+//     a join is in flight, the beacon otherwise;
+//   * the hub hand-off belongs to the link that sent the join (F447): a HUB
+//     write from any other connection generation is refused while the join
+//     is in flight and after it lands, the generation never comes round to
+//     the join's, and the single-link order the phone uses still lands.
 
 #include "../common/network/improv_core.h"
 
@@ -623,6 +627,147 @@ static void link_bookkeeping_survives_millis_zero_and_wrap() {
   CHECK(idle_disconnect_due(s, near_wrap + t.idle_disconnect_ms, t), "the bound across the wrap: idle");
 }
 
+// ── The hub hand-off belongs to the link that sent the join (F447) ─────────
+
+// The glue's connection generations as it hands them out: the first connect
+// of a boot is next_link_gen(0).
+static uint32_t gen_after(uint32_t gen, unsigned connects) {
+  for (unsigned i = 0; i < connects; ++i) gen = next_link_gen(gen);
+  return gen;
+}
+
+// Sweep F447: HUB was taken from any link while the session was
+// Provisioning or Provisioned. Mid-join a Provisioning session still
+// advertises connectable, so a phone that dropped before the verdict could
+// be followed by another client, which inherited the session and whose HUB
+// write was taken. Now the accepted WIFI_SETTINGS binds the join to the
+// link that sent it, and hub_gate() takes a HUB write from that link alone:
+// link N sends the Wi-Fi, drops, and N+1 connects; N+1's write is refused
+// (OtherLink) while the join is in flight and after it lands, and N's is
+// taken in both states.
+static void a_hub_write_from_another_link_is_refused_in_both_join_states() {
+  Session s;
+  Timing t;
+  session_begin(s, true, 1000, t);
+  const uint32_t n = gen_after(0, 1);
+  session_link_up(s, 1000);
+  CHECK(session_on_wifi_settings(s, 1200, t, n) == Error::None, "the phone's credentials, on link N");
+  CHECK(s.state == State::Provisioning && s.join_link == n, "the join is bound to link N");
+  CHECK(hub_gate(s, n) == HubGate::Take, "link N, mid-join: taken");
+  // N drops before the verdict; the door still advertises, N+1 connects.
+  session_link_down(s);
+  CHECK(advert_for(s) == Advert::Improv, "mid-join the door is still on air");
+  const uint32_t n1 = next_link_gen(n);
+  session_link_up(s, 1500);
+  CHECK(n1 != n, "a new link is a new generation");
+  CHECK(hub_gate(s, n1) == HubGate::OtherLink, "link N+1, mid-join: refused");
+  // Its own WIFI_SETTINGS mid-join is refused and does not take the join.
+  CHECK(session_on_wifi_settings(s, 1600, t, n1) == Error::InvalidRpc, "N+1's credentials mid-join: refused");
+  CHECK(s.join_link == n && hub_gate(s, n1) == HubGate::OtherLink, "and the join stays N's");
+  // The join lands: N+1 inherits a Provisioned session, never the hand-off.
+  session_on_join_result(s, true, 5000);
+  CHECK(s.state == State::Provisioned, "joined");
+  CHECK(hub_gate(s, n1) == HubGate::OtherLink, "link N+1, joined: refused");
+  CHECK(hub_gate(s, n) == HubGate::Take, "link N, joined: taken");
+  CHECK(hub_gate(s, 0) == HubGate::OtherLink, "a write the glue could not name: refused");
+
+  // The same with no drop: N's write is taken before and after the verdict,
+  // and a generation that is not N's (a second link beside it) is refused.
+  session_begin(s, true, 1000, t);
+  session_link_up(s, 1000);
+  CHECK(session_on_wifi_settings(s, 1200, t, n) == Error::None, "credentials on link N");
+  CHECK(hub_gate(s, n) == HubGate::Take && hub_gate(s, n1) == HubGate::OtherLink, "mid-join: N only");
+  session_on_join_result(s, true, 5000);
+  CHECK(hub_gate(s, n) == HubGate::Take && hub_gate(s, n1) == HubGate::OtherLink, "joined: N only");
+}
+
+// What the gate answers with no join to attach a hub to: NoJoin, whatever
+// the link (the refusal the glue had before F447, now the gate's).
+static void a_hub_write_with_no_join_is_refused_whatever_the_link() {
+  Session s;
+  Timing t;
+  const uint32_t n = gen_after(0, 1);
+  CHECK(hub_gate(s, n) == HubGate::NoJoin, "a stopped session: no join");
+  session_begin(s, true, 1000, t);
+  session_link_up(s, 1000);
+  CHECK(s.state == State::Authorized && hub_gate(s, n) == HubGate::NoJoin, "the door open, no Wi-Fi sent");
+  // A join that failed leaves no link bound, and a retry rebinds.
+  CHECK(session_on_wifi_settings(s, 1000, t, n) == Error::None, "a join on N");
+  session_on_join_result(s, false, 2000);
+  CHECK(s.join_link == 0 && hub_gate(s, n) == HubGate::NoJoin, "failed: no join, no link");
+  // A join nobody reported on times out the same way.
+  CHECK(session_on_wifi_settings(s, 1000 + t.wifi_settings_cooldown_ms, t, n) == Error::None, "retried on N");
+  CHECK(session_tick(s, 1000 + t.wifi_settings_cooldown_ms + t.provisioning_timeout_ms, t), "timed out");
+  CHECK(s.join_link == 0 && hub_gate(s, n) == HubGate::NoJoin, "timed out: no join, no link");
+  // A device with credentials, its door shut: nothing to hand over to.
+  session_begin(s, false, 1000, t);
+  CHECK(hub_gate(s, n) == HubGate::NoJoin, "door shut, no join");
+  // A tap after a landed join reopens the door with no join in flight.
+  session_tap(s, 2000);
+  CHECK(session_on_wifi_settings(s, 2000, t, n) == Error::None, "a tap's join on N");
+  session_on_join_result(s, true, 3000);
+  CHECK(hub_gate(s, n) == HubGate::Take, "joined: N takes it");
+  session_tap(s, 40000);
+  CHECK(s.state == State::Authorized && hub_gate(s, n) == HubGate::NoJoin, "a fresh tap: no join this door");
+}
+
+// The in-tree phone (ios ImprovClient.handOverHub) writes HUB once, after
+// the verdict, on the link that sent the Wi-Fi: that order still lands. A
+// failed join retried on a NEW link binds the new one; the link that
+// failed is refused the hand-off of the join it did not send.
+static void the_single_link_order_still_lands() {
+  Session s;
+  Timing t;
+  session_begin(s, true, 1000, t);
+  uint32_t gen = gen_after(0, 3);   // a few links came and went before
+  session_link_up(s, 1000);
+  CHECK(session_on_wifi_settings(s, 1000, t, gen) == Error::None, "credentials");
+  session_on_join_result(s, true, 6000);
+  CHECK(!idle_disconnect_due(s, 6000 + t.provisioned_linger_ms - 1, t), "the link lingers for the verdict");
+  CHECK(hub_gate(s, gen) == HubGate::Take, "the hub, on the same link, inside the linger: taken");
+
+  session_begin(s, true, 1000, t);
+  const uint32_t first = gen;
+  CHECK(session_on_wifi_settings(s, 1000, t, first) == Error::None, "a join on the first link");
+  session_on_join_result(s, false, 2000);
+  const uint32_t second = next_link_gen(first);
+  CHECK(session_on_wifi_settings(s, 1000 + t.wifi_settings_cooldown_ms, t, second) == Error::None,
+        "retried on a new link");
+  session_on_join_result(s, true, 9000);
+  CHECK(hub_gate(s, second) == HubGate::Take, "the link that sent the join that landed: taken");
+  CHECK(hub_gate(s, first) == HubGate::OtherLink, "the first link: refused");
+}
+
+// The generation cannot come round to the join's link inside a session: 32
+// bits, +1 per connect, 0 skipped. The old 8-bit count came back to the
+// same value after 256 connects, a few seconds of reconnects inside the
+// join's 30 s; this one does not. A session begun afresh names no link,
+// and a join whose link the glue did not name (0) takes no hub at all.
+static void the_link_generation_cannot_come_round_to_the_join() {
+  CHECK(next_link_gen(0) == 1, "the first connect of a boot is 1");
+  CHECK(next_link_gen(1) == 2 && next_link_gen(255) == 256 && next_link_gen(65535) == 65536,
+        "one more per connect, past every byte boundary");
+  CHECK(next_link_gen(0xFFFFFFFFu) == 1, "the top comes round to 1, never 0");
+  const uint32_t n = gen_after(0, 1);
+  CHECK(gen_after(n, 256) != n && gen_after(n, 65536) != n, "256 or 65536 reconnects later: still another link");
+  uint32_t g = 0xFFFFFFF0u;
+  bool zero = false;
+  for (int i = 0; i < 64; ++i) {
+    g = next_link_gen(g);
+    zero = zero || g == 0;
+  }
+  CHECK(!zero, "no generation across the top is 0");
+
+  Session s;
+  Timing t;
+  session_begin(s, true, 1000, t);
+  CHECK(s.join_link == 0, "a session begins bound to no link");
+  CHECK(session_on_wifi_settings(s, 1000, t) == Error::None, "a join whose link the glue did not name");
+  CHECK(s.join_link == 0, "binds 0");
+  CHECK(hub_gate(s, 0) == HubGate::OtherLink && hub_gate(s, n) == HubGate::OtherLink,
+        "and no write is taken for it, 0 included");
+}
+
 static void bad_packets_and_unknown_commands_publish_their_word() {
   Session s;
   Timing t;
@@ -677,6 +822,10 @@ int main() {
   a_tap_while_the_no_credentials_door_is_open_changes_nothing();
   an_idle_link_is_dropped_but_never_mid_join();
   link_bookkeeping_survives_millis_zero_and_wrap();
+  a_hub_write_from_another_link_is_refused_in_both_join_states();
+  a_hub_write_with_no_join_is_refused_whatever_the_link();
+  the_single_link_order_still_lands();
+  the_link_generation_cannot_come_round_to_the_join();
   bad_packets_and_unknown_commands_publish_their_word();
   a_stopped_session_offers_nothing();
 

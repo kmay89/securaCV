@@ -166,7 +166,7 @@ All responses (including static files) include:
 | `Cache-Control` | `no-store` |
 | `Referrer-Policy` | `no-referrer` |
 
-The CSP `connect-src` directive lets the SPA this server serves reach two things: its own origin (`'self'`, the address you opened it from, whatever that is) and other Canary devices by their mDNS `.local` name on port 80 (`http://canary-b1c2.local`; CSP also lets that source match the same name over https on 443). Everything else is refused by the browser before a request leaves the page: the public internet, a `.local` name on another port, and **any device entered or listed only by its LAN IP**, such as `http://192.168.1.47`. Enter a device by its `.local` name (`canary-a3f7.local`), or open the SPA from that device's own address. The SPA's own address check (`isPrivateUrl()` in `spa/app.js`; the SPA Compliance list below) still accepts an RFC 1918 IP, so an IP entry passes that check and is then blocked by CSP.
+The CSP `connect-src` directive lets the SPA this server serves reach two things: its own origin (`'self'`, the address you opened it from, whatever that is) and other Canary devices by their mDNS `.local` name on port 80 (`http://canary-b1c2.local`; CSP also lets that source match the same name over https on 443). Everything else is refused by the browser before a request leaves the page: the public internet, a `.local` name on another port, and **any device entered or listed only by its LAN IP**, such as `http://192.168.1.47`. Enter a device by its `.local` name (`canary-a3f7.local`), or open the SPA from that device's own address. The SPA says so before asking: an address that passes its private-network check (`isPrivateUrl()` in `spa/app.js`; the SPA Compliance list below) but is an IP other than the SPA's own origin is refused by `needsLocalName()` before any request, with a message to enter the device's `.local` name, and a peer that pairs over HTTP but is listed without a `.local` name is shown as not reachable by name (sweep F448).
 
 CSP has no way to name an IP range. A host source's wildcard may stand only for the whole leftmost label (`*.local`), so a source such as `http://192.168.*` matches nothing. This header listed eighteen such range sources until sweep F427 (2026-11); headless Chromium logged each as an invalid source and ignored it, so dropping them changed nothing a browser enforces. Widening `connect-src` to the `http:` scheme would reach IP-only devices, and would also let an injected script send data to any http host; that trade is not made here. What the served header allows was recorded in headless Chromium against `node device-api/server.js` (sweep F427): a fetch to `'self'`, `http://<name>.local` and `https://<name>.local` passes CSP; `http://192.168.1.47`, `http://10.0.0.5`, `http://<name>.local:8080`, a `ws://` or `wss://<name>.local` socket and `https://example.com` are refused. Other browsers were not tried.
 
@@ -185,9 +185,9 @@ The SPA enforces additional client-side security constraints, verified by tests:
 - No `.innerHTML` usage (prevents DOM XSS)
 - No third-party tracking or analytics libraries
 - Tokens stored per-device in `localStorage` under the `canary_devices` key
-- All API requests validated as private-network URLs before sending
+- All API requests validated as private-network URLs before sending, and an IP that is not the SPA's own origin (which the `connect-src` above refuses) answered with "enter its `.local` name" instead of a request
 
-**Tests:** `tests/spa/csp-compliance.test.js`, `tests/spa/token-storage.test.js`
+**Tests:** `tests/spa/csp-compliance.test.js`, `tests/spa/token-storage.test.js`, `tests/spa/peer-discovery.test.js`
 
 
 ### D11 — Webhook SSRF and remote-exfiltration guard

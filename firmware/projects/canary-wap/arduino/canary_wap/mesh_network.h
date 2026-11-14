@@ -1030,7 +1030,8 @@ struct NearbyDevice {
   uint32_t last_seen_ms;
   // When this row was put in the table: set by handle_presence() at the
   // insert and never by a refresh, so a key's ACK counts once its row is
-  // PRESENCE_REQUIRED_MS old (spec §3.4 rule 4; sweep F311). A row pruned
+  // PRESENCE_REQUIRED_MS old (spec §3.4 rule 4; sweep F311), and since F234
+  // so does its suppress vote (handle_suppress_vote()). A row pruned
   // after NEARBY_TIMEOUT_MS of silence, or a new session id, starts again.
   uint32_t first_seen_ms;
   int8_t rssi;
@@ -1064,7 +1065,8 @@ struct ReceivedChirp {
   uint8_t  confirm_count;                       // = number of valid entries in confirmed_by[]
   // Suppress vote set: distinct session_pubkeys that have signed a
   // CHIRP_MSG_SUPPRESS_VOTE for this nonce within SUPPRESS_WINDOW_MS of
-  // received_ms. Sized to the largest threshold (MAX_SUPPRESS_VOTERS).
+  // received_ms, each from a key whose nearby row is PRESENCE_REQUIRED_MS
+  // old (F234). Sized to the largest threshold (MAX_SUPPRESS_VOTERS).
   uint8_t  suppressed_by[MAX_SUPPRESS_VOTERS][SESSION_PUBKEY_SIZE];
   uint8_t  suppress_count;
   bool     validated;                           // ≥ threshold confirmations (from pubkeys ≠ originator) received

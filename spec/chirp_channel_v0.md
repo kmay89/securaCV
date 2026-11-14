@@ -301,10 +301,13 @@ Device A sends chirp (hop 0) ──broadcast──→
   once per key, from its first beacon (a refresh does not move it), so
   keys that began beaconing ten minutes before a chirp confirm it as soon
   as it arrives: a delay, not a price per identity, and one an attack can
-  pay before it starts. A suppress vote needs no presence at all
-  (§2.5.6; sweep F234, open). This bullet said a coordinated attack needed
-  3 or more devices, each holding a distinct key, and that its cost was
-  real (sweep D16).
+  pay before it starts. A suppress vote waits the same ten minutes since
+  sweep F234, so it is delayed the same way and priced no more; before F234
+  it counted from any key that signed it. What a key or a presence row
+  should cost, and whether an emergency template can be voted down at all,
+  are open (§2.5.6; sweep F234, open). This bullet said a coordinated
+  attack needed 3 or more devices, each holding a distinct key, and that
+  its cost was real (sweep D16).
 - Real events naturally get confirmed by multiple witnesses.
 
 **Exception**: Safety-class templates (EMERGENCY, WEATHER) require only 1
@@ -315,7 +318,8 @@ count itself.
 **Presence requirement also applies to ACK origination**: a device must have
 been broadcasting presence beacons for `PRESENCE_REQUIRED_MS` (10 min) before
 its ACKs are accepted as confirmations. Drive-by devices cannot immediately
-push chirps over the validation threshold.
+push chirps over the validation threshold. Its suppress votes are counted on
+the same rule (§2.5.6; sweep F234).
 
 ### 2.5.4 Defense: Escalating Cooldowns
 
@@ -437,8 +441,32 @@ On the canary-wap (sweep F233):
   suppressed at 3 votes (43%), and no window was read.
   `test_chirp_suppress_wap.cpp` holds the rule with real signed votes at
   every table size from 3 to 32 rows.
-- Who may vote is open (sweep F234): a vote needs a valid signature and a
-  session id that derives from its key, not a presence row.
+- A vote counts only from a key whose nearby row went into the table at
+  least `PRESENCE_REQUIRED_MS` (10 min) before, the rule an ACK meets
+  (§3.4 rule 4; sweep F234). A vote from any other key, one no beacon
+  named here or one whose row is younger (a row pruned and put in again
+  starts its ten minutes again), counts for nothing: it takes no slot, is
+  not kept for when the row comes of age, and is not logged. Before F234 a
+  vote needed only a valid signature and a session id that derives from
+  its key, and a session key costs nothing to make, so one device in range
+  voted from as many fresh keys as the threshold asked and suppressed any
+  chirp, an emergency one included. A receiver with fewer than 3 rows now
+  suppresses nothing: three votes need three keys present there.
+  `test_chirp_suppress_wap.cpp` holds it with fresh keys at 0, 2, 6, 17
+  and 32 rows, rows 9 min, 9 min 59 s and 10 min less 1 ms old, a key heard
+  before its first beacon, a row pruned and put in again, a vote carried
+  by another radio or at hop 1, and the originator's own vote (presence is
+  the whole rule: rule 2 of §3.4 is an ACK's).
+- That rule is a delay, not a price. Presence beacons are unsigned (§3.2),
+  so one radio beacons the session ids of keys it made, and their ten
+  minutes run together: four such keys beaconed ten minutes beside three
+  real rows suppress a chirp there. And made-up rows count toward the
+  threshold: 32 of them fill the table, keep a real neighbor out of it (its
+  ACK and its vote refused) and ask 17 votes (sweep F232, open; both pinned
+  as today's behavior in `test_chirp_suppress_wap.cpp`). Who else may vote
+  (a key whose row a signed frame confirmed; a cost per row or per sender
+  address, F232) and whether an emergency template can be voted down at
+  all are open (sweep F234).
 
 **Behavior when suppressed**:
 - The chirp is hidden from the receiver's UI. (The canary-wap takes it out
@@ -474,6 +502,10 @@ On the canary-wap (sweep F233):
 - Privacy preserved (only `session_pubkey` in suppress vote, not a stable
   device identifier).
 - Legitimate content won't get mass-dismissed (50% threshold + 3-vote floor).
+  *(Amended 2026-11, sweep F234: the threshold counts session keys, and one
+  device makes any number of them. Since F234 each must have been beaconed
+  here for ten minutes first, a delay rather than a cost, so one radio in
+  range can still vote a chirp down; F232 and F234 are open.)*
 
 ### 2.5.7 Defense: Time-Based Restrictions
 
@@ -681,8 +713,10 @@ Receivers MUST:
    unsigned (§3.2; sweep F232), so one radio beacons any number of session
    ids at once and their ten minutes run together, up to the table's free
    rows: the rule delays a confirming key by ten minutes, it does not put a
-   price on each key. A suppress vote needs no presence row at all (§2.5.6;
-   sweep F234, open).
+   price on each key. A suppress vote meets the same rule since sweep F234
+   (§2.5.6): before F234 it counted from any key that signed it, row or
+   not. A stronger cost per voter (F232) and whether an emergency template
+   can be voted down at all are open (sweep F234).
 5. Otherwise, add the pubkey to `confirmed_by[]`. If the chirp's confirmation
    threshold is now met, mark `validated = true` and (if `relay_enabled`)
    relay the chirp.

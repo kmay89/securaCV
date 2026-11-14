@@ -321,9 +321,10 @@ static void test_wap_reads_the_reason() {
   // no reason and acknowledged. Now it is read across the segments. One
   // that does not fit still acknowledges the entry with no reason, but
   // unread: the reason is optional and kept nowhere, and the dashboard's
-  // reason field has no maxlength while its submitAck() reads no answer, so
-  // a refusal would leave the entry unacknowledged with nothing shown. A
-  // body that stops arriving is refused by name with nothing acknowledged.
+  // reason field has no maxlength, so a refusal would leave the entry
+  // unacknowledged over a reason nobody keeps (since F468's page half the
+  // dialog shows that refusal; before it, nothing was shown). A body that
+  // stops arriving is refused by name with nothing acknowledged.
   r = run(t, "/api/logs/5/ack", "{\"reason\":\"seen it\"}", /*segment=*/5);
   CHECK(g_acks.size() == 1 && g_acks[0].seq == 5 && g_acks[0].reason == "seen it" && r.recv_calls == 4,
         "wap: a body in 5-byte segments: reason %s after %d reads",

@@ -13,6 +13,39 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-11 (b) — The C6 nightstand had 2,832 B of slot left and no gate said so: the size check spoke only past the boundary, and the PR checks measured with their own copies (found by the 2.4.16 release audit; sweep F367)
+
+- **Symptom:** none on a device yet. The 2.4.16 release audit measured the
+  published `canary-display-nightstand-c6` image at 2,028,784 B in a
+  2,031,616 B (`0x1F0000`) slot, 2,832 B of headroom after growing 29,856 B
+  in one release, and the two Sense images at about 93% of theirs. Every
+  gate was green. One more release of that growth fails the slot check, and
+  the release's display loop then publishes no OTA manifest for that
+  product, so fielded nightstands stop updating with nothing seen before.
+- **Cause:** `check_slot_budget.py` had two answers, fits and does not fit,
+  so a release one feature from the boundary looked the same as one with
+  half its slot free. And firmware.yml's two PR size checks (the PlatformIO
+  `size_guard` step and the Arduino CLI WAP image) each measured with their
+  own `stat` arithmetic instead of the script the release runs (the
+  2026-08-07 fix single-sourced the budgets, not the measuring).
+- **Fix:** the script prints a `::warning::` naming the env, its free bytes
+  and the floor when an image fits with less than `HEADROOM_FLOOR_PERCENT`
+  (5%) of its slot free, the floor rounded up to a whole byte in integers;
+  an image that fits still passes and one over the slot still fails. Both PR
+  checks now call it with `--require-budget` (an env with no budget fails
+  instead of passing unmeasured), keeping their own refusal of an absent or
+  empty bin; old-versus-new differentials of both steps show no change in
+  pass or fail. `scripts/tests/test_check_slot_budget.py` pins the
+  boundaries and fw-v2.4.16's real sizes (the C6 nightstand warns, the Sense
+  images do not), and runs both extracted workflow steps under bash. The
+  warning on real images and on the run page is CI's to show; what the C6
+  build drops is an open decision (backlog F367).
+- **Applies to:** every size or budget gate. A gate that answers only at the
+  boundary is an alarm that rings after the product is skipped: give it a
+  warning band well before the limit. And one measurer for every caller:
+  a PR check that re-derives the number the release computes is a second
+  rule that can drift from the first.
+
 ## 2026-11-11 — The SBOM workflow's own tools floated: cdxgen unpinned, cargo-cyclonedx rebuilt from latest every week (found by reading; sweep CI26)
 
 - **Symptom:** none reported; it was found by reading. Every release

@@ -46,11 +46,14 @@
  * the device its Wi-Fi hands it the broker too — the hub it found over
  * Bonjour and the login it minted — over the same encrypted link, right
  * after the join. The write is taken only on an encrypted link (property
- * AND handler, as the RPC write is) and only while the session is
- * Provisioned or Provisioning; anything else reads back as rejected and
- * stores nothing. The host task only copies the document into a mailbox;
- * the loop task parses it (hub_handoff.h, host-tested) and hands the result
- * to the board through Identity::store_hub, which persists it and points
+ * AND handler, as the RPC write is), only while the session is
+ * Provisioned or Provisioning, and only from the link that sent that
+ * join's WIFI_SETTINGS (each write carries its link's connection
+ * generation; improv_core.h's hub_gate() decides); anything else reads
+ * back as rejected and stores nothing. The host task only copies the
+ * document into a mailbox; the loop task parses it (hub_handoff.h,
+ * host-tested) and hands the result to the board through
+ * Identity::store_hub, which persists it and points
  * the MQTT manager at it. A READ answers one status byte, never the
  * document. Not in the advert: the scan response is full, and the phone
  * that needs it is already connected.

@@ -55,7 +55,7 @@
 #include <csi_types.h>
 #include <csi_module.h>
 #include "csi_module_settings_nvs.h"  // the module settings' NVS rule, shared with the canary (F93)
-#include "csi_settings_nvs.h"         // the modules' boot init (F93); stored Quiet Hours (F123, F128)
+#include "csi_settings_nvs.h"         // the modules' boot init (F93); stored Quiet Hours (F123, F128); the settings body's key reader (F462)
 #include "csi_tune_lab.h"             // the Tuning Lab's knobs and its POST (F123, F128)
 #include <csi_event.h>
 #include "csi_event_id_floor.h"   // when to write the id floor (common/csi, host-tested)
@@ -726,18 +726,36 @@ esp_err_t handle_window(httpd_req_t* req) {
     httpd_resp_send(req, nullptr, 0);
     return ESP_OK;
   }
+  /* Composed piece by piece (sweep F464): each piece's length is tested
+   * against the room left before the offset moves, and an answer that does
+   * not fit is refused whole, never sent cut. The pieces were added to an
+   * offset untested (`off += snprintf(buf + off, sizeof(buf) - off, ...)`),
+   * safe only because 32 values of at most 12 bytes and the header come to
+   * about 440 of the 768; a longer vector, or a header past the buffer,
+   * pushed `off` past it, and the next `sizeof(buf) - off` wrapped. A loop
+   * that stopped 8 bytes short also cut the vector without a word. */
   char buf[768];
-  int  off = snprintf(buf, sizeof(buf),
-    "{\"frames\":%u,\"time_bucket\":%u,\"v\":[",
-    (unsigned)g_latest_window.frames_in_window,
-    (unsigned)g_latest_window.time_bucket);
-  for (int i = 0; i < CSI_FEATURE_DIM; ++i) {
-    off += snprintf(buf + off, sizeof(buf) - off, "%s%d",
-                    i ? "," : "", (int)g_latest_window.v[i]);
-    if (off >= (int)sizeof(buf) - 8) break;
+  size_t pos = 0;
+  size_t left = sizeof(buf);
+  int n = snprintf(buf, left, "{\"frames\":%u,\"time_bucket\":%u,\"v\":[",
+                   (unsigned)g_latest_window.frames_in_window,
+                   (unsigned)g_latest_window.time_bucket);
+  bool ok = (n > 0 && (size_t)n < left);
+  if (ok) { pos += (size_t)n; left -= (size_t)n; }
+  for (int i = 0; ok && i < CSI_FEATURE_DIM; ++i) {
+    n = snprintf(buf + pos, left, "%s%d", i ? "," : "", (int)g_latest_window.v[i]);
+    ok = (n > 0 && (size_t)n < left);
+    if (ok) { pos += (size_t)n; left -= (size_t)n; }
   }
-  snprintf(buf + off, sizeof(buf) - off, "]}");
+  if (ok) {
+    n = snprintf(buf + pos, left, "]}");
+    ok = (n > 0 && (size_t)n < left);
+  }
   httpd_resp_set_type(req, "application/json");
+  if (!ok) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    return httpd_resp_send(req, "{\"error\":\"raw window does not fit its answer\"}", -1);
+  }
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
 }
@@ -840,11 +858,13 @@ esp_err_t handle_events_today(httpd_req_t* req) {
     char tail[64];
     const int tn = snprintf(tail, sizeof(tail),
                             "],\"tamper\":{\"kind\":\"%s\"}}", active);
-    if (tn > 0 && (size_t)tn < sizeof(tail)) {
-      httpd_resp_send_chunk(req, tail, tn);
-    } else {
+    /* A kind the tail cannot hold closes the answer without it, never cut
+     * (check_wap_json_answers.py J5 judges this length test, F464). */
+    if (tn <= 0 || (size_t)tn >= sizeof(tail)) {
       httpd_resp_send_chunk(req, "]}", 2);
+      return httpd_resp_send_chunk(req, nullptr, 0);
     }
+    httpd_resp_send_chunk(req, tail, tn);
   } else {
     httpd_resp_send_chunk(req, "]}", 2);
   }
@@ -1157,9 +1177,11 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    *   "pet_mode":    true|false  → core.presence.pet_mode (bool)
    *   "preset":      "sensitive"|"balanced"|"quiet" → core.presence.preset (int 0..2)
    *   "sensitivity": 0..100      → core.presence.sensitivity (int)
-   * Hand-parse to keep ArduinoJson out of this TU. We search for the
-   * QUOTED key in every case so a body like {"not_pet_mode": true}
-   * doesn't accidentally match. Buffer sized for the full payload:
+   * Hand-parse to keep ArduinoJson out of this TU. Every key is found by
+   * json_object_member() (csi_settings_nvs.cpp, sweep F462): a member of
+   * the body's own object, never a strstr() of the quoted key, which read
+   * a value spelled like a key as the key ({"label":"privacy_ceiling",
+   * "x":"p2"} stored the ceiling P2). Buffer sized for the full payload:
    *   pet_mode + preset + sensitivity + quiet_hours{enabled, start, end}
    * is ~130 chars; 384 leaves room for the household time zone (F28:
    * "tz" up to 47 chars, "tz_iana" up to 47) on top. Read whole through
@@ -1192,6 +1214,17 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
     return ESP_OK;
   }
+  /* A NUL inside the body is no JSON byte, and it would split the body in
+   * two: "filter_foreign" is read over all `got` bytes, the time zone and
+   * the stores to the first NUL, so {"pet_mode":true,"filter_foreign":false}
+   * followed by a NUL and junk stored pet mode and not the filter, and
+   * answered ok (the F462 review). Refused here, before any key is read,
+   * every reader below reads the same `got` bytes (strlen(body) == got). */
+  if (memchr(body, '\0', got) != nullptr) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body is not JSON\"}", -1);
+    return ESP_OK;
+  }
 
   bool wrote_anything = false;
 
@@ -1199,18 +1232,20 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * (repo sweep F28); "tz":"" alone clears the zone (back to UTC). Handled
    * FIRST and all-or-nothing: an unknown zone or an invalid rule is refused
    * by name before any other key in the body is written, so a 400 never
-   * leaves half a settings change on disk. */
-  if (strstr(body, "\"tz\"") != nullptr || strstr(body, "\"tz_iana\"") != nullptr) {
-    char tz[tz_rule::MAX_POSIX_LEN + 1] = {0};
-    char tz_iana[tz_rule::MAX_IANA_LEN + 1] = {0};
-    const bool tz_key   = strstr(body, "\"tz\"") != nullptr;
-    const bool iana_key = strstr(body, "\"tz_iana\"") != nullptr;
-    if ((tz_key && !tz_rule::json_string_field(body, "\"tz\"", tz, sizeof(tz))) ||
-        (iana_key && !tz_rule::json_string_field(body, "\"tz_iana\"", tz_iana, sizeof(tz_iana)))) {
-      httpd_resp_set_status(req, "400 Bad Request");
-      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"bad time zone\"}", -1);
-      return ESP_OK;
-    }
+   * leaves half a settings change on disk. Each is a member of the body's
+   * own object, read from where its key stands (read_tz_from_settings(),
+   * sweep F462): {"note":"tz","pet_mode":true} names no zone, and answered
+   * 400 "bad time zone" when "tz" was found by strstr(). */
+  char tz[tz_rule::MAX_POSIX_LEN + 1] = {0};
+  char tz_iana[tz_rule::MAX_IANA_LEN + 1] = {0};
+  bool tz_key = false;
+  bool iana_key = false;
+  if (!read_tz_from_settings(body, tz, sizeof(tz), tz_iana, sizeof(tz_iana), &tz_key, &iana_key)) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"bad time zone\"}", -1);
+    return ESP_OK;
+  }
+  if (tz_key || iana_key) {
     const tz_rule::Resolve r = (tz_key && tz[0] == '\0' && tz_iana[0] == '\0')
                                    ? clear_tz()
                                    : store_tz(tz, tz_iana);
@@ -1257,19 +1292,17 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
   const bool ceiling_changed = store_privacy_ceiling_from_settings(prefs, body);
   if (ceiling_changed) wrote_anything = true;
 
-  /* "filter_foreign": true|false → csi.ff (bool). Applied to the HAL below
-   * so the next frame sees it; no reboot. */
+  /* "filter_foreign": true|false → csi.ff (bool), the body's own member
+   * (json_object_member(), sweep F462). Applied to the HAL below so the
+   * next frame sees it; no reboot. */
   bool filter_changed = false;
-  if (const char* k = strstr(body, "\"filter_foreign\"")) {
-    if (const char* v = strchr(k, ':')) {
-      v++;
-      while (*v == ' ' || *v == '\t' || *v == '"') v++;
-      if (strncmp(v, "true", 4) == 0) {
-        prefs.putBool(NVS_KEY_FILTER_FOREIGN, true);  wrote_anything = true; filter_changed = true;
-      } else if (strncmp(v, "false", 5) == 0) {
-        prefs.putBool(NVS_KEY_FILTER_FOREIGN, false); wrote_anything = true; filter_changed = true;
-      }
-    }
+  JsonMember ff_member = {nullptr, nullptr, 0};
+  bool filter_on = true;
+  if (json_object_member(body, got, "filter_foreign", &ff_member) &&
+      json_member_bool(ff_member, &filter_on)) {
+    prefs.putBool(NVS_KEY_FILTER_FOREIGN, filter_on);
+    wrote_anything = true;
+    filter_changed = true;
   }
 
   prefs.end();
@@ -1502,7 +1535,16 @@ esp_err_t handle_tune_get_coefficients(httpd_req_t* req) {
       first ? "" : ",",
       c.full_key, c.group, c.label, kind_str,
       (long)c.min_v, (long)c.max_v, (long)c.default_v, (long)v);
-    if (n > 0) httpd_resp_send_chunk(req, buf, n);
+    /* A row its buffer cannot hold ends the list there, whole (F464): a row
+     * snprintf() cut was sent at the length it reported, n bytes read from
+     * the 320-byte buffer, past its end. The table's literal keys, groups
+     * and labels are far under it. */
+    if (n <= 0 || (size_t)n >= sizeof(buf)) {
+      httpd_resp_send_chunk(req, "]}", -1);
+      if (prefs_ok) prefs.end();
+      return httpd_resp_send_chunk(req, nullptr, 0);
+    }
+    httpd_resp_send_chunk(req, buf, n);
     first = false;
   }
   httpd_resp_send_chunk(req, "]}", -1);
@@ -1599,7 +1641,15 @@ esp_err_t handle_tune_get_preset(httpd_req_t* req) {
     char buf[160];
     int n = snprintf(buf, sizeof(buf), "%s\"%s\":%ld",
                      first ? "" : ",", c.full_key, (long)v);
-    if (n > 0) httpd_resp_send_chunk(req, buf, n);
+    /* As the coefficients list: a row past its buffer ends the bundle
+     * there, whole, never sent as n bytes read from the 160-byte buffer
+     * (F464). */
+    if (n <= 0 || (size_t)n >= sizeof(buf)) {
+      httpd_resp_send_chunk(req, "}", -1);
+      if (prefs_ok) prefs.end();
+      return httpd_resp_send_chunk(req, nullptr, 0);
+    }
+    httpd_resp_send_chunk(req, buf, n);
     first = false;
   }
   httpd_resp_send_chunk(req, "}", -1);

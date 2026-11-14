@@ -20,9 +20,14 @@
 // test names no symbol F233 added, so the same file compiles against the code
 // before it: that is how each case below was shown to fail there.
 //
-// Who may vote is F234's open decision (today a vote needs no presence row):
-// every voter here holds a row, except where the table is smaller than the
-// three-vote floor, which these cases leave alone.
+// Who may vote (sweep F234): a vote counts only from a key whose nearby row
+// is PRESENCE_REQUIRED_MS (ten minutes) old, the rule an ACK meets (spec
+// §3.4 rule 4, F311). It counted from any key that signed it, row or not,
+// so one radio made as many keys as the threshold asked and suppressed any
+// chirp. The voters in every case below hold rows that old before the chirp
+// arrives (stay_present()); the cases under "Who may vote" hold the rule
+// itself. Whether a stronger cost is asked of a voter, and whether an
+// emergency template can be voted down at all, stay open (F234, F232).
 //
 // What a suppressed chirp does (sweep F269): it leaves the recent table at
 // the vote that suppresses it, so nothing reads it after that vote: GET
@@ -47,8 +52,8 @@
 // prune dropped it, where suppression asks more than half the rows and at
 // least three. A received ACK of any type but CONFIRMED now changes nothing,
 // and a row the owner dismissed takes no confirmation before its prune.
-// The cases that confirm hold their keys present for ten minutes first
-// (stay_present(); spec §3.4 rule 4, sweep F311).
+// The cases that confirm or vote hold their keys present for ten minutes
+// first (stay_present(); spec §3.4 rule 4, sweeps F311 and F234).
 //
 // Host-tested only: the stubs stand in for the radio and the clock; the
 // Arduino compile is CI's.
@@ -67,6 +72,7 @@
 #include <time.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -372,14 +378,16 @@ std::vector<Neighbor> fill_nearby(size_t rows) {
   return out;
 }
 
-// The neighbors in `ns` keep beaconing, once a minute, until the rows their
-// first beacons put in the nearby table are PRESENCE_REQUIRED_MS old, so a
-// confirmation from any of them counts (spec §3.4 rule 4; sweep F311). The
-// wall clock moves with uptime and the loop task runs a pass each minute, as
-// on a device. Votes need no presence (F234's open decision), so only the
-// cases that confirm call this, before their witness arrives.
-void stay_present(const std::vector<Neighbor>& ns) {
-  for (uint32_t t = 0; t < cc::PRESENCE_REQUIRED_MS; t += 60000) {
+// The neighbors in `ns` keep beaconing, once a minute, for `minutes`
+// (PRESENCE_REQUIRED_MS by default, so the rows their first beacons put in
+// the nearby table are that old and a confirmation or a vote from any of
+// them counts: spec §3.4 rule 4, sweeps F311 and F234). The wall clock moves
+// with uptime and the loop task runs a pass each minute, as on a device. The
+// cases call it before their witness arrives: a vote counts only within
+// SUPPRESS_WINDOW_MS (two minutes) of the chirp's arrival.
+void stay_present(const std::vector<Neighbor>& ns,
+                  uint32_t minutes = cc::PRESENCE_REQUIRED_MS / 60000) {
+  for (uint32_t m = 0; m < minutes; ++m) {
     host_sim::now_ms += 60000;
     host_sim::wall_now += 60;
     for (const Neighbor& n : ns) deliver(n, presence_of(n));
@@ -460,14 +468,15 @@ int recent_route_shows(const uint8_t nonce[8]) {
 
 // ── At each table size ──────────────────────────────────────────────────
 
-// `rows` nearby rows, a chirp, then votes from the rows one by one, a second
-// apart: the chirp holds until the vote that makes its voters more than half
-// of the rows (and at least three), and is suppressed at that vote. With
-// `whole` the route view, the health log, the votes after it and the prune
-// are checked too.
+// `rows` nearby rows ten minutes old, a chirp, then votes from the rows one
+// by one, a second apart: the chirp holds until the vote that makes its
+// voters more than half of the rows (and at least three), and is suppressed
+// at that vote. With `whole` the route view, the health log, the votes after
+// it and the prune are checked too.
 void suppressed_at_more_than_half(size_t rows, bool whole) {
   boot_enabled();
   const std::vector<Neighbor> nearby = fill_nearby(rows);
+  stay_present(nearby);   // the rows may vote (F234)
   uint8_t nonce[8];
   cc::ReceivedChirp* c = witness_arrives(0x40, nonce);
   const size_t needed = more_than_half(rows);
@@ -508,6 +517,9 @@ void suppressed_at_more_than_half(size_t rows, bool whole) {
   // a set's worth: none of it counts anywhere, stores anything or logs the
   // line again (every vote after the one that suppressed logged it once
   // more before F233's review; until F269 they went on filling the set).
+  // Since F234 a vote from a key with no row is refused before it looks the
+  // chirp up, so the rows' own later votes are what reach the suppressed
+  // chirp's empty slot (none at 3 rows, where all three suppressed it).
   for (size_t v = needed; v < rows; ++v) {
     host_sim::now_ms += 1000;
     deliver(nearby[v], vote_of(nearby[v], nonce));
@@ -563,6 +575,7 @@ void test_every_table_size_can_suppress() {
 void test_a_repeated_voter_counts_once() {
   boot_enabled();
   std::vector<Neighbor> nearby = fill_nearby(7);
+  stay_present(nearby);
   uint8_t nonce[8];
   cc::ReceivedChirp* c = witness_arrives(0x41, nonce);
   for (size_t v = 0; v < 3; ++v) {
@@ -584,6 +597,7 @@ void test_a_repeated_voter_counts_once() {
 
   boot_enabled();
   nearby = fill_nearby(32);
+  stay_present(nearby);
   c = witness_arrives(0x42, nonce);
   for (size_t v = 0; v < 16; ++v) {
     host_sim::now_ms += 500;
@@ -605,8 +619,10 @@ void test_a_repeated_voter_counts_once() {
 // vote at 120 000 ms suppresses it.
 void test_votes_across_the_window() {
   for (const uint32_t third_at : {120000u, 120001u}) {
-    const uint32_t t0 = boot_enabled();
+    boot_enabled();
     std::vector<Neighbor> nearby = fill_nearby(3);
+    stay_present(nearby);
+    const uint32_t t0 = host_sim::now_ms;
     uint8_t nonce[8];
     cc::ReceivedChirp* c = witness_arrives(0x43, nonce);
     CHECK(c->received_ms == t0);
@@ -635,8 +651,10 @@ void test_votes_across_the_window() {
   // The window is the chirp's own: a second chirp heard later opens its own
   // 120 s, while the first one's has closed. At 7 rows (4 votes needed).
   {
-    const uint32_t t0 = boot_enabled();
+    boot_enabled();
     std::vector<Neighbor> nearby = fill_nearby(7);
+    stay_present(nearby);
+    const uint32_t t0 = host_sim::now_ms;
     uint8_t first[8];
     uint8_t second[8];
     cc::ReceivedChirp* a = witness_arrives(0x44, first);
@@ -661,10 +679,15 @@ void test_votes_across_the_window() {
   }
 
   // Uptime wraps (49.7 days): a chirp heard 50 s before the wrap still takes
-  // votes 100 s later, and drops them 130 s later.
+  // votes 100 s later, and drops them 130 s later. The voters' rows were put
+  // in ten minutes before the chirp, so their age is read across the wrap
+  // too.
   for (const uint32_t late : {100000u, 130000u}) {
-    const uint32_t t0 = boot_enabled(0xFFFFFFFFu - 50000u);
+    boot_enabled(0xFFFFFFFFu - 50000u - cc::PRESENCE_REQUIRED_MS);
     std::vector<Neighbor> nearby = fill_nearby(3);
+    stay_present(nearby);
+    const uint32_t t0 = host_sim::now_ms;
+    CHECK(t0 == 0xFFFFFFFFu - 50000u);
     uint8_t nonce[8];
     cc::ReceivedChirp* c = witness_arrives(0x46, nonce);
     host_sim::now_ms = t0 + late;   // past the wrap
@@ -682,14 +705,17 @@ void test_votes_across_the_window() {
 // after the first copy, 70 s after the second) suppressed the second copy
 // (this case was a_second_copy_takes_its_own_votes, which held that). Now
 // the frame heard again takes no row, the votes fall 130 s after the only
-// copy arrived, outside its window, and the chirp is still shown.
+// copy arrived, outside its window, and the chirp is still shown. The
+// voters' rows are ten minutes old first (F234), so the window alone refuses
+// their votes; the scene's times count from there.
 void test_a_chirp_heard_again_keeps_one_row_and_its_window() {
-  boot_enabled();   // the filter was cleared at this boot
+  boot_enabled();
   const auto advance = [](uint32_t ms) {
     host_sim::now_ms += ms;
     host_sim::wall_now += ms / 1000;
   };
   std::vector<Neighbor> nearby = fill_nearby(3);
+  stay_present(nearby);
   advance(250000);
   for (const Neighbor& n : nearby) deliver(n, presence_of(n));
   const std::vector<uint8_t> w = witness_of(kOriginator, 0x48);
@@ -722,6 +748,7 @@ void test_a_chirp_heard_again_keeps_one_row_and_its_window() {
 void test_a_vote_must_verify() {
   boot_enabled();
   const std::vector<Neighbor> nearby = fill_nearby(3);
+  stay_present(nearby);   // each key may vote (F234): what refuses below is the frame
   uint8_t nonce[8];
   cc::ReceivedChirp* c = witness_arrives(0x49, nonce);
   const size_t lines_before = suppressed_lines();
@@ -778,6 +805,7 @@ void test_a_vote_must_verify() {
 void test_a_vote_before_its_chirp_is_not_kept() {
   boot_enabled();
   std::vector<Neighbor> nearby = fill_nearby(3);
+  stay_present(nearby);
   const std::vector<uint8_t> w = witness_of(kOriginator, 0x47);
   uint8_t nonce[8];
   memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
@@ -790,6 +818,402 @@ void test_a_vote_before_its_chirp_is_not_kept() {
   CHECK(table_holds(nonce));
   for (size_t v = 0; v < 3; ++v) deliver(nearby[v], vote_of(nearby[v], nonce, 0x76));
   CHECK(!table_holds(nonce));          // suppressed, out of the table
+}
+
+// ── Who may vote (sweep F234) ───────────────────────────────────────────
+
+// Every byte a vote could move: the recent table and the nearby table whole,
+// their counts, and the health log's length.
+struct Tables {
+  std::vector<uint8_t> recent;
+  size_t recent_count;
+  std::vector<uint8_t> nearby;
+  size_t nearby_count;
+  size_t health_lines;
+  bool operator==(const Tables& o) const {
+    return recent == o.recent && recent_count == o.recent_count && nearby == o.nearby &&
+           nearby_count == o.nearby_count && health_lines == o.health_lines;
+  }
+};
+Tables tables_now() {
+  Tables t;
+  const uint8_t* r = reinterpret_cast<const uint8_t*>(cc::g_recent_chirps);
+  const uint8_t* n = reinterpret_cast<const uint8_t*>(cc::g_nearby_devices);
+  t.recent.assign(r, r + cc::MAX_RECENT_CHIRPS * sizeof(cc::ReceivedChirp));
+  t.recent_count = cc::g_recent_chirp_count;
+  t.nearby.assign(n, n + cc::MAX_NEARBY_CACHE * sizeof(cc::NearbyDevice));
+  t.nearby_count = cc::g_nearby_count;
+  t.health_lines = g_health.size();
+  return t;
+}
+// Delivers `f` from `radio` and holds that it moved nothing: a refused vote.
+// REFUSED() names the caller's line, and what moved.
+void refused_at(int line, const Neighbor& radio, const std::vector<uint8_t>& f) {
+  const Tables before = tables_now();
+  deliver(radio, f);
+  const Tables after = tables_now();
+  ++g_checks;
+  if (after == before) return;
+  std::fprintf(stderr, "FAIL %s:%d: a refused vote moved %s%s%s%s(row 0's suppress_count %u -> %u)\n",
+               __FILE__, line, after.recent != before.recent ? "the recent table " : "",
+               after.recent_count != before.recent_count ? "the recent count " : "",
+               after.nearby != before.nearby || after.nearby_count != before.nearby_count
+                   ? "the nearby table " : "",
+               after.health_lines != before.health_lines ? "the health log " : "",
+               before.recent_count > 0 ? (unsigned)before.recent[offsetof(cc::ReceivedChirp, suppress_count)] : 0u,
+               after.recent_count > 0 ? (unsigned)after.recent[offsetof(cc::ReceivedChirp, suppress_count)] : 0u);
+  std::exit(1);
+}
+#define REFUSED(radio, f) refused_at(__LINE__, (radio), (f))
+
+// An urgent emergency chirp from `origin` (one confirmation validates one,
+// spec §3.4), stored here; its nonce in `nonce`.
+cc::ReceivedChirp* emergency_arrives(const Neighbor& origin, uint8_t nonce_byte, uint8_t nonce[8]) {
+  const std::vector<uint8_t> w =
+      witness_of(origin, nonce_byte, cc::TPL_EMERG_FIRE_VISIBLE, 0, cc::CHIRP_URG_URGENT);
+  memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
+  deliver(origin, w);
+  for (size_t i = 0; i < cc::g_recent_chirp_count; ++i) {
+    if (memcmp(cc::g_recent_chirps[i].nonce, nonce, 8) == 0) {
+      CHECK(cc::g_recent_chirps[i].suppress_count == 0);
+      return &cc::g_recent_chirps[i];
+    }
+  }
+  CHECK(false);
+  return nullptr;
+}
+
+// A key that no beacon has named here: a fresh session key, as one device
+// makes any number of (spec §2.3).
+Neighbor fresh_key(size_t k) { return neighbor_of((uint8_t)(0x80 + k)); }
+
+// The item's probe (sweep F234): an urgent emergency chirp, at receivers
+// whose rows are ten minutes old, voted on by fresh session keys, keys no
+// beacon ever named here. They suppressed it at the 3rd vote with 0 or 2
+// rows, the 4th with 6, the 9th with 17 and the 17th with 32: one radio in
+// range hid any chirp. Now more than a full set of them (MAX_SUPPRESS_VOTERS
+// + 3) each move no byte of either table and log nothing, and the chirp is
+// still shown after the pass. Then the rows' own votes count, and suppress
+// it at more than half of the rows (spec §2.5.6's arithmetic, F233, the same
+// for the votes that count): at 0 and 2 rows nothing can, as three votes
+// need three keys present here.
+void test_a_fresh_key_votes_for_nothing() {
+  for (const size_t rows : {0u, 2u, 6u, 17u, 32u}) {
+    boot_enabled();
+    const std::vector<Neighbor> nearby = fill_nearby(rows);
+    stay_present(nearby);
+    uint8_t nonce[8];
+    cc::ReceivedChirp* c = emergency_arrives(kOriginator, 0x40, nonce);
+    const size_t lines_before = suppressed_lines();
+    const size_t capacity = sizeof(c->suppressed_by) / sizeof(c->suppressed_by[0]);
+    for (size_t k = 0; k < capacity + 3; ++k) {
+      host_sim::now_ms += 100;
+      const Neighbor stranger = fresh_key(k);
+      REFUSED(stranger, vote_of(stranger, nonce));
+    }
+    CHECK_AT(rows, c->suppress_count == 0 && table_holds(nonce));
+    CHECK_AT(rows, cc::g_nearby_count == rows);   // a vote puts no row in
+    cc::update();
+    CHECK_AT(rows, recent_route_shows(nonce) == 0);
+
+    const size_t needed = more_than_half(rows);
+    for (size_t v = 0; v < rows && v < needed; ++v) {
+      host_sim::now_ms += 100;
+      deliver(nearby[v], vote_of(nearby[v], nonce));
+      if (v + 1 < needed) CHECK_AT(rows, c->suppress_count == v + 1 && table_holds(nonce));
+    }
+    if (needed <= rows) {
+      CHECK_AT(rows, !table_holds(nonce));                       // suppressed at `needed`
+      CHECK_AT(rows, suppressed_lines() == lines_before + 1);
+    } else {
+      CHECK_AT(rows, c->suppress_count == rows && table_holds(nonce));   // every row voted: shown
+      cc::update();
+      CHECK_AT(rows, recent_route_shows(nonce) == 0);
+      CHECK_AT(rows, suppressed_lines() == lines_before);
+    }
+  }
+}
+
+// A vote counts once its key's row is PRESENCE_REQUIRED_MS old, not before,
+// the moment an ACK's would (spec §3.4 rule 4; test_chirp_security.cpp's
+// c13_an_ack_waits_for_ten_minutes_of_presence). Three rows: b and c first
+// heard a minute before a, all beaconing once a minute. An emergency chirp
+// arrives when a's row is 9 minutes old; b's and c's votes count at 10
+// minutes exactly, a's is refused at 9 minutes, at 9 minutes 59 s and at 10
+// minutes less 1 ms, and none of those is kept for when its row comes of
+// age: at 10 minutes the chirp still holds two votes. a's vote then counts,
+// the third, and suppresses it.
+void test_a_vote_waits_for_ten_minutes_of_presence() {
+  boot_enabled();
+  const Neighbor b = neighbor_of(0x01);
+  const Neighbor c = neighbor_of(0x02);
+  const Neighbor a = neighbor_of(0x03);
+  deliver(b, presence_of(b));
+  deliver(c, presence_of(c));
+  stay_present({b, c}, 1);
+  deliver(a, presence_of(a));
+  const uint32_t a_first = host_sim::now_ms;
+  stay_present({a, b, c}, 9);
+  CHECK(host_sim::now_ms - a_first == 9u * 60000u);
+  uint8_t nonce[8];
+  cc::ReceivedChirp* ch = emergency_arrives(kOriginator, 0x41, nonce);
+  deliver(b, vote_of(b, nonce));
+  deliver(c, vote_of(c, nonce));
+  CHECK(ch->suppress_count == 2 && table_holds(nonce));      // ten minutes exactly: counted
+
+  uint8_t fb = 0x72;
+  REFUSED(a, vote_of(a, nonce, fb++));                       // 9 minutes
+  host_sim::now_ms = a_first + 9u * 60000u + 59000u;         // 9 minutes 59 s, a beacon just heard
+  deliver(a, presence_of(a));
+  REFUSED(a, vote_of(a, nonce, fb++));
+  host_sim::now_ms = a_first + cc::PRESENCE_REQUIRED_MS - 1;
+  REFUSED(a, vote_of(a, nonce, fb++));                       // 10 minutes less 1 ms
+  host_sim::now_ms = a_first + cc::PRESENCE_REQUIRED_MS;
+  cc::update();
+  CHECK(ch->suppress_count == 2 && table_holds(nonce));      // nothing kept for this moment
+  CHECK(recent_route_shows(nonce) == 0);
+  const size_t lines_before = suppressed_lines();
+  deliver(a, vote_of(a, nonce, fb++));                       // 10 minutes: the third vote
+  CHECK(!table_holds(nonce));
+  CHECK(suppressed_lines() == lines_before + 1);
+}
+
+// The ten minutes are the row's, as for an ACK (F311): a vote heard before
+// its key's first beacon is refused, and so is the next one, once the beacon
+// has put in a row that is new; a row pruned after NEARBY_TIMEOUT_MS of
+// silence and put in again starts its ten minutes again, however long the
+// key was present before. At 3 rows (3 votes needed), so the third key is
+// the one that suppresses or not.
+void test_a_new_row_starts_its_ten_minutes_again() {
+  // Before its first beacon.
+  {
+    boot_enabled();
+    const std::vector<Neighbor> bc = fill_nearby(2);
+    stay_present(bc);
+    const Neighbor k = neighbor_of(0x10);
+    uint8_t nonce[8];
+    cc::ReceivedChirp* ch = emergency_arrives(kOriginator, 0x42, nonce);
+    REFUSED(k, vote_of(k, nonce, 0x72));                     // no row at all
+    deliver(k, presence_of(k));                              // its first beacon: a row, new
+    CHECK(cc::g_nearby_count == 3);
+    REFUSED(k, vote_of(k, nonce, 0x73));
+    deliver(bc[0], vote_of(bc[0], nonce));
+    deliver(bc[1], vote_of(bc[1], nonce));
+    CHECK(ch->suppress_count == 2 && table_holds(nonce));    // 3 rows ask 3 votes: shown
+    cc::update();
+    CHECK(recent_route_shows(nonce) == 0);
+  }
+  // Present ten minutes, silent until the prune takes its row, heard again.
+  {
+    boot_enabled();
+    const std::vector<Neighbor> bc = fill_nearby(2);
+    const Neighbor k = neighbor_of(0x10);
+    deliver(k, presence_of(k));
+    stay_present({bc[0], bc[1], k}, 20);                     // twenty minutes present
+    for (int m = 0; m < 4 && cc::g_nearby_count == 3; ++m) stay_present(bc, 1);
+    CHECK(cc::g_nearby_count == 2);                          // k's row pruned
+    deliver(k, presence_of(k));                              // and put in again, new
+    CHECK(cc::g_nearby_count == 3);
+    uint8_t nonce[8];
+    cc::ReceivedChirp* ch = emergency_arrives(kOriginator, 0x43, nonce);
+    deliver(bc[0], vote_of(bc[0], nonce));
+    deliver(bc[1], vote_of(bc[1], nonce));
+    REFUSED(k, vote_of(k, nonce));
+    CHECK(ch->suppress_count == 2 && table_holds(nonce));
+    // Ten minutes after its return a vote of k's counts, for a chirp still in
+    // its window.
+    stay_present({bc[0], bc[1], k});
+    uint8_t later[8];
+    ch = emergency_arrives(kOriginator, 0x44, later);
+    deliver(bc[0], vote_of(bc[0], later));
+    deliver(bc[1], vote_of(bc[1], later));
+    CHECK(ch->suppress_count == 2);
+    deliver(k, vote_of(k, later));
+    CHECK(!table_holds(later));                              // the third: suppressed
+  }
+}
+
+// The rule reads the vote's key, never the radio it came from or its hop
+// count: a vote carries no relay envelope, so a frame naming a key with no
+// row here is refused from whichever radio, at hop 0 or 1, while a frame
+// naming a present key counts whoever sends it. And the chirp's originator
+// is a voter like any other (the rule is presence alone; spec §3.4 rule 2,
+// no self-confirmation, is an ACK's): refused with no row, counted once its
+// row is ten minutes old, the vote that suppresses at 3 rows.
+void test_a_vote_is_ruled_by_its_key() {
+  boot_enabled();
+  const Neighbor origin = neighbor_of(0x20);
+  std::vector<Neighbor> nearby = fill_nearby(2);
+  stay_present(nearby);
+  uint8_t nonce[8];
+  cc::ReceivedChirp* ch = emergency_arrives(origin, 0x45, nonce);
+  const Neighbor x = fresh_key(0);
+  std::vector<uint8_t> relayed = vote_of(x, nonce);
+  relayed[offsetof(cc::ChirpHeader, hop_count)] = 1;
+  REFUSED(nearby[0], relayed);                               // x's vote from a present radio, hop 1
+  REFUSED(x, vote_of(x, nonce, 0x73));                       // and from its own, hop 0
+  REFUSED(origin, vote_of(origin, nonce));                   // the originator holds no row
+  std::vector<uint8_t> carried = vote_of(nearby[0], nonce);
+  carried[offsetof(cc::ChirpHeader, hop_count)] = 1;
+  deliver(x, carried);                                       // a present key's vote, from x's radio
+  CHECK(ch->suppress_count == 1);
+  deliver(nearby[1], vote_of(nearby[1], nonce));
+  CHECK(ch->suppress_count == 2 && table_holds(nonce));      // 2 rows ask 3: shown
+
+  boot_enabled();
+  nearby = fill_nearby(2);
+  deliver(origin, presence_of(origin));
+  stay_present({nearby[0], nearby[1], origin});
+  ch = emergency_arrives(origin, 0x46, nonce);
+  CHECK(cc::g_nearby_count == 3);
+  const size_t before = host_sim::espnow->sent.size();
+  deliver(origin, confirm_of(origin, nonce));                // its own ACK: refused, rule 2
+  CHECK(ch->confirm_count == 0 && !ch->validated && sent_of_type(before, cc::CHIRP_MSG_WITNESS) == 0);
+  deliver(nearby[0], vote_of(nearby[0], nonce));
+  deliver(nearby[1], vote_of(nearby[1], nonce));
+  CHECK(ch->suppress_count == 2);
+  deliver(origin, vote_of(origin, nonce));                   // its own vote: the third
+  CHECK(!table_holds(nonce));
+}
+
+// No other frame does a vote's work for a key with no row (F305 made every
+// ACK but CONFIRMED change nothing; it holds here for keys F234 now
+// refuses): a fresh key's RESOLVED ACK, every other ack_type byte, a MUTE
+// and a SELFTEST frame take no vote, set nothing, and the chirp is still
+// held and shown after the prune.
+void test_no_other_frame_votes_for_a_fresh_key() {
+  boot_enabled();
+  const std::vector<Neighbor> nearby = fill_nearby(3);
+  stay_present(nearby);
+  uint8_t nonce[8];
+  emergency_arrives(kOriginator, 0x47, nonce);
+  const Neighbor x = fresh_key(1);
+  for (unsigned type = 0; type < 256; ++type) {
+    if (type == cc::CHIRP_ACK_CONFIRMED) continue;
+    deliver(x, ack_of(x, nonce, (uint8_t)type, (uint8_t)type));
+  }
+  cc::ChirpSuppressVotePayload body;   // a vote's own bytes, under the other two types
+  memset(&body, 0, sizeof body);
+  memcpy(body.original_nonce, nonce, 8);
+  memcpy(body.voter_session_pubkey, x.pub, sizeof body.voter_session_pubkey);
+  deliver(x, frame_of(header_of(x, cc::CHIRP_MSG_MUTE, 0x74), body));
+  deliver(x, frame_of(header_of(x, cc::CHIRP_MSG_SELFTEST_OK, 0x75), body));
+  host_sim::now_ms += 30001;                                 // the next prune
+  cc::update();
+  CHECK(rows_holding(nonce) == 1);
+  const cc::ReceivedChirp* c = &cc::g_recent_chirps[0];
+  CHECK(!c->dismissed && c->suppress_count == 0 && c->confirm_count == 0);
+  CHECK(recent_route_shows(nonce) == 0);
+}
+
+// What the ten minutes cost (F234's floor is a delay, not a price; F232
+// decides the price, open). Presence beacons are unsigned, so one radio
+// beacons the session ids of keys it made, and their ten minutes run
+// together. At a receiver with 3 present rows, one radio's 4 keys, beaconed
+// from it ten minutes, make 7 rows, and their 4 votes suppress an emergency
+// chirp (4 is more than half of 7). Pinned as today's behavior: a cost per
+// row (F232) or a stronger rule for who may vote (F234) flips it, and this
+// case is then rewritten to that rule, not deleted.
+void test_keys_beaconed_ten_minutes_still_vote() {
+  boot_enabled();
+  std::vector<Neighbor> nearby = fill_nearby(3);
+  std::vector<Neighbor> made;
+  for (uint8_t k = 0; k < 4; ++k) {
+    Neighbor n = neighbor_of((uint8_t)(0x60 + k));
+    memcpy(n.mac, nearby[0].mac, sizeof n.mac);              // one radio, nearby[0]'s
+    made.push_back(n);
+    deliver(n, presence_of(n));
+  }
+  std::vector<Neighbor> all = nearby;
+  all.insert(all.end(), made.begin(), made.end());
+  stay_present(all);
+  CHECK(cc::g_nearby_count == 7);
+  uint8_t nonce[8];
+  cc::ReceivedChirp* ch = emergency_arrives(kOriginator, 0x48, nonce);
+  for (size_t v = 0; v < 3; ++v) {
+    deliver(made[v], vote_of(made[v], nonce));
+    CHECK(ch->suppress_count == v + 1);
+  }
+  deliver(made[3], vote_of(made[3], nonce));
+  CHECK(!table_holds(nonce));                                // F234 and F232 open: suppressed
+}
+
+// ── A padded nearby table (sweep F232, open) ────────────────────────────
+
+// A presence beacon claiming the made-up session id `sid`, from `radio`.
+std::vector<uint8_t> presence_claiming(const Neighbor& radio, const uint8_t sid[cc::SESSION_ID_SIZE]) {
+  cc::ChirpHeader h = header_of(radio, cc::CHIRP_MSG_PRESENCE, 0x70);
+  memcpy(h.session_id, sid, cc::SESSION_ID_SIZE);
+  cc::ChirpPresencePayload p;
+  memset(&p, 0, sizeof p);
+  p.listening = 1;
+  p.last_chirp_age_min = 255;
+  return frame_of(h, p);
+}
+
+// The item's scene: one radio beacons MAX_NEARBY_CACHE (32) made-up session
+// ids, no key behind any of them, once a minute. A full table refuses a new
+// row (handle_presence() evicts nothing), so a real neighbor r beaconing
+// beside it for ten minutes never gets one: its CONFIRMED ACK of an
+// emergency chirp is refused (no row; spec §3.4 rule 4), the chirp is not
+// validated or relayed, and, since F234, its suppress vote is refused too.
+// The made-up rows count toward the threshold all the same (17 votes of
+// keys present here, at 32 rows), and no vote can come from them, as no key
+// stands behind a made-up id; had the radio beaconed the ids of keys it
+// made, those keys would vote after ten minutes
+// (keys_beaconed_ten_minutes_still_vote). The control, without the padding:
+// r's row comes of age, its ACK validates and relays the chirp, and its vote
+// counts. Pinned as today's behavior (F232, open): a cost per presence row,
+// a per-address cap or evicting the stalest row flips the padded half, r
+// gets a row and both count after its ten minutes; rewrite it to that rule
+// then, do not delete it.
+void test_a_padded_table_keeps_a_neighbor_out() {
+  for (const bool padded : {true, false}) {
+    boot_enabled();
+    const Neighbor padder = neighbor_of(0xB0);
+    std::vector<std::array<uint8_t, cc::SESSION_ID_SIZE>> ids;
+    if (padded) {
+      for (size_t i = 0; i < cc::MAX_NEARBY_CACHE; ++i) {
+        std::array<uint8_t, cc::SESSION_ID_SIZE> sid;
+        for (size_t b = 0; b < sid.size(); ++b) sid[b] = (uint8_t)(0xE0 ^ (i * 37 + b * 11));
+        ids.push_back(sid);
+        deliver(padder, presence_claiming(padder, sid.data()));
+      }
+      CHECK(cc::g_nearby_count == cc::MAX_NEARBY_CACHE);
+    }
+    const Neighbor r = neighbor_of(0xB1);
+    for (int m = 0; m < 10; ++m) {                           // ten minutes, both beaconing
+      deliver(r, presence_of(r));
+      for (const auto& sid : ids) deliver(padder, presence_claiming(padder, sid.data()));
+      host_sim::now_ms += 60000;
+      host_sim::wall_now += 60;
+      cc::update();
+    }
+    deliver(r, presence_of(r));
+    bool r_has_row = false;
+    for (size_t i = 0; i < cc::g_nearby_count; ++i) {
+      r_has_row = r_has_row || memcmp(cc::g_nearby_devices[i].session_id, r.sid, cc::SESSION_ID_SIZE) == 0;
+    }
+    CHECK(r_has_row == !padded);
+    CHECK(cc::g_nearby_count == (padded ? cc::MAX_NEARBY_CACHE : 1u));
+
+    uint8_t nonce[8];
+    cc::ReceivedChirp* ch = emergency_arrives(kOriginator, 0x49, nonce);
+    const size_t before = host_sim::espnow->sent.size();
+    deliver(r, confirm_of(r, nonce));
+    CHECK(ch->confirm_count == (padded ? 0u : 1u));
+    CHECK(ch->validated == !padded && ch->relayed == !padded);
+    CHECK(sent_of_type(before, cc::CHIRP_MSG_WITNESS, /*relays_only=*/true) == (padded ? 0u : 1u));
+    if (padded) {
+      REFUSED(r, vote_of(r, nonce));                         // with F234: no row, no vote
+    } else {
+      deliver(r, vote_of(r, nonce));
+      CHECK(ch->suppress_count == 1);
+    }
+    CHECK(table_holds(nonce));
+    cc::update();
+    CHECK(recent_route_shows(nonce) == 0);
+  }
 }
 
 // ── A suppressed chirp stops at once (sweep F269) ────────────────────────
@@ -818,7 +1242,7 @@ void test_a_suppressed_chirp_stops_at_once() {
       boot_enabled();
       host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;   // this device may confirm
       const std::vector<Neighbor> nearby = fill_nearby(3);
-      stay_present(nearby);                           // and so may they (F311)
+      stay_present(nearby);                           // and so may they, and vote (F311, F234)
       const std::vector<uint8_t> w = witness_of(kOriginator, 0x50, k.tpl);
       uint8_t nonce[8];
       memcpy(nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8);
@@ -883,7 +1307,7 @@ void test_a_suppressed_chirp_stops_at_once() {
 void test_a_suppressed_row_leaves_its_neighbors_in_order() {
   boot_enabled();
   const std::vector<Neighbor> nearby = fill_nearby(3);
-  stay_present(nearby);   // their confirmations count below (F311)
+  stay_present(nearby);   // their confirmations and votes count below (F311, F234)
   std::vector<std::vector<uint8_t>> nonces;
   for (uint8_t i = 0; i < 5; ++i) {
     const Neighbor o = neighbor_of((uint8_t)(0xD0 + i));
@@ -1041,13 +1465,16 @@ void test_a_dismissed_chirp_takes_no_confirmation() {
 // refused, and so are a neighbor's relay of it and the frame again at the
 // last second of its freshness window, while a new chirp from the same
 // originator at that moment is stored (the receiver still takes witnesses).
+// The voters' rows are ten minutes old first (F234); the scene's times count
+// from there.
 void test_a_suppressed_chirp_is_not_stored_again() {
-  boot_enabled();   // the filter was cleared at this boot
+  boot_enabled();
   const auto advance = [](uint32_t ms) {
     host_sim::now_ms += ms;
     host_sim::wall_now += ms / 1000;
   };
   std::vector<Neighbor> nearby = fill_nearby(3);
+  stay_present(nearby);
   advance(250000);
   for (const Neighbor& n : nearby) deliver(n, presence_of(n));
   const std::vector<uint8_t> w = witness_of(kOriginator, 0x51);
@@ -1302,6 +1729,13 @@ const Test kTests[] = {
      test_a_chirp_heard_again_keeps_one_row_and_its_window},
     {"a_vote_must_verify", test_a_vote_must_verify},
     {"a_vote_before_its_chirp_is_not_kept", test_a_vote_before_its_chirp_is_not_kept},
+    {"a_fresh_key_votes_for_nothing", test_a_fresh_key_votes_for_nothing},
+    {"a_vote_waits_for_ten_minutes_of_presence", test_a_vote_waits_for_ten_minutes_of_presence},
+    {"a_new_row_starts_its_ten_minutes_again", test_a_new_row_starts_its_ten_minutes_again},
+    {"a_vote_is_ruled_by_its_key", test_a_vote_is_ruled_by_its_key},
+    {"no_other_frame_votes_for_a_fresh_key", test_no_other_frame_votes_for_a_fresh_key},
+    {"keys_beaconed_ten_minutes_still_vote", test_keys_beaconed_ten_minutes_still_vote},
+    {"a_padded_table_keeps_a_neighbor_out", test_a_padded_table_keeps_a_neighbor_out},
     {"a_suppressed_chirp_stops_at_once", test_a_suppressed_chirp_stops_at_once},
     {"a_suppressed_chirp_is_not_stored_again", test_a_suppressed_chirp_is_not_stored_again},
     {"a_nonce_outlives_the_freshness_window", test_a_nonce_outlives_the_freshness_window},

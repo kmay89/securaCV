@@ -568,7 +568,7 @@ header nonce (above).
 | C4 | Critical | PR #450 (envelope) + PR #454 (origin signature persistence) | `chirp_channel.cpp::handle_witness` + `relay_chirp` + `ReceivedChirp::origin_signature` (+ `ttl_minutes`, F306) | `test_chirp_protocol_invariants::canonical_distinguishes_signers` + `test_chirp_security::c4_a_relay_keeps_the_signed_ttl` (two hops, TTL 15, 30, 0 and 255) |
 | C5 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` + `pubkey_set_contains` | `test_chirp_security::c5_ack_dedup_by_pubkey` |
 | C6 | Critical (design) | PR #450 | `ChirpWitnessPayload::session_pubkey` + `session_id_from_pubkey` validation | `test_chirp_protocol_invariants::c1_c6_a_witness_must_verify` + `witness_canonical_layout` |
-| C7 | High | PR #450 | `chirp_channel.cpp::handle_suppress_vote` + `CHIRP_MSG_SUPPRESS_VOTE` | `test_chirp_suppress_wap::a_repeated_voter_counts_once` + `a_vote_must_verify` |
+| C7 | High | PR #450 (+ F234: a voter's nearby row ten minutes old) | `chirp_channel.cpp::handle_suppress_vote` + `CHIRP_MSG_SUPPRESS_VOTE` + `nearby_has_pubkey_with_presence` | `test_chirp_suppress_wap::a_repeated_voter_counts_once` + `a_vote_must_verify` + `a_fresh_key_votes_for_nothing` + `a_vote_waits_for_ten_minutes_of_presence` |
 | C8 | High | PR #450 | `chirp_channel.cpp::priority_heap_insert` | `test_chirp_security::c8_priority_storage_eviction` |
 | C9 | Medium | PR #450 (1024 array) + PR #454 (4 KB Bloom) + #1802 (two halves, F270) | `chirp_channel.cpp::bloom_hash` + `is_nonce_seen` + `cache_nonce` | `test_chirp_security::c9_bloom_flood` + `test_chirp_suppress_wap::a_nonce_outlives_the_freshness_window` |
 | C10 | High | PR #450 | `chirp_channel.cpp::wall_clock_is_synced` + `MIN_UNIX_TIME` gate | `test_chirp_commands_wap::a_refused_send_names_why` (`clock_unsynced`) |
@@ -587,6 +587,24 @@ re-implemented the code and tested the copies (no change to
 tests no clock, and C17 the version case, which tests no template. Each row
 now names a case on the real `chirp_channel.cpp`; the two files' headers say
 which old case became which.
+
+Sweep F234: C7's votes counted from any session key that signed one, with
+no nearby row, where C13 asks an ACK's key for a row ten minutes old (since
+F311). A session key costs nothing to make, so one device in range voted
+from as many fresh keys as the threshold asked and took any chirp, an
+emergency template included, off every receiver in range. A vote now counts
+only from a key whose row passes `nearby_has_pubkey_with_presence()`, the
+same ten-minute rule; a refused vote counts nowhere, takes no slot and is
+not kept. `test_chirp_suppress_wap.cpp`'s "Who may vote" cases hold it, and
+every case that suppresses gives its voters rows ten minutes old first. It
+is a delay, not a price: presence beacons are unsigned, so one radio's keys
+beaconed ten minutes still vote (`keys_beaconed_ten_minutes_still_vote`),
+and 32 made-up rows fill the table, keep a real neighbor's ACK and vote out
+and ask 17 votes (`a_padded_table_keeps_a_neighbor_out`, F232). Both are
+pinned as today's behavior. What a key or a presence row should cost
+(F232) and whether an emergency template can be voted down at all (F234)
+are open: the Chirp column of `docs/security/THREAT_MODEL.md`'s Sybil flood
+row stays partial.
 
 ## 10. References
 

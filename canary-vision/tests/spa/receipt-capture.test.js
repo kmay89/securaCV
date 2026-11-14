@@ -116,7 +116,11 @@ function loadApp(script, fallback) {
     document,
     window: {
       addEventListener: noop,
-      location: { hash: '' },
+      // The page was opened from the device's own address, the one IP the
+      // served connect-src lets this page reach ('self'), so the wizard
+      // captures from the prefilled 192.168.1.50 (peer-discovery.test.js
+      // holds what an IP that is not this page's origin gets: sweep F448).
+      location: { hash: '', origin: 'http://192.168.1.50' },
       history: { back: noop },
       matchMedia: () => ({ matches: false, addEventListener: noop }),
     },

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 
-from homeassistant.const import EntityCategory
+import pytest
+from homeassistant.const import EVENT_HOMEASSISTANT_START, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
@@ -339,7 +340,8 @@ async def test_the_health_sensor_writes_only_a_reading_the_core_can_carry(
     "Integer exceeds 64-bit range" from State.as_dict_json), so one written
     into the Health sensor failed the recorder and every websocket
     subscription on the entity, downstream of the callback that read it.
-    The sensor reads healthy with the no-reading attributes, and its state
+    The sensor reads healthy with the no-reading attributes (a battery_percent
+    of None on this unit, which says it has a battery, HA60), and its state
     serializes as the recorder and the websocket serialize one; the
     largest integer the core carries still reads as sent."""
     await setup_kernel_entry(enable_mqtt=True)
@@ -354,12 +356,160 @@ async def test_the_health_sensor_writes_only_a_reading_the_core_can_carry(
         await hass.async_block_till_done()
         state = hass.states.get("sensor.kitchen_cam_health")
         assert state is not None and state.state == "healthy", raw
-        assert state.attributes["battery_percent"] == 100, raw
+        assert state.attributes["battery_percent"] is None, raw
         assert state.attributes["memory_free_bytes"] is None, raw
         carried = json.loads(state.as_dict_json)["attributes"]
-        assert (carried["battery_percent"], carried["memory_free_bytes"]) == (100, None), raw
+        assert (carried["battery_percent"], carried["memory_free_bytes"]) == (None, None), raw
     fire(hass, f"securacv/{CANARY}/health", health.replace("1e300", str(2**64 - 1)))
     await hass.async_block_till_done()
     state = hass.states.get("sensor.kitchen_cam_health")
     assert state is not None and state.attributes["memory_free_bytes"] == 2**64 - 1
     assert json.loads(state.as_dict_json)["attributes"]["battery_percent"] == 2**64 - 1
+
+
+# One value per kind of charge that is no reading (sweep HA57), as the broker
+# hands the text over, and a present battery sending no battery key at all.
+NO_CHARGE = ['"battery": true', '"battery": Infinity', '"battery": -1', f'"battery": {2**64}', '"battery": "+5"', '"battery": "5_0"', ""]
+
+
+async def test_the_health_sensor_shows_no_charge_nobody_sent(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
+) -> None:
+    """Sweep HA60, on a real core: a unit that says it has a battery and sends
+    no number for its charge shows battery_percent None (it showed 100), a
+    real charge reads as sent, and a mains unit (battery 100 with
+    battery_present false, as the canary-wap sends) still reads 100. The
+    Health state is healthy for all three: no reading is not a low battery.
+    Each state serializes as the recorder and the websocket serialize one."""
+    await setup_kernel_entry(enable_mqtt=True)
+    fire(hass, f"securacv/{CANARY}/status", STATUS, retain=True)
+    head = f'"public_key": "{CANARY_KEY}", "memory_free": 182000'
+    fire(hass, f"securacv/{CANARY}/health", "{" + head + "}", retain=True)
+    await hass.async_block_till_done()
+    fire(hass, f"securacv/{CANARY}/health", "{" + head + "}", retain=True)
+    await hass.async_block_till_done()
+    for spelled in NO_CHARGE:
+        no_charge = "{" + head + ', "battery_present": true' + (", " + spelled if spelled else "") + "}"
+        # Each body reads otherwise than the one before it.
+        for body, attribute in (
+            ("{" + head + ', "battery_present": true, "battery": 37}', 37),
+            (no_charge, None),
+            ("{" + head + ', "battery_present": false, "battery": 100}', 100),
+            (no_charge, None),
+        ):
+            # Live, as a broker forwards a publish to a standing subscription
+            # (the core hands each subscription one retained copy per topic).
+            fire(hass, f"securacv/{CANARY}/health", body)
+            await hass.async_block_till_done()
+            state = hass.states.get("sensor.kitchen_cam_health")
+            assert state is not None and state.state == "healthy", body
+            assert "battery_percent" in state.attributes, body
+            assert state.attributes["battery_percent"] == attribute, body
+            assert json.loads(state.as_dict_json)["attributes"]["battery_percent"] == attribute, body
+
+
+SD = {"mounted": True, "usage_pct": 12.5, "writes": 4096, "errors": 0, "lifetime_kb": 524288, "wear_pct": 2.8, "replace_recommended": False}
+
+
+def sd_wear_entity_ids(hass: HomeAssistant) -> list[str]:
+    unique_id = f"{DOMAIN}_canary_{CANARY}_sd_wear"
+    return [e.entity_id for e in er.async_get(hass).entities.values() if e.unique_id == unique_id]
+
+
+async def test_sd_wear_appears_with_the_first_health_that_carries_the_sd_object(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
+) -> None:
+    """Sweep HA46, on a real core: a health without the `sd` object creates no
+    SD Wear entity (the Health sensor still comes with it); the first health
+    that carries it creates one, a later one included, once, and it shows the
+    broker's retained copy of that health; later healths move it, and one
+    without the object leaves it."""
+    await setup_kernel_entry(enable_mqtt=True)
+    plain = {"public_key": CANARY_KEY, "memory_free": 182000, "uptime": 5}
+    fire(hass, f"securacv/{CANARY}/status", STATUS, retain=True)
+    for _ in range(2):
+        fire(hass, f"securacv/{CANARY}/health", plain, retain=True)
+        await hass.async_block_till_done()
+    assert hass.states.get("sensor.kitchen_cam_health") is not None
+    assert sd_wear_entity_ids(hass) == []
+
+    # A later health carries the object (a unit updated to firmware that adds
+    # it; the canary base sends it on every health from boot): live to the
+    # standing subscriptions, then the broker's retained copy to the one the
+    # new sensor makes.
+    carrying = {**plain, "uptime": 65, "sd": SD}
+    fire(hass, f"securacv/{CANARY}/health", carrying)
+    await hass.async_block_till_done()
+    fire(hass, f"securacv/{CANARY}/health", carrying, retain=True)
+    await hass.async_block_till_done()
+    (entity_id,) = sd_wear_entity_ids(hass)
+    registered = er.async_get(hass).async_get(entity_id)
+    assert registered.translation_key == "sd_wear"
+    assert registered.entity_category == EntityCategory.DIAGNOSTIC
+    state = hass.states.get(entity_id)
+    assert state is not None and state.state == "2.8"
+    assert state.attributes["replace_recommended"] is False
+
+    for uptime, extra, shown in ((125, {"sd": {**SD, "wear_pct": 3.1}}, "3.1"), (185, {}, "3.1")):
+        fire(hass, f"securacv/{CANARY}/health", {**plain, "uptime": uptime, **extra})
+        await hass.async_block_till_done()
+        assert hass.states.get(entity_id).state == shown, extra
+    assert sd_wear_entity_ids(hass) == [entity_id], "created once"
+
+
+# The health body each Canary but the canary base publishes, field for field
+# (canary-wap: csi_mqtt.cpp; the others: their mqtt_mgr.cpp
+# publish_health_retained). None carries the `sd` object.
+MAINS = {"battery": 100, "battery_present": False, "memory_free": 182000, "uptime": 5, "firmware_version": "2.4.16"}
+NO_SD_OBJECT = {
+    "canary-wap": {**MAINS, "public_key": CANARY_KEY, "sd_mounted": True, "enclosure_open": False},
+    "canary-display": {**MAINS, "power_loss_detected": False, "unexpected_reboot": False},
+    "canary-sense": {**MAINS, "public_key": CANARY_KEY, "radar": {"link_ok": True, "last_frame_age_ms": 40, "frame_errors": 0}},
+    "canary-vision": {**MAINS, "public_key": CANARY_KEY},
+    "canary-sentinel": {**MAINS, "public_key": CANARY_KEY},
+}
+
+
+@pytest.mark.parametrize("device_type", list(NO_SD_OBJECT))
+async def test_an_sd_wear_entity_a_unit_with_no_sd_object_was_given_is_no_longer_provided(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry, device_type: str
+) -> None:
+    """What an existing install's SD Wear entity shows after HA46, for every
+    Canary whose health has no `sd` object (all but the canary base). The
+    integration created it from the unit's first health and it read unknown
+    forever. Now no health of the unit's creates it, so its registry entry is
+    left without an entity: at start the core writes it unavailable with
+    `restored` set (its entity registry's own start listener, fired here),
+    which is how Home Assistant marks an entity its integration no longer
+    provides, until its owner deletes it. A unit that later sends the object
+    takes it back."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    registry = er.async_get(hass)
+    unique_id = f"{DOMAIN}_canary_{CANARY}_sd_wear"
+    old = registry.async_get_or_create(
+        "sensor", DOMAIN, unique_id, config_entry=entry, translation_key="sd_wear",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    )
+    health = NO_SD_OBJECT[device_type]
+    fire(hass, f"securacv/{CANARY}/status", {**STATUS, "device_type": device_type}, retain=True)
+    for _ in range(2):
+        fire(hass, f"securacv/{CANARY}/health", health, retain=True)
+        await hass.async_block_till_done()
+    assert hass.states.get("sensor.kitchen_cam_health") is not None
+    assert hass.states.get(old.entity_id) is None, "no entity took the registry entry"
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_START)
+    await hass.async_block_till_done()
+    state = hass.states.get(old.entity_id)
+    assert state is not None and state.state == "unavailable"
+    assert state.attributes["restored"] is True
+    assert sd_wear_entity_ids(hass) == [old.entity_id], "the entry stays until its owner deletes it"
+
+    carrying = {**health, "uptime": 65, "sd": SD}
+    fire(hass, f"securacv/{CANARY}/health", carrying)
+    await hass.async_block_till_done()
+    fire(hass, f"securacv/{CANARY}/health", carrying, retain=True)
+    await hass.async_block_till_done()
+    state = hass.states.get(old.entity_id)
+    assert state.state == "2.8" and "restored" not in state.attributes
+    assert sd_wear_entity_ids(hass) == [old.entity_id]

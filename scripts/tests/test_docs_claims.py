@@ -8880,7 +8880,8 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
 #
 # firmware/FEATURES.md's Health Monitoring rows, its WiFi presence and audible
 # chirp rows and their three flag rows, and firmware/canary/CONSOLIDATION.md's
-# gaps #14 and #15, read the flagship's log, diagnostics and thermal code and
+# gaps #14 and #15 (and, since slice c, the dashboard's SD storage row and gap
+# #17), read the flagship's log, diagnostics, thermal and SD code and
 # the canary-wap sketch under the profile each of its builds selects. Each
 # test reads the code first and derives the verdict from what it finds, so a
 # change to the code fails here with the row it moves named, as surely as an
@@ -9050,25 +9051,6 @@ def wap_profiles() -> tuple[str, dict[str, dict[str, str]]]:
         profiles[here.group(1)] = dict(re.findall(r"(?m)^\s*#define (FEATURE_\w+)\s+(\S+)", block))
     assert set(profiles) == {"MINIMAL", "DEV", "FULL"}, set(profiles)
     return defaults[0], profiles
-
-
-def unguarded_defines(header: str) -> dict[str, str]:
-    """{macro: value} a header defines outside every `#if` but its include
-    guard: a value the header forces on whatever was defined before it."""
-    code = c_code(header)
-    guard = re.match(r"\s*#ifndef (\w+)\s*\n\s*#define \1\s*\n", code)
-    depth, top, out = 0, 1 if guard else 0, {}
-    for line in code.split("\n"):
-        d = _PP.match(line)
-        if d and d.group(1) in ("if", "ifdef", "ifndef"):
-            depth += 1
-        elif d and d.group(1) == "endif":
-            depth -= 1
-        elif depth <= top:  # inside the guard, or after its #endif
-            m = re.match(r"\s*#\s*define\s+(\w+)[ \t]+(\S+)", line)
-            if m:
-                out[m.group(1)] = m.group(2)
-    return out
 
 
 def verdict(cell: str) -> str:
@@ -9292,6 +9274,86 @@ class TheParityLedgersReadTheCode(unittest.TestCase):
             self.assertIn(needle, row[ARDUINO])
         self.assertIn("nothing writes a health line to it", row[CANARY])
         self.assertIn("SD health log persistence, the canary-wap cells ❌→✅", self.note())
+        # The dashboard's SD storage row, read the same way (sweep F20 slice
+        # c): of the four directories its label names, the flagship makes
+        # all four at mount and writes into those it opens a file in for
+        # writing. /HEALTH (above) and /EXPORT are named nowhere else, so no
+        # path it builds can reach them.
+        dirs = ("/WITNESS", "/HEALTH", "/CHAIN", "/EXPORT")
+        storage = c_code((FLAGSHIP / "lib/securacv_storage/src/securacv_storage.cpp").read_text(encoding="utf-8"))
+        for d in dirs:
+            self.assertIn(f'if (!SD.exists("{d}")) SD.mkdir("{d}");', storage)
+        for ln in self.flagship_src.splitlines():
+            if '"/EXPORT' in ln:
+                self.assertIn('if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");', ln,
+                              f"the flagship names /EXPORT anew: {ln.strip()}")
+        opened = set(re.findall(r'SD\.open\("(/[A-Z]+)/[^"]*",\s*FILE_(?:APPEND|WRITE)\)', self.flagship_src))
+        written = [d for d in dirs if d in opened]
+        self.assertEqual(written, ["/WITNESS", "/CHAIN"], "the flagship writes into another SD directory: "
+                         "restate the dashboard's SD storage row and gap #17")
+        sd = md_table(self.features, "Feature-Parity Dashboard")["SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`)"]
+        cell = sd["canary (PIO)"]
+        self.assertEqual(verdict(cell), "✅" if len(written) == len(dirs) else "⚠️" if written else "❌")
+        self.assertIn("`/HEALTH` made and rotated, never written", cell)
+        self.assertIn("`/EXPORT` made, never written", cell)
+        self.assertEqual(verdict(sd["canary-wap"]), "✅")  # its four writers: the drain above, the three below
+        # The export row reads the same code: the flagship's POST /api/export
+        # answers its bundle over HTTP and opens no file, so with nothing
+        # written to /EXPORT its cell is ⚠️ (an export, not to the card).
+        export = md_table(self.features, "Feature-Parity Dashboard")["Witness record export to /EXPORT/"]
+        handler = c_body(self.net, "static esp_err_t handle_export(httpd_req_t* req) {")
+        self.assertIn("return http_send_json(req, response.c_str());", handler)
+        self.assertNotIn("SD.", handler)
+        self.assertEqual(verdict(export["canary (PIO)"]), "✅" if "/EXPORT" in written else "⚠️")
+        self.assertIn("`POST /api/export` answers its bundle over HTTP; nothing writes it to `/EXPORT`",
+                      export["canary (PIO)"])
+        self.assertEqual(verdict(export["canary-wap"]), "✅")
+        sketch_src = "\n".join(c_code(f.read_text(encoding="utf-8", errors="replace")) for f in sorted(WAP.iterdir())
+                               if f.suffix in {".h", ".cpp", ".ino"})
+        for writer in ('SD.open("/WITNESS/records.jsonl", FILE_APPEND)', 'SD.open("/CHAIN/backup.bin", FILE_WRITE)',
+                       '"/EXPORT/bundle_%u.json"', "SD.open(export_path, FILE_WRITE)"):
+            self.assertIn(writer, sketch_src)
+        # Gap #17 carries the missing tier, with the Health row's verdict.
+        state = normalized(gap_state(self.consolidation, 17, "SD health log tier",
+                                     "`canary_wap/health_store_logic.h` + `health_store_drain()` (`canary_wap.ino`)"))
+        self.assertEqual(verdict(state), verdict(row[CANARY]))
+        self.assertTrue(state.startswith("❌ (2026-11, sweep F20 slice c; docs only)"), state[:60])
+        for needle in ("makes `/HEALTH` at mount", "counts and rotates it", "writes nothing to it",
+                       "fills the 100-entry RAM ring and prints to the serial port", "`/HEALTH/boot_<n>.jsonl`",
+                       "`health_store::line_build`", "`health_store_drain()`", "`FEATURE_SD_STORAGE`",
+                       "`health_store_logic.h`", "in one of 8 slots (`HS_PENDING_SLOTS`; when they fill, the oldest is "
+                       "overwritten and counted)", "It stays ⚠️ after, for `/EXPORT`, which this tree also makes "
+                       "and never writes", "a write no gap row here owns yet"):
+            self.assertIn(needle, state)
+        # Its staging, read off the canary-wap's code: 8 slots, the oldest
+        # overwritten and counted when they fill, drained while mounted.
+        slots = re.search(r"constexpr size_t HS_PENDING_SLOTS = (\d+);",
+                          c_code((WAP / "health_store_logic.h").read_text(encoding="utf-8")))
+        self.assertIn(f"in one of {slots.group(1)} slots (`HS_PENDING_SLOTS`;", state)
+        self.assertIn("g_health_pending_dropped++;", self.ino)
+        self.assertIn("if (!g_sd_mounted || sd_mount_in_flight()) return;",
+                      c_body(self.ino, "static void health_store_drain() {"))
+        gap17 = [ln for ln in self.consolidation.splitlines() if ln.startswith("| 17 | SD health log tier | ")]
+        self.assertTrue(gap17[0].endswith(" | Low-Medium | Low |"), gap17[0][-40:])
+        # And the next ports Phase 3 names: the Low-complexity rows still at
+        # ❌ are the ones it says are, read off the gap table.
+        gaps = {}
+        for ln in self.consolidation.splitlines():
+            if re.match(r"\| \d+ \| ", ln):
+                cells = [c.strip() for c in ln.strip().strip("|").split(" | ")]
+                gaps[int(cells[0])] = (verdict(cells[2]), cells[4])
+        low_missing = sorted(n for n, (v, cx) in gaps.items() if v == "❌" and re.match(r"\**Low\**(?![-\w])", cx))
+        self.assertEqual(low_missing, [12], "restate Phase 3's next per-gap ports")
+        self.assertIn("the next per-gap ports are #12 (audible chirp), the one Low-complexity row still at ❌, "
+                      "the remainder of #14 (system monitor, ⚠️ since sweep F20 slice b) and #17 (the SD health "
+                      "log tier, Low-Medium)", normalized(self.consolidation))
+        self.assertEqual((gaps[14][0], gaps[17]), ("⚠️", ("❌", "Low-Medium")))
+        # The exit criteria count no gaps by hand: a typed count went stale
+        # twice (15 against 16 rows, then 17).
+        self.assertEqual(sorted(gaps), list(range(1, len(gaps) + 1)))
+        exits = [ln for ln in self.consolidation.splitlines() if "gaps in the inventory are ✅" in ln]
+        self.assertEqual(exits, ["- All gaps in the inventory are ✅ in the canary (PIO) column (or explicitly "
+                                 "scoped out with a note)."], "the exit criteria count the gaps by hand again")
 
     def test_the_system_monitor_rows_read_the_flagships_diagnostics(self):
         cfg = c_code((FLAGSHIP / "include/canary_config.h").read_text(encoding="utf-8"))
@@ -9417,36 +9479,35 @@ class TheParityLedgersReadTheCode(unittest.TestCase):
             self.assertEqual(len(picks), 1, f"{env} passes {picks}")
             selected[env] = picks[0]
         self.assertEqual(selected["canary-wap-default"], "FULL")
-        # A sketch file that defines a flag outside every #if forces it, if
-        # the sketch includes it after build_config.h has set the profile's.
-        raw_ino = (WAP / "canary_wap.ino").read_text(encoding="utf-8")
-        includes = re.findall(r'(?m)^#include "([^"]+)"', c_code(raw_ino))
-        pulls_cfg = [i for i, h in enumerate(includes) if h == "build_config.h" or
-                     ((WAP / h).is_file() and '#include "build_config.h"' in c_code((WAP / h).read_text(encoding="utf-8")))]
-        forced = {}
-        for f in sorted(WAP.iterdir()):
-            if f.suffix in {".h", ".hpp"} and f.name != "build_config.h":
-                for macro, value in unguarded_defines(f.read_text(encoding="utf-8", errors="replace")).items():
-                    if macro.startswith("FEATURE_"):
-                        forced[macro] = (f.name, value)
+        # The profile's value stands only if build_config.h alone defines
+        # the flag and its header reads it after build_config.h has set it.
+        # Both are held structurally, whatever order a translation unit
+        # includes the headers in: no other sketch file defines the flag
+        # (sys_monitor.h's unconditional 1, which forced the monitor in over
+        # BUILD_PROFILE_MINIMAL's 0, is gone since sweep F467), and each
+        # flag's header includes build_config.h ahead of its first use of it.
+        sketch = {f.name: c_code(f.read_text(encoding="utf-8", errors="replace")) for f in sorted(WAP.iterdir())
+                  if f.suffix in {".h", ".hpp", ".cpp", ".ino"}}
         rows = {
             "FEATURE_SYS_MONITOR": ("sys_monitor.h", self.health, "System monitor (temp, heap, PSRAM)"),
             "FEATURE_WIFI_PRESENCE": ("wifi_presence.h", self.extra, "WiFi presence detection"),
             "FEATURE_AUDIBLE_CHIRP": ("audible_chirp.h", self.extra, "Audible chirp (buzzer/LED alerts)"),
         }
-        self.assertEqual({flag: forced[flag] for flag in rows if flag in forced},
-                         {"FEATURE_SYS_MONITOR": ("sys_monitor.h", "1")},
-                         "a sketch header forces another of these flags, or no longer forces FEATURE_SYS_MONITOR: "
-                         "restate the cells and the note's sentence about it")
+        self.assertEqual(profiles["MINIMAL"].get("FEATURE_SYS_MONITOR"), "0")
         note = self.note()
         for flag, (header, table, label) in rows.items():
             with self.subTest(flag=flag):
                 self.assertIn(f'#include "{header}"', self.ino)
                 self.assertNotIn(f"-D{flag}", ini)  # nothing overrides the profile's value
+                definers = sorted(n for n, code in sketch.items() if re.search(rf"(?m)^\s*#\s*define\s+{flag}\b", code))
+                self.assertEqual(definers, ["build_config.h"], f"a sketch file defines {flag} over its profile: "
+                                 "restate the cells and the note's sentence about it")
+                code = sketch[header]
+                cfg_at = code.find('#include "build_config.h"')
+                self.assertNotEqual(cfg_at, -1, f"{header} no longer includes build_config.h itself: "
+                                    "restate the note's sentence about the include order")
+                self.assertLess(cfg_at, code.find(flag), f"{header} reads {flag} before it includes build_config.h")
                 effective = {p: fl.get(flag) for p, fl in profiles.items()}
-                if flag in forced:
-                    self.assertLess(pulls_cfg[0], includes.index(forced[flag][0]))
-                    effective = dict.fromkeys(profiles, forced[flag][1])
                 on = {p for p, v in effective.items() if v == "1"}
                 in_envs = {selected[e] in on for e in envs}
                 pio = "✅" if in_envs == {True} else "⚠️" if True in in_envs else "❌"
@@ -9458,7 +9519,13 @@ class TheParityLedgersReadTheCode(unittest.TestCase):
                 self.assertEqual(sorted(p for p, fl in profiles.items() if fl.get(flag) == "1"), ["DEV", "FULL"])
                 self.assertIn("1 in `BUILD_PROFILE_FULL` and `_DEV`", self.flags[f"`{flag}`"][ARDUINO])
                 self.assertIn(f"`{flag}`", table[label][ARDUINO])
-        self.assertIn("`sys_monitor.h` defines `FEATURE_SYS_MONITOR` 1 again, unconditionally", note)
+        headers = [h for h, _, _ in rows.values()]
+        self.assertIn("Each of these flags follows its profile: `build_config.h` alone defines them, and "
+                      f"`{headers[0]}`, `{headers[1]}` and `{headers[2]}` each include it before reading theirs, "
+                      "so the profile's value stands whatever the include order, `BUILD_PROFILE_MINIMAL`'s 0 "
+                      "included (since sweep F467", note)
+        self.assertNotIn("1 again, unconditionally", note)
+        self.assertNotIn("the sketch includes it after `build_config.h`", note)
         # The runtime the cells name: the monitor's 30 s line (held in the
         # system monitor test), presence started at boot outside safe mode.
         setup = c_body(self.ino, "void setup() {")

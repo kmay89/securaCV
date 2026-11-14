@@ -148,6 +148,7 @@
 #include "witness_page.h"            // pure, host-tested GET /api/v1/witness page (spec/witness_api_v1.md)
 #include "fleet_selfreport.h"        // shared /api/fleet body builder (parity by architecture)
 #include "birth_day.h"               // pure, host-tested "when was this key born" rules
+#include "key_draw_check.h"          // pure, host-tested: a flat first-boot key draw is refused (F38)
 #include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
 #include "power_gate_logic.h"        // pure, host-tested round-two power gate decisions
 #include "health_store_logic.h"      // pure, host-tested /HEALTH jsonl format
@@ -778,7 +779,8 @@ struct DeviceIdentity {
   bool     key_is_new;    // …meaningful only if this boot is the one that made it.
   bool     key_refused;   // NVS holds, or may hold, a key this boot could not read: setup() halts (F360)
   // Provisioning could not hash the key's fingerprint or the genesis head
-  // (sweep F364): the device is unnamed or its chain unanchored this boot, so
+  // (sweep F364), or could not make a key at all (a flat draw, sweep F38):
+  // the device is unnamed or its chain unanchored this boot, so
   // create_witness_record() signs nothing and persist_chain_state() writes
   // nothing. setup() goes on, as after any provisioning refusal (F336).
   bool     chain_refused;
@@ -1913,10 +1915,25 @@ static bool generate_keypair(uint8_t priv[32], uint8_t pub[32]) {
   // fingerprint, so the keypair must exist first), so the RNG has no RF entropy
   // source yet — gate the one-time draw with bootloader_random_enable()/
   // _disable() to seed it properly (ESP-IDF's documented early-entropy pattern).
+  // The draw is looked at before it becomes a key (sweep F38,
+  // key_draw_check.h): a flat one (every byte equal, or too few or too many
+  // one bits) answers false, the buffer zeroed and the public key not
+  // derived, into establish_identity_key()'s "Keypair generation failed"
+  // branch, which nothing reached before. That branch stores nothing and
+  // refuses the chain for the boot (g_device.chain_refused), so no record is
+  // signed under the zeroed key and no chain state is persisted; provisioning
+  // fails without a halt (F58's open call), and the next boot draws again.
   bootloader_random_enable();
   esp_fill_random(priv, 32);
+  const bool flat = key_draw_check::is_flat(priv);
   bootloader_random_disable();
-  
+  if (flat) {
+    secure_zero(priv, 32);
+    Serial.println("[!!] Identity key draw came out flat (every byte equal, or its bit count out "
+                   "of bounds) - no key made; the next boot draws again");
+    return false;
+  }
+
   // Derive public key
   Ed25519::derivePublicKey(pub, priv);
   return true;
@@ -5227,9 +5244,11 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
   // long for its buffer: it acknowledges the entry with no reason and leaves
   // the body unread (httpd discards it), as it did before F300. The reason
   // is optional and kept nowhere (acknowledge_log_entry() ignores it), while
-  // the dashboard's #ackReason input has no maxlength and submitAck() reads
-  // no answer, so refusing a long one left the entry unacknowledged with
-  // nothing shown. A body that stops arriving is still refused by name.
+  // the dashboard's #ackReason input has no maxlength, so refusing a long one
+  // would leave the entry unacknowledged over a reason nobody keeps. (Since
+  // F468's page half submitAck() shows a refusal in its dialog; before it the
+  // dialog closed with nothing shown.) A body that stops arriving is still
+  // refused by name.
   // firmware/tests_host/test_log_ack_route holds both.
   char content[128] = {0};
   size_t body_len = 0;
@@ -12379,6 +12398,13 @@ static bool establish_identity_key() {
   }
   Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
   if (!generate_keypair(g_device.privkey, g_device.pubkey)) {
+    // A refused draw (sweep F38) leaves this boot no key: g_device.privkey is
+    // zeroed and the public key never derived, and setup() goes on (F58's
+    // open halt-or-ephemeral call). The chain is refused as after a
+    // fingerprint that did not hash (F364), so create_witness_record() signs
+    // nothing under the zeroed key and persist_chain_state() writes no
+    // {seq, head} from a zero head for the next boot's identity to adopt.
+    g_device.chain_refused = true;
     Serial.println("[!!] Keypair generation failed");
     return false;
   }
@@ -13290,7 +13316,10 @@ void setup() {
     // established comes after provision_device() has loaded the chain state,
     // so the records below continue the stored chain; the only ones ahead of
     // it are a new key that could not be made or stored, on a boot with no
-    // key stored (F58's pending halt-or-ephemeral call).
+    // key stored (F58's pending halt-or-ephemeral call). One that could not
+    // be made (a flat draw, sweep F38) refuses the chain too, so no record
+    // below is signed under its zeroed key and no chain state is persisted;
+    // the mesh and the hourly chain backup still take that key as it is.
     if (g_device.key_refused) {
       Serial.println("[!!] PROVISIONING FAILED - the identity key could not be used (see the identity key line above) - HALTING");
       while (true) { delay(1000); }

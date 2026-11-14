@@ -1151,8 +1151,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     every old member stayed registered, bound and stored, listed but never
     heard and counting against the eight slots. The cost: a Canary cannot
     pair with a second member of the opera it holds, so a changed radio
-    address is Leave then Join (F319). canary-wap's join is unchanged
-    (F318).
+    address is Leave then Join (F319). canary-wap's join still runs; since
+    wave 25 its joiner refuses a COMPLETE from another opera's initiator it
+    does not hold, before adding it (F318's guard), and whether a join is
+    refused outright is F318's decision.
   - *A member announces itself, and keeps doing so (F162, F324).* One
     signed `HEARTBEAT` (registry 16, empty payload) to bound members only,
     right after NOTIFY_PAIRED and once on the first pass after a boot that
@@ -1486,7 +1488,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     (audit C1, C4, C5, C6).
   - `confirm_count` removed from wire; receivers track unique-pubkey
     confirmation sets locally (audit C2, C3).
-  - Signed suppress voting wired (audit C7).
+  - Signed suppress voting wired (audit C7); a vote counts only from a key
+    whose nearby row is ten minutes old, the rule an ACK meets (F234). It
+    is a delay, not a cost per key: what a key or a row should cost (F232)
+    and whether an emergency template can be voted down at all are open.
   - Wall-clock-anchored timestamps; origination refused while the wall
     clock is not set (the canary-wap has no SNTP; GPS sets its clock)
     (audit C10, C15).
@@ -1569,7 +1574,7 @@ firmware or UI source.
 |---|---|---|---|
 | Spoofed origination | yes (Ed25519) | partial: Ed25519 over a witness and, on a relay, over its origin envelope, but a relay that names an origin key and carries no origin signature is soft-accepted on its relayer's signature (v0.2) and stored as that origin's chirp with content the origin never signed (Outstanding: persistent origin signature across relays) | yes (dual Ed25519) |
 | Replay | yes (counter) | partial: a two-half Bloom filter (4 KB and 4 hashes each) that takes a nonce only once its frame verifies (F309; a relay with no origin signature counts as verified, v0.2's soft accept) and the recent table, plus the freshness window only while the wall clock is synced; with no clock set, a replay is stored again once its row is gone and the filter has forgotten it (sweep F310, open) | yes (dedup + freshness) |
-| Sybil flood | yes (opera_id isolation) | partial: each confirmation and vote needs a distinct signed key, and a key's witnesses are rate-limited (4 an hour; a full 32-key table gives up its oldest window first, across uptime's wrap too, so a key's count is lost only when 32 other keys start an hour within its own; F416), but one device makes any number of session keys; presence beacons are unsigned (F232), so the ten-minute ACK wait (F311) runs for many keys at once, once per key and possibly before the chirp they confirm; suppress votes need no presence (F234) | yes (two-pubkey rule + audit) |
+| Sybil flood | yes (opera_id isolation) | partial: each confirmation and vote needs a distinct signed key, and a key's witnesses are rate-limited (4 an hour; a full 32-key table gives up its oldest window first, across uptime's wrap too, so a key's count is lost only when 32 other keys start an hour within its own; F416), but one device makes any number of session keys; presence beacons are unsigned (F232), so the ten-minute wait an ACK (F311) and, since F234, a suppress vote must meet runs for many keys at once, once per key and possibly before the chirp they confirm or vote down; what a key or a row should cost and whether an emergency template can be voted down at all are open (F232, F234) | yes (two-pubkey rule + audit) |
 | Physical extraction of opera_secret | partial (the FE gate keeps it off boards without flash encryption; NVS is not encrypted, so a board with flash encryption on still holds it in plaintext) | n/a | n/a |
 | Compromised device originates fake alarm | n/a | partial (suppress vote) | yes (two-pubkey rule) |
 | Reserved-tone or reserved-phrase impersonation | n/a | yes (lint) | yes (lint, color, frequencies) |
