@@ -207,6 +207,19 @@ jobs:
         # own table of contents carried four stale version anchors, one of
         # them three releases behind — nothing was red.
         run: python3 scripts/lint_md_links.py
+      - name: Site links — every securacv.com link opens something that exists
+        # The Lab, the desktop and Apple apps, the back office's mail and the
+        # firmware's help QR codes all link pages on the website, which lives
+        # in another repository — and nothing told this one when a page there
+        # moved. A census found the Lab's footer opening a page that never
+        # existed, a welcome mail linking a 404, and the desktop atlas opening
+        # an anchor the home page lacks. The website states every address it
+        # answers (routes, redirecting short links, published files, anchors)
+        # in its upstream-contract.json; the carried copy is
+        # canary-local/devices/site_contract.json, and this holds every link
+        # in the tree to it — literal URLs, an origin constant joined to a
+        # path in code, and the Lab manifest's site-relative hrefs.
+        run: python3 scripts/lint_site_links.py
       - name: Apple Home docs match the vocabulary they describe
         # The quickstart tells a user exactly what their Canaries will publish
         # into their home — which signals, which are OFF by default, how

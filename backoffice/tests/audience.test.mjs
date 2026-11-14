@@ -39,9 +39,9 @@ test('segments: every one starts from consent and narrows; counts match members;
 });
 
 test('the designed mail: plain text in, escaped branded HTML out, as a multipart message with the text first', () => {
-  const html = renderHtml('Hi <b>Ada</b>,\n\n# Two things\n\n- one & two\n- see https://securacv.com/faq now\n\n**Bold** words.\n\n— Errer Labs', { company: 'Errer Labs', siteOrigin: 'https://securacv.com', unsubscribe: 'https://x.test/u/t', preheader: 'A "quoted" preheader' });
+  const html = renderHtml('Hi <b>Ada</b>,\n\n# Two things\n\n- one & two\n- see https://securacv.com/glossary now\n\n**Bold** words.\n\n— Errer Labs', { company: 'Errer Labs', siteOrigin: 'https://securacv.com', unsubscribe: 'https://x.test/u/t', preheader: 'A "quoted" preheader' });
   assert.ok(html.includes('Hi &lt;b&gt;Ada&lt;/b&gt;,'), 'markup in the text is escaped, not rendered'); assert.ok(html.includes('<h2') && html.includes('Two things')); assert.ok(html.includes('<li') && html.includes('one &amp; two'));
-  assert.ok(html.includes('<a href="https://securacv.com/faq"')); assert.ok(html.includes('<strong>Bold</strong>')); assert.ok(html.includes('unsubscribe in one click')); assert.ok(html.includes('A &quot;quoted&quot; preheader')); assert.ok(!/<script|<img/.test(html), 'no scripts, no images, no pixels');
+  assert.ok(html.includes('<a href="https://securacv.com/glossary"')); assert.ok(html.includes('<strong>Bold</strong>')); assert.ok(html.includes('unsubscribe in one click')); assert.ok(html.includes('A &quot;quoted&quot; preheader')); assert.ok(!/<script|<img/.test(html), 'no scripts, no images, no pixels');
   const m = buildMessage({ from: 'Errer Labs <hello@errer.test>', to: 'a@example.test', subject: 'Hi', text: 'plain', html: '<p>rich</p>', headers: { 'List-Unsubscribe': '<https://x>' } });
   assert.match(m.raw, /Content-Type: multipart\/alternative; boundary="=_bo_/); assert.ok(m.raw.indexOf('text/plain') < m.raw.indexOf('text/html'), 'the plain part comes first'); assert.ok(m.raw.includes('List-Unsubscribe: <https://x>'));
   const plain = buildMessage({ from: 'a@b.test', to: 'c@d.test', subject: 's', text: 't' }); assert.match(plain.raw, /Content-Type: text\/plain/); assert.ok(!plain.raw.includes('multipart'));

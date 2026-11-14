@@ -274,7 +274,7 @@ function renderSidebar(view, entry) {
       // that strip is a second bar above the sidebar saying what the sidebar
       // already says, so it is hidden and its two useful links live here.
       IN_APP ? navLink(SITE_ORIGIN + "/glossary", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 016.5 3H19v15H6.5A2.5 2.5 0 004 20.5z"/><path d="M8 7h7M8 11h7"/></svg>', "Glossary", true) : null,
-      IN_APP ? navLink(SITE_ORIGIN + "/canary", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 113.5 2.3V13"/><path d="M12 16.5v.5" stroke-linecap="round"/></svg>', "Your Canary — help", true) : null,
+      IN_APP ? navLink(SITE_ORIGIN + "/help", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 113.5 2.3V13"/><path d="M12 16.5v.5" stroke-linecap="round"/></svg>', "Help", true) : null,
       // App only: the browser Lab has no updater and no update journal, so it
       // gets no Settings entry rather than one that answers "—" to everything.
       SETTINGS_AVAILABLE ? h("div", { class: "side-sec" }, "This app") : null,

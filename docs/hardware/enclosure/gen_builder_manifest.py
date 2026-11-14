@@ -1142,7 +1142,10 @@ def write_site(carries: dict[str, bytes], site: Path) -> list[str]:
 # the tree — so a rename on this side fails this repository's CI, not a
 # visitor's browser. Absent on the site (a checkout older than the
 # contract), the carry is skipped with a notice; once carried it is a
-# committed file the test reads.
+# committed file the test reads. The same file carries the site's own
+# addresses the other way (routes, published files, anchors), so a
+# securacv.com link in THIS tree is held to what the site answers
+# (scripts/lint_site_links.py).
 SITE_CONTRACT_IN = "upstream-contract.json"
 SITE_CONTRACT_OUT = REPO / "canary-local" / "devices" / "site_contract.json"
 
@@ -1181,6 +1184,25 @@ def site_contract(site: Path) -> bytes | None:
         "paths": sorted(set(paths)),
         "patterns": sorted(set(patterns)),
     }
+    # The other direction: the addresses the SITE answers (its routes, the
+    # files it publishes, each page's anchors), which scripts/lint_site_links.py
+    # holds every securacv.com link in this tree to. Carried when the site
+    # states them — a checkout older than that half of the contract has none,
+    # and the carried file then has none either.
+    for key in ("routes", "files"):
+        value = data.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list) or not all(isinstance(x, str) and x.startswith("/") for x in value):
+            sys.exit(f"{src}: \"{key}\" must be a list of site paths (\"/…\")")
+        out[key] = sorted(set(value))
+    anchors = data.get("anchors")
+    if anchors is not None:
+        if not isinstance(anchors, dict) or not all(
+                isinstance(k, str) and k.startswith("/") and isinstance(v, list)
+                and all(isinstance(x, str) and x for x in v) for k, v in anchors.items()):
+            sys.exit(f"{src}: \"anchors\" must map a site path to a list of ids")
+        out["anchors"] = {k: sorted(set(v)) for k, v in sorted(anchors.items())}
     return (json.dumps(out, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 

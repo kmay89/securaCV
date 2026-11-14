@@ -141,7 +141,11 @@ devices/<slug>/device.json cad.params
   → gen_flash.py → gen_builder_manifest.py [--site <website-checkout>]
       (with --site it also carries the website's upstream-contract.json BACK as
        canary-local/devices/site_contract.json — the runtime paths the site fetches from
-       this tree; scripts/tests/test_site_contract.py holds every one to the tree)
+       this tree and the issue forms it opens here; scripts/tests/test_site_contract.py
+       holds every one to the tree. The same file carries the site's own addresses —
+       routes, published files, anchors — and scripts/lint_site_links.py holds every
+       securacv.com link in this tree to them, so a link to a page newer than the
+       carried copy is red until this carry is rerun)
   → gen_print_files.py --site <website-checkout>   (only with --site: the in-development
        cases' print-ready STLs + print/print-files.json — version, commit, the .scad's
        sha256, each file's sha256 — into the website; its --check and the website's
