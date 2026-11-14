@@ -136,6 +136,8 @@ jobs:
         #    schema check, so cyclonedx-python-lib is too, at the same exact
         #    pin as that step. The tests import it unconditionally: a
         #    skipTest on ImportError reads as covered while catching nothing.
+        #    They also run sbom.yml's tool-version step with bash and jq (both
+        #    on the image) on documents in cargo-cyclonedx's and cdxgen's shapes.
         #  • canary-sentinel's copy of canary-sense's net/witness stack
         #    (test_check_sentinel_net_sync.py) — runs the real sync script on a
         #    scratch copy of both trees: a TLS-gate bypass, a MAC client ID or
@@ -175,6 +177,20 @@ jobs:
 
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
         run: python3 scripts/lint_dictionary_sync.py
+      - name: Device-details vocabulary — generated module current, every row emitted
+        # spec/device_details_vocabulary.json names each key a Canary's answers
+        # use, its class and the firmware sources that emit it. HACS ships
+        # custom_components/securacv/ alone, so the integration reads a
+        # generated copy, device_vocabulary.py, and diagnostics.py unions its
+        # redacted keys into TO_REDACT (sweep HA56). This byte-checks that
+        # copy (a hand edit, or a vocabulary edited without the run) and
+        # re-reads every named firmware source, refusing a row whose key its
+        # surface does not emit: a firmware edit that drops or renames such a
+        # key goes red here. The old key then joins INTEGRATION_REDACT_KEYS in
+        # diagnostics.py (Canaries on the earlier release still send it)
+        # before the row moves; the generator refuses to drop a redacted key
+        # otherwise.
+        run: python3 scripts/gen_device_vocabulary.py --check
       - name: Vehicle DBC signal math (golden vectors)
         run: python3 scripts/dbc_signal_resolve.py selftest
       - name: Vehicle profiles match their vendored DBC excerpts

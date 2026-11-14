@@ -55,12 +55,30 @@
 #define SECURACV_CHIRP_API_H
 
 #include "esp_http_server.h"
+#include "http_body_reader.h"   // a POST body read whole, or refused by name (sweep F300)
 #include "mesh_network.h"
 #include "api_auth.h"
 #include "http_status_line.h"
 #include <ArduinoJson.h>
 
 namespace chirp_api {
+
+// A POST body, read whole or refused by name (sweep F300): nullptr when all
+// of it is in `buf` (NUL-terminated, *len bytes; 0 for no body, which each
+// route answers its own way), else the error this file answers with
+// httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, ...). One httpd_req_recv()
+// is one socket read: the handlers parsed what it returned, so a body in two
+// TCP segments was parsed cut and one past the buffer was cut at it and
+// parsed anyway. http_body::read_request() (http_body_reader.h, host-tested)
+// reads Content-Length bytes and refuses a body that does not fit before
+// reading any of it; tests_host/test_http_body_reader pins that no other
+// httpd_req_recv() call is left in this file.
+static const char* read_body(httpd_req_t* req, char* buf, size_t cap, size_t* len) {
+  const http_body::Result r = http_body::read_request(req, buf, cap, len);
+  if (r == http_body::TOO_LARGE) return "Request body too large";
+  if (r == http_body::READ_FAILED) return "Request body read failed";
+  return nullptr;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // AUTH GATE — same template-trampoline as bluetooth_api.h (audit C12)
@@ -376,12 +394,15 @@ inline esp_err_t handle_chirp_disable(httpd_req_t* req) {
 inline esp_err_t handle_chirp_send(httpd_req_t* req) {
   // Read request body
   char content[256];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err);
+    return ESP_FAIL;
+  }
+  if (content_len == 0) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing request body");
     return ESP_FAIL;
   }
-  content[content_len] = '\0';
 
   // Parse JSON
   JsonDocument input;
@@ -566,12 +587,15 @@ inline esp_err_t handle_chirp_templates(httpd_req_t* req) {
 // POST /api/chirp/ack - Acknowledge a chirp
 inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
   char content[128];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err);
+    return ESP_FAIL;
+  }
+  if (content_len == 0) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing request body");
     return ESP_FAIL;
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
@@ -629,12 +653,15 @@ inline esp_err_t handle_chirp_ack(httpd_req_t* req) {
 // POST /api/chirp/dismiss - Dismiss a chirp from display
 inline esp_err_t handle_chirp_dismiss(httpd_req_t* req) {
   char content[64];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err);
+    return ESP_FAIL;
+  }
+  if (content_len == 0) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing request body");
     return ESP_FAIL;
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
@@ -665,12 +692,15 @@ inline esp_err_t handle_chirp_dismiss(httpd_req_t* req) {
 // POST /api/chirp/mute - Mute for duration
 inline esp_err_t handle_chirp_mute(httpd_req_t* req) {
   char content[64];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err);
+    return ESP_FAIL;
+  }
+  if (content_len == 0) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing request body");
     return ESP_FAIL;
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
@@ -702,12 +732,15 @@ inline esp_err_t handle_chirp_unmute(httpd_req_t* req) {
 // POST /api/chirp/settings - Update chirp settings
 inline esp_err_t handle_chirp_settings(httpd_req_t* req) {
   char content[128];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err);
+    return ESP_FAIL;
+  }
+  if (content_len == 0) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing request body");
     return ESP_FAIL;
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   DeserializationError err = deserializeJson(input, content);
@@ -755,12 +788,15 @@ inline esp_err_t handle_chirp_settings(httpd_req_t* req) {
 // POST /api/chirp/confirm - Confirm you also witness this (human verification)
 inline esp_err_t handle_chirp_confirm(httpd_req_t* req) {
   char content[64];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err);
+    return ESP_FAIL;
+  }
+  if (content_len == 0) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing request body");
     return ESP_FAIL;
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   DeserializationError err = deserializeJson(input, content);

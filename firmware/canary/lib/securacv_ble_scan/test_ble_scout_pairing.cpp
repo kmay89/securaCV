@@ -15,12 +15,13 @@
  *      until the loop-task tick writes it.
  *   C. The fleet-format filter (repo sweep F36): ble_scout_advert_kind.h
  *      refuses another Canary's presence beacon and Chirp and nothing else,
- *      its constants are held to fleet_beacon.h (included below by a path
- *      relative to this file) and to the Chirp shape fleet_roster_feed.cpp
- *      tables and the canary-wap's ble_config.h sends (both read from
- *      disk), and through ble_scout_on_advert() a strong beacon or Chirp
- *      from an unpaired advertiser never pairs while every near miss, and
- *      an advert with no manufacturer data, still does.
+ *      its beacon constants are held to fleet_beacon.h, its Chirp rule is
+ *      fleet_chirp.h's (both included), and the canary's roster feed
+ *      (src/fleet_roster_feed.cpp, compiled into this test) takes exactly
+ *      the Chirps fleet_chirp.h parses (repo sweep F316); through
+ *      ble_scout_on_advert() a strong beacon or Chirp from an unpaired
+ *      advertiser never pairs while every near miss, and an advert with no
+ *      manufacturer data, still does.
  *
  * Every advert in B and C goes through scan_advert(), which does what
  * ble_scout_nimble.cpp does with one: classify its manufacturer data and
@@ -47,6 +48,7 @@
  *       -I firmware/canary/lib/securacv_ble_scan/src \
  *       -I firmware/canary/lib/securacv_mesh/src \
  *       -I firmware/common/csi/src \
+ *       -I firmware/common/fleet_link \
  *       -o /tmp/test_scout_pairing && /tmp/test_scout_pairing
  */
 
@@ -55,9 +57,10 @@
 #include "ble_scout_advert_kind.h"
 #include "ble_scan.h"
 
-/* The presence beacon's own wire contract, by a path relative to this file
- * (firmware/common/fleet_link/) — no -I, so the CI link set is unchanged. */
-#include "../../../common/fleet_link/fleet_beacon.h"
+/* The fleet's two advert contracts (firmware/common/fleet_link/, on the
+ * -I path ble_scout_advert_kind.h needs for fleet_chirp.h anyway). */
+#include "fleet_beacon.h"
+#include "fleet_chirp.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -70,6 +73,15 @@
 #ifndef CSI_TEST_HOST_BUILD
 extern "C" int test_ble_scout_pairing_run() { return 0; }
 #else
+
+/* The canary's roster feed itself, compiled into this test (it is built only
+ * with FEATURE_BLE_SCAN, the `full` env's flag, and needs nothing but the
+ * fleet_link headers above), so C asks its on_advert() which Chirps it takes
+ * instead of reading its source. ble_scout.cpp is linked without the flag,
+ * so nothing else here calls the feed. */
+#define FEATURE_BLE_SCAN 1
+#include "src/fleet_roster_feed.cpp"
+#undef FEATURE_BLE_SCAN
 
 #define CHECK(cond)                                                        \
   do {                                                                     \
@@ -282,19 +294,17 @@ size_t beacon_blob(uint8_t* out, bool v2, uint8_t flags) {
   return FLEET_BEACON_MFG_LEN;
 }
 
-/* A Chirp in the layout the canary-wap's ble_config.h documents (17 bytes:
- * company 0xFFFF, type, 4-byte hour bucket, 8-byte chain-hash prefix,
- * 2-byte device id prefix). The length here is that comment's, not the
- * classifier's; test_chirp_shape_held_to_roster_and_sender holds the two
- * together. */
-constexpr size_t kChirpWireLen = 17;
+/* A Chirp exactly as the scanner sees it: the company id (fleet_chirp.h's)
+ * followed by fleet_chirp.h's own builder output, the bytes the canary-wap's
+ * ble_chirp.h puts on air. The type is written as given, so a near miss can
+ * carry one outside 0x01..0x05. */
+constexpr size_t kChirpWireLen = FLEET_CHIRP_MFG_LEN;
 size_t chirp_blob(uint8_t out[kChirpWireLen], uint8_t type) {
-  out[0] = 0xFF;
-  out[1] = 0xFF;
-  out[2] = type;
-  for (size_t i = 3; i < 15; ++i) out[i] = (uint8_t)(0x30 + i);
-  out[15] = 0xAB;
-  out[16] = 0xCD;
+  static const uint8_t chain[FLEET_CHIRP_CHAIN_LEN] = {0x33, 0x34, 0x35, 0x36,
+                                                       0x37, 0x38, 0x39, 0x3A};
+  out[0] = (uint8_t)(FLEET_CHIRP_COMPANY_ID & 0xFF);
+  out[1] = (uint8_t)((FLEET_CHIRP_COMPANY_ID >> 8) & 0xFF);
+  fleet_chirp_build(out + 2, type, 0x30313233u, chain, 0xAB, 0xCD);
   return kChirpWireLen;
 }
 
@@ -358,7 +368,7 @@ void test_every_parsed_beacon_is_refused() {
 }
 
 void test_chirps_are_refused() {
-  for (int type = 0x01; type <= 0x05; ++type) {
+  for (int type = FLEET_CHIRP_TYPE_FIRST; type <= FLEET_CHIRP_TYPE_LAST; ++type) {
     uint8_t blob[kChirpWireLen];
     const size_t n = chirp_blob(blob, (uint8_t)type);
     CHECK(AK::classify(blob, n) == AK::Kind::CHIRP_ADVERT);
@@ -468,9 +478,75 @@ void test_near_misses_are_offerable() {
   std::printf("PASS test_near_misses_are_offerable\n");
 }
 
-/* ── Source pins: the Chirp shape lives in two files this test cannot
- *    compile (fleet_roster_feed.cpp needs the fleet_link include path, and
- *    ble_config.h needs Arduino), so it reads them, whitespace collapsed. */
+/* fleet_chirp.h's parser is every receiver's Chirp reader. Over every length
+ * 0..40, every type byte and a fleet and five foreign company ids, the
+ * classifier calls a blob a Chirp exactly when fleet_chirp_parse() takes it,
+ * and the canary's roster feed notes it exactly then too (or when it is a
+ * beacon fleet_beacon_parse() takes), under the type and fp2 it carries. */
+void test_chirp_rule_is_fleet_chirp_h() {
+  const uint8_t companies[][2] = {{0xFF, 0xFF}, {0x4C, 0x00}, {0xFE, 0xFF},
+                                  {0xFF, 0xFE}, {0x00, 0x00}, {0x59, 0x00}};
+  uint8_t blob[40];
+  int parsed = 0;
+  uint32_t now = 1000;
+  for (const auto& c : companies) {
+    for (size_t len = 0; len <= sizeof(blob); ++len) {
+      for (int type = 0; type <= 0xFF; ++type) {
+        std::memset(blob, 0x5A, sizeof(blob));
+        blob[0] = c[0];
+        blob[1] = c[1];
+        blob[2] = (uint8_t)type;
+        blob[FLEET_CHIRP_OFF_FP] = 0x1C;
+        blob[FLEET_CHIRP_OFF_FP + 1] = (uint8_t)type;
+        FleetChirpFields f;
+        const bool chirp = fleet_chirp_parse(blob, len, &f);
+        FleetBeaconFields bf;
+        const bool beacon = fleet_beacon_parse(blob, len, &bf);
+        if (chirp) ++parsed;
+        if ((AK::classify(blob, len) == AK::Kind::CHIRP_ADVERT) != chirp) {
+          std::fprintf(stderr, "company %02X%02X len %zu type %02X: classifier and "
+                       "fleet_chirp_parse disagree\n", c[1], c[0], len, type);
+        }
+        CHECK((AK::classify(blob, len) == AK::Kind::CHIRP_ADVERT) == chirp);
+        CHECK(fleet_chirp_matches(blob, len) == chirp);
+
+        const uint32_t before = fleet_roster_feed::seen();
+        fleet_roster_feed::on_advert(blob, len, -60, ++now);
+        CHECK(fleet_roster_feed::seen() - before == ((chirp || beacon) ? 1u : 0u));
+        if (chirp) {
+          char want[5];
+          std::snprintf(want, sizeof(want), "1c%02x", (unsigned)type);
+          FleetRosterEntry roster[FLEET_ROSTER_MAX];
+          const int n = fleet_roster_feed::snapshot(roster, FLEET_ROSTER_MAX);
+          bool found = false;
+          for (int i = 0; i < n; ++i) {
+            if (std::strcmp(roster[i].fp4, want) != 0) continue;
+            found = roster[i].last_type == type && roster[i].last_seen_ms == now &&
+                    roster[i].battery_pct == -1 && roster[i].health_pct == -1;
+          }
+          CHECK(found);
+        }
+      }
+    }
+  }
+  CHECK(parsed == FLEET_CHIRP_TYPE_LAST - FLEET_CHIRP_TYPE_FIRST + 1);  /* 17 bytes, 0xFFFF */
+
+  /* And every Chirp the builder makes, at the field edges, is refused. */
+  const uint32_t hours[] = {0u, 1u, 0x01020304u, 0xFFFFFFFFu};
+  for (int type = FLEET_CHIRP_TYPE_FIRST; type <= FLEET_CHIRP_TYPE_LAST; ++type) {
+    for (uint32_t h : hours) {
+      uint8_t m[FLEET_CHIRP_MFG_LEN] = {0xFF, 0xFF};
+      fleet_chirp_build(m + 2, (uint8_t)type, h, nullptr, 0x00, 0xFF);
+      CHECK(AK::classify(m, sizeof(m)) == AK::Kind::CHIRP_ADVERT);
+      CHECK(!AK::offerable(m, sizeof(m)));
+    }
+  }
+  std::printf("PASS test_chirp_rule_is_fleet_chirp_h\n");
+}
+
+/* ── Source pins: the scan callback (ble_scout_nimble.cpp, both trees) needs
+ *    NimBLE, so this test cannot compile it; it reads it instead,
+ *    whitespace collapsed or code only. */
 
 std::string dir_of_this_file() {
   const std::string f = __FILE__;
@@ -503,8 +579,6 @@ std::string collapse(const std::string& raw) {
   }
   return out;
 }
-
-std::string read_collapsed(const std::string& path) { return collapse(read_raw(path)); }
 
 /* The code alone: every comment becomes one space, string and character
  * literals are kept whole (a comment opener inside one is not a comment),
@@ -562,54 +636,6 @@ bool count_is(const std::string& text, const std::string& needle, std::size_t wa
   std::fprintf(stderr, "%s: \"%s\" occurs %zu times, want %zu\n", where.c_str(),
                needle.c_str(), n, want);
   return false;
-}
-
-void test_chirp_shape_held_to_roster_and_sender() {
-  char buf[160];
-
-  /* The receiver: fleet_roster_feed.cpp's on_advert() tables exactly two
-   * shapes, the beacon through fleet_beacon.h and the Chirp by literals. */
-  const std::string roster = read_collapsed(dir_of_this_file() + "/src/fleet_roster_feed.cpp");
-  const std::size_t body = roster.find("void on_advert(");
-  const std::size_t body_end = roster.find("void tick(", body);
-  CHECK(body != std::string::npos && body_end != std::string::npos);
-  const std::string on_advert = roster.substr(body, body_end - body);
-  CHECK(count_of(on_advert, "if (len ==") == 2);
-  CHECK(has(on_advert, "if (len == FLEET_BEACON_MFG_LEN || len == FLEET_BEACON_MFG_V2_LEN) {"));
-  CHECK(has(on_advert, "if (!fleet_beacon_parse(mfg, len, &f)) return;"));
-  std::snprintf(buf, sizeof(buf), "if (len == %zu) {", AK::CHIRP_LEN);
-  CHECK(has(on_advert, buf));
-  std::snprintf(buf, sizeof(buf), "if (mfg[0] != 0x%02X || mfg[1] != 0x%02X) return;",
-                AK::COMPANY_ID_LO, AK::COMPANY_ID_HI);
-  CHECK(has(on_advert, buf));
-  CHECK(has(on_advert, "const uint8_t type = mfg[2];"));
-  std::snprintf(buf, sizeof(buf), "if (type < 0x%02X || type > 0x%02X) return;",
-                AK::CHIRP_TYPE_FIRST, AK::CHIRP_TYPE_LAST);
-  CHECK(has(on_advert, buf));
-
-  /* The sender: the canary-wap's ble_config.h — the payload after the
-   * company id, the company id, and the ChirpType values, contiguous from
-   * CHIRP_TYPE_FIRST to CHIRP_TYPE_LAST. */
-  const std::string cfg = read_collapsed(
-      dir_of_this_file() + "/../../../projects/canary-wap/arduino/canary_wap/ble_config.h");
-  std::snprintf(buf, sizeof(buf), "#define CHIRP_PAYLOAD_SIZE %zu ", AK::CHIRP_LEN - 2);
-  CHECK(has(cfg, buf));
-  std::snprintf(buf, sizeof(buf), "#define CHIRP_COMPANY_ID 0x%02X%02X ",
-                AK::COMPANY_ID_HI, AK::COMPANY_ID_LO);
-  CHECK(has(cfg, buf));
-  const std::size_t e0 = cfg.find("enum ChirpType : uint8_t {");
-  CHECK(e0 != std::string::npos);
-  const std::size_t e1 = cfg.find("};", e0);
-  CHECK(e1 != std::string::npos);
-  const std::string chirp_enum = cfg.substr(e0, e1 - e0);
-  CHECK(count_of(chirp_enum, "= 0x") ==
-        (std::size_t)(AK::CHIRP_TYPE_LAST - AK::CHIRP_TYPE_FIRST + 1));
-  for (int t = AK::CHIRP_TYPE_FIRST; t <= AK::CHIRP_TYPE_LAST; ++t) {
-    std::snprintf(buf, sizeof(buf), "= 0x%02X,", t);
-    CHECK(has(chirp_enum, buf));
-  }
-  CHECK(kChirpWireLen == AK::CHIRP_LEN);
-  std::printf("PASS test_chirp_shape_held_to_roster_and_sender\n");
 }
 
 /* ── The scan callback itself: ScoutScanCallbacks::onResult() in
@@ -838,7 +864,7 @@ void test_fleet_adverts_never_pair() {
     mac[5] = (uint8_t)(0x10 + v2);
     for (int k = 0; k < 5; ++k) scan_advert(mac, -20, t += 10, blob, n);
   }
-  for (int type = 0x01; type <= 0x05; ++type) {
+  for (int type = FLEET_CHIRP_TYPE_FIRST; type <= FLEET_CHIRP_TYPE_LAST; ++type) {
     uint8_t blob[kChirpWireLen];
     const size_t n = chirp_blob(blob, (uint8_t)type);
     mac[5] = (uint8_t)(0x20 + type);
@@ -957,7 +983,7 @@ int main() {
   test_chirps_are_refused();
   test_refusals_counted_exhaustively();
   test_near_misses_are_offerable();
-  test_chirp_shape_held_to_roster_and_sender();
+  test_chirp_rule_is_fleet_chirp_h();
   test_scan_callbacks_pass_the_verdict();
 
   test_window_before_init_is_not_ready();

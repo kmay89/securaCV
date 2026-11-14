@@ -273,6 +273,36 @@
   run-mesh-liveness run-opera-name`.
 - **Date learned:** 2026-11
 
+### A wire format each end spells for itself is held only by the test that reads both (Chirp advert, F316)
+- **What happened:** the 17-byte BLE Chirp (company 0xFFFF, a type byte
+  0x01..0x05, the fingerprint's two bytes at [15-16]) was written out by its
+  sender (the canary-wap's `ble_config.h` and `ble_chirp.h`) and again by
+  every receiver: the canary tree's roster feed and Scout pairing filter,
+  canary-sense, canary-vision and the display. The only thing holding two
+  of them together was `test_ble_scout_pairing.cpp`, which read their
+  source as text, and the iPhone app's chirp tests, which pinned the
+  sender's literals. Six spellings were six places a fix could land alone.
+- **Root cause:** a layout with no home is redefined by whoever needs it.
+- **Fix:** `firmware/common/fleet_link/fleet_chirp.h`, pure like
+  `fleet_beacon.h`: the constants, the offsets, `fleet_chirp_build()` and
+  `fleet_chirp_parse()`, host round-tripped by `test_fleet_chirp.cpp`
+  (firmware.yml's fleet-link job). Every receiver and the sender use it,
+  the sketches carry staged copies held byte-identical
+  (`check_fleet_beacon_sync.sh`, `setup.sh regen`), and the pairing test
+  includes the header instead of reading files. A scratch differential
+  against the old sender and receivers found no difference (83,200 builder
+  inputs: every type byte crossed with edge values of each field), so
+  nothing on the air changed. One receiver keeps its wider rule on purpose,
+  its offsets `static_assert`ed to the header (backlog F459).
+- **Rule:** give a wire format one header before its third reader, and
+  when you move a layout into it, move every cross-tree test that pinned
+  the old spelling in the same change: the iPhone belt that read
+  `ble_config.h`'s literals would have gone red on `ios-selfheal.yml`.
+- **Regression check:** `test_fleet_chirp.cpp` (its golden vector);
+  `check_fleet_beacon_sync.sh`; `test_ble_scout_pairing.cpp` over the real
+  roster feed; `ChirpAdvertTests` reads the header's defines and offsets.
+- **Date learned:** 2026-11
+
 ---
 
 ## A driver library's init table is a PANEL personality, not a chip default
@@ -385,6 +415,33 @@
   `scripts/ci/conformance.sh` existed for months, ran in no workflow, and
   had quietly rotted against three kernel API changes — an unexecuted gate
   protects nothing.
+
+### A parity cell is a reading of the code, under each env's flags (F20, gaps #14 and #15)
+- **What happened:** `firmware/FEATURES.md` and `CONSOLIDATION.md` called
+  the flagship's system monitor, log categories, acknowledgment and log
+  ring missing (❌) while `securacv_diagnostics`, the thermal watchdog, 11
+  log categories, `AckStatus` and a 100-entry ring all shipped. The
+  canary-wap's PlatformIO column read ❌ for features that env compiles,
+  because it builds the same sketch (`src_dir`). And the gap's own premise,
+  "the ack is lost at reboot, against the WAP's append-only ack", was false
+  twice: the canary-wap's acknowledgment is RAM-only too, and the removed
+  snapshot's "append-only" one was an `AckRecord` declared in its
+  `sd_storage.h` that nothing used, beside an `acknowledge_log()` stub
+  (its frozen source at 458bb07).
+- **Root cause:** each cell was written from a plan or a header, not read
+  from the code that runs, and nothing held it there.
+- **Fix:** every Health Monitoring row and gaps #14 and #15 were re-read
+  from the sources (the snapshot's from its frozen tree), each verdict
+  naming what is missing and the reading it rejected, and
+  `scripts/tests/test_docs_claims.py`'s `TheParityLedgersReadTheCode` holds
+  each one to the code fact it rests on, so a later code change flips the
+  doc check too.
+- **Rule:** a parity cell names code, read per env from the flags that env
+  builds with. A declared struct, a stub that returns false or a plan's
+  table is not a feature. A comparison between two trees reads both.
+- **Regression check:** `python3 -m pytest -q
+  scripts/tests/test_docs_claims.py -k TheParityLedgersReadTheCode`.
+- **Date learned:** 2026-11
 
 ---
 
@@ -995,13 +1052,46 @@
   to writing nothing downstream (1280 checks). F364's module slice took the
   vault, the USB update check, the familiar and presence hashes and the mesh
   helper the same way (`test_wap_sha_fail_modules.cpp`, 408 checks; over the
-  old sources valgrind reported 126 uses of uninitialized values), and the
-  Beacon, Chirp, mesh-network, OTA and pseudonym hashes are its next slices
-  (open). F403 put the BLE status service, the
+  old sources valgrind reported 126 uses of uninitialized values). The
+  Beacon and Chirp hashes followed, and then `mesh_network.cpp`'s
+  fingerprint and opera id, every caller refusing
+  (`test_mesh_address_wap.cpp`); `mesh_crypto`'s, the OTA and pseudonym
+  hashes, and the flagship's and the common witness core's helpers, are
+  open (backlog F364, F455). F403 put the BLE status service, the
   witness export's HEAD and the signer behind the same gate as BLE discovery;
   the MQTT bridge's identity, mDNS, the Improv door, the Bluetooth and console
   metadata, the mesh, the hourly chain backup and the HTTP routes still read a
   refused boot's identity (open).
+- **Date learned:** 2026-11
+
+### A module that did not read its store this boot must not write it (canary-wap mesh, F364)
+- **What happened:** F364's mesh slice made `mesh_network::init()` refuse a
+  device whose own key did not hash. The review found the sketch still ran
+  the mesh around the refused init: `loop()` called
+  `mesh_network::update()` and the 5-minute `save_replay_counters()`, and
+  the owner's routes ran commands, so the save removed the stored last-seen
+  record and an enable, rename or leave removed the stored opera (shown in
+  a scratch run over the host simulator). Safe mode and a failed
+  `esp_now_init()` had the same hole, and safe mode is reachable on a
+  device from code: there the sketch starts the AP, the HTTP server and the
+  mesh routes while `init()` never runs.
+- **Root cause:** every writer persists what is in RAM, and a refused or
+  skipped init leaves RAM empty, so a write then deletes what is stored.
+  The refusal guarded the step that refused, not the writers after it.
+- **Fix:** `g_store_loaded`, set by `init()` as its loads begin. All seven
+  NVS writers return without writing while it is false, `run_command()`
+  refuses every owner command but clearing alerts, and `POST
+  /api/mesh/enable` answers 400 `enable_failed` there instead of ok. One
+  consequence is a decision (backlog F456): in safe mode the owner can no
+  longer turn the mesh on or off.
+- **Rule:** a module that writes its state back must know whether it read
+  that state this boot. Until it has, every write is refused, not only the
+  ones on the path that failed.
+- **Regression check:** canary-wap `tests_host/test_mesh_address_wap.cpp`'s
+  `test_a_boot_that_did_not_read_the_store_writes_none` (a refused init and
+  safe mode: the 5-minute and pre-reboot saves and eleven owner commands
+  write nothing, and the next healthy boot finds the opera, both members
+  and the last-seen record). It fails on the code before the guard.
 - **Date learned:** 2026-11
 
 ### Token must never enter witness chain
@@ -1649,17 +1739,59 @@
   acting on a fragment. The canary's `/api/wifi/connect` now loops the
   same way (400 `empty_body`, 413 `body_too_large`), as its `/api/settings`
   and Scout routes already did.
-- **Not done:** most other canary-wap POST handlers (Chirp, Bluetooth,
-  household, RF presence, several in `canary_wap.ino`,
-  `csi_integration.cpp` and `csi_mqtt.cpp`) still parse after one
-  `httpd_req_recv()`. Moving them to `read_all()` is open work.
+- **Closed by F300 (2026-11):** every other canary-wap POST handler reads
+  its body whole or refuses it by name. `canary_wap.ino`'s 18 single reads
+  and `/api/peek/sensor`'s hand loop, and the Bluetooth, Chirp, household,
+  audible-chirp and RF presence API files, read through
+  `http_body::read_request()` (`read_all()` for exactly `req->content_len`,
+  sitting out three timeouts, as `/api/ota/config` does);
+  `csi_integration.cpp`'s events dismissal, settings POST and Tuning Lab
+  import read through `read_all()`, as `csi_mqtt.cpp`'s MQTT config route
+  (F266) does. Each answers its refusal in its own file's shape (400
+  `body_too_large` or `body_read_failed` in the sketch). The one named
+  exception is the log ack: a reason too long for its buffer acknowledges
+  the entry with no reason, unread, since the device keeps no reason.
 - **Regression check:** canary-wap `tests_host/test_http_body_reader.cpp`
   (in `make run`) covers fragmented, oversize, empty, closed, errored and
-  timed-out reads. A source pin fails if `beacon_api.h` calls
-  `httpd_req_recv()` anywhere but inside `read_body()`, or if a handler stops
-  reading through it. A new handler that takes a body loops to
-  `content_len` or calls `read_all()`; it never parses after one call.
+  timed-out reads, and its source pin scans `canary_wap.ino` and every
+  `*_api.h` (listed from the directory, so a new file is scanned): each
+  `httpd_req_recv(` sits inside `http_body::read_request()` or a
+  `read_all(` call, however it is spaced or wrapped; each API file's
+  `read_body()` keeps its whole shape (each refusal its own literal, only a
+  whole body `nullptr`); and each sketch handler answers its refusal at
+  once, `handle_log_ack` excepted by name. `test_wap_tune_lab.cpp` pins
+  `csi_integration.cpp` the same way. A new handler that takes a body calls
+  `http_body::read_request()`; it never parses after one call.
 - **Date learned:** 2026-09
+
+### A refusal the client never reads turns its request into a silent no-op (canary-wap, F300)
+- **What happened:** F300's first version made `handle_log_ack` refuse a
+  body past its 128-byte buffer with 400 `body_too_large`, as every other
+  converted route does. The dashboard's acknowledge dialog has a reason
+  field with no `maxlength`, and `submitAck()` reads no answer, so a reason
+  past about 114 bytes turned the acknowledgment into a no-op the owner
+  never saw. The handler's own tests passed; the review found it by reading
+  the client.
+- **Root cause:** a stricter server changes the contract for every client
+  that sends it something. What a client does with the new answer is part
+  of the change.
+- **Fix:** the log ack keeps its old answer for that case on purpose: a
+  reason too long for the buffer acknowledges the entry with no reason,
+  unread (the device keeps no reason), and a body that stops arriving is
+  still refused. The routes that moved from 200 to 400 for a body that does
+  not fit were checked against every shipped client (the web UI, the
+  companion page, the CSI dashboard, iOS, the desktop app, the Home
+  Assistant add-on); none sends one that big. The reason field the device
+  never keeps is backlog F468.
+- **Rule:** before a handler refuses what it used to accept, read what each
+  client sends it and what each does with a refusal. A refusal nothing
+  shows is worse than the old cut.
+- **Regression check:** `firmware/tests_host/test_log_ack_route.cpp` (a
+  128- and a 4013-byte body acknowledge with no reason, unread; a peer that
+  closes early is refused with nothing acknowledged), and
+  `test_http_body_reader.cpp`'s pin, which names `handle_log_ack` as its one
+  exception.
+- **Date learned:** 2026-11
 
 ### A query value read into a buffer sized for its decoded form is cut before it is decoded (canary-wap, F304)
 - **What happened:** `GET /api/fleet/qr` read `ssid` and `pass` with
@@ -2183,6 +2315,33 @@
 - **Regression check:** `canary-local/tools/tests/test_gen_wap_ap_facts.py`
   and `test_flash_monitor_vocab.py`, whose pinned readings are what `g++ -E`
   keeps (compared locally: 0 mismatches).
+- **Date learned:** 2026-11
+
+### A source pin holds only the text it matches: pin the whole call and the whole wrapper (canary-wap F300, Chirp F316)
+- **What happened:** two of wave 24's source pins passed code they were
+  written to refuse. `test_http_body_reader.cpp`'s first wrapper check
+  asked only that each API file's `read_body()` name its reader and its
+  refusals; a refusal that returned `nullptr`, two refusals with the same
+  text and a wrapper whose returns were `{}` all passed it, and so did a
+  new handler that spelled `httpd_req_recv (` with a space or split the call
+  across lines. The iPhone app's Chirp belt pinned only the first line of
+  the sender's `fleet_chirp_build()` call, so a sender that swapped the two
+  fingerprint bytes passed.
+- **Root cause:** a pin that finds a name or a line proves the text exists,
+  not what the code around it does.
+- **Fix:** the reader pin finds every call however it is spaced or wrapped
+  and holds each wrapper to its whole shape (each refusal its own
+  non-empty literal, only a whole body `nullptr`). The belt collapses
+  whitespace and pins the sender's whole call, and the header's two
+  fingerprint writes.
+- **Rule:** a source pin is a parser. Match a call the way the compiler
+  does (any whitespace before `(`, any line break inside it), pin the whole
+  expression whose order or shape matters, and prove it with mutants that
+  each must fail it.
+- **Regression check:** `test_http_body_reader.cpp` refuses ten one-site
+  mutants of the sketch, each by name; `ChirpAdvertTests` fails on the
+  swapped-fingerprint sender (emulated here; its first compile is
+  `ios-selfheal.yml`).
 - **Date learned:** 2026-11
 
 ### A bigger slot reaches only the boards that get a USB flash; the engine must check the slot before it downloads
@@ -5204,6 +5363,32 @@
   edited, replayed or older `state` sets nothing; the HA pytest rebuilds
   the same bytes; `scripts/lint_dictionary_sync.py` refuses a signed kind
   the dictionary does not list.
+- **Date learned:** 2026-11
+
+### State kept by table slot moves when the table does (canary-wap mesh rotation, F364)
+- **What happened:** a rotation in flight records the members whose
+  REKEY_ACK it still waits for as bits of `g_rekey.pending_acks`, one per
+  peer-table slot, and `remove_peer()` shifts the table down over the
+  removed slot. Before F364 every removal started a new rotation, which
+  rebuilt the bits. Once a removal's own rotation could be refused (its new
+  opera id did not hash), an earlier rotation stayed in flight across the
+  shift with its bits over the old slots, so a survivor's ACK cleared
+  another member's bit and the member whose bit stayed could be marked
+  stale. The review found it in the slice's first version.
+- **Root cause:** an array index stored outside the array is part of the
+  array. A new refusal path reached a state the old code always rebuilt.
+- **Fix:** `remove_peer()` remaps the bits right after the shift (bits
+  below the removed slot kept, its bit dropped, the bits above moved down
+  one). Canceling the rotation was rejected: a member that took its REKEY
+  installs the new secret on receipt, so a cancel at the initiator would
+  split the opera.
+- **Rule:** whatever moves rows moves the state keyed by their index with
+  them, and a new early return is a new way to reach state that used to be
+  rebuilt before anyone read it.
+- **Regression check:** canary-wap `tests_host/test_mesh_address_wap.cpp`'s
+  `test_a_refused_rotation_leaves_the_one_in_flight_whole` (B at slot 0
+  removed with a rotation to B and C in flight: C's ACK commits it at once
+  and C is not marked stale). It fails on the slice before the remap.
 - **Date learned:** 2026-11
 
 ## How to Add an Entry

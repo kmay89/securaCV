@@ -6,10 +6,11 @@
 // swaps its advert for 2 seconds (ble_chirp.h CHIRP_BROADCAST_DURATION_MS)
 // and then restores the beacon, so a chirp is a moment, not a presence.
 //
-// WIRE SHAPE, from the firmware that sends it and the display firmware that
-// already parses it — the code, not docs/ble_protocol.md (Draft v0.1), is
-// the contract (canary-wap ble_chirp.h buildChirpPayload + ble_config.h;
-// canary-display chirp_scan.cpp handle_advert):
+// WIRE SHAPE, from the firmware that sends it and the firmware that parses
+// it — the code, not docs/ble_protocol.md (Draft v0.1), is the contract
+// (firmware/common/fleet_link/fleet_chirp.h: canary-wap ble_chirp.h builds
+// with it, canary-display chirp_scan.cpp and the other receivers parse with
+// it):
 //
 //   full manufacturer blob = 17 bytes, exactly:
 //     [0-1]   company id 0xFF 0xFF (the BLE test id — see the caveat below)
@@ -96,7 +97,8 @@ struct ChirpAdvert: Hashable, Sendable {
     /// exactly what `CBAdvertisementDataManufacturerDataKey` delivers.
     /// Returns nil on any mismatch (wrong length, wrong company id, a type
     /// byte outside the vocabulary) so a stray advert can never be read as
-    /// a chirp. Mirrors chirp_scan.cpp's handle_advert gate byte for byte.
+    /// a chirp. Mirrors fleet_chirp.h's fleet_chirp_parse() gate byte for
+    /// byte (the one every firmware receiver asks).
     static func parse(manufacturerData mfg: Data) -> ChirpAdvert? {
         guard mfg.count == mfgLength else { return nil }
         // Contiguous copy: Data slices can carry a non-zero startIndex, and
@@ -118,9 +120,10 @@ struct ChirpAdvert: Hashable, Sendable {
 
     /// Build the on-air blob. The app never advertises — this exists so the
     /// tests can round-trip parse(encode(x)) == x against the firmware's
-    /// layout. (There is no firmware host test for the chirp payload, unlike
-    /// the beacon, so this round-trip plus the layout comment above IS the
-    /// sync guard; a firmware layout change must update both.)
+    /// layout, and encode the golden vector the firmware host test
+    /// (firmware/common/fleet_link/test_fleet_chirp.cpp) pins. A firmware
+    /// layout change fails that test and ChirpAdvertTests' source belt; it
+    /// must update this file too.
     static func encode(kind: Kind, hourBucket: UInt32,
                        chainHashPrefix: [UInt8], fpB0: UInt8, fpB1: UInt8) -> Data {
         var b = [UInt8](repeating: 0, count: mfgLength)

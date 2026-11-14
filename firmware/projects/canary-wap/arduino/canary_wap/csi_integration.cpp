@@ -38,6 +38,7 @@
 #include "csi_event_egress.h"     // committed events -> SD log + MQTT, in id order
 #include "api_auth.h"             // api_auth_check() — session cookie or bearer token (F346)
 #include "host_guard.h"           // the cookie gates' Host question (staged copy of firmware/common/network; F344)
+#include "http_body_reader.h"     // http_body::read_all() — a request body read whole or refused (F300)
 
 #include <Arduino.h>
 #include <Preferences.h>          // NVS-backed settings store
@@ -854,15 +855,39 @@ esp_err_t handle_events_today(httpd_req_t* req) {
 esp_err_t handle_events_dismiss(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
   /* Body is small JSON: {"event_id": <number>}. We parse with a tiny
-   * scanner to avoid pulling ArduinoJson into this TU. */
+   * scanner to avoid pulling ArduinoJson into this TU. Read whole through
+   * http_body::read_all() (sweep F300): one httpd_req_recv() returns what
+   * ONE socket read delivered, so a body in two TCP segments was parsed
+   * cut (its id a prefix of the one sent), and a body past the buffer was
+   * cut at it, not refused. read_all() refuses a body that cannot fit
+   * before reading any of it, loops until Content-Length bytes are in,
+   * sits out three socket timeouts, and never reads past the body. The
+   * cost: a stalled sender now holds the httpd task up to four
+   * recv_wait_timeout waits (30 s each in both of canary_wap.ino's
+   * configs) where it held it one, and a sender that trickles a byte per
+   * wait holds it a wait per byte (up to 95 here), the budget
+   * /api/mqtt/config and the Beacon routes already have, behind the same
+   * authorization (CSI_AUTH_OR_RETURN runs before the read). */
   char body[96];
-  const int got = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (got <= 0) {
+  if (req->content_len == 0) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"empty body\"}", -1);
     return ESP_OK;
   }
-  body[got] = '\0';
+  size_t got = 0;
+  const http_body::Result read = http_body::read_all(
+      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
+      req->content_len, body, sizeof(body), HTTPD_SOCK_ERR_TIMEOUT, 3, &got);
+  if (read == http_body::TOO_LARGE) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body too large\"}", -1);
+    return ESP_OK;
+  }
+  if (read != http_body::OK) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
+    return ESP_OK;
+  }
   const char* k = strstr(body, "event_id");
   if (!k) {
     httpd_resp_set_status(req, "400 Bad Request");
@@ -1037,14 +1062,18 @@ esp_err_t handle_calibrate_apply(httpd_req_t* req) {
  * /api/settings — GET reads NVS, POST writes NVS + reinits affected module
  *
  * Wire format (intentionally tiny, dashboard-friendly):
- *   GET  → {"pet_mode":true|false}
- *   POST {"pet_mode":true|false}  → 200 {"ok":true} after persisting
+ *   GET  → {"pet_mode":B,"preset":"sensitive"|"balanced"|"quiet",
+ *           "sensitivity":N,"quiet_hours":{"enabled":B,"start_min":M,
+ *           "end_min":M},"privacy_ceiling":"p0"|"p1"|"p2",
+ *           "filter_foreign":B,"tz":"…","tz_iana":"…",
+ *           "thresholds_source":"stored"|"preset"|"mixed"}
+ *   POST any subset of the writable keys above  → 200 {"ok":true} after
+ *        persisting (thresholds_source is read-only: the Tuning Lab and
+ *        the calibration store the thresholds)
  *
- * Pet Mode is the only key on the wire today; preset / sensitivity-slider
- * round-trips will land in a follow-up that maps preset → motion/active/
- * breathing thresholds. The NVS schema (cp.pet_mode et al.) is already
- * defined in csi_module_settings_nvs.h's key map, so future endpoint
- * expansion is purely additive.
+ * Every row is read and stored through csi_module_settings_nvs.h's key
+ * map, by the readers and stores in csi_settings_nvs.cpp that
+ * tests_host/test_wap_tune_lab.cpp runs.
  * ────────────────────────────────────────────────────────────────────────── */
 
 esp_err_t handle_settings_get(httpd_req_t* req) {
@@ -1085,7 +1114,16 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
   if (prefs.isKey(NVS_KEY_TZ_IANA)) prefs.getString(NVS_KEY_TZ_IANA, tz_iana, sizeof(tz_iana));
   if (!tz_rule::posix_valid(tz)) tz[0] = '\0';
   if (tz_rule::posix_for_iana(tz_iana) == nullptr) tz_iana[0] = '\0';
+  /* Where the thresholds core.presence runs come from (sweep F315), as the
+   * calibration's status names them: "stored" when a row holds each of the
+   * three (a calibration, the Tuning Lab, a bundle import), "preset" when
+   * none does (the preset and sensitivity baseline), "mixed" otherwise. A
+   * stored row wins over the preset and the slider, so the dashboard says
+   * so under the slider for any source but "preset". Read through the one
+   * reader init() agrees with (read_presence_thresholds_in_use()). */
+  const PresenceThresholdsInUse thresholds = read_presence_thresholds_in_use(prefs);
   prefs.end();
+  const char* thresholds_source = presence_thresholds_source(thresholds);
 
   /* Map preset index back to a stable string for the dashboard. The
    * mapping is the only place this conversion lives — keep it in sync
@@ -1103,10 +1141,10 @@ esp_err_t handle_settings_get(httpd_req_t* req) {
     "{\"pet_mode\":%s,\"preset\":\"%s\",\"sensitivity\":%ld,"
      "\"quiet_hours\":{\"enabled\":%s,\"start_min\":%ld,\"end_min\":%ld},"
      "\"privacy_ceiling\":\"%s\",\"filter_foreign\":%s,"
-     "\"tz\":\"%s\",\"tz_iana\":\"%s\"}",
+     "\"tz\":\"%s\",\"tz_iana\":\"%s\",\"thresholds_source\":\"%s\"}",
     pet_mode ? "true" : "false", preset_str, (long)sensitivity,
     qh.enabled ? "true" : "false", (long)qh.start_min, (long)qh.end_min,
-    privacy_str, filter_foreign ? "true" : "false", tz, tz_iana);
+    privacy_str, filter_foreign ? "true" : "false", tz, tz_iana, thresholds_source);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
@@ -1124,15 +1162,36 @@ esp_err_t handle_settings_post(httpd_req_t* req) {
    * doesn't accidentally match. Buffer sized for the full payload:
    *   pet_mode + preset + sensitivity + quiet_hours{enabled, start, end}
    * is ~130 chars; 384 leaves room for the household time zone (F28:
-   * "tz" up to 47 chars, "tz_iana" up to 47) on top. */
+   * "tz" up to 47 chars, "tz_iana" up to 47) on top. Read whole through
+   * http_body::read_all() (sweep F300), as handle_events_dismiss() reads
+   * its body: one httpd_req_recv() parsed what one socket read held, so
+   * a body in two TCP segments stored its first keys (a key cut inside
+   * its number as a different value, 75 as 7) and lost the rest without
+   * a word, and a body past the buffer was cut at it and stored cut. Now
+   * such a body is refused by name before any key is stored, at the cost
+   * handle_events_dismiss() names: a stalled sender holds the httpd task
+   * up to four recv_wait_timeout waits, a trickling one a wait per byte
+   * (up to 383 here). */
   char body[384];
-  const int got = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (got <= 0) {
+  if (req->content_len == 0) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"empty body\"}", -1);
     return ESP_OK;
   }
-  body[got] = '\0';
+  size_t got = 0;
+  const http_body::Result read = http_body::read_all(
+      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
+      req->content_len, body, sizeof(body), HTTPD_SOCK_ERR_TIMEOUT, 3, &got);
+  if (read == http_body::TOO_LARGE) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body too large\"}", -1);
+    return ESP_OK;
+  }
+  if (read != http_body::OK) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
+    return ESP_OK;
+  }
 
   bool wrote_anything = false;
 
@@ -1474,13 +1533,29 @@ esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
     httpd_resp_set_status(req, "500 Internal Server Error");
     return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"oom\"}", -1);
   }
-  size_t read = 0;
-  while (read < total) {
-    int n = httpd_req_recv(req, body + read, total - read);
-    if (n <= 0) { free(body); return ESP_FAIL; }
-    read += (size_t)n;
+  /* Through http_body::read_all() (sweep F300), the other routes' reader:
+   * the hand loop it replaces closed the socket with no answer at the
+   * first socket timeout, error or early close (ESP_FAIL), where
+   * read_all() sits out three timeouts and a failed read is answered by
+   * name. So a stalled sender holds the httpd task up to four
+   * recv_wait_timeout waits where it held it one (the hand loop already
+   * waited a wait per byte for a trickling one). The size check above
+   * keeps the buffer the body and its NUL, so TOO_LARGE is not reached
+   * while it holds; if the two ever part, one limit keeps one reason. */
+  size_t got = 0;
+  const http_body::Result read = http_body::read_all(
+      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
+      total, body, total + 1, HTTPD_SOCK_ERR_TIMEOUT, 3, &got);
+  if (read == http_body::TOO_LARGE) {
+    free(body);
+    httpd_resp_set_status(req, "400 Bad Request");
+    return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"empty or too large\"}", -1);
   }
-  body[total] = '\0';
+  if (read != http_body::OK) {
+    free(body);
+    httpd_resp_set_status(req, "400 Bad Request");
+    return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
+  }
 
   const TunePost post = tune_post(body, reinit_module);
   free(body);

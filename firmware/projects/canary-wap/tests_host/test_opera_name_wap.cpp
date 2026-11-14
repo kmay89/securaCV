@@ -35,7 +35,8 @@
 // out of canary_wap.ino (firmware/tests_host/cut_functions.awk, the Makefile
 // cuts them): the health log's ring and staging declarations (by line
 // range), log_health(), log_health_ssid(), health_log(), http_send_json(),
-// http_send_error(), handle_logs(), handle_mesh_status(),
+// http_send_error(), http_body_refusal() (over the REAL http_body_reader.h,
+// sweep F300), handle_logs(), handle_mesh_status(),
 // handle_mesh_pair_start() and handle_mesh_name(). Under them: stand-ins for
 // esp_http_server's request (its body, query and answer), the sketch's
 // g_health and g_device counters, and arduinojson_tree.h (ArduinoJson's
@@ -93,17 +94,38 @@ void dispatch_espnow_message(const uint8_t*, const uint8_t*, int, int8_t) {}
 #ifndef ESP_ERR_NOT_FOUND
 #define ESP_ERR_NOT_FOUND 0x105
 #endif
+#define HTTPD_SOCK_ERR_TIMEOUT -3   // what httpd_req_recv() returns for a read that timed out
 struct httpd_req_t {
-  std::string body;            // what the client sent, read once
+  size_t content_len = 0;      // the request's Content-Length, as IDF fills it
+  std::string body;            // what the client sent
+  size_t body_off = 0;         // how much of it the handler has read
+  // How the socket hands the body over (sweep F300), as stubs/mqtt's
+  // request does: each entry caps the next httpd_req_recv() call, as one
+  // TCP segment would (a short read); a negative one is returned as it is
+  // and reads nothing. Once the plan is spent each call returns all it may.
+  std::vector<int> recv_plan;
+  size_t recv_calls = 0;
   std::string query;           // after the '?'; "" is none
   std::string status = "200 OK";
   std::string type;
   std::string resp;
   int sends = 0;
 };
+// As IDF's: at most `len` bytes, never past content_len, as the plan allows.
 static int httpd_req_recv(httpd_req_t* r, char* buf, size_t len) {
-  const size_t n = r->body.size() < len ? r->body.size() : len;
-  memcpy(buf, r->body.data(), n);
+  const size_t call = r->recv_calls++;
+  size_t cap = len;
+  if (call < r->recv_plan.size()) {
+    const int step = r->recv_plan[call];
+    if (step <= 0) return step;
+    if ((size_t)step < cap) cap = (size_t)step;
+  }
+  const size_t owed = r->content_len > r->body_off ? r->content_len - r->body_off : 0;
+  if (owed < cap) cap = owed;
+  const size_t left = r->body.size() - r->body_off;
+  const size_t n = left < cap ? left : cap;
+  memcpy(buf, r->body.data() + r->body_off, n);
+  r->body_off += n;
   return (int)n;
 }
 static esp_err_t httpd_resp_set_status(httpd_req_t* r, const char* s) {
@@ -137,6 +159,7 @@ static struct {
 } g_device;
 static uint8_t g_log_min_level = SCV_LOG_INFO;
 
+#include "http_body_reader.h"   // the handlers' body reader, http_body::read_request() (sweep F300)
 #include OPERA_NAME_RING_INC
 void log_health(LogLevel level, LogCategory category, const char* message, const char* detail = nullptr);
 #include OPERA_NAME_INC
@@ -234,7 +257,7 @@ void opera_named(Device& d, const char* name) {
   uint8_t secret[mn::OPERA_SECRET_SIZE];
   host_sim::fill_random(secret, sizeof secret);
   memcpy(mn::g_opera_config.opera_secret, secret, sizeof secret);
-  mn::compute_opera_id(secret, mn::g_opera_config.opera_id);
+  CHECK(mn::compute_opera_id(secret, mn::g_opera_config.opera_id));
   mn::g_opera_config.configured = true;
   mn::g_opera_config.enabled = true;
   snprintf(mn::g_opera_config.opera_name, sizeof mn::g_opera_config.opera_name, "%s", name);
@@ -253,10 +276,13 @@ void no_opera(Device& d) {
 // One request to `handler` on `d`, as the HTTP server's task makes it: the
 // loop task gets one update() pass at the handler's first wait.
 template <typename H>
-httpd_req_t request(Device& d, H handler, const std::string& body, const std::string& query = "") {
+httpd_req_t request(Device& d, H handler, const std::string& body, const std::string& query = "",
+                    std::vector<int> recv_plan = {}) {
   become(d);
   httpd_req_t req;
+  req.content_len = body.size();
   req.body = body;
+  req.recv_plan = std::move(recv_plan);
   req.query = query;
   host_sim::on_task_delay = [](uint32_t ms) {
     host_sim::now_ms += ms;
@@ -439,6 +465,74 @@ void test_a_rename_refuses_a_name_the_rule_refuses_in_its_words() {
   std::printf("PASS a_rename_refuses_a_name_the_rule_refuses_in_its_words\n");
 }
 
+// The rename's body, as the socket hands it over (sweep F300). The handler
+// parsed what ONE httpd_req_recv() returned: a body that came in short
+// reads was parsed from its first segment (cut, so refused as invalid_json
+// while the client had sent a good rename), and one past the 128-byte
+// buffer was cut there. Now it reads Content-Length bytes through
+// http_body::read_request(): whole across short reads and a timeout, refused by
+// name when it does not fit or stops arriving, renaming nothing.
+void test_a_rename_reads_its_body_whole_or_refuses_it_by_name() {
+  const std::string name = "Back garden shed";
+  const std::string body = body_with("name", name);
+  {
+    const std::string label = "rename, the body in three short reads and a timeout";
+    opera_named(A, "test");
+    reset_log();
+    const httpd_req_t req = request(A, handle_mesh_name, body, "", {9, HTTPD_SOCK_ERR_TIMEOUT, 4});
+    const json_strict::Value v = parsed(req, label);
+    CHECK_MSG(req.status == "200 OK" && ok_true(v), label + ": answered " + req.status + " " + shown(req.resp));
+    become(A);
+    CHECK_MSG(std::string(mn::g_opera_config.opera_name) == name && nvs_name(A) == name,
+              label + ": renamed to the whole name, not parsed from the first segment");
+    CHECK_MSG(req.body_off == body.size(), label + ": every byte of the body was read");
+  }
+  struct Refused {
+    const char* why;
+    std::string body;
+    size_t content_len;
+    std::vector<int> plan;
+    const char* error;
+  };
+  const std::string big = body_with("name", std::string(117, 'n'));   // 128 bytes: no room for its NUL
+  const std::string fits = body_with("name", std::string(116, 'n'));   // 127 bytes and its NUL
+  const std::vector<Refused> refused = {
+      // Read whole and parsed: the rule refuses a 116-byte name in its words.
+      {"a body that just fits the buffer", fits, fits.size(), {40, 40}, mn::opera_name_refusal()},
+      {"one byte past the buffer", big, big.size(), {}, "body_too_large"},
+      {"four timeouts in a row", body, body.size(),
+       {HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT},
+       "body_read_failed"},
+      {"the peer closing before Content-Length is in", body.substr(0, 12), body.size(), {}, "body_read_failed"},
+      {"no body", "", 0, {}, "invalid_body"},
+  };
+  CHECK(big.size() == 128 && fits.size() == 127);
+  for (const Refused& c : refused) {
+    const std::string label = std::string("rename, ") + c.why;
+    opera_named(A, "test");
+    reset_log();
+    become(A);
+    httpd_req_t req;
+    req.content_len = c.content_len;
+    req.body = c.body;
+    req.recv_plan = c.plan;
+    host_sim::on_task_delay = [](uint32_t ms) { host_sim::now_ms += ms; };
+    host_sim::on_httpd_task = true;
+    handle_mesh_name(&req);
+    host_sim::on_httpd_task = false;
+    host_sim::on_task_delay = nullptr;
+    const json_strict::Value v = parsed(req, label);
+    CHECK_MSG(req.sends == 1 && req.status == "400 Bad Request" && !ok_true(v) && error_of(v) == c.error,
+              label + ": " + req.status + " " + shown(req.resp));
+    CHECK_MSG(std::string(mn::g_opera_config.opera_name) == "test" && nvs_name(A) == "test",
+              label + ": the name is as it was");
+    if (std::string(c.error) == "body_too_large") {
+      CHECK_MSG(req.recv_calls == 0, label + ": refused before any of it was read");
+    }
+  }
+  std::printf("PASS a_rename_reads_its_body_whole_or_refuses_it_by_name\n");
+}
+
 // ── POST /api/mesh/pair/start ────────────────────────────────────────────
 
 void test_a_pairing_start_founds_its_opera_under_a_name_the_rule_keeps() {
@@ -481,10 +575,11 @@ void test_a_pairing_start_refuses_a_name_and_founds_nothing() {
   for (const Name& n : kRefused) {
     cases.push_back({n.why, body_with("name", n.bytes), mn::opera_name_refusal()});
   }
-  // A body the handler's 128-byte buffer cuts is not JSON there: refused,
-  // where it founded an opera under the default name.
+  // A body past the handler's 128-byte buffer: refused by name before any
+  // of it is read (sweep F300). It was cut at the buffer, where it founded
+  // an opera under the default name, and then (F303) refused as not JSON.
   cases.push_back({"a 120-byte name (the body does not fit the buffer)", body_with("name", std::string(120, 'n')),
-                   "invalid_json"});
+                   "body_too_large"});
   cases.push_back({"a body that is not JSON", "name=Den", "invalid_json"});
   for (const Case& c : cases) {
     const std::string label = std::string("pair/start, ") + c.why;
@@ -659,6 +754,7 @@ int main() {
   test_the_rule_and_its_words();
   test_a_rename_keeps_a_name_the_rule_keeps_whole();
   test_a_rename_refuses_a_name_the_rule_refuses_in_its_words();
+  test_a_rename_reads_its_body_whole_or_refuses_it_by_name();
   test_a_pairing_start_founds_its_opera_under_a_name_the_rule_keeps();
   test_a_pairing_start_refuses_a_name_and_founds_nothing();
   test_the_setters_hold_the_name_to_the_rule();

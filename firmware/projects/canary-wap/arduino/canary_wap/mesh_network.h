@@ -546,9 +546,11 @@ const MeshAlert* get_alerts(size_t* count);
 //
 // The wait is bounded for a command the loop task has not started: after
 // timeout_ms it is withdrawn and never runs. kDone: it ran, and *ok is what
-// it returned (true for the commands that cannot fail: SET_ENABLED,
-// PAIR_CANCEL, CLEAR_ALERTS). kBusy (every slot taken) and kWithdrawn: it
-// did not run and will not, and *ok is false; the handler answers with
+// it returned (true for CLEAR_ALERTS, and for SET_ENABLED and PAIR_CANCEL
+// once init() has read the mesh's store: until then every command but
+// CLEAR_ALERTS is refused and answers false, F364's review). kBusy (every
+// slot taken) and kWithdrawn: it did not run and will not, and *ok is
+// false; the handler answers with
 // not_run_status() / not_run_error(), the PlatformIO tree's codes for the
 // same two cases (spec §8.3): 409 mesh_busy and 503 mesh_timeout. A command
 // the loop task has started is waited for until it is done (it never waits
@@ -669,7 +671,9 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
 // sweep F92; from another (the safe-mode retry runs on esp_http_server's
 // task) it hands MESH_CMD_SAVE_REPLAY to submit() and
 // waits up to COMMAND_WAIT_MS. True when the blob was written; false when
-// the save failed or did not run (the 5-minute save is the one before it).
+// the save failed or did not run (the 5-minute save is the one before it),
+// and always before init() has read the mesh's store (safe mode, a refused
+// init): RAM holds no member then, and the save removed the record.
 // ════════════════════════════════════════════════════════════════════════════
 
 bool save_replay_counters();

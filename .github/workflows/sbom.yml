@@ -140,6 +140,15 @@ jobs:
       # .github/release-targets.yml (the target's name, a watch entry, its
       # tag_prefix).
       DESKTOP_APPS: "flasher:desktop:flasher-v lab:desktop-lab:app-v"
+      # The two tools that write the Rust and Node documents, each pinned to
+      # an exact release: the newest that was at least two weeks old when it
+      # was set. The install lines and the binary's cache key read these, and
+      # the step after the gate reads each back off the documents, so a bump
+      # is an edit here plus the tool's row in sbom/README.md;
+      # scripts/tests/test_gen_firmware_sbom.py holds the install lines, the
+      # key and that row to them, and runs that step.
+      CARGO_CYCLONEDX_VERSION: "0.5.9"
+      CDXGEN_VERSION: "12.9.0"
 
     steps:
     - uses: actions/checkout@v7
@@ -205,21 +214,25 @@ jobs:
         echo "desktop apps described by this run: ${list:-none}"
 
     # ---- Rust SBOM ----
-    # Compiling cargo-cyclonedx from source cost ~5-10 min of every run.
-    # Cache the built binary under a weekly key: at most one build per
-    # week, and "latest" can never go stale longer than that.
-    - name: Weekly tool-cache stamp
-      id: week
-      run: echo "stamp=$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
+    # Compiling cargo-cyclonedx from source cost ~5-10 min of every run, so
+    # the built binary is cached under the version it was built at. A pinned
+    # version cannot go stale, so the key moves only when
+    # CARGO_CYCLONEDX_VERSION does, never on a calendar. A cold cache rebuilds
+    # the same release: GitHub drops an entry unused for 7 days, and an entry
+    # a pull request saved is not visible to main. The version comes before
+    # the OS so that no version's key is a prefix of another's (0.5.1 of
+    # 0.5.10): actions/cache falls back to a prefix match on a key it misses.
+    # `--version` with a bare x.y.z installs exactly that release, and
+    # --locked builds it from the lockfile the crate was published with.
     - name: Cache the cargo-cyclonedx binary
       id: tool
       uses: actions/cache@v6
       with:
         path: ~/.cargo/bin/cargo-cyclonedx
-        key: cargo-cyclonedx-${{ runner.os }}-${{ steps.week.outputs.stamp }}
+        key: cargo-cyclonedx-${{ env.CARGO_CYCLONEDX_VERSION }}-${{ runner.os }}
     - name: Install cargo-cyclonedx
       if: steps.tool.outputs.cache-hit != 'true'
-      run: cargo install cargo-cyclonedx --locked
+      run: cargo install cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION" --locked
 
     - name: Generate Rust SBOM (CycloneDX)
       # cargo-cyclonedx writes <package>.cdx.json next to Cargo.toml; it does
@@ -272,7 +285,14 @@ jobs:
       run: cd canary-vision && npm ci
 
     - name: Install cdxgen
-      run: npm install -g @cyclonedx/cdxgen
+      # The pin fixes cdxgen's own version (and its direct dependencies, which
+      # its package.json names exactly), not its whole tree: cdxgen publishes
+      # no npm-shrinkwrap.json, and a global install has no lockfile of ours,
+      # so the ranges inside those dependencies resolve at install time.
+      # --ignore-scripts, as for the app trees below: the tool needs its files,
+      # not anything a package in that floating tree would run on install
+      # (none in the tree it resolved to when it was pinned has one).
+      run: npm install -g --ignore-scripts "@cyclonedx/cdxgen@$CDXGEN_VERSION"
 
     - name: Generate Node.js SBOM (CycloneDX)
       run: cdxgen -t node -o sbom-node.cdx.json canary-vision/
@@ -368,6 +388,32 @@ jobs:
                and ([.dependencies[].dependsOn[]] - ([.components[]."bom-ref"] + [.metadata.component."bom-ref"]) | length) == 0' \
           sbom-firmware.cdx.json > /dev/null \
           || { echo "::error::sbom-firmware.cdx.json is not the document gen_firmware_sbom.py promises"; exit 1; }
+
+    # Each Rust and Node document records the tool that wrote it in
+    # metadata.tools, so read the pin back off the bytes that upload: a binary
+    # the cache restored, or a cdxgen on PATH, that is not the pinned release
+    # fails here. cargo-cyclonedx's 1.3 documents list their tools as an
+    # array and cdxgen's 1.7 ones as {components: [...]}; the filter reads
+    # either shape. test_gen_firmware_sbom.py runs this step on both.
+    - name: Check each document names the pinned tool that wrote it
+      env:
+        APPS: ${{ steps.apps.outputs.list }}
+      run: |
+        set -euo pipefail
+        wrote() {  # wrote <tool> <version> <document>
+          jq -e --arg tool "$1" --arg version "$2" \
+            '[.metadata.tools | if type == "array" then .[] else (.components // [])[] end]
+             | any(.name == $tool and .version == $version)' "$3" > /dev/null \
+            || { echo "::error::$3 does not name $1 $2 as its tool (metadata.tools: $(jq -c '.metadata.tools' "$3"))"; exit 1; }
+        }
+        rust="sbom-rust.cdx.json"; node="sbom-node.cdx.json"
+        for row in $APPS; do
+          app="${row%%:*}"
+          rust="$rust sbom-$app-rust.cdx.json"; node="$node sbom-$app-node.cdx.json"
+        done
+        for f in $rust; do wrote cargo-cyclonedx "$CARGO_CYCLONEDX_VERSION" "$f"; done
+        for f in $node; do wrote cdxgen "$CDXGEN_VERSION" "$f"; done
+        echo "every document names its pinned tool: cargo-cyclonedx $CARGO_CYCLONEDX_VERSION, cdxgen $CDXGEN_VERSION"
 
     # ---- Upload artifacts ----
     # Always keep the 90-day CI artifact (branch/PR visibility). On a release,

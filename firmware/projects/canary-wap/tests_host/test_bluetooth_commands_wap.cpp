@@ -2707,7 +2707,8 @@ void test_threads_bring_up_loop_and_reads() {
 using Handler = esp_err_t (*)(httpd_req_t*);
 
 // What one REST call to a real bluetooth_api.h handler sent, made on the
-// HTTP server's task ("httpd") with `body`. The loop task gets an update()
+// HTTP server's task ("httpd") with `body` (handed over as `recv_plan`
+// says: none, one read per call for as much as was asked). The loop task gets an update()
 // pass on each of the handler's sleeps (a command it submitted is drained on
 // the first). A tap made inside another (the in-flight hook below) keeps the
 // outer tap's turns.
@@ -2717,9 +2718,11 @@ struct Tap {
   unsigned inits = 0;    // NimBLEDevice::init() calls the tap made
   unsigned sleeps = 0;   // its waits for the loop task: 0 when it submitted nothing
 };
-Tap tap(Handler handler, const char* body = "") {
+Tap tap(Handler handler, const char* body = "", std::vector<int> recv_plan = {}) {
   httpd_req_t req;
   req.body = body;
+  req.content_len = req.body.size();   // the client's Content-Length
+  req.recv_plan = std::move(recv_plan);
   Tap out;
   const unsigned inits_before = host_sim::count("nimble_init");
   const std::string was = host_sim::task;
@@ -4901,6 +4904,47 @@ void answers_carry_name(const std::string& name) {
     const json_strict::Value* n = v.get("device_name");
     CHECK(n != nullptr && n->kind == json_strict::Value::String && n->text == name);
   }
+}
+
+// The REST handlers read their body whole (sweep F300). bluetooth_api.h
+// parsed what ONE httpd_req_recv() returned: a body that came in short
+// segments was parsed from its first (refused as "Invalid JSON", the name
+// not set), and one past the handler's buffer was cut there. Each now reads
+// Content-Length bytes through the file's read_body(): whole across short
+// reads and a timeout, refused in this file's words when it does not fit or
+// stops arriving (nothing applied, nothing brought up), and its own answer
+// for no body kept.
+void test_a_rest_body_is_read_whole_or_refused_by_name() {
+  const int T = HTTPD_SOCK_ERR_TIMEOUT;
+  boot();
+  Tap t = tap(bluetooth_api::handle_bluetooth_name_set, "{\"name\":\"Back porch\"}", {6, T, 5});
+  CHECK(t.status == "200 OK" && t.body == succeeded_with("Device name updated"));
+  answers_carry_name("Back porch");
+  const std::string fits = "{\"name\":\"" + std::string(116, 'n') + "\"}";   // 127 bytes and its NUL
+  const std::string big = "{\"name\":\"" + std::string(117, 'n') + "\"}";    // one byte past the 128
+  CHECK(fits.size() == 127 && big.size() == 128);
+  // Read whole and parsed: the name rule refuses 116 bytes in its words.
+  t = tap(bluetooth_api::handle_bluetooth_name_set, fits.c_str(), {50, 50});
+  CHECK(t.body == refused_with(bc::DEVICE_NAME_REFUSAL));
+  const struct {
+    std::string body;
+    std::vector<int> plan;
+    const char* why;
+  } refused[] = {
+      {big, {}, "Request body too large"},
+      {"{\"name\":\"Shed\"}", {T, T, T, T}, "Request body read failed"},
+      {"", {}, "Missing request body"},
+  };
+  for (const auto& c : refused) {
+    t = tap(bluetooth_api::handle_bluetooth_name_set, c.body.c_str(), c.plan);
+    CHECK(t.status == "200 OK" && t.body == refused_with(c.why) && t.inits == 0 && t.sleeps == 0);
+    answers_carry_name("Back porch");
+  }
+  // A route whose body is optional refuses an oversized one too, rather than
+  // scanning for its default duration.
+  const unsigned scans = host_sim::count("scan_start");
+  t = tap(bluetooth_api::handle_bluetooth_scan_start, ("{\"duration_sec\":5," + std::string(60, ' ') + "}").c_str());
+  CHECK(t.body == refused_with("Request body too large") && t.sleeps == 0 && host_sim::count("scan_start") == scans);
 }
 
 // POST /api/bluetooth/name and POST /api/bluetooth/settings took any byte
@@ -7204,6 +7248,7 @@ const Test kTests[] = {
     {"a_full_cccd_store_evicts_no_bond", test_a_full_cccd_store_evicts_no_bond},
     {"the_bring_up_leaves_the_state_of_what_runs", test_the_bring_up_leaves_the_state_of_what_runs},
     {"the_door_is_refused_under_any_bonded_link", test_the_door_is_refused_under_any_bonded_link},
+    {"a_rest_body_is_read_whole_or_refused_by_name", test_a_rest_body_is_read_whole_or_refused_by_name},
     {"a_name_holding_a_control_byte_is_refused", test_a_name_holding_a_control_byte_is_refused},
     {"a_saved_name_holding_a_control_byte_is_not_loaded",
      test_a_saved_name_holding_a_control_byte_is_not_loaded},

@@ -484,6 +484,13 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   @media (min-width: 720px) { .tinker-row { grid-template-columns: 1fr 1fr; } }
   .tinker-row label { display: flex; flex-direction: column; gap: 6px; }
   .tinker-row input[type="range"] { accent-color: var(--orb-3); }
+  /* Under the slider: where the levels in use come from, when it is not
+   * the Sensitive / Balanced / Quiet buttons and the slider
+   * (COPY.savedLevels, sweep F315). */
+  .tinker-note {
+    grid-column: 1 / -1;
+    margin: -6px 0 0; font-size: 12px; line-height: 1.5; color: var(--fg-mute);
+  }
 
   /* ── "How is it sensing?" reveal — under the waveform legend so a
      tester can see the live numbers behind the orb without leaving
@@ -1172,8 +1179,9 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
         <div class="tinker-row">
           <label>
             <span>Sensitivity <span data-tip="sensitivity">ⓘ</span></span>
-            <input type="range" id="sensitivitySlider" min="0" max="100" value="50">
+            <input type="range" id="sensitivitySlider" min="0" max="100" value="50" aria-describedby="sensNote">
           </label>
+          <p class="tinker-note" id="sensNote" role="status" hidden></p>
           <label style="grid-column:1/-1">
             <span>Live numbers <span data-tip="rawVector">ⓘ</span></span>
             <canvas id="rawHeatmap" width="800" height="32" style="width:100%;height:32px;border-radius:6px;display:block;background:rgba(0,0,0,0.04)" aria-hidden="true"></canvas>
@@ -1418,6 +1426,21 @@ const COPY = {
       low_memory: "The canary is short on memory. A restart will help.",
       notes:      "The canary noted a problem you haven't looked at yet.",
     },
+  },
+  savedLevels: {
+    /* The note under the sensitivity slider (sweep F315), keyed by the
+     * source GET /api/settings names, see applyThresholdsSource below. A
+     * level a calibration or the Tuning Lab saved wins over the Sensitive,
+     * Balanced and Quiet buttons and the slider until its row is reset
+     * there: the per-row reset in the Lab removes it. The words name those
+     * three buttons, not the modes: Pet Mode and Quiet hours keep working
+     * whatever is saved. The third source has no note: then the buttons
+     * and the slider are what the canary runs. No apostrophe or quote in
+     * this comment: microcopy_fkgl.py reads every quoted span in COPY,
+     * comments too, so one would pair with the next string and skew the
+     * grade. */
+    stored: "Saved levels from a calibration or the Tuning Lab are in charge. Sensitive, Balanced, Quiet and this slider change nothing. To get them back, reset motion, active and breathing in the Tuning Lab.",
+    mixed:  "Some saved levels from a calibration or the Tuning Lab are in charge. Sensitive, Balanced, Quiet and this slider set only the rest. To get them all back, reset motion, active and breathing in the Tuning Lab.",
   },
   what: {
     title: "What the sensor can and can't see",
@@ -2722,6 +2745,30 @@ const petSwitch = document.getElementById('petSwitch');
 window.PET_MODE = lsGet('csi.pet') === '1';
 setSwitch(petSwitch, window.PET_MODE);
 
+/* Where the levels core.presence runs come from (sweep F315): GET
+ * /api/settings' thresholds_source, "stored" | "preset" | "mixed", read
+ * through the reader the module's init() agrees with. A stored level wins
+ * over the Sensitive / Balanced / Quiet buttons and the slider (not over
+ * Pet Mode or Quiet hours), so for "stored" and "mixed" the note under
+ * the slider says so and names the way back; for "preset", or an answer
+ * without the field, there is none. Read on load (syncSettingsFromServer)
+ * and again after a calibration is applied, which stores all three. */
+const sensNote = document.getElementById('sensNote');
+function applyThresholdsSource(source) {
+  if (!sensNote) return;
+  const text = (source === 'stored' || source === 'mixed') ? COPY.savedLevels[source] : '';
+  sensNote.textContent = text;
+  sensNote.hidden = !text;
+}
+async function refreshThresholdsSource() {
+  try {
+    const r = await cvFetch('/api/settings', {cache: 'no-store'});
+    if (!r.ok) return;
+    const j = await r.json();
+    applyThresholdsSource(j.thresholds_source);
+  } catch {}
+}
+
 /* On load, pull every persistent setting from the device and reconcile
  * against the optimistic localStorage state. The server is the source
  * of truth — if the user changed Pet Mode / preset / sensitivity on
@@ -2731,6 +2778,7 @@ setSwitch(petSwitch, window.PET_MODE);
     const r = await cvFetch('/api/settings', {cache: 'no-store'});
     if (!r.ok) return;
     const j = await r.json();
+    applyThresholdsSource(j.thresholds_source);
     if (typeof j.pet_mode === 'boolean' && j.pet_mode !== window.PET_MODE) {
       window.PET_MODE = j.pet_mode;
       setSwitch(petSwitch, window.PET_MODE);
@@ -3021,6 +3069,9 @@ calibAcceptBtn.addEventListener('click', async () => {
     const r = await cvFetch('/api/csi/calibrate/apply', {method: 'POST'});
     if (!r.ok) throw new Error('apply not ok');
     endCalibration(COPY.calibrate.done);
+    /* The apply stored all three levels: the note under the slider says
+     * so now, not at the next page load (sweep F315). */
+    await refreshThresholdsSource();
   } catch {
     endCalibration(COPY.calibrate.error);
   }

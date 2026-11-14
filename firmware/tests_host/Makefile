@@ -701,6 +701,10 @@ TAP_ORACLE    = $(BUILD_DIR)/tap_step_oracle
 LOGACK_PIO_SRC  = ../canary/lib/securacv_network/src/securacv_network.cpp
 LOGACK_WAP_SRC  = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
 LOGACK_SIGS     = static bool log_ack_seq_from_uri(const char* uri, uint32_t* seq) {|static esp_err_t handle_log_ack(httpd_req_t* req) {
+# canary-wap's handler reads its body through http_body::read_request() and
+# answers a refusal with http_send_error() and http_body_refusal() (sweep
+# F300): cut with them.
+LOGACK_WAP_SIGS = $(LOGACK_SIGS)|static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {|static const char* http_body_refusal(http_body::Result r) {
 LOGACK_PIO_INC  = $(BUILD_DIR)/log_ack_pio.inc
 LOGACK_WAP_INC  = $(BUILD_DIR)/log_ack_wap.inc
 LOGACK_BIN      = $(BUILD_DIR)/test_log_ack_route
@@ -1604,7 +1608,7 @@ $(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_PIO_SRC) > $@.tmp && mv $@.tmp $@
 
 $(LOGACK_WAP_INC): $(LOGACK_WAP_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
-	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_WAP_SRC) > $@.tmp && mv $@.tmp $@
+	awk -v 'sigs=$(LOGACK_WAP_SIGS)' -f cut_functions.awk $(LOGACK_WAP_SRC) > $@.tmp && mv $@.tmp $@
 
 $(LOGACK_BIN): test_log_ack_route.cpp $(LOGACK_PIO_INC) $(LOGACK_WAP_INC) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(BUILD_DIR) test_log_ack_route.cpp -o $@

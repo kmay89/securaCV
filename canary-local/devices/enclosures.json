@@ -2939,7 +2939,8 @@
       },
       {
        "name": "span_max",
-       "default": "40"
+       "default": "40",
+       "comment": "the clamp-spacing rule (DESIGN_RULES §6): in seal mode, neighboring screw centers along a wall stand no farther apart than this; each wall's mid posts are derived from it, and the longest span is asserted within it"
       },
       {
        "name": "inner_x0",
@@ -3699,7 +3700,8 @@
       },
       {
        "name": "svc_pip_depth",
-       "default": "0.4"
+       "default": "0.4",
+       "comment": "how deep each dimple is cut into the head's face: its first two 0.2 layers (the head prints face-down), under svc_web_t so the web stays whole"
       },
       {
        "name": "svc_sprue_t",
@@ -3983,7 +3985,8 @@
       },
       {
        "name": "ant_rib_d",
-       "default": "0.4"
+       "default": "0.4",
+       "comment": "how far each rib stands proud of the +X wall's inner face: above ant_t, so the ribs stand past the FPC's face and bracket its ends"
       }
      ]
     },
@@ -4603,7 +4606,8 @@
       },
       {
        "name": "spk_post_dy",
-       "default": "16.0"
+       "default": "16.0",
+       "comment": "a mid post on each long wall stands this far above the driver's axis (spk_cy), and one this far below; every post is asserted 0.5 clear of the Ø spk_d driver"
       },
       {
        "name": "spk_mid_ys",
@@ -8094,7 +8098,8 @@
       },
       {
        "name": "v_front_h",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "the Grove Vision AI V2 module's front-side component height above its PCB (the Vision case's vm_front_h): the cavity clears it by at least cav_extra"
       },
       {
        "name": "xiao_w",
@@ -8129,11 +8134,13 @@
       },
       {
        "name": "s_front_h",
-       "default": "3.5"
+       "default": "3.5",
+       "comment": "the MR60 carrier's tallest front-side part above its PCB (connectors; the Sense case's radar_front_h): the cavity clears it by at least cav_extra"
       },
       {
        "name": "ant_h",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "the MR60 antenna (AiP package) top above the carrier's PCB: sets the radome air gap, asserted at least 3 mm"
       },
       {
        "name": "radome_t",
@@ -16662,7 +16669,8 @@
       },
       {
        "name": "label_depth",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "how deep every station label, the DEBOSS wordmark and the MATE's tag are sunk: the depth the DEBOSS station tests"
       },
       {
        "name": "emboss_h",
@@ -16671,7 +16679,8 @@
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the font every label, both wordmarks and the MATE's tag are set in (it must be installed)"
       },
       {
        "name": "brand_raised",
@@ -16690,11 +16699,13 @@
       },
       {
        "name": "emblem_rib",
-       "default": "0.7"
+       "default": "0.7",
+       "comment": "the retired EMBLEM station's stroke width: no feature of its raised mark's footprint is thinner, and the crown draws each stroke's top in by emblem_crown a side (asserted at least 0.4 when emblem_h > 0)"
       },
       {
        "name": "emblem_crown",
-       "default": "0.15"
+       "default": "0.15",
+       "comment": "the retired EMBLEM station's dome: each stroke's top draws in this far, its footprint a full rib (asserted under emblem_rib/2 when emblem_h > 0)"
       }
      ]
     },
@@ -17191,9 +17202,75 @@
      ]
     },
     {
+     "name": "Bracket",
+     "note": "mirror canary_vision_enclosure bracket defaults (gen_templates.py --check)",
+     "params": [
+      {
+       "name": "br_x",
+       "default": "46.0",
+       "comment": "the Vision bracket plate's width along its hinge axis, its br_x (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "br_y",
+       "default": "34.0",
+       "comment": "the Vision bracket plate's height, its br_y (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "br_screw_d",
+       "default": "4.8",
+       "comment": "the drill ring for the bracket's four #8 wall screws, its br_screw_d (gen_templates.py --check holds it equal)"
+      }
+     ]
+    },
+    {
      "name": "Doorbell",
      "note": "mirror canary_vision_doorbell plate defaults (gen_templates.py --check probes the doorbell and fails when one of these stops equaling its source)",
      "params": [
+      {
+       "name": "db_out_x",
+       "default": "51.5",
+       "comment": "the doorbell plate's out_x, the shell/slab outline's width (the doorbell's version echo prints out_x and out_y; gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_out_y",
+       "default": "169.2",
+       "comment": "the doorbell plate's out_y, the shell/slab outline's length (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_screw_inset_x",
+       "default": "7.5",
+       "comment": "how far the plate's wall screws sit in from its side edges, the doorbell's plate_screw_inset()[0] (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_screw_inset_y",
+       "default": "14.0",
+       "comment": "how far the plate's wall screws sit in from its end edges, the doorbell's plate_screw_inset()[1] (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_screw_d",
+       "default": "4.8",
+       "comment": "the drill ring for the plate's four #8 wall screws, the doorbell's plate_screw_d (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_dx",
+       "default": "2.2",
+       "comment": "the cable exit oval's X, the doorbell's exit_cx (the module's centerline, vm_cx; gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_cy",
+       "default": "-8.8",
+       "comment": "the cable exit oval's Y, the doorbell's exit_cy (v0.8: the well sits over the speaker zone; gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_w",
+       "default": "14.0",
+       "comment": "the cable exit oval's length, the doorbell's usb_exit_w (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_h",
+       "default": "10.0",
+       "comment": "the cable exit oval's height (Y), the doorbell's usb_exit_h (gen_templates.py --check holds it equal)"
+      },
       {
        "name": "db_exit_slide",
        "default": "8.0",

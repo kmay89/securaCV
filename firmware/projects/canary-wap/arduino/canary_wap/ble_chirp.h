@@ -60,36 +60,19 @@ static uint8_t g_deviceIdPrefixBytes[2] = {0};  // 2-byte device ID for chirp pa
 // PAYLOAD BUILDER
 // ════════════════════════════════════════════════════════════════
 
-// Build the chirp manufacturer data payload
-// Layout (after company ID, which NimBLE adds):
-//   [0]     Chirp type (uint8_t)
-//   [1-4]   Coarse timestamp (uint32_t, epoch/3600 = hour bucket)
-//   [5-12]  Chain hash prefix (8 bytes)
-//   [13-14] Device ID prefix (2 bytes)
+// Build the chirp manufacturer data payload: the CHIRP_PAYLOAD_SIZE (15)
+// bytes after the company id, which sendChirp() puts in front. The layout is
+// fleet_chirp.h's (through ble_config.h), the one every receiver parses:
+// type, hour bucket (big-endian), chain hash prefix, device id prefix.
 static void buildChirpPayload(ChirpType type, uint8_t* payload, size_t* len) {
-    // Chirp type
-    payload[0] = (uint8_t)type;
+    // Coarse timestamp: there is no NTP here, so the hour bucket is
+    // millis()/3600000, hours since this device booted.
+    const uint32_t hourBucket = millis() / 3600000UL;
 
-    // Coarse timestamp: epoch / 3600 (hour bucket)
-    // On ESP32 without NTP, use millis()/3600000 as relative hour bucket
-    uint32_t hourBucket = millis() / 3600000UL;
-    payload[1] = (hourBucket >> 24) & 0xFF;
-    payload[2] = (hourBucket >> 16) & 0xFF;
-    payload[3] = (hourBucket >> 8) & 0xFF;
-    payload[4] = hourBucket & 0xFF;
-
-    // Chain hash prefix (8 bytes)
-    if (g_chainHead) {
-        memcpy(&payload[5], g_chainHead, 8);
-    } else {
-        memset(&payload[5], 0, 8);
-    }
-
-    // Device ID prefix (2 bytes)
-    payload[13] = g_deviceIdPrefixBytes[0];
-    payload[14] = g_deviceIdPrefixBytes[1];
-
-    *len = CHIRP_PAYLOAD_SIZE;
+    // The first 8 bytes of the chain head; fleet_chirp_build() writes zeros
+    // while there is none (g_chainHead null).
+    *len = fleet_chirp_build(payload, (uint8_t)type, hourBucket, g_chainHead,
+                             g_deviceIdPrefixBytes[0], g_deviceIdPrefixBytes[1]);
 }
 
 // ════════════════════════════════════════════════════════════════

@@ -5,8 +5,8 @@ how each document is produced, and — for the firmware — the committed docume
 itself. Every document is **CycloneDX JSON**. The firmware document is held to
 the **1.5** schema, strictly, by `lint.yml` and by `sbom.yml`'s gate; the
 `cargo-cyclonedx` and `cdxgen` documents are at the spec version each tool
-writes (1.3 and 1.7 with the tool versions of 2026-11-04), and the gate holds
-them to their format tag, subject and contents, not to a schema.
+writes (1.3 and 1.7 at the pinned versions below), and the gate holds them to
+their format tag, subject and contents, not to a schema.
 
 ## The documents
 
@@ -26,6 +26,35 @@ is produced fresh by `sbom.yml` on every push to `main` that touches a
 dependency manifest, on pull requests (which build both apps' documents), and
 for every published release, where they are attached as release assets. They
 are not committed.
+
+### The tools that write them
+
+| Tool | Version | Set in | Writes |
+|------|---------|--------|--------|
+| `cargo-cyclonedx` | 0.5.9 | `CARGO_CYCLONEDX_VERSION`, in `generate-sbom`'s job `env` in `sbom.yml` | the Rust documents, CycloneDX 1.3 |
+| `@cyclonedx/cdxgen` | 12.9.0 | `CDXGEN_VERSION`, beside it | the Node.js documents, CycloneDX 1.7 |
+
+Each is pinned to an exact release, the newest that was at least two weeks old
+when the pin was set, so which release of a tool writes a bill of materials no
+longer depends on the day it was built. A bump is an edit of that variable and
+of its row above. The install lines read the variable
+(`cargo install cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION" --locked`,
+`npm install -g --ignore-scripts "@cyclonedx/cdxgen@$CDXGEN_VERSION"`), and so
+does the key the built `cargo-cyclonedx` binary is cached under
+(`cargo-cyclonedx-<version>-<os>`, which moves only when the version does).
+`--locked` builds `cargo-cyclonedx` from the lockfile it was published with.
+The `cdxgen` pin is narrower: `cdxgen` names its direct dependencies exactly
+but publishes no shrinkwrap, so the ranges inside those dependencies still
+resolve when the job installs it (`--ignore-scripts` keeps any of them from
+running an install script there). Each document records the tool that wrote
+it in `metadata.tools`, and the step after the gate reads the pinned version
+back from there on every Rust and Node document the job uploads.
+`scripts/tests/test_gen_firmware_sbom.py` holds the install lines, the cache
+key and each row's version and variable to the two variables, and runs that
+step on documents in both tools' shapes. Nothing checks the "Writes" column:
+it is the spec version each tool writes by default at its pin, read off its
+output when the pin was set, so a bump that moves a tool's default has to
+edit it by hand.
 
 ## The firmware SBOM
 

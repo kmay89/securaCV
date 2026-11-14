@@ -13,6 +13,47 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-11 — The SBOM workflow's own tools floated: cdxgen unpinned, cargo-cyclonedx rebuilt from latest every week (found by reading; sweep CI26)
+
+- **Symptom:** none reported; it was found by reading. Every release
+  attaches the bills of materials `sbom.yml` builds, and which tool release
+  wrote them depended on the day it ran: `npm install -g @cyclonedx/cdxgen`
+  took whatever npm served, and `cargo install cargo-cyclonedx --locked`
+  took crates.io's latest under a cache key that rotated with the ISO week.
+- **Cause:** the 2026-09-03 and 2026-11-04 (c) pins covered the tools that
+  build and bundle the apps. The tools that describe them followed the
+  weekly-latest pattern `.github/CI.md` describes for cargo tools, which
+  `audit.yml`'s cargo-audit and cargo-deny still use.
+- **Fix:** one job variable per tool (`CARGO_CYCLONEDX_VERSION` 0.5.9,
+  `CDXGEN_VERSION` 12.9.0, each the newest release at least two weeks old),
+  `cargo install --version "$CARGO_CYCLONEDX_VERSION" --locked` and
+  `npm install -g --ignore-scripts "@cyclonedx/cdxgen@$CDXGEN_VERSION"`.
+  The binary's cache key is `cargo-cyclonedx-<version>-<os>`, the version
+  first, because actions/cache falls back to a prefix match on a key it
+  misses and a key that ended in `0.5.1` would match `0.5.10`'s. A step
+  after the gate reads each Rust and Node document's `metadata.tools` and
+  fails unless it names the pinned release, so the pin is proven on the
+  bytes that upload. `test_gen_firmware_sbom.py`'s `SbomToolPins` holds
+  every command that installs or fetches a package by name (`cargo
+  install`; `npm install`/`i`/`add`; `npx`; `npm exec`/`x`; pnpm, yarn and
+  bun), refuses `cargo binstall` and any run line that rewrites a pin
+  variable (`$GITHUB_ENV` included), and runs the tool step itself under
+  bash and jq. Its first version read only `cargo install` and `npm install
+  -g`, and the review got past it four ways (`npx`, `npm exec`, `npm i
+  --location=global`, `cargo binstall`).
+- **Not closed by it:** the cdxgen pin fixes its version and its direct
+  dependencies, not the ranges beneath them (the package publishes no
+  `npm-shrinkwrap.json`), and cargo-cyclonedx 0.5.9's published lockfile
+  holds a yanked `xml-rs`; both are open in the backlog (CI26), with the
+  spec-version and Node 20 decisions. The workflow itself runs only in CI.
+- **Applies to:** every tool that writes a release artifact, not only the
+  ones that build it. Pin it from one variable, key its cache on that
+  variable with the version where no other version's key can prefix-match
+  it, and read the version back off the artifact it wrote: a pin in the
+  install line proves the install line. A check over install commands must
+  know every way the ecosystem installs (a runner, `exec`, a dlx, a
+  binstall), or it holds only the spelling it was written for.
+
 ## 2026-11-04 (d) — "Releases carry the project's SBOMs", and none of them named a crate the app ships (found by reading; sweep CI20)
 
 - **Symptom:** none reported; it was found by reading. Since 2026-10-09 every

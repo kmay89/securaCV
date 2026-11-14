@@ -37,6 +37,7 @@
 #include "ble_ota.h"
 #include "api_auth.h"
 #include "http_status_line.h"
+#include "http_body_reader.h"   // a POST body read whole, or refused by name (sweep F300)
 #include "wap_json_writer.h"
 #include <ArduinoJson.h>
 
@@ -142,6 +143,23 @@ static inline esp_err_t send_error(httpd_req_t* req, const char* error) {
   doc["success"] = false;
   doc["error"] = error;
   return send_doc(req, doc);
+}
+
+// A POST body, read whole or refused by name (sweep F300): nullptr when all
+// of it is in `buf` (NUL-terminated, *len bytes; 0 for no body, which each
+// route answers its own way), else the error this file answers with
+// send_error(). One httpd_req_recv() is one socket read: the handlers parsed
+// what it returned, so a body in two TCP segments was parsed cut and one past
+// the buffer was cut at it and parsed anyway. http_body::read_request()
+// (http_body_reader.h, host-tested) reads Content-Length bytes and refuses a
+// body that does not fit before reading any of it;
+// tests_host/test_http_body_reader pins that no other httpd_req_recv() call
+// is left in this file.
+static const char* read_body(httpd_req_t* req, char* buf, size_t cap, size_t* len) {
+  const http_body::Result r = http_body::read_request(req, buf, cap, len);
+  if (r == http_body::TOO_LARGE) return "Request body too large";
+  if (r == http_body::READ_FAILED) return "Request body read failed";
+  return nullptr;
 }
 
 // A Bluetooth device's name (sweep F302): a scanned device's is whatever its
@@ -483,9 +501,9 @@ inline esp_err_t handle_bluetooth_scan_start(httpd_req_t* req) {
   uint32_t duration_ms = bluetooth_channel::SCAN_DURATION_MS;
 
   char content[64];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) return send_error(req, err);
   if (content_len > 0) {
-    content[content_len] = '\0';
     JsonDocument input;
     if (deserializeJson(input, content) == DeserializationError::Ok) {
       if (input["duration_sec"].is<JsonVariant>()) {
@@ -601,11 +619,11 @@ inline esp_err_t handle_bluetooth_pair_cancel(httpd_req_t* req) {
 // POST /api/bluetooth/pair/confirm - Confirm pairing PIN
 inline esp_err_t handle_bluetooth_pair_confirm(httpd_req_t* req) {
   char content[64];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) return send_error(req, err);
+  if (content_len == 0) {
     return send_error(req, "Missing request body");
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
@@ -673,11 +691,11 @@ inline esp_err_t handle_bluetooth_paired_list(httpd_req_t* req) {
 // DELETE /api/bluetooth/paired - Remove a paired device
 inline esp_err_t handle_bluetooth_paired_remove(httpd_req_t* req) {
   char content[64];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) return send_error(req, err);
+  if (content_len == 0) {
     return send_error(req, "Missing request body");
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
@@ -729,11 +747,11 @@ inline esp_err_t handle_bluetooth_paired_clear(httpd_req_t* req) {
 // POST /api/bluetooth/paired/trust - Set device trust status
 inline esp_err_t handle_bluetooth_paired_trust(httpd_req_t* req) {
   char content[128];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) return send_error(req, err);
+  if (content_len == 0) {
     return send_error(req, "Missing request body");
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
@@ -763,11 +781,11 @@ inline esp_err_t handle_bluetooth_paired_trust(httpd_req_t* req) {
 // POST /api/bluetooth/paired/block - Set device block status
 inline esp_err_t handle_bluetooth_paired_block(httpd_req_t* req) {
   char content[128];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) return send_error(req, err);
+  if (content_len == 0) {
     return send_error(req, "Missing request body");
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
@@ -826,11 +844,11 @@ inline esp_err_t handle_bluetooth_settings_get(httpd_req_t* req) {
 // POST /api/bluetooth/settings - Update Bluetooth settings
 inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
   char content[512];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) return send_error(req, err);
+  if (content_len == 0) {
     return send_error(req, "Missing request body");
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
@@ -916,11 +934,11 @@ inline esp_err_t handle_bluetooth_settings_set(httpd_req_t* req) {
 // POST /api/bluetooth/name - Set device name
 inline esp_err_t handle_bluetooth_name_set(httpd_req_t* req) {
   char content[128];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) return send_error(req, err);
+  if (content_len == 0) {
     return send_error(req, "Missing request body");
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
@@ -950,11 +968,11 @@ inline esp_err_t handle_bluetooth_name_set(httpd_req_t* req) {
 // POST /api/bluetooth/power - Set TX power
 inline esp_err_t handle_bluetooth_power_set(httpd_req_t* req) {
   char content[64];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) return send_error(req, err);
+  if (content_len == 0) {
     return send_error(req, "Missing request body");
   }
-  content[content_len] = '\0';
 
   JsonDocument input;
   if (deserializeJson(input, content) != DeserializationError::Ok) {
