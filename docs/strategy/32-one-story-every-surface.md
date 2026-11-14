@@ -265,6 +265,12 @@ Listed once, in the order they block something.
    path picker rather than the flasher.
 8. **News with nothing in it.** The page promises everything announced, and
    nothing has been. Demote it from the footer until the first post.
+9. **The Home Assistant app's own store text.** Its documentation tab ends in
+   a link to the issue tracker and nothing else, and two option descriptions
+   still say "add-on". It should link the site's Home Assistant page and the
+   Help Desk. Left for the next change that already rebuilds the app: any
+   edit under `privacy_witness_kernel/` republishes its image on merge, and
+   a wording fix is not a reason to ship one.
 
 ## The test
 
