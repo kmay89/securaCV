@@ -174,7 +174,7 @@ headline is the hook.
 | Claims | each item in finding 5, corrected, on the site and in the glossary and FAQ sources |
 | The Witness Wall | the emulator's "verified" line no longer survives a live fleet; the hosted copy says why it cannot search |
 | Privacy policy | says what pages do fetch, names the waitlist, re-dated |
-| The Lab | Help opens the Help Desk from all three bars; the manifest's site links use routes; its site nav is the site's header |
+| The Lab | Help opens the Help Desk from all three bars; the manifest's site links use routes; its site nav is the site's header; every page has a canonical link and share tags, a title that says SecuraCV, and a description a result can show |
 | Desktop Flasher | four atlas cards whose blurb described another page; the dead anchor |
 | iPhone app, family map | the Hub opens the Home Assistant page |
 | Back office | the welcome mail's two links |
@@ -201,6 +201,9 @@ broken. Each decision above has a gate.
   A device in the field keeps printing them, so they are permanent.
 - **The issue forms the site opens** are paths in the same contract; a
   renamed form fails here.
+- **The Lab's head is split the same way the site's is**
+  (`canary-local/tools/gen_head.py`): the canonical link and share tags are
+  stamped, and the hand-written title and description are checked.
 - On the site: one headline, the header order, no link into a private
   repository, no font from another host, internal links by route, every
   install-story page linking the page that owns it.
@@ -241,13 +244,15 @@ Listed once, in the order they block something.
 
 ## Backlog, in order
 
-1. **The Lab's own head.** No Lab page has a canonical link or share tags,
-   and none says "SecuraCV" in its title. The site's generator is the
-   pattern; the Lab needs its own.
-2. **One map for the six stages.** The site's journey page should render
+1. **One map for the six stages.** The site's journey page should render
    from the Lab's manifest instead of restating it.
-3. **Lab bench names.** Seven benches kept an old name in their own title
-   after the manifest renamed them.
+2. **Lab bench names.** The page titles now lead with the manifest's name
+   for each bench; seven benches still carry the old name in their own
+   headline and in links from other benches.
+3. **The Lab's footers.** Sixteen pages end "nothing here phones anywhere".
+   It is true of the page (its content policy allows only its own origin),
+   and it is the phrase the claims audit retired elsewhere because it reads
+   as a claim about the product. One wording for both sites.
 4. **The device status vocabulary.** The site has four words and a ladder;
    the Lab says "released" for things the registry calls unfinished. One
    vocabulary, carried.

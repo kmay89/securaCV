@@ -175,6 +175,11 @@ devices/<slug>/device.json cad.params
        tests/print-files.test.mjs both fail on a case edited after its last render)
   → gen_stamp.py --check, gen_mark_svg.py --check (report-only; a STAMP_REV bump is a human's call)
   → in the website repo, after the carry: its make-*-glb.mjs (the AR models re-read cad-dims.json)
+
+A Lab page's own <title> or description is an input too: canary-local/tools/gen_head.py
+stamps the canonical link and the share tags from them into the page's <head>, and its
+--check (canary-local.yml) also refuses a title without the Lab's name or a description
+a search result cannot show whole.
 ```
 
 Two things about that list that the old prose had wrong. `./setup.sh regen`

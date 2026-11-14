@@ -4,8 +4,23 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Through Canary eyes — your webcam, its firmware · canary.local</title>
-  <meta name="description" content="Point your webcam at the room and watch the Canary Vision presence engine — the real firmware's detection filter, voxel tracker and presence FSM, compiled to WebAssembly — decide presence, dwell and events from boxes alone. The browser stages motion boxes at the same sensor boundary the camera module occupies on hardware; no pixel ever crosses it. Frames are examined locally and discarded, never recorded, stored, or sent anywhere. A demonstration of how the presence engine behaves — not a security device." />
+  <title>Through Canary eyes — your webcam, its firmware — SecuraCV Lab</title>
+  <meta name="description" content="Point your webcam at the room: the Canary Vision presence engine decides from boxes alone. Frames are discarded. A demonstration, not a security device." />
+  <!-- head:derived — written by canary-local/tools/gen_head.py from this page's own title and description. Edit those, then re-run it. -->
+  <link rel="canonical" href="https://kmay89.github.io/securaCV/canary-local/eyes.html" />
+  <meta property="og:site_name" content="SecuraCV Lab" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://kmay89.github.io/securaCV/canary-local/eyes.html" />
+  <meta property="og:title" content="Through Canary eyes — your webcam, its firmware" />
+  <meta property="og:description" content="Point your webcam at the room: the Canary Vision presence engine decides from boxes alone. Frames are discarded. A demonstration, not a security device." />
+  <meta property="og:image" content="https://securacv.com/share-card.jpg" />
+  <meta property="og:image:width" content="2400" />
+  <meta property="og:image:height" content="1260" />
+  <meta property="og:image:alt" content="Canary, SecuraCV's yellow bird mascot, holding a notepad beside the words: Records what happened. Never who. An open-source home camera with no cloud, no subscription, and no face recognition." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://securacv.com/share-card.jpg" />
+  <!-- /head:derived -->
   <link rel="stylesheet" href="assets/canary-local.css" />
   <link rel="stylesheet" href="assets/eyes-bench.css" />
 </head>
