@@ -297,20 +297,66 @@ else
 fi
 
 # ---- block 2: standalone mode → witnessd ---------------------------------
+# The camera URL is this block's one free-text value (run.sh holds the zone
+# to a pattern before it gets here). run.sh encodes the URL as a JSON string
+# on one line and the heredoc takes the encoded value whole, quotes included;
+# pasted raw between quotes, a password holding a `"` or a `\` made the file
+# invalid JSON and witnessd exited on every start. That line is lifted and
+# run as written, so every render below goes through the script's own
+# encoding, never through a copy of it kept here.
+PLAIN_URL='rtsp://user:secret@cam.local:554/stream'
+HOSTILE_URL='rtsp://user:pa"ss\word@cam.local:554/stream'
+assert_eq 1 "$(count_needle "$RUN_SH" 'CAMERA_URL_JSON=$(')" \
+    "run.sh: the camera URL is JSON-encoded on exactly one line (CAMERA_URL_JSON)"
+ENCODE_LINE=$(code_lines "$RUN_SH" | { grep -F 'CAMERA_URL_JSON=$(' || true; } | head -n1)
+# encode_camera_url URL — CAMERA_URL_JSON as run.sh's own line computes it
+# from CAMERA_URL, in an emptied environment like `render`.
+encode_camera_url() {
+    {
+        printf '%s\n' "$ENCODE_LINE"
+        printf 'printf "%%s" "$CAMERA_URL_JSON"\n'
+    } > "$TMP/encode.sh"
+    env -i PATH="$PATH" CAMERA_URL="$1" bash -u "$TMP/encode.sh"
+}
+PLAIN_URL_JSON=$(encode_camera_url "$PLAIN_URL") || PLAIN_URL_JSON=""
+HOSTILE_URL_JSON=$(encode_camera_url "$HOSTILE_URL") || HOSTILE_URL_JSON=""
 if heredoc_body "$RUN_SH" 2 > "$TMP/addon_standalone.body"; then
+    assert_eq 1 "$(count_needle "$TMP/addon_standalone.body" '"url": $CAMERA_URL_JSON,')" \
+        "run.sh standalone block: rtsp.url takes the encoded value whole"
+    assert_eq 0 "$(count_needle "$TMP/addon_standalone.body" '"$CAMERA_URL')" \
+        "run.sh standalone block: the raw URL is never pasted between quotes"
     render "$TMP/addon_standalone.body" "$TMP/addon_standalone_off.json" \
         DB_PATH="$ADDON_DB" API_BIND_ADDR="$ADDON_ADDR" TOKEN_FILE="$ADDON_TOKEN" \
         FLEET_PEERS_API= RETENTION_SECS=604800 \
-        CAMERA_URL="rtsp://user:secret@cam.local:554/stream" CAMERA_FPS=10 \
+        CAMERA_URL_JSON="$PLAIN_URL_JSON" CAMERA_FPS=10 \
         CAMERA_WIDTH=640 CAMERA_HEIGHT=480 CAMERA_ZONE="zone:front_boundary"
     assert_off_block "$TMP/addon_standalone_off.json" "run.sh standalone block" "${WITNESSD_TOP_KEYS[@]}"
+    # The regression case: a quote and a backslash in the password. The
+    # rendered file must parse, and rtsp.url must be the exact string the
+    # person typed, byte for byte.
+    render "$TMP/addon_standalone.body" "$TMP/addon_standalone_hostile.json" \
+        DB_PATH="$ADDON_DB" API_BIND_ADDR="$ADDON_ADDR" TOKEN_FILE="$ADDON_TOKEN" \
+        FLEET_PEERS_API="$ADDON_API_ON" RETENTION_SECS=604800 \
+        CAMERA_URL_JSON="$HOSTILE_URL_JSON" CAMERA_FPS=10 \
+        CAMERA_WIDTH=640 CAMERA_HEIGHT=480 CAMERA_ZONE="zone:front_boundary"
+    if jq -e . "$TMP/addon_standalone_hostile.json" > /dev/null 2>&1; then
+        ok "run.sh standalone block: a camera URL with a quote and a backslash still renders as JSON"
+        assert_eq "$HOSTILE_URL" "$(jq -r '.rtsp.url' "$TMP/addon_standalone_hostile.json")" \
+            "run.sh standalone block: that URL round-trips through rtsp.url exactly"
+        assert_keys_accepted "$TMP/addon_standalone_hostile.json" '.' \
+            'run.sh standalone block (quote and backslash in the URL)' "${WITNESSD_TOP_KEYS[@]}"
+    else
+        fail "run.sh standalone block: a camera URL with a quote and a backslash renders text that is not JSON: $(cat "$TMP/addon_standalone_hostile.json")"
+    fi
     render "$TMP/addon_standalone.body" "$TMP/addon_standalone.json" \
         DB_PATH="$ADDON_DB" API_BIND_ADDR="$ADDON_ADDR" TOKEN_FILE="$ADDON_TOKEN" \
         FLEET_PEERS_API="$ADDON_API_ON" RETENTION_SECS=604800 \
-        CAMERA_URL="rtsp://user:secret@cam.local:554/stream" CAMERA_FPS=10 \
+        CAMERA_URL_JSON="$PLAIN_URL_JSON" CAMERA_FPS=10 \
         CAMERA_WIDTH=640 CAMERA_HEIGHT=480 CAMERA_ZONE="zone:front_boundary"
     if jq -e . "$TMP/addon_standalone.json" > /dev/null 2>&1; then
         ok "run.sh standalone block: renders as JSON"
+        assert_eq "$PLAIN_URL" "$(jq -r '.rtsp.url' "$TMP/addon_standalone.json")" \
+            "run.sh standalone block: an ordinary camera URL renders unchanged"
         assert_keys_accepted "$TMP/addon_standalone.json" '.' \
             'run.sh standalone block (WitnessdConfigFile)' "${WITNESSD_TOP_KEYS[@]}"
         assert_keys_accepted "$TMP/addon_standalone.json" '.api' \

@@ -59,8 +59,10 @@ function flow() {
   vm.createContext(ctx);
   vm.runInContext(SECTION +
     "\n;globalThis.__t = { wizardPath, preflightView, frigateSummary, summaryRows, savePayload, donePlan, integrationStatusView,\n" +
-    // typeof: a page without the helper (WIZARD_PAGE pointed at an older one)
-    // fails the zone cases alone, not every case.
+    // typeof: a page without a helper (WIZARD_PAGE pointed at an older one)
+    // fails that helper's cases alone, not every case.
+    "  sealChoiceView: typeof sealChoiceView === \"function\" ? sealChoiceView : undefined,\n" +
+    "  sealChoice: typeof sealChoice === \"function\" ? sealChoice : undefined,\n" +
     "  zoneSlug: typeof zoneSlug === \"function\" ? zoneSlug : undefined };\n",
     ctx);
   return ctx.__t;
@@ -200,8 +202,91 @@ test("an RTSP-path save carries the typed cameras with their URLs", () => {
     { reconfigure: false, deviceKeySeed: "cd".repeat(32) });
   assert.strictEqual(payload.frigate_detected, false);
   assert.deepStrictEqual(plain(payload.cameras), [{ name: "Front Door", url: "rtsp://10.0.0.9/s", zone_id: "zone:front_door" }]);
-  assert.strictEqual(payload.enable_reviews, true);
+  // Alerts-only is never sent on this path (see the next section): this
+  // save used to carry enable_reviews true.
+  assert.strictEqual(payload.enable_reviews, false);
   assert.strictEqual(payload.retention_days, 30);
+});
+
+// ---------------------------------------------------------------------------
+// What to seal: "Only Frigate alerts" needs recording on in Frigate
+//
+// Reviews mode makes the bridge listen to Frigate's review items INSTEAD of
+// its events, and Frigate creates review items only for cameras that
+// record. On the RTSP path the wizard writes Frigate's config itself,
+// detection-only, so that choice sealed nothing while the done screen
+// promised a first sealed event within a minute. It is not offered there,
+// the reason is shown, and it is never sent.
+// ---------------------------------------------------------------------------
+
+test("alerts-only is offered on the Frigate path and sent when chosen", () => {
+  const t = flow();
+  const plan = t.wizardPath(FRIGATE_RUNNING);
+  const form = Object.assign({}, FORM, { seal: "reviews" });
+  assert.deepStrictEqual(plain(t.sealChoiceView(plan)), { alertsOffered: true, note: "" });
+  assert.strictEqual(t.sealChoice(form, plan), "reviews");
+  assert.strictEqual(t.savePayload(form, plan, { reconfigure: true }).enable_reviews, true);
+  assert.strictEqual(Object.fromEntries(t.summaryRows(form, plan))["What to seal"], "Only Frigate alerts");
+});
+
+test("alerts-only is not offered where the wizard writes Frigate's config, and the reason is given", () => {
+  const t = flow();
+  for (const checks of [{ frigate: false }, { frigate: true, frigate_config_found: false }]) {
+    const plan = t.wizardPath(checks);
+    assert.strictEqual(plan.path, "rtsp");
+    const view = t.sealChoiceView(plan);
+    assert.strictEqual(view.alertsOffered, false);
+    assert.match(view.note, /Frigate creates alerts only for cameras that record/);
+    assert.match(view.note, /the camera config this wizard writes keeps recording off/);
+    assert.match(view.note, /frigate\.enable_reviews in this app's Configuration tab/);
+    const form = Object.assign({}, FORM, { seal: "reviews" });
+    assert.strictEqual(t.sealChoice(form, plan), "events");
+    assert.strictEqual(t.savePayload(form, plan, { reconfigure: false }).enable_reviews, false);
+    // The Confirm screen names what will really be saved.
+    assert.strictEqual(Object.fromEntries(t.summaryRows(form, plan))["What to seal"], "Every tracked object");
+  }
+});
+
+// The page's own glue, run against a stand-in document: on the RTSP path
+// the radio is disabled, a selection made earlier (on a Frigate path that
+// has since gone) falls back to the default, and the reason is visible; on
+// the Frigate path the radio is live again and the reason is hidden.
+test("the Settings screen disables alerts-only on the RTSP path and shows why", () => {
+  const glue = slice(src, "function renderSealChoice() {", "\n// -----");
+  assert.match(src, /if \(step === 3\) renderSealChoice\(\);/);
+  for (const id of ["seal-events", "seal-reviews", "seal-reviews-note"]) {
+    assert.ok(IDS.has(id), `#${id} is in the page`);
+  }
+  const run = (checks) => {
+    const classes = new Set(["hint", "hidden"]);
+    const els = {
+      "seal-events": { checked: false },
+      "seal-reviews": { checked: true, disabled: false },
+      "seal-reviews-note": {
+        textContent: "",
+        classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) },
+      },
+    };
+    const ctx = { document: { getElementById: (id) => els[id] }, checks };
+    vm.createContext(ctx);
+    vm.runInContext(SECTION + "\nconst plan = wizardPath(checks);\n" + glue + "\nrenderSealChoice();", ctx);
+    return { els, hidden: classes.has("hidden") };
+  };
+  const rtsp = run({ frigate: false });
+  assert.strictEqual(rtsp.els["seal-reviews"].disabled, true);
+  assert.strictEqual(rtsp.els["seal-events"].checked, true);
+  assert.strictEqual(rtsp.hidden, false);
+  assert.match(rtsp.els["seal-reviews-note"].textContent, /is not offered here/);
+  const frigate = run(FRIGATE_RUNNING);
+  assert.strictEqual(frigate.els["seal-reviews"].disabled, false);
+  assert.strictEqual(frigate.els["seal-events"].checked, false);
+  assert.strictEqual(frigate.hidden, true);
+  assert.strictEqual(frigate.els["seal-reviews-note"].textContent, "");
+});
+
+test("the alerts-only choice says what it needs", () => {
+  const markup = MARKUP.replace(/\s+/g, " ");
+  assert.ok(markup.includes("Needs recording on in Frigate: it creates alerts only for cameras that record."));
 });
 
 // ---------------------------------------------------------------------------
@@ -369,7 +454,13 @@ test("with install_integration on and nothing installed, the primary action inst
   assert.ok(d.lines.some((l) => l.includes("Frigate keeps its own camera config")));
   assert.ok(d.lines.some((l) => l.startsWith("✓ Daily digest automation created")));
   assert.ok(d.lines.some((l) => l.includes("ready to install from this app")));
-  assert.ok(d.after.some((l) => l.includes("After the restart: Settings → Devices & Services → \"SecuraCV discovered\" → Configure")));
+  // The card is named as Home Assistant renders it: the integration's
+  // flow_title is "SecuraCV {name}" and its Supervisor discovery step sets
+  // the name to "app". No card is titled "SecuraCV discovered". Its button
+  // reads "Add" (the frontend's ha-config-flow-card renders ui.common.add
+  // on a discovered flow); "Configure" is the button of an entry that
+  // already exists.
+  assert.ok(d.after.some((l) => l.includes("After the restart: Settings → Devices & Services → the \"SecuraCV app\" card under Discovered → Add. Nothing to type.")));
   assert.ok(d.after.some((l) => l.includes("Settings → Dashboards → Add dashboard → SecuraCV")));
   assert.ok(d.after.some((l) => l.includes("first sealed event appears within a minute")));
   for (const line of [...d.lines, ...d.after]) {
@@ -405,8 +496,12 @@ test("a loaded integration needs no restart: the next step is the discovered car
                                           install_integration: true, loaded: true, hacs_url: LINKS.hacs }));
   assert.strictEqual(d.primary.kind, "integrations");
   assert.strictEqual(d.primary.href, LINKS.integrations);
-  assert.ok(d.after[0].includes("\"SecuraCV discovered\" card is there"));
-  assert.ok(d.after[0].includes("Press Configure — nothing to type"));
+  assert.ok(d.after[0].includes("the \"SecuraCV app\" card is under Discovered"));
+  assert.ok(d.after[0].includes("Press Add — nothing to type"));
+  for (const line of [...d.lines, ...d.after]) {
+    assert.doesNotMatch(line, /SecuraCV discovered/);
+    assert.doesNotMatch(line, /Configure/);
+  }
 });
 
 test("a digest that was skipped is said to be skipped, with the reason", () => {
