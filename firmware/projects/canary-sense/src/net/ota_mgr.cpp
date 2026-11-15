@@ -37,14 +37,22 @@ void schedule_next(uint32_t delay_ms, uint32_t jitter_ms) {
 
 /* Copy src into dst, replacing JSON-breaking characters — the release
  * summary comes from CHANGELOG text and is embedded in a snprintf-built
- * payload (canary house style; no ArduinoJson dependency in this TU). */
+ * payload (canary house style; no ArduinoJson dependency in this TU). The
+ * copy stops between characters: a multibyte character that would straddle
+ * the end of dst is left out whole, because half of one is invalid UTF-8
+ * and Home Assistant refuses the whole retained payload over it. */
 void copy_json_safe(char* dst, size_t cap, const char* src) {
   if (dst == nullptr || cap == 0) return;
   if (src == nullptr) { dst[0] = '\0'; return; }
   size_t o = 0;
   for (size_t i = 0; src[i] != '\0' && o < cap - 1; i++) {
-    char c = src[i];
-    dst[o++] = (c == '"' || c == '\\' || (uint8_t)c < 0x20) ? ' ' : c;
+    const uint8_t c = (uint8_t)src[i];
+    // A UTF-8 lead byte names its sequence's length: stop before one whose
+    // continuation bytes would not all fit, so the cut lands between
+    // characters (a continuation byte or ASCII counts as one).
+    const size_t seq = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+    if (o + seq > cap - 1) break;
+    dst[o++] = (c == '"' || c == '\\' || c < 0x20) ? ' ' : (char)c;
   }
   dst[o] = '\0';
 }
@@ -116,15 +124,32 @@ void record_update_outcome() {
 }  // namespace
 
 void ota_boot_validate() {
-  // Confirm — or roll back — a freshly applied OTA image. Called right
-  // after WiFi comes up and BEFORE the blocking MQTT connect: confirming
-  // must not depend on the broker being reachable, or a broker outage
-  // during a device's first post-update boot would let any reboot revert
-  // a perfectly good image (the engine owns rollback confirmation via
-  // verifyRollbackLater — unconfirmed images revert on the next start).
-  // The required probe pins the connectivity this device exists to
-  // provide. A failed required probe reboots into the previous firmware
-  // (does not return).
+  // Confirm — or roll back — a freshly applied OTA image. Called on every
+  // loop() pass; the probe runs ONCE, at a bounded healthy gate (docs/OTA.md
+  // §2): the first pass with the station link up, or kGateMs after the
+  // first pass at the latest. It used to run in setup() right after the
+  // single bounded boot join (WIFI_BOOT_TIMEOUT_MS, 30 s), where one missed
+  // association — a congested band, an auth timeout, a router that was
+  // itself rebooting — was the whole verdict on the image: a good image
+  // rolled back, and auto-update installed it again the next day. Inside
+  // the gate loop()'s backoff gets several more associations in. Confirming
+  // still never depends on the broker: the probe is the link, the dwell is
+  // the link (ota_health_tick), and the engine owns rollback confirmation
+  // via verifyRollbackLater — unconfirmed images revert on the next start.
+  // The required probe pins the connectivity this device exists to provide.
+  // A failed required probe reboots into the previous firmware (does not
+  // return).
+  static constexpr uint32_t kGateMs = 90000;
+  static bool probed = false;
+  static bool armed = false;
+  static uint32_t first_pass_ms = 0;
+  if (probed) return;
+  const uint32_t now = millis();
+  if (!armed) { armed = true; first_pass_ms = now; }
+  if (WiFi.status() != WL_CONNECTED && (uint32_t)(now - first_pass_ms) < kGateMs) {
+    return;
+  }
+  probed = true;
   static const securacv_selftest_t k_selftests[] = {
     { "wifi connectivity", [](const char*) -> bool {
         return WiFi.status() == WL_CONNECTED;
