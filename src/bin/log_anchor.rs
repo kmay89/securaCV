@@ -1853,11 +1853,6 @@ fn verify(
     };
     let checks_countersignature = !cas.is_empty() || policy.is_some();
 
-    // A database no writer has touched has no anchors table; it reads as
-    // zero rows, never as a table to create. Under --policy the coverage
-    // block below still runs over the ledgers themselves, so an absent
-    // table and an empty one reach the same per-subject verdicts (an empty
-    // ledger has nothing to cover; a non-empty one is uncovered).
     let threshold_s = policy
         .as_ref()
         .map(|(p, _)| p.max_clock_offset_s)
@@ -1871,6 +1866,11 @@ fn verify(
     // this block.
     let (anchors, ots_rows, mut clock) = {
         let snapshot = conn.unchecked_transaction()?;
+        // A database no writer has touched has no anchors table; it reads as
+        // zero rows, never as a table to create. Under --policy the coverage
+        // block below still runs over the ledgers themselves, so an absent
+        // table and an empty one reach the same per-subject verdicts (an empty
+        // ledger has nothing to cover; a non-empty one is uncovered).
         let anchors = if tsa::anchor_table_exists(&snapshot)? {
             tsa::list_anchors(&snapshot)?
         } else {
