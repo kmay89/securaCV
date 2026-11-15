@@ -250,6 +250,107 @@ test("the Home's setup list reads only what the app can observe", () => {
   assert.match(appJs, /KEYS\.benches, KEYS\.setupHidden\]/, "forgetEverything() must clear the setup list's keys");
 });
 
+test("a running flash holds the shell: no route change, step or reload orphans it unasked", () => {
+  // The flash bench's write and boot monitor live in a framed page. The
+  // write finishes in Rust whatever the page does, but replacing the frame
+  // loses what only the page holds — the receipt, the boot log, the Home's
+  // record of the flash — and the returning bench resets the board with a
+  // board read. So the bench tells the shell when it is busy, and every way
+  // off the bench asks first.
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const announce = nativeJs.slice(nativeJs.indexOf("const announceBusy ="), nativeJs.indexOf("const setMonitoring ="));
+  assert.match(announce, /const busy = !!\(st\.busy \|\| st\.monitoring\)/, "busy is the write OR the monitor holding the port");
+  assert.match(announce, /window === window\.top\) return;/, "a bench that is not framed posts nothing");
+  assert.match(announce, /window\.parent\.postMessage\(\{ source: "scv-lab", type: "busy", busy \}, location\.origin\)/,
+    "the busy word goes to the parent at this origin, and carries nothing else");
+  assert.match(nativeJs, /st\.monitoring = on;\n\s+for \(const c of monitorControls\) c\.disabled = !on;\n\s+announceBusy\(\);/,
+    "setMonitoring() must announce (the re-read, Stop watching and a stopped monitor all go through it)");
+  assert.match(nativeJs, /st\.busy = true;\n\s+announceBusy\(\);/, "onFlash must announce as the write starts");
+  assert.match(nativeJs, /st\.busy = false;\n\s+announceBusy\(\);/, "the finally must announce when the write is over");
+  // The shell's listener: same origin, and only from the bench on screen.
+  const listener = shellJs.slice(shellJs.indexOf('d.type !== "busy"') - 400);
+  assert.match(listener.slice(0, 400), /e\.origin !== location\.origin/, "the busy listener must reject other origins first");
+  assert.match(listener.slice(0, 700), /e\.source !== frame\.contentWindow/, "only the bench actually on screen may say it is busy");
+  assert.match(listener.slice(0, 900), /benchBusy = d\.busy === true;/, "the flag is the message's boolean and nothing else");
+  assert.match(listener.slice(0, 1000), /\.stepper\.reload"\)\) b\.disabled = benchBusy;/, "the bar's reload button follows the flag");
+  // One guard, three doors: navigate(), step() and reloadBench().
+  const guard = shellJs.slice(shellJs.indexOf("function leaveBusyBench("), shellJs.indexOf('window.addEventListener("message"', shellJs.indexOf("function leaveBusyBench(")));
+  assert.match(guard, /if \(!benchBusy\) return true;/);
+  assert.match(guard, /if \(!confirm\(BUSY_LEAVE\)\) return false;/, "leaving a busy bench must be a confirm()");
+  assert.match(shellJs, /const BUSY_LEAVE = "A flash is still running on this bench\. Leave anyway\? The write finishes, but the receipt and boot log are lost\.";/);
+  const nav = shellJs.slice(shellJs.indexOf("function navigate("), shellJs.indexOf("/* ---- sidebar"));
+  assert.match(nav, /if \(!leaveBusyBench\(\)\) return;/, "navigate() must ask before it replaces the frame");
+  const ctx = shellJs.slice(shellJs.indexOf("const APP_CTX = {"));
+  assert.match(ctx, /reloadBench: \(\) => \{\n\s+const f = document\.querySelector\("\.bench-frame"\);\n\s+if \(!f \|\| !leaveBusyBench\(\)\) return;/,
+    "reloadBench() (⌘R) must ask before it reloads the frame");
+  assert.match(ctx, /step: \(dir\) => \{\n\s+if \(!leaveBusyBench\(\)\) return;/, "step() (⌘[ / ⌘]) must ask before it moves");
+  assert.match(shellJs, /function renderContent\(view, entry\) \{[\s\S]{0,300}benchBusy = false;/, "replacing the frame clears the word");
+  assert.match(shellJs, /class: "stepper out reload"[\s\S]{0,200}disabled: benchBusy/, "the reload button is built disabled while busy");
+});
+
+test("the status strip is quiet: no live region rebuilt per poll, and no redraw under the keyboard", () => {
+  // The poller emits twice per tick. A footer that was aria-live re-announced
+  // itself to a screen reader every 15–60 s for as long as the app was open,
+  // and a Home rebuilt on every emit dropped a keyboard user's place.
+  const strip = appJs.slice(appJs.indexOf("export function statusStrip"), appJs.indexOf("/* ---- keyboard shortcuts"));
+  assert.doesNotMatch(strip, /aria-live/, "the strip must not be a live region");
+  assert.doesNotMatch(strip, /replaceChildren/, "the chips are patched in place, never rebuilt");
+  assert.strictEqual((strip.match(/role: "status"/g) || []).length, 1, "one role=status span carries the summary");
+  assert.match(strip, /if \(c\.lastChild\.textContent !== text\) c\.lastChild\.textContent = text;/, "a chip's text is written only when it changed");
+  assert.match(strip, /if \(now !== said\) \{ said = now; summary\.textContent = now; \}/, "the summary is written only when it changed");
+  assert.doesNotMatch(strip, /const now = [^\n]*listening/, "the start-of-tick 'listening…' is never the summary's word");
+  const home = appJs.slice(appJs.indexOf("export function dashboardView"), appJs.indexOf("function welcomeCard"));
+  assert.match(home, /fleet\.subscribe\(\(\) => \{ if \(!root\.contains\(document\.activeElement\)\) render\(\); \}\)/,
+    "the Home must not redraw while focus is inside it");
+  const devices = appJs.slice(appJs.indexOf("export function devicesView"), appJs.indexOf("export function statusStrip"));
+  assert.match(devices, /fleet\.subscribe\(\(\) => \{ if \(!root\.contains\(document\.activeElement\)\) render\(\); \}\)/,
+    "the fleet page must not redraw while focus is inside it");
+  assert.match(shellJs, /if \(side && side\.contains\(document\.activeElement\)\) return;/, "the sidebar must not rebuild while focus is inside it");
+});
+
+test("only an address on this network gets an Open link or is saved as the hub", async () => {
+  // An mDNS announcement is unauthenticated LAN traffic, and the Open link
+  // hands its address to the OS browser; the typed hub address is saved as
+  // typed and announced as in use everywhere. Both pass the same gate the
+  // native side applies before any socket opens — lib.rs host_is_local —
+  // and the JS twin is pinned to that function's own accept/refuse lists.
+  globalThis.window = {};
+  const app = await import(pathToFileURL(join(CANARY, "assets/lab-app.js")).href);
+  assert.strictEqual(app.deviceBase({ ip: "203.0.113.5", port: 1, deviceType: "canary-wap" }), null, "a public IP gets no Open link");
+  assert.strictEqual(app.deviceBase({ host: "login.example.net", port: 8080, deviceType: "canary-wap" }), null, "a public name gets no Open link");
+  assert.strictEqual(app.deviceBase({ ip: "192.168.1.40", port: 1, deviceType: "canary-wap" }), "http://192.168.1.40");
+  assert.strictEqual(app.deviceBase({ host: "canary-dash-3.local.", port: 1, deviceType: "canary-display" }), "http://canary-dash-3.local");
+  const fn = libRs.slice(libRs.indexOf("fn local_hosts_pass_and_public_hosts_are_refused"));
+  const lists = [...fn.matchAll(/for h in \[([\s\S]*?)\]/g)].map((m) => [...m[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]));
+  assert.strictEqual(lists.length, 2, "lib.rs's host test lost its accept/refuse lists");
+  assert.ok(lists[0].includes("canary.local") && lists[1].includes("example.com"), "the lists changed shape");
+  for (const h of lists[0]) assert.strictEqual(app.hostIsLocal(h), true, `${h} is local to lib.rs and must be here`);
+  for (const h of lists[1]) assert.strictEqual(app.hostIsLocal(h), false, `${h} is refused by lib.rs and must be here`);
+  assert.strictEqual(app.hostIsLocal("[fe80::1]"), true, "brackets are stripped, as lib.rs does");
+  assert.strictEqual(app.hostIsLocal("256.1.1.1"), false);
+  // The fleet page's Save runs the gate before anything is written, and the
+  // "Saved" sentence is reachable only past it.
+  const save = appJs.slice(appJs.indexOf("const saveAddr = async"), appJs.indexOf("const note = h("));
+  assert.match(save, /host = new URL\(v\)\.hostname/);
+  assert.match(save, /if \(v && !hostIsLocal\(host\)\) \{\n\s+note\.textContent = "That address is not on this network \(private\/LAN addresses and \.local names only\), so the app will not use it\.";\n\s+return;/);
+  assert.ok(save.indexOf("!hostIsLocal(host)") < save.indexOf('"Saved. The tray and the Witness Wall use it too."'), "the refusal must come before the save");
+  assert.ok(save.indexOf("!hostIsLocal(host)") < save.indexOf("localStorage.setItem(KEYS.kernel"), "nothing is written before the gate");
+  // What is remembered from an announcement is bounded.
+  const tick = appJs.slice(appJs.indexOf("async tick()"), appJs.indexOf("devices() {"));
+  assert.match(tick, /name: word\(s\.name, 40\), model: word\(s\.model, 40\), deviceType: word\(s\.deviceType, 40\)/);
+  assert.match(tick, /role: word\(s\.role, 40\), fw: word\(s\.fw, 24\)/);
+  assert.match(tick, /host: word\(s\.host, 40\)/);
+  assert.match(tick, /if \(ids\.length > MAX_SEEN\)/, "the map is capped");
+  assert.match(appJs, /const MAX_SEEN = 64;/);
+  // The Wall host and the fleet page accept the same typed scheme.
+  const key = (src, label) => {
+    const m = /(\/\^https\?:\\\/\\\/\/i)\.test\(k\)/.exec(src);
+    assert.ok(m, `${label} lost its kernel-address scheme test`);
+    return m[1];
+  };
+  assert.strictEqual(key(hostJs, "witness-host.js"), key(appJs, "lab-app.js"), "witness-host.js and lab-app.js must accept the same scheme for the typed hub");
+});
+
 test("CI runs this gate", () => {
   const yml = read(join(ROOT, ".github/workflows/canary-local.yml"));
   assert.match(yml, /node --test canary-local\/tests\/lab_app\.test\.js/, "add this file to the page logic tests job");

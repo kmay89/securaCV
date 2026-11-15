@@ -371,9 +371,13 @@ pub fn run() {
     // can leave the Lab unable to open at all (the Flasher's guard, ported —
     // desktop/src-tauri/src/lib.rs). Not negotiable, so no "quit anyway";
     // the install takes seconds and the app relaunches itself. That guard
-    // runs FIRST; only then, where the menu bar always shows the companion's
-    // tray (companion::keeps_running), does closing hide the window instead
-    // of quitting — the fleet watch keeps running, and the tray reopens it.
+    // runs FIRST; then, where the menu bar always shows the companion's
+    // tray (companion::keeps_running), closing hides the window instead
+    // of quitting — the fleet watch keeps running, the tray reopens it, and
+    // a flash in flight is untouched. Only where the close really quits
+    // does the flash guard ask (the Flasher's hub guard, ported): a quit
+    // kills the running espflash mid-write. Advisory, with a Quit — a
+    // half-written board is re-flashed, nothing is bricked.
     #[cfg(desktop)]
     let builder = builder.on_window_event(|window, event| {
         use tauri::Manager as _;
@@ -396,6 +400,22 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.hide();
                 companion::told_hidden_once(window.app_handle());
+            } else if flash::Sidecars::any_running(window.app_handle()) {
+                api.prevent_close();
+                let app = window.app_handle().clone();
+                window
+                    .dialog()
+                    .message(FLASH_QUIT_QUESTION)
+                    .title("Quit while flashing?")
+                    .buttons(MessageDialogButtons::OkCancelCustom(
+                        "Quit".into(),
+                        "Keep flashing".into(),
+                    ))
+                    .show(move |quit| {
+                        if quit {
+                            quit_through_flash(&app, 0);
+                        }
+                    });
             }
         }
     });
@@ -440,11 +460,13 @@ pub fn run() {
             }
             // Cmd-Q / the app menu's Quit never pass through CloseRequested —
             // they request an application exit directly, and this is the only
-            // place that can stop them (the Flasher's guard, ported).
+            // place that can stop them (the Flasher's guard, ported). The
+            // tray's Quit and the updater's restart come through here too
+            // (both are request_exit), so one flash guard covers them all.
             #[cfg(desktop)]
-            if let tauri::RunEvent::ExitRequested { api, .. } = &_event {
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &_event {
+                use tauri_plugin_dialog::{DialogExt as _, MessageDialogButtons};
                 if self_update::install_in_progress(_app) {
-                    use tauri_plugin_dialog::{DialogExt as _, MessageDialogButtons};
                     api.prevent_exit();
                     _app.dialog()
                         .message(
@@ -456,9 +478,44 @@ pub fn run() {
                         .title("Finishing the update")
                         .buttons(MessageDialogButtons::OkCustom("OK".into()))
                         .show(|_| {});
+                } else if flash::Sidecars::any_running(_app) {
+                    api.prevent_exit();
+                    let app = _app.clone();
+                    // The exit code this request carried is kept.
+                    let code = code.unwrap_or(0);
+                    _app.dialog()
+                        .message(FLASH_QUIT_QUESTION)
+                        .title("Quit while flashing?")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "Quit".into(),
+                            "Keep flashing".into(),
+                        ))
+                        .show(move |quit| {
+                            if quit {
+                                quit_through_flash(&app, code);
+                            }
+                        });
                 }
             }
         })
+}
+
+/// What the quit guards ask while an espflash is running. Advisory on
+/// purpose: a board left half-written is flashed again, nothing is bricked
+/// (the ESP32's first-stage bootloader is in ROM).
+#[cfg(desktop)]
+const FLASH_QUIT_QUESTION: &str = "A flash is still writing to the board. Quitting now leaves it \
+     unfinished — safe, you would flash it again. Quit anyway?";
+
+/// The Quit the guards offer: end the running espflash first, THEN ask for
+/// the exit again with the same code. The map is empty by then, so the exit
+/// guard lets this second request through (an exit requested while the
+/// map is still full would only be asked about again), and the Exit
+/// handler's `kill_all` finds nothing left to do.
+#[cfg(desktop)]
+fn quit_through_flash(app: &tauri::AppHandle, code: i32) {
+    flash::Sidecars::kill_all(app);
+    app.exit(code);
 }
 
 #[cfg(test)]

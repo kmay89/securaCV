@@ -61,6 +61,23 @@ fn bundled_catalog() -> &'static Catalog {
 pub struct Sidecars(Mutex<HashMap<u32, CommandChild>>);
 
 impl Sidecars {
+    /// Whether any espflash is running this instant. The quit guards in
+    /// lib.rs ask before letting a close or an exit through, and the updater
+    /// (self_update.rs) asks before offering or starting a restart: a quit
+    /// kills the sidecar mid-write, and nothing in the app should do that
+    /// without saying so first.
+    pub fn any_running(app: &AppHandle) -> bool {
+        app.try_state::<Sidecars>()
+            .map(|state| {
+                state
+                    .0
+                    .lock()
+                    .map(|running| !running.is_empty())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    }
+
     /// Kill every espflash still running. Called once, on app exit.
     pub fn kill_all(app: &AppHandle) {
         let Some(state) = app.try_state::<Sidecars>() else {

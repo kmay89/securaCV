@@ -234,9 +234,23 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   // every place the bench takes the port back or the monitor ends goes
   // through here, so a stopped monitor never leaves a live-looking Send.
   let monitorControls = [];
+  // Tell the Lab shell (lab-shell.js) when this bench is busy — a write in
+  // flight or the boot monitor holding the port — and when it is free again,
+  // so a route change or a reload asks before replacing this frame: the
+  // write itself finishes in Rust, but the receipt, the boot log and the
+  // Home's record of the flash live only here. Posted only when framed,
+  // only to the same origin, and only when the word changed.
+  let announced = null;
+  const announceBusy = () => {
+    const busy = !!(st.busy || st.monitoring);
+    if (busy === announced || window === window.top) return;
+    announced = busy;
+    try { window.parent.postMessage({ source: "scv-lab", type: "busy", busy }, location.origin); } catch { /* not framed by the shell */ }
+  };
   const setMonitoring = (on) => {
     st.monitoring = on;
     for (const c of monitorControls) c.disabled = !on;
+    announceBusy();
   };
   // The receipt card's serial:status / serial:log / serial:receipt listeners
   // belong to that card alone (sweep A85). A new flash, a new card and a
@@ -597,6 +611,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       autoUpdate: !!creds.autoUpdate,
     };
     st.busy = true;
+    announceBusy();
     go.disabled = true;
     go.textContent = "Flashing…";
     result.classList.add("flash-hidden");
@@ -660,6 +675,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       go.disabled = false;
       go.textContent = "Flash my Canary";
       st.busy = false;
+      announceBusy(); // still busy while the monitor holds the port
       st.chip = null; // the board reboots after a write; read it fresh next time
     }
   };
