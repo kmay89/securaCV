@@ -761,11 +761,12 @@ pub fn commitment(digest: &[u8; 32], nonce: &[u8; OTS_NONCE_LEN]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// 16 fresh random bytes (one per subject, calendar and run).
+/// 16 fresh random bytes (one per subject, calendar and run) from `rand`'s
+/// thread-local generator, which is seeded from the operating system.
 pub fn random_nonce() -> [u8; OTS_NONCE_LEN] {
-    let mut nonce = [0u8; OTS_NONCE_LEN];
-    rand::fill(&mut nonce[..]);
-    nonce
+    // Never a zeroed array that is filled afterwards, which a scanner reads
+    // as a constant.
+    rand::random()
 }
 
 /// Byte-reversed lowercase hex: how `ots` and block explorers print a

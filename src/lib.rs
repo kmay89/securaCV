@@ -8729,7 +8729,8 @@ mod tests {
             "/tests/fixtures/ots/response-bob.otsr"
         ))
         .unwrap();
-        let nonce = [0x42u8; crate::ots::OTS_NONCE_LEN];
+        // Random like the kernel's own, never a literal.
+        let nonce = crate::ots::random_nonce();
         let c = crate::ots::commitment(hash, &nonce);
         let node = crate::ots::parse_timestamp(&body, &c).unwrap();
         crate::ots::Proof::compose(hash, &nonce, node).unwrap()

@@ -2463,6 +2463,10 @@ use witness_kernel::ots;
 const OTS_BOB: &str = "https://bob.btc.calendar.opentimestamps.org";
 const OTS_ALICE: &str = "https://alice.btc.calendar.opentimestamps.org";
 const OTS_PENDING_DIGEST: &str = "a70dfe69c5a0d62816781abb6e1777854718624a0d194231adb14c32ee5438a4";
+// The client nonce inside the real pending.ots (tests/fixtures/ots/README.md);
+// pending-bob.ots is byte-pinned to it, so it is the one literal nonce these
+// tests keep: a test vector, not a deployed secret.
+// codeql[rust/hard-coded-cryptographic-value]
 const OTS_PENDING_NONCE: &str = "7a4605de0a5b37cb211759c6812bfe2e";
 const OTS_BITCOIN_DIGEST: &str = "6fd9c1c4f096b77e6d4457bac1c7f51010d318db483f2868d3795843f098d378";
 const OTS_BOB_MSG_BITCOIN: &str =
@@ -2491,9 +2495,10 @@ fn h32(s: &str) -> [u8; 32] {
     hex::decode(s).unwrap().try_into().unwrap()
 }
 
-/// A pending proof over `hash` at bob, built from the fixture body.
-fn composed(hash: &[u8; 32], nonce_byte: u8) -> ots::Proof {
-    let nonce = [nonce_byte; ots::OTS_NONCE_LEN];
+/// A pending proof over `hash` at bob, built from the fixture body. The
+/// nonce is random like the kernel's own, never a literal.
+fn composed(hash: &[u8; 32]) -> ots::Proof {
+    let nonce = ots::random_nonce();
     let c = ots::commitment(hash, &nonce);
     let node = ots::parse_timestamp(&ots_fx("response-bob.otsr"), &c).unwrap();
     ots::Proof::compose(hash, &nonce, node).unwrap()
@@ -2605,7 +2610,7 @@ fn verify_pending_row_unverified_literal() -> Result<()> {
         &db,
         AnchorSubject::ChainHead,
         OTS_BOB,
-        &composed(&head, 1),
+        &composed(&head),
         recent(),
     );
     let before = std::fs::read(&db)?;
@@ -2839,7 +2844,7 @@ fn verify_policy_ots_lines() -> Result<()> {
         &db,
         AnchorSubject::ChainHead,
         OTS_BOB,
-        &composed(&head, 2),
+        &composed(&head),
         recent(),
     );
     let genesis = ots::Proof::parse(&ots_fx("genesis.ots"))?;
@@ -3059,17 +3064,38 @@ fn import_ots_dir_stamp_round_trip() -> Result<()> {
     );
     std::fs::write(dir.join("a.bob.otsr"), ots_fx("response-bob.otsr"))?;
     // b: the chain head.
-    write_request(&dir, "b.bob", &head, &[3u8; 16], "bob", OTS_BOB);
+    write_request(&dir, "b.bob", &head, &ots::random_nonce(), "bob", OTS_BOB);
     std::fs::write(dir.join("b.bob.otsr"), ots_fx("response-bob.otsr"))?;
     // c: a sentinel.
     let sentinel = AnchorSubject::PolicyHead.empty_ledger_sentinel().unwrap();
-    write_request(&dir, "c.bob", &sentinel, &[4u8; 16], "bob", OTS_BOB);
+    write_request(
+        &dir,
+        "c.bob",
+        &sentinel,
+        &ots::random_nonce(),
+        "bob",
+        OTS_BOB,
+    );
     std::fs::write(dir.join("c.bob.otsr"), ots_fx("response-bob.otsr"))?;
     // d: the calendar request failed (curl -f wrote an empty file).
-    write_request(&dir, "d.bob", &[5u8; 32], &[5u8; 16], "bob", OTS_BOB);
+    write_request(
+        &dir,
+        "d.bob",
+        &[5u8; 32],
+        &ots::random_nonce(),
+        "bob",
+        OTS_BOB,
+    );
     std::fs::write(dir.join("d.bob.otsr"), b"")?;
     // e: not a calendar response.
-    write_request(&dir, "e.bob", &[6u8; 32], &[6u8; 16], "bob", OTS_BOB);
+    write_request(
+        &dir,
+        "e.bob",
+        &[6u8; 32],
+        &ots::random_nonce(),
+        "bob",
+        OTS_BOB,
+    );
     std::fs::write(dir.join("e.bob.otsr"), b"<html>502</html>")?;
     let out = log_anchor(
         &db,
@@ -3137,7 +3163,7 @@ fn import_ots_dir_stamp_round_trip() -> Result<()> {
         &dir2,
         "x.carol",
         &[7u8; 32],
-        &[7u8; 16],
+        &ots::random_nonce(),
         "carol",
         "https://carol.example",
     );
@@ -3304,7 +3330,7 @@ fn relabel_ots() -> Result<()> {
         &db_path,
         AnchorSubject::ChainHead,
         OTS_BOB,
-        &composed(&h1, 9),
+        &composed(&h1),
         recent(),
     );
     let out = log_anchor(
@@ -3338,7 +3364,7 @@ fn relabel_ots() -> Result<()> {
         &db_path,
         AnchorSubject::ChainHead,
         OTS_BOB,
-        &composed(&h3, 8),
+        &composed(&h3),
         recent(),
     );
     let kernel = Kernel::open(&cfg)?;

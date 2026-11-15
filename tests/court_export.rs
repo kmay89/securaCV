@@ -1505,12 +1505,13 @@ use witness_kernel::ots;
 const OTS_BOB: &str = "https://bob.btc.calendar.opentimestamps.org";
 
 /// A pending proof over `hash`, composed from the fixture calendar body.
-fn ots_proof(hash: &[u8; 32], nonce_byte: u8) -> ots::Proof {
+fn ots_proof(hash: &[u8; 32]) -> ots::Proof {
     let body = std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ots/response-bob.otsr"),
     )
     .unwrap();
-    let nonce = [nonce_byte; ots::OTS_NONCE_LEN];
+    // Random like the kernel's own, never a literal.
+    let nonce = ots::random_nonce();
     let c = ots::commitment(hash, &nonce);
     let node = ots::parse_timestamp(&body, &c).unwrap();
     ots::Proof::compose(hash, &nonce, node).unwrap()
@@ -1537,7 +1538,7 @@ fn ots_proof_over_bundle_packaged() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let (db, bundle) = make_db_and_bundle(temp.path())?;
     let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
-    let proof = ots_proof(&bundle_sha, 1);
+    let proof = ots_proof(&bundle_sha);
     let id = insert_ots_row(&db, tsa::AnchorSubject::Digest, &proof);
     let kit = temp.path().join("kit");
     let out = run_court_export(&db, &bundle, &kit);
@@ -1616,7 +1617,7 @@ fn ots_proof_over_bundle_packaged() -> Result<()> {
 /// commitment itself (synthetic: a 32-byte message, so it reads as attesting
 /// block `height`; no header confirms it, and the kit never says it does).
 fn ots_attested_proof(hash: &[u8; 32], height: u8) -> ots::Proof {
-    let nonce = [7u8; ots::OTS_NONCE_LEN];
+    let nonce = ots::random_nonce();
     let c = ots::commitment(hash, &nonce);
     let mut body = vec![0x00, 0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01, 0x01];
     body.push(height);
@@ -1642,7 +1643,7 @@ fn ots_readme_sentence_follows_the_proofs_state() -> Result<()> {
     assert_eq!(read_manifest(&kit)?["ots_bundle_attestation"], "bitcoin");
 
     // One attested and one pending: the sentence names the exception.
-    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha, 2));
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha));
     let kit2 = temp.path().join("kit2");
     export_ok(&db, &bundle, &kit2);
     let readme = std::fs::read_to_string(kit2.join("README.md"))?;
@@ -1666,15 +1667,11 @@ fn ots_excluded_rows() -> Result<()> {
     let sentinel = tsa::AnchorSubject::PolicyHead
         .empty_ledger_sentinel()
         .unwrap();
-    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&sentinel, 1));
-    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&[9u8; 32], 2));
-    let gone = insert_ots_row(
-        &db,
-        tsa::AnchorSubject::ChainHead,
-        &ots_proof(&[8u8; 32], 3),
-    );
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&sentinel));
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&[9u8; 32]));
+    let gone = insert_ots_row(&db, tsa::AnchorSubject::ChainHead, &ots_proof(&[8u8; 32]));
     let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
-    let broken = insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha, 4));
+    let broken = insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha));
     {
         let kernel = Kernel::open(&test_cfg(&db))?;
         kernel.conn.execute(
@@ -1768,7 +1765,7 @@ fn ots_client_reads_fixtures_and_our_proofs() -> Result<()> {
     }
     let temp = tempfile::tempdir()?;
     let ours = temp.path().join("ours.ots");
-    std::fs::write(&ours, ots_proof(&[0x5au8; 32], 7).to_bytes())?;
+    std::fs::write(&ours, ots_proof(&[0x5au8; 32]).to_bytes())?;
     let o = Command::new("ots").arg("info").arg(&ours).output()?;
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     Ok(())

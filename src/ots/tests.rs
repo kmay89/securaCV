@@ -21,6 +21,10 @@ fn h32(s: &str) -> [u8; 32] {
 }
 
 const PENDING_DIGEST: &str = "a70dfe69c5a0d62816781abb6e1777854718624a0d194231adb14c32ee5438a4";
+// The client nonce inside the real pending.ots (tests/fixtures/ots/README.md);
+// pending-bob.ots is byte-pinned to it, so it is the one literal nonce these
+// tests keep: a test vector, not a deployed secret.
+// codeql[rust/hard-coded-cryptographic-value]
 const PENDING_NONCE: &str = "7a4605de0a5b37cb211759c6812bfe2e";
 const PENDING_COMMITMENT: &str = "e1ae951b5744348aaf577a341e834464680d1c0afdea639715f148a0379d6593";
 const BOB: &str = "https://bob.btc.calendar.opentimestamps.org";
@@ -599,8 +603,10 @@ fn commitment_and_compose() {
     let response = parse_timestamp(&fx("response-bob.otsr"), &c).unwrap();
     let p = Proof::compose(&digest, &nonce, response.clone()).unwrap();
     assert_eq!(p.to_bytes(), fx("pending-bob.ots"));
-    // A response over another message is refused.
-    let wrong = [0u8; 16];
+    // A response over another message is refused. Any other nonce does it;
+    // a fresh one differs from the fixture's with overwhelming probability.
+    let wrong = random_nonce();
+    assert_ne!(wrong, nonce);
     assert!(Proof::compose(&digest, &wrong, response).is_err());
 }
 
