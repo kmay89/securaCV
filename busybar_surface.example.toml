@@ -97,8 +97,26 @@ client_id = "securacv-busybar-surface"
 # showing an empty one.
 [kernel]
 url = "http://127.0.0.1:8799"
-# The Event API capability token, as witness_api writes it.
+# The credential the surface presents, as a file holding one token. The
+# file is read again for every refresh (once a minute), never cached.
+#
+# Intended: a VIEWER token. It is long-lived and the API honors it on
+# GET /api/sealed-log and nowhere else, which is the only route this surface
+# reads. Mint one on the hub, the way you run witness_api:
+#   witness_api mint-viewer-token --label "busy bar"
+# The JSON it prints once carries "sealed_log_token"; put that value alone in
+# a file only this surface's user can read (chmod 600) and point at it:
+# token_path = "/etc/securacv/busybar_viewer_token"
+# Revoke it with `witness_api revoke-viewer-token <id>`.
+#
+# Fallback: the Event API's own capability token file, as witness_api writes
+# it. That token is a full credential and it rotates every ten minutes; the
+# per-refresh re-read is what keeps the surface following it.
 # token_path = "/run/witness/api_token"
+#
+# If the file cannot be read, or is empty, that refresh is skipped with a
+# warning and no request is made; the rear shows the timeline as unavailable
+# until a refresh succeeds.
 #
 # The surface reads GET /api/sealed-log, and only that. Every other route that
 # returns events — /events, /events/latest, /digest, /export/bundle — appends a

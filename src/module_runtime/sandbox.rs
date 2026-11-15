@@ -137,6 +137,23 @@ mod linux {
         // The batched socket calls bypass the single-message denials above.
         "sendmmsg",
         "recvmmsg",
+        // Limits and scheduling by pid. The child runs as the daemon's uid,
+        // so each of these works on the PARENT: `prlimit64(getppid(),
+        // RLIMIT_CPU, {1, 1})` ends a daemon that has used more than a second
+        // of CPU (SIGXCPU), RLIMIT_AS or RLIMIT_NOFILE of zero fails its next
+        // allocation or open, and an idle scheduling or I/O class starves it
+        // — the stop-the-witness-by-proxy the signal denials above exist to
+        // prevent. Nothing detection needs: the child's own CPU limit is set
+        // before the filter is installed, and threads are created with the
+        // default attributes. (glibc reads limits through `prlimit64` too,
+        // so `getrlimit` answers EPERM in here; nothing in the child asks.)
+        "prlimit64",
+        "setpriority",
+        "sched_setscheduler",
+        "sched_setparam",
+        "sched_setaffinity",
+        "sched_setattr",
+        "ioprio_set",
     ];
 
     /// Newer filesystem/network escape hatches that bypass the classic
@@ -168,6 +185,10 @@ mod linux {
         "pidfd_send_signal",
         "inotify_init",
         "uselib",
+        // The legacy spelling of `prlimit64` on the caller itself (it would
+        // let the child raise its own soft CPU limit back to the hard one).
+        // Not a syscall on aarch64, hence this list.
+        "setrlimit",
     ];
 
     /// Longest a child may burn CPU before the kernel ends it (`RLIMIT_CPU`,
@@ -601,6 +622,138 @@ mod tests {
             Some(libc::EPERM),
             "execve should be denied with EPERM inside the sandbox"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sandbox_blocks_changing_the_parents_limits_and_scheduling() {
+        // The child shares the daemon's uid, so the kernel would let it set
+        // the DAEMON's resource limits and scheduling by pid. Every attempt
+        // below must answer EPERM. Each is written to change nothing if it
+        // were allowed (the parent's own current values), except the limit:
+        // one below the soft RLIMIT_NOFILE, so "unchanged afterwards" means
+        // something.
+        #[repr(C)]
+        struct SchedAttr {
+            size: u32,
+            sched_policy: u32,
+            sched_flags: u64,
+            sched_nice: i32,
+            sched_priority: u32,
+            sched_runtime: u64,
+            sched_deadline: u64,
+            sched_period: u64,
+        }
+        fn nofile() -> (libc::rlim_t, libc::rlim_t) {
+            let mut lim = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) }, 0);
+            (lim.rlim_cur, lim.rlim_max)
+        }
+        fn errno_if_refused(rc: libc::c_long) -> Option<i32> {
+            (rc == -1)
+                .then(|| std::io::Error::last_os_error().raw_os_error())
+                .flatten()
+        }
+
+        let before = nofile();
+        assert!(before.0 > 16, "needs a soft limit with room to lower");
+        let nice = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+
+        let (attempts, thread_ran) = run_in_sandbox(move || {
+            let parent = unsafe { libc::getppid() };
+            let lowered = libc::rlimit {
+                rlim_cur: before.0 - 1,
+                rlim_max: before.1,
+            };
+            let param: libc::sched_param = unsafe { std::mem::zeroed() };
+            let mut cpus: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+            let cpus_len = std::mem::size_of::<libc::cpu_set_t>();
+            // Reading stays allowed; only the setters are denied.
+            assert_eq!(
+                unsafe { libc::sched_getaffinity(parent, cpus_len, &mut cpus) },
+                0
+            );
+            let attr = SchedAttr {
+                size: std::mem::size_of::<SchedAttr>() as u32,
+                sched_policy: libc::SCHED_OTHER as u32,
+                sched_flags: 0,
+                sched_nice: nice,
+                sched_priority: 0,
+                sched_runtime: 0,
+                sched_deadline: 0,
+                sched_period: 0,
+            };
+            let mut attempts: Vec<(String, Option<i32>)> = Vec::new();
+            let mut tried = |name: &str, rc: libc::c_long| {
+                attempts.push((name.to_string(), errno_if_refused(rc)));
+            };
+            unsafe {
+                tried(
+                    "prlimit64",
+                    libc::prlimit(parent, libc::RLIMIT_NOFILE, &lowered, std::ptr::null_mut())
+                        as libc::c_long,
+                );
+                tried(
+                    "setpriority",
+                    libc::setpriority(libc::PRIO_PROCESS, parent as libc::id_t, nice)
+                        as libc::c_long,
+                );
+                tried(
+                    "sched_setscheduler",
+                    libc::sched_setscheduler(parent, libc::SCHED_OTHER, &param) as libc::c_long,
+                );
+                tried(
+                    "sched_setparam",
+                    libc::sched_setparam(parent, &param) as libc::c_long,
+                );
+                tried(
+                    "sched_setaffinity",
+                    libc::sched_setaffinity(parent, cpus_len, &cpus) as libc::c_long,
+                );
+                tried(
+                    "sched_setattr",
+                    libc::syscall(
+                        libc::SYS_sched_setattr,
+                        parent,
+                        &attr as *const SchedAttr,
+                        0,
+                    ),
+                );
+                let ioprio = libc::syscall(libc::SYS_ioprio_get, 1, parent).max(0);
+                tried(
+                    "ioprio_set",
+                    libc::syscall(libc::SYS_ioprio_set, 1, parent, ioprio),
+                );
+                // The caller's own limit, by the legacy syscall glibc no
+                // longer uses (best-effort list; x86_64 has it).
+                #[cfg(target_arch = "x86_64")]
+                tried(
+                    "setrlimit",
+                    libc::syscall(libc::SYS_setrlimit, libc::RLIMIT_NOFILE, &lowered),
+                );
+            }
+            // Threads — what tract's inference pool needs — still start.
+            let thread_ran = std::thread::spawn(|| true).join().unwrap_or(false);
+            Ok((attempts, thread_ran))
+        })
+        .expect("sandbox run should succeed");
+
+        for (name, errno) in &attempts {
+            assert_eq!(
+                *errno,
+                Some(libc::EPERM),
+                "{name} on the parent should be denied with EPERM inside the sandbox"
+            );
+        }
+        assert!(attempts.len() >= 7, "every setter was tried: {attempts:?}");
+        assert!(
+            thread_ran,
+            "thread creation must keep working in the sandbox"
+        );
+        assert_eq!(nofile(), before, "the parent's limit is unchanged");
     }
 
     #[cfg(target_os = "linux")]

@@ -915,13 +915,14 @@ fn main() -> Result<()> {
         link: FrigateLink::new(device_id, args.frigate_topic_prefix.clone(), mode),
     };
 
-    // Witness the process lifecycle. A trailing `start` with no clean
-    // shutdown means the previous run died uncleanly — seal a PowerLoss
-    // failure record (proxy for power loss, crash, or kill; see
+    // Witness the process lifecycle. A previous run that never sealed a
+    // clean shutdown — a trailing `start`, or one retention pruned with no
+    // `shutdown_clean` live — died uncleanly: seal a PowerLoss failure
+    // record (proxy for power loss, crash, or kill; see
     // docs/failure_semantics.md). Then seal this run's start record —
     // fail-closed: if we cannot witness our own startup we must not run.
-    match bridge.kernel.last_lifecycle_phase() {
-        Ok(Some(LifecyclePhase::Start)) => {
+    match bridge.kernel.previous_run_ended_uncleanly() {
+        Ok(true) => {
             log::warn!("previous run did not shut down cleanly; sealing PowerLoss failure record");
             if let Err(e) = bridge.kernel.append_failure_event(
                 FailureType::PowerLoss,
@@ -934,8 +935,8 @@ fn main() -> Result<()> {
                 log::error!("failed to seal PowerLoss record: {e}");
             }
         }
-        Ok(_) => {}
-        Err(e) => log::error!("could not determine previous lifecycle phase: {e}"),
+        Ok(false) => {}
+        Err(e) => log::error!("could not determine how the previous run ended: {e}"),
     }
     bridge.append_lifecycle(LifecyclePhase::Start)?;
 

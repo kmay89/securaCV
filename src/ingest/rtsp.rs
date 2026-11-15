@@ -198,6 +198,9 @@ impl RtspSource {
 #[derive(Clone, Debug)]
 pub struct RtspStats {
     pub frames_captured: u64,
+    /// The source URL with any embedded credentials redacted
+    /// (`rtsp://***@host/...`): stats are for logs and summaries, never for
+    /// reconnecting.
     pub url: String,
 }
 
@@ -225,7 +228,10 @@ impl SyntheticRtspSource {
     ///
     /// Synthetic sources are always "connected".
     fn connect(&mut self) -> Result<()> {
-        log::info!("RtspSource: connected to {} (synthetic)", self.config.url);
+        log::info!(
+            "RtspSource: connected to {} (synthetic)",
+            super::redact_url_userinfo(&self.config.url)
+        );
         Ok(())
     }
 
@@ -273,7 +279,7 @@ impl SyntheticRtspSource {
     fn stats(&self) -> RtspStats {
         RtspStats {
             frames_captured: self.frame_count,
-            url: self.config.url.clone(),
+            url: super::redact_url_userinfo(&self.config.url),
         }
     }
 }
@@ -344,7 +350,10 @@ impl GstreamerRtspSource {
             .set_state(gstreamer::State::Playing)
             .context("set RTSP pipeline to Playing")?;
         self.connected_at = Some(Instant::now());
-        log::info!("RtspSource: connected to {}", self.config.url);
+        log::info!(
+            "RtspSource: connected to {}",
+            super::redact_url_userinfo(&self.config.url)
+        );
         Ok(())
     }
 
@@ -384,7 +393,7 @@ impl GstreamerRtspSource {
     fn stats(&self) -> RtspStats {
         RtspStats {
             frames_captured: self.frame_count,
-            url: self.config.url.clone(),
+            url: super::redact_url_userinfo(&self.config.url),
         }
     }
 
@@ -477,6 +486,19 @@ mod tests {
             backend: RtspBackendPreference::Auto,
             transport: None,
         }
+    }
+
+    #[test]
+    fn rtsp_stats_never_carry_the_url_credentials() -> Result<()> {
+        // The stats feed witnessd's periodic summary line: a camera URL's
+        // embedded credentials must not ride along into the log.
+        let mut config = stub_config();
+        config.url = "stub://admin:S3cret@camera.local:554/stream".to_string();
+        let mut source = RtspSource::new(config)?;
+        source.connect()?;
+        let stats = source.stats();
+        assert_eq!(stats.url, "stub://***@camera.local:554/stream");
+        Ok(())
     }
 
     #[test]
