@@ -1186,41 +1186,45 @@ fn ots_select_sql(conn: &Connection) -> Result<String> {
     ))
 }
 
-type RawOtsRow = Vec<rusqlite::types::Value>;
+/// One `ots_anchors` row as SQLite stores it, in [`ots_select_sql`] column
+/// order, read by storage class (the `tsa_anchors` reader's `RawValue`) and
+/// not yet typed.
+type RawOtsRow = Vec<crate::tsa::RawValue>;
 
 fn ots_i64(raw: &RawOtsRow, idx: usize) -> std::result::Result<i64, String> {
-    use rusqlite::types::Value;
+    use crate::tsa::RawValue;
     let name = OTS_COLUMN_NAMES[idx];
     match &raw[idx] {
-        Value::Integer(v) => Ok(*v),
-        Value::Null => Err(format!("{name} is NULL")),
+        RawValue::Integer(v) => Ok(*v),
+        RawValue::Null => Err(format!("{name} is NULL")),
         _ => Err(format!("{name} is not an INTEGER")),
     }
 }
 
 fn ots_opt_i64(raw: &RawOtsRow, idx: usize) -> std::result::Result<Option<i64>, String> {
     match &raw[idx] {
-        rusqlite::types::Value::Null => Ok(None),
+        crate::tsa::RawValue::Null => Ok(None),
         _ => ots_i64(raw, idx).map(Some),
     }
 }
 
 fn ots_text(raw: &RawOtsRow, idx: usize) -> std::result::Result<String, String> {
-    use rusqlite::types::Value;
+    use crate::tsa::RawValue;
     let name = OTS_COLUMN_NAMES[idx];
     match &raw[idx] {
-        Value::Text(v) => Ok(v.clone()),
-        Value::Null => Err(format!("{name} is NULL")),
+        RawValue::Text(v) => Ok(v.clone()),
+        RawValue::Null => Err(format!("{name} is NULL")),
+        RawValue::BadText => Err(format!("{name} is TEXT that is not UTF-8")),
         _ => Err(format!("{name} is not TEXT")),
     }
 }
 
 fn ots_blob(raw: &RawOtsRow, idx: usize) -> std::result::Result<Vec<u8>, String> {
-    use rusqlite::types::Value;
+    use crate::tsa::RawValue;
     let name = OTS_COLUMN_NAMES[idx];
     match &raw[idx] {
-        Value::Blob(v) => Ok(v.clone()),
-        Value::Null => Err(format!("{name} is NULL")),
+        RawValue::Blob(v) => Ok(v.clone()),
+        RawValue::Null => Err(format!("{name} is NULL")),
         _ => Err(format!("{name} is not a BLOB")),
     }
 }
@@ -1259,7 +1263,7 @@ fn decode_ots_row(raw: &RawOtsRow) -> std::result::Result<OtsAnchorRecord, Strin
 /// (`corrupt ots anchor {id}: {reason}`) instead of aborting the read.
 /// `Ok(vec![])` when the table is absent.
 pub fn list_ots_anchors_lenient(conn: &Connection) -> Result<Vec<(i64, Result<OtsAnchorRecord>)>> {
-    use rusqlite::types::Value;
+    use crate::tsa::{raw_value, RawValue};
     if !ots_table_exists(conn)? {
         return Ok(Vec::new());
     }
@@ -1269,7 +1273,7 @@ pub fn list_ots_anchors_lenient(conn: &Connection) -> Result<Vec<(i64, Result<Ot
     let rows = stmt.query_map([], |row| {
         let mut raw: RawOtsRow = Vec::with_capacity(width);
         for i in 0..width {
-            raw.push(row.get_ref(i)?.into());
+            raw.push(raw_value(row, i)?);
         }
         Ok(raw)
     })?;
@@ -1277,7 +1281,7 @@ pub fn list_ots_anchors_lenient(conn: &Connection) -> Result<Vec<(i64, Result<Ot
     for row in rows {
         let raw = row?;
         let id = match &raw[0] {
-            Value::Integer(id) => *id,
+            RawValue::Integer(id) => *id,
             _ => -1,
         };
         out.push((
