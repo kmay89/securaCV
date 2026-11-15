@@ -472,6 +472,12 @@ fn run_inner(
     // boot witnessd into safe mode. The TSA countersignature is never checked
     // here (`log_anchor verify --ca`, openssl). Runs after the high-water-mark
     // so an anchor failure reports on top of an otherwise-consistent chain.
+    // The anchors pass and the clock-provenance cross-check below read from
+    // ONE snapshot: a SAVEPOINT nests inside any transaction the caller
+    // holds, and outside one it is a deferred read transaction that blocks no
+    // WAL writer. witnessd may insert an anchor row and seal its record
+    // between two separate reads; read apart, that record would be an orphan.
+    let snapshot = ReadSnapshot::begin(conn, "verify_anchor_snapshot")?;
     let mut anchor_warnings = Vec::new();
     // The rows that decoded, and the ids that did not, for the
     // clock-provenance cross-check below.
@@ -536,6 +542,8 @@ fn run_inner(
     // record is never a warning (anchors predate the ledger). The check runs
     // even with no anchors table (every record is then an orphan) and skips
     // records whose anchor row exists but is malformed (already warned).
+    #[cfg(test)]
+    tests::between_the_anchor_and_clock_reads();
     if clock_rows > 0 {
         clock_provenance_warnings(
             conn,
@@ -544,8 +552,45 @@ fn run_inner(
             &mut report.warnings,
         );
     }
+    snapshot.release()?;
 
     Ok(())
+}
+
+/// A read snapshot over several reads of one connection: `SAVEPOINT name`
+/// on begin, `RELEASE name` on release or drop. Nested inside a caller's
+/// transaction it is a plain savepoint; outside one it opens a deferred
+/// transaction whose first read fixes the snapshot every later read sees.
+struct ReadSnapshot<'a> {
+    conn: &'a Connection,
+    name: &'static str,
+    open: bool,
+}
+
+impl<'a> ReadSnapshot<'a> {
+    fn begin(conn: &'a Connection, name: &'static str) -> Result<Self> {
+        conn.execute_batch(&format!("SAVEPOINT {name};"))?;
+        Ok(Self {
+            conn,
+            name,
+            open: true,
+        })
+    }
+
+    fn release(mut self) -> Result<()> {
+        self.open = false;
+        self.conn
+            .execute_batch(&format!("RELEASE {};", self.name))?;
+        Ok(())
+    }
+}
+
+impl Drop for ReadSnapshot<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            let _ = self.conn.execute_batch(&format!("RELEASE {};", self.name));
+        }
+    }
 }
 
 /// The clock-provenance cross-check warnings (see the call site). No
@@ -728,7 +773,22 @@ mod tests {
         derive_db_encryption_key, signing_key_from_seed, CandidateEvent, EventType,
         InferenceBackend, Kernel, KernelConfig, ModuleDescriptor, ZonePolicy,
     };
+    use std::cell::RefCell;
     use std::path::{Path, PathBuf};
+
+    thread_local! {
+        static BETWEEN_THE_ANCHOR_AND_CLOCK_READS: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    }
+
+    /// Test seam: runs between the anchors pass and the clock-provenance
+    /// cross-check, where a writer may land.
+    pub(super) fn between_the_anchor_and_clock_reads() {
+        BETWEEN_THE_ANCHOR_AND_CLOCK_READS.with(|hook| {
+            if let Some(f) = hook.borrow().as_ref() {
+                f();
+            }
+        });
+    }
 
     const TEST_SEED: &str = "devkey:test:runner1234567890abcdef1234567890";
 
@@ -2645,5 +2705,97 @@ mod tests {
             clock_provenance_head,
             "clock_provenance",
         );
+    }
+
+    /// The anchors pass and the clock-provenance cross-check read from one
+    /// snapshot: a row anchored and its record sealed between them is not an
+    /// orphan. Without the savepoint the cross-check reads the new record
+    /// against an anchors list that never saw its row and warns
+    /// "clock provenance orphan".
+    #[test]
+    fn anchors_and_clock_records_are_read_from_one_snapshot() {
+        let db = TempDb::new();
+        let cfg = KernelConfig {
+            db_path: db.path().to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: TEST_SEED.to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let fixture = crate::tsa::parse_response(
+            &std::fs::read(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/tsa/reply.tsr"
+            ))
+            .expect("reading the TSA fixture"),
+        )
+        .expect("the fixture token parses");
+        let gen_time = crate::tsa::gen_time_unix(&fixture.gen_time).expect("genTime");
+        let imprint: [u8; 32] = fixture.imprint.clone().try_into().expect("32-byte imprint");
+        let observe = |cfg: &KernelConfig, wall: i64, gap: Option<u32>| -> usize {
+            Kernel::open(cfg)
+                .expect("open kernel")
+                .observe_anchors_for_clock_provenance(&crate::ClockObservation {
+                    observed_wall_s: wall as u64,
+                    poll_gap_s: gap,
+                    kernel_version: "0.0.0-test",
+                })
+                .expect("observe")
+                .len()
+        };
+        let anchor_fixture = |cfg: &KernelConfig| {
+            let kernel = Kernel::open(cfg).expect("open kernel");
+            crate::tsa::ensure_anchor_table(&kernel.conn).expect("anchors table");
+            crate::tsa::insert_anchor(
+                &kernel.conn,
+                "digest",
+                &imprint,
+                "https://tsa.example/tsr",
+                &fixture,
+            )
+            .expect("insert anchor");
+        };
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        drop(kernel);
+        // The first poll only places the cursor; the next seals anchor #1's record.
+        assert_eq!(observe(&cfg, gen_time, None), 0);
+        anchor_fixture(&cfg);
+        assert_eq!(observe(&cfg, gen_time + 5, Some(5)), 1);
+
+        let writer_cfg = cfg.clone();
+        let writer_fixture = fixture.clone();
+        BETWEEN_THE_ANCHOR_AND_CLOCK_READS.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let kernel = Kernel::open(&writer_cfg).expect("open kernel");
+                crate::tsa::ensure_anchor_table(&kernel.conn).expect("anchors table");
+                crate::tsa::insert_anchor(
+                    &kernel.conn,
+                    "digest",
+                    &imprint,
+                    "https://tsa.example/tsr",
+                    &writer_fixture,
+                )
+                .expect("insert anchor");
+                drop(kernel);
+                assert_eq!(observe(&writer_cfg, gen_time + 10, Some(5)), 1);
+            }));
+        });
+        let conn = open_encrypted(db.path());
+        let report = verify(&conn);
+        BETWEEN_THE_ANCHOR_AND_CLOCK_READS.with(|hook| *hook.borrow_mut() = None);
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.anchors_checked, Some(1));
+        assert_eq!(report.clock_provenance_verified, Some(1));
+        assert!(
+            report.warnings.iter().all(|w| !w.contains("orphan")),
+            "{:?}",
+            report.warnings
+        );
+        // Both rows and both records exist once the snapshot has ended.
+        assert_eq!(crate::tsa::list_anchors(&conn).unwrap().len(), 2);
+        assert_eq!(crate::clock_provenance::row_count(&conn).unwrap(), 2);
     }
 }

@@ -147,7 +147,12 @@ CREATE TABLE IF NOT EXISTS clock_provenance_cursor (id INTEGER PRIMARY KEY CHECK
    device key lineage (the pinned key plus every validated rotation, PQ key
    when stored, Compat mode — the `court_export` pattern) and prints one
    ledger line. A failing ledger prints `FAIL`, suppresses the per-anchor
-   clock lines and fails the run after the loop.
+   clock lines and fails the run after the loop. The anchors table and the
+   ledger are read inside one read transaction: a running `witnessd` may
+   insert an anchor row and seal its record between two separate reads, and
+   a record read without its row would be reported (step 3) as naming a
+   deleted anchor. The database is in WAL mode, so the snapshot blocks no
+   writer.
 2. Under every anchor's `OK` / `UNVERIFIED` / `FAIL` block, one indented
    `clock:` line, plus `note:` / `WARNING:` lines where they apply.
 3. A record whose anchor id has no row, or whose row's token hashes
@@ -204,7 +209,10 @@ after the export-receipt walk, `verify::verify_clock_provenance_with` walks
 the ledger under the lineage keys; a chain or signature failure is a VERDICT
 failure (`FailedLedger::ClockProvenance`, serialized `clock_provenance`,
 named "clock-provenance ledger"). At the end of the anchors block each record
-is cross-checked and produces WARNINGS only: `clock provenance orphan: …` for
+is cross-checked — the anchors pass and the cross-check read from one
+`SAVEPOINT` snapshot, which nests inside any transaction the caller holds and
+otherwise opens a deferred read transaction, so a row anchored and sealed
+between the two reads is never an orphan — and produces WARNINGS only: `clock provenance orphan: …` for
 a missing or replaced token, `clock offset: …` for a prompt-or-negative
 offset beyond one bucket. A missing record is never a warning (pre-upgrade
 anchors have none). The orphan check runs even with no anchors table and

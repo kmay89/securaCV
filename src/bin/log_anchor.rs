@@ -998,23 +998,35 @@ fn verify(
     // block below still runs over the ledgers themselves, so an absent
     // table and an empty one reach the same per-subject verdicts (an empty
     // ledger has nothing to cover; a non-empty one is uncovered).
-    let anchors = if tsa::anchor_table_exists(conn)? {
-        tsa::list_anchors(conn)?
-    } else {
-        Vec::new()
-    };
-    if anchors.is_empty() {
-        println!("no anchors stored");
-    }
-    // The clock-provenance ledger, whole, before any anchor: its chain and
-    // device signatures under the key lineage this database names. The
-    // per-anchor clock lines below only mean something over a ledger that
-    // holds together.
     let threshold_s = policy
         .as_ref()
         .map(|(p, _)| p.max_clock_offset_s)
         .unwrap_or(clock_provenance::ONE_BUCKET_S);
-    let mut clock = ClockContext::load(conn, threshold_s)?;
+    // The anchors table and the clock-provenance ledger are read inside ONE
+    // read transaction. witnessd may insert an anchor row and seal its record
+    // between two separate reads, and a record read without its row would be
+    // reported after the loop as naming a deleted anchor. The database is in
+    // WAL mode, so the snapshot blocks no writer; it ends (a no-op rollback)
+    // when `snapshot` drops at the end of this block.
+    let (anchors, mut clock) = {
+        let snapshot = conn.unchecked_transaction()?;
+        let anchors = if tsa::anchor_table_exists(&snapshot)? {
+            tsa::list_anchors(&snapshot)?
+        } else {
+            Vec::new()
+        };
+        if anchors.is_empty() {
+            println!("no anchors stored");
+        }
+        #[cfg(test)]
+        tests::between_the_two_reads();
+        // The clock-provenance ledger, whole, before any anchor: its chain and
+        // device signatures under the key lineage this database names. The
+        // per-anchor clock lines below only mean something over a ledger that
+        // holds together.
+        let clock = ClockContext::load(&snapshot, threshold_s)?;
+        (anchors, clock)
+    };
     if anchors.is_empty() && policy.is_none() {
         let orphans = clock.finish(&anchors);
         if !clock.ledger_ok {
@@ -1836,6 +1848,107 @@ fn relabel(conn: &Connection, id: i64, subject: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use witness_kernel::{ClockObservation, Kernel, KernelConfig, ZonePolicy};
+
+    thread_local! {
+        static BETWEEN_THE_TWO_READS: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    }
+
+    /// Test seam: runs between `verify`'s read of the anchors table and its
+    /// walk of the clock-provenance ledger, where a writer may land.
+    pub(super) fn between_the_two_reads() {
+        BETWEEN_THE_TWO_READS.with(|hook| {
+            if let Some(f) = hook.borrow().as_ref() {
+                f();
+            }
+        });
+    }
+
+    fn test_cfg(db: &Path) -> KernelConfig {
+        KernelConfig {
+            db_path: db.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: std::time::Duration::from_secs(60 * 60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        }
+    }
+
+    /// The committed OpenSSL-generated token (`tests/fixtures/tsa/reply.tsr`).
+    fn fixture_token() -> tsa::TimestampToken {
+        let der = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tsa/reply.tsr"
+        ))
+        .expect("reading the TSA fixture");
+        tsa::parse_response(&der).expect("the fixture token parses")
+    }
+
+    /// One daemon poll with injected readings (never the wall clock): the
+    /// number of records it sealed.
+    fn observe(cfg: &KernelConfig, wall: i64, gap: Option<u32>) -> usize {
+        let mut kernel = Kernel::open(cfg).expect("open kernel");
+        kernel
+            .observe_anchors_for_clock_provenance(&ClockObservation {
+                observed_wall_s: wall as u64,
+                poll_gap_s: gap,
+                kernel_version: "0.0.0-test",
+            })
+            .expect("observe")
+            .len()
+    }
+
+    /// A digest anchor over the fixture token's own imprint, through a
+    /// connection of its own.
+    fn anchor_the_fixture(cfg: &KernelConfig) -> i64 {
+        let kernel = Kernel::open(cfg).expect("open kernel");
+        tsa::ensure_anchor_table(&kernel.conn).expect("anchors table");
+        let token = fixture_token();
+        let imprint: [u8; 32] = token.imprint.clone().try_into().expect("32-byte imprint");
+        tsa::insert_anchor(
+            &kernel.conn,
+            "digest",
+            &imprint,
+            "https://tsa.example/tsr",
+            &token,
+        )
+        .expect("insert anchor")
+    }
+
+    /// `verify` reads the anchors table and the clock-provenance ledger from
+    /// one snapshot: a row anchored and sealed between the two reads is
+    /// neither a deleted anchor nor an orphan. Without the shared read
+    /// transaction the record sealed in the seam names an anchor the earlier
+    /// read never saw, and the run fails with "deleted or replaced".
+    #[test]
+    fn verify_reads_anchors_and_clock_ledger_from_one_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("witness.db");
+        let cfg = test_cfg(&db);
+        let gen_time = tsa::gen_time_unix(&fixture_token().gen_time).expect("genTime");
+        // The first poll only places the cursor; the next seals anchor #1's record.
+        assert_eq!(observe(&cfg, gen_time, None), 0);
+        anchor_the_fixture(&cfg);
+        assert_eq!(observe(&cfg, gen_time + 5, Some(5)), 1);
+
+        let writer_cfg = cfg.clone();
+        BETWEEN_THE_TWO_READS.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                anchor_the_fixture(&writer_cfg);
+                assert_eq!(observe(&writer_cfg, gen_time + 10, Some(5)), 1);
+            }));
+        });
+        let reader = Kernel::open(&cfg).expect("open kernel");
+        let result = verify(&reader.conn, &cfg.db_path, &[], None, false);
+        BETWEEN_THE_TWO_READS.with(|hook| *hook.borrow_mut() = None);
+        result.expect("verify over one snapshot passes");
+        // Both rows and both records exist once the snapshot has ended.
+        assert_eq!(tsa::list_anchors(&reader.conn).unwrap().len(), 2);
+        assert_eq!(clock_provenance::row_count(&reader.conn).unwrap(), 2);
+    }
 
     /// `anchor-all` over empty ledgers: every head kind is planned over its
     /// sentinel and STORED AS `digest`, so a sentinel row is never a head the

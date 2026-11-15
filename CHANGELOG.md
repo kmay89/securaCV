@@ -39,6 +39,9 @@
   one per anchor row, the run's own included, so plain equality could never
   hold while it runs. A record whose anchor was deleted
   or whose token was replaced fails the run; a broken ledger fails it. The
+  anchors table and the ledger are read from one snapshot, so a row anchored
+  and sealed while `verify` runs is neither (and `run_full_verify`'s
+  cross-check reads the two the same way). The
   anchor policy gains `max_clock_offset_s` (default 600, at least 1): under
   `--policy` a reading beyond it is a breach that makes the policy `NOT
   SATISFIED`; without a policy it is a printed `WARNING`.
