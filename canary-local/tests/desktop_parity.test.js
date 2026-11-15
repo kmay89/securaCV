@@ -8940,7 +8940,7 @@ test("each frontend's About facts: a read that failed is never an empty board", 
     page.wireEfuseRead();
     nodes["efuse-read"].fire("click");
     await ticks();
-    assert.match(nodes["this-board"].textContent, new RegExp(`Package${want.replace(/[()]/g, "\\$&")}(?! yet)`),
+    assert.match(nodes["this-board"].textContent, new RegExp(`Package${want.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?! yet)`),
       `a fuse read answering ${JSON.stringify(answer)} should read ${want}`);
   }
 });
