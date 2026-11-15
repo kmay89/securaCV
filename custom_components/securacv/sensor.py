@@ -61,9 +61,12 @@ from .watch_runtime import async_observe_event
 from .health_metrics import (
     battery_charging,
     battery_percent,
+    bounded_number,
     bytes_per_day_to_mb,
     canary_sd,
+    canary_sd_attributes,
     canary_sd_wear_pct,
+    carried_scalar,
     egress_counters,
     egress_topic,
     egress_topic_pairs,
@@ -73,6 +76,7 @@ from .health_metrics import (
     memory_free_reading,
     offline_queue_counters,
     round_pct,
+    unsigned_reading,
 )
 from .signature import (
     verify_chain,
@@ -1356,26 +1360,31 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
             "battery_percent": 100 if battery is None else battery,
             # The reading, or None with none: never a 0 nobody sent.
             "memory_free_bytes": memory_free,
-            "uptime_seconds": data.get("uptime", 0),
-            "firmware_version": data.get("firmware_version", ""),
-            "public_key": public_key,
+            # Broker values, each as the core can carry it: an integer
+            # past 64 bits in any of them failed the recorder and every
+            # websocket subscription on the entity (HA57 held only the
+            # two keys above to that).
+            "uptime_seconds": unsigned_reading(data.get("uptime")),
+            "firmware_version": carried_scalar(data.get("firmware_version", "")),
+            "public_key": carried_scalar(public_key),
             # Health is not signed: say so with the same slice the signed
             # entities carry, rather than moving with no verdict at all.
             **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
         }
         # Battery detail, when the firmware reports it.
-        for key in (
-            "battery_present",
-            "charge_state",
-            "battery_health_pct",
-            "battery_mv",
+        for key, read in (
+            ("battery_present", carried_scalar),
+            ("charge_state", carried_scalar),
+            ("battery_health_pct", unsigned_reading),
+            ("battery_mv", unsigned_reading),
         ):
-            if (val := data.get(key)) is not None:
+            if (val := read(data.get(key))) is not None:
                 self._attr_extra_state_attributes[key] = val
-        # SD endurance metrics, when the firmware reports them.
-        if (sd := canary_sd(data)) is not None:
+        # SD endurance metrics, when the firmware reports them: the known
+        # keys, each bounded, never the raw object.
+        if (sd := canary_sd_attributes(data)) is not None:
             self._attr_extra_state_attributes["sd"] = sd
-        if (temp_c := data.get("temp_c")) is not None:
+        if (temp_c := bounded_number(data.get("temp_c"))) is not None:
             self._attr_extra_state_attributes["temp_c"] = temp_c
         # The committed-event egress's counters (HA24): in the canary base's
         # health, else from the canary-wap's own topic while it pairs with
@@ -1434,12 +1443,12 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
         attrs: dict[str, Any] = {}
         if (sd := canary_sd(data)) is not None:
             attrs = {
-                "mounted": sd.get("mounted"),
-                "usage_pct": sd.get("usage_pct"),
-                "writes": sd.get("writes"),
-                "errors": sd.get("errors"),
-                "lifetime_kb": sd.get("lifetime_kb"),
-                "replace_recommended": sd.get("replace_recommended"),
+                "mounted": carried_scalar(sd.get("mounted")),
+                "usage_pct": bounded_number(sd.get("usage_pct")),
+                "writes": unsigned_reading(sd.get("writes")),
+                "errors": unsigned_reading(sd.get("errors")),
+                "lifetime_kb": unsigned_reading(sd.get("lifetime_kb")),
+                "replace_recommended": carried_scalar(sd.get("replace_recommended")),
             }
         attrs.update(unsigned_trust_attrs(self.hass, self._entry, self._device_id))
         self._attr_extra_state_attributes = attrs
@@ -1477,10 +1486,10 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
         if isinstance(gps, dict):
             self._attr_native_value = gps.get("fix_type", "no_fix")
             self._attr_extra_state_attributes = {
-                "satellites": gps.get("satellites", 0),
-                "hdop": gps.get("hdop", 0),
-                "latitude": gps.get("latitude", ""),
-                "longitude": gps.get("longitude", ""),
+                "satellites": unsigned_reading(gps.get("satellites")),
+                "hdop": bounded_number(gps.get("hdop")),
+                "latitude": carried_scalar(gps.get("latitude", "")),
+                "longitude": carried_scalar(gps.get("longitude", "")),
                 **trust,
             }
         else:

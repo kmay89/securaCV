@@ -106,3 +106,95 @@ def test_the_pair_answer_and_a_refusal_body_are_held_to_the_same_cap():
     with pytest.raises(SecuraCVApiResponseError, match="unexpected status: 403"):
         run(async_pair_kernel(_Session(refusal), "http://kernel:8799", "123456"))
     assert refusal.content.served <= API_JSON_MAX_BYTES + 1
+
+
+def test_a_body_nested_past_the_interpreters_limit_is_a_response_error(monkeypatch):
+    """Nested brackets fit the byte cap and json.loads raises RecursionError
+    on them, which is no ValueError: out of the client it was an unhandled
+    exception in the backstop, not the response error every other junk
+    body is."""
+
+    def _too_deep(*_args, **_kwargs):
+        raise RecursionError("maximum recursion depth exceeded while decoding a JSON document")
+
+    monkeypatch.setattr(json, "loads", _too_deep)
+    with pytest.raises(SecuraCVApiResponseError, match="invalid JSON"):
+        run(_api(_Resp(200, b'{"device_id": "pwk_1a2b3c4d"}')).async_get_identity())
+
+
+# ── the adapter-stats coordinator reads under the same cap ───────────────
+
+
+class _EndlessStream:
+    """A chunked body that never ends: every read is served in full."""
+
+    def __init__(self) -> None:
+        self.served = 0
+
+    async def read(self, n: int = -1) -> bytes:
+        size = n if n >= 0 else 65536
+        self.served += size
+        return b"x" * size
+
+
+class _StatsSession:
+    def __init__(self, resp: _Resp) -> None:
+        self._resp = resp
+        self.urls: list[str] = []
+
+    def get(self, url, timeout=None, **kwargs):
+        self.urls.append(url)
+        return self._resp
+
+
+def _stats(resp: _Resp):
+    from homeassistant.core import HomeAssistant
+
+    from ..coordinator import SecuraCVAdapterStatsCoordinator
+    from .conftest import make_entry
+
+    hass = HomeAssistant()
+    hass.data = {}
+    session = _StatsSession(resp)
+    return SecuraCVAdapterStatsCoordinator(hass, make_entry(hass), "http://adapter-host:8799/", session), session
+
+
+def test_the_adapter_stats_poll_refuses_a_declared_length_over_the_cap():
+    """The stats URL is typed by a person and polled every 30 s with
+    `resp.json()`, the one read the cap did not cover: whatever answers
+    there could make Home Assistant buffer a body of any size, every poll."""
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    resp = _Resp(200, b"{}", content_length=API_JSON_MAX_BYTES + 1)
+    coordinator, session = _stats(resp)
+    with pytest.raises(UpdateFailed, match="too large"):
+        run(coordinator._async_update_data())
+    assert resp.content.served == 0
+    assert session.urls == ["http://adapter-host:8799"]
+
+
+def test_the_adapter_stats_poll_stops_reading_a_body_that_never_ends():
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    resp = _Resp(200, b"")
+    resp.content = _EndlessStream()
+    coordinator, _session = _stats(resp)
+    with pytest.raises(UpdateFailed, match="too large"):
+        run(coordinator._async_update_data())
+    assert resp.content.served == API_JSON_MAX_BYTES + 1
+
+
+def test_the_adapter_stats_poll_reads_what_it_read_before():
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    stats = {"adapters": {"frigate": {"events": 12, "errors": 0}}}
+    body = json.dumps(stats).encode()
+    assert run(_stats(_Resp(200, body, content_length=len(body)))[0]._async_update_data()) == stats
+    # An empty body and a non-object answer are {} as before; junk and a
+    # non-200 are failed updates.
+    assert run(_stats(_Resp(200, b""))[0]._async_update_data()) == {}
+    assert run(_stats(_Resp(200, b"[1, 2]"))[0]._async_update_data()) == {}
+    with pytest.raises(UpdateFailed, match="unreadable"):
+        run(_stats(_Resp(200, b"<html>login</html>"))[0]._async_update_data())
+    with pytest.raises(UpdateFailed, match="status 503"):
+        run(_stats(_Resp(503, b"{}"))[0]._async_update_data())

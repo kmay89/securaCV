@@ -268,6 +268,128 @@ async def test_canary_availability_follows_its_status_topic(
     assert hass.states.get("binary_sensor.kitchen_cam_online").state == "on"
 
 
+# The flagship's (firmware/canary) periodic status, as main.cpp publishes
+# it every 30 s: its witness state, and no liveness word.
+FLAGSHIP_STATUS = {"uptime": 3600, "free_heap": 182344, "records_created": 12, "seq": 12, "state": "NOFIX", "gps_fix": False, "sd_healthy": True, "chain_valid": True, "firmware": "2.4.16"}
+
+
+def canary_entity_id(hass: HomeAssistant, platform: str, key: str) -> str:
+    """The entity id of one of CANARY's entities, by its unique id."""
+    entity_id = er.async_get(hass).async_get_entity_id(platform, DOMAIN, f"{DOMAIN}_canary_{CANARY}_{key}")
+    assert entity_id is not None, key
+    return entity_id
+
+
+async def test_a_flagship_stays_online_through_its_periodic_status(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
+) -> None:
+    """The flagship says it is up on its availability topic (retained
+    ``online``, ``offline`` as its last will) and names its witness state on
+    status. That status was read as a liveness verdict of offline: thirty
+    seconds after each connect its entities went unavailable and its Online
+    sensor turned off, until the next reconnect. A status that says neither
+    online nor offline moves nothing."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    fire(hass, f"securacv/{CANARY}/availability", "online", retain=True)
+    fire(hass, f"securacv/{CANARY}/status", FLAGSHIP_STATUS, retain=True)
+    fire(hass, f"securacv/{CANARY}/health", HEALTH, retain=True)
+    await hass.async_block_till_done()
+    online = canary_entity_id(hass, "binary_sensor", "online")
+    health = canary_entity_id(hass, "sensor", "health_status")
+
+    # The periodic publishes, as the broker delivers them to the entry's
+    # wildcard and to the entities' own subscriptions.
+    for _ in range(3):
+        fire(hass, f"securacv/{CANARY}/status", FLAGSHIP_STATUS, retain=True)
+        fire(hass, f"securacv/{CANARY}/health", HEALTH, retain=True)
+        await hass.async_block_till_done()
+        assert entry.runtime_data.devices[CANARY]["online"] is True
+        assert hass.states.get(online).state == "on"
+        assert hass.states.get(health).state == "healthy"
+
+    # Its last will still takes it down, and a status still in flight does
+    # not bring it back.
+    fire(hass, f"securacv/{CANARY}/availability", "offline", retain=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(online).state == "off"
+    assert hass.states.get(health).state == "unavailable"
+    fire(hass, f"securacv/{CANARY}/status", FLAGSHIP_STATUS, retain=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(online).state == "off"
+    assert hass.states.get(health).state == "unavailable"
+
+
+async def test_health_sd_wear_and_gps_write_only_numbers_the_core_can_carry(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
+) -> None:
+    """HA57 held the battery and memory keys to what the core's JSON writer
+    carries; every other broker number the Health, SD Wear and GPS sensors
+    show was copied as sent. An integer past 64 bits in any of them (uptime,
+    the battery detail, the `sd` object, the egress counters, the GPS
+    object) made State.as_dict_json raise, which fails the recorder and
+    every websocket subscription on the entity. Each is read as a bounded
+    number or left out, and the three states serialize."""
+    await setup_kernel_entry(enable_mqtt=True)
+    await wake_a_canary(hass)
+    entity_ids = {
+        "health": canary_entity_id(hass, "sensor", "health_status"),
+        "sd_wear": canary_entity_id(hass, "sensor", "sd_wear"),
+        "gps": canary_entity_id(hass, "sensor", "gps_fix"),
+    }
+
+    def health_with(number: int) -> dict:
+        return {
+            "public_key": CANARY_KEY, "free_heap": 120000,
+            "uptime": number, "firmware_version": number, "battery_present": number, "charge_state": number,
+            "battery_mv": number, "battery_health_pct": number, "temp_c": number,
+            "sd": {"mounted": number, "usage_pct": number, "writes": number, "errors": number,
+                   "lifetime_kb": number, "wear_pct": 3.5, "replace_recommended": number, "unknown_key": number},
+            "gps": {"fix_type": "3d", "satellites": number, "hdop": number, "latitude": number, "longitude": number},
+            "csi_event_egress": {"dropped": number, "held_dropped": 1, "planner": {"live": number, "held": 2}},
+            "offline_queue": {"dropped_overflow": number, "dropped_oversize": 3},
+        }
+
+    def carried() -> dict[str, dict]:
+        out = {}
+        for name, entity_id in entity_ids.items():
+            state = hass.states.get(entity_id)
+            assert state is not None, name
+            # The recorder's and the websocket's serialization of the state.
+            out[name] = json.loads(state.as_dict_json)["attributes"]
+        return out
+
+    for wide in (2**64, -(2**64)):
+        fire(hass, f"securacv/{CANARY}/health", health_with(wide))
+        await hass.async_block_till_done()
+        attrs = carried()
+        health = attrs["health"]
+        assert health["uptime_seconds"] is None, wide
+        assert health["firmware_version"] is None, wide
+        for key in ("battery_present", "charge_state", "battery_mv", "battery_health_pct", "temp_c"):
+            assert key not in health, (key, wide)
+        assert health["sd"] == {"wear_pct": 3.5}, wide
+        assert health["csi_event_egress"] == {"held_dropped": 1, "planner": {"held": 2}}, wide
+        assert health["offline_queue"] == {"dropped_oversize": 3}, wide
+        sd_wear = attrs["sd_wear"]
+        for key in ("mounted", "usage_pct", "writes", "errors", "lifetime_kb", "replace_recommended"):
+            assert sd_wear[key] is None, (key, wide)
+        gps = attrs["gps"]
+        for key in ("satellites", "hdop", "latitude", "longitude"):
+            assert gps[key] is None, (key, wide)
+
+    # The largest integer the core carries still reads as sent.
+    most = 2**64 - 1
+    fire(hass, f"securacv/{CANARY}/health", health_with(most))
+    await hass.async_block_till_done()
+    attrs = carried()
+    assert attrs["health"]["uptime_seconds"] == most
+    assert attrs["health"]["battery_mv"] == most
+    assert attrs["health"]["sd"]["lifetime_kb"] == most
+    assert attrs["health"]["csi_event_egress"] == {"dropped": most, "held_dropped": 1, "planner": {"live": most, "held": 2}}
+    assert attrs["sd_wear"]["lifetime_kb"] == most
+    assert attrs["gps"]["satellites"] == most
+
+
 async def test_a_hostile_topic_segment_mints_no_device(
     hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
 ) -> None:

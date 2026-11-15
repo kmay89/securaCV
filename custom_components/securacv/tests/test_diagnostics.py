@@ -52,7 +52,9 @@ from ..device_vocabulary import (  # noqa: E402
     REDACTED_CLASSES,
     REDACTED_DEVICE_KEYS,
 )
+from ..data import VerificationState  # noqa: E402
 from ..diagnostics import (  # noqa: E402
+    CHAIN_VERIFICATION_FIELDS,
     INTEGRATION_REDACT_KEYS,
     TO_REDACT,
     async_get_config_entry_diagnostics,
@@ -463,6 +465,58 @@ def test_nothing_secret_or_identifying_survives() -> None:
         "/dev/mmcblk0p2",
     ):
         assert secret not in text, secret
+
+
+def test_the_chain_walk_indexes_reach_the_dump_as_counts_only() -> None:
+    """The walk's two indexes hold (event type, zone label, bucket) for
+    every sealed entry it covered: the whole coarse witness history. The
+    dump was built with ``asdict`` and projected only ``covered`` out, so
+    ``covered_seqs`` reached it whole, a zone label per verified event.
+    Each index is carried as its size, and nothing of a row survives."""
+    hass = HomeAssistant()
+    entry = _entry_with_kernel(hass)
+    state = entry.runtime_data.verification
+    rows = {
+        1: ("BoundaryCrossingObjectLarge", "zone:kids_bedroom", 1760140800),
+        2: ("BoundaryCrossingObjectSmall", "zone:kids_bedroom", 1760140800),
+        3: ("BoundaryCrossingObjectLarge", "zone:back_gate", 1760141400),
+    }
+    state.ok = True
+    state.verified_seq = 3
+    state.verified_entries = 3
+    state.head_seq = 3
+    state.head_hash = "7d" * 32
+    state.covered_seqs = dict(rows)
+    state.covered = set(rows.values())
+
+    diag = _diag(hass, entry)
+    text = repr(diag)
+    # None of these appears anywhere else in the seeded entry.
+    for leak in ("zone:", "kids_bedroom", "back_gate", "BoundaryCrossingObjectSmall",
+                 "1760141400", "7d" * 32):
+        assert leak not in text, leak
+    chain = diag["chain_verification"]
+    assert (chain["covered"], chain["covered_seqs"]) == (3, 3)
+    assert (chain["ok"], chain["verified_seq"], chain["head_seq"]) == (True, 3, 3)
+    assert "head_hash" not in chain
+    # Scalars only: no container a row could ride in.
+    assert set(chain) == set(CHAIN_VERIFICATION_FIELDS) | {"covered", "covered_seqs"}
+    assert all(value is None or isinstance(value, (bool, int, str)) for value in chain.values())
+
+
+def test_every_chain_walk_field_is_named_or_withheld() -> None:
+    """The dump names the fields it carries one by one. A field
+    ``VerificationState`` gains stays out of the dump until it is named,
+    and this fails until someone has decided which it is: carried as a
+    scalar, or withheld (the chain head's hash, the two indexes, which
+    are reported as their sizes)."""
+    import dataclasses
+
+    withheld = {"head_hash", "covered", "covered_seqs"}
+    fields = {field.name for field in dataclasses.fields(VerificationState)}
+    assert set(CHAIN_VERIFICATION_FIELDS) | withheld == fields
+    assert not set(CHAIN_VERIFICATION_FIELDS) & withheld
+    assert len(CHAIN_VERIFICATION_FIELDS) == len(set(CHAIN_VERIFICATION_FIELDS))
 
 
 def test_the_kernel_section_is_a_projection() -> None:
