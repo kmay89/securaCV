@@ -9339,6 +9339,12 @@ test("the About card's after-read line speaks for the latest fuse read on this b
     const b = bench([GOOD], opts);
     await b.read();
     assert.equal(b.lines(ABOUT_LEFT).length, 1, `${what}: precondition, the good read says where it left the board`);
+    // What the passport read at connect: the image the write replaces.
+    b.state.resident = { projectName: "canary_wap", version: "2.4.16", idf: "v5.5", secureVersion: 2,
+      elfSha256Prefix: "a0a1a2a3a4a5a6a7", product: null };
+    b.state.passport = { bootloader: { idf: "v5.5" } };
+    b.page.renderThisBoard();
+    assert.match(b.card.textContent, /canary_wap 2\.4\.16/, `${what}: precondition, the card names the installed image`);
     await b.page[fn]();
     await ticks();
     assert.ok(b.asked.includes(cmd), `${what}: ${fn} should have written (${b.asked.join(", ")})`);
@@ -9349,5 +9355,10 @@ test("the About card's after-read line speaks for the latest fuse read on this b
     assert.match(b.card.textContent, /PackageESP32-S3 \(QFN56\)/, `${what}: the card is still drawn`);
     assert.equal(b.lines(ABOUT_LEFT).length, 0,
       `${what}: espflash hard-resets the board at the end of the write, so the card must not say the fuse read left it in the ROM`);
+    // The passport read no longer names what the board runs: no row may
+    // still give the replaced image's name, version, anti-rollback number
+    // or fingerprint as "the installed image".
+    assert.doesNotMatch(b.card.textContent, /canary_wap|2\.4\.16|a0a1a2a3a4a5a6a7|Anti-rollback number2/,
+      `${what}: after a write starts, the card must not give the replaced image's facts as the installed image`);
   }
 });

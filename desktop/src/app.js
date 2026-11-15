@@ -5545,7 +5545,10 @@ function aboutFacts() {
     chipDesc: state.chipDesc,
     flashBytes: state.flashBytes,
     fuses: state.chipFuses,
-    image: !r || state.passportPending ? undefined
+    // Once a write has started (noteBoardWritten), the passport read no longer
+    // names what the board runs: the image rows say "Not checked yet" until
+    // the next read, never the image being overwritten.
+    image: !r || state.passportPending || r.overwritten ? undefined
       : r.unknown ? false
         : r.blank ? null
           : { projectName: r.projectName, version: r.version, idf: r.idf,
@@ -5553,7 +5556,7 @@ function aboutFacts() {
               // the catalog product the passport resolved, if any (the
               // Firmware row's Arduino-core test, as renderPassport's)
               productName: r.product ? r.product.name : null },
-    bootloader: p && "bootloader" in p ? p.bootloader : undefined,
+    bootloader: p && "bootloader" in p && !(r && r.overwritten) ? p.bootloader : undefined,
   };
 }
 
