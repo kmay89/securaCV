@@ -575,7 +575,7 @@ def test_health_and_egress_read_as_the_wap_sent_them(record, monkeypatch):
     # On mains the WAP sends a placeholder 100 beside battery_present false
     # (csi_mqtt.cpp's publish_health), a charge nothing measured. The
     # integration shows it as unknown, never as a full battery: an absent
-    # battery is omitted, not 100 (device-details §1.4, PR 6, #<PR>). This
+    # battery is omitted, not 100 (device-details §1.4, PR 6, #1971). This
     # assertion fails on the integration that turned the placeholder into
     # battery_percent 100, the value this test held before.
     assert sent["battery"] == 100 and sent["battery_present"] is False
@@ -1221,7 +1221,7 @@ def test_the_health_sensor_reads_only_a_memory_number_as_low_memory(
     assert attrs["memory_free_bytes"] == attribute, body
     assert type(attrs["memory_free_bytes"]) is type(attribute), body
     # The unit is on mains (battery_present false): no battery is unknown,
-    # where this held the placeholder 100 before #<PR>.
+    # where this held the placeholder 100 before #1971.
     assert attrs["battery_percent"] is None
     assert _value(memory, "is_on") is memory_on, body
 
@@ -1232,7 +1232,7 @@ def test_the_health_sensor_reads_only_a_memory_number_as_low_memory(
 # state and its battery_percent attribute. The Health sensor reads critical
 # below CRITICAL_BATTERY_THRESHOLD_PERCENT (10) and warning below
 # WARNING_BATTERY_THRESHOLD_PERCENT (25); no reading is the no-battery
-# reading: healthy, and a battery_percent that is unknown (None). Until #<PR>
+# reading: healthy, and a battery_percent that is unknown (None). Until #1971
 # the attribute was 100 there, as an absent key always was, a charge nobody
 # sent (sweep HA60, closed by it): each no-reading row below held 100.
 _BATTERY_READINGS = [

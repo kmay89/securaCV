@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### Honest names: what the Canaries, their pages and Home Assistant show comes from the build and the board, never one literal every build shares, and Home Assistant shows a battery nobody read as unknown (F398, HA60; device-details §1.4, PR 6, #<PR>)
+### Honest names: what the Canaries, their pages and Home Assistant show comes from the build and the board, never one literal every build shares, and Home Assistant shows a battery nobody read as unknown (F398, HA60; device-details §1.4, PR 6, #1971)
 
 - **The flagship names its board, or no board.** The mDNS TXT `model` was
   "XIAO ESP32S3" on every env, the ESP32-CAM, WROOM and Freenove ports

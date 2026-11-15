@@ -2900,7 +2900,7 @@ so — see D2 below.)
 - [ ] **F398 [code+decision] What the honest-names change left: two display
   strings, ten display envs and the flagship with no board token, the
   canary-wap's mains battery value, and the website's ten-probe copy.**
-  #<PR> (device-details PR 6) made the names, board tokens, versions and
+  #1971 (device-details PR 6) made the names, board tokens, versions and
   fallbacks each surface shows come from the build and the board. Open after
   it:
   - *canary-display, two strings in emulator inputs.* Its health still sends
@@ -2919,7 +2919,7 @@ so — see D2 below.)
     boards; the emulator compiles neither header.
   - *canary-wap on mains [decision].* `csi_mqtt.cpp` `publish_health()` still
     sends `"battery":100` beside `"battery_present":false`. Home Assistant
-    reads it as unknown since #<PR>, so nothing shows it; dropping the value
+    reads it as unknown since #1971, so nothing shows it; dropping the value
     changes a wire body `test_wap_mqtt_contract.py`'s record pins.
   - *The flagship names no board token.* No canary-tree build defines
     `CANARY_FIGURE_HARDWARE`, so its mDNS TXT, `/api/status`, `/api/fleet`

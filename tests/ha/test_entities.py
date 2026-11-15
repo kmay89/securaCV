@@ -340,7 +340,7 @@ async def test_the_health_sensor_writes_only_a_reading_the_core_can_carry(
     into the Health sensor failed the recorder and every websocket
     subscription on the entity, downstream of the callback that read it.
     The sensor reads healthy with the no-reading attributes (both unknown:
-    battery_percent was 100 there until #<PR>, sweep HA60), and its state
+    battery_percent was 100 there until #1971, sweep HA60), and its state
     serializes as the recorder and the websocket serialize one; the
     largest integer the core carries still reads as sent."""
     await setup_kernel_entry(enable_mqtt=True)
