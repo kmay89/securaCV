@@ -3,6 +3,8 @@
    No build step; pure ES module. Progress is remembered on-device only. */
 
 import { SETTINGS_AVAILABLE, probeSettings, settingsView } from "./lab-settings.js";
+import { probeApp, appViews, dashboardView, devicesView, statusStrip, installShortcuts,
+  fleet, rememberBench, APP_INFO } from "./lab-app.js";
 
 const MANIFEST_URL = "build-line.json";
 const SITE_ORIGIN = "https://securacv.com";
@@ -25,6 +27,9 @@ const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 
 let M, ROUTE = [], BY_SLUG = new Map(), PAGE_ROUTE = new Map(), SITE_BY_SLUG = new Map();
 let depthSel = {}; // benchSlug -> depth index
+let CUR = null;    // the bench entry on screen, for the step shortcuts
+let CUR_VIEW = "overview";
+let SHORTCUTS_ON = false;   // set once installShortcuts() ran: framed benches are told to forward
 
 /* ---- tiny hyperscript ---- */
 function h(tag, attrs, ...kids) {
@@ -145,6 +150,9 @@ function arrive() {
   const raw = location.hash.slice(1);
   const site = siteRoute(raw);
   if (site) goToSite(site, true);
+  // The app opens on its Home (what is plugged in, what is on the network,
+  // where you were); the website keeps the Overview — the isometric room.
+  else if (!raw && appViews()) navigate("dashboard", false);
   else navigate(routeId(raw), false);
 }
 
@@ -162,9 +170,16 @@ function navigate(id, push = true) {
     id === "all" ? "all" :
     id === "family" ? "family" :
     id === "settings" ? "settings" :
+    id === "dashboard" ? "dashboard" :
+    id === "devices" ? "devices" :
     BY_SLUG.has(id) ? "bench" : "overview";
   const entry = view === "bench" ? BY_SLUG.get(id) : null;
-  if (entry) markVisited(entry.stage.id);
+  if (entry) { markVisited(entry.stage.id); rememberBench(entry); }
+  CUR = entry;
+  CUR_VIEW = view;
+  // The fleet poller listens often while a view shows its answers, and only
+  // for the status strip under any other view.
+  fleet.setActive(view === "dashboard" || view === "devices");
 
   renderContent(view, entry);
   renderSidebar(view, entry);   // reflect selection + expansion
@@ -196,7 +211,9 @@ function stageRow(stage, curEntry, done) {
   const benches = stage.tracks ? stage.tracks.flatMap(t => t.benches) : (stage.benches || []);
   for (const b of benches) {
     const sel = curEntry && curEntry.bench.slug === b.slug;
-    kids.append(h("button", { class: "item" + (sel ? " sel" : ""), onclick: () => navigate(b.slug) },
+    // The manifest's one line rides the title: a hover reads it, and the
+    // sidebar search matches on it, so "usb" finds Flash over USB's bench.
+    kids.append(h("button", { class: "item" + (sel ? " sel" : ""), title: b.desc || null, onclick: () => navigate(b.slug) },
       h("span", { class: "lb", html: benchLabel(b) }),
       h("span", { class: "meta" }, b.real ? h("span", { class: "rf", title: "boots real firmware" }) : null),
     ));
@@ -224,6 +241,9 @@ function benchLabel(b) {
   return b.kind === "chooser" || /·/.test(noun) ? noun : noun;
 }
 
+// Which view is on screen, so a sidebar re-render for a fleet change keeps
+// the selection navigate() made (the app's Home sets no hash).
+const currentView = () => CUR_VIEW;
 function renderSidebar(view, entry) {
   const done = visited();
   const side = h("nav", { class: "side", "aria-label": "Lab contents" },
@@ -232,9 +252,15 @@ function renderSidebar(view, entry) {
       h("b", { html: 'canary<span class="dot">.</span>local <small>/ the lab</small>' })),
     h("label", { class: "side-search" },
       h("span", { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>' }),
-      h("input", { type: "search", placeholder: "Search benches…", oninput: onSearch, "aria-label": "Search benches" })),
+      h("input", { type: "search", placeholder: "Search the Lab…", oninput: onSearch, onkeydown: onSearchKey, "aria-label": "Search the Lab" }),
+      appViews() ? h("kbd", { class: "sk", "aria-hidden": "true" }, "⌘K") : null),
     h("div", { class: "side-scroll" },
-      navItem("overview", view === "overview", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 9l9-6 9 6v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 21V12h6v9"/></svg>', "Overview — the workshop"),
+      // The app's own destinations first: its Home, the fleet it can hear, and
+      // the one thing most people open it to do. Off-app none of these exist.
+      appViews() ? navItem("dashboard", view === "dashboard", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 11l9-7 9 7"/><path d="M5 10v9h14v-9"/></svg>', "Home") : null,
+      appViews() ? navItem("devices", view === "devices", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>', "Your fleet", fleetBadge()) : null,
+      appViews() && BY_SLUG.has("flash") ? navItem("flash", entry && entry.bench.slug === "flash", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2L4.5 13H11l-1 9 8.5-11H12z" fill="currentColor" stroke="none"/></svg>', "Flash a board") : null,
+      navItem("overview", view === "overview", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 9l9-6 9 6v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 21V12h6v9"/></svg>', appViews() ? "Workshop map" : "Overview — the workshop"),
       navItem("start", view === "start", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5 3l14 9-14 9z"/></svg>', "Get started"),
       h("div", { class: "side-sec" }, "The build line"),
       ...M.stages.map(s => stageRow(s, entry, done.has(s.id))),
@@ -248,7 +274,7 @@ function renderSidebar(view, entry) {
       // that strip is a second bar above the sidebar saying what the sidebar
       // already says, so it is hidden and its two useful links live here.
       IN_APP ? navLink(SITE_ORIGIN + "/glossary", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 016.5 3H19v15H6.5A2.5 2.5 0 004 20.5z"/><path d="M8 7h7M8 11h7"/></svg>', "Glossary", true) : null,
-      IN_APP ? navLink(SITE_ORIGIN + "/canary", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 113.5 2.3V13"/><path d="M12 16.5v.5" stroke-linecap="round"/></svg>', "Your Canary — help", true) : null,
+      IN_APP ? navLink(SITE_ORIGIN + "/help", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 113.5 2.3V13"/><path d="M12 16.5v.5" stroke-linecap="round"/></svg>', "Help", true) : null,
       // App only: the browser Lab has no updater and no update journal, so it
       // gets no Settings entry rather than one that answers "—" to everything.
       SETTINGS_AVAILABLE ? h("div", { class: "side-sec" }, "This app") : null,
@@ -258,9 +284,16 @@ function renderSidebar(view, entry) {
   const old = document.querySelector(".side");
   if (old) old.replaceWith(side); else document.querySelector(".shell").prepend(side);
 }
-const navItem = (id, sel, icoHtml, label) =>
+const navItem = (id, sel, icoHtml, label, meta) =>
   h("button", { class: "item" + (sel ? " sel" : ""), onclick: () => navigate(id) },
-    h("span", { html: icoHtml }), h("span", { class: "lb" }, label));
+    h("span", { html: icoHtml }), h("span", { class: "lb" }, label), meta || null);
+// "3" beside Your fleet: how many Canaries are online right now, from the
+// same poller the Home and the status strip read. Re-rendered with the
+// sidebar; the strip is the live one.
+function fleetBadge() {
+  const n = fleet.onlineCount();
+  return n ? h("span", { class: "meta" }, h("span", { class: "cnt-badge", title: n + " online" }, String(n))) : null;
+}
 // `external` marks a link off this origin. In the app, lab-nav.js's capture-
 // phase handler sends those to the OS browser so the window never leaves the
 // bundled Lab; on the website the target is what opens a new tab.
@@ -271,13 +304,47 @@ const navLink = (href, icoHtml, label, external) =>
     external ? h("span", { class: "ext", "aria-hidden": "true", html:
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg>' }) : null);
 
+/* Search covers every destination the sidebar lists — the app's own views,
+   the references, every bench and depth, with the manifest's one-line
+   description searched too — not only the benches under the stages. While a
+   query is typed, every stage unfolds to its hits and the ones with none
+   fold away; Enter opens the first hit; Escape clears. An empty query puts
+   the sidebar back exactly as navigate() built it. */
 function onSearch(e) {
   const q = e.target.value.trim().toLowerCase();
-  document.querySelectorAll(".side-scroll .children .item").forEach(it => {
-    const hit = !q || it.textContent.toLowerCase().includes(q);
+  const scroll = document.querySelector(".side-scroll");
+  if (!scroll) return;
+  if (!q) {
+    renderSidebar(currentView(), CUR);
+    const i = document.querySelector(".side-search input");
+    if (i) i.focus();
+    return;
+  }
+  let hits = 0;
+  for (const it of scroll.querySelectorAll(".item:not([aria-expanded])")) {
+    const hit = (it.textContent + " " + (it.title || "")).toLowerCase().includes(q);
     it.style.display = hit ? "" : "none";
-    if (q && hit) it.closest(".children")?.removeAttribute("hidden");
-  });
+    if (hit) { hits++; it.closest(".children")?.removeAttribute("hidden"); }
+  }
+  for (const row of scroll.querySelectorAll(".item[aria-expanded]")) {
+    const kids = row.nextElementSibling;
+    const any = !!kids && [...kids.querySelectorAll(".item")].some((it) => it.style.display !== "none");
+    row.style.display = any ? "" : "none";
+    if (kids) kids.hidden = !any;
+  }
+  scroll.querySelectorAll(".side-sec").forEach((s) => { s.style.display = "none"; });
+  let none = scroll.querySelector(".side-none");
+  if (!hits) {
+    if (!none) scroll.append(none = h("div", { class: "side-none" }));
+    none.textContent = "Nothing in the Lab matches “" + e.target.value.trim() + "”.";
+  } else if (none) none.remove();
+}
+function onSearchKey(e) {
+  if (e.key === "Escape") { e.target.value = ""; onSearch(e); e.target.blur(); return; }
+  if (e.key !== "Enter") return;
+  const first = [...document.querySelectorAll(".side-scroll .item:not([aria-expanded])")]
+    .find((it) => it.style.display !== "none" && !it.closest(".children[hidden]"));
+  if (first) { e.preventDefault(); first.click(); }
 }
 
 /* ---- topbar (phone) ---- */
@@ -285,7 +352,11 @@ function renderTopbar(view, entry) {
   let bar = document.querySelector(".topbar");
   const title = view === "bench" ? entry.bench.noun : view === "start" ? "Get started"
     : view === "all" ? "All benches" : view === "family" ? "SecuraCV everywhere"
-    : view === "settings" ? "Updates & about" : "The Lab";
+    : view === "settings" ? "Updates & about"
+    : view === "dashboard" ? "Home" : view === "devices" ? "Your fleet" : "The Lab";
+  // The app's window title follows the view (Tauri mirrors document.title);
+  // the website keeps the page's own.
+  if (appViews()) document.title = (view === "overview" ? "Workshop map" : title) + " — SecuraCV Lab";
   const content = [
     h("button", { class: "back", hidden: view === "overview", onclick: () => navigate("overview") },
       h("span", { html: "‹" }), " Lab"),
@@ -315,17 +386,22 @@ function renderTabbar(entry) {
 function renderContent(view, entry) {
   let c = document.querySelector(".content");
   if (!c) { c = h("main", { class: "content" }); document.querySelector(".main").append(c); }
+  // A live view (Home, Your fleet) subscribed to the fleet poller; tell it
+  // it is leaving so the subscription goes with it.
+  for (const n of c.children) n.dispatchEvent(new Event("scv:leave"));
   if (view === "overview") c.replaceChildren(overviewView());
   else if (view === "start") c.replaceChildren(startView());
   else if (view === "all") c.replaceChildren(allView());
   else if (view === "family") c.replaceChildren(familyView());
   else if (view === "settings") c.replaceChildren(settingsView());
+  else if (view === "dashboard") c.replaceChildren(dashboardView(APP_CTX));
+  else if (view === "devices") c.replaceChildren(devicesView(APP_CTX));
   else c.replaceChildren(benchView(entry));
   // A bench fills the window; the reading views keep their measure. Toggled
   // here rather than with `.content:has(.bench-wrap)` because the app supports
   // macOS back to 10.15 (tauri.conf.json), whose WebView predates :has() — the
   // selector would silently no-op there and leave the bench in a 1020px column.
-  c.classList.toggle("content-full", view === "bench");
+  c.classList.toggle("content-full", view === "bench" || view === "start");
   // On a phone the depth strip scrolls sideways rather than clipping labels,
   // so the tab you are actually on can start off-screen. Bring it into the
   // strip after the paint that put it there.
@@ -356,13 +432,20 @@ function benchView(entry) {
   const idx = ROUTE.indexOf(entry);
   const prev = ROUTE[idx - 1], next = ROUTE[idx + 1];
 
+  // The way onward is named, not just pointed at: "Next: First boot" on a
+  // wide window (the label folds to the arrow below 1100px), so walking the
+  // line needs no guessing about what the › leads to.
   const step = (e, label, glyph, cls) =>
     e ? h("button", { class: "stepper " + cls, title: `${label}: ${e.bench.noun}`,
           "aria-label": `${label}: ${e.bench.noun}`, onclick: () => navigate(e.bench.slug) },
+        cls === "next" ? h("span", { class: "sl" }, "Next: " + e.bench.noun) : null,
         h("span", { html: ARROW(glyph) }))
       : h("button", { class: "stepper " + cls, disabled: true, "aria-hidden": "true" },
           h("span", { html: ARROW(glyph) }));
 
+  // What this bench is, in the manifest's one line (a depth's own line when
+  // it has one), so nobody has to read the page's hero to find out.
+  const desc = (depth && depth.desc) || bench.desc || "";
   const bar = h("header", { class: "bench-bar" },
     h("div", { class: "bb-where" },
       h("div", { class: "crumbs" },
@@ -370,7 +453,8 @@ function benchView(entry) {
         track ? [h("span", { class: "sep" }, "›"), track.label.replace(" path", "")] : null),
       h("div", { class: "bb-title" },
         h("h1", {}, bench.noun),
-        real ? h("span", { class: "badge" }, "Real firmware") : null)),
+        real ? h("span", { class: "badge" }, "Real firmware") : null),
+      desc ? h("div", { class: "bb-desc", title: desc }, desc) : null),
     // Depths are how one bench teaches at two levels (overview vs. deep lab).
     // Kept as a segmented control because switching should feel like changing
     // channel on the same bench, not like navigating somewhere else.
@@ -383,6 +467,13 @@ function benchView(entry) {
     h("div", { class: "bb-go" },
       step(prev, "Previous", "M15 6l-6 6 6 6", "prev"),
       step(next, "Next", "M9 6l6 6-6 6", "next"),
+      // App only: the window has no browser chrome, so a bench that wedged
+      // (a board unplugged mid-read, say) had no reload button anywhere.
+      appViews()
+        ? h("button", { class: "stepper out", title: "Reload this bench (⌘R)", "aria-label": "Reload this bench",
+            onclick: () => APP_CTX.reloadBench() },
+            h("span", { html: ARROW("M20 12a8 8 0 11-2.3-5.7M20 4v5h-5") }))
+        : null,
       // Website only. A new tab is a real place in a browser; in the app the
       // window IS the Lab, and a `target="_blank"` there would ask Tauri for a
       // second webview that no capability grants — the button would sit there
@@ -393,11 +484,31 @@ function benchView(entry) {
             h("span", { html: ARROW("M7 17L17 7M9 7h8v8") }))),
   );
 
-  // The bench, live. Same-origin, so it inherits the app's theme and the
-  // permissions it needs — serial for the flasher, camera for the eyes bench,
-  // microphone for the acoustic ones — which a bare iframe would withhold.
+  return h("div", { class: "bench-wrap" },
+    bar,
+    // A stage with tracks is a choice, so the choice is a control: one chip
+    // per sense, the current one lit, each a click to that track's bench.
+    // The manifest's optionsNote (a paragraph) stays the room's caption.
+    stage.tracks
+      ? h("div", { class: "trackbar", role: "group", "aria-label": "Pick a sense" },
+          h("span", { class: "tk" }, "Pick the sense your Canary carries:"),
+          ...stage.tracks.map((t) => h("button", { class: "tchip" + (t === track ? " on" : ""), style: `--ac:${t.accent}`,
+              "aria-pressed": t === track ? "true" : "false", onclick: () => navigate(t.benches[0].slug) },
+            h("b", {}, t.label), h("span", {}, t.benches[0].noun))),
+          h("span", { class: "tk tail" }, "The line runs straight on to Home."))
+      : stage.fork
+        ? h("div", { class: "forknote" }, "✦ " + (stage.optionsNote || "Options at this stage — pick the sense your Canary carries."))
+        : null,
+    benchFrame(src, bench.noun),
+  );
+}
+
+// The bench, live. Same-origin, so it inherits the app's theme and the
+// permissions it needs — serial for the flasher, camera for the eyes bench,
+// microphone for the acoustic ones — which a bare iframe would withhold.
+function benchFrame(src, title) {
   const frame = h("iframe", {
-    class: "bench-frame", src, title: bench.noun, loading: "eager",
+    class: "bench-frame", src, title, loading: "eager",
     allow: "serial; camera; microphone; usb; bluetooth; clipboard-write",
   });
   // Second line of defense, and the one that does not depend on the frame
@@ -408,6 +519,12 @@ function benchView(entry) {
   // `dataset.at` is written BEFORE the resync so this can never re-enter.
   frame.dataset.at = src;
   frame.addEventListener("load", () => {
+    // Where this shell takes the keyboard (the app), tell the framed page so
+    // it forwards the chords; on the website it stays silent and the frame
+    // leaves the browser's own shortcuts alone (lab-nav.js forwardShortcuts).
+    if (SHORTCUTS_ON) {
+      try { frame.contentWindow.postMessage({ source: "scv-lab-shell", type: "shortcuts" }, location.origin); } catch { /* not ours */ }
+    }
     let here;
     try { here = frame.contentWindow.location.href; } catch { return; } // same-origin, but never assume
     const file = here.split("#")[0].split("?")[0].split("/").pop();
@@ -415,14 +532,7 @@ function benchView(entry) {
     frame.dataset.at = file;
     followFramed(here);
   });
-
-  return h("div", { class: "bench-wrap" },
-    bar,
-    (stage.options || stage.fork)
-      ? h("div", { class: "forknote" }, "✦ " + (stage.optionsNote || "Options at this stage — pick the sense your Canary carries. The line runs straight on to Home."))
-      : null,
-    frame,
-  );
+  return frame;
 }
 const linkNav = (slug) => (e) => { e.preventDefault(); navigate(slug); };
 
@@ -510,15 +620,35 @@ function overviewView() {
   );
 }
 
+/* The guided thread, framed like a bench. It used to be a card with an "Open
+   the setup guide" link that left the shell — in the app that meant the
+   sidebar, the strip and the shortcuts all vanished a click into the one
+   path a new person is most likely to take. Now the guide fills the pane
+   under the same slim bar, and its links hand up to the shell like any
+   bench's (PAGE_ROUTE knows start.html). */
 function startView() {
   const o = M.onramp;
-  return h("div", { class: "hero-o" },
-    h("h1", {}, "Get started"),
-    h("p", {}, o.desc),
-    h("div", { class: "actions" },
-      h("a", { class: "btn primary", href: o.lab }, "Open the setup guide"),
-      h("button", { class: "btn ghost", onclick: () => navigate(firstOf(M.stages[0]).slug) }, "Or walk the build line →")),
-  );
+  const first = firstOf(M.stages[0]);
+  const bar = h("header", { class: "bench-bar" },
+    h("div", { class: "bb-where" },
+      h("div", { class: "crumbs" }, h("b", {}, "The guided thread"), h("span", { class: "sep" }, "›"), "stages 1 – 5"),
+      h("div", { class: "bb-title" }, h("h1", {}, o.noun)),
+      h("div", { class: "bb-desc", title: o.desc }, o.desc)),
+    h("div", { class: "bb-go" },
+      h("button", { class: "stepper next", title: "Or walk the build line from stage 1: " + first.noun,
+          "aria-label": "Walk the build line: " + first.noun, onclick: () => navigate(first.slug) },
+        h("span", { class: "sl" }, "Or walk the build line"),
+        h("span", { html: ARROW("M9 6l6 6-6 6") })),
+      appViews()
+        ? h("button", { class: "stepper out", title: "Reload the guide (⌘R)", "aria-label": "Reload the guide",
+            onclick: () => APP_CTX.reloadBench() },
+            h("span", { html: ARROW("M20 12a8 8 0 11-2.3-5.7M20 4v5h-5") }))
+        : null,
+      IN_APP ? null
+        : h("a", { class: "stepper out", href: o.lab, target: "_blank", rel: "noopener",
+            title: "Open the guide in its own tab", "aria-label": "Open in a new tab" },
+            h("span", { html: ARROW("M7 17L17 7M9 7h8v8") }))));
+  return h("div", { class: "bench-wrap" }, bar, benchFrame(o.lab, o.noun));
 }
 
 function allView() {
@@ -598,6 +728,28 @@ function birdSVG() {
     '<svg class="bird" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="36" r="17" fill="#FFD44F"/><circle cx="41" cy="24" r="10" fill="#FFD44F"/><circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/><path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/><ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/></svg>' });
 }
 
+/* ---- the app's hooks into this shell (lab-app.js views and shortcuts) ---- */
+const APP_CTX = {
+  navigate,
+  // A bench by slug; an unknown slug lands on the Overview through routeId.
+  goBench: (slug) => navigate(routeId(slug)),
+  stages: () => M.stages,
+  firstOf,
+  visited,
+  appInfo: () => APP_INFO,
+  focusSearch: () => { const i = document.querySelector(".side-search input"); if (i) { i.focus(); i.select(); } },
+  reloadBench: () => {
+    const f = document.querySelector(".bench-frame");
+    if (!f) return;
+    try { f.contentWindow.location.reload(); } catch { f.src = f.src; }
+  },
+  step: (dir) => {
+    if (!CUR) { navigate(firstOf(M.stages[0]).slug); return; }
+    const e = ROUTE[ROUTE.indexOf(CUR) + dir];
+    if (e) navigate(e.bench.slug);
+  },
+};
+
 /* ---- boot ---- */
 async function boot() {
   const root = document.getElementById("lab-shell");
@@ -619,11 +771,33 @@ async function boot() {
   // answer rather than a stale default. Resolves false on the website and on
   // iOS/iPadOS (App Store updates), true only on the desktop app.
   await probeSettings();
-  VALID_IDS = ["overview", "start", "all", "family", ...(SETTINGS_AVAILABLE ? ["settings"] : []), ...ROUTE.map((e) => e.bench.slug)];
+  // …and whether it has native reach (ports, mDNS, a kernel poll): only then
+  // do the app's Home and fleet views exist as routes.
+  await probeApp();
+  VALID_IDS = ["overview", "start", "all", "family", ...(SETTINGS_AVAILABLE ? ["settings"] : []), ...(appViews() ? ["dashboard", "devices"] : []), ...ROUTE.map((e) => e.bench.slug)];
   root.removeAttribute("data-loading");
   const shell = h("div", { class: "shell" }, h("div", { class: "main" }));
   root.replaceChildren(shell);
+  if (appViews()) {
+    fleet.start();
+    // The sidebar's online badge follows the poller — rebuilt only when the
+    // count moved, and never under a search in progress (a rebuild would
+    // drop the filter and the focus).
+    let shownOnline = -1;
+    fleet.subscribe(() => {
+      const n = fleet.onlineCount();
+      const q = document.querySelector(".side-search input");
+      if (n === shownOnline || document.hidden || (q && (q.value || document.activeElement === q))) return;
+      shownOnline = n;
+      if (document.querySelector(".side")) renderSidebar(currentView(), CUR);
+    });
+    installShortcuts(APP_CTX);
+    SHORTCUTS_ON = true;
+  }
   arrive();
+  // The status strip under every view: what is plugged in, who is on the
+  // network, which build this is — the app's always-on answer.
+  if (appViews()) document.querySelector(".main").append(statusStrip(APP_CTX));
   window.addEventListener("hashchange", arrive);
   // The embedded isometric room (Overview) posts a slug when a station's tool is
   // tapped; route it through the same allowlist sanitizer before navigating.

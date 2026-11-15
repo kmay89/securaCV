@@ -44,7 +44,21 @@ TOKEN_FILE="/config/api_token"
 # is why the bridge writes it 0600. Both kernel config blocks below and the
 # bridge's argv read this one variable, so they can never name two files.
 FLEET_PEERS_FILE="/config/fleet_peers.json"
-DEVICE_KEY_FILE="/config/.securacv/device_key"
+# The device key seed file: the wizard writes it, resolve_device_key_seed
+# reads or generates it. It lives in /data, the app's own directory, which
+# only this app's processes can open. It used to sit under /config, which
+# every Home Assistant backup carries and the Samba, SSH and File editor
+# apps (root, all of them) export whole — a 0600 mode protects nothing
+# there, and anyone holding a backup could forge the sealed log's identity.
+# The one-time move below (run_lib.sh migrate_device_key_file) carries an
+# existing /config copy over, verified, and removes it.
+DEVICE_KEY_FILE="/data/device_key"
+LEGACY_DEVICE_KEY_FILE="/config/.securacv/device_key"
+# The copy of the seed the kernel itself used to keep beside the sealed log
+# (crypto::device_key_path_for_db: DB_PATH with its extension replaced).
+# witnessd no longer writes it (the service sets DEVICE_KEY_SEED_PERSIST=0);
+# run_lib.sh remove_kernel_seed_copy removes the one an earlier release left.
+KERNEL_SEED_FILE="/config/witness.ed25519.seed"
 INGRESS_PORT="${INGRESS_PORT:-8788}"
 RUN_DIR="/run/securacv"
 SETUP_FILE="$RUN_DIR/setup.sh"
@@ -99,6 +113,35 @@ else
 fi
 
 # ============================================================================
+# The device key seed leaves /config (one-time). An existing
+# /config/.securacv/device_key is copied to /data/device_key (0600, byte-
+# checked), held against the sealed log with the kernel's own verifier
+# (log_verify --lineage: the seed must open the log and derive its genesis
+# or a later epoch's key), and only then removed; with no log yet, the byte
+# check is the whole proof. The seed itself is never logged — the verdicts
+# are two fixed words. A key the log refuses stays in both places with a
+# warning: the services will say the same at open, and nothing a person
+# might need is deleted on the way to that message.
+# ============================================================================
+if [ -s "$LEGACY_DEVICE_KEY_FILE" ]; then
+    if key_move=$(migrate_device_key_file "$LEGACY_DEVICE_KEY_FILE" "$DEVICE_KEY_FILE" "$DB_PATH"); then
+        case "$key_move" in
+            "moved verified")
+                bashio::log.info "Device key: moved from ${LEGACY_DEVICE_KEY_FILE} to ${DEVICE_KEY_FILE} (the app's private data); the sealed log accepts it, and the copy under /config is removed. Back it up from the Configuration tab (device_key_seed), not from /config." ;;
+            "moved no-log")
+                bashio::log.info "Device key: moved from ${LEGACY_DEVICE_KEY_FILE} to ${DEVICE_KEY_FILE} (the app's private data; byte-identical, no sealed log yet to hold it against); the copy under /config is removed." ;;
+            "kept unverified")
+                bashio::log.warning "Device key: ${DEVICE_KEY_FILE} holds the key from ${LEGACY_DEVICE_KEY_FILE}, but the sealed log at ${DB_PATH} does not accept it, so the /config copy is kept. If the services open the log, delete that copy by hand; if they do not, the key and the log come from different installs." ;;
+            "kept differs")
+                bashio::log.warning "Device key: ${DEVICE_KEY_FILE} is in use and ${LEGACY_DEVICE_KEY_FILE} holds a different key (a restored backup?). Nothing was changed; remove the /config copy by hand once you are sure it is not needed." ;;
+        esac
+    else
+        bashio::log.error "Device key: could not copy ${LEGACY_DEVICE_KEY_FILE} to ${DEVICE_KEY_FILE} (nothing was removed). Check the app's data volume (/data) for space and errors, then restart."
+        exit 1
+    fi
+fi
+
+# ============================================================================
 # First-run detection: the device key is auto-generated, so its absence no
 # longer marks a fresh install. The app is considered configured when the
 # user has made any deliberate choice: a key (option or wizard-written file),
@@ -107,8 +150,16 @@ fi
 # factory defaults.
 # ============================================================================
 DEVICE_KEY_SEED=$(bashio::config 'device_key_seed' || echo "")
+# What the option said before the key file or a fresh seed stood in for it:
+# the recorder below writes the option only when this is empty.
+OPTION_DEVICE_KEY_SEED="$DEVICE_KEY_SEED"
 MODE=$(bashio::config 'mode')
 
+# The cameras list is read whole (run_lib.sh opt_list): bashio prints an
+# array option one element per line, so two cameras gave `jq length` two
+# numbers, the test failed and the app ran the wizard alone (sweep HA38).
+# An options file opt_list cannot read counts no camera (its non-zero
+# return is not acted on here), so only the wizard runs.
 CONFIGURED="false"
 if [ -n "$DEVICE_KEY_SEED" ] && [ "$DEVICE_KEY_SEED" != "devkey:mvp" ]; then
     CONFIGURED="true"
@@ -116,7 +167,7 @@ elif [ -s "$DEVICE_KEY_FILE" ]; then
     CONFIGURED="true"
 elif [ "$MODE" = "frigate" ]; then
     CONFIGURED="true"
-elif bashio::config.has_value 'cameras' && [ "$(bashio::config 'cameras' | jq length)" -gt 0 ]; then
+elif [ "$(opt_list cameras | jq length)" -gt 0 ]; then
     CONFIGURED="true"
 fi
 
@@ -132,12 +183,57 @@ if [ "$CONFIGURED" != "true" ]; then
 fi
 
 # Resolve the device key: option → wizard-written key file → auto-generate
-# and persist (0600). /config is captured by HA backups; the panel reminds
-# the user to back the key up.
+# and persist (0600) under /data, the app's own directory: not in a Home
+# Assistant configuration backup, not visible to the file-sharing apps. A
+# backup that includes this app carries it; the panel reminds the user to
+# back the key up. The value is never logged.
 DEVICE_KEY_SEED=$(resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE")
 if [ -z "$DEVICE_KEY_SEED" ]; then
     bashio::log.error "Failed to resolve or generate a device key seed."
     exit 1
+fi
+
+# A seed the key file supplied (wizard-written, generated just now, or
+# moved from /config above) is recorded in the device_key_seed option when
+# that option is empty, so the Configuration tab shows it: that is where the
+# docs send people to copy the key from, and once the file is in /data
+# nothing else in Home Assistant can read it. The panel's own Supervisor
+# client does the write (serve_wizard.py record-device-key-seed), with the
+# seed in that one child's environment, never on argv; its output is a
+# fixed word. A refused write is a warning, never a stopped start.
+if [ -z "$OPTION_DEVICE_KEY_SEED" ] || [ "$OPTION_DEVICE_KEY_SEED" = "devkey:mvp" ]; then
+    if record=$(DEVICE_KEY_SEED="$DEVICE_KEY_SEED" /usr/bin/python3 /usr/local/bin/serve_wizard.py record-device-key-seed 2>/dev/null) \
+        && [ "$record" = "recorded" ]; then
+        bashio::log.info "Device key: recorded in the device_key_seed option (Configuration tab) — copy it from there for a backup; the file copy stays in the app's data (${DEVICE_KEY_FILE})."
+    elif [ "${record:-}" != "already-set" ]; then
+        bashio::log.warning "Device key: could not record it in the device_key_seed option (${record:-the Supervisor did not answer}); it is in the app's data only (${DEVICE_KEY_FILE}). Re-run the setup wizard from the panel to record it, or restart the app to try again."
+    fi
+fi
+
+# ============================================================================
+# The kernel's own copy of the seed leaves /config (one-time). In standalone
+# mode witnessd wrote the environment seed beside the sealed log, at
+# /config/witness.ed25519.seed, at its first start — the key this release
+# moved into /data, back inside every backup. The witnessd service now
+# starts it with DEVICE_KEY_SEED_PERSIST=0, so a fresh install writes no
+# such file, and the copy an earlier release left is removed here once it is
+# shown to hold the seed in use, byte for byte (the seed is never logged;
+# the verdicts are fixed words). A copy holding another key is kept, with a
+# warning: witnessd says the same at open, and nothing a person might need
+# is deleted on the way to that message. Runs in both modes: a Frigate-mode
+# install that once ran standalone has the file too.
+# ============================================================================
+if [ -e "$KERNEL_SEED_FILE" ]; then
+    if seed_copy=$(remove_kernel_seed_copy "$KERNEL_SEED_FILE" "$DEVICE_KEY_SEED"); then
+        case "$seed_copy" in
+            "removed")
+                bashio::log.info "Device key: the kernel's copy at ${KERNEL_SEED_FILE} held the key in use and is removed; the kernel writes no copy under /config anymore (the key stays in ${DEVICE_KEY_FILE} and the device_key_seed option)." ;;
+            "kept differs")
+                bashio::log.warning "Device key: ${KERNEL_SEED_FILE} holds a different key from the one in use (${DEVICE_KEY_FILE}, or the device_key_seed option), so it is kept. The kernel refuses to open the log with two identities and will say so; remove that file by hand once you are sure which key is the log's." ;;
+        esac
+    else
+        bashio::log.warning "Device key: could not remove the kernel's copy at ${KERNEL_SEED_FILE}; it is tried again at the next start. Check /config for errors."
+    fi
 fi
 
 # The public device id every producer shares (run_lib.sh ha_device_id):
@@ -231,6 +327,23 @@ fi
 # ============================================================================
 export WITNESS_API_ALLOW_INSECURE=1
 API_BIND_ADDR="0.0.0.0:8799"
+
+# The fleet roll-call, GET /api/fleet, takes no token, so the kernel's own
+# default is its own row (`self`). The Witness Wall needs every Canary's
+# row: the `fleet_rollcall` option opts into `full`. witness_api (frigate
+# mode) and witnessd (standalone) read the same WITNESS_API_FLEET_ROLLCALL.
+FLEET_ROLLCALL="self"
+if bashio::config.has_value 'fleet_rollcall'; then
+    FLEET_ROLLCALL=$(bashio::config 'fleet_rollcall')
+fi
+case "$FLEET_ROLLCALL" in
+    self|full) ;;
+    *)
+        bashio::log.warning "fleet_rollcall='${FLEET_ROLLCALL}' is neither self nor full; serving this kernel's own row only."
+        FLEET_ROLLCALL="self"
+        ;;
+esac
+export WITNESS_API_FLEET_ROLLCALL="$FLEET_ROLLCALL"
 
 # The Supervisor-internal hostname the discovery payload and the MQTT
 # announce carry (contract C1/C6). Not a LAN address.
@@ -398,20 +511,29 @@ if [ "$MODE" = "frigate" ]; then
     MQTT_USER=$(resolve_value "$OPT_FRIGATE_USER" "$DISCOVERED_MQTT_USER" "")
     MQTT_PASS=$(resolve_value "$OPT_FRIGATE_PASS" "$DISCOVERED_MQTT_PASS" "")
     MQTT_TOPIC=$(resolve_frigate_topic "$OPT_FRIGATE_TOPIC" "$TOPIC_PREFIX")
-    MIN_CONFIDENCE=$(bashio::config 'frigate.min_confidence')
+    # A frigate block saved without min_confidence (the schema lets it go)
+    # read as the string "null", which frigate_bridge cannot parse; the
+    # default is config.yaml's and the bridge's own, 0.5.
+    MIN_CONFIDENCE=$(bashio::config 'frigate.min_confidence' '0.5')
 
     # Get cameras and labels as comma-separated strings. Cameras are the
     # shared slugs the wizard wrote (contract C8); the bridge slugs both
     # sides before comparing, so a hand-typed name still meets Frigate's.
-    FRIGATE_CAMERAS=""
-    if bashio::config.has_value 'frigate.cameras'; then
-        FRIGATE_CAMERAS=$(bashio::config 'frigate.cameras' | jq -r 'join(",")')
+    # Each list is read whole (run_lib.sh opt_list): bashio prints an array
+    # option one element per line, which `join` cannot parse, so under
+    # `set -e` a label list stopped the setup here (sweep HA38). An empty or
+    # missing list joins to "", and the bridge's own default applies. An
+    # options file opt_list cannot read leaves both lists unknown, not empty,
+    # and an empty camera list would seal every camera Frigate reports, not
+    # the ones the wizard saved: the setup stops here instead.
+    if ! FRIGATE_CAMERAS_JSON=$(opt_list frigate.cameras) \
+        || ! FRIGATE_LABELS_JSON=$(opt_list frigate.labels); then
+        bashio::log.error "Cannot read frigate.cameras and frigate.labels from ${OPTIONS_JSON:-/data/options.json}."
+        bashio::log.error "Not starting the Frigate bridge without them: an empty camera list would seal every camera Frigate reports."
+        exit 1
     fi
-
-    FRIGATE_LABELS=""
-    if bashio::config.has_value 'frigate.labels'; then
-        FRIGATE_LABELS=$(bashio::config 'frigate.labels' | jq -r 'join(",")')
-    fi
+    FRIGATE_CAMERAS=$(printf '%s\n' "$FRIGATE_CAMERAS_JSON" | jq -r 'join(",")')
+    FRIGATE_LABELS=$(printf '%s\n' "$FRIGATE_LABELS_JSON" | jq -r 'join(",")')
 
     bashio::log.info "MQTT Broker: $MQTT_HOST:$MQTT_PORT"
     bashio::log.info "Frigate Topic: $MQTT_TOPIC"
@@ -485,10 +607,18 @@ else
     build_camera_config() {
         local cameras_json="[]"
 
-        # Check if cameras are manually configured
-        if bashio::config.has_value 'cameras'; then
-            cameras_json=$(bashio::config 'cameras')
-            bashio::log.info "Found $(echo "$cameras_json" | jq length) manually configured cameras"
+        # Cameras configured by hand, read whole (run_lib.sh opt_list): bashio
+        # prints an array option one element per line, so the merge and the
+        # `.[0]` below met bare objects, not an array, and the app stopped at
+        # start with any camera configured (sweep HA38). An options file it
+        # cannot read gives [] (opt_list says so on stderr): discovery below
+        # applies as with no camera configured, and with discovery off the
+        # start stops on "No cameras configured!".
+        cameras_json=$(opt_list cameras) || cameras_json="[]"
+        local configured_count
+        configured_count=$(printf '%s\n' "$cameras_json" | jq length)
+        if [ "$configured_count" -gt 0 ]; then
+            bashio::log.info "Found $configured_count manually configured cameras"
         fi
 
         # Try go2rtc discovery if enabled
@@ -582,7 +712,7 @@ fi
     declare -p MODE DEVICE_ID ADDON_HOST TOKEN_FILE PUBLISH_PREFIX \
         MQTT_PUBLISH_ENABLED INSTALL_INTEGRATION
     declare -p DEVICE_KEY_SEED WITNESS_CONFIG WITNESS_VAULT_PATH RUST_LOG \
-        WITNESS_API_ALLOW_INSECURE
+        WITNESS_API_ALLOW_INSECURE WITNESS_API_FLEET_ROLLCALL
     declare -p PUBLISHER_CMD_ARRAY PUBLISHER_MQTT_PASSWORD
     declare -p FRIGATE_CMD_ARRAY FRIGATE_MQTT_PASSWORD
 } > "$SETUP_FILE"

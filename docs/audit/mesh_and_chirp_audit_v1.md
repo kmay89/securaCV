@@ -387,7 +387,7 @@ Before merging the Chirp v0.2 hardening to main:
 - [x] `PROTOCOL_VERSION` bump documented; older firmware refuses v1 frames gracefully. (Bumped from 0 to 1 in `mesh_network.h:514`; `chirp_channel.cpp::on_espnow_recv` strict-rejects mismatched version.)
 - [x] Spec `spec/chirp_channel_v0.md` updated to v0.2 with corrected wire format and removed `TPL_AUTH_FEDERAL_PRESENCE`.
 - [x] `docs/security/THREAT_MODEL.md` Chirp section added.
-- [x] HA MQTT discovery surfaces `chirp.state` four-state NFPA enum (`Normal | Trouble | Alarm | Supervisory`).
+- [x] HA MQTT discovery surfaces `chirp.state` as the firmware's own state words (`disabled | initializing | listening | active | muted | cooldown`, or `unknown`), not an NFPA enum.
 
 **Status: closed (PR #450 + #454 merged 2026-05-11/12).**
 
@@ -415,6 +415,7 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 - [x] Self-test heartbeat (`BEACON_MSG_SELFTEST_OK`) emits daily; receivers surface `Trouble` on >36h absence.
 - [x] X25519 keypair NVS-persisted (audit follow-up: codex P1 #7 closure in PR #454).
 - [x] Audit log NVS-persisted as a ring buffer with head pointer (audit follow-up: gemini P1 #3 / codex P2 #8 closure in PR #454).
+- [x] An audit entry is chained only from and to a head that hashed: when the SHA-256 for its link fails, the entry is not recorded, the chain, the SD log and the ring stay as they were, an ALERT is logged and the alarm proceeds; a head that did not hash at boot is re-derived before the next append (`beacon_channel.cpp::chain_audit_entry`, `tests_host/test_wap_sha_fail_modules.cpp`). Host-tested only.
 - [x] COSIGN_REQ/RESP encrypted with X25519 + ChaCha20-Poly1305 (audit follow-up in PR #454). Since 2026-09 the clear routing fields (fingerprints, `ciphertext_len`, `accept`) are bound as associated data and an all-zero X25519 shared secret is refused (`beacon_cosign_aad.h`, `tests_host/test_beacon_cosign_aad.cpp`).
 
 **Status: closed (PR #454 merged 2026-05-12).** Hardware verification of the two-pubkey origination flow remains queued — see `docs/audit/hardware_verification_checklist.md`.
@@ -564,7 +565,7 @@ header nonce (above).
 | C1 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (Ed25519::verify against carried `session_pubkey`) | `test_chirp_protocol_invariants::c1_c6_a_witness_must_verify` + `witness_canonical_layout` |
 | C2 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (initial `confirm_count = 0`; ignored on wire) | `test_chirp_security::c2_c3_no_self_count` |
 | C3 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` (different-pubkey check) + `send_chirp` (initial 0) | `test_chirp_security::c2_c3_no_self_count` |
-| C4 | Critical | PR #450 (envelope) + PR #454 (origin signature persistence) | `chirp_channel.cpp::handle_witness` + `relay_chirp` + `ReceivedChirp::origin_signature` | `test_chirp_protocol_invariants::canonical_distinguishes_signers` |
+| C4 | Critical | PR #450 (envelope) + PR #454 (origin signature persistence) | `chirp_channel.cpp::handle_witness` + `relay_chirp` + `ReceivedChirp::origin_signature` (+ `ttl_minutes`, F306) | `test_chirp_protocol_invariants::canonical_distinguishes_signers` + `test_chirp_security::c4_a_relay_keeps_the_signed_ttl` (two hops, TTL 15, 30, 0 and 255) |
 | C5 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` + `pubkey_set_contains` | `test_chirp_security::c5_ack_dedup_by_pubkey` |
 | C6 | Critical (design) | PR #450 | `ChirpWitnessPayload::session_pubkey` + `session_id_from_pubkey` validation | `test_chirp_protocol_invariants::c1_c6_a_witness_must_verify` + `witness_canonical_layout` |
 | C7 | High | PR #450 | `chirp_channel.cpp::handle_suppress_vote` + `CHIRP_MSG_SUPPRESS_VOTE` | `test_chirp_suppress_wap::a_repeated_voter_counts_once` + `a_vote_must_verify` |
@@ -573,7 +574,7 @@ header nonce (above).
 | C10 | High | PR #450 | `chirp_channel.cpp::wall_clock_is_synced` + `MIN_UNIX_TIME` gate | `test_chirp_commands_wap::a_refused_send_names_why` (`clock_unsynced`) |
 | C11 | Medium | PR #450 | `chirp_channel.cpp::generate_emoji_string` (5 emojis) | `test_chirp_commands_wap::every_session_display_is_five_emoji_in_its_field` |
 | C12 | High (latent) | PR #454 | `chirp_api.h::chirp_auth_gated<>` + `canary_wap.ino` registration under `FEATURE_MESH_NETWORK` | manual: cURL with/without Bearer header |
-| C13 | High | PR #450 | `chirp_channel.cpp::confirm_chirp` (presence check) + `nearby_has_pubkey_with_presence` | `test_chirp_security::c5_ack_dedup_by_pubkey` (a key with no nearby row) |
+| C13 | High | PR #450 | `chirp_channel.cpp::confirm_chirp` (presence check) + `nearby_has_pubkey_with_presence` (the row ten minutes old since F311: `NearbyDevice::first_seen_ms`) | `test_chirp_security::c5_ack_dedup_by_pubkey` (a key with no nearby row) + `c13_an_ack_waits_for_ten_minutes_of_presence` + `c13_presence_counts_from_the_row` |
 | C14 | High | PR #450 | `chirp_channel.cpp::pubkey_rate_check_and_record` | manual flood test |
 | C15 | Medium | PR #450 | `chirp_channel.cpp::is_night_mode` (conservative when unsynced) | covered by C10 |
 | C16 | High | PR #450 (partial) + PR #454 (full per-finding suite) | `firmware/projects/canary-wap/tests_host/` | 6 host-test binaries, all green |

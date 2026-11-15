@@ -227,8 +227,8 @@ class _Resp:
         self.status = status
         self._payload = payload
 
-    async def json(self):
-        return self._payload
+    async def read(self):
+        return b"" if self._payload is None else json.dumps(self._payload).encode()
 
     async def __aenter__(self):
         return self

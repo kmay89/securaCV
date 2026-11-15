@@ -99,7 +99,9 @@ once; each PROBE then prints `PG1 <ms> EVT rs485 slave=1 reg=0 val=<n> crc=ok`
 and the station shows the value. A slave that answers with a Modbus
 exception (five bytes, CRC good) prints `PG1 <ms> EVT rs485 slave=1
 exception=<code>` as soon as it is in (`2` is an illegal data address: the
-slave is there, register 0 is not; the station's tile still reads "no reply").
+slave is there, register 0 is not), and the glass names it until the next
+PROBE: the tile reads `exception <code>` and the pin tracker's RS485 row
+`exc <code> • check register`, where a dead line reads "no reply • check A/B".
 Anything else prints `PG1 <ms> EVT rs485 slave=1 reply=none`, at one of two
 moments: a reply of the full seven bytes that fails its checks (a bad CRC,
 another slave's, another function's) as soon as its last byte is in; a quiet

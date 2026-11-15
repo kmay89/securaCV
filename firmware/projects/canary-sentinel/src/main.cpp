@@ -35,7 +35,15 @@
   0..100 anomaly score, a 0/1/2+ occupant bucket, a near/mid/far band, and
   which modality CLASSES corroborated. Raw centimeters, per-target data, MACs
   and imagery are read, used to form a Vote, and dropped here. They never
-  cross emit_claim().
+  cross emit_claim(). Beside the claim, the retained health payload carries
+  the radar UART's link health, as canary-sense's does (radar_link_health():
+  link up or down, the age of the last frame, the parser's error count),
+  never a reading. The device-details design classes that age and that count
+  as activity, and its tier policy keeps activity off the broker; they reach
+  the owner's broker here anyway, as a legacy exception: the same health
+  object canary-sense already publishes, which that design's PR 7 asks this
+  file to publish too. Home Assistant's diagnostics redaction does not list
+  `last_frame_age_ms` yet; device-details PR 16 adds it.
 */
 
 #include <Arduino.h>
@@ -75,6 +83,7 @@
 
 // Board-agnostic fusion brain + channel adapters (firmware/common via -I).
 #include "canary/sentinel_config.h"        // build_fusion_config() from the preset
+#include "canary/sentinel_links.h"         // the radar and light links, one rule each
 #include "fusion/sentinel_fusion.h"
 #include "fusion/sentinel_channels.h"
 
@@ -105,12 +114,11 @@ static FusionEngine g_engine;   // configured from the preset in setup()
 #if defined(FEATURE_MMWAVE_RADAR) && FEATURE_MMWAVE_RADAR
 static HardwareSerial RadarSerial(RADAR_UART_NUM);
 static securacv::mmwave::FrameParser g_radar_parser;
-static bool     g_radar_seen = false;
-static uint32_t g_last_radar_frame_ms = 0;
+static canary::sentinel::RadarLink g_radar_link;  // the fusion vote and the health object read it
 #endif
 #if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
 static securacv::sensors::BH1750 g_lux;
-static float g_lux_baseline = -1.0f;
+static canary::sentinel::LightChannel g_light;  // its lux baseline (canary/sentinel_links.h)
 #endif
 
 // PIR settle tail: how long after the last motion edge PIR keeps voting Weak.
@@ -136,6 +144,10 @@ static uint32_t g_mqtt_attempts = 0;
 // (ground-truth-only referral — same contract as canary-sense).
 static bool g_broker_gossiped = false;
 
+// The health payload's radar object, or nullptr while there is none to give
+// (see radar_link_health(), below the radar reader whose state it reports).
+static const canary::net::RadarLinkHealth* radar_link_health(uint32_t now_ms);
+
 static bool mqtt_supervise(uint32_t now) {
   if (canary::net::mqtt_connected()) {
     g_mqtt_attempts = 0;
@@ -156,7 +168,7 @@ static bool mqtt_supervise(uint32_t now) {
     canary::net::publish_status_retained(TOPICS, "online");
     // Trust surface: health carries the pubkey HA TOFU-pins on; the
     // retained chain head lets HA verify continuity immediately.
-    canary::net::publish_health_retained(TOPICS);
+    canary::net::publish_health_retained(TOPICS, radar_link_health(now));
     canary::net::publish_chain_retained(TOPICS);
     g_last_health_ms = now;
     return true;
@@ -210,6 +222,17 @@ static void set_last_event(const char* e) {
   g_snap.last_event = g_last_event;
 }
 
+// Whether this build's light sensor did not answer at boot (the driver keeps
+// begin()'s answer as present()). A build without the sensor has nothing to
+// be absent. tests_host/test_sentinel_links.cpp holds this body to its source.
+static bool light_absent_at_boot() {
+#if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
+  return !g_lux.present();
+#else
+  return false;
+#endif
+}
+
 static void refresh_snapshot(const FusionResult& r, uint32_t now_ms) {
   g_snap.claim.level         = level_name(r.level);
   g_snap.claim.confidence    = r.confidence;
@@ -220,7 +243,10 @@ static void refresh_snapshot(const FusionResult& r, uint32_t now_ms) {
   g_snap.present   = (r.level == Level::Present || r.level == Level::Confirmed ||
                       r.level == Level::Loiter);
   g_snap.anomalous = (r.level == Level::Anomaly);
-  g_snap.denied_any        = r.denied_any;
+  // A channel voting Denied, or a light sensor absent since boot: an absent
+  // sensor never votes, but it is never a silent gap either (R6).
+  g_snap.denied_any        = canary::sentinel::channel_denied_reported(r.denied_any,
+                                                                       light_absent_at_boot());
   g_snap.strong_modalities = r.strong_modalities;
   g_snap.modalities = modality_list(r.modality_bits);
   g_snap.uptime_s = now_ms / 1000;
@@ -342,8 +368,7 @@ static void read_radar(uint32_t now) {
   for (Frame f = g_radar_parser.poll(); f.kind != FrameKind::None;
        f = g_radar_parser.poll()) {
     got = true;
-    g_radar_seen = true;
-    g_last_radar_frame_ms = now;
+    canary::sentinel::radar_link_frame(g_radar_link, now);
     if (f.kind == FrameKind::Presence) {
       present_now = f.has_target;
       // Coarse side-bands consumed here; the raw cm/count never leave this file.
@@ -353,7 +378,7 @@ static void read_radar(uint32_t now) {
     }
   }
 
-  const bool stalled = g_radar_seen && (now - g_last_radar_frame_ms) > SENT_STALE_RADAR;
+  const bool stalled = canary::sentinel::radar_stalled(g_radar_link, now, SENT_STALE_RADAR);
   if (got) {
     g_engine.observe(Channel::Radar, chan::radar_vote(false, present_now, false),
                      /*quality=*/95, now);
@@ -368,21 +393,46 @@ static void read_radar(uint32_t now) {
 #endif
 }
 
+// The radar object of the retained health payload: the wire contract Home
+// Assistant's radar-link diagnostic reads (link_ok / last_frame_age_ms /
+// frame_errors; RadarLinkHealth in canary/net/mqtt_mgr.h). It reports the
+// link read_radar() above already judges, by the same rule
+// (canary/sentinel_links.h), so once the radar has spoken the health object
+// and the fusion vote agree: link_ok is false exactly when the vote is
+// Denied. A radar silent since boot is the exception: it reads down here
+// once judged, while its channel never votes, as an unwired one does. The
+// publish was there, carried from canary-sense; nothing here passed it a
+// radar, so a Standard build's health never carried one.
+// tests_host/test_sentinel_links.cpp holds this body, and both publishes'
+// use of it, to their source.
+//
+// nullptr while the link has not been judged yet (no frame decoded and the
+// stall window not yet over since the UART opened), which HA keeps as
+// "unknown" rather than "down", and always on a build with no radar (Lite),
+// so HA grows no radar-link sensor for it.
+static const canary::net::RadarLinkHealth* radar_link_health(uint32_t now_ms) {
+#if defined(FEATURE_MMWAVE_RADAR) && FEATURE_MMWAVE_RADAR
+  static canary::net::RadarLinkHealth h;
+  if (!canary::sentinel::radar_link_judged(g_radar_link, now_ms, SENT_STALE_RADAR)) return nullptr;
+  h.link_ok           = canary::sentinel::radar_link_ok(g_radar_link, now_ms, SENT_STALE_RADAR);
+  h.last_frame_age_ms = canary::sentinel::radar_frame_age_ms(g_radar_link, now_ms);
+  h.frame_errors      = g_radar_parser.error_count();
+  return &h;
+#else
+  (void)now_ms;
+  return nullptr;
+#endif
+}
+
 static void read_light(uint32_t now) {
 #if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
-  const float lux = g_lux.read_lux();
-  if (lux < 0.0f) {
-    // Sensor absent / read failed / saturated-dark: treat as blinded.
-    g_engine.observe(Channel::Light, Vote::Denied, /*quality=*/100, now);
-    return;
-  }
-  if (g_lux_baseline < 0.0f) g_lux_baseline = lux;
-  const uint16_t delta = static_cast<uint16_t>(fabsf(lux - g_lux_baseline));
-  // Slow-track the baseline so a sunset drift doesn't read as an event.
-  g_lux_baseline += (lux - g_lux_baseline) * 0.02f;
-  g_engine.observe(Channel::Light,
-                   chan::light_vote(/*blinded=*/false, delta, /*weak_delta=*/50),
-                   /*quality=*/80, now);
+  // begin()'s answer at boot (the driver keeps it as present()) tells a unit
+  // with no light sensor (no vote) from a sensor that stopped answering
+  // (Denied, R2); the rule and the vote are canary/sentinel_links.h's, and
+  // tests_host/test_sentinel_links.cpp holds this body to its source.
+  const canary::sentinel::LightSample s =
+      canary::sentinel::light_sample(g_light, g_lux.present(), g_lux.read_lux());
+  if (s.votes) g_engine.observe(Channel::Light, s.vote, s.quality, now);
 #else
   (void)now;
 #endif
@@ -704,11 +754,19 @@ void setup() {
 #endif
 #if defined(FEATURE_MMWAVE_RADAR) && FEATURE_MMWAVE_RADAR
   RadarSerial.begin(RADAR_UART_BAUD, SERIAL_8N1, RADAR_UART_RX, RADAR_UART_TX);
-  g_last_radar_frame_ms = millis();
+  canary::sentinel::radar_link_open(g_radar_link, millis());
 #endif
 #if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
   Wire.begin(I2C_SDA, I2C_SCL);
-  g_lux.begin(Wire, BH1750_ADDR);
+  // The POWER_ON acknowledgment is the BH1750's only presence probe. A unit
+  // where nothing answers has no light sensor: its light channel never votes,
+  // where it used to vote Denied on every read, and the state topic reports
+  // it as a denied channel (canary/sentinel_links.h).
+  if (g_lux.begin(Wire, BH1750_ADDR)) {
+    boot_kv("BH1750", "ambient light sensor online");
+  } else {
+    boot_kv("BH1750", "not found: absent, never votes, reported as channel_denied");
+  }
 #endif
 
   TOPICS = build_topics(canary::cfg::get().device_id);
@@ -849,7 +907,7 @@ void loop() {
   // store and diagnostics).
   if ((int32_t)(now - g_last_health_ms) >= (int32_t)HEALTH_PUBLISH_MS) {
     g_last_health_ms = now;
-    canary::net::publish_health_retained(TOPICS);
+    canary::net::publish_health_retained(TOPICS, radar_link_health(now));
   }
 
   // Heartbeat + state refresh. Under heap pressure the diagnostics ladder

@@ -240,6 +240,34 @@ Only evidence originating **outside the board** may waive it:
 A board's own confident announcement that it is already a Canary now buys it
 nothing.
 
+### Proportional, not whole-chip (browser flasher)
+
+The promise is that nothing the board arrived with survives outside what our
+image writes. A whole-chip erase keeps it by erasing everything, in one
+command that reports nothing until it ends: on a 16 MB part, a minute or more
+of silence for a chip that is usually mostly blank. The browser flasher now
+keeps the same promise in proportion:
+
+1. **Map the chip.** For each 256 KB block, the flasher stub computes the MD5
+   of what the chip returns at that address (`SPI_FLASH_MD5`), and a block
+   whose MD5 equals that of 256 KB of `0xFF` is blank. The board's own
+   firmware is not running while this happens: the stub is our code, loaded
+   into RAM by the mask ROM, so a hostile image cannot answer for it. A block
+   whose probe fails counts as data.
+2. **Erase what holds data**, minus the range the image's own write erases
+   anyway, 256 KB at a time so the bar moves (`ERASE_REGION`, with the stub's
+   status checked on every piece).
+3. **Fall back to the whole-chip erase** when there is no stub, no map, or the
+   chip refuses an erase. Same end state, more silence.
+
+The end state is identical: every byte is written by the image, erased, or
+proven blank (`canary-local/tests/flash.test.js` checks that property over
+random block maps). The same map lets the safety copy skip the blank blocks
+instead of reading them. An erase the user asks for (Clean install, the
+Advanced checkbox, a rescue) stays the whole-chip erase. The desktop Flasher
+still erases the whole chip: its `espflash` sidecar reconnects for every
+command, so sixty-four MD5 probes would cost more than they save.
+
 ## Where the two flashers differ, and why we say so
 
 Per CLAUDE.md's "two flashers, two frontends" rule, both get the cold-start

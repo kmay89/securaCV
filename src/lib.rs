@@ -195,6 +195,7 @@ pub fn high_water_mark_path_from_env() -> Option<std::path::PathBuf> {
 /// to an independent secret (or rotate the independent secret) without data loss.
 /// Both keys are 64-char hex (32 raw bytes), as produced by the `derive_*` helpers.
 pub fn rekey_database_file(db_path: &str, old_key_hex: &str, new_key_hex: &str) -> Result<()> {
+    ensure_sqlcipher_ready()?;
     let conn = Connection::open(db_path)?;
     // Authenticate with the current key (also verifies it is correct).
     apply_sqlcipher_key(&conn, old_key_hex)?;
@@ -211,8 +212,38 @@ pub fn rekey_database_file(db_path: &str, old_key_hex: &str, new_key_hex: &str) 
     Ok(())
 }
 
+/// Finish SQLite's and SQLCipher's start-up before this thread opens or keys
+/// a database.
+///
+/// SQLCipher sets up its mutexes, private heap and cipher provider in
+/// SQLite's extra-init hook, which `sqlite3_initialize` runs after it has
+/// already marked the library initialized. A second thread opening its first
+/// database in that window gets through `sqlite3_initialize` at once and its
+/// `PRAGMA key` fails. `sqlcipher_extra_init` takes SQLite's main mutex and
+/// returns at once when start-up is complete, so calling it here waits out
+/// another thread's start-up. It is the hook SQLCipher requires by name at
+/// build time (`-DSQLITE_EXTRA_INIT=sqlcipher_extra_init`).
+fn ensure_sqlcipher_ready() -> Result<()> {
+    extern "C" {
+        fn sqlcipher_extra_init(arg: *const std::ffi::c_char) -> std::ffi::c_int;
+    }
+    // SAFETY: both calls take no pointers we own (the argument is unused and
+    // may be null), are safe to call from any thread, and are idempotent.
+    let rc = unsafe {
+        match rusqlite::ffi::sqlite3_initialize() {
+            rusqlite::ffi::SQLITE_OK => sqlcipher_extra_init(std::ptr::null()),
+            rc => rc,
+        }
+    };
+    if rc != rusqlite::ffi::SQLITE_OK {
+        return Err(anyhow!("SQLCipher start-up failed (SQLite code {rc})"));
+    }
+    Ok(())
+}
+
 /// Apply the SQLCipher encryption key to an open database connection.
 fn apply_sqlcipher_key(conn: &Connection, hex_key: &str) -> Result<()> {
+    ensure_sqlcipher_ready()?;
     conn.pragma_update(None, "key", format!("x'{}'", hex_key))?;
     // Verify the key works by reading a page
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
@@ -247,6 +278,7 @@ fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> 
     let encrypted_path = format!("{}.encrypted", db_path);
 
     // Open the unencrypted database (no key)
+    ensure_sqlcipher_ready()?;
     let plain_conn = Connection::open(db_path)?;
 
     // Attach the new encrypted database
@@ -339,6 +371,7 @@ pub(crate) fn open_db_connection_with_key(
     db_path: &str,
     encryption_key: Option<&str>,
 ) -> Result<Connection> {
+    ensure_sqlcipher_ready()?;
     if db_path.starts_with("file:") {
         let conn = Connection::open_with_flags(
             db_path,
@@ -1453,7 +1486,7 @@ impl RawMediaBoundary {
 
 // -------------------- Sealed Log --------------------
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct KernelConfig {
     pub db_path: String,
     pub ruleset_id: String,
@@ -1462,9 +1495,31 @@ pub struct KernelConfig {
     /// default retention; pruning will write checkpoints
     pub retention: Duration,
     /// Device signing seed (required at runtime; must not be the MVP placeholder).
+    /// Zeroized when the config is dropped, and never printed by `Debug`.
     pub device_key_seed: String,
     /// Zone policy for suppressing sensitive areas.
     pub zone_policy: ZonePolicy,
+}
+
+impl std::fmt::Debug for KernelConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KernelConfig")
+            .field("db_path", &self.db_path)
+            .field("ruleset_id", &self.ruleset_id)
+            .field("ruleset_hash", &hex::encode(self.ruleset_hash))
+            .field("kernel_version", &self.kernel_version)
+            .field("retention", &self.retention)
+            .field("device_key_seed", &"<redacted>")
+            .field("zone_policy", &self.zone_policy)
+            .finish()
+    }
+}
+
+impl Drop for KernelConfig {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.device_key_seed.zeroize();
+    }
 }
 
 impl KernelConfig {
@@ -2934,7 +2989,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         // Burn-first (durable): a token file re-parses as unconsumed, so
         // without this ledger a granted token could authorize repeated
         // exports across separate invocations within its validity bucket.
-        self.consume_token_durably(token)?;
+        // The same call appends the signed redemption row, so a deleted
+        // burn row does not reopen the token either.
+        self.redeem_token_durably(token)?;
         let artifact = self.export_events_sequential_unchecked(
             expected_ruleset_hash,
             options,
@@ -3613,11 +3670,83 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         token.attach_receipt_signature(receipt_entry_hash, &self.device_key)
     }
 
-    /// Burn the token's nonce in the durable anti-replay ledger — see
-    /// `consume_break_glass_token_durably`. Call BEFORE releasing any
-    /// cleartext or export artifact.
-    pub fn consume_token_durably(&self, token: &break_glass::BreakGlassToken) -> Result<()> {
-        consume_break_glass_token_durably(&self.conn, token)
+    /// Redeem a token durably, in one transaction and before any cleartext
+    /// or export artifact exists: burn the nonce in the unsigned anti-replay
+    /// table (`consume_break_glass_token_durably`, which also refuses a nonce
+    /// the chain already shows redeemed), then append the device-signed,
+    /// hash-chained `TokenRedeemed { nonce, receipt_entry_hash }` row that
+    /// restates the `Granted` receipt the token was minted from. Returns that
+    /// row's chain hash. A redemption that cannot be recorded does not
+    /// happen: either both rows land or neither does, and the caller gets
+    /// an error before it unseals anything.
+    pub fn redeem_token_durably(
+        &mut self,
+        token: &break_glass::BreakGlassToken,
+    ) -> Result<[u8; 32]> {
+        let own_tx = self.conn.is_autocommit();
+        self.conn.execute_batch(if own_tx {
+            "BEGIN IMMEDIATE;"
+        } else {
+            "SAVEPOINT token_redemption;"
+        })?;
+        let recorded = self.redeem_token_locked(token).and_then(|entry_hash| {
+            self.conn.execute_batch(if own_tx {
+                "COMMIT;"
+            } else {
+                "RELEASE token_redemption;"
+            })?;
+            Ok(entry_hash)
+        });
+        if recorded.is_err() {
+            // Best effort: the error the caller sees is the redemption's.
+            let _ = self.conn.execute_batch(if own_tx {
+                "ROLLBACK;"
+            } else {
+                "ROLLBACK TO token_redemption; RELEASE token_redemption;"
+            });
+        }
+        recorded
+    }
+
+    fn redeem_token_locked(&mut self, token: &break_glass::BreakGlassToken) -> Result<[u8; 32]> {
+        // Validate before recording anything. A token file only re-parses
+        // for shape, so a file with an altered bucket or nonce reaches here
+        // looking like a token; recording its redemption would append a
+        // signed row the verifier then rejects (and witnessd would boot into
+        // safe mode on). The device signature binds nonce, envelope, ruleset,
+        // bucket and receipt hash, the bucket must be live, and the grant it
+        // names must re-derive its quorum — the same gate the unseal runs.
+        let envelope_id = token.vault_envelope_id().to_string();
+        let ruleset_hash = token.ruleset_hash();
+        break_glass::BreakGlass::assert_token_valid(
+            token,
+            &envelope_id,
+            ruleset_hash,
+            TimeBucket::now(600)?,
+            &self.device_verifying_key(),
+            |hash| self.break_glass_receipt_outcome(&envelope_id, ruleset_hash, hash),
+        )?;
+        // Burn first: the unsigned table is the fast gate every older caller
+        // still consults, and it is written before the signed row so a crash
+        // between the two leaves the nonce burned (the verifier then names
+        // it) rather than spendable.
+        consume_break_glass_token_durably(&self.conn, token)?;
+        let granted_entry_hash = token.receipt_entry_hash();
+        let payload: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT payload_json FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
+                params![granted_entry_hash.to_vec()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(payload) = payload else {
+            return Err(anyhow!("break-glass receipt not found for token"));
+        };
+        let granted: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
+        let redemption =
+            break_glass::BreakGlassReceipt::redemption_of(&granted, granted_entry_hash, token)?;
+        self.append_break_glass_receipt(&redemption, &[])
     }
 
     pub fn break_glass_receipt_outcome(
@@ -3932,7 +4061,8 @@ pub(crate) fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
     }
     let mut key_bytes = [0u8; 32];
     key_bytes.copy_from_slice(bytes);
-    VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
+    crate::crypto::signatures::verifying_key_strict(&key_bytes)
+        .map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
 }
 
 #[cfg(feature = "pqc-signatures")]
@@ -4253,7 +4383,7 @@ pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
 pub mod verify_helpers;
 pub mod verify_runner;
 
-fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
+pub(crate) fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
         return Err(anyhow!(
             "corrupt {}: expected 32 bytes, got {}",
@@ -4268,6 +4398,17 @@ fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
 
 fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+}
+
+/// Test helper. A row stamped with the current 10-minute bucket is still
+/// inside a zero retention during that bucket's first second, when its start
+/// equals the cutoff. Wait that second out before a test prunes with
+/// retention 0 and expects such a row to go.
+#[cfg(test)]
+pub(crate) fn wait_out_bucket_first_second() {
+    while now_s().is_ok_and(|s| s % u64::from(TEN_MINUTES_S) == 0) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Durable anti-replay ledger for break-glass tokens.
@@ -4376,6 +4517,37 @@ pub fn read_policy_change_history(conn: &Connection) -> Result<Vec<PolicyChangeH
     Ok(out)
 }
 
+/// The id of the signed `TokenRedeemed` receipt row for `nonce`, if the
+/// chain holds one. Reads the chain, not the unsigned burn table: this is
+/// the check a deleted burn row cannot undo.
+pub fn break_glass_redemption_row_for_nonce(
+    conn: &Connection,
+    nonce: &[u8; 32],
+) -> Result<Option<i64>> {
+    let mut stmt =
+        conn.prepare("SELECT id, payload_json FROM break_glass_receipts ORDER BY id ASC")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let id: i64 = row.get(0)?;
+        let payload: String = row.get(1)?;
+        let receipt: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
+        if let Some((redeemed_nonce, _)) = receipt.redeemed_token() {
+            if &redeemed_nonce == nonce {
+                return Ok(Some(id));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Burn a token's nonce in the unsigned anti-replay table — the first half
+/// of a redemption. The whole act is [`Kernel::redeem_token_durably`], which
+/// also appends the device-signed `TokenRedeemed` row; a burn without that
+/// row is what the verifier reports as `FailureKind::TokenRedemption`.
+///
+/// Refuses a nonce the table already holds AND a nonce the signed receipt
+/// chain already shows redeemed, so deleting the unsigned row buys no
+/// replay while the token's bucket is still live.
 pub fn consume_break_glass_token_durably(
     conn: &Connection,
     token: &break_glass::BreakGlassToken,
@@ -4389,6 +4561,13 @@ pub fn consume_break_glass_token_durably(
          )",
         [],
     )?;
+    if let Some(row_id) = break_glass_redemption_row_for_nonce(conn, &token.token_nonce())? {
+        return Err(anyhow!(
+            "break-glass token already redeemed (signed redemption receipt #{}; a removed \
+             anti-replay row does not reopen a spent token)",
+            row_id
+        ));
+    }
     let consumed_at = i64::try_from(now_s()?).unwrap_or(i64::MAX);
     let inserted = conn.execute(
         "INSERT OR IGNORE INTO consumed_break_glass_tokens \
@@ -4670,6 +4849,12 @@ pub fn select_module_backend(
 pub trait Module {
     fn descriptor(&self) -> ModuleDescriptor;
 
+    /// The zone ids this module may name in a candidate. The sandbox runtime
+    /// admits a candidate only for a zone declared here (fail closed: a
+    /// module that declares none emits nothing), so the child's `zone_id`
+    /// string can never carry free text into the sealed log.
+    fn declared_zone_ids(&self) -> Vec<String>;
+
     fn process(
         &mut self,
         view: &InferenceView<'_>,
@@ -4743,6 +4928,10 @@ impl Module for ZoneCrossingModule {
             requested_capabilities: &[],
             supported_backends: ZONE_CROSSING_BACKENDS,
         }
+    }
+
+    fn declared_zone_ids(&self) -> Vec<String> {
+        vec![self.zone_id.clone()]
     }
 
     fn process(
@@ -5082,7 +5271,7 @@ mod tests {
 
     #[test]
     fn sealed_log_document_reanchors_at_the_newest_rotation() -> Result<()> {
-        use ed25519_dalek::{Signature, Verifier};
+        use ed25519_dalek::Signature;
 
         let (mut kernel, cfg) = setup_test_kernel()?;
         seal_one_event(&mut kernel, &cfg, "zone:a")?;
@@ -5153,7 +5342,7 @@ mod tests {
                 &stored,
             );
             new_key
-                .verify(&signing_hash, &Signature::from_bytes(&signature))
+                .verify_strict(&signing_hash, &Signature::from_bytes(&signature))
                 .map_err(|e| anyhow!("signature at index {idx}: {e}"))?;
             expected_prev = stored;
         }
@@ -6549,6 +6738,212 @@ mod tests {
         Ok(())
     }
 
+    /// A fresh nonce for a token a test forges or mints beside the real one:
+    /// random like the kernel's own, never a literal (not even a zeroed
+    /// array that is filled afterwards, which a scanner reads as a constant).
+    fn random_test_nonce() -> [u8; 32] {
+        rand::random::<[u8; 32]>()
+    }
+
+    /// A kernel with a 1-of-1 quorum and one Granted, device-signed token for
+    /// `envelope`, exactly as `break_glass authorize` leaves them.
+    fn kernel_with_granted_token(
+        envelope: &str,
+    ) -> Result<(Kernel, KernelConfig, break_glass::BreakGlassToken, [u8; 32])> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let alice = SigningKey::from_bytes(&[41u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+        let bucket = TimeBucket::now(600)?;
+        let request = UnlockRequest::new(envelope, cfg.ruleset_hash, "incident", bucket)?;
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+        let (result, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        let mut token = result.expect("1-of-1 quorum grants");
+        let granted_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+        kernel.sign_break_glass_token(&mut token, granted_hash)?;
+        Ok((kernel, cfg, token, granted_hash))
+    }
+
+    #[test]
+    fn redeem_token_durably_burns_first_and_appends_a_signed_redemption_row() -> Result<()> {
+        let (mut kernel, _cfg, token, granted_hash) = kernel_with_granted_token("vault:1")?;
+
+        let redemption_hash = kernel.redeem_token_durably(&token)?;
+
+        // The unsigned burn row is there …
+        let burned: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM consumed_break_glass_tokens WHERE token_nonce = ?1",
+            params![token.token_nonce().to_vec()],
+            |r| r.get(0),
+        )?;
+        assert_eq!(burned, 1);
+        // … and so is the signed row, chained onto the grant, restating it.
+        let (payload, prev_hash): (String, Vec<u8>) = kernel.conn.query_row(
+            "SELECT payload_json, prev_hash FROM break_glass_receipts ORDER BY id DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let row: BreakGlassReceipt = serde_json::from_str(&payload)?;
+        assert_eq!(
+            row.redeemed_token(),
+            Some((token.token_nonce(), granted_hash))
+        );
+        assert_eq!(prev_hash, granted_hash.to_vec());
+        assert_eq!(row.vault_envelope_id, "vault:1");
+        assert_eq!(row.time_bucket, token.expires_bucket());
+        assert!(row.trustees_used.is_empty());
+        assert_ne!(redemption_hash, granted_hash);
+
+        // The full verifier walks it green and counts it.
+        let report = kernel.verify_sealed_log()?;
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.break_glass_receipts_verified, 2);
+        assert_eq!(report.break_glass_granted, 1);
+        assert_eq!(report.break_glass_redeemed, 1);
+
+        // A second redemption is refused by the burn table …
+        let err = kernel.redeem_token_durably(&token).unwrap_err().to_string();
+        assert!(err.contains("already redeemed"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_the_burn_row_does_not_reopen_a_redeemed_token() -> Result<()> {
+        // The attack the signed row exists for: an actor with a database
+        // handle and no signing key deletes the unsigned burn row and
+        // presents the token again inside its still-live bucket.
+        let (mut kernel, _cfg, token, _granted_hash) = kernel_with_granted_token("vault:1")?;
+        kernel.redeem_token_durably(&token)?;
+        kernel.conn.execute(
+            "DELETE FROM consumed_break_glass_tokens WHERE token_nonce = ?1",
+            params![token.token_nonce().to_vec()],
+        )?;
+
+        let err = kernel.redeem_token_durably(&token).unwrap_err().to_string();
+        assert!(
+            err.contains("signed redemption receipt"),
+            "the chain, not the unsigned table, must refuse the replay: {err}"
+        );
+        // The refusal left nothing behind: no second burn row, no second
+        // redemption row (the transaction rolled back), chain still green.
+        let burned: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM consumed_break_glass_tokens",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(burned, 0);
+        let rows: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM break_glass_receipts", [], |r| {
+                    r.get(0)
+                })?;
+        assert_eq!(rows, 2);
+
+        // The verifier names the tampering: a redeemed nonce whose burn row
+        // is gone is a token-redemption failure, not a quiet pass.
+        let report = kernel.verify_sealed_log()?;
+        assert!(!report.chain_valid);
+        let error = report.error.clone().unwrap_or_default();
+        assert!(error.contains("no burn row"), "{error}");
+        // (The export gate's own refusal of the same replay is covered in
+        // tests/export_events_authorized.rs, with a token for that envelope.)
+        Ok(())
+    }
+
+    #[test]
+    fn tampered_token_file_is_refused_before_anything_is_recorded() -> Result<()> {
+        // A token FILE re-parses for shape only. One with an altered bucket
+        // or a made-up nonce pointing at a real grant must be refused before
+        // the burn and the signed row — otherwise it would poison the chain
+        // with a redemption the verifier rejects, and the real token's own
+        // redemption would then read as a second spend of the grant.
+        let (mut kernel, _cfg, token, _granted_hash) = kernel_with_granted_token("vault:1")?;
+        let file = BreakGlassTokenFile::from_token(&token)?;
+
+        let mut stale = file.clone();
+        stale.expires_bucket.start_epoch_s += 600;
+        let stale = stale.into_token()?;
+        let err = kernel.redeem_token_durably(&stale).unwrap_err().to_string();
+        assert!(
+            err.contains("expired") || err.contains("signature"),
+            "{err}"
+        );
+
+        let mut forged_nonce = file.clone();
+        forged_nonce.token_nonce = hex::encode(random_test_nonce());
+        let forged_nonce = forged_nonce.into_token()?;
+        let err = kernel
+            .redeem_token_durably(&forged_nonce)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("signature"), "{err}");
+
+        // Nothing was recorded: no burn, no row, and the chain is still green.
+        let burned: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM consumed_break_glass_tokens",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(burned, 0);
+        let rows: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM break_glass_receipts", [], |r| {
+                    r.get(0)
+                })?;
+        assert_eq!(rows, 1);
+        let report = kernel.verify_sealed_log()?;
+        assert!(report.chain_valid, "{:?}", report.error);
+
+        // The genuine token still redeems once.
+        kernel.redeem_token_durably(&token)?;
+        let report = kernel.verify_sealed_log()?;
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.break_glass_redeemed, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn redemption_row_needs_a_granted_receipt_the_token_points_at() -> Result<()> {
+        let (mut kernel, _cfg, token, _granted_hash) = kernel_with_granted_token("vault:1")?;
+        // A token whose receipt hash the chain does not hold cannot be
+        // redeemed — and the burn is rolled back with the failed append, so
+        // the refusal leaves no half-recorded redemption.
+        let mut stray = break_glass::BreakGlassToken::test_token_with(
+            random_test_nonce(),
+            token.expires_bucket(),
+            "vault:1",
+            token.ruleset_hash(),
+        );
+        stray.attach_receipt_signature([5u8; 32], &kernel.device_key)?;
+        let err = kernel.redeem_token_durably(&stray).unwrap_err().to_string();
+        assert!(err.contains("receipt not found"), "{err}");
+        let burned: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM consumed_break_glass_tokens",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(burned, 0, "a refused redemption burns nothing");
+        Ok(())
+    }
+
     #[test]
     fn raw_media_boundary_denies_export() {
         let result: Result<Vec<u8>> = RawMediaBoundary::deny_export("test");
@@ -7515,7 +7910,7 @@ mod tests {
     const ROT_THIRD_SEED: &str = "devkey:rotate:third:33333333333333333";
 
     fn verify_chain_from_genesis(conn: &Connection, genesis_pub: &[u8; 32]) -> Result<u64> {
-        let genesis_key = ed25519_dalek::VerifyingKey::from_bytes(genesis_pub)?;
+        let genesis_key = crate::crypto::signatures::verifying_key_strict(genesis_pub)?;
         crate::verify::verify_events_with(
             conn,
             &genesis_key,
@@ -8085,6 +8480,97 @@ mod tests {
     }
 
     #[test]
+    fn retention_ages_rows_by_the_signed_bucket_not_the_created_at_column() -> Result<()> {
+        // An actor with a database handle but no signing key stamps live
+        // rows as ancient. The pass must not sign a checkpoint over their
+        // deletion: age comes from the signed bucket, so nothing is pruned.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        kernel
+            .conn
+            .execute("UPDATE sealed_events SET created_at = 0 WHERE id <= 2", [])?;
+
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(86_400))?;
+
+        assert_eq!(sealed_event_hashes(&kernel)?.len(), 3, "live rows stay");
+        assert!(checkpoint_rows(&kernel)?.is_empty(), "no checkpoint signed");
+        Ok(())
+    }
+
+    #[test]
+    fn retention_prunes_by_the_signed_bucket_when_created_at_is_newer() -> Result<()> {
+        // The other direction: a stamp forged NEWER than the signed bucket
+        // (or a legacy row whose column was the wall clock, not the bucket)
+        // cannot keep an expired row alive past retention either.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now - 3 * 86_400)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        kernel.conn.execute(
+            "UPDATE sealed_events SET created_at = ?1 WHERE id = 1",
+            params![now as i64],
+        )?;
+
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(86_400))?;
+
+        assert_eq!(
+            sealed_event_hashes(&kernel)?
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert_eq!(checkpoint_rows(&kernel)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn retention_refuses_a_prefix_whose_payload_was_rewritten() -> Result<()> {
+        // The payload itself is rewritten to carry an old bucket, with its
+        // own entry hash recomputed so the row is self-consistent. The next
+        // row's prev_hash no longer links, so the pass refuses and prunes
+        // nothing — a chain break is reported, never checkpointed over.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        let (payload, prev): (String, Vec<u8>) = kernel.conn.query_row(
+            "SELECT payload_json, prev_hash FROM sealed_events WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut record = SealedLogRecord::deserialize_compat(&payload)?;
+        if let SealedLogRecord::Failure(f) = &mut record {
+            f.time_bucket.start_epoch_s = now - 3 * 86_400;
+        } else {
+            panic!("row 1 is a failure record");
+        }
+        let forged = serde_json::to_string(&record)?;
+        let prev: [u8; 32] = prev.try_into().expect("32-byte prev_hash");
+        let forged_hash = hash_entry(&prev, forged.as_bytes());
+        kernel.conn.execute(
+            "UPDATE sealed_events SET payload_json = ?1, entry_hash = ?2, created_at = ?3 WHERE id = 1",
+            params![forged, forged_hash.to_vec(), (now - 3 * 86_400) as i64],
+        )?;
+
+        let err = kernel
+            .enforce_retention_with_checkpoint(Duration::from_secs(86_400))
+            .expect_err("a rewritten prefix refuses the pass");
+        assert!(
+            err.to_string()
+                .contains(crate::storage::RETENTION_CHAIN_BREAK),
+            "{err}"
+        );
+        assert_eq!(sealed_event_hashes(&kernel)?.len(), 3, "nothing pruned");
+        assert!(checkpoint_rows(&kernel)?.is_empty(), "nothing checkpointed");
+        Ok(())
+    }
+
+    #[test]
     fn retention_without_anchor_table_writes_one_checkpoint() -> Result<()> {
         let (mut kernel, cfg) = setup_test_kernel()?;
         seal_one_event(&mut kernel, &cfg, "zone:a")?;
@@ -8139,6 +8625,7 @@ mod tests {
         seal_one_event(&mut kernel, &cfg, "zone:b")?;
         // Retention=0 checkpoints at the current head and prunes everything up to it (so the
         // pruned prefix includes the rotation; the checkpoint is signed by the new key).
+        wait_out_bucket_first_second();
         kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
         seal_one_event(&mut kernel, &cfg, "zone:c")?; // post-checkpoint, new key
 

@@ -2579,6 +2579,9 @@ _SIG_KIND_SOURCES = (
     "firmware/projects/canary-wap/arduino/canary_wap/device_signature.cpp",
     "firmware/projects/canary-display/src/trust.cpp",
     "desktop/src-tauri/src/whoami.rs",
+    # The Flasher's sealed-session client rebuilds the `seal` canonical to
+    # verify the device's handshake answer before deriving the session key.
+    "desktop/src-tauri/src/seal.rs",
     # The kernel's fleet roll-call rebuilds the `chain` canonical to verify
     # peers' publishes against their TOFU pins (and declares SIG_PREFIX /
     # SCHEMA_V, which _check_sig pins to the dictionary below).

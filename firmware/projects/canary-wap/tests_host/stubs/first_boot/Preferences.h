@@ -15,6 +15,10 @@
  * beside this file answers IDF's nvs_open() and nvs_get_blob() from the same
  * store, and logs nothing. The String Arduino.h comes from stubs/nvs_store.
  *
+ * rw_begins and puts count every read-write begin() and every put, refused
+ * or not, so a suite can hold a refused read to writing nothing (the API
+ * token's, test_wap_hmac_fail.cpp, sweep F365).
+ *
  * The key read's faults (sweep F360), each in force until clear():
  *   prefs_begin_fails  Preferences' begin() refuses every open and IDF's
  *                      nvs_open() does not: the session after a probe that
@@ -31,11 +35,25 @@
  *                      the F360 case); Garbles (fills the buffer with 0xA5,
  *                      then answers 0, as IDF fills it before its data CRC
  *                      check refuses; IDF also erases that entry in the
- *                      same read, which this fake does not: what the suite
- *                      holds is that the sketch's key block writes
- *                      nothing); Short
+ *                      same read, which this fake does only with
+ *                      erase_refused: what the suite holds is that the
+ *                      sketch's key block writes nothing); Copies (copies the stored bytes, then
+ *                      answers 0: IDF copies the data before its data CRC
+ *                      check refuses it, so the buffer can hold a
+ *                      well-formed value behind a count of 0; with
+ *                      copy_flip_mask set, the copy has that byte's bits
+ *                      flipped at copy_flip_at, the flash bit flip the CRC
+ *                      caught, the F365 review); Short
  *                      (copies all but the last byte and answers that
- *                      count). */
+ *                      count).
+ *   read_key           when not empty, `read` applies to this key's blob
+ *                      only and every other blob reads Ok: one entry of a
+ *                      pair refused, the other read whole (the TLS
+ *                      certificate and its key, sweep F404).
+ *   erase_refused      Garbles and Copies also erase the entry they refused,
+ *                      as IDF erases an entry whose data CRC check failed
+ *                      (only that entry: its partner in a pair stays), so
+ *                      a later boot finds it gone (F404's review). */
 #ifndef STUB_FIRST_BOOT_PREFERENCES_H
 #define STUB_FIRST_BOOT_PREFERENCES_H
 
@@ -52,7 +70,7 @@
 #include "esp_err.h"
 
 struct HostFirstBootNvs {
-  enum class Read { Ok, Fails, Garbles, Short };
+  enum class Read { Ok, Fails, Garbles, Copies, Short };
   struct Row {
     char type = 0;   // 'B' bool, 'U' u8, 'c' i8, 'S' u16, 'u' u32, 'L' ulong, 'b' blob, 's' string
     std::vector<uint8_t> bytes;
@@ -67,7 +85,13 @@ struct HostFirstBootNvs {
   bool prefs_begin_fails = false;      // Preferences refuses every open; IDF does not
   esp_err_t length_fault = ESP_OK;     // IDF's blob lookup fails with this
   Read read = Read::Ok;                // what a blob read does once its lookup succeeded
+  std::string read_key;                // …for this key's blob only (empty: every blob)
+  bool erase_refused = false;          // Garbles/Copies erase the entry, as IDF's CRC refusal does
+  size_t copy_flip_at = 0;             // Copies: the byte whose bits flip…
+  uint8_t copy_flip_mask = 0;          // …by this mask (0: copied as stored)
   int blob_reads = 0;                  // getBytes() calls
+  int rw_begins = 0;                   // read-write begin() calls, opened or refused
+  int puts = 0;                        // put*() calls, stored or refused
   uint32_t last_handle = 0;            // nvs.h's handles, each naming its namespace
   std::map<uint32_t, std::string> handle_ns;   // open, not yet closed
 
@@ -89,6 +113,7 @@ class Preferences {
  public:
   bool begin(const char* name, bool readOnly = false, const char* = nullptr) {
     host_nvs().begins++;
+    if (!readOnly) host_nvs().rw_begins++;
     if (started_ || name == nullptr) return false;
     if (host_nvs().fail_begin || host_nvs().prefs_begin_fails ||
         (readOnly && !host_nvs().has_namespace(name))) {
@@ -138,7 +163,10 @@ class Preferences {
     if (len == 0 || buf == nullptr || max_len == 0) return len;
     if (len > max_len) return 0;
     const HostFirstBootNvs::Row* r = find(key);
-    switch (host_nvs().read) {
+    const HostFirstBootNvs::Read how =
+        host_nvs().read_key.empty() || host_nvs().read_key == key ? host_nvs().read
+                                                                  : HostFirstBootNvs::Read::Ok;
+    switch (how) {
       case HostFirstBootNvs::Read::Ok:
         memcpy(buf, r->bytes.data(), len);
         return len;
@@ -146,6 +174,14 @@ class Preferences {
         return 0;
       case HostFirstBootNvs::Read::Garbles:
         memset(buf, 0xA5, len);
+        if (host_nvs().erase_refused) host_nvs().rows.erase(path(key));
+        return 0;
+      case HostFirstBootNvs::Read::Copies:
+        memcpy(buf, r->bytes.data(), len);
+        if (host_nvs().copy_flip_at < len) {
+          static_cast<uint8_t*>(buf)[host_nvs().copy_flip_at] ^= host_nvs().copy_flip_mask;
+        }
+        if (host_nvs().erase_refused) host_nvs().rows.erase(path(key));
         return 0;
       case HostFirstBootNvs::Read::Short:
         memcpy(buf, r->bytes.data(), len - 1);
@@ -186,6 +222,7 @@ class Preferences {
     return it == host_nvs().rows.end() ? nullptr : &it->second;
   }
   size_t put(const char* key, char type, const void* v, size_t len) {
+    host_nvs().puts++;
     if (!started_ || read_only_ || key == nullptr) return 0;
     HostFirstBootNvs::Row& r = host_nvs().rows[path(key)];
     r.type = type;

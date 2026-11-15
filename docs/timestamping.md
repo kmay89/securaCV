@@ -275,6 +275,20 @@ No line reads `OK` without an openssl countersignature success. A verifier
 needs only the DB (or the exported token), the TSA's public CA certificate,
 and openssl — no SecuraCV toolchain is required for the trust-critical step.
 
+**Anchors are part of the ledger verdict (structural).** Checks 1 and 2
+also run inside `run_full_verify` — `log_verify`, witnessd's boot verify and
+`POST /verify` — against every row of the anchors table
+(`docs/log_verify.md`, "Anchors are part of the verdict"). A head-kind anchor
+whose hash is in no live row and in no retention checkpoint whose device
+signature verifies fails that verdict as `anchor_regression` (rollback,
+truncation, or a different history than the one anchored); a damaged row or
+a token that does not parse or cover its row's hash is a warning. The report
+names the anchor row id and at most a 16-hex prefix, never a `genTime`. Check
+3 stays here: the kernel never links a CMS implementation, so a `valid`
+ledger verdict says the anchored states are still present, not that a TSA
+vouched for them — `log_verify` prints the exact `log_anchor … verify --ca`
+command as the next step.
+
 ## Honest limits
 
 - An anchor proves the ledger head existed **at or before** the token's
@@ -320,7 +334,8 @@ and openssl — no SecuraCV toolchain is required for the trust-critical step.
 |---|---|
 | older `log_anchor list`/`verify` on a newer DB (new subject literals, four new columns, extra checkpoint rows) | lists rows unchanged; new literals fall through to `digest anchor, chain membership not applicable`; preserved heads read as `in chain history` via `checkpoints` |
 | older `court_export` on a newer DB | new receipt-head rows are not packaged (it recognizes only `chain_head` and the bundle digest) — privacy-safe; preserved heads pass its history check |
-| older `log_verify` / `witnessd` on a newer DB | unaffected (they never read `tsa_anchors`; the latest checkpoint is still the real cutoff) |
+| `log_verify` / `witnessd` older than the anchors-in-the-verdict release on a newer DB | unaffected (they never read `tsa_anchors`; the latest checkpoint is still the real cutoff) |
+| this release's `log_verify` / `witnessd` on a DB with anchors | every anchor row is checked structurally as part of the verdict: a chain head pruned by an older `witnessd` (below) now FAILS `log_verify` and boots `witnessd` into safe mode until `relabel`; a damaged row is a warning. Run `log_anchor verify` before upgrading |
 | new binaries on an older DB / legacy eight-column anchors table | read-only verbs probe the columns and never migrate; write verbs (`request`, `import`, online `anchor-all`, `relabel`) add the columns on open |
 | **older `witnessd` keeps writing while new `log_anchor`/`court_export` anchor into its DB** | anchored chain heads are still lost at every retention pass — only this release's `witnessd` writes the preserving checkpoints. `verify` then reports `anchored hash is not in chain history`; `relabel` is the remediation. **Upgrade `witnessd` before anchoring chain heads with these tools** |
 | conformance fixture (no `tsa_anchors`) | retention and packaging take the no-table branch |

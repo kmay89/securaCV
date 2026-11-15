@@ -410,6 +410,7 @@ mod tests {
             .rotate_device_identity("devkey:inspect:111111111111111111111")
             .expect("rotate");
         seal_event(&mut kernel, &cfg, "zone:b");
+        crate::wait_out_bucket_first_second();
         kernel
             .enforce_retention_with_checkpoint(Duration::from_secs(0))
             .expect("checkpoint");

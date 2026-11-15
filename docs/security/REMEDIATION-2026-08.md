@@ -501,6 +501,12 @@ needs it, with the procedural stand-in the runbook uses meanwhile.
   membership for `chain_head`, countersignature with `--ca`); a `valid`
   ledger verdict says nothing about the anchors table
   (`quorum_unseal_v2.md` §4).
+  *Since fixed, structurally (2026-11): `run_full_verify` — and so
+  `log_verify`, `POST /verify` and the `witnessd` boot verify — fails the
+  verdict (`anchor_regression`) on a head-kind anchor whose hash is no longer
+  in its declared ledger's history, and warns on a damaged anchor row; the
+  TSA countersignature is still `log_anchor verify --ca` (`docs/log_verify.md`,
+  "Anchors are part of the verdict").*
 - **`witnessd` first run and the HA add-on wizard do not apply
   `validate_new_seed_strength`**; only `break_glass init` does.
 

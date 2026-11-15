@@ -2,6 +2,10 @@
 
 <!-- Brief description of changes -->
 
+## Checks run
+
+<!-- the summary line of `python3 scripts/gates.py --run`, and any FAIL block -->
+
 ## Checklist
 
 ### Required

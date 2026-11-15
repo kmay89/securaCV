@@ -42,9 +42,19 @@
  * among them. Every string this format holds is one of marshal()'s words, a
  * module's or type's literal id, or a value that came through the
  * chokepoint, whose sanitize_string_field() turns each byte outside
- * printable ASCII into '?' (no module's label holds a backslash), so such a
- * line was edited on the card or written by something else. Read back, it
- * used to keep the byte, and
+ * printable ASCII into '?', and each '"', '\' and '{' too (sweep F301:
+ * before it a module's label could carry the three through, so the
+ * chokepoint wrote rows this reader refuses at the next load). So such a
+ * line was edited on the card, written by something else, or written before
+ * F301. A quote in a label ended its string early. parse() refuses a
+ * string whose closing quote is not followed by `,` or `}`, as marshal()
+ * follows every one (F301: `ac"tive`), and a line that holds a key twice (a
+ * label of `","motion":99,"x":"` made its forged key the one the scanners
+ * read first). A label whose quote is followed by `,` or `}` (`ac",x`,
+ * `ok","zz":1,"q":"`) still loads, its field cut at the quote: what it
+ * keeps holds no quote, no backslash and no key it did not have, so the
+ * row's rewrite and its body are JSON. Read back, a refused line used to
+ * keep what it held, and
  * the two writers that spell a parsed record with %s, marshal() (a
  * dismissal rewrites a restored row) and csi_event_wire::build_event_body()
  * (the backfill's MQTT body), wrote a line and a body that are not JSON; the
@@ -174,8 +184,10 @@ inline U32 json_u32(const char* line, const char* key, uint32_t* out) {
 
 /* A byte a string field may hold: printable ASCII, less the backslash. The
  * chokepoint writes no other (sanitize_string_field() turns everything
- * outside 0x20..0x7E into '?'; no module's label holds a backslash), and the
- * writers spell what parse() reads with %s, unescaped (sweep F264). */
+ * outside 0x20..0x7E into '?', and '"', '\' and '{' too since sweep F301),
+ * and the writers spell what parse() reads with %s, unescaped (sweep F264).
+ * A '"' ends the field (json_str() holds what follows it to the format), and
+ * a '{' anywhere past the first byte is a second record's (well_formed()). */
 inline bool name_byte(unsigned char c) {
   return c >= 0x20 && c <= 0x7E && c != '\\';
 }
@@ -183,7 +195,12 @@ inline bool name_byte(unsigned char c) {
 /* Pull one string field by name into `out` ("" on a miss, which is no
  * refusal). False, with `out` "", when the field holds a byte name_byte()
  * refuses anywhere up to its closing quote, past `cap` too: the byte would
- * reach a line or a body written from the record as it is. */
+ * reach a line or a body written from the record as it is. False too when
+ * the field does not end as marshal() ends every string, a closing quote
+ * and then `,` or `}` (sweep F301): most lines a chokepoint before F301
+ * wrote with a quote inside a label, whose field the quote cut short, or a
+ * string that never closes. A label quote followed by `,` or `}` passes
+ * here, cut at the quote: what `out` keeps holds no quote. */
 inline bool json_str(const char* line, const char* key, char* out, size_t cap) {
   if (!out || cap == 0) return false;
   out[0] = '\0';
@@ -193,16 +210,41 @@ inline bool json_str(const char* line, const char* key, char* out, size_t cap) {
   const char* k = strstr(line, needle);
   if (!k) return true;
   size_t i = 0;
-  for (const char* p = k + kn; *p && *p != '"'; ++p) {
+  const char* p = k + kn;
+  for (; *p && *p != '"'; ++p) {
     if (!name_byte((unsigned char)*p)) {
       out[0] = '\0';
       return false;
     }
     if (i < cap - 1) out[i++] = *p;
   }
+  if (*p != '"' || (p[1] != ',' && p[1] != '}')) {
+    out[0] = '\0';
+    return false;
+  }
   out[i] = '\0';
   return true;
 }
+
+/* True when `line` holds `key` at most once (sweep F301). Every key marshal()
+ * writes, it writes once, and no string it writes holds a quote, so a key
+ * twice is a label of a chokepoint before F301 that held `","dismissed":1,
+ * "x":"`: the scanners above take a key's first spelling, and the label's
+ * stood before the record's own. */
+inline bool key_once(const char* line, const char* key) {
+  char needle[32];
+  const int kn = snprintf(needle, sizeof(needle), "\"%s\":", key);
+  if (kn <= 0 || (size_t)kn >= sizeof(needle)) return false;
+  const char* k = strstr(line, needle);
+  return k == nullptr || strstr(k + kn, needle) == nullptr;
+}
+
+/* Every key parse() reads, in marshal()'s order. */
+constexpr const char* kKeys[] = {
+  "id", "first", "last", "cat", "priv", "module", "type", "bundled",
+  "state", "conf", "motion", "breathing", "bpm", "dur", "tb", "dom",
+  "dismissed",
+};
 
 /* Exactly one record: starts `{"id":`, ends `}`, no second `{`. */
 inline bool well_formed(const char* line) {
@@ -240,13 +282,21 @@ inline uint32_t record_id(const char* line) {
 /* Parse one line (without its '\n') into `out`. False for a line that is
  * not one well-formed record, whose id is 0 (no such event) or not a
  * uint32, whose `first` / `last` is there but not a uint32 (a missing
- * one reads 0, as before), all of which record_id() refuses, or whose
- * string field holds a byte json_str() refuses (sweep F264). */
+ * one reads 0, as before), all of which record_id() refuses, whose string
+ * field holds a byte json_str() refuses or does not end as marshal() ends
+ * one (sweep F264, F301), or which holds a key it reads twice (F301). The
+ * last two refuse most lines a chokepoint before F301 wrote from a label
+ * holding a quote; one whose quote is followed by `,` or `}` loads, its
+ * field cut at the quote (the header comment, above). record_id() still
+ * reads a refused line's id (the tail scans, above). */
 inline bool parse(const char* line, csi_event_record_t* out) {
   if (!line || !out) return false;
   memset(out, 0, sizeof(*out));
   const uint32_t id = record_id(line);
   if (id == 0) return false;
+  for (const char* key : kKeys) {
+    if (!key_once(line, key)) return false;
+  }
   out->event_id = id;
   /* record_id() held both to a uint32 or missing (left 0). */
   (void)json_u32(line, "first", &out->first_seen_ms);

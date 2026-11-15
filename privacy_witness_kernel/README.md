@@ -39,10 +39,18 @@ developer's map of the directory.
 | `Dockerfile` | Multi-stage build: Rust kernel (cargo-chef) → pruned integration carry → official HA base runtime (s6-overlay) |
 | `rootfs/etc/services.d/*/{run,finish}` | The s6 services: `panel`, `witness_api`, `witnessd`, `frigate_bridge`, `event_mqtt_bridge`, `discovery` |
 | `run.sh` | The one-time setup step (cont-init): renders the kernel config, the services' argv and `/run/securacv/setup.sh`, installs blueprints, updates the app's own integration copy |
-| `run_lib.sh` | Pure, bashio-free helpers (tested by `tests/test_run_lib.sh`): value resolution, device id, discovery payload (C6), blueprint install |
+| `run_lib.sh` | Pure, bashio-free helpers (tested by `tests/test_run_lib.sh`): value resolution, list options read whole from `/data/options.json` (`opt_list`, which returns 1 when that file cannot be read), the device key seed (`/data/device_key`; `migrate_device_key_file` moves the `/config/.securacv/device_key` copy earlier releases kept, verified against the sealed log with `log_verify --lineage`, and never prints the seed), device id, discovery payload (C6), blueprint install |
 | `serve_wizard.py` | The ingress panel: setup wizard, status panel, `/api/health` watchdog probe, proxies to the kernel and to Canaries |
 | `integration_carry.py` | Option G: places/updates the carried integration under `/config/custom_components` (marker + sha256 manifest; never HACS/edited copies; no restarts) |
 | `wizard/index.html` | The page; its `setup-flow` section is pure logic the node tests lift |
+
+`map:` keeps `all_app_configs` and `share` **read-write on purpose**. The
+wizard writes Frigate's camera config to
+`/addon_configs/ccab4aaf_frigate/config.yml` (`config.yml.new` beside an
+existing one) and the Supervisor has no API that writes another app's files
+for it; the break-glass vault lives under `/share/witness_vault/`. The
+AppArmor profile (`apparmor.txt`) narrows both: under `/addon_configs` only
+Frigate's directory and those two files are writable.
 | `apparmor.txt` | Custom profile: one child profile per process, writes limited to the paths `DOCS.md` lists |
 | `discover_cameras.sh` | go2rtc camera discovery (jq twin of the wizard's Python reference) |
 | `verify_published_image.sh` | Release gate: every declared arch publicly pullable from GHCR |
@@ -78,7 +86,9 @@ only `/health` and the fleet roll-call `GET /api/fleet` answer without it.
 **Witness Wall (Apple TV).** The same API answers `GET /api/fleet`, the
 roll-call the tvOS Witness Wall reads: the kernel's own row first, then every
 Canary the app's MQTT publisher has heard on the broker. Peers appear only
-while `mqtt_publish.enabled` is on (the default). The app advertises no
+while `mqtt_publish.enabled` is on (the default) **and** the `fleet_rollcall`
+option is `full` — `self`, the default, serves this kernel's row alone,
+because the route takes no token. The app advertises no
 Bonjour service and ships the 8799 host port disabled, so the Wall cannot find
 it on its own: enable the port in the app's Network settings and type
 `http://<your-home-assistant-host>:8799` into the Wall once. Enabling that

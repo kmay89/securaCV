@@ -178,6 +178,10 @@ struct FirstCanaryCard: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Find my Canary") { store.setDiscoveryConsent(true) }
                             .buttonStyle(.borderedProminent)
+                        // A display never answers that listen: it shows a
+                        // code on its own screen instead.
+                        Button("It has a screen? Scan its code") { open(.display) }
+                            .font(.footnote)
                         HStack(spacing: Theme.m) {
                             Button("Not now") { store.setDiscoveryConsent(false) }
                             Button("Set up a hub instead") { open(.hub) }
@@ -187,6 +191,8 @@ struct FirstCanaryCard: View {
                         ListeningRow(text: FirstRunCard.listeningLine(notificationsAllowed: store.notificationsAllowed),
                                      advice: store.bluetoothAdvice,
                                      since: store.listeningSince)
+                        Button("It has a screen? Scan its code") { open(.display) }
+                            .font(.footnote)
                         HStack(spacing: Theme.m) {
                             Button("Other ways to add one") { open(.canary) }
                             Button("Set up a hub") { open(.hub) }

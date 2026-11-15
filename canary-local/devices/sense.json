@@ -15,8 +15,8 @@
     "board": "Seeed XIAO ESP32-C6 (MR60BHA2 kit)",
     "board_short": "XIAO ESP32C6",
     "board_id": "xiao-esp32c6-mr60",
-    "fw_version": "2.4.18",
-    "fw_train": "2.4.18",
+    "fw_version": "2.4.19",
+    "fw_train": "2.4.19",
     "ota_product": "securacv-canary-sense",
     "senses": [
       "mmWave radar",
@@ -43,6 +43,7 @@
     "presence_range": "static human presence 1.5\u20136 m",
     "presence_max_m": 6.0,
     "vitals_range_m": 1.5,
+    "vitals_period_ms": 1000,
     "vitals_accuracy": "breathing ~90%, heart rate ~85% (\u22641.5 m, single target)",
     "host": "XIAO ESP32-C6 (RISC-V, WiFi 6, BLE 5, 802.15.4)",
     "link": "UART1 \u00b7 host TX GPIO16 \u2192 radar RX, host RX GPIO17 \u2190 radar TX \u00b7 115200 8N1",
@@ -259,7 +260,7 @@
       "              ,_,          Waking up...",
       "             (o.o)",
       "             /| |\\         SecuraCV Canary Sense",
-      "              d b          v2.4.18",
+      "              d b          v2.4.19",
       "",
       "    This is your privacy witness device.",
       "    It creates tamper-proof records of what it",
@@ -469,14 +470,14 @@
         "suffix": "health",
         "retained": true,
         "cadence": "~60 s + on reconnect",
-        "payload": "{\"battery_present\":false,\"memory_free\":145120,\"uptime\":312,\"firmware_version\":\"2.4.18\",\"public_key\":\"\u2026\",\"radar\":{\"link_ok\":true,\"last_frame_age_ms\":412,\"frame_errors\":0}}",
+        "payload": "{\"battery_present\":false,\"memory_free\":145120,\"uptime\":312,\"firmware_version\":\"2.4.19\",\"public_key\":\"\u2026\",\"radar\":{\"link_ok\":true,\"last_frame_age_ms\":412,\"frame_errors\":0}}",
         "note": "carries the pubkey Home Assistant TOFU-pins on first sight \u2014 the green-badge trust anchor \u2014 and the radar-link object HA's diagnostic sensor reads (link_ok / last_frame_age_ms / frame_errors)"
       },
       {
         "suffix": "update/state",
         "retained": true,
         "cadence": "on OTA state change",
-        "payload": "{\"installed_version\":\"2.4.18\",\"latest_version\":\"2.4.18\",\"in_progress\":false,\"update_percentage\":null}"
+        "payload": "{\"installed_version\":\"2.4.19\",\"latest_version\":\"2.4.19\",\"in_progress\":false,\"update_percentage\":null}"
       },
       {
         "suffix": "update/auto",
@@ -536,7 +537,7 @@
     ],
     "offline_note": "no broker? the witness keeps sensing and chaining \u2014 every transition still advances the NVS-persisted hash chain; an outage shows up as a jump in seq/chain length, never lost tamper evidence",
     "heartbeat_ms": 5000,
-    "pane_note": "Every topic and every key, in its order, is the firmware's, and the radar lab publishes when the firmware would, at its own thresholds: an event and the chain head on a witnessed transition, the state row on a change and every heartbeat. The occupant count is the firmware's too: 0 until presence is confirmed, held while the room empties, and back to 0 with presence_cleared, never an occupancy_changed to 0. One step is left out: the device also records a presence_cleared when the radar's first frame finds the room empty (at boot, and when the radar comes back from a stall), and the lab does not. What this page cannot know reads \u2026: each sig, the health topic's public_key, and a chain head's hash once it moves; the fp is an illustrative one, not the repo test key's. uptime_s, ts_ms and bucket_uptime_s keep the example's values, since the page has no device clock, and the status and health heartbeats are not staged.",
+    "pane_note": "Every topic and every key, in its order, is the firmware's, and the radar lab publishes when the firmware would, at its own thresholds: an event and the chain head on a witnessed transition, the state row on a change and every heartbeat. The occupant count is the firmware's too: 0 until presence is confirmed, held while the room empties, and back to 0 with presence_cleared, never an occupancy_changed to 0. Every tick that turns Clear records a presence_cleared, as on the device, so the radar's first frame of an empty room records one too (at boot, and when the radar comes back from a stall). What this page cannot know reads \u2026: each sig, the health topic's public_key, and a chain head's hash once it moves; the fp is an illustrative one, not the repo test key's. uptime_s, ts_ms and bucket_uptime_s keep the example's values, since the page has no device clock, and the status and health heartbeats are not staged.",
     "discovery": {
       "prefix": "homeassistant",
       "config_topic": "homeassistant/<component>/<device_id>/<object_id>/config",
@@ -547,7 +548,7 @@
         "name": "SecuraCV Canary Sense <id>",
         "mf": "SecuraCV",
         "mdl": "Canary Sense (XIAO ESP32-C6 + MR60BHA2)",
-        "sw": "2.4.18"
+        "sw": "2.4.19"
       },
       "entities": [
         {
@@ -1147,7 +1148,7 @@
       "state": "Present",
       "led": "green",
       "event": "occupancy_changed",
-      "serial": "[vitals] breathing lost",
+      "serial": "[vitals] breathing lost (stall)",
       "mqtt": [
         {
           "suffix": "events",

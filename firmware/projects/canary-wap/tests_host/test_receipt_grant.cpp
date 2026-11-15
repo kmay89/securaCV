@@ -2148,9 +2148,9 @@ void test_qr_bearer_shapes() {
     std::string raw;
     const char* hint;
   };
-  // 128 bytes, the buffer's size: no room for the NUL.
-  const std::string too_long = std::string("Bearer ") + std::string(121, 'x');
-  CHECK(too_long.size() == 128);
+  // API_AUTH_HEADER_CAP bytes, the buffer's size: no room for the NUL.
+  const std::string too_long = std::string("Bearer ") + std::string(API_AUTH_HEADER_CAP - 7, 'x');
+  CHECK(too_long.size() == API_AUTH_HEADER_CAP);
   for (const Shape& s : {Shape{std::string("Basic ") + kToken, "Use 'Bearer <token>' format"},
                          Shape{std::string("bearer ") + kToken, "Use 'Bearer <token>' format"},
                          Shape{too_long, "Authorization header too long"}}) {

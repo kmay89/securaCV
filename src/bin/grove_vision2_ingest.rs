@@ -56,7 +56,7 @@ fn main() -> Result<()> {
         let resolved =
             witness_kernel::crypto::resolve_device_seed(&args.db_path, env_seed.as_deref())?;
         log::info!("device key seed: {}", resolved.source);
-        resolved.seed
+        resolved.seed.to_string()
     };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&args.ruleset_id);
     let cfg = KernelConfig {

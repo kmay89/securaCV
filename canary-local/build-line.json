@@ -20,7 +20,7 @@
     "noun": "Get started",
     "slug": "start",
     "lab": "start.html",
-    "site": "/lab.html",
+    "site": "/lab",
     "desc": "Pick your path (Home Assistant, a spare Pi, Docker, or a soldering iron) and your OS; copy-paste your way in. The guided thread across stages 1–5."
   },
   "stages": [
@@ -38,9 +38,9 @@
           "desc": "Four questions → ranked device matches with honest release status." }
       ],
       "site": [
-        { "noun": "Do you need a computer?", "href": "/linux.html" },
-        { "noun": "Compare", "href": "/compare.html" },
-        { "noun": "Store", "href": "/store.html" }
+        { "noun": "Do you need a computer?", "href": "/linux" },
+        { "noun": "Compare", "href": "/compare" },
+        { "noun": "Store", "href": "/store" }
       ]
     },
     {
@@ -61,11 +61,11 @@
           "desc": "Spin every real board in 3D; ‘Wire it’ stages the harness." }
       ],
       "site": [
-        { "noun": "See it in 3D", "slug": "see-it-in-3d", "href": "/showroom.html", "wasNamed": "Showroom" },
-        { "noun": "Print one", "slug": "print", "href": "/print.html" },
-        { "noun": "Test bench", "slug": "test-bench", "href": "/playground.html", "wasNamed": "Playground" },
-        { "noun": "Makers", "slug": "makers", "href": "/corps.html", "wasNamed": "Maker Corps" },
-        { "noun": "Gallery", "slug": "gallery", "href": "/gallery.html" }
+        { "noun": "See it in 3D", "slug": "see-it-in-3d", "href": "/showroom", "wasNamed": "Showroom" },
+        { "noun": "Print one", "slug": "print", "href": "/print" },
+        { "noun": "Test bench", "slug": "test-bench", "href": "/playground", "wasNamed": "Playground" },
+        { "noun": "The Maker Corps", "slug": "makers", "href": "/corps", "wasNamed": "Makers" },
+        { "noun": "Gallery", "slug": "gallery", "href": "/gallery" }
       ]
     },
     {
@@ -79,7 +79,7 @@
           "wasNamed": "The WAP", "desc": "Guided first boot: meet the board, watch it come up, drive the phone setup wizard." }
       ],
       "site": [
-        { "noun": "Download the app", "href": "/download.html" }
+        { "noun": "Download the app", "href": "/download" }
       ]
     },
     {
@@ -136,8 +136,8 @@
           "desc": "Your fleet on the TV — home, business, and apartment views; the desktop Lab finds your real Canaries on the Wi-Fi." }
       ],
       "site": [
-        { "noun": "Watch over a parent", "slug": "why-canary", "href": "/watch-over.html", "wasNamed": "Watched over, never watched" },
-        { "noun": "Plug it in", "slug": "plug-it-in", "href": "/plugin.html" }
+        { "noun": "Watch over a parent", "slug": "why-canary", "href": "/watch-over", "wasNamed": "Watched over, never watched" },
+        { "noun": "Plug it in", "slug": "plug-it-in", "href": "/plugin" }
       ]
     },
     {
@@ -153,24 +153,26 @@
           ] }
       ],
       "site": [
-        { "noun": "How it works", "slug": "how-it-works", "href": "/how-it-works.html" },
-        { "noun": "The evidence vault", "slug": "evidence-vault", "href": "/vault.html" },
-        { "noun": "Self-check", "slug": "self-check", "href": "/checkup.html", "wasNamed": "Canary Doctor" }
+        { "noun": "How it works", "slug": "how-it-works", "href": "/how-it-works" },
+        { "noun": "The evidence vault", "slug": "evidence-vault", "href": "/vault" },
+        { "noun": "Self-check", "slug": "self-check", "href": "/checkup", "wasNamed": "Canary Doctor" }
       ]
     }
   ],
   "siteNav": [
-    { "label": "How it works", "href": "/how-it-works.html" },
-    { "label": "The Lab", "href": "/lab.html" },
-    { "label": "Compare", "href": "/compare.html" },
-    { "label": "Build it yourself", "href": "/maker.html", "gathers": ["workshop", "catalog", "boards", "first-boot", "test-bench", "print", "gallery", "makers"] },
-    { "label": "Store", "href": "/store.html" },
-    { "label": "Download", "href": "/download.html" }
+    { "label": "Lab", "href": "/lab" },
+    { "label": "How It Works", "href": "/how-it-works" },
+    { "label": "Home Assistant", "href": "/home-assistant" },
+    { "label": "Build", "href": "/maker", "gathers": ["workshop", "catalog", "boards", "first-boot", "test-bench", "print", "gallery", "makers"] },
+    { "label": "Store", "href": "/store" },
+    { "label": "Help", "href": "/help" }
   ],
   "footerNav": [
-    { "label": "Site map", "href": "/site-map.html" },
-    { "label": "Your Canary (help)", "href": "/canary.html" },
-    { "label": "Privacy", "href": "/privacy.html" },
+    { "label": "Find your path", "href": "/paths" },
+    { "label": "What you can have today", "href": "/today" },
+    { "label": "Get the apps", "href": "/download" },
+    { "label": "Feedback", "href": "/feedback" },
+    { "label": "Privacy", "href": "/privacy" },
     { "label": "GitHub", "href": "https://github.com/kmay89/securaCV" }
   ],
   "$redirects_note": "Maps an old slug → the new canonical slug. Every target below is defined as a `slug` on a bench (stages[].benches[]) or a site link (stages[].site[]), so a renderer can always resolve it: a bench target opens that bench, and a site-link target leaves for that page on securacv.com (lab-shell.js siteRoute forwards lab.html#old-slug there; site-map.js links it directly). tests/build_line.test.js holds both halves.",

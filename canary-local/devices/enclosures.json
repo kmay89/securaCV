@@ -1014,7 +1014,7 @@
       },
       {
        "name": "e_camera",
-       "default": "_pre(opt_camera,  true,  false, true)"
+       "default": "wap_e_camera(preset)"
       },
       {
        "name": "e_buzzer",
@@ -1249,7 +1249,7 @@
         0.04,
         0.32
        ],
-       "comment": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
+       "comment": "your slicer's layer height: the face's disc-seat counterbore and the sealed plate's washer pockets get bridge steps this thick (core_bridge_steps)"
       }
      ]
     },
@@ -1637,7 +1637,7 @@
      ]
     },
     {
-     "name": "Quality",
+     "name": "Hidden",
      "note": "",
      "params": [
       {
@@ -1677,6 +1677,11 @@
        "default": "board_l + 2*board_clear"
       },
       {
+       "name": "board_stop_gap",
+       "default": "0.3",
+       "comment": "the board's end stops stand this far off the drawn ends (a real board mics 21.14 against the drawn 21.0: 0.23 a side)"
+      },
+      {
        "name": "batt_zone_l",
        "default": "wap_batt_zone_l(preset)"
       },
@@ -1702,6 +1707,11 @@
       {
        "name": "clip_stack",
        "default": "board_clips ? (clip_clear + clip_t) : 0"
+      },
+      {
+       "name": "gps_rim",
+       "default": "1.2",
+       "comment": "the GPS cradle's rim past the module: base() draws the cradle from it (rrect(gps_l + 2*gps_rim, ...)), so the +X cove assert below reads the drawing"
       },
       {
        "name": "inner_l",
@@ -1753,7 +1763,7 @@
       },
       {
        "name": "board_cx",
-       "default": "-inner_l/2 + max(board_clear + 0.5, floor_cove + tol_slide + brd_xiao_usb_overhang()) + board_l/2"
+       "default": "-inner_l/2 + wap_board_x0(preset) + board_l/2"
       },
       {
        "name": "board_cy",
@@ -1761,8 +1771,8 @@
       },
       {
        "name": "zone0",
-       "default": "-inner_l/2 + board_zone_l + 0.5",
-       "comment": "x where the appended bays begin"
+       "default": "-inner_l/2 + board_zone_l + 0.5 + wap_card_shift(preset)",
+       "comment": "x where the appended bays begin (v0.9.2: they follow the board)"
       },
       {
        "name": "batt_cx",
@@ -2854,7 +2864,7 @@
         0.04,
         0.32
        ],
-       "comment": "your slicer's layer height: the front's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
+       "comment": "your slicer's layer height: the front's disc-seat counterbore and the sealed back's washer pockets get bridge steps this thick (core_bridge_steps)"
       },
       {
        "name": "ledge_w",
@@ -2929,7 +2939,8 @@
       },
       {
        "name": "span_max",
-       "default": "40"
+       "default": "40",
+       "comment": "the clamp-spacing rule (DESIGN_RULES §6): in seal mode, neighboring screw centers along a wall stand no farther apart than this; each wall's mid posts are derived from it, and the longest span is asserted within it"
       },
       {
        "name": "inner_x0",
@@ -3605,7 +3616,7 @@
       {
        "name": "svc_head_d",
        "default": "9.6",
-       "comment": "the plunger's head Ø: a flat disc in a seat on the back face (the +X one sits 1 mm off a screw seat)"
+       "comment": "the plunger's head Ø: a flat disc in a seat on the back face (the +X one keeps 0.8 off a screw seat)"
       },
       {
        "name": "svc_rim_t",
@@ -3689,7 +3700,8 @@
       },
       {
        "name": "svc_pip_depth",
-       "default": "0.4"
+       "default": "0.4",
+       "comment": "how deep each dimple is cut into the head's face: its first two 0.2 layers (the head prints face-down), under svc_web_t so the web stays whole"
       },
       {
        "name": "svc_sprue_t",
@@ -3973,7 +3985,8 @@
       },
       {
        "name": "ant_rib_d",
-       "default": "0.4"
+       "default": "0.4",
+       "comment": "how far each rib stands proud of the +X wall's inner face: above ant_t, so the ribs stand past the FPC's face and bracket its ends"
       }
      ]
     },
@@ -4064,7 +4077,7 @@
       {
        "name": "head_floor",
        "default": "2.0",
-       "comment": "solid plastic under every recessed head — the plate screws' web past their gland and the"
+       "comment": "solid plastic under every recessed head: under a plate screw's bearing (its washer's land when sealed) and the wall plate's counterbores"
       }
      ]
     },
@@ -4398,7 +4411,7 @@
         0.04,
         0.32
        ],
-       "comment": "your slicer's layer height: the button's bezel counterbore gets bridge steps this thick (core_bridge_steps)"
+       "comment": "your slicer's layer height: the button's bezel counterbore and the body's washer pockets get bridge steps this thick (core_bridge_steps)"
       },
       {
        "name": "ledge_w",
@@ -4593,7 +4606,8 @@
       },
       {
        "name": "spk_post_dy",
-       "default": "16.0"
+       "default": "16.0",
+       "comment": "a mid post on each long wall stands this far above the driver's axis (spk_cy), and one this far below; every post is asserted 0.5 clear of the Ø spk_d driver"
       },
       {
        "name": "spk_mid_ys",
@@ -4627,6 +4641,25 @@
        "name": "fence_x",
        "default": "-inner_x/2 + bay_wall_gap + batt_t + batt_clear",
        "comment": "the bay fence's -X face (the cell side)"
+      },
+      {
+       "name": "xiao_usb_end_y",
+       "default": "vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang",
+       "comment": "the XIAO's board end (the USB-C shell stands past it)"
+      },
+      {
+       "name": "svc_cy",
+       "default": "xiao_usb_end_y + xiao_btn_dy + svc_dy",
+       "comment": "the plunger axis along Y"
+      },
+      {
+       "name": "svc_seat_d",
+       "default": "svc_head_d + 2*svc_tol",
+       "comment": "the head's seat on the back face"
+      },
+      {
+       "name": "scr_seat_d",
+       "default": "pl_seat_d(screw_size, screw_head, tol_hole, e_gland)"
       },
       {
        "name": "spk_boss_h",
@@ -4692,7 +4725,7 @@
       },
       {
        "name": "pl_r",
-       "default": "max(0, plate_t - pl_hh(screw_size, screw_head) - pl_gland_raw(screw_size, e_gland) - head_floor)"
+       "default": "max(0, plate_t - pl_hh(screw_size, screw_head) - pl_wh(screw_size, e_gland) - head_floor)"
       },
       {
        "name": "pl_L",
@@ -4808,24 +4841,9 @@
        "default": "xiao_face_hi_z - xiao_btn_h"
       },
       {
-       "name": "xiao_usb_end_y",
-       "default": "vm_cy - vm_l/2 - usb_port_proud + xiao_usb_overhang",
-       "comment": "the XIAO's board end (the USB-C shell stands past it)"
-      },
-      {
-       "name": "svc_cy",
-       "default": "xiao_usb_end_y + xiao_btn_dy + svc_dy",
-       "comment": "the plunger axis along Y"
-      },
-      {
        "name": "svc_bore_d",
        "default": "svc_stem_d + 2*svc_tol",
        "comment": "the stem slides"
-      },
-      {
-       "name": "svc_seat_d",
-       "default": "svc_head_d + 2*svc_tol",
-       "comment": "the head's seat on the back face"
       },
       {
        "name": "svc_seat_depth",
@@ -4904,6 +4922,11 @@
        "name": "svc_stroke_hi",
        "default": "(svc_cap_hi_z - svc_tip_z) + xiao_btn_travel",
        "comment": "...and at the far end"
+      },
+      {
+       "name": "svc_scr_seat_d",
+       "default": "scr_seat_d",
+       "comment": "a plate screw's seat on the back face (it was a copy of the head-bore-or-gland arithmetic; the washer's pocket outgrew both)"
       },
       {
        "name": "vm_scr_len",
@@ -8075,7 +8098,8 @@
       },
       {
        "name": "v_front_h",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "the Grove Vision AI V2 module's front-side component height above its PCB (the Vision case's vm_front_h): the cavity clears it by at least cav_extra"
       },
       {
        "name": "xiao_w",
@@ -8110,11 +8134,13 @@
       },
       {
        "name": "s_front_h",
-       "default": "3.5"
+       "default": "3.5",
+       "comment": "the MR60 carrier's tallest front-side part above its PCB (connectors; the Sense case's radar_front_h): the cavity clears it by at least cav_extra"
       },
       {
        "name": "ant_h",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "the MR60 antenna (AiP package) top above the carrier's PCB: sets the radome air gap, asserted at least 3 mm"
       },
       {
        "name": "radome_t",
@@ -8269,7 +8295,7 @@
         0.04,
         0.32
        ],
-       "comment": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
+       "comment": "your slicer's layer height: the face's disc-seat counterbore and the sealed back's washer pockets get bridge steps this thick (core_bridge_steps)"
       }
      ]
     },
@@ -9492,7 +9518,7 @@
       {
        "name": "cg_fill",
        "default": "0.90",
-       "comment": "the bush's fill of its cavity once squeezed — 0.90 is the O-ring rule's ceiling, but nothing holds it there (the overfill assert compares the bush with itself); it sets the bush's free length (cg_bush_l), and a fill above about 0.96 is refused only because the squeezed bush would rise out of the nose bore (asserted)"
+       "comment": "the bush's fill of its cavity once squeezed: it sets the bush's free length (cg_bush_l). 0.90 is the O-ring rule's ceiling, and a fill past it is refused (asserted: TPU does not compress, so 10 % is left for tolerance and heat); the squeezed bush must also stay inside the nose bore (asserted, about 0.96 at the defaults)"
       },
       {
        "name": "cg_bush_l",
@@ -15462,7 +15488,13 @@
        "name": "btn_dz",
        "default": "1.0",
        "comment": "actuator center off that face (side tact switches sit ~1.0) — MEASURE"
-      },
+      }
+     ]
+    },
+    {
+     "name": "Side cluster",
+     "note": "battery / RTC / pin row exit on the RIGHT (+X) edge",
+     "params": [
       {
        "name": "opt_side",
        "default": "true",
@@ -16637,7 +16669,8 @@
       },
       {
        "name": "label_depth",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "how deep every station label, the DEBOSS wordmark and the MATE's tag are sunk: the depth the DEBOSS station tests"
       },
       {
        "name": "emboss_h",
@@ -16646,7 +16679,8 @@
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the font every label, both wordmarks and the MATE's tag are set in (it must be installed)"
       },
       {
        "name": "brand_raised",
@@ -16665,11 +16699,13 @@
       },
       {
        "name": "emblem_rib",
-       "default": "0.7"
+       "default": "0.7",
+       "comment": "the retired EMBLEM station's stroke width: no feature of its raised mark's footprint is thinner, and the crown draws each stroke's top in by emblem_crown a side (asserted at least 0.4 when emblem_h > 0)"
       },
       {
        "name": "emblem_crown",
-       "default": "0.15"
+       "default": "0.15",
+       "comment": "the retired EMBLEM station's dome: each stroke's top draws in this far, its footprint a full rib (asserted under emblem_rib/2 when emblem_h > 0)"
       }
      ]
     },
@@ -17166,9 +17202,75 @@
      ]
     },
     {
+     "name": "Bracket",
+     "note": "mirror canary_vision_enclosure bracket defaults (gen_templates.py --check)",
+     "params": [
+      {
+       "name": "br_x",
+       "default": "46.0",
+       "comment": "the Vision bracket plate's width along its hinge axis, its br_x (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "br_y",
+       "default": "34.0",
+       "comment": "the Vision bracket plate's height, its br_y (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "br_screw_d",
+       "default": "4.8",
+       "comment": "the drill ring for the bracket's four #8 wall screws, its br_screw_d (gen_templates.py --check holds it equal)"
+      }
+     ]
+    },
+    {
      "name": "Doorbell",
      "note": "mirror canary_vision_doorbell plate defaults (gen_templates.py --check probes the doorbell and fails when one of these stops equaling its source)",
      "params": [
+      {
+       "name": "db_out_x",
+       "default": "51.5",
+       "comment": "the doorbell plate's out_x, the shell/slab outline's width (the doorbell's version echo prints out_x and out_y; gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_out_y",
+       "default": "169.2",
+       "comment": "the doorbell plate's out_y, the shell/slab outline's length (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_screw_inset_x",
+       "default": "7.5",
+       "comment": "how far the plate's wall screws sit in from its side edges, the doorbell's plate_screw_inset()[0] (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_screw_inset_y",
+       "default": "14.0",
+       "comment": "how far the plate's wall screws sit in from its end edges, the doorbell's plate_screw_inset()[1] (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_screw_d",
+       "default": "4.8",
+       "comment": "the drill ring for the plate's four #8 wall screws, the doorbell's plate_screw_d (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_dx",
+       "default": "2.2",
+       "comment": "the cable exit oval's X, the doorbell's exit_cx (the module's centerline, vm_cx; gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_cy",
+       "default": "-8.8",
+       "comment": "the cable exit oval's Y, the doorbell's exit_cy (v0.8: the well sits over the speaker zone; gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_w",
+       "default": "14.0",
+       "comment": "the cable exit oval's length, the doorbell's usb_exit_w (gen_templates.py --check holds it equal)"
+      },
+      {
+       "name": "db_exit_h",
+       "default": "10.0",
+       "comment": "the cable exit oval's height (Y), the doorbell's usb_exit_h (gen_templates.py --check holds it equal)"
+      },
       {
        "name": "db_exit_slide",
        "default": "8.0",

@@ -159,6 +159,7 @@ typedef enum {
     SECURACV_OTA_ERR_MANIFEST_SIG,          /**< Manifest signature missing or invalid (forged metadata) */
     SECURACV_OTA_ERR_MIN_VERSION,           /**< Running version is below the manifest's min_version: install the intermediate release first */
     SECURACV_OTA_ERR_BOARD_MISMATCH,        /**< Manifest names another board or chip than this image was built for */
+    SECURACV_OTA_ERR_MANIFEST_DOWNGRADE,    /**< manifest_version below the floor this device persisted once it took a newer one (a v1 manifest binds no board) */
     SECURACV_OTA_ERR__COUNT,                /**< Sentinel — keep LAST. Not an error code; lets
                                                  test_ota_logic.cpp iterate every enumerator so a
                                                  new code cannot ship without a friendly UI string. */
@@ -596,13 +597,27 @@ securacv_ota_dwell_verdict_t securacv_ota_dwell_tick(securacv_ota_dwell_t *d, ui
 void securacv_ota_dwell_clear(securacv_ota_dwell_t *d);
 
 /**
- * @brief The board / chip rule, pure: a manifest binding (v2) matches when
- * each field it names equals the build's; an empty manifest field binds
- * nothing, and a build that does not know its own board / chip (NULL) cannot
- * be bound and passes. A v1 manifest has no binding.
+ * @brief The board / chip rule, pure: a manifest binding matches when each
+ * field it names equals the build's; an empty manifest field binds nothing,
+ * and a build that does not know its own board / chip (NULL) cannot be bound
+ * and passes. The rule reads the fields, not manifest_version: a v1 manifest
+ * normally carries none (securacv_ota_manifest_from_fields() refuses one that
+ * does, since it would be unsigned), but one that reaches here with a board
+ * is held to it all the same, never waved through for being v1.
  */
 bool securacv_ota_board_ok(const securacv_ota_manifest_t *m,
                            const char *build_board, const char *build_chip);
+
+/**
+ * @brief The manifest-version floor rule, pure: may a device whose persisted
+ * floor is @p floor take a manifest that says @p manifest_version? 0 is no
+ * floor. The engine raises the floor to 2 the first time a signed
+ * manifest_version 2 manifest verifies (securacv_ota_get_manifest_version_floor),
+ * after which a v1 manifest — signed, but binding no board or chip — is
+ * refused for good: the hardware binding cannot be taken back by serving
+ * the older format.
+ */
+bool securacv_ota_manifest_version_ok(uint8_t manifest_version, uint8_t floor);
 
 // ============================================================================
 // PERSISTED SETTINGS (NVS)
@@ -688,6 +703,15 @@ bool securacv_ota_get_local_http_allowed(void);
  * @return ESP_OK if a floor was read, otherwise the NVS error.
  */
 esp_err_t securacv_ota_get_min_version(char *buf, size_t buf_len);
+
+/**
+ * @brief The persisted manifest-version floor (0 = none set)
+ *
+ * Read-only view of the second monotonic floor the engine persists, beside
+ * the version floor above: 2 once a signed manifest_version 2 manifest has
+ * verified on this device. securacv_ota_manifest_version_ok() is the rule.
+ */
+uint8_t securacv_ota_get_manifest_version_floor(void);
 
 /**
  * @brief Record that an install was written and the next boot targets @p version

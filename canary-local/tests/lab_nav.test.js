@@ -219,6 +219,38 @@ test("bar tagline: browser copy in the bar, device copy in the module", () => {
   );
 });
 
+// ---- link parity ----------------------------------------------------------
+
+// The static bar is what a visitor without JavaScript gets; the module
+// replaces it on every bench. The two named the same links ("Glossary",
+// "Help") and for months sent "Help" to different pages: the static bar to
+// securacv.com/help, the Help Desk, and the live bar to securacv.com/canary,
+// the page a plugged-in Canary opens for itself. Same word, same bar, two
+// destinations depending on whether a script had run. A label both bars
+// carry must open the same page from both.
+test("a link the static bar and the live bar both name opens the same page", () => {
+  const origin = (navJs.match(/const SITE_ORIGIN = "([^"]+)"/) || [])[1];
+  assert.ok(origin, "lab-nav.js lost its SITE_ORIGIN constant");
+  const staticLinks = new Map(
+    [...canonicalBar.matchAll(/<a(?: class="[^"]*")? href="([^"]+)">([^<]+)<\/a>/g)]
+      .map((m) => [m[2].trim(), m[1]]));
+  const liveLinks = new Map(
+    [...navJs.matchAll(/h\("a", \{(?: class: "[^"]*",)? href: SITE_ORIGIN \+ "([^"]*)" \}, "([^"]+)"\)/g)]
+      .map((m) => [m[2], origin + m[1]]));
+  assert.ok(liveLinks.size >= 3, "this test no longer finds lab-nav.js's site links — update its pattern");
+  let shared = 0;
+  for (const [label, href] of liveLinks) {
+    if (!staticLinks.has(label)) continue;
+    shared++;
+    assert.strictEqual(
+      href.replace(/\/$/, ""), staticLinks.get(label).replace(/\/$/, ""),
+      `"${label}" opens ${staticLinks.get(label)} in the static bar and ${href} once ` +
+      `lab-nav.js has run — one label, one destination.`
+    );
+  }
+  assert.ok(shared >= 3, `only ${shared} labels are shared between the two bars — the bars drifted apart`);
+});
+
 test("module contract: manifest-driven, styled by a real stylesheet", () => {
   assert.ok(navJs.includes('"build-line.json"'),
     "lab-nav.js must render from build-line.json — the one manifest every surface shares");

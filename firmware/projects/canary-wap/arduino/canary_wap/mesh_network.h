@@ -29,6 +29,8 @@
 #include "mesh_channel_hop.h"   // CHANNEL_LOCK wire format + HopTracker (PR 4b)
 #include "mesh_hub_election.h"  // HUB_ELECTION wire format + HubMonitor (PR 4c)
 #include "loop_command_ring.h"  // F96, F111: owner commands handed to the loop task
+#include "device_name_rule.h"   // F303: the Opera name's bound and its words
+#include "wap_json_writer.h"    // F303: the Opera name is UTF-8 a strict reader takes
 #include <string.h>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -544,9 +546,11 @@ const MeshAlert* get_alerts(size_t* count);
 //
 // The wait is bounded for a command the loop task has not started: after
 // timeout_ms it is withdrawn and never runs. kDone: it ran, and *ok is what
-// it returned (true for the commands that cannot fail: SET_ENABLED,
-// PAIR_CANCEL, CLEAR_ALERTS). kBusy (every slot taken) and kWithdrawn: it
-// did not run and will not, and *ok is false; the handler answers with
+// it returned (true for CLEAR_ALERTS, and for SET_ENABLED and PAIR_CANCEL
+// once init() has read the mesh's store: until then every command but
+// CLEAR_ALERTS is refused and answers false, F364's review). kBusy (every
+// slot taken) and kWithdrawn: it did not run and will not, and *ok is
+// false; the handler answers with
 // not_run_status() / not_run_error(), the PlatformIO tree's codes for the
 // same two cases (spec §8.3): 409 mesh_busy and 503 mesh_timeout. A command
 // the loop task has started is waited for until it is done (it never waits
@@ -580,6 +584,39 @@ inline Command make_command(CommandType type) {
   cmd.type = type;
   return cmd;
 }
+
+// The name an owner gives the opera (sweep F303): 1 to MAX_OPERA_NAME_LEN
+// bytes, none below 0x20 (device_name_rule::storable(), the device name's
+// test at this bound), of well-formed UTF-8 (each character whole, as a
+// strict reader reads it: wap_json::shown_piece() shows none as U+FFFD).
+// GET /api/mesh writes the name through ArduinoJson 7.4.1, which writes a
+// control byte raw (JSON.parse refuses it) and every other byte as it is,
+// and "Opera name changed" logged it raw too. POST /api/mesh/name tested
+// only the length, and POST /api/mesh/pair/start nothing, cutting a longer
+// name at 32 bytes, inside a character if one stood there. Both routes now
+// refuse such a name in opera_name_refusal()'s words, set_opera_name() and
+// start_pairing_initiator() hold it to the same test, and a name stored
+// before the rule is read back clean (load_opera_config()). DEL (0x7f) is
+// kept, as the device name keeps it: JSON carries it raw.
+inline bool opera_name_storable(const char* name) {
+  if (!device_name_rule::storable(name, MAX_OPERA_NAME_LEN)) return false;
+  for (const unsigned char* p = (const unsigned char*)name; *p;) {
+    const unsigned char* shown;
+    size_t span;
+    (void)wap_json::shown_piece(p, &shown, &span);
+    if (shown != p) return false;   // a reader shows U+FFFD here: not whole UTF-8
+    p += span;
+  }
+  return true;
+}
+
+// What both routes answer a name opera_name_storable() refuses: the rule in
+// words, its bound held to MAX_OPERA_NAME_LEN at compile time.
+constexpr const char* opera_name_refusal() {
+  return "Invalid Opera name: 1 to 32 bytes of well-formed UTF-8, no byte below 0x20";
+}
+static_assert(device_name_rule::states_bound(opera_name_refusal(), MAX_OPERA_NAME_LEN),
+              "opera_name_refusal() states MAX_OPERA_NAME_LEN");
 
 static const size_t   COMMAND_SLOTS   = 4;
 static const uint32_t COMMAND_WAIT_MS = 2000;   // for the loop task to start it
@@ -634,7 +671,9 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
 // sweep F92; from another (the safe-mode retry runs on esp_http_server's
 // task) it hands MESH_CMD_SAVE_REPLAY to submit() and
 // waits up to COMMAND_WAIT_MS. True when the blob was written; false when
-// the save failed or did not run (the 5-minute save is the one before it).
+// the save failed or did not run (the 5-minute save is the one before it),
+// and always before init() has read the mesh's store (safe mode, a refused
+// init): RAM holds no member then, and the save removed the record.
 // ════════════════════════════════════════════════════════════════════════════
 
 bool save_replay_counters();
@@ -742,10 +781,14 @@ namespace chirp_channel {
 static const uint8_t PROTOCOL_VERSION = 1;
 static const uint8_t CHIRP_MAGIC = 0xC4;           // Message identifier
 // CHIRP_CHANNEL: previously pinned to 6 to keep chirp off Opera's channel 1.
-// With the shared single-radio reality (see mesh_channel_policy.h) chirp now
-// rides the same radio as Opera; the broadcast peer is registered with
-// channel = 0 so it follows the current radio channel. The constant is kept
-// at its historical value purely as the host-build fallback for tests.
+// The ESP32 has one radio (mesh_channel_policy.h, docs/network_coexistence.md),
+// so chirp rides the channel Opera does: the broadcast peer is registered
+// with channel 0, which ESP-NOW reads as the radio's current channel (the
+// STA's, else the AP's, else MESH_FALLBACK_CHANNEL, 6). The two are told
+// apart by a frame's first byte (CHIRP_MAGIC here; in an Opera frame the
+// protocol version, 1, or before membership a pairing type, 8..12,
+// mesh_wire.h), not by the channel. Spec §2.2, §12.1 and §13.1 say so
+// (sweep F308; scripts/tests/test_chirp_spec_tables.py reads this value).
 static const uint8_t CHIRP_CHANNEL = 0;            // 0 = follow current radio channel
 static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length (legacy field; v0.2 uses structured fields)
 static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps (priority heap by urgency)
@@ -761,7 +804,7 @@ static const size_t EMOJI_DISPLAY_SIZE = 31;       // 5 emojis (up to 6 bytes ea
 static const size_t MAX_CONFIRMERS_PER_CHIRP = 8;  // Unique pubkey set tracked per pending chirp (v0.2 Sybil resistance)
 static const uint32_t MIN_UNIX_TIME = 1700000000;  // Threshold below which time(nullptr) is treated as unsynced (v0.2)
 static const uint8_t MAX_WITNESSES_PER_PUBKEY_PER_HOUR = 4;  // v0.2 per-pubkey receive-side rate limit (C14)
-static const size_t MAX_PUBKEY_RATE_TRACK = 32;    // LRU of recent originating pubkeys for rate-limit tracking
+static const size_t MAX_PUBKEY_RATE_TRACK = 32;    // origin keys rate-tracked at once; a full table gives up the row whose window opened longest ago
 
 // Timing (milliseconds)
 static const uint32_t PRESENCE_INTERVAL_MS = 60000;    // Send presence every 60s
@@ -985,6 +1028,11 @@ struct NearbyDevice {
   uint8_t session_id[SESSION_ID_SIZE];
   char emoji[EMOJI_DISPLAY_SIZE];
   uint32_t last_seen_ms;
+  // When this row was put in the table: set by handle_presence() at the
+  // insert and never by a refresh, so a key's ACK counts once its row is
+  // PRESENCE_REQUIRED_MS old (spec §3.4 rule 4; sweep F311). A row pruned
+  // after NEARBY_TIMEOUT_MS of silence, or a new session id, starts again.
+  uint32_t first_seen_ms;
   int8_t rssi;
   bool listening;                               // Is accepting chirps
 };
@@ -1000,6 +1048,13 @@ struct ReceivedChirp {
   ChirpDetailSlot detail;
   ChirpUrgency urgency;
   uint8_t hop_count;
+  // The TTL the originator signed (spec §3.3's canonical covers it), kept so
+  // a relay carries the same byte and its origin signature still verifies;
+  // relay_chirp() wrote 15, and a chirp sent with any other TTL was refused
+  // one hop on (sweep F306). It takes the byte of padding before
+  // received_ms, so the row stays 964 bytes. Nothing here reads it as a
+  // display time: a row lives DEFAULT_DISPLAY_MS whatever it says.
+  uint8_t ttl_minutes;
   uint32_t received_ms;
   uint32_t timestamp;                           // Wall-clock send time (UNIX seconds, v0.2)
   uint8_t nonce[8];
@@ -1546,6 +1601,14 @@ const char* state_name(ChirpState state);
 
 // Get category name as string
 const char* category_name(ChirpCategory category);
+
+// A template's category, from the template table (the mapping handle_ack()
+// counts confirmations by): the all-clear templates, 0x80 to 0x82, are
+// CHIRP_CAT_ALL_CLEAR (5). GET /api/chirp/recent took the id's high nibble,
+// 8 for those three, which category_name() answers "unknown" (sweep F307).
+// An id the table lacks also reads CHIRP_CAT_ALL_CLEAR; no stored chirp
+// holds one, since handle_witness() refuses an unknown template.
+ChirpCategory template_category(ChirpTemplate template_id);
 
 // Get urgency name as string
 const char* urgency_name(ChirpUrgency urgency);

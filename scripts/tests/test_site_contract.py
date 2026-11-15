@@ -1,9 +1,12 @@
 """canary-local/devices/site_contract.json — the website's runtime contract on
 this tree — names files the site fetches live (showroom STLs, board GLBs,
-figure SVGs, the device catalogs). Every path must exist and every pattern
-must match, or the site 404s in a visitor's browser. The file is carried from
-the website by gen_builder_manifest.py --site (see its reverse-carry block);
-these tests read the committed copy."""
+figure SVGs, the device catalogs) and the issue forms its pages open here.
+Every path must exist and every pattern must match, or the site 404s in a
+visitor's browser. It also carries the site's own addresses the other way
+(routes, published files, anchors), which scripts/lint_site_links.py holds
+this tree's links to. The file is carried from the website by
+gen_builder_manifest.py --site (see its reverse-carry block); these tests
+read the committed copy."""
 from __future__ import annotations
 
 import json
@@ -40,6 +43,23 @@ class SiteContract(unittest.TestCase):
         empty = [g for g in self.data["patterns"] if not any(REPO.glob(g))]
         self.assertEqual(empty, [], "no file in this tree matches these patterns the website "
                                     "reads at runtime")
+
+    def test_the_sites_own_addresses_are_carried(self):
+        """The other half: what THIS tree may link on the site. Its absence
+        would leave scripts/lint_site_links.py with nothing to hold a link to."""
+        for key in ("routes", "files"):
+            self.assertIsInstance(self.data.get(key), list, f"{key} not carried — rerun the --site carry")
+            self.assertEqual(self.data[key], sorted(set(self.data[key])))
+            self.assertTrue(all(x.startswith("/") for x in self.data[key]))
+        self.assertIn("/", self.data["routes"])
+        self.assertIn("/help", self.data["routes"])
+        self.assertIn("/home-assistant", self.data["routes"],
+                      "the page the family map sends a hub owner to is not an address the site answers")
+        self.assertIsInstance(self.data.get("anchors"), dict)
+        # A Canary draws these on its own screen; they are permanent addresses.
+        for anchor in ("s-safe-mode", "s-hub-unreachable", "s-not-verified", "probe-sd_card"):
+            self.assertIn(anchor, self.data["anchors"]["/help"],
+                          f"/help#{anchor} is printed by devices in the field and the site no longer answers it")
 
     def test_paths_are_repository_relative(self):
         for x in [*self.data["paths"], *self.data["patterns"]]:

@@ -4,11 +4,18 @@
  * HTTP handlers for the harm-reduction Beacon channel.
  *
  * Auth-gated from day one (see spec/beacon_channel_v0.md §10 and
- * docs/audit/mesh_and_chirp_audit_v1.md C12 closure for Chirp). Every route
- * is wrapped in the bcn_auth_gated trampoline, which runs api_auth_check:
- * the bearer, or a landing-page session any host on the network can mint
- * (ledger F346), gets a successful response. Mirrors the pattern
- * established in bluetooth_api.h (#437) and household_api.h (#438).
+ * docs/audit/mesh_and_chirp_audit_v1.md C12 closure for Chirp). The reads
+ * (GET) are wrapped in the bcn_auth_gated trampoline, which runs
+ * api_auth_check: the bearer, or a landing-page session any host on the
+ * network can mint (ledger F346). Every route that changes Beacon state (the
+ * POSTs: pairing, revocation, origination, cosign, cancel, silence, the
+ * self-test) is wrapped in bcn_bearer_gated, the bearer alone
+ * (api_auth_check_bearer), the way the Bluetooth and mesh pair confirms are:
+ * with two WAPs on one LAN a session-gated originate + cosign would let any
+ * LAN host raise a genuinely dual-signed ALERT with no human at either
+ * device. Neither trampoline is open when no token was registered. Mirrors
+ * the pattern established in bluetooth_api.h (#437) and household_api.h
+ * (#438).
  *
  * The handlers themselves are thin JSON wrappers around beacon_channel::*
  * public functions. The cryptographic origination, NFPA-72 state machine,
@@ -30,6 +37,7 @@
 #include "beacon_channel.h"
 #include "beacon_cancel_policy.h"
 #include "http_body_reader.h"
+#include "wap_json_writer.h"   // shown_text(): a set member's name, as a page shows it (F408)
 #include "api_auth.h"
 #include <ArduinoJson.h>
 #include <string.h>
@@ -45,10 +53,24 @@ inline const char*& auth_token_storage() {
   return token;
 }
 
+// Reads: a bearer or a landing session. No token registered: refused (an
+// empty token takes no bearer, F331), never the open behavior the Bluetooth
+// gate keeps for a miswired caller.
 template<esp_err_t (*Real)(httpd_req_t*)>
 static esp_err_t bcn_auth_gated(httpd_req_t* req) {
   const char* tok = auth_token_storage();
-  if (tok && !api_auth_check(req, tok)) return ESP_OK;
+  if (!api_auth_check(req, tok ? tok : "")) return ESP_OK;
+  return Real(req);
+}
+
+// Writes: the bearer alone (BOOT Tap Once or the pasted token on the
+// dashboard). A session the landing page mints for any LAN host must not
+// originate, cosign, cancel or silence a life-safety alert, pair or revoke a
+// set member, or run the audible self-test. No token registered: refused.
+template<esp_err_t (*Real)(httpd_req_t*)>
+static esp_err_t bcn_bearer_gated(httpd_req_t* req) {
+  const char* tok = auth_token_storage();
+  if (!api_auth_check_bearer(req, tok ? tok : "")) return ESP_OK;
   return Real(req);
 }
 
@@ -175,7 +197,13 @@ inline esp_err_t handle_set_list(httpd_req_t* req) {
     char fp_hex[beacon_channel::DEVICE_FP_SIZE * 2 + 1];
     fp_to_hex(e->fingerprint, fp_hex);
     m["fingerprint"] = fp_hex;
-    m["name"] = e->name;
+    // The member's name as a page shows it (sweep F408): nothing in this
+    // firmware fills it yet, but v0.3's pairing will, from a peer's frame,
+    // and ArduinoJson writes a control byte raw and ill-formed UTF-8 as it
+    // is. Held by check_wap_json_answers.py J10, as the Bluetooth names are.
+    char name[wap_json::replaced_cap(beacon_channel::BEACON_NAME_LEN)];
+    wap_json::shown_text(name, sizeof(name), e->name);
+    m["name"] = name;
     m["paired_at"] = (uint32_t)e->paired_at;
     m["last_selftest"] = (uint32_t)e->last_selftest;
     switch (e->trust_level) {
@@ -225,12 +253,10 @@ inline esp_err_t handle_pair_cancel(httpd_req_t* req) {
 // One httpd_req_recv() is one socket read, so parsing after a single call
 // rejects a body the client sent in two segments and silently truncates one
 // longer than the buffer (http_body_reader.h, host-tested). Every Beacon
-// route reads its body here; tests_host pins that no bare httpd_req_recv
-// remains in this file.
+// route reads its body here, through http_body::read_request(); tests_host
+// pins that no bare httpd_req_recv remains in this file.
 static const char* read_body(httpd_req_t* req, char* buf, size_t cap, size_t* len) {
-  const http_body::Result r = http_body::read_all(
-      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
-      req->content_len, buf, cap, HTTPD_SOCK_ERR_TIMEOUT, 3, len);
+  const http_body::Result r = http_body::read_request(req, buf, cap, len);
   if (r == http_body::TOO_LARGE) return "body too large";
   if (r == http_body::READ_FAILED) return "body read failed";
   return nullptr;
@@ -650,18 +676,18 @@ inline void register_routes(httpd_handle_t server, const char* api_token = nullp
   register_api_handler(server, "/api/beacon/set",          HTTP_GET,  bcn_auth_gated<handle_set_list>);
   register_api_handler(server, "/api/beacon/active",       HTTP_GET,  bcn_auth_gated<handle_active>);
   register_api_handler(server, "/api/beacon/audit",        HTTP_GET,  bcn_auth_gated<handle_audit>);
-  register_api_handler(server, "/api/beacon/pair/start",   HTTP_POST, bcn_auth_gated<handle_pair_start>);
-  register_api_handler(server, "/api/beacon/pair/join",    HTTP_POST, bcn_auth_gated<handle_pair_join>);
-  register_api_handler(server, "/api/beacon/pair/confirm", HTTP_POST, bcn_auth_gated<handle_pair_confirm>);
-  register_api_handler(server, "/api/beacon/pair/cancel",  HTTP_POST, bcn_auth_gated<handle_pair_cancel>);
-  register_api_handler(server, "/api/beacon/revoke",       HTTP_POST, bcn_auth_gated<handle_revoke>);
-  register_api_handler(server, "/api/beacon/originate",      HTTP_POST, bcn_auth_gated<handle_originate>);
-  register_api_handler(server, "/api/beacon/originate-solo", HTTP_POST, bcn_auth_gated<handle_originate_solo>);
-  register_api_handler(server, "/api/beacon/cosign",         HTTP_POST, bcn_auth_gated<handle_cosign>);
-  register_api_handler(server, "/api/beacon/cancel",         HTTP_POST, bcn_auth_gated<handle_cancel>);
-  register_api_handler(server, "/api/beacon/cancel-solo",    HTTP_POST, bcn_auth_gated<handle_cancel_solo>);
-  register_api_handler(server, "/api/beacon/silence",        HTTP_POST, bcn_auth_gated<handle_silence>);
-  register_api_handler(server, "/api/beacon/selftest",     HTTP_POST, bcn_auth_gated<handle_selftest>);
+  register_api_handler(server, "/api/beacon/pair/start",   HTTP_POST, bcn_bearer_gated<handle_pair_start>);
+  register_api_handler(server, "/api/beacon/pair/join",    HTTP_POST, bcn_bearer_gated<handle_pair_join>);
+  register_api_handler(server, "/api/beacon/pair/confirm", HTTP_POST, bcn_bearer_gated<handle_pair_confirm>);
+  register_api_handler(server, "/api/beacon/pair/cancel",  HTTP_POST, bcn_bearer_gated<handle_pair_cancel>);
+  register_api_handler(server, "/api/beacon/revoke",       HTTP_POST, bcn_bearer_gated<handle_revoke>);
+  register_api_handler(server, "/api/beacon/originate",      HTTP_POST, bcn_bearer_gated<handle_originate>);
+  register_api_handler(server, "/api/beacon/originate-solo", HTTP_POST, bcn_bearer_gated<handle_originate_solo>);
+  register_api_handler(server, "/api/beacon/cosign",         HTTP_POST, bcn_bearer_gated<handle_cosign>);
+  register_api_handler(server, "/api/beacon/cancel",         HTTP_POST, bcn_bearer_gated<handle_cancel>);
+  register_api_handler(server, "/api/beacon/cancel-solo",    HTTP_POST, bcn_bearer_gated<handle_cancel_solo>);
+  register_api_handler(server, "/api/beacon/silence",        HTTP_POST, bcn_bearer_gated<handle_silence>);
+  register_api_handler(server, "/api/beacon/selftest",     HTTP_POST, bcn_bearer_gated<handle_selftest>);
 }
 
 } // namespace beacon_api

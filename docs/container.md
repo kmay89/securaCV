@@ -54,6 +54,14 @@ Optional:
   `openssl rand -hex 32`. Once a seed is persisted in `/data`, a *different*
   `DEVICE_KEY_SEED` is rejected at startup rather than silently re-keying the
   log.
+- `DEVICE_KEY_SEED_PERSIST`: whether `witnessd` writes a `DEVICE_KEY_SEED`
+  it was given to `/data/witness.ed25519.seed` when no seed file exists yet
+  (default: yes, so the operator commands below find the seed there). Set
+  `0` when the seed lives in a secret store and must not land on the data
+  volume: the seed is used as given, nothing is written, and a seed file
+  that already exists must still agree with it. Takes `1`/`true`/`yes`/`on`
+  or `0`/`false`/`no`/`off`; anything else stops the start. The Home
+  Assistant app sets `0` (its seed lives in the app's own `/data`).
 - `WITNESS_API_ADDR`: Event API bind address (default in container: `0.0.0.0:8799`)
 - `WITNESS_API_TOKEN_PATH`: file path for the Event API capability token
   (e.g. `/data/api_token`; the viewer-token and pairing files default
@@ -136,7 +144,17 @@ bare, `witness_api` is the Event API daemon and tries to serve beside
 1. Start the container with a token path, so `witnessd` knows where the
    viewer-token file lives — add
    `-e WITNESS_API_TOKEN_PATH=/data/api_token` to the `docker run` above
-   (or name the file itself with `WITNESS_API_VIEWER_TOKEN_PATH`).
+   (or name the file itself with `WITNESS_API_VIEWER_TOKEN_PATH`). The stock
+   [`examples/witnessd.service`](../examples/witnessd.service) already
+   passes `-e WITNESS_API_TOKEN_PATH=/data/api_token`, so a unit started
+   from that file skips this step: its container is `witnessd`, and its
+   header says to widen its loopback-only `-p` binding before you mint. A
+   copy installed before that line joined the file (2026-11-03) lacks it:
+   if its `ExecStart` has no `WITNESS_API_TOKEN_PATH`, copy the file again
+   (a `systemctl edit` override stays) or add the line to its `ExecStart`,
+   then run `sudo systemctl daemon-reload` and
+   `sudo systemctl restart witnessd.service`, which re-creates the
+   container.
 2. Once `witnessd` has started at least once (it creates the device seed
    whose key the receipt carries), mint one token per screen:
 
@@ -153,12 +171,14 @@ bare, `witness_api` is the Event API daemon and tries to serve beside
    the port.
 
 `docker exec` runs in the container's environment (every `WITNESS_API_*`
-variable and `DEVICE_KEY_SEED`, if you set one), in its working directory
+variable, and `DEVICE_KEY_SEED` and `WITNESS_CONFIG` if you set them;
+`witness_api` reads a config file written for `witnessd`, takes the keys
+the two share and skips the daemon's own blocks), in its working directory
 `/data`, and as the container's user (UID 1001 unless `docker run --user`
 named another), the same user `witnessd` writes `/data` as. So
 `witness_api` opens the same database, finds the seed `witnessd` persisted
 beside it with no `DEVICE_KEY_SEED=$(cat …)` prefix, and writes the
-viewer-token file `witnessd` reads. Three things break that:
+viewer-token file `witnessd` reads. Two things break that:
 
 - `docker exec -u root` writes a root-owned `0600` file the kernel cannot
   read. `witnessd` then refuses every viewer token, and every later mint or
@@ -169,19 +189,13 @@ viewer-token file `witnessd` reads. Three things break that:
 - `docker exec -e` pointing a `WITNESS_API_*` path somewhere else mints
   into a file `witnessd` never opens, because it reads only the path it
   started with.
-- A container started with `WITNESS_CONFIG` naming a file written for
-  `witnessd` (one with an `[rtsp]` block, say). `docker exec` passes that
-  variable on, and `witness_api` reads the same file, knows only its
-  `db_path`, `ruleset_id`, `api`, `zones` and `retention` keys, and refuses
-  any other, so every subcommand fails at load. This mint path needs the
-  environment-only setup this page gives, or a config file holding only
-  those keys.
 
 **No restart.** `witnessd` re-reads the viewer-token file on every request,
 so a new token works on the first request that carries it. The exception is a container
-started with neither variable: it has no viewer-token file at all,
+started with neither variable and no `WITNESS_CONFIG` whose `[api]` sets
+`token_path` or `viewer_token_path`: it has no viewer-token file at all,
 `witness_api` refuses to mint ("no viewer token file is configured"), and
-the fix is to re-create the container with step 1.
+the fix is to re-create the container with step 1 (or that config file).
 
 **Revoke** with the `token_id` from the receipt (or from the file); the next
 request carrying the token is refused:

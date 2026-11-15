@@ -8,8 +8,9 @@
 // HomeKit Bridge recipe) call binary_sensor.<id>_smoke_alarm came up as
 // binary_sensor.canary_<id>_smoke_alarm_heard. Home Assistant 2025.10 added
 // `default_entity_id` (abbreviated `def_ent_id`) to MQTT discovery: a full
-// entity id whose part after the '.' becomes the object id when the entity is
-// first registered (homeassistant/components/mqtt/entity.py). Every config
+// entity id whose part after the '.' Home Assistant tries as the object id
+// when the entity is first registered, adding _2 when another entity holds it
+// (homeassistant/components/mqtt/entity.py). Every config
 // now asks for <component>.<device id, as Home Assistant slugs it>_<object_id>.
 //
 // The REAL csi_mqtt.cpp, over stubs/mqtt and a fake esp_mqtt client that

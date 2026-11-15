@@ -21,7 +21,8 @@ final class AppRouteTests: XCTestCase {
                       .find(witnessID: "canary-porch-01"),
                       .setup(what: nil),
                       .setup(what: "hub"),
-                      .setup(what: "canary")] {
+                      .setup(what: "canary"),
+                      .setup(what: "display")] {
             XCTAssertEqual(AppRoute(url: route.url), route,
                            "\(route.url) does not parse back to \(route)")
         }
@@ -39,9 +40,14 @@ final class AppRouteTests: XCTestCase {
         XCTAssertEqual(AppRoute.setup(what: "hub").url.absoluteString, "securacv://setup?what=hub")
     }
 
-    func testSetupNamesOnlyTheTwoWalkthroughs() {
+    func testSetupNamesOnlyTheWalkthroughs() {
         // A link into a guide can only open a guide: an unknown target
         // degrades to the Set up door, never to a guess.
+        XCTAssertEqual(AppRoute(url: URL(string: "securacv://setup?what=display")!), .setup(what: "display"),
+                       "a display opens its own walkthrough, not the listening screen")
+        for target in ["hub", "canary", "display"] {
+            XCTAssertNotNil(SetupTarget(rawValue: target), "\(target) is a SetupTarget the route can land on")
+        }
         XCTAssertEqual(AppRoute(url: URL(string: "securacv://setup?what=HUB")!), .setup(what: "hub"))
         XCTAssertEqual(AppRoute(url: URL(string: "securacv://setup?what=bogus")!), .setup(what: nil))
         XCTAssertEqual(AppRoute(url: URL(string: "securacv://setup")!), .setup(what: nil))

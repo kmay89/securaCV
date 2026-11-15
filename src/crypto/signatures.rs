@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -280,8 +280,24 @@ pub fn verify_ed25519_only(
     let signing_hash = domain_separated_hash(domain, entry_hash);
     let sig = ed25519_dalek::Signature::from_bytes(signature);
     verifying_key
-        .verify(&signing_hash, &sig)
+        .verify_strict(&signing_hash, &sig)
         .map_err(|e| anyhow!("signature verification failed: {}", e))
+}
+
+/// Parses an Ed25519 verifying key and refuses a **weak** one (a point of
+/// small order, the identity included). Under such a key `(R = identity,
+/// s = 0)` verifies for *every* message, so "signed by this key" proves no
+/// act of signing. Every key read from storage, the wire, a policy or a
+/// rotation record goes through here; `ed25519_dalek::VerifyingKey::from_bytes`
+/// alone accepts them.
+pub fn verifying_key_strict(
+    bytes: &[u8; 32],
+) -> Result<VerifyingKey, ed25519_dalek::SignatureError> {
+    let key = VerifyingKey::from_bytes(bytes)?;
+    if key.is_weak() {
+        return Err(ed25519_dalek::SignatureError::new());
+    }
+    Ok(key)
 }
 
 /// Compute the domain-separated signing hash for a chain entry.
@@ -325,7 +341,7 @@ fn verify_rotation_binding(
     sig_bytes.copy_from_slice(signature);
     let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
     verifying_key
-        .verify(
+        .verify_strict(
             &rotation_binding_hash(domain, prev_public_key, new_public_key),
             &sig,
         )
@@ -421,7 +437,7 @@ fn verify_ed25519(
     let signature_bytes = signatures.ed25519_signature_array()?;
     let sig = ed25519_dalek::Signature::from_bytes(&signature_bytes);
     verifying_key
-        .verify(signing_hash, &sig)
+        .verify_strict(signing_hash, &sig)
         .map_err(|e| anyhow!("signature verification failed: {}", e))
 }
 

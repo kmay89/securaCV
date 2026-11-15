@@ -100,7 +100,7 @@ const state = {
   efuseScan: null,   // { port, chip, scan } from the security-fuse read — per board, never inherited
   monitoring: false,
   devChannel: false, // fetch fw-dev-latest instead of the pinned stable release
-  localFile: null,   // { path, name, size, sha256, esp_magic } picked under Advanced
+  localFile: null,   // { handle, name, size, sha256, esp_magic } picked under Advanced
   update: null,      // pending self-update, if any
   announcedUpdate: null, // last update version logged, so routine re-checks stay quiet
   // "Ask it for its self-check" ran since the last write: whatever manifest
@@ -117,7 +117,11 @@ const state = {
 // ── session memory ───────────────────────────────────────────────────────────
 // A tiny, local, non-secret memory so the app makes sense session after
 // session. It never stores a Wi-Fi or MQTT *password* — only the harmless
-// facts that make jumping back in seamless.
+// facts that make jumping back in seamless. (`prefs.secrets` is the one
+// exception, and a closed one: older builds kept passwords there when the
+// platform had no OS store. It is still READ, so nothing saved then is lost
+// and the adoption pass can move it into a store that appears, but nothing
+// is written to it any more — secretStore.set refuses instead.)
 const PREFS_KEY = "securacv.lab.prefs.v2";
 const prefs = loadPrefs();
 
@@ -242,7 +246,7 @@ const secretStore = {
   where() {
     return this.backend === "keychain" ? "your Mac's Keychain"
       : this.backend === "credential-manager" ? "Windows Credential Manager"
-      : this.backend === "secret-service" ? "your desktop's keyring (GNOME Keyring or KDE Wallet, via Secret Service)"
+      : this.backend === "secret-service" ? "your desktop's keyring"
       : "this app's local settings";
   },
   key(...parts) { return parts.map((p) => encodeURIComponent(String(p))).join(":"); },
@@ -272,12 +276,14 @@ const secretStore = {
         return false;
       }
     }
-    // No OS store on this platform — the prefs file IS the advertised
-    // destination here (the consent note names it).
-    prefs.secrets = prefs.secrets || {};
-    prefs.secrets[key] = value;
-    this.track(key, true);
-    return true;
+    // No OS store on this platform. The prefs file used to be the fallback
+    // destination — a WebView localStorage blob any script in the webview
+    // can read, holding Wi-Fi keys, broker passwords, device tokens and the
+    // hub login in the clear. So a secret is stored NOWHERE here: the
+    // consent note says so (profileNoteRefresh), only the non-secret fields
+    // are remembered, and the token card tells the owner to copy the key.
+    logEvent("warn", "No password store on this computer — not saving " + key.split(":")[0] + " credential.");
+    return false;
   },
   async get(key) {
     await this.init();
@@ -331,6 +337,11 @@ const secretStore = {
 // flasher's mintApiToken (flash-core.js): reject bytes >= 248 (248 = 62*4),
 // modulo below that is exactly uniform.
 const TOKEN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+// How the key travels after the flash, said once on the token card. The
+// browser flasher's done card says it in the same words (flash-core.js
+// SEALED_KEY_NOTE; desktop_parity.test.js holds the two equal): the fleet
+// book never sends the key in the clear (fleet.rs, seal.rs).
+const SEALED_KEY_NOTE = "From the Flasher's fleet book this key never travels in the clear: Identify and over-the-air updates seal it to the board's own identity key (an X25519 exchange signed by its Ed25519 key), so another device on your network answering to this board's name, or relaying to the real one, cannot read it. A board whose firmware predates the sealed exchange is asked to update once over USB first.";
 function mintApiToken() {
   for (;;) {
     const bytes = crypto.getRandomValues(new Uint8Array(96));
@@ -577,14 +588,14 @@ function wifiQrString(ssid, pass) {
 // layered over the registry entry so its other fields still show through.
 const HELP_DESKTOP_OVERRIDES = {
   dev_channel: {
-    what: "The checkbox below switches this app to the rolling prerelease — signed with the same key, newer, less soaked.",
-    when: "You're testing a fix the maintainer just cut. Untick it to return to stable.",
+    what: "Switches this app to the rolling prerelease: signed with the same key, newer, less tested.",
+    when: "You're testing a fix the maintainer just cut. Untick to return to stable.",
   },
   skip_backup: {
-    what: "Normally every byte on the board is saved into this app's backups folder before anything is written — the console names the file, and it is your undo button.",
+    what: "Every byte on the board is saved to this app's backups folder before anything is written. It's your undo.",
   },
   wifi_bake: {
-    what: "Typed here, your network is written into the chip's settings region in the same pass as the firmware — the Canary joins it on first boot. It never leaves this app except over the USB cable. A Sense, Vision or WAP can also be left blank: it opens a Bluetooth setup door at first power-on and the SecuraCV iPhone app hands over your Wi-Fi in one tap.",
+    what: "Your network is written into the chip with the firmware, so the Canary joins it on first boot. It only leaves this app over the USB cable. A Sense, Vision or WAP can be left blank: the SecuraCV iPhone app hands it your Wi-Fi at first power-on.",
   },
 };
 // Inlined from canary-local/assets/flash-core.js (SETUP_DOOR_NOTE,
@@ -733,13 +744,20 @@ let lastBookKey = null;
 function profileNoteRefresh() {
   const note = $("prov-remember-note");
   if (!note) return;
+  // Without an OS store there is no place a password may go (secretStore.set
+  // refuses), so the note promises only what is kept: the non-secret fields.
+  const noStore = secretStore.backend === "none";
   note.textContent = $("prov-remember").checked
-    ? `Wi-Fi and broker passwords go to ${secretStore.where()}; names, hosts and ports stay in this app. A reflash fills every field back in.`
-    : "Nothing is saved — you'll retype the passwords next time.";
+    ? (noStore
+      ? "No password store on this computer, so passwords aren't saved — Wi-Fi name, broker and the rest stay in this app."
+      : `Passwords go to ${secretStore.where()}; the rest stays in this app.`)
+    : "Nothing is saved.";
   const hubNote = $("hub-remember-note");
   if (hubNote) {
     hubNote.textContent = $("hub-remember").checked
-      ? `Passwords go to ${secretStore.where()} — a relaunch can pick up right where you left off.`
+      ? (noStore
+        ? "No password store on this computer, so the Wi-Fi password and the login aren't saved — only the names."
+        : `Passwords go to ${secretStore.where()}.`)
       : "";
   }
 }
@@ -770,7 +788,7 @@ async function profileAutofill() {
     }
     const note = $("prov-autofill-note");
     if (note && filled.length) {
-      note.textContent = `✓ Filled from your setup profile (${secretStore.where()}): ${filled.join(" and ")}.`;
+      note.textContent = `✓ Filled in from last time: ${filled.join(" and ")}.`;
       note.classList.remove("hidden");
     }
   } catch (_) { /* autofill is a nicety, never a blocker */ }
@@ -783,7 +801,9 @@ async function profileAutofill() {
 // flash itself is unaffected, but "remembered" must never be assumed.
 function profileSaveFromFlash(p) {
   try {
-    if (!$("prov-remember").checked || !p) return;
+    // No OS store: there is nowhere a password may go (secretStore.set
+    // refuses), and the consent note already said so — nothing to attempt.
+    if (!$("prov-remember").checked || !p || secretStore.backend === "none") return;
     const saves = [];
     if (p.wifiSsid) saves.push(secretStore.set(secretStore.key("wifi", p.wifiSsid), p.wifiPass || ""));
     if (p.mqttHost && p.mqttPass) {
@@ -794,8 +814,8 @@ function profileSaveFromFlash(p) {
       const note = $("prov-autofill-note");
       if (note) {
         note.textContent =
-          `⚠ Couldn't save the password${results.length > 1 ? "s" : ""} to ${secretStore.where()}` +
-          " (locked, or permission declined) — this flash is unaffected, but you'll retype next time.";
+          `⚠ Couldn't save the password${results.length > 1 ? "s" : ""} to ${secretStore.where()}.` +
+          " The flash is unaffected; you'll retype next time.";
         note.classList.remove("hidden");
       }
     }).catch(() => {});
@@ -853,16 +873,16 @@ function toggleDensity() {
   else document.documentElement.removeAttribute("data-density");
   syncDensityButton();
   logEvent("info", prefs.minimal
-    ? "Minimal mode on — the full story stays one click away"
-    : "Minimal mode off — the full story is back");
+    ? "Minimal mode on"
+    : "Minimal mode off");
 }
 function syncDensityButton() {
   const b = $("density-toggle");
   if (!b) return;
   b.setAttribute("aria-pressed", String(!!prefs.minimal));
   b.title = prefs.minimal
-    ? "Minimal mode is on — click to bring the full story back"
-    : "Minimal mode — fold the explainers away; every control and check stays";
+    ? "Minimal mode on — click for full detail"
+    : "Minimal mode — hide the explainers";
 }
 
 // ── boot ─────────────────────────────────────────────────────────────────────
@@ -1137,8 +1157,16 @@ async function boot() {
   });
   await listen("serial:vision", (ev) => {
     const host = state.vision.hostFlash;
-    if (!host || !host.product_id.includes("vision") ||
-        Number(ev.payload && ev.payload.module_id) <= 0) return;
+    const proof = ev.payload || {};
+    // module_ok, when the proof carries it, is the verdict: the engine reads
+    // the boot line's 1 or 0, and the ERROR line an older image printed above
+    // its id when the module did not answer (monitor.rs). An older image's
+    // module_id was a RAM address, non-zero with no module at all (sweep
+    // F384), so `> 0` alone is only the fallback for a proof without it.
+    const moduleOk = typeof proof.module_ok === "boolean"
+      ? proof.module_ok
+      : Number(proof.module_id) > 0;
+    if (!host || !host.product_id.includes("vision") || !moduleOk) return;
     // Compatibility with the already-published 2.2.0 image: it prints the
     // live Grove ID but predates the `j` manifest command. The release hash is
     // already in hostFlash; this boot line proves that exact image reached its
@@ -1323,7 +1351,7 @@ const witnessDiscovery = {
       const n = sightings.length;
       this.status(n + " Canar" + (n === 1 ? "y" : "ies") + " announced on this network — none serves the fleet document yet.");
     } else if (!this.found) {
-      this.status("Scanning your network for Canaries… nothing answering yet — flash one, or make sure a Canary is on this Wi-Fi.");
+      this.status("Scanning… nothing answering yet. Make sure a Canary is on this Wi-Fi.");
     }
     this.schedule();
   },
@@ -1384,11 +1412,20 @@ const fleetBook = {
   webPorts: {},
   probedAt: {},      // deviceId → last probe attempt (retry sparsely)
   // book key → the device's answer to a fresh challenge, SHOWN and never
-  // gating. See whoami.rs: the proof is relay-able, so it says which key
-  // answered, not who holds the socket. Gating a token on it would trade
-  // an honest "unverified" for false confidence.
+  // gating by itself: a badge can be minutes old, and the proof is
+  // relay-able (whoami.rs), so it says which key answered, not who holds
+  // the socket. What protects the key is not a check on who answers but
+  // how the key travels: fleet_device_call sends it only sealed under a
+  // session agreed with the recorded identity key (seal.rs; the firmware's
+  // api_seal.h), so whoever is at the address gets a ciphertext (deviceCall
+  // below hands it the id + fingerprint the handshake is checked against).
   proof: {},
   proofAt: {},       // book key → last challenge (re-ask sparsely)
+  // book key + address → the person said yes to a changed address this
+  // session (addressTrusted). Session-only: the book keeps pairedAddr, the
+  // address the device first proved itself at, and a different one is asked
+  // about again next launch unless it was confirmed into the book.
+  addrOk: {},
   lastScanAt: 0,
   hubUp: null,       // last hub_probe_hub answer (null = never asked)
   opBusy: {},        // book key → an identify/update is running
@@ -1420,6 +1457,13 @@ const fleetBook = {
       // address follow the DEVICE (it may have updated itself), and last-seen
       // becomes a real timestamp instead of a guess.
       const book = bookAll();
+      // What is folded in is DISPLAY: the address a row shows is whatever
+      // the network last said, because any host on it can announce a
+      // device_id with its own address. A token never goes to that address
+      // in the clear — deviceCall below seals it to the recorded identity
+      // key, so a host that is not the device gets nothing it can read —
+      // and a changed address is still confirmed by hand (addressTrusted)
+      // before anything is sent there at all.
       for (const entry of Object.values(book)) {
         const s = entry.deviceId && this.sightings[entry.deviceId];
         if (!s) continue;
@@ -1480,26 +1524,30 @@ const fleetBook = {
       const base = this.baseFor(e);
       if (!base) continue;
       if (this.proofAt[e.key] && now - this.proofAt[e.key] < 10 * 60 * 1000) continue;
-      this.proofAt[e.key] = now;
-      try {
-        const r = await invoke("device_whoami", {
-          base,
-          deviceId: e.deviceId,
-          expectedFp: e.pubkeyFp || "",
-        });
-        if (!r || !r.proof) continue;
-        this.proof[e.key] = r;
-        // Trust on first sight: record the fingerprint the first time a
-        // device proves itself, so a LATER change shows up as wrong-key.
-        if (r.proof === "answered" && !e.pubkeyFp && r.seenFp) {
-          bookUpsert({ mac: e.mac, deviceId: e.deviceId, pubkeyFp: r.seenFp });
-        }
-        if (r.proof === "wrong-key") {
-          logEvent("warn", `${e.name || e.deviceId}: ${r.detail}`);
-        }
-      } catch (_) { /* unreachable or refused — absence of proof, not disproof */ }
+      await this.probeIdentityFor(e, base);
     }
     this.renderSoon();
+  },
+  async probeIdentityFor(e, base) {
+    this.proofAt[e.key] = Date.now();
+    try {
+      const r = await invoke("device_whoami", {
+        base,
+        deviceId: e.deviceId,
+        expectedFp: e.pubkeyFp || "",
+      });
+      if (!r || !r.proof) return;
+      this.proof[e.key] = r;
+      // Trust on first sight: record the fingerprint the first time a
+      // device proves itself, so a LATER change shows up as wrong-key —
+      // and so the token gate (deviceCall) has a key to check against.
+      if (r.proof === "answered" && !e.pubkeyFp && r.seenFp) {
+        bookUpsert({ mac: e.mac, deviceId: e.deviceId, pubkeyFp: r.seenFp });
+      }
+      if (r.proof === "wrong-key") {
+        logEvent("warn", `${e.name || e.deviceId}: ${r.detail}`);
+      }
+    } catch (_) { /* unreachable or refused — absence of proof, not disproof */ }
   },
   schedule() {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
@@ -1558,22 +1606,79 @@ const fleetBook = {
   tokenKey(entry) {
     return secretStore.key("canary", entry.mac || entry.deviceId, "token");
   },
+  // The address (ip or host) a base points at, for the paired-address record.
+  addrOf(base) {
+    return String(base || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  },
+  // Is `base` an address this device may be trusted at? The first address a
+  // device proves itself at is recorded as its paired address (pairedAddr,
+  // in the book). A later announcement from a DIFFERENT address is the
+  // attack shape — a host on the LAN announcing a victim's device_id with
+  // its own address — and also what a DHCP lease change looks like, so a
+  // human decides: a native confirm names both addresses, and only a yes
+  // moves the pairing. The sealed handshake still runs after this: a yes
+  // here never hands the key to whatever answers there.
+  async addressTrusted(entry, base) {
+    const addr = this.addrOf(base);
+    if (!entry.pairedAddr || entry.pairedAddr === addr) return true;
+    if (this.addrOk[entry.key + "|" + addr]) return true;
+    const who = entry.name || entry.deviceId;
+    const text = `${who} used to answer at ${entry.pairedAddr} and now announces itself at ${addr}.\n\n` +
+      "A new address can be your router handing out another one — or a different device on " +
+      "your network using this Canary's name. Trust the new address? The key still only goes sealed to this Canary's own identity.";
+    let ok = false;
+    try {
+      ok = await window.__TAURI__.dialog.confirm(text, { title: "This Canary moved", kind: "warning" });
+    } catch (_) {
+      ok = window.confirm(text);
+    }
+    if (ok) {
+      this.addrOk[entry.key + "|" + addr] = true;
+      entry.pairedAddr = addr;
+      savePrefs();
+    }
+    return ok;
+  },
+  // One authenticated call to a device, with everything the Rust side needs
+  // to seal: the device id and the fingerprint the book recorded, which the
+  // handshake's signature is checked against before a session key exists
+  // (once per device + address, and again when the device says the session
+  // is gone). The key then rides only sealed under that session, never as a
+  // plain bearer, and there is no fallback: firmware without the handshake
+  // is told to update once over USB. No fingerprint yet means no call: ask
+  // for the badge first (probeIdentityFor), which records it on first
+  // sight. The first address that passes becomes the pairing.
+  async deviceCall(entry, base, token, action) {
+    if (!entry.pubkeyFp) await this.probeIdentityFor(entry, base);
+    const r = await invoke("fleet_device_call", {
+      base, token, action,
+      deviceId: entry.deviceId,
+      expectedFp: entry.pubkeyFp || "",
+    });
+    // A refusal (r.refused: the handshake's own sentence) sent nothing, so
+    // the address it came from proves nothing; the pairing waits.
+    if (!r.refused && !entry.pairedAddr) { entry.pairedAddr = this.addrOf(base); savePrefs(); }
+    return r;
+  },
 
   async identify(entry) {
     const key = entry.key;
     if (this.opBusy[key]) return;
     this.opBusy[key] = true;
-    this.note(key, "Asking it to speak up…");
+    this.note(key, "Asking it to blink…");
     try {
       const token = await secretStore.get(this.tokenKey(entry));
       const base = this.baseFor(entry);
       if (!token || !base) { this.note(key, token ? "It isn't answering right now." : this.noTokenNote()); return; }
-      const r = await invoke("fleet_device_call", { base, token, action: "identify" });
-      if (r.httpStatus === 401) this.note(key, this.staleTokenNote());
+      if (!(await this.addressTrusted(entry, base))) { this.note(key, "Not sent — the new address wasn't trusted."); return; }
+      const r = await this.deviceCall(entry, base, token, "identify");
+      if (r.refused) this.note(key, r.refused);
+      else if (r.httpStatus === 429) this.note(key, this.heldOffNote());
+      else if (r.httpStatus === 401) this.note(key, this.staleTokenNote());
       else if (r.httpStatus === 404) this.note(key, "This firmware doesn't have an identify signal yet.");
-      else this.note(key, "✓ Watch for the blink.");
+      else this.note(key, "✓ Watch for the blink. (The key went sealed to its identity.)");
     } catch (e) {
-      this.note(key, "Couldn't reach it: " + e);
+      this.note(key, this.callNote(e));
     } finally {
       this.opBusy[key] = false;
       this.renderSoon();
@@ -1596,27 +1701,35 @@ const fleetBook = {
       const token = await secretStore.get(this.tokenKey(entry));
       const base = this.baseFor(entry);
       if (!token || !base) { this.note(key, token ? "It isn't answering right now." : this.noTokenNote()); return; }
-      this.note(key, "Starting the update — the board downloads and verifies it itself (signed, with automatic rollback)…");
+      if (!(await this.addressTrusted(entry, base))) { this.note(key, "Not sent — the new address wasn't trusted."); return; }
+      this.note(key, "Starting the update — the board downloads and checks it itself…");
       let started = false;
       let lostSocket = false;
       for (let attempt = 0; attempt < 4 && !started; attempt++) {
         if (attempt) await new Promise((r) => setTimeout(r, 5000));
         let inst = null;
-        try { inst = await invoke("fleet_device_call", { base, token, action: "ota-install" }); }
+        try { inst = await this.deviceCall(entry, base, token, "ota-install"); }
         catch (_) {
-          // The install call can outlive its own socket (the board can get
-          // to rebooting) — treat transport loss as "watch the status".
+          // Only a transport failure throws (a refusal to seal the key to
+          // what answered comes back as inst.refused, below). The install
+          // call can outlive its own socket (the board can get to
+          // rebooting) — treat transport loss as "watch the status".
           lostSocket = true;
           started = true;
           break;
         }
+        // The handshake's refusal is an answer, not a lost socket: the
+        // key stayed here, and the sentence says why (old firmware, a
+        // different key at this address, a signature that didn't verify).
+        if (inst.refused) { this.note(key, inst.refused); return; }
+        if (inst.httpStatus === 429) { this.note(key, this.heldOffNote()); return; }
         if (inst.httpStatus === 401) { this.note(key, this.staleTokenNote()); return; }
-        if (inst.httpStatus === 404) { this.note(key, "This firmware predates one-click installs — update once over USB or from Home Assistant, and later updates work from here."); return; }
-        if (inst.httpStatus === 409) { this.note(key, "The board's update engine is busy — waiting for it to free up…"); continue; }
+        if (inst.httpStatus === 404) { this.note(key, "This firmware predates one-click updates. Update once over USB; later updates work from here."); return; }
+        if (inst.httpStatus === 409) { this.note(key, "The board is busy — waiting…"); continue; }
         if (inst.httpStatus >= 400) { this.note(key, "The board refused to start the update (HTTP " + inst.httpStatus + "). Try again in a minute."); return; }
         started = true;
       }
-      if (!started) { this.note(key, "The board's update engine stayed busy — it may be mid-check on its own. Try again in a minute."); return; }
+      if (!started) { this.note(key, "The board stayed busy. Try again in a minute."); return; }
       const startFw = entry.fw || "";
       const t0 = Date.now();
       let lastText = "";
@@ -1624,8 +1737,12 @@ const fleetBook = {
       while (Date.now() - t0 < 5 * 60 * 1000) {
         await new Promise((r) => setTimeout(r, 3000));
         let st = null;
-        try { st = await invoke("fleet_device_call", { base, token, action: "ota-status" }); }
+        try { st = await this.deviceCall(entry, base, token, "ota-status"); }
         catch (_) { sawActivity = true; this.note(key, "Rebooting into the new build…"); continue; }
+        // After the reboot the board may answer the new handshake with a
+        // key the book doesn't know (reflashed meanwhile): say so and stop,
+        // rather than narrating a reboot for five minutes.
+        if (st && st.refused) { this.note(key, st.refused); return; }
         const b = (st && st.body) || {};
         const stateName = String(b.state || "").toUpperCase();
         if (b.error && b.error !== "NONE" && b.error_text) { this.note(key, "The board reports: " + b.error_text); return; }
@@ -1651,25 +1768,35 @@ const fleetBook = {
           return;
         }
         if (sawActivity) {
-          this.note(key, "The run finished but the board still reports the old version — its own settings page has the details. Safe to try again.");
+          this.note(key, "Finished, but the board still reports the old version. Safe to try again.");
           return;
         }
         this.note(key, lastText || "Waiting for the board to start…");
       }
       this.note(key, "Still working — the board finishes on its own; check back in a minute.");
     } catch (e) {
-      this.note(key, "Couldn't start the update: " + e);
+      this.note(key, this.callNote(e));
     } finally {
       this.opBusy[key] = false;
       this.renderSoon();
     }
   },
 
+  // A refusal from fleet_device_call is already a sentence that says the key
+  // stayed here (seal.rs Refusal::detail, the handshake's own words); a
+  // transport failure or an internal one is not, and gets the prefix.
+  callNote(e) {
+    const s = String(e);
+    return /^[A-Z]/.test(s) ? s : "Couldn't reach it: " + s;
+  },
+  heldOffNote() {
+    return "The board is holding this address off for a moment after wrong keys. Try again in a few seconds.";
+  },
   noTokenNote() {
-    return "No stored key for this board — reflash it once with this app (any version) and the key is minted and kept automatically.";
+    return "No stored key for this board. Reflash it once with this app and one is minted and kept.";
   },
   staleTokenNote() {
-    return "The board refused the stored key — it was probably reflashed elsewhere, or, on an all-rounder Canary, reset with its 10-second BOOT hold (which drops a key a flasher seeded). One reflash here mints a fresh one.";
+    return "The board refused the stored key — it was probably reflashed elsewhere or reset with the 10-second BOOT hold. Reflash here to mint a fresh one.";
   },
   note(key, text) {
     this.opNote[key] = text;
@@ -1725,15 +1852,17 @@ const fleetBook = {
           : e.fw && train && !fwBehind(e.fw, train)
             ? `<span class="fb-badge ok">up to date</span>`
             : "";
-      // The identity proof, SHOWN and never gating. A relay can forward a
-      // genuine device's answer, so this says who answered, not who is
-      // holding the socket — see whoami.rs and the fleet-book doc. The one
-      // loud case is wrong-key: a different identity answering for this
-      // device id is worth interrupting for.
+      // The identity proof, SHOWN and never gating by itself: the badge may
+      // be minutes old, and a relay can forward a genuine device's answer,
+      // so it says who answered, not who is holding the socket — see
+      // whoami.rs and the fleet-book doc. (The key itself only ever goes
+      // sealed to this identity, in fleet_device_call.) The one loud case
+      // is wrong-key: a different identity answering for this device id is
+      // worth interrupting for.
       const pr = this.proof[e.key];
       const proofBadge = !pr ? ""
         : pr.proof === "answered"
-          ? `<span class="fb-badge proof" title="Signed a fresh challenge with the identity key recorded at flash time. This does not prove the address is genuine — a relay can forward a real device's answer.">identity answered</span>`
+          ? `<span class="fb-badge proof" title="Signed a fresh challenge with the key recorded at flash time. A relay could forward a real device's answer, so this doesn't prove the address — which is why Identify and Update send the key only sealed to this identity, and a changed address is confirmed by hand.">identity answered</span>`
           : pr.proof === "wrong-key"
             ? `<span class="fb-badge bad" title="${esc(pr.detail || "")}">different key answered</span>`
             : pr.proof === "bad-signature"
@@ -1770,9 +1899,8 @@ const fleetBook = {
         <span class="muted">${book.length ? `${book.length} device${book.length === 1 ? "" : "s"} · ` : ""}${
           this.lastScanAt ? "network checked " + relativeTime(this.lastScanAt) : "checking your network…"}</span>
       </div>
-      ${empty ? `<p class="muted fb-empty">Every Canary you flash lands here automatically — with its name,
-        firmware, live network status, and (for boards this app flashed) a one-click over-the-air update.
-        Flash your first one under “Flash a Canary”.</p>` : rows.join("") + strangerRows.join("")}`;
+      ${empty ? `<p class="muted fb-empty">Every Canary you flash lands here, with its name, firmware,
+        network status and one-click updates. Flash your first one under “Flash a Canary”.</p>` : rows.join("") + strangerRows.join("")}`;
 
     host.querySelectorAll("[data-book-identify]").forEach((b) =>
       b.addEventListener("click", () => { const e = bookAll()[b.dataset.bookIdentify]; if (e) this.identify(e); }));
@@ -1836,11 +1964,15 @@ function matchProjectToProduct(catalog, projectName) {
 // display product it names, else the catalog display entry it matches, else
 // the first display product — never the flagship. Every display firmware
 // reads the same serial console (none), so the monitor's commands are right
-// either way.
+// either way. A name that carries no catalog stem at all is no SecuraCV
+// build ("esp32_display_demo", a vendor's own image) and stays unrecognized,
+// as the plain matcher leaves it. Every surface here that names the board's
+// firmware resolves it through this: the passport (its head, customs, the
+// install verdicts, the self-check ask), the smart pick and the monitor.
 function productForProject(catalog, projectName) {
   const match = matchProjectToProduct(catalog, projectName);
   const name = String(projectName || "").toLowerCase();
-  if (!/display/.test(name)) return match;
+  if (!match || !/display/.test(name)) return match;
   const isDisplay = (p) => (p.role || (/display|watch|dash/.test(String(p.id || "")) ? "display" : "")) === "display";
   if (match && isDisplay(match)) return match;
   const products = (catalog && catalog.products) || [];
@@ -1978,35 +2110,31 @@ const BOOT_SIGNATURES = [
     signature: "brownout",
     test: /brownout detector was triggered|\bBROWNOUT_RST\b|rst:0x[0-9a-f]+ \(BROWNOUT/i,
     means: "The board browned out — it isn't getting enough power to boot.",
-    fix: "This isn't the firmware. Use a different USB port (straight into the " +
-      "computer, not a hub), or a powered hub, and a shorter good-quality data " +
-      "cable. Then reconnect.",
+    fix: "Not the firmware. Use a different USB port (straight into the computer, " +
+      "not a hub) and a shorter data cable, then reconnect.",
     action: "power",
   },
   {
     signature: "panic",
     test: /guru meditation|backtrace:|panic'?ed|abort\(\) was called|assert failed/i,
     means: "The new firmware crashed as it started up.",
-    fix: "A clean install usually clears this. Every install starts the settings " +
-      "region over; the full erase also wipes the partitions an install never writes " +
-      "(the second firmware slot, the file system), where a previous firmware may have " +
-      "left stale data. Reconnect and tick first contact.",
+    fix: "A clean install usually clears this: reconnect, tick the full wipe, and " +
+      "flash again.",
     action: "clean-install",
   },
   {
     signature: "no-app",
     test: /invalid header: 0x|no bootable app partitions|ota_data partition|not found any bootable/i,
     means: "The bootloader couldn't find a complete, valid app to run.",
-    fix: "Reconnect and flash again with a full erase (tick first contact) so a " +
-      "whole image is laid down from scratch.",
+    fix: "Reconnect and flash again with the full wipe ticked.",
     action: "clean-install",
   },
   {
     signature: "flash-error",
     test: /flash read err|checksum failed|corrupt|e \(\d+\) esp_image/i,
     means: "The board had trouble reading its own flash.",
-    fix: "Reseat the cable and do a clean install. If it keeps happening across " +
-      "several boards, that one's flash chip may be failing.",
+    fix: "Reseat the cable and do a clean install. If it keeps happening, that " +
+      "chip may be failing.",
     action: "clean-install",
   },
 ];
@@ -2104,10 +2232,8 @@ function renderDials(product) {
   box.append(Object.assign(document.createElement("p"), {
     className: "fineprint",
     textContent: detect
-      ? "Bake a starting point into the chip so it behaves right where it's going. " +
-        "These are the same numbers Home Assistant retunes live — nothing is locked in."
-      : "A starting point for the radar's reflexes, written with the firmware. " +
-        "Home Assistant retunes all of them live afterward.",
+      ? "A starting point for where it's going. Home Assistant can retune these live."
+      : "A starting point for the radar. Home Assistant can retune these live.",
   }));
   const grid = document.createElement("div");
   grid.className = "dial-grid";
@@ -2246,12 +2372,11 @@ function renderChangeMap(map) {
   if (map.layoutChanged) {
     box.append(Object.assign(document.createElement("p"), {
       className: "cm-layout",
-      textContent: "The partition layout itself changes with this image — the board's " +
-        "regions are being rearranged, not just rewritten.",
+      textContent: "The partition layout itself changes with this image.",
     }));
   }
   const WORDS = {
-    untouched: "left alone — the image doesn't reach it",
+    untouched: "left alone",
     identical: "already byte-for-byte identical",
     wiped: "reset to factory-fresh",
     changed: "rewritten",
@@ -2427,7 +2552,7 @@ function updateResumeState() {
       ? "you built a Home Assistant hub"
       : `you hatched ${article(last.name)} ${esc(last.name)}${last.chip ? " (" + esc(last.chip) + ")" : ""}`;
   $("resume-body").innerHTML =
-    `Last time ${what} — ${when}. ${roster.length} device${roster.length === 1 ? "" : "s"} in this session's roster.`;
+    `Last time ${what} — ${when}.`;
   $("resume").classList.remove("hidden");
 }
 
@@ -2564,7 +2689,7 @@ function trackPresenceWhileMonitoring(usb) {
   if (missingPolls < UNPLUG_GRACE_POLLS) {
     // A rebooting board re-enumerates within a second or two; don't call a
     // blink an unplug. The monitor is waiting it out on its own thread.
-    setConn("reading", "Board went away — waiting for it to come back…");
+    setConn("reading", "Board reconnecting…");
     return;
   }
   missingPolls = 0;
@@ -2739,19 +2864,15 @@ function shippedWith({ projectName, product, blank, read = "ok" } = {}) {
 function coldBootVerdict({ heldBoot, hadResidentFirmware } = {}) {
   if (!hadResidentFirmware) {
     return { level: "clear", label: "Nothing was on the chip to run",
-      detail: "The board arrived erased, so there was no resident firmware to execute " +
-              "when you plugged it in." };
+      detail: "The board arrived erased, so nothing ran when you plugged it in." };
   }
   if (heldBoot) {
     return { level: "clear", label: "You brought it up cold",
-      detail: "You held BOOT, so the chip went straight into the ROM's download mode and " +
-              "the firmware it shipped with never executed a single instruction." };
+      detail: "You held BOOT, so the shipped firmware never ran." };
   }
   return { level: "attention", label: "Its own firmware ran before we met it",
-    detail: "You plugged in without holding BOOT, so whatever shipped on the chip booted " +
-            "for a moment first — long enough to present itself to your computer however " +
-            "it liked. Nothing here can undo that after the fact. Next time hold BOOT " +
-            "while the cable goes in and it never gets the chance." };
+    detail: "Whatever shipped on the chip booted once before this app saw it. Nothing " +
+            "can undo that now; next time hold BOOT while plugging in." };
 }
 
 // The cold-start answer buttons. `state.heldBoot` stays undefined until the
@@ -2767,8 +2888,7 @@ function wireColdStartAnswer() {
     hot.classList.toggle("chosen", !isCold);
     note.textContent = isCold
       ? "Good — its own firmware never got to run."
-      : "Noted. Whatever shipped on the chip has already booted once; the full erase " +
-        "still removes it, but next time hold BOOT on the way in.";
+      : "Noted. The full wipe still removes it; next time hold BOOT on the way in.";
     renderPassport(); // the verdict beside the passport moves with the answer
   };
   held.addEventListener("click", () => mark(true));
@@ -2798,7 +2918,7 @@ function wireEfuseRead() {
     const port = state.port;
     const chip = state.chip;
     btn.disabled = true;
-    out.textContent = "Reading eFuse block 0… (read-only — nothing is ever burned)";
+    out.textContent = "Reading security fuses (read-only)…";
     // The probe resets the board into its ROM, with the sequence its port
     // calls for, and does not reset it back out (efuse.rs), which on a
     // native-USB board re-enumerates the port — own the port like the flash
@@ -2835,13 +2955,11 @@ function efuseStopFindings() {
 
 function renderEfuseScan(out, scan) {
   if (!scan || !scan.supported) {
-    out.textContent = `No confirmed fuse table for ${scan && scan.chip ? scan.chip : "this chip"} — ` +
-      "not checked. (Same answer the browser flasher gives: it refuses to guess bit offsets.)";
+    out.textContent = `No confirmed fuse table for ${scan && scan.chip ? scan.chip : "this chip"} — not checked.`;
     return;
   }
   if (scan.virgin) {
-    out.textContent = "Clean — every security fuse still reads factory-zero. " +
-      "No previous owner burned secure boot, flash encryption, or the recovery path.";
+    out.textContent = "Clean — every security fuse still reads factory-zero.";
     return;
   }
   const rows = (scan.burned || []).map((f) => {
@@ -2888,7 +3006,9 @@ async function readPassport(port) {
         version: p.resident.version,
         projectName: p.resident.projectName,
         slot: p.resident.slot,
-        product: matchProjectToProduct(state.catalog, p.resident.projectName),
+        // Display-aware (productForProject): a display build whose name
+        // carries no flavor is a display, never the flagship's "canary".
+        product: productForProject(state.catalog, p.resident.projectName),
       };
     } else {
       state.resident = { unknown: true };
@@ -2922,11 +3042,15 @@ function renderPassport() {
   if (r.blank) {
     head.textContent = "A blank board — nothing installed yet.";
   } else if (r.unknown) {
-    head.textContent = "Couldn't read what's installed (the install itself is unaffected).";
+    head.textContent = "Couldn't read what's installed. Flashing still works.";
   } else {
     const who = r.product ? r.product.name : r.projectName || "unknown firmware";
-    head.textContent = `Running ${who}${r.version ? " " + r.version : ""}` +
-      (r.slot ? ` from ${r.slot}` : "");
+    const from = r.slot ? ` from ${r.slot}` : "";
+    // Never the Arduino core's own name and ESP-IDF version as the
+    // firmware's (ARDUINO_READBACK_NOTE).
+    head.textContent = !r.product && /^arduino/i.test(r.projectName || "")
+      ? `Running an Arduino sketch${from}. ${ARDUINO_READBACK_NOTE}`
+      : `Running ${who}${r.version ? " " + r.version : ""}${from}`;
   }
   box.appendChild(head);
 
@@ -2960,18 +3084,34 @@ function renderPassport() {
   }
 
   // The board's own voice before anything is written (parity: the browser's
-  // connect-page startVoice and its self-check chips). Only for firmware we
-  // recognize — a foreign image has no `j` to answer. The chips land in the
-  // serial monitor (renderSelfCheck), where the board's words already go.
-  if (r.product && !r.blank && !r.unknown) {
-    const ask = document.createElement("button");
-    ask.type = "button";
-    ask.className = "btn btn-small btn-ghost pp-ask";
-    ask.textContent = "Ask it for its self-check →";
-    ask.title = "Starts the serial monitor without resetting the board and asks for its " +
-      "self-manifest: the self-check score, its temperature and any tamper flag. Nothing is written.";
-    ask.addEventListener("click", askSelfCheck);
-    box.appendChild(ask);
+  // connect-page renderLiveStoryAsk and its self-check chips), offered only
+  // where the firmware prints a self-check (sweep A97): the catalog's
+  // serial_receipt is false for the WAP, the Sense and every display, which
+  // are pointed at the serial monitor and their boot log instead, in the
+  // browser's words. A readable firmware the catalog does not name is still
+  // asked (requiresLiveReceipt fails closed on null), as the browser asks it
+  // and as askSelfCheck's own gate already does: every SecuraCV release up
+  // to 2.4.17 names the Arduino core, not its product, and the flagship and
+  // the Vision among them answer `j`. The chips land in the serial monitor
+  // (renderSelfCheck), where the board's words already go.
+  if (!r.blank && !r.unknown) {
+    if (requiresLiveReceipt(r.product)) {
+      const ask = document.createElement("button");
+      ask.type = "button";
+      ask.className = "btn btn-small btn-ghost pp-ask";
+      ask.textContent = "Ask it for its self-check →";
+      ask.title = "Starts the serial monitor without resetting the board and asks for its self-check. Nothing is written.";
+      ask.addEventListener("click", askSelfCheck);
+      box.appendChild(ask);
+    } else {
+      const none = document.createElement("div");
+      none.className = "pp-noask";
+      // True here as in the browser: the Start button attaches as a pure
+      // observer (startMonitor), so the boot log comes from a RESET tap.
+      none.textContent = "This firmware prints no self-check; open the serial monitor and tap the board’s " +
+        "RESET button to read its boot log.";
+      box.appendChild(none);
+    }
   }
 
   // The same board, met twice: the fleet book already knows this MAC. Says so
@@ -3047,7 +3187,7 @@ function resetSteps() {
   $("step-pick").classList.add("disabled");
   $("step-flash").classList.add("disabled");
   $("product-list").innerHTML = "";
-  $("pick-sub").textContent = "We'll only show images built for your board's chip.";
+  $("pick-sub").textContent = "Only images built for this chip are shown.";
   $("flash-btn").disabled = true;
   $("flash-target").textContent = "";
   $("console").classList.add("hidden");
@@ -3188,13 +3328,14 @@ function verdictMarkup(product, version) {
   const r = state.resident;
   // A board we COULDN'T read is not a board with nothing on it. installVerdict
   // maps both `null` and `{unknown:true}` to "First install", which is right
-  // for the browser — its probe cannot tell a blank chip from an unreadable
-  // one, so both arrive as `{unknown:true}`. This backend can (it returns
-  // blank:true only when the read SUCCEEDED and found no table), so saying
-  // "nothing SecuraCV is on this board yet" here would be an invented claim
-  // that contradicts the passport card sitting directly above it — and would
-  // hide a downgrade. Keep installVerdict byte-identical to the browser's and
-  // make the distinction at the call site, where the better information is.
+  // for a chip read back blank. This backend returns blank:true only when the
+  // read SUCCEEDED and found no table, so saying "nothing SecuraCV is on this
+  // board yet" for a failed read would be an invented claim that contradicts
+  // the passport card sitting directly above it — and would hide a
+  // downgrade. Keep installVerdict byte-identical to the browser's and make
+  // the distinction at the call site, where the better information is; the
+  // browser's installVerdictFor does the same from its own state.ptRead, in
+  // these words (desktop_parity.test.js).
   if (r.unknown) {
     return `<span class="p-verdict is-unknown">` +
       `<span class="p-verdict-label">• Can't tell yet</span>` +
@@ -3229,7 +3370,9 @@ function smartPick(catalog, opts = {}) {
   const label = opts.chipLabel || chip || "this chip";
 
   if (currentProject) {
-    const cur = matchProjectToProduct(catalog, currentProject);
+    // Display-aware, as the browser's (productForProject): a flavorless
+    // display build is a display.
+    const cur = productForProject(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
       return { product: cur, kind: "current", shortlist: [cur],
         why: `This board already runs ${cur.name}, so it is preselected. An install starts its settings over (a new witness key, where it keeps one); an over-the-air update keeps them.` };
@@ -3335,29 +3478,27 @@ function renderProducts() {
       // same way the stable path names its pinned release — "that release
       // doesn't exist yet", never "something is broken".
       $("pick-sub").textContent =
-        `Images for your ${state.chip} — the dev channel points at the rolling ` +
-        `fw-dev-latest prerelease, and no dev release has been cut yet ` +
-        `(HTTP ${status[1]}). Turn the dev channel off under Advanced for the ` +
-        `stable release, or install a local file.`;
+        `Images for your ${state.chip}: the dev channel has no dev release yet ` +
+        `(HTTP ${status[1]}). Turn it off under Advanced, or install a local file.`;
     } else if (status && pinned) {
       $("pick-sub").textContent =
-        `Images for your ${state.chip} — but this build is pinned to firmware ` +
-        `release ${pinned}, and that release has no published images ` +
-        `(HTTP ${status[1]}). Install a local file under Advanced until it is cut.`;
+        `Images for your ${state.chip}: this build is pinned to firmware release ` +
+        `${pinned}, which has no published images yet (HTTP ${status[1]}). ` +
+        `Install a local file under Advanced until it is cut.`;
     } else if (status) {
       $("pick-sub").textContent =
-        `Images for your ${state.chip} — the firmware manifest returned HTTP ` +
+        `Images for your ${state.chip}: the firmware manifest returned HTTP ` +
         `${status[1]}. Install a local file under Advanced.`;
     } else {
       // "didn't load" rather than "couldn't reach": with no HTTP status this is
       // either a transport failure OR a manifest that arrived malformed, and the
       // second one did reach us.
       $("pick-sub").textContent =
-        `Images for your ${state.chip} — the firmware manifest didn't load ` +
+        `Images for your ${state.chip}: the firmware manifest didn't load ` +
         `(${state.manifestError}). ` +
-        (pinned ? `This build is pinned to firmware release ${pinned}; if that ` +
-                  `release exists, the images appear once you're back online. ` : "") +
-        `Install a local file under Advanced.`;
+        (pinned ? `Pinned to firmware release ${pinned}; the images appear once ` +
+                  `you're back online. ` : "") +
+        `Or install a local file under Advanced.`;
     }
   } else {
     $("pick-sub").textContent = `Images built for your ${state.chip}:`;
@@ -3565,10 +3706,10 @@ function onProductChosen(p, ver) {
     $("wifi-pass").value = "";
   }
   $("provision-note").textContent = (usbSecrets
-    ? "The official release image is generic. These values are written directly into this board's settings partition and never logged."
+    ? "Written into this board's settings, never logged."
     : broker
-    ? "Optional, and worth doing: bake in your network AND your hub's broker, and this board comes up already talking to Home Assistant. Skip either and its on-screen setup still works. Written straight into this board's settings partition, never logged."
-    : "Optional: bake your network in and the Canary joins it on first boot — skip it and the board's own setup path (phone portal or on-screen) still works.")
+    ? "Optional: add your network and hub so the board comes up talking to Home Assistant. Its on-screen setup works either way. Written into the board, never logged."
+    : "Optional: add your network and the Canary joins it on first boot. Its own setup path works either way.")
     + (door ? " " + SETUP_DOOR_NOTE : "");
   profileNoteRefresh();
   // Offer the network this computer is on — the common case — so joining is
@@ -3624,9 +3765,9 @@ function showModuleFlow() {
   $("module-flow").classList.remove("hidden");
   $("console").textContent = "";
   $("console").classList.remove("hidden");
-  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable." +
+  setStatus("flash-result", "Use the module button below. The host receipt is kept while you move the cable." +
     (state.vision.hostFlash ? "" :
-      " (The demo takes two boards — the XIAO host gets the Canary Vision firmware through its own USB-C port, before or after this one.)"));
+      " (Two boards: the XIAO host takes the Canary Vision firmware through its own USB-C port, before or after this.)"));
   benchReset();
   renderReceipts(true);
 }
@@ -3656,7 +3797,7 @@ async function onFlash() {
     if (stops.length) {
       setStatus("flash-result",
         `✗ This board can't take firmware — ${stops.map((f) => f.label).join("; ")}. ` +
-        "eFuses burn one way only, and nothing this app does reaches that. " +
+        "eFuses burn one way only; nothing this app does reaches that. " +
         "If this board was sold to you as new, it wasn't.", "err");
       return;
     }
@@ -3733,20 +3874,22 @@ async function onFlash() {
   // vanishes reads as a broken feature.
   let noMapReason = null;
   if (skipBackup) {
-    noMapReason = "No change map this time — the safety copy is switched off under Advanced, " +
-      "and the map is drawn from it.";
+    noMapReason = "No change map this time — the safety copy is off under Advanced, and the map is drawn from it.";
   } else if (!state.flashBytes) {
-    noMapReason = "No change map this time — the board didn't report its flash size, so there " +
-      "was nothing to read a copy from.";
+    noMapReason = "No change map this time — the board didn't report its flash size.";
   } else if (backupKey && state.backupsTaken[backupKey]) {
-    noMapReason = "No change map this time — the safety copy from earlier in this session is " +
-      "kept as your undo, and it describes the board as it was before that first install, " +
-      "not as it is now.";
+    noMapReason = "No change map this time — the safety copy from earlier this session describes " +
+      "the board before its first install, not as it is now.";
   }
+  // Every step of this install, listed before the first one starts.
+  op.setJourney(installJourneySteps({
+    backup: !skipBackup && !!state.flashBytes && !(backupKey && state.backupsTaken[backupKey]),
+    erase: !!($("first-contact") && $("first-contact").checked),
+  }), lastInstallText(product.id));
   if (!skipBackup && state.flashBytes && !(backupKey && state.backupsTaken[backupKey])) {
     try {
       backupPath = await invoke("auto_backup_path", { mac: state.mac || "" });
-      appendFlashLog(con, "→ safety copy first — reading the whole chip before anything is written…");
+      appendFlashLog(con, "→ safety copy first — reading the whole chip…");
       await invoke("backup_flash", {
         port: state.port,
         outPath: backupPath,
@@ -3757,10 +3900,8 @@ async function onFlash() {
       logEvent("ok", "Safety copy saved: " + backupPath);
     } catch (e) {
       backupPath = null;
-      noMapReason = "No change map this time — the safety copy it's drawn from couldn't be " +
-        "read off this board.";
-      appendFlashLog(con, "⚠ Couldn't take the safety copy (" + e + ") — continuing. " +
-        "Advanced → Rescue can still try a manual backup.");
+      noMapReason = "No change map this time — the safety copy couldn't be read off this board.";
+      appendFlashLog(con, "⚠ Couldn't take the safety copy (" + e + ") — continuing.");
     }
   }
   if (!backupPath && noMapReason) renderChangeMapUnavailable(noMapReason);
@@ -3782,6 +3923,7 @@ async function onFlash() {
       // Absent when the copy was skipped or failed: no map, honestly.
       backupPath: backupPath || "",
     }), con);
+    if (op.journey) rememberInstallTime(product.id, op.journey.finish());
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
     resetSetupNetwork(); // this write's first boot prints the key fresh
@@ -3832,17 +3974,16 @@ async function onFlash() {
     // USB-C port. Say the next move out loud, or the demo dies half-done with
     // a module that never got a brain.
     const moduleNext = product.id && product.id.includes("vision") && !state.vision.module
-      ? " Board 1 of 2 done — now move the USB cable to the CAMERA MODULE's own USB-C port " +
-        "(the wide port on the carrier board, next to the Grove socket — not the XIAO's). " +
-        "I'll recognize the module and offer its model below."
+      ? " Board 1 of 2 done. Now move the cable to the camera module's own USB-C port " +
+        "(the wide one by the Grove socket); its model is offered below."
       : "";
     if (requiresLiveReceipt(product)) {
-      setStatus("flash-result", "Firmware written, and espflash confirmed the write on the chip. Watching the live boot for its device receipt…" + moduleNext, "ok");
+      setStatus("flash-result", "Written and confirmed on the chip. Watching the boot for its receipt…" + moduleNext, "ok");
       renderProveRow(product);
       state.busy = false;
       await startMonitor({ postFlash: true });
     } else {
-      setStatus("flash-result", "Firmware written, and espflash confirmed the write on the chip. Flashing is complete. ✓" + moduleNext, "ok");
+      setStatus("flash-result", "Written and confirmed on the chip. Done. ✓" + moduleNext, "ok");
       renderProveRow(product);
       maybeHatch();
       // The serial monitor should just work — start it automatically so the
@@ -3855,7 +3996,7 @@ async function onFlash() {
     // browser's classifyFlashError — same kinds, same remedies).
     const c = classifyFlashError(e);
     state.lastError = String(e);
-    op.fail("Didn't finish — the details are below and in the console.");
+    op.fail("Didn't finish — details below.");
     setStatus(
       "flash-result",
       (c.title ? c.title + ". " : "The flash didn't finish. ") + c.hint +
@@ -3949,8 +4090,13 @@ function renderTokenOnce(apiToken) {
   if (!apiToken) { box.classList.add("hidden"); box.innerHTML = ""; return; }
   box.innerHTML =
     `<b>This board's local API key — shown once.</b> ` +
-    `<span class="muted">Written into the board with the Wi-Fi, and kept in ${esc(secretStore.where())} ` +
-    `for the fleet book. Copy it if you want it somewhere else too — a reflash mints a new one, and an all-rounder Canary's 10-second BOOT reset drops it for one the board derives from its own key.</span>` +
+    (secretStore.backend === "none"
+      ? `<span class="muted">Not kept — this computer has no password store, so copy it now; ` +
+        `the fleet book can't identify or update this board without it. ` +
+        `A reflash or a 10-second BOOT reset replaces it.</span>`
+      : `<span class="muted">Kept in ${esc(secretStore.where())} for the fleet book. ` +
+        `Copy it if you want it elsewhere; a reflash or a 10-second BOOT reset replaces it.</span>`) +
+    ` <span class="muted">${esc(SEALED_KEY_NOTE)}</span>` +
     `<span class="token-row"><code>${esc(apiToken)}</code>` +
     `<button type="button" class="btn btn-ghost btn-small" id="token-copy">Copy</button></span>`;
   box.classList.remove("hidden");
@@ -3987,8 +4133,8 @@ function renderNurseryStrip() {
       (extras ? `<span class="nursery-extras">${esc(extras)}</span>` : "") +
       `<span class="muted nursery-ago">${esc(when)}</span></div>`;
   }).join("");
-  box.innerHTML = `<div class="nursery-head">🐣 This session's nursery — ` +
-    `${batch.length} hatchling${batch.length === 1 ? "" : "s"} so far</div>` + rows;
+  box.innerHTML = `<div class="nursery-head">🐣 This session: ` +
+    `${batch.length} hatchling${batch.length === 1 ? "" : "s"}</div>` + rows;
   box.classList.remove("hidden");
 }
 
@@ -4258,8 +4404,7 @@ async function onFlashModule() {
     // Mirror of the host-side nudge: whichever board flashed first, the
     // other one is named — with its port — before this counts as done.
     const hostNext = state.vision.hostFlash ? "" :
-      " Board 1 of 2 done — the XIAO host still needs the Canary Vision firmware: " +
-      "move the cable to the XIAO's own USB-C port and pick Canary Vision above.";
+      " Board 1 of 2 done. Move the cable to the XIAO's own USB-C port and pick Canary Vision above.";
     setStatus("flash-result", "Vision module: model checked and burned, AT answered, one inference run. ✓" + hostNext, "ok");
     renderModulePreview(receipt);
     renderReceipts(true);
@@ -4527,10 +4672,9 @@ function updateLocalFlashUi() {
   const connected = !!state.chip && state.portKind === "esp32";
   $("local-chip-note").textContent = connected
     ? `Connected: ${state.chip} on ${state.port}. A local file skips the ` +
-      `catalog's chip guard — there's no product to compare against — so ` +
+      `catalog's chip guard (there's no product to compare against), so ` +
       `make sure this build targets that chip.`
-    : "Plug in a Canary and let the chip read finish first — the file is " +
-      "written to whichever chip is connected.";
+    : "Plug in a Canary and let the chip read finish first.";
   $("local-flash-btn").disabled = !(state.localFile && connected && !state.busy);
   // The rescue bench sits in the same Advanced card and gates on the same
   // connection, so refresh it on every pass through here.
@@ -4668,26 +4812,24 @@ async function onRescueRestore() {
   const port = state.port, chip = state.chip, flashBytes = state.flashBytes;
   state.busy = true;
   rescueButtons(false);
-  let path = null;
+  // The OS open panel is raised from Rust (pick_local_file), which answers
+  // an opaque handle for the chosen file; write_local_image takes that
+  // handle, never a path, so nothing in the webview can name a file.
+  let picked = null;
   try {
-    path = await window.__TAURI__.dialog.open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: "Firmware image or backup", extensions: ["bin"] }],
-    });
+    picked = await invoke("pick_local_file", { kind: "restore" });
   } catch (e) {
     setStatus("rescue-result", String(e), "err");
     cancelRescue();
     return;
   }
-  if (!path) { cancelRescue(); return; }
-  const name = String(path).split(/[\\/]/).pop();
+  if (!picked) { cancelRescue(); return; }
+  const name = picked.name;
   let ok = false;
   try {
     ok = await window.__TAURI__.dialog.confirm(
-      `Write ${name} to the ${chip} on ${port}?\n\nThis overwrites the whole chip ` +
-      `from offset 0. A backup or a merged factory .bin is right; an app-only ` +
-      `build is refused before anything is written.`,
+      `Write ${name} to the ${chip} on ${port}?\n\nThis overwrites the whole chip. ` +
+      `A backup or a factory .bin is right; an app-only build is refused.`,
       { title: "Restore / write a .bin", kind: "warning" });
   } catch (_) {
     ok = window.confirm(`Write ${name} to the ${chip} on ${port}?`);
@@ -4697,7 +4839,7 @@ async function onRescueRestore() {
     noteBoardWritten(); // the image going on is not the one the passport read
     await invoke("write_local_image", {
       port,
-      path,
+      handle: picked.handle,
       flashSize: flashBytes || null, // optional fit-check; the shape guard runs regardless
       baud: flashBaud(),
     });
@@ -4716,9 +4858,8 @@ async function onRescueErase() {
   let ok = false;
   try {
     ok = await window.__TAURI__.dialog.confirm(
-      `Erase the entire ${chip} on ${port}?\n\nThis wipes everything — including ` +
-      `the board's Ed25519 identity key and saved Wi-Fi. Do this before selling ` +
-      `or giving a board away. Back it up first if you might want any of it back.`,
+      `Erase the entire ${chip} on ${port}?\n\nThis wipes everything, including the ` +
+      `identity key and saved Wi-Fi. Back it up first if you might want it back.`,
       { title: "Erase the whole chip", kind: "warning" });
   } catch (_) {
     ok = window.confirm(`Erase the entire ${chip}? This destroys the identity key.`);
@@ -4752,7 +4893,7 @@ async function onHealthCheck() {
   // Its espflash reads are deliberately captured (streaming them would bury
   // the console), so the strip's sweep + elapsed clock are the liveness here.
   const strip = opFor(con);
-  strip.begin("Reading the board's story — nothing is changed…");
+  strip.begin("Reading the board (nothing is changed)…");
   strip.indet();
   const unlisten = await listen("health:log", (ev) => appendFlashLog(con, ev.payload));
   try {
@@ -4786,6 +4927,15 @@ const DESCRIPTOR_DATE_NOTE =
   "The date is the one in the image’s app descriptor. On an Arduino build, every SecuraCV " +
   "release included, that is when the Arduino core was built, not this firmware, so it says " +
   "nothing about when the board was flashed.";
+
+// A descriptor that names the Arduino core (`arduino-lib-builder`, with the
+// core's ESP-IDF version where a firmware version goes) is every SecuraCV
+// release up to 2.4.17, a SecuraCV build made outside a release, or any other
+// Arduino sketch, so the passport shows neither string as the firmware's. The
+// browser's ARDUINO_READBACK_NOTE (flash.js) is the same sentence
+// (desktop_parity.test.js).
+const ARDUINO_READBACK_NOTE =
+  "SecuraCV releases up to 2.4.17 read this way too, so its version can’t be read off the board.";
 
 // Build the report DOM from the object the backend returns. Everything read off
 // flash (project names, versions, labels) goes in via textContent, never HTML.
@@ -4868,8 +5018,7 @@ function renderHealthReport(r) {
       r.witness.provisioned ? "ok" : null);
     row("Wi-Fi settings", r.witness.wifiConfigured ? "stored" : "none");
     box.append(h("p", "muted",
-      "Presence only — the identity key and Wi-Fi password are never shown or saved; " +
-      "the report notes only whether they exist."));
+      "Keys and passwords are never shown or saved; only whether they exist."));
   }
 
   if (r.partitions && r.partitions.length) {
@@ -4924,25 +5073,24 @@ async function onSaveHealthReport(r) {
 }
 
 async function onPickLocalFile() {
-  let path = null;
+  // The OS open panel is raised from Rust (pick_local_file) and answers an
+  // opaque handle; inspect_local_file and flash_local_file take the handle,
+  // never a path, so nothing in the webview can name a file of its own.
+  let picked = null;
   try {
-    path = await window.__TAURI__.dialog.open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: "Factory firmware image", extensions: ["bin"] }],
-    });
+    picked = await invoke("pick_local_file", { kind: "factory" });
   } catch (e) {
     setStatus("local-result", String(e), "err");
     return;
   }
-  if (!path) return;
+  if (!picked) return;
   setStatus("local-result", "");
   $("local-name").textContent = "reading…";
   try {
     // Size + SHA-256 are computed and SHOWN before anything is written, so
     // the confirm is over a named, fingerprinted file — never a blind path.
-    const info = await invoke("inspect_local_file", { path });
-    state.localFile = { path, name: String(path).split(/[\\/]/).pop(), ...info };
+    const info = await invoke("inspect_local_file", { handle: picked.handle });
+    state.localFile = { handle: picked.handle, name: picked.name, ...info };
     $("local-name").textContent = state.localFile.name;
     $("local-size").textContent = state.localFile.size.toLocaleString() + " B";
     $("local-sha").textContent = state.localFile.sha256;
@@ -4956,11 +5104,8 @@ async function onPickLocalFile() {
       // needs depends on the chip, which may not be read yet —
       // flash_local_file checks it against the connected one.
       magic.textContent =
-        "⚠ This file has no 0xE9 — the ESP32's own “program starts here” " +
-        "marker — where a factory image keeps its bootloader (the first " +
-        "byte, or 4 KB in for a classic ESP32). An ESP32, S3, C3 or C6 " +
-        "wouldn't start from it, so the write will be refused before " +
-        "anything is written.";
+        "⚠ No bootloader marker (0xE9) where a factory image keeps one. " +
+        "The board wouldn't start from this file, so the write will be refused.";
     }
     $("local-info").classList.remove("hidden");
   } catch (e) {
@@ -5027,7 +5172,7 @@ async function onFlashLocalFile() {
     const receipt = await invoke("flash_local_file", {
       port: state.port,
       baud: state.catalog.flash_baud || 921600,
-      path: file.path,
+      handle: file.handle,
       expectedSize: file.size,
       expectedSha256: file.sha256,
       detectedChip: state.chip,
@@ -5038,8 +5183,8 @@ async function onFlashLocalFile() {
     renderReceipts();
     setStatus(
       "local-result",
-      `Write confirmed. ${file.name} is on the board — local-file ` +
-      `(fingerprint only), SHA-256 ${receipt.installed_sha256.slice(0, 16)}….`,
+      `Write confirmed. ${file.name} is on the board ` +
+      `(SHA-256 ${receipt.installed_sha256.slice(0, 16)}…).`,
       "ok"
     );
     logEvent("ok", `Local file ${file.name} flashed`);
@@ -5190,7 +5335,7 @@ function onSenseTuneLine(line) {
       if ([...sel.options].some((o) => o.value === v)) sel.value = v;
     }
     if (typeof cfg.raw === "boolean") $("sense-raw").checked = cfg.raw;
-    badge.textContent = "LIVE — knobs synced with the board";
+    badge.textContent = "LIVE — synced";
     return;
   }
   const verdict = /^\[tune\]\s+(ok|err)\s+(.*)$/.exec(String(line).trim());
@@ -5420,10 +5565,9 @@ function hideProveRow() {
 // catalog describes it.
 const DESKTOP_PROVE_REAL = {
   "bench-radar": {
-    label: "👋 Feel it sense — its live lines and the radar's knobs →",
-    how: "The serial monitor streams the radar's presence lines live off the USB console, " +
-      "and the tuning panel beside it sets every reflex. The browser Lab's radar bench " +
-      "draws the same lines as presence, bands and vitals.",
+    label: "👋 Watch it sense →",
+    how: "The serial monitor streams the radar's presence lines live, and the tuning " +
+      "panel beside it sets every reflex.",
   },
 };
 
@@ -5457,10 +5601,8 @@ async function proveReal(product, kind) {
     // The camera bench lives on the MODULE's own USB-C port; the watcher
     // recognizes the module there and opens its flow and bench by itself.
     $("prove-how").textContent =
-      "The camera bench is on the camera module's own USB-C port (the wide one by the " +
-      "Grove socket): move the cable there and this app recognizes the module, and its " +
-      "live bench — boxes, the confidence meter and the two on-module dials — starts " +
-      "from the module section.";
+      "The camera bench runs on the module's own USB-C port (the wide one by the Grove " +
+      "socket). Move the cable there and the live preview starts from the module section.";
     return;
   }
   if (!state.monitoring) await startMonitor();
@@ -5521,7 +5663,7 @@ function renderMonitorBauds() {
   for (const b of bauds) {
     const o = document.createElement("option");
     o.value = String(b);
-    o.textContent = b === def ? `${b} (picked for your Canary)` : String(b);
+    o.textContent = b === def ? `${b} (default)` : String(b);
     sel.appendChild(o);
   }
   sel.value = keep && bauds.includes(Number(keep)) ? keep : String(def);
@@ -5653,7 +5795,7 @@ async function startMonitor(opts) {
   $("serial-monitor").classList.remove("hidden");
   $("serial-console").textContent = "";
   clearBootDiagnosis(); // a fresh boot gets a fresh verdict
-  $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
+  $("monitor-status").textContent = "Waiting for the board…";
   renderSenseTune(); // the radar tuning suite rides the monitor on Sense boards
   renderWapField();  // …and the field bench on a WAP
   renderMonitorCmds(); // …and the command chips of the firmware on the bench
@@ -5806,7 +5948,7 @@ const OP_STAGES = [
   // catch): every later stage and every write frame was dropped on a dead
   // controller, which is precisely the looks-stuck failure this strip exists
   // to prevent.
-  ["→ safety copy first", "Safety copy — reading the whole chip before anything is written…", "zero"],
+  ["→ safety copy first", "Safety copy — reading the whole chip…", "zero"],
   // "indet", not "zero": the health check's reads are captured (no frames
   // ever stream), so its bar sweeps; a backup's first streamed frame takes
   // the bar over immediately.
@@ -5815,8 +5957,8 @@ const OP_STAGES = [
   ["→ downloading", "Downloading the signed image…", "zero"],
   // Coarse words only — a specific number would read like a benchmark
   // nobody ran; erase time grows with the die and varies by vendor.
-  ["→ first contact", "Erasing the whole chip — the chip stays silent until it finishes (small chips take seconds; big ones can run a minute or more)…", "indet"],
-  ["→ erasing the whole chip", "Erasing the whole chip — the chip stays silent until it finishes (small chips take seconds; big ones can run a minute or more)…", "indet"],
+  ["→ first contact", "Erasing the whole chip — it stays silent until it finishes (seconds to a minute or more)…", "indet"],
+  ["→ erasing the whole chip", "Erasing the whole chip — it stays silent until it finishes (seconds to a minute or more)…", "indet"],
   ["✓ chip erased", "Chip erased ✓", null],
   ["bytes staged", "Writing firmware to the board…", "zero"],
   ["→ writing ", null, "zero"],
@@ -5829,6 +5971,175 @@ const OP_STAGES = [
   ["✓ read complete", "Read complete ✓", "full"],
 ];
 const opRegistry = {}; // console element id → controller
+
+// ── the install journey: every step named up front, ticked off with its time ──
+// Parity with the browser flasher's progressCard.journey (flash-core.js
+// installJourney): the rows are listed before the first step starts, the
+// active one times itself live, finished ones keep their real duration, and
+// the clock line adds "about N left" once the active step's own bar gives a
+// rate. The desktop learns where it is from the same narration lines the op
+// strip already reads (JOURNEY_MARKS), so no backend change is needed.
+//   [line prefix, action, step key]
+const JOURNEY_MARKS = [
+  ["→ safety copy first", "start", "backup"],
+  ["✓ backup saved", "done", "backup"],
+  ["⚠ Couldn't take the safety copy", "skip", "backup"],
+  ["→ resolving", "start", "download"],
+  ["→ downloading", "start", "download"],
+  ["✓ release verified", "done", "download"],
+  ["✓ release checked", "done", "download"],
+  ["→ first contact", "start", "erase"],
+  ["✓ chip erased", "done", "erase"],
+  ["bytes staged", "write-unless-erase", "write"],
+  ["✓ chip write confirmed", "done", "write"],
+];
+
+function installJourneySteps({ backup, erase }) {
+  const steps = [];
+  if (backup) steps.push({ key: "backup", label: "Save a safety copy" });
+  steps.push({ key: "download", label: "Download and check the signed image" });
+  if (erase) steps.push({ key: "erase", label: "Erase the whole chip" });
+  steps.push({ key: "write", label: "Write the firmware and confirm it" });
+  return steps;
+}
+
+// "1:05" — one clock face for the strip and the rows.
+function clockFace(seconds) {
+  const s = Math.max(0, Math.floor(seconds || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// The same words as flash-core.js journeyClockLine.
+function journeyClockLine(elapsedSeconds, etaSeconds) {
+  const head = clockFace(elapsedSeconds);
+  if (etaSeconds == null || !Number.isFinite(etaSeconds)) return head;
+  if (etaSeconds < 5) return `${head} · almost done`;
+  if (etaSeconds < 60) return `${head} · about ${Math.max(5, Math.round(etaSeconds / 5) * 5)} s left overall`;
+  return `${head} · about ${clockFace(Math.round(etaSeconds))} left overall`;
+}
+
+// The last install of this product on this computer (per-viewer, never a
+// promise; the browser keeps its own under the same key name).
+const INSTALL_TIMES_KEY = "canary.flash.installTimes.v1";
+function installTimeKey(productId) {
+  return productId ? `${productId}|${state.chip || ""}|${state.flashBytes || 0}` : null;
+}
+function lastInstallText(productId) {
+  const k = installTimeKey(productId);
+  if (!k) return "";
+  try {
+    const secs = JSON.parse(localStorage.getItem(INSTALL_TIMES_KEY) || "{}")[k];
+    return secs > 0 ? `Last install on this computer took ${clockFace(secs)}.` : "";
+  } catch (_) { return ""; }
+}
+function rememberInstallTime(productId, seconds) {
+  const k = installTimeKey(productId);
+  if (!k || !(seconds > 0)) return;
+  try {
+    const all = JSON.parse(localStorage.getItem(INSTALL_TIMES_KEY) || "{}");
+    all[k] = Math.round(seconds);
+    localStorage.setItem(INSTALL_TIMES_KEY, JSON.stringify(all));
+  } catch (_) {}
+}
+
+function journeyFor(wrap, steps, note) {
+  wrap.querySelectorAll(".op-journey, .op-journey-note").forEach((n) => n.remove());
+  const list = document.createElement("ol");
+  list.className = "op-journey";
+  list.setAttribute("aria-label", "Install steps");
+  const rows = new Map();
+  for (const st of steps) {
+    const li = document.createElement("li");
+    li.className = "is-pending";
+    const mark = document.createElement("span"); mark.className = "op-journey-mark";
+    mark.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span"); label.className = "op-journey-label";
+    label.textContent = st.label;
+    const time = document.createElement("span"); time.className = "op-journey-time";
+    li.append(mark, label, time);
+    list.append(li);
+    rows.set(st.key, { st, li, time, t0: 0, secs: 0, state: "pending" });
+  }
+  wrap.prepend(list);
+  if (note) {
+    const p = document.createElement("p"); p.className = "op-journey-note"; p.textContent = note;
+    list.after(p);
+  }
+  const t0 = Date.now();
+  let active = null, fracAt = null; // fracAt: {t, f} where the active bar started counting
+  let eta = null;
+  const set = (r, cls) => {
+    r.li.className = cls;
+    r.state = cls.slice(3);
+    if (cls === "is-active") r.li.setAttribute("aria-current", "step");
+    else r.li.removeAttribute("aria-current");
+  };
+  const api = {
+    start(key) {
+      const r = rows.get(key);
+      if (!r || r.state === "done") return;
+      if (active && active !== key) api.done(active);
+      active = key; fracAt = null; eta = null;
+      r.t0 = Date.now();
+      set(r, "is-active");
+      r.time.textContent = "0:00";
+    },
+    done(key) {
+      const r = rows.get(key);
+      if (!r || r.state === "done") return;
+      if (r.t0) r.secs = (Date.now() - r.t0) / 1000;
+      set(r, "is-done");
+      r.time.textContent = r.t0 ? clockFace(r.secs) : "";
+      if (active === key) { active = null; eta = null; }
+    },
+    skip(key, why) {
+      const r = rows.get(key);
+      if (!r || r.state === "done") return;
+      set(r, "is-skipped");
+      r.time.textContent = why || "skipped";
+      if (active === key) { active = null; eta = null; }
+    },
+    // The active step's bar: a rate from its own progress, never a constant.
+    frac(f) {
+      if (!active || !(f > 0)) return;
+      const now = Date.now();
+      if (!fracAt || f < fracAt.f) { fracAt = { t: now, f }; return; }
+      const df = f - fracAt.f, dt = (now - fracAt.t) / 1000;
+      if (df > 0.02 && dt > 1) eta = (1 - f) * dt / df;
+    },
+    feed(line) {
+      const t = String(line).trim();
+      for (const [marker, action, key] of JOURNEY_MARKS) {
+        if (!t.startsWith(marker) && !(marker === "bytes staged" && t.includes(marker))) continue;
+        if (action === "start") api.start(key);
+        else if (action === "done") api.done(key);
+        else if (action === "skip") api.skip(key, "couldn't read — continuing");
+        else if (action === "write-unless-erase") {
+          if (active === "download") api.done("download");
+          if (!rows.has("erase")) api.start(key);
+        }
+        if (marker === "✓ chip erased") api.start("write");
+        return;
+      }
+    },
+    tick() {
+      const r = active && rows.get(active);
+      if (r && r.t0) r.time.textContent = clockFace((Date.now() - r.t0) / 1000);
+    },
+    // "left overall" only when nothing is left after the active step: espflash
+    // gives a rate for the step it is running, and a backup's or download's
+    // own estimate says nothing about the erase and write still to come.
+    clockLine(quiet) {
+      const last = steps.length && active === steps[steps.length - 1].key;
+      return journeyClockLine((Date.now() - t0) / 1000, quiet || !last ? null : eta);
+    },
+    finish() {
+      if (active) api.done(active);
+      return (Date.now() - t0) / 1000;
+    },
+  };
+  return api;
+}
 
 function opFor(con) {
   if (opRegistry[con.id]) return opRegistry[con.id];
@@ -5857,6 +6168,22 @@ function opFor(con) {
     wrap.append(row, bar);
     con.before(wrap);
   }
+  // The heartbeat: blinks each time espflash or the board says anything, so
+  // "it's alive" is visible, not implied by the clock.
+  const beatEl = document.createElement("span");
+  beatEl.className = "op-beat";
+  beatEl.setAttribute("aria-hidden", "true");
+  beatEl.title = "blinks each time the board answers";
+  stageEl.before(beatEl);
+  let lastBeat = 0;
+  const beat = () => {
+    const now = Date.now();
+    if (now - lastBeat < 160) return;
+    lastBeat = now;
+    beatEl.classList.remove("is-on");
+    void beatEl.offsetWidth;
+    beatEl.classList.add("is-on");
+  };
   let t0 = 0, lastSignal = 0, ticker = null;
   const mmss = (ms) => {
     const s = Math.floor(ms / 1000);
@@ -5864,7 +6191,15 @@ function opFor(con) {
   };
   const ctl = {
     active: false,
+    journey: null,
+    // List the install's steps up front (journeyFor); null clears it.
+    setJourney(steps, note) {
+      wrap.querySelectorAll(".op-journey, .op-journey-note").forEach((n) => n.remove());
+      this.journey = steps ? journeyFor(wrap, steps, note) : null;
+      return this.journey;
+    },
     begin(stageText) {
+      this.setJourney(null); // a journey belongs to one run; the flow that wants one sets it after begin()
       this.active = true;
       t0 = lastSignal = Date.now();
       wrap.classList.remove("hidden");
@@ -5876,13 +6211,17 @@ function opFor(con) {
       ticker = setInterval(() => {
         if (!this.active) { clearInterval(ticker); return; }
         const now = Date.now();
-        elapsedEl.textContent = mmss(now - t0) +
-          (now - lastSignal > 8000 ? " — still working" : "");
+        const quiet = now - lastSignal > 8000;
+        if (this.journey) this.journey.tick();
+        elapsedEl.textContent = (this.journey ? this.journey.clockLine(quiet) : mmss(now - t0)) +
+          (quiet ? " — still working" : "");
       }, 1000);
     },
-    stage(text) { lastSignal = Date.now(); stageEl.textContent = text; },
+    stage(text) { lastSignal = Date.now(); beat(); stageEl.textContent = text; },
     frac(f) {
       lastSignal = Date.now();
+      beat();
+      if (this.journey) this.journey.frac(f);
       fillEl.classList.remove("indet");
       fillEl.style.width = (Math.max(0, Math.min(1, f)) * 100).toFixed(1) + "%";
     },
@@ -5891,6 +6230,7 @@ function opFor(con) {
     // flash's own narration becomes the stage.
     feedLine(line) {
       if (!this.active) return;
+      if (this.journey) this.journey.feed(line);
       const f = progressFromFrame(line);
       if (f != null) { this.frac(f); return; }
       const t = String(line).trim();
@@ -5903,6 +6243,7 @@ function opFor(con) {
         return;
       }
       lastSignal = Date.now(); // any output at all is a sign of life
+      beat();
     },
     end() {
       this.active = false;
@@ -6038,20 +6379,38 @@ function requiresLiveReceipt(product) {
 }
 
 // ── self-update ─────────────────────────────────────────────────────────────
-// The update's own release notes, rendered safely: escape everything first,
-// then re-allow exactly two bits of markdown the notes use — `- ` bullets and
-// `**bold**` — so the banner can say WHAT is changing, not just a number.
+// The update's own release notes arrive hard-wrapped (a `- ` bullet runs on
+// over indented lines), so the lines are joined back into their paragraph or
+// bullet first. Read line by line, every continuation line landed in one
+// paragraph above a list of cut-off first lines. The Lab's noteBlocks
+// (lab-settings.js) is the same function; lab_settings.test.js holds them equal.
+function noteBlocks(notes) {
+  const blocks = [];
+  let cur = null;
+  for (const raw of String(notes || "").split("\n")) {
+    const line = raw.trim();
+    if (!line) cur = null;
+    else if (line.startsWith("- ")) blocks.push(cur = { item: true, text: line.slice(2) });
+    else if (cur) cur.text += " " + line;
+    else blocks.push(cur = { item: false, text: line });
+  }
+  return blocks;
+}
+
+// Rendered safely: escape everything first, then re-allow the three marks the
+// notes use, **bold**, `code` and *italic* (the Lab's notesNode reads the
+// same pattern). Each bullet is one line that opens on a click (styles.css
+// .update-notes summary), so the banner says WHAT is changing as a list of
+// headlines, not a wall.
 function notesHtml(notes) {
-  const lines = String(notes || "").split("\n").map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return "";
-  const li = [];
-  const p = [];
-  const bold = (s) => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  lines.forEach((l) => {
-    if (l.startsWith("- ")) li.push(`<li>${bold(l.slice(2))}</li>`);
-    else p.push(bold(l));
-  });
-  return (p.length ? `<p>${p.join(" ")}</p>` : "") + (li.length ? `<ul>${li.join("")}</ul>` : "");
+  const marks = (s) => esc(s).replace(/\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/g,
+    (_, b, c, i) => (b ? `<b>${b}</b>` : c ? `<code>${c}</code>` : `<i>${i}</i>`));
+  let out = "", inList = false;
+  for (const b of noteBlocks(notes)) {
+    if (b.item !== inList) { out += inList ? "</ul>" : "<ul>"; inList = b.item; }
+    out += b.item ? `<li><details><summary>${marks(b.text)}</summary></details></li>` : `<p>${marks(b.text)}</p>`;
+  }
+  return out + (inList ? "</ul>" : "");
 }
 
 async function checkForUpdate(manual = false) {
@@ -6122,23 +6481,23 @@ const REPO = "https://github.com/kmay89/securaCV";
 const ATLAS_FAMILY_GROUP = "The other windows onto your fleet";
 const ATLAS_LINKS = [
   ["Your Canaries on the web", [
-    ["Home", "The privacy-first witness, start to finish.", SITE + "/"],
-    ["Meet the fleet", "Every Canary and what each one witnesses.", SITE + "/fleet"],
-    ["Ecosystem", "How the Canaries, the Hub and Home Assistant fit.", SITE + "/ecosystem"],
-    ["Gallery", "Real installs and the events they caught.", SITE + "/gallery"],
-    ["Compare", "SecuraCV next to the subscription cameras.", SITE + "/compare"],
+    ["Home", "The project, start to finish.", SITE + "/"],
+    ["What you can have today", "Only what exists right now: builds, apps, the store.", SITE + "/today"],
+    ["Home Assistant", "Keep Frigate, add proof: the witness log beside your cameras.", SITE + "/home-assistant"],
+    ["Your Fleet", "Who your Canary hears nearby, live.", SITE + "/fleet"],
+    ["Compare", "SecuraCV next to subscription cameras.", SITE + "/compare"],
   ]],
   ["Learn & try", [
     ["How it works", "The witness kernel, in plain language.", SITE + "/how-it-works"],
     ["The Lab", "The browser flasher this app grew from.", SITE + "/lab"],
-    ["Test bench", "Wire a real peripheral to the bench firmware — poke it, read its serial.", SITE + "/playground"],
-    ["Checkup", "Point it at a board and read its health.", SITE + "/checkup"],
+    ["Test bench", "Wire a peripheral to the bench firmware.", SITE + "/playground"],
+    ["Canary Doctor", "What a healthy first boot reports, emulated.", SITE + "/checkup"],
   ]],
   ["Build & extend", [
-    ["Download", "Get this app for every platform.", SITE + "/download"],
-    ["Plugin", "Wire a Canary into your own stack.", SITE + "/plugin"],
-    ["Maker", "Roll your own from parts.", SITE + "/maker"],
-    ["Factory", "How a Canary is born: the factory image and its birth certificate.", SITE + "/factory"],
+    ["Download", "This app, for Mac and Linux.", SITE + "/download"],
+    ["Plug It In", "What a Canary shows your computer over USB (a preview build).", SITE + "/plugin"],
+    ["Build one", "Five steps: pick, print, source, flash, check.", SITE + "/maker"],
+    ["Factory", "How a Canary is born.", SITE + "/factory"],
   ]],
   // The rest of the family, named from the flashing bench — the moment of
   // maximum investment used to end at a dead end: this app derives birth
@@ -6147,15 +6506,15 @@ const ATLAS_LINKS = [
   // (non-negotiable #4): a built-and-tested app that isn't in a store yet
   // says so instead of implying a download.
   [ATLAS_FAMILY_GROUP, [
-    ["iPhone & Apple Watch app", "The living-with-it companion: honest alerts, the fleet on your wrist. On TestFlight (ask for an invite); App Store release pending.", REPO + "/tree/main/ios"],
-    ["SecuraCV Lab (desktop)", "This app's sibling: the whole Lab as a native app — same benches, offline.", SITE + "/download"],
-    ["The Witness Wall (Apple TV)", "Your fleet's record on the TV — try it on the Your Fleet tab today; the native app is built, App Store availability pending.", REPO + "/blob/main/tvos/RUN_ON_APPLE_TV.md"],
+    ["iPhone & Apple Watch app", "Alerts and your fleet on your wrist. On TestFlight; App Store release pending.", REPO + "/tree/main/ios"],
+    ["SecuraCV Lab (desktop)", "This app's sibling: the whole Lab as a native app.", SITE + "/download"],
+    ["The Witness Wall (Apple TV)", "Your fleet's record on the TV. Try it on the Your Fleet tab; App Store availability pending.", REPO + "/blob/main/tvos/RUN_ON_APPLE_TV.md"],
   ]],
   ["The project", [
-    ["Source on GitHub", "Every line, open. Read it, fork it.", REPO],
+    ["Source on GitHub", "Every line, open.", REPO],
     ["Changelog", "What changed, release by release.", REPO + "/blob/main/CHANGELOG.md"],
-    ["Security", "How issues are handled and disclosed.", REPO + "/blob/main/SECURITY.md"],
-    ["Errer Labs", "The people behind the birds.", SITE + "/#about"],
+    ["Security", "How issues are handled.", REPO + "/blob/main/SECURITY.md"],
+    ["Errer Labs", "The people behind the birds.", SITE + "/about"],
   ]],
 ];
 
@@ -6183,7 +6542,7 @@ function renderAtlas() {
   // Field notes — the embedded lessons, browsable offline.
   const lessons = cat.lessons || [];
   if (lessons.length) {
-    parts.push(`<div class="atlas-group"><h2>Field notes · baked into this build</h2>` +
+    parts.push(`<div class="atlas-group"><h2>Field notes</h2>` +
       lessons.map((l) =>
         `<div class="note-card"><div class="n-stage">${esc(l.stage || "note")}</div>
            <h3>${esc(l.title || "")}</h3><p>${esc(l.body || "")}</p></div>`).join("") +
@@ -6244,7 +6603,7 @@ function renderAbout() {
        ${state.update.notes ? `<div class="update-notes"><b>What's changing</b>${notesHtml(state.update.notes)}</div>` : ""}
        <div class="row"><button class="btn btn-primary btn-small" id="about-update">Update &amp; relaunch</button>
        <button class="btn btn-ghost btn-small" id="about-check">Check again</button></div>`
-    : `<p class="status">You're on the newest build. The app checks on its own — at launch and every few hours — and heals forward; updates are signed and verified before they install.</p>
+    : `<p class="status">You're on the newest build. The app checks at launch and every few hours; updates are signed and checked before they install.</p>
        <div class="row"><button class="btn btn-ghost btn-small" id="about-check">Check now</button></div>`;
 
   // The family footer renders the Atlas' own family cards — found by the
@@ -6270,7 +6629,7 @@ function renderAbout() {
       </span>
       <div>
         <h2>SecuraCV&nbsp;Flasher</h2>
-        <p>The flashing bench as a native app — by <span class="bb-lab">Errer Labs</span>. No browser, no terminal, and you can't brick the board. Its sibling, the <b>SecuraCV Lab</b> app, carries the whole Lab.</p>
+        <p>The flashing bench as a native app, by <span class="bb-lab">Errer Labs</span>. Its sibling, the <b>SecuraCV Lab</b> app, carries the whole Lab.</p>
       </div>
     </div>
 
@@ -6288,15 +6647,15 @@ function renderAbout() {
 
     <section class="card">
       <div class="step-head"><span class="step-n">≡</span><h2>Recent activity</h2></div>
-      <p class="muted">A local record of what this app did — so a failure is visible and recoverable, never silent. Kept on this computer only.</p>
+      <p class="muted">What this app did, kept on this computer only.</p>
       <div class="log-list">${logHtml}</div>
       <div class="row"><button class="btn btn-ghost btn-small" id="about-reset">Reset the app's memory</button></div>
-      <p class="fineprint muted">Reset also forgets the setup profile's saved passwords (from ${esc(secretStore.where())}), every stored device API key, and the fleet book.</p>
+      <p class="fineprint muted">Reset also forgets saved passwords (in ${esc(secretStore.where())}), device API keys, and the fleet book.</p>
     </section>
 
     <section class="card">
       <div class="step-head"><span class="step-n">⌂</span><h2>The family</h2></div>
-      <p class="muted">This app is one window onto your fleet. The others, with honest availability — same cards as the Explore tab, one source.</p>
+      <p class="muted">The other windows onto your fleet.</p>
       <div class="atlas-grid">${familyHtml}</div>
     </section>`;
 
@@ -6568,11 +6927,11 @@ function hatchMoment(product) {
     return {
       kicker: "Vision Canary hatched",
       title: "Your Vision Canary is awake — both boards proved it.",
-      body: "The host reported its signed identity and live Vision I²C module; the WE2 reported the pinned model and completed an inference.",
+      body: "The host reported its signed identity and Vision module; the module ran the pinned model once.",
       steps: [
-        "Put the board where it can see a doorway, then walk through once.",
-        "Open Home Assistant and watch the presence entity flip to detected, then clear.",
-        "The attended module frame above stayed on this computer; deployed events remain presence/boxes only."
+        "Put it where it can see a doorway, then walk through once.",
+        "Watch the presence entity in Home Assistant flip to detected, then clear.",
+        "The frame above stayed on this computer; deployed events are presence and boxes only."
       ]
     };
   }
@@ -6583,11 +6942,11 @@ function hatchMoment(product) {
     return {
       kicker: "Canary hatched",
       title: "Your Sense Canary is listening with radar.",
-      body: "The first satisfying test is motion in empty air: no camera, no mic, just the mmWave witness waking up.",
+      body: "First test: motion in empty air. No camera, no mic.",
       steps: [
-        "Power it from the room where it will live and wait for Home Assistant discovery.",
-        "Stand still for a breath, then walk past it at normal speed.",
-        "Watch presence flip in Home Assistant; on Wellbeing builds, try seated breathing only after the presence card is stable."
+        "Power it in the room where it will live and wait for Home Assistant to discover it.",
+        "Stand still, then walk past it at normal speed.",
+        "Watch presence flip in Home Assistant. On Wellbeing builds, try seated breathing once presence is stable."
       ]
     };
   }
@@ -6598,23 +6957,23 @@ function hatchMoment(product) {
     return {
       kicker: "Canary hatched",
       title: "Your Canary is on its perch.",
-      body: "The magical first proof is local and physical: hand it your Wi-Fi from your phone, open the dashboard, then make one harmless signal it can witness.",
+      body: "Hand it your Wi-Fi from your phone, open the dashboard, then make one harmless signal it can witness.",
       steps: [
-        "Open the SecuraCV iPhone app near it and tap the card that appears — it hands over your Wi-Fi.",
-        "No card? Join the Wi-Fi network it creates, named SecuraCV-, its device type, then four characters (older Canaries: SecuraCV- and four characters), using the key it prints on its serial console at boot (cv-… on a WAP; eight characters on a Sense or Vision) — the setup page opens on its own; if not, open canary.local.",
-        "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
-        "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+        "Open the SecuraCV iPhone app near it and tap the card that appears. It hands over your Wi-Fi.",
+        "No iPhone? Join the Wi-Fi network it creates (SecuraCV-…) with the key it prints on its serial console at boot. The setup page opens by itself; if not, open canary.local.",
+        "Tap Identify so the bird blinks and chirps.",
+        "Knock once near it, or use the acoustic self-test card."
       ]
     };
   }
   return {
     kicker: "Canary hatched",
     title: "Your Canary is on its perch.",
-    body: "The magical first proof is local and physical: join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
+    body: "Join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
     steps: [
-      "Join the Wi-Fi network it creates, named SecuraCV-, its device type, then four characters (older Canaries: SecuraCV- and four characters), using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
-      "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
-      "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+      "Join the Wi-Fi network it creates (SecuraCV-…) with the key it prints on its serial console at boot. The setup page opens by itself; if not, open canary.local.",
+      "Tap Identify so the bird blinks and chirps.",
+      "Knock once near it, or use the acoustic self-test card."
     ]
   };
 }
@@ -6813,7 +7172,7 @@ function hubInit() {
   // non-secret fields.
   $("hub-provision").addEventListener("change", () => {
     $("hub-provision-hint").textContent = $("hub-provision").checked
-      ? "After the flash, keep this app open: it watches for the hub and finishes setup the moment it answers."
+      ? "After the flash, keep this app open; it finishes setup when the hub answers."
       : "";
     hubArm();
   });
@@ -6918,7 +7277,7 @@ function hubInit() {
   listen("hub:mac-auth", () => {
     $("hub-progress-wrap").classList.remove("hidden");
     $("hub-stage").textContent =
-      "👆 Approve the macOS prompt — Touch ID or your password. It's “authopen”, Apple's built-in disk-writing helper (the same one Raspberry Pi Imager uses).";
+      "👆 Approve the macOS prompt (Touch ID or your password). It's “authopen”, Apple's own disk-writing helper.";
     $("hub-console").classList.remove("hidden");
   });
   $("hub-stop-btn").addEventListener("click", async () => {
@@ -6992,9 +7351,8 @@ async function hubMaybeResume() {
     } catch (_) {}
   }
   const accountNote = rec.account && !(hub.pendingAccount && hub.pendingAccount.password)
-    ? "This app was closed before it could finish your Home Assistant account, so if the " +
-      "hub asks you to create one, that's why — its wizard takes a minute and wants the " +
-      "same details you typed when flashing."
+    ? "This app was closed before it could create your Home Assistant account, so the hub " +
+      "may ask you to create one. Use the details you typed when flashing."
     : "";
   if (accountNote) hub.onboardNote = accountNote;
   if (up && !rec.provision) {
@@ -7168,16 +7526,13 @@ function hubCountdownStart(el, startedAt) {
 // staring at a spinner with no next move on either path.
 function hubFindItChecklist() {
   return (
-    "Longer than a normal first boot now. The Pi may well be fine and just hard to find; " +
-    "try these, in order: " +
+    "Longer than a normal first boot. The Pi is probably fine and just hard to find. Try: " +
     "1) Open http://" + HUB_HOST + " from a phone or another computer — some computers " +
-    "can't resolve .local names even when the hub is up (this watcher has the same limit). " +
-    "2) Look in your router's device list for “homeassistant” and open its IP address " +
-    "with :8123 on the end. " +
-    "3) If you set Wi-Fi at flash time, a mistyped network name or password is invisible " +
-    "from outside — plug an ethernet cable into the Pi (it needs no setup at all), or " +
-    "re-flash the card with the Wi-Fi typed fresh. " +
-    "Still watching in the background — if it answers, we'll say so."
+    "can't resolve .local names. " +
+    "2) Find “homeassistant” in your router's device list and open its IP with :8123. " +
+    "3) If you typed Wi-Fi at flash time, a typo is invisible from here — plug in ethernet, " +
+    "or re-flash with the Wi-Fi retyped. " +
+    "Still watching in the background."
   );
 }
 
@@ -7188,7 +7543,7 @@ function hubPresentError(raw) {
   if (msg.startsWith("canceled:")) {
     setStatus(
       "hub-result",
-      "Stopped, no harm done. The card just needs a fresh flash whenever you're ready — type ERASE again to go.",
+      "Stopped, no harm done. Type ERASE again whenever you're ready.",
       ""
     );
     return;
@@ -7196,33 +7551,29 @@ function hubPresentError(raw) {
   let friendly;
   if (msg.includes("read-back verification FAILED")) {
     friendly =
-      "The card and we are telling different stories — it didn't hold what we wrote, which " +
-      "usually means a worn-out or counterfeit card. Best move: try a different card. " +
-      "Nothing else on your computer was touched.";
+      "The card didn't hold what we wrote — usually a worn-out or counterfeit card. " +
+      "Try a different card. Nothing else on your computer was touched.";
   } else if (
     msg.includes("no longer connected") ||
     msg.includes("disappeared") ||
     /write failed after|read-back failed|Input\/output|no such device|not connected/i.test(msg)
   ) {
     friendly =
-      "The card wandered off mid-job (loose reader? bumped cable?). No harm done — plug it back " +
-      "in and type ERASE again; we start clean from the top, with no half-finished leftovers.";
+      "The card disconnected mid-write (loose reader?). No harm done: plug it back in and type ERASE again.";
   } else if (/no space|not enough|ENOSPC/i.test(msg)) {
     friendly =
-      "Your computer ran low on room to stage the image (we need about 6 GB free). Clear a little " +
-      "space and type ERASE to try again — your card wasn't touched.";
+      "Not enough free space to stage the image (about 6 GB needed). Clear some space and " +
+      "type ERASE again. Your card wasn't touched.";
   } else if (msg.includes("download") || /network|timed out|connection/i.test(msg)) {
     friendly =
-      "The internet let us down mid-download — we even tried twice. Your card is untouched, and " +
-      "any part we'd fetched is kept, so a retry picks up quickly. Type ERASE to try again.";
+      "The download failed, twice. Your card is untouched and the part fetched is kept, so a " +
+      "retry is quick. Type ERASE to try again.";
   } else if (msg.includes("no permission") || msg.includes("authorize")) {
     friendly =
-      "Your computer wouldn't let us open the disk — that's it being protective, not broken. " +
-      "The message below says exactly which permission to grant, then try again.";
+      "Your computer wouldn't let us open the disk. The message below names the permission to grant.";
   } else {
     friendly =
-      "Well, that didn't go to plan — our fault, not yours, and your card is fine. " +
-      "The details are below; a retry sorts out most of these.";
+      "That didn't go to plan. Your card is fine; details are below, and a retry fixes most of these.";
   }
   setStatus("hub-result", friendly + "\n\n" + msg, "err");
 }
@@ -7274,7 +7625,7 @@ function hubValidateAccount() {
     // A gentle, non-blocking nudge if they've started a name/username.
     hint.textContent =
       name || user
-        ? "Add a password to pre-make your login and skip Home Assistant's setup wizard — or leave it blank to set up on first boot."
+        ? "Add a password to pre-make your login, or leave it blank to set up on first boot."
         : "";
     return;
   }
@@ -7292,8 +7643,7 @@ function hubValidateAccount() {
       (/[0-9]/.test(pass) ? 1 : 0) + (/[^a-zA-Z0-9]/.test(pass) ? 1 : 0);
     const strength = pass.length >= 16 || (pass.length >= 12 && variety >= 3)
       ? "strong" : pass.length >= 10 ? "decent" : "okay";
-    msg = `Looks good — password strength: ${strength}. Keep this app open after the flash and ` +
-      "it finishes your account the moment the hub comes online.";
+    msg = `Looks good (strength: ${strength}). Keep this app open after the flash.`;
   }
   hub.accountValid = ok;
   hint.textContent = msg;
@@ -7327,6 +7677,9 @@ function hubSaveSettings() {
         display: $("hub-provision-display").checked,
       })
     );
+    // The passwords, only where an OS store exists to hold them: without
+    // one secretStore.set refuses, and the note beside the box says so.
+    if (secretStore.backend === "none") return;
     const ssid = $("hub-ssid").value.trim();
     if (ssid && $("hub-pass").value) {
       secretStore.set(secretStore.key("wifi", ssid), $("hub-pass").value);
@@ -7396,8 +7749,7 @@ async function hubPreflight() {
     if (!pf.staging_ok) {
       const freeGb = (pf.staging_free_bytes / 1024 ** 3).toFixed(1);
       line.textContent =
-        `⚠ Only ${freeGb} GB free for staging — the image needs ~6 GB of room. ` +
-        "Free some space first, or the flash may stop partway.";
+        `⚠ Only ${freeGb} GB free; the image needs about 6 GB. Free some space first.`;
     } else {
       // Linux has no authopen, so nothing prompts: a normal account can't
       // open the raw disk, and the write stops with "no permission to write
@@ -7405,10 +7757,10 @@ async function hubPreflight() {
       // download, not after it.
       line.textContent =
         hub.platform === "macos"
-          ? "Heads up: when the write starts, macOS asks for Touch ID or your password — a prompt from “authopen”, Apple's built-in disk-writing helper. That's expected; approve it and the flash continues."
+          ? "When the write starts, macOS asks for Touch ID or your password (“authopen”, Apple's disk-writing helper). Approve it and the flash continues."
           : hub.platform === "linux"
-          ? "Heads up: on Linux an account outside the disk group can't write a raw disk, and nothing will prompt for a password. " +
-            "If the write stops with “no permission”, run the one line it shows (sudo chown \"$USER\" /dev/…, for that card only) and type ERASE again — INSTALL.md, “Write a Pi hub card (Linux)”."
+          ? "On Linux, an account outside the disk group can't write a raw disk, and nothing prompts for a password. " +
+            "If the write stops with “no permission”, run the one line it shows and type ERASE again (INSTALL.md, “Write a Pi hub card (Linux)”)."
           : "";
     }
   } catch (_) {
@@ -7433,10 +7785,9 @@ function hubStartFirstBoot() {
   $("hub-fb-dot").className = "dot reading";
   $("hub-fb-text").textContent =
     (hub.flashedViaPi
-      ? "Unplug the USB-C cable, then plug your Pi into its own power supply — it stays a plain USB disk until that power-cycle. Watching for it to come online."
-      : "Put the card in your Pi and power it on — watching for it to come online.") +
-    " No monitor or keyboard needed — the hub announces itself on your network by itself." +
-    " First boot takes 10–20 minutes while it sets itself up; the blinking light is normal. Leave it powered if you can (a power cut usually just delays it — worst case is re-flashing). You can walk away, we'll ping you.";
+      ? "Unplug the USB-C cable, then plug your Pi into its own power supply. Watching for it to come online."
+      : "Put the card in your Pi and power it on. Watching for it to come online.") +
+    " First boot takes 10–20 minutes; the blinking light is normal. You can walk away — we'll ping you.";
   $("hub-fb-open").classList.add("hidden");
   $("hub-fb-open").textContent = hubOpenLabel();
   hubRenderQr();
@@ -7463,7 +7814,7 @@ function hubStartFirstBoot() {
       saidPreparing = true;
       $("hub-fb-dot").className = "dot reading";
       $("hub-fb-text").textContent = hubPreparingLine();
-      hubNotify("Your hub is on the network", "It's installing Home Assistant now — the long part. Nothing to do; this app finishes setup when it's ready.");
+      hubNotify("Your hub is on the network", "It's installing Home Assistant now. Nothing to do; this app finishes setup when it's ready.");
     }
     // Past the honest first-boot window with nothing heard AT ALL: swap "be
     // patient" for the go-find-it checklist (see hubFindItChecklist). A hub
@@ -7474,6 +7825,8 @@ function hubStartFirstBoot() {
     }
     if (up) {
       hubStopFirstBoot(true);
+      // The first address the hub answered at, for the change warning.
+      try { await hubResolveAndNote(host, null); } catch (_) {}
       $("hub-fb-dot").className = "dot connected";
       const openBtn = $("hub-fb-open");
       openBtn.classList.remove("hidden");
@@ -7535,11 +7888,39 @@ function hubStartFirstBoot() {
 // both the live watch and a resumed one.
 function hubPreparingLine() {
   return (
-    "Found it — your hub is on the network and installing Home Assistant, which is the long " +
-    "part of first boot (a few minutes; longer on a slow card). Nothing to do: this app keeps " +
-    "watching and finishes setup the moment Home Assistant answers. The SecuraCV iPhone app " +
-    "can finish it too, from anywhere in the house."
+    "Found it. Your hub is on the network and installing Home Assistant, the long part of " +
+    "first boot. Nothing to do; this app finishes setup when it answers."
   );
+}
+
+// The address a hub name answered at the first time it was reached, kept per
+// name so a later answer from somewhere else can be pointed out. Home
+// Assistant mints its own identity on the hub's first boot (nothing this app
+// could stamp at flash time), so the address is the only continuity there
+// is — recorded at the first successful probe, shown and confirmed before
+// the login is ever sent (hub_onboard raises the native dialog).
+const HUB_FIRST_IP_KEY = "securacv.hub.first-ip";
+function hubFirstIps() {
+  try { return JSON.parse(localStorage.getItem(HUB_FIRST_IP_KEY)) || {}; } catch (_) { return {}; }
+}
+function hubRememberIp(host, ip) {
+  try {
+    const all = hubFirstIps();
+    if (!ip || all[host]) return;
+    all[host] = ip;
+    localStorage.setItem(HUB_FIRST_IP_KEY, JSON.stringify(all));
+  } catch (_) { /* memory is a nicety */ }
+}
+// Resolve the hub through the same gate every hub call applies and say where
+// it is; the first success per name is recorded for the change warning.
+async function hubResolveAndNote(host, statusEl) {
+  const ip = await invoke("hub_resolve_hub", { host });
+  const first = hubFirstIps()[host];
+  if (!first) hubRememberIp(host, ip);
+  if (statusEl && first && first !== ip) {
+    statusEl.textContent = `${host} answers at ${ip} now — it was ${first} before. You'll be asked before the login is sent.`;
+  }
+  return { ip, first: first || null };
 }
 
 async function hubRunOnboarding(statusEl, hostOverride) {
@@ -7548,6 +7929,18 @@ async function hubRunOnboarding(statusEl, hostOverride) {
   // Unlike the ssh path, onboarding wants the web port — the backend adds
   // :8123 itself when a cleaned host doesn't carry one.
   const host = hubCleanHost(hostOverride) || HUB_HOST;
+  // Where the name points right now, shown before anything is sent, and
+  // handed to the backend as the address the person saw: it re-resolves,
+  // refuses a different answer, and asks in a native dialog (naming the
+  // previous address when it changed) before the login crosses the LAN.
+  let resolved = null;
+  try { resolved = await hubResolveAndNote(host, statusEl); }
+  catch (e) {
+    hub.onboardNote = "Couldn't work out where " + host + " is on your network (" + e + "). " +
+      "Open the hub; its wizard asks for the same details.";
+    statusEl.textContent = hub.onboardNote;
+    return null;
+  }
   // The watch only hands over once /api/onboarding answers, so these retries
   // cover Core's own hiccups right after it comes up (a restart while it
   // finishes installing itself), not the landing page — hence a longer,
@@ -7560,6 +7953,8 @@ async function hubRunOnboarding(statusEl, hostOverride) {
         name: acct.name,
         username: acct.username,
         password: acct.password,
+        expectedIp: resolved.ip,
+        previousIp: resolved.first,
       });
       // Any report is a definitive answer from the hub — the password's job
       // is done either way, so drop it from memory now. The username stays:
@@ -7569,10 +7964,9 @@ async function hubRunOnboarding(statusEl, hostOverride) {
         hub.onboardNote = null;
         hub.onboardUser = acct.username;
         statusEl.textContent =
-          "Your Home Assistant account is ready — the login is checked and works. " +
+          "Your Home Assistant account is ready and the login works. " +
           "Open http://" + (host === HUB_HOST ? HUB_HOST : host + ":8123") +
-          " and sign in as " + acct.username +
-          "; the password is the one you typed in Step 3. 🐤";
+          " and sign in as " + acct.username + " with the password from Step 3. 🐤";
       } else {
         hub.onboardNote = report.note ||
           "Home Assistant still has a setup step waiting in the browser.";
@@ -7584,8 +7978,8 @@ async function hubRunOnboarding(statusEl, hostOverride) {
       // its API is up. Patience beats an error here.
       if (attempt === attempts) {
         hub.onboardNote =
-          "Couldn't finish your Home Assistant account automatically (" + e + "). " +
-          "Nothing is lost: open the hub and its wizard walks you through the same steps.";
+          "Couldn't create your Home Assistant account automatically (" + e + "). " +
+          "Open the hub; its wizard asks for the same details.";
         statusEl.textContent = hub.onboardNote;
         return null;
       }
@@ -7600,8 +7994,8 @@ async function hubRunOnboarding(statusEl, hostOverride) {
 // The kernel add-on's panel carries that as one click; "finished" must say so
 // rather than declare a hub done with its integration uninstalled.
 const HUB_INTEGRATION_CLICK =
-  "One click is still yours: open the SecuraCV panel in the hub's sidebar and press " +
-  "Install the integration and restart Home Assistant.";
+  "One click left: open the SecuraCV panel in the hub's sidebar, press Install the " +
+  "integration, and restart Home Assistant.";
 
 // ── self-setup over the hub's service console ───────────────────────────────
 // The card carried the bundle; the hub is answering; now this computer is the
@@ -7647,7 +8041,7 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverr
       const waitS = 45;
       statusEl.textContent =
         (report.note || "The hub isn't ready for setup yet.") +
-        ` Trying again in ${waitS} seconds (${attempt} of ${retries}) — nothing to do.`;
+        ` Trying again in ${waitS} seconds (${attempt} of ${retries}).`;
       el.textContent += `\n— not ready yet; trying again in ${waitS} s —\n`;
       el.scrollTop = el.scrollHeight;
       await new Promise((r) => setTimeout(r, waitS * 1000));
@@ -7656,19 +8050,19 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverr
       statusEl.textContent =
         "Setup finished — Mosquitto, MQTT, Frigate, and securaCV are installed" +
         (withPihole
-          ? ", plus Pi-hole. To switch Pi-hole on, point your router's DNS at the hub's IP — until then it sits idle."
+          ? ", plus Pi-hole (point your router's DNS at the hub's IP to switch it on)."
           : ".") +
         (withDisplay
-          ? " The hub-display app is installed too — one step is yours: make the screen its own Home Assistant user (Settings → People → Users, Administrator off — a screen only views dashboards), then open Settings → Apps → HAOS Kiosk Display → Configuration, enter that login, and press Start. The attached screen lights up with your dashboard."
+          ? " The hub display is installed too; give the screen its own Home Assistant user (Settings → People → Users, Administrator off), then enter that login under Settings → Apps → HAOS Kiosk Display → Configuration and press Start."
           : "") +
         " Open your hub" +
         (hub.onboardUser
-          ? " — sign in as " + hub.onboardUser + "; the password is the one you typed in Step 3 —"
+          ? " — sign in as " + hub.onboardUser + " with the password from Step 3 —"
           : "") +
         " and the SecuraCV panel is waiting. " + HUB_INTEGRATION_CLICK + " 🐤" +
         // A clean install must not bury an account that still needs a human —
         // carry the onboarding run's note over the finish line.
-        (hub.onboardNote ? " One thing about your account: " + hub.onboardNote : "");
+        (hub.onboardNote ? " About your account: " + hub.onboardNote : "");
       hubNotify(
         "Hub setup finished",
         "Broker, MQTT, Frigate, and securaCV are installed — open " + HUB_HOST + ". " + HUB_INTEGRATION_CLICK
@@ -7804,7 +8198,7 @@ async function hubLoadPlan() {
       : "against Home Assistant's published checksum";
     const gb = Math.round(hub.plan.min_card_bytes / 1024 ** 3);
     $("hub-card-req").textContent =
-      "You'll need a " + (gb + 4) + " GB or larger card — 64 GB recommended.";
+      "Card: " + (gb + 4) + " GB or larger (64 GB recommended).";
     // The USB-C on-ramp hint is per-family (CMs use the IO-board jumper;
     // the Pi 400 needs a reader) — say the right thing for the picked board.
     const board = hub.boards.find((b) => b.id === hub.boardId);
@@ -7941,8 +8335,7 @@ function hubArm() {
   if (contradiction) {
     setStatus(
       "hub-result",
-      "You've typed Wi-Fi but chosen wired ethernet — the Wi-Fi would be dropped. " +
-        "Untick ethernet to use the Wi-Fi, or clear the fields to go wired.",
+      "You typed Wi-Fi but chose ethernet. Untick ethernet to use the Wi-Fi, or clear the fields.",
       "err",
     );
   }
@@ -8045,16 +8438,16 @@ function hubShowHatch(receipt) {
   // the card is touched, so reaching this screen without it means none was
   // asked for. There is no "seeded but maybe not" state left to explain.
   const wifiLine = receipt.wifi_seeded
-    ? " Your Wi-Fi went into the image before the write, so the same read-back covers it."
+    ? " Your Wi-Fi is on the card."
     : " Plug in ethernet before you power it on.";
   const acctLine = receipt.account_note ? " " + receipt.account_note : "";
   const provLine = receipt.provision_note ? " " + receipt.provision_note : "";
   // The same two checksums hub.rs names: the repo pin when the plan has one,
   // else Home Assistant's published one — never "pinned" for an unpinned plan.
   const cacheLine = receipt.used_cache
-    ? " (reused your local copy — it matched " +
+    ? " (Reused your local copy; it matched " +
       (hub.plan && hub.plan.pinned ? "this release's pinned checksum" : "Home Assistant's published checksum") +
-      ", so no re-download.)"
+      ".)"
     : "";
   // Shown whenever present. Advice rather than a warning now: nothing is
   // written to the card after the read-back, so a card that wouldn't
@@ -8071,67 +8464,49 @@ function hubShowHatch(receipt) {
   // reader moves to the Pi; the Pi-over-USB-C path has nothing to move — but
   // it stays a plain USB disk until it's power-cycled onto its own supply.
   const bootStep = hub.flashedViaPi
-    ? "Nothing to move — the storage we just wrote is already inside your Pi. It's still in " +
-      "“act as a disk” mode though, so it won't start on its own: unplug the USB-C cable " +
-      "from this computer, then plug the Pi into its normal power supply. That power-cycle " +
-      "is what starts the first boot."
-    : "Take the card out of the reader and put it in your Raspberry Pi (or connect the SSD), " +
-      "then power it on.";
+    ? "Nothing to move: the storage is already in your Pi. Unplug the USB-C cable from this " +
+      "computer, then plug the Pi into its own power supply. That starts the first boot."
+    : "Put the card in your Raspberry Pi (or connect the SSD) and power it on.";
   // With the self-setup seed on the card, the broker/MQTT installs below are
   // not the user's job — this app does them the moment the hub answers.
   const selfSetup = receipt.provision_seeded;
   const steps = [
     bootStep,
-    "First boot usually takes under 10 minutes while Home Assistant unpacks and downloads " +
-      "itself, though a slow card can stretch it to 20 — LED activity is it working, not a " +
-      "problem. Best to leave it plugged in for those minutes; if power does get cut, it " +
-      "nearly always recovers on the next boot, and the true worst case is simply " +
-      "re-flashing this card.",
+    "First boot takes 10–20 minutes; LED activity is normal. Leave it powered. If power is " +
+      "cut it almost always recovers, and the worst case is re-flashing this card.",
     ...(selfSetup
       ? [
-          "Keep this app open. The moment Home Assistant answers, this app connects to the " +
-            "hub's service console and installs everything itself — Mosquitto broker, the MQTT " +
-            "connection, Frigate, and securaCV" +
+          "Keep this app open. When Home Assistant answers, this app installs Mosquitto, MQTT, " +
+            "Frigate, and securaCV" +
             ($("hub-provision-pihole").checked ? ", plus Pi-hole" : "") +
-            ($("hub-provision-display").checked ? ", plus the hub-display app" : "") +
-            " — narrated in the console below. Nothing to click on the hub. Closed this app? " +
-            "Open the SecuraCV iPhone app instead: its Set up guide finds the hub on your Wi-Fi " +
-            "and does the same steps from your pocket.",
+            ($("hub-provision-display").checked ? ", plus the hub display" : "") +
+            " itself, narrated in the console below. If this app is closed, the SecuraCV " +
+            "iPhone app's Set up guide does the same steps.",
         ]
       : []),
     ...(selfSetup && $("hub-provision-pihole").checked
       ? [
-          "When setup finishes, switch Pi-hole on by pointing your router's DNS at the hub's " +
-            "IP (in the router's DHCP settings). From then on, Pi-hole's page shows every " +
-            "domain every device on your network asks for — the way to see that nothing, " +
-            "Canaries included, is quietly talking out — and known ad/tracker domains are " +
-            "refused for the whole house. Until the router change it sits idle.",
+          "To switch Pi-hole on, point your router's DNS at the hub's IP (in the router's " +
+            "DHCP settings). Until then it sits idle.",
         ]
       : []),
     ...(selfSetup && $("hub-provision-display").checked
       ? [
-          "When setup finishes, wake the screen: on the hub, make it its own Home Assistant " +
-            "user (Settings → People → Users → Add User — name it “screen”, leave " +
-            "Administrator off; a screen only views dashboards), then open Settings → Apps " +
-            "→ HAOS Kiosk Display → Configuration, enter that login, and press Start — your " +
-            "dashboard appears on the attached display, touch and all. The login is yours " +
-            "to type there because this app never carries it anywhere.",
+          "To wake the screen: give it its own Home Assistant user (Settings → People → Users " +
+            "→ Add User, name it “screen”, Administrator off), then open Settings → Apps → " +
+            "HAOS Kiosk Display → Configuration, enter that login, and press Start.",
         ]
       : []),
     accountTyped
-      ? "Keep this app open through first boot: the moment Home Assistant answers, this app " +
-        "creates your account on the hub and checks the login actually works — no setup " +
-        `wizard for you. Then open http://${HUB_HOST} and sign in with the details you typed.`
-      : `Open http://${HUB_HOST} on any device in your home and create your account — or let ` +
-        "the SecuraCV iPhone app do it: its Set up guide creates the account for you.",
+      ? "Keep this app open through first boot: it creates your account on the hub and checks " +
+        `the login works. Then open http://${HUB_HOST} and sign in.`
+      : `Open http://${HUB_HOST} on any device and create your account, or let the SecuraCV ` +
+        "iPhone app's Set up guide do it.",
     ...(selfSetup
       ? []
       : [
-          "Once you're in, give your Canaries their meeting point: in Home Assistant go to " +
-            "Settings → Apps → Install app, choose “Mosquitto broker”, and press Start. When " +
-            "Home Assistant then offers to set up the newly discovered “MQTT” integration, accept " +
-            "with the defaults — they're exactly right for Canaries (the broker lives on the hub " +
-            "itself, port 1883).",
+          "Install the broker: Settings → Apps → Install app → “Mosquitto broker” → Start. " +
+            "When Home Assistant offers to set up the discovered “MQTT” integration, accept the defaults.",
         ]),
     // Which login the Canaries use depends on who made it. When this app
     // provisioned the hub, the plan already minted a broker-local “canary”
@@ -8142,18 +8517,13 @@ function hubShowHatch(receipt) {
     // the add-on's configuration, which the rest of this guide tells them to
     // leave alone.
     selfSetup
-      ? "Your Canaries' login was made for you during setup: the broker refuses anonymous " +
-        "connections, so the hub minted a “canary” account with a password of its own. Read " +
-        "that password in Home Assistant under Settings → Apps → Mosquitto broker → " +
-        "Configuration → Logins, and type the pair into the MQTT fields when you flash each " +
-        "Canary. It can only speak MQTT — it is not a Home Assistant account and cannot act " +
-        "as one."
-      : "Now make the login your Canaries will use: the broker refuses anonymous connections, " +
-        "and Home Assistant's own reserved accounts don't apply to them. Turn on Advanced Mode " +
-        "in your profile, then Settings → People → Users → Add user — “securacv” and a " +
-        "password you'll reuse on each device. It needs no administrator rights. Type that " +
-        "same pair into the MQTT fields when you flash each Canary.",
-    "Then follow “The Hub” guide to bring in your Canaries — securacv.com/lab → Home Assistant.",
+      ? "Your Canaries' login was made during setup: a broker-only “canary” account. Read its " +
+        "password under Settings → Apps → Mosquitto broker → Configuration → Logins, and type " +
+        "that pair into the MQTT fields when you flash each Canary."
+      : "Make the login your Canaries will use: turn on Advanced Mode in your profile, then " +
+        "Settings → People → Users → Add user — “securacv” and a password, no administrator " +
+        "rights. Type that pair into the MQTT fields when you flash each Canary.",
+    "Then follow “The Hub” guide at securacv.com/lab → Home Assistant.",
   ];
   $("hub-hatch-steps").innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join("");
   if (wasHidden) {

@@ -8,8 +8,10 @@ const DEVICE = {
   device_id: 'canary-a3f7',
   name: 'Front Porch',
   model: 'XIAO ESP32S3',
-  // Canonical witness type: the reference device-api models a WAP-class
-  // device (HTTP API + mDNS browse); vision/sense are MQTT-only.
+  // Canonical witness type: the reference device-api reports itself as a
+  // canary-wap, though the canary-wap firmware serves none of this API's
+  // pairing (no /api/v1/info, no X-Canary-Token; docs/discovery.md §2);
+  // vision/sense are MQTT-only.
   device_type: 'canary-wap',
   firmware_version: '0.4.1',
   ip: '192.168.1.47',

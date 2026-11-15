@@ -84,9 +84,11 @@ static uint32_t s_total_always_ignored_matches = 0;
 
 // Generate k indices in [0, bit_width) from (fp, hash_index_base).
 // Each index is extracted from the SHA output as a 16-bit slice masked
-// to bit_width (which must be a power of two).
-static void hash_indices(uint16_t fp, size_t bit_width, uint8_t k,
-                         uint16_t* out_indices) {
+// to bit_width (which must be a power of two). True only when every SHA
+// step ran; on false the k indices are zeroed and the caller must not set
+// or test a single bit with them (sweep F364).
+[[nodiscard]] static bool hash_indices(uint16_t fp, size_t bit_width, uint8_t k,
+                                       uint16_t* out_indices) {
   // bit_width must be a power of two for the mask to work cleanly.
   const uint16_t mask = (uint16_t)(bit_width - 1);
 
@@ -100,15 +102,22 @@ static void hash_indices(uint16_t fp, size_t bit_width, uint8_t k,
   uint8_t digest[32];
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-  // Matches the rest of the canary-wap codebase (see canary_wap.ino and
-  // chirp_channel.cpp). arduino-esp32 3.3.x ships mbedTLS 3.x, where the
-  // `_ret`-suffixed variants are the deprecated ones — the non-suffixed
-  // names return int and are canonical. We don't check the return because
-  // SHA on ESP32 is hardware-backed and a failure here would be fatal.
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, in, sizeof(in));
-  mbedtls_sha256_finish(&ctx, digest);
+  // arduino-esp32 3.3.x (the only core this sketch builds on) ships
+  // mbedTLS 3.x, where the non-suffixed names return int and the `_ret`
+  // variants are gone. Every answer is checked: SHA on the S3 and C3 is a
+  // hardware engine that can answer an error, and after one the digest is
+  // not, or not wholly, written — indices sliced from it would set or test
+  // bits no fingerprint owns. So a failed hash is no index at all.
+  int ret = mbedtls_sha256_starts(&ctx, 0);
+  if (ret == 0) ret = mbedtls_sha256_update(&ctx, in, sizeof(in));
+  if (ret == 0) ret = mbedtls_sha256_finish(&ctx, digest);
   mbedtls_sha256_free(&ctx);
+  if (ret != 0) {
+    for (uint8_t i = 0; i < k; i++) out_indices[i] = 0;
+    secure_wipe(in, sizeof(in));
+    secure_wipe(digest, sizeof(digest));
+    return false;
+  }
 
   // SHA-256 gives 32 bytes = 16 × 16-bit slices. k ≤ 8 for us, so one
   // digest is plenty. If a future increase in k needed more, concatenate
@@ -121,6 +130,7 @@ static void hash_indices(uint16_t fp, size_t bit_width, uint8_t k,
 
   secure_wipe(in, sizeof(in));
   secure_wipe(digest, sizeof(digest));
+  return true;
 }
 
 static inline void bloom_set(uint8_t* filter, size_t bit_width,
@@ -310,7 +320,7 @@ void note_fingerprint(uint16_t fp) {
   fp &= FINGERPRINT_MASK;
 
   uint16_t idx[BLOOM_HASHES];
-  hash_indices(fp, BLOOM_BITS, BLOOM_HASHES, idx);
+  if (!hash_indices(fp, BLOOM_BITS, BLOOM_HASHES, idx)) return;  // nothing learned
   bloom_set(s_today, BLOOM_BITS, idx, BLOOM_HASHES);
   s_total_notes++;
 }
@@ -319,10 +329,12 @@ bool is_ambient(uint16_t fp) {
   if (!s_initialized || !s_yesterday_valid) return false;
   fp &= FINGERPRINT_MASK;
 
-  s_total_ambient_queries++;
-
+  // A query the filter could not hash is not answered: not ambient (so
+  // nothing is suppressed on its say-so) and not counted.
   uint16_t idx[BLOOM_HASHES];
-  hash_indices(fp, BLOOM_BITS, BLOOM_HASHES, idx);
+  if (!hash_indices(fp, BLOOM_BITS, BLOOM_HASHES, idx)) return false;
+
+  s_total_ambient_queries++;
   const bool match = bloom_contains(s_yesterday, BLOOM_BITS, idx, BLOOM_HASHES);
   if (match) s_total_ambient_matches++;
   return match;
@@ -365,7 +377,7 @@ bool always_ignore(uint16_t fp) {
   fp &= FINGERPRINT_MASK;
 
   uint16_t idx[IGNORE_HASHES];
-  hash_indices(fp, IGNORE_BITS, IGNORE_HASHES, idx);
+  if (!hash_indices(fp, IGNORE_BITS, IGNORE_HASHES, idx)) return false;  // nothing added or persisted
   bloom_set(s_ignore, IGNORE_BITS, idx, IGNORE_HASHES);
 
   persist_ignore();
@@ -379,10 +391,11 @@ bool is_always_ignored(uint16_t fp) {
   if (!s_initialized) return false;
   fp &= FINGERPRINT_MASK;
 
-  s_total_always_ignored_queries++;
-
+  // As is_ambient(): an unhashed query is not ignored and not counted.
   uint16_t idx[IGNORE_HASHES];
-  hash_indices(fp, IGNORE_BITS, IGNORE_HASHES, idx);
+  if (!hash_indices(fp, IGNORE_BITS, IGNORE_HASHES, idx)) return false;
+
+  s_total_always_ignored_queries++;
   const bool match = bloom_contains(s_ignore, IGNORE_BITS, idx, IGNORE_HASHES);
   if (match) s_total_always_ignored_matches++;
   return match;

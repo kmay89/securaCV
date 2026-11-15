@@ -821,6 +821,7 @@ fn serve_with(cfg: &BridgeConfig, no_mqtt: bool, style: QrStyle, show_pairing: b
     let mut server_state = state_for(identity, &cfg.bridge_name, &state.setup_code, &canaries);
     server_state.pairings = state.pairing_store();
     server_state.config_number = state.config_number;
+    server_state.setup_attempts = state.setup_attempts;
 
     // device id → accessory id, fixed by the order the canaries were listed.
     let aid_of: HashMap<String, u64> = cfg
@@ -864,6 +865,7 @@ fn serve_with(cfg: &BridgeConfig, no_mqtt: bool, style: QrStyle, show_pairing: b
     let state_path = cfg.state.clone();
     let mut persisted_pairings = state.pairings.clone();
     let mut persisted_config = state.config_number;
+    let mut persisted_attempts = state.setup_attempts;
 
     let server = serve(bind, server_state, pacing, move |s| {
         for _ in 0..DRAIN_PER_TICK {
@@ -886,12 +888,16 @@ fn serve_with(cfg: &BridgeConfig, no_mqtt: bool, style: QrStyle, show_pairing: b
         // existing controller's key or demotes it from admin changes neither
         // the table length nor the config number, so a length check would
         // skip the save and the old permission would come back on restart.
-        state.absorb(&s.pairings, s.config_number);
-        if state.pairings != persisted_pairings || state.config_number != persisted_config {
+        state.absorb(&s.pairings, s.config_number, s.setup_attempts);
+        if state.pairings != persisted_pairings
+            || state.config_number != persisted_config
+            || state.setup_attempts != persisted_attempts
+        {
             match store::save(&state_path, &state) {
                 Ok(()) => {
                     persisted_pairings = state.pairings.clone();
                     persisted_config = state.config_number;
+                    persisted_attempts = state.setup_attempts;
                 }
                 Err(e) => log::error!("could not persist HAP pairings: {e}"),
             }

@@ -17,6 +17,44 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.12.5 — 2026-11-05
+
+**Shorter words everywhere, same features.** The app said too much, and
+new users had to read past it to find the next step.
+
+- **Every screen is shorter.** Step headings, checkbox labels, notes under
+  the fields, status lines, verdicts and the hub's finish-line steps now say
+  what you need and stop. Nothing was removed: every control, check and
+  receipt is where it was.
+- **Long explanations fold away.** The cold-start brief, the maintenance
+  key, what Pi-hole records and how to set up a hub screen each sit behind a
+  one-line summary you can open when you want them.
+- **Advanced reads as optional.** Its sections have one-line titles and a
+  sentence or two each, so Safety copy, Dev channel, Local file, Health
+  check and Rescue are easy to tell apart.
+- **Plainer menus and dropdowns.** The nav says *About*, the serial console
+  speed says *default*, and the Explore tab's cards carry one line each.
+
+## 0.12.4 — 2026-10-30
+
+**The 2.4.19 firmware catalog is baked in, so a Canary Glance AMOLED on a
+V2 board lights, and update notes read as one line per change.**
+
+- **Firmware 2.4.19 in the picker.** On the Canary Glance AMOLED
+  (Waveshare ESP32-S3-Touch-AMOLED-2.41), a V2 board's glass stayed black
+  on every earlier release: its panel reset sits on the board's IO
+  expander, and nothing drove it. Install 2.4.19 from here and the serial
+  monitor should say `first light 2/5: panel reset released`. Nothing to do
+  first on any other Canary. Built by CI; not yet booted on our bench.
+- **A Canary Vision whose camera module never answered is refused,** not
+  passed: the boot check reads the module's own yes or no from 2.4.19 on,
+  and an older image's ERROR line still fails it.
+- **An Arduino sketch reads as one.** A board running an Arduino sketch, or
+  a SecuraCV release up to 2.4.17, no longer shows the Arduino core's own
+  name and version as its firmware.
+- **The "an update is ready" banner lists one line per change.** Each line
+  opens on a click, instead of a wall of cut-off lines.
+
 ## 0.12.3 — 2026-10-28
 
 **The 2.4.18 firmware catalog is baked in, a board on 2.4.18 says what it
@@ -166,8 +204,10 @@ before and after you flash it.**
   a hub address typed with stray spaces now connects.
 - Under the hood: the flash engine is a shared, separately tested crate (the
   Lab runs the same one); rustls 0.23.45 (RUSTSEC-2026-0285), mdns-sd
-  0.21.4, Tauri CLI 2.12.0; releases carry the project's SBOMs and build on
-  Node 22.
+  0.21.4, Tauri CLI 2.12.0; releases build on Node 22 and carry three SBOMs:
+  `sbom-rust.cdx.json` (the witness kernel's crates), `sbom-node.cdx.json`
+  (canary-vision's npm packages) and `sbom-firmware.cdx.json`. None of them
+  lists this app's own crates or npm packages.
 
 ## 0.11.9 — 2026-09-03
 

@@ -120,6 +120,9 @@ static void on_sntp_sync(struct timeval*) { g_last_sntp_sync_ms = millis(); }
 #include "chime.h"
 #include "core_compat.h"
 #include "glass_settings.h"
+#if defined(CD_AMOLED_GLASS)
+#include "pwr_key.h"  // the case PWR key's learned polarity
+#endif
 #if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) ||   \
      (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE) ||         \
      (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||     \
@@ -1337,9 +1340,11 @@ void setup() {
   // no backlight pin to name — brightness is the RM690B0's 0x51 command.
   boot_kvf("Glass",  "RM690B0 2.41\" %dx%d portrait AMOLED (FT6336 touch)",
            LCD_WIDTH, LCD_HEIGHT);
-  boot_kvf("QSPI",   "CLK=%d D0..D3=%d/%d/%d/%d CS=%d RST=%d off=%d",
+  // The panel reset is an expander line on V2, not a GPIO (pins.h).
+  boot_kvf("QSPI",   "CLK=%d D0..D3=%d/%d/%d/%d CS=%d RST=EXIO%d@0x%02X TE=%d off=%d",
            LCD_PIN_SCLK, LCD_PIN_SDIO0, LCD_PIN_SDIO1, LCD_PIN_SDIO2,
-           LCD_PIN_SDIO3, LCD_PIN_CS, LCD_PIN_RST, LCD_COL_OFFSET);
+           LCD_PIN_SDIO3, LCD_PIN_CS, EXIO_LCD_RESET, EXIO_I2C_ADDR,
+           LCD_PIN_TE, LCD_COL_OFFSET);
   boot_kv("Bright",  "panel command 0x51 (AMOLED — no backlight pin)");
 #else
   boot_kv("Glass",   "ST7789 1.47\" 172x320 portrait SPI (no touch)");
@@ -2201,39 +2206,41 @@ void loop() {
     defined(PWR_LATCH_PIN) && (PWR_LATCH_PIN >= 0) && !defined(__EMSCRIPTEN__)
   // The case PWR button (AMOLED 2.41 — a readable GPIO, unlike the 1.69's
   // latch-only key). Short press = wake/peek, exactly a BOOT tap; held
-  // CD_PWR_OFF_HOLD_MS = honest power-off through the HAL (panel to sleep,
-  // latch dropped, deep sleep waking on this same button). A hand-rolled
-  // hold timer rather than the ButtonClassifier on purpose: a power gesture
-  // must not inherit the double/triple grammar, and it fires on the
-  // deadline, not the release — the user learns the hold length by feel.
+  // CD_PWR_OFF_HOLD_MS and released = honest power-off through the HAL once
+  // the key has rested (panel to sleep, latch dropped, deep sleep waking on
+  // this same button). Its own model
+  // rather than the ButtonClassifier on purpose: a power gesture must not
+  // inherit the double/triple grammar. And the model LEARNS which level the
+  // key rests at (canary/io/pwr_key.h): the old glue assumed active-low, so
+  // a board whose sense line rests LOW powered a working glass off three
+  // seconds into every boot — and, on USB, hung waiting for a release.
   {
+    static canary::io::PwrKeyModel s_pwr(CD_PWR_OFF_HOLD_MS);
     static bool s_pwr_armed = false;
-    static bool s_pwr_down = false;
-    static uint32_t s_pwr_down_ms = 0;
-    static bool s_pwr_fired = false;
+    static bool s_pwr_logged = false;
     if (!s_pwr_armed) {
+      // The weak internal pull-up keeps an undriven line from floating; it
+      // cannot outvote a sense line the board actively holds LOW, which is
+      // exactly the case the learned polarity exists for.
       pinMode(PWR_KEY_PIN, INPUT_PULLUP);
       s_pwr_armed = true;
     }
-    const bool pressed = digitalRead(PWR_KEY_PIN) == LOW;
-    if (pressed && !s_pwr_down) {
-      s_pwr_down = true;
-      s_pwr_down_ms = now;
-      s_pwr_fired = false;
-    } else if (pressed && s_pwr_down && !s_pwr_fired &&
-               (int32_t)(now - s_pwr_down_ms) >= (int32_t)CD_PWR_OFF_HOLD_MS) {
-      s_pwr_fired = true;
+    const canary::io::PwrKeyEvent ev =
+        s_pwr.feed(digitalRead(PWR_KEY_PIN) == HIGH, now);
+    if (s_pwr.learned() && !s_pwr_logged) {
+      s_pwr_logged = true;
+      boot_line(s_pwr.idle_high() ? "[input] PWR key rests HIGH (press = LOW)"
+                                  : "[input] PWR key rests LOW (press = HIGH)");
+    }
+    if (ev == canary::io::PwrKeyEvent::PowerOff) {
       boot_line("[input] PWR held -> power off");
-      canary::hal::power_off();  // does not return
-    } else if (!pressed && s_pwr_down) {
-      s_pwr_down = false;
-      if (!s_pwr_fired) {
-        // A released short press: wake the glass, same as a BOOT tap.
-        const bool night_now = in_quiet_hours();
-        g_wake_until_ms = now + wake_window_ms(night_now);
-        canary::ui::canary_mark_react(canary::ui::CanaryReact::Startle);
-        fleet.mark_dirty();
-      }
+      canary::hal::power_off(s_pwr.pressed_high());  // does not return
+    } else if (ev == canary::io::PwrKeyEvent::Tap) {
+      // A released short press: wake the glass, same as a BOOT tap.
+      const bool night_now = in_quiet_hours();
+      g_wake_until_ms = now + wake_window_ms(night_now);
+      canary::ui::canary_mark_react(canary::ui::CanaryReact::Startle);
+      fleet.mark_dirty();
     }
   }
 #endif  // CD_AMOLED_GLASS && PWR_KEY_PIN

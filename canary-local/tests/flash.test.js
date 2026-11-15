@@ -335,6 +335,42 @@ test("manifestOverrideUrl: same-origin and loopback allowed, LAN/public refused"
 });
 
 // ── byte glue for esptool-js (must survive high bytes) ──────────────────────
+test("imageVerificationPolicy: a ?manifest= override never lowers the bar on its own", async () => {
+  const { imageVerificationPolicy } = await core();
+  // Pre-ceremony (placeholder key): checksum-only everywhere, as before.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: false, selfHosted: true }), "checksum-only");
+  // A real key: a signed image is verified wherever its manifest lives.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: true, selfHosted: true }), "verify");
+  // A real key and an unsigned image: refused from the official manifest, and
+  // ALSO from a self-hosted one — a ?manifest=http://127.0.0.1:… link used to
+  // downgrade a Lab with a pinned key to checksum-only silently.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false }), "require-signature");
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "require-signature");
+  // Only the person's explicit acceptance of the unsigned, self-hosted
+  // manifest brings checksum-only back — and never for the official one.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true, unsignedAccepted: true }), "checksum-only");
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false, unsignedAccepted: true }), "require-signature");
+});
+
+test("flash.js asks for that acceptance on the confirm card, naming the override's origin", () => {
+  const src = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  // The origin is remembered beside the override flag and shown wherever the override is.
+  assert.match(src, /state\.manifestOverrideOrigin = override \? new URL\(override\)\.origin : ""/);
+  assert.match(src, /fact\("Manifest", `self-hosted · \$\{state\.manifestOverrideOrigin\}`\)/, "the install card names the override origin");
+  assert.match(src, /Using a self-hosted firmware manifest from \$\{state\.manifestOverrideOrigin\}/, "so does the manifest banner");
+  // The consent is a deliberate click on the confirm card, in loud words, and the install button waits for it.
+  assert.match(src, /unsigned, self-hosted manifest at \$\{state\.manifestOverrideOrigin\}/);
+  assert.match(src, /unsignedOk\.id = "flash-unsigned-ok"/);
+  assert.match(src, /go\.disabled = !unsignedOk\.checked/, "Install stays disabled until the box is ticked");
+  assert.match(src, /unsignedAccepted: !!\(unsignedOk && unsignedOk\.checked\)/, "and only that click reaches the policy");
+  // The policy at flash time reads the acceptance, and refuses without it.
+  assert.match(src, /unsignedAccepted: !!opts\.unsignedAccepted/);
+  assert.match(src, /policy === "require-signature" && state\.manifestOverride/);
+  assert.match(src, /carries no Ed25519 [\s\S]{0,120}refusing to flash it/);
+  // What was actually checked is said in those words on the journey, not "signature".
+  assert.match(src, /`SHA-256 only · unsigned, \$\{state\.manifestOverrideOrigin\}`/);
+});
+
 test("bytes <-> binary string round-trips including 0x00/0x80/0xFF", async () => {
   const { bytesToBinaryString, binaryStringToBytes, hex } = await core();
   const src = new Uint8Array([0x00, 0x01, 0x7f, 0x80, 0xfe, 0xff, 0xe9, 0x55]);
@@ -2012,8 +2048,10 @@ test("imageVerificationPolicy: fail-closed once a real key is pinned", async () 
   assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: true, selfHosted: false }), "verify");
   // Real key + official manifest + NO signature → REFUSE (the P1 hole).
   assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false }), "require-signature");
-  // Real key + self-hosted manifest without a signature → user opted in → checksum-only.
-  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "checksum-only");
+  // Real key + self-hosted manifest without a signature → still REFUSED: a
+  // ?manifest= link is not the user's opt-in (the matrix above holds the one
+  // thing that is, the confirm card's own acceptance).
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "require-signature");
   // No key yet (pre-ceremony) → checksum-only regardless.
   assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: false, selfHosted: false }), "checksum-only");
   assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: true, selfHosted: false }), "checksum-only");
@@ -2360,4 +2398,158 @@ test("flash.html: every vendored module the flasher imports is pinned", () => {
   const norm = (s) => s.replace(/^\.\//, "");
   assert.deepStrictEqual([...vendored].map(norm).sort(), Object.keys(map).map(norm).sort(),
     "the flasher's vendored imports and the SRI integrity map have drifted apart");
+});
+
+// ── the blank map: a faster safety copy and a proportional first-contact erase ──
+test("planBlankProbe: covers the chip exactly, the last block may be short", async () => {
+  const { planBlankProbe, BLANK_PROBE_BLOCK } = await core();
+  const plan = planBlankProbe(16 * 1024 * 1024);
+  assert.strictEqual(plan.length, (16 * 1024 * 1024) / BLANK_PROBE_BLOCK);
+  assert.strictEqual(plan[0].offset, 0);
+  const odd = planBlankProbe(BLANK_PROBE_BLOCK * 2 + 0x1000);
+  assert.deepStrictEqual(odd.map((b) => b.size), [BLANK_PROBE_BLOCK, BLANK_PROBE_BLOCK, 0x1000]);
+  assert.strictEqual(odd.reduce((n, b) => n + b.size, 0), BLANK_PROBE_BLOCK * 2 + 0x1000);
+  assert.deepStrictEqual(planBlankProbe(0), []);
+  assert.deepStrictEqual(planBlankProbe(NaN), []);
+});
+
+test("blankSkipReads: only proven-blank blocks are skipped; unknown is read", async () => {
+  const { blankSkipReads, blankBytes } = await core();
+  const K = 0x40000;
+  const blocks = [
+    { offset: 0, size: K, blank: false },
+    { offset: K, size: K, blank: false },
+    { offset: 2 * K, size: K, blank: true },
+    { offset: 3 * K, size: K, blank: null },   // the probe failed: read it
+    { offset: 4 * K, size: K, blank: true },
+  ];
+  assert.deepStrictEqual(blankSkipReads(blocks), [
+    { offset: 0, size: 2 * K },                 // adjacent data merges into one read
+    { offset: 3 * K, size: K },
+  ]);
+  assert.strictEqual(blankBytes(blocks), 2 * K);
+  assert.deepStrictEqual(blankSkipReads([]), []);
+});
+
+test("firstContactEraseSpans: every byte ends written, erased or proven blank", async () => {
+  const { firstContactEraseSpans, planBlankProbe, FLASH_SECTOR } = await core();
+  // Property over many block maps and image sizes: the new image's write,
+  // our erase spans and the proven-blank blocks together cover the whole chip,
+  // so the end state equals a whole-chip erase followed by the write.
+  const flash = 4 * 1024 * 1024;
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let trial = 0; trial < 200; trial++) {
+    const blocks = planBlankProbe(flash).map((b) => ({
+      ...b, blank: [true, false, null][Math.floor(rnd() * 3)],
+    }));
+    const imageLen = Math.floor(rnd() * flash);
+    const spans = firstContactEraseSpans(blocks, imageLen);
+    const covered = new Uint8Array(flash / FLASH_SECTOR);
+    const mark = (off, size) => {
+      for (let a = off; a < off + size; a += FLASH_SECTOR) covered[a / FLASH_SECTOR] = 1;
+    };
+    mark(0, Math.ceil(imageLen / FLASH_SECTOR) * FLASH_SECTOR); // the write erases its own range
+    for (const b of blocks) if (b.blank === true) mark(b.offset, b.size);
+    for (const s of spans) {
+      assert.strictEqual(s.offset % FLASH_SECTOR, 0, "erase spans start on a sector");
+      assert.strictEqual(s.size % FLASH_SECTOR, 0, "erase spans are whole sectors");
+      assert.ok(s.offset >= Math.ceil(imageLen / FLASH_SECTOR) * FLASH_SECTOR,
+        "never erases what the image's own write is about to overwrite");
+      mark(s.offset, s.size);
+    }
+    assert.ok(covered.every((c) => c === 1), `trial ${trial}: a sector was left unaccounted for`);
+  }
+});
+
+test("firstContactEraseSpans: a mostly blank chip erases only what holds data", async () => {
+  const { firstContactEraseSpans } = await core();
+  const K = 0x40000;
+  const blocks = [];
+  for (let i = 0; i < 64; i++) blocks.push({ offset: i * K, size: K, blank: i >= 12 });
+  // old firmware filled 3 MB; the new image is 1.9 MB
+  const spans = firstContactEraseSpans(blocks, 1987760);
+  const total = spans.reduce((n, s) => n + s.size, 0);
+  assert.ok(total < 2 * 1024 * 1024, `erases ${total} bytes, not the 16 MB chip`);
+  assert.strictEqual(spans[0].offset, Math.ceil(1987760 / 0x1000) * 0x1000);
+  assert.deepStrictEqual(firstContactEraseSpans(blocks.map((b) => ({ ...b, blank: true })), 0), [],
+    "a blank chip needs no erase at all");
+});
+
+test("chunkSpans: pieces cover the spans exactly, none larger than the cap", async () => {
+  const { chunkSpans } = await core();
+  const pieces = chunkSpans([{ offset: 0x1000, size: 0x90000 }, { offset: 0x200000, size: 0x1000 }], 0x40000);
+  assert.ok(pieces.every((p) => p.size <= 0x40000));
+  assert.strictEqual(pieces.reduce((n, p) => n + p.size, 0), 0x91000);
+  assert.strictEqual(pieces[0].offset, 0x1000);
+  assert.strictEqual(pieces[pieces.length - 1].offset, 0x200000);
+});
+
+test("installJourney: every step named up front, in install order", async () => {
+  const { installJourney } = await core();
+  const full = installJourney({ backup: true, download: true, erase: "first-contact", imageBytes: 2e6, flashBytes: 16 << 20 });
+  assert.deepStrictEqual(full.map((s) => s.key), ["map", "backup", "download", "check", "clear", "write", "confirm"]);
+  const local = installJourney({ backup: false, download: false, erase: "full", imageBytes: 1e6, flashBytes: 4 << 20 });
+  assert.deepStrictEqual(local.map((s) => s.key), ["erase", "write", "confirm"]);
+  const plain = installJourney({ download: true, imageBytes: 1e6 });
+  assert.deepStrictEqual(plain.map((s) => s.key), ["download", "check", "write", "confirm"]);
+});
+
+test("journeyEtaSeconds: measured rates only; unknown or a silent whole-chip erase means no number", async () => {
+  const { installJourney, journeyEtaSeconds } = await core();
+  const steps = installJourney({ backup: true, backupBytes: 3e6, download: true, imageBytes: 2e6, erase: "first-contact" });
+  // Nothing measured yet: no promise.
+  assert.strictEqual(journeyEtaSeconds(steps, "map", 0, {}), null);
+  // Mid-backup with a measured link rate and its own estimate; the download
+  // has no rate yet, so the total is still unknown.
+  assert.strictEqual(journeyEtaSeconds(steps, "backup", 0.5, { link: 100e3 }, 15), null);
+  // Both lanes measured: backup's own 15 s + download 2 MB at 1 MB/s + write 2 MB at 100 KB/s;
+  // map/check/clear/confirm are short on-chip steps.
+  assert.strictEqual(journeyEtaSeconds(steps, "backup", 0.5, { link: 100e3, net: 1e6 }, 15), 15 + 2 + 20);
+  // During the write, the write's own tracker is the estimate.
+  assert.strictEqual(journeyEtaSeconds(steps, "write", 0.9, { link: 100e3, net: 1e6 }, 4), 4);
+  const erasing = installJourney({ download: false, imageBytes: 2e6, erase: "full", flashBytes: 16 << 20 });
+  assert.strictEqual(journeyEtaSeconds(erasing, "erase", 0, { link: 100e3 }), null,
+    "a whole-chip erase reports nothing, so the total can't be promised");
+  assert.strictEqual(journeyEtaSeconds(erasing, "write", 0, { link: 100e3 }), 20);
+});
+
+test("journeyClockLine: elapsed first, then what's left when it's honest", async () => {
+  const { journeyClockLine, clockFace } = await core();
+  assert.strictEqual(clockFace(0), "0:00");
+  assert.strictEqual(clockFace(125.9), "2:05");
+  assert.strictEqual(journeyClockLine(65, null), "1:05");
+  assert.strictEqual(journeyClockLine(65, 3), "1:05 · almost done");
+  assert.strictEqual(journeyClockLine(65, 42), "1:05 · about 40 s left overall");
+  assert.strictEqual(journeyClockLine(65, 95.4), "1:05 · about 1:35 left overall");
+  assert.strictEqual(journeyClockLine(5, Infinity), "0:05");
+});
+
+test("flasher glue: the safety copy maps first, and the first-contact erase falls back to a whole-chip erase", () => {
+  const src = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  const backup = /async function takeBackup\([\s\S]*?\n}\n/.exec(src);
+  assert.ok(backup, "takeBackup vanished");
+  assert.match(backup[0], /probeBlankBlocks\(/, "the safety copy no longer maps the chip first");
+  assert.match(backup[0], /fill\(0xff\)/, "skipped blocks must be filled with 0xFF, what reading them returns");
+  const probe = /async function probeBlankBlocks\([\s\S]*?\n}\n/.exec(src);
+  assert.match(probe[0], /IS_STUB/, "the map must require the stub: the ROM answers MD5 in ASCII hex");
+  assert.match(probe[0], /blank = null/, "a failed probe must be unknown (read and erased), never blank");
+  assert.match(probe[0], /if \(\+\+failed >= 3 \|\| ok === 0\) return null/,
+    "a chip that won't answer MD5 must not stall the install for minutes of probe timeouts");
+  const erase = /async function eraseForFirstContact\([\s\S]*?\n}\n/.exec(src);
+  assert.ok(erase, "eraseForFirstContact vanished");
+  assert.match(erase[0], /eraseFlash\(\)/, "without a map or the stub, first contact must still erase the whole chip");
+  assert.match(erase[0], /firstContactEraseSpans/, "the proportional erase must come from the tested planner");
+  assert.match(erase[0], /resp\[0\] === 0/,
+    "every erase must read the stub's status: checkCommand would report a refused erase as success");
+  assert.doesNotMatch(erase[0].replace(/\/\/.*$/gm, ""), /checkCommand\(/,
+    "checkCommand ignores the erase status");
+  assert.match(erase[0], /if \(!ok\) return wholeChip\(\)/, "a refused erase must fall back to the whole chip");
+  // A map is trusted only within the install run that drew it: between runs
+  // the board can boot its own firmware and write into "blank" blocks.
+  assert.doesNotMatch(src, /state\.blankMap/, "a blank map must never be cached across runs");
+  assert.match(src, /eraseForFirstContact\(box, esploader, bytes\.length, journey, mapFromThisRun\)/,
+    "the erase may only reuse the map this install's own safety copy drew");
+  // An erase the user asked for stays the whole-chip erase.
+  assert.match(src, /eraseKind: forcedErase && !askedFullErase \? "first-contact" : null/);
 });

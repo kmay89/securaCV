@@ -1,0 +1,111 @@
+{
+  "$comment": "THE DEVICE-DETAILS VOCABULARY: one row per key a Canary's own answers use (its HTTP and Bluetooth answers, its MQTT publishes, its serial records) that a diagnostics dump must treat by class. Each row names its class and the firmware sources ('surfaces') that emit it as a JSON key; scripts/gen_device_vocabulary.py refuses a row a named surface does not emit, or that names none, so the vocabulary says what the devices say. The generator writes custom_components/securacv/device_vocabulary.py (HACS ships that directory alone, so the integration cannot read spec/), whose redacted keys diagnostics.py unions into TO_REDACT: a row added here in a redacted class is redacted with no edit to diagnostics.py. Seeded (sweep HA56) with the keys of ledger F391 that a firmware source emits; serial_number and chip_id, which F391 also named, are emitted by none and stay integration-owned in diagnostics.py until one does. This file is also the input the general identifier lint (ledger F430) is to read; that lint is not built. Edit here, run python3 scripts/gen_device_vocabulary.py, commit both; lint.yml runs --check. When firmware renames or drops a key a row names, Canaries on the earlier release still send the old one: add it to INTEGRATION_REDACT_KEYS in diagnostics.py, with the release that last sent it, before the row moves (the generator will not write a module that stops redacting a key the committed one redacts).",
+  "vocabulary_version": 1,
+  "classes": {
+    "identifier": {
+      "redacted": true,
+      "means": "A value that names one unit, or one radio peer of it, for as long as it lasts. Posted in a dump, it lets a stranger match the device."
+    },
+    "health_counter": {
+      "redacted": true,
+      "means": "A count or an age a Canary reports about itself. Together they can single a device out across dumps and hint at when it reboots or is busy."
+    }
+  },
+  "keys": [
+    {
+      "key": "hw_token",
+      "class": "identifier",
+      "means": "the salted hardware token",
+      "surfaces": [
+        "firmware/projects/canary-wap/arduino/canary_wap/identity_json.h",
+        "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
+      ]
+    },
+    {
+      "key": "mdns_host",
+      "class": "identifier",
+      "means": "the mDNS host name",
+      "surfaces": [
+        "firmware/projects/canary-wap/arduino/canary_wap/identity_json.h",
+        "firmware/projects/canary-wap/arduino/canary_wap/fleet_scan_cache.h"
+      ]
+    },
+    {
+      "key": "module_id",
+      "class": "identifier",
+      "means": "the AI module's id slot; since F384 the Vision sends 1 or 0 there (a module answered) and never the module's own id, and the key stays redacted so a build that sent the id would not reach a dump",
+      "surfaces": [
+        "firmware/projects/canary-vision/src/main.cpp"
+      ]
+    },
+    {
+      "key": "local_address",
+      "class": "identifier",
+      "means": "the Bluetooth radio's own address",
+      "surfaces": [
+        "firmware/projects/canary-wap/arduino/canary_wap/bluetooth_api.h"
+      ]
+    },
+    {
+      "key": "address",
+      "class": "identifier",
+      "means": "a Bluetooth address: the connected peer's, or a scanned or paired device's",
+      "surfaces": [
+        "firmware/projects/canary-wap/arduino/canary_wap/bluetooth_api.h"
+      ]
+    },
+    {
+      "key": "peer_address",
+      "class": "identifier",
+      "means": "the Bluetooth address of the peer a pairing is with",
+      "surfaces": [
+        "firmware/projects/canary-wap/arduino/canary_wap/bluetooth_api.h"
+      ]
+    },
+    {
+      "key": "uptime",
+      "class": "health_counter",
+      "means": "how long the Canary has been up, in seconds",
+      "surfaces": [
+        "firmware/canary/src/main.cpp",
+        "firmware/projects/canary-display/src/net/mqtt_mgr.cpp",
+        "firmware/projects/canary-sense/src/net/mqtt_mgr.cpp"
+      ]
+    },
+    {
+      "key": "boot_count",
+      "class": "health_counter",
+      "means": "how many times the Canary has booted",
+      "surfaces": [
+        "firmware/canary/src/main.cpp",
+        "firmware/canary/lib/securacv_network/src/securacv_network.cpp",
+        "firmware/canary/lib/securacv_diagnostics/src/diagnostics_json.h"
+      ]
+    },
+    {
+      "key": "sd_writes",
+      "class": "health_counter",
+      "means": "how many writes the card has taken this boot",
+      "surfaces": [
+        "firmware/canary/src/main.cpp"
+      ]
+    },
+    {
+      "key": "http_requests",
+      "class": "health_counter",
+      "means": "how many requests the web server has answered this boot",
+      "surfaces": [
+        "firmware/canary/src/main.cpp"
+      ]
+    },
+    {
+      "key": "last_frame_age_ms",
+      "class": "health_counter",
+      "means": "how long ago the radar's last frame arrived, in milliseconds",
+      "surfaces": [
+        "firmware/projects/canary-sense/src/net/mqtt_mgr.cpp",
+        "firmware/projects/canary-sentinel/src/net/mqtt_mgr.cpp"
+      ]
+    }
+  ]
+}

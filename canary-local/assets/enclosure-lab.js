@@ -172,6 +172,38 @@ export function matchVariant(siblingsPlusSelf, axisVals) {
   return best ? best.id : null;
 }
 
+// A group's note, split for its one-line summary (sweep C24): the .scad
+// annotations run from a few words to 2058 characters (Ventilation), and the
+// summary carried all of it. `lead` is the note up to and including its first
+// sentence end — a ".", "!" or "?" followed by whitespace or the note's end —
+// or the whole note when it has none; `rest` is what follows, trimmed (empty
+// when the lead is the whole note). A mark is no sentence end where it cannot
+// close one: before any letter or digit (a note that opens with "." or
+// "..."), in a run of dots (an ellipsis, a ".." range), after a dotted
+// abbreviation ("e.g.", "i.e.") or one of ABBREVIATIONS ("vs."), or after a
+// bare enumerator ("1."). A period inside a number ("1.47", "v1.2") is never
+// one: whitespace does not follow it. A sentence may open in lower case: these
+// notes start new sentences with identifiers ("part=", "floor_t is"). Pure, so
+// catalog_lab.test.js holds it to every committed note.
+const ABBREVIATIONS = /^\W*(?:vs|cf|approx|incl|fig|eq)\.$/i;
+export function noteParts(note) {
+  const text = String(note ?? "").trim();
+  const end = /[.!?](?=\s|$)/g;
+  for (let m = end.exec(text); m; m = end.exec(text)) {
+    const at = m.index;
+    const lead = text.slice(0, at + 1);
+    const rest = text.slice(at + 1).trim();
+    if (!/[A-Za-z0-9]/.test(lead)) continue;
+    if (text[at] === "." && text[at - 1] === ".") continue;
+    if (text[at] === ".") {
+      const word = lead.slice(lead.search(/\S+$/));
+      if (/^\W*(?:[A-Za-z]\.){2,}$/.test(word) || ABBREVIATIONS.test(word) || /^\W*\d+\.$/.test(word)) continue;
+    }
+    return { lead, rest };
+  }
+  return { lead: text, rest: "" };
+}
+
 // The old read-only param inventory, kept (collapsed) as the "advanced" view so
 // numeric/engineering knobs the configurator doesn't surface are never lost.
 function renderParamDump(scad, open) {
@@ -181,9 +213,13 @@ function renderParamDump(scad, open) {
   for (const g of scad.groups) {
     const d = el("details", "pgroup");
     const s = el("summary");
+    // The summary says the note's first sentence; the rest of a long note
+    // opens with the group, whole, as its first row (sweep C24).
+    const { lead, rest } = noteParts(g.note);
     s.append(el("strong", null, g.name),
-             g.note ? el("span", "muted", "  " + g.note) : "");
+             lead ? el("span", "muted", "  " + lead) : "");
     d.append(s);
+    if (rest) d.append(el("div", "pnote muted", String(g.note).trim()));
     for (const p of g.params) {
       const row = el("div", "prow");
       row.append(el("code", null, p.name), el("span", "pdefault", p.default));

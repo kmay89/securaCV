@@ -41,6 +41,12 @@
      "text": "O-ring 2 ID x 1 CS (under the head)"
     },
     {
+     "qty": 12,
+     "kind": "washer",
+     "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+     "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
+    },
+    {
      "qty": 1,
      "kind": "button",
      "spec": "Ø12 illuminated momentary button + panel nut (16.2 AC)",
@@ -150,6 +156,10 @@
     "SCR8": {
      "bom": 1,
      "echo": 1
+    },
+    "WSH1": {
+     "bom": 12,
+     "echo": 12
     }
    }
   },
@@ -197,6 +207,12 @@
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
+    },
+    {
+     "qty": 12,
+     "kind": "washer",
+     "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+     "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
     },
     {
      "qty": 1,
@@ -401,6 +417,90 @@
      "echo": 4
     },
     "SCR8": {
+     "bom": 4,
+     "echo": 4
+    }
+   }
+  },
+  "sense.seal": {
+   "device": "canary-sense",
+   "scad": "canary_sense_enclosure.scad",
+   "overrides": {
+    "preset": "custom",
+    "opt_seal": "true",
+    "opt_vent": "true",
+    "screw_head": "pan",
+    "part": "back"
+   },
+   "case": "Sense",
+   "items": [
+    {
+     "qty": 4,
+     "kind": "screw",
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap (plate to the post ends)"
+    },
+    {
+     "qty": 4,
+     "kind": "o-ring",
+     "spec": "O-ring 2 ID x 1 CS (under the head)",
+     "text": "O-ring 2 ID x 1 CS (under the head)"
+    },
+    {
+     "qty": 4,
+     "kind": "washer",
+     "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+     "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
+    },
+    {
+     "qty": 1,
+     "kind": "gasket",
+     "spec": "TPU gasket (print part=\"gasket\")",
+     "text": "TPU gasket (print part=\"gasket\")"
+    },
+    {
+     "qty": 1,
+     "kind": "vent",
+     "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+     "text": "Ø12 adhesive ePTFE/GORE vent patch"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "bolt",
+     "spec": "M5 x 25 bolt + nut",
+     "text": "M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)"
+    },
+    {
+     "qty": 4,
+     "kind": "wall-screw",
+     "spec": "#8 / M4 countersunk wall screw (bracket)",
+     "text": "#8 / M4 countersunk wall screw (bracket)"
+    }
+   ],
+   "bom": {
+    "ORG1": {
+     "bom": 4,
+     "echo": 4
+    },
+    "SCR3": {
+     "bom": 4,
+     "echo": 4
+    },
+    "SCR6": {
+     "bom": 1,
+     "echo": 1
+    },
+    "SCR7": {
+     "bom": 4,
+     "echo": 4
+    },
+    "WSH1": {
      "bom": 4,
      "echo": 4
     }
@@ -630,8 +730,8 @@
     {
      "qty": 6,
      "kind": "screw",
-     "spec": "M2 pan x 8 self-tap",
-     "text": "M2 pan x 8 self-tap (plate to the post ends)"
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap (plate to the post ends)"
     },
     {
      "qty": 4,
@@ -644,6 +744,12 @@
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
+    },
+    {
+     "qty": 6,
+     "kind": "washer",
+     "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+     "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
     },
     {
      "qty": 1,
@@ -723,6 +829,10 @@
     "SCR9": {
      "bom": 2,
      "echo": 2
+    },
+    "WSH1": {
+     "bom": 12,
+     "echo": 6
     }
    }
   },
@@ -788,14 +898,20 @@
     {
      "qty": 8,
      "kind": "screw",
-     "spec": "M2 pan x 8 self-tap",
-     "text": "M2 pan x 8 self-tap (plate to the post ends)"
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap (plate to the post ends)"
     },
     {
      "qty": 8,
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
+    },
+    {
+     "qty": 8,
+     "kind": "washer",
+     "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+     "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
     },
     {
      "qty": 1,
@@ -855,6 +971,10 @@
     "SCR4": {
      "bom": 2,
      "echo": 2
+    },
+    "WSH1": {
+     "bom": 8,
+     "echo": 8
     }
    }
   },
@@ -871,8 +991,8 @@
     {
      "qty": 8,
      "kind": "screw",
-     "spec": "M2 pan x 8 machine (into the inserts)",
-     "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
+     "spec": "M2 pan x 10 machine (into the inserts)",
+     "text": "M2 pan x 10 machine (into the inserts) (plate to the post ends)"
     },
     {
      "qty": 8,
@@ -885,6 +1005,12 @@
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
+    },
+    {
+     "qty": 8,
+     "kind": "washer",
+     "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+     "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
     },
     {
      "qty": 1,
@@ -946,14 +1072,20 @@
     {
      "qty": 8,
      "kind": "screw",
-     "spec": "M2 pan x 8 self-tap",
-     "text": "M2 pan x 8 self-tap (plate to the post ends)"
+     "spec": "M2 pan x 10 self-tap",
+     "text": "M2 pan x 10 self-tap (plate to the post ends)"
     },
     {
      "qty": 8,
      "kind": "o-ring",
      "spec": "O-ring 2 ID x 1 CS (under the head)",
      "text": "O-ring 2 ID x 1 CS (under the head)"
+    },
+    {
+     "qty": 8,
+     "kind": "washer",
+     "spec": "M2 washer 2.2 x 7 x 0.8, DIN 9021",
+     "text": "M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)"
     },
     {
      "qty": 1,
@@ -1010,6 +1142,10 @@
     "SCR4": {
      "bom": 2,
      "echo": 2
+    },
+    "WSH1": {
+     "bom": 8,
+     "echo": 8
     }
    }
   },

@@ -450,7 +450,13 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
   reopens it for a minute on a BOOT tap, and a Canary whose saved Wi-Fi is
   merely failing never reopens it (that is the setup network's job). Then
   the older paths, one per family, each the one its firmware serves
-  (`SetupGuide.canary`): a display's glass QR (the button asks for the
+  (`SetupGuide.canary`). A display's walkthrough opens with the flash,
+  because a blank board has no QR yet and iOS has no USB serial: the
+  phone never flashes, it hands a computer the in-browser flasher's link
+  through the share sheet (AirDrop to a Mac is one tap), focused on the
+  Canary Glance AMOLED with `?product=` where that is the board
+  (`FlasherLinks`; `scripts/tests/test_ios_flasher_links.py` holds the id
+  to `flash.json`). Then a display's glass QR (the button asks for the
   camera at the tap — VisionKit reports itself unavailable until it is
   allowed — and a good scan starts the join by itself), or the
   Flasher-printed key for a camera or radar Canary; the phone joins
@@ -459,7 +465,29 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
   the Canary can see, posts the pick to `/join`, and shows the device's
   `/status` verdict with the tip its own page would give and a retry that
   needs no new prompt (`Model/SetupPortal.swift`,
-  `Transport/SetupPortalClient.swift`). A brand-new WAP's fallback is its
+  `Transport/SetupPortalClient.swift`). The phone keeps that network itself,
+  not with `joinOnce`: a joinOnce network is dropped when the app leaves the
+  foreground, and leaving for the Passwords app is the one thing a person
+  does in the middle of this step. The client forgets the network on the
+  verdict, on a failure, or when the screen closes, and at launch it removes
+  any `SecuraCV-` configuration an earlier, killed run left behind
+  (`forgetLingeringSetupNetworks`). iOS may still open the Canary's own page
+  in its captive pop-up the moment the phone is on the network — the
+  firmware answers Apple's probe with a redirect so a Settings join gets the
+  page, and the probe cannot tell the two joins apart — so the screen says
+  what both ways out do (finish there, or Cancel → Use Without Internet),
+  and the client watches `/status` while the person decides: a join finished
+  in the pop-up lands here as done, its network unnamed and unremembered,
+  since this phone never sent it. That watch beats once a second, because
+  both firmware portals take the setup network down 1.6 s after the FIRST
+  client to read `success` (the pop-up's page counts), and three polls
+  answered by nobody end the step in words that point at the
+  watch-it-appear step. Closing the screen ends every step still in flight
+  (`finish()` moves a generation that `connect` and `hand` check after each
+  await), so a dismissed walkthrough never comes back as a watcher. iOS's own refusals — Cancel on its prompt,
+  a key outside 8–63 characters, the app not in front — are said in those
+  words (`SetupPortal.HotspotJoinOutcome`), never as a bare
+  `localizedDescription`. A brand-new WAP's fallback is its
   own setup page, which the walkthrough explains and the person drives (the
   bonded Bluetooth step it used to show could never list a device: a new
   WAP does not advertise that console). A Sense or Vision's hub link rides
@@ -483,6 +511,52 @@ bench: the iOS pairing sheet's timing against NimBLE 1.4.x (a Vision), the
 once-only claim read on a WAP, the card's fifteen-second freshness and the
 pop-up's −70 dBm "close" band against a real beacon are the open items
 ([the design's checklist](../docs/design/magic_pairing.md#9-bench-checklist-what-to-verify-before-calling-it-shipped)).
+
+## Which one is yours
+
+The last step of every Canary walkthrough, **Watch it appear**, ticks the new
+Canary in two ways. When this phone joined its setup network, the network's
+four identity characters match the device's mDNS name, which is an identity
+match. When it was set up some other way, from the card, the iPhone Camera app
+or the Flasher, the screen remembers what was already on the network when the
+walkthrough opened. A same-kind Canary heard after that is shown as "new on
+your network since you opened this": a strong hint, never called verified
+(`Model/ArrivalWatch.swift`, `ArrivalWatchTests`), and used only when no
+setup-network identity is known, so it never ticks a different Canary in
+place of the one this phone joined. The baseline needs ten seconds of
+uninterrupted running browse, and a stretch cut short by the browse stopping
+or the app leaving the foreground starts over, so a slow Local Network prompt
+or a trip to the Camera app never makes an old Canary look new. The watch always ends in words: 90 seconds after a join
+here, three minutes when the person may not have started yet.
+
+A display also has its own way in. Today's first-run card offers "It has a
+screen? Scan its code", Set up lists "Add a display", and
+`securacv://setup?what=display` opens the same walkthrough, skipping the
+Bluetooth listen a display never answers (`scripts/tests/test_ios_setup_targets.py`
+holds the link, the targets and their destinations to each other).
+
+## Keeping Canaries up to date
+
+Each display and each paired WAP has a **Software update** section on its
+screen (`Views/Components/FirmwareUpdateSection.swift`). It shows what the
+Canary runs, checks for something newer, and installs it after one
+confirmation. The phone never downloads or holds firmware: it asks the
+Canary's own update engine (`firmware/common/ota`, the one Home Assistant's
+update entity drives) to check or install, then reads back what the device
+says: each step, the download and install percentage, the restart, and the
+version it comes back on. The Canary installs an update only if its
+signature checks out against the release key it was built with, and rolls
+itself back if the new image fails its health check. A restart that comes
+back on the old version is said out loud, never shown as success.
+
+A display serves `/api/ota/{status,check,install}` on the home network, like
+its other settings; a WAP serves the same routes behind its bearer token over
+its pinned https, so only a paired WAP gets the section. The contract lives
+in `Model/FirmwareUpdate.swift`. `FirmwareUpdateTests` runs it against both
+firmware's status bodies, and `scripts/tests/test_ios_firmware_update.py`
+holds its field names, state words and "busy" answers to the firmware
+sources on Linux. Firmware older than these routes answers 404, and the
+section says to update it once from a computer.
 
 ## On your iPad
 
@@ -607,6 +681,13 @@ anything; intents that act prefer the live store and fall back to the same
 durable ledgers the store folds at launch — one behavior, cold or warm.
 
 ## Build it (on a Mac)
+
+Shipping it is a button, not a laptop: **Actions → "Update everything (only
+what needs it)"** with `only: ios` uploads to TestFlight
+([`docs/RELEASE_BUTTONS.md`](../docs/RELEASE_BUTTONS.md)), and
+[`APP_STORE.md`](APP_STORE.md) is the App Store submission checklist: the
+record's fields and copy, the privacy label answer, the App Review notes and
+the screenshots.
 
 ```sh
 cd ios

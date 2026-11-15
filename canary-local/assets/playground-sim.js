@@ -44,6 +44,7 @@ export const PG = {
   PAD_POLL_MS: 50,
   SCAN_EVERY_MS: 3000,
   SNAP_EVERY_MS: 1000,
+  CAN_DRAIN_MS: 100, // fieldbus RX drain + one bus-off recovery step per pass
 };
 
 // VL53L0X trip thresholds cycled from the glass (action_tof_cycle_trip).
@@ -125,7 +126,7 @@ function freshState() {
     light: { found: false, addr: 0, lux: 0 },
     tof: { found: false, valid: false, mm: 0, trip_mm: 100, trips: 0, tripped: false },
     pad: { found: false, touched_bits: 0, preset: 0, events: 0 },
-    rs485: { ready: false, polls: 0, replies: 0, last_val: 0, last_ok: false },
+    rs485: { ready: false, polls: 0, replies: 0, last_val: 0, last_ok: false, last_exc: -1 },
     can: { ready: false, tx: 0, rx: 0, last_id: 0 },
     bus: { count: 0, addrs: [] },
     display_ok: true,
@@ -150,8 +151,9 @@ function canFormatFrame(f) {
 //
 // Every mutator returns the array of PG1 lines it emitted (usually 0–2) and
 // also appends them to `this.log`, so a UI can either react to the return or
-// tail the log. `snapshot(now)` is the 1 Hz SNAP; `tick(now)` runs the
-// bounded-output safety auto-off. There is no wall clock — the caller owns it.
+// tail the log. `snapshot(now)` is the 1 Hz SNAP; `tick(now)` is a loop pass:
+// the bounded-output safety auto-off, then the CAN drain's bus-off recovery
+// step. There is no wall clock — the caller owns it.
 // ============================================================================
 
 export class PlaygroundSim {
@@ -162,6 +164,11 @@ export class PlaygroundSim {
   reset() {
     this.g = freshState();
     this.log = [];
+    // The CAN controller's bus-off recovery, as can_keep_running() steps it:
+    // null (running), "bus_off" (out of service, no recovery initiated yet)
+    // or "recovering" (initiated; the next drain pass restarts it).
+    this._canRecovery = null;
+    this._tCan = 0; // the loop's t_can: the last drain pass
   }
 
   _emit(now, station, body) {
@@ -330,7 +337,11 @@ export class PlaygroundSim {
 
   // ── RS485 · Modbus RTU: probe holding register 0 of slave 1 ─────────────
   // Ports action_rs485_probe(): a virtual slave answers with a deterministic,
-  // ramping register value; `rs485ProbeQuiet` models an empty bus (no reply).
+  // ramping register value; `rs485ProbeQuiet` models an empty bus (no reply);
+  // `rs485ProbeException` a slave that answers with a Modbus exception (2 is
+  // an illegal data address: the slave is there, register 0 is not). last_exc
+  // follows the latest probe alone, as in the firmware: an exception sets it,
+  // a good reply and no reply clear it (-1).
   rs485Probe(now) {
     this.g.rs485.ready = true;
     this.g.rs485.polls++;
@@ -338,6 +349,7 @@ export class PlaygroundSim {
     this.g.rs485.replies++;
     this.g.rs485.last_val = v;
     this.g.rs485.last_ok = true;
+    this.g.rs485.last_exc = -1;
     return [this._emit(now, "rs485", `slave=1 reg=0 val=${v} crc=ok`)];
   }
 
@@ -345,20 +357,64 @@ export class PlaygroundSim {
     this.g.rs485.ready = true;
     this.g.rs485.polls++;
     this.g.rs485.last_ok = false;
+    this.g.rs485.last_exc = -1;
     return [this._emit(now, "rs485", "slave=1 reply=none")];
+  }
+
+  rs485ProbeException(now, code = 2) {
+    // The code is the exception reply's one byte, printed as %u.
+    if (!Number.isInteger(code) || code < 0 || code > 255) {
+      throw new RangeError(`a Modbus exception code is one byte (0..255), not ${code}`);
+    }
+    this.g.rs485.ready = true;
+    this.g.rs485.polls++;
+    this.g.rs485.last_ok = false;
+    this.g.rs485.last_exc = code;
+    return [this._emit(now, "rs485", `slave=1 exception=${code}`)];
   }
 
   // ── CAN · TWAI: send a test frame / receive one from another node ───────
   // Ports action_can_send() (tx id=0x100 dlc=8) and the loop's can_drain()
-  // (a received frame logged via the can_frame.h formatter).
+  // (a received frame logged via the can_frame.h formatter, then one step of
+  // the bus-off recovery). A refused send says why, as the station does: a
+  // controller out of service for a bus-off says "bus=off (recovering)";
+  // otherwise no other node acknowledged the frame ("bus quiet?"). The one
+  // refusal not modeled is "tx=fail driver": the virtual controller always
+  // comes up.
+  _canTapRefused(now) {
+    return [this._emit(now, "can", this._canRecovery
+      ? "tx=fail bus=off (recovering)"
+      : "tx=fail (bus quiet? need another node/ack)")];
+  }
+
   canSend(now) {
     this.g.can.ready = true;
+    if (this._canRecovery) return this._canTapRefused(now);
     this.g.can.tx++;
     return [this._emit(now, "can", "tx id=0x100 dlc=8 ok")];
   }
 
+  // A SEND tap no other node acknowledges: alone on the bus (or the far end
+  // unpowered), the controller only goes error-passive, never bus-off.
+  canNoAck(now) {
+    this.g.can.ready = true;
+    return this._canTapRefused(now);
+  }
+
+  // A SEND tap after the controller was driven bus-off (H/L swapped at one
+  // end while another node is on the bus, say): refused, and the drain's
+  // recovery is armed, once per bus-off. The next drain pass (tick) initiates
+  // it ("bus=off recovery=started"); the one after restarts the controller
+  // ("bus=on recovered"), as a quiet 500 kbit/s bus frees in a few ms.
+  canBusOff(now) {
+    this.g.can.ready = true;
+    if (!this._canRecovery) this._canRecovery = "bus_off";
+    return this._canTapRefused(now);
+  }
+
   canReceive(now) {
     this.g.can.ready = true;
+    if (this._canRecovery) return []; // out of service: it hears nothing
     this.g.can.rx++;
     const f = { id: 0x101, extended: false, rtr: false, dlc: 8,
                 data: [0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7] };
@@ -366,7 +422,22 @@ export class PlaygroundSim {
     return [this._emit(now, "can", `rx ${canFormatFrame(f)}`)];
   }
 
-  // ── Bounded-output safety: release any DO past its deadline ─────────────
+  // One step of can_keep_running(), after a drain: never a transmit.
+  _canRecoverStep(now) {
+    if (this._canRecovery === "bus_off") {
+      this._canRecovery = "recovering";
+      return [this._emit(now, "can", "bus=off recovery=started")];
+    }
+    if (this._canRecovery === "recovering") {
+      this._canRecovery = null;
+      return [this._emit(now, "can", "bus=on recovered")];
+    }
+    return [];
+  }
+
+  // ── One loop pass: bounded-output safety, then the CAN drain ────────────
+  // Releases any DO past its deadline, then, once CAN_DRAIN_MS has passed
+  // since the last drain and the controller is up, takes one recovery step.
   tick(now) {
     const out = [];
     for (const ch of [0, 1]) {
@@ -376,6 +447,10 @@ export class PlaygroundSim {
         c.latched = false;
         out.push(...this._doDrive(ch, false, now));
       }
+    }
+    if (now - this._tCan >= PG.CAN_DRAIN_MS) {
+      this._tCan = now;
+      if (this.g.can.ready) out.push(...this._canRecoverStep(now));
     }
     return out;
   }

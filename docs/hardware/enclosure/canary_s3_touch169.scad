@@ -110,7 +110,6 @@ opt_btn = true;      // PWR/BOOT/RST access holes in the top (+Y) wall
 btn_d = 3.4;                       // access hole Ø
 btn_xs = [-9.0, 0.0, 9.0];         // button X centers on the top edge — MEASURE
 
-/* [Side cluster] — battery / RTC / pin row exit on the RIGHT (+X) edge */
 /* [Port / button datums] — the 1.47 family mounts USB-C and the tact switches
    on the BACK of the PCB (photo-verified on the C3 and C6); the 1.69 has not
    met calipers, so the side is a knob. At "front"/"back" the opening centers
@@ -119,6 +118,8 @@ usb_side = "back";   // ["back","front"] which PCB face carries the USB-C — ME
 usb_dz   = 0.0;      // measured correction to the derived USB-C center (+ = toward the back)
 btn_side = "back";   // ["back","front"] which PCB face carries the buttons — MEASURE
 btn_dz   = 1.0;      // actuator center off that face (side tact switches sit ~1.0) — MEASURE
+
+/* [Side cluster] — battery / RTC / pin row exit on the RIGHT (+X) edge */
 opt_side = true;     // battery/RTC/pin cluster slot in the right (+X) wall, behind the PCB
 side_open_h = 10.0;   // side slot height — MEASURE; capped by the snap windows either side of it (asserted)
 side_open_dy = 0.0;   // side slot center offset (Y) — MEASURE

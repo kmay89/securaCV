@@ -77,6 +77,7 @@ def save_env(monkeypatch, tmp_path):
     server reads back as the options as they are."""
     captured: dict = {}
     monkeypatch.setattr(serve_wizard, "DEVICE_KEY_FILE", tmp_path / "device_key")
+    monkeypatch.setattr(serve_wizard, "LEGACY_DEVICE_KEY_FILE", tmp_path / "legacy" / "device_key")
     monkeypatch.setattr(serve_wizard, "WIZARD_PREFS_FILE", tmp_path / "wizard_prefs.json")
     monkeypatch.setattr(
         serve_wizard, "set_addon_options", lambda opts: captured.update(options=opts)

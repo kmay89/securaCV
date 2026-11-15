@@ -2,8 +2,8 @@
  * @file test_device_signature_common.cpp
  * @brief Host-side test for the shared device_signature module
  *        (firmware/common/identity) — canonical-message builders +
- *        b64url encoder, including the canary-sense `sense` kind and the
- *        canary-sentinel `sentinel` kind.
+ *        b64url encoder, including the canary-sense `sense` kind, the
+ *        canary-sentinel `sentinel` kind and the `state` wellbeing kind.
  *
  * The Ed25519 sign path needs the Arduino Crypto library, so this test
  * covers the deterministic parts: the canonical string bytes that go
@@ -178,6 +178,81 @@ void test_sentinel_canonical_truncation_returns_zero() {
   check(out[0] == '\0', "truncated sentinel canonical clears the buffer");
 }
 
+/* The `state` wellbeing canonical a canary-sense signs on its retained
+ * `securacv/<id>/state` publish. STATE_GOLDEN is the golden vector: the
+ * kernel's fleet roll-call test (src/fleet_peers.rs, STATE_GOLDEN) and the
+ * HA pytest (custom_components/securacv/tests/test_signature.py) rebuild it
+ * byte-for-byte from the same inputs and verify the deterministic Ed25519
+ * signature over it under the shared test key, and both read THIS file to
+ * prove the literal below is still the one they pin — so no side can move
+ * it alone. Inputs: chain length 12, the device's third state publish
+ * since boot, a present room with one occupant and the breathing lock held. */
+#define STATE_GOLDEN \
+  "securacv-canary-sig|v1|state|sense01|12|3|present|1|true"
+
+void test_state_canonical_golden_vector() {
+  char out[256];
+  const size_t n = device_signature::build_state_canonical(
+      /*chain_length=*/12,
+      /*seq=*/3,
+      /*presence=*/"present",
+      /*occupants=*/"1",
+      /*breathing=*/"true",
+      /*device_id=*/"sense01", out, sizeof(out));
+  check(n > 0, "build_state_canonical wrote something");
+  check_eq(std::string(out, n), STATE_GOLDEN,
+           "state canonical matches the shared golden vector");
+}
+
+void test_state_canonical_without_breathing_channel() {
+  /* A build with no breathing channel (no CANARY_SENSE_VITALS) spells the
+   * slot `unknown` — never an empty slot a verifier would read as a
+   * different message — and a cleared room with nobody in it still lands
+   * every field. */
+  char out[256];
+  const size_t n = device_signature::build_state_canonical(
+      40, 1, "clear", "0", "unknown", "hall", out, sizeof(out));
+  check(n > 0, "unknown-breathing canonical wrote something");
+  check_eq(std::string(out, n),
+           "securacv-canary-sig|v1|state|hall|40|1|clear|0|unknown",
+           "state canonical without a breathing channel matches reference");
+}
+
+void test_state_canonical_is_not_a_sense_canonical() {
+  /* Domain separation by kind: the same device, the same words and the
+   * same numbers through the two builders can never produce the same
+   * bytes, so a signed `sense` event can never be replayed as a `state`
+   * snapshot (or the reverse). */
+  char a[256], b[256];
+  const size_t na = device_signature::build_state_canonical(
+      3, 1200, "present", "1", "near", "dev01", a, sizeof(a));
+  const size_t nb = device_signature::build_sense_canonical(
+      3, "1200", "present", "1", "near", 0, "dev01", b, sizeof(b));
+  check(na > 0 && nb > 0, "both canonicals built");
+  check(std::string(a, na) != std::string(b, nb),
+        "state and sense canonicals differ for the same inputs");
+  check(std::string(a, na).find("|v1|state|") != std::string::npos,
+        "state canonical carries its kind");
+}
+
+void test_state_canonical_truncation_returns_zero() {
+  char out[32];
+  const size_t n = device_signature::build_state_canonical(
+      12, 3, "present", "1", "true", "sense01", out, sizeof(out));
+  check(n == 0, "truncated state canonical returns 0");
+  check(out[0] == '\0', "truncated state canonical clears the buffer");
+}
+
+void test_state_sign_is_refused_on_the_host() {
+  /* The host build has no Ed25519 signer: sign_state must fail closed (an
+   * unsigned body goes out, the roll-call serves no words) rather than
+   * hand back a buffer that looks like a signature. */
+  char sig[device_signature::SIG_B64URL_CAP] = "stale";
+  check(!device_signature::sign_state(12, 3, "present", "1", "true",
+                                      sig, sizeof(sig)),
+        "sign_state fails closed without a signer");
+}
+
 void test_chain_canonical_null_hash_returns_zero() {
   char out[256] = "sentinel";
   const size_t n = device_signature::build_chain_canonical(
@@ -254,6 +329,11 @@ int main() {
   test_sentinel_canonical_anomaly_unknown_bands();
   test_sentinel_canonical_is_not_a_sense_canonical();
   test_sentinel_canonical_truncation_returns_zero();
+  test_state_canonical_golden_vector();
+  test_state_canonical_without_breathing_channel();
+  test_state_canonical_is_not_a_sense_canonical();
+  test_state_canonical_truncation_returns_zero();
+  test_state_sign_is_refused_on_the_host();
   test_chain_canonical_null_hash_returns_zero();
   test_canonical_truncation_returns_zero();
   test_b64url_known_vectors();

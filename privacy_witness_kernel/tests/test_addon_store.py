@@ -13,6 +13,7 @@ PyYAML is a TEST dependency only (the image has none); the pwk-wizard-tests
 job installs it, and the tests are skipped locally without it.
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -84,8 +85,193 @@ def test_options_and_schema_carry_the_new_switches():
     assert schema["verify_interval_hours"] == "int(0,168)?"
     assert opts["retention_days"] == 7
     assert opts["frigate"]["enable_reviews"] is False
-    assert schema["frigate"]["cameras"] == "list(str)?"
+    # A list of strings, in the Supervisor's list syntax (a YAML list holding
+    # the element type). `list(str)?` is a select that takes only "str".
+    assert schema["frigate"]["cameras"] == ["str?"]
+    assert schema["frigate"]["labels"] == ["str?"]
     assert set(opts) == set(schema), "every option has a schema entry and vice versa"
+
+
+# The Supervisor's option check, mirrored for the types this schema uses:
+# supervisor/apps/options.py (AppOptions, home-assistant/supervisor at
+# bde7fb7b), which write_options runs on the stored options before every
+# start (the app does not start when it refuses them) and POST
+# /addons/self/options runs on every save the wizard sends. A YAML list is a
+# list of its one element type; a dict is checked key by key (unknown keys
+# dropped, a missing key refused unless its type ends in "?"); `list(a|b)` is
+# a SELECT: str(value) must be one of a, b. So `list(str)?` refused the
+# defaults' `cameras: []` ("[]" is not "str") and the app never started.
+_SUP_ELEMENT = re.compile(
+    r"^(?:"
+    r"|bool"
+    r"|email"
+    r"|url"
+    r"|port"
+    r"|device(?:\((?P<filter>subsystem=[a-z]+)\))?"
+    r"|str(?:\((?P<s_min>\d+)?,(?P<s_max>\d+)?\))?"
+    r"|password(?:\((?P<p_min>\d+)?,(?P<p_max>\d+)?\))?"
+    r"|int(?:\((?P<i_min>-?\d+)?,(?P<i_max>-?\d+)?\))?"
+    r"|float(?:\((?P<f_min>-?\d*\.?\d+)?,(?P<f_max>-?\d*\.?\d+)?\))?"
+    r"|match\((?P<match>.*)\)"
+    r"|list\((?P<list>.+)\)"
+    r")\??$"
+)
+
+
+class _Refused(Exception):
+    """The Supervisor would raise vol.Invalid here."""
+
+
+def _sup_range(match, low, high, number):
+    lo, hi = match.group(low), match.group(high)
+    if (lo and number < float(lo)) or (hi and number > float(hi)):
+        raise _Refused(f"{number} is outside ({lo}, {hi})")
+
+
+def _supervisor_check(typ, value, key):
+    """Return the value as the Supervisor stores it, or raise _Refused."""
+    if isinstance(typ, list):
+        if not isinstance(value, list):
+            raise _Refused(f"Invalid list for option '{key}'")
+        return [_supervisor_check(typ[0], element, key) for element in value]
+    if isinstance(typ, dict):
+        if not isinstance(value, dict):
+            raise _Refused(f"Invalid dict for option '{key}'")
+        out = {k: _supervisor_check(typ[k], v, k) for k, v in value.items() if k in typ}
+        for missing in set(typ) - set(out):
+            inner = typ[missing][0] if isinstance(typ[missing], list) and typ[missing] else typ[missing]
+            if not (isinstance(inner, str) and inner.endswith("?")):
+                raise _Refused(f"Missing option '{missing}' in {key}")
+        return out
+    if value is None:
+        raise _Refused(f"Missing required option '{key}'")
+    match = _SUP_ELEMENT.match(typ)
+    if not match:
+        raise _Refused(f"Unknown type '{typ}'")
+    if typ.startswith(("str", "password")):
+        if not isinstance(value, str):
+            raise _Refused(f"'{key}' expects a string, got {value!r}")
+        prefix = "s" if typ.startswith("str") else "p"
+        _sup_range(match, f"{prefix}_min", f"{prefix}_max", len(value))
+        return value
+    if typ.startswith("int"):
+        number = int(value)
+        _sup_range(match, "i_min", "i_max", number)
+        return number
+    if typ.startswith("float"):
+        number = float(value)
+        _sup_range(match, "f_min", "f_max", number)
+        return number
+    if typ.startswith("bool"):
+        if isinstance(value, str):
+            if value.lower() not in ("1", "true", "yes", "on", "enable",
+                                     "0", "false", "no", "off", "disable"):
+                raise _Refused(f"'{key}' expects a boolean, got {value!r}")
+            return value.lower() in ("1", "true", "yes", "on", "enable")
+        return bool(value)
+    if typ.startswith("url"):
+        from urllib.parse import urlparse
+        parsed = urlparse(value)
+        if not parsed.scheme or not parsed.netloc:
+            raise _Refused(f"'{key}' expects a URL, got {value!r}")
+        return value
+    if typ.startswith("match"):
+        if not re.match(match.group("match"), str(value)):
+            raise _Refused(f"'{key}' does not match {match.group('match')}")
+        return str(value)
+    if typ.startswith("list"):
+        choices = match.group("list").split("|")
+        if str(value) not in choices:
+            raise _Refused(f"value must be one of {choices} for option '{key}', got {value!r}")
+        return str(value)
+    raise AssertionError(f"type '{typ}' is not mirrored here; mirror it before using it")
+
+
+def test_the_supervisor_check_mirror_refuses_a_select_standing_in_for_a_list():
+    """The mirror is only worth its fidelity: a select takes one of its
+    values, never a list (what 0.9.0's `list(str)?` met in its own defaults),
+    and the list syntax takes the list."""
+    with pytest.raises(_Refused, match=r"one of \['str'\]"):
+        _supervisor_check("list(str)?", [], "cameras")
+    with pytest.raises(_Refused, match=r"one of \['str'\]"):
+        _supervisor_check("list(str)?", ["person", "car"], "labels")
+    assert _supervisor_check("list(standalone|frigate)", "frigate", "mode") == "frigate"
+    assert _supervisor_check(["str?"], ["person", "car"], "labels") == ["person", "car"]
+    assert _supervisor_check({"labels": ["str?"]}, {}, "frigate") == {}
+    with pytest.raises(_Refused, match="Invalid list"):
+        _supervisor_check(["str?"], "person", "labels")
+    with pytest.raises(_Refused, match="Missing option 'name'"):
+        _supervisor_check({"name": "str", "zone_id": "str?"}, {}, "cameras")
+
+
+def _walk_schema(schema, options, path=""):
+    """Yield (dotted path, schema entry, default) for every option leaf."""
+    for key, typ in schema.items():
+        here = f"{path}.{key}" if path else key
+        value = options.get(key) if isinstance(options, dict) else None
+        if isinstance(typ, dict):
+            yield from _walk_schema(typ, value if isinstance(value, dict) else {}, here)
+        else:
+            yield here, typ, value
+
+
+def test_every_list_option_is_declared_as_a_list():
+    """A default that is a list must have the list syntax, so a select can
+    never again stand in for one (0.9.0's frigate.cameras and labels)."""
+    for path, typ, default in _walk_schema(CONFIG["schema"], CONFIG["options"]):
+        if isinstance(default, list):
+            assert isinstance(typ, list), f"{path}: a list default declared as {typ!r}"
+        if isinstance(typ, str) and typ.startswith("list("):
+            assert not isinstance(default, list), f"{path}: {typ!r} is a select"
+
+
+def test_the_default_options_pass_the_supervisor_check():
+    """write_options checks the stored options (config.yaml's defaults under
+    whatever the person saved) before every start; the defaults alone must
+    pass, or the app never starts."""
+    stored = _supervisor_check(CONFIG["schema"], CONFIG["options"], "root")
+    assert stored["frigate"]["cameras"] == []
+    assert stored["frigate"]["labels"] == ["person", "car", "dog", "cat"]
+    assert stored["cameras"] == []
+
+
+def _load_serve_wizard():
+    spec = importlib.util.spec_from_file_location("serve_wizard_store", ADDON / "serve_wizard.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("payload", [
+    {"mode": "frigate", "frigate_detected": True, "digest_enabled": False,
+     "cameras": [{"name": "Front Door"}, {"name": "Driveway"}]},
+    {"mode": "frigate", "frigate_detected": True, "digest_enabled": False, "cameras": []},
+    {"mode": "standalone", "digest_enabled": False,
+     "cameras": [{"name": "Front Door", "url": "rtsp://10.0.0.2/front"},
+                 {"name": "\U0001F3E0", "url": "rtsp://10.0.0.3/home"}]},
+], ids=["frigate, two cameras", "frigate, every camera", "standalone, two cameras"])
+def test_the_wizard_saves_pass_the_supervisor_check(payload, monkeypatch, tmp_path):
+    """What the wizard POSTs to /addons/self/options (over the options the
+    Supervisor answers, here the defaults) must pass the same check, or the
+    save is refused and the setup never completes."""
+    wizard = _load_serve_wizard()
+    sent: dict = {}
+    monkeypatch.setattr(wizard, "DEVICE_KEY_FILE", tmp_path / "device_key")
+    monkeypatch.setattr(wizard, "LEGACY_DEVICE_KEY_FILE", tmp_path / "legacy" / "device_key")
+    monkeypatch.setattr(wizard, "WIZARD_PREFS_FILE", tmp_path / "wizard_prefs.json")
+    monkeypatch.setattr(wizard, "get_addon_options", lambda: json.loads(json.dumps(CONFIG["options"])))
+    monkeypatch.setattr(wizard, "set_addon_options", lambda options: sent.update(options=options))
+    monkeypatch.setattr(wizard, "restart_addon", lambda: None)
+    handler = wizard.WizardHandler.__new__(wizard.WizardHandler)
+    result = handler._handle_save(payload)
+    assert result["ok"] is True, result
+    stored = _supervisor_check(CONFIG["schema"], {**CONFIG["options"], **sent["options"]}, "root")
+    assert stored["mode"] == payload["mode"]
+    if payload["mode"] == "frigate":
+        assert stored["frigate"]["cameras"] == result["cameras"]
+        assert stored["frigate"]["labels"] == ["person", "car", "dog", "cat"]
+    else:
+        assert [c["zone_id"] for c in stored["cameras"]] == ["zone:front_door", "zone:_"]
 
 
 def test_discovery_services_and_ingress_unchanged():
@@ -205,13 +391,14 @@ def test_apparmor_only_the_panel_writes_the_integration_tree():
 # Every file a confined process opens under /config, by the literal the Rust
 # source (or the setup) spells, with the least permission that keeps it
 # running — a standalone install crash-looped once because witnessd's own
-# seed file (crypto::resolve_device_seed_persisting_env creates
-# `<db>.ed25519.seed` at every first start) had no rule. A new file in the
-# sources is a new row here AND a new rule in apparmor.txt.
+# seed file (crypto::resolve_device_seed_persisting_env created
+# `<db>.ed25519.seed` at every first start, until the service set
+# DEVICE_KEY_SEED_PERSIST=0) had no rule. A new file in the sources is a new
+# row here AND a new rule in apparmor.txt.
 #
 #   witness.db(-wal/-shm)        storage.rs (SQLite WAL)            witnessd, witness_api, frigate_bridge
 #   witness.db.health.json(.tmp) storage_health.rs store_state      witnessd, witness_api
-#   witness.ed25519.seed         crypto/mod.rs device_key_path_for_db  witnessd (creates), witness_api + frigate_bridge (read)
+#   witness.ed25519.seed         crypto/mod.rs device_key_path_for_db  witnessd + witness_api + frigate_bridge (read, mismatch check); the setup removes it
 #   api_token + .api_token.*.tmp api/mod.rs write_restricted         witnessd, witness_api (write); event_mqtt_bridge, panel (read)
 #   paired_tokens.json (+tmp)    api/pairing.rs PAIRED_TOKEN_FILE_NAME  witnessd, witness_api
 #   pairing_code (+tmp)          api/pairing.rs PAIRING_CODE_FILE_NAME  witnessd, witness_api
@@ -225,7 +412,7 @@ REQUIRED_FILE_RULES = {
         "/config/witness.db-*": "rwk",
         "/config/witness.db.health.json": "rw",
         "/config/witness.db.health.json.tmp": "rw",
-        "/config/witness.ed25519.seed": "rw",
+        "/config/witness.ed25519.seed": "r",
         "/config/api_token": "rw",
         "/config/.api_token.*.tmp": "rw",
         "/config/viewer_tokens.json": "r",
@@ -265,6 +452,7 @@ REQUIRED_FILE_RULES = {
         "/config/fleet_peers.json.tmp": "rw",
     },
     "panel": {
+        "/data/device_key": "rw",
         "/config/api_token": "r",
         "/config/.securacv/**": "rw",
         "/config/frigate.yml": "rw",
@@ -285,15 +473,60 @@ def test_apparmor_names_every_file_each_process_opens(profile):
         assert not missing, f"{profile}: {path} needs {needed!r}, has {rules[path]!r}"
 
 
-def test_apparmor_the_seed_file_is_created_by_witnessd_alone():
-    """witnessd persists the environment seed on a first standalone start;
-    the other kernel processes only read it (resolve_device_seed never
-    writes a seed it was given)."""
-    assert "w" in _file_rules(_profile_block("witnessd"))["/config/witness.ed25519.seed"]
-    for profile in ("witness_api", "frigate_bridge"):
+def _setup_profile_block():
+    """The top-level profile's own rules: from its header to the first child."""
+    start = APPARMOR.index(f"profile {CONFIG['slug']} ")
+    end = APPARMOR.index("\n  profile ", start)
+    return APPARMOR[start:end]
+
+
+def test_apparmor_the_device_key_lives_in_data_and_the_setup_can_verify_it():
+    """The seed file is the app's own (/data/device_key: the wizard writes
+    it, the setup reads it); the setup's one-time move out of /config holds
+    the seed against the sealed log with log_verify --lineage, which runs
+    inherited under the top-level profile and opens the database as every
+    kernel process does. No child profile but the panel names the key file,
+    and nothing names the legacy path by itself (the panel's
+    /config/.securacv/** covers the copy the move removes)."""
+    setup = _file_rules(_setup_profile_block())
+    assert setup["/data/**"] == "rw"
+    assert "r" in setup["/config/witness.db"] and "k" in setup["/config/witness.db"]
+    assert "r" in setup["/config/witness.db-*"] and "k" in setup["/config/witness.db-*"]
+    assert setup["/config/.securacv/**"] == "rw"  # the move deletes the legacy copy
+    assert _file_rules(_profile_block("panel"))["/data/device_key"] == "rw"
+    for name in ("witness_api", "witnessd", "frigate_bridge", "event_mqtt_bridge"):
+        assert "/data/device_key" not in _file_rules(_profile_block(name)), name
+    assert "/config/.securacv/device_key" not in APPARMOR
+    assert 'DEVICE_KEY_FILE="/data/device_key"' in RUN_SH
+    assert 'LEGACY_DEVICE_KEY_FILE="/config/.securacv/device_key"' in RUN_SH
+    wizard = (ADDON / "serve_wizard.py").read_text()
+    assert 'DEVICE_KEY_FILE = Path("/data/device_key")' in wizard
+    assert 'LEGACY_DEVICE_KEY_FILE = Path("/config/.securacv/device_key")' in wizard
+
+
+def test_apparmor_no_kernel_process_writes_the_seed_file_and_the_setup_removes_it():
+    """The seed never lands under /config again. witnessd used to persist
+    the environment seed beside the database on a first standalone start;
+    its service now sets DEVICE_KEY_SEED_PERSIST=0, so it, like witness_api
+    and frigate_bridge, only reads the file (the seed-mismatch check for an
+    install that still has one). The setup alone holds `w`, to remove the
+    copy an earlier release left once it is shown to hold the key in use
+    (run_lib.sh remove_kernel_seed_copy, called from run.sh)."""
+    for profile in ("witnessd", "witness_api", "frigate_bridge"):
         assert _file_rules(_profile_block(profile))["/config/witness.ed25519.seed"] == "r", profile
     for profile in ("event_mqtt_bridge", "panel"):
         assert "/config/witness.ed25519.seed" not in _file_rules(_profile_block(profile)), profile
+    assert _file_rules(_setup_profile_block())["/config/witness.ed25519.seed"] == "rw"
+    service = (SERVICES_DIR / "witnessd" / "run").read_text()
+    assert "export DEVICE_KEY_SEED_PERSIST=0\n" in service
+    assert service.index("export DEVICE_KEY_SEED_PERSIST=0") < service.index("exec /usr/local/bin/witnessd")
+    witnessd = (REPO / "src" / "bin" / "witnessd.rs").read_text()
+    assert "DEVICE_KEY_SEED_PERSIST_ENV" in witnessd and "device_seed_persist_policy" in witnessd
+    assert 'DEVICE_KEY_SEED_PERSIST_ENV: &str = "DEVICE_KEY_SEED_PERSIST"' in (
+        REPO / "src" / "crypto" / "mod.rs"
+    ).read_text()
+    assert 'KERNEL_SEED_FILE="/config/witness.ed25519.seed"' in RUN_SH
+    assert RUN_SH.count('remove_kernel_seed_copy "$KERNEL_SEED_FILE" "$DEVICE_KEY_SEED"') == 1
 
 
 def test_apparmor_rules_name_the_literals_the_sources_spell():
@@ -318,8 +551,19 @@ def test_apparmor_rules_name_the_literals_the_sources_spell():
 
 def test_dockerfile_uses_the_official_pinned_base_selected_by_targetarch():
     assert "ARG TARGETARCH" in DOCKERFILE
-    assert "FROM ghcr.io/home-assistant/amd64-base:3.18 AS runtime-amd64" in DOCKERFILE
-    assert "FROM ghcr.io/home-assistant/aarch64-base:3.18 AS runtime-arm64" in DOCKERFILE
+    # Pinned by digest as well as tag: the tag says which base, the digest
+    # says which bytes, so a re-tagged upstream image cannot change the
+    # add-on's runtime under a release.
+    assert re.search(
+        r"^FROM ghcr\.io/home-assistant/amd64-base:3\.18@sha256:[0-9a-f]{64} AS runtime-amd64$",
+        DOCKERFILE,
+        re.M,
+    )
+    assert re.search(
+        r"^FROM ghcr\.io/home-assistant/aarch64-base:3\.18@sha256:[0-9a-f]{64} AS runtime-arm64$",
+        DOCKERFILE,
+        re.M,
+    )
     assert "FROM runtime-${TARGETARCH}" in DOCKERFILE
     assert "hassio-addons/base" not in DOCKERFILE
     assert "BUILD_FROM" not in DOCKERFILE
@@ -413,6 +657,40 @@ def test_run_sh_computes_the_device_id_before_anything_announces_it():
     assert RUN_SH.index('DEVICE_ID=$(ha_device_id') < RUN_SH.index("PUBLISHER_CMD_ARRAY=(")
 
 
+def test_run_sh_moves_the_device_key_out_of_config_before_reading_it():
+    """The one-time move runs before the first-run gate and before the seed
+    resolves, names the sealed log for the verification, and its verdicts
+    are matched as fixed words: the seed itself is never logged. A copy that
+    cannot be written stops the start (the app must not mint a new identity
+    over a key it could not carry over)."""
+    move = 'migrate_device_key_file "$LEGACY_DEVICE_KEY_FILE" "$DEVICE_KEY_FILE" "$DB_PATH"'
+    assert RUN_SH.count(move) == 1
+    assert RUN_SH.index(move) < RUN_SH.index('elif [ -s "$DEVICE_KEY_FILE" ]; then')
+    assert RUN_SH.index(move) < RUN_SH.index('resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE"')
+    for verdict in ('"moved verified")', '"moved no-log")', '"kept unverified")', '"kept differs")'):
+        assert verdict in RUN_SH, verdict
+    code = "\n".join(line for line in RUN_SH.splitlines() if not line.lstrip().startswith("#"))
+    assert not re.search(r"bashio::log\.\w+ .*DEVICE_KEY_SEED", code)
+    assert not re.search(r"bashio::log\.\w+ .*key_move", code)
+    assert "exit 1" in RUN_SH[RUN_SH.index(move):RUN_SH.index("First-run detection")]
+    # A seed the key file supplied is recorded in the option (the Configuration
+    # tab is where the docs send people to copy it from): after the seed
+    # resolves, only when the option was empty, through the panel's Supervisor
+    # client with the seed in that child's environment and never on argv.
+    record = 'DEVICE_KEY_SEED="$DEVICE_KEY_SEED" /usr/bin/python3 /usr/local/bin/serve_wizard.py record-device-key-seed'
+    assert RUN_SH.count(record) == 1
+    assert RUN_SH.index('resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE"') < RUN_SH.index(record)
+    assert RUN_SH.index(record) < RUN_SH.index('DEVICE_ID=$(ha_device_id')
+    assert 'OPTION_DEVICE_KEY_SEED="$DEVICE_KEY_SEED"' in RUN_SH
+    assert RUN_SH.index('OPTION_DEVICE_KEY_SEED="$DEVICE_KEY_SEED"') < RUN_SH.index('resolve_device_key_seed "$DEVICE_KEY_SEED"')
+    assert '[ -z "$OPTION_DEVICE_KEY_SEED" ] || [ "$OPTION_DEVICE_KEY_SEED" = "devkey:mvp" ]' in RUN_SH
+    assert not re.search(r"serve_wizard\.py record-device-key-seed[^\n]*\$DEVICE_KEY_SEED", RUN_SH)
+    # The token the integration reads did not move with it.
+    const = (REPO / "custom_components" / "securacv" / "const.py").read_text()
+    assert 'DEFAULT_TOKEN_FILE = "/config/api_token"' in const
+    assert 'TOKEN_FILE="/config/api_token"' in RUN_SH
+
+
 def test_run_sh_passes_the_c1_announce_flags_to_the_publisher():
     for flag in ("--announce-api-bind all", "--announce-pairing token_file",
                  '--announce-api-host "$ADDON_HOST"', '--ha-device-id "$DEVICE_ID"'):
@@ -461,9 +739,17 @@ def test_docs_cover_the_journeys_the_carry_disclosure_revocation_and_migration()
         "Revoking and uninstalling", "sensor.pwk_last_event", "sensor.securacv_last_event",
         "binary_sensor.securacv_chain_valid", "event.securacv_<zone>",
         "Settings → Dashboards → Add dashboard → SecuraCV",
+        # The device key: where it is, what a backup holds, what uninstall does.
+        "`/data/device_key` inside the app", "the device key with it",
+        "moves it, checks it against the sealed log",
     ):
         assert needle in docs, needle
     assert "appears automatically via MQTT discovery" not in docs
+    # Nothing user-facing still sends people to the /config copy for a backup.
+    for text in (docs, re.sub(r"\s+", " ", (ADDON / "wizard" / "index.html").read_text()),
+                 re.sub(r"\s+", " ", (ADDON / "translations" / "en.yaml").read_text())):
+        assert "stored at `/config/.securacv/device_key`" not in text
+        assert "included in Home Assistant backups" not in text
 
 
 def test_changelog_has_an_entry_for_this_version():

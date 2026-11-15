@@ -93,6 +93,17 @@ static const char* NVS_REVOKED = "revoked";     // F33: the §5.6 deny-list blob
 // ════════════════════════════════════════════════════════════════════════════
 
 static bool g_initialized = false;
+// Whether this boot has read the mesh's store (NVS_NS): init() sets it as
+// its loads begin, after the checks that refuse a mesh (this device's own
+// key does not hash, esp_now_init() fails). Until then RAM holds nothing of
+// the opera or its members, so nothing here writes the store, and no owner
+// command but clearing the alert history runs (F364's review). A refused
+// init, a failed esp_now_init() and safe mode (where init() does not run)
+// all left it false while the sketch's 5-minute save and the owner's
+// commands still ran: the save removed the last-seen record (a later boot
+// took members' earlier frames as fresh), an enable, rename or leave
+// removed the stored opera, and a pair/start founded a new one over it.
+static bool g_store_loaded = false;
 static Preferences g_prefs;
 
 // Device identity (references to main firmware keys)
@@ -324,8 +335,8 @@ static volatile bool g_rx_pending = false;
 // FORWARD DECLARATIONS
 // ════════════════════════════════════════════════════════════════════════════
 
-static void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out);
-static void compute_opera_id(const uint8_t* secret, uint8_t* id_out);
+[[nodiscard]] static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out);
+[[nodiscard]] static bool compute_opera_id(const uint8_t* secret, uint8_t* id_out);
 static bool derive_session_key(const uint8_t* local_priv, const uint8_t* peer_pub, uint8_t* key_out);
 static bool encrypt_message(const uint8_t* key, const uint8_t* plaintext, size_t len,
                            uint8_t* ciphertext, uint8_t* nonce_out, uint8_t* tag_out);
@@ -417,26 +428,40 @@ static void espnow_recv_cb(const esp_now_recv_info_t* info, const uint8_t* data,
 // CRYPTO HELPERS
 // ════════════════════════════════════════════════════════════════════════════
 
-static void sha256_domain(const char* domain, const uint8_t* data, size_t len, uint8_t* out) {
+// False, with the 32-byte `out` zeroed, when a SHA-256 step fails.
+[[nodiscard]] static bool sha256_domain(const char* domain, const uint8_t* data, size_t len, uint8_t* out) {
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, (const uint8_t*)domain, strlen(domain));
-  mbedtls_sha256_update(&ctx, data, len);
-  mbedtls_sha256_finish(&ctx, out);
+  int rc = mbedtls_sha256_starts(&ctx, 0);
+  if (rc == 0) rc = mbedtls_sha256_update(&ctx, (const uint8_t*)domain, strlen(domain));
+  if (rc == 0) rc = mbedtls_sha256_update(&ctx, data, len);
+  if (rc == 0) rc = mbedtls_sha256_finish(&ctx, out);
   mbedtls_sha256_free(&ctx);
+  if (rc != 0) memset(out, 0, 32);
+  return rc == 0;
 }
 
-static void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
+// False, with `fp_out` zeroed, when the hash fails, and every caller
+// refuses (sweep F364): a zeroed fingerprint is no key's, so it used to be
+// taken as one, and the deny-list answered "not removed" for it
+// (is_revoked_pubkey). [[nodiscard]] (the declarations above), so a
+// caller that drops the answer does not compile under -Werror, and
+// test_mesh_revocation_wap still holds every call in this file to
+// `if (!compute_...(`.
+static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
   uint8_t hash[32];
-  sha256_domain("securacv:pubkey:fingerprint", pubkey, PUBKEY_SIZE, hash);
-  memcpy(fp_out, hash, FINGERPRINT_SIZE);
+  const bool ok = sha256_domain("securacv:pubkey:fingerprint", pubkey, PUBKEY_SIZE, hash);
+  memcpy(fp_out, hash, FINGERPRINT_SIZE);   // zeros when !ok (sha256_domain)
+  return ok;
 }
 
-static void compute_opera_id(const uint8_t* secret, uint8_t* id_out) {
+// False, with `id_out` zeroed, when the hash fails; every caller refuses,
+// as for compute_fingerprint.
+static bool compute_opera_id(const uint8_t* secret, uint8_t* id_out) {
   uint8_t hash[32];
-  sha256_domain(DOMAIN_FLEET_ID, secret, OPERA_SECRET_SIZE, hash);
-  memcpy(id_out, hash, OPERA_ID_SIZE);
+  const bool ok = sha256_domain(DOMAIN_FLEET_ID, secret, OPERA_SECRET_SIZE, hash);
+  memcpy(id_out, hash, OPERA_ID_SIZE);      // zeros when !ok
+  return ok;
 }
 
 static bool derive_session_key(const uint8_t* local_priv, const uint8_t* peer_pub, uint8_t* key_out) {
@@ -487,15 +512,19 @@ static bool decrypt_message(const uint8_t* key, const uint8_t* ciphertext, size_
 
 static bool sign_message(const uint8_t* privkey, const uint8_t* data, size_t len, uint8_t* sig_out) {
   // Use domain-separated signing
+  // Nothing is signed over a hash that failed.
   uint8_t hash[32];
-  sha256_domain(DOMAIN_MESSAGE, data, len, hash);
+  if (!sha256_domain(DOMAIN_MESSAGE, data, len, hash)) {
+    memset(sig_out, 0, SIGNATURE_SIZE);
+    return false;
+  }
   Ed25519::sign(sig_out, privkey, g_device_pubkey, hash, 32);
   return true;
 }
 
 static bool verify_signature(const uint8_t* pubkey, const uint8_t* data, size_t len, const uint8_t* sig) {
   uint8_t hash[32];
-  sha256_domain(DOMAIN_MESSAGE, data, len, hash);
+  if (!sha256_domain(DOMAIN_MESSAGE, data, len, hash)) return false;
   return Ed25519::verify(sig, pubkey, hash, 32);
 }
 
@@ -630,12 +659,20 @@ static bool add_peer(const uint8_t* pubkey, const uint8_t* mac, const char* name
   if (g_peer_count >= MAX_OPERA_SIZE) {
     return false;
   }
+  // A key that does not hash is not added (sweep F364): it was added under
+  // a zeroed fingerprint, and the slot is not touched before this.
+  uint8_t fingerprint[FINGERPRINT_SIZE];
+  if (!compute_fingerprint(pubkey, fingerprint)) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "opera: a member's key did not hash; not added");
+    return false;
+  }
 
   OperaPeer* peer = &g_peers[g_peer_count];
   memset(peer, 0, sizeof(OperaPeer));
 
   memcpy(peer->pubkey, pubkey, PUBKEY_SIZE);
-  compute_fingerprint(pubkey, peer->fingerprint);
+  memcpy(peer->fingerprint, fingerprint, FINGERPRINT_SIZE);
   memcpy(peer->mac_addr, mac, 6);
   strncpy(peer->name, name, MAX_PEER_NAME_LEN);
   peer->name[MAX_PEER_NAME_LEN] = '\0';
@@ -919,7 +956,9 @@ static bool send_to_peer(OperaPeer* peer, MessageType type, const uint8_t* paylo
 
   // Sign the message (excluding signature space)
   uint8_t signature[SIGNATURE_SIZE];
-  sign_message(g_device_privkey, msg, offset, signature);
+  if (!sign_message(g_device_privkey, msg, offset, signature)) {
+    return false;
+  }
   memcpy(msg + offset, signature, SIGNATURE_SIZE);
   offset += SIGNATURE_SIZE;
 
@@ -1156,7 +1195,10 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
       {
         if (!peer->session_established) break;
         if (payload_len != sizeof(OperaRekeyPayload)) break;
-        const OperaRekeyPayload* rk = (const OperaRekeyPayload*)payload;
+        // Copied out: the payload sits unaligned in the frame for its uint32_t.
+        OperaRekeyPayload copy;
+        memcpy(&copy, payload, sizeof(copy));
+        const OperaRekeyPayload* rk = &copy;
         uint8_t new_secret[OPERA_SECRET_SIZE];
         if (!decrypt_message(peer->session_key, rk->encrypted_secret,
                              OPERA_SECRET_SIZE, rk->nonce, rk->tag, new_secret)) {
@@ -1165,14 +1207,29 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
           break;
         }
 
+        // ── 0. The new opera_id, before anything is sent (sweep F364) ──
+        // One that does not hash refuses the rekey: no ACK, nothing
+        // installed, so the initiator's timeout marks this member stale,
+        // and it is out of the opera until its owner re-pairs it (nothing
+        // re-pairs on its own). It was derived after the ACK went out, and
+        // a failed hash installed the new secret under a zeroed opera_id.
+        uint8_t new_opera_id[OPERA_ID_SIZE];
+        if (!compute_opera_id(new_secret, new_opera_id)) {
+          secure_wipe(new_secret, sizeof(new_secret));
+          health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+                     "opera: rekey refused: the new opera id did not hash (no ACK sent)");
+          break;
+        }
+
         // ── 1. ACK FIRST under the still-current opera_id + session key ──
         OperaRekeyAckPayload ack;
         ack.rekey_id = rk->rekey_id;
         send_to_peer(peer, MSG_OPERA_REKEY_ACK, (uint8_t*)&ack, sizeof(ack));
 
-        // ── 2. Now install the new secret and derive new opera_id ──
+        // ── 2. Now install the new secret and its opera_id ──
         memcpy(g_opera_config.opera_secret, new_secret, OPERA_SECRET_SIZE);
-        compute_opera_id(g_opera_config.opera_secret, g_opera_config.opera_id);
+        secure_wipe(new_secret, sizeof(new_secret));
+        memcpy(g_opera_config.opera_id, new_opera_id, OPERA_ID_SIZE);
         persist_opera_config();  // FE-gated; logs alert if refused
 
         // ── 3. Invalidate the session so both sides re-auth ──
@@ -1187,7 +1244,10 @@ static void handle_received_message(const uint8_t* mac, const uint8_t* data, siz
       // We're the initiator; record this peer's ACK.
       {
         if (payload_len != sizeof(OperaRekeyAckPayload)) break;
-        const OperaRekeyAckPayload* ack = (const OperaRekeyAckPayload*)payload;
+        // Copied out: the payload sits unaligned in the frame for its uint32_t.
+        OperaRekeyAckPayload copy;
+        memcpy(&copy, payload, sizeof(copy));
+        const OperaRekeyAckPayload* ack = &copy;
         if (!g_rekey.active) break;
         if (ack->rekey_id != g_rekey.rekey_id) break;
         // Find peer index in g_peers (peer pointer arithmetic).
@@ -1280,13 +1340,13 @@ static void handle_auth_challenge(const uint8_t* mac, const uint8_t* payload, si
   memcpy(sign_input + AUTH_CHALLENGE_SIZE, g_opera_config.opera_id, OPERA_ID_SIZE);
 
   uint8_t hash[32];
-  sha256_domain(DOMAIN_AUTH, sign_input, sizeof(sign_input), hash);
+  if (!sha256_domain(DOMAIN_AUTH, sign_input, sizeof(sign_input), hash)) return;
   Ed25519::sign(response.challenge_sig, g_device_privkey, g_device_pubkey, hash, 32);
 
   memcpy(response.pubkey, g_device_pubkey, PUBKEY_SIZE);
 
   // Sign opera_id as proof of membership
-  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash);
+  if (!sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash)) return;
   Ed25519::sign(response.opera_proof, g_device_privkey, g_device_pubkey, hash, 32);
 
   // Derive session key
@@ -1311,7 +1371,7 @@ static void handle_auth_response(OperaPeer* peer, const uint8_t* payload, size_t
 
   // Verify opera proof
   uint8_t hash[32];
-  sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash);
+  if (!sha256_domain(DOMAIN_AUTH, g_opera_config.opera_id, OPERA_ID_SIZE, hash)) return;
   if (!Ed25519::verify(response->opera_proof, peer->pubkey, hash, 32)) {
     g_auth_failures++;
     return;
@@ -1331,7 +1391,10 @@ static void handle_tamper_alert(OperaPeer* peer, const uint8_t* payload, size_t 
   if (!peer) return;
   if (payload_len != sizeof(TamperAlertPayload)) return;
 
-  const TamperAlertPayload* alert = (const TamperAlertPayload*)payload;
+  // Copied out: the payload sits unaligned in the frame for its uint32_t.
+  TamperAlertPayload copy;
+  memcpy(&copy, payload, sizeof(copy));
+  const TamperAlertPayload* alert = &copy;
 
   update_peer_state(peer, PEER_ALERT);
   peer->alerts_received++;
@@ -1395,7 +1458,10 @@ static void handle_offline_imminent(OperaPeer* peer, const uint8_t* payload, siz
   if (!peer) return;
   if (payload_len != sizeof(OfflineImminentPayload)) return;
 
-  const OfflineImminentPayload* alert = (const OfflineImminentPayload*)payload;
+  // Copied out: the payload sits unaligned in the frame for its uint32_t.
+  OfflineImminentPayload copy;
+  memcpy(&copy, payload, sizeof(copy));
+  const OfflineImminentPayload* alert = &copy;
 
   update_peer_state(peer, PEER_OFFLINE);
   peer->alerts_received++;
@@ -1808,8 +1874,16 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
   // as it was, in RAM and in NVS. (The initiator has already added this
   // device; it cannot know.) It is added under the opera it is joining,
   // whose last-seen tombstone for it applies (F116), not the one it holds.
+  // An opera_id that does not hash ends the pairing the same way (sweep
+  // F364): it was joined as a zeroed id, which no member of that opera holds.
   uint8_t opera_id[OPERA_ID_SIZE];
-  compute_opera_id(opera_secret, opera_id);
+  if (!compute_opera_id(opera_secret, opera_id)) {
+    secure_wipe(opera_secret, sizeof(opera_secret));
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "opera: pairing refused: the opera id did not hash");
+    fail_pairing();
+    return;
+  }
   if (!add_peer(g_pairing.peer_pubkey, g_pairing.peer_mac, "Opera Creator", opera_id)) {
     secure_wipe(opera_secret, sizeof(opera_secret));
     fail_pairing();
@@ -1865,6 +1939,7 @@ static bool flash_encryption_enabled() {
 // as they stood in RAM, all zero after a leave, and load_opera_config() took
 // the zero opera back as configured at the next boot.
 static bool persist_opera_config() {
+  if (!g_store_loaded) return false;   // nothing read, nothing written (F364's review)
   if (!flash_encryption_enabled()) {
     health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
                "opera: refused to persist secret — flash encryption disabled (audit O2)");
@@ -1936,8 +2011,18 @@ static bool load_opera_config(bool* member_slots_without_opera) {
   size_t id_len = g_prefs.getBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
   size_t secret_len = g_prefs.getBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
   String name = g_prefs.getString(NVS_FLEET_NAME, "");
-  strncpy(g_opera_config.opera_name, name.c_str(), MAX_OPERA_NAME_LEN);
-  g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
+  // A name stored before the rule (sweep F303; opera_name_storable()) is
+  // read back clean, in RAM: each control byte as a space
+  // (device_name_rule::scrub_stored(), as the device name's load does), and
+  // each piece that is not whole UTF-8 (a character the old pair/start cut
+  // at its 32nd byte) as U+FFFD, the text cut on a character to fit. A
+  // well-formed name reads back as it was stored. The NVS row keeps its old
+  // bytes until the next rename or pairing writes the name again.
+  char stored[MAX_OPERA_NAME_LEN + 1];
+  strncpy(stored, name.c_str(), MAX_OPERA_NAME_LEN);
+  stored[MAX_OPERA_NAME_LEN] = '\0';
+  (void)device_name_rule::scrub_stored(stored);
+  (void)wap_json::shown_text(g_opera_config.opera_name, sizeof(g_opera_config.opera_name), stored);
   g_opera_config.configured = (id_len == OPERA_ID_SIZE && secret_len == OPERA_SECRET_SIZE);
   // An all-zero id or secret is no opera (sweep F113): what a leave on
   // firmware from before F113 stored (persist_opera_config). Taken as
@@ -1985,6 +2070,7 @@ static bool load_opera_config(bool* member_slots_without_opera) {
 // member back, lost a survivor, and loaded an absent slot as an all-zero
 // member (F137's review, host-probed). True when the list is stored.
 static bool persist_peers() {
+  if (!g_store_loaded) return false;   // as persist_opera_config
   g_prefs.begin(NVS_NS, false);
   bool ok = true;
   for (uint8_t i = 0; ok && i < g_peer_count; i++) {
@@ -2086,6 +2172,7 @@ static bool load_peers() {
 
   g_peer_count = 0;
   bool unreadable = false;
+  bool unhashed = false;
   for (uint8_t i = 0; i < stored; i++) {
     char key[16];
     peer_slot_key(key, i);
@@ -2097,13 +2184,23 @@ static bool load_peers() {
       unreadable = true;
       continue;
     }
+    // A key that does not hash is not loaded this boot (sweep F364): it
+    // was loaded under a zeroed fingerprint. Its slot reads whole, so
+    // unlike an unreadable one it is not saved away below. A membership
+    // change later this boot still saves the list as loaded, and the
+    // sketch's 5-minute save the last-seen record, both without it.
+    uint8_t fingerprint[FINGERPRINT_SIZE];
+    if (!compute_fingerprint(peer_data, fingerprint)) {
+      unhashed = true;
+      continue;
+    }
     OperaPeer& p = g_peers[g_peer_count++];
     memcpy(p.pubkey, peer_data, PUBKEY_SIZE);
     memcpy(p.mac_addr, peer_data + PUBKEY_SIZE, 6);
     memcpy(p.name, peer_data + PUBKEY_SIZE + 6, MAX_PEER_NAME_LEN);
     p.name[MAX_PEER_NAME_LEN] = '\0';
 
-    compute_fingerprint(p.pubkey, p.fingerprint);
+    memcpy(p.fingerprint, fingerprint, FINGERPRINT_SIZE);
     p.state = PEER_OFFLINE;
     p.session_established = false;
     // Same counter convention as add_peer (spec §3.3): the first frame this
@@ -2134,10 +2231,18 @@ static bool load_peers() {
     health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
                "opera: a stored member entry is unreadable; not loaded");
   }
+  if (unhashed) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "opera: a stored member's key did not hash; not loaded this boot");
+  }
   // F71: before anything is sent, and before the save below, whose
   // persist_tx_reservations writes the record from what is in RAM.
   load_tx_reservations();
   const bool folded = fold_duplicate_peers();
+  // Nothing is saved over a member this boot could not hash (F364): the
+  // fold (made in RAM above) and the slot cleanup are saved by a boot that
+  // loads every slot.
+  if (unhashed) return true;
   if (folded || stale_slots) persist_peers();
   if (stale_slots) {
     health_log(SCV_LOG_INFO, SCV_CAT_MESH,
@@ -2173,9 +2278,20 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
     }
   }
 
+  // This device's own key must hash (sweep F364), or the mesh does not
+  // start: it ran under a zeroed fingerprint, which its signed frames
+  // carried, no member held and get_self_fingerprint() handed out. A
+  // refused init keeps nothing of the device and reads no store, so this
+  // boot writes none (g_store_loaded) and runs no owner command that would.
+  if (!compute_fingerprint(device_pubkey, g_device_fingerprint)) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "mesh: this device's key did not hash; mesh not started");
+    g_mesh_state = MESH_ERROR;
+    publish_view();
+    return false;
+  }
   g_device_privkey = device_privkey;
   g_device_pubkey = device_pubkey;
-  compute_fingerprint(device_pubkey, g_device_fingerprint);
   strncpy(g_device_name, device_name, MAX_PEER_NAME_LEN);
   g_device_name[MAX_PEER_NAME_LEN] = '\0';
 
@@ -2215,7 +2331,9 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
         ensure_broadcast_peer();
       });
 
-  // Load persisted config
+  // Load persisted config. From here the store is this boot's: the loads
+  // read it, and what they repair they write from what they read.
+  g_store_loaded = true;
   bool member_slots_without_opera = false;
   load_opera_config(&member_slots_without_opera);
   load_revocations();   // F33: the §5.6 deny-list
@@ -2297,7 +2415,16 @@ bool is_enabled() {
 // write, the heartbeat), and the read must show what the command did.
 static bool run_command(const Command& cmd) {
   bool ok = false;
-  switch (cmd.type) {
+  if (!g_store_loaded && cmd.type != MESH_CMD_CLEAR_ALERTS) {
+    // The mesh did not read its store this boot (g_store_loaded: a refused
+    // init, a failed esp_now_init(), safe mode), so a command that writes
+    // it, or starts what will, is refused with nothing changed, and the
+    // state init() left (MESH_ERROR, or MESH_DISABLED in safe mode) stands.
+    // Clearing the alert history touches no store. A cancel has no pairing
+    // to end: none can start.
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               "mesh: not started this boot; the owner's command changed nothing");
+  } else switch (cmd.type) {
     case MESH_CMD_SET_ENABLED:
       set_enabled(cmd.flag);
       ok = true;
@@ -2360,8 +2487,9 @@ loop_command_ring::Wait submit(const Command& cmd, bool* ok, uint32_t timeout_ms
 void update() {
   // The owner's commands first, and before the early return below: a
   // disabled mesh still runs MESH_CMD_SET_ENABLED (sweep F96). Also before
-  // init(): the commands ran whether or not init() did before they moved
-  // here, and still do.
+  // init(), or after one that did not read the store: each command is
+  // drained and answered, and run_command() refuses those that need the
+  // store (F364's review).
   g_commands.drain(run_command);
 
   if (!g_initialized || g_mesh_state == MESH_DISABLED) {
@@ -2409,11 +2537,38 @@ void update() {
   // ACKed or the timeout expires.
   maybe_finalize_rekey();
 
-  // Check pairing timeout
+  // Check pairing timeout. Logged, as every other end of a pairing is (sweep
+  // F359: fail_pairing(), a CONFIRM that did not match, an unanswered
+  // COMPLETE), so the owner learns why the code on the screen led nowhere.
+  // Whether this side's owner confirmed is read first, since cancel_pairing()
+  // wipes the session. Only a session that showed its code can hold a
+  // confirm (confirm_pairing() refuses before). An initiator whose owner and
+  // joiner both confirmed has completed in initiator_step() above, so one
+  // that confirmed and times out never had the joiner's CONFIRM, and a joiner
+  // that confirmed never had the COMPLETE. The line says what this side
+  // knows: nothing came back after its owner confirmed. Why is one of three
+  // things it cannot tell apart, so it names none as the cause: the other
+  // owner never confirmed; the other Canary runs pairing firmware from
+  // before F75/F94 and did not answer as this one expects; or every copy was
+  // lost on the air (the initiator then holds the member and logs an
+  // unanswered COMPLETE, so the other Canary's log says which: the detail
+  // points there). Written as message and detail through log_health(): the
+  // ring keeps 79 bytes of a message and 47 of a detail (HealthLogRingEntry),
+  // and GET /api/logs, the dashboard and the BLE log read the ring, so one
+  // longer line reached the owner cut before its reason (the F359 review);
+  // Serial and the /HEALTH file carry both fields whole.
+  // test_mesh_liveness_wap.cpp and test_opera_name_wap.cpp hold the words
+  // and that both fields reach GET /api/logs whole.
   if ((g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN ||
        g_mesh_state == MESH_PAIRING_CONFIRM) &&
       now - g_pairing.started_ms > PAIRING_TIMEOUT_MS) {
+    const bool confirmed_here = g_pairing.code_confirmed;
     cancel_pairing();
+    log_health(SCV_LOG_WARNING, SCV_CAT_MESH,
+               confirmed_here
+                   ? "opera: pairing timed out; code confirmed here, no answer from the other Canary"
+                   : "opera: pairing timed out",
+               confirmed_here ? "check its log; older firmware? update both" : nullptr);
   }
 
   // Send periodic heartbeat — while MESH_CONNECTING too (sweep F76). It
@@ -2675,6 +2830,17 @@ static bool remove_peer(const uint8_t* fingerprint) {
         g_peers[j] = g_peers[j + 1];
       }
       g_peer_count--;
+      // A rotation in flight names its members by index (bit j of
+      // pending_acks is g_peers[j]), so its bits follow the shift: the
+      // removed member's bit goes, and those above it move down one (F364's
+      // review). Left in place, a survivor's ACK cleared another member's
+      // bit, and the commit marked a member stale for another's missing
+      // ACK. A rotation started below rebuilds them; one refused below
+      // carries on with these.
+      if (g_rekey.active) {
+        const uint32_t acks = g_rekey.pending_acks;
+        g_rekey.pending_acks = (uint16_t)((acks & ((1u << i) - 1u)) | ((acks >> (i + 1u)) << i));
+      }
 
       // F99: the removed device keeps its last-seen counter for this one,
       // and a re-pair starts it one past the highest counter this device
@@ -2718,12 +2884,30 @@ static bool remove_peer(const uint8_t* fingerprint) {
       // (the in-flight one will be superseded by the new rekey_id, and any
       // late ACKs for the old id are dropped).
       if (g_opera_config.configured && g_peer_count > 0) {
+        // The candidate's opera_id must hash, or no rotation starts (sweep
+        // F364): it staged a zeroed id, which the commit installed while
+        // every member that took the REKEY derived the real one. The
+        // removal above stands, and a rotation in flight carries on, its
+        // bits moved with the shift above. The removed member keeps the
+        // secret until the next rotation, as after a removal of the last
+        // member, where none starts; and if a rotation in flight reached
+        // it, that rotation's secret too.
+        uint8_t secret[OPERA_SECRET_SIZE];
+        uint8_t opera_id[OPERA_ID_SIZE];
+        esp_fill_random(secret, OPERA_SECRET_SIZE);
+        if (!compute_opera_id(secret, opera_id)) {
+          secure_wipe(secret, sizeof(secret));
+          health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+                     "opera: rekey not started: the new opera id did not hash");
+          return true;
+        }
         // Stage candidate secret in g_rekey (NOT in g_opera_config yet).
         g_rekey.active = true;
         g_rekey.rekey_id = (uint32_t)millis();
         g_rekey.started_ms = millis();
-        esp_fill_random(g_rekey.pending_secret, OPERA_SECRET_SIZE);
-        compute_opera_id(g_rekey.pending_secret, g_rekey.pending_opera_id);
+        memcpy(g_rekey.pending_secret, secret, OPERA_SECRET_SIZE);
+        secure_wipe(secret, sizeof(secret));
+        memcpy(g_rekey.pending_opera_id, opera_id, OPERA_ID_SIZE);
 
         // Encrypt + send REKEY to each surviving member; mark each as
         // pending-ACK in the bitmask.
@@ -2812,6 +2996,9 @@ const OperaConfig* get_opera_config() {
 }
 
 static bool set_opera_name(const char* name) {
+  // The route refuses such a name first, in words (sweep F303); this is the
+  // setter's own test, so no other caller can store one.
+  if (!opera_name_storable(name)) return false;
   strncpy(g_opera_config.opera_name, name, MAX_OPERA_NAME_LEN);
   g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
   return persist_opera_config();
@@ -2852,15 +3039,37 @@ static bool start_pairing_initiator(const char* opera_name) {
   if (g_mesh_state == MESH_PAIRING_INIT || g_mesh_state == MESH_PAIRING_JOIN) {
     return false;  // Already pairing
   }
+  // A name given is held to the rule before anything starts (sweep F303;
+  // the route refuses it first, in words): it was stored cut at 32 bytes,
+  // inside a character if one stood there. None given keeps the default.
+  if (opera_name != nullptr && !opera_name_storable(opera_name)) {
+    return false;
+  }
+
+  // A new opera's id must hash before anything changes (sweep F364): one
+  // that did not was created as a zeroed id and stored.
+  uint8_t new_secret[OPERA_SECRET_SIZE];
+  uint8_t new_opera_id[OPERA_ID_SIZE];
+  const bool create = !g_opera_config.configured;
+  if (create) {
+    esp_fill_random(new_secret, OPERA_SECRET_SIZE);
+    if (!compute_opera_id(new_secret, new_opera_id)) {
+      secure_wipe(new_secret, sizeof(new_secret));
+      health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+                 "opera: not created: its opera id did not hash");
+      return false;
+    }
+  }
 
   memset(&g_pairing, 0, sizeof(g_pairing));
   g_pairing.role = PAIR_ROLE_INITIATOR;
   g_pairing.started_ms = millis();
 
   // Create new opera if we don't have one
-  if (!g_opera_config.configured) {
-    esp_fill_random(g_opera_config.opera_secret, OPERA_SECRET_SIZE);
-    compute_opera_id(g_opera_config.opera_secret, g_opera_config.opera_id);
+  if (create) {
+    memcpy(g_opera_config.opera_secret, new_secret, OPERA_SECRET_SIZE);
+    secure_wipe(new_secret, sizeof(new_secret));
+    memcpy(g_opera_config.opera_id, new_opera_id, OPERA_ID_SIZE);
     g_opera_config.configured = true;
     g_opera_config.enabled = true;
 
@@ -3137,9 +3346,29 @@ void set_channel_lock_handler(channel_lock_handler_fn fn) {
 // REVOCATION DENY-LIST PERSISTENCE (F33 part 6 — spec §5.6)
 // ════════════════════════════════════════════════════════════════════════════
 
+// Fails closed (sweep F364): a key that does not hash counts as removed. Its
+// zeroed fingerprint is on no list, so it counted as not removed. Logged,
+// as each other refusal of a hash is, so the owner learns why a pairing got
+// no OFFER or ACCEPT, or ended as "partner refused" (F364's review); at
+// most once per interval while the failures last, as reserve_tx_counter's
+// line is, since a pairing partner's DISCOVER repeats every 2 s.
+static constexpr uint32_t KEY_HASH_WARN_INTERVAL_MS = 300000;
+static bool g_key_hash_warned = false;
+static uint32_t g_key_hash_warned_ms = 0;
+
 static bool is_revoked_pubkey(const uint8_t* pubkey) {
   uint8_t fp[FINGERPRINT_SIZE];
-  compute_fingerprint(pubkey, fp);
+  if (!compute_fingerprint(pubkey, fp)) {
+    const uint32_t now = millis();
+    if (!g_key_hash_warned || now - g_key_hash_warned_ms >= KEY_HASH_WARN_INTERVAL_MS) {
+      g_key_hash_warned = true;
+      g_key_hash_warned_ms = now;
+      health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+                 "opera: a key did not hash; refused as removed");
+    }
+    return true;
+  }
+  g_key_hash_warned = false;
   return mesh_revocation::contains(g_revoked, fp, millis());
 }
 
@@ -3148,6 +3377,7 @@ static bool is_revoked_pubkey(const uint8_t* pubkey) {
 // FE-off board the list lasts until reboot.
 static void persist_revocations() {
   static_assert(FINGERPRINT_SIZE == mesh_revocation::FP_LEN, "deny-list key width");
+  if (!g_store_loaded) return;         // as persist_opera_config
   if (!flash_encryption_enabled()) return;
   if (mesh_revocation::count(g_revoked, millis()) == 0 && !g_revoked_stored) return;
   uint8_t blob[mesh_revocation::BLOB_MAX];
@@ -3267,6 +3497,7 @@ static bool retire_rx(const OperaPeer* peer, const uint8_t* opera_id) {
 // write of at most 256 B per removal or leave. A write NVS refuses leaves
 // the last stored set: the change holds until the next boot.
 static void persist_rx_tombstones() {
+  if (!g_store_loaded) return;         // as persist_opera_config
   uint8_t blob[MAX_RX_TOMBSTONES * RX_TOMB_ENTRY_SIZE];
   size_t n = 0;
   for (uint8_t i = 0; i < g_rx_tomb_count; i++) {
@@ -3321,6 +3552,11 @@ static const char* NVS_REPLAY_KEY = "replay_ctrs";
 constexpr size_t REPLAY_ENTRY_SIZE = FINGERPRINT_SIZE + sizeof(uint64_t);
 
 bool save_replay_counters() {
+  // A boot that did not read the store saves nothing over it (F364's
+  // review): with no member in RAM this removed the last-seen record, so
+  // the next boot that loaded took members' earlier frames as fresh. The
+  // sketch's 5-minute save runs whatever init() answered.
+  if (!g_store_loaded) return false;
   if (g_peer_count == 0) {
     // No peers remain: drop the blob, which holds members only. What this
     // device last heard from each dropped member is its tombstone (F116),
@@ -3415,6 +3651,7 @@ bool load_replay_counters() {
 // record already in that form costs no write; none (nothing ever reserved)
 // stays none. True when the record says it, or there is none.
 static bool persist_tx_floor_without_members() {
+  if (!g_store_loaded) return false;   // as persist_opera_config
   uint8_t floor_entry[TX_RESERVE_ENTRY_SIZE] = {};
   memcpy(floor_entry + FINGERPRINT_SIZE, &g_tx_high_signed, sizeof(uint64_t));
   Preferences prefs;
@@ -3440,6 +3677,7 @@ static bool persist_tx_floor_without_members() {
 // Preferences::putBytes returns the length only after nvs_commit succeeds,
 // on both cores canary-wap builds.
 static bool persist_tx_reservations() {
+  if (!g_store_loaded) return false;   // as persist_opera_config
   if (g_peer_count == 0) return persist_tx_floor_without_members();
   uint8_t blob[MAX_OPERA_SIZE * TX_RESERVE_ENTRY_SIZE];
   size_t n = 0;

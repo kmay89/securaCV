@@ -65,6 +65,17 @@
     unexpected_reboot: { label: "Rebooted unexpectedly", icon: "mdi:shield-alert" },
     enclosure: { label: "Enclosure opened", icon: "mdi:shield-alert" },
   };
+  // The Canary's two stateless summaries (sensor.py's _SUMMARY_TYPES, sweep
+  // HA28): the only stateless rows the Last event sensor names by their type,
+  // meta.daily_summary's nightly row and meta.quiet_hours' row when a Quiet
+  // Hours window ends. Not dictionary ids either, so card-owned like the
+  // kinds above; strings.json names the same two Last event states in the
+  // same words, and the card's tests hold the keys to _SUMMARY_TYPES and the
+  // labels to strings.json, so a third summary cannot land unlabeled.
+  const SUMMARY_METADATA = {
+    daily_summary: { label: "Daily summary", icon: "mdi:calendar-check" },
+    held_summary: { label: "Quiet Hours summary", icon: "mdi:weather-night" },
+  };
   const DEFAULT_EVENT_ICON = "mdi:shield-eye";
 
   // Mirror of const.py MODALITY_METADATA + DEVICE_TYPE_MODALITY. A small
@@ -186,13 +197,25 @@
     return snake;
   }
 
+  /**
+   * The card's own {label, icon} for an event_type, or null when it has none:
+   * the dictionary's ids, then the tamper kinds, then the summaries. An own
+   * property only, so an id that names something every object inherits
+   * (`constructor`, `toString`, `__proto__`) is an id the card does not know,
+   * not a function or a prototype for a label.
+   */
+  function cardMeta(eventType) {
+    const key = normalizeEventType(eventType);
+    for (const table of [EVENT_TYPE_METADATA, TAMPER_KIND_METADATA, SUMMARY_METADATA]) {
+      if (Object.prototype.hasOwnProperty.call(table, key)) return table[key];
+    }
+    return null;
+  }
+
   /** {label, icon} for an event_type, falling back gracefully. */
   function eventMeta(eventType) {
     if (!eventType) return { label: "Unknown", icon: DEFAULT_EVENT_ICON };
-    const key = normalizeEventType(eventType);
-    const meta = EVENT_TYPE_METADATA[key] || TAMPER_KIND_METADATA[key];
-    if (meta) return meta;
-    return { label: String(eventType), icon: DEFAULT_EVENT_ICON };
+    return cardMeta(eventType) || { label: String(eventType), icon: DEFAULT_EVENT_ICON };
   }
 
   /** Integer 0..100 percent for a [0,1] confidence, or null when unusable. */
@@ -477,7 +500,7 @@
           seenByDevice.add(deviceKey);
         }
         const meta = eventMeta(eventType);
-        const known = Object.prototype.hasOwnProperty.call(EVENT_TYPE_METADATA, normalizeEventType(eventType));
+        const known = cardMeta(eventType) != null;
         const verification = resolveVerification({
           verification: attrs.verification,
           verified: attrs.verified,
@@ -490,8 +513,11 @@
           entityId,
           ts: entry.ts,
           eventType,
-          // The card owns the words for the dictionary's ids; an entity's
-          // friendly_event only names a type the card does not know.
+          // The card owns the words for every type it has a row for (the
+          // dictionary's ids, the tamper kinds, the summaries); an entity's
+          // friendly_event only names a type the card does not know. The
+          // kernel's friendly_event for a type outside the dictionary is the
+          // raw id (kernel_verify.py), so it never outranks the card's words.
           label: known ? meta.label : (attrs.friendly_event || meta.label),
           icon: meta.icon,
           zone,
@@ -749,6 +775,8 @@
   // --- Node export surface (pure helpers only; no DOM) ----------------------
   const helpers = {
     EVENT_TYPE_METADATA,
+    TAMPER_KIND_METADATA,
+    SUMMARY_METADATA,
     DEFAULT_EVENT_ICON,
     MODALITY_METADATA,
     DEVICE_TYPE_MODALITY,

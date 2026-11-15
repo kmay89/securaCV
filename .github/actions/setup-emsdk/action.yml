@@ -16,10 +16,20 @@ description: >
 inputs:
   version:
     description: >
-      Emscripten SDK release to install and activate. Pinned: the cache key
-      carries it, so a bump is a new cache entry, never a stale one.
+      Emscripten SDK release to install and activate, and the emsdk tag the
+      checkout is made at (the emsdk repository tags every release). Pinned:
+      the cache key carries it, so a bump is a new cache entry, never a
+      stale one. Bump `commit` with it.
     required: false
     default: "6.0.3"
+  commit:
+    description: >
+      The commit the emsdk tag named by `version` points at (`git ls-remote
+      --tags https://github.com/emscripten-core/emsdk.git <version>`). The
+      checkout is refused when the tag resolves elsewhere, so a moved tag
+      cannot swap the SDK's installer under the build.
+    required: false
+    default: "db04e88298d9916fc51fcd3743045ca3eb695127"
   path:
     description: Where the SDK checkout lives; also the cache path.
     required: false
@@ -40,17 +50,25 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ inputs.path }}
-        key: emsdk-${{ inputs.version }}-${{ runner.os }}
+        key: emsdk-${{ inputs.version }}-${{ inputs.commit }}-${{ runner.os }}
 
     - name: Install pinned Emscripten SDK ${{ inputs.version }}
       if: steps.emsdk-cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         EMSDK_VERSION: ${{ inputs.version }}
+        EMSDK_COMMIT: ${{ inputs.commit }}
         EMSDK_DIR: ${{ inputs.path }}
       run: |
         set -euo pipefail
-        git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$EMSDK_DIR"
+        # The release tag, not HEAD: the installer that fetches and checks
+        # the SDK's binaries is itself pinned, to the tag AND its commit.
+        git clone --depth 1 --branch "$EMSDK_VERSION" https://github.com/emscripten-core/emsdk.git "$EMSDK_DIR"
+        got="$(git -C "$EMSDK_DIR" rev-parse HEAD)"
+        if [ "$got" != "$EMSDK_COMMIT" ]; then
+          echo "::error title=emsdk::tag ${EMSDK_VERSION} resolves to ${got}, expected ${EMSDK_COMMIT}; bump the action's commit input deliberately"
+          exit 1
+        fi
         "$EMSDK_DIR/emsdk" install "$EMSDK_VERSION"
 
     - name: Activate + verify Emscripten (cached or fresh)

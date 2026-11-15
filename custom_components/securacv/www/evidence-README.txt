@@ -11,19 +11,19 @@ every signature and hash on your own computer, and checking cannot hurt the
 file. Keep the zip exactly as you received it — it is the evidence; the page
 is only a check of it.
 
-Read the verdict at the top. "Verified — integrity intact: all N checks
-passed" means every event is signed, chained to the one before it, and nothing
-was added, removed or reordered since it was sealed. A note reading
-"self-attested" means integrity is intact but authorship is not yet confirmed:
-the key that signed the record traveled inside the record. To confirm who
+Read the verdict at the top. "Self-consistent — signed by the key it names
+(identity not confirmed)" means every check passed: every event is signed,
+chained to the one before it, and nothing was added, removed or reordered
+since it was sealed — but the key that signed the record traveled inside the
+record, so authorship is self-attested, not yet confirmed. To confirm who
 signed it, ask the owner for their witness key fingerprint by phone or in
 person (Home Assistant shows it on the SecuraCV device page; WITNESS_KEY.txt in
 this zip is the owner's own copy of the same thing), compare it with the
 fingerprint the page shows, then paste the key from WITNESS_KEY.txt into the
-"expected device key" field and verify again — the verdict becomes
-"authorship confirmed". "Not verified — rejected" means a check failed: do not
-rely on this copy, ask for a fresh export, and keep both if the fresh one fails
-too.
+"expected device key" field and verify again — the verdict becomes "Verified —
+integrity intact", with "authorship confirmed" on the signature check. "Not
+verified — rejected" means a check failed: do not rely on this copy, ask for a
+fresh export, and keep both if the fresh one fails too.
 
 What the record does not prove: what was in the video (SecuraCV never saw the
 pixels — Frigate or the camera keeps those), the exact second anything happened
@@ -35,6 +35,8 @@ exported.
 Files in this zip:
   securacv-events-<window>.json  the sealed export, byte for byte as the kernel wrote it
   evidence_viewer.html           the offline checker (open it; it needs nothing else)
+  WITNESS_STATEMENT.txt          the export read out in plain language: what was
+                                 recorded, what that proves, what it does not
   WITNESS_KEY.txt                the owner's witness key and its fingerprint
   README.txt                     this note
 

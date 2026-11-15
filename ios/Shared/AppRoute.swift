@@ -65,9 +65,10 @@ enum AppRoute: Equatable, Sendable {
                 .first(where: { $0.name == "what" })?
                 .value?
                 .lowercased()
-            // Only the two walkthroughs are destinations; anything else
-            // degrades to the Set up door itself.
-            self = .setup(what: (what == "hub" || what == "canary") ? what : nil)
+            // Only the walkthroughs are destinations; anything else degrades
+            // to the Set up door itself. `display` opens the display path
+            // directly (a display has no Bluetooth door to listen for).
+            self = .setup(what: (what == "hub" || what == "canary" || what == "display") ? what : nil)
         default:
             return nil
         }

@@ -4,16 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- "Flasher", not "Lab": a separate app named SecuraCV Lab ships from
-       this repo (desktop-lab/), and this window calling itself the Lab made
-       "open the Lab" mean three different things. One honest name per
-       surface — the ecosystem audit's cheapest fix. -->
+       this repo (desktop-lab/). One honest name per surface. -->
   <title>SecuraCV Flasher</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body data-view="canary">
 
-  <!-- ── Splash: a branded cold-start moment showing the build it's running
-       and whether it's up to date. Fades out on its own (or on click). ── -->
+  <!-- ── Splash: build + update state, fades on its own (or on click). ── -->
   <div id="splash" class="splash" role="status" aria-label="Starting SecuraCV Flasher">
     <div class="s-mark" aria-hidden="true">
       <svg viewBox="0 0 64 64" width="76" height="76">
@@ -27,12 +24,12 @@
     </div>
     <div class="s-word"><b>SecuraCV</b><span>Flasher</span></div>
     <div class="s-bar"><i></i></div>
-    <div class="s-meta" id="splash-meta">Warming up…</div>
+    <div class="s-meta" id="splash-meta">Starting…</div>
   </div>
 
   <div id="app" class="app-shell">
 
-    <!-- ── Left rail: the app's spine. Destinations, not a scroll. ── -->
+    <!-- ── Left rail: destinations. ── -->
     <aside class="rail">
       <div class="rail-brand">
         <span class="mark" aria-hidden="true">
@@ -67,18 +64,17 @@
         </button>
         <button class="nav-item" data-nav="about" role="tab" aria-selected="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
-          <span>About &amp; Health</span>
+          <span>About</span>
         </button>
       </nav>
 
       <div class="rail-spacer"></div>
 
       <div class="rail-foot">
-        <!-- Minimal mode: folds the explainer prose away for people who flash
-             all day. Every control, check and receipt stays; styles.css owns
-             what folds (html[data-density="minimal"]). Same mode, same rule,
-             as the browser flasher's minimal.js — two flashers, one feature. -->
-        <button id="density-toggle" class="icon-btn" aria-label="Toggle minimal mode" title="Minimal mode — fold the explainers away; every control and check stays">
+        <!-- Minimal mode folds the remaining explainers (styles.css owns the
+             list, html[data-density="minimal"]); every control stays. Same
+             mode as the browser flasher's minimal.js. -->
+        <button id="density-toggle" class="icon-btn" aria-label="Toggle minimal mode" title="Minimal mode — hide the explainers">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/></svg>
         </button>
         <button id="theme-toggle" class="icon-btn" aria-label="Toggle day / night" title="Day / night">
@@ -92,7 +88,7 @@
     <main class="stage">
       <div class="stage-inner">
 
-        <!-- self-update banner (kept) -->
+        <!-- self-update banner -->
         <div id="update-banner" class="banner hidden" role="status">
           <span id="update-text">An update is ready.</span>
           <button id="update-btn" class="btn btn-small btn-primary">Update &amp; relaunch</button>
@@ -100,7 +96,7 @@
           <div id="update-notes" class="update-notes hidden"></div>
         </div>
 
-        <!-- welcome-back / resume where you left off -->
+        <!-- welcome back -->
         <div id="resume" class="resume hidden" role="status">
           <div class="r-mark" aria-hidden="true">
             <svg viewBox="0 0 64 64" width="26" height="26"><circle cx="32" cy="36" r="17" fill="#FFD44F"/><circle cx="41" cy="24" r="10" fill="#FFD44F"/><circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/><path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/></svg>
@@ -110,7 +106,7 @@
             <p id="resume-body"></p>
           </div>
           <div class="r-actions">
-            <button id="resume-go" class="btn btn-small btn-primary">Jump back in</button>
+            <button id="resume-go" class="btn btn-small btn-primary">Continue</button>
             <button id="resume-dismiss" class="btn btn-small btn-ghost">Start fresh</button>
           </div>
         </div>
@@ -120,11 +116,10 @@
           <div class="pane-head">
             <div class="kicker">Flash a Canary</div>
             <h1>Plug it in and go</h1>
-            <p class="lede">No browser, no terminal — the flashing engine is built in.
-              You can't pick the wrong image, and you can't brick the board.</p>
+            <p class="lede">The flashing engine is built in. You can't pick the wrong image, and you can't brick the board.</p>
           </div>
 
-          <!-- live connection status — always on, no Connect button -->
+          <!-- live connection status — no Connect button -->
           <div id="conn" class="connbar idle" role="status" aria-live="polite">
             <span class="dot idle" id="conn-dot"></span>
             <span id="conn-text">Scanning for a Canary…</span>
@@ -132,144 +127,94 @@
             <button id="recheck" class="link-btn hidden">re-read chip</button>
           </div>
 
-          <!-- dev-channel banner: loud on purpose — nobody should flash a
-               prerelease without a stripe telling them so. -->
+          <!-- dev-channel banner: loud on purpose -->
           <div id="dev-banner" class="dev-banner hidden" role="status">
             <strong>DEV CHANNEL</strong>
-            <span>— <span class="mono">fw-dev-latest</span>, not the pinned stable release.
+            <span>— <span class="mono">fw-dev-latest</span>, not the stable release.
               <span id="dev-standing"></span>
-              Turn it off under Advanced to go back.</span>
+              Turn it off under Advanced.</span>
           </div>
 
           <section class="card" id="step-detect">
             <div class="step-head"><span class="step-n">1</span><h2>Plug in your Canary</h2></div>
-            <p class="muted">Connect it over USB-C with a <em>data</em> cable. It's picked up
-              automatically — the status bar above tracks it live, no button to press.</p>
+            <p class="muted">Use a USB-C <em>data</em> cable. The status bar above picks it up by itself.</p>
 
-            <!-- Cold start. The one control on this page that has to happen BEFORE
-                 the cable goes in: an unflashed board arrives running somebody
-                 else's firmware, and these chips have native USB, so that firmware
-                 can present itself as a keyboard the instant it's plugged in. No
-                 app can intercept that — the OS enumerates the device before we
-                 hear about it. Holding BOOT is what stops it, in mask ROM.
-                 Mirrors the browser flasher's coldStartCard() (canary-local). -->
-            <!-- Collapsed by default: the full why-and-how lives one click in,
-                 so the page shows one calm line instead of five paragraphs.
-                 Every safety sentence is intact inside (drift-gated by
-                 desktop_parity.test.js), and the wipe default stays ON
-                 whether or not anyone opens this. -->
+            <!-- Cold start: the one instruction that has to land BEFORE the
+                 cable goes in. Collapsed; every safety sentence stays inside
+                 (drift-gated by desktop_parity.test.js). Mirrors the browser
+                 flasher's coldStartCard(). -->
             <details class="coldstart" id="coldstart">
-              <summary><h3>🛡 New board from a shop or marketplace? Do this first — hold <kbd>BOOT</kbd> while plugging in</h3></summary>
-              <p>It arrives running somebody else's firmware. On a board with
-                native USB (the S3 and C-series Canaries) that firmware can
-                introduce itself to your computer as anything it likes, including
-                a keyboard, the moment you plug it in. No app can step in front of
-                that; your operating system finishes with the device before this
-                one even hears about it.</p>
-              <p>One move stops it, and it's the chip's own silicon doing the stopping:</p>
+              <summary><h3>🛡 Board new to you? Hold <kbd>BOOT</kbd> while plugging in</h3></summary>
+              <p>A board from a shop or marketplace arrives running someone else's
+                firmware. On a native-USB board (S3 and C-series) that firmware can
+                present itself to your computer as anything, even a keyboard, the
+                moment it's plugged in. No app can step in front of that. Holding
+                BOOT keeps it from ever running:</p>
               <ol>
-                <li>Unplug the board, if it's plugged in.</li>
+                <li>Unplug the board.</li>
                 <li>Press and hold <kbd>BOOT</kbd> (marked B).</li>
                 <li>Still holding it, plug the cable in. Then let go.</li>
               </ol>
-              <p class="fineprint">No BOOT button, or no USB port at all? A classic
-                ESP32 — an ESP32-CAM, a plain WROOM DevKit — reaches your computer
-                through a separate USB-to-serial chip rather than its own USB, so
-                its firmware can only ever appear as a serial port and cannot
-                pretend to be a keyboard. Bringing it up cold is still how you stop
-                the resident firmware running:
-                jumper IO0 to GND before you apply power,
-                instead of holding BOOT. Most DevKits do even that for you.
-                Per-board wiring is on the board's own card below.</p>
-              <p class="fineprint">The chip comes up in its mask-ROM download mode and
-                the firmware it shipped with never runs a single instruction. That's
-                not a promise this app is making — it's unerasable ROM, the same
-                property that makes the board impossible to brick from here.</p>
-              <!-- What the user actually did, carried into the passport as
-                   THEIR answer rather than our measurement — a native-USB board
-                   presents the same USB descriptor in the ROM's download mode
-                   as it does running stock firmware, so the port cannot tell us.
-                   Parity: the browser's cold-start card asks the same question
-                   (canary-local/assets/flash.js, coldStartCard). -->
+              <p class="fineprint">No BOOT button, or no USB port? A classic ESP32
+                (ESP32-CAM, plain WROOM DevKit) talks through a separate USB-serial
+                chip, so its firmware can only ever be a serial port and cannot
+                pretend to be a keyboard. To keep its firmware from running,
+                jumper IO0 to GND before you apply power. Per-board wiring is on
+                the board's card below.</p>
+              <p class="fineprint">Held correctly, the chip comes up in its mask-ROM
+                download mode and the shipped firmware never runs. That's the chip's
+                own silicon, not a promise from this app, and it's the same property
+                that makes the board impossible to brick from here.</p>
+              <!-- The user's own answer, carried into the passport as theirs:
+                   the port cannot tell. Parity: coldStartCard asks the same. -->
               <div class="coldstart-answer">
                 <button type="button" id="coldstart-held" class="btn btn-ghost btn-small">✓ I held BOOT while plugging in</button>
                 <button type="button" id="coldstart-hot" class="btn btn-ghost btn-small">It's already plugged in</button>
               </div>
               <p class="fineprint" id="coldstart-note"></p>
-              <!-- Same check as the browser flasher's "customs" pass: eFuse
-                   block 0, read-only (the two ROM commands used cannot write
-                   anything). espflash has no fuse-read command, so the app
-                   speaks that sliver of the ROM protocol itself (efuse.rs).
-                   A probe that fails says "not checked" — never "clean". -->
-              <p class="fineprint" id="coldstart-efuse">This app can also read the
-                chip's security fuses — the one thing a previous owner can have
-                changed that no erase can undo (secure boot, flash encryption, a
-                disabled recovery path).
+              <!-- Read-only eFuse block 0 (efuse.rs). A failed probe says
+                   "not checked", never "clean". -->
+              <p class="fineprint" id="coldstart-efuse">The security fuses are the one
+                thing a previous owner can change that no erase undoes.
                 <button type="button" id="efuse-read" class="btn btn-ghost btn-small">Read its security fuses</button>
               </p>
               <div class="fineprint" id="efuse-result"></div>
             </details>
-            <!-- Deliberately OUTSIDE the folded brief above: this checkbox is a
-                 destructive choice (a full-chip wipe, re-armed for every board
-                 that attaches — see resetSteps), so it must be seen before every
-                 flash, not discovered inside a disclosure aimed at new boards.
-                 Review catch on this PR: folding it away meant reflashing a
-                 known Canary would wipe its whole chip unannounced. (Any
-                 install starts the settings region over, the identity key
-                 included: the factory image spans it, blank.) -->
+            <!-- Deliberately OUTSIDE the fold: a destructive choice, re-armed
+                 for every board (resetSteps), must be seen before every flash. -->
             <label class="coldstart-ask">
               <input type="checkbox" id="first-contact" checked>
-              <span>This board is new to me — wipe the whole chip before writing.
-                Leave this ticked for anything bought unflashed: a normal install
-                only overwrites the parts it needs, so whatever a previous owner
-                left in the other partitions would survive. Reflashing a Canary
-                you set up here? Unticking it keeps those other partitions, but
-                not its identity: every install starts the settings region over,
-                so the board comes up with a new identity key either way. It
-                re-ticks itself for the next board.</span>
+              <span>Wipe the whole chip first. Keep this on for a board that's new to you.
+                Unticking keeps the other partitions, but every install starts the
+                settings region over, so the board comes up with a new identity key either way.</span>
             </label>
 
-            <!-- The board's passport: what it runs, whether your fleet has
-                 met it before, and what it has lived through. Filled by
-                 readPassport() from the read-only `board_passport` command;
-                 stays hidden until a board is actually read. -->
+            <!-- The board's passport (readPassport); hidden until read. -->
             <div id="passport" class="passport hidden"></div>
 
-            <!-- Boards whose flashing port isn't the one you can see. Filled
-                 from the embedded catalog (products[].access) — see
-                 renderAccessNotes(); hidden when no such board ships. -->
+            <!-- Boards whose flashing port isn't the visible one (renderAccessNotes). -->
             <div id="access-notes"></div>
 
-            <!-- Already have a Canary running? Prove it's on over the air.
-                 Parity with the browser flasher's "Test it over Bluetooth"
-                 entry: this window has no Bluetooth of its own, so the check
-                 is a pointer to where it runs — never a dead end. -->
+            <!-- Parity with the browser flasher's "Test it over Bluetooth". -->
             <details id="ble-check" class="hint">
-              <summary>Already have a Canary WAP? Check it over Bluetooth</summary>
-              <p class="muted">A Canary WAP keeps a read-only Bluetooth console alive even when
-                Wi-Fi is down — reading its live snapshot proves it’s on, healthy and
-                reachable, and writes nothing. This app’s window has no Bluetooth of its
-                own, so the check runs in the browser Lab in Chrome or Edge on this computer
-                (the iPhone app does not read a WAP’s console today).</p>
+              <summary>Have a Canary WAP running? Check it over Bluetooth</summary>
+              <p class="muted">A WAP keeps a read-only Bluetooth console up even without Wi-Fi.
+                This window has no Bluetooth of its own, so the check runs in the browser Lab in
+                Chrome or Edge on this computer.</p>
               <button id="ble-check-open" class="btn btn-small btn-ghost" type="button">Open the browser Bluetooth check ↗</button>
             </details>
 
             <details id="download-mode" class="hint hidden">
               <summary>Found, but not identified?</summary>
-              <p>Put it in <strong>download mode</strong>: hold <kbd>BOOT</kbd> (B),
-                tap <kbd>RESET</kbd> (R), then let go of BOOT — it'll be read automatically.
-                Leave download mode later with a tap of RESET.</p>
+              <p>Hold <kbd>BOOT</kbd>, tap <kbd>RESET</kbd>, release <kbd>BOOT</kbd>. It's read
+                again automatically. Tap RESET later to leave download mode.</p>
             </details>
           </section>
 
           <section class="card disabled" id="step-pick">
             <div class="step-head"><span class="step-n">2</span><h2>Pick the firmware</h2></div>
-            <p class="muted" id="pick-sub">We'll only show images built for your board's chip.</p>
-            <!-- The detection-led recommendation: one card led with, and the
-                 evidence for it in plain words. Filled by renderProducts() from
-                 smartPick(); the rest of the chip's products stay one click
-                 away. Parity with the browser flasher, which has never handed
-                 anyone a wall of SKUs when the silicon already narrowed it. -->
+            <p class="muted" id="pick-sub">Only images built for this chip are shown.</p>
+            <!-- One recommended card, with its reason (renderProducts / smartPick). -->
             <div id="pick-recommend" class="pick-recommend hidden"></div>
             <div id="product-list" class="product-list"></div>
           </section>
@@ -277,88 +222,59 @@
           <section class="card disabled" id="step-flash">
             <div class="step-head"><span class="step-n">3</span><h2>Flash it</h2></div>
             <section id="provisioning" class="provision hidden" aria-labelledby="provision-title">
-              <h3 id="provision-title">First-boot connection</h3>
-              <p class="muted detail-only" id="provision-note">These values are written directly
-                into this board’s settings partition, never logged and never saved by the app.</p>
+              <h3 id="provision-title">Wi-Fi &amp; hub</h3>
+              <p class="muted detail-only" id="provision-note">Written into this board's settings, never logged, never saved by the app.</p>
               <div class="form-grid">
                 <label class="usb-only">Canary name<input id="device-id" maxlength="47" autocomplete="off" required></label>
                 <label>Wi-Fi name<input id="wifi-ssid" maxlength="32" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
-                <!-- An EXISTING network key, not an account credential: masked text
-                     (never type=password) so the OS offers nothing to "generate" —
-                     grab it from your router sticker or phone, or just type it.
-                     Pattern: firmware/LESSONS_LEARNED.md "iOS offers to invent a password". -->
-                <label>Wi-Fi network password<span class="pw-row"><input id="wifi-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="wifi-pass" aria-label="Show the password">Show</button><button type="button" class="btn btn-ghost pw-fetch" data-pw="wifi-pass" data-ssid="wifi-ssid" title="Fill with this computer's saved password for the Wi-Fi name above — the system asks permission first, and it goes only to the board.">Use saved</button></span></label>
-                <!-- A name with no password is refused by readProvisioning unless
-                     this is ticked: a forgotten password used to seed an open join
-                     that failed silently on first boot. Same choice, same words, in
-                     the browser flasher (renderWifiFields). -->
+                <!-- Masked text, never type=password: the OS would offer to
+                     "generate" a key the router already owns. -->
+                <label>Wi-Fi password<span class="pw-row"><input id="wifi-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="wifi-pass" aria-label="Show the password">Show</button><button type="button" class="btn btn-ghost pw-fetch" data-pw="wifi-pass" data-ssid="wifi-ssid" title="Fill from this computer's saved Wi-Fi password. The system asks permission first.">Use saved</button></span></label>
+                <!-- A name with no password is refused unless this is ticked
+                     (readProvisioning). Same words in the browser flasher. -->
                 <label class="check span-2"><input type="checkbox" id="wifi-open"> open network (no password)</label>
                 <label class="broker-only">Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off"></label>
                 <label class="broker-only">MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883"></label>
                 <label class="broker-only">MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
                 <label class="broker-only">MQTT password<span class="pw-row"><input id="mqtt-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="mqtt-pass" aria-label="Show the password">Show</button></span></label>
-                <!-- Broker TLS: the mode byte plus the CA / SHA-256 pin the
-                     firmware's shared decision reads (mqtt_transport_logic.h),
-                     sealed as mqtt_tls / mqtt_ca / mqtt_fp by provisioning.rs.
-                     Plain stays the default; the CA box shows for the CA mode
-                     only and the pin for the fingerprint mode only
-                     (tlsRowsRefresh), and the lab option says what it is and
-                     is never preselected. Same options, same copy, in the
-                     browser flasher (renderWifiFields) — pinned equal by
-                     canary-local/tests/desktop_parity.test.js. -->
+                <!-- Broker TLS mode (mqtt_transport_logic.h). Options are pinned
+                     equal to the browser flasher's by desktop_parity.test.js. -->
                 <label class="broker-only">Broker encryption<select id="mqtt-tls">
                   <option value="0" selected>Plain MQTT (default — what every Canary shipped with)</option>
                   <option value="1">TLS, CA-verified — paste the broker's CA below</option>
                   <option value="2">TLS, SHA-256 fingerprint pin</option>
                   <option value="3">TLS, lab only: encrypted but NOT verified — warns on every connect</option>
                 </select></label>
-                <p class="muted broker-only span-2" id="mqtt-tls-note"></p>
+                <p class="muted broker-only span-2 detail-only" id="mqtt-tls-note"></p>
                 <label class="span-2 hidden" id="mqtt-ca-row">Broker CA certificate (PEM)<textarea id="mqtt-ca" rows="5" maxlength="3070" spellcheck="false" autocomplete="off" placeholder="-----BEGIN CERTIFICATE----- … -----END CERTIFICATE----- (PEM: the CA that signed the broker's certificate)"></textarea></label>
                 <label class="hidden" id="mqtt-fp-row">Broker certificate SHA-256 fingerprint<input id="mqtt-fp" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="AA:BB:CC:… (paste just the 64 hex after “Fingerprint=” from: openssl x509 -in broker.crt -noout -fingerprint -sha256)" pattern="[: ]*(?:[0-9a-fA-F]{2}[: ]*){32}" title="SHA-256 fingerprint: 64 hex digits, ':' or spaces between pairs optional"></label>
-                <!-- A TLS mode with the port still at the plain default earns a
-                     SUGGESTION of 8883 — a button, never a rewrite: the port is
-                     the owner's, and "the broker did not speak TLS on this
-                     port" is the failure the firmware names when it is wrong. -->
-                <p class="muted span-2 prov-nudge hidden" id="mqtt-port-nudge"><span>TLS brokers usually listen on 8883 and this port is still 1883 — a plain listener on a TLS mode fails as “the broker did not speak TLS on this port”. The port stays yours:</span><button type="button" id="mqtt-port-8883" class="btn btn-ghost btn-small">Use 8883</button></p>
+                <!-- A TLS mode on the plain port earns a suggestion, never a rewrite. -->
+                <p class="muted span-2 prov-nudge hidden" id="mqtt-port-nudge"><span>TLS brokers usually listen on 8883; a plain port fails as “the broker did not speak TLS on this port”.</span><button type="button" id="mqtt-port-8883" class="btn btn-ghost btn-small">Use 8883</button></p>
               </div>
-              <!-- The setup profile: type it once, every later flash fills
-                   itself in. Passwords go to the OS secret store when there is
-                   one (the note names it); everything else lives in the same
-                   local prefs the app already keeps. -->
+              <!-- The setup profile: passwords go to the OS secret store when
+                   there is one (the note names it). -->
               <div class="row prov-profile">
                 <label class="check"><input type="checkbox" id="prov-remember" checked>
                   Remember for next flash</label>
-                <span id="prov-remember-note" class="muted"></span>
+                <span id="prov-remember-note" class="muted detail-only"></span>
               </div>
               <p id="prov-autofill-note" class="muted hidden" role="status"></p>
-              <!-- The same Wi-Fi as a scannable QR (parity with the browser
-                   flasher): point a camera Canary — or a phone helping with
-                   setup — at it instead of retyping the password. Rendered
-                   locally by the vendored generator; nothing leaves the app. -->
+              <!-- Wi-Fi as a QR, rendered locally on demand. -->
               <div class="row">
                 <button type="button" id="wifi-qr-btn" class="btn btn-ghost btn-small">Show Wi-Fi as a QR code</button>
               </div>
               <div id="wifi-qr-box" class="wifi-qr hidden" aria-label="Wi-Fi network QR code"></div>
 
-              <!-- Room presets for the boards whose firmware reads its
-                   detection dials (Vision) or radar reflexes (Sense) out of
-                   NVS. Filled by renderDials(); hidden for every other
-                   product. "As it ships" writes nothing at all. -->
+              <!-- Room presets (renderDials); hidden for products without dials. -->
               <div id="dials" class="dials hidden"></div>
 
-              <!-- OTA opt-in (default ON): seeds the shared update engine's
-                   own NVS namespace (securacv_ota/auto_upd) so the board
-                   keeps itself on signed releases with no hub in the loop.
-                   Unchecking writes an explicit 0 — a recorded choice, not
-                   an absence. Same checkbox, same copy, in the browser
-                   flasher (renderWifiFields). -->
+              <!-- OTA opt-in, default ON. Same checkbox, same copy, in the browser flasher. -->
               <div class="row prov-auto-update">
                 <label class="check"><input type="checkbox" id="auto-update" checked>
                   Keep this Canary updated automatically</label>
               </div>
-              <p class="muted">Updates are Ed25519-signed releases installed with A/B rollback —
-                the board steps back by itself if a new one doesn’t boot — and you can turn
-                this off later in the device’s settings.</p>
+              <p class="muted detail-only">Updates are Ed25519-signed releases installed with A/B rollback — the board
+                steps back by itself if a new one doesn’t boot. You can turn this off later in the device’s settings.</p>
             </section>
             <div class="row" id="host-flash-controls">
               <button id="flash-btn" class="btn btn-primary" disabled>Flash my Canary</button>
@@ -366,8 +282,8 @@
             </div>
             <section id="module-flow" class="module-flow hidden">
               <h3>Grove Vision AI V2 module</h3>
-              <p class="muted">CH343 / WiseEye2 recognized. This writes the pinned person model, checked
-                by SHA-256 before a byte is written, to <span class="mono">0x400000</span>, then requires an AT response and one real inference.</p>
+              <p class="muted">Writes the pinned person model (SHA-256 checked first) to <span class="mono">0x400000</span>,
+                then requires an AT response and one real inference.</p>
               <div class="row">
                 <button id="module-flash-btn" class="btn btn-primary">Flash &amp; prove the Vision module</button>
                 <span id="module-progress" class="muted"></span>
@@ -375,15 +291,12 @@
               <canvas id="module-preview" class="module-preview hidden" role="img" aria-label="One attended local inference frame from the Vision module, with its detection boxes drawn"></canvas>
 
               <!-- The live bench: see what it sees, tune the two on-module
-                   thresholds — no reflash needed. Mirrors the browser Lab's
-                   bench (same INVOKE/BREAK/TSCORE/TIOU protocol). -->
+                   thresholds. Same protocol as the browser Lab's bench. -->
               <div id="bench" class="bench">
-                <h4>Live bench — see what it sees</h4>
-                <p class="muted">Streams camera frames from the module to this app over
-                  your USB cable — the attended, one-time bench check from the guide.
-                  Frames render below and go nowhere else.</p>
+                <h4>Live preview</h4>
+                <p class="muted detail-only">Camera frames stream from the module over USB to this window and nowhere else.</p>
                 <details id="bench-guide" class="hint hidden">
-                  <summary>How to get the live preview working</summary>
+                  <summary>Preview not working?</summary>
                   <div id="bench-guide-body"></div>
                 </details>
                 <div class="row">
@@ -409,71 +322,42 @@
                     <input id="bench-tiou" type="range" min="0" max="100" value="45" disabled>
                     <output id="bench-tiou-out">45</output></label>
                 </div>
-                <p class="fineprint muted">Thresholds live on the module itself — a slider
-                  writes the value, then reads back what the module actually holds.</p>
+                <p class="fineprint muted">Each slider writes to the module, then reads back what it actually holds.</p>
               </div>
             </section>
-            <!-- The install's live progress: stage + elapsed clock + a real
-                 bar. Driven by opProgress (app.js) from three signals — the
-                 structured flash:progress download events, the percent parsed
-                 out of espflash's own progress frames, and the flash's
-                 narration lines. The console below stays the verbatim
-                 transcript; this strip is the glanceable answer to "is it
-                 stuck?" — the elapsed clock ticks every second no matter
-                 what, and stages with no honest number sweep the bar instead
-                 of freezing it. Mirrors the browser flasher's progressCard;
-                 the hub flow's bar (#hub-progress-wrap) was the pattern. -->
+            <!-- Install progress: stage + elapsed + bar (opProgress in app.js).
+                 The clock is aria-hidden so a live region doesn't announce every tick. -->
             <div id="flash-progress-wrap" class="op-progress hidden" role="status" aria-live="polite">
-              <!-- aria-hidden on the clock: it rewrites every second, and a
-                   polite live region would re-announce the whole strip each
-                   tick — hundreds of "0:01… 0:02…" burying the real stage
-                   changes. Only the stage text speaks. -->
               <div class="op-progress-row"><p id="flash-op-stage" class="muted"></p><p id="flash-op-elapsed" class="muted" aria-hidden="true"></p></div>
               <div class="bar"><div id="flash-op-fill" class="bar-fill"></div></div>
             </div>
             <pre id="console" class="console hidden" aria-live="polite"></pre>
-            <!-- What this install touches, from the safety copy vs the checked
-                 image. Filled by renderChangeMap() off the flash:changemap
-                 event; absent when no safety copy was taken. -->
+            <!-- What this install touches (renderChangeMap). -->
             <div id="change-map" class="change-map hidden"></div>
             <p id="flash-result" class="status"></p>
-            <!-- What to do next when an install fails. The browser flasher has
-                 always put the escalation IN the error card (try again, then a
-                 clean install with a full erase, then a diagnostic report);
-                 here the full-erase choice lived only as a pre-flash checkbox
-                 someone had to know to go find. Filled by
-                 renderFlashFailureActions(); empty and hidden otherwise. -->
+            <!-- Next steps after a failed install (renderFlashFailureActions). -->
             <div id="flash-actions" class="flash-actions hidden"></div>
-            <!-- The freshly minted local-API credential, shown once per flash
-                 (parity with the browser done card): the keychain holds it for
-                 the fleet book, but the owner deserves to see and copy it. -->
+            <!-- The minted local-API key, shown once (renderTokenOnce). -->
             <div id="token-once" class="token-once hidden" aria-live="polite"></div>
-            <!-- This session's nursery — the batch flasher's working memory,
-                 placed exactly where the next board gets plugged in. -->
+            <!-- This session's hatchlings (renderNurseryStrip). -->
             <div id="nursery-strip" class="nursery-strip hidden" aria-live="polite"></div>
-            <!-- Prove it, two ways (parity: the browser done card): the
-                 catalog's prove block names one real proof over the cable or
-                 the glass and one emulated twin in the browser Lab; the
-                 Bluetooth check rides along for the boards that run its
-                 console. Filled by renderProveRow() after a product flash. -->
+            <!-- Prove it (renderProveRow): one real proof, one emulated twin. -->
             <section id="prove-row" class="prove-row hidden" aria-live="polite">
-              <h3>Prove it, two ways</h3>
+              <h3>Prove it</h3>
               <div class="row">
-                <button id="prove-real" class="btn btn-primary" type="button">Watch it boot &amp; prove itself →</button>
+                <button id="prove-real" class="btn btn-primary" type="button">Watch it boot →</button>
                 <button id="prove-twin" class="btn btn-ghost hidden" type="button"></button>
                 <button id="prove-ble" class="btn btn-ghost hidden" type="button">Check over Bluetooth ↗</button>
               </div>
-              <p id="prove-how" class="muted"></p>
-              <p id="prove-ble-note" class="muted hidden"></p>
+              <p id="prove-how" class="muted detail-only"></p>
+              <p id="prove-ble-note" class="muted detail-only hidden"></p>
             </section>
 
             <section id="receipts" class="receipts hidden" aria-live="polite">
-              <h3>Installation receipts</h3>
+              <h3>Receipts</h3>
               <div id="receipt-host-image" class="receipt pending"><span>Host firmware</span><strong>waiting</strong></div>
-              <!-- The broker TLS mode as SEALED (never as connected): the line the
-                   writer returned in its receipt, from the NVS bytes it wrote —
-                   same words as the browser's done card (desktop_parity). Shown
-                   only when a broker host was sealed. -->
+              <!-- The broker TLS mode as SEALED (never as connected), from the
+                   writer's receipt. Shown only when a broker host was sealed. -->
               <div id="receipt-host-broker" class="receipt pending hidden"><span>Broker link</span><strong>waiting</strong></div>
               <div id="receipt-host-boot" class="receipt pending"><span>Host boot + Vision I²C</span><strong>waiting</strong></div>
               <div id="receipt-module" class="receipt pending"><span>Vision module model + inference</span><strong>waiting</strong></div>
@@ -489,45 +373,31 @@
                 <button id="monitor-clear" class="btn btn-small">Clear</button>
                 <button id="monitor-manifest" class="btn btn-small" disabled>Print receipt (j)</button>
                 <button id="monitor-expand" class="btn btn-small" aria-pressed="false">Expand</button>
-                <!-- Console speed. Pre-picked from the catalog's console_baud
-                     and changeable for the curious — and if the output doesn't
-                     decode as text, the monitor walks the list itself rather
-                     than leaving someone staring at mojibake with nothing to
-                     turn. Options are filled from CONSOLE_BAUDS by
-                     renderMonitorBauds(); parity with the browser flasher's
-                     flash-mon-baud selector and its self-heal. -->
+                <!-- Console speed: pre-picked from the catalog; the monitor
+                     walks the list itself if the output doesn't decode
+                     (renderMonitorBauds, judgeMonitorBaud). -->
                 <label class="monitor-baud muted">
                   <span>baud</span>
                   <select id="monitor-baud" class="input" aria-label="Console baud rate"></select>
                 </label>
               </div>
               <details class="hint">
-                <summary>What am I looking at?</summary>
-                <p class="muted monitor-lede">Every line the firmware prints, live over the same
-                  USB cable — watch it boot, see why something isn’t working, and talk back
-                  (press <kbd>h</kbd> for the firmware’s own menu). After a flash it starts by
-                  itself, reboots the board so you see the boot from the first line, and
-                  reconnects on its own across resets and replugs. Read-only unless you type;
-                  closing it changes nothing on the board.</p>
+                <summary>What is this?</summary>
+                <p class="muted monitor-lede">Every line the firmware prints, live over the same USB cable.
+                  After a flash it starts by itself and reconnects across resets. Press <kbd>h</kbd> for
+                  the firmware’s own menu. Read-only unless you type.</p>
               </details>
               <p id="monitor-status" class="muted">Not connected.</p>
-              <!-- What the board says about itself, from its own self-manifest
-                   (`j`): the self-check score, the die temperature and a tamper
-                   flag. Same chips as the browser's connect page — filled by
-                   renderSelfCheck() before a flash or after one. -->
+              <!-- Self-check chips from the board's own manifest (renderSelfCheck). -->
               <div id="selfcheck-chips" class="selfcheck hidden" aria-live="polite"></div>
-              <!-- The WAP field bench (parity: the browser's phaseWapBench):
-                   its [wap] transition lines as a verdict and a stir meter.
-                   Shown by renderWapField() when a WAP is on the bench. -->
+              <!-- The WAP field bench (renderWapField). -->
               <div id="wap-field" class="wap-field hidden">
                 <div class="row wap-field-head">
-                  <h4>The field bench — the room’s WiFi, felt</h4>
+                  <h4>Field bench</h4>
                   <span id="wap-field-status" class="wap-field-status muted" role="status">◌ listening for the field…</span>
                 </div>
-                <p class="muted">Its live verdict off this cable — the same coarse vocabulary it
-                  publishes: an event, a device count, a confidence word, a dwell class. Never a
-                  MAC, never a raw signal. Walk in with your phone, then without it: the stir
-                  meter still moves — the field feels the body, not the phone.</p>
+                <p class="muted detail-only">The WAP’s live verdict: an event, a device count, a confidence word, a dwell class.
+                  Never a MAC, never a raw signal. Walk past it with and without your phone — the field feels the body.</p>
                 <div class="bench-meter">
                   <div class="bench-meter-track"><div id="wap-field-fill" class="bench-meter-fill"></div></div>
                   <div class="muted">field stir — how much a body is moving the radio</div>
@@ -535,14 +405,11 @@
                 <p id="wap-field-stale" class="muted hidden">No field lines lately — the WAP only speaks on transitions; walk past it.</p>
               </div>
 
-              <!-- Radar tuning suite (Sense boards): every runtime knob, live
-                   over the same monitor port. Sliders speak the firmware's USB
-                   tuning console (`set <knob> <value>`); the [cfg] snapshot
-                   line is the single source of truth the panel reconciles to.
-                   Mirror of the web flasher's radar-bench tuning suite. -->
+              <!-- Radar tuning (Sense boards): every runtime knob, live over
+                   the monitor port (renderSenseTune). -->
               <div id="sense-tune" class="sense-tune hidden">
                 <div class="row sense-tune-head">
-                  <h4>Radar tuning — every knob, live</h4>
+                  <h4>Radar tuning</h4>
                   <span id="sense-tune-badge" class="muted">syncing with the board…</span>
                 </div>
                 <div id="sense-knobs" class="sense-knobs"></div>
@@ -558,22 +425,15 @@
                   </label>
                   <label class="muted sense-raw-toggle">
                     <input id="sense-raw" type="checkbox" disabled />
-                    bench detail (raw cm &amp; bpm — stays on this cable)
+                    raw detail (cm &amp; bpm, this cable only)
                   </label>
                 </div>
               </div>
 
-              <!-- A fatal boot signature turned into a plain-language cause and
-                   fix — filled by maybeDiagnose() from the live serial stream. -->
+              <!-- A fatal boot signature as a cause and a fix (maybeDiagnose). -->
               <div id="boot-diagnosis" class="boot-diagnosis hidden"></div>
               <pre id="serial-console" class="console" aria-live="polite"></pre>
-              <!-- The commands of the firmware on the bench, labeled, so none
-                   has to be typed blind. Built by renderMonitorCmds() from the
-                   product's `monitor` record in the embedded flash.json — the
-                   record the browser flasher's monitor and the Lab app's
-                   receipt card read (sweep A86) — which also sets the box's
-                   placeholder; the one below is the catalog's monitor_unknown,
-                   for a board whose product is not known. -->
+              <!-- The firmware's own commands, labeled (renderMonitorCmds). -->
               <div id="monitor-cmds" class="monitor-cmds"></div>
               <form id="monitor-cmd-form" class="row monitor-cmd" autocomplete="off">
                 <input id="monitor-cmd" class="input" type="text"
@@ -596,13 +456,10 @@
               <h3 id="hatch-title">It is alive.</h3>
               <p id="hatch-body"></p>
               <ol id="hatch-steps"></ol>
-              <!-- The setup network and its key, read off the board's own first-boot
-                   line over the serial monitor (app.js feedSetupNetwork) — the only
-                   place that key is ever printed. -->
+              <!-- The setup network and its key, read off the first-boot line (feedSetupNetwork). -->
               <p id="hatch-setup-net" class="muted hidden" aria-live="polite"></p>
 
-              <!-- Birth certificate — the same naming + certificate the web Lab's
-                   Hatchery gives, now for the real Canary you just flashed. -->
+              <!-- Birth certificate — the same naming spec as the web Lab's Hatchery. -->
               <figure class="cert" id="hatch-cert" hidden>
                 <div class="cert-frame">
                   <div class="cert-top">
@@ -632,55 +489,45 @@
           </section>
 
           <section class="card" id="step-advanced">
-            <div class="step-head"><span class="step-n">⚙</span><h2>Advanced — you can skip all of this</h2></div>
+            <div class="step-head"><span class="step-n">⚙</span><h2>Advanced</h2></div>
+            <p class="muted">Optional. Most people never need these.</p>
 
             <details class="hint" id="adv-backup">
-              <summary>The automatic safety copy</summary>
-              <p>Before every write, the whole chip is read to a timestamped file in this
-                app's backups folder — the undo button. Restore any copy from Rescue below.
-                Skipping saves ~a minute per board on a big batch; the board you're
-                erasing anyway loses nothing, but a provisioned Canary loses its undo.</p>
+              <summary>Safety copy</summary>
+              <p>Before every write, the whole chip is saved to this app's backups folder.
+                It's your undo: restore it from Rescue below. Skipping saves about a minute per board.</p>
               <label class="check"><input type="checkbox" id="skip-backup">
                 Skip the safety copy this session</label>
             </details>
 
             <details class="hint" id="adv-diag">
-              <summary>Something's wrong — copy a diagnostic report</summary>
-              <p>One click gathers what a bug report needs — app build, platform, chip,
-                USB device, chosen firmware, the last error, and the console tail —
-                and puts it on your clipboard. Nothing is sent anywhere; you decide
-                where it goes.</p>
+              <summary>Diagnostic report</summary>
+              <p>Copies what a bug report needs (build, platform, chip, USB device, firmware, last
+                error, console tail) to your clipboard. Nothing is sent anywhere.</p>
               <div class="row">
                 <button id="diag-report-btn" class="btn btn-ghost btn-small">Copy diagnostic report</button>
                 <span id="diag-report-note" class="muted"></span>
               </div>
-              <!-- When the clipboard is unreachable the full report lands here
-                   to select by hand — the app log truncates, this doesn't. -->
+              <!-- Fallback when the clipboard is unreachable. -->
               <textarea id="diag-report-out" class="diag-report-out hidden" readonly
                         rows="10" spellcheck="false"></textarea>
             </details>
 
             <details class="hint" id="adv-dev">
-              <summary>Dev channel — flash the rolling prerelease</summary>
-              <p>Dev images come from the rolling <span class="mono">fw-dev-latest</span>
-                prerelease: usually the newest dev build, or the stable one when none is
-                newer (the banner says which version), checked exactly the same way (chip
-                guard, SHA-256, and the release signature). The toggle can only ever mean
-                <span class="mono">fw-dev-latest</span>;
-                it is not a way to point at an arbitrary manifest.</p>
+              <summary>Dev channel</summary>
+              <p>Flash the rolling <span class="mono">fw-dev-latest</span> prerelease instead of the
+                stable release. Same checks: chip guard, SHA-256, release signature. The banner
+                says which version it carries.</p>
               <label class="check"><input type="checkbox" id="dev-channel">
                 Use the dev channel</label>
             </details>
 
             <details class="hint" id="adv-local">
               <summary>Install a local file</summary>
-              <p>Install a <strong>factory</strong> firmware image from your computer
-                (a factory .bin you built — <span class="mono">dev_flash.sh &lt;env&gt; -f</span>
-                or <span class="mono">firmware/scripts/make_factory.py</span> makes one —
-                or one saved for an air-gapped setup). An app-only build won’t do: it
-                gets written at offset 0, where only a merged factory image belongs.
-                We can’t check a personal file’s signature, but the board still can’t
-                be bricked, and espflash checks the write against the chip.</p>
+              <p>Write a <strong>factory</strong> .bin from your computer
+                (<span class="mono">dev_flash.sh &lt;env&gt; -f</span> or
+                <span class="mono">firmware/scripts/make_factory.py</span> makes one). An app-only
+                build is refused. Its signature can't be checked, but the board still can't be bricked.</p>
               <div class="row">
                 <button id="local-pick" class="btn btn-ghost btn-small">Choose a .bin…</button>
                 <span id="local-name" class="muted"></span>
@@ -700,14 +547,10 @@
             </details>
 
             <details class="hint" id="adv-health">
-              <summary>Health check — read the board’s story (changes nothing)</summary>
-              <p>Read the board’s own record straight off flash — the partition
-                map, the firmware in each slot and when it was built, update
-                history, whether it ever hard-crashed, and its witness chain —
-                and get a plain-language verdict with what to do about anything
-                off. <strong>Read-only:</strong> nothing is written to the board,
-                and the identity key and saved Wi-Fi are never shown or saved —
-                only whether they’re present is reported.</p>
+              <summary>Health check (read-only)</summary>
+              <p>Reads the partition map, the firmware in each slot, update history, crash dumps
+                and the witness chain, then gives a plain verdict. Nothing is written. Keys and
+                passwords are never shown — only whether they exist.</p>
               <div class="row">
                 <button id="health-check-btn" class="btn btn-ghost btn-small" disabled>Run a health check</button>
               </div>
@@ -718,14 +561,9 @@
             </details>
 
             <details class="hint" id="adv-rescue">
-              <summary>Rescue bench — back up, restore, or erase a board</summary>
-              <p>Turn the flasher into a safety net: pull a full copy of the chip
-                to a file you keep, write a saved copy (or any factory
-                <span class="mono">.bin</span>) back, or wipe the chip to a clean
-                slate. A backup holds <strong>everything</strong> on the board —
-                its Ed25519 identity key and saved Wi-Fi included — so store the
-                file like a house key. None of this can brick the board: the
-                ESP32’s first-stage bootloader is mask ROM.</p>
+              <summary>Rescue: back up, restore, or erase</summary>
+              <p>A backup holds <strong>everything</strong> on the board, identity key and saved Wi-Fi
+                included — store the file like a house key. None of this can brick the board.</p>
               <div class="row">
                 <button id="rescue-backup-btn" class="btn btn-ghost btn-small" disabled>Back up this chip…</button>
                 <button id="rescue-restore-btn" class="btn btn-ghost btn-small" disabled>Restore / write a .bin…</button>
@@ -743,41 +581,32 @@
           <div class="pane-head">
             <div class="kicker">Build a Hub</div>
             <h1>Turn a card into a Home Assistant hub</h1>
-            <p class="lede">The brain your Canaries report home to. Only external, removable
-              disks are ever offered — and the write runs only after you type ERASE.</p>
+            <p class="lede">The hub your Canaries report to. Only removable disks are offered, and nothing is written until you type ERASE.</p>
           </div>
 
-          <!-- Resume across a restart: if the app was reopened soon after a flash,
-               pick the first-boot watch back up instead of forgetting it. -->
+          <!-- Resume across a restart (hubMaybeResume). -->
           <div id="hub-resume" class="resume-banner hidden" role="status">
             <span class="dot reading" id="hub-resume-dot"></span>
-            <span class="resume-grow" id="hub-resume-text">Picking up where you left off — still watching for the hub you just made…</span>
+            <span class="resume-grow" id="hub-resume-text">Still watching for the hub you just made…</span>
             <button id="hub-resume-open" class="btn btn-small hidden">Open your hub →</button>
             <button id="hub-resume-setup" class="btn btn-small hidden">Run self-setup again</button>
             <button id="hub-resume-dismiss" class="link-btn">Dismiss</button>
             <span id="hub-resume-count" class="fb-count hidden" role="timer"></span>
           </div>
 
-          <!-- Standing self-setup: a hub flashed with the self-setup option can be
-               finished from here at ANY later time — a card flashed today and first
-               booted next weekend falls outside the resume window, and its bundle
-               still deserves a one-click run. Hidden unless this computer holds a
-               maintenance key. -->
+          <!-- Standing self-setup: shown when this computer holds a maintenance key. -->
           <div id="hub-standing" class="resume-banner hidden">
-            <span class="resume-grow" id="hub-standing-text">Flashed a self-setup card before?
-              Power that hub on, then finish its setup from here — no monitor needed.</span>
+            <span class="resume-grow" id="hub-standing-text">Flashed a self-setup card before? Power the hub on, then finish its setup from here.</span>
             <input id="hub-standing-host" class="confirm-input" autocomplete="off" spellcheck="false"
                    placeholder="homeassistant.local" aria-label="Hub address — an IP works too">
             <button id="hub-standing-run" class="btn btn-small">Finish hub setup</button>
           </div>
 
           <section class="card" id="hub-step-what">
-            <div class="step-head"><span class="step-n">1</span><h2>What you're making</h2></div>
-            <p class="muted">A <strong>Home Assistant hub</strong> for your Canaries: we download the
-              official <span id="hub-os-label" class="mono">Home Assistant OS</span> image,
-              check it <span id="hub-pin-state"></span>, write it to your card, read every byte
-              back to prove the write, and seed your Wi-Fi so the Pi joins your network on
-              its own. <span id="hub-card-req"></span></p>
+            <div class="step-head"><span class="step-n">1</span><h2>Pick your Pi</h2></div>
+            <p class="muted">This downloads the official <span id="hub-os-label" class="mono">Home Assistant OS</span> image,
+              checks it <span id="hub-pin-state"></span>, writes it, reads every byte back, and adds your Wi-Fi.
+              <span id="hub-card-req"></span></p>
             <div id="hub-board-list" class="product-list" role="radiogroup" aria-label="Raspberry Pi model"></div>
             <details class="hint">
               <summary>Have a different Pi?</summary>
@@ -785,28 +614,24 @@
             </details>
             <details class="hint">
               <summary>What happens on first boot?</summary>
-              <p>Home Assistant OS keeps itself updated and heals itself (A/B rollback if an
-                update ever goes wrong). First boot takes 10–20 minutes while it sets up —
-                then it appears on your network as
-                <span class="mono">homeassistant.local:8123</span>.</p>
+              <p>It sets itself up for 10–20 minutes, then appears on your network as
+                <span class="mono">homeassistant.local:8123</span>. Home Assistant OS keeps
+                itself updated, with rollback if an update fails.</p>
             </details>
           </section>
 
           <section class="card" id="hub-step-target">
             <div class="step-head"><span class="step-n">2</span><h2>Plug in your card or SSD</h2></div>
-            <p class="muted" id="hub-target-sub">Insert a microSD card (or plug in a USB SSD — the durable
-              choice for a Pi 5). It's picked up automatically.</p>
+            <p class="muted" id="hub-target-sub">A microSD card, or a USB SSD (the durable choice for a Pi 5). It's picked up automatically.</p>
             <div id="hub-target-list" class="product-list" role="radiogroup" aria-label="Write target"></div>
             <details id="hub-pi-usb" class="hint">
               <summary>No card reader? Use the Pi itself over USB-C</summary>
-              <p>Your Raspberry Pi 5 can be its own card reader — we borrow it for a
-                minute and it shows up here as a disk (SD card <em>and</em> NVMe).
-                The cable powers it; no power supply needed.</p>
+              <p>A Pi 5 can act as a card reader for its own SD card or NVMe. The cable powers it.</p>
               <ol class="pi-usb-steps">
-                <li>Leave the Pi unpowered. Put the card you want to flash in it (or leave the NVMe in).</li>
-                <li>Click <strong>Wait for my Pi</strong> below.</li>
+                <li>Leave the Pi unpowered, with the card (or NVMe) in it.</li>
+                <li>Click <strong>Wait for my Pi</strong>.</li>
                 <li><strong>Hold the Pi's power button</strong>, connect a USB-C <em>data</em> cable
-                  from this computer to the Pi's USB-C port, then release the button.</li>
+                  from this computer, then release.</li>
               </ol>
               <p id="hub-pi-usb-hint" class="muted"></p>
               <div class="row">
@@ -821,91 +646,67 @@
           </section>
 
           <section class="card disabled" id="hub-step-wifi">
-            <div class="step-head"><span class="step-n">3</span><h2>Your Wi-Fi &amp; account</h2></div>
-            <p class="muted">All written onto the card only — never logged, never sent anywhere.
-              The hub joins your Wi-Fi the moment it boots.</p>
+            <div class="step-head"><span class="step-n">3</span><h2>Wi-Fi &amp; account</h2></div>
+            <p class="muted">Written onto the card only. Never logged, never sent anywhere.</p>
             <div class="form-grid">
               <label>Wi-Fi name<input id="hub-ssid" maxlength="32" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
-              <!-- Same rule as the Canary form: an existing home Wi-Fi key gets a
-                   masked text field, never a type=password the OS reads as
-                   "new account — let me invent one". -->
-              <label>Wi-Fi password<span class="pw-row"><input id="hub-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="hub-pass" aria-label="Show the password">Show</button><button type="button" class="btn btn-ghost pw-fetch" data-pw="hub-pass" data-ssid="hub-ssid" title="Fill with this computer's saved password for the Wi-Fi name above — the system asks permission first, and it goes only onto the card.">Use saved</button></span></label>
+              <label>Wi-Fi password<span class="pw-row"><input id="hub-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="hub-pass" aria-label="Show the password">Show</button><button type="button" class="btn btn-ghost pw-fetch" data-pw="hub-pass" data-ssid="hub-ssid" title="Fill from this computer's saved Wi-Fi password. The system asks permission first.">Use saved</button></span></label>
             </div>
             <div class="row">
               <label class="check"><input type="checkbox" id="hub-hidden-net"> Hidden network</label>
-              <label class="check"><input type="checkbox" id="hub-ethernet"> I'll plug in ethernet instead</label>
-              <label class="check"><input type="checkbox" id="hub-remember" checked> Remember these for next time</label>
-              <span id="hub-remember-note" class="muted"></span>
+              <label class="check"><input type="checkbox" id="hub-ethernet"> I'll use ethernet instead</label>
+              <label class="check"><input type="checkbox" id="hub-remember" checked> Remember for next time</label>
+              <span id="hub-remember-note" class="muted detail-only"></span>
             </div>
 
             <details id="hub-account-panel" class="hint" open>
-              <summary>Your Home Assistant account — so there's no setup wizard</summary>
-              <p class="muted">Type your login now and this app finishes it for you: keep the app
-                open through first boot, and the moment Home Assistant answers, it creates your
-                account on the hub over Home Assistant's own setup API and <strong>checks the login
-                works</strong> — so your first visit is a sign-in, not a wizard. Your password stays
-                on this computer (a scrambled copy also rides the card as a head start) and goes only
-                to your own hub, on your own network. Leave it empty and the hub asks you to create
-                the account on first visit — or the SecuraCV iPhone app creates it for you.</p>
+              <summary>Home Assistant account (skips the setup wizard)</summary>
+              <p class="muted">Type a login now and this app creates it on the hub after first boot, then
+                checks it works. Keep the app open until then. Leave it blank to set up on first visit.</p>
               <div class="form-grid">
                 <label>Your name<input id="hub-acct-name" maxlength="128" autocomplete="off"></label>
                 <label>Username<input id="hub-acct-user" maxlength="64" autocomplete="off"></label>
                 <label>New hub account password<input id="hub-acct-pass" type="password" maxlength="128" autocomplete="new-password"></label>
-                <label>Confirm hub account password<input id="hub-acct-pass2" type="password" maxlength="128" autocomplete="new-password"></label>
+                <label>Confirm password<input id="hub-acct-pass2" type="password" maxlength="128" autocomplete="new-password"></label>
               </div>
               <p id="hub-acct-hint" class="muted"></p>
             </details>
 
             <details id="hub-provision-panel" class="hint" open>
-              <summary>Finish hub setup by itself — broker, MQTT, securaCV
+              <summary>Self-setup: broker, MQTT, Frigate, securaCV
                 <span class="chip-badge">on by default</span></summary>
-              <p class="muted">The card also carries the securaCV <strong>self-setup bundle</strong> and a
-                <strong>maintenance key</strong> made on this computer. Once Home Assistant is up, this app
-                connects to the hub over your network and installs everything — the Mosquitto broker, the
-                MQTT connection, Frigate, and the securaCV witness kernel — narrating why at every step. The
-                Pi never needs a monitor or keyboard; this screen is the screen, and so is your phone: the
-                SecuraCV iPhone app's Set up guide does the same steps if this app is closed. Honest
-                status: the bundle is proven at the desk, not yet on a real first boot — a bundle that
-                never runs is harmless (the hub ignores it), and the guide covers every step by hand.</p>
-              <p class="muted">The key's private half stays in this app's data folder and never leaves this
-                computer. To revoke it later, delete <span class="mono">authorized_keys</span> from the
-                card's boot partition (or re-flash without this option).</p>
+              <p class="muted">The card carries a setup bundle and a maintenance key made on this computer.
+                Once the hub is up, this app installs everything over your network. No monitor or
+                keyboard on the Pi; the SecuraCV iPhone app can do the same steps if this app is closed.</p>
+              <details class="hint">
+                <summary>About the maintenance key</summary>
+                <p class="muted">Its private half stays in this app's data folder. To revoke it, delete
+                  <span class="mono">authorized_keys</span> from the card's boot partition, or re-flash
+                  without this option. Honest status: the bundle is proven at the desk, not yet on a
+                  real first boot; a bundle that never runs is harmless.</p>
+              </details>
               <label class="check"><input type="checkbox" id="hub-provision" checked> Put the self-setup bundle and maintenance key on the card</label>
-              <p class="muted" style="margin-top:12px"><strong>Recommended companion — Pi-hole.</strong>
-                A small open-source DNS service millions of people run. Your devices ask it
-                “where is this website?”, it answers, and it refuses known ad and tracker domains
-                along the way. It's here because securaCV's promise is devices that
-                <strong>don't talk out</strong> — and Pi-hole is how you check that promise instead of
-                taking our word: one page shows every domain every device (Canaries included) tries
-                to reach, so anything quietly phoning home shows up in plain sight. It changes
-                nothing until you point your router's DNS at the hub, and skipping it changes
-                nothing at all.</p>
-              <p class="muted"><strong>What it records, plainly:</strong> to tell you <em>which</em>
-                device asked for a domain, Pi-hole has to log the asking device — so its query log
-                holds the client's IP address (and hostname, if your network supplies one), the
-                domain, and the time. It does not see what's on a page, only the names looked up.
-                That log is the feature, and it is also a log of your household's browsing: it stays
-                on your hub, nothing is uploaded, and you control how long it's kept — Pi-hole's own
-                settings let you shorten retention or turn query logging off entirely (blocking
-                still works without it).</p>
+              <p class="muted" style="margin-top:12px"><strong>Pi-hole</strong> — a DNS service that shows every
+                domain every device on your network asks for, so you can see nothing phones home. It also
+                blocks known ad and tracker domains. Does nothing until you point your router's DNS at the hub.</p>
+              <details class="hint">
+                <summary>What Pi-hole records</summary>
+                <p class="muted">To say which device asked for a domain, its query log keeps the client IP
+                  (and hostname), the domain, and the time. Not page contents. The log stays on your hub;
+                  Pi-hole's settings let you shorten retention or turn logging off (blocking still works).</p>
+              </details>
               <label class="check"><input type="checkbox" id="hub-provision-pihole" checked> Also install Pi-hole</label>
-              <p class="muted" style="margin-top:12px"><strong>Optional — a screen on the hub itself.</strong>
-                The hub never needs one; headless stays the default. But if you're plugging an HDMI
-                display into the Pi — say a 7&#8243; 1024x600 IPS touchscreen with USB touch — self-setup
-                can also install <strong>HAOSKiosk</strong>, a small open-source app that runs a browser
-                on the hub and shows your dashboard on that screen full-screen, touch and all. No cloud
-                and no new account: the screen shows your own dashboard, and fetches only what that
-                dashboard already fetches on any device that opens it — it's a real browser, so a
-                dashboard that embeds outside content (a weather card, say) loads it here too.</p>
-              <p class="muted"><strong>One thing it can't do for you:</strong> the screen needs a Home
-                Assistant login, and no password is ever typed here or put on the card. Best practice —
-                give the screen its own: in HA, Settings → People → Users → Add User, name it something
-                like &ldquo;screen&rdquo;, leave Administrator off (the app keeps that password in its
-                configuration, and a screen only needs to view dashboards). Then open Settings → Apps →
-                HAOS Kiosk Display → Configuration, enter that login, and press Start; the screen lights
-                up with your dashboard. (Zoom, rotation, and screen-timeout live in the same tab.) No
-                screen attached? The app simply won't start, and nothing else on the hub cares.</p>
-              <label class="check"><input type="checkbox" id="hub-provision-display"> Also install the hub display (for a screen plugged into the Pi)</label>
+              <p class="muted" style="margin-top:12px"><strong>Hub display</strong> — for an HDMI screen plugged into
+                the Pi. Installs HAOSKiosk, which shows your dashboard full-screen, touch included. Headless stays the default.</p>
+              <details class="hint">
+                <summary>Setting up the screen afterward</summary>
+                <p class="muted">The screen needs its own Home Assistant login, and no password is ever put
+                  on the card. In HA: Settings → People → Users → Add User (name it “screen”, Administrator
+                  off). Then Settings → Apps → HAOS Kiosk Display → Configuration, enter that login, press
+                  Start. Zoom, rotation and timeout live in the same tab. No screen attached? The app
+                  simply won't start.</p>
+              </details>
+              <label class="check"><input type="checkbox" id="hub-provision-display"> Also install the hub display</label>
               <p id="hub-provision-hint" class="muted"></p>
             </details>
           </section>
@@ -917,14 +718,11 @@
 
             <div class="reassure">
               <span class="reassure-i" aria-hidden="true">✓</span>
-              <span><strong>Only the card you picked gets written</strong> — your computer's own drives are
-                never even offered as a target. Every byte is read back afterward and checked, so you know it
-                actually worked (even a counterfeit card that lies about the write is caught right here, at
-                your desk). And you can stop at any moment — the card just needs a fresh flash if you do.</span>
+              <span><strong>Only the disk you picked gets written.</strong> Your computer's own drives are never offered.
+                Every byte is read back and checked. You can stop at any time; the card then just needs a fresh flash.</span>
             </div>
 
-            <p class="muted" style="margin-top:12px">To be sure, type <span class="mono">ERASE</span> —
-              everything on the chosen card will be replaced.</p>
+            <p class="muted" style="margin-top:12px">Type <span class="mono">ERASE</span> to confirm — everything on the chosen card will be replaced.</p>
             <div class="row">
               <input id="hub-confirm" class="confirm-input" autocomplete="off" spellcheck="false"
                      placeholder="ERASE" aria-label="Type ERASE to confirm">
@@ -960,15 +758,12 @@
                   <button id="hub-fb-setup" class="btn btn-small hidden">Run self-setup again</button>
                   <button id="hub-fb-stop" class="link-btn">Stop watching</button>
                 </div>
-                <!-- The watch resolves homeassistant.local; some computers never can.
-                     The typed address is offered from the FIRST tick, collapsed — not
-                     only after 25 minutes of silence — and fed into every probe at
-                     once (app.js hubFbHost). The address stays whatever is typed. -->
+                <!-- A typed address feeds every probe from the next tick (hubFbHost). -->
                 <details id="hub-fb-host-hint" class="fb-host">
                   <summary>Know its address? Type it here</summary>
                   <input id="hub-fb-host" class="confirm-input" autocomplete="off" spellcheck="false"
                          placeholder="hub address — an IP works" aria-label="Hub address">
-                  <span class="muted">From your router's device list (“homeassistant”). The watch uses it on its next tick.</span>
+                  <span class="muted">From your router's device list (“homeassistant”).</span>
                 </details>
               </div>
             </section>
@@ -979,9 +774,8 @@
         <section id="atlas-view" class="view hidden" data-pane="atlas">
           <div class="pane-head">
             <div class="kicker">Explore</div>
-            <h1>Everything, one calm map</h1>
-            <p class="lede">Your Canaries on the web and the field knowledge baked into this
-              build — organized, offline-safe, and refreshed every time the app updates.</p>
+            <h1>Guides and links</h1>
+            <p class="lede">Your Canaries on the web, plus the field notes baked into this build. Works offline.</p>
           </div>
           <div id="atlas-body"></div>
         </section>
@@ -989,19 +783,16 @@
         <!-- ══════════ YOUR FLEET VIEW (the book + the Witness Wall) ══════════ -->
         <section id="fleet-view" class="view hidden" data-pane="fleet">
           <div id="fleet-scan-status" class="fleet-scan-status" role="status" aria-live="polite">Scanning your network for Canaries…</div>
-          <!-- The fleet book: every Canary this app flashed, found live on the
-               network by a real mDNS browse, with per-device status and the
-               one-click over-the-air update. Rendered by fleetBook (app.js). -->
+          <!-- The fleet book (fleetBook in app.js). -->
           <div id="fleet-book" class="fleet-book"></div>
           <iframe id="witness-frame" class="witness-frame" src="witness/witness.html" title="Your Fleet — the Witness Wall"></iframe>
         </section>
 
         <section id="about-view" class="view hidden" data-pane="about">
           <div class="pane-head">
-            <div class="kicker">About &amp; Health</div>
-            <h1>Rock solid, never stale</h1>
-            <p class="lede">Exactly which build you're running, when it was cut, and whether
-              it's current — the app checks itself and heals forward on its own.</p>
+            <div class="kicker">About</div>
+            <h1>This build</h1>
+            <p class="lede">Which version you're running, whether it's current, and what the app did recently.</p>
           </div>
           <div id="about-body"></div>
         </section>

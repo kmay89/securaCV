@@ -4,7 +4,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub mod signatures;
 
@@ -37,20 +37,22 @@ impl fmt::Display for SeedSource {
 /// `KernelConfig` takes; `source` is what a daemon may log.
 #[derive(Clone, Debug)]
 pub struct ResolvedSeed {
-    pub seed: String,
+    /// Zeroized when dropped; copy it with `to_string()` only into a
+    /// holder that zeroizes too (`KernelConfig` does).
+    pub seed: Zeroizing<String>,
     pub source: SeedSource,
 }
 
 /// Mint a fresh device seed from the OS RNG: `devkey:` + 64 hex chars (32 bytes
 /// of entropy), the format `witnessd` has always generated on first start.
-pub fn generate_device_seed() -> String {
+pub fn generate_device_seed() -> Zeroizing<String> {
     let mut seed_bytes = [0u8; 32];
     rand::rngs::SysRng
         .try_fill_bytes(&mut seed_bytes[..])
         .expect("OS RNG unavailable");
-    let seed_hex = hex::encode(seed_bytes);
+    let seed_hex = Zeroizing::new(hex::encode(seed_bytes));
     seed_bytes.zeroize();
-    format!("devkey:{}", seed_hex)
+    Zeroizing::new(format!("devkey:{}", *seed_hex))
 }
 
 /// Resolve the device seed for a WRITE-SIDE process (the bridges,
@@ -74,12 +76,41 @@ pub fn resolve_device_seed(db_path: &str, env_seed: Option<&str>) -> Result<Reso
     resolve_device_seed_inner(db_path, env_seed, false)
 }
 
+/// The environment variable that tells `witnessd` whether an environment
+/// seed may be persisted beside the database. Unset, it may (the behavior
+/// `witnessd` has always had, which the container image relies on: the
+/// seed file is where every later process on the host finds the identity).
+/// `0`/`false`/`no`/`off` says the seed is kept elsewhere (a secret store,
+/// the Home Assistant app's own `/data`) and must not be copied onto the
+/// database's directory; `witnessd` then resolves like every other daemon
+/// ([`resolve_device_seed`]). Any other value is a startup error: a typo
+/// here would silently put the seed where the operator moved it away from.
+pub const DEVICE_KEY_SEED_PERSIST_ENV: &str = "DEVICE_KEY_SEED_PERSIST";
+
+/// Parse [`DEVICE_KEY_SEED_PERSIST_ENV`]'s value: `true` when an environment
+/// seed may be persisted. `None` (unset) and the empty string keep the
+/// default (`true`); `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` are
+/// accepted in any case; anything else is refused.
+pub fn device_seed_persist_policy(value: Option<&str>) -> Result<bool> {
+    let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(true);
+    };
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        other => Err(anyhow!(
+            "{DEVICE_KEY_SEED_PERSIST_ENV} must be true/false (got '{other}')"
+        )),
+    }
+}
+
 /// [`resolve_device_seed`] for `witnessd`, which has always written an
 /// environment seed to `<db>.ed25519.seed` when no file exists yet (so the
 /// seed file is where every later process on the host finds the identity).
-/// Kept for that one daemon so its on-disk behavior does not change; every
-/// other write-side process uses [`resolve_device_seed`], which never
-/// persists an environment seed.
+/// Kept for that one daemon so its on-disk behavior does not change unless
+/// the operator sets [`DEVICE_KEY_SEED_PERSIST_ENV`] to `0`; every other
+/// write-side process uses [`resolve_device_seed`], which never persists an
+/// environment seed.
 pub fn resolve_device_seed_persisting_env(
     db_path: &str,
     env_seed: Option<&str>,
@@ -98,7 +129,7 @@ fn resolve_device_seed_inner(
         Err(err) => {
             return match env_seed {
                 Some(seed) => Ok(ResolvedSeed {
-                    seed: seed.to_string(),
+                    seed: Zeroizing::new(seed.to_string()),
                     source: SeedSource::Env,
                 }),
                 None => Err(err),
@@ -117,7 +148,7 @@ fn resolve_device_seed_inner(
                 }
             }
             Ok(ResolvedSeed {
-                seed: seed.to_string(),
+                seed: Zeroizing::new(seed.to_string()),
                 source: SeedSource::Env,
             })
         }
@@ -133,7 +164,7 @@ fn resolve_device_seed_inner(
 pub fn find_device_seed(db_path: &str, env_seed: Option<&str>) -> Result<Option<ResolvedSeed>> {
     if let Some(seed) = env_seed.map(str::trim).filter(|s| !s.is_empty()) {
         return Ok(Some(ResolvedSeed {
-            seed: seed.to_string(),
+            seed: Zeroizing::new(seed.to_string()),
             source: SeedSource::Env,
         }));
     }
@@ -141,7 +172,7 @@ pub fn find_device_seed(db_path: &str, env_seed: Option<&str>) -> Result<Option<
         return Ok(None);
     };
     Ok(read_seed_file(&path)?.map(|seed| ResolvedSeed {
-        seed,
+        seed: Zeroizing::new(seed),
         source: SeedSource::File(path),
     }))
 }
@@ -180,7 +211,7 @@ pub fn device_key_path_for_db(db_path: &str) -> Result<PathBuf> {
 pub fn load_or_create_device_seed(
     path: impl AsRef<Path>,
     provided_seed: Option<&str>,
-) -> Result<String> {
+) -> Result<Zeroizing<String>> {
     load_or_create_device_seed_with_source(path.as_ref(), provided_seed).map(|r| r.seed)
 }
 
@@ -196,12 +227,12 @@ fn load_or_create_device_seed_with_source(
                 ));
             }
             return Ok(ResolvedSeed {
-                seed,
+                seed: Zeroizing::new(seed),
                 source: SeedSource::Env,
             });
         }
         return Ok(ResolvedSeed {
-            seed,
+            seed: Zeroizing::new(seed),
             source: SeedSource::File(path.to_path_buf()),
         });
     }
@@ -222,7 +253,7 @@ fn load_or_create_device_seed_with_source(
             }
         }
         return Ok(ResolvedSeed {
-            seed: trimmed.to_string(),
+            seed: Zeroizing::new(trimmed.to_string()),
             source: SeedSource::Env,
         });
     }
@@ -232,7 +263,7 @@ fn load_or_create_device_seed_with_source(
     if !written {
         if let Some(existing) = read_seed_file(path)? {
             return Ok(ResolvedSeed {
-                seed: existing,
+                seed: Zeroizing::new(existing),
                 source: SeedSource::File(path.to_path_buf()),
             });
         }
@@ -475,10 +506,10 @@ mod tests {
         let test_seed = "devkey:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
 
         let seed = load_or_create_device_seed(&path, Some(test_seed)).unwrap();
-        assert_eq!(seed, test_seed);
+        assert_eq!(*seed, test_seed);
 
         let reload = load_or_create_device_seed(&path, Some(test_seed)).unwrap();
-        assert_eq!(reload, test_seed);
+        assert_eq!(*reload, test_seed);
     }
 
     #[test]
@@ -560,7 +591,7 @@ mod tests {
 
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(
-            load_or_create_device_seed(&path, None).unwrap(),
+            *load_or_create_device_seed(&path, None).unwrap(),
             "devkey:loose_mode_seed_value_with_entropy"
         );
     }
@@ -593,7 +624,7 @@ mod tests {
         assert_eq!(second.source, SeedSource::File(seed_path.clone()));
 
         // Environment agrees with the file: the environment is the source.
-        let third = resolve_device_seed(db, Some(&format!("  {}\n", first.seed))).unwrap();
+        let third = resolve_device_seed(db, Some(&format!("  {}\n", *first.seed))).unwrap();
         assert_eq!(third.seed, first.seed);
         assert_eq!(third.source, SeedSource::Env);
 
@@ -619,7 +650,7 @@ mod tests {
         let env_seed = "devkey:from_the_environment_with_entropy";
 
         let resolved = resolve_device_seed(db, Some(env_seed)).unwrap();
-        assert_eq!(resolved.seed, env_seed);
+        assert_eq!(*resolved.seed, env_seed);
         assert_eq!(resolved.source, SeedSource::Env);
         assert!(
             find_device_seed(db, None).unwrap().is_none(),
@@ -651,12 +682,73 @@ mod tests {
         let env_seed = "devkey:from_the_environment_with_entropy";
 
         let resolved = resolve_device_seed_persisting_env(db, Some(env_seed)).unwrap();
-        assert_eq!(resolved.seed, env_seed);
+        assert_eq!(*resolved.seed, env_seed);
         assert_eq!(resolved.source, SeedSource::Env);
 
         let found = find_device_seed(db, None).unwrap().expect("file persisted");
-        assert_eq!(found.seed, env_seed);
+        assert_eq!(*found.seed, env_seed);
         assert!(matches!(found.source, SeedSource::File(_)));
+    }
+
+    /// `DEVICE_KEY_SEED_PERSIST`: unset keeps witnessd's historical
+    /// persisting; the off words turn it off; a typo is refused rather than
+    /// read as "persist" (the one reading that would put the seed back where
+    /// the operator moved it away from).
+    #[test]
+    fn device_seed_persist_policy_parses_the_switch_and_refuses_typos() {
+        assert!(device_seed_persist_policy(None).unwrap());
+        assert!(device_seed_persist_policy(Some("")).unwrap());
+        assert!(device_seed_persist_policy(Some("  ")).unwrap());
+        for on in ["1", "true", "TRUE", "yes", "on", " On "] {
+            assert!(device_seed_persist_policy(Some(on)).unwrap(), "{on:?}");
+        }
+        for off in ["0", "false", "False", "no", "off", " OFF "] {
+            assert!(!device_seed_persist_policy(Some(off)).unwrap(), "{off:?}");
+        }
+        for bad in ["never", "2", "nope", "persist"] {
+            let err = device_seed_persist_policy(Some(bad))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(DEVICE_KEY_SEED_PERSIST_ENV), "got: {err}");
+            assert!(err.contains("true/false"), "got: {err}");
+        }
+    }
+
+    /// With persisting off, witnessd's path is [`resolve_device_seed`]: an
+    /// environment seed leaves no file behind, and a seed file that already
+    /// exists (an install from before the switch) still has to agree with it,
+    /// so the read-side mismatch check keeps working for those installs.
+    #[test]
+    fn witnessd_with_persisting_off_writes_nothing_and_still_checks_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("witness.db");
+        let db = db.to_str().unwrap();
+        let env_seed = "devkey:kept_in_the_apps_own_data_dir_xx";
+
+        assert!(!device_seed_persist_policy(Some("0")).unwrap());
+        let resolved = resolve_device_seed(db, Some(env_seed)).unwrap();
+        assert_eq!(*resolved.seed, env_seed);
+        assert_eq!(resolved.source, SeedSource::Env);
+        assert!(
+            !device_key_path_for_db(db).unwrap().exists(),
+            "persisting off: no seed file beside the database"
+        );
+
+        // An earlier release's file beside the database: identical is fine,
+        // a different one is a configuration error, and neither is rewritten.
+        let seed_path = device_key_path_for_db(db).unwrap();
+        load_or_create_device_seed(&seed_path, Some(env_seed)).unwrap();
+        let before = fs::read_to_string(&seed_path).unwrap();
+        assert_eq!(
+            resolve_device_seed(db, Some(env_seed)).unwrap().source,
+            SeedSource::Env
+        );
+        let err = resolve_device_seed(db, Some("devkey:another_identity_with_entropy_ab"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("mismatch"), "got: {err}");
+        assert!(!err.contains("devkey:"), "the error must not carry a seed");
+        assert_eq!(fs::read_to_string(&seed_path).unwrap(), before);
     }
 
     /// `:memory:` has no seed file: the environment is the only source.

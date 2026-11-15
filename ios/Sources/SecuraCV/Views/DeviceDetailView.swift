@@ -14,6 +14,8 @@ struct DeviceDetailView: View {
     @State private var verifying = false
     @State private var verdict: ChainVerdict?
     @State private var showingGlassSettings = false
+    @State private var repairing: DiscoveredCanary?
+    @Environment(\.dismiss) private var dismiss
 
     /// The pushed `witness` value goes stale the moment the store updates
     /// (e.g. right after Mute) — render mute state from the live row.
@@ -80,6 +82,26 @@ struct DeviceDetailView: View {
                 BirthCertificateCard(witness: liveWitness, pairedAt: pairedAt)
             }
             .listRowBackground(Color.clear)
+
+            // The Canary answered 403 to this phone's token and is no longer
+            // polled. Pair again is offered when it is on the network.
+            if liveWitness.pairingRefused {
+                Section {
+                    Label("This Canary no longer accepts this phone's pairing.",
+                          systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(Theme.color(.warn))
+                    if let target = store.discovery.found.first(where: { $0.deviceID == witness.id }) {
+                        Button("Pair again") { repairing = target }
+                    }
+                    Button("Remove from this phone", role: .destructive) {
+                        store.removePairing(witness.id)
+                        dismiss()
+                    }
+                } footer: {
+                    Text("Installing or erasing a Canary gives it a new key, and it shows up as a new Canary. Pair that one, then remove this one.")
+                }
+                .sheet(item: $repairing) { PairView(canary: $0) }
+            }
 
             Section("Trust") {
                 LabeledContent("Signature") {
@@ -158,7 +180,7 @@ struct DeviceDetailView: View {
             // every poll 401s once the gate stops taking it, so an unpaired
             // row or a Keychain-lost token gets no tile — the same up-front
             // guard verifyNow applies).
-            if witness.deviceType == .wap,
+            if witness.deviceType == .wap, !liveWitness.pairingRefused,
                let ref = store.devices.devices.first(where: { $0.id == witness.id }),
                let api = try? store.devices.api(for: ref) {
                 SensingNowSection(api: api)
@@ -284,6 +306,21 @@ struct DeviceDetailView: View {
                 .sheet(isPresented: $showingGlassSettings) {
                     GlassSettingsSheet(witness: liveWitness, base: base)
                 }
+            }
+
+            // Software update — the device fetches, verifies and installs;
+            // the phone asks and watches (FirmwareUpdate.swift). Every
+            // display serves the routes on the home network; a WAP serves
+            // them behind its bearer token, so only a paired WAP whose token
+            // still resolves gets the section (the same guard as Sensing now).
+            if witness.deviceType.servesGlassSettings, let base = nightlightBaseURL {
+                FirmwareUpdateSection(transport: GlassFirmwareTransport(base: base),
+                                      deviceName: liveWitness.displayName)
+            } else if witness.deviceType == .wap, !liveWitness.pairingRefused,
+                      let ref = store.devices.devices.first(where: { $0.id == witness.id }),
+                      let api = try? store.devices.api(for: ref) {
+                FirmwareUpdateSection(transport: WapFirmwareTransport(api: api),
+                                      deviceName: liveWitness.displayName)
             }
 
             Section {

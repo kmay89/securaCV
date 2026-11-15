@@ -79,7 +79,9 @@ inline bool nvs_set_u8(const char* key, uint8_t val) {
 #pragma GCC diagnostic ignored "-Wsign-compare"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-function"
+#if defined(__GNUC__) && !defined(__clang__)   // a GCC-only warning name
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
+#endif
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include CHIRP_CHANNEL_CPP
 #pragma GCC diagnostic pop
@@ -119,7 +121,7 @@ inline Neighbor neighbor_of(uint8_t seed) {
   n.priv[0] ^= 0x5A;
   n.priv[31] ^= 0xC3;
   Ed25519::derivePublicKey(n.pub, n.priv);
-  cc::session_id_from_pubkey(n.pub, n.sid);
+  CHECK(cc::session_id_from_pubkey(n.pub, n.sid));
   const uint8_t mac[6] = {0x02, 0x00, 0x00, 0x00, 0x02, seed};
   memcpy(n.mac, mac, sizeof mac);
   return n;
@@ -156,17 +158,19 @@ inline std::vector<uint8_t> presence_of(const Neighbor& n) {
   p.last_chirp_age_min = 255;
   return frame_of(header_of(n, cc::CHIRP_MSG_PRESENCE, 0x70), p);
 }
-// `n`'s signed witness (hop 0), signed as send_chirp() signs one.
+// `n`'s signed witness (hop 0), signed as send_chirp() signs one, with the
+// TTL `ttl` (POST /api/chirp's default is 15; any byte goes out).
 inline std::vector<uint8_t> witness_of(const Neighbor& n, uint8_t nonce_byte,
                                        cc::ChirpTemplate tpl = cc::TPL_INFRA_POWER_OUT,
-                                       cc::ChirpUrgency urg = cc::CHIRP_URG_CAUTION) {
+                                       cc::ChirpUrgency urg = cc::CHIRP_URG_CAUTION,
+                                       uint8_t ttl = 15) {
   const cc::ChirpHeader h = header_of(n, cc::CHIRP_MSG_WITNESS, nonce_byte);
   cc::ChirpWitnessPayload p;
   memset(&p, 0, sizeof p);
   p.template_id = (uint8_t)tpl;
   p.detail_slot = (uint8_t)cc::DETAIL_NONE;
   p.urgency = (uint8_t)urg;
-  p.ttl_minutes = 15;
+  p.ttl_minutes = ttl;
   memcpy(p.session_pubkey, n.pub, sizeof p.session_pubkey);
   uint8_t canonical[256];
   const size_t cl = cc::build_witness_canonical(&h, &p, n.pub, canonical, sizeof canonical);
@@ -257,6 +261,24 @@ inline uint32_t boot_enabled(bool presence_met = false) {
     CHECK(cc::has_presence_requirement());
   }
   return host_sim::now_ms;
+}
+
+// The neighbors in `ns` keep beaconing, once a minute, for `minutes`; by
+// default until the rows their first beacons put in the nearby table are
+// PRESENCE_REQUIRED_MS old, so a confirmation from any of them counts (spec
+// §3.4 rule 4: ten minutes of presence; sweep F311). The wall clock moves
+// with uptime and the loop task runs a pass each minute, as on a device, so
+// a row not in `ns` is pruned after NEARBY_TIMEOUT_MS. A witness built
+// before this is stale after it.
+static_assert(cc::PRESENCE_REQUIRED_MS % 60000 == 0, "stay_present() counts whole minutes");
+inline void stay_present(const std::vector<Neighbor>& ns,
+                         uint32_t minutes = cc::PRESENCE_REQUIRED_MS / 60000) {
+  for (uint32_t m = 0; m < minutes; ++m) {
+    host_sim::now_ms += 60000;
+    host_sim::wall_now += 60;
+    for (const Neighbor& n : ns) deliver(n, presence_of(n));
+    cc::update();
+  }
 }
 
 struct Test {

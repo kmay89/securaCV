@@ -85,6 +85,17 @@ For structured security testing — what's in scope, what a tester is handed,
 what is explicitly out of bounds, and what counts as a finding —
 see [`docs/security/PENTEST_SCOPE.md`](docs/security/PENTEST_SCOPE.md).
 
+### The website is in scope too
+
+`securacv.com` names this file as its policy
+(`/.well-known/security.txt`), because the website's own repository is not
+public and a policy nobody can open is not a policy. Report a website issue
+through the same two private channels above. The site is static — no
+accounts, no credentials, no server-side code — so the interesting surface is
+content injection, its Content Security Policy and its response headers; the
+same applies to the in-browser Lab this repository publishes on GitHub Pages
+(`canary-local/`).
+
 ## Known dependency advisories
 
 Transitive dependencies occasionally carry published advisories that are
@@ -190,7 +201,7 @@ so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
   **delete it the moment `c2pa` ships a release that resolves `rsa` past the
   advisory.** Everything else `cargo audit` reports stays fatal.
 
-### Group 4 — `zip` extraction (RUSTSEC-2026-0367, -0368, -0369) — root FIXED; desktop apps NOT REACHABLE, IGNORED
+### Group 4 — `zip` extraction (RUSTSEC-2026-0367, -0368, -0369, -0429) — FIXED everywhere
 
 - **Bug:** three advisories published 2026-10 against every `zip` release
   before 9.0.0, all in extraction: `ZipArchive::extract` creates symbolic
@@ -221,15 +232,18 @@ so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
   make it would hold the release signing key, and with that key could ship any
   installer at all, which the extraction flaws add nothing to. On macOS and
   Linux the crate is not compiled in.
-- **Fix not yet possible for the desktop apps:** `tauri-plugin-updater`
-  2.14.0, the newest 2.x on 2026-10-18, still requires `zip ^4`, and there is
-  no fixed 4.x release; only the 3.0 alphas move.
-- **What we did instead:** the three IDs are ignored in
-  [`.cargo/audit.toml`](.cargo/audit.toml), which every lockfile's audit
-  reads. The kernel's lockfile no longer carries an affected `zip`, so the
-  ignore covers only the two desktop lockfiles. **Delete the three entries
-  the moment a `tauri-plugin-updater` 2.x release takes `zip` 9**, and take
-  that bump.
+- **Fixed for the desktop apps on 2026-11-02.** `tauri-plugin-updater`
+  2.14.1 requires `zip ^9`, so both lockfiles took the updater bump and `zip`
+  9.2.2 (`cargo update -p tauri-plugin-updater` in each crate; the crate
+  requirement `tauri-plugin-updater = "2"` was already loose enough). That
+  also clears RUSTSEC-2026-0429 (7.5 high, published 2026-10-22: `extract`
+  aborts the process on a symlink entry with a large declared size — the same
+  signed-archive-only path as the three above), which the 2026-11-02
+  scheduled audit was the first to fail on, since it was never on the ignore
+  list. The three ignore entries are gone from
+  [`.cargo/audit.toml`](.cargo/audit.toml); every lockfile's audit now reads
+  only the Group 3 entry. The reachability analysis above is kept as the
+  record of why the ignore was sound while it stood.
 
 ### Status
 
@@ -237,9 +251,42 @@ The five alerts in Groups 1 and 2 are resolved by dependency migrations (no
 securaCV code was ever on a reachable path). Both vulnerable crate versions —
 `rustls-webpki 0.102.8` and `time 0.3.41` — are absent from `Cargo.lock`.
 Group 3 has no reachable fix and is ignored under the reasoning recorded
-above, as is Group 4's desktop half; Group 4's kernel half is fixed by a bump. This section is retained as an audit record; remove entries once the
+above. Group 4 is fixed by bumps in every lockfile that carried `zip`, and its
+ignore entries are gone. This section is retained as an audit record; remove entries once the
 corresponding Dependabot alerts are closed, or — for Group 3 — once an
 upstream fix lets the ignore go.
+
+### Group 5 — SQLite WAL page-size read (RUSTSEC-2026-0459, Medium) — NOT YET FIXABLE in the SQLCipher build
+
+- **Bug:** CVE-2026-119375. SQLite before 3.54.0 can return uninitialized
+  page-cache memory when a process opens a database together with a sibling
+  `-wal` file whose page size differs from the database's. A crafted pair of
+  files makes ordinary queries return stale bytes from the process's memory.
+  The vector is local and the victim has to open the files. CVSS 4.0: 6.8.
+- **Where it comes from:** `rusqlite`'s `bundled-sqlcipher` feature, which
+  the kernel needs for its encrypted database. `libsqlite3-sys` 0.39.1
+  builds SQLCipher from `sqlcipher-src`, pinned to `=419.0.6`, which carries
+  SQLite 3.53.4. The plain bundled SQLite in the same release is 3.54.1 and
+  fixed; the SQLCipher build is not.
+- **What `cargo audit` shows, and what it does not:** the advisory is keyed
+  on the crate version (`patched >= 0.39.0`), so the audit has passed since
+  the `rusqlite` 0.41 upgrade. That pass says the crate version is new
+  enough. It does not say this build is fixed, and it is not.
+- **Exposure:** only a process that opens a database, with its `-wal`, that a
+  less trusted party could have written. `witnessd` and the bridges open
+  their own database in their own data directory; whoever can plant a `-wal`
+  there can already rewrite the log's files. The verifier and export
+  commands (`log_verify`, `export_verify`, `court_export`, `log_anchor`,
+  `break_glass`) open the database they are pointed at and hold key material
+  while they do, so the exposed case is running one of them on a database
+  directory received from someone else. Until the fix, check received
+  evidence as an envelope (`envelope_verify`, the offline viewer), which
+  reads JSON and never opens SQLite, and do not open a received database
+  that arrives with a `-wal` file beside it.
+- **Fix not yet possible:** `sqlcipher-src` 420.0.0 carries SQLite 3.54.1,
+  but `libsqlite3-sys` 0.39.x pins `=419.0.6` exactly, so nothing we can
+  bump or patch selects it. The fix arrives with the first `libsqlite3-sys`
+  release that pins `sqlcipher-src` 420 or later.
 
 ## Non-goals
 

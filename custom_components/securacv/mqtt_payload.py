@@ -2,9 +2,11 @@
 
 Everything on the broker is untrusted input: a hostile or misconfigured
 publisher must never be able to balloon memory, AttributeError a @callback
-out of existence, or mint a device out of a topic segment. The three
+out of existence, or mint a device out of a topic segment. The payload
 helpers here are what every handler in the package calls first; they used
 to live in ``__init__.py`` and are re-exported from there unchanged.
+``broker_text`` bounds a single value the device registry takes from a
+payload.
 """
 from __future__ import annotations
 
@@ -24,6 +26,11 @@ MAX_MQTT_PAYLOAD_BYTES = 64 * 1024
 # unbounded (device_id was taken verbatim from the topic).
 DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
+# The longest broker-supplied text the device registry takes (a name, a
+# firmware version, a board): a device page is not a place for a hostile
+# publisher's essay.
+BROKER_TEXT_MAX_LENGTH = 64
+
 
 def mqtt_payload_within_cap(payload: Any) -> bool:
     """True when a raw MQTT payload is within the untrusted-broker cap."""
@@ -37,6 +44,23 @@ def valid_device_id(device_id: Any) -> bool:
     """True iff `device_id` is a topic segment a real Canary could publish."""
     # fullmatch, not match: `$` would accept a trailing newline.
     return isinstance(device_id, str) and DEVICE_ID_RE.fullmatch(device_id) is not None
+
+
+def broker_text(value: Any, limit: int = BROKER_TEXT_MAX_LENGTH) -> str | None:
+    """A broker-supplied value as bounded, printable text, or None.
+
+    Only a str is text: a number, bool, list or object is None, never its
+    ``str()``. Characters that neither print nor are whitespace (control
+    characters among them) are dropped first, then runs of whitespace
+    become one space and the ends are trimmed, so a dropped character
+    leaves no space behind; the result is cut to ``limit`` characters, and
+    empty is None.
+    """
+    if not isinstance(value, str):
+        return None
+    kept = "".join(ch for ch in value if ch.isprintable() or ch.isspace())
+    text = " ".join(kept.split())
+    return text[:limit].rstrip() or None
 
 
 def parse_mqtt_json(payload: Any) -> dict[str, Any] | None:
@@ -78,3 +102,63 @@ def mqtt_payload_text(payload: Any) -> str | None:
     if isinstance(payload, str):
         return payload
     return None
+
+
+def creating_payload(msg: Any) -> dict[str, Any] | None:
+    """The body of the publish that creates an entity, to hand to it, or None.
+
+    A discovery callback creates an entity on a device's first publish on a
+    topic, and the entity subscribes only once it is added, after that
+    delivery: on a topic that is not retained (events) it never sees the
+    publish that made it unless it is handed the body (HA44; event.py's
+    tamper entity is handed its own the same way). A delivery flagged
+    retained is not handed over: the entity's own subscription is sent the
+    broker's retained copy anyway.
+    """
+    if getattr(msg, "retain", False):
+        return None
+    return parse_mqtt_json(getattr(msg, "payload", None))
+
+
+class CreatingEcho:
+    """The creating publish's body: applied once, and its one echo recognized.
+
+    ``take()`` hands the body over once (async_added_to_hass applies it after
+    its subscribe) and drops it, so a second add of the same entity replays
+    nothing. A broker that ALSO retained that publish (live, a broker
+    forwards it with the retain flag cleared, so the discovery callback
+    handed it over) sends the entity's fresh subscription its retained copy.
+    That copy need not come next: Home Assistant batches a new SUBSCRIBE
+    (mqtt/client.py SUBSCRIBE_COOLDOWN), and a live event arriving on the
+    wildcard subscription in that window reaches the entity's local one
+    first. So the watch stays open across live deliveries and closes on the
+    first delivery flagged retained, which is the one retained copy the core
+    hands a subscription per topic until a reconnect (client.py
+    _retained_topics). ``is_echo()`` is true for that delivery when it is
+    equal to the body shown, and only then; whatever it is, it ends the
+    watch, so a later publish of the same body (a re-send, the retained copy
+    after a reconnect) takes the ordinary path.
+    """
+
+    __slots__ = ("_pending", "_shown")
+
+    def __init__(self, payload: dict[str, Any] | None) -> None:
+        self._pending = payload
+        self._shown: dict[str, Any] | None = None
+
+    def take(self) -> dict[str, Any] | None:
+        """The body to apply now, once; None after the first call."""
+        payload, self._pending = self._pending, None
+        self._shown = payload
+        return payload
+
+    def is_echo(self, msg: Any, data: dict[str, Any]) -> bool:
+        """True for the subscription's retained copy of the body just applied.
+
+        A live delivery is never the echo and leaves the watch open; the
+        first retained one ends it.
+        """
+        if self._shown is None or not getattr(msg, "retain", False):
+            return False
+        shown, self._shown = self._shown, None
+        return data == shown

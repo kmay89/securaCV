@@ -76,9 +76,8 @@ octal-PSRAM render load. Charging warms the board next to the PCF85063
 crystal (clock drift) and the QMI8658 (bias) — charge with the backlight
 dimmed and don't calibrate the IMU mid-charge. The touch layer sits on the
 glass: CST816-family controllers drift when hot, so keep it out of direct
-sun. Runtime gauge: the die-temp watchdog (`FEATURE_DIAGNOSTICS`-class
-passive watchdog) plus the night backlight floor, which is also the thermal
-relief valve.
+sun. The night backlight floor is the thermal relief valve. canary-display
+reads no die temperature, so there is no runtime gauge.
 
 ## Support Status
 

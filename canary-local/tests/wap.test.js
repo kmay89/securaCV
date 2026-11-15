@@ -34,6 +34,26 @@ const egressH = read(join(FW, "csi_event_egress.h"));
 const companionH = read(join(FW, "companion_pwa.h"));
 const doc = read(join(REPO, "docs/getting_started_canary.md"));
 
+// A code line of the sketch: not a comment line, and not under #if 0. The
+// generator reads the sketch the same way (gen_wap.py's _code_lines), so a
+// dead registration or port write it does not count is not held against the
+// page here either; a line under any other #if is read as written, as there.
+const codeLines = (text) => {
+  const lines = [];
+  const dead = []; // one entry per open #if: true while that branch is #if 0's
+  for (const line of text.split("\n")) {
+    const directive = line.match(/^\s*#\s*(if|ifdef|ifndef|else|elif|endif)\b(.*)$/);
+    if (directive) {
+      const arg = directive[2].replace(/\/\*.*?\*\//g, "").replace(/\/\/.*$/, "").trim();
+      if (directive[1].startsWith("if")) dead.push(directive[1] === "if" && arg === "0");
+      else if (directive[1] === "endif") dead.pop();
+      else if (dead.length) dead[dead.length - 1] = false; // #else, #elif: not #if 0's branch
+    }
+    if (!dead.includes(true) && !/^\s*(\/\/|\/?\*)/.test(line)) lines.push(line);
+  }
+  return lines;
+};
+
 // ── 1. shape + sanity floors ───────────────────────────────────────────────
 test("wap.json has every section the page requires", () => {
   for (const k of ["device", "ap", "captive", "routes", "wizard", "serial", "mqtt", "sensing", "sandbox", "docs"])
@@ -98,9 +118,49 @@ test("AP channel, client cap and server ports are the sketch's own (F277)", () =
   for (const line of softAps) {
     assert.match(line, /,\s*AP_CHANNEL,\s*false,\s*AP_MAX_CLIENTS\);/, "a SoftAP raised without the two constants");
   }
-  assert.strictEqual(data.ap.https_port, num(/ssl_config\.httpd\.server_port\s*=\s*(\d+);/, "the HTTPS server's port"));
+  // The HTTPS port is the HTTPS_PORT constant, which the HTTPS config's one
+  // port_secure write takes; httpd_ssl_start() binds port_secure and writes
+  // it over httpd.server_port, so the sketch writes no httpd.server_port
+  // (sweep F400).
+  assert.strictEqual(data.ap.https_port, num(/static const int\s+HTTPS_PORT\s*=\s*(\d+);/, "HTTPS_PORT"));
+  const code = codeLines(ino);
+  assert.strictEqual(code.filter((l) => /^\s*ssl_config\.port_secure\s*=\s*HTTPS_PORT;/.test(l)).length, 1,
+    "the HTTPS server's port is not one ssl_config.port_secure = HTTPS_PORT; write");
+  assert.deepStrictEqual(code.filter((l) => /\bhttpd\.server_port\b/.test(l)), [],
+    "the sketch writes ssl_config.httpd.server_port, which httpd_ssl_start() overwrites");
   assert.strictEqual(data.ap.http_port, num(/redirect_config\.server_port\s*=\s*(\d+);/, "the port-80 redirect server's port"));
   assert.strictEqual(data.ap.http_port, num(/[^\w.]config\.server_port\s*=\s*(\d+);/, "the HTTP-only server's port"));
+});
+
+// Sweep F366: the mDNS services' ports were typed in gen_wap.py, so a start
+// that advertised another port left the page green. Each one listed is now
+// the one every mDNS start in the sketch registers (the generator refuses
+// the forms it cannot read; this holds the committed page to the sketch,
+// reading the same code lines the generator counts, #if 0 excluded).
+test("each mDNS service and its port is the one every mDNS start registers (F366)", () => {
+  const code = codeLines(ino);
+  const begins = code.filter((l) => /\bMDNS\.begin\(/.test(l)).length;
+  assert.ok(begins >= 1, "no MDNS.begin() in canary_wap.ino");
+  const regs = code.filter((l) => /\bMDNS\.addService\(/.test(l));
+  assert.strictEqual(regs.length, 2 * begins, "each mDNS start registers two services: " + regs.join(" | "));
+  assert.deepStrictEqual(data.ap.mdns_services.map((s) => s.service), ["_http._tcp", "_securacv._tcp"]);
+  const portOf = (tok) => (tok === "HTTPS_PORT" ? data.ap.https_port : Number(tok));
+  for (const s of data.ap.mdns_services) {
+    const name = s.service.slice(1, -"._tcp".length);
+    const mine = regs.map((l) => l.match(/^\s*MDNS\.addService\("([a-z0-9-]+)",\s*"tcp",\s*([1-9]\d*|HTTPS_PORT)\);/))
+      .filter((m) => m && m[1] === name);
+    assert.strictEqual(mine.length, begins, "not every mDNS start registers " + name);
+    for (const m of mine) assert.strictEqual(s.port, portOf(m[2]), s.service + "'s port is not the sketch's");
+  }
+});
+
+test("the securacv service's TXT keys are the ones the sketch adds", () => {
+  const keys = (src) => [...new Set([...src.matchAll(/MDNS\.addServiceTxt\("securacv",\s*"tcp",\s*"([a-z_]+)"/g)].map((m) => m[1]))];
+  const code = codeLines(ino).join("\n");
+  const sync = code.slice(code.indexOf("static void mdns_sync_broker_txt() {"), code.indexOf("static void mdns_reannounce() {"));
+  const svc = data.ap.mdns_services[1];
+  assert.deepStrictEqual(svc.txt_while_mqtt_up, keys(sync));
+  assert.deepStrictEqual(svc.txt.map((t) => t.split("=")[0]), keys(code).filter((k) => !keys(sync).includes(k)));
 });
 
 test("captive.html is the firmware's CAPTIVE_PORTAL_HTML, verbatim", () => {
@@ -221,6 +281,31 @@ test("every MQTT topic example is keyed as the firmware publishes it (sweep A32)
   // the bare strings are csi_mqtt.cpp's own
   assert.ok(csiMqttCpp.includes('const char* pl = state ? "ON" : "OFF";'));
   assert.ok(csiMqttCpp.includes('const char* pl = muted ? "muted" : "live";'));
+});
+
+// Sweep A90: the chirp example said "listening", a word state_name() has and
+// no canary-wap sends: enable() goes from initializing straight to active,
+// and nothing on the WAP sets CHIRP_LISTENING. The example's word is held to
+// the states chirp_channel.cpp can show: one set_state() enters, the one the
+// channel starts in, or the one shown_state() reads over an active channel
+// whose cooldown runs (what get_status() reports, and the sketch publishes).
+const chirpCpp = read(join(FW, "chirp_channel.cpp"));
+test("the chirp example's state is a word the WAP's channel shows (sweep A90)", () => {
+  const words = new Map([...fnBody(chirpCpp, "const char* state_name(ChirpState state) {")
+    .matchAll(/case (CHIRP_[A-Z_]+):\s*return "([a-z_]+)";/g)].map((m) => [m[2], m[1]]));
+  assert.ok(words.size >= 5, "state_name() parsed thin: " + [...words.keys()]);
+  const code = chirpCpp.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/.*$/gm, "");
+  const shown = new Set([
+    ...[...code.matchAll(/\bset_state\((CHIRP_[A-Z_]+)\)/g)].map((m) => m[1]),
+    ...[...code.matchAll(/static ChirpState g_state = (CHIRP_[A-Z_]+);/g)].map((m) => m[1]),
+    ...[...fnBody(code, "static ChirpState shown_state(").matchAll(/\?\s*(CHIRP_[A-Z_]+)\s*:/g)].map((m) => m[1]),
+  ]);
+  assert.ok(shown.has("CHIRP_ACTIVE") && shown.has("CHIRP_DISABLED"), "chirp_channel.cpp parsed thin: " + [...shown]);
+  const state = JSON.parse(data.mqtt.topics.find((t) => t.suffix === "chirp").payload).state;
+  assert.ok(words.has(state),
+    "the chirp example's state " + JSON.stringify(state) + " is not a word state_name() returns");
+  assert.ok(shown.has(words.get(state)), "the chirp example says " + JSON.stringify(state) + ", but chirp_channel.cpp "
+    + "never enters " + words.get(state) + " (it shows " + [...shown].sort().join(", ") + ")");
 });
 
 test("the egress example is the body csi_mqtt::publish_egress() sends (sweep F149)", () => {
@@ -362,6 +447,92 @@ test("every sandbox events row is one a WAP module commits; the WAP has no panic
     "tamper_events_module.cpp"].map((f) => read(join(FW, f))).join("\n");
   assert.ok(!sources.includes("silent_panic"));
   assert.ok(!JSON.stringify(data.sandbox).includes("silent_panic"), "a scene publishes an event no WAP emits");
+});
+
+// A108 (sweep HA16): the sandbox's Home Assistant lines are the ids the WAP's
+// discovery configs ask for, and the page says when an install shows them:
+// Home Assistant 2025.10 and later tries to give an entity the def_ent_id id
+// when it first registers it (a _2 on the end when another entity holds that
+// id), an entity registered earlier keeps its id across an upgrade,
+// and an older release, which reads only obj_id, builds the id from the
+// device and entity names. wap.js is a page module (it imports the 3D board
+// lab), so the sentence is read from its source; wap_probe.mjs sees it render.
+const SANDBOX_ID_NOTE =
+  "The entity ids above are the ones the WAP's discovery configs ask for (def_ent_id, " +
+  "Home Assistant's default_entity_id; <id> is the device id as Home Assistant slugs it: " +
+  "letters lowercased, digits kept, each run of anything else one underscore, none at " +
+  "either end). Home Assistant 2025.10 and later tries to give an entity that id when it " +
+  "first registers it (with _2 on the end if another entity already holds it), so a WAP " +
+  "first added on 2025.10 or later gets them. An entity it registered earlier keeps the " +
+  "id it has, even across an upgrade to 2025.10, and a release before 2025.10 ignores the " +
+  "key and builds the id from the device and entity names " +
+  "(binary_sensor.canary_<id>_smoke_alarm_heard).";
+
+test("the sandbox says its Home Assistant ids are the ones the WAP asks for, and when they hold", () => {
+  const src = read(join(ROOT, "assets/wap.js"));
+  // 1. the sentence, as wap.js builds it: a run of string literals and '+'
+  const decl = src.match(/\nconst SANDBOX_ID_NOTE =\n([\s\S]*?);\n/);
+  assert.ok(decl, "wap.js has no SANDBOX_ID_NOTE (the sandbox's fine print, A108)");
+  const literals = [...decl[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)];
+  assert.strictEqual(decl[1].replace(/"((?:[^"\\]|\\.)*)"/g, "").replace(/[\s+]/g, ""), "",
+    "SANDBOX_ID_NOTE is not a plain run of string literals");
+  assert.strictEqual(literals.map((m) => JSON.parse('"' + m[1] + '"')).join(""), SANDBOX_ID_NOTE);
+  // ... and renderSandbox puts it under the pad and its readout, whenever a
+  // card carries an id
+  const sandbox = src.slice(src.indexOf("function renderSandbox(d, b) {"), src.indexOf("function renderKeepGoing()"));
+  const note = '    if (d.sandbox.some((sc) => sc.ha)) s.append(el("p", "fineprint wap-sand-note", SANDBOX_ID_NOTE));\n';
+  assert.ok(sandbox.includes(note), "renderSandbox does not append the fine print");
+  const padAt = sandbox.indexOf("    s.append(pad, readout);\n");
+  assert.ok(padAt >= 0 && padAt < sandbox.indexOf(note), "the fine print is not under the pad and its readout");
+  assert.ok(sandbox.includes('if (sc.ha) card.append(el("code", "fineprint wap-sand-ha", sc.ha));'));
+  assert.ok(sandbox.includes('(sc.ha ? "  →  " + sc.ha : "")'), "the readout carries the scene's id");
+
+  // 2. every id a card shows is one a config asks for, domain included:
+  // def_ent_id is <component>.<device id slug>_<object_id>
+  const lines = data.sandbox.filter((sc) => sc.ha).map((sc) => sc.ha);
+  assert.deepStrictEqual(lines, ["binary_sensor.<id>_smoke_alarm -> ON", "binary_sensor.<id>_co_alarm -> ON",
+    "switch.<id>_mic_mute -> ON"]);
+  assert.ok(csiMqttCpp.includes('      "\\"def_ent_id\\":\\"%s.%s_%s\\","\n'), "the table's def_ent_id format");
+  assert.ok(csiMqttCpp.includes("    e.component, slug, e.object_id,\n"), "the table's def_ent_id arguments");
+  for (const line of lines) {
+    const m = line.match(/^([a-z_]+)\.<id>_([a-z_]+) -> ON$/);
+    assert.ok(m, line);
+    const [, component, objectId] = m;
+    const table = csiMqttCpp.includes(`{ "${component}", "${objectId}", `);
+    const own = csiMqttCpp.includes(`"\\"def_ent_id\\":\\"${component}.%s_${objectId}\\","`);
+    assert.ok(table || own, `${line}: no discovery config asks for ${component}.<id>_${objectId}`);
+  }
+  // the mic switch builds its own config: its def_ent_id's %s is the slug,
+  // the argument right after uniq_id's raw device id
+  const mic = csiMqttCpp.slice(csiMqttCpp.indexOf("bool publish_mic_discovery() {"));
+  const micBody = mic.slice(0, mic.indexOf("\n}\n"));
+  assert.ok(micBody.includes('      "\\"uniq_id\\":\\"canary_%s_mic_mute\\","\n      "\\"def_ent_id\\":\\"switch.%s_mic_mute\\","\n'),
+    "the mic switch's uniq_id and def_ent_id formats");
+  assert.ok(micBody.includes("    \"}\",\n    s_device_id,\n    slug,\n"),
+    "the mic switch's def_ent_id is not filled with the device id slug");
+
+  // 3. what the sentence says of the id and of an older release, held to
+  // the firmware: the slug rule, def_ent_id alone (no obj_id, sweep HA29),
+  // and the fallback the device and entity names give
+  const slugFn = csiMqttCpp.slice(csiMqttCpp.indexOf("void device_id_slug(char* out, size_t cap) {"));
+  const rule = SANDBOX_ID_NOTE.match(/<id> is the device id as Home Assistant slugs it: ([^)]*)\)/);
+  assert.ok(rule, "the note no longer says how <id> is slugged");
+  // each clause of the note's rule, beside the line of device_id_slug() it states
+  assert.deepStrictEqual(rule[1].split(", "), ["letters lowercased", "digits kept",
+    "each run of anything else one underscore", "none at either end"]);
+  assert.ok(slugFn.includes("if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');"), "letters lowercased");
+  assert.ok(slugFn.includes("const bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');"), "digits kept");
+  assert.ok(slugFn.includes("if (gap && n + 1 < cap) out[n++] = '_';"), "a run of anything else is one '_'");
+  // none at the start (a gap opens only after a kept character) and none at
+  // the end (a gap is written only before the next kept one)
+  assert.ok(slugFn.includes("      gap = (n > 0);\n      continue;\n"), "none at either end");
+  assert.ok(!/\\"obj(ect)?_id\\"/.test(csiMqttCpp), "the WAP sends obj_id: an older release would take the id");
+  assert.ok(csiMqttCpp.includes('        "\\"name\\":\\"Canary %s\\","'), "the device name");
+  assert.ok(csiMqttCpp.includes('{ "binary_sensor", "smoke_alarm", "Smoke Alarm Heard", '), "the entity name");
+  const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const fallback = "binary_sensor." + slug("Canary qidq Smoke Alarm Heard").replace("qidq", "<id>");
+  assert.strictEqual(fallback, "binary_sensor.canary_<id>_smoke_alarm_heard");
+  assert.ok(SANDBOX_ID_NOTE.includes("(" + fallback + ")"));
 });
 
 test("the MQTT pane publishes each scene over the topic as it stands, retained by the topic's own flag", async () => {

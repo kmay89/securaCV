@@ -57,6 +57,21 @@ enum NearbySignal {
 
 // MARK: - the card that comes to you
 
+/// Whether this window's nearby card stands down, as a binding the window's
+/// RootView owns. A sheet that lists the nearby Canaries itself sets it
+/// while it is up. The default writes nowhere, for a view shown outside a
+/// window that provides one.
+private struct NearbyOfferStandDownKey: EnvironmentKey {
+    static var defaultValue: Binding<Bool> { .constant(false) }
+}
+
+extension EnvironmentValues {
+    var nearbyOfferStandDown: Binding<Bool> {
+        get { self[NearbyOfferStandDownKey.self] }
+        set { self[NearbyOfferStandDownKey.self] = newValue }
+    }
+}
+
 /// Mounted once, over every section (RootView). Shows the AirPods-style
 /// offer when the policy names one Canary; the setup sheet it opens is
 /// attached to this always-present container, so the sheet survives the
@@ -65,20 +80,22 @@ struct NearbyOfferOverlay: View {
     @EnvironmentObject var store: FleetStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var target: NearbyCanary?
+    /// This window's "+" sheet is up (RootView's state).
+    let standingDown: Bool
     /// The Canary the card holds (Shared/NearbyCanary.swift,
     /// NearbyOfferLatch). Latched when the card first appears — and counted
     /// as offered right then, not when it is answered — so a card that is
     /// ignored, or whose signal wobbles across "close enough", neither
     /// flickers nor slides up a second time this session. It stays until it
     /// is answered or the Canary drops out of earshot entirely, and it stands
-    /// down while the Fleet tab's "+" sheet is up (store.nearbyOfferStandsDown):
+    /// down while this window's "+" sheet is up (`standingDown`):
     /// that sheet lists the same Canaries inline, and its .medium detent
     /// would otherwise leave this card showing dimmed behind it.
     @State private var offer = NearbyOfferLatch()
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            if let c = offer.visible(standingDown: store.nearbyOfferStandsDown) {
+            if let c = offer.visible(standingDown: standingDown) {
                 // The live sighting, so "right here / close by" keeps up.
                 let live = store.nearbyCanaries.first { $0.suffix == c.suffix } ?? c
                 NearbyOfferCard(canary: live,
@@ -94,10 +111,10 @@ struct NearbyOfferOverlay: View {
             }
         }
         .animation(reduceMotion ? nil : Animation.spring(response: 0.45, dampingFraction: 0.85),
-                   value: offer.visible(standingDown: store.nearbyOfferStandsDown)?.id)
+                   value: offer.visible(standingDown: standingDown)?.id)
         .onChange(of: store.nearbyOffer?.id, initial: true) { _, _ in latchOffer() }
         .onChange(of: target?.id) { _, _ in latchOffer() }   // a sheet closed: the next one may show
-        .onChange(of: store.nearbyOfferStandsDown) { _, _ in latchOffer() }   // the "+" sheet closed
+        .onChange(of: standingDown) { _, _ in latchOffer() }   // the "+" sheet closed
         .onChange(of: store.nearbyCanaries.map(\.suffix)) { _, heard in offer.heard(heard) }
         .sheet(item: $target) { c in
             NearbySetupSheet(canary: c)
@@ -106,7 +123,7 @@ struct NearbyOfferOverlay: View {
 
     private func latchOffer() {
         if let suffix = offer.latch(store.nearbyOffer, setupOpen: target != nil,
-                                    standingDown: store.nearbyOfferStandsDown) {
+                                    standingDown: standingDown) {
             store.noteOffered(suffix)
         }
     }

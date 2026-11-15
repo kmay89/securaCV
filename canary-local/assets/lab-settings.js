@@ -32,6 +32,52 @@
    never built against a stale answer. */
 export let SETTINGS_AVAILABLE = false;
 
+/** The last answer from the release channel, for the app's Home and status
+    strip to read without asking again (every ask is journaled). Written by
+    the panel's own check AND by every journal line the native updater emits
+    (`update:log`, self_update.rs), so the routine check that runs with no
+    panel open moves it too — a found update, a "Later", a current build. */
+export const updateState = { checked: false, update: null, failed: null, listeners: new Set() };
+
+/* The journal's own vocabulary (self_update.rs `journal(...)` calls), read
+   back as state. Only the lines that settle the question move it; a
+   download or install line leaves it where it was. */
+const JOURNAL_READY = /\bv(\S+) is ready \(running v(\S+)\)/;
+const JOURNAL_CURRENT = /checked — v\S+ is current/;
+const JOURNAL_FAILED = /update check (unavailable|failed)/;
+export function noteJournalLine(line) {
+  const msg = String(line || "").replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z\s+/, "");
+  let m;
+  if ((m = JOURNAL_READY.exec(msg))) {
+    updateState.update = { version: m[1], current_version: m[2] };
+    updateState.checked = true; updateState.failed = null;
+  } else if (JOURNAL_CURRENT.test(msg)) {
+    updateState.update = null; updateState.checked = true; updateState.failed = null;
+  } else if (JOURNAL_FAILED.test(msg)) {
+    updateState.failed = msg; updateState.checked = false;
+  } else {
+    return false;
+  }
+  for (const fn of updateState.listeners) { try { fn(updateState); } catch {} }
+  return true;
+}
+
+/** Follow the native updater from launch: seed from the newest journal line
+    that settled the question, then every line it emits from here on. Called
+    once by the app shell where self-update exists; off-app it does nothing. */
+let watching = false;
+export async function watchUpdates() {
+  if (watching || !SETTINGS_AVAILABLE) return;
+  watching = true;
+  try {
+    const lines = (await invoke("read_update_journal")) || [];   // newest first
+    for (const l of lines) if (noteJournalLine(l)) break;
+  } catch { /* no journal yet */ }
+  listen("update:log", (ev) => { if (typeof ev.payload === "string") noteJournalLine(ev.payload); });
+}
+
+import { SHORTCUTS, forgetEverything, appViews } from "./lab-app.js";
+
 /** Ask the native shell whether this build can actually self-update.
     Safe to call anywhere — resolves false off-app and on mobile. */
 export async function probeSettings() {
@@ -84,19 +130,40 @@ function splitLine(line) {
   return m ? { when: `${m[1]} ${m[2]}Z`, msg: m[3] } : { when: "", msg: line };
 }
 
-/* Release notes are markdown-ish (`- ` bullets, `**bold**`). Render them as
-   real elements — never innerHTML, so release copy can't inject markup. */
+/* Release notes arrive hard-wrapped (a `- ` bullet runs on over indented
+   lines), so the lines are joined back into their paragraph or bullet first.
+   Read line by line, every continuation line became its own paragraph above a
+   list of cut-off first lines. The Flasher's noteBlocks (desktop/src/app.js)
+   is the same function; lab_settings.test.js holds them equal. */
+function noteBlocks(notes) {
+  const blocks = [];
+  let cur = null;
+  for (const raw of String(notes || "").split("\n")) {
+    const line = raw.trim();
+    if (!line) cur = null;
+    else if (line.startsWith("- ")) blocks.push(cur = { item: true, text: line.slice(2) });
+    else if (cur) cur.text += " " + line;
+    else blocks.push(cur = { item: false, text: line });
+  }
+  return blocks;
+}
+
+/* Rendered as real elements — never innerHTML, so release copy can't inject
+   markup — with the three marks the notes use, **bold**, `code` and *italic*
+   (the Flasher's notesHtml reads the same pattern). Each bullet is one line
+   that opens on a click (lab-shell.css .set-notes summary), in a box that
+   scrolls. */
 function notesNode(notes) {
   const box = h("div", { class: "set-notes" }, h("b", {}, "What's changing"));
-  const list = h("ul", {});
-  let any = false;
-  for (const raw of String(notes).split("\n")) {
-    const line = raw.trim().replace(/\*\*/g, "");
-    if (!line) continue;
-    if (line.startsWith("- ")) { list.append(h("li", {}, line.slice(2))); any = true; }
-    else box.append(h("p", {}, line));
+  const tags = [null, "b", "code", "i"];   // split's text, then one slot per capture group
+  const marks = (s) => s.split(/\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/)
+    .map((part, i) => (part === undefined ? null : tags[i % 4] ? h(tags[i % 4], {}, part) : part));
+  let list = null;
+  for (const b of noteBlocks(notes)) {
+    if (!b.item) { list = null; box.append(h("p", {}, marks(b.text))); continue; }
+    if (!list) box.append(list = h("ul", {}));
+    list.append(h("li", {}, h("details", {}, h("summary", {}, marks(b.text)))));
   }
-  if (any) box.append(list);
   return box;
 }
 
@@ -114,9 +181,34 @@ export function settingsView() {
   const logBox = h("div", { class: "set-log" }, h("div", { class: "set-log-row" }, h("span", { class: "muted" }, "Reading the update journal…")));
   const pathNote = h("p", { class: "set-path" });
 
+  // On-device memory: which stages you visited, the bench you were on, the
+  // Canaries heard, the welcome card. Nothing here ever left this computer.
+  const resetNote = h("span", { class: "muted" });
+  const resetBtn = h("button", { class: "btn ghost", onclick: () => {
+    forgetEverything();
+    resetNote.textContent = "Forgotten. The sidebar's checkmarks, the fleet memory, the welcome card and the setup list start over on the next view.";
+  } }, "Forget my progress and fleet memory");
+
   root.append(
     h("section", { class: "set-sec" }, h("h2", {}, "This build"), specs),
     h("section", { class: "set-sec" }, h("h2", {}, "Updates"), updateBox),
+    appViews() ? h("section", { class: "set-sec" },
+      h("h2", {}, "Fleet and network"),
+      h("p", { class: "set-lede" },
+        "The app listens for Canaries announcing themselves on your network and asks a hub's kernel for its fleet report. " +
+        "The kernel address lives on the fleet page, beside the devices it answers for."),
+      h("div", { class: "actions" },
+        h("a", { class: "btn ghost", href: "#devices" }, "Open Your fleet"))) : null,
+    appViews() ? h("section", { class: "set-sec" },
+      h("h2", {}, "Keyboard shortcuts"),
+      h("dl", { class: "set-specs set-kbd" },
+        ...SHORTCUTS.flatMap(([keys, what]) => [h("dt", {}, h("kbd", {}, keys)), h("dd", {}, what)])),
+      h("p", { class: "set-lede" }, "On Linux, Ctrl stands in for ⌘. They work anywhere in the app, inside a bench too — except ⌘1–6 and the brackets while you are typing in a field.")) : null,
+    h("section", { class: "set-sec" },
+      h("h2", {}, "On-device memory"),
+      h("p", { class: "set-lede" },
+        "Progress, the bench you were on, the Canaries heard, the welcome card and the Home's setup list are kept on this computer only. Forgetting brings a hidden setup list back."),
+      h("div", { class: "kaddr-row" }, resetBtn, resetNote)),
     h("section", { class: "set-sec" },
       h("h2", {}, "Update log"),
       h("p", { class: "set-lede" },
@@ -189,6 +281,10 @@ async function runCheck(ui, info) {
   let update = null, failed = null;
   try { update = await invoke("check_update"); }
   catch (e) { failed = String(e); }
+  updateState.checked = !failed;
+  updateState.update = update || null;
+  updateState.failed = failed;
+  for (const fn of updateState.listeners) { try { fn(updateState); } catch {} }
   await refreshLog(ui);   // the check itself was just journaled
 
   const checkBtn = (label) =>

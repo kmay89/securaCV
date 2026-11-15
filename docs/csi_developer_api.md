@@ -496,6 +496,13 @@ F77 closed bundles are ring rows, so a dismissed `core.presence` or
 RAM until the module's next `init()` (F77's review made the nudge once per
 row). Nothing leaves the device.
 
+The body is read whole before it is parsed (sweep F300): an empty one is
+refused with `400` `{"ok":false,"reason":"empty body"}`, one longer than 95
+bytes with `400` `{"ok":false,"reason":"body too large"}`, and one the socket
+does not deliver whole with `400` `{"ok":false,"reason":"body read failed"}`,
+and nothing is dismissed. Before F300 a body in two TCP segments was parsed
+cut, its id a prefix of the one sent.
+
 ```bash
 curl -X POST http://canary.local/api/events/dismiss \
      -H 'Content-Type: application/json' \
@@ -517,6 +524,14 @@ the Lab from the dashboard (long-press on the version chip, or
 | `POST /api/tune/coefficients` | update one or more knobs; persists to NVS; applies at once and from every boot. A `null` value removes the knob's stored row instead (the Lab's reset, sweep F127) |
 | `GET /api/tune/preset` | export every knob's current value as one flat, unsigned JSON object (a download named `tuning-preset.json`) |
 | `POST /api/tune/preset` | import such an object: the same handler as `POST /api/tune/coefficients`, which checks no signature |
+
+Both POST routes read the body whole before storing anything (sweep F300):
+an empty body or one over 4096 bytes is refused with `400`
+`{"ok":false,"reason":"empty or too large"}`, and one the socket does not
+deliver whole (the peer closes early, a read errors, or a fourth socket
+timeout passes) with `400` `{"ok":false,"reason":"body read failed"}`. Before
+F300 the handler closed the connection with no answer at the first socket
+timeout, error or early close.
 
 A tuning bundle is that flat object, one `"<full_key>": value` pair per
 knob (`{"core.presence.preset":1,"core.presence.sensitivity":50,...}`). It
@@ -638,13 +653,27 @@ open; falls back to declared defaults for unset keys.
   "privacy_ceiling": "p0",
   "filter_foreign": true,
   "tz": "EST5EDT,M3.2.0,M11.1.0",
-  "tz_iana": "America/New_York"
+  "tz_iana": "America/New_York",
+  "thresholds_source": "preset"
 }
 ```
 
 Apart from the zone, that is what a device that never stored a setting
 reports. Its Quiet Hours read off, 1380 to 420 (23:00 to 07:00): the one
 default the chokepoint and the Tuning Lab share (sweep F123).
+
+`thresholds_source` (sweep F315, read-only) says where the three thresholds
+`core.presence` runs come from: `"stored"` when a row holds each of motion,
+active and breathing (a calibration's apply, the Tuning Lab, a bundle
+import), `"preset"` when none does (the preset and sensitivity baseline),
+`"mixed"` otherwise. It is the calibration status's `current_source` (below),
+read by the same reader (`read_presence_thresholds_in_use()`) with the same
+values. A stored row wins over the preset and sensitivity, so for `"stored"`
+and `"mixed"` the dashboard shows a note under the sensitivity slider saying
+the Sensitive, Balanced and Quiet buttons and the slider change nothing (or
+set only the rest) until those rows are reset in the Tuning Lab; Pet Mode
+and Quiet Hours are not thresholds and keep working. There is no POST key
+for it: the calibration and the Tuning Lab store the thresholds.
 
 `tz` / `tz_iana` are the household time zone (repo sweep F28, option A —
 maintainer to confirm): the POSIX rule the device applies, and the IANA name
@@ -670,9 +699,10 @@ preset and sensitivity set only the default of `core.presence`'s three
 thresholds: once a threshold is stored directly (the calibration's apply
 stores all three, and a Tuning Lab bundle import or slider stores its own),
 the stored threshold wins, at boot as at once, while
-`GET /api/settings` keeps reporting the saved preset. The Tuning Lab's
-reset removes a threshold's row, and the preset and sensitivity apply to it
-again (sweep F127).
+`GET /api/settings` keeps reporting the saved preset and sensitivity; its
+`thresholds_source` (`"stored"`, `"mixed"` or `"preset"`, sweep F315) is
+what says which wins. The Tuning Lab's reset removes a threshold's row, and
+the preset and sensitivity apply to it again (sweep F127).
 The wire keys are deliberately short (the dashboard's controls surface,
 not the full module-tunable surface):
 
@@ -685,6 +715,22 @@ not the full module-tunable surface):
 | `"tz"` | string | Household time zone as a POSIX rule (≤ 47 characters, e.g. `"CET-1CEST,M3.5.0,M10.5.0/3"`). `""` alone clears the zone (back to UTC). The rule must fit the strict POSIX grammar in `tz_rule::posix_valid`: names of 3 to 10 letters (or `<…>`), offsets up to 24 h, and a zone with summer time names **both** change dates; nothing may trail it. Anything else is refused (`400`, `"bad time zone"`) and nothing in the body is written, because the C library under the ESP32 Arduino core 2.0.x (newlib 4.1) does not fall back to UTC on a rule it cannot read: it keeps part of the previous zone. |
 | `"tz_iana"` | string | The same, as an IANA zone name (`"Europe/Berlin"`), mapped on the device through the fleet's table (`firmware/common/time/tz_rule.h`). A zone the table does not know is refused (`400`, `"unknown zone"`) — never stored, never silently UTC. A typed `"tz"` wins when both are sent. |
 | `"filter_foreign"` | bool | CSI transmitter filter: accept frames only from the router this Canary is associated with (and registered peer Canaries); everything else is counted under `frames_dropped_foreign` on `/api/status` and never buffered. Default on. Off restores every decoded frame on the channel. Applied to the HAL at once and persisted; `/api/status` reports `filter_armed` (the setting is on and the Canary has associated, so the filter is comparing). |
+
+The body is read whole before any key is stored (sweep F300), through
+`http_body::read_all()`, the Beacon routes' reader. An empty body is
+refused with `400` `{"ok":false,"reason":"empty body"}`, a body longer than
+383 bytes with `400` `{"ok":false,"reason":"body too large"}`, and a body the
+socket does not deliver whole (the peer closes early, a read errors, or a
+fourth socket timeout passes) with `400`
+`{"ok":false,"reason":"body read failed"}`; nothing in a refused body is
+written. Before F300 the handler parsed what one socket read held, so a body
+in two TCP segments stored its first keys (a key cut inside its number as a
+different value, `75` as `7`) and lost the rest without a word, and a body
+past 383 bytes was cut there and stored cut. The cost of reading whole: a
+stalled sender holds the HTTP server's task up to four 30 s waits, and one
+that trickles a byte per wait up to a wait per byte, the budget
+`POST /api/mqtt/config` and the Beacon routes already have, behind the same
+authorization.
 
 Each module setting a POST carries is stored on the shared key map's row
 for its module key (`firmware/common/csi/src/csi_module_settings_nvs.h`):

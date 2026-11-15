@@ -102,9 +102,9 @@ golden vector.
 | Topic | Retained | Carries |
 |---|---|---|
 | `securacv/<id>/events` | no | one signed event per level transition: `event` (`level_changed`), `seq`, `bucket_uptime_s`, `level`, `confidence`, `anomaly`, `occupancy`, `range`, `modality_bits`, `signed` + `v`/`alg`/`fp`/`sig` |
-| `securacv/<id>/state` | yes | the latest claim + `presence` (level present/confirmed/loiter), `anomaly_active`, `channel_denied`, `modalities` (class names), `strong_modalities`, `tier`, uptime |
+| `securacv/<id>/state` | yes | the latest claim + `presence` (level present/confirmed/loiter), `anomaly_active`, `channel_denied` (a channel voting `Denied`, or a light sensor that did not answer at boot), `modalities` (class names), `strong_modalities`, `tier`, uptime |
 | `securacv/<id>/status` | yes | online/offline (LWT), heartbeat, RSSI, heap health |
-| `securacv/<id>/health` | yes | the public key HA TOFU-pins, firmware version |
+| `securacv/<id>/health` | yes | the public key HA TOFU-pins, firmware version; on a build with the radar, the `radar` link object (`link_ok`, `last_frame_age_ms`, `frame_errors`) once the link has been judged: a frame decoded, or one stall window (`SENT_STALE_RADAR`) passed since boot |
 | `securacv/<id>/chain` | yes | the signed chain head + length (the `chain` kind) |
 | `securacv/<id>/update/*` | yes | the HA update entity + auto-update switch (signed pull-OTA) |
 
@@ -114,7 +114,13 @@ Channel-blinded problem sensor, Level / Confidence / Anomaly score / Occupancy
 (last event, uptime, RSSI, free heap) and the firmware update entity. There is
 no Identify button and no tuning dial yet. In the SecuraCV integration the
 device's sensing modality reads "Other sensor": it fuses several media, and a
-dedicated fusion modality is a later dictionary decision.
+dedicated fusion modality is a later dictionary decision. A Sentinel whose
+health carries the radar object also gets the integration's Radar link
+diagnostic (`ok` / `stale` / `down`), read by the rule the radar's fusion
+vote uses: once the radar has spoken, the link reads `down` exactly when the
+radar votes `Denied`. A radar silent since boot reads `down` there while its
+channel never votes, as an unwired one does, so that diagnostic is the only
+place it shows. A Lite build sends no object and gets no sensor.
 
 ## Phases — what is proven where
 
@@ -130,11 +136,32 @@ PIR + light: the unwired channels never vote, which the engine treats as
 quiet (not blinded). That is fewer corroborating classes than the tier table
 above promises — one more reason nothing ships yet.
 
+The light sensor is read the same way. The BH1750 has no id register;
+its power-on acknowledgment at boot is the only presence probe, so the boot
+console's `BH1750` row reads `ambient light sensor online` or `not found:
+absent, never votes, reported as channel_denied`. A sensor that did not
+answer at boot is **absent**: the light channel never votes, so it adds no
+suspicion, but the state topic's `channel_denied` is true for it, so Home
+Assistant's Channel-blinded problem sensor stays on (R6: never a silent
+gap). One that answered and then fails a read is **blinded**: `Denied`,
+suspicion (R2). Before this, the boot answer was ignored and every failed
+read voted `Denied`, so a unit without a working light sensor showed a
+blinded channel for good, and on a build with the radar an `Anomaly`
+whenever the radar saw a body (a denied channel while a body is present is
+the evasion R2 flags; `test_sentinel_links.cpp` shows it under the `door`
+preset). Now it shows the problem sensor and no `Anomaly`. A sensor removed
+while the unit is off therefore boots as absent: it reaches the owner as a
+denied channel, but no longer as suspicion. On the wire only the anomaly
+score (a blinded sensor raises it, an absent one does not), and the level
+that score can lift to `Anomaly` (on every preset with the radar, it does
+while the radar sees a body), tell the two apart, until the device-details
+record carries the part's status (device-details PR 15).
+
 ## Build & test
 
 ```
 # verify the novel core + the signed canonical without hardware:
-make -C firmware/tests_host          # fusion + preset + device-signature suites
+make -C firmware/tests_host          # fusion + preset + links + device-signature suites
 firmware/scripts/check_sentinel_net_sync.sh   # the net stack still equals canary-sense's
 
 # device builds (compile-gated in CI; recipe in envs/platformio/):

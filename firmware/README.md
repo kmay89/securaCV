@@ -271,7 +271,7 @@ Lifecycle labels are [VARIANT_POLICY.md](VARIANT_POLICY.md)'s; where the two tab
 | `dev` | SD, WiFi, HTTP; self-signed HTTPS on 443 (port 80 redirects) compiled in, not running until a certificate is stored, which no stock build does (F15), Camera, OTA | Development iteration | built |
 | `release` | as dev, size-optimized; HTTPS stays off until the size guard shows it fits the OTA slot | Production | built + OTA-slot guard |
 | `full` | + Mesh, BLE (the Scout and the GATT status service) (pioarduino core 3, `default_8MB` table). No BLE discovery, RF presence or Chirp: this tree has no code for them yet, and the inert flags that said otherwise were removed 2026-10-09 | Closest to WAP parity | built |
-| `dev_ha` | dev + MQTT (broker TLS: plain / CA / pin / lab, fail-closed) + HA Discovery | Home Assistant development | compile-only |
+| `dev_ha` | dev + MQTT (broker TLS: plain / CA / pin / lab, fail-closed) + HA Discovery, built `-Os` (dev's `-Og` image no longer fits the 1.9 MB OTA slot with MQTT in) | Home Assistant development | compile-only |
 | `release_ha` | release + the same MQTT + HA Discovery | The published, OTA-signed canary image | built + OTA-slot guard |
 | `minimal` | Crypto + GPS only | Testing crypto/chain logic | compile-only |
 | `usb-onboard` | dev + USB-OTG HID help-launch + read-only SD drive | Opt-in; on-device (Phase 2) validation pending | compile-only |

@@ -98,9 +98,12 @@ static volatile uint32_t g_isr_drop_count = 0;
 // ════════════════════════════════════════════════════════════════════════════
 
 // Domain-separated hash: only 4 bytes kept. Cannot reverse to MAC.
-// Changes every bucket because bucket_start is mixed in.
-static void hash_mac(const uint8_t mac[6], uint32_t bucket_salt,
-                     uint8_t out[HASH_LEN]) {
+// Changes every bucket because bucket_start is mixed in. True only when
+// the hash ran (sweep F364): a refused mbedtls_sha256() leaves its digest
+// unwritten, and four bytes of whatever the stack held would be counted as
+// a device. On false `out` is zeroed and the caller counts nothing.
+[[nodiscard]] static bool hash_mac(const uint8_t mac[6], uint32_t bucket_salt,
+                                   uint8_t out[HASH_LEN]) {
   uint8_t input[32];
   // Domain separation: "scv:wp:" + bucket_salt + MAC
   memcpy(input, "scv:wp:", 7);
@@ -108,8 +111,12 @@ static void hash_mac(const uint8_t mac[6], uint32_t bucket_salt,
   memcpy(input + 11, mac, 6);
 
   uint8_t hash[32];
-  mbedtls_sha256(input, 17, hash, 0);
+  if (mbedtls_sha256(input, 17, hash, 0) != 0) {
+    memset(out, 0, HASH_LEN);
+    return false;
+  }
   memcpy(out, hash, HASH_LEN);
+  return true;
 }
 
 // Check if MAC hash already seen this bucket — main context only
@@ -192,9 +199,9 @@ static void process_queue() {
   while (processed < QUEUE_DEPTH && xQueueReceive(g_probe_queue, &cap, 0) == pdTRUE) {
     processed++;
 
-    // Hash and deduplicate
+    // Hash and deduplicate. A MAC that could not be hashed is not counted.
     uint8_t mac_hash[HASH_LEN];
-    hash_mac(cap.mac, g_state.bucket_start_ms, mac_hash);
+    if (!hash_mac(cap.mac, g_state.bucket_start_ms, mac_hash)) continue;
 
     portENTER_CRITICAL(&g_state_mux);
     if (!mac_seen(mac_hash) && g_state.count < MAX_MACS_PER_BUCKET) {

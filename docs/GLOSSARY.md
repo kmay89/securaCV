@@ -25,12 +25,12 @@ follows.
 
 | Name | What it is | Not |
 |---|---|---|
-| **SecuraCV** | The **platform** — the witness kernel plus the signed evidence log. The "how." | Not the device, not the company |
-| **Canary** | The **device**, and the brand people say out loud. The hero noun. | Not the software |
+| **SecuraCV** | The **witness** — open-source software for the cameras and sensors you already own (the witness kernel plus the signed evidence log), and the platform a Canary runs. The name on the door. | Not the device, not the company |
+| **Canary** | The **device**, and the name people say out loud for one. | Not the software |
 | **Errer Labs** | The **company** that makes it and holds the trademarks. | Not the product |
 
 Say "a Canary," "your fleet of Canaries," "SecuraCV runs on it." Don't make
-someone learn "witness kernel" before they understand what they're buying.
+someone learn "witness kernel" before they understand what they're getting.
 Canonical rules: [`docs/BRAND.md`](BRAND.md).
 
 **Casing.** The platform is written **`SecuraCV`** in all prose, UI, store
@@ -512,10 +512,16 @@ disabled, and enabling it opens the roll-call to your LAN) and type
 already published and the roll-call lists the kernel alone until
 `SECURACV_FLEET_ROLLCALL=1`. It says *Verified* only once it is
 paired: the operator mints a viewer token on the hub (`witness_api
-mint-viewer-token`), whose one-line receipt carries a token good for
-`GET /api/sealed-log` alone and the kernel's key, which the Wall pins; an
-unpaired Wall shows the devices' own report. The add-on has no control that
-mints one yet, so an add-on install gets the roll-call, not a walk.
+mint-viewer-token --label <s>` on a host install; on the `witnessd` image,
+`docker exec <container> witness_api mint-viewer-token --label <s>` in a
+container started with a token path, as
+[Mint a Witness Wall viewer token](container.md#mint-a-witness-wall-viewer-token)
+walks; in the Docker sidecar, `docker exec securacv entrypoint.sh
+mint-viewer-token --label <s>`), whose one-line receipt carries a token good
+for `GET /api/sealed-log` alone and the kernel's key, which the Wall pins
+once the receipt is pasted into its Settings → Verification; an unpaired
+Wall shows the devices' own report. The add-on has no control that mints
+one yet, so an add-on install gets the roll-call, not a walk.
 → [tvOS docs](tvos/README.md),
 [Home Assistant setup](homeassistant_setup.md#witness-wall-the-fleet-roll-call),
 [viewer tokens](homeassistant_setup.md#viewer-tokens-witness-wall)

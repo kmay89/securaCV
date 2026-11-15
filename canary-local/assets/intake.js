@@ -365,10 +365,10 @@ export const KNOWN_STOCK = [
 // would turn missing evidence into the single cleanest verdict on the page,
 // which is the exact inversion this whole module exists to avoid.
 //
-// `product` is the catalog product the caller matched the project name to
-// (matchProjectToProduct). It counts only when the name IS that product's
-// asset_stem, the identity a SecuraCV release stamps into the descriptor:
-// a substring match ("my-canary-demo") is somebody else's image.
+// `product` is the catalog product the caller resolved the project name to
+// (productForProject, in both flashers). It counts only when the name IS
+// that product's asset_stem, the identity a SecuraCV release stamps into the
+// descriptor: a substring match ("my-canary-demo") is somebody else's image.
 export function shippedWith({ projectName, product, blank, read = "ok" } = {}) {
   if (read !== "ok") {
     return { level: "inconclusive", kind: "unread",

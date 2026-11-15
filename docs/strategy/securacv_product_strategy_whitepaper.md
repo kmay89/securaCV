@@ -235,8 +235,8 @@ Satisfaction here is not "more features." It is the *feeling of trustworthy calm
    event. The one thing no other camera can claim is "this can't be edited — even by
    us." Don't hide the differentiator; make it the UI.
 3. **Constraints sold as the point.** Coarse ~10-minute time buckets, no faces,
-   24-hour memory — each is a *promise*, not a limitation. Marketing copy and UI
-   copy should say so explicitly. Never apologize.
+   a short memory (seven days by default, configurable) — each is a *promise*, not
+   a limitation. Marketing copy and UI copy should say so explicitly. Never apologize.
 4. **Proof that travels.** A one-tap, court-grade signed export + a free standalone
    verifier turns the moat into something a non-engineer can *use* under stress —
    the single highest-leverage satisfaction feature for persona B.

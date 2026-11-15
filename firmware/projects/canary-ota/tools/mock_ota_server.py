@@ -27,7 +27,8 @@ The server listens on https://localhost:8443 by default.
 Configure the ESP32 to use this URL as the manifest URL.
 
 IMPORTANT: For development only! This uses self-signed certificates.
-Enable SECURACV_OTA_SKIP_CERT_VERIFY in platformio.ini for testing.
+Enable SECURACV_OTA_SKIP_CN_CHECK in platformio.ini for testing (it skips
+only the certificate hostname check; the chain is still verified).
 
 Author: ERRERlabs
 License: MIT
@@ -312,7 +313,7 @@ def run_server(port: int = DEFAULT_PORT,
     print(f"  https://0.0.0.0:{port}")
     print()
     print(f"{Colors.YELLOW}Note: Using self-signed certificate.{Colors.END}")
-    print(f"Enable SECURACV_OTA_SKIP_CERT_VERIFY=1 in platformio.ini for testing.")
+    print(f"Enable SECURACV_OTA_SKIP_CN_CHECK=1 in platformio.ini for testing.")
     print()
     print(f"{Colors.CYAN}Press Ctrl+C to stop.{Colors.END}")
     print()

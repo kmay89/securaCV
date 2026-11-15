@@ -179,6 +179,74 @@ for v in ADDON_DB ADDON_TOKEN ADDON_ADDR; do
     [ -n "${!v}" ] || fail "run.sh: could not read the fixed value behind $v"
 done
 
+# ---- the device key seed: in /data, moved out of /config, never printed ----
+# The seed file lives in the app's own directory (every HA backup carries
+# /config, and the file-sharing apps export it whole); the /config path
+# survives only as the legacy location the one-time move reads. The token
+# the integration reads (custom_components/securacv/const.py
+# DEFAULT_TOKEN_FILE) stays where it is.
+ADDON_KEY=$(fixed_value "$RUN_SH" DEVICE_KEY_FILE)
+ADDON_LEGACY_KEY=$(fixed_value "$RUN_SH" LEGACY_DEVICE_KEY_FILE)
+assert_eq "/data/device_key" "$ADDON_KEY" \
+    "run.sh: DEVICE_KEY_FILE is the app's own /data/device_key"
+assert_eq "/config/.securacv/device_key" "$ADDON_LEGACY_KEY" \
+    "run.sh: LEGACY_DEVICE_KEY_FILE names the pre-move /config path, so the move finds it"
+assert_eq "/config/api_token" "$ADDON_TOKEN" \
+    "run.sh: the API token stays at /config/api_token (the integration's DEFAULT_TOKEN_FILE)"
+assert_eq 1 "$(count_needle "$RUN_SH" 'migrate_device_key_file "$LEGACY_DEVICE_KEY_FILE" "$DEVICE_KEY_FILE" "$DB_PATH"')" \
+    "run.sh: the move is called once, from the legacy path to the new one, against the sealed log"
+assert_eq 1 "$(count_needle "$RUN_SH" 'resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE"')" \
+    "run.sh: the seed resolves from the new file (the move ran first)"
+# Order: the move runs before the first-run gate reads the new file, and the
+# gate reads the new file.
+MOVE_LINE=$(code_lines "$RUN_SH" | grep -n -F 'migrate_device_key_file "$LEGACY_DEVICE_KEY_FILE"' | cut -d: -f1 | head -n1)
+GATE_LINE=$(code_lines "$RUN_SH" | grep -n -F 'elif [ -s "$DEVICE_KEY_FILE" ]; then' | cut -d: -f1 | head -n1)
+if [ -n "$MOVE_LINE" ] && [ -n "$GATE_LINE" ] && [ "$MOVE_LINE" -lt "$GATE_LINE" ]; then
+    ok "run.sh: the key move runs before the first-run gate reads the key file"
+else
+    fail "run.sh: the key move (line ${MOVE_LINE:-?}) must precede the first-run gate (line ${GATE_LINE:-?})"
+fi
+# The seed is never printed: no log line, echo or printf names the variable
+# that holds it, and the move's verdicts are fixed words the script matches.
+assert_eq 0 "$(code_lines "$RUN_SH" | { grep -c -E 'bashio::log\.[a-z]+ .*DEVICE_KEY_SEED|(echo|printf) .*DEVICE_KEY_SEED' || true; })" \
+    "run.sh: no log, echo or printf line names DEVICE_KEY_SEED (the seed is never printed)"
+assert_eq 0 "$(code_lines "$RUN_SH" | grep -F 'bashio::log' | { grep -c -F 'key_move' || true; })" \
+    "run.sh: the move's verdict is matched, never interpolated into a log line"
+
+# The kernel's own copy beside the log (`<db>.ed25519.seed`): witnessd no
+# longer writes it (its service sets DEVICE_KEY_SEED_PERSIST=0 before the
+# exec), and run.sh removes the one an earlier release left, once the seed
+# in use is resolved, by handing both to remove_kernel_seed_copy exactly
+# once. The file name is DB_PATH's with the kernel's extension.
+ADDON_KERNEL_SEED=$(fixed_value "$RUN_SH" KERNEL_SEED_FILE)
+assert_eq "${ADDON_DB%.db}.ed25519.seed" "$ADDON_KERNEL_SEED" \
+    "run.sh: KERNEL_SEED_FILE is DB_PATH with the kernel's seed extension (crypto::device_key_path_for_db)"
+assert_eq 1 "$(count_needle "$RUN_SH" 'remove_kernel_seed_copy "$KERNEL_SEED_FILE" "$DEVICE_KEY_SEED"')" \
+    "run.sh: the kernel's copy is held to the seed in use exactly once"
+RESOLVE_LINE=$(code_lines "$RUN_SH" | grep -n -F 'resolve_device_key_seed "$DEVICE_KEY_SEED" "$DEVICE_KEY_FILE"' | cut -d: -f1 | head -n1)
+CLEANUP_LINE=$(code_lines "$RUN_SH" | grep -n -F 'remove_kernel_seed_copy "$KERNEL_SEED_FILE"' | cut -d: -f1 | head -n1)
+SETUP_WRITE_LINE=$(code_lines "$RUN_SH" | grep -n -F 'touch "$CONFIGURED_MARKER"' | cut -d: -f1 | head -n1)
+if [ -n "$RESOLVE_LINE" ] && [ -n "$CLEANUP_LINE" ] && [ -n "$SETUP_WRITE_LINE" ] \
+    && [ "$RESOLVE_LINE" -lt "$CLEANUP_LINE" ] && [ "$CLEANUP_LINE" -lt "$SETUP_WRITE_LINE" ]; then
+    ok "run.sh: the kernel's copy is removed after the seed resolves and before the services start"
+else
+    fail "run.sh: resolve (line ${RESOLVE_LINE:-?}) must precede the cleanup (line ${CLEANUP_LINE:-?}), which must precede the services (line ${SETUP_WRITE_LINE:-?})"
+fi
+assert_eq 0 "$(code_lines "$RUN_SH" | grep -F 'bashio::log' | { grep -c -F 'seed_copy' || true; })" \
+    "run.sh: the cleanup's verdict is matched, never interpolated into a log line"
+WITNESSD_RUN="$(dirname "$RUN_SH")/rootfs/etc/services.d/witnessd/run"
+if [ -f "$WITNESSD_RUN" ]; then
+    assert_eq 1 "$(count_needle "$WITNESSD_RUN" 'export DEVICE_KEY_SEED_PERSIST=0')" \
+        "witnessd service: tells the kernel the seed is kept elsewhere (no copy beside the log)"
+    PERSIST_LINE=$(code_lines "$WITNESSD_RUN" | grep -n -F 'export DEVICE_KEY_SEED_PERSIST=0' | cut -d: -f1 | head -n1)
+    EXEC_LINE=$(code_lines "$WITNESSD_RUN" | grep -n -F 'exec /usr/local/bin/witnessd' | cut -d: -f1 | head -n1)
+    if [ -n "$PERSIST_LINE" ] && [ -n "$EXEC_LINE" ] && [ "$PERSIST_LINE" -lt "$EXEC_LINE" ]; then
+        ok "witnessd service: the switch is exported before the exec"
+    else
+        fail "witnessd service: DEVICE_KEY_SEED_PERSIST=0 (line ${PERSIST_LINE:-?}) must precede the exec (line ${EXEC_LINE:-?})"
+    fi
+fi
+
 # The fragment as run.sh builds it with publishing on, and as it is with it off.
 ADDON_API_ON=", \"fleet_peers_path\": \"$ADDON_PEERS\""
 

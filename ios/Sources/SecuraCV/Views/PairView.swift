@@ -49,7 +49,11 @@ struct PairView: View {
     /// while this very sheet is open, and the honest thing then is to say so
     /// rather than keep offering to add it.
     private var alreadyJoined: Bool {
-        store.witnesses.contains { $0.id == canary.deviceID }
+        // A refused pairing is listed but needs its key again.
+        if store.witnesses.contains(where: { $0.id == canary.deviceID && $0.pairingRefused }) {
+            return false
+        }
+        return store.witnesses.contains { $0.id == canary.deviceID }
             || store.devices.devices.contains { $0.id == canary.deviceID }
     }
 

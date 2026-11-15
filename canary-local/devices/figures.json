@@ -1964,7 +1964,7 @@
     },
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 11274,
+     "triangles": 13098,
      "mm": [
       48.7,
       166.4,
@@ -2220,7 +2220,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 11274,
+     "triangles": 13098,
      "mm": [
       48.7,
       166.4,

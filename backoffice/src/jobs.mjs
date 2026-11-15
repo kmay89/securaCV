@@ -20,6 +20,26 @@ import { resetDemo, isDemo } from './modules/demo.mjs';
 import { join } from 'node:path';
 import { timedFetch } from './net.mjs';
 import { verifyChain } from './integrity.mjs';
+import { awayState } from './modules/away.mjs';
+
+// Each fetched message is filed on its own: the mailbox has already flagged it \Seen, so one the parser or the
+// ticket chokes on is written down (its uid in mail_seen, an exception naming it by subject) and the rest of the
+// batch still lands — never a loop that dies on the first and loses the fifty behind it without a word.
+export async function ingestInbox(db, cfg, msgs, { ingest = (raw) => ingestEmail(db, parseEmail(raw), { cfg }) } = {}) {
+  let created = 0, appended = 0, dup = 0, failed = 0;
+  for (const m of msgs) {
+    if (db.get('SELECT uid FROM mail_seen WHERE uid = ?', m.uid)) { dup++; continue; }
+    if (!m.raw) { db.audit('system', 'mail.inbox.skipped', 'mail', m.uid, { why: m.skipped }); continue; }   // over the size cap: left on the server, marked seen
+    try { const r = ingest(m.raw); if (r.created) created++; else if (r.ticket) appended++; else dup++; }
+    catch (err) {
+      failed++; const subject = (String(m.raw).match(/^Subject:[ \t]*(.*)$/im) || [])[1]?.trim().slice(0, 120) || '(no subject)';
+      await raise(db, cfg, `inbox:failed:${m.uid}`, `support [inbox]: a mail could not be filed (uid ${m.uid})`, `Subject: ${subject}\nError: ${String(err.message || err).slice(0, 300)}\n\nThe mail is still in the mailbox, flagged seen: read it there, and resolve this once it is handled.`);
+    }
+    db.run('INSERT OR IGNORE INTO mail_seen (uid, seen_at) VALUES (?, ?)', m.uid, nowIso());
+  }
+  db.run('DELETE FROM mail_seen WHERE seen_at < ?', new Date(Date.now() - 60 * 86400000).toISOString());
+  return { fetched: msgs.length, created, appended, ignored: dup, ...(failed ? { failed } : {}) };
+}
 
 export const JOBS = {
   // name: [interval seconds, fn(app)]
@@ -27,24 +47,18 @@ export const JOBS = {
   automations: [3600, async ({ db, cfg }) => { const { runAutomations } = await import('./modules/automations.mjs'); return runAutomations(db, cfg); }],
   inbox:    [120, async ({ db, cfg }) => {
     if (!cfg.imapUrl) return { skipped: 'IMAP_URL not set' };
-    const msgs = await imapFetchUnseen(cfg.imapUrl);
-    let created = 0, appended = 0, dup = 0;
-    for (const m of msgs) {
-      if (db.get('SELECT uid FROM mail_seen WHERE uid = ?', m.uid)) { dup++; continue; }
-      if (!m.raw) { db.audit('system', 'mail.inbox.skipped', 'mail', m.uid, { why: m.skipped }); continue; }   // over the size cap: left on the server, marked seen
-      const r = ingestEmail(db, parseEmail(m.raw), { cfg });
-      db.run('INSERT INTO mail_seen (uid, seen_at) VALUES (?, ?)', m.uid, nowIso());
-      if (r.created) created++; else if (r.ticket) appended++; else dup++;
-    }
-    db.run('DELETE FROM mail_seen WHERE seen_at < ?', new Date(Date.now() - 60 * 86400000).toISOString());
-    return { fetched: msgs.length, created, appended, ignored: dup };
+    return ingestInbox(db, cfg, await imapFetchUnseen(cfg.imapUrl));
   }],
   probes:   [60, async (app) => ({ ran: (await runDueProbes(app.db, { cfg: app.cfg })).length })],
   sla:      [600, async ({ db, cfg }) => {
-    const late = slaBreaches(db);
+    // While the operator is away (away.mjs) a ticket whose clock ran out before the morning they are back is
+    // not an alarm: the customer was told the date. It stays in the queue, and the alarm comes due on the return.
+    const away = awayState(db, cfg); const breached = slaBreaches(db);
+    const late = away.on && away.resume_at ? breached.filter(t => t.sla_due_at >= away.resume_at) : breached;
     for (const t of late) await raise(db, cfg, `sla:${t.number}`, `support [sla]: ${t.number} unanswered past ${cfg.slaHours}h`, `${t.subject}\nfrom ${t.email || 'unknown'} · opened ${t.created_at} · due ${t.sla_due_at}\n\nReply at ${cfg.baseUrl}/tickets/${t.id}`);
-    const lateKeys = new Set(late.map(t => `sla:${t.number}`));
-    for (const ex of db.all('SELECT key FROM exceptions WHERE key LIKE \'sla:%\' AND resolved_at IS NULL')) if (!lateKeys.has(ex.key)) await resolve(db, cfg, ex.key, 'Answered.');
+    const breachedKeys = new Set(breached.map(t => `sla:${t.number}`));
+    for (const ex of db.all('SELECT key FROM exceptions WHERE key LIKE \'sla:%\' AND resolved_at IS NULL')) if (!breachedKeys.has(ex.key)) await resolve(db, cfg, ex.key, 'Answered.');
+    if (away.on) return { breached: late.length, deferred: breached.length - late.length, away_until: away.until };
     return { breached: late.length };
   }],
   stock:    [3600, async ({ db, cfg }) => {
@@ -105,6 +119,14 @@ export const JOBS = {
     return { ok: true, chained: v.chained, unchained: v.unchained, head: v.head?.id ?? null };
   }],
   // Once a day at DIGEST_HOUR (UTC): today's list, the numbers, the health checklist, to the operator.
+  // the mail domain's public DNS (SPF, DMARC, MX) as receivers read it; the doctor shows the last answer
+  maildns:  [21600, async ({ db, cfg }) => {
+    if (cfg.demo) return { skipped: 'demo mode' };
+    const { checkMailDomain, rememberMailDomainCheck, mailDomainOf } = await import('./modules/maildns.mjs');
+    if (!mailDomainOf(cfg)) return { skipped: 'no MAIL_FROM or SUPPORT_ADDR' };
+    const r = rememberMailDomainCheck(db, await checkMailDomain(cfg));
+    return { domain: r.domain, ok: r.ok, problems: r.problems?.length || 0, error: r.error || undefined };
+  }],
   digest:   [600, async ({ db, cfg }) => {
     if (!cfg.operatorEmail) return { skipped: 'OPERATOR_EMAIL not set' };
     const today = new Date().toISOString().slice(0, 10);

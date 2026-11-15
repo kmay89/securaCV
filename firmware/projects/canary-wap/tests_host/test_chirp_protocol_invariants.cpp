@@ -160,8 +160,10 @@ void test_protocol_version_is_v02() {
   CHECK(cc::g_recent_chirp_count == 1);
 }
 
-// §3.1 and §12.1: the magic is 0xC4 (Opera's is 0x0A); a frame with another
-// magic is not Chirp's and is not stored.
+// §3.1 and §12.1: the magic is 0xC4; a frame with another first byte is not
+// Chirp's and is not stored. There is no Opera magic: an Opera frame starts
+// with its version byte, 1, or before membership a pairing type, 8..12
+// (sweep F308); 0x0A below is the OPERA_MAGIC an older §12.1 named.
 void test_magic_byte() {
   CHECK(cc::CHIRP_MAGIC == 0xC4);
   boot_enabled();
@@ -309,6 +311,7 @@ void test_canonical_distinguishes_signers() {
   const Neighbor origin = neighbor_of(0x27);
   const Neighbor confirmer = neighbor_of(0x28);
   deliver(confirmer, presence_of(confirmer));
+  stay_present({confirmer});   // ten minutes of presence before its ACK counts (spec §3.4 rule 4)
   const Bytes w = witness_of(origin, 0x36, cc::TPL_EMERG_FIRE_VISIBLE, cc::CHIRP_URG_URGENT);
   cc::ChirpHeader oh;
   cc::ChirpWitnessPayload op;

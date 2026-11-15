@@ -63,12 +63,14 @@ export function haloOf(arcs) {
  * Join stack sets it 5 px above, F155) and the midpoint of each of its sides
  * inside the stroke's inner edge. With corners, also held: the farthest point of its
  * rounded corners inside that edge — what the landscape nightlight's layout
- * promises (its corners 2 px inside the stroke, F157), and what the 800 px
- * dash glass does not in either orientation: there the corners reach past
- * the ring (F155, an open decision; F156). Returns {fail, offset, sides,
- * reach, inner}: the measures in pixels, and a failure message or null.
+ * promises (its corners 2 px inside the stroke, F157). The 800 px dash
+ * glass's corners reach past the ring in either orientation; with ceiling
+ * ({reach, over}, from wideCardCeiling()) they may reach no farther from the
+ * halo's center, nor farther past the stroke's inner edge, than
+ * test_onboard_layout holds. Returns {fail, offset, sides, reach, inner}:
+ * the measures in pixels, and a failure message or null.
  */
-export function cardInHalo(card, halo, { corners = false, cornerR = 10 } = {}) {
+export function cardInHalo(card, halo, { corners = false, cornerR = 10, ceiling = null } = {}) {
   if (!card) return { fail: "the Join scene shows no QR card (F184)" };
   if (!halo) return { fail: "the Join scene shows no halo (F184)" };
   const [x0, y0, x1, y1] = card.box;
@@ -97,8 +99,23 @@ export function cardInHalo(card, halo, { corners = false, cornerR = 10 } = {}) {
     fail = `the QR card's sides reach ${r1(sides)} px from the halo's center, past its stroke: ${at} (F184)`;
   } else if (corners && reach > inner) {
     fail = `the QR card's corners reach ${r1(reach)} px from the halo's center, past its stroke: ${at} (F184)`;
+  } else if (ceiling && (reach > ceiling.reach + 0.05 || reach - inner > ceiling.over + 0.05)) {
+    fail = `the QR card's corners reach ${r1(reach)} px from the halo's center, ${r1(reach - inner)} px past ` +
+      `its stroke's inner edge, over the ${ceiling.reach} px and ${ceiling.over} px test_onboard_layout holds: ${at}`;
   }
   return { fail, offset, sides: r1(sides), reach: r1(reach), inner };
+}
+
+/**
+ * The wide Join card's corner-reach ceilings on the default ladder, read
+ * from test_onboard_layout.cpp: {reach} px from the halo's center and {over}
+ * px past the stroke's inner edge. Throws when the test names neither.
+ */
+export function wideCardCeiling(layoutTest) {
+  const reach = Number(/\bkWideCardReach\[2\] = \{([\d.]+),/.exec(layoutTest)?.[1]);
+  const inner = Number(/\bkWideStrokeInner = ([\d.]+);/.exec(layoutTest)?.[1]);
+  if (!(reach > 0 && inner > 0)) throw new Error("test_onboard_layout.cpp names no kWideCardReach or kWideStrokeInner");
+  return { reach, over: Math.round((reach - inner) * 10) / 10 };
 }
 
 /**
@@ -392,6 +409,88 @@ export function linesInked(reads) {
   if (!empty.length) return null;
   return `${empty.length} line(s) the firmware draws show no ink where it says they are: ` +
     `${JSON.stringify(empty.map((r) => ({ text: r.text, box: r.box })))} (F184)`;
+}
+
+/**
+ * The splash bubble's tail in numbers: {pad, border, side, rise} from
+ * splash_layout.h (the bubble's top edge stands pad + border above its
+ * line's box; the tail's ink starts `rise` rows above that edge) and minInk,
+ * the floor the native render test (glass_splash_test.cpp) holds a drawn
+ * tail to. Throws naming the first number it cannot read.
+ */
+export function splashTail(splashLayoutH, splashTestCpp) {
+  const int = (src, name, file) => {
+    const v = Number(new RegExp(`constexpr (?:int|long) ${name} = (\\d+);`).exec(src)?.[1]);
+    if (!(v > 0)) throw new Error(`${file} names no ${name}`);
+    return v;
+  };
+  return {
+    pad: int(splashLayoutH, "kBubblePad", "splash_layout.h"), border: int(splashLayoutH, "kBubbleBorder", "splash_layout.h"),
+    side: int(splashLayoutH, "kTailSide", "splash_layout.h"), rise: int(splashLayoutH, "kTailRise", "splash_layout.h"),
+    minInk: int(splashTestCpp, "kMinInk", "glass_splash_test.cpp"),
+  };
+}
+
+/**
+ * The bubble's tail off the frame, as the native render tests take it: the
+ * glass with the tail against the glass without it. fr: the frame with a
+ * typed line up; k: splashTail(); st: {labels, bird, base}, the labels and
+ * the bird's box read with fr, and base {w, h, data, bird}, a frame kept
+ * while the bubble and its tail were hidden. The bubble is centered on the
+ * glass and its top edge stands k.pad + k.border above its line's box. Read:
+ * the pixels that differ between the two frames in the rows above that
+ * edge, k.rise + k.side of them, 2 * k.side px either side of the center
+ * line, outside the bird's box in either frame (the bird moves between the
+ * two). Returns {text, ink, top, left, right, edge, cx}: the line, the
+ * count (-1 with no base to read against), the highest inked row and the
+ * inked columns' extent; null when no line is up.
+ */
+export function tailInk(fr, k, st) {
+  const { w, h, data } = fr;
+  const line = st.labels.find((l) => l.shown && l.opa >= 250 && l.text.trim() !== "");
+  if (!line) return null;
+  const edge = line.y - k.pad - k.border, cx = w / 2, base = st.base;
+  const out = { text: line.text, ink: -1, top: null, left: null, right: null, edge, cx };
+  if (!base || base.w !== w || base.h !== h) return out;
+  const birds = [st.bird, base.bird].filter((b) => b && b.shown);
+  out.ink = 0;
+  for (let y = Math.max(0, edge - k.rise - k.side); y < Math.min(h, edge); y++) {
+    for (let x = Math.max(0, Math.floor(cx) - 2 * k.side); x < Math.min(w, Math.ceil(cx) + 2 * k.side); x++) {
+      if (birds.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h)) continue;
+      const i = (y * w + x) * 4;
+      const d = Math.abs(data[i] - base.data[i]) + Math.abs(data[i + 1] - base.data[i + 1]) + Math.abs(data[i + 2] - base.data[i + 2]);
+      if (d < 12) continue;
+      out.ink++;
+      if (out.top === null) out.top = y;
+      out.left = out.left === null ? x : Math.min(out.left, x);
+      out.right = out.right === null ? x : Math.max(out.right, x);
+    }
+  }
+  return out;
+}
+
+/**
+ * The tail is on the glass where splash_layout.h puts it. read: tailInk();
+ * k: splashTail(). Held: at least k.minInk px of ink above the bubble's top
+ * edge, centered on the bubble's center line within 1 px, reaching no more
+ * than k.rise rows above the edge. A dist that draws no tail, or draws it
+ * off the center line or up into the bird, fails. Returns a failure
+ * message, or null.
+ */
+export function tailDrawn(read, k) {
+  if (!read) return "no line of the splash is up to read the bubble's tail over";
+  const at = `over ${JSON.stringify(read.text)} (the bubble's top edge at row ${read.edge}, its center line at ${read.cx})`;
+  if (read.ink < 0) return `no frame without the bubble was kept to read its tail against, ${at}`;
+  if (read.ink < k.minInk) {
+    return `the glass draws no tail on the bubble's top edge: ${read.ink} px of ink above it, under ${k.minInk}, ${at}`;
+  }
+  if (Math.abs((read.left + read.right + 1) / 2 - read.cx) > 1) {
+    return `the bubble's tail stands off its center line: its ink spans columns ${read.left}..${read.right}, ${at}`;
+  }
+  if (read.edge - read.top > k.rise) {
+    return `the bubble's tail reaches ${read.edge - read.top} rows above its top edge, past its ${k.rise}, ${at}`;
+  }
+  return null;
 }
 
 /**

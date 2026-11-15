@@ -200,7 +200,7 @@ async function main() {
     const s = section("serial", "first boot", "Power on and read what it says",
       "The host boots, checks its hardware, introduces the module over I2C, joins WiFi and " +
       "announces itself to Home Assistant. Every string below is the firmware's own — the " +
-      "one line to care about is Grove Vision AI ID: non-zero means the link is alive.");
+      "one line to care about is Grove Vision AI ID: 1 means the module answered, 0 that it did not.");
     s.append(buildSerial(d, bus));
   }
 

@@ -550,11 +550,15 @@ static void emit_self_manifest() {
 
   // A separate additive record keeps the shared manifest schema stable while
   // giving the native flasher a hard, live gate for the two-board Vision unit.
+  // module_id is 1 or 0 (an older Flasher gates on `> 0`), module_ok is the
+  // same verdict as a bool, which a newer Flasher reads when it is present;
+  // neither is ever the module's own id (vision_mgr.cpp, sweep F384).
   canary::dbg_serial().printf(
       "{\"schema\":\"securacv.vision.proof/v1\","
-      "\"module_id\":%d,\"i2c_ready\":%s,\"witness_ready\":%s,"
+      "\"module_id\":%d,\"module_ok\":%s,\"i2c_ready\":%s,\"witness_ready\":%s,"
       "\"wifi_configured\":%s,\"wifi_connected\":%s,\"mqtt_connected\":%s}\n",
       canary::vision::module_id(),
+      canary::vision::module_ok() ? "true" : "false",
       canary::vision::ready() ? "true" : "false",
       canary::witness::ready() ? "true" : "false",
       canary::net::wifi_configured() ? "true" : "false",

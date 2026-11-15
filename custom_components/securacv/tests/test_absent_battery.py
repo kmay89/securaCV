@@ -116,3 +116,10 @@ def test_the_battery_blueprint_says_no_charge_of_a_canary_without_one() -> None:
     assert present in by_trigger["low"], "the low-battery push needs a battery"
     assert present in by_trigger["recovered"], (
         "the recovered push names a charge, so it fires only for a Canary with a battery")
+    # battery_percent is unknown when a present battery reports no number,
+    # and the blueprint's battery_pct reads unknown as 0: both pushes name
+    # battery_pct, so both need a charge that was read.
+    read = "state_attr(health_sensor, 'battery_percent') is number"
+    assert read in by_trigger["low"], "a low-battery push needs a charge that was read"
+    assert read in by_trigger["recovered"], "a recovered push needs a charge that was read"
+    assert "battery_percent') | int(0)" in blueprint["variables"]["battery_pct"]

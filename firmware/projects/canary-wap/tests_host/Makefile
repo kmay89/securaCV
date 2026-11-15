@@ -33,6 +33,13 @@ SRC_DIR   = ../arduino/canary_wap
 ARDUINO_GLOBALS = -include arduino_globals.h
 override CXXFLAGS += $(ARDUINO_GLOBALS)
 
+# -Wstringop-truncation is GCC's. clang refuses the name under -Werror, so
+# the flag that turns it off goes only to a compiler that takes it.
+NO_STRINGOP_TRUNC := $(shell $(CXX) -Werror -Wno-stringop-truncation -x c++ -fsyntax-only /dev/null >/dev/null 2>&1 && echo -Wno-stringop-truncation)
+# The sketch's CSI core files name feature-vector indexes they do not all
+# read. clang's -Wall counts an unused constant; GCC's does not.
+NO_UNUSED_CONST = -Wno-unused-const-variable
+
 # Every compile writes the headers it read beside its binary (sweep F286):
 # -MMD writes $@.d for `-o $@`, -MP gives each header an empty rule so a
 # deleted one is no error, and the end of this file reads them back and
@@ -326,13 +333,21 @@ clean: clean-beacon-cancel
 
 # Full-body HTTP reads (http_body_reader.h): a body split across TCP reads is
 # reassembled, an oversized one is refused before any read (never truncated),
-# timeouts are bounded, nothing past content_len is read — and a source pin
-# that every Beacon route in beacon_api.h reads its body through read_body().
+# timeouts are bounded, nothing past content_len is read; read_request()
+# does the same over a request (sweep F300) — and a source pin that every
+# httpd_req_recv( in canary_wap.ino and the sketch's *_api.h files (listed
+# from the directory at run time, so the binary needs no rebuild when they
+# move) is inside an http_body::read_all( call. canary_wap.ino's handlers call
+# read_request() themselves and answer its refusal at once (handle_log_ack
+# by name refuses only a body that stops arriving); each *_api.h handler
+# reads through its file's read_body() over read_request(), whose two
+# refusals the pin holds to its whole shape, the Beacon routes' too.
+# csi_integration.cpp, in the same folder, is not scanned by this pin.
 HTTP_BODY_BIN = test_http_body_reader
 HTTP_BODY_SRC = test_http_body_reader.cpp
 
-$(HTTP_BODY_BIN): $(HTTP_BODY_SRC) $(SRC_DIR)/http_body_reader.h $(SRC_DIR)/beacon_api.h beacon_source_scan.h
-	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DBEACON_API_H='"$(abspath $(SRC_DIR))/beacon_api.h"' -o $@ $(HTTP_BODY_SRC)
+$(HTTP_BODY_BIN): $(HTTP_BODY_SRC) $(SRC_DIR)/http_body_reader.h beacon_source_scan.h
+	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(HTTP_BODY_SRC)
 
 .PHONY: run-http-body clean-http-body
 run-http-body: $(HTTP_BODY_BIN)
@@ -356,7 +371,7 @@ EVLOAD_LIB = $(SRC_DIR)/csi_event_log.cpp $(SRC_DIR)/csi_event.cpp \
 
 $(EVLOAD_BIN): $(EVLOAD_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
                $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable $(NO_STRINGOP_TRUNC) -DCSI_TEST_HOST_BUILD \
 	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVLOAD_SRC) $(EVLOAD_LIB))
 
 .PHONY: run-evlog-load clean-evlog-load
@@ -378,7 +393,7 @@ EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
 
 $(EVDISMISS_BIN): $(EVDISMISS_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
                   $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable $(NO_STRINGOP_TRUNC) -DCSI_TEST_HOST_BUILD \
 	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVDISMISS_SRC) $(EVLOAD_LIB))
 
 .PHONY: run-evlog-dismiss clean-evlog-dismiss
@@ -410,7 +425,7 @@ $(EGRESS_BIN): $(EGRESS_SRC) $(EGRESS_LIB) $(SRC_DIR)/csi_event_egress.h $(SRC_D
                $(wildcard $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/loop_command_ring.h) \
                $(SRC_DIR)/csi_event_wire.h json_strict.h \
                $(wildcard stubs/egress/*.h stubs/egress/freertos/*.h stubs/sd_fake/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment $(NO_STRINGOP_TRUNC) -DCSI_TEST_HOST_BUILD \
 	  -I stubs/egress -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EGRESS_SRC) $(EGRESS_LIB))
 
 .PHONY: run-wap-egress clean-wap-egress
@@ -848,7 +863,7 @@ $(MODBOOT_BIN): $(MODBOOT_SRC) $(MODBOOT_LIB) $(SRC_DIR)/csi_module.h $(SRC_DIR)
                 $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_bundler.h $(SRC_DIR)/csi_integration.cpp \
                 $(SRC_DIR)/acoustic_events_module.cpp $(SRC_DIR)/vault_events_module.cpp $(SRC_DIR)/ble_scout.cpp \
                 $(wildcard stubs/module_boot/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror $(NO_STRINGOP_TRUNC) $(NO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
 	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(MODBOOT_SRC) $(MODBOOT_LIB))
 
@@ -882,7 +897,7 @@ $(TUNELAB_BIN): $(TUNELAB_SRC) $(TUNELAB_LIB) $(SRC_DIR)/csi_tune_lab.h $(SRC_DI
                 $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_event.h \
                 $(SRC_DIR)/csi_integration.cpp $(SRC_DIR)/csi_dashboard_html.h \
                 $(wildcard stubs/module_boot/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror $(NO_STRINGOP_TRUNC) $(NO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
 	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(TUNELAB_SRC) $(TUNELAB_LIB))
 
@@ -925,7 +940,7 @@ $(DAILY_BIN): $(DAILY_SRC) $(DAILY_INC) $(MODBOOT_LIB) $(SRC_DIR)/csi_settings_n
               $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/meta_daily_summary.h \
               $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_event_wire.h $(SRC_DIR)/tz_rule.h \
               $(wildcard stubs/module_boot/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror $(NO_STRINGOP_TRUNC) $(NO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	  -I stubs/module_boot -I $(SRC_DIR) -I . -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
 	  -o $@ $(DAILY_SRC) $(MODBOOT_LIB))
 
@@ -955,7 +970,14 @@ clean: clean-wap-daily-summary
 # nvs_load_key(), nvs_store_key() and establish_identity_key(), with the
 # one-line KeyLoad enum, over the same fake NVS, which can also fail IDF's
 # blob lookup and Preferences' read: only IDF's ESP_ERR_NVS_NOT_FOUND may
-# lead to a new key, and a refused read writes nothing.
+# lead to a new key, and a refused read writes nothing. And the stored TLS
+# certificate fails closed the same way (sweep F404): the NVS_KEY_TLS_CERT
+# and NVS_KEY_TLS_KEY lines, secure_zero(), hex_to_str(),
+# tls_free_buffers(), tls_load_from_nvs(), tls_store_to_nvs(), the
+# certificate's fingerprint and its refusal, and init_tls_cert(), cut
+# verbatim over the same fake NVS: only a session that opened with neither
+# entry stored may lead to a new certificate, and a refused read stores
+# nothing over the one phones pin.
 FIRSTBOOT_BIN    = test_wap_first_boot_nvs
 FIRSTBOOT_SRC    = test_wap_first_boot_nvs.cpp
 FIRSTBOOT_WIZ    = test_wap_first_boot_nvs_wizard.inc
@@ -963,7 +985,9 @@ FIRSTBOOT_KEY    = test_wap_first_boot_nvs_key.inc
 FIRSTBOOT_PWR    = test_wap_first_boot_nvs_power.inc
 FIRSTBOOT_CHIRP  = test_wap_first_boot_nvs_chirp.inc
 FIRSTBOOT_STAMP  = test_wap_first_boot_nvs_stamp.inc
-FIRSTBOOT_INCS   = $(FIRSTBOOT_WIZ) $(FIRSTBOOT_KEY) $(FIRSTBOOT_PWR) $(FIRSTBOOT_CHIRP) $(FIRSTBOOT_STAMP)
+FIRSTBOOT_TLS    = test_wap_first_boot_nvs_tls.inc
+FIRSTBOOT_INCS   = $(FIRSTBOOT_WIZ) $(FIRSTBOOT_KEY) $(FIRSTBOOT_PWR) $(FIRSTBOOT_CHIRP) $(FIRSTBOOT_STAMP) \
+                   $(FIRSTBOOT_TLS)
 FIRSTBOOT_CUT    = ../../../tests_host/cut_functions.awk
 CUT_INCS        += $(FIRSTBOOT_INCS)
 
@@ -981,6 +1005,14 @@ $(FIRSTBOOT_KEY): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
 	@grep -nE '^static const char\* NVS_KEY_PRIV +=|^enum class KeyLoad : uint8_t \{' $(SRC_DIR)/canary_wap.ino | \
 	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
 	awk -v 'sigs=static esp_err_t stored_key_length(|static KeyLoad nvs_load_key(|static bool nvs_store_key(|static bool establish_identity_key() {' \
+	  -f $(FIRSTBOOT_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
+$(FIRSTBOOT_TLS): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
+	@test "$$(grep -cE '^static const char\* NVS_KEY_TLS_(CERT|KEY) +=' $(SRC_DIR)/canary_wap.ino)" = 2 || { \
+	  echo "canary_wap.ino: not one NVS_KEY_TLS_CERT and one NVS_KEY_TLS_KEY line for tls_load_from_nvs()" >&2; exit 1; }
+	@grep -nE '^static const char\* NVS_KEY_TLS_(CERT|KEY) +=' $(SRC_DIR)/canary_wap.ino | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
+	awk -v 'sigs=static void secure_zero(|static void hex_to_str(|static void tls_free_buffers() {|static KeyLoad tls_load_from_nvs() {|static bool tls_store_to_nvs() {|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool init_tls_cert() {' \
 	  -f $(FIRSTBOOT_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
 
 $(FIRSTBOOT_CHIRP): $(SRC_DIR)/chirp_channel.cpp $(FIRSTBOOT_CUT) Makefile
@@ -1233,6 +1265,31 @@ clean-pair-crypto:
 run: run-pair-crypto
 clean: clean-pair-crypto
 
+# The sealed bearer (api_seal.h, seal_api.h, api_auth.h's Sealed branch): the
+# REAL api_seal.h over real X25519 / HKDF-SHA256 (stubs/pair_crypto), SHA-256
+# and ChaCha20-Poly1305 (stubs/mesh_net), the real device_signature.cpp's
+# canonical and gates, and the REAL api_auth.h over stubs/receipt_grant's
+# request, against reference vectors the Flasher's Rust client pins too. Also
+# reads the sketch's text (its paths are passed in, so the pins fail closed):
+# the route, the handler's calls, the hook, the gates' one reader.
+APISEAL_BIN = test_api_seal
+APISEAL_SRC = test_api_seal.cpp
+
+$(APISEAL_BIN): $(APISEAL_SRC) $(SRC_DIR)/api_seal.h $(SRC_DIR)/seal_api.h $(SRC_DIR)/api_auth.h $(SRC_DIR)/device_signature.cpp $(SRC_DIR)/device_signature.h $(SRC_DIR)/canary_wap.ino arduino_globals.h stubs/pair_crypto/Curve25519.h stubs/pair_crypto/mbedtls/md.h stubs/pair_crypto/mbedtls/hkdf.h stubs/mesh_net/ChaChaPoly.h stubs/mesh_net/mbedtls/sha256.h $(wildcard stubs/receipt_grant/*.h)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-function -Wno-ignored-qualifiers \
+	  -I stubs/receipt_grant -I stubs/pair_crypto -I stubs/mesh_net -I $(SRC_DIR) -I . \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -DSEAL_API_H='"$(abspath $(SRC_DIR))/seal_api.h"' \
+	  -DAPI_AUTH_H='"$(abspath $(SRC_DIR))/api_auth.h"' -o $@ $(APISEAL_SRC) $(SRC_DIR)/device_signature.cpp -lcrypto)
+
+.PHONY: run-api-seal clean-api-seal
+run-api-seal: $(APISEAL_BIN)
+	$(call run_marked,$(APISEAL_BIN))
+clean-api-seal:
+	rm -f $(APISEAL_BIN)
+
+run: run-api-seal
+clean: clean-api-seal
+
 # F33 part 6: the spec §5.6 REVOCATION_GRACE_MS deny-list. mesh_revocation is
 # the PlatformIO tree's module, staged byte-identical (check_mesh_sync.sh);
 # its behavior suite runs here against the STAGED copy, and
@@ -1387,6 +1444,58 @@ clean-mesh-commands:
 run: run-mesh-commands
 clean: clean-mesh-commands
 
+# The Opera name and every health-log line hold no byte a strict JSON reader
+# refuses (sweep F303), on the same harness and link as
+# test_mesh_commands_wap: the REAL mesh_network.cpp (its rename and pairing
+# commands, run by update() in the handler's wait, set_opera_name(),
+# start_pairing_initiator() and the NVS load), and cut out of canary_wap.ino
+# the health log's ring and staging declarations (from its first comment
+# line to the staging lock, by the awk below, which fails unless it finds
+# each end once) and, by firmware/tests_host/cut_functions.awk,
+# log_health_ssid(), log_health(), health_log(), http_send_json(),
+# http_send_error(), http_body_refusal(), handle_logs(), handle_mesh_status(),
+# handle_mesh_pair_start() and handle_mesh_name(), over stand-ins for
+# esp_http_server's request (its body handed over in short reads as a test
+# plans them, sweep F300: the rename reads it whole, refuses one past its
+# buffer or one that stops arriving by name) and arduinojson_tree.h, and the
+# REAL http_body_reader.h. Both routes refuse a
+# name with a byte below 0x20, past 32 bytes or not whole UTF-8 in the
+# rule's words and keep one at the cap whole; GET /api/mesh and GET
+# /api/logs parse strictly and carry well-formed UTF-8 for every name and
+# every line, a line cut on a character to its field.
+OPNAME_BIN      = test_opera_name_wap
+OPNAME_SRC      = test_opera_name_wap.cpp
+OPNAME_RING_INC = test_opera_name_wap_ring.inc
+OPNAME_INC      = test_opera_name_wap.inc
+OPNAME_CUT      = ../../../tests_host/cut_functions.awk
+CUT_INCS       += $(OPNAME_RING_INC) $(OPNAME_INC)
+
+$(OPNAME_RING_INC): $(SRC_DIR)/canary_wap.ino Makefile
+	awk -v 'from=^// Health log buffer ' -v 'to=^static portMUX_TYPE g_health_pending_mux ' \
+	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(OPNAME_INC): $(SRC_DIR)/canary_wap.ino $(OPNAME_CUT) Makefile
+	awk -v 'sigs=static void log_health_ssid(LogLevel level, LogCategory category, const char* message, const char* ssid) {|void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {|void health_log(LogLevel level, LogCategory category, const char* message) {|static esp_err_t http_send_json(httpd_req_t* req, const char* json) {|static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {|static const char* http_body_refusal(http_body::Result r) {|static esp_err_t handle_logs(httpd_req_t* req) {|static esp_err_t handle_mesh_status(httpd_req_t* req) {|static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {|static esp_err_t handle_mesh_name(httpd_req_t* req) {' \
+	  -f $(OPNAME_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(OPNAME_BIN): $(OPNAME_SRC) $(OPNAME_RING_INC) $(OPNAME_INC) mesh_net_sim.h arduinojson_tree.h json_strict.h browser_utf8.h \
+               $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) \
+               $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h \
+               $(SRC_DIR)/health_store_logic.h $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/device_name_rule.h $(MESH_ADDR_LINK)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -I . \
+	  -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' \
+	  -DOPERA_NAME_RING_INC='"$(OPNAME_RING_INC)"' -DOPERA_NAME_INC='"$(OPNAME_INC)"' \
+	  -o $@ $(OPNAME_SRC) $(MESH_ADDR_LINK) -lcrypto)
+
+.PHONY: run-opera-name clean-opera-name
+run-opera-name: $(OPNAME_BIN)
+	$(call run_marked,$(OPNAME_BIN))
+clean-opera-name:
+	rm -f $(OPNAME_BIN) $(OPNAME_RING_INC) $(OPNAME_INC)
+
+run: run-opera-name
+clean: clean-opera-name
+
 # The owner's Chirp commands run on the loop task (sweep F111): the REAL
 # chirp_channel.cpp, #included and compiled on the host against
 # stubs/mesh_net (an ESP-NOW send log, an in-memory NVS, OpenSSL's Ed25519
@@ -1482,6 +1591,50 @@ clean-bt-commands:
 run: run-bt-commands
 clean: clean-bt-commands
 
+# The Beacon set as it loads from NVS and as GET /api/beacon/set answers it
+# (sweep F408): load_beacon_set(), get_beacon_set_size() and
+# get_beacon_set_entry() cut verbatim out of beacon_channel.cpp, with the
+# readers of the set the F408 review found counting a refused entry
+# (persist_beacon_set(), recompute_trouble_reasons() and
+# revoke_beacon_set_entry()), and
+# handle_set_list() with the helpers it calls cut verbatim out of
+# beacon_api.h (firmware/tests_host/cut_functions.awk; REPLY_BUF's line
+# starts the cut that carries send_reply(), the function right after it, to
+# its closing brace), over the REAL beacon_wire.h and wap_json_writer.h and
+# stubs/bt's ArduinoJson and esp_http_server stand-ins. An entry NVS did not
+# return whole is left out, every loaded name ends in its field, and the
+# answer is strict JSON with each name as a page shows it; the set holds its
+# members only, so a set of refused rows reads empty and no revoke finds a
+# hole. Built with AddressSanitizer.
+BSET_BIN  = test_beacon_set_load
+BSET_SRC  = test_beacon_set_load.cpp
+BSET_CHANNEL_INC = test_beacon_set_load_channel.inc
+BSET_API_INC     = test_beacon_set_load_api.inc
+BSET_CUT  = ../../../tests_host/cut_functions.awk
+CUT_INCS += $(BSET_CHANNEL_INC) $(BSET_API_INC)
+
+$(BSET_CHANNEL_INC): $(SRC_DIR)/beacon_channel.cpp $(BSET_CUT) Makefile
+	awk -v 'sigs=static bool persist_beacon_set() {|static bool load_beacon_set() {|static void recompute_trouble_reasons() {|uint8_t get_beacon_set_size() {|const BeaconSetEntry* get_beacon_set_entry(uint8_t index) {|bool revoke_beacon_set_entry(const uint8_t* fingerprint) {' \
+	  -f $(BSET_CUT) $(SRC_DIR)/beacon_channel.cpp > $@.tmp && mv $@.tmp $@
+
+$(BSET_API_INC): $(SRC_DIR)/beacon_api.h $(BSET_CUT) Makefile
+	awk -v 'sigs=static inline esp_err_t send_json(httpd_req_t* req, const char* json) {|static const size_t REPLY_BUF = 256;|static inline esp_err_t send_error(httpd_req_t* req, const char* err) {|static inline void fp_to_hex(const uint8_t* fp, char* out) {|inline esp_err_t handle_set_list(httpd_req_t* req) {' \
+	  -f $(BSET_CUT) $(SRC_DIR)/beacon_api.h > $@.tmp && mv $@.tmp $@
+
+$(BSET_BIN): $(BSET_SRC) $(BSET_CHANNEL_INC) $(BSET_API_INC)
+	$(CXX) $(CXXFLAGS) -g -Werror -fsanitize=address -fno-omit-frame-pointer -I stubs/bt -I $(SRC_DIR) -I . \
+	  -DBEACON_SET_CHANNEL_INC='"$(BSET_CHANNEL_INC)"' -DBEACON_SET_API_INC='"$(BSET_API_INC)"' \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(BSET_SRC)
+
+.PHONY: run-beacon-set-load clean-beacon-set-load
+run-beacon-set-load: $(BSET_BIN)
+	$(call run_marked,$(BSET_BIN))
+clean-beacon-set-load:
+	rm -f $(BSET_BIN) $(BSET_CHANNEL_INC) $(BSET_API_INC)
+
+run: run-beacon-set-load
+clean: clean-beacon-set-load
+
 # The BLE provisioning service (the F262 review): the REAL ble_provision.cpp,
 # #included and compiled on the host over stubs/bt (NimBLE, ArduinoJson and
 # FreeRTOS stand-ins) and stubs/ble_prov (WiFi). Every scan list it publishes
@@ -1543,7 +1696,7 @@ endif
 $(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
                   $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/http_body_reader.h \
                   json_strict.h mqtt_test_hooks.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function $(NO_STRINGOP_TRUNC) \
 	  -include mqtt_test_hooks.h $(MQTT_REINIT_HEAP) \
 	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp)
 
@@ -1570,7 +1723,7 @@ HA_IDS_SRC = test_ha_discovery_ids.cpp
 $(HA_IDS_BIN): $(HA_IDS_SRC) beacon_source_scan.h $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
                $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h \
                $(SRC_DIR)/http_body_reader.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function $(NO_STRINGOP_TRUNC) \
 	  -I stubs/mqtt -I $(SRC_DIR) -DCSI_MQTT_CPP='"$(abspath $(SRC_DIR))/csi_mqtt.cpp"' \
 	  -o $@ $(HA_IDS_SRC) $(SRC_DIR)/csi_mqtt.cpp)
 
@@ -1607,7 +1760,7 @@ $(MQTT_BODIES_BIN): $(MQTT_BODIES_SRC) json_strict.h $(SRC_DIR)/csi_mqtt.cpp $(S
                     $(SRC_DIR)/device_signature.cpp $(SRC_DIR)/device_signature.h $(SRC_DIR)/mqtt_identity.h \
                     $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h \
                     $(SRC_DIR)/http_body_reader.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function $(NO_STRINGOP_TRUNC) \
 	  -I stubs/mqtt -I $(SRC_DIR) -DDEVICE_SIGNATURE_CPP='"$(abspath $(SRC_DIR))/device_signature.cpp"' \
 	  -o $@ $(MQTT_BODIES_SRC) $(SRC_DIR)/csi_mqtt.cpp -lcrypto)
 
@@ -2044,14 +2197,20 @@ clean: clean-mqtt-identity
 # for everything it calls but the two mints, so a refused mint is run against
 # the chain state it leaves. It also reads every source in the sketch
 # directory (the path is passed in), so it re-runs on every `make`: each call
-# of the three uses its result.
+# of the three uses its result. And the stored API token (sweep F365): the
+# NVS_KEY_API_TKN line, the one-line KeyLoad enum, nvs_store_token(),
+# stored_token_length(), api_token_well_formed() and nvs_load_token() are cut
+# verbatim too and run under provision_device() over the first-boot suite's
+# fake NVS (stubs/first_boot, Arduino.h from stubs/nvs_store) and the real
+# nvs_store.h: only IDF's ESP_ERR_NVS_NOT_FOUND may lead to a stored token.
 HMACFAIL_BIN     = test_wap_hmac_fail
 HMACFAIL_SRC     = test_wap_hmac_fail.cpp
 HMACFAIL_KEY     = test_wap_hmac_fail_key.inc
 HMACFAIL_RESOLVE = test_wap_hmac_fail_resolve.inc
 HMACFAIL_DM      = test_wap_hmac_fail_datamgmt.inc
 HMACFAIL_PROV    = test_wap_hmac_fail_prov.inc
-HMACFAIL_INCS    = $(HMACFAIL_KEY) $(HMACFAIL_RESOLVE) $(HMACFAIL_DM) $(HMACFAIL_PROV)
+HMACFAIL_TOKEN   = test_wap_hmac_fail_token.inc
+HMACFAIL_INCS    = $(HMACFAIL_KEY) $(HMACFAIL_RESOLVE) $(HMACFAIL_DM) $(HMACFAIL_PROV) $(HMACFAIL_TOKEN)
 HMACFAIL_CUT     = ../../../tests_host/cut_functions.awk
 HMACFAIL_MD      = ../../../tests_host/stubs/mbedtls_md
 CUT_INCS        += $(HMACFAIL_INCS)
@@ -2073,6 +2232,16 @@ $(HMACFAIL_PROV): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 	awk -v 'sigs=static bool provision_device() {' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
+$(HMACFAIL_TOKEN): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	@test "$$(grep -cE '^static const char\* NVS_KEY_API_TKN +=' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
+	  echo "canary_wap.ino: no single NVS_KEY_API_TKN line for nvs_load_token()" >&2; exit 1; }
+	@test "$$(grep -cE '^enum class KeyLoad : uint8_t \{ Loaded, Absent, Refused \};$$' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
+	  echo "canary_wap.ino: no single one-line KeyLoad enum for nvs_load_token()" >&2; exit 1; }
+	@grep -nE '^static const char\* NVS_KEY_API_TKN +=|^enum class KeyLoad : uint8_t \{' $(SRC_DIR)/canary_wap.ino | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
+	awk -v 'sigs=static bool nvs_store_token(|static esp_err_t stored_token_length(|static bool api_token_well_formed(|static KeyLoad nvs_load_token(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
 $(HMACFAIL_DM): $(SRC_DIR)/data_mgmt_api.h $(HMACFAIL_CUT) Makefile
 	awk '/^static const (uint32_t|size_t) +BACKUP_(MAGIC|VERSION|PAYLOAD|SIZE) +=/ { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
 	  END { if (n != 4) { print "data_mgmt_api.h: " n + 0 " BACKUP_ constant line(s), expected 4" > "/dev/stderr"; exit 1 } }' \
@@ -2081,13 +2250,17 @@ $(HMACFAIL_DM): $(SRC_DIR)/data_mgmt_api.h $(HMACFAIL_CUT) Makefile
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/data_mgmt_api.h >> $@.tmp && mv $@.tmp $@
 
 $(HMACFAIL_BIN): $(HMACFAIL_SRC) $(HMACFAIL_INCS) arduino_globals.h $(SRC_DIR)/log_level.h \
-                 $(SRC_DIR)/chain_state.h $(wildcard $(HMACFAIL_MD)/mbedtls/*.h stubs/sd_fake/*.h)
+                 $(SRC_DIR)/chain_state.h $(SRC_DIR)/nvs_store.h \
+                 $(wildcard $(HMACFAIL_MD)/mbedtls/*.h stubs/sd_fake/*.h stubs/first_boot/*.h) \
+                 stubs/nvs_store/Arduino.h $(wildcard $(NVSLOCK_FREERTOS)/freertos/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations \
+	  -I stubs/first_boot -I stubs/nvs_store -I $(NVSLOCK_FREERTOS) \
 	  -I stubs/sd_fake -I $(HMACFAIL_MD) -I $(SRC_DIR) -I . \
 	  -DWAP_HMAC_KEY_INC='"$(HMACFAIL_KEY)"' \
 	  -DWAP_HMAC_RESOLVE_INC='"$(HMACFAIL_RESOLVE)"' \
 	  -DWAP_HMAC_DATAMGMT_INC='"$(HMACFAIL_DM)"' \
 	  -DWAP_HMAC_PROV_INC='"$(HMACFAIL_PROV)"' \
+	  -DWAP_HMAC_TOKEN_INC='"$(HMACFAIL_TOKEN)"' \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(HMACFAIL_SRC) -lcrypto
 
 .PHONY: run-wap-hmac-fail clean-wap-hmac-fail
@@ -2098,6 +2271,236 @@ clean-wap-hmac-fail:
 
 run: run-wap-hmac-fail
 clean: clean-wap-hmac-fail
+
+# The sketch's SHA-256 fails closed (sweep F364, the .ino's slice):
+# sha256_raw() and sha256_domain() answer whether every mbedTLS step ran and
+# zero their output when one did not, and each of the five callers refuses
+# what the hash was for. The six [[nodiscard]] declarations (the awk below
+# takes each, a two-line one whole), the one-line RecordMade enum,
+# hex_print(), secure_zero(), hex_to_str(), the two helpers,
+# compute_fingerprint(), tls_free_buffers(), the certificate's fingerprint
+# and its refusal, compute_chain_hash(), update_chain(), the chain persist,
+# the hash latch line and witness_hash_failed(), create_witness_record(),
+# the SD-tail recovery, verify_record_signature(), chain_tail_intact(), the
+# boot attestation's and loop()'s record and self-verify helpers,
+# fingerprint_is_nonzero() and the identity gate,
+# identity_named_and_anchored(), are cut verbatim out of canary_wap.ino;
+# tls_after_setup() on its own, init_tls_cert() on its own (the suite
+# includes it twice, with and without the certificate generator),
+# provision_device() on its own, and what the gate holds back after a
+# refused identity (sweep F403): ble_witness_get_head_json() and
+# device_signature_mount() (firmware/tests_host/cut_functions.awk), and
+# ble_bringup_task()'s FEATURE_BLE_STATUS block, cut by line from its one
+# opening line to the first #endif at its depth. Under them: a stand-in
+# for mbedTLS's streaming SHA-256, defined in the suite over OpenSSL, that
+# fails the step and the hash the test names, and the fake SD card
+# (stubs/sd_fake). It also reads canary_wap.ino (the sketch directory's
+# path is passed in), so it re-runs on every `make`: each call of the six
+# uses its result.
+SHAFAIL_BIN   = test_wap_sha_fail
+SHAFAIL_SRC   = test_wap_sha_fail.cpp
+SHAFAIL_CORE  = test_wap_sha_fail_core.inc
+SHAFAIL_TLS   = test_wap_sha_fail_tls.inc
+SHAFAIL_AFTER = test_wap_sha_fail_after.inc
+SHAFAIL_PROV  = test_wap_sha_fail_prov.inc
+SHAFAIL_REACH = test_wap_sha_fail_reach.inc
+SHAFAIL_STATUS = test_wap_sha_fail_status.inc
+SHAFAIL_INCS  = $(SHAFAIL_CORE) $(SHAFAIL_TLS) $(SHAFAIL_AFTER) $(SHAFAIL_PROV) $(SHAFAIL_REACH) \
+                $(SHAFAIL_STATUS)
+CUT_INCS     += $(SHAFAIL_INCS)
+
+$(SHAFAIL_CORE): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk '/^\[\[nodiscard\]\] static bool / { n++; on = 1; printf "#line %d \"%s\"\n", FNR, FILENAME } \
+	  on { print; if ($$0 ~ /;/) on = 0 } \
+	  /^static bool g_witness_hash_warned = false;$$/ { w++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
+	  /^enum class RecordMade : uint8_t \{ Made, Unverified, Refused \};$$/ { e++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
+	  END { if (n != 6 || w != 1 || e != 1) { print "canary_wap.ino: " n + 0 " [[nodiscard]] static bool declaration(s), expected 6, " w + 0 " hash latch line(s), expected 1, and " e + 0 " one-line RecordMade enum(s), expected 1" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/canary_wap.ino > $@.tmp
+	awk -v 'sigs=static void hex_print(|static void secure_zero(|static void hex_to_str(|static bool sha256_raw(|static bool sha256_domain(|static bool compute_fingerprint(|static void tls_free_buffers() {|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool compute_chain_hash(|static bool update_chain(|static bool persist_chain_blob() {|static void persist_chain_state() {|static void witness_recover_from_sd() {|static void witness_hash_failed(|static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {|static bool verify_record_signature(|static bool chain_tail_intact() {|static RecordMade witness_record_last(|static void record_boot_attestation(|static void self_verify_last_record() {|static bool fingerprint_is_nonzero(|static bool identity_named_and_anchored() {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
+$(SHAFAIL_TLS): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool init_tls_cert() {' -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SHAFAIL_AFTER): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static inline bool tls_after_setup() {' -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SHAFAIL_PROV): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool provision_device() {' -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SHAFAIL_REACH): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=bool ble_witness_get_head_json(|static void device_signature_mount() {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+# The status service's registration is a block inside ble_bringup_task(), not
+# a function: cut from its one opening line to the first line that closes
+# it at the same depth, or fail.
+$(SHAFAIL_STATUS): $(SRC_DIR)/canary_wap.ino Makefile
+	awk -v 'start=      #if FEATURE_BLE_STATUS' -v 'stop=      #endif' \
+	  '$$0 == start { n++; if (n == 1) { printf "#line %d \"%s\"\n", FNR, FILENAME; on = 1 } } \
+	   on { print } on && $$0 == stop { on = 0; done = 1 } \
+	   END { if (n != 1 || on || !done) { print "canary_wap.ino: the BLE status registration is not one block" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SHAFAIL_BIN): $(SHAFAIL_SRC) $(SHAFAIL_INCS) arduino_globals.h $(SRC_DIR)/log_level.h \
+                $(SRC_DIR)/chain_state.h $(SRC_DIR)/chain_persist.h $(SRC_DIR)/witness_page.h \
+                $(SRC_DIR)/witness_store.h $(SRC_DIR)/mqtt_identity.h $(wildcard stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations -I stubs/sd_fake -I $(SRC_DIR) -I . \
+	  -DWAP_SHA_INC='"$(SHAFAIL_CORE)"' -DWAP_SHA_TLS_INC='"$(SHAFAIL_TLS)"' \
+	  -DWAP_SHA_TLS_AFTER_INC='"$(SHAFAIL_AFTER)"' -DWAP_SHA_PROV_INC='"$(SHAFAIL_PROV)"' \
+	  -DWAP_SHA_REACH_INC='"$(SHAFAIL_REACH)"' -DWAP_SHA_STATUS_INC='"$(SHAFAIL_STATUS)"' \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(SHAFAIL_SRC) -lcrypto
+
+.PHONY: run-wap-sha-fail clean-wap-sha-fail
+run-wap-sha-fail: $(SHAFAIL_BIN)
+	$(call run_marked,$(SHAFAIL_BIN))
+clean-wap-sha-fail:
+	rm -f $(SHAFAIL_BIN) $(SHAFAIL_INCS)
+
+run: run-wap-sha-fail
+clean: clean-wap-sha-fail
+
+# GET /api/fleet/qr reads its query whole or refuses it (sweep F304): the
+# REAL fleet_qr_query.h and handle_fleet_qr(), cut verbatim out of
+# canary_wap.ino (firmware/tests_host/cut_functions.awk), with the real
+# wap_json_writer.h, over the host esp_http_server.h (stubs/receipt_grant,
+# whose query readers answer TRUNC with a cut copy, as IDF's do). Every
+# answer is a 400 naming the field or a QR drawn from the whole name and
+# password. Hooked into `run` and `clean` by prerequisite.
+FLEETQR_BIN  = test_fleet_qr_query
+FLEETQR_SRC  = test_fleet_qr_query.cpp
+FLEETQR_INC  = test_fleet_qr_query_handler.inc
+CUT_INCS    += $(FLEETQR_INC)
+
+$(FLEETQR_INC): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static esp_err_t handle_fleet_qr(httpd_req_t* req) {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(FLEETQR_BIN): $(FLEETQR_SRC) $(FLEETQR_INC) arduino_globals.h $(SRC_DIR)/fleet_qr_query.h \
+                $(SRC_DIR)/wap_json_writer.h stubs/receipt_grant/esp_http_server.h
+	$(CXX) $(CXXFLAGS) -Werror -I stubs/receipt_grant -I $(SRC_DIR) -I . \
+	  -DFLEET_QR_HANDLER_INC='"$(FLEETQR_INC)"' -o $@ $(FLEETQR_SRC)
+
+.PHONY: run-fleet-qr-query clean-fleet-qr-query
+run-fleet-qr-query: $(FLEETQR_BIN)
+	$(call run_marked,$(FLEETQR_BIN))
+clean-fleet-qr-query:
+	rm -f $(FLEETQR_BIN) $(FLEETQR_INC)
+
+run: run-fleet-qr-query
+clean: clean-fleet-qr-query
+
+# The sketch's modules use no SHA-256 they were refused (sweep F364, the
+# modules' slice; the sketch's own is run-wap-sha-fail above): the vault's
+# ciphertext digest and key id (vault_snapshot.cpp), the USB update drop's
+# image hash (usb_evidence_drive.cpp's dep_sha256() under
+# evidence_update::verify()), the familiar filters' index hash
+# (familiar.cpp), Wi-Fi presence's MAC hash (wifi_presence.h) and
+# mesh_crypto::sha256_domain(). Each helper answers whether every mbedTLS
+# step ran and zeroes its output when one did not, and each caller refuses:
+# no sealed file, ct_hash or key id, no verdict but sha_failed, no learned
+# or matched bit, no counted capture, a zeroed mesh digest. mesh_crypto.cpp
+# is compiled whole and evidence_update_verify.cpp and securacv_ota.cpp's
+# pure subset are linked; the rest is cut verbatim out of the sketch's files
+# — each module's state block by its first and last line (the awk below,
+# which fails unless it finds each exactly once), the functions by
+# firmware/tests_host/cut_functions.awk. Under them: stubs/mesh_net's
+# OpenSSL SHA-256 with its fail knob (unarmed in every other suite), the
+# real X25519 and HKDF of stubs/pair_crypto and the fake SD card
+# (stubs/sd_fake). It also reads the five modules' files and
+# evidence_update_verify.cpp (the sketch directory's path is passed in), so
+# it re-runs on every `make`: no bare call of a SHA step or of the helpers.
+SHAMOD_BIN          = test_wap_sha_fail_modules
+SHAMOD_SRC          = test_wap_sha_fail_modules.cpp
+SHAMOD_LINK         = $(SRC_DIR)/mesh_crypto.cpp $(SRC_DIR)/evidence_update_verify.cpp \
+                      $(SRC_DIR)/securacv_ota.cpp
+SHAMOD_VAULT_STATE  = test_wap_sha_fail_modules_vault_state.inc
+SHAMOD_VAULT        = test_wap_sha_fail_modules_vault.inc
+SHAMOD_FAM_STATE    = test_wap_sha_fail_modules_familiar_state.inc
+SHAMOD_FAM          = test_wap_sha_fail_modules_familiar.inc
+SHAMOD_WP_STATE     = test_wap_sha_fail_modules_presence_state.inc
+SHAMOD_WP           = test_wap_sha_fail_modules_presence.inc
+SHAMOD_USB          = test_wap_sha_fail_modules_usb.inc
+# And POST /api/vault/key's handler (sweep F426): handle_vault_key_set(), cut
+# verbatim out of canary_wap.ino with the http_body_refusal() and
+# http_send_error() it calls, over the vault's cut functions, the REAL
+# http_body_reader.h, stand-ins for its body read (short reads as a case
+# plans them) and http_send_json(), and arduinojson_tree.h. A key whose key
+# id did not compute, and one NVS did not open for or refused, answer the
+# device's refusal (not the 64-hex shape text) and leave the key registered
+# before in RAM and NVS; a malformed key answers the shape text; a key in
+# short reads is read whole, and a body past the buffer or one that stops
+# arriving is refused by name (sweep F300).
+SHAMOD_VAULT_KEY    = test_wap_sha_fail_modules_vault_key.inc
+# And beacon_channel.cpp's hash helper with what stands on it: the co-sign
+# session key, the fingerprint, the audit chain's head (load and append) and
+# the tamper auto-revoke.
+SHAMOD_BEACON       = test_wap_sha_fail_modules_beacon.inc
+SHAMOD_INCS         = $(SHAMOD_VAULT_STATE) $(SHAMOD_VAULT) $(SHAMOD_FAM_STATE) $(SHAMOD_FAM) \
+                      $(SHAMOD_WP_STATE) $(SHAMOD_WP) $(SHAMOD_USB) $(SHAMOD_VAULT_KEY) $(SHAMOD_BEACON)
+CUT_INCS           += $(SHAMOD_INCS)
+# A state block: every line from the first line matching `from` to the next
+# matching `to`, behind a #line naming the file, found exactly once.
+SHAMOD_RANGE_AWK    = '$$0 ~ from && !on { s++; on = 1; printf "\#line %d \"%s\"\n", FNR, FILENAME } \
+  on { print } on && $$0 ~ to { e++; on = 0 } \
+  END { if (s != 1 || e != 1 || on) { print FILENAME ": the state block from /" from "/ to /" to "/ found " s + 0 " start(s) and " e + 0 " end(s), expected one of each" > "/dev/stderr"; exit 1 } }'
+
+$(SHAMOD_VAULT_STATE): $(SRC_DIR)/vault_snapshot.cpp Makefile
+	awk -v 'from=^using vault_logic::Trigger;$$' -v 'to=^static SealResult +g_result;' \
+	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/vault_snapshot.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_VAULT): $(SRC_DIR)/vault_snapshot.cpp $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=[[nodiscard]] static bool sha256_key_id(|static bool hex_nibble(|static void fail_result(|static void seal_task(void*) {|static void load_config_from(|KeySet set_pubkey_hex(|bool has_pubkey() {|void key_id_hex(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/vault_snapshot.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_FAM_STATE): $(SRC_DIR)/familiar.cpp Makefile
+	awk -v 'from=^static const char\\* NVS_KEY_SALT ' -v 'to=^static uint32_t s_total_always_ignored_matches = 0;' \
+	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/familiar.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_FAM): $(SRC_DIR)/familiar.cpp $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static void secure_wipe(|[[nodiscard]] static bool hash_indices(|static inline void bloom_set(|static inline bool bloom_contains(|static uint32_t bloom_popcount(|static void persist_ignore() {|void note_fingerprint(|bool is_ambient(|bool always_ignore(|bool is_always_ignored(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/familiar.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_WP_STATE): $(SRC_DIR)/wifi_presence.h Makefile
+	awk -v 'from=^static const uint32_t BUCKET_DURATION_MS ' -v 'to=^static volatile uint32_t g_isr_drop_count = 0;' \
+	  $(SHAMOD_RANGE_AWK) $(SRC_DIR)/wifi_presence.h > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_WP): $(SRC_DIR)/wifi_presence.h $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=[[nodiscard]] static bool hash_mac(|static bool mac_seen(|static void process_queue() {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/wifi_presence.h > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_USB): $(SRC_DIR)/usb_evidence_drive.cpp $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool dep_sha256(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/usb_evidence_drive.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_VAULT_KEY): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {|static const char* http_body_refusal(http_body::Result r) {|static esp_err_t handle_vault_key_set(httpd_req_t* req) {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_BEACON): $(SRC_DIR)/beacon_channel.cpp $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=[[nodiscard]] static bool sha256_two(|static bool ecdh_session_key(|[[nodiscard]] static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {|static bool persist_audit_entry(|[[nodiscard]] static bool audit_head_after(|[[nodiscard]] static bool rederive_audit_head(|static bool load_audit_log(|static bool chain_audit_entry(BeaconAuditEntry* entry) {|bool revoke_beacon_set_entry(|bool on_peer_tampered(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/beacon_channel.cpp > $@.tmp && mv $@.tmp $@
+
+$(SHAMOD_BIN): $(SHAMOD_SRC) $(SHAMOD_INCS) $(SHAMOD_LINK) arduino_globals.h arduinojson_tree.h json_strict.h \
+               $(SRC_DIR)/vault_snapshot.h
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I stubs/sd_fake \
+	  -I $(SRC_DIR) -I . -DSECURACV_OTA_HOST_BUILD \
+	  -DWAP_SHAMOD_VAULT_STATE_INC='"$(SHAMOD_VAULT_STATE)"' -DWAP_SHAMOD_VAULT_INC='"$(SHAMOD_VAULT)"' \
+	  -DWAP_SHAMOD_FAMILIAR_STATE_INC='"$(SHAMOD_FAM_STATE)"' -DWAP_SHAMOD_FAMILIAR_INC='"$(SHAMOD_FAM)"' \
+	  -DWAP_SHAMOD_PRESENCE_STATE_INC='"$(SHAMOD_WP_STATE)"' -DWAP_SHAMOD_PRESENCE_INC='"$(SHAMOD_WP)"' \
+	  -DWAP_SHAMOD_USB_INC='"$(SHAMOD_USB)"' -DWAP_SHAMOD_VAULT_KEY_INC='"$(SHAMOD_VAULT_KEY)"' \
+	  -DWAP_SHAMOD_BEACON_INC='"$(SHAMOD_BEACON)"' \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -o $@ $(SHAMOD_SRC) $(SHAMOD_LINK) -lcrypto)
+
+.PHONY: run-wap-sha-fail-modules clean-wap-sha-fail-modules
+run-wap-sha-fail-modules: $(SHAMOD_BIN)
+	$(call run_marked,$(SHAMOD_BIN))
+clean-wap-sha-fail-modules:
+	rm -f $(SHAMOD_BIN) $(SHAMOD_INCS)
+
+run: run-wap-sha-fail-modules
+clean: clean-wap-sha-fail-modules
 
 # Every suite compiles the sketch's code after Arduino.h's names (sweep
 # F229): check_arduino_globals.py asks make for every compile of `run` and

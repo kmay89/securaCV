@@ -342,12 +342,15 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
   (`mr60_presence.cpp`, deadline-before-data); `Unknown` is radar-link
   health, not a witness event, and reaches Home Assistant as the firmware's
   own "radar link problem" binary sensor. Home Assistant's separate
-  radar-link diagnostic sensor reads a `radar` object from the health
-  payload that **no firmware publishes as of this writing**, so that entity
-  stays "unknown"; #1740 (open) adds the object. The same PR fixes a
-  stall-recovery defect on the evidence path: today the first target frame
-  after a stall moves the FSM through `Clear`, and canary-sense signs a
-  `presence_cleared` record while a body is in view. Corrupt frames are
+  radar-link diagnostic sensor reads the `radar` object of the health
+  payload (`link_ok`, `last_frame_age_ms`, `frame_errors`): canary-sense
+  publishes it in every retained health once the link has been judged, and
+  canary-sentinel does the same on a build with the radar, judged by the
+  stall rule its fusion vote uses (`canary/sentinel_links.h`); a Sentinel
+  Lite has no radar and sends no object, and gets no sensor. After a stall
+  the first target frame starts the debounce and the state stays `Unknown`
+  until `Present` is earned, so a returning radar never signs
+  `presence_cleared` while it reports a body. Corrupt frames are
   dropped by checksum and counted; there is no alarm threshold on the
   count. A radar that reports the same value forever is **not** detected —
   the FSMs read a steady value as a held lock. There is no radar self-test,
@@ -412,7 +415,7 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
 | Wi-Fi backoff bounded and jittered; never-online never reboots | `test_wifi_join_policy.cpp`, `scripts/lint_wifi_join_policy.py` |
 | Offline queue bounded, ordered, tamper-first | `test_mqtt_offline_queue.cpp` |
 | Silent radar fails safe | `test_mr60_uart.cpp` (stall cases) |
-| A returning radar never signs "cleared" over a body | **not on main** — the stall-recovery cases arrive with #1740 |
+| A returning radar never signs "cleared" over a body | `test_mr60_uart.cpp` (`test_presence_fsm_stall_recovery_never_reports_clear_with_a_target`) |
 | Boot-time tail verification enters safe mode | `witnessd` boot path (#990); corrupt-store open is **not** covered |
 | Watchdog aborts a stalled loop | `witnessd.rs` watchdog unit test |
 | A Canary crash loop degrades to safe mode; a pending image never does; every escape works | `test_boot_policy.cpp`, `test_boot_guard.cpp` (decisions and NVS glue; the boot-path wiring is bench Track E) |

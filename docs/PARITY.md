@@ -74,7 +74,7 @@ Witness Wall** is the Apple TV app that polls `GET /api/fleet`.
 | canary-ota (`firmware/projects/canary-ota/`) | ❌ every column — an ESP-IDF teaching harness with the older SHA-256-only engine; no CI job compiles it and it has no onboarding. Left as it was, by design (`firmware/VARIANT_POLICY.md`). |
 | canary-companion, canary-tincan | not applicable — Phase-0 pure cores with no runtime, no network stack and no env; their host tests still pass (`make -C firmware/projects/<p>/tests_host`). |
 | canary-fence-guard | not applicable — a concept whose `main_stub.cpp` refuses to compile. |
-| the emulator (`canary-local/emulator/`) | inherits the display row: it compiles `provision.cpp`, `runtime_config.cpp` and `main.cpp`, which all changed, so the committed `dist/` was rebuilt from this tree by Actions → "Rebuild emulator dist (pinned emsdk)" before the merge (`CLAUDE.md`, "Generated files"); the dist drift check and the page logic tests hold it to the sources. |
+| the emulator (`canary-local/emulator/`) | inherits the display row: it compiles `provision.cpp`, `runtime_config.cpp` and `main.cpp`, which all changed, so the committed `dist/` was rebuilt from this tree by Actions → "Rebuild emulator dist (pinned emsdk)" before the merge (`docs/GENERATED_FILES.md`); the dist drift check and the page logic tests hold it to the sources. |
 
 ### Footnotes — every ⚠️ and ❌, with its reason
 
@@ -178,7 +178,7 @@ branch; the suites this program added or changed are listed first).
 | `test_fleet_key.cpp` | HKDF-SHA256 of the Wi-Fi credentials with the fixed info string, refusal on an open network, HMAC tag and constant-time compare, the key id |
 | `test_peer_protocol.cpp` | SCVP frame encode/decode, tag verification, replay by sequence and uptime, table expiry at 35 s, the election (oldest uptime wins, hub anywhere wins) |
 | `test_canary_onboarding_glue.cpp` | the PIO canary's reset scopes and join-reason mapping onto the shared words |
-| `test_wifi_credential_policy.cpp`, `test_wifi_join_policy.cpp`, `test_setup_portal_logic.cpp`, `test_improv_core.cpp`, `test_hub_handoff.cpp`, `test_provisioning_gate.cpp` | the §1 password rules, the join labels and backoff, the portal's request parsing, the BLE door wire format, the hub hand-off, the claim gate (pre-existing; all still green), and since F342 the WAP's one-asker BOOT tap (`tap_arbitrate()`; the flagship's tap still goes to the first asker, F354) |
+| `test_wifi_credential_policy.cpp`, `test_wifi_join_policy.cpp`, `test_setup_portal_logic.cpp`, `test_improv_core.cpp`, `test_hub_handoff.cpp`, `test_provisioning_gate.cpp` | the §1 password rules, the join labels and backoff, the portal's request parsing, the BLE door wire format, the hub hand-off, the claim gate (pre-existing; all still green), and the one-asker BOOT tap (`tap_arbitrate()`: the WAP's since F342, the flagship's since F354) |
 | `firmware/common/ota/test_ota_logic.cpp` | manifest v2 (`board`/`chip` in the signed message, a v1 manifest carrying them refused), `min_version` enforced, board mismatch refused, the 60 s confirm dwell, the lowercase state words, the friendly strings, field fit and the install marker |
 | `firmware/projects/canary-display/tests_host/test_onboard_layout.cpp` | the glass QR (version 4, 33 modules) composed in portrait and landscape for the typed SSID |
 | `firmware/projects/canary-wap/tests_host/` | the WAP's provisioning and BLE OTA policy suites (pre-existing; green) |

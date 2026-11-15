@@ -58,8 +58,10 @@ type; the full walkthrough with the exact screens is
 Open the app's Web UI. With Frigate installed the wizard reads your cameras
 from Frigate's own config (`/addon_configs/ccab4aaf_frigate/config.yml`) and
 skips the RTSP screen; the broker comes from the Supervisor; the device key
-is generated and kept at `/config/.securacv/device_key` (back it up — Home
-Assistant backups include it). You choose the retention (7 / 30 / 365
+is generated once, shown once, and kept in the app's own data
+(`/data/device_key` inside the app — not under `/config`, so a
+configuration-only backup does not carry it; save it somewhere safe). You
+choose the retention (7 / 30 / 365
 days), what to seal (every tracked object, or only Frigate alerts) and the
 daily digest. Manual YAML is only needed for an external broker or
 non-default Frigate topics:
@@ -324,7 +326,7 @@ It prints one JSON line, the pairing receipt (the token, the kernel's
 current verifying key, a short id), and that line is the token's only copy:
 the kernel keeps its sha256 in `/data/viewer_tokens.json` (`0600`, beside
 the capability token) and re-reads the file on every request. The Wall
-takes the receipt under Settings → Pair ([`tvos/README.md`](../tvos/README.md));
+takes the receipt under Settings → Verification ([`tvos/README.md`](../tvos/README.md));
 `docker exec securacv entrypoint.sh revoke-viewer-token <id>` takes it
 back. Like the paired token it crosses the LAN in plaintext.
 

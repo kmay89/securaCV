@@ -23,7 +23,7 @@ static int g_failures = 0;
     }                                                                    \
   } while (0)
 
-/* 2026-08-07T12:00:00Z — a believable clock, mid-day so the day arithmetic
+/* 2026-08-08T12:00:00Z — a believable clock, mid-day so the day arithmetic
  * has something to truncate. */
 static constexpr uint32_t kNoon = 1786190400u;
 

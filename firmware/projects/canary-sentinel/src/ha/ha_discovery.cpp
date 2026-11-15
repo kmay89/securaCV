@@ -246,7 +246,8 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
   }
 
   // Channel blinded (diagnostic problem sensor; ON while any enabled channel
-  // is denied — covered, jammed, unplugged or stalled). Degrade honestly (R6).
+  // is denied — covered, jammed, unplugged or stalled — or the light sensor
+  // did not answer at boot, which never votes). Degrade honestly (R6).
   {
     char t[192], p[1024];
     topic_for("binary_sensor", "channel_denied", t, sizeof(t));

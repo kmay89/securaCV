@@ -150,6 +150,56 @@ final class GlassSettingsTests: XCTestCase {
         XCTAssertEqual(byKey["orientation"]?.value, 1)
     }
 
+    // MARK: - a turn the glass refused
+
+    /// The dash's look block as glass_web.cpp writes it since the glass
+    /// began serving the turn worn and the port's refusal beside the saved
+    /// choice. The three orientation values are substituted per test.
+    private func dashBody(saved: Int, worn: Int, refused: Int) -> Data {
+        let body = #"{"day_pct":60,"bright_pct":80,"bright_min_pct":50,"orientation":\#(saved),"orientation_worn":\#(worn),"orientation_refused":\#(refused),"character":0,"clock_style":0,"characters":["Quiet Glass"],"clock_styles":["Segment"]}"#
+        return Data(body.utf8)
+    }
+
+    private func orientationBlurb(_ s: GlassSettings) -> String? {
+        GlassAPI.knobs(for: s).first { $0.key == "orientation" }?.blurb
+    }
+
+    func testARefusedTurnIsSaidInTheGlassesOwnWords() throws {
+        let s = try GlassSettings.decode(dashBody(saved: 1, worn: 0, refused: 1))
+        XCTAssertEqual(s.orientation, 1, "the picker still shows the saved choice")
+        XCTAssertEqual(s.orientationWorn, 0)
+        XCTAssertTrue(s.orientationRefused)
+        let stays = "Not enough memory to turn this glass, so it stays Landscape. "
+        let portrait: String = stays + "A restart tries the saved turn again: Portrait."
+        XCTAssertEqual(orientationBlurb(s), portrait)
+
+        let flipped = try GlassSettings.decode(dashBody(saved: 3, worn: 0, refused: 1))
+        let portraitFlipped: String = stays + "A restart tries the saved turn again: Portrait, Flipped."
+        XCTAssertEqual(orientationBlurb(flipped), portraitFlipped)
+    }
+
+    /// Right after a write the saved turn and the turn worn differ on a
+    /// healthy glass, until its next render pass. That is not a refusal.
+    func testTurnsThatDifferWithoutTheGlassesWordAreNotARefusal() throws {
+        let s = try GlassSettings.decode(dashBody(saved: 1, worn: 0, refused: 0))
+        XCTAssertFalse(s.orientationRefused)
+        XCTAssertNil(GlassAPI.orientationRefusalText(s))
+        XCTAssertEqual(orientationBlurb(s)?.hasPrefix("How the glass is turned."), true)
+    }
+
+    /// Older firmware serves `orientation` alone.
+    func testAGlassThatSendsNoRefusalKeyIsNotRefused() throws {
+        let s = try GlassSettings.decode(Data(Self.dash7SameSiteBody.utf8))
+        XCTAssertFalse(s.orientationRefused)
+        XCTAssertNil(s.orientationWorn)
+        XCTAssertNil(GlassAPI.orientationRefusalText(s))
+    }
+
+    func testTurnsAreNamedAsTheGlassNamesThem() {
+        XCTAssertEqual((0...3).map(GlassAPI.orientationLabel),
+                       ["Landscape", "Portrait", "Landscape, Flipped", "Portrait, Flipped"])
+    }
+
     // MARK: - the standalone-weather block: shown, never offered
 
     /// GET /api/settings from a 7" glass (dash7 / nightstand7,

@@ -243,7 +243,7 @@ pio run -t menuconfig
 
 1. Verify WiFi is connected
 2. Check manifest URL is accessible
-3. For local testing, use `SECURACV_OTA_SKIP_CERT_VERIFY=1`
+3. For local testing, use `SECURACV_OTA_SKIP_CN_CHECK=1` (skips only the certificate hostname check; the chain is still verified)
 
 ### Rollback Triggered After Update
 

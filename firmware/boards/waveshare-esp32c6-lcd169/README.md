@@ -51,8 +51,9 @@ copper.
 Battery charging is the extra heat source this board adds over the 1.47: the
 charge path warms the PCB right next to the RTC crystal (drift) and the IMU
 (bias). Prefer charging while the backlight is dimmed, and don't calibrate
-the IMU during charge. Runtime gauge: the die-temp watchdog
-(`FEATURE_DIAGNOSTICS`) that every build ships.
+the IMU during charge. No build uses this board yet, and canary-display,
+where an env for it would land, reads no die temperature, so there is no
+runtime gauge.
 
 ## Support Status
 

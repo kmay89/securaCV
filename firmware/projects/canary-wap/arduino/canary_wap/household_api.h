@@ -34,6 +34,7 @@
 #define SECURACV_HOUSEHOLD_API_H
 
 #include "esp_http_server.h"
+#include "http_body_reader.h"   // a POST body read whole, or refused by name (sweep F300)
 #include "household.h"
 #include "presence_context.h"
 #include "notify.h"
@@ -91,6 +92,23 @@ static inline esp_err_t send_ok(httpd_req_t* req, const char* msg = nullptr) {
   if (msg) d["message"] = msg;
   char buf[160]; serializeJson(d, buf);
   return send_json(req, buf);
+}
+
+// A POST body, read whole or refused by name (sweep F300): nullptr when all
+// of it is in `buf` (NUL-terminated, *len bytes; 0 for no body, which each
+// route answers its own way), else the error this file answers with
+// send_err(). One httpd_req_recv() is one socket read: the handlers parsed
+// what it returned, so a body in two TCP segments was parsed cut and one past
+// the buffer was cut at it and parsed anyway. http_body::read_request()
+// (http_body_reader.h, host-tested) reads Content-Length bytes and refuses a
+// body that does not fit before reading any of it;
+// tests_host/test_http_body_reader pins that no other httpd_req_recv() call
+// is left in this file.
+static const char* read_body(httpd_req_t* req, char* buf, size_t cap, size_t* len) {
+  const http_body::Result r = http_body::read_request(req, buf, cap, len);
+  if (r == http_body::TOO_LARGE) return "body too large";
+  if (r == http_body::READ_FAILED) return "body read failed";
+  return nullptr;
 }
 
 static inline const char* role_name(household::DeviceRole r) {
@@ -163,9 +181,9 @@ inline esp_err_t handle_list(httpd_req_t* req) {
 // POST /api/household/role  body: { "slot": 0..7, "role": "owner|family|guest" }
 inline esp_err_t handle_set_role(httpd_req_t* req) {
   char body[128];
-  int n = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (n <= 0) return send_err(req, "missing body");
-  body[n] = '\0';
+  size_t n = 0;
+  if (const char* err = read_body(req, body, sizeof(body), &n)) return send_err(req, err);
+  if (n == 0) return send_err(req, "missing body");
 
   JsonDocument in;
   if (deserializeJson(in, body) != DeserializationError::Ok) return send_err(req, "bad JSON");
@@ -196,9 +214,9 @@ inline esp_err_t handle_set_role(httpd_req_t* req) {
 // DELETE /api/household  body: { "slot": N }
 inline esp_err_t handle_remove(httpd_req_t* req) {
   char body[64];
-  int n = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (n <= 0) return send_err(req, "missing body");
-  body[n] = '\0';
+  size_t n = 0;
+  if (const char* err = read_body(req, body, sizeof(body), &n)) return send_err(req, err);
+  if (n == 0) return send_err(req, "missing body");
 
   JsonDocument in;
   if (deserializeJson(in, body) != DeserializationError::Ok) return send_err(req, "bad JSON");
@@ -252,9 +270,9 @@ inline esp_err_t handle_presence_status(httpd_req_t* req) {
 // POST /api/presence/override   body: { "context": "home|away|quiet|traveling" }
 inline esp_err_t handle_override_set(httpd_req_t* req) {
   char body[64];
-  int n = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (n <= 0) return send_err(req, "missing body");
-  body[n] = '\0';
+  size_t n = 0;
+  if (const char* err = read_body(req, body, sizeof(body), &n)) return send_err(req, err);
+  if (n == 0) return send_err(req, "missing body");
 
   JsonDocument in;
   if (deserializeJson(in, body) != DeserializationError::Ok) return send_err(req, "bad JSON");

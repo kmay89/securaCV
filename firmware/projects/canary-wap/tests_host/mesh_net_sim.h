@@ -29,6 +29,7 @@ struct Device {
   uint8_t mac[6] = {};
   // mesh_network.cpp's statics, as last saved.
   bool initialized = false;
+  bool store_loaded = false;      // whether this boot's init() read its NVS store
   uint8_t fingerprint[mn::FINGERPRINT_SIZE] = {};
   char device_name[mn::MAX_PEER_NAME_LEN + 1] = {};
   mn::OperaConfig cfg = {};
@@ -48,6 +49,8 @@ struct Device {
   uint32_t storm_pause_until_ms = 0, storm_trigger_count = 0;
   bool tx_reserve_warned = false;
   uint32_t tx_reserve_warned_ms = 0;
+  bool key_hash_warned = false;
+  uint32_t key_hash_warned_ms = 0;
   mn::RekeyState rekey = {};
   mn::PairingSession pairing = {};
   // The owner's commands waiting for this device's loop task (F96).
@@ -64,6 +67,7 @@ inline Device* g_cur = nullptr;
 
 inline void save(Device& d) {
   d.initialized = mn::g_initialized;
+  d.store_loaded = mn::g_store_loaded;
   memcpy(d.fingerprint, mn::g_device_fingerprint, sizeof d.fingerprint);
   memcpy(d.device_name, mn::g_device_name, sizeof d.device_name);
   d.cfg = mn::g_opera_config;
@@ -89,6 +93,8 @@ inline void save(Device& d) {
   d.storm_trigger_count = mn::g_storm_trigger_count;
   d.tx_reserve_warned = mn::g_tx_reserve_warned;
   d.tx_reserve_warned_ms = mn::g_tx_reserve_warned_ms;
+  d.key_hash_warned = mn::g_key_hash_warned;
+  d.key_hash_warned_ms = mn::g_key_hash_warned_ms;
   d.rekey = mn::g_rekey;
   d.pairing = mn::g_pairing;
   d.commands = mn::g_commands;
@@ -98,6 +104,7 @@ inline void save(Device& d) {
 
 inline void load(Device& d) {
   mn::g_initialized = d.initialized;
+  mn::g_store_loaded = d.store_loaded;
   mn::g_device_privkey = d.priv;
   mn::g_device_pubkey = d.pub;
   memcpy(mn::g_device_fingerprint, d.fingerprint, sizeof d.fingerprint);
@@ -125,6 +132,8 @@ inline void load(Device& d) {
   mn::g_storm_trigger_count = d.storm_trigger_count;
   mn::g_tx_reserve_warned = d.tx_reserve_warned;
   mn::g_tx_reserve_warned_ms = d.tx_reserve_warned_ms;
+  mn::g_key_hash_warned = d.key_hash_warned;
+  mn::g_key_hash_warned_ms = d.key_hash_warned_ms;
   mn::g_rekey = d.rekey;
   mn::g_pairing = d.pairing;
   mn::g_commands = d.commands;
@@ -212,7 +221,7 @@ inline uint64_t counter_of(const std::vector<uint8_t>& f) {
 inline mn::OperaPeer* entry(Device& self, const Device& other) {
   become(self);
   uint8_t fp[mn::FINGERPRINT_SIZE];
-  mn::compute_fingerprint(other.pub, fp);
+  if (!mn::compute_fingerprint(other.pub, fp)) return nullptr;   // a key that does not hash
   return mn::find_peer_by_fingerprint(fp);
 }
 

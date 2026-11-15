@@ -48,6 +48,9 @@
 //   - (F200's review) beside a side that reports this pairing paired nothing
 //     is canceled: the other is completing (F134); a confirm whose answer was
 //     lost then waits for the outcome as for any other answer;
+//   - (F321) the five-unreadable-polls exits say what that read finds, as the
+//     timeouts do: both report it paired is a success, one paired beside one
+//     still running is "still finishing", and only otherwise the retry text;
 //   - work an attempt began stops at its next await once the user cancels
 //     or starts again: a cleanup still reading, or a wait asleep, sends
 //     nothing more and leaves the screen to the new attempt;
@@ -713,16 +716,100 @@ test("a confirm answer lost while a side reports this pairing paired cancels not
   assert.deepStrictEqual(cancels(p), []);
 });
 
+// Changed on purpose by F321: the fresh read finds one side paired beside one
+// still running, which is still finishing, and is now said so (it said
+// "became unreachable ... Try again", a retry F136 refuses once the opera
+// key lands). Still nothing is canceled.
 test("five unreadable polls in the confirm wait cancel nothing beside a side that reports paired", async () => {
   const p = await toCodes(Object.assign({}, F133, {
     confirm: { init: [THROW, THROW, THROW, THROW, THROW, piom("CONNECTING", 3, "paired")],
                join: [piom("PAIRING_CONFIRM", 1, "running")] },
   }));
   await p.t.meshConfirm();
-  assert.strictEqual(p.el("mesh-error").textContent,
-    "A Canary became unreachable while completing. Try again.");
+  assert.strictEqual(p.el("mesh-error").textContent, STILL_FINISHING);
   assert.strictEqual(p.polls.confirm.init, 6);
   assert.deepStrictEqual(cancels(p), [], "the new Canary is completing, not stuck");
+});
+
+// F321: the three five-unreadable-polls exits (the code wait's unreachable
+// and not-ok answers, the confirm wait's unreachable) end as the timeouts do,
+// from meshEndAtTimeout: the fresh read of both decides what is said. Both
+// report this pairing paired: the success, as a timeout's read shows it. One
+// paired beside one still running: still finishing, not a retry. Neither
+// sends a cancel, to either side.
+test("five unreadable polls end from the fresh read: paired is a success, one paired is still finishing", async () => {
+  const runI = piom("PAIRING_INIT", 3, "running");
+  const runJ = piom("PAIRING_JOIN", 1, "running");
+  const doneI = piom("CONNECTING", 3, "paired");
+  const doneJ = piom("CONNECTING", 1, "paired");
+  const NOT_OK = { ok: false, error: "timeout" };
+  // Each exit: how to reach it, given what the fresh read of each side finds.
+  const exits = {
+    // The existing Canary unreachable: the polls after the first read it
+    // alone (fetch rejects before the new one is asked), so the new one's
+    // second read is the fresh read.
+    "code wait, unreachable": async (atI, atJ) => {
+      const p = page(Object.assign({}, F133, {
+        codes: { init: [runI, THROW, THROW, THROW, THROW, THROW, atI], join: [runJ, atJ] },
+      }));
+      await p.t.meshStartPairing();
+      await settle();
+      assert.strictEqual(p.polls.codes.init, 7, "one good poll, five failed, then the one read");
+      return p;
+    },
+    // The new Canary answering, but not ok: both are read at every poll.
+    "code wait, not responding": async (atI, atJ) => {
+      const p = page(Object.assign({}, F133, {
+        codes: { init: Array(6).fill(runI).concat([atI]),
+                 join: [runJ, NOT_OK, NOT_OK, NOT_OK, NOT_OK, NOT_OK, atJ] },
+      }));
+      await p.t.meshStartPairing();
+      await settle();
+      assert.strictEqual(p.polls.codes.join, 7);
+      return p;
+    },
+    "confirm wait, unreachable": async (atI, atJ) => {
+      const p = await toCodes(Object.assign({}, F133, {
+        confirm: { init: [THROW, THROW, THROW, THROW, THROW, atI], join: [atJ] },
+      }));
+      await p.t.meshConfirm();
+      assert.strictEqual(p.polls.confirm.init, 6, "five failed polls, then the one read");
+      return p;
+    },
+  };
+  // What each exit says when the fresh read decides nothing (its old words).
+  const failMsg = {
+    "code wait, unreachable": "A Canary became unreachable. Check the network and try again.",
+    "code wait, not responding": "A Canary stopped responding. Try again.",
+    "confirm wait, unreachable": "A Canary became unreachable while completing. Try again.",
+  };
+  for (const [exit, reach] of Object.entries(exits)) {
+    const running = exit.startsWith("confirm") ? piom("PAIRING_CONFIRM", 1, "running") : runJ;
+    // Both report it paired.
+    let p = await reach(doneI, doneJ);
+    assert.ok(visible(p, "mesh-done"), `${exit}: ${p.el("mesh-error").textContent}`);
+    assert.ok(!visible(p, "mesh-error"), exit);
+    assert.match(p.el("mesh-done-note").textContent, /report the pairing finished/, exit);
+    assert.deepStrictEqual(cancels(p), [], `${exit}: nothing is canceled beside a pairing both finished`);
+    assert.ok(!p.el("mesh-start-btn").disabled, `${exit}: Start is ready for the next Canary`);
+
+    // One paired, the other still running this pairing: either way round.
+    for (const [atI, atJ, which] of [[doneI, running, "existing paired, new running"],
+                                     [runI, doneJ, "existing running, new paired"]]) {
+      p = await reach(atI, atJ);
+      assert.strictEqual(p.el("mesh-error").textContent, STILL_FINISHING, `${exit}, ${which}`);
+      assert.ok(!visible(p, "mesh-done") && visible(p, "mesh-form"), `${exit}, ${which}`);
+      assert.deepStrictEqual(cancels(p), [], `${exit}, ${which}: the running side is completing, not stuck`);
+      assert.ok(!p.el("mesh-start-btn").disabled, `${exit}, ${which}`);
+    }
+
+    // One paired beside one the fresh read cannot reach: the read decides
+    // nothing, so the exit's own words, and still no cancel to the paired side.
+    p = await reach(doneI, THROW);
+    assert.strictEqual(p.el("mesh-error").textContent, failMsg[exit], exit);
+    assert.ok(!visible(p, "mesh-done") && visible(p, "mesh-form"), exit);
+    assert.deepStrictEqual(cancels(p), [], `${exit}: nothing is canceled beside a side that reports paired`);
+  }
 });
 
 // F215: either wait's timeout reads both Canaries once more and cancels a

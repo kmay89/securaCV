@@ -110,7 +110,26 @@ Security posture of the bridge (`fleet.rs`, unit-tested):
 - a 401 is surfaced as "the board refused the stored key" (reflashed
   elsewhere, or an all-rounder Canary reset with its 10 s BOOT hold, which
   removes a seeded token and derives one from the key on the next boot →
-  reflash here mints a fresh one), never retried blindly.
+  reflash here mints a fresh one), never retried blindly;
+- **the key never travels in the clear.** Before a token goes to a
+  `(device_id, address)` pair the app agrees a session key with the device:
+  `GET /api/device/seal?nonce=&client_pub=` carries a fresh X25519 public
+  key, the device answers with its own ephemeral key and an Ed25519
+  signature over the whole transcript (`securacv-canary-sig|v1|seal|<device_id>|<nonce>|<client_pub>|<device_pub>`),
+  the app checks that signature against the fingerprint the book recorded
+  at flash time, and both ends derive `HKDF-SHA256(salt = SHA-256(transcript),
+  ikm = X25519 shared secret, info = "securacv:api-seal:v1")`. Every
+  authenticated call then carries `Authorization: Sealed <sid>.<seq>.<hex>`:
+  the token under ChaCha20-Poly1305 with that key, bound to the method, the
+  path and a strictly increasing counter (`desktop/src-tauri/src/seal.rs`;
+  the firmware's `api_seal.h`, opened by `api_auth.h`'s gates under the
+  same per-address lockout as a plain bearer). The three suites —
+  `tests_host/test_api_seal.cpp`, `seal.rs`'s tests and
+  `desktop_parity.test.js` — pin the same reference vectors, computed by a
+  third implementation. There is **no plain-bearer fallback**: a board whose
+  firmware predates the handshake is told to update once over USB (the same
+  line as for firmware before one-click updates), because a fallback is
+  exactly the downgrade a relay would ask for.
 
 ## Honest limits
 
@@ -125,42 +144,36 @@ Security posture of the bridge (`fleet.rs`, unit-tested):
   flash-time "Keep this Canary updated automatically" toggle is the one place
   the flashers set that policy, over USB with the owner's hands on the board —
   never over the network.)
-- **mDNS is unauthenticated by nature.** A hostile device already admitted
-  to your network can announce a known Canary's `device_id` and, when you
-  click Identify or Update, receive that board's bearer token at its own
-  address. Nothing the client can check today changes that: the TXT record,
-  hostname, and IP are all attacker-chosen, and pinning any of them (or a
-  TXT-advertised fingerprint) would authenticate nothing. This is the local
-  API's existing trust model — the wap's pairing-QR flow hands the same
-  `{base_url, token}` to any client on the LAN, and the token travels in
-  cleartext HTTP headers to the real board anyway — so the fleet book
-  inherits, rather than widens, "LAN admission is the boundary." What a
-  stolen token yields is bounded: Bearer-gated reads (status, diagnostics,
-  chain heads) and a signed-only, anti-rollback update trigger — never
-  firmware the pinned release key didn't sign, and never a raw frame.
+- **mDNS is unauthenticated by nature, and the fleet book no longer leans
+  on it.** A hostile device already admitted to your network can announce a
+  known Canary's `device_id` at its own address; nothing a client can check
+  changes that (the TXT record, hostname and IP are all attacker-chosen),
+  and the signed challenge `GET /api/device/enroll?nonce=` answers does not
+  settle it either — a peer that can reach the real board relays the nonce
+  and hands the signature back as its own. So the book sends nothing such a
+  host can use: the key goes only sealed to the identity recorded at flash
+  time (the bullet above). What a host at a spoofed address gets is a
+  ciphertext; what a relay gets is one request it can forward but not read,
+  replay or point at another route.
 
-  **What has shipped since, and what it does not fix.** canary-wap now
-  answers `GET /api/device/enroll?nonce=<hex>` with an Ed25519 signature over
-  `securacv-canary-sig|v1|whoami|<device_id>|<nonce>`. This page previously
-  called that endpoint "the structural fix"; **it is not**, and the fleet
-  book does not use it to gate anything. A signature over a nonce is not
-  channel binding: a hostile peer can spoof the announcement, relay your
-  nonce to the genuine device's (deliberately unauthenticated) endpoint, and
-  return the signature as its own — and that peer is by assumption already
-  on your LAN, which is exactly what let it spoof in the first place, so
-  relaying costs it nothing. Verifying such a proof and then handing over a
-  token would authenticate the key while telling you nothing about the
-  socket receiving the credential.
+  What the seal does **not** do, so nobody over-reads it: the request body
+  and the answer are not sealed (a relay can read a status answer, or
+  change identify's blink duration — the bodies on this verb set carry
+  nothing worth more), and the device still accepts a plain `Bearer`
+  header from every other client, so the wap's pairing-QR flow, the phone
+  app on a plain-http device and Home Assistant still hand the token to
+  whatever answers on the LAN. For those clients "LAN admission is the
+  boundary" stands as written; sealing their calls is the same protocol
+  applied to each of them, and is open. What a stolen token yields is
+  bounded as before: Bearer-gated reads and a signed-only, anti-rollback
+  update trigger — never firmware the pinned release key didn't sign, and
+  never a raw frame.
 
-  What the endpoint genuinely provides is narrower and still useful: proof
-  that a device holding that key was reachable and answered a challenge it
-  could not have precomputed. That rules out an impersonator who *cannot*
-  reach the real device — a stale announcement for a Canary that has left
-  the network, or a peer on a segment that cannot talk to it.
-
-  The structural fix requires the token exchange **itself** to be
-  authenticated to the device key — sealing the credential to that key, or
-  keying the channel with it — so that a relay cannot read what it forwards.
-  That is a protocol design decision, not a patch, and it is open. Until it
-  lands, this row of the trust model stands as written: LAN admission is the
-  boundary.
+  Why this and not https: the firmware advertises a `tls_cert_fp` and the
+  iPhone app pins it, but no stock build stores a certificate (sweep F15),
+  so there is nothing to pin on a fielded board; a browser-flashed board
+  could not pin a self-signed certificate at all; and a device that fell
+  back to plain HTTP (no certificate, a core without `esp_https_server`)
+  would have reopened the relay path exactly where it matters. Sealing to
+  the identity key the book already holds works on every build over the
+  transport every board has.

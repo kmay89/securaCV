@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openTicket, ingestEmail, parseEmail, classify, reply, slaBreaches, ticketByNumber, decodeWords } from '../src/modules/support.mjs';
+import { openTicket, ingestEmail, parseEmail, classify, reply, slaBreaches, ticketByNumber, decodeWords, htmlToText, BODY_MAX, MIME_DEPTH } from '../src/modules/support.mjs';
+import { enqueue } from '../src/modules/mail.mjs';
 import { testDb, testCfg } from './helpers.mjs';
 
 test('parseEmail handles folded headers, RFC 2047, multipart with QP and base64, and HTML-only mail', () => {
@@ -58,4 +59,45 @@ test('htmlToText drops script/style bodies, keeps block breaks, decodes entities
   assert.equal(htmlToText('<div>Hi<br>there &amp;lt; you</div><script>alert(1)</script><style>p{}</style><p>bye</p>'), 'Hi\nthere &lt; you\nbye\n');
   assert.equal(htmlToText('<scr<script>ipt>x</script>'), 'ipt>x');
   assert.equal(htmlToText('a <b'), 'a ');
+});
+
+test('a 2 MB bounce body is read in milliseconds, not minutes: the text is capped before anything scans it', () => {
+  const db = testDb(); const cfg = testCfg();
+  const raw = 'From: postmaster@relay.example.test\r\nSubject: Undeliverable: hi\r\nMessage-ID: <big@relay.example.test>\r\n\r\n' + 'a'.repeat(2 * 1024 * 1024);
+  const t0 = Date.now(); const m = parseEmail(raw); const r = ingestEmail(db, m, { cfg }); const ms = Date.now() - t0;
+  assert.ok(ms < 500, `took ${ms} ms`); assert.equal(m.text.length, BODY_MAX); assert.equal(r.ignored, 'bounce'); assert.deepEqual(r.bounced, []);
+  // the same body handed straight to the API is capped the same way
+  const t1 = Date.now(); const r2 = ingestEmail(db, { from: 'postmaster@relay.example.test', subject: 'Undeliverable: hi', text: 'b'.repeat(2 * 1024 * 1024) + ' x@y.test', messageId: '<big2@relay.example.test>' }, { cfg });
+  assert.ok(Date.now() - t1 < 500); assert.deepEqual(r2.bounced, []);
+  const r3 = ingestEmail(db, { from: 'ada@example.test', subject: 'long', text: 'c'.repeat(2 * 1024 * 1024), messageId: '<big3@x>' }, { cfg });
+  assert.equal(r3.ticket.messages[0].body.length, BODY_MAX);
+  db.close();
+});
+
+test('HTML-only mail with twenty thousand script tags is one walk, and a multipart nested thousands deep is read, not recursed', () => {
+  const t0 = Date.now(); const out = htmlToText('<p>hi</p>' + '<SCRIPT>var x = 1;</script>'.repeat(20_000) + '<style>a{}</STYLE>bye' + '<script>never closed');
+  assert.ok(Date.now() - t0 < 500); assert.equal(out, 'hi\nbye');
+  let body = 'Content-Type: text/plain\r\n\r\ndeep hello\r\n';
+  for (let i = 0; i < 3800; i++) body = `Content-Type: multipart/mixed; boundary="b${i}"\r\n\r\n--b${i}\r\n${body}\r\n--b${i}--\r\n`;
+  const m = parseEmail('From: a@b.test\r\nSubject: nest\r\n' + body);
+  assert.equal(typeof m.text, 'string'); assert.ok(m.text.length > 0, 'the part past the depth cap is kept as text'); assert.ok(m.text.includes('multipart/mixed'), `depth ${MIME_DEPTH} reached: the rest is opaque`); assert.deepEqual(m.attachments, []);
+  // a shallow nest still finds the plain part
+  const ok = parseEmail('From: a@b.test\r\nContent-Type: multipart/mixed; boundary="o"\r\n\r\n--o\r\nContent-Type: multipart/alternative; boundary="i"\r\n\r\n--i\r\nContent-Type: text/plain\r\n\r\ninner\r\n--i--\r\n--o--\r\n');
+  assert.equal(ok.text, 'inner');
+});
+
+test('threading trusts only our own Message-IDs, and a reply from another address than the ticket\'s contact is a flagged note', () => {
+  const db = testDb(); const cfg = testCfg();
+  const t = openTicket(db, { email: 'ada@example.test', subject: 'Help', body: 'x', cfg, messageId: '<ada-1@customer.test>' });
+  // a stranger who quotes the customer's own (sender-chosen) id does not land on her ticket
+  const r1 = ingestEmail(db, { from: 'Mallory <mallory@evil.test>', subject: 'Re: Help', text: 'me too', messageId: '<m-1@evil.test>', inReplyTo: '<ada-1@customer.test>' }, { cfg });
+  assert.ok(r1.created); assert.notEqual(r1.ticket.number, t.number);
+  // our outbox id does thread — for the customer as her own word, for anyone else as a note
+  const out = enqueue(db, { to: 'ada@example.test', subject: 'Re: Help', text: 'reply', kind: 'support', ref: `ticket:${t.number}` }); db.run('UPDATE mail_outbox SET message_id = ? WHERE id = ?', '<ours-1@errer.test>', out.id);
+  const r2 = ingestEmail(db, { from: 'ada@example.test', subject: 'Re: Help', text: 'thanks', messageId: '<ada-2@customer.test>', inReplyTo: '<ours-1@errer.test>' }, { cfg });
+  assert.equal(r2.ticket.number, t.number); assert.equal(r2.ticket.messages.at(-1).direction, 'in'); assert.equal(r2.stranger, undefined);
+  const r3 = ingestEmail(db, { from: 'mallory@evil.test', subject: `Re: [${t.number} ${t.thread_token}] Help`, text: 'send it to me instead', messageId: '<m-2@evil.test>', attachments: [{ filename: 'x.png', mime: 'image/png', bytes: Buffer.from('x') }] }, { cfg });
+  assert.equal(r3.ticket.number, t.number); assert.equal(r3.stranger, true); const note = r3.ticket.messages.at(-1); assert.equal(note.direction, 'note'); assert.match(note.body, /^\[from another address than the ticket's contact\] send it/); assert.equal(note.from_addr, 'mallory@evil.test'); assert.equal(r3.attachments, 0);
+  assert.equal(ticketByNumber(db, t.number).status, 'waiting_on_us', 'a note does not move the status the customer\'s reply set');
+  db.close();
 });

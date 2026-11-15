@@ -12,7 +12,10 @@
  * compared from one whose bearer was not (the lockout's HELD). The library
  * is handed its source explicitly and reads no peer; `peer` is the address
  * the test's request_peer_ipv4() stand-in hands the handlers cut from
- * securacv_network.cpp (the real one reads the socket with getpeername). */
+ * securacv_network.cpp (the real one reads the socket with getpeername), and
+ * the BOOT tap's asker is `peer` too, or `peer6` when the socket reports a
+ * real IPv6 address, through the test's request_peer_key() stand-in (sweep
+ * F354; `peer_unknown` is a socket that cannot say). */
 #ifndef STUB_SECURACV_AUTH_ESP_HTTP_SERVER_H
 #define STUB_SECURACV_AUTH_ESP_HTTP_SERVER_H
 
@@ -41,6 +44,9 @@ typedef struct httpd_req {
   std::map<std::string, std::string, HostCaseLess> headers;
   int value_reads = 0;  // httpd_req_get_hdr_value_str() calls
   uint32_t peer = 0;    // the socket peer's IPv4, host order, for request_peer_ipv4()
+  bool peer6_set = false;   // the socket peer is the IPv6 address below instead
+  uint8_t peer6[16] = {};   // network order, as sin6_addr holds it
+  bool peer_unknown = false;  // getpeername() fails: no asker the tap can name
 
   // The response, as the library sets it. The pointers are the caller's;
   // the send copies them into the strings below.

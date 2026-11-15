@@ -41,6 +41,16 @@
 //     {"error":"forbidden"}) and shows the unlock banner again; a 403
 //     {"error":"host"}, a 429 or an answer to a token since replaced keeps
 //     the one it has.
+//   - The Bluetooth lists (F422, the WAP page's F407): loadBtPairedDevices()
+//     wrote a bond's name, address and security into innerHTML as they
+//     came and spliced the address into the Trust and Remove onclick
+//     strings, and renderScanResults() wrote a nearby radio's advertised
+//     name, its address and type the same way. Both now draw every field
+//     through escapeHtml(), and Trust and Remove name their row by its index
+//     into the list the page drew (btPairedShown), so no bond text reaches
+//     an attribute. The markup they write is read as a browser parses it
+//     (html_fragment.js, the WAP page tests' tokenizer). No route in this
+//     firmware serves /api/bluetooth yet (F198), so this is latent there.
 // The functions are lifted out of the C++ raw string by literal markers that
 // stand in the page before and after these changes (so the old page runs
 // here and fails on what it does, not on a missing marker), and run against
@@ -57,6 +67,8 @@ const assert = require("node:assert");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const vm = require("node:vm");
+const { parseFragment, textElement, shape, attr, HOSTILE } =
+  require("../projects/canary-wap/arduino/canary_wap/html_fragment.js");
 
 const FW = join(__dirname, "..");
 const UI = process.env.CANARY_WEBUI || join(FW, "canary", "lib", "securacv_webui", "src", "securacv_webui.cpp");
@@ -707,4 +719,170 @@ test("every fetch that carries the token drops a refused one", () => {
   // The fourth is saveRecoveryKit(): the receipt answers a refused bearer
   // with the tap's 403 (physical_confirmation_required), which drops nothing.
   assert.match(slice("    async function saveRecoveryKit() {", "    // API calls"), /Authorization'\] = 'Bearer '/);
+});
+
+// ── The Bluetooth lists draw what a bond or a radio carries as text (F422) ─
+
+// escapeHtml() and the Bluetooth list glue, from btClearScan() (the scan
+// card's Clear, just before the paired list) to btSetName(): the paired list,
+// Remove, Clear all and Trust, and the list's own state where the page keeps
+// one (an older page has none). Both markers stand in the page before and
+// after F422.
+const escapeSrc = slice("    function escapeHtml(str) {", "\n    }\n") + "\n    }\n";
+const pairedSrc = slice("    async function btClearScan() {", "    async function btSetName() {");
+const scanSrc = slice("    function renderScanResults(devices) {", "    async function btRefreshScan() {");
+const settleAll = () => new Promise((r) => setImmediate(r));
+
+function btPage(answers) {
+  const el = dom();
+  const calls = [];
+  const alerts = [];
+  let served = 0;
+  const ctx = {
+    api: async (endpoint, method, body) => {
+      calls.push({ endpoint, method: method || "GET", body });
+      if (endpoint === "/api/bluetooth/paired" && !method) {
+        const devices = answers[Math.min(served++, answers.length - 1)];
+        return { count: devices.length, devices };
+      }
+      return { success: true };
+    },
+    document: { getElementById: el, createElement: () => textElement() },
+    confirm: () => true,
+    alert: (m) => alerts.push(m),
+  };
+  vm.createContext(ctx);
+  vm.runInContext(escapeSrc + pairedSrc + scanSrc, ctx);
+  return {
+    ctx, el, calls, alerts,
+    load: () => ctx.loadBtPairedDevices(),
+    list: () => parseFragment(el("btPairedList").innerHTML),
+    scan: (devices) => { ctx.renderScanResults(devices); return parseFragment(el("btScanList").innerHTML); },
+    // A tap on an element: its onclick attribute run as the page's script.
+    tap: async (button) => {
+      const code = attr(button, "onclick");
+      assert.ok(code, `${shape(button)} has an onclick`);
+      await vm.runInContext(code, ctx);
+      await settleAll();
+    },
+    // What Remove and Trust posted, in the sandbox's realm: read as JSON.
+    removed: () => calls.filter((c) => c.method === "DELETE" && c.endpoint === "/api/bluetooth/paired")
+      .map((c) => c.body.address),
+    trusted: () => calls.filter((c) => c.endpoint === "/api/bluetooth/paired/trust")
+      .map((c) => JSON.parse(JSON.stringify(c.body))),
+  };
+}
+
+// The text these tests feed every field: html_fragment.js's HOSTILE, the
+// list the WAP page tests feed theirs.
+const FED = HOSTILE;
+const BOND = { name: "Pixel 8", address: "aa:bb:cc:dd:ee:ff", security: "encrypted",
+               connection_count: 3, trusted: false, blocked: false };
+const buttons = (f) => f.elements.filter((e) => e.tag === "button");
+
+test("a paired row is a box, its name, its address, its security line, Trust and Remove", async () => {
+  const p = btPage([[BOND]]);
+  await p.load();
+  const f = p.list();
+  assert.deepStrictEqual(f.elements.map(shape), ["div[class style]", "div[style]", "div[]", "strong[]",
+    "div[style]", "div[style]", "div[style]", "button[class onclick]", "button[class onclick]"]);
+  assert.strictEqual(f.elements[3].text, "Pixel 8");
+  assert.strictEqual(f.elements[4].text, "aa:bb:cc:dd:ee:ff");
+  assert.strictEqual(f.elements[5].text, "Security: encrypted | Connections: 3");
+  assert.deepStrictEqual(buttons(f).map((b) => b.text), ["Trust", "Remove"]);
+});
+
+test("a bond's name, address or security that reads as markup makes no element, attribute or comment", async () => {
+  const own = await (async () => { const p = btPage([[BOND]]); await p.load(); return p.list().elements; })();
+  const devices = FED.map((h, k) => ({ ...BOND, name: h, address: FED[(k + 1) % FED.length],
+                                       security: FED[(k + 2) % FED.length], connection_count: FED[(k + 3) % FED.length] }));
+  const p = btPage([devices]);
+  await p.load();
+  const f = p.list();
+  assert.deepStrictEqual(f.elements.map(shape), devices.flatMap(() => own.map(shape)),
+                         "each row has exactly the row's own elements and attributes");
+  assert.deepStrictEqual(f.comments, [], "no comment opened");
+  devices.forEach((d, k) => {
+    const row = f.elements.slice(k * own.length, (k + 1) * own.length);
+    row.forEach((e, j) => {
+      for (const [n, v] of e.attrs) {
+        if (n !== "onclick") assert.strictEqual(v, attr(own[j], n), `row ${k}: ${e.tag} ${n}`);
+        for (const t of [d.name, d.address, d.security]) {
+          assert.ok(!v.includes(t), `row ${k}: no bond text in ${e.tag} ${n}`);
+        }
+      }
+    });
+    assert.strictEqual(row[3].text, d.name, `row ${k}: the name reads as sent`);
+    assert.strictEqual(row[4].text, d.address, `row ${k}: the address reads as sent`);
+    assert.strictEqual(row[5].text, `Security: ${d.security} | Connections: ${d.connection_count}`,
+                       `row ${k}: the security line reads as sent`);
+  });
+});
+
+test("Remove and Trust post an address that holds a quote as it was listed", async () => {
+  for (const address of ["aa:bb'cc", 'aa:bb"cc', "x'); alert(1);//", "aa:bb\\", "a\u2028b"]) {
+    for (const trusted of [false, true]) {
+      const p = btPage([[{ ...BOND, address, trusted }]]);
+      await p.load();
+      const [trust, remove] = buttons(p.list());
+      assert.strictEqual(trust.text, trusted ? "Untrust" : "Trust");
+      await p.tap(trust);
+      assert.deepStrictEqual(p.trusted(), [{ address, trusted: !trusted }], JSON.stringify(address));
+      await p.tap(remove);
+      assert.deepStrictEqual(p.removed(), [address], JSON.stringify(address));
+    }
+  }
+});
+
+test("Trust and Remove on each row act on exactly that row's bond", async () => {
+  const devices = FED.map((h, k) => ({ ...BOND, name: "Phone", address: h, trusted: k % 2 === 1 }));
+  const p = btPage([devices]);
+  await p.load();
+  const b = buttons(p.list());
+  assert.strictEqual(b.length, 2 * devices.length);
+  for (const [k, d] of devices.entries()) {
+    await p.tap(b[2 * k]);
+    assert.deepStrictEqual(p.trusted().at(-1), { address: d.address, trusted: !d.trusted }, `row ${k}`);
+    await p.tap(b[2 * k + 1]);
+    assert.strictEqual(p.removed().at(-1), d.address, `row ${k}`);
+  }
+  assert.deepStrictEqual(p.removed(), devices.map((d) => d.address));
+});
+
+test("Remove names the bond the list shows now, after the list has changed", async () => {
+  const first = [{ ...BOND, name: "A", address: "11:11:11:11:11:11" }, { ...BOND, name: "B", address: "22:22:22:22:22:22" }];
+  const then = [{ ...BOND, name: "B", address: "22:22:22:22:22:22" }];
+  const p = btPage([first, then]);
+  await p.load();
+  await p.load();                       // the list as the device now answers it
+  const b = buttons(p.list());
+  assert.strictEqual(b.length, 2);
+  await p.tap(b[1]);
+  assert.deepStrictEqual(p.removed(), ["22:22:22:22:22:22"]);
+});
+
+test("a nearby radio's name, address, type or signal that reads as markup makes nothing", () => {
+  const plain = { name: "Watch", address: "11:22:33:44:55:66", rssi: -60, type: "wearable", is_securacv: false };
+  const own = btPage([[]]).scan([plain]).elements;
+  assert.deepStrictEqual(own.map(shape), ["div[class style]", "div[style]", "div[]", "span[style]", "strong[]",
+    "div[style]", "div[style]", "div[style]", "div[style]"]);
+  for (const h of FED) {
+    const f = btPage([[]]).scan([{ ...plain, name: h, address: h, type: h, rssi: h }]);
+    const label = JSON.stringify(h.slice(0, 30));
+    assert.deepStrictEqual(f.comments, [], label);
+    assert.deepStrictEqual(f.elements.map(shape), own.map(shape), label);
+    // The signal line's color is the page's own, picked by comparing the
+    // signal: one of its three, whatever was sent.
+    const COLORS = ["success", "warning", "danger"].map((c) => `color:var(--${c});font-weight:600;`);
+    f.elements.forEach((e, j) => {
+      for (const [n, v] of e.attrs) {
+        if (j === 7 && n === "style") assert.ok(COLORS.includes(v), `${label}: the signal's color ${v}`);
+        else assert.strictEqual(v, attr(own[j], n), `${label}: ${e.tag} ${n}`);
+      }
+    });
+    assert.strictEqual(f.elements[4].text, h, `${label}: the name reads as sent`);
+    assert.strictEqual(f.elements[5].text, h, `${label}: the address reads as sent`);
+    assert.strictEqual(f.elements[7].text, `${h} dBm`, `${label}: the signal reads as sent`);
+    assert.strictEqual(f.elements[8].text, h, `${label}: the type reads as sent`);
+  }
 });

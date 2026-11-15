@@ -162,15 +162,17 @@ All responses (including static files) include:
 |--------|-------|
 | `X-Content-Type-Options` | `nosniff` |
 | `X-Frame-Options` | `DENY` |
-| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' http://*.local http://192.168.* http://10.* http://172.16-31.*` |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' http://*.local` |
 | `Cache-Control` | `no-store` |
 | `Referrer-Policy` | `no-referrer` |
 
-The CSP `connect-src` directive allows the SPA to reach other Canary devices on the LAN (mDNS `.local` and RFC 1918 addresses) while blocking connections to the public internet.
+The CSP `connect-src` directive lets the SPA this server serves reach two things: its own origin (`'self'`, the address you opened it from, whatever that is) and other Canary devices by their mDNS `.local` name on port 80 (`http://canary-b1c2.local`; CSP also lets that source match the same name over https on 443). Everything else is refused by the browser before a request leaves the page: the public internet, a `.local` name on another port, and **any device entered or listed only by its LAN IP**, such as `http://192.168.1.47`. Enter a device by its `.local` name (`canary-a3f7.local`), or open the SPA from that device's own address. The SPA's own address check (`isPrivateUrl()` in `spa/app.js`; the SPA Compliance list below) still accepts an RFC 1918 IP, so an IP entry passes that check and is then blocked by CSP.
+
+CSP has no way to name an IP range. A host source's wildcard may stand only for the whole leftmost label (`*.local`), so a source such as `http://192.168.*` matches nothing. This header listed eighteen such range sources until sweep F427 (2026-11); headless Chromium logged each as an invalid source and ignored it, so dropping them changed nothing a browser enforces. Widening `connect-src` to the `http:` scheme would reach IP-only devices, and would also let an injected script send data to any http host; that trade is not made here. What the served header allows was recorded in headless Chromium against `node device-api/server.js` (sweep F427): a fetch to `'self'`, `http://<name>.local` and `https://<name>.local` passes CSP; `http://192.168.1.47`, `http://10.0.0.5`, `http://<name>.local:8080`, a `ws://` or `wss://<name>.local` socket and `https://example.com` are refused. Other browsers were not tried.
 
 `X-Powered-By` is disabled.
 
-**Test:** `tests/security/security-headers.test.js`
+**Test:** `tests/security/security-headers.test.js` (every `connect-src` source must be one the CSP3 grammar accepts, and this table's string and `firmware-integration.md`'s snippet must equal the served header)
 
 ---
 

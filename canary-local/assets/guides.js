@@ -325,6 +325,20 @@ export const DISPLAY_FIXES = [
   },
 ];
 
+// The screen-dark flow's download-mode guess, staged and told the same way on
+// every card; its words about the serial panel are the chip's own (the two
+// "Second guess" steps in BENCH_FIXES, sweep A101).
+const parkInDownload = async (ctx) => {
+  ctx.bench?.setBootHeld(true);
+  ctx.bench?.pressReset();
+  ctx.bench?.setBootHeld(false);
+  ctx.note?.("check the serial panel — then press RESET on the bench to recover");
+};
+const DARK_SERIAL_SILENT =
+  "Serial silent AND the screen dark at 10:00? Now suspect the " +
+  "display ribbon or the panel supply — the brain and the glass " +
+  "have separate failure modes.";
+
 // ── The bench's debug curriculum ────────────────────────────────────────
 // Symptom-first flows for the PHYSICAL layer — cable, battery, switch,
 // buttons, the hardwired lights. ctx additionally carries `bench` (the
@@ -332,37 +346,76 @@ export const DISPLAY_FIXES = [
 // staged state is exactly what the power plane would do to real silicon,
 // and where hardware genuinely can't do a thing (turn off a rail LED from
 // software), the flow says so instead of pretending.
+//
+// A symptom or step that names a board light says which (`lights`: registry
+// led ids, the lights its words name), and benchFixesFor() offers it only
+// where the card's bench block lists every one of them (sweep A128). A step
+// marked `unlit` is the other half of a variant: offered only where the card
+// lists none of those ids, so each card gets the telling its own lights
+// allow. A flow's `wordings` say its symptom where the card does not list
+// the lights the symptom names (`Screen dark` on a card with no PWR), the
+// first that fits; a flow with no wording or no step that fits is not
+// offered. Each flow's `id` names it whatever a card's wording says.
+// A symptom or step whose words stage a light's no-battery flicker says so
+// too (`flicker`: led ids), and is offered only where the card's bench block
+// flags that light `flicker_without_battery` (the watch's CHG; the dashes'
+// CHG goes dark with USB in and no battery, and the bench shows it so).
+const watchLedRail = async (ctx) => {
+  ctx.bench?.setUsb(true);
+  ctx.note?.("watch the LED rail — the firmware has no say in it");
+};
+const unplugOnBattery = async (ctx) => {
+  ctx.bench?.setBattery(true);
+  ctx.bench?.setSwitch(true);
+  ctx.bench?.setUsb(false);
+};
+const fitTheBattery = async (ctx) => {
+  ctx.bench?.setUsb(true);
+  ctx.bench?.setBattery(true);
+};
+const everythingRemoved = async (ctx) => {
+  ctx.bench?.setUsb(false);
+  ctx.bench?.setBattery(false);
+};
 export const BENCH_FIXES = [
   {
-    symptom: "A red light is always on — can I turn it off?",
+    id: "light-on",
+    symptom: "The PWR light is always on — can I turn it off?",
+    lights: ["pwr"],
+    wordings: [{ lights: ["chg"], symptom: "The CHG light stays on — can I turn it off?" }],
     steps: [
       {
         title: "Those lights don't answer to software",
+        lights: ["pwr", "chg", "done"],
         body:
-          "The power/charge LEDs (PWR, CHG, DONE on the dash; CHG on the " +
-          "watch's XIAO) are wired to the power rail and the charge chip — " +
-          "not to any pin the ESP32 controls. No setting, no firmware " +
-          "update, no amount of code can switch them off while the board " +
-          "is powered. The bench proves it: the firmware is running right " +
-          "now, and it has no knob for this.",
-        stage: async (ctx) => {
-          ctx.bench?.setUsb(true);
-          ctx.note?.("watch the LED rail — the firmware has no say in it");
-        },
+          "The power/charge LEDs (PWR, CHG, DONE) are wired to the power " +
+          "rail and the charge chip — not to any pin the ESP32 controls. No " +
+          "setting, no firmware update, no amount of code can switch them " +
+          "off while the board is powered. The bench proves it: the " +
+          "firmware is running right now, and it has no knob for this.",
+        stage: watchLedRail,
+      },
+      {
+        title: "That light doesn't answer to software",
+        lights: ["chg"],
+        unlit: ["pwr"],
+        body:
+          "The CHG LED is wired to the charge chip — not to any pin the " +
+          "ESP32 controls. No setting, no firmware update, no amount of code " +
+          "can switch it off while the chip is charging. The bench proves " +
+          "it: the firmware is running right now, and it has no knob for this.",
+        stage: watchLedRail,
       },
       {
         title: "What actually turns them off",
+        lights: ["pwr", "chg", "done"],
         body:
           "Physics only: PWR follows the rail (cut all power and it dies), " +
           "CHG goes out when charging finishes or USB leaves, DONE only " +
           "glows while a full battery sits on USB. We just unplugged USB — " +
           "watch the charge lights drop while the board rides the battery.",
         battery: true, // stages a battery: never offered where the board has none
-        stage: async (ctx) => {
-          ctx.bench?.setBattery(true);
-          ctx.bench?.setSwitch(true);
-          ctx.bench?.setUsb(false);
-        },
+        stage: unplugOnBattery,
         onDevice:
           "If the glow bothers you at night: the enclosures are designed to " +
           "shade the board LEDs, and a small square of matte tape over the " +
@@ -370,7 +423,24 @@ export const BENCH_FIXES = [
           "only honest window into the charger.",
       },
       {
+        title: "What actually turns it off",
+        lights: ["chg"],
+        unlit: ["pwr", "done"],
+        body:
+          "Physics only: CHG goes out when charging finishes or USB leaves. " +
+          "We just unplugged USB — watch it drop while the board rides the " +
+          "battery.",
+        battery: true, // stages a battery: never offered where the board has none
+        stage: unplugOnBattery,
+        onDevice:
+          "If the glow bothers you at night: the enclosures are designed to " +
+          "shade the board LEDs, and a small square of matte tape over the " +
+          "light is bench-legal. Don't desolder — CHG is your only honest " +
+          "window into the charger.",
+      },
+      {
         title: "The one exception",
+        lights: ["user"],
         body:
           "The watch's XIAO carries a USER LED on GPIO21 — that one IS " +
           "firmware territory. This firmware leaves it dark on purpose " +
@@ -380,10 +450,15 @@ export const BENCH_FIXES = [
     ],
   },
   {
-    symptom: "The charge light is flickering",
+    id: "charge-flicker",
+    symptom: "The CHG light is flickering",
+    lights: ["chg"],
+    flicker: ["chg"],
     steps: [
       {
         title: "It's hunting for a battery",
+        lights: ["chg"],
+        flicker: ["chg"],
         body:
           "On the watch's XIAO, a flickering CHG light with USB in means no " +
           "battery is fitted — the charge chip keeps probing for a cell and " +
@@ -396,27 +471,28 @@ export const BENCH_FIXES = [
       },
       {
         title: "Fit the battery and it settles",
+        lights: ["chg"],
         body:
-          "Battery back in: CHG goes steady while filling, then hands over " +
-          "(off on the watch, DONE on the dash) when the cell is full. Use " +
-          "the bench's fast-forward to watch the handover without waiting.",
+          "Battery back in: CHG goes steady while filling, then goes out " +
+          "when the cell is full. Use the bench's fast-forward to watch it " +
+          "go out without waiting.",
         battery: true, // stages a battery: never offered where the board has none
-        stage: async (ctx) => {
-          ctx.bench?.setUsb(true);
-          ctx.bench?.setBattery(true);
-        },
+        stage: fitTheBattery,
       },
     ],
   },
   {
-    symptom: "Screen dark, but the power light is on",
+    id: "screen-dark",
+    symptom: "Screen dark, but the PWR light is on",
+    lights: ["pwr"],
+    wordings: [{ symptom: "Screen dark" }],
     steps: [
       {
         title: "First guess: it's asleep, not broken",
         body:
           "During quiet hours the glass idles near-dark (watch) or off " +
-          "(dash) on purpose, while the board — and its PWR light — stay " +
-          "up. Tap the glass for a dim peek. Staged: 23:00.",
+          "(dash) on purpose, while the board stays up. Tap the glass for a " +
+          "dim peek. Staged: 23:00.",
         stage: async (ctx) => {
           ctx.bench?.setUsb(true);
           ctx.emu.setTimeScale(1);
@@ -430,23 +506,37 @@ export const BENCH_FIXES = [
         rom: [{ kind: "download", quote: "waiting for download" }],
         body:
           "If BOOT was held (or wedged by an enclosure misfit) when the " +
-          "board last reset, the ROM sits in download mode: rail up, PWR " +
-          "lit, screen dead, serial saying 'waiting for download'. We just " +
-          "did exactly that. Press RESET — alone — and it boots normally.",
-        stage: async (ctx) => {
-          ctx.bench?.setBootHeld(true);
-          ctx.bench?.pressReset();
-          ctx.bench?.setBootHeld(false);
-          ctx.note?.("check the serial panel — then press RESET on the bench to recover");
-        },
-        onDevice:
-          "Serial silent AND the screen dark at 10:00? Now suspect the " +
-          "display ribbon or the panel supply — the brain and the glass " +
-          "have separate failure modes.",
+          "board last reset, the ROM sits in download mode: rail up, screen " +
+          "dead, serial saying 'waiting for download'. We just did exactly " +
+          "that. Press RESET — alone — and it boots normally.",
+        stage: parkInDownload,
+        onDevice: DARK_SERIAL_SILENT,
+      },
+      {
+        title: "Second guess: the ROM is waiting for a flasher",
+        // The same guess for a board whose chip's ROM voice holds no
+        // download line (the Nightlight's ESP32-C3: no Espressif source the
+        // Lab quotes prints its download banner): offered on a card that
+        // names its chip exactly where the step above is not (benchFixesFor,
+        // sweep A101). It quotes no ROM line; it names the bench's own note,
+        // which romBanner() prints there.
+        romMissing: "download",
+        strap: true, // names the BOOT strap: benchFixesFor() says the board's own
+        body:
+          "If BOOT (GPIO0) was held (or wedged by an enclosure misfit) when " +
+          "the board last reset, the ROM sits in download mode: rail up, " +
+          "screen dead, the app never started. We just did exactly that. " +
+          "The serial panel shows the bench's own note where the ROM's " +
+          "banner would be — the ROM waits for a flasher, and the Lab quotes " +
+          "no download-mode banner for this chip. Press RESET — alone — and " +
+          "it boots normally.",
+        stage: parkInDownload,
+        onDevice: DARK_SERIAL_SILENT,
       },
     ],
   },
   {
+    id: "download-banner",
     symptom: "Serial says 'waiting for download'",
     // the symptom itself quotes the ROM's download banner (sweep A83)
     rom: [{ kind: "download", quote: "waiting for download" }],
@@ -478,18 +568,30 @@ export const BENCH_FIXES = [
     ],
   },
   {
-    symptom: "Nothing at all — no lights, no glass",
+    id: "no-power",
+    symptom: "Nothing at all — no PWR light, no glass",
+    lights: ["pwr"],
+    wordings: [{ symptom: "Nothing at all — the glass stays dark" }],
     steps: [
       {
         title: "No light means no power — full stop",
+        lights: ["pwr"],
         body:
-          "The PWR/CHG LEDs sit ahead of everything the firmware does. If " +
-          "every light is dark, the board has no rail: cable, switch, or " +
+          "The PWR LED hangs off the rail, ahead of everything the firmware " +
+          "does: if it is dark, the board has no rail — cable, switch, or " +
           "battery. We just staged the worst case — everything removed.",
-        stage: async (ctx) => {
-          ctx.bench?.setUsb(false);
-          ctx.bench?.setBattery(false);
-        },
+        stage: everythingRemoved,
+      },
+      {
+        title: "Dead glass and a silent serial: start with power",
+        unlit: ["pwr"],
+        body:
+          "The glass and the serial port are the tells here: both dead on a " +
+          "known-good data cable most likely means the board has no rail — " +
+          "cable, switch, or battery. We just staged the worst case — " +
+          "everything removed: the bench's power line reads 'none — rail " +
+          "down' and the serial port is gone.",
+        stage: everythingRemoved,
       },
       {
         title: "Work the power path in order",
@@ -509,6 +611,7 @@ export const BENCH_FIXES = [
     ],
   },
   {
+    id: "unplug-dies",
     symptom: "It died the moment I unplugged the cable",
     steps: [
       {
@@ -544,6 +647,7 @@ export const BENCH_FIXES = [
     ],
   },
   {
+    id: "reboots",
     symptom: "It reboots by itself",
     steps: [
       {
@@ -588,6 +692,7 @@ export const BENCH_FIXES = [
     ],
   },
   {
+    id: "boot-silent",
     symptom: "Pressing BOOT does nothing",
     steps: [
       {
@@ -618,12 +723,13 @@ export const BENCH_FIXES = [
           "lists what each press does (hover the BOOT chip). On real " +
           "hardware, a press that does nothing is a press that never " +
           "reaches the pin — a case that misses the button, or a stuck " +
-          "one. This bench's BOOT holds the strap only and is not wired to " +
-          "the twin's button input, so the glass will not answer it. Hold " +
-          "it AND press RESET — download mode.",
+          "one. On this bench the BOOT toggle holds the strap only; the " +
+          "press control beside it presses the twin's button while the app " +
+          "runs, and the twin answers with the same firmware code. Hold the " +
+          "strap AND press RESET — download mode.",
         stage: async (ctx) => {
           ctx.bench?.setBootHeld(true);
-          ctx.note?.("BOOT held — the strap only; the bench does not press the twin's button");
+          ctx.note?.("BOOT strap held — the strap only; the press control beside it presses the twin's button");
         },
       },
       {
@@ -655,35 +761,78 @@ export const BENCH_FIXES = [
 // the voice is the lines the Lab quotes, not all a chip's ROM prints, and for
 // the Nightlight's ESP32-C3 it quotes no restart or download banner (no
 // Espressif source on file quotes a production C3's), so no flow tells that
-// card to look for one. A step marked `boot` is
+// card to look for one. A step marked `romMissing` (a kind) is the other half:
+// offered exactly where the board names its chip and that chip's ROM voice
+// holds no line of that kind, so a card whose chip has no quoted download
+// banner still gets its download-mode guess, told in the bench's own words
+// (sweep A101). A step marked `boot` is
 // offered only where the board's BOOT button says the running firmware
 // reads it ("read") or never does ("ignored"): `read_while_running`, and
 // neither where the bench block does not say (sweep A83).
+// A symptom or step that names a board light is offered only where the
+// card's bench block lists it (`lights`, by registry led id; `unlit` for the
+// other half of a variant), and a symptom the card cannot say as written is
+// said in the first of its `wordings` that fits (sweep A128): all seven cards
+// used to be offered flows naming lights their blocks do not list ("PWR lit"
+// on boards that list no PWR, the watch's USER LED on the dashes).
 const FLOWS_STRAP = "GPIO0";
+// The board's ROM voice holds a line of this kind (a string, not null).
+function romHas(profile, kind) {
+  const voice = ROM_VOICES[profile?.rom?.chip];
+  return !!voice && typeof voice[kind] === "string";
+}
+// A `romMissing` step: the board names its chip (so romBanner() prints the
+// bench's note there) and that chip's voice holds no line of the kind.
+function romLacks(profile, kind) {
+  if (!kind) return true;
+  return !!profile?.rom?.chip && !romHas(profile, kind);
+}
 function romSays(profile, quotes) {
   if (!quotes) return true;
   const voice = ROM_VOICES[profile?.rom?.chip];
-  return !!voice && quotes.every(({ kind, quote }) => typeof voice[kind] === "string" && voice[kind].includes(quote));
+  return !!voice && quotes.every(({ kind, quote }) => romHas(profile, kind) && voice[kind].includes(quote));
 }
 function bootSays(profile, boot) {
   if (!boot) return true;
   const reads = (profile?.buttons || []).find((b) => b.id === "boot")?.read_while_running;
   return typeof reads === "boolean" && (boot === "read") === reads;
 }
+// A symptom or step's `lights` are all lights the card lists, its `unlit`
+// none of them, and its `flicker` lights the card's bench block flags
+// flicker_without_battery (sweep A128). `lit` holds the card's led ids and
+// the flagged ones: none where its bench block lists none, or has no `leds`
+// at all (the Nightlight).
+function lightsFit(lit, x) {
+  return (x.lights || []).every((id) => lit.listed.has(id))
+    && !(x.unlit || []).some((id) => lit.listed.has(id))
+    && (x.flicker || []).every((id) => lit.flickers.has(id));
+}
 export function benchFixesFor(profile) {
   const strap = profile?.rom?.boot_strap;
   const restrap = !!strap && strap !== FLOWS_STRAP;
   const pin = (t) => (typeof t === "string" ? t.split(FLOWS_STRAP).join(strap) : t);
+  const leds = profile?.leds || [];
+  const lit = { listed: new Set(leds.map((l) => l.id)), flickers: new Set(leds.filter((l) => l.flicker_without_battery).map((l) => l.id)) };
   return BENCH_FIXES
     .filter((f) => romSays(profile, f.rom))
-    .map((f) => ({
-      ...f,
-      steps: f.steps
-        .filter((st) => profile?.power?.battery || !st.battery)
-        .filter((st) => romSays(profile, st.rom) && bootSays(profile, st.boot))
-        .map((st) => (restrap && st.strap ? { ...st, title: pin(st.title), body: pin(st.body), onDevice: pin(st.onDevice) } : st)),
-    }))
-    .filter((f) => f.steps.length);
+    .map((f) => {
+      // the card's own words for the symptom: the flow's where it lists the
+      // lights they name, else the first wording that fits it
+      const said = [f, ...(f.wordings || [])].find((w) => lightsFit(lit, w));
+      const flow = { ...f };
+      delete flow.wordings; // the card's own wording stands in their place
+      return {
+        ...flow,
+        symptom: said?.symptom,
+        lights: said?.lights || [],
+        steps: f.steps
+          .filter((st) => profile?.power?.battery || !st.battery)
+          .filter((st) => romSays(profile, st.rom) && romLacks(profile, st.romMissing) && bootSays(profile, st.boot))
+          .filter((st) => lightsFit(lit, st))
+          .map((st) => (restrap && st.strap ? { ...st, title: pin(st.title), body: pin(st.body), onDevice: pin(st.onDevice) } : st)),
+      };
+    })
+    .filter((f) => f.symptom && f.steps.length);
 }
 
 // Witnesses (no glass): the decoder cards the page shows instead of an

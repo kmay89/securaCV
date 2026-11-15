@@ -21,7 +21,9 @@ import { marketing } from '../src/modules/marketing.mjs';
 import { stateTileMap } from '../src/statemap.mjs';
 import { setTimezone, dt, day, zonedToUtc, hourIn } from '../src/render.mjs';
 import { createInvoice, issueInvoice, remindInvoice } from '../src/modules/invoices.mjs';
-import { openExceptions } from '../src/modules/exceptions.mjs';
+import { openExceptions, raise } from '../src/modules/exceptions.mjs';
+import { recordSession, markSessionExpired } from '../src/modules/recovery.mjs';
+import { openClaim } from '../src/modules/warranty.mjs';
 import { createApp } from '../src/server.mjs';
 import { createApiToken, setupOperator, totp } from '../src/auth.mjs';
 import { tinyPng } from '../src/modules/demo.mjs';
@@ -129,17 +131,32 @@ test('a recall by firmware finds every board, where it went and who has it; one 
   db.close();
 });
 
-test('the right to be forgotten blanks the person and keeps the books; the export is everything we hold', () => {
+test('the right to be forgotten blanks the person and keeps the books; the export is everything we hold', async () => {
   const db = testDb(); const cfg = testCfg(); const cat = catalog();
   const { order } = recordOrder(db, sampleOrder(), { catalog: cat }); const ct = contactById(db, order.contact_id); joinWaitlist(db, ct.id, 'vision-kit');
   const t = openTicket(db, { email: ct.email, subject: 'Help', body: 'My address is 1 Analytical Way', cfg, autoAck: false }); addMessage(db, t.id, { direction: 'in', body: 'photo', from_addr: ct.email }); saveAtt(db, t);
+  // the address written elsewhere than its own column
+  recordSession(db, { id: 'cs_forget_1', amount_cents: 100, lines: '1x wap-kit' }); markSessionExpired(db, { id: 'cs_forget_1', email: 'Ada@example.test', recovery_url: 'https://checkout.stripe.com/c/pay/r1' });
+  createInvoice(db, { email: ct.email, name: 'Ada Lovelace', bill_to: 'Ada Lovelace\nada@example.test', po_number: 'PO-ADA-1', items: [{ sku: 'wap-kit', description: 'kit', qty: 1, unit_cents: 6900 }] });
+  openClaim(db, { orderNumber: order.number, email: ct.email, category: 'dead_board', description: 'no lights, mail me at ada@example.test', cfg });
+  transition(db, order.id, 'packed', { actor: 'test', cfg }); transition(db, order.id, 'shipped', { actor: 'test', cfg, carrier: 'USPS', tracking: '9400100000000000000001' });
+  assert.ok(timeline(db, order.id).some(ev => ev.kind === 'shipped' && ev.text.includes('tracking emailed to the customer') && !ev.text.includes('@')), 'the timeline never names the address');
+  db.run('INSERT INTO order_events (order_id, at, kind, actor, text) VALUES (?, ?, ?, ?, ?)', order.id, '2026-01-01T00:00:00.000Z', 'shipped', 'legacy', 'Shipped · tracking emailed to ada@example.test');
+  await raise(db, cfg, 'sla:T-000001', 'support [sla]: T-000001', 'Help\nfrom ada@example.test · opened today');
   const before = trialBalance(db); const x = exportContact(db, ct.email);
-  assert.equal(x.contact.email, 'ada@example.test'); assert.equal(x.contact.consent_token, undefined, 'tokens are not exported'); assert.equal(x.orders.length, 1); assert.equal(x.orders[0].items[0].sku, 'wap-kit'); assert.equal(x.tickets.length, 1); assert.equal(x.waitlist.length, 1); assert.ok(x.mail.length >= 0); assert.ok(x.exported_at);
-  const r = forgetContact(db, ct.email, { actor: 'cli' }); assert.deepEqual([r.orders, r.tickets, r.attachments, r.waitlist], [1, 1, 1, 1]);
+  assert.equal(x.checkouts.length, 1); assert.equal(x.invoices[0].po_number, 'PO-ADA-1'); assert.match(x.warranty_claims[0].description, /no lights/); assert.equal(x.exceptions[0].key, 'sla:T-000001'); assert.ok(x.orders[0].events.some(ev => ev.text.includes('ada@example.test')));
+  assert.equal(x.contact.email, 'ada@example.test'); assert.equal(x.contact.consent_token, undefined, 'tokens are not exported'); assert.equal(x.orders.length, 1); assert.equal(x.orders[0].items[0].sku, 'wap-kit'); assert.equal(x.tickets.length, 2, 'the help ticket and the warranty claim\'s'); assert.equal(x.waitlist.length, 1); assert.ok(x.mail.length >= 0); assert.ok(x.exported_at);
+  const r = forgetContact(db, ct.email, { actor: 'cli' }); assert.deepEqual([r.orders, r.tickets, r.attachments, r.waitlist], [1, 2, 1, 1]);
   const g = contactById(db, ct.id); assert.equal(g.email, `forgotten-${ct.id}@forgotten.invalid`); assert.equal(g.name, 'Forgotten customer'); assert.ok(g.forgotten_at); assert.equal(g.consent_marketing, 0); assert.equal(contactByEmail(db, 'ada@example.test') ?? null, null);
   const o = db.get('SELECT * FROM orders WHERE id = ?', order.id); assert.equal(o.ship_line1, '(forgotten)'); assert.equal(o.ship_city, ''); assert.equal(o.ship_state, 'MA', 'the state stays for the sales-tax table'); assert.equal(o.total_cents, 7700); assert.equal(o.number, order.number);
   assert.equal(db.get('SELECT body FROM ticket_messages WHERE ticket_id = ? ORDER BY id LIMIT 1', t.id).body, "(forgotten at the customer's request)"); assert.equal(attachmentsFor(db, t.id).length, 0); assert.equal(db.get('SELECT subject, status FROM tickets WHERE id = ?', t.id).status, 'closed');
   assert.deepEqual(trialBalance(db).rows, before.rows, 'the ledger is untouched');
+  assert.equal(db.get("SELECT email FROM checkout_sessions WHERE id = 'cs_forget_1'").email, null); assert.equal(r.checkouts, 1);
+  const inv = db.get('SELECT bill_to, po_number FROM invoices WHERE contact_id = ?', ct.id); assert.equal(inv.bill_to, '(forgotten)'); assert.equal(inv.po_number, null);
+  assert.equal(db.get('SELECT description FROM warranty_claims WHERE contact_id = ?', ct.id).description, "(forgotten at the customer's request)");
+  assert.equal(db.get("SELECT text FROM order_events WHERE order_id = ? AND actor = 'legacy'", order.id).text, 'Shipped · tracking emailed to [forgotten]');
+  assert.equal(db.get("SELECT body FROM exceptions WHERE key = 'sla:T-000001'").body, 'Help\nfrom [forgotten] · opened today');
+  assert.ok(!db.all('SELECT text FROM order_events WHERE order_id = ?', order.id).some(ev => ev.text.includes('ada@')) && !db.all('SELECT body FROM exceptions').some(e => e.body.includes('ada@')) && !db.all('SELECT body_text FROM mail_outbox').some(m => m.body_text.includes('ada@')), 'nothing left names her');
   assert.equal(forgetContact(db, ct.id).already, true); assert.throws(() => forgetContact(db, 'nobody@example.test'), /no such/);
   assert.ok(db.get("SELECT 1 AS ok FROM audit_log WHERE action = 'contact.forget' AND entity_id = ?", String(ct.id)), 'logged');
   db.close();

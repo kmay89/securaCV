@@ -8,7 +8,7 @@
     "min_ha": "2026.5.0",
     "source": "custom_components/securacv/manifest.json + hacs.json"
   },
-  "fw_train": "2.4.18",
+  "fw_train": "2.4.19",
   "upstream": {
     "haos_version": "18.1",
     "ha_version": "2026.7.2",
@@ -415,7 +415,7 @@
             "cmd": "mosquitto_sub -h localhost -v -C 4 -t 'securacv/+/status' -t 'securacv/+/health' -t 'securacv/+/chain' -t 'securacv/+/counts'",
             "out": [
               "securacv/canary-s3-4dC2/status {\"online\":true,\"device_type\":\"canary-wap\",\"csi_running\":true,\"wifi_connected\":true,\"rssi\":-58}",
-              "securacv/canary-s3-4dC2/health {\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.18-wap\",\"public_key\":\"\u2026\",\"event_id_space_low\":false,\"sd_mounted\":true}",
+              "securacv/canary-s3-4dC2/health {\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.19-wap\",\"public_key\":\"\u2026\",\"event_id_space_low\":false,\"sd_mounted\":true}",
               "securacv/canary-s3-4dC2/chain {\"v\":1,\"length\":312,\"latest_hash\":\"a1b2\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}",
               "securacv/canary-s3-4dC2/counts {\"v\":1,\"total\":312,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
             ],
@@ -598,7 +598,7 @@
     },
     {
       "name": "Last Event",
-      "desc": "latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28), every other stateless row `unknown` (`last_event`; signed `events` topic)"
+      "desc": "latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28; an entities card shows them as Daily summary and Quiet Hours summary, the timeline card's words, HA41), every other stateless row `unknown`; the event that creates it (a device's first on the topic) is shown too, verified and replay-gated like any other (HA44) (`last_event`; signed `events` topic)"
     },
     {
       "name": "Health",
@@ -614,7 +614,7 @@
     },
     {
       "name": "Radar Link",
-      "desc": "`ok` / `stale` / `down` for the UART link to the radar module, canary-sense devices only (`radar_link`; `health` topic, unsigned; diagnostic)"
+      "desc": "`ok` / `stale` / `down` for the UART link to the radar module, on a canary-sense, and on a canary-sentinel whose health reports a `radar` object, which a Sentinel Lite (no radar) never sends (`radar_link`; `health` topic, unsigned; diagnostic)"
     },
     {
       "name": "Online",
@@ -678,11 +678,11 @@
     },
     {
       "name": "Motion",
-      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
+      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic, the event that creates them included (HA44), and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
     },
     {
       "name": "Occupancy",
-      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
+      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic, the event that creates them included (HA44), and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
     },
     {
       "name": "WiFi AP",
@@ -798,6 +798,11 @@
       "topic": "securacv/{device_id}/chain",
       "direction": "Device \u2192 HA",
       "content": "Hash chain state"
+    },
+    {
+      "topic": "securacv/{device_id}/state",
+      "direction": "Device \u2192 HA",
+      "content": "canary-sense: the retained room snapshot; its presence/occupants/breathing words carry a `state`-kind signature (`chain_length`, `seq`, `sig`) the kernel's fleet roll-call verifies \u2014 the readings beside them are unsigned"
     },
     {
       "topic": "securacv/{device_id}/tamper",

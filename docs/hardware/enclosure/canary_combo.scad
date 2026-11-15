@@ -87,6 +87,17 @@
 //              window. Two stops now stand board_clear past its top edge —
 //              the released Sense's stops, to the millimeter — and the travel
 //              is board_clear.
+//  2026-11-03: the sealed build's O-ringed plate screws get a land
+//              (canary_core_lib pl_seat_cut): the M2 pan head (Ø4.0) was
+//              narrower than its Ø4.3 gland. Each sealed seat takes a DIN
+//              9021 washer (2.2 x 7.0 x 0.8, billed) in a Ø7.6 pocket whose
+//              floor is its land, over a Ø4.673 x 0.769 gland; the recess is
+//              1.031 (was 1.85) and the screws grow M2 x 8 -> x 10 (the
+//              front's pilots 7.65 -> 8.83). The -Y wall post's seat, 0.5
+//              inside the cavity wall, now leaves 0.90 of plate to the bore
+//              at the back face (was 2.3) — over core_min_web(), but the
+//              thinnest wall round any seat in the catalog. opt_seal only:
+//              the default (unsealed) back and front do not move.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft-edge front, the piston plate (pl_*) — the shared idiom
@@ -130,7 +141,7 @@ cam_fov_margin = 4;  // degrees added to each side of the FOV cone the hole must
 cam_disc_d = 14.0;  cam_disc_t = 1.0;
 v_stack_sock = 6.5;    // brd_stack_sock_measured(), canary_board_lib — the XIAO ports are DERIVED
                        // from this, so the unmeasured 11.5 put them in the floor
-v_front_h = 5.0;
+v_front_h = 5.0;       // the Grove Vision AI V2 module's front-side component height above its PCB (the Vision case's vm_front_h): the cavity clears it by at least cav_extra
 xiao_w = 17.8;         // the measured XIAO — sets the corner pins that catch the module under it
 xiao_below = 5.5;      // air under a stacked XIAO's USB face: shell + half a plug overmold + clearance
 
@@ -138,8 +149,8 @@ xiao_below = 5.5;      // air under a stacked XIAO's USB face: shell + half a pl
 sm_l = 44.0;                 // MR60 carrier length — brd_l("mr60"), canary_board_lib
 sm_w = 36.0;                 // MR60 carrier width — brd_w("mr60"), canary_board_lib
 s_stack_sock = 6.5;          // brd_stack_sock_measured() — same decision as v_stack_sock
-s_front_h = 3.5;
-ant_h = 1.2;
+s_front_h = 3.5;            // the MR60 carrier's tallest front-side part above its PCB (connectors; the Sense case's radar_front_h): the cavity clears it by at least cav_extra
+ant_h = 1.2;                // the MR60 antenna (AiP package) top above the carrier's PCB: sets the radome air gap, asserted at least 3 mm
 radome_t = 1.5;   // ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); AVOID 0.7–1.1 mm
 rad_win_x = 24.0;  rad_win_y = 24.0;  rad_dx = 0.0;  rad_dy = 6.0;
 s_usb_z = 0.0;       // extra lift of the C6 port relative to its DERIVED axis (a measured correction)
@@ -174,7 +185,7 @@ lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is th
 hood_len = 9.0;  hood_t = 1.8;
 hood_seat = 0.6;  // groove in the front's show face the hood's spigot presses into (tol_press); bond with neutral-cure silicone  // [0.4:0.1:1.0]
 usb_hood_reach = 3.0;  // how far the USB awning's drip edge stands off the bottom wall  // [2:0.5:6]
-bridge_layer = 0.2;    // your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
+bridge_layer = 0.2;    // your slicer's layer height: the face's disc-seat counterbore and the sealed back's washer pockets get bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 
 /* [Stud/keyhole interface] — blind keyholes in the plate */
 kh_extra   = 3.0;   // plate thickening that hosts the keyhole pockets
@@ -420,6 +431,7 @@ assert(!opt_mark || mark_word_ink_w("securaCV", mark_size) <= out_x - 4.0,
 hw_echo("Combo witness", [
     hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, pl_L, "self-tap"), " (plate to the post ends)")),
     e_gland ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_gland ? hw_item(len(post_xy()), hw_washer(screw_size)) : "",
     hw_item(4, str(hw_screw("m2", "pan", cam_scr_l, "self-tap"), " (OV5647 to the front posts)")),
     e_seal ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     opt_hood ? hw_item(1, "hood (print part=\"hood\"; bond into the front's groove)") : "",
@@ -511,9 +523,9 @@ module back() {
                 translate([s_cx + s*(sm_w/2 - 4) - 1.5, sm_cy + sm_l/2 + board_clear, floor_t - 0.01])
                     cube([3, 2.0, s_standoff + pcb_t + 1.0]);
         }
-        // the screws: seats through the plate, pan heads over their glands in seal mode
+        // the screws: seats through the plate, pan heads on their washers over the glands in seal mode
         for (p = post_xy())
-            pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
+            pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland, bridge_layer);
         // the key notch in the plate's edge (the rib is on the shell's bore wall):
         // core_key_d() + 0.3 deep from the bore wall
         if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2, 270, plate_t + 0.2, core_key_d() - 0.7);

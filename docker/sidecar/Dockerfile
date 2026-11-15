@@ -15,7 +15,7 @@
 # 1.78+, the rumqttc-next family needs 1.89+); pinned to a recent stable.
 # The -bookworm variant matters: the runtime stage below is bookworm, and
 # the binaries must link against the same glibc/libssl generation.
-FROM rust:1.99-slim-bookworm@sha256:a24e292b4af7bdee351a31d3a6379972a5652f0ea22a1b6d6883324ac4f5097c AS build
+FROM rust:1.99-slim-bookworm@sha256:f2c004e3d2d8b547e8cf7ffbc29205385f4e71d23e53e4e383065db5e9f822cd AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -43,7 +43,7 @@ RUN cargo build --release \
     --bin event_mqtt_bridge \
     --bin log_verify
 
-FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 # mosquitto-clients powers the `doctor` subcommand's broker checks;
 # curl powers the HEALTHCHECK below and doctor's kernel probe (same probe

@@ -159,6 +159,7 @@
     .toast { position: absolute; left: 50%; bottom: 18px; transform: translate(-50%,20px); z-index: 14; opacity: 0; background: rgba(20,30,35,.96); border: 1px solid var(--tv-line2); border-radius: 12px; padding: 10px 16px; font-family: var(--mono); font-size: clamp(.66rem,1.4vw,.78rem); color: var(--tv-ink); transition: opacity .25s ease, transform .25s ease; pointer-events: none; white-space: nowrap; }
     .toast.show { opacity: 1; transform: translate(-50%,0); }
     .toast .k { color: var(--verified); margin-right: .5em; }
+    .toast.plain .k { display: none; }
 
     /* ---- remote + how-to ---- */
     .below { display: grid; grid-template-columns: 1fr 240px; gap: 28px; margin-top: 28px; align-items: start; }

@@ -15,6 +15,7 @@
 #define BLE_CONFIG_H
 
 #include <Arduino.h>
+#include "fleet_chirp.h"   // the Chirp advert's wire format (staged from firmware/common/fleet_link)
 
 // ════════════════════════════════════════════════════════════════
 // BLE FEATURE FLAGS
@@ -86,17 +87,18 @@
 // ════════════════════════════════════════════════════════════════
 // CHIRP PROTOCOL
 // ════════════════════════════════════════════════════════════════
-#define CHIRP_COMPANY_ID          0xFFFF  // Use 0xFFFF for testing
+#define CHIRP_COMPANY_ID          FLEET_CHIRP_COMPANY_ID  // 0xFFFF, the testing id
 #define CHIRP_MIN_INTERVAL_MS     10000   // Rate limit: 1 chirp per 10 seconds
 #define CHIRP_HEARTBEAT_INTERVAL_MS 300000 // Heartbeat every 5 minutes
 
-// Chirp message types
+// Chirp message types: the sketch's names for fleet_chirp.h's type bytes
+// (0x01..0x05), which every receiver checks.
 enum ChirpType : uint8_t {
-    CHIRP_ALERT     = 0x01,  // Manual or sensor-triggered alert
-    CHIRP_HEARTBEAT = 0x02,  // Periodic "I'm alive" (every 5 min)
-    CHIRP_TAMPER    = 0x03,  // Tamper event detected
-    CHIRP_WITNESS   = 0x04,  // New witness record created
-    CHIRP_BOOT      = 0x05,  // Device just booted
+    CHIRP_ALERT     = FLEET_CHIRP_TYPE_ALERT,      // Manual or sensor-triggered alert
+    CHIRP_HEARTBEAT = FLEET_CHIRP_TYPE_HEARTBEAT,  // Periodic "I'm alive" (every 5 min)
+    CHIRP_TAMPER    = FLEET_CHIRP_TYPE_TAMPER,     // Tamper event detected
+    CHIRP_WITNESS   = FLEET_CHIRP_TYPE_WITNESS,    // New witness record created
+    CHIRP_BOOT      = FLEET_CHIRP_TYPE_BOOT,       // Device just booted
 };
 
 // Chirp type to string
@@ -139,13 +141,11 @@ inline const char* rssiQuality(int rssi) {
 // ════════════════════════════════════════════════════════════════
 // CHIRP PAYLOAD STRUCTURE
 // ════════════════════════════════════════════════════════════════
-// Manufacturer data layout (17 bytes total):
-//   [0-1]   Company ID (0xFFFF)           — set by NimBLE
-//   [2]     Chirp type (uint8_t)
-//   [3-6]   Coarse timestamp (uint32_t, epoch/3600 = hour bucket)
-//   [7-14]  Chain hash prefix (8 bytes)
-//   [15-16] Device ID prefix (2 bytes)
-#define CHIRP_PAYLOAD_SIZE  15  // Excluding 2-byte company ID (handled by NimBLE)
+// The manufacturer-data layout (17 bytes as a scanner sees them: company id,
+// type, big-endian hour bucket, chain-hash prefix, device id prefix at
+// [15-16]) is fleet_chirp.h's, the one spelling of it in the fleet; ble_chirp.h
+// builds it with fleet_chirp_build().
+#define CHIRP_PAYLOAD_SIZE  FLEET_CHIRP_PAYLOAD_LEN  // 15: the bytes after the 2-byte company id
 
 // Nearby Canary device tracking structure
 struct NearbyCanary {

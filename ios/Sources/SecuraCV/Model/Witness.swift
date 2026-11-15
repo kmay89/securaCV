@@ -46,6 +46,9 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
     var link: Liveness = .unknown
     var lastSeen: Date?
     var seenViaBLE: Bool = false         // heard directly over BLE, no broker/WiFi
+    /// The Canary answered 403 to this phone's token, so the app stopped
+    /// polling it (RefusedPairings). Pair it again or remove it.
+    var pairingRefused: Bool = false
 
     // Trust
     var badge: TrustBadge = .unknown
@@ -60,16 +63,40 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
     /// answers. See firmware/common/identity/birth_day.h.
     var bornDay: Int?
     /// False means `bornDay` is when the device was first DATED, not born —
-    /// the app says so rather than promoting a shelf into a birthday.
-    var bornExact: Bool = false
+    /// the app says so rather than promoting a shelf into a birthday. Nil
+    /// means the device sent no flag, which reads as not exact.
+    var bornExact: Bool?
 
     /// The birth day as a date, at UTC midnight. Nil when the device has never
-    /// reported one. Rendered day-only everywhere: a birth day carries no time
-    /// of day by construction, and inventing one would be the first decorative
-    /// thing on a screen whose job is being checkable.
+    /// reported one, or the day is one no Canary can stamp. Rendered day-only
+    /// everywhere: a birth day carries no time of day by construction, and
+    /// inventing one would be the first decorative thing on a screen whose
+    /// job is being checkable.
     var bornOn: Date? {
-        guard let bornDay, bornDay > 0 else { return nil }
+        guard let bornDay, FleetSelfDevice.bornDayWindow.contains(bornDay) else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(bornDay) * 86_400)
+    }
+
+    /// "Born" only when the device said the day is exact, "First dated" for
+    /// a day without that, nil without a day. The Wall's words.
+    var bornLabel: String? {
+        guard bornOn != nil else { return nil }
+        return bornExact == true ? "Born" : "First dated"
+    }
+
+    /// The birth day in words. It is a UTC day, so it is formatted in UTC:
+    /// local time west of Greenwich would show the day before.
+    func bornDayText(locale: Locale = .autoupdatingCurrent) -> String? {
+        guard let bornOn else { return nil }
+        return bornOn.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted,
+                                                 locale: locale, timeZone: .gmt))
+    }
+
+    /// Why the label is not "Born": only when the device itself said
+    /// `born_exact: false`. A day sent without the flag gets no reason.
+    var bornNote: String? {
+        guard bornOn != nil, bornExact == false else { return nil }
+        return "It met a clock later than it was made, so its real birthday is on or before this day."
     }
 
     // Last event (edge-triggered)
@@ -149,6 +176,7 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
         if badge == .failed || link.isDark { return .alert }
         var sev = lastEventSeverity
         if link == .stale { sev = max(sev, .warn) }
+        if pairingRefused { sev = max(sev, .warn) }
         if let b = batteryPct, b >= 0, b < Self.lowBatteryThreshold { sev = max(sev, .warn) }
         return sev
     }
@@ -246,6 +274,7 @@ extension Witness {
         if tamper { return tamperKind.isEmpty ? "Tamper detected" : tamperKind }
         if badge == .failed { return "Signature did not verify" }
         if link.isDark { return "Gone dark" }
+        if pairingRefused { return "Needs pairing again" }
         if !lastEvent.isEmpty { return lastEvent }
         return link.label
     }

@@ -889,6 +889,11 @@ def _augment_issue_registry() -> None:
         def __init__(self, hass) -> None:
             self._hass = hass
 
+        @property
+        def issues(self):
+            """Every issue, keyed (domain, issue_id), as the core's registry has them."""
+            return {key: self.async_get_issue(*key) for key in list(_issues(self._hass))}
+
         def async_get_issue(self, domain, issue_id):
             issue = _issues(self._hass).get((domain, issue_id))
             if issue is None:
@@ -1028,7 +1033,13 @@ def _augment_service_info() -> None:
 
 
 class DeviceRegistryStub:
-    """Records async_get_or_create calls and answers identifier lookups."""
+    """Records async_get_or_create calls and answers identifier lookups.
+
+    An update writes every keyword it is passed, None included, as the real
+    registry does (its keywords default to UNDEFINED, and an explicit None
+    clears the field): a writer that passes None for a fact it lacks erases
+    what an earlier write set, and a test on this stub must see that.
+    """
 
     def __init__(self) -> None:
         self.devices: list[types.SimpleNamespace] = []
@@ -1042,7 +1053,7 @@ class DeviceRegistryStub:
             if identifiers & device.identifiers:
                 device.identifiers |= identifiers
                 for key, value in kwargs.items():
-                    if key not in ("identifiers", "config_entry_id") and value is not None:
+                    if key not in ("identifiers", "config_entry_id"):
                         setattr(device, key, value)
                 return device
         device = types.SimpleNamespace(
@@ -1102,9 +1113,13 @@ def _augment_device_registry() -> None:
             raise ValueError(f"no device {identifier} in {config_entry_id}")
         return device.id
 
+    def async_entries_for_config_entry(registry, config_entry_id):
+        return [device for device in registry.devices if device.config_entry_id == config_entry_id]
+
     dr_mod.DeviceInfo = DeviceInfo
     dr_mod.DeviceEntry = types.SimpleNamespace
     dr_mod.async_get = async_get
+    dr_mod.async_entries_for_config_entry = async_entries_for_config_entry
     dr_mod.async_get_device_id_by_identifier = async_get_device_id_by_identifier
     dr_mod._securacv_rich = True
     entity_mod = _module("homeassistant.helpers.entity")
@@ -1492,6 +1507,15 @@ def _augment_notifications_registry_dt() -> None:
 
         dt_mod.utcnow = lambda: datetime.now(timezone.utc)
         dt_mod.now = lambda: datetime.now(timezone.utc)
+    if not hasattr(dt_mod, "as_local"):
+        # evidence.py prints the witness statement's windows in the owner's
+        # clock through these two; the stub's clock is UTC, like the real
+        # lane's default config.
+        from datetime import datetime, timezone
+
+        dt_mod.UTC = timezone.utc
+        dt_mod.utc_from_timestamp = lambda epoch_s: datetime.fromtimestamp(epoch_s, tz=timezone.utc)
+        dt_mod.as_local = lambda value: value.astimezone(timezone.utc)
     util_mod = _module("homeassistant.util")
     if not hasattr(util_mod, "dt"):
         util_mod.dt = dt_mod

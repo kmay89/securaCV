@@ -204,12 +204,12 @@ final class FleetSelfReportTests: XCTestCase {
         let r = try FleetSelfReport.decode(Data(Self.bornBody.utf8))
         let d = try XCTUnwrap(r.devices.first)
         XCTAssertEqual(d.bornDay, 20673)
-        XCTAssertTrue(d.bornExact)
+        XCTAssertEqual(d.bornExact, true)
 
         var w = Witness(id: "canary-a3f7")
         FleetMerge.fold(d, into: &w)
         XCTAssertEqual(w.bornDay, 20673)
-        XCTAssertTrue(w.bornExact)
+        XCTAssertEqual(w.bornExact, true)
         // Days since the epoch, rendered at UTC midnight — a birth day carries
         // no time of day, so the date must land exactly on the day boundary.
         let born = try XCTUnwrap(w.bornOn)
@@ -220,13 +220,13 @@ final class FleetSelfReportTests: XCTestCase {
         let r = try FleetSelfReport.decode(Data(Self.firstDatedBody.utf8))
         let d = try XCTUnwrap(r.devices.first)
         XCTAssertEqual(d.bornDay, 20666)
-        XCTAssertFalse(d.bornExact,
+        XCTAssertEqual(d.bornExact, false,
                        "the device said it learned the date late — the app must carry that through")
 
         var w = Witness(id: "canary-b1c2")
         FleetMerge.fold(d, into: &w)
         XCTAssertNotNil(w.bornOn, "a late day is still worth showing — it bounds the device's age")
-        XCTAssertFalse(w.bornExact)
+        XCTAssertEqual(w.bornExact, false)
     }
 
     /// The device that has never met a clock omits both keys. Nil must survive
@@ -235,7 +235,7 @@ final class FleetSelfReportTests: XCTestCase {
         let r = try FleetSelfReport.decode(Data(Self.displayBody.utf8))
         let d = try XCTUnwrap(r.devices.first)
         XCTAssertNil(d.bornDay)
-        XCTAssertFalse(d.bornExact, "absent is not exact")
+        XCTAssertNil(d.bornExact, "absent is not exact")
 
         var w = Witness(id: "lan:nightstand.local#0")
         FleetMerge.fold(d, into: &w)
@@ -252,7 +252,12 @@ final class FleetSelfReportTests: XCTestCase {
         let r = try FleetSelfReport.decode(Data(body.utf8))
         let d = try XCTUnwrap(r.devices.first)
         XCTAssertEqual(d.bornDay, 20673)
-        XCTAssertFalse(d.bornExact)
+        XCTAssertNil(d.bornExact)
+
+        var w = Witness(id: "canary-a3f7")
+        FleetMerge.fold(d, into: &w)
+        XCTAssertEqual(w.bornLabel, "First dated")
+        XCTAssertNil(w.bornNote, "the device gave no reason, so the card gives none")
     }
 
     /// Zero and negatives are the boot epoch showing through, not dates. Folded
@@ -280,7 +285,66 @@ final class FleetSelfReportTests: XCTestCase {
                                      chain: "ok", product: "canary-wap")
         FleetMerge.fold(silent, into: &w)
         XCTAssertEqual(w.bornDay, 20673, "a row with no birth day says nothing, it does not say 'none'")
-        XCTAssertTrue(w.bornExact)
+        XCTAssertEqual(w.bornExact, true)
+    }
+
+    /// Only a day a Canary can stamp is kept: 20089 (2025-01-01, the
+    /// firmware's clock floor) to 49710 (the last day of a 32-bit clock).
+    /// The Wall and the web readers drop the rest, so the phone does too.
+    func testOnlyADayACanaryCanStampIsKept() throws {
+        let cases: [(Int, Bool)] = [(1, false), (20088, false), (20089, true),
+                                    (49710, true), (49711, false)]
+        for (value, kept) in cases {
+            let body = #"{"kernel":"K","verified_through":"now","devices":[{"name":"K","online":true,"chain":"ok","product":"canary-wap","born_day":\#(value),"born_exact":true}]}"#
+            let r = try FleetSelfReport.decode(Data(body.utf8))
+            let d = try XCTUnwrap(r.devices.first)
+            let want: Int? = kept ? value : nil
+            XCTAssertEqual(d.bornDay, want, "born_day \(value)")
+
+            // The same window on the row, however the day reached it.
+            var w = Witness(id: "canary-a3f7")
+            w.bornDay = value
+            XCTAssertEqual(w.bornOn != nil, kept, "born_day \(value)")
+        }
+    }
+
+    /// CI's macOS runners run in UTC, where a formatter that slipped back to
+    /// the local zone would print the same day and pass. Move this process
+    /// west of Greenwich, where the local day of a UTC midnight is the day
+    /// before, and put the zone back when the test ends.
+    private func pinAZoneWestOfUTC() throws {
+        let saved = NSTimeZone.default
+        NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        addTeardownBlock { NSTimeZone.default = saved }
+    }
+
+    private static let en = Locale(identifier: "en_US")
+
+    /// A born day is a UTC day: day 20673 is Aug 8 everywhere, never Aug 7.
+    func testABirthDayReadsTheSameDayWestOfUTC() throws {
+        try pinAZoneWestOfUTC()
+        let d = try XCTUnwrap(try FleetSelfReport.decode(Data(Self.bornBody.utf8)).devices.first)
+        var w = Witness(id: "canary-a3f7")
+        FleetMerge.fold(d, into: &w)
+        XCTAssertEqual(w.bornLabel, "Born")
+        XCTAssertEqual(w.bornDayText(locale: Self.en), "Aug 8, 2026")
+        XCTAssertNil(w.bornNote, "an exact day needs no explanation")
+    }
+
+    /// The note sits only beside a day the device itself called not exact.
+    func testTheLateClockNoteNeedsTheDevicesOwnFlag() throws {
+        try pinAZoneWestOfUTC()
+        let d = try XCTUnwrap(try FleetSelfReport.decode(Data(Self.firstDatedBody.utf8)).devices.first)
+        var w = Witness(id: "canary-b1c2")
+        FleetMerge.fold(d, into: &w)
+        XCTAssertEqual(w.bornLabel, "First dated")
+        XCTAssertEqual(w.bornDayText(locale: Self.en), "Aug 1, 2026")
+        XCTAssertNotNil(w.bornNote)
+
+        let none = Witness(id: "lan:nightstand.local#0")
+        XCTAssertNil(none.bornLabel)
+        XCTAssertNil(none.bornDayText(locale: Self.en))
+        XCTAssertNil(none.bornNote)
     }
 
     // ── the wellbeing words + the seeing claim (the aggregated body) ──

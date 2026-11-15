@@ -128,7 +128,20 @@ async def test_export_evidence_writes_one_private_zip_and_notifies(
     assert stat.S_IMODE(pack.stat().st_mode) == 0o600
     with zipfile.ZipFile(pack) as zf:
         names = set(zf.namelist())
-        assert names == {"securacv-events-1700000400.json", "evidence_viewer.html", "README.txt", "WITNESS_KEY.txt"}
+        assert names == {
+            "securacv-events-1700000400.json",
+            "evidence_viewer.html",
+            "README.txt",
+            "WITNESS_KEY.txt",
+            "WITNESS_STATEMENT.txt",
+        }
+        statement = zf.read("WITNESS_STATEMENT.txt").decode()
+        assert "covering the last 48 hours before it." in statement
+        assert f"Witness: kernel {KERNEL_DEVICE_ID}." in statement
+        assert f"Witness key fingerprint: {kernel.kernel.fingerprint} " in statement
+        assert "Chain state when exported: verified ✓ (" in statement, "the integration's own walk, as the notification says"
+        assert "2 sealed events" in statement
+        assert "What this does not prove" in statement
         assert zf.read("securacv-events-1700000400.json") == kernel.bundle
         key_text = zf.read("WITNESS_KEY.txt").decode()
         assert key_text == f"verifying_key={kernel.verifying_key}\nfingerprint={kernel.kernel.fingerprint}\nkernel={KERNEL_DEVICE_ID}\n"

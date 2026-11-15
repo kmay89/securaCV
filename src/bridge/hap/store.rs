@@ -80,6 +80,12 @@ pub struct PersistedState {
     /// as unknown, so the first start after upgrade bumps once.
     #[serde(default)]
     pub fleet_hash: String,
+    /// Failed pair-setup attempts, accessory-wide, carried across restarts:
+    /// HAP's hundred-try limit counted from zero on every start, so a
+    /// supervisor that restarts the bridge handed a code-guesser a fresh
+    /// hundred each time. Reset only by a completed pairing or `reset`.
+    #[serde(default)]
+    pub setup_attempts: u32,
     /// Paired controllers.
     pub pairings: Vec<StoredPairing>,
 }
@@ -98,6 +104,7 @@ impl PersistedState {
             setup_id: random_setup_id()?,
             seed: hex::encode(seed),
             config_number: 1,
+            setup_attempts: 0,
             fleet_hash: String::new(),
             pairings: Vec::new(),
         })
@@ -128,7 +135,8 @@ impl PersistedState {
     }
 
     /// Copy a live pairing table back into this state, ready to save.
-    pub fn absorb(&mut self, store: &PairingStore, config_number: u64) {
+    pub fn absorb(&mut self, store: &PairingStore, config_number: u64, setup_attempts: u32) {
+        self.setup_attempts = setup_attempts;
         self.pairings = store
             .list()
             .iter()
@@ -349,7 +357,7 @@ mod tests {
                 admin: true,
             })
             .expect("add");
-        state.absorb(&store, 4);
+        state.absorb(&store, 4, 0);
         save(&path, &state).expect("saves");
 
         let reloaded = load(&path).expect("loads").expect("present");

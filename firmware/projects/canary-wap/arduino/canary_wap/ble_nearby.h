@@ -22,7 +22,9 @@
 #if FEATURE_BLE && FEATURE_BLE_NEARBY
 
 #include <NimBLEDevice.h>
+#include <string>
 #include "fleet_beacon.h"   // canonical fleet-link presence beacon wire format
+#include "ble_nearby_prefix.h"   // F405: a name's prefix, all hex digits or refused
 
 namespace ble_nearby {
 
@@ -93,6 +95,22 @@ static int8_t currentRssi(const NearbyCanary* c) {
     uint8_t idx = (c->rssiIndex == 0) ? NEARBY_RSSI_HISTORY - 1 : c->rssiIndex - 1;
     return c->rssiHistory[idx];
 }
+
+// This parser reads fleet_chirp.h's layout (through ble_config.h) by offsets
+// into the payload after the company id, and on a wider rule than
+// fleet_chirp_parse(): any blob of at least 17 bytes on company 0xFFFF,
+// whatever its type byte, where fleet_chirp_parse() takes exactly 17 bytes
+// and types 0x01..0x05. What this scan lists is unchanged (repo sweep F316
+// moved the layout into the shared header and nothing else); these hold its
+// offsets to that header, so a layout change there fails this file's compile
+// instead of reading the wrong bytes.
+static_assert(CHIRP_PAYLOAD_SIZE + 2 == FLEET_CHIRP_MFG_LEN,
+              "the payload is the Chirp blob after its 2-byte company id");
+static_assert(FLEET_CHIRP_OFF_TYPE - 2 == 0, "the Chirp type is payload[0]");
+static_assert(FLEET_CHIRP_OFF_CHAIN - 2 == 5, "the chain prefix is payload[5..12]");
+static_assert(sizeof(NearbyCanary::chainHashPrefix) == FLEET_CHIRP_CHAIN_LEN,
+              "the chain prefix is FLEET_CHIRP_CHAIN_LEN bytes");
+static_assert(FLEET_CHIRP_OFF_FP - 2 == 13, "the device id prefix is payload[13..14]");
 
 // Parse chirp manufacturer data from a Canary device
 // Returns true if valid chirp data found
@@ -186,11 +204,12 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
                 if (hasChirpData || hasBeaconData) {
                     strncpy(prefix, tempCanary.deviceIdPrefix, 4);
                 } else {
-                    // Try to extract from BLE name "SCV-XXXX"
-                    String name = advertisedDevice->getName().c_str();
-                    if (name.startsWith(BLE_DEVICE_NAME_PREFIX) && name.length() >= 8) {
-                        name.substring(4, 8).toCharArray(prefix, 5);
-                    } else {
+                    // Try to extract from BLE name "SCV-XXXX". The name is the
+                    // advertiser's choice, so its four bytes are taken only when
+                    // all four are ASCII hex digits, folded to lowercase: any
+                    // other byte would reach GET /api/nearby's hand-built JSON.
+                    const std::string name = advertisedDevice->getName();
+                    if (!nearby_prefix_from_name(name.data(), name.size(), BLE_DEVICE_NAME_PREFIX, prefix)) {
                         // No valid device ID prefix available — treat as non-Canary
                         // (We never use MAC addresses as identifiers for privacy)
                         g_nonCanaryCount++;

@@ -425,11 +425,24 @@ record. Host-tested in `firmware/tests_host/test_hub_handoff.cpp`.
 encryption again, as the RPC write does — **and** only while the Improv
 session is **Provisioned** (the device has the Wi-Fi this phone gave it) or
 **Provisioning** (a phone that writes a beat before the verdict lands). Any
-other time — the door open but no join, the door shut, a stranger who
-paired — the write stores nothing, logs one health line, and reads back as
-rejected. The write callback runs on the NimBLE host task and only copies
-the document into a mailbox (release/acquire, exactly like the RPC
-command's); the loop task parses and applies it in `tick()`.
+other time — the door open but no join, a tap's door that shut with no join
+while the client stayed connected, a stranger who paired and sent no
+Wi-Fi — the write stores nothing, logs one health line, and reads back as
+rejected. The shut door is not itself the gate: a Provisioned session
+already counts as shut (`door_open_now()` is false: it advertises the
+beacon) and still takes a write on the link that is up. Once the join has
+succeeded, that link is the one that provisioned it — the glue puts
+nothing on air while a client is connected, and when a Provisioned
+session's link drops the advert is non-connectable, so no later client
+reaches HUB until a new tap. Mid-join the rule is narrower: a Provisioning
+session still advertises connectable (`advert_for()` answers Improv), so a
+phone that drops before the verdict can be followed, inside the join's
+30 s (`provisioning_timeout_ms`), by another client that inherits the
+session, and once the join lands that client's HUB write is taken too.
+`handle_hub()` checks the session, not which link wrote. The write
+callback runs on the NimBLE host task and only copies the document into a
+mailbox (release/acquire, exactly like the RPC command's); the loop task
+parses and applies it in `tick()`.
 
 **What "stored" means.** The glue hands the parsed record to the board
 (`Identity::store_hub`), which persists it through `runtime_config`'s
@@ -485,8 +498,8 @@ HUB on the WAP is a follow-up, not a claim this page makes.
 | 1 | Is the `Host` foreign (cannot name this device, and the request did not arrive over the SoftAP)? | `403 {"error":"host"}` | The bearer is unread, the claim untouched, the BOOT tap left unspent. |
 | 2 | A valid **bearer**? | serve | The claim and the tap are left alone. |
 | 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim only on a match** (a wrong value spends nothing; an expired claim is burned). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
-| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | The tap is one consumer across every path. On the flagship the take is `take()`, one atomic exchange. On the WAP the receipt's take is `take_exact()`, a compare-and-swap of the stamp `tap_arbitrate()` judged, and the tap is served only to the sole address asking for it; a second address in the window closes the tap with `409 tap_contended`. The WAP's BLE OTA break-glass takes the same tap with `take()`'s exchange, and an exchange and a compare-and-swap of one word cannot both win. |
-| — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). The WAP answers its own literal with the same fields, whose `hint` and `button` say to start asking first, then short-tap BOOT (F342); the shared builder's "short tap, then poll" moves with F354. |
+| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | The tap is one consumer across every path. On both trees the receipt's take is `take_exact()`, a compare-and-swap of the stamp `tap_arbitrate()` judged, and the tap is served only to the sole address asking for it; a second address in the window closes the tap with `409 tap_contended`. On the flagship a home-network page load that would take the tap asks the same arbiter (F354). The WAP's BLE OTA break-glass takes the same tap with `take()`'s exchange, and an exchange and a compare-and-swap of one word cannot both win. |
+| — | none of the above | `403 physical_confirmation_required` | The body `build_gate_refusal_json` builds, with the fields the three-grant route always answered; its `hint` and `button` say to start asking first, then short-tap BOOT (F342, F354). The WAP answers its own literal, the same body at the same TTL. |
 
 Every caller the three-grant overload admitted is admitted here too, in the
 same order; the claim is inserted between the bearer and the tap and
@@ -796,8 +809,6 @@ What stays open, and is the ledger's, not a claim of this design:
   still work.
 - A dual-stack browser would count as two askers if the WAP's station
   interface ever enabled IPv6 (it does not today).
-- The flagship's tap, on its receipt and on the page load it unlocks, still
-  goes to the first asker (F354).
 
 Host-tested (`firmware/tests_host/test_provisioning_gate.cpp`,
 `test_receipt_grant.cpp`, `test_receipt_authority.cpp`,
@@ -1220,6 +1231,79 @@ cannot speak to.
 - [ ] A unit flashed on `default.csv` takes the one USB reflash to
       `min_spiffs.csv` and then OTAs normally.
 
+**The hub hand-off (Sense, Vision; §3.6)**
+
+The code landed in #1804 (2026-10-16); none of these rows has been run.
+Run each on a Sense (NimBLE 2.x) and on a Vision (NimBLE 1.4.x). The
+iPhone writes only well-formed documents, so the refusal rows need a client
+that writes the companion service's HUB characteristic
+(`8fc1cf02-b162-4401-9607-c8ac21383e90`) by hand, after sending
+`WIFI_SETTINGS` itself: the provisioning link lingers only 20 s after the
+join, so a short script (Python `bleak`) suits them better than nRF Connect
+by hand, one document per join. What gates a write is the session's join,
+not the open door (§3.6): `handle_hub()` takes a document only while the
+session is Provisioned or Provisioning, so a write on the provisioning link
+after the join is taken although `door_open_now()` is already false. Once
+the join has succeeded and that link drops, the advert is non-connectable
+(a Provisioned session advertises the beacon), so no later client reaches
+HUB until a new tap; mid-join the door still advertises connectable, so a
+phone that drops before the verdict can be followed by another client that
+inherits the session (§3.6).
+
+- [ ] A fresh unit (no Wi-Fi, no broker in NVS) set up from the iPhone's
+      card, with the hub already set up on the phone: after the join the
+      console prints `[IMPROV] hub hand-off stored: <host>:1883 with a
+      login`, the card says "It reports to your hub at <host>.", and the
+      unit connects to that broker and appears in Home Assistant with no
+      Flasher step; after a power cycle it still reports there.
+- [ ] The status byte: a READ of HUB on the provisioning link answers one
+      byte — `0` once `WIFI_SETTINGS` is accepted and before any HUB write,
+      `1` after a stored write, `2` after a refused one — never `3`, and
+      never the bytes written (read it right after a write that carried a
+      password).
+- [ ] An unencrypted write: from a client that declines to pair, a HUB
+      write is refused by the stack (`WRITE_ENC`) and the console prints no
+      `hub hand-off` line; if the stack ever lets one through, the
+      handler's second check (`isEncrypted()` on 2.x, `sec_state.encrypted`
+      on 1.4.x) logs `[IMPROV] hub hand-off on an unencrypted link refused`
+      and the byte reads `2`. Either way nothing is stored; note which of
+      the two the bench saw.
+- [ ] No join, no hub: on a unit that already has Wi-Fi, short-tap BOOT
+      (the door opens for 60 s), connect and pair, and write a well-formed
+      document without sending `WIFI_SETTINGS`: `[IMPROV] hub hand-off
+      refused: no join this session`, the byte reads `2`, and the unit keeps
+      the broker it had. Keep the link up past the 60 s, so the door shuts,
+      and write again: the same refusal.
+- [ ] A refused document keeps nothing: on the provisioning link after a
+      join, one per join, write a duplicate key
+      (`{"host":"a.local","host":"b.local"}`), a password holding `\n`, a
+      241-byte document, the host `-ha.local`, `"port":0`, and a `user`
+      with no `pass` — each otherwise well-formed, with `"host":"ha.local"`
+      where the host is not the fault (`{"host":"ha.local","port":0}`,
+      `{"host":"ha.local","user":"canary"}`): the parser answers `bad host`
+      before `bad port` before `bad credentials`, so a document with no
+      valid host logs `bad host` whatever else is wrong with it. The
+      console names each verdict — `malformed`, `malformed`, `too long`,
+      `bad host`, `bad port`, `bad credentials` — and never the document;
+      each reads `2`; the unit keeps the broker it had before the write
+      (or none). The wipe of the record is host-tested
+      (`test_hub_handoff.cpp`); the mailbox's and the attribute's
+      (`handle_hub()`, `HubCb::scrub()` in `improv_ble.cpp`) are the glue's
+      and not host-tested; the bench sees that nothing was kept.
+- [ ] A unit already talking to a broker (seeded by the Flasher) that takes
+      a different hub through a tap and the iPhone's card: the card says it
+      reports to the new hub (the byte read `1`), and the unit ends up
+      reporting to the new broker by one of two paths; note which. Either
+      the console says `Hub handed over while connected to another broker -
+      restarting shortly.` and about 25 s after the write `Restarting onto
+      the handed-over broker.`, then it restarts (`store_hub` found
+      `mqtt_connected()` true: the manager's session to the old broker
+      survived the join's Wi-Fi bounce, or `mqtt_supervise`, which runs
+      every loop pass, re-dialed it before the phone wrote); or no restart
+      at all: `store_hub` found it disconnected and re-pointed the manager
+      in place (`mqtt_init` and an immediate attempt), so the next attempt
+      dialed the new broker. Either way it reports to the new broker.
+
 **WAP (FULL profile)**
 
 - [ ] The pairing channel is up 5 s after a fresh boot with nobody on the
@@ -1322,11 +1406,12 @@ cannot speak to.
 - [ ] With the card up, the Fleet tab's "+" sheet hides it (nothing dimmed
       behind the half-height sheet, on an iPhone and on an iPad) and lists
       the Canary inline; closing the sheet brings the card back; a Canary
-      first heard while the sheet is up is offered once it closes. On an
-      iPad with two windows the stand-down is app-wide (one flag in
-      `FleetStore`): a "+" sheet in one window hides the card in both, and
-      with a "+" sheet up in each, closing one brings the card back
-      behind the other; note what the bench sees.
+      first heard while the sheet is up is offered once it closes.
+- [ ] On an iPad with two windows the stand-down is per window (each
+      window's `RootView` holds its own; `scripts/tests/test_ios_setup_glue.py`
+      pins the wiring): a "+" sheet in one window hides the card in that
+      window only, and with a "+" sheet up in each, closing one brings
+      the card back in that window and not behind the other.
 - [ ] The Keychain item is written only after a proven join, never on a
       failure; Forget clears it; it is absent from iCloud Keychain.
 - [ ] The `403`-on-claim path lands on the WAP's row under Ready to pair,

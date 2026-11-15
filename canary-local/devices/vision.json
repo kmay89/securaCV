@@ -10,8 +10,8 @@
     "model": "Canary Vision (Grove Vision AI V2)",
     "board_short": "Grove Vision AI V2",
     "board_id": "seeed_grove_vision_ai_v2",
-    "fw_version": "2.4.18",
-    "fw_train": "2.4.18",
+    "fw_version": "2.4.19",
+    "fw_train": "2.4.19",
     "ota_product": "securacv-canary-vision",
     "senses": [
       "camera (on-module inference)"
@@ -326,7 +326,7 @@
       "              ,_,          Waking up...",
       "             (o.o)",
       "             /| |\\         SecuraCV Canary Vision",
-      "              d b          v2.4.18",
+      "              d b          v2.4.19",
       "",
       "    This is your privacy witness device.",
       "    It creates tamper-proof records of what it",
@@ -403,7 +403,7 @@
       },
       {
         "tag": "[I2C]",
-        "text": "Grove Vision AI ID=2"
+        "text": "Grove Vision AI ID=1"
       },
       {
         "tag": "",
@@ -441,7 +441,7 @@
     "ready": [
       "",
       "  watching \u00b7 invoke every 100 ms \u00b7 heartbeat every 5 s",
-      "  a non-zero Grove Vision AI ID is the handshake \u2014 ID=0 means check the I2C link"
+      "  Grove Vision AI ID=1 is the handshake \u2014 ID=0 means check the I2C link"
     ],
     "id_zero_hint": "Grove Vision AI ID=0 \u2192 I2C wiring/pins wrong, Grove cable on the wrong socket, or module in bootloader mode (tap Reset)."
   },
@@ -755,7 +755,7 @@
         {
           "suffix": "health",
           "retain": true,
-          "payload": "{\"battery_present\":false,\"memory_free\":183424,\"uptime\":41,\"firmware_version\":\"2.4.18\",\"public_key\":\"2152f8d1\u2026\"}"
+          "payload": "{\"battery_present\":false,\"memory_free\":183424,\"uptime\":41,\"firmware_version\":\"2.4.19\",\"public_key\":\"2152f8d1\u2026\"}"
         },
         {
           "suffix": "chain",
@@ -824,7 +824,7 @@
       "pio run -e canary-vision-xiao-c3 -t upload",
       "pio device monitor"
     ],
-    "monitor": "pio device monitor \u2014 115200 baud; a non-zero `Grove Vision AI ID=...` line confirms the I2C link",
+    "monitor": "pio device monitor \u2014 115200 baud; `Grove Vision AI ID=1` confirms the module answered over I2C (ID=0: it did not)",
     "secrets": "cp secrets/secrets.example.h secrets/secrets.h \u2014 WiFi + MQTT fields. Your first USB flash with real secrets seeds the device's NVS; every signed OTA update it installs later inherits that setup automatically.",
     "browser": {
       "page": "flash.html",

@@ -441,6 +441,10 @@ mod sandbox_row {
             MODULE.clone()
         }
 
+        fn declared_zone_ids(&self) -> Vec<String> {
+            Vec::new()
+        }
+
         fn process(
             &mut self,
             _view: &InferenceView<'_>,

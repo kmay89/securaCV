@@ -30,8 +30,11 @@ struct VerifyDeps {
   // Ed25519 verify: true iff sig(64) over msg by pub(32) is valid.
   bool (*ed25519_verify)(const uint8_t sig[64], const uint8_t pub[32],
                          const uint8_t* msg, size_t msg_len);
-  // SHA-256 of a memory range.
-  void (*sha256)(const uint8_t* data, size_t len, uint8_t out[32]);
+  // SHA-256 of a memory range: true iff every step ran and out[32] holds
+  // the digest. On false out holds nothing verify() may read (sweep F364:
+  // a refused mbedtls_sha256() leaves it unwritten), so verify() refuses
+  // the image as sha_failed before any compare.
+  bool (*sha256)(const uint8_t* data, size_t len, uint8_t out[32]);
   const uint8_t* release_pubkey;  // 32 bytes; all-zero = unprovisioned → refuse
   const char* product;            // e.g. "securacv-canary-wap"
   const char* running_version;    // FIRMWARE_VERSION
@@ -47,7 +50,8 @@ struct Verdict {
 
 // Run the full acceptance pipeline against a staged manifest + image:
 //   pubkey provisioned → product match → manifest signature → size match →
-//   SHA-256 of the staged bytes → image signature over size||sha →
+//   SHA-256 of the staged bytes (a hash that did not run: sha_failed) →
+//   image signature over size||sha →
 //   version decision (must be UPDATE: same-version and rollback refused,
 //   identical to the network path).
 Verdict verify(const securacv_ota_manifest_t& m,

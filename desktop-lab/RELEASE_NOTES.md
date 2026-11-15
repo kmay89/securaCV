@@ -16,6 +16,91 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.4.1 — 2026-11-06
+
+**Every workflow is easier to follow: a setup list on the Home that ticks
+itself, a bar that says what each bench is and names the next one, shortcuts
+that work inside a bench, and a search that finds everything.**
+
+- **Set up a Canary.** Five steps on the Home — plug a board in, flash it,
+  first boot, give it a hub, watch the wall — each answered by something
+  the app observes (a port listed, an install the Flash bench remembered,
+  a Canary announcing itself, a hub answering, the Wall opened), never by a
+  box you tick. The first step not yet done carries the button. *Hide* puts
+  it away; forgetting on-device memory brings it back.
+- **The bench bar explains itself.** Under every bench's name, the one line
+  that says what it is; on a wide window the › is *Next: First boot*
+  instead of an arrow to guess at.
+- **Pick a sense.** Stage 4's long options note is three chips — Camera,
+  Radar, Sound — the current one lit, each a click to that bench.
+- **Get started stays in the app.** The guided thread opens inside the
+  shell like any bench; it used to be a link that left the sidebar, the
+  strip and the shortcuts behind.
+- **Shortcuts work inside a bench.** Focus lands in the bench after any
+  click there, and until now that silenced ⌘K and the rest. A framed bench
+  now hands the chords up. ⌘1–6 and the brackets stay yours while you are
+  typing in a field.
+- **Search the Lab.** The sidebar search covers the app's own views, the
+  references, every bench and depth, and the descriptions too; stages fold
+  to their hits; Enter opens the first; Escape clears; a miss says so.
+- **Less to scroll past.** A bench framed by the shell drops its bird and
+  big title — the bar already names it — so the tool starts higher.
+- **Plainer words on Your fleet.** *Your hub* and a labeled *Hub address*
+  instead of *Hub and kernel* and an unlabeled field.
+
+## 0.4.0 — 2026-11-06
+
+**The app opens on a Home of its own: what is plugged in, who is on your
+network, and the bench you were on — with a fleet page, a status strip,
+keyboard shortcuts and a first-run welcome.**
+
+- **Home.** Three live cards: *On your network* (how many Canaries are
+  online, and whether a hub's kernel is answering), *Over USB* (the board
+  plugged into this computer, one click from the Flash bench) and *This
+  app* (version, firmware train, whether an update is ready). Under them:
+  pick up where you left off, your fleet at a glance, six things to do,
+  and the build line. The isometric room is still there as *Workshop map*.
+- **Your fleet.** Every Canary the app has heard announce itself, with its
+  model, firmware and address; the hub's own rows beside them. A board on
+  older firmware than this app carries is marked *update to 2.4.x*, with a
+  Flash button where the app can flash. A board that goes quiet reads
+  *last heard*, never offline: presence is what the network said. The
+  kernel address is set here, and the menu bar companion and the Witness
+  Wall use the same one.
+- **A status strip under every bench:** online count, the USB board, the
+  hub, and the build — each a click to where it is handled.
+- **Keyboard shortcuts:** ⌘K search, ⌘1–6 jump to a stage, ⌘[ and ⌘]
+  previous and next bench, ⌘R reload the bench, ⌘, Settings, ⌘⇧H Home
+  (Ctrl on Linux). Listed under Updates & about.
+- **A welcome on first run** with three ways in: a board to flash,
+  Canaries already running, or just exploring.
+- **Settings** gains the shortcut list, a link to the fleet page, and a
+  button that forgets the app's on-device memory (progress, the last bench,
+  the Canaries heard).
+- Nothing new leaves this computer: discovery is the same mDNS browse and
+  kernel poll the Witness Wall bench already ran, and the words stay coarse
+  (online, offline, last heard, hub down, chain not ok). The website Lab is
+  unchanged.
+
+## 0.3.4 — 2026-10-30
+
+**The 2.4.19 firmware catalog is baked in, so a Canary Glance AMOLED on a
+V2 board lights, and update notes read as one line per change.**
+
+- **Firmware 2.4.19 on the Flash page.** On the Canary Glance AMOLED
+  (Waveshare ESP32-S3-Touch-AMOLED-2.41), a V2 board's glass stayed black
+  on every earlier release: its panel reset sits on the board's IO
+  expander, and nothing drove it. Install 2.4.19 from here and the serial
+  monitor should say `first light 2/5: panel reset released`. Nothing to do
+  first on any other Canary. Built by CI; not yet booted on our bench.
+- **A Canary Vision whose camera module never answered is refused** on the
+  bench, not passed: its boot check reads the module's own yes or no from
+  2.4.19 on.
+- **An Arduino sketch reads as one.** A board running an Arduino sketch, or
+  a SecuraCV release up to 2.4.17, no longer shows the Arduino core's own
+  name and version as its firmware.
+- **The update dialog lists one line per change,** each opening on a click.
+
 ## 0.3.3 — 2026-10-28
 
 **The 2.4.18 firmware catalog is baked in, and the Flash page refuses an
@@ -139,7 +224,10 @@ the menu bar.**
   published once a board is connected, and downloads the image you chose
   when you press Flash.
 - Under the hood: rustls 0.23.45 (RUSTSEC-2026-0285), mdns-sd 0.21.4, Tauri
-  CLI 2.12.0; publishing a draft attaches the project's SBOMs.
+  CLI 2.12.0; publishing a draft attaches three SBOMs: `sbom-rust.cdx.json`
+  (the witness kernel's crates), `sbom-node.cdx.json` (canary-vision's npm
+  packages) and `sbom-firmware.cdx.json`. None of them lists the Lab's own
+  crates or npm packages.
 
 ## 0.2.4 — 2026-09-03
 
