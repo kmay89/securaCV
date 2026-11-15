@@ -2935,7 +2935,7 @@ mod tests {
             }));
         });
         let reader = Kernel::open(&cfg).expect("open kernel");
-        let result = verify(&reader.conn, &cfg.db_path, &[], None, false);
+        let result = verify(&reader.conn, &cfg.db_path, &[], None, false, None);
         BETWEEN_THE_TWO_READS.with(|hook| *hook.borrow_mut() = None);
         result.expect("verify over one snapshot passes");
         // Both rows and both records exist once the snapshot has ended.
