@@ -280,8 +280,12 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
    per-device ledgers: typed subjects, anchor policy with declared roles,
    anchor-all with a constant per-run request count, two-TSA distinctness
    check, TSA identity from the token; scheduled anchoring stays an operator
-   cron — never in witnessd; OpenTimestamps and clock-provenance events
-   remain design.)*
+   cron — never in witnessd. Clock-provenance events are implemented:
+   `witnessd` seals one device-signed record per anchor row — the device
+   clock against the token's `genTime`, whole clamped seconds, bound by the
+   token's hash — into a never-pruned ledger whose head is the fifth anchor
+   subject, and `court_export` packages each packaged token's record;
+   `docs/design/clock_provenance.md`. OpenTimestamps remains design.)*
 
 **Tier 2 — the spine (medium):**
 

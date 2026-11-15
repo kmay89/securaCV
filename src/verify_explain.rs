@@ -17,6 +17,7 @@ pub fn ledger_name(ledger: FailedLedger) -> &'static str {
         FailedLedger::KeyLineage => "device key lineage",
         FailedLedger::HighWaterMark => "signed external high-water-mark",
         FailedLedger::Anchors => "RFC 3161 anchor table",
+        FailedLedger::ClockProvenance => "clock-provenance ledger",
     }
 }
 
@@ -195,6 +196,12 @@ pub fn warning_hint(kind: WarningKind) -> Option<&'static str> {
              verified and no anchored head is missing. `log_anchor verify` reports a token \
              problem as FAIL on that row; a malformed row stops it with `corrupt anchor N: …` \
              and must be restored from a backup (export tokens alongside your DB backups).",
+        ),
+        WarningKind::ClockProvenance => Some(
+            "a clock-provenance record (the device's own clock measured against a TSA token) \
+             contradicts the anchors table or reads the device clock more than one bucket \
+             from the TSA's time. The ledgers still verified. `log_anchor verify` prints \
+             the per-anchor assessment, the ClockSkew correlation and the exact figures.",
         ),
         WarningKind::Other => None,
     }
