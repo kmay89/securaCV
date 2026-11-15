@@ -311,6 +311,28 @@ upstream fix lets the ignore go.
   reads JSON and never opens SQLite, and do not open a received database
   that arrives with a `-wal` file beside it.
 
+### Group 6 — `quinn-udp` receive loop (RUSTSEC-2026-0538) — RESOLVED
+
+- **Advisory:** RUSTSEC-2026-0538, "Receive loop can spin after a truncated
+  datagram", against `quinn-udp` 0.5.15; patched in 0.5.16. Nothing beyond
+  that title is described here.
+- **Where it came from:** the lockfiles of the Flasher
+  (`desktop/src-tauri`), the Lab app (`desktop-lab/src-tauri`) and the flash
+  engine (`desktop/flash-engine`). `quinn-udp` sits under `quinn` 0.11.11,
+  an optional dependency of `reqwest` 0.12.28 that only `reqwest`'s `http3`
+  feature (its HTTP/3 client over QUIC) turns on. `reqwest` 0.12.28 is
+  reached from `flash-engine`, and in the two apps also from the app crate,
+  `tauri` and `tauri-plugin-updater`.
+- **Compiled in? No.** No crate in the three graphs turns on `http3`; the
+  lockfiles list `quinn` because `reqwest`'s `__rustls-ring` feature names
+  `quinn?/ring`, a reference that does not enable the dependency.
+  `cargo tree --locked --target all -i quinn-udp` prints nothing in each of
+  the three crates, with default features and with `--all-features`
+  (2026-11-15). The audit reads the lockfile, so it failed all the same.
+- **Fix:** `quinn-udp` 0.5.16 in all three lockfiles. Only that package
+  entry (version and checksum) changed; each lockfile passes
+  `cargo metadata --locked`.
+
 ## Non-goals
 
 The following are explicitly out of scope:
