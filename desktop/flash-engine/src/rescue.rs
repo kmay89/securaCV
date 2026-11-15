@@ -46,6 +46,11 @@ pub fn is_local_day(day: &str) -> bool {
 /// does not already hold — the automatic safety copies share one folder, so
 /// the counter is what keeps two copies on one day apart.
 pub fn next_backup_filename(day: &str, taken: &[String]) -> Option<String> {
+    // Refuse a day that is not one before counting: every counter would be
+    // refused in turn, four billion times.
+    if !is_local_day(day) {
+        return None;
+    }
     (1..=u32::MAX)
         .filter_map(|n| backup_filename(day, n))
         .find(|name| !taken.iter().any(|t| t == name))

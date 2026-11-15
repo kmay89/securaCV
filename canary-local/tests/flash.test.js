@@ -2494,6 +2494,12 @@ test("aboutBoardGroups: every row says where it came from, and a gap is a phrase
   assert.strictEqual(row({ chip: "ESP32-S3", image: false, bootloader: false }, "installed"), C.notChecked,
     "a read that failed is never an empty board");
   assert.strictEqual(row({ chip: "ESP32-S3", image: null, bootloader: null }, "installed"), "None found");
+  // One read failed and the other found nothing: an unread image is not an
+  // absent one, in either order.
+  for (const [image, bootloader] of [[false, null], [null, false], [false, undefined], [undefined, false]]) {
+    assert.notStrictEqual(row({ chip: "ESP32-S3", image, bootloader }, "installed"), "None found",
+      `image ${image}, bootloader ${bootloader}: a failed read must not read as an empty board`);
+  }
   assert.strictEqual(row({ chip: "ESP32-S3", image: { projectName: "x" }, bootloader: false }, "built_for_flash"), C.notChecked);
   assert.strictEqual(row({}, "chip"), C.notReported);
   assert.strictEqual(row({ chip: "ESP32-S3" }, "flash"), C.notReported);

@@ -2835,8 +2835,9 @@ export function aboutBoardGroups(facts = {}) {
     imageRows = [aboutRow("installed", "Installed image", C.flasherOnly, "about", "esp_app_desc_t")];
   } else if (img === undefined && boot === undefined) {
     imageRows = [aboutRow("installed", "Installed image", C.notCheckedYet, "about", "esp_app_desc_t")];
-  } else if ((img === false || img === undefined) && (boot === false || boot === undefined)) {
-    // A read that failed is not an empty board.
+  } else if (!img && !boot && (img === false || boot === false)) {
+    // A read that failed is not an empty board, whatever the other read
+    // found: "None found" needs every read that ran to have found nothing.
     imageRows = [aboutRow("installed", "Installed image", C.notChecked, "about", "esp_app_desc_t")];
   } else if (!img && !boot) {
     imageRows = [aboutRow("installed", "Installed image", "None found", "about", "esp_app_desc_t")];
