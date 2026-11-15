@@ -211,6 +211,98 @@
   And when a receipt carries a security fact (`tls_cert_fp`), grep the
   consumer for it before calling the feature shipped.
 
+### A template's default is a reading: `default(0)` showed 0 dBm on every reconnect (canary-wap, F368)
+- **What happened:** the canary-wap's Signal Strength discovery row rendered
+  `{{ value_json.rssi | default(0) }}`. The retained status the connect burst
+  sends carries no `rssi`, so after every MQTT connect Home Assistant showed
+  0 dBm, a full-strength reading that no radio measured, until the next
+  status with a reading.
+- **Root cause:** a default in a value template is not "no value"; it is a
+  value the receiver records like any other.
+- **Fix:** the row renders `default('')`. Home Assistant's MQTT sensor
+  ignores an empty state on a numeric sensor and keeps the last reading.
+- **Rule:** when a field can be missing, render nothing and let the receiver
+  keep what it had, and prove what the receiver does with the real one, not
+  a stub. The canary's own Sensing RSSI did the same with a zero no radio
+  measured: its sensing body carried `rssi_dbm: 0` until the first CSI
+  window, and for good on a build without CSI. The row now renders
+  `default('')`, and the body leaves the key out unless the last window's
+  mean was taken over a frame (F411). The first guard, "a window has been
+  seen", was not that: the CSI HAL closes a window every second whether or
+  not it heard anything, so a quiet window, or one whose frames were all
+  below the noise floor, is counted with a zero mean. Ask the layer that
+  took the mean how many samples it took, not whether it ran.
+- **Regression check:** `scripts/tests/test_ha_discovery_wap_render.py` (the
+  expected failure is now a plain test) and the real-core
+  `tests/ha/test_wap_signal_strength.py`, which shows Home Assistant 2026.5.0
+  and 2026.10.1 keeping the reading and fails on any core warning. For the
+  canary, `firmware/tests_host/test_canary_sensing_rssi.cpp` (the predicate
+  on real CSI windows, quiet and below-floor ones included),
+  `scripts/tests/test_ha_discovery_canary_sensing_render.py` and the
+  real-core `tests/ha/test_canary_sensing_rssi.py`.
+- **Date learned:** 2026-11
+
+### A line for the owner is a contract with the field that carries it, and it says only what its writer knows (canary-wap, F359)
+- **What happened:** the pairing timeout's new log line was drafted as one
+  175-byte sentence naming a cause ("the other Canary did not finish; its
+  owner may not have confirmed, or it runs older pairing firmware"). Two
+  reviews showed it false in a case the branch's own comment named (the
+  joiner's COMPLETE lost on the air: the other Canary had finished) and cut
+  at 79 bytes on every surface an owner reads: `HealthLogRingEntry::message`
+  is 80 bytes and `health_log()` forwards no detail, so `GET /api/logs`, the
+  dashboard and the BLE log would have shown the first 79 bytes, on a
+  character. Three older pairing lines already reach the owner that way
+  (sweep F445).
+- **Root cause:** the line was written for the serial monitor, which carries
+  it whole, and the owner's surfaces were not read for their widths; and it
+  reported what the writer inferred, not what it observed.
+- **Fix:** `update()` logs through `log_health()` as a message that states
+  this side's facts ("opera: pairing timed out; code confirmed here, no
+  answer from the other Canary", 78 bytes) and a detail that points at the
+  log that can say why ("check its log; older firmware? update both", 42
+  bytes), or "opera: pairing timed out" alone. `test_mesh_liveness_wap.cpp`
+  pins each case (both roles confirmed, neither, no partner, the lost
+  COMPLETE, a completed pairing that logs neither) and
+  `test_opera_name_wap.cpp` holds both fields reaching `GET /api/logs`
+  whole (#1920).
+- **Rule:** before a line is written for the owner, read the width of every
+  field it crosses (the ring's 80 and 48 bytes) and pin that it arrives
+  whole; and a line names a cause only when this side can know it,
+  otherwise it names the place that can.
+- **Regression check:** `make -C firmware/projects/canary-wap/tests_host
+  run-mesh-liveness run-opera-name`.
+- **Date learned:** 2026-11
+
+### A wire format each end spells for itself is held only by the test that reads both (Chirp advert, F316)
+- **What happened:** the 17-byte BLE Chirp (company 0xFFFF, a type byte
+  0x01..0x05, the fingerprint's two bytes at [15-16]) was written out by its
+  sender (the canary-wap's `ble_config.h` and `ble_chirp.h`) and again by
+  every receiver: the canary tree's roster feed and Scout pairing filter,
+  canary-sense, canary-vision and the display. The only thing holding two
+  of them together was `test_ble_scout_pairing.cpp`, which read their
+  source as text, and the iPhone app's chirp tests, which pinned the
+  sender's literals. Six spellings were six places a fix could land alone.
+- **Root cause:** a layout with no home is redefined by whoever needs it.
+- **Fix:** `firmware/common/fleet_link/fleet_chirp.h`, pure like
+  `fleet_beacon.h`: the constants, the offsets, `fleet_chirp_build()` and
+  `fleet_chirp_parse()`, host round-tripped by `test_fleet_chirp.cpp`
+  (firmware.yml's fleet-link job). Every receiver and the sender use it,
+  the sketches carry staged copies held byte-identical
+  (`check_fleet_beacon_sync.sh`, `setup.sh regen`), and the pairing test
+  includes the header instead of reading files. A scratch differential
+  against the old sender and receivers found no difference (83,200 builder
+  inputs: every type byte crossed with edge values of each field), so
+  nothing on the air changed. One receiver keeps its wider rule on purpose,
+  its offsets `static_assert`ed to the header (backlog F459).
+- **Rule:** give a wire format one header before its third reader, and
+  when you move a layout into it, move every cross-tree test that pinned
+  the old spelling in the same change: the iPhone belt that read
+  `ble_config.h`'s literals would have gone red on `ios-selfheal.yml`.
+- **Regression check:** `test_fleet_chirp.cpp` (its golden vector);
+  `check_fleet_beacon_sync.sh`; `test_ble_scout_pairing.cpp` over the real
+  roster feed; `ChirpAdvertTests` reads the header's defines and offsets.
+- **Date learned:** 2026-11
+
 ---
 
 ## A driver library's init table is a PANEL personality, not a chip default
@@ -240,6 +332,64 @@
   before trusting `begin()`; on emissive panels, assume "serial fine, zero
   photons" means panel power until proven otherwise.
 
+
+### A button polarity nobody verified can switch a working glass off (2026-10)
+- **What happened:** the AMOLED 2.41 was still reported dark after the
+  init fix. A fresh audit found the panel path matching the bench-tested
+  CircuitPython reference: pins, reset, init bytes, QSPI framing and
+  brightness. It found a second way to a dark glass that had nothing to
+  do with the panel. The case PWR key (GPIO15, "KEY_BAT") reaches the S3
+  through the soft power latch, and the glue assumed active-low. No source
+  we could read says which level that line rests at. If it rests LOW, the
+  glue saw "PWR held" from the first loop pass and called `power_off()`
+  three seconds later. On USB it then spun forever in
+  `while (digitalRead(key) == LOW)`, panel off, never sleeping.
+- **The fix:** `canary/io/pwr_key.h` learns the resting level after boot,
+  acts only on a press that began after learning, and re-learns a "press"
+  that outlasts 15 s. A hold powers off only after its release, once the
+  resting level has held for 1.5 s. The first version fired on a deadline
+  once one round trip had "confirmed" the polarity; review reproduced a
+  power-off 30 ms into a tap after a mislearn, because a round trip cannot
+  prove polarity: after a mislearn, a tap looks exactly like the release of
+  a long hold. The settled rest is what a tap can never fake. The release wait in `power_off()` is bounded. The serial
+  log prints the learned level, and `display_init` prints numbered
+  "first light" lines so the next dark glass says where it stopped.
+- **Guidance:** on a board marked compile-tested, every input with a
+  destructive action (power-off, factory reset) must not depend on an
+  assumed polarity. Learn the idle level, or require an observed edge. A
+  wait on a GPIO level always needs a deadline.
+
+### A pin map from someone else's board is THEIR revision: V2 moved the 2.41's panel reset onto a pulled-down expander line (2026-10)
+- **What happened:** the AMOLED 2.41 (a V2 board, its owner confirmed) was
+  still black after both fixes above, with a serial log that said the
+  panel, the touch and the setup network were all up. The pin map and the
+  init had been checked twice against the CircuitPython board definition,
+  and they matched it. The board did not match CircuitPython. Waveshare's
+  own V2 tree (`waveshareteam/ESP32-S3-Touch-AMOLED-2.41-V2`: the V2.0
+  schematic and three display examples) puts OLED_RESET on TCA9554 EXIO0
+  with a 10 kΩ pull-down, TP_RESET on EXIO1, the panel's TE output on
+  GPIO21 and the touch INT on GPIO3. CircuitPython's map (reset on GPIO21,
+  touch reset on GPIO3) is an earlier revision's. We left the expander all
+  inputs, so the pull-down held the panel in reset for good, and we drove
+  the panel's TE output from the S3. QSPI writes carry no acknowledgement,
+  so every line on serial was true and the glass emitted nothing. Touch
+  answered only because its reset is pulled up.
+- **The fix:** `display_init` makes EXIO0/EXIO1 outputs and pulses them the
+  way the vendor does, then reads EXIO0 back from the expander's input
+  register and logs it as "first light 2/5". Nothing drives GPIO21 or
+  GPIO3. The init table is now Waveshare's V2 sequence byte for byte (no
+  page-0x13 `0xEB` write, which only the CircuitPython init sends).
+  `scripts/tests/test_amoled241_v2_wiring.py` holds the pin map, the reset
+  order and the init table to the vendor's tree.
+- **Guidance:** a third-party board definition is evidence about the
+  revision its author owns. Before transcribing it, find the vendor's
+  schematic for the revision on your bench, and check each reset and
+  enable line from the panel connector back to its driver, pull resistors
+  included. A reset held by a pull-down looks exactly like a dead panel
+  with a healthy bus, so read a reset line back when the hardware lets you.
+  "The audit matched the reference" is only as good as the reference's
+  revision.
+
 ---
 
 ## A diagnostic named after a thing must test that thing
@@ -265,6 +415,33 @@
   `scripts/ci/conformance.sh` existed for months, ran in no workflow, and
   had quietly rotted against three kernel API changes — an unexecuted gate
   protects nothing.
+
+### A parity cell is a reading of the code, under each env's flags (F20, gaps #14 and #15)
+- **What happened:** `firmware/FEATURES.md` and `CONSOLIDATION.md` called
+  the flagship's system monitor, log categories, acknowledgment and log
+  ring missing (❌) while `securacv_diagnostics`, the thermal watchdog, 11
+  log categories, `AckStatus` and a 100-entry ring all shipped. The
+  canary-wap's PlatformIO column read ❌ for features that env compiles,
+  because it builds the same sketch (`src_dir`). And the gap's own premise,
+  "the ack is lost at reboot, against the WAP's append-only ack", was false
+  twice: the canary-wap's acknowledgment is RAM-only too, and the removed
+  snapshot's "append-only" one was an `AckRecord` declared in its
+  `sd_storage.h` that nothing used, beside an `acknowledge_log()` stub
+  (its frozen source at 458bb07).
+- **Root cause:** each cell was written from a plan or a header, not read
+  from the code that runs, and nothing held it there.
+- **Fix:** every Health Monitoring row and gaps #14 and #15 were re-read
+  from the sources (the snapshot's from its frozen tree), each verdict
+  naming what is missing and the reading it rejected, and
+  `scripts/tests/test_docs_claims.py`'s `TheParityLedgersReadTheCode` holds
+  each one to the code fact it rests on, so a later code change flips the
+  doc check too.
+- **Rule:** a parity cell names code, read per env from the flags that env
+  builds with. A declared struct, a stub that returns false or a plan's
+  table is not a feature. A comparison between two trees reads both.
+- **Regression check:** `python3 -m pytest -q
+  scripts/tests/test_docs_claims.py -k TheParityLedgersReadTheCode`.
+- **Date learned:** 2026-11
 
 ---
 
@@ -558,6 +735,44 @@
   evidence for the feature.
 - **Date learned:** 2026-10
 
+### A chip-target `#if` before `sdkconfig.h` is included takes the fallback on every chip (canary, F432)
+- **What happened:** `securacv_thermal.cpp` chose its die-temperature
+  provider with `#if defined(CONFIG_IDF_TARGET_ESP32S3)` (and the IDF
+  version) before any include had reached `sdkconfig.h`, so
+  `SECURACV_HAVE_TSENS` was 0 on the ESP32-S3 as on the classic ESP32, and
+  every stock unit ran the sensorless stub: each `thermal_read_die_c()` was
+  a miss, the camera's thermal guard throttled the first PEEK stream after
+  three misses on every unit (sweep F432 had read the classic ESP32 as the
+  only case), the thermal watchdog logged "Thermal sensor not responding",
+  the self-test's temperature check failed and health carried no `temp_c`.
+  Found by the review of F432 (#1920), which ran `g++ -E` over the pinned
+  build's defines and read the macro's value instead of believing the
+  branch.
+- **Root cause:** a macro a header defines is undefined until that header
+  is included, and `#if defined(X)` on an undefined macro is false, not an
+  error. The fallback branch compiled cleanly everywhere and looked like a
+  designed posture ("conservatively, not blind" on the dashboard): the shape
+  of the `__has_include` lesson above, with a different macro.
+- **Fix:** `securacv_thermal.cpp` includes `<sdkconfig.h>` first,
+  unconditionally, not under `__has_include`: a build where the header is out
+  of reach must fail loudly, since taking the stub silently was this bug.
+  `test_camera_thermal.cpp` compiles the provider once per chip target over
+  `tests_host/stubs/idf_tsens` (esp32; the S3 on IDF 4.4.7 and 5.5.4, each
+  with the `sdkconfig.h` that names the target and a fake driver whose calls
+  match the pinned headers, in three driver modes), and a source pin holds
+  the include before the target test. The S3's TSENS branch compiles in CI
+  for the first time, and its first real readings reach five consumers with
+  no bench behind them (sweep F438).
+- **Rule:** a target or version macro is tested only after the header that
+  defines it is included, and a provider that says a chip has no sensor is
+  checked with the preprocessor, not believed. A lint over `firmware/` for
+  the first `#if` on `CONFIG_IDF_TARGET_*` or `ESP_IDF_VERSION` is sweep
+  F442.
+- **Regression check:** `make -C firmware/tests_host run`
+  (`test_camera_thermal`, three targets); on the old provider the S3 builds
+  fail 25 of 407 checks.
+- **Date learned:** 2026-11
+
 ---
 
 ## Hardware: XIAO ESP32S3 Sense
@@ -730,6 +945,154 @@
   runs the sketch's load, probe, store and `establish_identity_key()` over
   its first-boot fake NVS, which fails the length lookup, the session or the
   read, and pins `setup()`'s halt.
+
+### A read whose count is thrown away can return a CRC-failed value as a stored one (canary-wap, F365)
+- **What happened:** The canary-wap's `nvs_load_token()` checked the stored
+  API token's length, read it with `Preferences::getBytes()`, discarded the
+  count, and took whatever passed `strlen >= 35`. When a data CRC fails, IDF
+  copies the stored chunk into the caller's buffer before it refuses the read
+  (and erases the entry), so `getBytes()` answers 0 over a buffer holding the
+  35 bytes it copied, and the load reported a token loaded: bytes no client
+  held when the data itself was corrupted. Every other `false` (a session
+  that would not open, a length of 0) `provision_device()` read as "no
+  token", and it derived a new one and stored it over the stored one, which
+  is harmless only while today's derivation gives the stored token back
+  (sweep F365, found by F359's review). F360 had fixed the same shape for the
+  identity key a few functions away.
+- **Root cause:** the count is the only part of the answer that tells a read
+  that copied from a read that succeeded. A buffer IDF filled before refusing
+  looks exactly like one it filled and kept.
+- **Fix:** `nvs_load_token()` answers Loaded, Absent or Refused, as
+  `nvs_load_key()` does: only `ESP_ERR_NVS_NOT_FOUND` is Absent, the read must
+  answer exactly the length the probe found, the token must be `cv_` and 32
+  letters or digits, and the buffer is zeroed on anything but Loaded.
+  `provision_device()` stores a token only on Absent; a refusal fails
+  provisioning with nothing written.
+- **Rule:** when one stored secret's load is fixed, read every other load
+  beside it for the same shape; a lesson applied to the key and not to the
+  token is the same bug one function down. A load that discards its count
+  cannot refuse, however careful its other checks are (`tls_load_from_nvs()`
+  discarded both of its counts until sweep F404 made it answer Loaded, Absent
+  or Refused the same way, and the Bluetooth store's paired list and saved
+  name dropped theirs until F406).
+- **Regression check:** `projects/canary-wap/tests_host/test_wap_hmac_fail.cpp`
+  runs the sketch's own `nvs_load_token()`, `nvs_store_token()` and
+  `provision_device()`, cut verbatim, over the first-boot fake NVS, whose
+  `Read::Copies` mode copies the stored bytes and answers 0 as IDF does before
+  its CRC check refuses, with and without a flipped bit; the count check alone
+  must refuse both.
+- **Date learned:** 2026-11
+
+### Zero bytes put is not an empty list saved, and a stand-in for the store must refuse what the store refuses (canary-wap, F406, F408)
+- **What happened:** the canary-wap's `save_paired_devices()` saved an empty
+  paired list as `putBytes(key, p, 0)`. Arduino-ESP32's `Preferences` writes
+  nothing for a length of 0 and answers 0, so after a Clear, or after every
+  entry lost its bond, the old row was still in NVS: each boot loaded it and
+  dropped it again ("entries without a bond dropped"). The host suite's fake
+  NVS took the 0-length put as a write, so no test saw it. Beside it,
+  `load_paired_devices()` and the Beacon set's load copied whatever
+  `getBytes()` returned and never terminated a name, so a row another struct
+  layout wrote, or a corrupted one, left a name with no NUL for
+  `shown_text()` to read past.
+- **Root cause:** the call's signature says "store N bytes", and for N = 0
+  the library stores nothing; the fake modeled the signature, not the
+  library's answer. And F365's count rule had been applied to the token and
+  the key, not to the store one module over.
+- **Fix:** an empty list is saved by `remove()`, and the fake refuses a
+  0-length put as the device does. Each load takes only a row read to its
+  full length, at most the table's entries, and terminates every name; a
+  refused row loads nothing and logs one line short enough for the health
+  log's ring to keep whole (79 bytes), and the paired list is rebuilt from
+  NimBLE's bond store or replaced once by the empty list. The Beacon set
+  keeps only whole entries whose valid byte is 1, so its count and revoke
+  read members.
+- **Rule:** to store nothing, remove the key. A stand-in for a storage
+  library answers what the library answers at the edges first (a length of
+  0, a short read, a read refused on its CRC), or the suite proves the
+  stand-in instead of the firmware.
+- **Regression check:** `projects/canary-wap/tests_host/test_bluetooth_commands_wap.cpp`
+  (`a_cleared_list_stays_cleared_after_a_reboot`, the refused-row and
+  short-read cases; each fails on the old code) and `test_beacon_set_load.cpp`
+  (the set's functions cut verbatim, under ASan).
+- **Date learned:** 2026-11
+
+### A hash helper that returns void cannot refuse, and a refused hash must stay off every surface that reads it (canary-wap, F364)
+- **What happened:** `canary_wap.ino`'s `sha256_raw()` and `sha256_domain()`
+  returned `void` and checked none of mbedTLS's `_starts()`, `_update()` and
+  `_finish()` answers. On the ESP32-S3 and C3 an update past the DMA
+  threshold can fail (the shared crypto DMA channel not claimed, or no
+  internal copy of a buffer that is not DMA-capable), and `_finish()` still
+  writes all 32 bytes of a digest that skipped those blocks: a wrong hash,
+  under the key fingerprint, the genesis head, the chain link, a record's
+  payload hash and the TLS certificate's pin. F359 had already fixed the HMAC
+  helper beside them.
+- **Root cause:** a helper with no return value gives its callers nothing to
+  refuse on, so none of the five did. And a refusal added only where the hash
+  is made leaves the zeroed value reaching every other reader: the review
+  found BLE discovery, the boot's `[OK] Boot attestation` line, `loop()`'s
+  table rows and the 60 s self-verify still reading the zeroed fingerprint
+  and head.
+- **Fix:** both helpers are `[[nodiscard]] bool`, check every step, free the
+  context on every path and zero the output on a failure. Each caller refuses
+  what its hash was for: provisioning fails, no link or record is made, the
+  certificate stays unpinned and HTTPS off. A refused fingerprint or genesis
+  head (`g_device.chain_refused`) keeps BLE discovery off the air and the
+  zeroed record off the boot's lines, table rows and self-verify, and a
+  generated certificate is hashed before it is stored.
+- **Rule:** wrap a primitive that can fail in a helper that says so, then
+  follow each refusal to every reader of what the helper would have produced,
+  not only the caller that sees it first. `[[nodiscard]]` is a warning on the
+  device, not a guard; the host suite is the guard. A stand-in for a failing
+  library step must let the later steps run: mbedTLS does not promise that a
+  step after a failed one fails, and a stand-in that fails everything after
+  the first fault hides a caller that checks only `_finish()`.
+- **Regression check:** `projects/canary-wap/tests_host/test_wap_sha_fail.cpp`
+  runs the helpers and their five callers, cut verbatim from the sketch, over
+  an mbedTLS stand-in that fails one named step once, and holds every caller
+  to writing nothing downstream (1280 checks). F364's module slice took the
+  vault, the USB update check, the familiar and presence hashes and the mesh
+  helper the same way (`test_wap_sha_fail_modules.cpp`, 408 checks; over the
+  old sources valgrind reported 126 uses of uninitialized values). The
+  Beacon and Chirp hashes followed, and then `mesh_network.cpp`'s
+  fingerprint and opera id, every caller refusing
+  (`test_mesh_address_wap.cpp`); `mesh_crypto`'s, the OTA and pseudonym
+  hashes, and the flagship's and the common witness core's helpers, are
+  open (backlog F364, F455). F403 put the BLE status service, the
+  witness export's HEAD and the signer behind the same gate as BLE discovery;
+  the MQTT bridge's identity, mDNS, the Improv door, the Bluetooth and console
+  metadata, the mesh, the hourly chain backup and the HTTP routes still read a
+  refused boot's identity (open).
+- **Date learned:** 2026-11
+
+### A module that did not read its store this boot must not write it (canary-wap mesh, F364)
+- **What happened:** F364's mesh slice made `mesh_network::init()` refuse a
+  device whose own key did not hash. The review found the sketch still ran
+  the mesh around the refused init: `loop()` called
+  `mesh_network::update()` and the 5-minute `save_replay_counters()`, and
+  the owner's routes ran commands, so the save removed the stored last-seen
+  record and an enable, rename or leave removed the stored opera (shown in
+  a scratch run over the host simulator). Safe mode and a failed
+  `esp_now_init()` had the same hole, and safe mode is reachable on a
+  device from code: there the sketch starts the AP, the HTTP server and the
+  mesh routes while `init()` never runs.
+- **Root cause:** every writer persists what is in RAM, and a refused or
+  skipped init leaves RAM empty, so a write then deletes what is stored.
+  The refusal guarded the step that refused, not the writers after it.
+- **Fix:** `g_store_loaded`, set by `init()` as its loads begin. All seven
+  NVS writers return without writing while it is false, `run_command()`
+  refuses every owner command but clearing alerts, and `POST
+  /api/mesh/enable` answers 400 `enable_failed` there instead of ok. One
+  consequence is a decision (backlog F456): in safe mode the owner can no
+  longer turn the mesh on or off.
+- **Rule:** a module that writes its state back must know whether it read
+  that state this boot. Until it has, every write is refused, not only the
+  ones on the path that failed.
+- **Regression check:** canary-wap `tests_host/test_mesh_address_wap.cpp`'s
+  `test_a_boot_that_did_not_read_the_store_writes_none` (a refused init and
+  safe mode: the 5-minute and pre-reboot saves and eleven owner commands
+  write nothing, and the next healthy boot finds the opera, both members
+  and the last-seen record). It fails on the code before the guard.
+- **Date learned:** 2026-11
 
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only
@@ -1059,6 +1422,18 @@
   exists in both places must be compared, not chosen. If a check's operands
   can't differ (a zero-length compare, a constant), it is decoration; prove
   it can fail.
+- **Seen again (2026-11, Chirp, sweep F309, #1920):** Chirp's replay filter
+  took a witness's header nonce before the signature check, for the cost
+  argument that caching first saves a signature check per replayed junk
+  frame. It saved nothing: a flooder sends a fresh nonce per frame and
+  reaches the hash and the Ed25519 verify either way, and caching first let a
+  frame that fails its signature carry a heard chirp's nonce and keep the
+  real chirp out of a receiver it had not reached. The nonce now enters the
+  filter only after both signature checks (`test_chirp_security.cpp`,
+  `c9_a_forged_nonce_does_not_block_the_chirp`). The key is still the nonce
+  alone, so a frame signed under any key with a heard nonce still pre-empts
+  (sweep F435): the Beacon's answer above, a key only the real frame can
+  carry, is the open half.
 - **Regression check:** `tests_host/test_beacon_origination.cpp` mirrors the
   whole receive pipeline and fails on the pre-fix logic for each of the
   four; `test_beacon_solo_origination.cpp` pins that the solo path answers
@@ -1364,17 +1739,182 @@
   acting on a fragment. The canary's `/api/wifi/connect` now loops the
   same way (400 `empty_body`, 413 `body_too_large`), as its `/api/settings`
   and Scout routes already did.
-- **Not done:** most other canary-wap POST handlers (Chirp, Bluetooth,
-  household, RF presence, several in `canary_wap.ino`,
-  `csi_integration.cpp` and `csi_mqtt.cpp`) still parse after one
-  `httpd_req_recv()`. Moving them to `read_all()` is open work.
+- **Closed by F300 (2026-11):** every other canary-wap POST handler reads
+  its body whole or refuses it by name. `canary_wap.ino`'s 18 single reads
+  and `/api/peek/sensor`'s hand loop, and the Bluetooth, Chirp, household,
+  audible-chirp and RF presence API files, read through
+  `http_body::read_request()` (`read_all()` for exactly `req->content_len`,
+  sitting out three timeouts, as `/api/ota/config` does);
+  `csi_integration.cpp`'s events dismissal, settings POST and Tuning Lab
+  import read through `read_all()`, as `csi_mqtt.cpp`'s MQTT config route
+  (F266) does. Each answers its refusal in its own file's shape (400
+  `body_too_large` or `body_read_failed` in the sketch). The one named
+  exception is the log ack: a reason too long for its buffer acknowledges
+  the entry with no reason, unread, since the device keeps no reason.
 - **Regression check:** canary-wap `tests_host/test_http_body_reader.cpp`
   (in `make run`) covers fragmented, oversize, empty, closed, errored and
-  timed-out reads. A source pin fails if `beacon_api.h` calls
-  `httpd_req_recv()` anywhere but inside `read_body()`, or if a handler stops
-  reading through it. A new handler that takes a body loops to
-  `content_len` or calls `read_all()`; it never parses after one call.
+  timed-out reads, and its source pin scans `canary_wap.ino` and every
+  `*_api.h` (listed from the directory, so a new file is scanned): each
+  `httpd_req_recv(` sits inside `http_body::read_request()` or a
+  `read_all(` call, however it is spaced or wrapped; each API file's
+  `read_body()` keeps its whole shape (each refusal its own literal, only a
+  whole body `nullptr`); and each sketch handler answers its refusal at
+  once, `handle_log_ack` excepted by name. `test_wap_tune_lab.cpp` pins
+  `csi_integration.cpp` the same way. A new handler that takes a body calls
+  `http_body::read_request()`; it never parses after one call.
 - **Date learned:** 2026-09
+
+### A refusal the client never reads turns its request into a silent no-op (canary-wap, F300)
+- **What happened:** F300's first version made `handle_log_ack` refuse a
+  body past its 128-byte buffer with 400 `body_too_large`, as every other
+  converted route does. The dashboard's acknowledge dialog has a reason
+  field with no `maxlength`, and `submitAck()` reads no answer, so a reason
+  past about 114 bytes turned the acknowledgment into a no-op the owner
+  never saw. The handler's own tests passed; the review found it by reading
+  the client.
+- **Root cause:** a stricter server changes the contract for every client
+  that sends it something. What a client does with the new answer is part
+  of the change.
+- **Fix:** the log ack keeps its old answer for that case on purpose: a
+  reason too long for the buffer acknowledges the entry with no reason,
+  unread (the device keeps no reason), and a body that stops arriving is
+  still refused. The routes that moved from 200 to 400 for a body that does
+  not fit were checked against every shipped client (the web UI, the
+  companion page, the CSI dashboard, iOS, the desktop app, the Home
+  Assistant add-on); none sends one that big. The reason field the device
+  never keeps is backlog F468.
+- **Rule:** before a handler refuses what it used to accept, read what each
+  client sends it and what each does with a refusal. A refusal nothing
+  shows is worse than the old cut.
+- **Regression check:** `firmware/tests_host/test_log_ack_route.cpp` (a
+  128- and a 4013-byte body acknowledge with no reason, unread; a peer that
+  closes early is refused with nothing acknowledged), and
+  `test_http_body_reader.cpp`'s pin, which names `handle_log_ack` as its one
+  exception.
+- **Date learned:** 2026-11
+
+### A query value read into a buffer sized for its decoded form is cut before it is decoded (canary-wap, F304)
+- **What happened:** `GET /api/fleet/qr` read `ssid` and `pass` with
+  `httpd_query_key_value()` into 33- and 65-byte buffers, the sizes of the
+  decoded values, and percent-decoded them after. Encoded, one byte can take
+  three characters, so a 22-symbol password or a 63-character passphrase with
+  symbols in it was cut before it was decoded and drawn into the pairing QR
+  short, and the answer for `pass` was never checked. A network name whose encoded form
+  passed 32 characters was answered "ssid is required", and a legal 299-byte
+  query "Missing query parameters".
+- **Root cause:** IDF's query reader copies what fits and says so with
+  `ESP_ERR_HTTPD_RESULT_TRUNC`. A caller that sizes the buffer for the value
+  it will keep, and does not read that answer, takes a cut value for a whole
+  one.
+- **Fix:** `fleet_qr_query.h`, which the handler and a host test share, sizes
+  the query from `httpd_req_get_url_query_len()` (bounded) and each value for
+  its encoded form, checks every answer, and refuses a cut or unreadable
+  value with a 400 that names the field. The byte limits apply after
+  decoding (the network name's after it is read back to the home network,
+  F262).
+- **Rule:** size a buffer for the form the bytes arrive in, not the form you
+  will keep, and read a truncation answer as a refusal. And before scoping a
+  fix's page out, check that the page shows what the route now says: the
+  Fleet sheet showed its own fixed hint for every one of these 400s until
+  F401 had it show the route's text.
+- **Regression check:** `projects/canary-wap/tests_host/test_fleet_qr_query.cpp`
+  (1431 checks) runs the shared reader over the tests_host
+  `esp_http_server.h` stand-in.
+- **Date learned:** 2026-11
+
+### A JSON sanitizer must replace every byte JSON gives meaning to, and keep UTF-8 well-formed (canary-wap, F301, F302)
+- **What happened:** the CSI chokepoint's `sanitize_string_field()` turned
+  every byte outside 0x20 to 0x7E into `?`, but kept `"` and `\`, so a quote
+  in a row's label reached the card line, the MQTT `events` body and the
+  REST row as text that is not JSON, and the next load refused it, or worse,
+  read a key the row never had (sweep F301). Bluetooth names, which another
+  radio chooses, reached three answers with their control bytes raw (F302);
+  the item proposed `wap_json::replaced_text()`, which would have kept
+  ill-formed UTF-8.
+- **Root cause:** "printable" is not "safe for this format". A sanitizer has
+  to be written against the grammar it feeds: for JSON that is the quote, the
+  backslash and the bytes JSON forbids raw, and for a strict reader,
+  well-formed UTF-8.
+- **Fix:** the chokepoint also replaces `"`, `\` and `{` in both trees, and
+  the card reader refuses a string whose closing quote is not followed by `,`
+  or `}`, and a line that repeats a key. Every Bluetooth name goes through
+  `wap_json::shown_text()`, which writes ill-formed UTF-8 and the forbidden
+  control bytes as U+FFFD, and rule J10 in `check_wap_json_answers.py` holds
+  the writes in place (173 self-test mutations; its docstring lists what it
+  cannot see).
+- **Rule:** a fix to how text is written must also decide what the reader
+  does with text an older writer left; F301's reader refuses what an old
+  quote could forge and loads the rest cut at the quote, pinned so the
+  comments cannot claim more. The radio-carried text the rule did not reach
+  was F405 to F408; the next entry is what closing them taught.
+- **Regression check:** `firmware/common/csi/csi_event_invariants_test.cpp`,
+  the event-log load and backfill tests, the Bluetooth answer test in
+  `test_bluetooth_commands_wap.cpp` and `test_wap_json_writer.cpp`; each
+  fails on the code before.
+- **Date learned:** 2026-11
+
+### A rule over a format's writers must know every way the answer is built: a `String +=` was neither J7 nor J10 (canary-wap, F405)
+- **What happened:** `ble_nearby.h` copied four bytes of an advertised name
+  (`"SCV-XXXX"`, any four bytes another radio chose) into a nearby row's
+  prefix, and `GET /api/nearby` appended them raw into a hand-built `String`
+  JSON, so a quote, a backslash or a control byte broke the answer.
+  `check_wap_json_answers.py` held ArduinoJson values (J10) and `printf`
+  formats (J7); a `String` concatenation is neither, so no rule saw it.
+- **Root cause:** a guard over a format's writers lists the writers its
+  author knew. The third way to build an answer looked like ordinary string
+  code.
+- **Fix:** the prefix is taken only as four ASCII hex digits
+  (`ble_nearby_prefix.h`), and J11 holds every append onto a `String` in the
+  sketch, in every declaration form, to a literal, a number, a recorded
+  vocabulary answer or a hex-held `char` array, following an array's writers
+  through copies, addresses, casts and dereferences (the review found two
+  declaration forms and the address path the first version missed). Its 230
+  self-test mutations each refuse, and a branch-deletion run shows every
+  refusal condition is held by one.
+- **Rule:** list a guard's sinks from the code, the ones that look like
+  plain string handling included, and prove each refusal condition with a
+  mutation that only it catches.
+- **Regression check:** J11 and its self-test (the "WAP guard self-tests"
+  job), and `test_bluetooth_commands_wap.cpp`'s hostile names through the
+  real scan callback and `GET /api/nearby`.
+- **Date learned:** 2026-11
+
+### JSON-safe is not HTML-safe, and a button names its row, not its text (canary-wap, F407)
+- **What happened:** the Bluetooth page's paired list built `innerHTML` from
+  a bond's name and address, and its Remove button spliced the address into
+  an `onclick`, while the scan list beside it escaped its own. A bond's name
+  is an identity address today, so no radio text reached it, but
+  `shown_text()` makes a name valid JSON, not safe HTML.
+- **Root cause:** each grammar needs its own escaping: text in JSON, text in
+  HTML, and text inside an attribute that holds JavaScript, where a value
+  escaped for HTML can still close the string it sits in.
+- **Fix:** every drawn field goes through `escapeHtml()`, and Remove names
+  its row by index, so no stored text reaches an attribute.
+- **Rule:** draw untrusted text as text, and never splice it into an inline
+  handler: pass an index or a slot and look the value up. The flagship's
+  paired list and the WAP's Presence panel still do the old thing (sweep
+  F422, F423, open).
+- **Regression check:** `web_ui_logic.test.js` and `dashboard_gates.test.js`
+  cut the page's own functions and feed them hostile names, addresses and
+  prefixes; `html_fragment.js` reads what they drew (its readings matched
+  Chromium locally; that cross-check is not in CI).
+- **Date learned:** 2026-11
+
+### A poll that reschedules itself on the happy path stops at the first empty answer (canary-wap, F296)
+- **What happened:** `refreshBleDiscovery()` returned from its empty-list
+  branch before it scheduled its 10 s refresh, so a Canary that came into
+  range afterward did not show until the owner opened the view again; a
+  refused or missing answer stopped it the same way.
+- **Fix:** the reschedule moved into a `finally`, guarded by whether the
+  view is still on screen, so every pass schedules the next and leaving the
+  view leaves no timer.
+- **Rule:** a self-rescheduling poll puts its next tick where every exit
+  reaches it, and stops on the view, not on the answer. On a build without
+  the route that is a 404 every tick while the view is open (sweep F297
+  decides whether to stop there).
+- **Regression check:** `dashboard_gates.test.js` drives the page's own
+  function over an empty, a refused and a missing answer.
+- **Date learned:** 2026-11
 
 ---
 
@@ -1751,6 +2291,59 @@
   closed early.
 - **Date learned:** 2026-09
 
+### A generator that reads firmware source must read what the compiler reads, or refuse (gen_wap.py F400, gen_flash.py A93)
+- **What happened:** `canary_wap.ino` set `ssl_config.httpd.server_port =
+  443`, a field `httpd_ssl_start()` overwrites from `port_secure`, so the
+  write did nothing, and `gen_wap.py` read that dead write as the HTTPS
+  port; its reader also took `port_secure = 8443` under a 443 constant, and
+  counted a write inside a block comment. `gen_flash.py` read a monitor
+  key's `#if` on its physical line, so a directive spliced by a backslash, or
+  one whose block comment closes on a later line, read differently from the
+  compiler (5 mismatches against `g++ -E` before the review).
+- **Root cause:** a text reader over C sees lines. The compiler sees logical
+  lines, after comments are removed and splices joined, and a write to a
+  field the library overwrites is still a line of code.
+- **Fix:** `HTTPS_PORT` is one constant bound as `port_secure`; `gen_wap.py`
+  reads it and the one `port_secure` write, skips code inside `/* */` and
+  `#if 0`, and refuses every other spelling by name. `gen_flash.py` reads
+  each directive on its logical line (`pp_logical_lines`) and refuses by
+  name every gate shape it cannot evaluate.
+- **Rule:** a source reader reads what the compiler reads or refuses; hold
+  its readings to `g++ -E` over the shapes it claims. The shared
+  `read_const` still drops code after a block comment closed on a later
+  line (sweep F429, open).
+- **Regression check:** `canary-local/tools/tests/test_gen_wap_ap_facts.py`
+  and `test_flash_monitor_vocab.py`, whose pinned readings are what `g++ -E`
+  keeps (compared locally: 0 mismatches).
+- **Date learned:** 2026-11
+
+### A source pin holds only the text it matches: pin the whole call and the whole wrapper (canary-wap F300, Chirp F316)
+- **What happened:** two of wave 24's source pins passed code they were
+  written to refuse. `test_http_body_reader.cpp`'s first wrapper check
+  asked only that each API file's `read_body()` name its reader and its
+  refusals; a refusal that returned `nullptr`, two refusals with the same
+  text and a wrapper whose returns were `{}` all passed it, and so did a
+  new handler that spelled `httpd_req_recv (` with a space or split the call
+  across lines. The iPhone app's Chirp belt pinned only the first line of
+  the sender's `fleet_chirp_build()` call, so a sender that swapped the two
+  fingerprint bytes passed.
+- **Root cause:** a pin that finds a name or a line proves the text exists,
+  not what the code around it does.
+- **Fix:** the reader pin finds every call however it is spaced or wrapped
+  and holds each wrapper to its whole shape (each refusal its own
+  non-empty literal, only a whole body `nullptr`). The belt collapses
+  whitespace and pins the sender's whole call, and the header's two
+  fingerprint writes.
+- **Rule:** a source pin is a parser. Match a call the way the compiler
+  does (any whitespace before `(`, any line break inside it), pin the whole
+  expression whose order or shape matters, and prove it with mutants that
+  each must fail it.
+- **Regression check:** `test_http_body_reader.cpp` refuses ten one-site
+  mutants of the sketch, each by name; `ChirpAdvertTests` fails on the
+  swapped-fingerprint sender (emulated here; its first compile is
+  `ios-selfheal.yml`).
+- **Date learned:** 2026-11
+
 ### A bigger slot reaches only the boards that get a USB flash; the engine must check the slot before it downloads
 - **What happened:** fw-v2.4.16 grew the Vision C3 envs from `default.csv`
   (0x140000 slots) to `min_spiffs.csv` (0x1E0000) for the Bluetooth setup
@@ -1792,6 +2385,33 @@
   smallest one, as nightlight-c3 does, or say in the release notes that
   those boards need a USB reflash.
 - **Date learned:** 2026-10
+
+### A debug build's optimization level is set by `debug_build_flags`, not by unflagging (canary `dev_ha`)
+- **What happened:** The canary's `dev_ha` env (dev's debug image plus the
+  MQTT client) stood 3,551 bytes under partitions_ota.csv's 1,966,080-byte
+  slot. #1916's dashboard tap banner added about 14.6 KB to every canary
+  env, and `pio run -e dev_ha` failed `checkprogsize`. The first fix,
+  `build_unflags = -Og`, assumed the framework's `-Os` would remain. CI
+  built a 2,247,117-byte image instead, larger than before.
+- **Root cause:** `dev` is `build_type = debug`. For a debug build,
+  PlatformIO 6.1 (`builder/tools/piobuild.py`, then `piomisc.py`
+  `ConfigureDebugTarget`) applies `build_flags`, strips `-Os` and `-O0` to
+  `-O3` (but not `-Og`) from the compile flags, appends `debug_build_flags`
+  (default `-Og -g2 -ggdb2`), and only then applies `build_unflags`.
+  Unflagging `-Og` removed the only `-O` left, which gave a `-O0` image. An
+  `-Os` placed in `build_flags` would have been stripped too.
+- **Fix:** `dev_ha` sets `debug_build_flags = -Os -g2 -ggdb2` and keeps
+  `build_unflags = -Og`. That drops the `-Og` that dev's `build_flags`
+  carry, and it replaces dev's `-Os` unflag, which would strip this `-Os`.
+  Logging, features and the partition table stay dev's.
+- **Rule:** in a `build_type = debug` env, change the optimization level
+  through `debug_build_flags`. Before you push a flag change you cannot
+  compile, read the order in the installed PlatformIO's builder, or run
+  `pio run -t envdump`. Watch the env that sits closest to its slot: the
+  next feature crosses it first.
+- **Regression check:** firmware.yml's compile-only step (`pio run -e
+  dev_ha`) fails `checkprogsize` past the slot.
+- **Date learned:** 2026-11
 
 ---
 
@@ -3158,6 +3778,35 @@
   (`assert_only_member_heartbeats`), not deleted.
 - **Date learned:** 2026-10
 
+### A relay carries what its origin signed, and a message any key can send must not do what only one key may (canary-wap Chirp, F305, F306, F311)
+- **What happened:** three Chirp rules in `chirp_channel.cpp` did not do what
+  the spec said. A relay set `ttl_minutes` to 15 under a signature that
+  covered the value the origin sent, so a chirp sent with any other TTL
+  failed its origin signature one hop on (sweep F306). One neighbor's signed
+  RESOLVED ACK, which no firmware path sends, set `dismissed` and took any
+  chirp off a receiver at the next prune, where community suppression needs
+  more than half the nearby rows (F305). And an ACK counted from any key with
+  a nearby row, though spec §3.4 asks for ten minutes of presence (F311).
+- **Root cause:** each one read a field or a message as the owner's when any
+  key, or any relay, could set it. A relay that rewrites a signed byte breaks
+  the signature it forwards, and a message type with no sender rule is a
+  message type every key may send.
+- **Fix:** the relay carries the received TTL in a padding byte (the row
+  stays 964 B); only a CONFIRMED ACK counts, and a dismissed row takes none;
+  an ACK counts only once its key's row is ten minutes old
+  (`NearbyDevice::first_seen_ms`, wrap-safe).
+- **Rule:** say what a rule buys. Presence beacons are unsigned (F232), so
+  one radio runs the ten minutes for many keys at once: the wait delays a
+  Sybil and does not price one, and suppress votes still need no presence
+  (F234). The spec and `docs/FLEET_SEMANTICS.md` now say both, and since
+  D16 so do the threat model's Sybil row and the spec's §2.5.3.
+- **Regression check:** `test_chirp_security.cpp`
+  (`c4_a_relay_keeps_the_signed_ttl`, the three `c13_` presence cases),
+  `test_chirp_suppress_wap.cpp` and `test_chirp_commands_wap.cpp`, on the
+  real `chirp_channel.cpp`; each fails on the code before. Spec §12.3 is
+  static_asserted row by row and pinned by `test_chirp_spec_tables.py`.
+- **Date learned:** 2026-11
+
 ### A pin on the order of a step is not a test of the step
 - **What happened:** canary-wap's `mesh_network.cpp` re-pointed a mesh
   member's radio address, and its ESP-NOW registration, at the source of
@@ -3653,6 +4302,17 @@
   fifth-review note on F345 named it. Before deciding a route's gate,
   search the ledger and the docs for the route as a remedy, not only as an
   attack.
+- **The flagship, later (sweep F354, 2026-11):** the flagship's receipt
+  and its home-LAN page load both handed out the token on a tap, through two
+  paths, so an arbiter on the receipt alone would have left the page load
+  going to the first asker. Both now take the tap through
+  `provisioning_gate_take()` (peek, `tap_arbitrate()`, `take_exact()`), and a
+  shape rule in `check_route_security.py` holds every consumer to that step.
+  A gate with two consumers is arbitrated in the one step both take. And a
+  refusal's words copied from one device to another are checked clause by
+  clause on the device that will say them: the WAP's `409` hint ends "or read
+  the token from the USB serial console", and the flagship's console never
+  prints the token, so its hint drops that clause (F410).
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)
@@ -3697,6 +4357,37 @@
   end at their TTLs and are not valid again 2^32 ms + 5 s after issue).
   Host-tested; the wraps cannot be bench-tested.
 - **Date learned:** 2026-10
+
+### A victim picked by the smallest stamp is the wrong one after the wrap, and a row that outlives 2^32 ms reads young under any rule (canary-wap Chirp, F416)
+- **What happened:** the per-key witness rate table (32 rows) evicted the
+  row with the smallest `window_start_ms` and cleared rows only at boot.
+  After the uptime wrap the rows written before it held the largest stamps,
+  so they were never the victim: two keys taking turns evicted each other out
+  of the rows written since and passed the 4-an-hour limit for up to 49.7
+  days (a host probe: 12 of 12 witnesses where 4 belong). The priority heap
+  broke an urgency tie on the raw stamps too.
+- **Root cause:** "oldest" was read off the stamp, where only the age `now -
+  stamp` orders rows across the wrap. The first fix took the age and was
+  still wrong one way, caught by the review's test: a table left idle for
+  2^32 ms gave up a live window, because a row that lives longer than 2^32
+  ms reads young again whatever the rule (the F347 lesson above, in a table
+  instead of a slot).
+- **Fix:** the victim is a row whose hour has run out, else the row with the
+  largest unsigned age; the heap tie goes to the largest `now -
+  received_ms`; and `update()` prunes every rate row whose window is older
+  than `PUBKEY_RATE_WINDOW_MS` on each loop pass, so no row lives long enough
+  for its age to wrap. `test_chirp_security.cpp` replays the probe (4 of 12),
+  holds every key to 4 per sliding hour with live rows from before the wrap
+  and the victim's after it, and keeps the idle table's live window; the
+  review's 30-schedule differential against an ideal limiter (a scratch
+  probe, not committed) gave 0 mismatches on the fixed tree (#1920).
+- **Rule:** an order between stamps is an order between ages, and an age is
+  only as good as the sweep that retires rows before 2^32 ms; test the policy
+  with rows from before the wrap and with a table that idles across one.
+- **Regression check:** `make -C firmware/projects/canary-wap/tests_host run`
+  (`test_chirp_security`'s c14 cases fail on the old table and on the
+  age-only cut).
+- **Date learned:** 2026-11
 
 ### A setup-window grant outlived setup, and a pasted token passed on the cookie beside it (canary-wap, F334, F335, F345, F346, F361)
 - **What happened:** after first-boot setup any host on a WAP's home network
@@ -4534,6 +5225,28 @@
   start walks them); `check_wap_loop_commands.py` rules BV4 and BV7.
 - **Date learned:** 2026-10
 
+### A race test bounded by the writer's steps can end before the reader looks (mesh alert history, F323)
+- **What happened:** `test_mesh_session.cpp`'s
+  `test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears`
+  asserted that its reader had read a full history, but the writer's 1200
+  steps could finish before the reader ever ran while the history was full.
+  Under load or at -O1 it failed, the base binary too; the sweep said it
+  passed every run at CI's flags, and pinned to one core beside busy loops it
+  failed 1 run in 10 there as well.
+- **Root cause:** the test asserted an observation its schedule never waited
+  for. A step count bounds the writer, not what the reader sees.
+- **Fix:** at the first full history the writer waits until the reader has
+  read it full, under a 10 s `steady_clock` deadline that fails with a
+  message instead of hanging. 300 of 300 runs pass across -O0, -O1 and -O2
+  beside 3 and 7 busy loops, and under TSan.
+- **Rule:** a concurrency test that asserts the other thread saw a state
+  waits for that observation, under a deadline that fails loudly, and its
+  comment says what a pass proves. Here, on one core a pass can still hold
+  no full read between two live stores (sweep F433, open).
+- **Regression check:** the test itself, in the mesh host tests
+  (`MESH_TESTS`, `firmware.yml`'s host-test step).
+- **Date learned:** 2026-11
+
 ### A guard's proof that it bites belongs beside the guard, not inside the ten-minute regression budget
 - **What happened:** `firmware/scripts/regression_check.sh` ran the two
   canary-wap source guards (`check_wap_loop_commands.py`,
@@ -4549,11 +5262,134 @@
   passes it: the check alone, in seconds. A job of its own in `firmware.yml`
   ("WAP guard self-tests", one matrix leg per guard, twenty minutes) runs
   each guard with its proof on every PR, in parallel with everything else.
-  Each guard's last line says which it ran.
+  Each guard's last line says which it ran. The proof kept growing with the
+  guard: J11 (F405) took `check_wap_json_answers.py`'s to 230 mutations,
+  about 13 minutes of CPU, where a main run had already taken 12m49s at the
+  smaller count, so the job allows thirty minutes now, and running the
+  mutations in parallel is sweep CI22 (open). A budget sized for a proof
+  needs the proof's cost per mutation and its count, read again whenever a
+  rule adds mutations.
 - **Regression check:** `regression_check.sh` finishes inside its job's
   budget (CI's Regression Guards, ten minutes); the self-tests are the two
   legs of "WAP guard self-tests".
 - **Date learned:** 2026-10
+
+## Peer protocol: a replay window is a window, and the address is outside the tag
+
+### "Uptime fell" is not a reboot: it is any captured early-boot frame
+- **What happened:** `peer_protocol.h`'s replay rule took a frame whose
+  `uptime_s` was below the row's as a reboot and reset the row's counter to
+  it, and every accepted frame re-pointed the row's address to the socket's
+  source. The tag covers the frame, not the address. Any LAN host that had
+  captured one early heartbeat of a peer could send it to the multicast
+  group whenever it liked: the window reopened, and the coordinator-bound
+  unicast events of `peer_link.cpp` went to the sender. `docs/TRUST_MODEL.md`
+  said a captured heartbeat could not be replayed.
+- **Root cause:** a monotone counter is a replay window only while the
+  receiver can tell a restart from a replay of the first frames after one.
+  Uptime cannot: the replayed frame's uptime is low because it was captured
+  low. Nothing in the frame was per-boot.
+- **Fix:** the header's reserved byte carries a random per-boot `boot_id`
+  (0 on older senders); a row tracks the boot it is in and the one before,
+  each with its last counter; a frame must advance one of them. A claimed
+  new boot is taken only from its first 8 frames and 120 s, once per 30 s
+  per peer, and provisionally (presence only) until its second in-order
+  frame confirms it; the address is taken only from a frame that advanced a
+  counter the row already held. What still does not hold is written down in
+  `TRUST_MODEL.md` §3 (a captured pair the receiver never saw; a forgotten
+  row; a sender without a `boot_id`): a window is a window, say so.
+- **Regression check:** `tests_host/test_peer_protocol.cpp`,
+  `a_captured_frame_is_not_a_reboot` (the keyed and the fallback rules, the
+  provisional sighting, the address never moved by a replay).
+- **Date learned:** 2026-11
+
+### A gate that is "the bearer or a session" is a session gate
+- **What happened:** every Beacon route, the origination and cosign among
+  them, sat behind `api_auth_check()`, which the landing-page session any
+  LAN host can mint satisfies; and the trampoline let a null token through
+  (`if (tok && !check)`). With two WAPs on one LAN, a session on each was a
+  genuinely dual-signed life-safety ALERT with no human at either device,
+  every invariant of the two-pubkey rule honored.
+- **Root cause:** the invariants bind the signers, not the caller; the REST
+  caller is bound by the gate alone, and the gate was the weakest one.
+- **Fix:** every Beacon `POST` takes `bcn_bearer_gated` (the bearer alone,
+  as the Bluetooth and mesh pair confirms do); both gates refuse a null
+  token. `test_beacon_cancel_origination.cpp` pins the registrations and the
+  gate bodies in the source, since `api_auth.h` is not host-buildable.
+- **Regression check:** `test_source_writes_take_the_bearer` there.
+- **Date learned:** 2026-11
+
+### A signed v1 manifest is a signed way to drop the board binding
+- **What happened:** `securacv_ota_board_ok()` returned true for any
+  `manifest_version != 2`, and nothing remembered that a device had ever
+  taken a v2 manifest. A release server (or a mirror replaying an old,
+  validly signed v1 manifest under the right product id) could offer an
+  image for another board of the same product without the binding the v2
+  format was added for.
+- **Root cause:** one monotonic floor (the version) and none for the
+  format; the board rule read the version field instead of the fields.
+- **Fix:** a second NVS floor (`man_floor`), raised to 2 the moment a signed
+  v2 manifest verifies (a format floor, so an image rollback cannot strand
+  the device), and `securacv_ota_manifest_version_ok()` refuses v1 past it
+  (`SECURACV_OTA_ERR_MANIFEST_DOWNGRADE`); `securacv_ota_board_ok()` now holds
+  a manifest to every field it names whatever its version.
+- **Regression check:** `common/ota/test_ota_logic.cpp`
+  (`test_manifest_v2_message_and_rules`).
+
+### A signature on one topic does not cover the next topic over
+
+- **What happened:** The kernel's fleet roll-call (`src/fleet_peers.rs`)
+  verified a Canary's `chain` publish against its pinned key and then took
+  the room's `presence` / `occupants` / `breathing` words from the same
+  device id's `state` publish — which nothing signed. Any client with
+  broker publish rights could put a wellbeing of its choosing on a real,
+  verified-online Canary's row, and the only honest remedy was to default
+  the served roll-call to the kernel's own row.
+- **Root cause:** "Verified" was true of the chain and read as true of the
+  row. Every topic that feeds a served claim needs its own signature, or
+  its words are the broker's, not the device's.
+- **Fix:** A `state` kind of the device-signature canonical
+  (`securacv-canary-sig|v1|state|<id>|<chain_length>|<seq>|<presence>|<occupants>|<breathing>`,
+  `device_signature::sign_state`), published by canary-sense in the same
+  envelope shape as `chain`, with the NVS-persisted chain length and a
+  per-boot publish counter as the freshness pair; the bridge takes words
+  only from a live publish that verifies under the pin with a pair strictly
+  past the last one it verified, and leaves the words alone otherwise.
+  Only the three words are signed: range, lux and BPM beside them are not
+  read by the roll-call and stay unsigned.
+- **Regression check:** `firmware/tests_host/test_device_signature_common.cpp`
+  and the canary-wap copy's `test_device_signature.cpp` pin the golden
+  canonical; `cargo test fleet_peers` proves an unsigned, foreign-key,
+  edited, replayed or older `state` sets nothing; the HA pytest rebuilds
+  the same bytes; `scripts/lint_dictionary_sync.py` refuses a signed kind
+  the dictionary does not list.
+- **Date learned:** 2026-11
+
+### State kept by table slot moves when the table does (canary-wap mesh rotation, F364)
+- **What happened:** a rotation in flight records the members whose
+  REKEY_ACK it still waits for as bits of `g_rekey.pending_acks`, one per
+  peer-table slot, and `remove_peer()` shifts the table down over the
+  removed slot. Before F364 every removal started a new rotation, which
+  rebuilt the bits. Once a removal's own rotation could be refused (its new
+  opera id did not hash), an earlier rotation stayed in flight across the
+  shift with its bits over the old slots, so a survivor's ACK cleared
+  another member's bit and the member whose bit stayed could be marked
+  stale. The review found it in the slice's first version.
+- **Root cause:** an array index stored outside the array is part of the
+  array. A new refusal path reached a state the old code always rebuilt.
+- **Fix:** `remove_peer()` remaps the bits right after the shift (bits
+  below the removed slot kept, its bit dropped, the bits above moved down
+  one). Canceling the rotation was rejected: a member that took its REKEY
+  installs the new secret on receipt, so a cancel at the initiator would
+  split the opera.
+- **Rule:** whatever moves rows moves the state keyed by their index with
+  them, and a new early return is a new way to reach state that used to be
+  rebuilt before anyone read it.
+- **Regression check:** canary-wap `tests_host/test_mesh_address_wap.cpp`'s
+  `test_a_refused_rotation_leaves_the_one_in_flight_whole` (B at slot 0
+  removed with a rotation to B and C in flight: C's ACK commits it at once
+  and C is not marked stale). It fails on the slice before the remap.
+- **Date learned:** 2026-11
 
 ## How to Add an Entry
 

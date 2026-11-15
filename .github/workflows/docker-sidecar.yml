@@ -40,9 +40,10 @@ on:
       - "Cargo.lock"
       - ".github/workflows/docker-sidecar.yml"
 
+# contents: read for every job; packages: write only on the publish job —
+# lint and e2e run on pull requests and never push.
 permissions:
   contents: read
-  packages: write
 
 # Cancel superseded PR runs only. Main/tag runs publish to GHCR; canceling
 # one mid-push could leave :latest and :<version> pointing at different
@@ -135,6 +136,9 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v7
 
@@ -150,7 +154,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -163,7 +167,11 @@ jobs:
           file: docker/sidecar/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          provenance: false
+          # A SLSA provenance attestation and an SBOM ride along in the
+          # index, so `docker buildx imagetools inspect` says which commit
+          # built the image a user runs.
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha,scope=sidecar
           cache-to: type=gha,scope=sidecar,mode=max
           tags: |

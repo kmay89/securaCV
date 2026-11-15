@@ -2,7 +2,8 @@
 // Ed25519 release key (OpenSSL), sign a manifest exactly the way
 // firmware/scripts/ota_release.py does (canonical field string + image
 // signature over size_LE32||sha256), then prove evidence_update::verify
-// accepts the genuine pair and rejects every tampered variant.
+// accepts the genuine pair and rejects every tampered variant, and refuses
+// as sha_failed, before any compare, an image the device could not hash.
 //
 // Links: evidence_update_verify.cpp + securacv_ota.cpp (pure subset via
 // -DSECURACV_OTA_HOST_BUILD) + OpenSSL libcrypto.
@@ -56,8 +57,23 @@ static bool dep_verify(const uint8_t sig[64], const uint8_t pub[32],
   return ok;
 }
 
-static void dep_sha256(const uint8_t* data, size_t len, uint8_t out[32]) {
-  SHA256(data, len, out);
+static bool dep_sha256(const uint8_t* data, size_t len, uint8_t out[32]) {
+  return SHA256(data, len, out) != nullptr;
+}
+
+// A hash that does not run (sweep F364): mbedTLS answers an error and the
+// digest is never written, so `out` keeps whatever was there. Counted, and
+// so is every signature check, so a case sees verify() stop at the hash.
+static int g_failed_hashes = 0;
+static int g_verify_calls = 0;
+static bool dep_sha256_refused(const uint8_t*, size_t, uint8_t*) {
+  ++g_failed_hashes;
+  return false;
+}
+static bool dep_verify_counted(const uint8_t sig[64], const uint8_t pub[32],
+                               const uint8_t* msg, size_t msg_len) {
+  ++g_verify_calls;
+  return dep_verify(sig, pub, msg, msg_len);
 }
 
 static void to_hex(const uint8_t* b, size_t n, char* out) {
@@ -76,7 +92,7 @@ static securacv_ota_manifest_t signed_manifest(const std::vector<uint8_t>& image
   m.size = (uint32_t)image.size();
 
   uint8_t sha[32];
-  dep_sha256(image.data(), image.size(), sha);
+  CHECK(dep_sha256(image.data(), image.size(), sha));
   to_hex(sha, 32, m.sha256);
 
   uint8_t signed_msg[36];
@@ -130,6 +146,20 @@ int main() {
     auto m2 = signed_manifest(image, "securacv-canary-vision", "2.3.0");
     auto v = evidence_update::verify(m2, image.data(), (uint32_t)image.size(), deps);
     CHECK(!v.ok && strcmp(v.code, "product_mismatch") == 0);
+  }
+  { // the device's hash refused → sha_failed, before any compare (F364): the
+    // message names the device, not the files, and the image signature over
+    // the digest is never checked
+    evidence_update::VerifyDeps d2 = deps;
+    d2.sha256 = dep_sha256_refused;
+    d2.ed25519_verify = dep_verify_counted;
+    g_failed_hashes = g_verify_calls = 0;
+    auto v = evidence_update::verify(m, image.data(), (uint32_t)image.size(), d2);
+    CHECK(!v.ok && strcmp(v.code, "sha_failed") == 0);
+    CHECK(strstr(v.msg, "could not hash the image") != nullptr);
+    CHECK(strstr(v.msg, "copy both files again") == nullptr);
+    CHECK(g_failed_hashes == 1);
+    CHECK(g_verify_calls == 1);  // the manifest's signature only
   }
   { // flipped bit in the image → SHA mismatch
     auto bad = image;

@@ -49,8 +49,14 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
     /// False means the day above is when the device was FIRST DATED, not when
     /// it was born — a Canary flashed in a workshop and plugged in a week later
     /// first learns the date a week late. The app must not call that a
-    /// birthday. See firmware/common/identity/birth_day.h.
-    var bornExact: Bool
+    /// birthday. Nil means the device sent no flag, which reads as not
+    /// exact. See firmware/common/identity/birth_day.h.
+    var bornExact: Bool?
+
+    /// The days a Canary can stamp: the firmware's clock floor (2025-01-01)
+    /// to the last day a 32-bit Unix clock names (2106-02-07). The same
+    /// window as the Wall's `bornDayWindow` and witness-core's.
+    static let bornDayWindow = 20_089...49_710
     /// WHICH BOARD this is (`hw`) — the `boards/<id>/pins` header the build
     /// compiled against, as `CANARY_FIGURE_HARDWARE` spells it. Nil when the
     /// device omitted it, which is every device on firmware older than the
@@ -102,15 +108,18 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
         chain       = (try? c.decode(String.self, forKey: .chain)) ?? ""
         product     = (try? c.decode(String.self, forKey: .product)) ?? ""
         chainHeight = try? c.decodeIfPresent(Int.self, forKey: .chainHeight)
-        // A day of 0 or less is the epoch showing through, not a date. Folded
-        // to nil here so exactly one representation of "not known" reaches the
-        // UI, whichever way an older or stranger firmware phrased it.
+        // A day outside the window is one no Canary can stamp (0 is the
+        // epoch showing through). Folded to nil here so exactly one
+        // representation of "not known" reaches the UI.
         let day = (try? c.decodeIfPresent(Int.self, forKey: .bornDay)) ?? nil
-        bornDay = (day ?? 0) > 0 ? day : nil
-        // Absent means not exact. A firmware that reports a day but no verdict
-        // has not earned the word "born" — the cautious reading is the only
-        // safe one, because the flag exists to hold back a claim.
-        bornExact = ((try? c.decodeIfPresent(Bool.self, forKey: .bornExact)) ?? nil) ?? false
+        if let day, Self.bornDayWindow.contains(day) {
+            bornDay = day
+        } else {
+            bornDay = nil
+        }
+        // Absent (or not a boolean) stays nil and reads as not exact: the
+        // flag exists to hold back a claim.
+        bornExact = (try? c.decodeIfPresent(Bool.self, forKey: .bornExact)) ?? nil
         // Empty and absent are one answer here ("this device cannot say"),
         // folded to nil so a caller never spends a map lookup proving that an
         // empty string is not a board id.
@@ -133,7 +142,7 @@ struct FleetSelfDevice: Codable, Hashable, Sendable {
     }
 
     init(name: String, online: Bool, chain: String, product: String, chainHeight: Int? = nil,
-         bornDay: Int? = nil, bornExact: Bool = false, hardware: String? = nil,
+         bornDay: Int? = nil, bornExact: Bool? = nil, hardware: String? = nil,
          hub: String = "", presence: String? = nil, occupants: String? = nil,
          breathing: Bool? = nil, seeing: String? = nil, seeingScore: Int? = nil) {
         self.name = name

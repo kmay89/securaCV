@@ -253,6 +253,37 @@ def test_the_first_event_for_a_zone_creates_its_entity_which_fires_it():
     assert len(added) == 2 and len(entity.fired) == 2
 
 
+def test_a_zone_id_the_kernel_could_not_have_sealed_mints_no_entity():
+    """The feed is a broker topic: a zone label is gated on shape and
+    length the way a Canary's device id is (mqtt_payload.DEVICE_ID_RE), so
+    a publisher that is not the kernel cannot name arbitrary entities."""
+    hass, entry, _api, coordinator = _kernel()
+    added: list = []
+    manager = event_platform.WitnessEventManager(hass, entry, coordinator, added.extend)
+    for bad in ("", "zone:" + "x" * 64, "zone:front\ndoor", "zone:<script>", "zone:a/b", 5, None):
+        manager.async_handle_event(dict(EVENT, zone_id=bad))
+    assert added == []
+    for good in ("zone:front_door", "zone:Drive-Way", "Back yard", "cam.2"):
+        assert event_platform.valid_zone_id(good), good
+    manager.async_handle_event(dict(EVENT, zone_id="zone:" + "y" * 59))
+    assert len(added) == 1
+
+
+def test_the_number_of_witness_zones_per_entry_is_capped():
+    hass, entry, _api, coordinator = _kernel()
+    added: list = []
+    manager = event_platform.WitnessEventManager(hass, entry, coordinator, added.extend)
+    cap = event_platform.MAX_WITNESS_ZONES
+    for n in range(cap + 8):
+        manager.async_handle_event(dict(EVENT, zone_id=f"zone:cam_{n}"))
+    assert len(added) == cap and len(manager.entities) == cap
+    # Events for a zone already known still route; a new zone is ignored.
+    manager.async_handle_event(dict(EVENT, zone_id="zone:cam_0"))
+    assert len(added) == cap
+    manager.async_handle_event(dict(EVENT, zone_id="zone:one_more"))
+    assert len(added) == cap and "one_more" not in manager.entities
+
+
 def test_a_covered_event_fires_verified(monkeypatch):
     _clock_at(monkeypatch, 1700000700.0)
     hass, entry, _api, coordinator = _kernel()

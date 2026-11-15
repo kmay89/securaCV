@@ -41,7 +41,12 @@
  *                  refuses; IDF also erases that entry in the same read,
  *                  which this fake does not: what the suite holds is that
  *                  the load and its caller write nothing); Short (copies
- *                  31 bytes, answers 31).
+ *                  all but the last byte, answers that count).
+ *   read_only_key  when set, `read` applies to getBytes() of this key alone
+ *                  and every other key reads Ok, so a load that reads two
+ *                  entries (the TLS pair, test_tls_load_der.cpp) meets one
+ *                  whole and one refused; empty, `read` applies to every
+ *                  key.
  * Every call counts. failed_begins is the error line Arduino's begin() logs
  * for each open it refuses; prefs_open is the handles begun and not ended. */
 #ifndef STUB_NVS_KEY_PREFERENCES_H
@@ -68,6 +73,7 @@ struct HostKeyNvs {
   esp_err_t length_fault = ESP_OK;
   bool begin_fails = false;
   Read read = Read::Ok;
+  std::string read_only_key;   // `read` applies to this key alone; empty: to every key
 
   int ro_begins = 0, rw_begins = 0, failed_begins = 0, double_begins = 0;
   int wrong_namespace = 0;
@@ -84,6 +90,7 @@ struct HostKeyNvs {
     length_fault = ESP_OK;
     begin_fails = false;
     read = Read::Ok;
+    read_only_key.clear();
   }
 };
 inline HostKeyNvs& host_key_nvs() {
@@ -127,7 +134,9 @@ class Preferences {
     const size_t len = getBytesLength(key);
     if (len == 0 || buf == nullptr || maxLen == 0) return len;
     if (len > maxLen) return 0;
-    switch (n.read) {
+    const HostKeyNvs::Read how =
+        (n.read_only_key.empty() || n.read_only_key == key) ? n.read : HostKeyNvs::Read::Ok;
+    switch (how) {
       case HostKeyNvs::Read::Ok:
         memcpy(buf, n.blobs[key].data(), len);
         return len;

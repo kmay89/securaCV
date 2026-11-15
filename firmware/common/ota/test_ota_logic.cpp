@@ -304,10 +304,29 @@ static int test_manifest_v2_message_and_rules()
     CHECK(securacv_ota_board_ok(&m, "", ""));
     m.board[0] = '\0';
     CHECK(securacv_ota_board_ok(&m, "anything", "esp32c6"));
+    // A v1 struct that carries a board (from_fields refuses one; this is the
+    // rule on its own) is held to it, never waved through for being v1.
     m.manifest_version = 1;
     strcpy(m.board, "xiao-esp32c6-mr60");
-    CHECK(securacv_ota_board_ok(&m, "xiao-esp32s3-sense", "esp32s3"));  // v1: no binding
+    CHECK(!securacv_ota_board_ok(&m, "xiao-esp32s3-sense", "esp32s3"));
+    CHECK(securacv_ota_board_ok(&m, "xiao-esp32c6-mr60", "esp32c6"));
+    m.board[0] = '\0';
+    m.chip[0] = '\0';
+    CHECK(securacv_ota_board_ok(&m, "xiao-esp32s3-sense", "esp32s3"));  // v1 with no fields: no binding
     CHECK(!securacv_ota_board_ok(NULL, "x", "y"));
+
+    // The manifest-version floor: no floor takes anything the parser admits;
+    // a floor of 2 (set once a signed v2 verified) refuses v1 and absent (0,
+    // which the parsers read as 1), takes v2 and anything newer.
+    CHECK(securacv_ota_manifest_version_ok(1, 0));
+    CHECK(securacv_ota_manifest_version_ok(2, 0));
+    CHECK(securacv_ota_manifest_version_ok(0, 0));
+    CHECK(!securacv_ota_manifest_version_ok(1, 2));
+    CHECK(!securacv_ota_manifest_version_ok(0, 2));
+    CHECK(securacv_ota_manifest_version_ok(2, 2));
+    CHECK(securacv_ota_manifest_version_ok(3, 2));
+    CHECK(securacv_ota_manifest_version_ok(1, 1));
+    CHECK(securacv_ota_manifest_version_ok(0, 1));
 
     // The floor rule, enforced: below min_version refuses; no floor is no floor.
     CHECK(securacv_ota_min_version_ok("2.4.0", "2.4.0"));

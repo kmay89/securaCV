@@ -220,13 +220,22 @@ struct FleetWiFiSheet: View {
                 ForEach(plan.handsOn) { c in
                     candidateRow(c, note: nil)
                 }
+                // The in-app path, not Settings: the display walkthrough
+                // scans the QR on its glass, joins its setup network itself
+                // and hands the new Wi-Fi over (CanaryFamilySetupView).
+                NavigationLink {
+                    CanaryFamilySetupView(family: .display)
+                } label: {
+                    Label("Walk me through a display", systemImage: "qrcode.viewfinder")
+                }
             } header: {
                 Text("Needs hands-on")
             } footer: {
                 Text("Displays store Wi-Fi only through their own setup "
                    + "screen: unplug the display, plug it back in, and it "
-                   + "opens its setup network when it can't join — join that "
-                   + "network from this iPhone and type the new password there.")
+                   + "opens its setup network when it can't join. The "
+                   + "walkthrough scans the code on its screen and hands it "
+                   + "the new Wi-Fi from this iPhone.")
             }
         }
         if !plan.unreachable.isEmpty {

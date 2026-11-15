@@ -18,7 +18,8 @@
 //!              (or anchor-all --policy … --offline-dir out/ for every subject)
 //!
 //! Subjects: `chain_head` (default), `export_receipt_head`,
-//! `break_glass_receipt_head`, `policy_head`, or a bare `digest`
+//! `break_glass_receipt_head`, `policy_head`, `clock_provenance_head`, or a
+//! bare `digest`
 //! (`--digest HEX` / `--file PATH`).
 //!
 //! `log_anchor verify` re-checks every stored anchor structurally (imprint
@@ -30,6 +31,13 @@
 //! TSAs in the declared roles — roles are the operator's declarations, never
 //! a legal finding.
 //!
+//! `verify` also reads the clock-provenance ledger `witnessd` seals (one
+//! device-signed record per anchor row: the device clock measured against
+//! the token's genTime, bound by the token's hash) and prints, under every
+//! anchor, what that record says — with the ClockSkew correlation and the
+//! structural seal-before-genTime check. It holds no key and writes nothing;
+//! `docs/design/clock_provenance.md`.
+//!
 //! `list`, `verify`, `query` and `anchor-all --offline-dir` open the
 //! database read-only and never create the anchors table (an observer
 //! writes nothing); `request`, `import`, online `anchor-all` and `relabel`
@@ -37,13 +45,16 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{ArgAction, Parser, Subcommand};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use witness_kernel::anchor_policy::{self, AnchorPolicy, Attribution, CoverageVerdict, Verified};
+use witness_kernel::clock_provenance::{self, ClockProvenanceRow};
+use witness_kernel::crypto::signatures::SignatureMode;
 use witness_kernel::tsa::{self, AnchorRecord, AnchorSubject};
+use witness_kernel::{verify, verify_helpers};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -92,7 +103,7 @@ enum Command {
         #[arg(long, value_name = "FILE")]
         policy: Option<PathBuf>,
         /// Ledger head to anchor: chain_head (default), export_receipt_head,
-        /// break_glass_receipt_head, policy_head
+        /// break_glass_receipt_head, policy_head, clock_provenance_head
         #[arg(long, value_name = "S", conflicts_with_all = ["digest", "file"])]
         subject: Option<String>,
         /// Anchor an explicit hex SHA-256 digest (e.g. an export bundle
@@ -109,7 +120,7 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         out: String,
         /// Ledger head to anchor: chain_head (default), export_receipt_head,
-        /// break_glass_receipt_head, policy_head
+        /// break_glass_receipt_head, policy_head, clock_provenance_head
         #[arg(long, value_name = "S", conflicts_with_all = ["digest", "file"])]
         subject: Option<String>,
         /// Anchor an explicit hex SHA-256 digest instead of a ledger head
@@ -200,7 +211,7 @@ fn open(args: &Args, mode: OpenMode) -> Result<Connection> {
         (None, Some(seed)) => Some(seed.clone()),
         (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
             eprintln!("log_anchor: database key from the {}", found.source);
-            found.seed
+            found.seed.to_string()
         }),
     };
     let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
@@ -339,7 +350,7 @@ fn parse_head_subject(s: &str) -> Result<AnchorSubject> {
         Some(kind) => Ok(kind),
         None => bail!(
             "unknown subject '{s}' (allowed: chain_head, export_receipt_head, \
-             break_glass_receipt_head, policy_head)"
+             break_glass_receipt_head, policy_head, clock_provenance_head)"
         ),
     }
 }
@@ -728,6 +739,14 @@ fn plan_subjects(conn: &Connection, policy: &AnchorPolicy) -> Result<Vec<Planned
                      so the request count stays constant",
                     &hex::encode(hash)[..16]
                 );
+                if subject == AnchorSubject::ClockProvenanceHead {
+                    eprintln!(
+                        "anchor-all: {subject}: witnessd seals one record per anchor row this run \
+                         stores, so the ledger is no longer empty afterwards and `verify --policy` \
+                         reads this subject NOT covered until the next anchor-all; run anchor-all \
+                         again once witnessd has polled (about 5 s)"
+                    );
+                }
                 out.push(Planned {
                     subject,
                     stored_as: AnchorSubject::Digest,
@@ -979,16 +998,46 @@ fn verify(
     // block below still runs over the ledgers themselves, so an absent
     // table and an empty one reach the same per-subject verdicts (an empty
     // ledger has nothing to cover; a non-empty one is uncovered).
-    let anchors = if tsa::anchor_table_exists(conn)? {
-        tsa::list_anchors(conn)?
-    } else {
-        Vec::new()
-    };
-    if anchors.is_empty() {
-        println!("no anchors stored");
-        if policy.is_none() {
-            return Ok(());
+    let threshold_s = policy
+        .as_ref()
+        .map(|(p, _)| p.max_clock_offset_s)
+        .unwrap_or(clock_provenance::ONE_BUCKET_S);
+    // The anchors table and the clock-provenance ledger are read inside ONE
+    // read transaction. witnessd may insert an anchor row and seal its record
+    // between two separate reads, and a record read without its row would be
+    // reported after the loop as naming a deleted anchor. The database is in
+    // WAL mode, so the snapshot blocks no writer; it ends (a no-op rollback)
+    // when `snapshot` drops at the end of this block.
+    let (anchors, mut clock) = {
+        let snapshot = conn.unchecked_transaction()?;
+        let anchors = if tsa::anchor_table_exists(&snapshot)? {
+            tsa::list_anchors(&snapshot)?
+        } else {
+            Vec::new()
+        };
+        if anchors.is_empty() {
+            println!("no anchors stored");
         }
+        #[cfg(test)]
+        tests::between_the_two_reads();
+        // The clock-provenance ledger, whole, before any anchor: its chain and
+        // device signatures under the key lineage this database names. The
+        // per-anchor clock lines below only mean something over a ledger that
+        // holds together.
+        let clock = ClockContext::load(&snapshot, threshold_s)?;
+        (anchors, clock)
+    };
+    if anchors.is_empty() && policy.is_none() {
+        let orphans = clock.finish(&anchors);
+        if !clock.ledger_ok {
+            bail!("clock provenance ledger failed verification");
+        }
+        if orphans > 0 {
+            bail!(
+                "{orphans} clock-provenance record(s) name anchors that were deleted or replaced"
+            );
+        }
+        return Ok(());
     }
 
     let mut failures = 0usize;
@@ -1176,6 +1225,7 @@ fn verify(
 
         let membership = membership_text(a);
         let signer_text = signer_summary(&a.token_der);
+        let line_ok = problems.is_empty() && under_label.is_some();
         if problems.is_empty() {
             if let Some(label) = under_label {
                 println!(
@@ -1216,7 +1266,9 @@ fn verify(
                 println!("    {p}");
             }
         }
+        clock.print_for_anchor(conn, a, line_ok, policy.is_some())?;
     }
+    let orphans = clock.finish(&anchors);
 
     // Distinctness: only OK rows, only head kinds.
     for key in &head_order {
@@ -1271,21 +1323,37 @@ fn verify(
                     println!("policy: {}: ledger is empty; nothing to cover", c.subject)
                 }
                 CoverageVerdict::Covered {
+                    hash,
                     by,
                     anchor_ids,
                     bucket_start,
                     is_current,
-                    ..
                 } => {
                     let ids = anchor_ids
                         .iter()
                         .map(|i| format!("#{i}"))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    let current = if is_current {
-                        "yes".to_string()
-                    } else {
-                        "NO (ledger advanced since)".to_string()
+                    // The clock-provenance ledger grows by one record per
+                    // anchor row witnessd observes, this run's own rows
+                    // included, so its head always moves past what a run
+                    // anchored. It reads current when every record since
+                    // seals a later anchor row (`docs/timestamping.md`).
+                    let self_advanced = (!is_current
+                        && c.subject == AnchorSubject::ClockProvenanceHead
+                        && clock.ledger_ok)
+                        .then(|| {
+                            clock_provenance::advanced_only_by_later_anchors(&clock.rows, &hash)
+                        })
+                        .flatten();
+                    let is_current = is_current || self_advanced.is_some();
+                    let current = match self_advanced {
+                        _ if !is_current => "NO (ledger advanced since)".to_string(),
+                        Some(n) => format!(
+                            "yes (advanced since only by {n} record(s) of later anchor rows; this \
+                             ledger grows by one record per anchor row, this run's own included)"
+                        ),
+                        None => "yes".to_string(),
                     };
                     println!(
                         "policy: {}: covered by {} — anchors {ids}, bucket {}; current head: {current}",
@@ -1335,15 +1403,24 @@ fn verify(
             }
         }
         print_policy_note(path);
-        let unsatisfied = uncovered > 0 || (require_current && not_current > 0);
+        let breaches = clock.breaches;
+        let unsatisfied = uncovered > 0 || (require_current && not_current > 0) || breaches > 0;
         if unsatisfied {
             let current_part = if require_current {
                 format!(", {not_current} not current")
             } else {
                 String::new()
             };
+            let clock_part = if breaches > 0 {
+                format!(
+                    ", {breaches} clock-offset breach(es) of max_clock_offset_s {}",
+                    p.max_clock_offset_s
+                )
+            } else {
+                String::new()
+            };
             let msg = format!(
-                "anchor policy {}: NOT SATISFIED ({uncovered} subject(s) uncovered{current_part})",
+                "anchor policy {}: NOT SATISFIED ({uncovered} subject(s) uncovered{current_part}{clock_part})",
                 path.display()
             );
             // The verdict line goes to stdout either way, on the same stream
@@ -1359,10 +1436,333 @@ fn verify(
     if failures > 0 {
         bail!("{failures} anchor(s) failed verification");
     }
+    if !clock.ledger_ok {
+        bail!("clock provenance ledger failed verification");
+    }
+    if orphans > 0 {
+        bail!("{orphans} clock-provenance record(s) name anchors that were deleted or replaced");
+    }
     if let Some(msg) = policy_failure {
         bail!("{msg}");
     }
     Ok(())
+}
+
+/// What `verify` knows about the clock-provenance ledger while it walks the
+/// anchors (`docs/design/clock_provenance.md`, "Verification"). Read-only
+/// and key-free: the ledger is checked under the key lineage the database
+/// itself names, so its line says self-consistent, never verified.
+struct ClockContext {
+    rows: Vec<ClockProvenanceRow>,
+    /// `false` after the ledger line printed `FAIL`: the per-anchor clock
+    /// lines are suppressed and the run bails after the loop.
+    ledger_ok: bool,
+    /// `max_clock_offset_s` from the policy, else one bucket (600 s).
+    threshold_s: i64,
+    /// Retained ClockSkew failure buckets, for the correlation notes.
+    skew_buckets: Vec<i64>,
+    /// Records that contradict the anchors table (anchor deleted or token
+    /// replaced); each fails the run.
+    orphans: usize,
+    /// Under `--policy`: evaluated offsets beyond the threshold, plus
+    /// seal-before-genTime findings beyond it on anchors whose own line is OK.
+    breaches: usize,
+}
+
+impl ClockContext {
+    fn load(conn: &Connection, threshold_s: i64) -> Result<Self> {
+        let mut ctx = Self {
+            rows: Vec::new(),
+            ledger_ok: true,
+            threshold_s,
+            skew_buckets: Vec::new(),
+            orphans: 0,
+            breaches: 0,
+        };
+        let count = clock_provenance::row_count(conn)?;
+        if count == 0 {
+            println!("clock provenance: no records");
+            return Ok(ctx);
+        }
+        match Self::walk_ledger(conn) {
+            Ok(rows) => {
+                println!(
+                    "clock provenance: {} record(s), ledger self-consistent (chain and device \
+                     signatures check under the key lineage this database names; identity \
+                     unverified)",
+                    rows.len()
+                );
+                ctx.rows = rows;
+                ctx.skew_buckets = clock_provenance::clock_skew_buckets(conn)?;
+            }
+            Err(e) => {
+                println!("clock provenance: FAIL ({e:#})");
+                ctx.ledger_ok = false;
+            }
+        }
+        Ok(ctx)
+    }
+
+    /// The court_export pattern: the database's pinned device key, every
+    /// validated lineage key, the stored PQ key when there is one, Compat.
+    fn walk_ledger(conn: &Connection) -> Result<Vec<ClockProvenanceRow>> {
+        let genesis = witness_kernel::device_public_key_from_db(conn)
+            .map_err(|e| anyhow!("could not read the database's device identity: {e}"))?;
+        let keys = verify_helpers::lineage_verifying_keys(conn, &genesis)?;
+        let pq = verify_helpers::load_pq_verifying_key(conn, None, None)?;
+        let mut walked: Vec<(i64, [u8; 32])> = Vec::new();
+        verify::verify_clock_provenance_with(
+            conn,
+            &keys,
+            SignatureMode::Compat,
+            pq.as_ref(),
+            |id, entry_hash| walked.push((id, entry_hash)),
+        )?;
+        // Only the rows the walk checked: witnessd may have committed one
+        // since, and an unchecked row must not ride on this verdict.
+        clock_provenance::list_walked_rows(conn, &walked)
+    }
+
+    fn band(&self, is_beyond: bool) -> String {
+        let (word, what) = (
+            if is_beyond { "BEYOND" } else { "within" },
+            if self.threshold_s == clock_provenance::ONE_BUCKET_S {
+                "one bucket (600 s)".to_string()
+            } else {
+                format!("{} s (max_clock_offset_s)", self.threshold_s)
+            },
+        );
+        format!("{word} {what}")
+    }
+
+    /// The clock lines under one anchor's block: the record's statement
+    /// (steps 2, 5, 6, 8), the token cross-check (3), and the structural
+    /// seal-before-genTime check on a chain-head anchor over a live sealed
+    /// row (7), which needs no record at all.
+    fn print_for_anchor(
+        &mut self,
+        conn: &Connection,
+        a: &AnchorRecord,
+        line_ok: bool,
+        under_policy: bool,
+    ) -> Result<()> {
+        if self.ledger_ok {
+            let row = clock_provenance::record_for_anchor(&self.rows, a.id).cloned();
+            match row {
+                None => println!(
+                    "    clock: no record (anchored before clock provenance, or witnessd was not \
+                     running to observe it)"
+                ),
+                Some(row) => {
+                    let stored = clock_provenance::token_sha256_hex(&a.token_der);
+                    if stored != row.record.token_sha256 {
+                        self.orphans += 1;
+                        println!(
+                            "    clock: FAIL record #{} binds token sha256 {}… but the row now \
+                             holds {}… — the token was replaced after the device bound it",
+                            row.id,
+                            prefix16(&row.record.token_sha256),
+                            &stored[..16]
+                        );
+                    } else {
+                        self.print_record(&row, a, under_policy);
+                    }
+                }
+            }
+        }
+        // Step 7: structural, record or no record. The sealed row's bucket
+        // start versus the token's time bounds how far ahead the device read
+        // when it sealed the anchored row.
+        if a.subject_kind() == Some(AnchorSubject::ChainHead) {
+            let created_at: Option<i64> = conn
+                .query_row(
+                    "SELECT created_at FROM sealed_events WHERE entry_hash = ?1 ORDER BY id ASC \
+                     LIMIT 1",
+                    [a.subject_hash.as_slice()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let gen_time = tsa::parse_token(&a.token_der)
+                .ok()
+                .and_then(|t| tsa::gen_time_unix(&t.gen_time));
+            if let (Some(created_at), Some(gen_time)) = (created_at, gen_time) {
+                if let Some(n) = clock_provenance::seal_precedes_gen_time(created_at, gen_time) {
+                    if n > self.threshold_s {
+                        println!(
+                            "    WARNING: the anchored sealed row's bucket starts {n} s after the \
+                             TSA genTime: the device clock read at least {n} s ahead when it sealed \
+                             that row ({})",
+                            self.band(true)
+                        );
+                        if under_policy && line_ok {
+                            self.breaches += 1;
+                        }
+                    } else {
+                        println!(
+                            "    note: the anchored sealed row's bucket starts {n} s after the TSA \
+                             genTime: the device clock read at least {n} s ahead when it sealed \
+                             that row"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn print_record(&mut self, row: &ClockProvenanceRow, a: &AnchorRecord, under_policy: bool) {
+        let rec = &row.record;
+        let Some(offset) = rec.observed_offset_s else {
+            println!(
+                "    clock: record #{} binds this token (sha256 {}…); binding only, no \
+                 measurement (row already present at the first poll of a witnessd process, or \
+                 first seen more than 3600 s after the previous completed poll)",
+                row.id,
+                prefix16(&rec.token_sha256)
+            );
+            return;
+        };
+        let offset_text = clock_provenance::format_offset(offset);
+        let Some(asmt) = clock_provenance::assess(rec, a) else {
+            println!(
+                "    clock: record #{}: device clock {offset_text} recorded, but genTime not \
+                 readable from the token; not evaluated",
+                row.id
+            );
+            return;
+        };
+        let gap = rec.poll_gap_s.unwrap_or(0);
+        let stored = clock_provenance::stored_text(asmt.lag_s);
+        if !(asmt.prompt || offset < 0) {
+            println!(
+                "    clock: record #{}: device clock {offset_text} vs TSA genTime; row {stored} \
+                 (delayed import), positive offset not evaluated",
+                row.id
+            );
+        } else {
+            let is_beyond = clock_provenance::beyond(rec, &asmt, self.threshold_s);
+            let when = if asmt.prompt {
+                format!("row seen within {gap} s, {stored}")
+            } else {
+                format!(
+                    "row seen within {gap} s, {stored} (delayed import; a negative offset is \
+                     evaluated regardless)"
+                )
+            };
+            println!(
+                "    clock: record #{}: device clock {offset_text} vs TSA genTime ({when}); {}",
+                row.id,
+                self.band(is_beyond)
+            );
+            if is_beyond {
+                if under_policy {
+                    self.breaches += 1;
+                } else {
+                    println!(
+                        "    WARNING: device clock offset beyond the structural threshold; with \
+                         --policy this counts against the anchor policy"
+                    );
+                }
+                let center = rec.time_bucket.start_epoch_s as i64;
+                match clock_provenance::skew_within(
+                    &self.skew_buckets,
+                    center,
+                    clock_provenance::ONE_BUCKET_S,
+                ) {
+                    Some(b) => println!(
+                        "    note: a ClockSkew failure record is retained in bucket {b} (within \
+                         one bucket of this reading)"
+                    ),
+                    None => println!(
+                        "    note: no ClockSkew failure record retained within one bucket of this \
+                         reading (retention prunes failure records)"
+                    ),
+                }
+            }
+        }
+        if asmt.host_clock_disagrees {
+            // A clamped offset gives a bound on the reading, so the gap is
+            // printed as the inequality it is.
+            let gap = if !asmt.clamped {
+                format!("{:+}", asmt.host_gap_s)
+            } else if offset > 0 {
+                format!(">= {:+}", asmt.host_gap_s)
+            } else {
+                format!("<= {:+}", asmt.host_gap_s)
+            };
+            println!(
+                "    note: host clock: the device's reading at observation is {gap} s from the \
+                 anchor row's bucket start (expected 0 to 1199 s); the anchoring host's clock \
+                 and the device clock disagree"
+            );
+        }
+    }
+
+    /// After the anchor loop: records whose anchor is gone (step 3), and the
+    /// step check between consecutive measured records (step 9). Returns the
+    /// orphan count.
+    fn finish(&mut self, anchors: &[AnchorRecord]) -> usize {
+        if !self.ledger_ok {
+            return self.orphans;
+        }
+        for row in &self.rows {
+            if !anchors.iter().any(|a| a.id == row.record.anchor_id) {
+                self.orphans += 1;
+                println!(
+                    "clock provenance: FAIL record #{} names anchor #{}, which is not in the \
+                     anchors table (deleted, or the table was rebuilt)",
+                    row.id, row.record.anchor_id
+                );
+            }
+        }
+        // Only evaluated readings are compared: the gate print_record and
+        // beyond() use (a readable genTime, and prompt or negative). A
+        // delayed import's positive offset is not a clock reading, so it
+        // can neither make nor hide a step.
+        let measured: Vec<&ClockProvenanceRow> = self
+            .rows
+            .iter()
+            .filter(|r| {
+                let Some(offset) = r.record.observed_offset_s else {
+                    return false;
+                };
+                anchors
+                    .iter()
+                    .find(|a| a.id == r.record.anchor_id)
+                    .and_then(|a| clock_provenance::assess(&r.record, a))
+                    .is_some_and(|asmt| asmt.prompt || offset < 0)
+            })
+            .collect();
+        for pair in measured.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let (oa, ob) = (
+                i64::from(a.record.observed_offset_s.unwrap_or(0)),
+                i64::from(b.record.observed_offset_s.unwrap_or(0)),
+            );
+            let step = ob - oa;
+            if step.abs() > clock_provenance::ONE_BUCKET_S {
+                let (lo, hi) = (
+                    a.record.time_bucket.start_epoch_s as i64,
+                    b.record.time_bucket.start_epoch_s as i64,
+                );
+                match clock_provenance::skew_between(&self.skew_buckets, lo, hi) {
+                    Some(bk) => println!(
+                        "clock provenance: note: device clock offset stepped {step:+} s between \
+                         records #{} and #{}; a ClockSkew failure record is retained between \
+                         their buckets (bucket {bk})",
+                        a.id, b.id
+                    ),
+                    None => println!(
+                        "clock provenance: note: device clock offset stepped {step:+} s between \
+                         records #{} and #{}; no ClockSkew failure record is retained between \
+                         their buckets (retention prunes failure records)",
+                        a.id, b.id
+                    ),
+                }
+            }
+        }
+        self.orphans
+    }
 }
 
 fn print_policy_note(path: &Path) {
@@ -1443,4 +1843,142 @@ fn relabel(conn: &Connection, id: i64, subject: &str) -> Result<()> {
         "anchor #{id} relabeled {old} -> digest (the token is unchanged; ledger membership is no longer asserted)"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use witness_kernel::{ClockObservation, Kernel, KernelConfig, ZonePolicy};
+
+    thread_local! {
+        static BETWEEN_THE_TWO_READS: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    }
+
+    /// Test seam: runs between `verify`'s read of the anchors table and its
+    /// walk of the clock-provenance ledger, where a writer may land.
+    pub(super) fn between_the_two_reads() {
+        BETWEEN_THE_TWO_READS.with(|hook| {
+            if let Some(f) = hook.borrow().as_ref() {
+                f();
+            }
+        });
+    }
+
+    fn test_cfg(db: &Path) -> KernelConfig {
+        KernelConfig {
+            db_path: db.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: std::time::Duration::from_secs(60 * 60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        }
+    }
+
+    /// The committed OpenSSL-generated token (`tests/fixtures/tsa/reply.tsr`).
+    fn fixture_token() -> tsa::TimestampToken {
+        let der = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tsa/reply.tsr"
+        ))
+        .expect("reading the TSA fixture");
+        tsa::parse_response(&der).expect("the fixture token parses")
+    }
+
+    /// One daemon poll with injected readings (never the wall clock): the
+    /// number of records it sealed.
+    fn observe(cfg: &KernelConfig, wall: i64, gap: Option<u32>) -> usize {
+        let mut kernel = Kernel::open(cfg).expect("open kernel");
+        kernel
+            .observe_anchors_for_clock_provenance(&ClockObservation {
+                observed_wall_s: wall as u64,
+                poll_gap_s: gap,
+                kernel_version: "0.0.0-test",
+            })
+            .expect("observe")
+            .len()
+    }
+
+    /// A digest anchor over the fixture token's own imprint, through a
+    /// connection of its own.
+    fn anchor_the_fixture(cfg: &KernelConfig) -> i64 {
+        let kernel = Kernel::open(cfg).expect("open kernel");
+        tsa::ensure_anchor_table(&kernel.conn).expect("anchors table");
+        let token = fixture_token();
+        let imprint: [u8; 32] = token.imprint.clone().try_into().expect("32-byte imprint");
+        tsa::insert_anchor(
+            &kernel.conn,
+            "digest",
+            &imprint,
+            "https://tsa.example/tsr",
+            &token,
+        )
+        .expect("insert anchor")
+    }
+
+    /// `verify` reads the anchors table and the clock-provenance ledger from
+    /// one snapshot: a row anchored and sealed between the two reads is
+    /// neither a deleted anchor nor an orphan. Without the shared read
+    /// transaction the record sealed in the seam names an anchor the earlier
+    /// read never saw, and the run fails with "deleted or replaced".
+    #[test]
+    fn verify_reads_anchors_and_clock_ledger_from_one_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("witness.db");
+        let cfg = test_cfg(&db);
+        let gen_time = tsa::gen_time_unix(&fixture_token().gen_time).expect("genTime");
+        // The first poll only places the cursor; the next seals anchor #1's record.
+        assert_eq!(observe(&cfg, gen_time, None), 0);
+        anchor_the_fixture(&cfg);
+        assert_eq!(observe(&cfg, gen_time + 5, Some(5)), 1);
+
+        let writer_cfg = cfg.clone();
+        BETWEEN_THE_TWO_READS.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                anchor_the_fixture(&writer_cfg);
+                assert_eq!(observe(&writer_cfg, gen_time + 10, Some(5)), 1);
+            }));
+        });
+        let reader = Kernel::open(&cfg).expect("open kernel");
+        let result = verify(&reader.conn, &cfg.db_path, &[], None, false);
+        BETWEEN_THE_TWO_READS.with(|hook| *hook.borrow_mut() = None);
+        result.expect("verify over one snapshot passes");
+        // Both rows and both records exist once the snapshot has ended.
+        assert_eq!(tsa::list_anchors(&reader.conn).unwrap().len(), 2);
+        assert_eq!(clock_provenance::row_count(&reader.conn).unwrap(), 2);
+    }
+
+    /// `anchor-all` over empty ledgers: every head kind is planned over its
+    /// sentinel and STORED AS `digest`, so a sentinel row is never a head the
+    /// full verifier would look for in a ledger (it is in none by
+    /// construction).
+    #[test]
+    fn empty_ledger_sentinels_are_planned_as_digest_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        // The chain reader needs its two tables to exist; the receipt and
+        // policy readers tolerate a missing table. All five ledgers are empty.
+        conn.execute_batch(
+            "CREATE TABLE sealed_events (id INTEGER PRIMARY KEY, entry_hash BLOB);
+             CREATE TABLE checkpoints (id INTEGER PRIMARY KEY, chain_head_hash BLOB);",
+        )
+        .unwrap();
+        let policy: AnchorPolicy = serde_json::from_str(
+            r#"{"format":"securacv-anchor-policy:v1","tsas":[{"name":"a","role":"qualified",
+                "url":"https://a.example/tsr","ca":"a.pem"}],
+                "subjects":["chain_head","export_receipt_head","break_glass_receipt_head","policy_head",
+                "clock_provenance_head"]}"#,
+        )
+        .unwrap();
+        let planned = plan_subjects(&conn, &policy).unwrap();
+        assert_eq!(planned.len(), AnchorSubject::HEADS.len());
+        assert_eq!(planned.len(), 5);
+        for (p, subject) in planned.iter().zip(AnchorSubject::HEADS) {
+            assert_eq!(p.subject, subject);
+            assert!(p.sentinel);
+            assert_eq!(p.stored_as, AnchorSubject::Digest);
+            assert_eq!(p.hash, subject.empty_ledger_sentinel().unwrap());
+        }
+    }
 }

@@ -1,4 +1,6 @@
 # The real-Home-Assistant test lane (tests/ha): the CURRENT cell.
+# Pinned by version, not by `--hash`, for the reason requirements_test.txt
+# gives (one line pins a whole core release's tree; hashes would churn it).
 # pytest-homeassistant-custom-component pins the Home Assistant release it was
 # cut for (and pytest, pytest-asyncio, syrupy, freezegun, aiohttp...), so this
 # one line decides which core the lane runs on. The floor cell — the release
@@ -10,5 +12,5 @@
 #   pytest -c tests/ha/pytest.ini --confcutdir=tests/ha tests/ha
 pytest-homeassistant-custom-component==0.13.372   # Home Assistant 2026.10.1
 paho-mqtt==2.1.0   # the mqtt integration's own requirement (mqtt_mock drives it; tests skip pip)
-mypy==2.4.0        # the same pin as requirements_test.txt; run against the real core on 3.14
-ruff==0.17.1
+mypy==2.4.1        # the same pin as requirements_test.txt; run against the real core on 3.14
+ruff==0.17.4

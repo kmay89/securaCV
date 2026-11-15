@@ -31,6 +31,13 @@ is not in KNOWN_DRIFT (it is new) and on any KNOWN_DRIFT entry that no longer
 happens (it was fixed — shrink the list). The CSVs are a human's to
 correct: this generator reports, it never edits them.
 
+THE SEAL STACK. A sealed seat is a stack, not a ring: the O-ring in its
+gland and the DIN 9021 washer over it that stops the pan head on the land
+round the gland (canary_core_lib pl_seat_cut, 2026-11-03 — without the washer
+the head rode the ring down until it extruded). A set that echoes O-rings
+must echo the same number of washers, and --check fails on one that does
+not (`seal_stack_gaps`), so a case can never bill the ring without its stop.
+
 THE RIB HEADROOM. Each set also records its lid rib (lid_rib_h / lid_rib_w)
 and the headroom its own PLS-4 assert holds the rib to (`lid_headroom`, or
 `cav_extra` on the Sense, whose assert reads that) — read from the case,
@@ -64,7 +71,7 @@ DESIGN_RULES = HERE / "DESIGN_RULES.md"
 # How every message names the rib table: by its title, not its section number.
 RIB_TABLE = 'DESIGN_RULES.md "Lid rib proportions" table'
 
-FASTENERS = ("screw", "insert", "security-screw", "wall-screw", "bolt", "o-ring")
+FASTENERS = ("screw", "insert", "security-screw", "wall-screw", "bolt", "o-ring", "washer")
 
 # The committed sets: render.sh's presets (base part — the hardware line is a
 # top-level echo, so any part gives it; the WAP shield is the exception, its
@@ -114,6 +121,13 @@ SETS = [
      "overrides": {"part": '"back"'}, "rib": True},
     {"id": "sense+inserts", "device": "canary-sense", "scad": _SENSE,
      "overrides": {"part": '"back"', "screw_insert": "true"}, "join": ("insert", "screw")},
+    # the sealed Sense (opt_seal, a custom build: no preset seals it) — the one
+    # build the Sense BOM's ORG1 / WSH1 rows and its sealed-build recipe bill,
+    # so the join reads them against an echo instead of trusting them
+    # (2026-11-03: its plate screws became x 10 over the washers)
+    {"id": "sense.seal", "device": "canary-sense", "scad": _SENSE,
+     "overrides": {"preset": '"custom"', "opt_seal": "true", "opt_vent": "true",
+                   "screw_head": '"pan"', "part": '"back"'}},
 ]
 
 # The bound each case's own PLS-4 assert holds lid_rib_h to, and the WAP's
@@ -135,6 +149,7 @@ JOIN = {
         ("screw", r"^M2 (pan|flat) x (8|10) machine \(into the inserts\)", "SCR5"),  # the insert builds: flat x 10 indoor, pan x 8 Outdoor
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),   # 3.5mm OD x 4.0mm
         ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
+        ("washer", r"^M2 washer 2\.2 x 7 x 0\.8, DIN 9021", "WSH1"),  # each O-ring's stop on the land
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
     "canary-vision": ("bom_canary_vision.csv", [
@@ -146,14 +161,16 @@ JOIN = {
         ("wall-screw", r"^#8 ", "SCR7"),                            # #8 / M4: countersunk (the bracket), pan (the doorbell plate) — the row names both
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR9"),  # the weather preset's keyholes
         ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
+        ("washer", r"^M2 washer 2\.2 x 7 x 0\.8, DIN 9021", "WSH1"),  # each O-ring's stop on the land
     ]),
     "canary-sense": ("bom_canary_sense.csv", [
-        ("screw", r"^M2 pan x 8 self-tap", "SCR3"),                  # PAN head, 8 mm: the plate screw pl_len() picks — a longer one is drift, not a match
-        ("screw", r"^M2 pan x 8 machine \(into the inserts\)", "SCR8"),  # the insert build's
+        ("screw", r"^M2 pan x (8|10) self-tap", "SCR3"),             # PAN head, 8 mm, or 10 over the sealed build's washers: the plate screw pl_len() picks — any other length is drift, not a match
+        ("screw", r"^M2 pan x (8|10) machine \(into the inserts\)", "SCR8"),  # the insert build's (10 sealed)
         ("bolt", r"^M5 x 25 bolt \+ nut", "SCR6"),                  # the hinge (the Vision's bracket and knob)
         ("wall-screw", r"^#8 / M4 countersunk", "SCR7"),           # the bracket's four corners
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
         ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
+        ("washer", r"^M2 washer 2\.2 x 7 x 0\.8, DIN 9021", "WSH1"),  # each O-ring's stop on the land
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
 }
@@ -171,6 +188,7 @@ _ITEM = re.compile(r"^(\d+)x (.+)$")
 _SCREW = re.compile(r"^M(\d+(?:\.\d+)?) (pan|flat) x (\d+) (self-tap|machine \(into the inserts\))")
 _INSERT = re.compile(r"^M(\d+(?:\.\d+)?) heat-set insert (\S+) OD x (\S+)")
 _BOLT = re.compile(r"^M\d+(?:\.\d+)? x \d+ bolt")
+_WASHER = re.compile(r"^M\d+(?:\.\d+)? washer ")
 
 
 def classify(what: str) -> tuple[str, str]:
@@ -187,6 +205,8 @@ def classify(what: str) -> tuple[str, str]:
         return "wall-screw", what
     if _BOLT.match(what):
         return "bolt", what.split(" (")[0]
+    if _WASHER.match(what):
+        return "washer", what.split(" (")[0]
     for needle, kind in (("O-ring", "o-ring"), ("TPU gasket", "gasket"), ("vent patch", "vent"),
                          ("light pipe", "light-pipe"), ("disc magnet", "magnet"),
                          ("clear disc", "window"), ("button", "button"),
@@ -290,6 +310,20 @@ def join(sets: dict, boms: dict | None = None) -> tuple[dict, list[dict]]:
     return table, drift
 
 
+def seal_stack_gaps(sets: dict) -> list[str]:
+    """Each set whose echo bills O-rings without as many head-seal washers —
+    a ring with no stop over it (the 2026-11-03 head-seal fix: the washer is
+    what lands on the gland's land; a seat billed without it is torque-set)."""
+    bad = []
+    for sid, rec in sorted(sets.items()):
+        rings = sum(i["qty"] for i in rec["items"] if i["kind"] == "o-ring")
+        washers = sum(i["qty"] for i in rec["items"] if i["kind"] == "washer")
+        if rings != washers:
+            bad.append(f"{sid}: {rings} O-ring(s) billed over {washers} head-seal washer(s) — every "
+                       f"gland's ring needs its washer (canary_core_lib hw_washer)")
+    return bad
+
+
 def build() -> dict:
     sets = {s["id"]: probe_set(s) for s in sorted(SETS, key=lambda s: s["id"])}
     table, drift = join(sets)
@@ -379,6 +413,7 @@ def main() -> int:
             f"alone): {k}" for k in new]
     bad += [f"BOM drift no longer happens — take it out of KNOWN_DRIFT: {k}" for k in gone]
     bad += check_design_rules(fresh["sets"])
+    bad += seal_stack_gaps(fresh["sets"])
     if "--check" in sys.argv:
         if not OUT.exists():
             bad.insert(0, "hardware.json is missing — run gen_hardware.py")

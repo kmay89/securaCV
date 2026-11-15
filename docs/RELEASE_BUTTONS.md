@@ -613,6 +613,15 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
 
 ## Things no button can do for you
 
+- **Accepting Apple's updated developer agreement.** When Apple republishes
+  the Program License Agreement, every Apple signing request from the team is
+  refused until the Account Holder accepts it at developer.apple.com/account.
+  An iPhone or Apple TV release then fails at **Archive** with `PLA Update
+  available … must agree to the latest Program License Agreement`, followed
+  by "No profiles … were found" for each target. Accept it, then **Re-run
+  failed jobs** on that release run, or press the master button again. The
+  version is still untagged, so no bump is owed (`.github/RELEASE_LESSONS.md`,
+  2026-10-29).
 - **The OTA key ceremony.** It makes your master signing key; it has to happen on
   your machine.
 - **Promoting the CloudKit schema.** A new field on a synced record
@@ -639,7 +648,7 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
   its commit, then regenerate `flash.json` (`gen_flash.py` embeds the
   artifact stamps — run it *after* the rebuild, or the catalog goes stale
   in the same push). The order and the two symptoms of getting it wrong are
-  in `CLAUDE.md`, "Generated files". The same bump moves the committed
+  in `docs/GENERATED_FILES.md`. The same bump moves the committed
   firmware SBOM, which carries `FIRMWARE_VERSION`: run
   `python3 scripts/gen_firmware_sbom.py` and commit
   `sbom/sbom-firmware.cdx.json` with it, or `lint.yml`'s `--check` fails.

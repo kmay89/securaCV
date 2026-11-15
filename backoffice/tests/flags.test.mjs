@@ -8,7 +8,7 @@ import { createApp } from '../src/server.mjs';
 import { createCheckout } from '../src/modules/storefront.mjs';
 import { DEMO_CATALOG } from '../src/modules/demo.mjs';
 import { doctor } from '../src/modules/health.mjs';
-import { setupOperator, createApiToken, totp } from '../src/auth.mjs';
+import { setupOperator, createApiToken, totp, sessionFor } from '../src/auth.mjs';
 import { testDb, testCfg } from './helpers.mjs';
 
 const REG = { rollout_x: { kind: 'rollout', default: false, owner: 'ops', since: '2026-01-01', remove_by: '2026-06-01', description: 'a dark launch' }, switch_y: { kind: 'switch', default: true, owner: 'owner', since: '2026-01-01', remove_by: null, description: 'a standing choice' } };
@@ -63,7 +63,7 @@ test('over HTTP: the Settings page lists and flips a flag for the owner, /api/fl
     const secret = setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'O' });
     const form = (o) => new URLSearchParams(o).toString();
     const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email: 'o@errer.test', password: 'owner password 1234', code: totp(secret) }) });
-    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf;
+    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = sessionFor(db, cookie.split('=')[1]).csrf;
     const page = await (await fetch(base + '/settings', { headers: { cookie, accept: 'text/html' } })).text();
     assert.ok(page.includes('<h2>Feature flags</h2>') && page.includes('<b>stripe_tax</b>') && page.includes('Turn on'), 'the section, the flag, the toggle');
     const flip = await fetch(base + '/settings/flags/stripe_tax', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: form({ _csrf: csrf, on: '1' }) });

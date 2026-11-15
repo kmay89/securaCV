@@ -35,8 +35,23 @@
     tests/csp.test.js + gen_csp.py --check guard the policy line itself.
   -->
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>The Canary Nursery — flash &amp; first flight · canary.local</title>
-  <meta name="description" content="Flash SecuraCV Canary firmware straight from a Chromium browser over USB-C — no Arduino, no PlatformIO, no terminal. It detects your ESP32 chip, backs the board up automatically before writing, flashes a signed release image, and verifies it against the chip's own checksum. It's a triage bench too: a read-only health check reports firmware slots, update history, crash dumps and witness-chain state, and a built-in serial monitor talks to the firmware's console. Built so you can't pick the wrong image and can't brick the board: the ESP32's bootloader is mask ROM. Works offline; the flashing engine is served from this site, nothing phones anywhere." />
+  <title>Flash over USB — the browser flasher — SecuraCV Lab</title>
+  <meta name="description" content="Flash signed Canary firmware from Chrome or Edge over USB-C: it detects the chip, backs the board up before writing, and checks the image it wrote." />
+  <!-- head:derived — written by canary-local/tools/gen_head.py from this page's own title and description. Edit those, then re-run it. -->
+  <link rel="canonical" href="https://kmay89.github.io/securaCV/canary-local/flash.html" />
+  <meta property="og:site_name" content="SecuraCV Lab" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://kmay89.github.io/securaCV/canary-local/flash.html" />
+  <meta property="og:title" content="Flash over USB — the browser flasher" />
+  <meta property="og:description" content="Flash signed Canary firmware from Chrome or Edge over USB-C: it detects the chip, backs the board up before writing, and checks the image it wrote." />
+  <meta property="og:image" content="https://securacv.com/share-card.jpg" />
+  <meta property="og:image:width" content="2400" />
+  <meta property="og:image:height" content="1260" />
+  <meta property="og:image:alt" content="Canary, SecuraCV's yellow bird mascot, holding a notepad beside the words: Records what happened. Never who. An open-source home camera with no cloud, no subscription, and no face recognition." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://securacv.com/share-card.jpg" />
+  <!-- /head:derived -->
   <link rel="stylesheet" href="assets/canary-local.css" />
   <link rel="stylesheet" href="assets/flash.css" />
 

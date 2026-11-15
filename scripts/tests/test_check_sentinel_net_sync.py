@@ -226,7 +226,7 @@ class SenseFixMustBeCarried(SyncPin):
         self.assert_passes()
 
     def test_a_key_handling_fix_in_sense_fails_until_carried(self) -> None:
-        old = "  // An all-zero blob is not a key — regenerate rather than sign with it.\n"
+        old = "      // A refused read can leave the buffer as it was or partly written.\n"
         new = old + "  // (fixed)\n"
         self.edit(SENSE, WITNESS, old, new)
         self.assert_drift()

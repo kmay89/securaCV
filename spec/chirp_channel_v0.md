@@ -60,18 +60,19 @@ This is **NOT** a surveillance system like Ring doorbells. Key differences:
 3. **Soft Witness**: Calm notifications, not panic alarms
 4. **Opt-In Only**: Devices explicitly subscribe to receive community alerts
 5. **No History**: Alerts display in real-time, then fade away
-6. **Rate Limited**: One chirp per device per 5-minute window (prevents spam/hysteria)
+6. **Rate Limited**: An escalating cooldown after each send, 5 minutes to 4 hours (§2.5.4; prevents spam/hysteria)
 7. **Limited Range**: Max 3 hops - your building/block, not the whole city
 8. **Deniable**: Cannot prove who sent a chirp (ephemeral keys)
 
 ### 1.3 Use Cases
 
-- "Unusual activity on my street" - soft awareness, not accusation
 - "Power outage in area" - community situational awareness
-- "Someone checking car doors" - heads-up without police involvement
 - "Fire/smoke in building" - faster than waiting for official alarm
 - "Medical emergency, need help" - community response
 - "All clear" - de-escalation after concern passes
+
+Each is a template (§2.5.3). No chirp describes a person or what a person
+is doing.
 
 ### 1.4 Non-Goals
 
@@ -110,7 +111,16 @@ Chirp Channel uses the same ESP-NOW transport as Opera, but with different messa
 
 - **Broadcast Only**: All chirps sent to broadcast address
 - **No Pairing Required**: Devices discover each other via broadcast
-- **Separate Channel**: Uses WiFi channel 6 (Opera uses channel 1)
+- **Shared Channel**: Chirp rides the radio's current channel, as Opera
+  does. The ESP32 has one 2.4 GHz radio, so the canary-wap registers Chirp's
+  broadcast peer (`CHIRP_CHANNEL`) and Opera's peers (`ESPNOW_CHANNEL`) at
+  channel 0, which ESP-NOW reads as the current channel, and
+  `mesh_channel_policy.h` picks that channel: the STA's when it is
+  connected, else the AP's, else 6. Chirp and Opera frames are told apart by
+  their first byte, not by the channel (§12.1). This bullet said Chirp used
+  channel 6 and Opera channel 1; a send pinned to a channel the STA was not
+  on made the driver retune the radio away from the home Wi-Fi, which is
+  why the pins were removed (`docs/network_coexistence.md`; sweep F308).
 - **Range**: ~250m per hop, max 750m with 3 hops
 
 ### 2.3 Identity Model
@@ -247,6 +257,9 @@ If the answer to #1 is "yes" or #2 is "individual" or #3 is "paranoid" - **don't
 ### 2.5.3 Defense: Witness Requirement (Sybil Resistance) — v0.2
 
 **Key Insight**: A single device should not be able to broadcast to the neighborhood alone.
+The rule below asks for other session keys, not other devices, so it delays a
+device that makes its own confirming keys, once and possibly before the chirp,
+and does not stop one (the second and third points under "Why This Works").
 
 **Rule**: Chirps only propagate beyond hop 0 after **2 independent confirmations from distinct `session_pubkey`s**.
 
@@ -276,10 +289,22 @@ Device A sends chirp (hop 0) ──broadcast──→
 - The `confirm_count` is no longer carried on the wire as a sender-controlled
   field. It is local state, derived only from cryptographically authenticated
   ACK messages with unique pubkeys.
-- Single bad actor cannot inflate the count by claiming N witnesses — every
-  claim requires a fresh signed ACK from a fresh pubkey.
-- Coordinated attack needs 3+ devices in same area, each holding a distinct
-  session_pubkey and each willing to sign an ACK. Cost is real.
+- No sender can raise the count by claiming N witnesses: each one counted is
+  its own signed ACK, from a session key not yet counted for that chirp.
+- What that does not buy is a price per identity. The threshold needs 2
+  signed ACKs (1 for safety templates) from session keys other than the
+  originator's, and one device can make any number of session keys: a key
+  is a fresh random seed (§2.3). So what a Sybil costs is the ten minutes
+  of presence each confirming key must wait before its ACK counts (§3.4
+  rule 4), and one radio runs those ten minutes for many keys at once,
+  since presence beacons are unsigned (§3.2; sweep F232, open). They run
+  once per key, from its first beacon (a refresh does not move it), so
+  keys that began beaconing ten minutes before a chirp confirm it as soon
+  as it arrives: a delay, not a price per identity, and one an attack can
+  pay before it starts. A suppress vote needs no presence at all
+  (§2.5.6; sweep F234, open). This bullet said a coordinated attack needed
+  3 or more devices, each holding a distinct key, and that its cost was
+  real (sweep D16).
 - Real events naturally get confirmed by multiple witnesses.
 
 **Exception**: Safety-class templates (EMERGENCY, WEATHER) require only 1
@@ -468,7 +493,7 @@ Different rules at different times:
 
 ```
 Layer 1: Structured templates (no offensive content possible)
-Layer 2: Witness requirement (no solo broadcast)
+Layer 2: Witness requirement (no relay before other keys confirm)
 Layer 3: Escalating cooldowns (diminishing spam returns)
 Layer 4: Presence requirement (no drive-by)
 Layer 5: Community mute (organic moderation)
@@ -482,7 +507,7 @@ Layer 6: Time restrictions (reduced night attacks)
 | Spam flooding | Escalating cooldowns (max ~5/day) |
 | Offensive text | Structured templates (impossible) |
 | False "gunman" | No such template exists |
-| Coordinated spam | Witness requirement (need 3+ liars) |
+| Coordinated spam | Witness requirement: 2 signed ACKs from other session keys, which one device can make; a ten-minute delay, not a price per identity (§2.5.3) |
 | Drive-by attack | 10-min presence requirement |
 | Cry wolf | Community mute + escalating cooldowns |
 | Night harassment | Time restrictions |
@@ -531,6 +556,17 @@ chirp_presence = {
   the device sends, not what it takes, so a device in its cooldown says it
   is listening (sweep F194: it said it was not, and neighbors listed it as
   deaf for the cooldown's 5 minutes to 4 hours).
+- `last_chirp_age_min` counts from this session's own last send: a new
+  session (§2.3) says 255 until it sends. The canary-wap counted it from
+  the device's last send, which only a reboot forgot, so after a disable and
+  an enable the new session's beacons told any neighbor that heard the old
+  one chirp how many minutes ago that was, and linked the two sessions on
+  the wire (§6.4; sweep F415). The send cooldown (§2.5.4) is the device's
+  and still counts from its last send.
+- The canary-wap's `last_chirp_age_min` stops at 254 and stays there until
+  the session sends again. It counted on with nothing to stop it, so 2^32 ms
+  (49.7 days) after a send uptime's wrap made it read a few minutes, which
+  was false (sweep F417).
 - The beacon is unsigned, so a receiver never shows its `emoji` field. The
   canary-wap's nearby list shows the display of the header's `session_id`
   (§2.3), derived as a witness's sender emoji is (it is what an honest
@@ -588,6 +624,13 @@ On relay (hop_count > 0):
   preserving the original signer's identity.
 - The relaying device re-signs the canonical under its own session key, placing
   its `session_pubkey` and `signature` in the top-level fields.
+- Every other signed field goes on as the originator sent it, `ttl_minutes`
+  included, since the origin signature covers it. The canary-wap's relay
+  wrote 15 there, so a chirp sent with any other TTL failed its origin
+  signature one hop on (sweep F306); it keeps the byte it received.
+  The canary-wap's `POST /api/chirp` does not hold the TTL to the 5 to 60
+  above, and its receiver does not read it as a display time: it keeps
+  every chirp `DEFAULT_DISPLAY_MS` (30 min), whatever the TTL says.
 - Receivers verify both signatures and that `origin_pubkey != session_pubkey`.
 
 **Categories**:
@@ -629,7 +672,17 @@ Receivers MUST:
 3. Reject if `confirmer_session_pubkey` is already in the local `confirmed_by[]`
    set for this `original_nonce`.
 4. Reject if the confirmer's pubkey has not been seen in `g_nearby_devices` for
-   at least `PRESENCE_REQUIRED_MS` (drive-by ACKs do not count).
+   at least `PRESENCE_REQUIRED_MS` (drive-by ACKs do not count). The
+   canary-wap counts it from the moment the confirmer's row went into the
+   table (`NearbyDevice::first_seen_ms`): a refresh does not move it, and a
+   row pruned after `NEARBY_TIMEOUT_MS` (3 min) without a beacon, or a new
+   session id, starts again (sweep F311: only a row was asked for, so a key
+   first heard a second before its ACK counted). Presence beacons are
+   unsigned (§3.2; sweep F232), so one radio beacons any number of session
+   ids at once and their ten minutes run together, up to the table's free
+   rows: the rule delays a confirming key by ten minutes, it does not put a
+   price on each key. A suppress vote needs no presence row at all (§2.5.6;
+   sweep F234, open).
 5. Otherwise, add the pubkey to `confirmed_by[]`. If the chirp's confirmation
    threshold is now met, mark `validated = true` and (if `relay_enabled`)
    relay the chirp.
@@ -638,8 +691,19 @@ Receivers MUST:
   count as a witness confirmation.
 - `confirmed`: human confirmed they also witness this; counts as a witness
   confirmation if it passes all checks above.
-- `resolved`: user signals the situation is resolved; treated as a local
-  dismissal and may contribute to suppress voting.
+- `resolved`: the sender's user signals the situation is resolved. It is
+  local to the sender: a receiver does not act on it. The sender's dismissal
+  reaches its neighbors only as its signed suppress vote (§2.5.6), which
+  counts toward the threshold there like any other. The canary-wap took a
+  received `resolved` as a dismissal of the chirp, and its next prune
+  dropped the row, so one key with a nearby row took a chirp off a receiver
+  that suppression asks more than half the rows, and at least three, to
+  remove (sweep F305); it now changes nothing, as any `ack_type` other than
+  `confirmed` does. A chirp its owner dismissed takes no confirmation in the
+  seconds before its row leaves, neither a neighbor's ACK nor its own
+  owner's confirm (§8.1: refused `not_found`); that confirm signed and
+  broadcast an ACK for the chirp its owner had just dismissed, and a
+  neighbor counted it like any other.
 
 ### 3.5 CHIRP_MUTE (Leave Me Alone)
 
@@ -661,10 +725,9 @@ chirp_mute = {
 
 1. **Device detects something** (motion, tamper, user observation)
 2. **User is prompted**: "Share with nearby community?"
-3. **User selects category and urgency** from simple picker
-4. **User optionally adds brief message** (64 chars max)
-5. **User confirms send** with deliberate action (hold button 2 sec)
-6. **Chirp broadcasts** to nearby devices
+3. **User selects a template and an urgency** from simple picker
+4. **User confirms send** with deliberate action (hold button 2 sec)
+5. **Chirp broadcasts** to nearby devices
 
 ```
 ┌─────────────────────────────────────────┐
@@ -673,24 +736,25 @@ chirp_mute = {
 │  🐦🌳⭐🌙🍀 (your session)               │
 │                                         │
 │  ┌─────────────────────────────────┐   │
-│  │ What's happening?               │   │
-│  │ ○ Unusual activity              │   │
-│  │ ○ Utility issue                 │   │
-│  │ ○ Safety concern                │   │
-│  │ ○ Community notice              │   │
+│  │ What are you witnessing?        │   │
+│  │ ○ power outage                  │   │
+│  │ ○ fire or smoke visible         │   │
+│  │ ○ medical emergency scene       │   │
+│  │ ○ situation resolved            │   │
 │  └─────────────────────────────────┘   │
 │                                         │
 │  How urgent?                            │
 │  [Info] [Caution] [Urgent]             │
-│                                         │
-│  Brief message (optional):              │
-│  [_______________________________]      │
 │                                         │
 │  [ Cancel ]    [====Hold to Send====]  │
 │                                         │
 │  ⚠️ This will notify ~12 nearby devices │
 └─────────────────────────────────────────┘
 ```
+
+The picker offers templates (§2.5.3) and the three urgencies; there is no
+free text. On the canary-wap the send button asks "Send this alert?" in
+place of the 2-second hold.
 
 ### 4.2 Receiving a Chirp
 
@@ -700,22 +764,31 @@ When chirp received, display is **calm and informative**, not alarming:
 ┌─────────────────────────────────────────┐
 │  🐝🌸💧🔔🌻 shared nearby:               │
 │                                         │
-│  📍 Activity • Caution                  │
-│  "someone checking car doors"           │
+│  📍 Infrastructure • Caution            │
+│  "power outage"                         │
 │                                         │
-│  ⏱️ 2 min ago • 🔄 3 relays              │
+│  ⏱️ 2 min ago • 🔄 hop 1                 │
 │                                         │
 │  [ Dismiss ]  [ I see it too ]          │
 └─────────────────────────────────────────┘
 ```
 
+What a chirp says is a template's text with its category and urgency, and
+at most a detail from a fixed list (§2.5.3): there is no free text, and the
+six categories are `category_name()`'s (`chirp_channel.cpp`). `GET
+/api/chirp/recent` carries the same fields (§8.2). The mockup showed an
+"Activity" category and a free-text message, neither of which exists
+(sweep D19).
+
 ### 4.3 Rate Limiting
 
 To prevent spam and hysteria:
 
-- **Per-device**: Max 1 chirp per 5 minutes
-- **Per-category**: Max 1 chirp per category per 15 minutes
-- **Relay limit**: Max 2 relays per received chirp
+- **Per-device**: an escalating cooldown after each send: 5 minutes, 15
+  minutes, 1 hour, then 4 hours (§2.5.4)
+- **Per origin key, on receive**: 4 witnesses an hour
+- **Relay limit**: a device relays a chirp once, when it is validated, and
+  at most 10 chirps a minute (§5.2)
 - **Cooldown display**: "You can chirp again in 3:24"
 
 ## 5. Relay and Propagation
@@ -752,11 +825,38 @@ Devices do NOT relay if:
 ```
 if (chirp.nonce in nonce_filter or chirp.nonce in recent_chirps) {
   drop_duplicate()
+} else if (!signatures_verify(chirp)) {   // session id, signature, a relay's origin envelope
+  drop()                                  // and its nonce is not kept
 } else {
   nonce_filter.add(chirp.nonce)
-  process_chirp()
+  process_chirp()                         // template, freshness, per-key rate limit, store
 }
 ```
+
+Only a verified frame's nonce enters the filter (sweep F309): one whose
+`session_id` derives from the key it carries, whose signature verifies
+under that key, and, for a relay, whose origin envelope verifies. The
+canary-wap took the nonce first, before any check, so frames no key signed,
+from any device in range, filled the filter (raising the rate at which it
+drops a new witness as a repeat, below), and a made-up frame carrying a
+heard chirp's nonce kept that chirp out of a receiver it had not reached
+yet. Taking it first saved little: a flood with a fresh nonce per frame
+reaches the signature check every time either way, and only a junk frame
+sent again with the same nonce now costs one. A verified frame that a later
+check refuses (an unknown template, the freshness window, the per-key rate
+limit) keeps its nonce, so it is refused at the lookup when it comes
+again while the filter holds it (331 to 662 s, below). The freshness
+window runs before the rate limit, so a stale frame played back never
+counts against its key's hour.
+
+The filter holds nonces, not who signed them, and so does the recent
+table: a frame that verifies under any key, an attacker's own among them,
+takes the nonce it carries, and where it arrives first the chirp that
+nonce came from is refused as a repeat. A relay that names an origin key
+and carries no origin signature at all takes it too: v0.2 still accepts
+one on its relayer's signature alone and stores it as that origin's chirp
+with content the origin never signed (THREAT_MODEL.md, the Chirp "Spoofed
+origination" cell). Both are known limits of this version.
 
 A nonce is one chirp: a receiver must refuse a witness whose nonce it has
 seen for at least as long as the frame could still be accepted. A frame is
@@ -882,6 +982,9 @@ COOLDOWN ──timeout(tier: 5 min to 4 h)──→ ACTIVE
 * ──disable()──→ DISABLED
 ```
 
+The canary-wap's enable goes from INITIALIZING straight to ACTIVE; LISTENING
+is left for other implementations.
+
 On the canary-wap the two COOLDOWN arrows are the timer starting and running
 out, not stored transitions: MUTED ──unmute/timeout──→ ACTIVE reads COOLDOWN
 again while the timer still runs, and so does an enable while the timer the
@@ -936,7 +1039,8 @@ A confirmation (`POST /api/chirp/confirm`, or `/api/chirp/ack` with
 `"type":"confirmed"`) that sends nothing says why, in this order:
 `chirp_disabled` (409), `presence_required` (409, ten minutes on),
 `clock_unsynced` (409), `not_found` (404, no chirp with that nonce in the
-recent list), `own_chirp` (409, the originator cannot confirm its own,
+recent list, or one this device's owner dismissed, §3.4), `own_chirp` (409,
+the originator cannot confirm its own,
 §3.4), each with a `message` (sweep F174: every one was `not_found`, and the
 ack's a bare `{"success":false}`). A dismiss (`POST /api/chirp/dismiss`, or
 the ack with `"resolved"`) hides the chirp on this device whatever happens,
@@ -974,16 +1078,28 @@ shows what the POST did. The answers keep their shape.
 
 ### 8.2 Response Formats
 
+The keys below are the ones `chirp_api.h` writes and reads, and
+`scripts/tests/test_chirp_spec_tables.py` holds each example to its
+handler (sweep D19: the examples showed an `activity` category, a `message`
+field and a free-text send, none of which exists).
+
 ```json
 // GET /api/chirp
 {
-  "state": "ACTIVE",
+  "state": "cooldown",
   "session_emoji": "🐦🌳⭐🌙🍀",
   "nearby_count": 12,
   "recent_chirps": 2,
-  "last_chirp_sent": null,
-  "cooldown_remaining_sec": 0,
-  "relay_enabled": true
+  "last_chirp_sent_ms": 5400000,
+  "cooldown_remaining_sec": 240,
+  "cooldown_tier": 1,
+  "presence_met": true,
+  "night_mode": false,
+  "relay_enabled": true,
+  "muted": false,
+  "mute_remaining_sec": 0,
+  "can_send": false,
+  "cannot_send_reason": "cooldown"
 }
 
 // GET /api/chirp/recent
@@ -991,24 +1107,38 @@ shows what the POST did. The answers keep their shape.
   "chirps": [
     {
       "emoji": "🐝🌸💧🔔🌻",
-      "category": "activity",
+      "template_id": 16,
+      "template_text": "power outage",
+      "detail": "",
+      "category": "infrastructure",
       "urgency": "caution",
-      "message": "someone checking car doors",
-      "age_sec": 120,
       "hop_count": 1,
-      "acks": 3
+      "age_sec": 120,
+      "confirm_count": 1,
+      "validated": false,
+      "status": "awaiting_confirmation",
+      "relayed": false,
+      "suppressed": false,
+      "nonce": "3fa1c2d4e5f60718"
     }
   ]
 }
 
 // POST /api/chirp/send
 {
-  "category": "activity",
+  "template_id": 16,
   "urgency": "caution",
-  "message": "someone checking car doors",
+  "detail": 0,
   "ttl_minutes": 15
 }
 ```
+
+A chirp is a template id (the table `GET /api/chirp/templates` lists), an
+urgency and a detail slot, never free text. `detail` is the slot's text in
+the recent list and its number in a send. `last_chirp_sent_ms` is the
+uptime of the device's last send, the cooldown's timer (§2.5.4), 0 if it
+never sent or after 24 hours with no send (the tiers' reset), and
+`cannot_send_reason` is present only while `can_send` is false.
 
 ## 9. UI Requirements
 
@@ -1048,10 +1178,13 @@ Chirp notifications should be **informative, not alarming**:
 
 ### 10.1 Threats Mitigated
 
-1. **Spam/Abuse**: Rate limiting (1 per 5 min)
+1. **Spam/Abuse**: Rate limiting (escalating send cooldown, §2.5.4; 4 witnesses an hour per origin key on receive)
 2. **Tracking**: Ephemeral session identity
 3. **Hysteria**: Human confirmation required, calm UI
-4. **Replay**: Nonce deduplication, 5-minute TTL
+4. **Replay**: one nonce, one chirp: the nonce filter, which takes only
+   verified nonces, and the recent table (§5.3), with the freshness window
+   while the wall clock is set; with no clock set, a replay is stored
+   again once both have forgotten it (§5.3; sweep F310, open)
 5. **Impersonation**: Ed25519 session signatures
 6. **Range abuse**: 3-hop limit
 
@@ -1128,16 +1261,27 @@ st_chirp_at  | uint32 | the loop's self-test (canary_wap) | UNIX seconds the aud
 ### 12.1 ESP-NOW Configuration for Chirp
 
 ```c
-// Chirp uses different channel from Opera
-#define CHIRP_CHANNEL 6
+// Chirp shares the radio's channel with Opera (§2.2): its peer is
+// registered at channel 0, which ESP-NOW reads as the current channel
+#define CHIRP_CHANNEL 0  // follow the current radio channel
 
 // Chirp always broadcasts (no peer list)
 uint8_t CHIRP_BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-// Message prefix to identify chirp vs opera
+// A Chirp frame's first byte
 #define CHIRP_MAGIC 0xC4  // 'Ch' for Chirp
-#define OPERA_MAGIC 0x0A  // 'Op' for Opera
 ```
+
+Every frame the radio hears goes to both protocols, and each keeps its own
+by the first byte: a Chirp frame starts with `CHIRP_MAGIC`, and an Opera
+frame starts with its protocol version (`OPERA_VERSION`, 1) or, before
+membership, its pairing type (8 to 12, `PAIR_FIRST` to `PAIR_LAST`;
+`spec/canary_mesh_network_v0.md` §4.5), so each handler drops the other's
+frames (on the canary-wap, `mesh_network.cpp`'s receive pass hands
+every frame to `chirp_channel::dispatch_espnow_message()`, which keeps those
+that start with `CHIRP_MAGIC`). There is no Opera magic byte: this block
+defined `OPERA_MAGIC 0x0A`, which no firmware uses, and gave `CHIRP_CHANNEL`
+as 6 (sweep F308).
 
 ### 12.2 Session Identity Generation
 
@@ -1173,7 +1317,7 @@ are allocated once by `init()`, in PSRAM where the board has it.
 | Session identity | 112 bytes |
 | Recent chirps | 16 * 964 = 15,424 bytes |
 | Nonce dedup (Bloom filter, two halves) | 2 * 4,096 = 8,192 bytes |
-| Nearby (presence) table | 32 * 48 = 1,536 bytes |
+| Nearby (presence) table | 32 * 52 = 1,664 bytes |
 | Per-key witness rate table | 32 * 40 = 1,280 bytes |
 | Self-test seen table | 32 * 40 = 1,280 bytes |
 | Route views (two copies and a scratch) | 3,404 bytes |
@@ -1182,8 +1326,14 @@ are allocated once by `init()`, in PSRAM where the board has it.
 A recent chirp holds its suppress set of 17 keys (§2.5.6); sizing that set to
 the fullest table added 288 bytes to each, 4,608 in all (sweep F233). The
 nonce filter's second half (§5.3) added 4,096 bytes (sweep F270; the total
-was ~27 KB). This table said ~3.5 KB, sized for a 128-byte chirp and a
-100-entry nonce list.
+was ~27 KB). A nearby row's first-seen time (§3.4 rule 4) added 4 bytes to
+each, 128 in all (sweep F311), and a recent chirp's TTL byte, kept for its
+relay (§3.3), took a byte of padding, so that row did not grow (sweep
+F306). The whole is 31,356 bytes; `test_chirp_commands_wap.cpp` holds each
+row and the total to the structs by `static_assert`, and
+`scripts/tests/test_chirp_spec_tables.py` holds this table to those lines.
+This table said ~3.5 KB, sized for a 128-byte chirp and a 100-entry nonce
+list.
 
 ## 13. Relationship to Opera
 
@@ -1191,7 +1341,7 @@ was ~27 KB). This table said ~3.5 KB, sized for a 128-byte chirp and a
 
 Chirp Channel operates **independently** from Opera:
 - Different identity system (ephemeral vs persistent)
-- Different channel (6 vs 1)
+- Same radio channel; Chirp frames are told apart by their magic byte (§12.1)
 - Different trust model (community vs trusted)
 - Can use Chirp without Opera, and vice versa
 
@@ -1224,9 +1374,12 @@ Opera devices MUST NOT:
 - v0.2 (2026-05-11): Hardening per `docs/audit/mesh_and_chirp_audit_v1.md` —
   end-to-end signature verification (C1, C4, C6); Sybil-resistant confirmation
   via unique-pubkey set tracking and wire-format removal of `confirm_count`
-  (C2, C3, C5); signed suppress voting wired (C7); priority storage by
-  urgency (C8); Bloom-filter dedup (C9); wall-clock-anchored timestamps with
-  conservative behavior when unsynced (C10, C15); 5-emoji session display
+  (C2, C3, C5) *(amended 2026-11-04, sweep D16: the set counts distinct
+  keys, not devices, and one device makes any number of session keys, so it
+  does not price a Sybil, §2.5.3)*; signed suppress voting wired (C7);
+  priority storage by urgency (C8); Bloom-filter dedup (C9);
+  wall-clock-anchored timestamps with conservative behavior when unsynced
+  (C10, C15); 5-emoji session display
   (C11); REST API Bearer-gated *(amended 2026-10-22, #1843's sweep: behind
   `api_auth_check()`, which also takes the landing session any host on the
   network can mint, F346)* (C12); presence requirement on ACK origination

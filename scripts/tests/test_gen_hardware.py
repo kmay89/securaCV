@@ -66,6 +66,7 @@ class ParsesTheEcho(unittest.TestCase):
         for text, kind in (("M2 flat x 8 self-tap", "screw"),
                            ("M3 heat-set insert 4.5 OD x 5", "insert"),
                            ("O-ring 2 ID x 1 CS (under the head)", "o-ring"),
+                           ("M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland's land)", "washer"),
                            ("M5 x 25 bolt + nut (hinge; knob part=\"knob\")", "bolt"),
                            ("Ø3 light pipe", "light-pipe"),
                            ("Ø6 x 2.2 disc magnet (press + glue)", "magnet"),
@@ -101,11 +102,12 @@ class JoinsTheBom(unittest.TestCase):
         self.assertEqual(drift, [])
 
     def test_a_row_joins_only_the_head_its_description_names(self):
-        line = '"HARDWARE — Sense: 4x M2 pan x 10 self-tap · 1x Ø3 light pipe"'
+        line = '"HARDWARE — Sense: 4x M2 pan x 12 self-tap · 1x Ø3 light pipe"'
         sets = _set("sense", "canary-sense", line)
         _, drift = gh.join(sets, {"bom_canary_sense.csv": {"SCR3": 4}})
-        self.assertEqual([d["what"] for d in drift], ["unbilled M2 pan x 10 self-tap"])
-        # the Sense row names PAN x 8 (the plate screw, into the post ends): only that joins
+        self.assertEqual([d["what"] for d in drift], ["unbilled M2 pan x 12 self-tap"])
+        # the Sense row names PAN x 8 (the plate screw, into the post ends), or
+        # x 10 over the sealed build's washers: only those join
         line = '"HARDWARE — Sense: 4x M2 pan x 8 self-tap (plate to the post ends) · 1x Ø3 light pipe"'
         table, drift = gh.join(_set("sense", "canary-sense", line),
                                {"bom_canary_sense.csv": {"SCR3": 4}})
@@ -131,6 +133,37 @@ class JoinsTheBom(unittest.TestCase):
         line = '"HARDWARE — WAP: 4x M2 flat x 8 self-tap"'
         _, drift = gh.join(_set("wap.compact_plain", "canary-wap", line), {"bom_canary_wap.csv": {}})
         self.assertEqual([d["what"] for d in drift], ["short SCR3"])
+
+
+class TheSealStackIsBilledWhole(unittest.TestCase):
+    """A gland's O-ring without its DIN 9021 washer has no land under the head."""
+
+    def test_a_ring_without_its_washer_is_refused(self):
+        line = ('"HARDWARE — WAP: 8x M2 pan x 10 self-tap (plate to the post ends) · '
+                '8x O-ring 2 ID x 1 CS (under the head)"')
+        bad = gh.seal_stack_gaps(_set("wap.battery_weather", "canary-wap", line))
+        self.assertEqual(len(bad), 1)
+        self.assertIn("8 O-ring(s) billed over 0 head-seal washer(s)", bad[0])
+
+    def test_the_whole_stack_passes_and_joins_its_row(self):
+        line = ('"HARDWARE — WAP: 8x M2 pan x 10 self-tap (plate to the post ends) · '
+                '8x O-ring 2 ID x 1 CS (under the head) · '
+                '8x M2 washer 2.2 x 7 x 0.8, DIN 9021 (under the head, on the gland\'s land)"')
+        sets = _set("wap.battery_weather", "canary-wap", line)
+        self.assertEqual(gh.seal_stack_gaps(sets), [])
+        table, drift = gh.join(sets, {"bom_canary_wap.csv": {"SCR3": 12, "ORG1": 8, "WSH1": 8}})
+        self.assertEqual(table["wap.battery_weather"]["WSH1"], {"bom": 8, "echo": 8})
+        self.assertEqual(drift, [])
+        _, drift = gh.join(sets, {"bom_canary_wap.csv": {"SCR3": 12, "ORG1": 8}})
+        self.assertEqual([d["what"] for d in drift], ["short WSH1"])
+
+    def test_every_committed_set_bills_its_washers(self):
+        led = json.loads((ENC / "hardware.json").read_text(encoding="utf-8"))
+        self.assertEqual(gh.seal_stack_gaps(led["sets"]), [])
+        sealed = sorted(sid for sid, r in led["sets"].items()
+                        if any(i["kind"] == "o-ring" for i in r["items"]))
+        self.assertIn("sense.seal", sealed)
+        self.assertIn("doorbell", sealed)
 
 
 class TheCommittedLedgerAgreesWithItself(unittest.TestCase):

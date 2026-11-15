@@ -10,7 +10,7 @@ import { doctor } from '../src/modules/health.mjs';
 import { setFlag } from '../src/flags.mjs';
 import { recordOrder } from '../src/modules/orders.mjs';
 import { createApp } from '../src/server.mjs';
-import { setupOperator, totp } from '../src/auth.mjs';
+import { setupOperator, totp, sessionFor } from '../src/auth.mjs';
 import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
 
 const D = 86400000; const iso = (ms) => new Date(ms).toISOString();
@@ -106,7 +106,7 @@ test('over HTTP: the product page edits the listing, the Products page prints th
   try {
     const secret = setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'O' });
     const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ email: 'o@errer.test', password: 'owner password 1234', code: totp(secret) }).toString() });
-    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf;
+    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = sessionFor(db, cookie.split('=')[1]).csrf;
     const get = async (p) => (await fetch(base + p, { headers: { cookie, accept: 'text/html' } })).text();
     const post = (p, body) => fetch(base + p, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ _csrf: csrf, ...body }).toString() });
     const cat = await app.catalog(); const sku = [...cat.products.keys()][0];

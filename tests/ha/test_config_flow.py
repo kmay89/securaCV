@@ -358,11 +358,14 @@ async def test_hassio_discovery_creates_the_both_entry(
     assert entry.state is ConfigEntryState.LOADED
 
 
-async def test_hassio_rediscovery_updates_the_url_and_reloads_once(
+async def test_hassio_rediscovery_moves_the_entry_only_after_its_own_credentials_confirm_the_key(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mqtt_mock: MqttMockHAClient
 ) -> None:
-    """discovery-update-info: a new host updates the entry and reloads it; the
-    identical payload again changes nothing and reloads nothing."""
+    """discovery-update-info: a new host is a confirm card, never a silent
+    rewrite. On the click the new URL is probed with the entry's own
+    credentials; the entry moves and reloads once when the answer carries
+    the pinned key. The identical payload again changes nothing and reloads
+    nothing."""
     app = KernelMock(aioclient_mock, SigningKernel(), url=ADDON_URL)
     new_url = "http://e1d2c3b4-privacy-witness-kernel:8799"
     KernelMock(aioclient_mock, app.kernel, url=new_url, verifying_key=app.verifying_key)
@@ -380,6 +383,12 @@ async def test_hassio_rediscovery_updates_the_url_and_reloads_once(
             data=hassio_info(host="e1d2c3b4-privacy-witness-kernel"),
         )
         await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.FORM and result["step_id"] == "hassio_confirm"
+        assert entry.data[CONF_URL] == ADDON_URL, "nothing moves before the click"
+        assert reload.call_count == 0
+
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        await hass.async_block_till_done()
         assert result["type"] is FlowResultType.ABORT
         assert result["reason"] == "already_configured"
         assert entry.data[CONF_URL] == new_url
@@ -387,7 +396,7 @@ async def test_hassio_rediscovery_updates_the_url_and_reloads_once(
         assert reload.call_count == 1
         assert entry.state is ConfigEntryState.LOADED
 
-        # The same payload again: a no-op.
+        # The same payload again: a no-op, with no confirm card and no probe.
         result = await hass.config_entries.flow.async_init(
             DOMAIN,
             context={"source": config_entries.SOURCE_HASSIO},
@@ -397,6 +406,39 @@ async def test_hassio_rediscovery_updates_the_url_and_reloads_once(
         assert result["type"] is FlowResultType.ABORT and result["reason"] == "already_configured"
         assert reload.call_count == 1
         assert entry.data[CONF_URL] == new_url
+
+
+async def test_hassio_rediscovery_to_a_host_with_another_key_leaves_the_entry_alone(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mqtt_mock: MqttMockHAClient
+) -> None:
+    """A payload that names the entry's kernel but points at a host answering
+    under a different key — the shape of an add-on that is not ours — is
+    refused on the click: no move, no reload, the fingerprints shown."""
+    app = KernelMock(aioclient_mock, SigningKernel(), url=ADDON_URL)
+    other_url = "http://e1d2c3b4-privacy-witness-kernel:8799"
+    KernelMock(aioclient_mock, SigningKernel(), url=other_url)
+    entry = make_kernel_entry(
+        auth_mode=AUTH_MODE_TOKEN_FILE, enable_mqtt=True, url=ADDON_URL, verifying_key=app.verifying_key
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    with patch.object(hass.config_entries, "async_schedule_reload", wraps=hass.config_entries.async_schedule_reload) as reload:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_HASSIO},
+            data=hassio_info(host="e1d2c3b4-privacy-witness-kernel"),
+        )
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.FORM and result["step_id"] == "hassio_confirm"
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "announce_key_mismatch"
+        assert entry.data[CONF_URL] == ADDON_URL
+        assert entry.data[CONF_KERNEL_VERIFYING_KEY] == app.verifying_key
+        assert reload.call_count == 0
 
 
 async def test_hassio_payload_without_connection_details_aborts(hass: HomeAssistant) -> None:

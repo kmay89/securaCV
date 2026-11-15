@@ -37,9 +37,13 @@
  *   securacv-canary-sig|v1|sense|<device_id>|<seq>|<event>|<presence>|
  *                                <occupants>|<range>|<bucket_uptime_s>
  *   securacv-canary-sig|v1|whoami|<device_id>|<nonce_hex>
+ *   securacv-canary-sig|v1|seal|<device_id>|<nonce_hex>|<client_pub_hex>|
+ *                                <device_pub_hex>
  *   securacv-canary-sig|v1|sentinel|<device_id>|<seq>|<event>|<level>|
  *                                <confidence>|<anomaly>|<occupancy>|<range>|
  *                                <modality_bits>|<bucket_uptime_s>
+ *   securacv-canary-sig|v1|state|<device_id>|<chain_length>|<seq>|<presence>|
+ *                                <occupants>|<breathing>
  *
  * Both sides reconstruct this string from the parsed JSON fields and
  * verify the Ed25519 sig over its raw UTF-8 bytes. The schema version
@@ -60,6 +64,20 @@
  * confidence, anomaly or the modality bitmask — publishing those beside a
  * `sense` signature would leave them unsigned and forgeable by anyone with
  * broker access.
+ *
+ * The `state` kind signs the retained per-room wellbeing snapshot
+ * (`securacv/<device_id>/state`): the three coarse words the fleet roll-call
+ * carries (presence unknown/clear/present, occupants 0/1/2+, breathing
+ * true/false — or `unknown` on a build with no breathing channel) plus a
+ * freshness pair the verifier requires to advance strictly: the device's
+ * witness-chain length when it spoke (NVS-persisted, so it survives a
+ * reboot) and a per-boot count of its state publishes. Without it anyone
+ * with broker publish rights could publish a room's wellbeing under a real
+ * device id while the real Canary kept signing its chain (the kernel's
+ * `PeerTable::observe` in src/fleet_peers.rs now takes the words only from
+ * a `state` that verifies under the pinned key). Everything finer beside
+ * the words in that JSON (range, lux, BPM) stays unsigned and is never
+ * read by the roll-call.
  *
  * Output sigs are base64url-encoded with no padding (86 chars for the
  * 64-byte Ed25519 sig); the whoami proof alone is hex (see sign_whoami).
@@ -158,6 +176,19 @@ bool sign_sentinel(uint32_t    seq,
                    char*       sig_b64url_out,
                    size_t      sig_cap);
 
+/* Sign the canonical "state" wellbeing snapshot. presence / occupants /
+ * breathing are the chokepoint's fixed vocabulary (unknown/clear/present,
+ * 0/1/2+, true/false/unknown), so no escaping is needed. chain_length is
+ * the device's witness-chain length at the moment of the publish; seq is
+ * the publisher's per-boot state counter (both monotonic, see above). */
+bool sign_state(uint32_t    chain_length,
+                uint32_t    seq,
+                const char* presence,
+                const char* occupants,
+                const char* breathing,
+                char*       sig_b64url_out,
+                size_t      sig_cap);
+
 /* Sign the canonical "whoami" presence proof — a caller-supplied nonce
  * bound to this device's identity:
  *
@@ -197,6 +228,26 @@ bool sign_sentinel(uint32_t    seq,
 bool sign_whoami(const char* nonce_hex,
                  char*       sig_hex_out,
                  size_t      sig_cap);
+
+/* The sealed-credential handshake's signature (the WAP's api_seal.h,
+ * GET /api/device/seal): the identity key signs the whole transcript of one
+ * X25519 exchange — this device's id, the caller's nonce, the caller's
+ * ephemeral public key and the ephemeral public key this device just made —
+ * so a verifier holding the pinned fingerprint knows the key it is about to
+ * seal a credential under was agreed with THIS device and nothing in
+ * between swapped either half. That is what the whoami proof above lacks: a
+ * relay can forward a signature over a nonce, but a credential sealed under
+ * a key the relay does not hold is useless to it.
+ *
+ * Both public keys are 64 lowercase hex chars and the nonce passes
+ * whoami_nonce_ok(); anything else is refused unsigned, so the key never
+ * signs attacker-shaped bytes. sig_cap must be >= SIG_HEX_CAP; the
+ * signature is 128 hex chars, as sign_whoami()'s. */
+bool sign_seal(const char* nonce_hex,
+               const char* client_pub_hex,
+               const char* device_pub_hex,
+               char*       sig_hex_out,
+               size_t      sig_cap);
 
 /* Identity accessors — both return pointers into module-local storage
  * with static lifetime. Callers must not free. fingerprint_hex is the
@@ -254,10 +305,30 @@ size_t build_sentinel_canonical(uint32_t    seq,
                                 char*       out,
                                 size_t      cap);
 
+size_t build_state_canonical(uint32_t    chain_length,
+                             uint32_t    seq,
+                             const char* presence,
+                             const char* occupants,
+                             const char* breathing,
+                             const char* device_id,
+                             char*       out,
+                             size_t      cap);
+
 size_t build_whoami_canonical(const char*   nonce_hex,
                               const char*   device_id,
                               char*         out,
                               size_t        cap);
+
+size_t build_seal_canonical(const char*   nonce_hex,
+                            const char*   client_pub_hex,
+                            const char*   device_pub_hex,
+                            const char*   device_id,
+                            char*         out,
+                            size_t        cap);
+
+/* The seal handshake's key gate: exactly 64 lowercase hex chars (one X25519
+ * public key), so the seal canonical is deterministic. */
+bool seal_pub_hex_ok(const char* pub_hex);
 
 /* Test-only: the nonce gate the HTTP handler applies before signing —
  * 16-64 chars, lowercase hex only, so the proof canonical is

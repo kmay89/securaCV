@@ -123,6 +123,13 @@ struct GlassSettings: Sendable, Equatable {
     /// -1 when a catalog scene is on; 0…359 when the owner picked a color.
     var lampHue = -1
     var orientation = 0
+    /// The turn the glass wears, when it said. It can differ from
+    /// `orientation` for a moment after a write, so it only names the turn
+    /// in the refusal line and is never compared to decide one.
+    var orientationWorn: Int?
+    /// The glass's own word that it could not wear the saved turn. Absent
+    /// on older firmware, which reads as not refused.
+    var orientationRefused = false
     var autoRotate = true
     var scenes: [String] = []
 
@@ -185,6 +192,8 @@ extension GlassSettings {
         if let v = obj["lamp_minutes"] as? Int { s.lampMinutes = v }
         if let v = obj["lamp_hue"] as? Int { s.lampHue = v }
         if let v = obj["orientation"] as? Int { s.orientation = v }
+        if let v = obj["orientation_worn"] as? Int { s.orientationWorn = v }
+        if let v = obj["orientation_refused"] as? Int { s.orientationRefused = v == 1 }
         if let v = obj["auto_rotate"] as? Int { s.autoRotate = v == 1 }
         if let v = obj["scenes"] as? [String] { s.scenes = v }
         return s
@@ -275,10 +284,12 @@ enum GlassAPI {
                 blurb: "Twelve-hour digits with a quiet AM/PM beside the clock; "
                      + "off shows 24-hour time.",
                 kind: .toggle, value: s.clock12h ? 1 : 0))
+            // A refused turn replaces the blurb with the glass's own words.
+            let turnBlurb: String = orientationRefusalText(s)
+                ?? "How the glass is turned. Portrait swaps the wall poster for the tall column face."
             out.append(GlassKnob(
                 key: "orientation", title: "Orientation",
-                blurb: "How the glass is turned. Portrait swaps the wall poster for "
-                     + "the tall column face.",
+                blurb: turnBlurb,
                 kind: .choice(labels: ["Landscape", "Portrait",
                                        "Landscape flipped", "Portrait flipped"]),
                 value: s.orientation))
@@ -331,6 +342,30 @@ enum GlassAPI {
         case 2: return 10
         default: return 5
         }
+    }
+
+    // MARK: - a turn the glass refused
+
+    /// A turn's name as the glass's Orientation page spells it
+    /// (orientation_page.h, orientation_label).
+    static func orientationLabel(_ turn: Int) -> String {
+        switch turn & 3 {
+        case 1: return "Portrait"
+        case 2: return "Landscape, Flipped"
+        case 3: return "Portrait, Flipped"
+        default: return "Landscape"
+        }
+    }
+
+    /// The glass's own footer when it could not wear the saved turn
+    /// (orientation_page.h, orientation_footer); nil when it did not refuse.
+    /// Read from `orientation_refused` alone. A refusing glass stays
+    /// landscape, so that is the turn named when it sent no worn turn.
+    static func orientationRefusalText(_ s: GlassSettings) -> String? {
+        guard s.orientationRefused else { return nil }
+        return "Not enough memory to turn this glass, so it stays "
+            + "\(orientationLabel(s.orientationWorn ?? 0)). "
+            + "A restart tries the saved turn again: \(orientationLabel(s.orientation))."
     }
 
     // MARK: - the standalone-weather block, rendered as facts

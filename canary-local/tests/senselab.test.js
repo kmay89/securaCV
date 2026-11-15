@@ -250,11 +250,28 @@ test("PresenceFSM: debounce, clear timeout, stall — the firmware integration w
   assert.ok(ev.stalled);
 });
 
+// A tick of a native trace as the Sense Lab's frame: a presence frame, a
+// vitals frame, or the empty frame loop() ticks with when none arrived.
+const simFrame = (S, k) => ("target" in k
+  ? { kind: S.FrameKind.Presence, has_target: k.target, target_count: k.count, distance_cm: k.cm, breath_rate: 0, heart_rate: 0 }
+  : "breath" in k
+    ? { kind: S.FrameKind.Vitals, has_target: false, target_count: 0, distance_cm: 0, breath_rate: k.breath, heart_rate: k.heart }
+    : { kind: S.FrameKind.None });
+
+// Name the first differing tick before the whole-trace compare.
+function sameRows(got, want, name) {
+  const at = got.findIndex((g, i) => JSON.stringify(g) !== JSON.stringify(want[i]));
+  if (at >= 0) assert.deepStrictEqual(got[at], want[at], `trace "${name}", tick ${at}`);
+  assert.deepStrictEqual(got, want, `trace "${name}"`);
+}
+
 // F131: the Sense Lab's PresenceFSM, and what its pipeline records, against
 // the firmware's own, built from mr60_presence.cpp with the host's g++
 // (fixtures/mr60_presence_native.js), on the same frames: every tick's state,
 // count, band, both change flags and stall, and the events drive_fsms would
-// sign (SensePipeline's own _fsms, the loop body radar-emu.js drives).
+// sign (SensePipeline's own _fsms, the loop body radar-emu.js drives). The
+// wellbeing build's traces play here too, with the vitals frames reaching a
+// presence-only pipeline (vitals off), as on a presence-only device.
 test("PresenceFSM and the pipeline's records tick as mr60_presence.cpp and drive_fsms do", async (t) => {
   const native = require("./fixtures/mr60_presence_native.js");
   for (const gate of native.MAIN_GATES) assert.ok(mainCpp.includes(gate), "main.cpp's drive_fsms gate the driver mirrors: " + gate);
@@ -262,7 +279,9 @@ test("PresenceFSM and the pipeline's records tick as mr60_presence.cpp and drive
   if (b.skip) { t.skip(b.skip); return; }
   const S = await simP;
   const cfg = data.fsm.presence;
-  for (const [name, trace] of Object.entries(native.traces(cfg))) {
+  const vtraces = native.vitalsTraces(cfg, data.fsm.vitals);
+  const all = [...Object.entries(native.traces(cfg)), ...Object.entries(vtraces).map(([n, tr]) => ["vitals " + n, tr])];
+  for (const [name, trace] of all) {
     const want = native.runFirmware(cfg, trace);
     // the FSM on its own for the change flags, and a presence-only
     // pipeline beside it for what it records, fed the same frames
@@ -271,17 +290,91 @@ test("PresenceFSM and the pipeline's records tick as mr60_presence.cpp and drive
     const got = [];
     for (const k of trace) {
       if ("reset" in k) { fsm.reset(k.reset); pipe.reset(k.reset); continue; }
-      const frame = "target" in k
-        ? { kind: S.FrameKind.Presence, has_target: k.target, target_count: k.count, distance_cm: k.cm, breath_rate: 0, heart_rate: 0 }
-        : { kind: S.FrameKind.None };
+      const frame = simFrame(S, k);
       const ev = fsm.tick(frame, k.t);
       const events = pipe._fsms(frame, k.t);
       got.push({ state: fsm.state, count: fsm.count, range: fsm.range, state_changed: ev.state_changed,
         count_changed: ev.count_changed, stalled: ev.stalled, events });
     }
-    assert.deepStrictEqual(got, want, `trace "${name}"`);
+    sameRows(got, want, name);
     assert.ok(!want.some((r) => r.events.includes("occupancy_changed") && r.count === "0"), `trace "${name}" signs no occupancy_changed to 0`);
   }
+});
+
+// A107: the Sense Lab's vitals path against the firmware's, built from
+// mr60_vitals.cpp with -DCANARY_SENSE_VITALS beside the presence FSM, the
+// driver running drive_fsms' vitals lines as main.cpp spells them
+// (VITALS_GATES): the pipeline as the wellbeing build drives it
+// (SensePipeline(cfg, vitals, true)) and the firmware play the same frames,
+// and every tick's presence row, signed events, lock, lock change and
+// stall, and the snapshot's breathing_locked, bpm_valid and both BPMs must
+// agree. The traces hold what F131 decided for this side (bpm_valid held
+// on dropout ticks, cut at the Clear tick, no acquisition during the
+// Present debounce), and each is first checked to reach it.
+test("the pipeline's vitals path ticks as mr60_vitals.cpp and drive_fsms do (wellbeing build)", async (t) => {
+  const native = require("./fixtures/mr60_presence_native.js");
+  for (const gate of native.VITALS_GATES) assert.ok(mainCpp.includes(gate), "main.cpp's drive_fsms vitals lines the driver compiles: " + gate);
+  const b = native.build();
+  if (b.skip) { t.skip(b.skip); return; }
+  const S = await simP;
+  const cfg = data.fsm.presence, vcfg = data.fsm.vitals;
+  const vtraces = native.vitalsTraces(cfg, vcfg);
+  const all = [...Object.entries(native.traces(cfg)), ...Object.entries(vtraces).map(([n, tr]) => ["vitals " + n, tr])];
+  const runs = {};
+  for (const [name, trace] of all) {
+    let last = -Infinity;
+    for (const k of trace) {
+      const at = "reset" in k ? k.reset : k.t;
+      assert.ok(at >= last, `trace "${name}" runs backward at ${at} (a retuned window outgrew the trace)`);
+      last = at;
+    }
+    const want = native.runFirmware(cfg, trace, vcfg);
+    const pipe = new S.SensePipeline(cfg, vcfg, true);
+    // both FSMs' own events, beside what the pipeline records from them
+    let pev = null, vev = null;
+    const ptick = pipe.presence.tick.bind(pipe.presence), vtick = pipe.vitals.tick.bind(pipe.vitals);
+    pipe.presence.tick = (...a) => (pev = ptick(...a));
+    pipe.vitals.tick = (...a) => (vev = vtick(...a));
+    const got = [];
+    for (const k of trace) {
+      if ("reset" in k) { pipe.reset(k.reset); continue; }
+      const events = pipe._fsms(simFrame(S, k), k.t);
+      const s = pipe.snapshot;
+      got.push({ state: pipe.presence.state, count: pipe.presence.count, range: pipe.presence.range,
+        state_changed: pev.state_changed, count_changed: pev.count_changed, stalled: pev.stalled, events,
+        vitals: { lock: pipe.vitals.lock, lock_changed: vev.lock_changed, stalled: vev.stalled,
+          breathing_locked: s.breathing_locked, bpm_valid: s.bpm_valid, breath_bpm: s.breath_bpm, heart_bpm: s.heart_bpm } });
+    }
+    sameRows(got, want, name);
+    runs[name] = { trace: trace.filter((k) => !("reset" in k)), rows: want };
+  }
+
+  // each wellbeing trace reaches the steps it is named for, on the
+  // firmware's own rows (so a retuned window cannot empty the compare)
+  const { lock, second, silence } = Object.fromEntries(["lock", "second", "silence"].map((n) => [n, runs["vitals " + n]]));
+  const pairs = (run) => run.rows.map((r, i) => [run.trace[i], r, run.rows[i - 1]]).slice(1);
+  // lock: vitals frames inside the debounce earn nothing
+  const debounceV = pairs(lock).filter(([k, r]) => "breath" in k && r.state !== "present");
+  assert.ok(debounceV.length >= 2 && debounceV.every(([, r]) => r.vitals.lock !== "locked" && !r.vitals.bpm_valid), "lock: no acquisition before Present");
+  // lock: a dropout frame, a vitals frame and the count-0 return frame, each holding bpm_valid
+  const dropout = pairs(lock).filter(([k, r]) => r.state === "present" && (("target" in k && (!k.target || k.count === 0)) || "breath" in k)
+    && r.vitals.lock === "locked");
+  assert.ok(dropout.some(([k]) => "target" in k && !k.target) && dropout.some(([k]) => "target" in k && k.target && k.count === 0)
+    && dropout.every(([, r]) => r.vitals.bpm_valid), "lock: bpm_valid held on the dropout ticks");
+  // lock: the Clear tick cuts bpm_valid while the lock rides on, then the deadline drops it
+  const clear = pairs(lock).find(([, r, p]) => r.state === "clear" && p.state === "present");
+  assert.ok(clear && clear[2].vitals.bpm_valid && !clear[1].vitals.bpm_valid && clear[1].vitals.lock === "locked", "lock: the Clear tick cuts bpm_valid");
+  assert.ok(lock.rows.some((r) => r.vitals.stalled && r.vitals.lock === "lost"), "lock: the deadline ends the lock");
+  // second: a second person while the lock is earned restarts the run, though no vitals frame came between
+  const confirm = pairs(second).find(([, r]) => r.vitals.lock_changed && r.vitals.lock === "locked");
+  assert.strictEqual(confirm[0].t, 3400 + vcfg.lock_confirm_ms, "second: the run restarts after the 2+ ticks");
+  assert.ok(pairs(second).some(([k, r, p]) => "target" in k && k.count === 2 && p.vitals.bpm_valid && !r.vitals.bpm_valid && r.vitals.lock === "locked"),
+    "second: a second person stops bpm_valid at once, the lock held");
+  assert.ok(second.rows.some((r) => r.vitals.bpm_valid && r.vitals.breath_bpm === vcfg.breath_max_bpm), "second: the band's edge is plausible");
+  // silence: the presence stall cuts bpm_valid in its own tick
+  const stall = pairs(silence).find(([, r]) => r.stalled);
+  assert.ok(stall && stall[2].vitals.bpm_valid && !stall[1].vitals.bpm_valid, "silence: the stall cuts bpm_valid");
+  assert.ok(silence.rows.filter((r) => r.vitals.lock_changed && r.vitals.lock === "locked").length === 2, "silence: the lock is earned afresh");
 });
 
 test("VitalsFSM: lock confirm, instant multi-target suppression, deadline loss", async () => {

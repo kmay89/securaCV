@@ -16,6 +16,8 @@ const path = require("node:path");
 
 const {
   EVENT_TYPE_METADATA,
+  TAMPER_KIND_METADATA,
+  SUMMARY_METADATA,
   normalizeEventType,
   eventMeta,
   normalizeModality,
@@ -386,6 +388,89 @@ test("historyToTimelineItems: a kernel row seen through the sensor AND the event
   assert.deepEqual(historyToTimelineItems({ "event.securacv_x": [{ s: "unknown", a: {}, lu: 1 }] }, {}), []);
   // ...and one whose sample lacks event_type is skipped rather than labeled by its timestamp.
   assert.deepEqual(historyToTimelineItems({ "event.securacv_x": [{ s: "2026-10-11T14:03:00+00:00", a: {}, lu: 1 }] }, {}), []);
+});
+
+test("historyToTimelineItems names the two summaries a Canary's Last event shows (HA41)", () => {
+  // A Canary's Last event between two summaries reads `unknown` for every
+  // other stateless row (the activity ribbon every 15 minutes), which the
+  // card drops; the summaries themselves are named, not shown as raw ids.
+  const history = {
+    "sensor.securacv_canary_porch_last_event": [
+      { s: "boundary_crossing_object_large", a: { zone_id: "zone:porch", time_bucket: { start_epoch_s: 600, size_s: 600 } }, lu: 100 },
+      { s: "unknown", lu: 150 },
+      { s: "daily_summary", a: { zone_id: "zone:porch", time_bucket: { start_epoch_s: 1200, size_s: 600 } }, lu: 200 },
+      { s: "unknown", lu: 250 },
+      { s: "held_summary", a: { zone_id: "zone:porch", time_bucket: { start_epoch_s: 1800, size_s: 600 } }, lu: 300 },
+      { s: "unknown", lu: 350 },
+    ],
+  };
+  const items = historyToTimelineItems(history, { maxEvents: 50 });
+  assert.deepEqual(items.map((i) => i.eventType), ["held_summary", "daily_summary", "boundary_crossing_object_large"]);
+  assert.deepEqual(items.map((i) => i.label), ["Quiet Hours summary", "Daily summary", "Person or vehicle"]);
+  assert.deepEqual(items.map((i) => i.icon), ["mdi:weather-night", "mdi:calendar-check", "mdi:car"]);
+  // The kernel spells the type as its Rust variant, and its friendly_event
+  // for a type outside the dictionary is that raw id (kernel_verify.py):
+  // the card's words win over it for a type the card has a row for, the
+  // tamper kinds too, and an entity's friendly_event still names a type the
+  // card does not know.
+  const kernelAttrs = (eventType, friendly) => ({
+    zone_id: "zone:porch", time_bucket: { start_epoch_s: 600, size_s: 600 },
+    kernel_device_id: "pwk_1a2b3c4d", verification: "sealed", event_type: eventType, friendly_event: friendly,
+  });
+  const kernel = historyToTimelineItems({
+    "event.securacv_porch": [
+      { s: "2026-10-11T14:03:00+00:00", a: kernelAttrs("HeldSummary", "HeldSummary"), lu: 400 },
+      { s: "2026-10-11T14:13:00+00:00", a: kernelAttrs("DailySummary", "DailySummary"), lu: 410 },
+      { s: "2026-10-11T14:23:00+00:00", a: kernelAttrs("SdRemove", "SdRemove"), lu: 420 },
+      { s: "2026-10-11T14:33:00+00:00", a: kernelAttrs("SomeFutureClaim", "Some future claim"), lu: 430 },
+    ],
+  }, { maxEvents: 50 });
+  assert.deepEqual(kernel.map((i) => i.label), [
+    "Some future claim", "Storage card removed", "Daily summary", "Quiet Hours summary",
+  ]);
+  assert.deepEqual(kernel.map((i) => i.icon), [
+    "mdi:shield-eye", "mdi:shield-alert", "mdi:calendar-check", "mdi:weather-night",
+  ]);
+});
+
+test("SUMMARY_METADATA names exactly sensor.py's _SUMMARY_TYPES, in strings.json's words", () => {
+  // The Python tuple read from the file, so a third summary type cannot land
+  // on the sensor without a label here, nor a label here outlive its type.
+  const sensor = fs.readFileSync(path.join(__dirname, "..", "sensor.py"), "utf8");
+  const tuple = sensor.match(/^_SUMMARY_TYPES = \(([^)]*)\)/m);
+  assert.ok(tuple, "sensor.py's _SUMMARY_TYPES moved: update this test");
+  const types = [...tuple[1].matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(types, ["daily_summary", "held_summary"]);
+  assert.deepEqual(Object.keys(SUMMARY_METADATA).sort(), [...types].sort());
+  for (const t of types) {
+    assert.equal(eventMeta(t), SUMMARY_METADATA[t], t);
+    assert.ok(!Object.prototype.hasOwnProperty.call(EVENT_TYPE_METADATA, t), `${t} is a dictionary id now`);
+    assert.ok(!Object.prototype.hasOwnProperty.call(TAMPER_KIND_METADATA, t), `${t} is a tamper kind`);
+  }
+  // The Last event entity names the same two states in the same words, so
+  // the dashboard's entities card and this timeline agree (strings.json is
+  // the source copy, translations/en.json what Home Assistant renders).
+  for (const rel of ["strings.json", path.join("translations", "en.json")]) {
+    const doc = JSON.parse(fs.readFileSync(path.join(__dirname, "..", rel), "utf8"));
+    const states = doc.entity.sensor.last_event.state;
+    assert.deepEqual(
+      states,
+      Object.fromEntries(types.map((t) => [t, SUMMARY_METADATA[t].label])),
+      rel,
+    );
+  }
+});
+
+test("eventMeta reads only its own rows: an inherited name is an unknown id", () => {
+  // `constructor` on a plain object is Object itself, and `__proto__` its
+  // prototype: read as rows, a broker's event_type of that name drew a
+  // function or a prototype for a label (undefined text on the card).
+  for (const id of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__", "isPrototypeOf"]) {
+    assert.deepEqual(eventMeta(id), { label: id, icon: "mdi:shield-eye" }, id);
+    const [item] = historyToTimelineItems({ "sensor.securacv_canary_x_last_event": [{ s: id, a: {}, lu: 1 }] }, {});
+    assert.equal(item.label, id, id);
+    assert.equal(item.icon, "mdi:shield-eye", id);
+  }
 });
 
 test("historyToTimelineItems: an unclaimed bridge row gets a window from the flattened bucket", () => {

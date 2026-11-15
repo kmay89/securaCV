@@ -94,7 +94,7 @@ test('createCheckout: every line checked, the session Stripe is asked for carrie
   // the thanks page before and after the webhook
   assert.deepEqual(sessionStatus(db, { ...cfg, secret: 's' }, 'cs_test_abc123'), { pending: true }); assert.throws(() => sessionStatus(db, cfg, 'nope'), /not a checkout session id/);
   const o = recordOrder(db, sampleOrder({ external_id: 'cs_test_abc123', items: [{ sku: 'wap-parts', name: 'p', qty: 3, unit_cents: 1500 }] }), { catalog: DEMO_CATALOG }).order;
-  const st = sessionStatus(db, { ...cfg, secret: 's', baseUrl: 'https://ops.example.test' }, 'cs_test_abc123', { now }); assert.equal(st.pending, false); assert.equal(st.order, o.number); assert.equal(st.ships.ships_on, '2026-10-27'); assert.match(st.status_url, /^https:\/\/ops\.example\.test\/o\/EL-000001\//); assert.equal(st.email, undefined, 'the thanks page never echoes the address');
+  const st = sessionStatus(db, { ...cfg, secret: 's', baseUrl: 'https://ops.example.test' }, 'cs_test_abc123', { now }); assert.equal(st.pending, false); assert.equal(st.order, o.number); assert.equal(st.ships.ships_on, '2026-10-27'); assert.equal(st.status_url, undefined, 'the signed order link rides in the confirmation mail, never behind a session id'); assert.equal(st.email, undefined, 'the thanks page never echoes the address'); assert.deepEqual(Object.keys(st).sort(), ['delivers', 'items', 'order', 'pending', 'ships']);
   assert.equal(formEncode({ a: { b: [1, 2], c: null }, d: 'x y' }), 'a%5Bb%5D%5B0%5D=1&a%5Bb%5D%5B1%5D=2&d=x%20y');
   db.close();
 });
@@ -112,6 +112,11 @@ test('over HTTP: the store routes answer the site with CORS, the demo takes no p
     const ev = { id: 'evt_site_1', type: 'checkout.session.completed', data: { object: { id: 'cs_site_0001', payment_intent: 'pi_site_0001', payment_status: 'paid', currency: 'usd', amount_subtotal: 1500, amount_total: 2300, created: Math.floor(Date.now() / 1000), total_details: { amount_shipping: 800, amount_tax: 0 }, customer_details: { email: 'shopper@customer.example.test', name: 'Shopper Fixture' }, shipping_details: { name: 'Shopper Fixture', address: { line1: '1 Example Lane', city: 'Madison', state: 'WI', postal_code: '53703', country: 'US' } }, line_items: { data: [{ description: 'WAP Enclosure Set', quantity: 1, price: { unit_amount: 1500, product: { metadata: { sku: 'wap-parts' } } } }] } } } };
     const body = JSON.stringify(ev); r = await fetch(base + '/webhooks/stripe', { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(body, cfg.stripeWebhookSecret) }, body }); assert.equal(r.status, 200);
     const mail = db.get("SELECT subject, body_text FROM mail_outbox WHERE to_addr = 'shopper@customer.example.test' AND subject LIKE 'We have your%'"); assert.ok(mail, 'the confirmation is queued'); assert.match(mail.body_text, /ships (Mon|Tue|Wed|Thu|Fri|Sat|Sun), /); assert.match(mail.body_text, /expect it .* — an estimate/); assert.match(mail.body_text, /\/o\/EL-\d+\//);
-    r = await fetch(base + '/store/session/cs_site_0001'); const st = await r.json(); assert.equal(st.pending, false); assert.equal(st.items[0].sku, 'wap-parts'); assert.ok(st.status_url);
+    r = await fetch(base + '/store/session/cs_site_0001'); const st = await r.json(); assert.equal(st.pending, false); assert.equal(st.items[0].sku, 'wap-parts'); assert.equal(st.status_url, undefined);
+    // the session route is rate-limited per address, like every public route
+    let last; for (let i = 0; i < 40; i++) last = await fetch(base + '/store/session/cs_site_0001'); assert.equal(last.status, 429);
+    // a checkout is limited per address as well as per IP: five in ten minutes, then "enough"
+    let co; for (let i = 0; i < 6; i++) co = await fetch(base + '/store/checkout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items: [{ sku: 'wap-parts', qty: 1 }], email: 'Victim@example.test' }) });
+    assert.equal(co.status, 429); assert.match((await co.json()).error, /enough checkouts/);
   } finally { await app.close(); db.close(); }
 });

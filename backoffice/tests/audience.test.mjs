@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
 import { upsertContact, requestConsent, confirmConsent, unsubscribe, segment, segmentCount, audienceStats, markBounced, canMarket, setContactTags, SEGMENTS } from '../src/modules/contacts.mjs';
 import { renderHtml, buildMessage, sendOutbox } from '../src/modules/mail.mjs';
+import { enqueue } from '../src/modules/mail.mjs';
 import { createCampaign, updateCampaign, scheduleCampaign, sendDueCampaigns, sendTest, previewHtml, campaignReport, queueCampaign, duplicateCampaign } from '../src/modules/campaigns.mjs';
 import { seedAutomations, runAutomations, listAutomations, automationReport, upsertAutomation, setAutomationEnabled } from '../src/modules/automations.mjs';
 import { recordOrder, transition } from '../src/modules/orders.mjs';
@@ -38,9 +39,9 @@ test('segments: every one starts from consent and narrows; counts match members;
 });
 
 test('the designed mail: plain text in, escaped branded HTML out, as a multipart message with the text first', () => {
-  const html = renderHtml('Hi <b>Ada</b>,\n\n# Two things\n\n- one & two\n- see https://securacv.com/faq now\n\n**Bold** words.\n\n— Errer Labs', { company: 'Errer Labs', siteOrigin: 'https://securacv.com', unsubscribe: 'https://x.test/u/t', preheader: 'A "quoted" preheader' });
+  const html = renderHtml('Hi <b>Ada</b>,\n\n# Two things\n\n- one & two\n- see https://securacv.com/glossary now\n\n**Bold** words.\n\n— Errer Labs', { company: 'Errer Labs', siteOrigin: 'https://securacv.com', unsubscribe: 'https://x.test/u/t', preheader: 'A "quoted" preheader' });
   assert.ok(html.includes('Hi &lt;b&gt;Ada&lt;/b&gt;,'), 'markup in the text is escaped, not rendered'); assert.ok(html.includes('<h2') && html.includes('Two things')); assert.ok(html.includes('<li') && html.includes('one &amp; two'));
-  assert.ok(html.includes('<a href="https://securacv.com/faq"')); assert.ok(html.includes('<strong>Bold</strong>')); assert.ok(html.includes('unsubscribe in one click')); assert.ok(html.includes('A &quot;quoted&quot; preheader')); assert.ok(!/<script|<img/.test(html), 'no scripts, no images, no pixels');
+  assert.ok(html.includes('<a href="https://securacv.com/glossary"')); assert.ok(html.includes('<strong>Bold</strong>')); assert.ok(html.includes('unsubscribe in one click')); assert.ok(html.includes('A &quot;quoted&quot; preheader')); assert.ok(!/<script|<img/.test(html), 'no scripts, no images, no pixels');
   const m = buildMessage({ from: 'Errer Labs <hello@errer.test>', to: 'a@example.test', subject: 'Hi', text: 'plain', html: '<p>rich</p>', headers: { 'List-Unsubscribe': '<https://x>' } });
   assert.match(m.raw, /Content-Type: multipart\/alternative; boundary="=_bo_/); assert.ok(m.raw.indexOf('text/plain') < m.raw.indexOf('text/html'), 'the plain part comes first'); assert.ok(m.raw.includes('List-Unsubscribe: <https://x>'));
   const plain = buildMessage({ from: 'a@b.test', to: 'c@d.test', subject: 's', text: 't' }); assert.match(plain.raw, /Content-Type: text\/plain/); assert.ok(!plain.raw.includes('multipart'));
@@ -100,13 +101,22 @@ test('automations: enrolled once per thing, sent after the delay, skipped withou
 
 test('a bounce names the address and suppresses it; the newsletter form double-opts-in; a sealed off-site copy round-trips through the drill', async () => {
   const db = testDb(); const cfg = testCfg();
-  optIn(db, 'gone@example.test', 'Gone');
-  const r = ingestEmail(db, { from: 'Mail Delivery Subsystem <mailer-daemon@relay.example.test>', subject: 'Undeliverable: October from the bench', text: 'Your message to gone@example.test could not be delivered.\n550 5.1.1 User unknown', messageId: '<dsn1@relay.example.test>' }, { cfg });
-  assert.equal(r.ignored, 'bounce'); assert.deepEqual(r.bounced, ['gone@example.test']); assert.ok(db.get('SELECT bounced_at FROM contacts WHERE email = \'gone@example.test\'').bounced_at); assert.equal(db.get('SELECT COUNT(*) AS n FROM tickets').n, 0, 'a bounce is not a ticket');
+  optIn(db, 'gone@example.test', 'Gone'); optIn(db, 'fine@example.test', 'Fine');
+  // a DSN counts only when it names a mail we sent, and suppresses only the address that mail went to
+  const sent = enqueue(db, { to: 'gone@example.test', subject: 'October from the bench', text: 'x', kind: 'campaign', ref: 'campaign:oct' }); db.run('UPDATE mail_outbox SET message_id = ?, status = \'sent\' WHERE id = ?', '<oct-1@errer.test>', sent.id);
+  const r0 = ingestEmail(db, { from: 'Mail Delivery Subsystem <mailer-daemon@relay.example.test>', subject: 'Undeliverable: October from the bench', text: 'Your message to gone@example.test and fine@example.test could not be delivered.\n550 5.1.1 User unknown', messageId: '<dsn0@relay.example.test>' }, { cfg });
+  assert.equal(r0.ignored, 'bounce'); assert.deepEqual(r0.bounced, [], 'a bounce that names no mail of ours suppresses nobody'); assert.equal(db.get('SELECT bounced_at FROM contacts WHERE email = \'gone@example.test\'').bounced_at, null);
+  const r = ingestEmail(db, { from: 'Mail Delivery Subsystem <mailer-daemon@relay.example.test>', subject: 'Undeliverable: October from the bench', text: 'Your message to gone@example.test and fine@example.test could not be delivered.\n550 5.1.1 User unknown', messageId: '<dsn1@relay.example.test>', inReplyTo: '<oct-1@errer.test>' }, { cfg });
+  assert.equal(r.ignored, 'bounce'); assert.deepEqual(r.bounced, ['gone@example.test']); assert.equal(db.get('SELECT bounced_at FROM contacts WHERE email = \'fine@example.test\'').bounced_at, null, 'an address merely written in the body is not bounced');
+  const r2 = ingestEmail(db, { from: 'postmaster@relay.example.test', subject: 'Delivery Status Notification (Failure)', text: 'The original message id was <oct-1@errer.test>', messageId: '<dsn2@relay.example.test>' }, { cfg });
+  assert.deepEqual(r2.bounced, ['gone@example.test'], 'our id in the body counts too'); assert.ok(!JSON.parse(db.get("SELECT detail FROM audit_log WHERE action = 'contact.bounce' ORDER BY id DESC LIMIT 1").detail).email, 'the audit row names the contact id, never the address'); assert.ok(db.get('SELECT bounced_at FROM contacts WHERE email = \'gone@example.test\'').bounced_at); assert.equal(db.get('SELECT COUNT(*) AS n FROM tickets').n, 0, 'a bounce is not a ticket');
   const totpSecret = setupOperator(db, 'audience-test-pw-1'); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
   try {
     const f = await fetch(base + '/forms/newsletter', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'new@example.test', name: 'New' }) });
-    assert.equal((await f.json()).newsletter, 'confirmation mail sent'); assert.ok(db.get('SELECT consent_token FROM contacts WHERE email = \'new@example.test\'').consent_token); assert.equal(db.get('SELECT consent_marketing FROM contacts WHERE email = \'new@example.test\'').consent_marketing, 0);
+    assert.equal((await f.json()).newsletter, 'confirmation mail sent'); const tok1 = db.get('SELECT consent_token FROM contacts WHERE email = \'new@example.test\'').consent_token; assert.ok(tok1); assert.equal(db.get('SELECT consent_marketing FROM contacts WHERE email = \'new@example.test\'').consent_marketing, 0);
+    // the form again inside the hour: no second confirmation mail, and the token in the first one still stands
+    const f2 = await fetch(base + '/forms/newsletter', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'new@example.test' }) }); assert.equal(f2.status, 200);
+    assert.equal(db.get("SELECT COUNT(*) AS n FROM mail_outbox WHERE to_addr = 'new@example.test' AND ref LIKE 'consent:%'").n, 1, 'one confirmation per address per hour'); assert.equal(db.get('SELECT consent_token FROM contacts WHERE email = \'new@example.test\'').consent_token, tok1, 'the token is not rotated');
     // security: the door
     const login = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ password: 'audience-test-pw-1', code: totp(totpSecret) }), redirect: 'manual' });
     const cookie = login.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions').csrf;

@@ -41,15 +41,17 @@
 #include "mbedtls/sha256.h"
 
 // ============================================================================
-// SECURITY: Compile-time guard against cert-skip in release builds
+// SECURITY: Compile-time guard against the hostname-check skip in release builds
 // ============================================================================
-// SECURACV_OTA_SKIP_CERT_VERIFY disables TLS certificate verification,
-// enabling MITM attacks on OTA downloads. It MUST only be used in
-// development builds with self-signed certs and mock_ota_server.py.
-#if defined(SECURACV_OTA_SKIP_CERT_VERIFY) && !defined(SECURACV_DEBUG_BUILD)
-  #error "SECURACV_OTA_SKIP_CERT_VERIFY is set without SECURACV_DEBUG_BUILD. " \
-         "This disables TLS certificate verification and MUST NOT be used in " \
-         "release/production firmware. Remove -DSECURACV_OTA_SKIP_CERT_VERIFY " \
+// SECURACV_OTA_SKIP_CN_CHECK skips the TLS certificate's common-name
+// (hostname) check only (esp_http_client's skip_cert_common_name_check);
+// the chain is still verified. A release built with it accepts any host
+// holding a certificate the configured trust accepts, so it MUST only be
+// set in development builds (mock_ota_server.py).
+#if defined(SECURACV_OTA_SKIP_CN_CHECK) && !defined(SECURACV_DEBUG_BUILD)
+  #error "SECURACV_OTA_SKIP_CN_CHECK is set without SECURACV_DEBUG_BUILD. " \
+         "It skips the TLS hostname check and MUST NOT be used in " \
+         "release/production firmware. Remove -DSECURACV_OTA_SKIP_CN_CHECK " \
          "from build_flags or define -DSECURACV_DEBUG_BUILD for dev builds."
 #endif
 
@@ -773,7 +775,7 @@ static esp_err_t ota_fetch_manifest(void)
         http_config.cert_pem = s_ctx.config.server_cert_pem;
     }
 
-#ifdef SECURACV_OTA_SKIP_CERT_VERIFY
+#ifdef SECURACV_OTA_SKIP_CN_CHECK
     http_config.skip_cert_common_name_check = true;
 #endif
 
@@ -924,7 +926,7 @@ static esp_err_t ota_download_and_flash(void)
         http_config.cert_pem = s_ctx.config.server_cert_pem;
     }
 
-#ifdef SECURACV_OTA_SKIP_CERT_VERIFY
+#ifdef SECURACV_OTA_SKIP_CN_CHECK
     http_config.skip_cert_common_name_check = true;
 #endif
 

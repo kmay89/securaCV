@@ -89,6 +89,6 @@ enum EcosystemMap {
             sfSymbol: "house",
             job: "Home Assistant on a Raspberry Pi running the witness kernel — the timeline card, automations, and voice, all local.",
             availability: "Free — the Flasher writes the card for you",
-            url: labURL),
+            url: URL(string: site + "/home-assistant")!),
     ]
 }

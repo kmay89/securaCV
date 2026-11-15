@@ -307,7 +307,7 @@ static const size_t DETAIL_COUNT = sizeof(DETAIL_TABLE) / sizeof(DETAIL_TABLE[0]
 // ════════════════════════════════════════════════════════════════════════════
 
 static void set_state(ChirpState new_state);
-static void generate_session_identity();
+[[nodiscard]] static bool generate_session_identity();
 static void generate_emoji_string(const uint8_t* session_id, char* emoji_out);
 static bool is_nonce_seen(const uint8_t* nonce);
 static void cache_nonce(const uint8_t* nonce);
@@ -322,6 +322,7 @@ static void handle_selftest(const uint8_t* data, size_t len);
 static void relay_chirp(const ReceivedChirp* chirp);
 static void prune_stale_nearby();
 static void prune_old_chirps();
+static void prune_expired_rate_rows(uint32_t now);
 static void load_settings();
 static void save_settings();
 static void publish_view();
@@ -329,7 +330,7 @@ static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int
 static const TemplateEntry* find_template(ChirpTemplate id);
 static ChirpCategory template_to_category(ChirpTemplate id);
 static uint32_t get_cooldown_for_tier(uint8_t tier);
-static void session_id_from_pubkey(const uint8_t* pubkey, uint8_t* sid_out);
+[[nodiscard]] static bool session_id_from_pubkey(const uint8_t* pubkey, uint8_t* sid_out);
 static size_t build_witness_canonical(const ChirpHeader* hdr,
                                       const ChirpWitnessPayload* payload,
                                       const uint8_t* signer_pubkey,
@@ -400,32 +401,41 @@ static uint32_t wall_clock_now_seconds() {
 // SESSION IDENTITY
 // ════════════════════════════════════════════════════════════════════════════
 
-static void session_id_from_pubkey(const uint8_t* pubkey, uint8_t* sid_out) {
+// False, with the id zeroed, when a SHA-256 step fails.
+[[nodiscard]] static bool session_id_from_pubkey(const uint8_t* pubkey, uint8_t* sid_out) {
   mbedtls_sha256_context ctx;
   uint8_t hash[32];
   mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, (const uint8_t*)"securacv:chirp:session:v0", 25);
-  mbedtls_sha256_update(&ctx, pubkey, SESSION_PUBKEY_SIZE);
-  mbedtls_sha256_finish(&ctx, hash);
+  int rc = mbedtls_sha256_starts(&ctx, 0);
+  if (rc == 0) rc = mbedtls_sha256_update(&ctx, (const uint8_t*)"securacv:chirp:session:v0", 25);
+  if (rc == 0) rc = mbedtls_sha256_update(&ctx, pubkey, SESSION_PUBKEY_SIZE);
+  if (rc == 0) rc = mbedtls_sha256_finish(&ctx, hash);
   mbedtls_sha256_free(&ctx);
+  if (rc != 0) memset(hash, 0, sizeof(hash));
   memcpy(sid_out, hash, SESSION_ID_SIZE);
+  return rc == 0;
 }
 
-static void generate_session_identity() {
+// False, with no session, when the new key's session id did not hash.
+[[nodiscard]] static bool generate_session_identity() {
   uint8_t seed[32];
   esp_fill_random(seed, sizeof(seed));
 
   Ed25519::generatePrivateKey(g_session.session_privkey);
   Ed25519::derivePublicKey(g_session.session_pubkey, g_session.session_privkey);
 
-  session_id_from_pubkey(g_session.session_pubkey, g_session.session_id);
+  if (!session_id_from_pubkey(g_session.session_pubkey, g_session.session_id)) {
+    memset(&g_session, 0, sizeof(g_session));
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK, "chirp: session id hash failed");
+    return false;
+  }
   generate_emoji_string(g_session.session_id, g_session.emoji_display);
 
   g_session.created_ms = millis();
   g_session.valid = true;
 
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: new session identity generated");
+  return true;
 }
 
 // v0.2: 5 emojis instead of 3, raising distinct-display count from ~4 K to ~1 M.
@@ -482,6 +492,23 @@ static uint32_t cooldown_left_ms(uint8_t tier, uint32_t last_send_ms, uint32_t c
   if (tier == 0) return 0;
   const uint32_t elapsed = now - last_send_ms;
   return elapsed < cooldown_ms ? cooldown_ms - elapsed : 0;
+}
+
+// What a mute has left at `now`: the time to its deadline, `until` (mute()
+// sets it to the moment it ran plus the duration), and 0 once the deadline
+// has come or when no mute runs. Every reader counts it here: update()
+// (which ends the mute when this is 0), is_muted() (what handle_witness()
+// and the presence beacon's `listening` read), get_status() and
+// read_status(). They compared the deadline as an absolute time (`now <
+// until`), so a deadline past uptime's 49.7-day wrap, which wraps to a
+// small number, read as long past: a mute set within its length of the
+// wrap ended at once, and the chirps it was set to drop came in (sweep
+// F361, #1836's filing). The difference read as signed is exact for a
+// deadline less than 2^31 ms (24.8 days) away, and a mute is at most 120
+// minutes (7.2e6 ms); update() ends one at its first pass at or past the
+// deadline, so no flag is kept to the point where the sign turns.
+static uint32_t mute_left_ms(bool muted, uint32_t until, uint32_t now) {
+  return (muted && (int32_t)(until - now) > 0) ? until - now : 0;
 }
 
 // What a stored state reads as: an active channel whose cooldown runs reads
@@ -640,23 +667,62 @@ static bool pubkey_set_contains(const uint8_t set[][SESSION_PUBKEY_SIZE], size_t
   return false;
 }
 
+// A key's witnesses, MAX_WITNESSES_PER_PUBKEY_PER_HOUR an hour (audit C14),
+// counted in a window of PUBKEY_RATE_WINDOW_MS that starts at its first
+// witness.
+static const uint32_t PUBKEY_RATE_WINDOW_MS = 3600000;
+
+// A row whose window has run out goes at the next loop pass, on or off
+// (update() runs this beside expire_stale_tiers(), which does the same for
+// the cooldown tiers). Dropping it is the same as keeping it for its key,
+// since an expired row starts over at the key's next witness, and it keeps
+// the age below true: a row left in the table reads its age as unsigned
+// elapsed time, so one no witness touched for 2^32 ms (49.7 days) read as
+// minutes old, younger than a live window, and one new key then evicted a
+// live row instead of it (the review of F416; the fix below picks the
+// victim by that age). Rows were cleared only by init(), never set invalid.
+static void prune_expired_rate_rows(uint32_t now) {
+  for (size_t i = 0; i < MAX_PUBKEY_RATE_TRACK; i++) {
+    PubkeyRateEntry& e = g_pubkey_rate[i];
+    if (e.valid && now - e.window_start_ms > PUBKEY_RATE_WINDOW_MS) {
+      memset(&e, 0, sizeof(e));
+    }
+  }
+}
+
+// A key with no row takes a free one, or else the row whose window started
+// longest ago: the largest now - window_start_ms. That is unsigned elapsed
+// time, so it holds across uptime's wrap, and with the prune above no row
+// outlives its hour by more than a pass, so a window that has run out is
+// always older than any live one and goes first; a live window goes only
+// when all MAX_PUBKEY_RATE_TRACK rows are live, that is when that many keys
+// each started a window within the hour. The victim was the smallest
+// window_start_ms, and after the wrap the rows written since it hold the
+// smallest: the rows from before it stayed until uptime passed their values
+// again, up to 49.7 days, while two keys taking turns evicted each other's
+// row and each witness counted as a key's first (sweep F416: 12 of 12
+// accepted where 4 are allowed).
 static bool pubkey_rate_check_and_record(const uint8_t* pubkey) {
   uint32_t now = millis();
-  const uint32_t WINDOW_MS = 3600000;
+  const uint32_t WINDOW_MS = PUBKEY_RATE_WINDOW_MS;
 
   PubkeyRateEntry* entry = nullptr;
   PubkeyRateEntry* free_slot = nullptr;
   PubkeyRateEntry* oldest = nullptr;
-  uint32_t oldest_start = UINT32_MAX;
+  uint32_t oldest_age = 0;
 
   for (size_t i = 0; i < MAX_PUBKEY_RATE_TRACK; i++) {
     PubkeyRateEntry& e = g_pubkey_rate[i];
     if (e.valid && memcmp(e.pubkey, pubkey, SESSION_PUBKEY_SIZE) == 0) {
       entry = &e; break;
     }
-    if (!e.valid && !free_slot) free_slot = &e;
-    if (e.valid && e.window_start_ms < oldest_start) {
-      oldest_start = e.window_start_ms;
+    if (!e.valid) {
+      if (!free_slot) free_slot = &e;
+      continue;
+    }
+    const uint32_t age = now - e.window_start_ms;
+    if (!oldest || age > oldest_age) {
+      oldest_age = age;
       oldest = &e;
     }
   }
@@ -681,12 +747,28 @@ static bool pubkey_rate_check_and_record(const uint8_t* pubkey) {
   return true;
 }
 
+// Spec §3.4 rule 4: the key's session id holds a nearby row, and that row
+// was put in the table at least PRESENCE_REQUIRED_MS ago. Only a row was
+// asked for, so a key first heard a second before its ACK counted (sweep
+// F311). first_seen_ms is set at the insert alone (handle_presence()), so a
+// refresh does not move it; a row pruned after NEARBY_TIMEOUT_MS of silence,
+// or a new session id (a new key), is a new row with ten minutes of its own.
+// The age is unsigned elapsed time, so uptime's wrap does not shorten it. A
+// row kept fresh without a gap reads as new again for ten minutes every
+// 2^32 ms (49.7 days): that key's ACKs are refused for those minutes, and
+// none ever counts early. has_presence_requirement() reads this device's
+// own session the same way.
+// Presence beacons are unsigned (§3.2; sweep F232), so one radio beacons any
+// number of session ids at once, and their ten minutes run together, up to
+// the table's free rows: the rule delays a confirming key by ten minutes, it
+// does not put a price on each one. A suppress vote reads no presence at all
+// (handle_suppress_vote(); sweep F234, open).
 static bool nearby_has_pubkey_with_presence(const uint8_t* pubkey) {
   uint8_t sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(pubkey, sid);
+  if (!session_id_from_pubkey(pubkey, sid)) return false;
   for (size_t i = 0; i < g_nearby_count; i++) {
     if (memcmp(g_nearby_devices[i].session_id, sid, SESSION_ID_SIZE) == 0) {
-      return true;
+      return millis() - g_nearby_devices[i].first_seen_ms >= PRESENCE_REQUIRED_MS;
     }
   }
   return false;
@@ -710,18 +792,25 @@ static void drop_recent_at(size_t i) {
   memset(&g_recent_chirps[g_recent_chirp_count], 0, sizeof(ReceivedChirp));
 }
 
-// C8: priority storage — replace FIFO with urgency-aware insert.
+// C8: priority storage — replace FIFO with urgency-aware insert. A full
+// table gives up its least urgent row, and of those the one held longest:
+// the largest now - received_ms, unsigned elapsed time, so the order holds
+// across uptime's wrap. The tie went to the smallest received_ms, and in
+// the 30 minutes after the wrap (a row lives DEFAULT_DISPLAY_MS) a row
+// stored before it held a larger value than every row stored since, so the
+// newer rows went first (sweep F416).
 static void priority_heap_insert(const ReceivedChirp* incoming) {
   if (g_recent_chirp_count < MAX_RECENT_CHIRPS) {
     g_recent_chirps[g_recent_chirp_count++] = *incoming;
     return;
   }
+  const uint32_t now = millis();
   size_t evict_idx = 0;
   for (size_t i = 1; i < g_recent_chirp_count; i++) {
     const ReceivedChirp& a = g_recent_chirps[evict_idx];
     const ReceivedChirp& b = g_recent_chirps[i];
     if (b.urgency < a.urgency ||
-        (b.urgency == a.urgency && b.received_ms < a.received_ms)) {
+        (b.urgency == a.urgency && now - b.received_ms > now - a.received_ms)) {
       evict_idx = i;
     }
   }
@@ -774,10 +863,26 @@ static void send_presence() {
   // lists showed a device in its cooldown as deaf (sweep F194).
   payload->listening = is_muted() ? 0 : 1;
 
+  // The age stops at 254 minutes, the field's cap (spec §3.2), and stays
+  // there: once it reaches the cap the send time slides forward to hold it
+  // at exactly 254 minutes, so it never runs on to read small again. It was
+  // unsigned elapsed time with nothing to stop it, and 2^32 ms (49.7 days)
+  // after a session's last send the beacon said a few minutes, which is
+  // false (sweep F417). A beacon goes out every PRESENCE_INTERVAL_MS while
+  // the channel is on, so the slide runs long before that. A send sets the
+  // time again and an enable clears it; 0 is "never", which the slide does
+  // not write (UINT32_MAX reads one millisecond older than the cap).
   if (g_last_chirp_sent_ms == 0) {
     payload->last_chirp_age_min = 255;
   } else {
-    uint32_t age_ms = millis() - g_last_chirp_sent_ms;
+    static const uint32_t AGE_CAP_MS = 254u * 60000u;
+    const uint32_t now = millis();
+    uint32_t age_ms = now - g_last_chirp_sent_ms;
+    if (age_ms >= AGE_CAP_MS) {
+      g_last_chirp_sent_ms = now - AGE_CAP_MS;
+      if (g_last_chirp_sent_ms == 0) g_last_chirp_sent_ms = UINT32_MAX;
+      age_ms = AGE_CAP_MS;
+    }
     uint32_t age_min = age_ms / 60000;
     payload->last_chirp_age_min = (age_min > 254) ? 254 : (uint8_t)age_min;
   }
@@ -807,6 +912,14 @@ static void handle_presence(const uint8_t* data, size_t len, int8_t rssi) {
   if (!device && g_nearby_count < MAX_NEARBY_CACHE) {
     device = &g_nearby_devices[g_nearby_count++];
     new_device = true;
+    // The assignment starts the new row's ten minutes (spec §3.4 rule 4;
+    // sweep F311), here and only here: a refresh below never moves
+    // first_seen_ms. The memset is not what does it, since every field is
+    // written below; a slot past the count keeps whatever row a prune or a
+    // disable left there, and the memset clears it so a field added later
+    // and not written here does not inherit that row's bytes.
+    memset(device, 0, sizeof(*device));
+    device->first_seen_ms = millis();
   }
   if (device) {
     memcpy(device->session_id, hdr->session_id, SESSION_ID_SIZE);
@@ -841,8 +954,9 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
   // it). Before, the filter was cleared whole every 5 minutes, and the same
   // frame heard just after a reset was stored again: a second row of a
   // chirp still held, or a suppressed chirp back with no votes.
+  // The nonce goes into the filter only once the frame's signatures verify,
+  // below (sweep F309).
   if (is_nonce_seen(hdr->nonce) || recent_index_of(hdr->nonce) >= 0) return;
-  cache_nonce(hdr->nonce);
 
   if (payload->urgency < (uint8_t)g_urgency_filter) return;
   if (is_muted()) return;   // what the presence beacon's `listening` says (sweep F194)
@@ -850,7 +964,7 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
 
   // audit C6: session_id MUST derive from carried session_pubkey
   uint8_t derived_sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(payload->session_pubkey, derived_sid);
+  if (!session_id_from_pubkey(payload->session_pubkey, derived_sid)) return;
   if (memcmp(derived_sid, hdr->session_id, SESSION_ID_SIZE) != 0) {
     health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
                "chirp: rejected witness — session_id != hash(pubkey)");
@@ -913,6 +1027,37 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
     memcpy(origin_pubkey, payload->session_pubkey, SESSION_PUBKEY_SIZE);
   }
 
+  // The origin's session id, for its emoji. A hash that fails drops the
+  // frame before its nonce is kept.
+  uint8_t origin_sid[SESSION_ID_SIZE];
+  if (!session_id_from_pubkey(origin_pubkey, origin_sid)) return;
+
+  // Only a nonce whose frame verified enters the filter (sweep F309). The
+  // insert came first, before the session-id and signature checks, so
+  // unsigned frames from any device in range filled it (a half's
+  // false-positive rate is about 2.4 % at 4,096 nonces and climbs from
+  // there, each a new witness dropped as a repeat), and a made-up frame
+  // carrying a heard chirp's nonce kept that chirp out of a receiver it had
+  // not reached yet. Taking it first saved nothing a flooder cannot route
+  // around: a fresh nonce per frame reaches the SHA-256 and the Ed25519
+  // checks every time; only a junk frame sent again with the same nonce
+  // costs those checks now. It goes in here, before the template, the
+  // freshness window and the rate limit, as it did, so a verified frame
+  // that one of those refuses is refused at the lookup above when it comes
+  // again while the filter holds its nonce (331 to 662 s).
+  // A frame dropped before the checks, below the urgency filter or during
+  // a mute, leaves no nonce now, so a copy heard once the filter or the
+  // mute lets it through is taken, where before it was refused as a repeat
+  // for up to 662 s. (This device's own frames are still refused at the
+  // lookup: send_chirp() puts their nonces in.)
+  // The filter holds nonces, not who signed them: a frame that verifies
+  // under any key, an attacker's own among them, still takes the nonce it
+  // carries, and so does a relay that names an origin key and carries no
+  // origin signature, which the soft accept above lets through on its
+  // relayer's signature alone and stores as that origin's chirp (spec
+  // §5.3; THREAT_MODEL's Chirp "Spoofed origination" cell).
+  cache_nonce(hdr->nonce);
+
   ChirpTemplate template_id = (ChirpTemplate)payload->template_id;
   if (!find_template(template_id)) {
     health_log(SCV_LOG_INFO, SCV_CAT_NETWORK,
@@ -920,11 +1065,8 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
     return;
   }
 
-  if (!pubkey_rate_check_and_record(origin_pubkey)) {
-    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: rate-limited witness from pubkey");
-    return;
-  }
-
+  // Freshness before the rate limit: a stale frame, played back, costs its
+  // origin key none of its hour.
   bool unverifiable_ts = false;
   if (wall_clock_is_synced()) {
     uint32_t now_sec = wall_clock_now_seconds();
@@ -938,19 +1080,24 @@ static void handle_witness(const uint8_t* data, size_t len, int8_t rssi) {
     unverifiable_ts = true;
   }
 
+  if (!pubkey_rate_check_and_record(origin_pubkey)) {
+    health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, "chirp: rate-limited witness from pubkey");
+    return;
+  }
+
   ReceivedChirp chirp;
   memset(&chirp, 0, sizeof(chirp));
   memcpy(chirp.sender_session, hdr->session_id, SESSION_ID_SIZE);
   memcpy(chirp.sender_pubkey, origin_pubkey, SESSION_PUBKEY_SIZE);
 
-  uint8_t origin_sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(origin_pubkey, origin_sid);
   generate_emoji_string(origin_sid, chirp.sender_emoji);
 
   chirp.template_id = template_id;
   chirp.detail = (ChirpDetailSlot)payload->detail_slot;
   chirp.urgency = (ChirpUrgency)payload->urgency;
   chirp.hop_count = hdr->hop_count;
+  // The signed byte, kept for the relay (relay_chirp(); sweep F306).
+  chirp.ttl_minutes = payload->ttl_minutes;
   chirp.received_ms = millis();
   chirp.timestamp = hdr->timestamp;
   memcpy(chirp.nonce, hdr->nonce, 8);
@@ -1011,7 +1158,11 @@ static void handle_ack(const uint8_t* data, size_t len) {
       chirp = &g_recent_chirps[i]; break;
     }
   }
-  if (!chirp) return;
+  // A row the owner dismissed takes no ACK. It leaves at update()'s next
+  // prune, up to 30 s on, and until then a confirmation found it and could
+  // validate and relay a chirp the owner had just taken off this device
+  // (sweep F305).
+  if (!chirp || chirp->dismissed) return;
 
   uint8_t canonical[128];
   size_t cl = build_ack_canonical(payload->original_nonce, payload->ack_type,
@@ -1025,7 +1176,7 @@ static void handle_ack(const uint8_t* data, size_t len) {
   }
 
   uint8_t derived_sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(payload->confirmer_session_pubkey, derived_sid);
+  if (!session_id_from_pubkey(payload->confirmer_session_pubkey, derived_sid)) return;
   if (memcmp(derived_sid, hdr->session_id, SESSION_ID_SIZE) != 0) return;
 
   if (memcmp(payload->confirmer_session_pubkey, chirp->sender_pubkey,
@@ -1058,9 +1209,15 @@ static void handle_ack(const uint8_t* data, size_t len) {
         relay_chirp(chirp);
       }
     }
-  } else if (payload->ack_type == CHIRP_ACK_RESOLVED) {
-    chirp->dismissed = true;
   }
+  // Every other ack_type changes nothing here: "seen" counts for nothing,
+  // and "resolved" is local to its sender (spec §3.4). It set `dismissed`,
+  // and update()'s next prune dropped the row, so one signed ACK from any
+  // key with a nearby row took a chirp off this device, where community
+  // suppression asks more than half the nearby rows, and at least three
+  // (§2.5.6; sweep F305). `dismissed` is this device's owner's alone
+  // (dismiss_chirp()); the sender's dismissal reaches the community only
+  // as its signed suppress vote, which handle_suppress_vote() counts.
 }
 
 static void handle_suppress_vote(const uint8_t* data, size_t len) {
@@ -1077,7 +1234,7 @@ static void handle_suppress_vote(const uint8_t* data, size_t len) {
   if (!Ed25519::verify(payload->signature, payload->voter_session_pubkey, canonical, cl)) return;
 
   uint8_t derived_sid[SESSION_ID_SIZE];
-  session_id_from_pubkey(payload->voter_session_pubkey, derived_sid);
+  if (!session_id_from_pubkey(payload->voter_session_pubkey, derived_sid)) return;
   if (memcmp(derived_sid, hdr->session_id, SESSION_ID_SIZE) != 0) return;
 
   // A nonce has one row (sweep F270: handle_witness() refuses a frame whose
@@ -1158,7 +1315,11 @@ static void relay_chirp(const ReceivedChirp* chirp) {
   payload->template_id = (uint8_t)chirp->template_id;
   payload->detail_slot = (uint8_t)chirp->detail;
   payload->urgency = (uint8_t)chirp->urgency;
-  payload->ttl_minutes = 15;
+  // The originator's TTL, as it signed it: the origin signature below covers
+  // this byte (build_witness_canonical()), and a relay that wrote 15 was
+  // refused one hop on ("bad origin signature") for any chirp sent with
+  // another TTL (sweep F306).
+  payload->ttl_minutes = chirp->ttl_minutes;
   memcpy(payload->session_pubkey, g_session.session_pubkey, SESSION_PUBKEY_SIZE);
 
   // v0.3 (audit C4 closure): include the original signer's pubkey AND
@@ -1357,7 +1518,10 @@ void read_status(StatusView* out) {
   out->cooldown_remaining_ms = cooldown_left_ms(out->cooldown_tier, out->last_chirp_sent_ms,
                                                 out->cooldown_ms, now);
   out->state = shown_state(out->state, out->cooldown_remaining_ms);
-  out->mute_remaining_ms = (out->muted && now < out->mute_until_ms) ? out->mute_until_ms - now : 0;
+  out->mute_remaining_ms = mute_left_ms(out->muted, out->mute_until_ms, now);   // F361
+  // Unsigned elapsed time, as has_presence_requirement() counts it, with the
+  // same known limit: a session on without a break reads presence unmet for
+  // ten minutes every 2^32 ms (49.7 days), and fails closed (sweep F417).
   out->presence_met = out->session_start_ms != 0 &&
                       (now - out->session_start_ms) >= PRESENCE_REQUIRED_MS;
   out->clock_synced = wall_clock_is_synced();
@@ -1436,7 +1600,18 @@ static bool enable() {
   if (!g_initialized) return false;
   if (g_state != CHIRP_DISABLED) return true;
   set_state(CHIRP_INITIALIZING);
-  generate_session_identity();
+  if (!generate_session_identity()) {
+    set_state(CHIRP_DISABLED);
+    return false;
+  }
+  // A new session has sent nothing: its beacons say 255 ("never") until its
+  // own first send. The age counted from the last session's send, so the new
+  // key's first beacons told any neighbor that heard the old one how long ago
+  // it chirped, to the minute, and linked the two sessions on the wire
+  // (spec 2.3: the identity is discarded at a disable; 6.4: no chirp history
+  // across sessions; sweep F415). The cooldown's own timer,
+  // g_cooldown.last_chirp_ms, is the device's and stays (F193, below).
+  g_last_chirp_sent_ms = 0;
   if (esp_now_init() != ESP_OK) { /* may be already initialized by mesh_network */ }
   // The cooldown tiers are this device's, not the session's: they outlive a
   // disable, and only 24 quiet hours reset them (expire_stale_tiers()). An
@@ -1554,13 +1729,17 @@ void update() {
   // The tiers reset after 24 quiet hours on or off, since a disable keeps
   // them (sweep F193).
   expire_stale_tiers(millis());
+  // A per-key rate row goes once its hour has run out, on or off, so none
+  // sits long enough for its age to wrap (F416's review).
+  prune_expired_rate_rows(millis());
 
   if (g_state == CHIRP_DISABLED) {
     publish_view();
     return;
   }
   uint32_t now = millis();
-  if (g_muted && now >= g_mute_until_ms) {
+  // The mute ends at its deadline, counted across uptime's wrap (F361).
+  if (g_muted && mute_left_ms(g_muted, g_mute_until_ms, now) == 0) {
     g_muted = false;
     if (g_state == CHIRP_MUTED) set_state(CHIRP_ACTIVE);
   }
@@ -1588,8 +1767,7 @@ ChirpStatus get_status() {
   status.state = shown_state(g_state, status.cooldown_remaining_ms);
   status.relay_enabled = g_relay_enabled;
   status.muted = g_muted;
-  status.mute_remaining_ms = (g_muted && millis() < g_mute_until_ms)
-                             ? g_mute_until_ms - millis() : 0;
+  status.mute_remaining_ms = mute_left_ms(g_muted, g_mute_until_ms, millis());   // one read (F361)
   return status;
 }
 
@@ -1631,6 +1809,15 @@ bool is_active() {
   return shown == CHIRP_ACTIVE || shown == CHIRP_LISTENING;
 }
 
+// This session on for at least PRESENCE_REQUIRED_MS (spec §2.5.5). The age
+// is unsigned elapsed time, so uptime's wrap does not shorten it. A session
+// kept on without a break reads as new again for ten minutes every 2^32 ms
+// (49.7 days): its sends, confirmations and suppress votes are refused as
+// presence_required for those minutes, and none ever goes early. A known
+// limit that fails closed, the one F311 wrote down for a nearby row's
+// first_seen_ms (sweep F417); read_status() counts presence_met the same
+// way. Latching it would publish a new StatusView field and move
+// test_chirp_commands_wap.cpp's the_view_sizes pin.
 bool has_presence_requirement() {
   if (g_session_start_ms == 0) return false;
   return (millis() - g_session_start_ms) >= PRESENCE_REQUIRED_MS;
@@ -1665,6 +1852,8 @@ bool is_night_mode() {
 }
 
 bool is_valid_template(ChirpTemplate template_id) { return find_template(template_id) != nullptr; }
+// The template table's category, as handle_ack() reads it (sweep F307).
+ChirpCategory template_category(ChirpTemplate template_id) { return template_to_category(template_id); }
 const char* get_template_text(ChirpTemplate template_id) {
   const TemplateEntry* entry = find_template(template_id);
   return entry ? entry->text : "unknown alert";
@@ -1834,6 +2023,15 @@ static bool confirm_chirp(const uint8_t* nonce, ConfirmRefusal* why) {
   }
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
     if (memcmp(g_recent_chirps[i].nonce, nonce, 8) != 0) continue;
+    // A chirp this device's owner dismissed is not confirmed from here: it
+    // is refused not_found ("Chirp not found or already dismissed"), as it
+    // is once update()'s next prune takes its row, and as a chirp the
+    // community suppressed is (F269). A confirm in the up to 30 s before
+    // that prune signed and broadcast an ACK, beside the suppress vote the
+    // dismiss sent when it could, and a neighbor counted it like any other,
+    // so the chirp the owner dismissed could be validated and relayed there.
+    // handle_ack() refuses a received ACK for such a row (sweep F305).
+    if (g_recent_chirps[i].dismissed) break;
     if (memcmp(g_recent_chirps[i].sender_pubkey, g_session.session_pubkey,
                SESSION_PUBKEY_SIZE) == 0) {
       *why = CONFIRM_REFUSED_OWN_CHIRP;   // the originator cannot confirm its own (spec 3.4)
@@ -1979,7 +2177,7 @@ static bool unmute(MuteRefusal* why) {
   return true;
 }
 
-bool is_muted() { return g_muted && millis() < g_mute_until_ms; }
+bool is_muted() { return mute_left_ms(g_muted, g_mute_until_ms, millis()) > 0; }   // F361
 
 static void set_relay_enabled(bool enabled) { g_relay_enabled = enabled; save_settings(); }
 bool is_relay_enabled() { return g_relay_enabled; }

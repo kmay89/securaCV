@@ -9,9 +9,11 @@
 
 ## Witnessing without watching.
 
-SecuraCV is a calm, local-first witness layer for homes, studios, labs, and small sites. It helps you understand **what happened** without turning your cameras and sensors into an identity archive.
+SecuraCV is an open-source witness for the cameras and sensors you already own: it keeps a signed, tamper-evident record of **what happened** — never a face, a plate or a cloud archive. It is calm, local-first, and built for homes, studios, labs, and small sites.
 
 Clips stay on your hardware. Events become privacy-preserving claims. The durable record is a signed, hash-chained log you can verify offline.
+
+**On the web:** [securacv.com](https://securacv.com) · [install on Home Assistant](https://securacv.com/home-assistant) (two buttons, nothing to type) · [run the real firmware in your browser](https://securacv.com/lab) · [what exists today](https://securacv.com/today) · [help](https://securacv.com/help)
 
 ### The promise
 
@@ -32,7 +34,7 @@ Clips stay on your hardware. Events become privacy-preserving claims. The durabl
 | If you are... | Start here | Outcome |
 |---|---|---|
 | Completely new — you just found this | [Why this matters](docs/why_this_matters.md) → [the FAQ](docs/FAQ.md) | The idea in plain words, then the questions everyone asks — answered honestly. Nothing to install, nothing to buy. |
-| Running Home Assistant with cameras | [Home Assistant setup](docs/homeassistant_setup.md) → [Frigate integration](docs/frigate_integration.md) | Frigate keeps recording; SecuraCV adds sealed, signed witness events per camera, a chain-status header, a daily digest, notifications with proof, and a one-tap evidence export. |
+| Running Home Assistant with cameras | [The install page](https://securacv.com/home-assistant) → [Home Assistant setup](docs/homeassistant_setup.md) → [Frigate integration](docs/frigate_integration.md) | Frigate keeps recording; SecuraCV adds sealed, signed witness events per camera, a chain-status header, a daily digest, notifications with proof, and a one-tap evidence export. |
 | Running Docker beside an existing Frigate | [Docker quickstart](docs/frigate_integration.md#quick-start-docker-no-home-assistant) | One sidecar container wraps the witness API, bridge, and doctor checks; Home Assistant pairs with one 6-digit code. |
 | Building hardware | [Getting started with Canaries](docs/getting_started_canary.md) → [hardware guides](docs/hardware/README.md) | Small independent witnesses for radar, camera-module presence, WiFi sensing, and displays. |
 | Evaluating trust and safety | [Why exports work this way](docs/why_secure.md) → [threat model](docs/security/THREAT_MODEL.md) | A clear view of what is enforced, what is audited, and what remains out of scope. |
@@ -242,7 +244,7 @@ High-signal references:
 
 ## Status
 
-SecuraCV is a **v1 release candidate**.
+SecuraCV is a **v1 release candidate**: the Home Assistant app and the integration are released, and v1 itself is held until the firmware is proven on real devices. Treat it as software under active development, not a finished product ([the FAQ's honest status](docs/FAQ.md#honest-status)).
 
 Current audited docs status:
 
@@ -278,7 +280,7 @@ any scale, forever. Two short, plain-language companions cover the rest:
 - **[LICENSING.md](LICENSING.md)** — who pays, who doesn't, and why. Free for
   schools, universities, nonprofits, groups, businesses, and governments to
   self-host at any scale; the short list of things that cost money (bought
-  hardware, court-grade attestation, support SLAs) each has a free path; and the
+  hardware, third-party attestation, support SLAs) each has a free path; and the
   survival promises (no phone-home, no kill switch, standalone verifier) that
   make it safe to standardize on.
 - **[TRADEMARK.md](TRADEMARK.md)** — using the name, logo, and mascot: a free

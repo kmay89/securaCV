@@ -58,7 +58,7 @@ fn main() -> Result<()> {
         let resolved =
             witness_kernel::crypto::resolve_device_seed(&config.db_path, env_seed.as_deref())?;
         log::info!("device key seed: {}", resolved.source);
-        resolved.seed
+        resolved.seed.to_string()
     };
     let cfg = kernel_config(&config, kernel_version, device_key_seed)?;
 
@@ -295,11 +295,11 @@ fn open_existing_kernel(
                 config.db_path
             )
         })?;
-    let cfg = kernel_config(config, kernel_version, found.seed.clone())?;
+    let cfg = kernel_config(config, kernel_version, found.seed.to_string())?;
     // Open the kernel rather than deriving from the seed: a retired seed
     // cannot reopen the log, so the receipt can only ever carry the key
     // /api/sealed-log actually serves.
-    Ok((Kernel::open(&cfg)?, found.seed))
+    Ok((Kernel::open(&cfg)?, found.seed.to_string()))
 }
 
 fn mint_viewer_token(

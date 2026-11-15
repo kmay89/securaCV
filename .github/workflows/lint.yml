@@ -109,6 +109,11 @@ jobs:
         # rule now lives once in common/network/wifi_join_policy.h, and this
         # lint is what stops a fifth copy appearing.
         run: python3 scripts/lint_wifi_join_policy.py
+      - name: Chip-target macros are tested after sdkconfig.h
+        # CONFIG_IDF_TARGET_* and ESP_IDF_VERSION come from headers, never the
+        # command line: a file that tests one first compiles its "no such
+        # chip" branch on every chip, and nothing warns.
+        run: python3 scripts/lint_idf_target_include_order.py
       - name: scripts/tests suites (lints, board cost model, BOM pricing)
         # `discover` runs EVERY test_*.py in scripts/tests exactly once, so the
         # board cost model (test_board_design.py) and BOM pricing contract
@@ -131,6 +136,8 @@ jobs:
         #    schema check, so cyclonedx-python-lib is too, at the same exact
         #    pin as that step. The tests import it unconditionally: a
         #    skipTest on ImportError reads as covered while catching nothing.
+        #    They also run sbom.yml's tool-version step with bash and jq (both
+        #    on the image) on documents in cargo-cyclonedx's and cdxgen's shapes.
         #  • canary-sentinel's copy of canary-sense's net/witness stack
         #    (test_check_sentinel_net_sync.py) — runs the real sync script on a
         #    scratch copy of both trees: a TLS-gate bypass, a MAC client ID or
@@ -170,6 +177,20 @@ jobs:
 
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
         run: python3 scripts/lint_dictionary_sync.py
+      - name: Device-details vocabulary — generated module current, every row emitted
+        # spec/device_details_vocabulary.json names each key a Canary's answers
+        # use, its class and the firmware sources that emit it. HACS ships
+        # custom_components/securacv/ alone, so the integration reads a
+        # generated copy, device_vocabulary.py, and diagnostics.py unions its
+        # redacted keys into TO_REDACT (sweep HA56). This byte-checks that
+        # copy (a hand edit, or a vocabulary edited without the run) and
+        # re-reads every named firmware source, refusing a row whose key its
+        # surface does not emit: a firmware edit that drops or renames such a
+        # key goes red here. The old key then joins INTEGRATION_REDACT_KEYS in
+        # diagnostics.py (Canaries on the earlier release still send it)
+        # before the row moves; the generator refuses to drop a redacted key
+        # otherwise.
+        run: python3 scripts/gen_device_vocabulary.py --check
       - name: Vehicle DBC signal math (golden vectors)
         run: python3 scripts/dbc_signal_resolve.py selftest
       - name: Vehicle profiles match their vendored DBC excerpts
@@ -202,6 +223,19 @@ jobs:
         # own table of contents carried four stale version anchors, one of
         # them three releases behind — nothing was red.
         run: python3 scripts/lint_md_links.py
+      - name: Site links — every securacv.com link opens something that exists
+        # The Lab, the desktop and Apple apps, the back office's mail and the
+        # firmware's help QR codes all link pages on the website, which lives
+        # in another repository — and nothing told this one when a page there
+        # moved. A census found the Lab's footer opening a page that never
+        # existed, a welcome mail linking a 404, and the desktop atlas opening
+        # an anchor the home page lacks. The website states every address it
+        # answers (routes, redirecting short links, published files, anchors)
+        # in its upstream-contract.json; the carried copy is
+        # canary-local/devices/site_contract.json, and this holds every link
+        # in the tree to it — literal URLs, an origin constant joined to a
+        # path in code, and the Lab manifest's site-relative hrefs.
+        run: python3 scripts/lint_site_links.py
       - name: Apple Home docs match the vocabulary they describe
         # The quickstart tells a user exactly what their Canaries will publish
         # into their home — which signals, which are OFF by default, how
@@ -319,6 +353,13 @@ jobs:
         # rule (says "flock", widens the raw-frame accessor) that AGENTS.md
         # forbids.
         run: python3 scripts/gen_agent_entrypoints.py --check
+      - name: Agent context budget — what loads at session start stays small
+        # The root CLAUDE.md (and its @import, AGENTS.md) is loaded into every
+        # agent session before the first prompt; a tree's AGENTS.md and a
+        # `paths:`-scoped rule load only when a file there is touched. This
+        # caps both, so a rule for one tree lands in that tree's brief and the
+        # root does not grow back into the 55 KB it was.
+        run: python3 scripts/agent_context_budget.py --check
       - name: Build matrix matches platformio.ini + config.h
         run: python3 scripts/lint_build_matrix.py
       - name: Device manifests join the seven device schemas

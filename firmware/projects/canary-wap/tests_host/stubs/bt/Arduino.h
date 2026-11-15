@@ -95,6 +95,15 @@ class String {
     const size_t at = s_.find(needle);
     return at == std::string::npos ? -1 : (int)at;
   }
+  // An append, as ble_nearby.h builds GET /api/nearby's answer (sweep F405).
+  String& operator+=(const char* c) {
+    s_ += c ? c : "";
+    return *this;
+  }
+  String& operator+=(const String& o) {
+    s_ += o.s_;
+    return *this;
+  }
  private:
   std::string s_;
 };

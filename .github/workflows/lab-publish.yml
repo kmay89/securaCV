@@ -234,14 +234,17 @@ jobs:
     secrets: inherit
 
   # The third thing the `release: published` event used to do and a CI
-  # publish never triggers: sbom.yml builds the bills of materials (Rust,
-  # Node, firmware) from the tag the publish above just created and attaches
-  # them. Called, like the pointer, so a failed attach fails this run.
+  # publish never triggers: sbom.yml builds the bills of materials (the
+  # kernel's Rust, canary-vision's Node, the firmware, and the Lab's own Rust
+  # and Node) from the tag the publish above just created and attaches them. Called, like the pointer, so a failed attach fails this run.
   sbom:
     name: Attach the SBOMs to the release
     needs: publish
     uses: ./.github/workflows/sbom.yml
     with:
       tag: ${{ needs.publish.outputs.tag }}
+      # The Lab's own crate graph and npm tree join the three project
+      # documents (sbom-lab-rust/-node.cdx.json; sweep CI20).
+      app: lab
     permissions:
       contents: write

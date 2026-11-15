@@ -72,6 +72,21 @@ test("the shell frames the bench itself rather than describing it", () => {
     "lab-shell.css must not rely on :has() — macOS 10.15's WebView silently ignores it");
 });
 
+test("the guided thread is framed under the bar, not linked out of the shell", () => {
+  // "Open the setup guide" used to be a plain link that left lab.html — in
+  // the app, the sidebar, the strip and the shortcuts all vanished a click
+  // into the path a new person is most likely to take.
+  const start = shellJs.slice(shellJs.indexOf("function startView("), shellJs.indexOf("function allView("));
+  assert.match(start, /benchFrame\(o\.lab, o\.noun\)/, "startView must frame the onramp page");
+  assert.doesNotMatch(start, /href: o\.lab(?![\s\S]{0,80}target: "_blank")/, "no plain link to start.html that navigates the shell away");
+  assert.match(shellJs, /classList\.toggle\("content-full", view === "bench" \|\| view === "start"\)/,
+    "the framed guide must fill the pane like a bench");
+  // The bar names what a bench is and the way onward.
+  assert.match(shellJs, /class: "bb-desc", title: desc/, "the bench bar must carry the manifest's one-line description");
+  assert.match(shellJs, /"Next: " \+ e\.bench\.noun/, "the next stepper must name the next bench");
+  assert.match(shellJs, /class: "trackbar"/, "a stage with tracks must render its tracks as a picker");
+});
+
 test("every page the shell frames can actually be framed", () => {
   const busters = [/\btop\.location\s*=/, /window\.top\s*!==\s*window\.self/, /self\s*!==\s*top\b/];
   for (const page of [...framedPages].sort()) {

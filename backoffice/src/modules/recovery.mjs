@@ -43,19 +43,24 @@ This is the only mail we send about it; if you changed your mind, there is nothi
 `;
 
 // Expired sessions worth one follow-up: an email, a live recovery link, the waiting time passed, no order
-// from that address since, and no mail yet.
+// from that address since, no mail yet — and an address already known here (a contact, or an order), because
+// the address on an expired session is whatever was typed on Stripe's page, by whoever opened it.
 export function recoverableSessions(db, cfg, { now = Date.now() } = {}) {
   const waitMs = (cfg.recoveryHours ?? 1) * 3600000; const cutoff = new Date(now - waitMs).toISOString(); const t = new Date(now).toISOString();
   return db.all("SELECT * FROM checkout_sessions WHERE status = 'expired' AND email IS NOT NULL AND email != '' AND recovery_url IS NOT NULL AND recovery_mailed_at IS NULL AND expired_at <= ? AND (recovery_expires_at IS NULL OR recovery_expires_at > ?) AND expired_at >= ? ORDER BY expired_at", cutoff, t, new Date(now - 7 * 86400000).toISOString())
     .filter(s => !db.get('SELECT o.id FROM orders o JOIN contacts c ON c.id = o.contact_id WHERE lower(c.email) = lower(?) AND o.paid_at >= ?', s.email, s.expired_at))
-    .filter(s => !db.get("SELECT id FROM contacts WHERE lower(email) = lower(?) AND (unsubscribed_at IS NOT NULL OR bounced_at IS NOT NULL OR forgotten_at IS NOT NULL)", s.email));
+    .filter(s => !db.get("SELECT id FROM contacts WHERE lower(email) = lower(?) AND (unsubscribed_at IS NOT NULL OR bounced_at IS NOT NULL OR forgotten_at IS NOT NULL)", s.email))
+    .filter(s => db.get('SELECT id FROM contacts WHERE lower(email) = lower(?) AND forgotten_at IS NULL', s.email));
 }
+// Once per session, and one per address per day whatever the number of sessions: a hundred carts opened in
+// someone's name are one mail to them, not a hundred.
 export function sendRecovery(db, cfg, s, { now = Date.now() } = {}) {
   const ref = `recovery:${s.id}`; if (db.get('SELECT id FROM mail_outbox WHERE ref = ?', ref)) return null;
+  if (db.get('SELECT id FROM checkout_sessions WHERE lower(email) = lower(?) AND recovery_mailed_at >= ?', s.email, new Date(now - 86400000).toISOString())) return null;
   const m = enqueue(db, { to: s.email, subject: `Your ${cfg.product || 'SecuraCV'} cart is still here`, kind: 'transactional', ref,
     text: fill(RECOVERY_TPL, { lines: s.lines ? s.lines.split(', ').map(l => `  ${l}`).join('\n') : '  (your cart)', url: s.recovery_url, ships: 'Orders go out in weekly batches; the checkout page shows the ship day for your ZIP before you pay.', company: cfg.company || 'Errer Labs', support: cfg.supportAddr || '' }) });
   db.run('UPDATE checkout_sessions SET recovery_mailed_at = ? WHERE id = ?', new Date(now).toISOString(), s.id);
-  db.audit('system', 'checkout.recovery', 'checkout', s.id, { to: s.email, amount_cents: s.amount_cents });
+  db.audit('system', 'checkout.recovery', 'checkout', s.id, { amount_cents: s.amount_cents });   // never the address: the audit chain cannot be forgotten
   return m;
 }
 export function runRecovery(db, cfg, { now = Date.now() } = {}) {

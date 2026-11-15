@@ -34,8 +34,8 @@ use zeroize::Zeroizing;
 use crate::crypto::signatures::{
     sign_rotation_attestation, sign_rotation_authorization, verify_rotation_attestation,
     verify_rotation_authorization, PqPublicKey, SignatureKeys, SignatureMode, SignatureSet,
-    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_EXPORT_RECEIPT, DOMAIN_POLICY_CHANGE_RECORD,
-    DOMAIN_SEALED_LOG_ENTRY,
+    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CLOCK_PROVENANCE, DOMAIN_EXPORT_RECEIPT,
+    DOMAIN_POLICY_CHANGE_RECORD, DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::storage::ensure_columns;
 
@@ -54,6 +54,7 @@ pub mod bridge;
 #[cfg(feature = "c2pa-export")]
 pub mod c2pa_export;
 pub mod canonical_json;
+pub mod clock_provenance;
 pub mod config;
 pub mod crypto;
 pub mod detect;
@@ -195,6 +196,7 @@ pub fn high_water_mark_path_from_env() -> Option<std::path::PathBuf> {
 /// to an independent secret (or rotate the independent secret) without data loss.
 /// Both keys are 64-char hex (32 raw bytes), as produced by the `derive_*` helpers.
 pub fn rekey_database_file(db_path: &str, old_key_hex: &str, new_key_hex: &str) -> Result<()> {
+    ensure_sqlcipher_ready()?;
     let conn = Connection::open(db_path)?;
     // Authenticate with the current key (also verifies it is correct).
     apply_sqlcipher_key(&conn, old_key_hex)?;
@@ -211,8 +213,38 @@ pub fn rekey_database_file(db_path: &str, old_key_hex: &str, new_key_hex: &str) 
     Ok(())
 }
 
+/// Finish SQLite's and SQLCipher's start-up before this thread opens or keys
+/// a database.
+///
+/// SQLCipher sets up its mutexes, private heap and cipher provider in
+/// SQLite's extra-init hook, which `sqlite3_initialize` runs after it has
+/// already marked the library initialized. A second thread opening its first
+/// database in that window gets through `sqlite3_initialize` at once and its
+/// `PRAGMA key` fails. `sqlcipher_extra_init` takes SQLite's main mutex and
+/// returns at once when start-up is complete, so calling it here waits out
+/// another thread's start-up. It is the hook SQLCipher requires by name at
+/// build time (`-DSQLITE_EXTRA_INIT=sqlcipher_extra_init`).
+fn ensure_sqlcipher_ready() -> Result<()> {
+    extern "C" {
+        fn sqlcipher_extra_init(arg: *const std::ffi::c_char) -> std::ffi::c_int;
+    }
+    // SAFETY: both calls take no pointers we own (the argument is unused and
+    // may be null), are safe to call from any thread, and are idempotent.
+    let rc = unsafe {
+        match rusqlite::ffi::sqlite3_initialize() {
+            rusqlite::ffi::SQLITE_OK => sqlcipher_extra_init(std::ptr::null()),
+            rc => rc,
+        }
+    };
+    if rc != rusqlite::ffi::SQLITE_OK {
+        return Err(anyhow!("SQLCipher start-up failed (SQLite code {rc})"));
+    }
+    Ok(())
+}
+
 /// Apply the SQLCipher encryption key to an open database connection.
 fn apply_sqlcipher_key(conn: &Connection, hex_key: &str) -> Result<()> {
+    ensure_sqlcipher_ready()?;
     conn.pragma_update(None, "key", format!("x'{}'", hex_key))?;
     // Verify the key works by reading a page
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
@@ -247,6 +279,7 @@ fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> 
     let encrypted_path = format!("{}.encrypted", db_path);
 
     // Open the unencrypted database (no key)
+    ensure_sqlcipher_ready()?;
     let plain_conn = Connection::open(db_path)?;
 
     // Attach the new encrypted database
@@ -339,6 +372,7 @@ pub(crate) fn open_db_connection_with_key(
     db_path: &str,
     encryption_key: Option<&str>,
 ) -> Result<Connection> {
+    ensure_sqlcipher_ready()?;
     if db_path.starts_with("file:") {
         let conn = Connection::open_with_flags(
             db_path,
@@ -1080,6 +1114,71 @@ pub struct ExportBundle {
     pub pq_public_key: Option<Vec<u8>>,
 }
 
+/// Schema discriminator of a [`ClockProvenanceRecord`] (precedent:
+/// [`KEY_ROTATION_SCHEMA_V1`]).
+pub const CLOCK_PROVENANCE_SCHEMA_V1: &str = "securacv/clock_provenance/v1";
+
+/// The bound on a recorded clock offset, in whole seconds either way. A
+/// reading past it is stored as the bound itself (`>= +3600 s` /
+/// `<= -3600 s`): the record says "at least this far", never how far.
+pub const CLOCK_PROVENANCE_CLAMP_S: i64 = 3600;
+
+/// One sealed clock-provenance record: the device's own clock measured
+/// against one RFC 3161 token's `genTime`, at the moment `witnessd` first saw
+/// the anchor row (`docs/design/clock_provenance.md`).
+///
+/// The wire shape is byte-pinned (`serde_json::to_string`, declared order,
+/// both `Option`s serialized as explicit `null`): the stored `payload_json`
+/// literal is what is hashed and signed, and a verifier never re-serializes
+/// it. New fields go LAST and are `Option` + `default`.
+///
+/// Every field is a 10-minute bucket, a whole-second clamped difference, a
+/// whole-second clamped duration, a row id, a hash or a version string —
+/// no precise absolute instant of the kernel's own (Invariant III). The only
+/// precise instant derivable, `genTime + observed_offset_s`, is the time of
+/// an anchoring act the TSA already fixed to the second.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClockProvenanceRecord {
+    /// [`CLOCK_PROVENANCE_SCHEMA_V1`].
+    pub schema: String,
+    /// The device clock at observation, at kernel granularity (10 minutes).
+    pub time_bucket: TimeBucket,
+    /// The `tsa_anchors` row observed — a locator; the binding is the hash.
+    pub anchor_id: i64,
+    /// SHA-256 (64 lowercase hex) over the row's `token_der`: binds the
+    /// imprint, the `genTime` and the TSA identity, `sha256sum`-checkable.
+    pub token_sha256: String,
+    /// `clamp(device wall clock − genTime, ±3600)` in whole seconds; positive
+    /// means the device read ahead of the TSA. `None` is a binding-only
+    /// record (the row was already there at the first poll of this process).
+    pub observed_offset_s: Option<i32>,
+    /// Whole seconds since the previous completed poll (1..=3600): the row
+    /// was at most this old when first seen. `None` with `observed_offset_s`.
+    pub poll_gap_s: Option<u32>,
+    /// The `witnessd` build that measured.
+    pub kernel_version: String,
+}
+
+/// What one poll of the anchors table observed, as the daemon hands it to
+/// [`Kernel::observe_anchors_for_clock_provenance`]: the wall clock read ONCE
+/// for every row of the poll, and the measured gap since the previous
+/// completed poll (`None` on the first poll of a process ⇒ binding-only
+/// records).
+#[derive(Clone, Copy, Debug)]
+pub struct ClockObservation<'a> {
+    pub observed_wall_s: u64,
+    pub poll_gap_s: Option<u32>,
+    pub kernel_version: &'a str,
+}
+
+/// One record a poll sealed, as returned to the daemon for its log line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SealedClockProvenance {
+    pub id: i64,
+    pub anchor_id: i64,
+    pub record: ClockProvenanceRecord,
+}
+
 /// One sealed-log row as `GET /api/sealed-log` serves it to a read-only
 /// verifier — the wire shape `tvos/witness-core`'s `SealedEntry` walks.
 ///
@@ -1453,7 +1552,7 @@ impl RawMediaBoundary {
 
 // -------------------- Sealed Log --------------------
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct KernelConfig {
     pub db_path: String,
     pub ruleset_id: String,
@@ -1462,9 +1561,31 @@ pub struct KernelConfig {
     /// default retention; pruning will write checkpoints
     pub retention: Duration,
     /// Device signing seed (required at runtime; must not be the MVP placeholder).
+    /// Zeroized when the config is dropped, and never printed by `Debug`.
     pub device_key_seed: String,
     /// Zone policy for suppressing sensitive areas.
     pub zone_policy: ZonePolicy,
+}
+
+impl std::fmt::Debug for KernelConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KernelConfig")
+            .field("db_path", &self.db_path)
+            .field("ruleset_id", &self.ruleset_id)
+            .field("ruleset_hash", &hex::encode(self.ruleset_hash))
+            .field("kernel_version", &self.kernel_version)
+            .field("retention", &self.retention)
+            .field("device_key_seed", &"<redacted>")
+            .field("zone_policy", &self.zone_policy)
+            .finish()
+    }
+}
+
+impl Drop for KernelConfig {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.device_key_seed.zeroize();
+    }
 }
 
 impl KernelConfig {
@@ -1648,6 +1769,9 @@ impl Kernel {
               entry_hash BLOB NOT NULL,
               signature BLOB NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS clock_provenance (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, payload_json TEXT NOT NULL, prev_hash BLOB NOT NULL, entry_hash BLOB NOT NULL, signature BLOB NOT NULL, pq_signature BLOB, pq_scheme TEXT);
+            CREATE TABLE IF NOT EXISTS clock_provenance_cursor (id INTEGER PRIMARY KEY CHECK (id = 1), last_anchor_id INTEGER NOT NULL);
 
             CREATE TABLE IF NOT EXISTS device_metadata (
               id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -2511,6 +2635,99 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(entry_hash)
     }
 
+    /// Seal one clock-provenance record into the never-pruned
+    /// `clock_provenance` ledger in its own `BEGIN IMMEDIATE` transaction.
+    /// The daemon path is [`Self::observe_anchors_for_clock_provenance`],
+    /// which seals and advances the cursor together; this is the primitive
+    /// under it.
+    pub fn append_clock_provenance(
+        &mut self,
+        record: &ClockProvenanceRecord,
+    ) -> Result<clock_provenance::ClockProvenanceRow> {
+        let key_material = self.signature_key_material();
+        self.conn.execute_batch("BEGIN IMMEDIATE;")?;
+        match append_clock_provenance_locked(&self.conn, &key_material, record).and_then(|row| {
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(row)
+        }) {
+            Ok(row) => Ok(row),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
+    }
+
+    /// One poll of the local `tsa_anchors` table (a read of this database,
+    /// no network): for every anchor row past the persistent cursor, seal one
+    /// clock-provenance record and advance the cursor, all in ONE
+    /// `BEGIN IMMEDIATE` transaction, so a crash can neither duplicate a
+    /// record nor skip a row.
+    ///
+    /// - No cursor row yet (first poll on an upgraded database): the cursor is
+    ///   set to `MAX(tsa_anchors.id)` (0 without the table) and nothing is
+    ///   sealed — pre-upgrade anchors are never backfilled.
+    /// - `obs.poll_gap_s == None` (the first poll of this process) or a gap
+    ///   over 3600 s: every row gets a binding-only record
+    ///   (`observed_offset_s` and `poll_gap_s` both `null`) — the row may have
+    ///   been there for any length of time, and a clamped gap would state a
+    ///   false bound.
+    /// - A row whose `token_der` is not readable as bytes gets no record; the
+    ///   cursor still moves past it.
+    /// - A token that does not parse, or whose `genTime` does not, gets a
+    ///   binding-only record: the hash binding holds, the measurement cannot.
+    ///
+    /// Returns the records sealed, in anchor-id order.
+    pub fn observe_anchors_for_clock_provenance(
+        &mut self,
+        obs: &ClockObservation<'_>,
+    ) -> Result<Vec<SealedClockProvenance>> {
+        let (wall, gap) = (obs.observed_wall_s, obs.poll_gap_s);
+        self.observe_anchors_for_clock_provenance_with(obs.kernel_version, || Some((wall, gap)))
+            .map(Option::unwrap_or_default)
+    }
+
+    /// [`Self::observe_anchors_for_clock_provenance`] with the clock readings
+    /// taken by `read_clocks`, called exactly ONCE, after `BEGIN IMMEDIATE`
+    /// has the write lock and before the anchors table is read: the wall
+    /// clock `W` (whole seconds) and the gap since the previous completed
+    /// poll. Read under the lock, `W` cannot predate a row that committed
+    /// while this poll waited for the lock (up to the 5 s busy timeout), so
+    /// a row's genTime is never measured against an earlier reading.
+    ///
+    /// `read_clocks` returning `None` (a wall clock that cannot be read)
+    /// rolls back with nothing written and returns `Ok(None)`.
+    pub fn observe_anchors_for_clock_provenance_with<F>(
+        &mut self,
+        kernel_version: &str,
+        read_clocks: F,
+    ) -> Result<Option<Vec<SealedClockProvenance>>>
+    where
+        F: FnOnce() -> Option<(u64, Option<u32>)>,
+    {
+        let key_material = self.signature_key_material();
+        self.conn.execute_batch("BEGIN IMMEDIATE;")?;
+        let Some((observed_wall_s, poll_gap_s)) = read_clocks() else {
+            let _ = self.conn.execute_batch("ROLLBACK;");
+            return Ok(None);
+        };
+        let obs = ClockObservation {
+            observed_wall_s,
+            poll_gap_s,
+            kernel_version,
+        };
+        match observe_anchors_locked(&self.conn, &key_material, &obs).and_then(|sealed| {
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(sealed)
+        }) {
+            Ok(sealed) => Ok(Some(sealed)),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
+    }
+
     pub fn log_break_glass_receipt(
         &mut self,
         receipt: &crate::break_glass::BreakGlassReceipt,
@@ -2934,7 +3151,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         // Burn-first (durable): a token file re-parses as unconsumed, so
         // without this ledger a granted token could authorize repeated
         // exports across separate invocations within its validity bucket.
-        self.consume_token_durably(token)?;
+        // The same call appends the signed redemption row, so a deleted
+        // burn row does not reopen the token either.
+        self.redeem_token_durably(token)?;
         let artifact = self.export_events_sequential_unchecked(
             expected_ruleset_hash,
             options,
@@ -3613,11 +3832,83 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         token.attach_receipt_signature(receipt_entry_hash, &self.device_key)
     }
 
-    /// Burn the token's nonce in the durable anti-replay ledger — see
-    /// `consume_break_glass_token_durably`. Call BEFORE releasing any
-    /// cleartext or export artifact.
-    pub fn consume_token_durably(&self, token: &break_glass::BreakGlassToken) -> Result<()> {
-        consume_break_glass_token_durably(&self.conn, token)
+    /// Redeem a token durably, in one transaction and before any cleartext
+    /// or export artifact exists: burn the nonce in the unsigned anti-replay
+    /// table (`consume_break_glass_token_durably`, which also refuses a nonce
+    /// the chain already shows redeemed), then append the device-signed,
+    /// hash-chained `TokenRedeemed { nonce, receipt_entry_hash }` row that
+    /// restates the `Granted` receipt the token was minted from. Returns that
+    /// row's chain hash. A redemption that cannot be recorded does not
+    /// happen: either both rows land or neither does, and the caller gets
+    /// an error before it unseals anything.
+    pub fn redeem_token_durably(
+        &mut self,
+        token: &break_glass::BreakGlassToken,
+    ) -> Result<[u8; 32]> {
+        let own_tx = self.conn.is_autocommit();
+        self.conn.execute_batch(if own_tx {
+            "BEGIN IMMEDIATE;"
+        } else {
+            "SAVEPOINT token_redemption;"
+        })?;
+        let recorded = self.redeem_token_locked(token).and_then(|entry_hash| {
+            self.conn.execute_batch(if own_tx {
+                "COMMIT;"
+            } else {
+                "RELEASE token_redemption;"
+            })?;
+            Ok(entry_hash)
+        });
+        if recorded.is_err() {
+            // Best effort: the error the caller sees is the redemption's.
+            let _ = self.conn.execute_batch(if own_tx {
+                "ROLLBACK;"
+            } else {
+                "ROLLBACK TO token_redemption; RELEASE token_redemption;"
+            });
+        }
+        recorded
+    }
+
+    fn redeem_token_locked(&mut self, token: &break_glass::BreakGlassToken) -> Result<[u8; 32]> {
+        // Validate before recording anything. A token file only re-parses
+        // for shape, so a file with an altered bucket or nonce reaches here
+        // looking like a token; recording its redemption would append a
+        // signed row the verifier then rejects (and witnessd would boot into
+        // safe mode on). The device signature binds nonce, envelope, ruleset,
+        // bucket and receipt hash, the bucket must be live, and the grant it
+        // names must re-derive its quorum — the same gate the unseal runs.
+        let envelope_id = token.vault_envelope_id().to_string();
+        let ruleset_hash = token.ruleset_hash();
+        break_glass::BreakGlass::assert_token_valid(
+            token,
+            &envelope_id,
+            ruleset_hash,
+            TimeBucket::now(600)?,
+            &self.device_verifying_key(),
+            |hash| self.break_glass_receipt_outcome(&envelope_id, ruleset_hash, hash),
+        )?;
+        // Burn first: the unsigned table is the fast gate every older caller
+        // still consults, and it is written before the signed row so a crash
+        // between the two leaves the nonce burned (the verifier then names
+        // it) rather than spendable.
+        consume_break_glass_token_durably(&self.conn, token)?;
+        let granted_entry_hash = token.receipt_entry_hash();
+        let payload: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT payload_json FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
+                params![granted_entry_hash.to_vec()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(payload) = payload else {
+            return Err(anyhow!("break-glass receipt not found for token"));
+        };
+        let granted: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
+        let redemption =
+            break_glass::BreakGlassReceipt::redemption_of(&granted, granted_entry_hash, token)?;
+        self.append_break_glass_receipt(&redemption, &[])
     }
 
     pub fn break_glass_receipt_outcome(
@@ -3932,7 +4223,8 @@ pub(crate) fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
     }
     let mut key_bytes = [0u8; 32];
     key_bytes.copy_from_slice(bytes);
-    VerifyingKey::from_bytes(&key_bytes).map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
+    crate::crypto::signatures::verifying_key_strict(&key_bytes)
+        .map_err(|e| anyhow!("invalid verifying key bytes: {}", e))
 }
 
 #[cfg(feature = "pqc-signatures")]
@@ -4253,7 +4545,7 @@ pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
 pub mod verify_helpers;
 pub mod verify_runner;
 
-fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
+pub(crate) fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
         return Err(anyhow!(
             "corrupt {}: expected 32 bytes, got {}",
@@ -4268,6 +4560,174 @@ fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
 
 fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+}
+
+/// Test helper. A row stamped with the current 10-minute bucket is still
+/// inside a zero retention during that bucket's first second, when its start
+/// equals the cutoff. Wait that second out before a test prunes with
+/// retention 0 and expects such a row to go.
+#[cfg(test)]
+pub(crate) fn wait_out_bucket_first_second() {
+    while now_s().is_ok_and(|s| s % u64::from(TEN_MINUTES_S) == 0) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The newest clock-provenance entry hash, or the genesis `[0; 32]`, read on
+/// the transaction's own connection so the link and the insert see one state.
+fn last_clock_provenance_hash_or_zero(conn: &Connection) -> Result<[u8; 32]> {
+    let mut stmt =
+        conn.prepare("SELECT entry_hash FROM clock_provenance ORDER BY id DESC LIMIT 1")?;
+    let mut rows = stmt.query([])?;
+    match rows.next()? {
+        Some(row) => {
+            let entry_bytes: Vec<u8> = row.get(0)?;
+            blob32(entry_bytes, "clock_provenance.entry_hash")
+        }
+        None => Ok([0u8; 32]),
+    }
+}
+
+/// Hash, sign and insert one clock-provenance record with the write lock
+/// held (the caller owns the transaction). Chain shape = export receipts:
+/// `entry_hash = SHA256(prev_hash ‖ payload_json)`, signed under
+/// [`DOMAIN_CLOCK_PROVENANCE`]; `created_at` is the record's bucket start.
+fn append_clock_provenance_locked(
+    conn: &Connection,
+    key_material: &SignatureKeyMaterial,
+    record: &ClockProvenanceRecord,
+) -> Result<clock_provenance::ClockProvenanceRow> {
+    if record.schema != CLOCK_PROVENANCE_SCHEMA_V1 {
+        return Err(anyhow!(
+            "clock-provenance record schema must be {CLOCK_PROVENANCE_SCHEMA_V1} (got {:?})",
+            record.schema
+        ));
+    }
+    let created_at = record.time_bucket.start_epoch_s as i64;
+    let prev_hash = last_clock_provenance_hash_or_zero(conn)?;
+    let payload_json = serde_json::to_string(record)?;
+    let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+    let signature_set = sign_entry(
+        &key_material.signature_keys(),
+        &entry_hash,
+        DOMAIN_CLOCK_PROVENANCE,
+    )?;
+    let pq_signature = signature_set
+        .pq_signature
+        .as_ref()
+        .map(|sig| sig.signature.clone());
+    let pq_scheme = signature_set
+        .pq_signature
+        .as_ref()
+        .map(|sig| sig.scheme_id.clone());
+    conn.execute(
+        "INSERT INTO clock_provenance(created_at, payload_json, prev_hash, entry_hash, \
+         signature, pq_signature, pq_scheme) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            created_at,
+            payload_json,
+            prev_hash.to_vec(),
+            entry_hash.to_vec(),
+            signature_set.ed25519_signature,
+            pq_signature,
+            pq_scheme,
+        ],
+    )?;
+    Ok(clock_provenance::ClockProvenanceRow {
+        id: conn.last_insert_rowid(),
+        created_at,
+        payload_json,
+        prev_hash,
+        entry_hash,
+        signatures: signature_set,
+        record: record.clone(),
+    })
+}
+
+/// The body of [`Kernel::observe_anchors_for_clock_provenance`], with the
+/// write lock held.
+fn observe_anchors_locked(
+    conn: &Connection,
+    key_material: &SignatureKeyMaterial,
+    obs: &ClockObservation<'_>,
+) -> Result<Vec<SealedClockProvenance>> {
+    let cursor: Option<i64> = conn
+        .query_row(
+            "SELECT last_anchor_id FROM clock_provenance_cursor WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(cursor) = cursor else {
+        // First poll ever on this database: start at the newest row that
+        // exists, so nothing anchored before this release is ever measured
+        // against a clock that did not observe it.
+        let newest: i64 = if tsa::anchor_table_exists(conn)? {
+            conn.query_row("SELECT COALESCE(MAX(id), 0) FROM tsa_anchors", [], |row| {
+                row.get(0)
+            })?
+        } else {
+            0
+        };
+        conn.execute(
+            "INSERT INTO clock_provenance_cursor(id, last_anchor_id) VALUES (1, ?1)",
+            params![newest],
+        )?;
+        return Ok(Vec::new());
+    };
+    let rows = tsa::anchor_tokens_after(conn, cursor)?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let size = TEN_MINUTES_S as u64;
+    let time_bucket = TimeBucket {
+        start_epoch_s: (obs.observed_wall_s / size) * size,
+        size_s: TEN_MINUTES_S,
+    };
+    let mut sealed = Vec::new();
+    let mut last_id = cursor;
+    for (anchor_id, token_der) in rows {
+        last_id = anchor_id;
+        let Some(token_der) = token_der else {
+            continue;
+        };
+        let token_sha256 = clock_provenance::token_sha256_hex(&token_der);
+        // A measurement needs a completed previous poll no more than 3600 s
+        // ago (else the row's age is unbounded: a gap is a bound only while
+        // it is not clamped) and a readable genTime; otherwise the record
+        // binds the token and says nothing about the clock.
+        let measured = obs
+            .poll_gap_s
+            .filter(|gap| i64::from(*gap) <= CLOCK_PROVENANCE_CLAMP_S)
+            .and_then(|gap| {
+                let token = tsa::parse_token(&token_der).ok()?;
+                let gen_time = tsa::gen_time_unix(&token.gen_time)?;
+                let offset = (obs.observed_wall_s as i64 - gen_time)
+                    .clamp(-CLOCK_PROVENANCE_CLAMP_S, CLOCK_PROVENANCE_CLAMP_S)
+                    as i32;
+                Some((offset, gap.max(1)))
+            });
+        let record = ClockProvenanceRecord {
+            schema: CLOCK_PROVENANCE_SCHEMA_V1.to_string(),
+            time_bucket,
+            anchor_id,
+            token_sha256,
+            observed_offset_s: measured.map(|(offset, _)| offset),
+            poll_gap_s: measured.map(|(_, gap)| gap),
+            kernel_version: obs.kernel_version.to_string(),
+        };
+        let row = append_clock_provenance_locked(conn, key_material, &record)?;
+        sealed.push(SealedClockProvenance {
+            id: row.id,
+            anchor_id,
+            record,
+        });
+    }
+    conn.execute(
+        "UPDATE clock_provenance_cursor SET last_anchor_id = ?1 WHERE id = 1",
+        params![last_id],
+    )?;
+    Ok(sealed)
 }
 
 /// Durable anti-replay ledger for break-glass tokens.
@@ -4376,6 +4836,37 @@ pub fn read_policy_change_history(conn: &Connection) -> Result<Vec<PolicyChangeH
     Ok(out)
 }
 
+/// The id of the signed `TokenRedeemed` receipt row for `nonce`, if the
+/// chain holds one. Reads the chain, not the unsigned burn table: this is
+/// the check a deleted burn row cannot undo.
+pub fn break_glass_redemption_row_for_nonce(
+    conn: &Connection,
+    nonce: &[u8; 32],
+) -> Result<Option<i64>> {
+    let mut stmt =
+        conn.prepare("SELECT id, payload_json FROM break_glass_receipts ORDER BY id ASC")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let id: i64 = row.get(0)?;
+        let payload: String = row.get(1)?;
+        let receipt: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
+        if let Some((redeemed_nonce, _)) = receipt.redeemed_token() {
+            if &redeemed_nonce == nonce {
+                return Ok(Some(id));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Burn a token's nonce in the unsigned anti-replay table — the first half
+/// of a redemption. The whole act is [`Kernel::redeem_token_durably`], which
+/// also appends the device-signed `TokenRedeemed` row; a burn without that
+/// row is what the verifier reports as `FailureKind::TokenRedemption`.
+///
+/// Refuses a nonce the table already holds AND a nonce the signed receipt
+/// chain already shows redeemed, so deleting the unsigned row buys no
+/// replay while the token's bucket is still live.
 pub fn consume_break_glass_token_durably(
     conn: &Connection,
     token: &break_glass::BreakGlassToken,
@@ -4389,6 +4880,13 @@ pub fn consume_break_glass_token_durably(
          )",
         [],
     )?;
+    if let Some(row_id) = break_glass_redemption_row_for_nonce(conn, &token.token_nonce())? {
+        return Err(anyhow!(
+            "break-glass token already redeemed (signed redemption receipt #{}; a removed \
+             anti-replay row does not reopen a spent token)",
+            row_id
+        ));
+    }
     let consumed_at = i64::try_from(now_s()?).unwrap_or(i64::MAX);
     let inserted = conn.execute(
         "INSERT OR IGNORE INTO consumed_break_glass_tokens \
@@ -4670,6 +5168,12 @@ pub fn select_module_backend(
 pub trait Module {
     fn descriptor(&self) -> ModuleDescriptor;
 
+    /// The zone ids this module may name in a candidate. The sandbox runtime
+    /// admits a candidate only for a zone declared here (fail closed: a
+    /// module that declares none emits nothing), so the child's `zone_id`
+    /// string can never carry free text into the sealed log.
+    fn declared_zone_ids(&self) -> Vec<String>;
+
     fn process(
         &mut self,
         view: &InferenceView<'_>,
@@ -4743,6 +5247,10 @@ impl Module for ZoneCrossingModule {
             requested_capabilities: &[],
             supported_backends: ZONE_CROSSING_BACKENDS,
         }
+    }
+
+    fn declared_zone_ids(&self) -> Vec<String> {
+        vec![self.zone_id.clone()]
     }
 
     fn process(
@@ -5082,7 +5590,7 @@ mod tests {
 
     #[test]
     fn sealed_log_document_reanchors_at_the_newest_rotation() -> Result<()> {
-        use ed25519_dalek::{Signature, Verifier};
+        use ed25519_dalek::Signature;
 
         let (mut kernel, cfg) = setup_test_kernel()?;
         seal_one_event(&mut kernel, &cfg, "zone:a")?;
@@ -5153,7 +5661,7 @@ mod tests {
                 &stored,
             );
             new_key
-                .verify(&signing_hash, &Signature::from_bytes(&signature))
+                .verify_strict(&signing_hash, &Signature::from_bytes(&signature))
                 .map_err(|e| anyhow!("signature at index {idx}: {e}"))?;
             expected_prev = stored;
         }
@@ -6549,6 +7057,212 @@ mod tests {
         Ok(())
     }
 
+    /// A fresh nonce for a token a test forges or mints beside the real one:
+    /// random like the kernel's own, never a literal (not even a zeroed
+    /// array that is filled afterwards, which a scanner reads as a constant).
+    fn random_test_nonce() -> [u8; 32] {
+        rand::random::<[u8; 32]>()
+    }
+
+    /// A kernel with a 1-of-1 quorum and one Granted, device-signed token for
+    /// `envelope`, exactly as `break_glass authorize` leaves them.
+    fn kernel_with_granted_token(
+        envelope: &str,
+    ) -> Result<(Kernel, KernelConfig, break_glass::BreakGlassToken, [u8; 32])> {
+        let cfg = KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let mut kernel = Kernel::open(&cfg)?;
+        let alice = SigningKey::from_bytes(&[41u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+        let bucket = TimeBucket::now(600)?;
+        let request = UnlockRequest::new(envelope, cfg.ruleset_hash, "incident", bucket)?;
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+        let (result, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        let mut token = result.expect("1-of-1 quorum grants");
+        let granted_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+        kernel.sign_break_glass_token(&mut token, granted_hash)?;
+        Ok((kernel, cfg, token, granted_hash))
+    }
+
+    #[test]
+    fn redeem_token_durably_burns_first_and_appends_a_signed_redemption_row() -> Result<()> {
+        let (mut kernel, _cfg, token, granted_hash) = kernel_with_granted_token("vault:1")?;
+
+        let redemption_hash = kernel.redeem_token_durably(&token)?;
+
+        // The unsigned burn row is there …
+        let burned: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM consumed_break_glass_tokens WHERE token_nonce = ?1",
+            params![token.token_nonce().to_vec()],
+            |r| r.get(0),
+        )?;
+        assert_eq!(burned, 1);
+        // … and so is the signed row, chained onto the grant, restating it.
+        let (payload, prev_hash): (String, Vec<u8>) = kernel.conn.query_row(
+            "SELECT payload_json, prev_hash FROM break_glass_receipts ORDER BY id DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let row: BreakGlassReceipt = serde_json::from_str(&payload)?;
+        assert_eq!(
+            row.redeemed_token(),
+            Some((token.token_nonce(), granted_hash))
+        );
+        assert_eq!(prev_hash, granted_hash.to_vec());
+        assert_eq!(row.vault_envelope_id, "vault:1");
+        assert_eq!(row.time_bucket, token.expires_bucket());
+        assert!(row.trustees_used.is_empty());
+        assert_ne!(redemption_hash, granted_hash);
+
+        // The full verifier walks it green and counts it.
+        let report = kernel.verify_sealed_log()?;
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.break_glass_receipts_verified, 2);
+        assert_eq!(report.break_glass_granted, 1);
+        assert_eq!(report.break_glass_redeemed, 1);
+
+        // A second redemption is refused by the burn table …
+        let err = kernel.redeem_token_durably(&token).unwrap_err().to_string();
+        assert!(err.contains("already redeemed"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_the_burn_row_does_not_reopen_a_redeemed_token() -> Result<()> {
+        // The attack the signed row exists for: an actor with a database
+        // handle and no signing key deletes the unsigned burn row and
+        // presents the token again inside its still-live bucket.
+        let (mut kernel, _cfg, token, _granted_hash) = kernel_with_granted_token("vault:1")?;
+        kernel.redeem_token_durably(&token)?;
+        kernel.conn.execute(
+            "DELETE FROM consumed_break_glass_tokens WHERE token_nonce = ?1",
+            params![token.token_nonce().to_vec()],
+        )?;
+
+        let err = kernel.redeem_token_durably(&token).unwrap_err().to_string();
+        assert!(
+            err.contains("signed redemption receipt"),
+            "the chain, not the unsigned table, must refuse the replay: {err}"
+        );
+        // The refusal left nothing behind: no second burn row, no second
+        // redemption row (the transaction rolled back), chain still green.
+        let burned: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM consumed_break_glass_tokens",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(burned, 0);
+        let rows: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM break_glass_receipts", [], |r| {
+                    r.get(0)
+                })?;
+        assert_eq!(rows, 2);
+
+        // The verifier names the tampering: a redeemed nonce whose burn row
+        // is gone is a token-redemption failure, not a quiet pass.
+        let report = kernel.verify_sealed_log()?;
+        assert!(!report.chain_valid);
+        let error = report.error.clone().unwrap_or_default();
+        assert!(error.contains("no burn row"), "{error}");
+        // (The export gate's own refusal of the same replay is covered in
+        // tests/export_events_authorized.rs, with a token for that envelope.)
+        Ok(())
+    }
+
+    #[test]
+    fn tampered_token_file_is_refused_before_anything_is_recorded() -> Result<()> {
+        // A token FILE re-parses for shape only. One with an altered bucket
+        // or a made-up nonce pointing at a real grant must be refused before
+        // the burn and the signed row — otherwise it would poison the chain
+        // with a redemption the verifier rejects, and the real token's own
+        // redemption would then read as a second spend of the grant.
+        let (mut kernel, _cfg, token, _granted_hash) = kernel_with_granted_token("vault:1")?;
+        let file = BreakGlassTokenFile::from_token(&token)?;
+
+        let mut stale = file.clone();
+        stale.expires_bucket.start_epoch_s += 600;
+        let stale = stale.into_token()?;
+        let err = kernel.redeem_token_durably(&stale).unwrap_err().to_string();
+        assert!(
+            err.contains("expired") || err.contains("signature"),
+            "{err}"
+        );
+
+        let mut forged_nonce = file.clone();
+        forged_nonce.token_nonce = hex::encode(random_test_nonce());
+        let forged_nonce = forged_nonce.into_token()?;
+        let err = kernel
+            .redeem_token_durably(&forged_nonce)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("signature"), "{err}");
+
+        // Nothing was recorded: no burn, no row, and the chain is still green.
+        let burned: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM consumed_break_glass_tokens",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(burned, 0);
+        let rows: i64 =
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM break_glass_receipts", [], |r| {
+                    r.get(0)
+                })?;
+        assert_eq!(rows, 1);
+        let report = kernel.verify_sealed_log()?;
+        assert!(report.chain_valid, "{:?}", report.error);
+
+        // The genuine token still redeems once.
+        kernel.redeem_token_durably(&token)?;
+        let report = kernel.verify_sealed_log()?;
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.break_glass_redeemed, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn redemption_row_needs_a_granted_receipt_the_token_points_at() -> Result<()> {
+        let (mut kernel, _cfg, token, _granted_hash) = kernel_with_granted_token("vault:1")?;
+        // A token whose receipt hash the chain does not hold cannot be
+        // redeemed — and the burn is rolled back with the failed append, so
+        // the refusal leaves no half-recorded redemption.
+        let mut stray = break_glass::BreakGlassToken::test_token_with(
+            random_test_nonce(),
+            token.expires_bucket(),
+            "vault:1",
+            token.ruleset_hash(),
+        );
+        stray.attach_receipt_signature([5u8; 32], &kernel.device_key)?;
+        let err = kernel.redeem_token_durably(&stray).unwrap_err().to_string();
+        assert!(err.contains("receipt not found"), "{err}");
+        let burned: i64 = kernel.conn.query_row(
+            "SELECT COUNT(*) FROM consumed_break_glass_tokens",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(burned, 0, "a refused redemption burns nothing");
+        Ok(())
+    }
+
     #[test]
     fn raw_media_boundary_denies_export() {
         let result: Result<Vec<u8>> = RawMediaBoundary::deny_export("test");
@@ -7515,7 +8229,7 @@ mod tests {
     const ROT_THIRD_SEED: &str = "devkey:rotate:third:33333333333333333";
 
     fn verify_chain_from_genesis(conn: &Connection, genesis_pub: &[u8; 32]) -> Result<u64> {
-        let genesis_key = ed25519_dalek::VerifyingKey::from_bytes(genesis_pub)?;
+        let genesis_key = crate::crypto::signatures::verifying_key_strict(genesis_pub)?;
         crate::verify::verify_events_with(
             conn,
             &genesis_key,
@@ -8085,6 +8799,97 @@ mod tests {
     }
 
     #[test]
+    fn retention_ages_rows_by_the_signed_bucket_not_the_created_at_column() -> Result<()> {
+        // An actor with a database handle but no signing key stamps live
+        // rows as ancient. The pass must not sign a checkpoint over their
+        // deletion: age comes from the signed bucket, so nothing is pruned.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        kernel
+            .conn
+            .execute("UPDATE sealed_events SET created_at = 0 WHERE id <= 2", [])?;
+
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(86_400))?;
+
+        assert_eq!(sealed_event_hashes(&kernel)?.len(), 3, "live rows stay");
+        assert!(checkpoint_rows(&kernel)?.is_empty(), "no checkpoint signed");
+        Ok(())
+    }
+
+    #[test]
+    fn retention_prunes_by_the_signed_bucket_when_created_at_is_newer() -> Result<()> {
+        // The other direction: a stamp forged NEWER than the signed bucket
+        // (or a legacy row whose column was the wall clock, not the bucket)
+        // cannot keep an expired row alive past retention either.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now - 3 * 86_400)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        kernel.conn.execute(
+            "UPDATE sealed_events SET created_at = ?1 WHERE id = 1",
+            params![now as i64],
+        )?;
+
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(86_400))?;
+
+        assert_eq!(
+            sealed_event_hashes(&kernel)?
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert_eq!(checkpoint_rows(&kernel)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn retention_refuses_a_prefix_whose_payload_was_rewritten() -> Result<()> {
+        // The payload itself is rewritten to carry an old bucket, with its
+        // own entry hash recomputed so the row is self-consistent. The next
+        // row's prev_hash no longer links, so the pass refuses and prunes
+        // nothing — a chain break is reported, never checkpointed over.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        seal_failure_at(&mut kernel, &cfg, now)?;
+        let (payload, prev): (String, Vec<u8>) = kernel.conn.query_row(
+            "SELECT payload_json, prev_hash FROM sealed_events WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut record = SealedLogRecord::deserialize_compat(&payload)?;
+        if let SealedLogRecord::Failure(f) = &mut record {
+            f.time_bucket.start_epoch_s = now - 3 * 86_400;
+        } else {
+            panic!("row 1 is a failure record");
+        }
+        let forged = serde_json::to_string(&record)?;
+        let prev: [u8; 32] = prev.try_into().expect("32-byte prev_hash");
+        let forged_hash = hash_entry(&prev, forged.as_bytes());
+        kernel.conn.execute(
+            "UPDATE sealed_events SET payload_json = ?1, entry_hash = ?2, created_at = ?3 WHERE id = 1",
+            params![forged, forged_hash.to_vec(), (now - 3 * 86_400) as i64],
+        )?;
+
+        let err = kernel
+            .enforce_retention_with_checkpoint(Duration::from_secs(86_400))
+            .expect_err("a rewritten prefix refuses the pass");
+        assert!(
+            err.to_string()
+                .contains(crate::storage::RETENTION_CHAIN_BREAK),
+            "{err}"
+        );
+        assert_eq!(sealed_event_hashes(&kernel)?.len(), 3, "nothing pruned");
+        assert!(checkpoint_rows(&kernel)?.is_empty(), "nothing checkpointed");
+        Ok(())
+    }
+
+    #[test]
     fn retention_without_anchor_table_writes_one_checkpoint() -> Result<()> {
         let (mut kernel, cfg) = setup_test_kernel()?;
         seal_one_event(&mut kernel, &cfg, "zone:a")?;
@@ -8139,6 +8944,7 @@ mod tests {
         seal_one_event(&mut kernel, &cfg, "zone:b")?;
         // Retention=0 checkpoints at the current head and prunes everything up to it (so the
         // pruned prefix includes the rotation; the checkpoint is signed by the new key).
+        wait_out_bucket_first_second();
         kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
         seal_one_event(&mut kernel, &cfg, "zone:c")?; // post-checkpoint, new key
 
@@ -8273,5 +9079,491 @@ mod tests {
         assert_eq!(count, 2, "legacy rotation record must verify on the chain");
         assert_eq!(reconstruct_device_key_lineage(&kernel.conn)?.len(), 2);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod clock_provenance_tests {
+    use super::*;
+    use crate::clock_provenance::token_sha256_hex;
+    use crate::crypto::signatures::verify_with_domain;
+    use crate::tsa;
+
+    /// The committed fixture token's genTime, `20260610123324Z`.
+    const FIXTURE_GEN_TIME: i64 = 1_781_094_804;
+    const FIXTURE_BUCKET: u64 = 1_781_094_600;
+
+    fn kernel() -> Kernel {
+        Kernel::open(&KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        })
+        .expect("open kernel")
+    }
+
+    fn fixture_token() -> tsa::TimestampToken {
+        let path = format!(
+            "{}/tests/fixtures/tsa/reply.tsr",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        tsa::parse_response(&std::fs::read(&path).expect("reading TSA fixture"))
+            .expect("fixture token parses")
+    }
+
+    fn insert_fixture_anchor(conn: &Connection) -> i64 {
+        tsa::ensure_anchor_table(conn).unwrap();
+        let token = fixture_token();
+        let imprint: [u8; 32] = token.imprint.clone().try_into().expect("32-byte imprint");
+        tsa::insert_anchor(conn, "digest", &imprint, "(offline)", &token).unwrap()
+    }
+
+    fn cursor(conn: &Connection) -> Option<i64> {
+        conn.query_row(
+            "SELECT last_anchor_id FROM clock_provenance_cursor WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap()
+    }
+
+    fn obs(observed_wall_s: u64, poll_gap_s: Option<u32>) -> ClockObservation<'static> {
+        ClockObservation {
+            observed_wall_s,
+            poll_gap_s,
+            kernel_version: "0.0.0-test",
+        }
+    }
+
+    /// Cursor at 0 with no anchors stored: the state a fresh database reaches
+    /// at its first poll.
+    fn kernel_with_cursor() -> Kernel {
+        let mut k = kernel();
+        assert!(k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, None))
+            .unwrap()
+            .is_empty());
+        assert_eq!(cursor(&k.conn), Some(0));
+        k
+    }
+
+    fn record(offset: Option<i32>, gap: Option<u32>) -> ClockProvenanceRecord {
+        ClockProvenanceRecord {
+            schema: CLOCK_PROVENANCE_SCHEMA_V1.to_string(),
+            time_bucket: TimeBucket {
+                start_epoch_s: FIXTURE_BUCKET,
+                size_s: 600,
+            },
+            anchor_id: 7,
+            token_sha256: "ab".repeat(32),
+            observed_offset_s: offset,
+            poll_gap_s: gap,
+            kernel_version: "0.0.0-test".to_string(),
+        }
+    }
+
+    const DDL_LEDGER: &str = "CREATE TABLE IF NOT EXISTS clock_provenance (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, payload_json TEXT NOT NULL, prev_hash BLOB NOT NULL, entry_hash BLOB NOT NULL, signature BLOB NOT NULL, pq_signature BLOB, pq_scheme TEXT);";
+    const DDL_CURSOR: &str = "CREATE TABLE IF NOT EXISTS clock_provenance_cursor (id INTEGER PRIMARY KEY CHECK (id = 1), last_anchor_id INTEGER NOT NULL);";
+
+    #[test]
+    fn ddl_literals_are_frozen() {
+        // Pinned in the source …
+        let source = include_str!("lib.rs");
+        // (twice: once in `ensure_schema`, once in the constants above).
+        assert!(
+            source.matches(DDL_LEDGER).count() >= 2,
+            "clock_provenance DDL changed"
+        );
+        assert!(
+            source.matches(DDL_CURSOR).count() >= 2,
+            "clock_provenance_cursor DDL changed"
+        );
+        // … and in the schema SQLite actually holds (it drops IF NOT EXISTS).
+        let k = kernel();
+        for (name, ddl) in [
+            ("clock_provenance", DDL_LEDGER),
+            ("clock_provenance_cursor", DDL_CURSOR),
+        ] {
+            let stored: String = k
+                .conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
+                    [name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let expected = ddl
+                .replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE")
+                .trim_end_matches(';')
+                .to_string();
+            assert_eq!(stored, expected);
+        }
+    }
+
+    #[test]
+    fn payload_wire_shape_is_byte_pinned() {
+        let measured = serde_json::to_string(&record(Some(2), Some(5))).unwrap();
+        assert_eq!(
+            measured,
+            format!(
+                r#"{{"schema":"securacv/clock_provenance/v1","time_bucket":{{"start_epoch_s":1781094600,"size_s":600}},"anchor_id":7,"token_sha256":"{}","observed_offset_s":2,"poll_gap_s":5,"kernel_version":"0.0.0-test"}}"#,
+                "ab".repeat(32)
+            )
+        );
+        let binding_only = serde_json::to_string(&record(None, None)).unwrap();
+        assert!(
+            binding_only.ends_with(
+                r#""observed_offset_s":null,"poll_gap_s":null,"kernel_version":"0.0.0-test"}"#
+            ),
+            "{binding_only}"
+        );
+        // Round trip, both shapes.
+        for text in [&measured, &binding_only] {
+            let parsed: ClockProvenanceRecord = serde_json::from_str(text).unwrap();
+            assert_eq!(serde_json::to_string(&parsed).unwrap(), **text);
+        }
+    }
+
+    #[test]
+    fn append_chains_from_genesis_and_signs_under_the_domain() {
+        let mut k = kernel();
+        let first = k
+            .append_clock_provenance(&record(Some(2), Some(5)))
+            .unwrap();
+        let second = k.append_clock_provenance(&record(None, None)).unwrap();
+        assert_eq!(first.id, 1);
+        assert_eq!(first.prev_hash, [0u8; 32]);
+        assert_eq!(
+            first.entry_hash,
+            hash_entry(&[0u8; 32], first.payload_json.as_bytes())
+        );
+        assert_eq!(second.prev_hash, first.entry_hash);
+        assert_eq!(second.created_at, FIXTURE_BUCKET as i64);
+        let key = device_public_key_from_db(&k.conn).unwrap();
+        verify_with_domain(
+            DOMAIN_CLOCK_PROVENANCE,
+            &key,
+            &first.entry_hash,
+            &first.signatures,
+            SignatureMode::Compat,
+            None,
+        )
+        .expect("verifies under its own domain");
+        assert!(verify_with_domain(
+            DOMAIN_EXPORT_RECEIPT,
+            &key,
+            &first.entry_hash,
+            &first.signatures,
+            SignatureMode::Compat,
+            None,
+        )
+        .is_err());
+        // The stored row is what the walker sees.
+        let rows = clock_provenance::list_rows(&k.conn).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].payload_json, first.payload_json);
+        assert_eq!(rows[1].record, record(None, None));
+        // A record of another schema is refused before anything is written.
+        let mut other = record(None, None);
+        other.schema = "securacv/clock_provenance/v2".to_string();
+        assert!(k.append_clock_provenance(&other).is_err());
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn first_observation_initializes_the_cursor_to_the_newest_anchor_and_seals_nothing() {
+        let mut k = kernel();
+        insert_fixture_anchor(&k.conn);
+        let newest = insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert!(sealed.is_empty(), "pre-upgrade rows are never backfilled");
+        assert_eq!(cursor(&k.conn), Some(newest));
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 0);
+        // Without an anchors table the cursor starts at 0.
+        let k2 = kernel_with_cursor();
+        assert_eq!(cursor(&k2.conn), Some(0));
+    }
+
+    #[test]
+    fn new_rows_get_one_record_each_and_the_cursor_advances_with_them() {
+        let mut k = kernel_with_cursor();
+        let a = insert_fixture_anchor(&k.conn);
+        let b = insert_fixture_anchor(&k.conn);
+        let w = (FIXTURE_GEN_TIME + 2) as u64;
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(w, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 2);
+        assert_eq!((sealed[0].anchor_id, sealed[1].anchor_id), (a, b));
+        assert_eq!((sealed[0].id, sealed[1].id), (1, 2));
+        let token_hash = token_sha256_hex(&fixture_token().token_der);
+        for s in &sealed {
+            assert_eq!(s.record.observed_offset_s, Some(2));
+            assert_eq!(s.record.poll_gap_s, Some(5));
+            assert_eq!(s.record.token_sha256, token_hash);
+            assert_eq!(s.record.time_bucket.start_epoch_s, FIXTURE_BUCKET);
+            assert_eq!(s.record.time_bucket.size_s, 600);
+            assert_eq!(s.record.kernel_version, "0.0.0-test");
+        }
+        assert_eq!(cursor(&k.conn), Some(b));
+        // Nothing new: nothing sealed, cursor unchanged.
+        assert!(k
+            .observe_anchors_for_clock_provenance(&obs(w + 5, Some(5)))
+            .unwrap()
+            .is_empty());
+        assert_eq!(cursor(&k.conn), Some(b));
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_failing_append_leaves_the_cursor_where_it_was() {
+        let mut k = kernel_with_cursor();
+        let a = insert_fixture_anchor(&k.conn);
+        // Simulate the crash: the ledger insert aborts mid-transaction.
+        k.conn
+            .execute_batch(
+                "CREATE TRIGGER simulated_failure BEFORE INSERT ON clock_provenance BEGIN \
+                 SELECT RAISE(ABORT, 'simulated storage failure'); END;",
+            )
+            .unwrap();
+        let err = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("simulated storage failure"),
+            "{err}"
+        );
+        assert_eq!(
+            cursor(&k.conn),
+            Some(0),
+            "the cursor must not move past an unsealed row"
+        );
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 0);
+        assert!(k.conn.is_autocommit(), "the transaction was rolled back");
+        k.conn
+            .execute_batch("DROP TRIGGER simulated_failure;")
+            .unwrap();
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, a);
+        assert_eq!(cursor(&k.conn), Some(a));
+    }
+
+    #[test]
+    fn first_poll_of_a_process_seals_binding_only_records() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, None))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        let rows = clock_provenance::list_rows(&k.conn).unwrap();
+        assert!(rows[0].is_binding_only());
+        assert!(rows[0]
+            .payload_json
+            .contains(r#""observed_offset_s":null,"poll_gap_s":null"#));
+    }
+
+    #[test]
+    fn unreadable_token_der_gets_no_record_but_the_cursor_moves_past_it() {
+        let mut k = kernel_with_cursor();
+        tsa::ensure_anchor_table(&k.conn).unwrap();
+        k.conn
+            .execute(
+                "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject, \
+                 subject_hash, tsa_url, gen_time, token_der) VALUES (?1, 600, 'digest', ?2, \
+                 '(offline)', '20260610123324Z', 5)",
+                params![FIXTURE_BUCKET as i64, vec![0u8; 32]],
+            )
+            .unwrap();
+        let bad = k.conn.last_insert_rowid();
+        let good = insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, good);
+        assert_eq!(cursor(&k.conn), Some(good));
+        assert!(good > bad);
+    }
+
+    #[test]
+    fn unparseable_gen_time_gives_a_binding_only_record() {
+        let mut k = kernel_with_cursor();
+        tsa::ensure_anchor_table(&k.conn).unwrap();
+        let mut token_der = fixture_token().token_der;
+        let needle = b"20260610123324Z";
+        let at = token_der
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("genTime occurs in the token");
+        token_der[at..at + needle.len()].copy_from_slice(b"20261310123324Z");
+        assert_eq!(tsa::gen_time_unix("20261310123324Z"), None);
+        k.conn
+            .execute(
+                "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject, \
+                 subject_hash, tsa_url, gen_time, token_der) VALUES (?1, 600, 'digest', ?2, \
+                 '(offline)', '20261310123324Z', ?3)",
+                params![FIXTURE_BUCKET as i64, vec![0u8; 32], token_der.clone()],
+            )
+            .unwrap();
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        assert_eq!(sealed[0].record.token_sha256, token_sha256_hex(&token_der));
+    }
+
+    #[test]
+    fn offsets_are_clamped_both_ways() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs((FIXTURE_GEN_TIME + 10_000) as u64, Some(5)))
+            .unwrap();
+        assert_eq!(sealed[0].record.observed_offset_s, Some(3600));
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs((FIXTURE_GEN_TIME - 10_000) as u64, Some(5)))
+            .unwrap();
+        assert_eq!(sealed[0].record.observed_offset_s, Some(-3600));
+        // A gap of 0 still reads as a 1 s bound.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(0)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, Some(1));
+        // Exactly 3600 s is still a bound.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(3600)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, Some(3600));
+    }
+
+    #[test]
+    fn list_walked_rows_keeps_only_the_rows_a_walk_checked() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        insert_fixture_anchor(&k.conn);
+        k.observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        let all = clock_provenance::list_rows(&k.conn).unwrap();
+        assert_eq!(all.len(), 2);
+        // The walk saw only the first row; the second committed after it.
+        let walked = [(all[0].id, all[0].entry_hash)];
+        let kept = clock_provenance::list_walked_rows(&k.conn, &walked).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, all[0].id);
+        // A row whose entry_hash differs from the one walked is dropped too.
+        let walked = [(all[0].id, [0u8; 32])];
+        assert!(clock_provenance::list_walked_rows(&k.conn, &walked)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_gap_over_the_clamp_seals_a_binding_only_record() {
+        // The main loop stalled 25 h: a clamped gap would state a false
+        // bound on the row's age, so the record binds and measures nothing.
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(90_000)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        let payload: String = k
+            .conn
+            .query_row(
+                "SELECT payload_json FROM clock_provenance WHERE id = ?1",
+                [sealed[0].id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            payload.contains("\"observed_offset_s\":null,\"poll_gap_s\":null"),
+            "{payload}"
+        );
+        // 3601 s is already over.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(3601)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+    }
+
+    #[test]
+    fn the_clock_readings_are_taken_once_under_the_write_lock() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let mut calls = 0;
+        let sealed = k
+            .observe_anchors_for_clock_provenance_with("0.0.0-test", || {
+                calls += 1;
+                Some((FIXTURE_GEN_TIME as u64 + 2, Some(5)))
+            })
+            .unwrap()
+            .expect("readings taken");
+        assert_eq!(calls, 1);
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, Some(2));
+        // An unreadable wall clock: nothing written, the cursor unmoved, and
+        // the row is still there for the next poll.
+        insert_fixture_anchor(&k.conn);
+        let before: i64 = k
+            .conn
+            .query_row("SELECT COUNT(*) FROM clock_provenance", [], |r| r.get(0))
+            .unwrap();
+        assert!(k
+            .observe_anchors_for_clock_provenance_with("0.0.0-test", || None)
+            .unwrap()
+            .is_none());
+        let after: i64 = k
+            .conn
+            .query_row("SELECT COUNT(*) FROM clock_provenance", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, after);
+        assert!(k.conn.is_autocommit(), "the transaction was closed");
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_GEN_TIME as u64, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+    }
+
+    #[test]
+    fn one_wall_clock_reading_serves_every_row_of_a_poll() {
+        let mut k = kernel_with_cursor();
+        for _ in 0..3 {
+            insert_fixture_anchor(&k.conn);
+        }
+        let w = (FIXTURE_GEN_TIME + 599 + 600) as u64; // the next bucket, +1199 s
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(w, Some(7)))
+            .unwrap();
+        assert_eq!(sealed.len(), 3);
+        let buckets: std::collections::BTreeSet<u64> = sealed
+            .iter()
+            .map(|s| s.record.time_bucket.start_epoch_s)
+            .collect();
+        assert_eq!(buckets.len(), 1, "one W per poll ⇒ one bucket");
+        assert!(sealed
+            .iter()
+            .all(|s| s.record.observed_offset_s == Some(1199)));
+        assert_eq!(sealed[0].record.time_bucket.start_epoch_s, (w / 600) * 600);
     }
 }

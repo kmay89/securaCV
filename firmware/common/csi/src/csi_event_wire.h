@@ -26,10 +26,12 @@
  * builder was shared, the canary-wap wrote `"signed":true` even on the
  * early-boot publish that carried no signature — a claim the payload
  * could not back.) Strings are chokepoint-sanitized ASCII (state names,
- * confidence words, module/type ids), so no JSON escaping is needed; a row
- * the backfill read back from the card is held to that by
- * csi_event_log_line::parse(), which refuses a line whose string holds a
- * backslash or a byte outside printable ASCII (sweep F264).
+ * confidence words, module/type ids; no '"' or '\' since sweep F301:
+ * before it a module's label could carry either into a body that was not
+ * JSON), so no JSON escaping is needed; a row the backfill read back from
+ * the card is held to that by csi_event_log_line::parse(), which refuses a
+ * line whose string holds a backslash or a byte outside printable ASCII
+ * (sweep F264) or ends before marshal() ends one (F301).
  */
 
 #ifndef SECURACV_CSI_EVENT_WIRE_H

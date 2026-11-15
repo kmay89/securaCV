@@ -330,10 +330,11 @@ class LedgerShape(unittest.TestCase):
         for rid, row in reg.items():
             self.assertIn(row["evidence"], {"measured", "drawing", "spec", "unmeasured"}, rid)
         facts = self.dims["board_facts"]
-        self.assertEqual(len(facts), 27)   # + the OV5647-62's nine camera facts (v0.6) + the XIAO's four switch facts (v0.9 doorbell) + the Round Display's socket offset and active area (watch v0.3) + the Grove Vision AI V2's back-side height (Vision v0.7)
+        self.assertEqual(len(facts), 33)   # + the OV5647-62's nine camera facts (v0.6) + the XIAO's four switch facts (v0.9 doorbell) + the Round Display's socket offset and active area (watch v0.3) + the Grove Vision AI V2's back-side height (Vision v0.7) + the Sense's six microSD card facts (WAP v0.9.2)
         self.assertEqual(facts["brd_ov5647_lens_dy"], -1.7)
         self.assertEqual(facts["brd_xiao_w_measured"], 17.8)
         self.assertEqual(facts["brd_xiao_sense_cam_h"], 12.7)
+        self.assertEqual(facts["brd_xiao_sense_sd_over"], 3.11)
         self.assertEqual(facts["brd_stack_sock_measured"], 6.5)
         self.assertEqual(facts["brd_ws169_glass_h"], 41.13)
         # the same numbers the resolver hands the cases — one registry, read once
@@ -533,6 +534,29 @@ class SiteCarry(unittest.TestCase):
         _, out, err = self.run_main("--site", str(self.site), "--check")
         self.assertIn("is stale against the site's", str(err))
 
+
+    def test_the_sites_own_addresses_are_carried_when_it_states_them(self):
+        """routes / files / anchors are the other half of the contract (what
+        this tree may link on the site). Carried normalized when present, and
+        a malformed one stops the run instead of gating nothing."""
+        full = {**self.CONTRACT,
+                "routes": ["/help", "/", "/help"],
+                "files": ["/store.json"],
+                "anchors": {"/help": ["s-safe-mode", "claims", "claims"], "/": ["install"]}}
+        (self.site / "upstream-contract.json").write_text(json.dumps(full), encoding="utf-8")
+        rc, _, _ = self.run_main("--site", str(self.site))
+        self.assertEqual(rc, 0)
+        carried = json.loads(gbm.SITE_CONTRACT_OUT.read_text(encoding="utf-8"))
+        self.assertEqual(carried["routes"], ["/", "/help"])
+        self.assertEqual(carried["files"], ["/store.json"])
+        self.assertEqual(carried["anchors"], {"/": ["install"], "/help": ["claims", "s-safe-mode"]})
+        self.assertEqual(list(carried["anchors"]), ["/", "/help"])   # keys sorted too
+        for bad in ({"routes": ["help"]}, {"files": "store.json"}, {"anchors": {"/help": "x"}},
+                    {"anchors": ["/help"]}):
+            (self.site / "upstream-contract.json").write_text(
+                json.dumps({**self.CONTRACT, **bad}), encoding="utf-8")
+            _, _, err = self.run_main("--site", str(self.site))
+            self.assertIsNotNone(err, bad)
     def test_a_malformed_contract_is_refused(self):
         for bad in ('{"paths": "x"}', '{"paths": ["/abs"]}', '{"paths": ["a/../b"]}',
                     '{"paths": [], "patterns": [3]}', "not json"):

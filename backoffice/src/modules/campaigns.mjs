@@ -69,16 +69,19 @@ export function campaignReport(db, slug) {
   const m = db.get('SELECT COUNT(*) AS queued, SUM(status = \'sent\') AS sent, SUM(status = \'suppressed\') AS suppressed, SUM(status = \'failed\') AS failed, SUM(status = \'queued\') AS pending FROM mail_outbox WHERE ref = ?', `campaign:${slug}`);
   if (!c.sent_at) return { campaign: c, ...m, unsubscribed: 0, orders: 0, revenue_cents: 0, replies: 0 };
   const until = new Date(Date.parse(c.sent_at) + 7 * 86400000).toISOString();
-  const recips = `SELECT DISTINCT to_addr FROM mail_outbox WHERE ref = 'campaign:${slug.replace(/'/g, "''")}' AND status = 'sent'`;
-  const unsubscribed = db.get(`SELECT COUNT(*) AS n FROM contacts WHERE email IN (${recips}) AND unsubscribed_at >= ? AND unsubscribed_at < ?`, c.sent_at, until).n;
-  const o = db.get(`SELECT COUNT(*) AS n, COALESCE(SUM(o.total_cents - o.refunded_cents),0) AS c FROM orders o JOIN contacts ct ON ct.id = o.contact_id WHERE ct.email IN (${recips}) AND o.paid_at >= ? AND o.paid_at < ? AND o.status != 'canceled'`, c.sent_at, until);
-  const replies = db.get(`SELECT COUNT(*) AS n FROM tickets t JOIN contacts ct ON ct.id = t.contact_id WHERE ct.email IN (${recips}) AND t.created_at >= ? AND t.created_at < ?`, c.sent_at, until).n;
+  const recips = "SELECT DISTINCT to_addr FROM mail_outbox WHERE ref = ? AND status = 'sent'"; const ref = `campaign:${slug}`;
+  const unsubscribed = db.get(`SELECT COUNT(*) AS n FROM contacts WHERE email IN (${recips}) AND unsubscribed_at >= ? AND unsubscribed_at < ?`, ref, c.sent_at, until).n;
+  const o = db.get(`SELECT COUNT(*) AS n, COALESCE(SUM(o.total_cents - o.refunded_cents),0) AS c FROM orders o JOIN contacts ct ON ct.id = o.contact_id WHERE ct.email IN (${recips}) AND o.paid_at >= ? AND o.paid_at < ? AND o.status != 'canceled'`, ref, c.sent_at, until);
+  const replies = db.get(`SELECT COUNT(*) AS n FROM tickets t JOIN contacts ct ON ct.id = t.contact_id WHERE ct.email IN (${recips}) AND t.created_at >= ? AND t.created_at < ?`, ref, c.sent_at, until).n;
   return { campaign: c, ...m, unsubscribed, orders: o.n, revenue_cents: o.c, replies, window_days: 7 };
 }
 
-// Double opt-in step 1: the confirm mail.
+// Double opt-in step 1: the confirm mail. One per address per hour, the rule the ticket acknowledgement keeps
+// (support.mjs): a form fed someone else's address in a loop earns them one mail, not one per call — and the token
+// in the mail they already hold stays good, since no new one is minted meanwhile.
 export function sendConsentRequest(db, contactId, cfg) {
   const c = contactById(db, contactId); if (!c) throw new Error('no such contact');
+  if (db.get('SELECT id FROM mail_outbox WHERE to_addr = ? AND ref = ? AND created_at >= ?', c.email, `consent:${c.id}`, new Date(Date.now() - 3600_000).toISOString())) return null;
   const t = requestConsent(db, contactId);
   enqueue(db, { to: c.email, subject: `Confirm: occasional ${cfg.product || 'SecuraCV'} news`, kind: 'transactional', ref: `consent:${c.id}`,
     text: `Someone (we hope you) asked for occasional ${cfg.product || 'SecuraCV'} news at ${cfg.siteOrigin}.\n\nConfirm here: ${confirmUrl(cfg, t)}\n\nIf that wasn't you, ignore this — nothing is sent without the click. No tracking pixels, ever; every mail has a one-click unsubscribe.\n\n— ${cfg.company || 'Errer Labs'}\n` });

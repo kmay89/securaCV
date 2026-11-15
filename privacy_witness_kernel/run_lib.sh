@@ -21,12 +21,54 @@ resolve_value() {
     echo "${3:-}"
 }
 
+# opt_list KEY
+# The list option KEY (a dotted path: cameras, frigate.labels) as ONE compact
+# JSON array, read whole from the options file the Supervisor writes before
+# every start ($OPTIONS_JSON, default /data/options.json: the same validated
+# options bashio::config fetches from the Supervisor). bashio::config prints
+# an array option one element per line (`.key[]`), never as an array, so a
+# `jq length`, `join` or `.[0]` on its output reads each element on its own:
+# two cameras answer two numbers, and a list of labels is not JSON at all
+# (sweep HA38). Read whole, the list is right whatever bashio prints.
+# Always prints one array, never "null". A missing key or block, null, or any
+# value that is not an array reads as [] and returns 0: the person has no
+# such list. A file that cannot be read (absent, empty, not JSON, not a JSON
+# object) also prints [], with a note on stderr, but returns 1: the list is
+# then unknown, not empty, and the caller decides. The first-run gate takes
+# the [] (the wizard runs), and so does the standalone camera pick (go2rtc
+# discovery still applies, as with no camera configured); the frigate block
+# stops, because an empty camera list there means every camera Frigate
+# reports. jq does the parsing (no shell word-splitting of names), and the
+# key reaches it as data, never as program text. Pure: no bashio —
+# unit-tested in tests/test_run_lib.sh, on the app's jq 1.6 in CI.
+opt_list() {
+    local key="${1:?opt_list: option key required}"
+    local file="${OPTIONS_JSON:-/data/options.json}"
+    local out=""
+    if [ -r "$file" ]; then
+        out=$(jq -cn --arg key "$key" \
+            'input | if type == "object" then . else error("not an object") end
+             | (try getpath($key | split(".")) catch null)
+             | if type == "array" then . else [] end' "$file" 2>/dev/null) || out=""
+    fi
+    case "$out" in
+        "["*"]") printf '%s\n' "$out" ;;
+        *)
+            echo "opt_list: could not read ${key} from ${file}; reading it as []" >&2
+            printf '[]\n'
+            return 1
+            ;;
+    esac
+}
+
 # resolve_device_key_seed OPTION_VALUE KEY_FILE
 # Resolution order: explicit option (unless empty or the "devkey:mvp"
 # placeholder) → persisted key file (written by the setup wizard) → a
 # freshly generated 64-hex seed persisted to KEY_FILE with 0600 perms.
 # Always echoes the resolved seed; never fails the caller for a missing
-# key, so a fresh install starts without manual openssl steps.
+# key, so a fresh install starts without manual openssl steps. KEY_FILE
+# is the app's own /data/device_key (migrate_device_key_file moves the
+# /config copy earlier releases kept); the caller never logs what it prints.
 resolve_device_key_seed() {
     local option_value="${1:-}"
     local key_file="${2:?resolve_device_key_seed: key file path required}"
@@ -58,6 +100,147 @@ resolve_device_key_seed() {
     )
     chmod 600 "$key_file"
     echo "$seed"
+}
+
+# verify_device_key_seed SEED DB_PATH
+# Does SEED derive the identity the sealed log at DB_PATH was created with?
+# The kernel's own verifier answers (`log_verify --lineage`, $LOG_VERIFY_BIN
+# overrides the path for tests): the seed derives the database key, so a
+# seed that is not the log's cannot even open it, and the key lineage is
+# walked from the public key the seed derives (a seed that derives a later
+# epoch's key, after a rotation, is accepted too — log_verify says so and
+# anchors at the recorded genesis). The seed reaches the verifier in the
+# environment of that one child only, never on argv, and nothing here or
+# in the verifier's output names it; every byte of output is discarded.
+# Returns 0 when the log accepts the seed, 1 when it does not, 2 when no
+# verifier is installed (the caller treats that as unverified, not as a
+# refusal).
+verify_device_key_seed() {
+    local seed="${1:?verify_device_key_seed: seed required}"
+    local db="${2:?verify_device_key_seed: db path required}"
+    local bin="${LOG_VERIFY_BIN:-/usr/local/bin/log_verify}"
+    [ -x "$bin" ] || return 2
+    if DEVICE_KEY_SEED="$seed" "$bin" --db "$db" --lineage --ui plain > /dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+# migrate_device_key_file OLD_FILE NEW_FILE DB_PATH
+# One-time move of the device key seed file out of /config (every Home
+# Assistant backup carries that tree, and the Samba, SSH and File editor
+# apps export it whole, so 0600 there protects nothing) into the app's own
+# /data. Runs at every start and is a no-op once OLD_FILE is gone.
+#
+# With NEW_FILE absent, OLD_FILE is copied there (0600 from the first byte,
+# temp + rename) and the copy is proven byte-identical by sha256; then,
+# when a sealed log exists at DB_PATH, the seed is held against it with
+# verify_device_key_seed, so the /config copy is removed only once the key
+# it holds is shown to be the log's identity. With no log yet (configured,
+# never started) the byte-identical copy is all there is to check.
+# With NEW_FILE already present (an earlier start copied but could not
+# verify, or a restored backup brought the old file back), an identical
+# OLD_FILE is held to the log again and removed on success; one that
+# differs is left alone, since NEW_FILE is the key in use.
+#
+# Prints one verdict, two words, and never the seed:
+#   moved verified    copied (or already there), the log accepts the seed,
+#                     OLD_FILE removed
+#   moved no-log      copied, no sealed log to hold it against, OLD_FILE
+#                     removed on the byte check alone
+#   kept unverified   NEW_FILE holds the key; the log did not accept it (or
+#                     no verifier is installed); OLD_FILE kept
+#   kept differs      both files exist and differ; nothing changed
+#   failed copy       NEW_FILE could not be written or did not match;
+#                     the partial copy is removed, OLD_FILE untouched
+# Returns 1 for `failed copy`, 0 otherwise (the caller decides what a kept
+# file means for the start). Pure: paths only, no bashio — unit-tested in
+# tests/test_run_lib.sh with a stub verifier.
+migrate_device_key_file() {
+    local old="${1:?migrate_device_key_file: old key file required}"
+    local new="${2:?migrate_device_key_file: new key file required}"
+    local db="${3:?migrate_device_key_file: db path required}"
+    local tmp old_sum new_sum seed
+    [ -s "$old" ] || return 0
+
+    if [ -s "$new" ]; then
+        old_sum=$(sha256sum "$old" | cut -d' ' -f1)
+        new_sum=$(sha256sum "$new" | cut -d' ' -f1)
+        if [ "$old_sum" != "$new_sum" ]; then
+            echo "kept differs"
+            return 0
+        fi
+    else
+        mkdir -p "$(dirname "$new")"
+        tmp="$new.tmp.$$"
+        if ! ( umask 077; cp "$old" "$tmp" ) || ! chmod 600 "$tmp"; then
+            rm -f "$tmp"
+            echo "failed copy"
+            return 1
+        fi
+        old_sum=$(sha256sum "$old" | cut -d' ' -f1)
+        new_sum=$(sha256sum "$tmp" | cut -d' ' -f1)
+        if [ "$old_sum" != "$new_sum" ] || ! mv -f "$tmp" "$new"; then
+            rm -f "$tmp"
+            echo "failed copy"
+            return 1
+        fi
+    fi
+
+    if [ ! -s "$db" ]; then
+        rm -f "$old"
+        echo "moved no-log"
+        return 0
+    fi
+    seed=$(head -n1 "$new" | tr -d '[:space:]')
+    if verify_device_key_seed "$seed" "$db"; then
+        rm -f "$old"
+        echo "moved verified"
+        return 0
+    fi
+    echo "kept unverified"
+    return 0
+}
+
+# remove_kernel_seed_copy FILE SEED
+# One-time removal of the copy of the seed the kernel used to keep beside
+# the sealed log (`<db>.ed25519.seed`: in the app, /config/witness.ed25519.seed).
+# In standalone mode witnessd wrote the environment seed there at its first
+# start — the same bytes as /data/device_key, back under /config, where
+# every backup and file-sharing app reaches them. The witnessd service now
+# starts it with DEVICE_KEY_SEED_PERSIST=0, so no new file appears; this
+# removes the one an earlier release left. Runs at every start and is a
+# no-op once FILE is gone.
+#
+# FILE is removed only when the seed it holds is, byte for byte, the seed in
+# use (SEED: what run.sh resolved from the option or /data/device_key) — the
+# same identity, kept in a safer place, so nothing is lost. A file holding
+# another seed is left alone: witnessd refuses that disagreement at open
+# with a message naming the file, and nothing a person might need is
+# deleted on the way to that message.
+#
+# Prints one verdict and never the seed:
+#   removed        FILE held the seed in use; FILE removed
+#   kept differs   FILE holds a different (or no) seed; nothing changed
+#   failed remove  FILE could not be removed
+# Returns 1 for `failed remove`, 0 otherwise. Pure: paths and the seed
+# value only, no bashio — unit-tested in tests/test_run_lib.sh.
+remove_kernel_seed_copy() {
+    local file="${1:?remove_kernel_seed_copy: seed file required}"
+    local seed="${2:?remove_kernel_seed_copy: seed in use required}"
+    local stored
+    [ -e "$file" ] || return 0
+
+    stored=$(head -n1 "$file" 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$stored" ] || [ "$stored" != "$seed" ]; then
+        echo "kept differs"
+        return 0
+    fi
+    if ! rm -f "$file" || [ -e "$file" ]; then
+        echo "failed remove"
+        return 1
+    fi
+    echo "removed"
 }
 
 # ha_device_id SEED

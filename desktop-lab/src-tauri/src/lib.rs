@@ -112,26 +112,50 @@ fn espflash_bundled(_app: &tauri::AppHandle) -> bool {
     false
 }
 
-/// Only ever talk to a host that can be on this network: `.local`-style
-/// names, single-label LAN hostnames, or private/loopback/link-local IP
-/// literals. Keep in lockstep with `desktop/src-tauri/src/fleet.rs`
+/// Is this one address on a network this computer can be on? RFC 1918,
+/// 100.64/10 (carrier-grade NAT), loopback and link-local; for IPv6 `::1`,
+/// fe80::/10, fc00::/7 — and the IPv4-mapped form of any IPv4 range, judged
+/// as the IPv4 it carries. Lockstep twin of the Flasher's
+/// `fleet::ip_is_local` (`desktop/src-tauri/src/fleet.rs`).
+fn ip_is_local(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4_is_local(v4),
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return v4_is_local(v4);
+            }
+            v6.is_loopback()
+                // fe80::/10 link-local and fc00::/7 unique-local
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+fn v4_is_local(v4: std::net::Ipv4Addr) -> bool {
+    let o = v4.octets();
+    v4.is_private()
+        || v4.is_loopback()
+        || v4.is_link_local()
+        // 100.64.0.0/10 (RFC 6598)
+        || (o[0] == 100 && (o[1] & 0xc0) == 64)
+}
+
+/// The NAME gate: only ever talk to a host that can be on this network —
+/// `.local`-style names, single-label LAN hostnames, or private/loopback/
+/// link-local IP literals. Keep in lockstep with `desktop/src-tauri/src/fleet.rs`
 /// (`host_is_local`) — one policy, two crates: a fleet call must never be
-/// steerable at an internet host (docs/firmware_ota.md §Transport).
+/// steerable at an internet host (docs/firmware_ota.md §Transport). A name
+/// is only half the answer (`.lan`, `.internal`, a single label can resolve
+/// through unicast DNS to anything): `resolve_local` resolves it, judges
+/// every address, and the client pins to those addresses.
 fn host_is_local(host: &str) -> bool {
     let host = host.trim_matches(['[', ']']);
     if host.is_empty() {
         return false;
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        return match ip {
-            std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
-            std::net::IpAddr::V6(v6) => {
-                v6.is_loopback()
-                    // fe80::/10 link-local and fc00::/7 unique-local
-                    || (v6.segments()[0] & 0xffc0) == 0xfe80
-                    || (v6.segments()[0] & 0xfe00) == 0xfc00
-            }
-        };
+        return ip_is_local(ip);
     }
     let lower = host.to_ascii_lowercase();
     for suffix in [".local", ".lan", ".internal", ".home.arpa"] {
@@ -143,20 +167,58 @@ fn host_is_local(host: &str) -> bool {
     !lower.contains('.')
 }
 
-/// `http://host[:port]` (or https) with a local host — anything else is
-/// refused before a socket opens. Lockstep twin of the Flasher's
-/// `fleet::base_ok` (`desktop/src-tauri/src/fleet.rs`).
-fn base_ok(base: &str) -> bool {
-    let rest = if let Some(r) = base.strip_prefix("http://") {
-        r
-    } else if let Some(r) = base.strip_prefix("https://") {
-        r
-    } else {
-        return false;
-    };
+/// Every address a name resolved to must be local, or the name is refused
+/// (one public answer among local ones is still a connection off the LAN);
+/// an empty answer is refused too. Twin of the Flasher's `addrs_all_local`.
+fn addrs_all_local(
+    host: &str,
+    addrs: Vec<std::net::SocketAddr>,
+) -> Result<Vec<std::net::SocketAddr>, String> {
+    if addrs.is_empty() {
+        return Err(format!("{host} didn't resolve to any address"));
+    }
+    if let Some(bad) = addrs.iter().find(|a| !ip_is_local(a.ip())) {
+        return Err(format!(
+            "{host} resolves to {}, which is not on this network — refusing to connect",
+            bad.ip()
+        ));
+    }
+    Ok(addrs)
+}
+
+/// Resolve a host (bare name or IP literal, brackets allowed) into the
+/// addresses a connection may be pinned to: the name gate, then the OS
+/// resolver (Bonjour / avahi answer `.local`), then every answer judged.
+async fn resolve_local(host: &str) -> Result<Vec<std::net::SocketAddr>, String> {
+    let bare = host.trim_matches(['[', ']']).to_string();
+    if !host_is_local(&bare) {
+        return Err(format!("{host} is not a local/private host"));
+    }
+    if let Ok(ip) = bare.parse::<std::net::IpAddr>() {
+        return Ok(vec![std::net::SocketAddr::new(ip, 0)]);
+    }
+    let name = bare.clone();
+    let addrs = tauri::async_runtime::spawn_blocking(move || {
+        use std::net::ToSocketAddrs;
+        (name.as_str(), 0u16)
+            .to_socket_addrs()
+            .map(|it| it.collect::<Vec<_>>())
+            .map_err(|e| format!("couldn't resolve {name}: {e}"))
+    })
+    .await
+    .map_err(|e| format!("resolver thread failed: {e}"))??;
+    addrs_all_local(&bare, addrs)
+}
+
+/// The host of `http://host[:port][/…]` (or https), brackets kept on an
+/// IPv6 literal. `None` for anything that isn't such a URL.
+fn base_host(base: &str) -> Option<&str> {
+    let rest = base
+        .strip_prefix("http://")
+        .or_else(|| base.strip_prefix("https://"))?;
     let host_port = rest.split('/').next().unwrap_or_default();
     if host_port.is_empty() {
-        return false;
+        return None;
     }
     // Split a trailing :port (careful with bracketed IPv6).
     let host = if let Some(end) = host_port.rfind(']') {
@@ -170,7 +232,44 @@ fn base_ok(base: &str) -> bool {
     } else {
         host_port
     };
-    host_is_local(host)
+    Some(host)
+}
+
+/// `http://host[:port]` (or https) with a local host — anything else is
+/// refused before a socket opens. Lockstep twin of the Flasher's
+/// `fleet::base_ok` (`desktop/src-tauri/src/fleet.rs`).
+fn base_ok(base: &str) -> bool {
+    base_host(base).is_some_and(host_is_local)
+}
+
+/// A client for ONE local base: proxy-free, timeout-bounded, and pinned to
+/// the addresses `resolve_local` just vetted, so hyper never resolves the
+/// name a second time. Twin of the Flasher's `fleet::pinned_client`.
+///
+/// `.no_proxy()`: a LAN probe must never be routed through an OS-configured
+/// proxy. reqwest defaults `auto_sys_proxy` on, and hyper-util's
+/// client-proxy-system feature — which tauri-plugin-updater can switch on
+/// from the other side of the graph, since Cargo unifies features on the one
+/// shared hyper-util — makes that read the system proxy on macOS/Windows.
+/// macOS applies no bypass list there, so `.local` and 192.168.x.x addresses
+/// would leave the machine. The URL gate stops nothing on its own; only the
+/// connection's own settings do.
+async fn pinned_client(
+    base: &str,
+    timeout: std::time::Duration,
+) -> Result<reqwest::Client, String> {
+    let host =
+        base_host(base).ok_or_else(|| "device address must be a local/private host".to_string())?;
+    let addrs = resolve_local(host).await?;
+    let bare = host.trim_matches(['[', ']']);
+    let mut builder = reqwest::Client::builder()
+        .user_agent("SecuraCV-Lab")
+        .timeout(timeout)
+        .no_proxy();
+    if bare.parse::<std::net::IpAddr>().is_err() {
+        builder = builder.resolve_to_addrs(bare, &addrs);
+    }
+    builder.build().map_err(|e| e.to_string())
 }
 
 /// Find Canaries on the LAN and return the first kernel fleet that answers.
@@ -200,21 +299,14 @@ async fn witness_discover(bases: Vec<String>) -> Result<serde_json::Value, Strin
                 .to_string(),
         );
     }
-    let client = reqwest::Client::builder()
-        .user_agent("SecuraCV-Lab")
-        .timeout(std::time::Duration::from_secs(2))
-        // A LAN probe must never be routed through an OS-configured proxy.
-        // reqwest defaults `auto_sys_proxy` on, and hyper-util's
-        // client-proxy-system feature — which tauri-plugin-updater can switch
-        // on from the other side of the graph, since Cargo unifies features on
-        // the one shared hyper-util — makes that read the system proxy on
-        // macOS/Windows. macOS applies no bypass list there, so `.local` and
-        // 192.168.x.x addresses would leave the machine. base_ok gates the
-        // URL; only .no_proxy() gates the connection.
-        .no_proxy()
-        .build()
-        .map_err(|e| e.to_string())?;
     for base in &bases {
+        // One pinned client per base: the name is resolved, every address
+        // judged local, and the connection pinned to those addresses. A name
+        // that resolves off the LAN is skipped like any other candidate that
+        // failed the gate.
+        let Ok(client) = pinned_client(base, std::time::Duration::from_secs(2)).await else {
+            continue;
+        };
         let url = format!("{}/api/fleet", base.trim_end_matches('/'));
         if let Ok(resp) = client.get(&url).send().await {
             if resp.status().is_success() {
@@ -388,9 +480,11 @@ mod tests {
             "172.16.9.9",
             "127.0.0.1",
             "169.254.10.10",
+            "100.64.0.1",
             "::1",
             "fe80::1",
             "fd00::abcd",
+            "::ffff:192.168.1.40",
         ] {
             assert!(host_is_local(h), "{h} should be local");
         }
@@ -401,11 +495,27 @@ mod tests {
             "8.8.8.8",
             "172.32.0.1",
             "2001:4860:4860::8888",
+            "::ffff:8.8.8.8",
+            "100.128.0.0",
             "",
             ".local",
         ] {
             assert!(!host_is_local(h), "{h} must be refused");
         }
+    }
+
+    #[test]
+    fn a_resolved_name_is_local_only_when_every_answer_is() {
+        let sa = |ip: &str| std::net::SocketAddr::new(ip.parse().unwrap(), 80);
+        assert_eq!(
+            addrs_all_local("hub.lan", vec![sa("192.168.1.9"), sa("fe80::1")])
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(addrs_all_local("hub.lan", vec![sa("192.168.1.9"), sa("93.184.216.34")]).is_err());
+        assert!(addrs_all_local("hub.lan", vec![sa("::ffff:93.184.216.34")]).is_err());
+        assert!(addrs_all_local("hub.lan", vec![]).is_err());
     }
 
     #[test]

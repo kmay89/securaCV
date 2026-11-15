@@ -16,6 +16,7 @@ codes. Nothing here is ever logged at a level that could carry a token.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -24,7 +25,7 @@ from typing import Any
 
 import aiohttp
 
-from .const import EXPORT_BUNDLE_MAX_BYTES, PAIRED_TOKEN_LABEL
+from .const import API_JSON_MAX_BYTES, EXPORT_BUNDLE_MAX_BYTES, PAIRED_TOKEN_LABEL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,6 +79,47 @@ class BundleDownload:
 
     filename: str
     content: bytes
+
+
+async def _async_read_capped(resp: Any, cap: int, what: str) -> bytes:
+    """The response body, or SecuraCVApiResponseError once it exceeds `cap`.
+
+    A declared Content-Length over the cap is refused before a byte is
+    read; a body without one (chunked) is read at most `cap + 1` bytes at
+    a time and refused as soon as it is over, so an answer that never ends
+    cannot balloon memory. A test double without a stream reader is read
+    whole, then held to the same cap.
+    """
+    length = getattr(resp, "content_length", None)
+    if isinstance(length, int) and length > cap:
+        raise SecuraCVApiResponseError(f"{what} too large: {length} bytes")
+    reader = getattr(getattr(resp, "content", None), "read", None)
+    if reader is None:
+        body = bytes(await resp.read())
+    else:
+        chunks: list[bytes] = []
+        total = 0
+        while total <= cap:
+            chunk = await reader(cap + 1 - total)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        body = b"".join(chunks)
+    if len(body) > cap:
+        raise SecuraCVApiResponseError(f"{what} too large: {len(body)} bytes")
+    return body
+
+
+async def _async_read_json(resp: Any, what: str = "response") -> Any:
+    """Decode a JSON body read under `API_JSON_MAX_BYTES`; empty is None."""
+    body = await _async_read_capped(resp, API_JSON_MAX_BYTES, what)
+    if not body.strip():
+        return None
+    try:
+        return json.loads(body)
+    except ValueError as err:
+        raise SecuraCVApiResponseError(f"invalid JSON response: {err}") from err
 
 
 def bundle_filename(content_disposition: str | None, fallback: str) -> str:
@@ -175,10 +217,7 @@ class SecuraCVApi:
         """Send one request, retrying once with a re-read token on 401."""
 
         async def _read_json(resp: Any) -> dict[str, Any]:
-            try:
-                data = await resp.json()
-            except aiohttp.ContentTypeError as err:
-                raise SecuraCVApiResponseError(f"invalid JSON response: {err}") from err
+            data = await _async_read_json(resp)
             return data if isinstance(data, dict) else {}
 
         return await self._async_request(
@@ -318,14 +357,7 @@ class SecuraCVApi:
         fallback = f"securacv-events-{int(time.time()) // 600 * 600}.json"
 
         async def _read_bytes(resp: Any) -> BundleDownload:
-            length = getattr(resp, "content_length", None)
-            if isinstance(length, int) and length > EXPORT_BUNDLE_MAX_BYTES:
-                raise SecuraCVApiResponseError(f"export bundle too large: {length} bytes")
-            content = await resp.read()
-            if len(content) > EXPORT_BUNDLE_MAX_BYTES:
-                raise SecuraCVApiResponseError(
-                    f"export bundle too large: {len(content)} bytes"
-                )
+            content = await _async_read_capped(resp, EXPORT_BUNDLE_MAX_BYTES, "export bundle")
             disposition = None
             headers = getattr(resp, "headers", None)
             if headers is not None:
@@ -343,8 +375,8 @@ class SecuraCVApi:
 async def _error_word(resp: aiohttp.ClientResponse) -> str | None:
     """The `error` word of a JSON refusal body, None when the body is not that."""
     try:
-        body = await resp.json()
-    except (aiohttp.ContentTypeError, ValueError):
+        body = await _async_read_json(resp, "refusal")
+    except SecuraCVApiResponseError:
         return None
     if isinstance(body, dict) and isinstance(body.get("error"), str):
         return body["error"]
@@ -379,10 +411,7 @@ async def async_pair_kernel(
                 raise SecuraCVApiPairLimitError("paired_token_limit")
             if resp.status != 200:
                 raise SecuraCVApiResponseError(f"unexpected status: {resp.status}")
-            try:
-                data = await resp.json()
-            except aiohttp.ContentTypeError as err:
-                raise SecuraCVApiResponseError(f"invalid JSON response: {err}") from err
+            data = await _async_read_json(resp, "pair response")
     except (aiohttp.ClientError, asyncio.TimeoutError) as err:
         raise SecuraCVApiConnectionError("unable to reach API") from err
     if not isinstance(data, dict):

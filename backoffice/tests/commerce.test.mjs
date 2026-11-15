@@ -94,6 +94,8 @@ test('every checkout is counted; an abandoned one with an email gets one follow-
   recordSession(db, { id: 'cs_x2', amount_cents: 8131, lines: '1x wap-kit', state: 'CT', created_at: iso(t0 - 40 * 60000) });
   recordSession(db, { id: 'cs_x3', amount_cents: 8131, lines: '1x wap-kit', state: 'NY', created_at: iso(t0 - 40 * 60000) });
   markSessionExpired(db, { id: 'cs_x1', email: ev.email, recovery_url: ev.recovery_url, recovery_expires_at: ev.recovery_expires_at, amount_cents: ev.amount_cents, at: iso(t0) });
+  assert.equal(recoverableSessions(db, cfg, { now: t0 + 2 * H }).length, 0, 'an address nobody here knows (typed on Stripe\'s page by whoever opened the cart) is never written to');
+  upsertContact(db, { email: 'ada@example.test', name: 'Ada', source: 'test' });
   markSessionExpired(db, { id: 'cs_x3', email: null, recovery_url: 'https://checkout.stripe.com/c/pay/recover_3', at: iso(t0), amount_cents: 8131 });   // no email typed: nobody to write to
   markSessionPaid(db, { id: 'cs_x2', order_number: 'EL-000001', at: iso(t0 - 30 * 60000) });
   assert.equal(recoverableSessions(db, cfg, { now: t0 + 30 * 60000 }).length, 0, 'not inside the hour');
@@ -102,6 +104,11 @@ test('every checkout is counted; an abandoned one with an email gets one follow-
   assert.deepEqual(runRecovery(db, cfg, { now: t0 + 2 * H }), { mailed: 1, waiting: 0 });
   const m = db.get("SELECT * FROM mail_outbox WHERE ref = 'recovery:cs_x1'"); assert.ok(m); assert.equal(m.to_addr, 'ada@example.test'); assert.match(m.body_text, /1x vision-kit[\s\S]*recover_1[\s\S]*only mail we send/);
   assert.equal(runRecovery(db, cfg, { now: t0 + 5 * H }).mailed, 0, 'once');
+  // a second cart in the same name the same day: no second mail; the next day, one
+  recordSession(db, { id: 'cs_x1c', amount_cents: 100, lines: '1x wap-parts', created_at: iso(t0 + 5 * H) }); markSessionExpired(db, { id: 'cs_x1c', email: 'ADA@example.test', recovery_url: 'https://checkout.stripe.com/c/pay/recover_1c', at: iso(t0 + 5 * H), amount_cents: 100 });
+  assert.equal(runRecovery(db, cfg, { now: t0 + 7 * H }).mailed, 0, 'one per address per day'); assert.equal(db.get("SELECT recovery_mailed_at FROM checkout_sessions WHERE id = 'cs_x1c'").recovery_mailed_at, null);
+  assert.equal(runRecovery(db, cfg, { now: t0 + 27 * H }).mailed, 1); assert.ok(!JSON.parse(db.get("SELECT detail FROM audit_log WHERE action = 'checkout.recovery' ORDER BY id DESC LIMIT 1").detail).to, 'the audit row carries the session, never the address');
+  db.run("DELETE FROM checkout_sessions WHERE id = 'cs_x1c'"); db.run("DELETE FROM mail_outbox WHERE ref = 'recovery:cs_x1c'");
   // a reopened session that pays: the old one is recovered, the new one paid
   markSessionPaid(db, { id: 'cs_x1b', order_number: 'EL-000002', recovered_from: 'cs_x1', at: iso(t0 + 3 * H) });
   assert.equal(db.get("SELECT status FROM checkout_sessions WHERE id = 'cs_x1'").status, 'recovered');

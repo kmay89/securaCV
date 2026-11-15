@@ -47,7 +47,18 @@
  * lets FULL proceed and answers OVERFLOW by ble_gap_unpair_oldest_peer(),
  * which goes through ble_gap_unpair()'s busy guard like deleteBond(). The
  * stack persists a bond before it reports the link's authentication, so a
- * test pairs a phone through pairing_starts() and persist_bond() first. */
+ * test pairs a phone through pairing_starts() and persist_bond() first.
+ *
+ * And since sweep F405, what ble_nearby.h's scan callback reads off an
+ * advertisement (its service UUIDs, its name, its manufacturer data) and
+ * the scan calls its task makes, so the suite drives the real nearby scan
+ * and GET /api/nearby's answer.
+ *
+ * And since sweep F353, each bond's PEER_SEC record (struct
+ * ble_store_key_sec and struct ble_store_value_sec, field for field as
+ * host/ble_store.h declares them) and ble_store_read_peer_sec(), keyed and
+ * answered as ble_store_config.c finds a record, so the paired list's
+ * rebuild can read whether a bond's pairing was authenticated. */
 #ifndef STUB_BT_NIMBLE_DEVICE_H
 #define STUB_BT_NIMBLE_DEVICE_H
 
@@ -143,6 +154,7 @@ enum : uint16_t {
 #define BLE_STORE_EVENT_FULL         2
 #define BLE_HS_ENOENT                5
 #define BLE_HS_ENOMEM                6
+#define BLE_HS_ENOTSUP               8
 #define BLE_HS_EBUSY                 15
 #define BLE_HS_EUNKNOWN              17
 #define BLE_HS_ESTORE_CAP            27
@@ -150,6 +162,37 @@ enum : uint16_t {
 // build sets it), which the channel reports beside the list (sweep F209).
 // host_sim::max_bonds below is the store the stand-in keeps, 3 as well.
 #define CONFIG_BT_NIMBLE_MAX_BONDS   3
+// A bond's security record and its key (host/ble_store.h, field for field
+// as NimBLE-Arduino 2.3.8 and 2.5.0 declare them, sweep F353): keyed by the
+// peer's identity address, type and value (peer_addr all zero is
+// BLE_ADDR_ANY: "don't key off peer", the idx-th record), idx 0 for the
+// first match. ble_sm_fill_store_value() (ble_sm.c) writes `authenticated`
+// (the pairing's MITM) and `sc` only beside an LTK, so a record whose
+// ltk_present is 0 holds 0 there whatever the pairing was.
+struct ble_store_key_sec {
+  ble_addr_t peer_addr;
+  uint8_t idx;
+};
+struct ble_store_value_sec {
+  ble_addr_t peer_addr;
+  uint16_t bond_count;
+
+  uint8_t key_size;
+  uint16_t ediv;
+  uint64_t rand_num;
+  uint8_t ltk[16];
+  uint8_t ltk_present : 1;
+
+  uint8_t irk[16];
+  uint8_t irk_present : 1;
+
+  uint8_t csrk[16];
+  uint8_t csrk_present : 1;
+  uint32_t sign_counter;
+
+  unsigned authenticated : 1;
+  uint8_t sc : 1;
+};
 // The record an OVERFLOW names (host/ble_store.h): the stand-in carries the
 // CCCD's, whose peer the default answer spares.
 struct ble_store_value_cccd {
@@ -159,19 +202,24 @@ struct ble_store_value_cccd {
   unsigned value_changed : 1;
 };
 union ble_store_value {
+  struct ble_store_value_sec sec;
   struct ble_store_value_cccd cccd;
+};
+// The union's members are named types: an anonymous struct inside an
+// anonymous union is an extension clang's -Wpedantic refuses.
+struct ble_store_status_overflow {
+  int obj_type;
+  const union ble_store_value* value;
+};
+struct ble_store_status_full {
+  int obj_type;
+  uint16_t conn_handle;
 };
 struct ble_store_status_event {
   int event_code;
   union {
-    struct {
-      int obj_type;
-      const union ble_store_value* value;
-    } overflow;
-    struct {
-      int obj_type;
-      uint16_t conn_handle;
-    } full;
+    struct ble_store_status_overflow overflow;
+    struct ble_store_status_full full;
   };
 };
 
@@ -458,17 +506,24 @@ class NimBLEAdvertisedDevice {
   std::string name;
   bool connectable = true;
   std::vector<NimBLEUUID> services;   // the service UUIDs it advertises
+  // Its manufacturer data, company id first, as NimBLE hands it over (a
+  // std::string, embedded NULs kept): ble_nearby.h's chirp and fleet-link
+  // beacon (sweep F405's scan path).
+  std::string mfg;
   NimBLEAddress getAddress() const { return address; }
   int getRSSI() const { return rssi; }
   bool haveName() const { return !name.empty(); }
   std::string getName() const { return name; }
   bool isConnectable() const { return connectable; }
+  bool haveServiceUUID() const { return !services.empty(); }
   bool isAdvertisingService(const NimBLEUUID& u) const {
     for (const NimBLEUUID& s : services) {
       if (s == u) return true;
     }
     return false;
   }
+  bool haveManufacturerData() const { return !mfg.empty(); }
+  std::string getManufacturerData(uint8_t = 0) const { return mfg; }
   bool haveAppearance() const { return false; }
   uint16_t getAppearance() const { return 0; }
 };
@@ -500,6 +555,13 @@ class NimBLEScan {
     return true;
   }
   bool isScanning() const { return __atomic_load_n(&scanning_, __ATOMIC_ACQUIRE); }
+  // NimBLE-Arduino 2.x's blocking scan and its result list (ble_nearby.h's
+  // scan task, which the host suite does not run): recorded, nothing heard.
+  NimBLEScanResults getResults(uint32_t, bool = false) {
+    host_sim::note("scan_results");
+    return NimBLEScanResults();
+  }
+  void clearResults() {}
  private:
   NimBLEScanCallbacks* cb_ = nullptr;
   bool scanning_ = false;
@@ -546,11 +608,61 @@ inline std::function<void()> before_unpair;
 inline bool has_irk(const NimBLEAddress& a) {
   return std::find(bond_irks.begin(), bond_irks.end(), a) != bond_irks.end();
 }
+// The peer's security records, BLE_STORE_OBJ_TYPE_PEER_SEC (sweep F353):
+// ble_store_config.c's ble_store_config_peer_secs, in the order written.
+// `bonds` is the other side of the same store (getNumBonds() and
+// getBondedAddress() read ble_store_util_bonded_peers(), which walks
+// OUR_SEC): store_bond() writes both, ble_gap_unpair() deletes both. A bond
+// a test puts in `bonds` by hand has no record here, as a store whose
+// PEER_SEC write failed would hold it: ble_store_read_peer_sec() answers
+// BLE_HS_ENOENT for it.
+inline std::vector<ble_store_value_sec> peer_secs;
+inline uint16_t peer_bond_count = 0;   // ble_store_config_peer_bond_count's role
+// Nonzero: every ble_store_read_peer_sec() answers it, a store whose read
+// fails. The read never touches NVS: ble_store_read() hands it to
+// store_read_cb (BLE_HS_ENOTSUP when there is none), and NimBLE-Arduino
+// 2.3.8/2.5.0's ble_store_config_read_peer_sec() walks the array loaded
+// at init (BLE_HS_ENOENT when no record matches). The channel lists the
+// bond on either, and on whatever a future store answers.
+inline int peer_sec_read_fails = 0;
+// The task of each ble_store_read_peer_sec(), in order, and the keys whose
+// address type was neither public (0) nor random (1), which its
+// BLE_HS_DBG_ASSERT refuses.
+inline std::mutex peer_sec_mu;
+inline std::vector<std::string> peer_sec_reads;
+inline unsigned peer_sec_bad_keys = 0;
+inline bool same_addr(const ble_addr_t& a, const ble_addr_t& b) {   // ble_addr_cmp() == 0
+  return a.type == b.type && memcmp(a.val, b.val, sizeof a.val) == 0;
+}
 // The stack stores a bond under `identity`; `irk` when the peer handed over
-// its identity resolving key (a phone using resolvable private addresses).
-inline void store_bond(const NimBLEAddress& identity, bool irk) {
+// its identity resolving key (a phone using resolvable private addresses);
+// `authenticated` when the pairing was (a passkey or a comparison the owner
+// confirmed: MITM), not when it was Just Works. Its PEER_SEC record is
+// ble_sm_persist_keys()'s for the Secure Connections pairing the channel
+// asks for (setSecurityAuth(true, true, true)): both sides hold the LTK, so
+// the record carries one, and `authenticated` and `sc` beside it. A record
+// the store holds is rewritten in place, as ble_store_config_write_peer_sec()
+// does (the stand-in keeps an IRK once handed over, as `bond_irks` does).
+inline void store_bond(const NimBLEAddress& identity, bool irk, bool authenticated = true) {
   if (std::find(bonds.begin(), bonds.end(), identity) == bonds.end()) bonds.push_back(identity);
   if (irk && !has_irk(identity)) bond_irks.push_back(identity);
+  ble_store_value_sec v;
+  memset(&v, 0, sizeof v);
+  v.peer_addr = *identity.getBase();
+  v.key_size = 16;
+  memset(v.ltk, 0x5A, sizeof v.ltk);
+  v.ltk_present = 1;
+  v.irk_present = has_irk(identity) ? 1 : 0;
+  v.authenticated = authenticated ? 1 : 0;
+  v.sc = 1;
+  v.bond_count = ++peer_bond_count;
+  for (ble_store_value_sec& r : peer_secs) {
+    if (same_addr(r.peer_addr, v.peer_addr)) {
+      r = v;
+      return;
+    }
+  }
+  peer_secs.push_back(v);
 }
 // ble_gap_adv_active() || ble_gap_disc_active().
 inline bool radio_busy() {
@@ -675,6 +787,10 @@ inline int host_sim::gap_unpair(const NimBLEAddress& a) {
   }
   bonds.erase(std::remove(bonds.begin(), bonds.end(), a), bonds.end());
   bond_irks.erase(std::remove(bond_irks.begin(), bond_irks.end(), a), bond_irks.end());
+  // ble_store_util_delete_peer(): its PEER_SEC record too (sweep F353).
+  peer_secs.erase(std::remove_if(peer_secs.begin(), peer_secs.end(),
+                                 [&](const ble_store_value_sec& r) { return same_addr(r.peer_addr, *a.getBase()); }),
+                  peer_secs.end());
   // ble_store_util_delete_peer(): the peer's CCCD records go with its bond.
   cccds.erase(std::remove_if(cccds.begin(), cccds.end(),
                              [&](const CccdRecord& r) { return r.peer == a; }),
@@ -747,15 +863,16 @@ inline int pairing_starts(uint16_t handle) {
   return 0;
 }
 // That pairing ends bonded: ble_sm_persist_keys() writes the bond under the
-// peer's identity (ble_store_write()). A record the store holds is
+// peer's identity (ble_store_write()), its PEER_SEC record `authenticated`
+// as the pairing was (store_bond(), F353). A record the store holds is
 // rewritten in place; a new one that finds no room raises
 // BLE_STORE_EVENT_OVERFLOW until the device callbacks make room (0) or give
 // up (nonzero: not stored, that answer returned). The stack reports the
 // link's authentication after this, bonded either way.
-inline int persist_bond(const NimBLEAddress& identity, bool irk) {
+inline int persist_bond(const NimBLEAddress& identity, bool irk, bool authenticated = true) {
   if (sm_procs > 0) --sm_procs;
   if (NimBLEDevice::isBonded(identity)) {
-    store_bond(identity, irk);
+    store_bond(identity, irk, authenticated);
     return 0;
   }
   while (bonds.size() >= max_bonds) {
@@ -767,7 +884,7 @@ inline int persist_bond(const NimBLEAddress& identity, bool irk) {
     const int rc = device_callbacks->onStoreStatus(&ev, nullptr);
     if (rc != 0) return rc;
   }
-  store_bond(identity, irk);
+  store_bond(identity, irk, authenticated);
   return 0;
 }
 // A bonded peer writes a characteristic's CCCD (it subscribes): NimBLE
@@ -805,6 +922,39 @@ inline int persist_cccd(const NimBLEAddress& peer, uint16_t chr_val_handle) {
 
 // NimBLE's host C API, the calls update() and a link's connect (applied on
 // the loop task since F143) make.
+
+// ble_store_read_peer_sec() (host/ble_store.h; ble_store.c, which reads
+// through ble_hs_cfg.store_read_cb under the host lock: NimBLE-Arduino's
+// ble_store_config_read_peer_sec() and ble_store_config_find_sec(), the
+// same files in 2.3.8 and 2.5.0), as migrate_paired_devices() makes it
+// (sweep F353): a key whose peer_addr is BLE_ADDR_ANY reads the idx-th
+// record; any other is matched by type and value, with idx 0 only (a
+// nonzero idx with a peer finds nothing). A match is copied out whole and
+// answers 0; no match answers BLE_HS_ENOENT, and the value is left as it
+// was. host_sim::peer_sec_read_fails stands for a read that fails.
+inline int ble_store_read_peer_sec(const struct ble_store_key_sec* key_sec, struct ble_store_value_sec* value_sec) {
+  {
+    std::lock_guard<std::mutex> g(host_sim::peer_sec_mu);
+    host_sim::peer_sec_reads.push_back(host_sim::task);
+    if (key_sec->peer_addr.type != 0 && key_sec->peer_addr.type != 1) ++host_sim::peer_sec_bad_keys;
+  }
+  if (host_sim::peer_sec_read_fails != 0) return host_sim::peer_sec_read_fails;
+  const ble_addr_t any = {0, {0, 0, 0, 0, 0, 0}};
+  int idx = -1;
+  if (host_sim::same_addr(key_sec->peer_addr, any)) {
+    if (key_sec->idx < host_sim::peer_secs.size()) idx = key_sec->idx;
+  } else if (key_sec->idx == 0) {
+    for (size_t i = 0; i < host_sim::peer_secs.size(); ++i) {
+      if (host_sim::same_addr(host_sim::peer_secs[i].peer_addr, key_sec->peer_addr)) {
+        idx = (int)i;
+        break;
+      }
+    }
+  }
+  if (idx < 0) return BLE_HS_ENOENT;
+  *value_sec = host_sim::peer_secs[(size_t)idx];
+  return 0;
+}
 inline int ble_gap_set_prefered_le_phy(uint16_t, uint8_t, uint8_t, uint16_t) {
   host_sim::note("le_phy");
   return 0;

@@ -456,25 +456,62 @@ function validateSummary(name, entriesLen, declaredCount, declaredHeadRaw, compu
 
 // ---- top-level verify ----------------------------------------------------
 
+// The caller's trusted device key, or null when none was supplied. Shared by
+// both verifiers so "the key you supplied" is parsed and refused identically.
+function trustedKeyBytes(opts) {
+  const trustedHex = ((opts && opts.trustedDeviceKeyHex) || '').trim().toLowerCase();
+  if (!trustedHex) return null;
+  // hexToBytes decodes a non-hex digit as 0, so a pasted key is checked for
+  // shape here: a typo must be refused, never silently read as a different key.
+  if (!/^[0-9a-f]*$/.test(trustedHex) || trustedHex.length % 2 !== 0) throw new Error('the supplied device key is not valid hex');
+  const trusted = hexToBytes(trustedHex);
+  if (trusted.length !== 32) throw new Error('the supplied device key must be 32 bytes (64 hex characters)');
+  return trusted;
+}
+
 // Returns { status, ok, error?, sealed_events, break_glass_granted, break_glass_denied,
-//           export_receipts, pq_checked, warnings, whole_envelope_digest }.
-async function verifyEnvelope(envelope) {
+//           break_glass_redeemed, export_receipts, pq_checked, warnings,
+//           whole_envelope_digest, authorship }.
+//
+// Trust caveat, the same as verifyExportBundle's: the envelope carries its own
+// device key (provenance.device_public_key), so without `opts.trustedDeviceKeyHex`
+// the verdict means "internally consistent and signed by the key the envelope
+// names" — authorship is self-attested. Supplying the key the device owner
+// published upgrades it to confirmed authorship, or fails it if the keys differ.
+async function verifyEnvelope(envelope, opts = {}) {
   const result = {
     status: 'compromised',
     ok: false,
     sealed_events: 0,
     break_glass_granted: 0,
     break_glass_denied: 0,
+    break_glass_redeemed: 0,
     export_receipts: 0,
     pq_checked: false,
     warnings: [],
     checks: [],
     whole_envelope_digest: envelope && envelope.whole_envelope_digest,
+    authorship: 'envelope', device_public_key: null,
   };
   try {
     if (envelope.envelope_format !== ENVELOPE_FORMAT) throw new Error(`unknown envelope_format: ${envelope.envelope_format}`);
     if (envelope.envelope_version !== ENVELOPE_VERSION) throw new Error(`unsupported envelope_version ${envelope.envelope_version}`);
     result.checks.push('Envelope format and version recognized');
+
+    // Authorship: compare the envelope's own key against the caller's trusted
+    // key BEFORE any signature check, so "verified" means verified under the
+    // key the caller trusts — never merely under the key the file names.
+    const namedKey = hexToBytes(envelope.provenance.device_public_key);
+    if (namedKey.length !== 32) throw new Error('provenance device_public_key must be 32 bytes');
+    result.device_public_key = bytesToHex(namedKey);
+    const trusted = trustedKeyBytes(opts);
+    if (trusted) {
+      if (!bytesEqual(trusted, namedKey)) {
+        throw new Error('device key mismatch: this envelope names a different device key than the one you supplied');
+      }
+      result.authorship = 'trusted';
+      result.checks.push('Envelope device key matches the trusted key you supplied');
+    }
 
     // Manifest must equal the canonical v1 manifest ("rules travel with the data").
     if (canonicalize(envelope.manifest) !== canonicalize(V1_MANIFEST)) {
@@ -517,7 +554,11 @@ async function verifyEnvelope(envelope) {
       { perEntry: lineage.keys, rowKey: lineage.rowKey }, 'sealed_events', sigCheckable);
     validateSummary('sealed_events', sealed.entries.length, sealed.count, sealed.head_hash, sealedHead);
     result.checks.push(`Sealed-event hash chain intact (${sealed.entries.length} ${sealed.entries.length === 1 ? 'entry' : 'entries'})`);
-    if (sigCheckable) result.checks.push('Device Ed25519 signatures valid on every sealed event');
+    if (sigCheckable) {
+      result.checks.push(result.authorship === 'trusted'
+        ? 'Device Ed25519 signatures valid on every sealed event (authorship confirmed against your trusted key)'
+        : 'Device Ed25519 signatures valid on every sealed event, under the device key named in the envelope');
+    }
 
     // Checkpoint signature — by whichever lineage key was current when it was written.
     // The cutoff-bound message first (src/log/mod.rs checkpoint_message), then the legacy
@@ -539,6 +580,9 @@ async function verifyEnvelope(envelope) {
     const bgHead = await verifyLinearChain(bg.entries, new Uint8Array(32), domains.break_glass,
       { anyOf: lineage.keys }, 'break_glass_receipts', sigCheckable);
     validateSummary('break_glass_receipts', bg.entries.length, bg.count, bg.head_hash, bgHead);
+    const grants = new Map();
+    const redeemedNonces = new Set();
+    const redeemedGrants = new Set();
     for (let i = 0; i < bg.entries.length; i++) {
       const e = bg.entries[i];
       const receipt = JSON.parse(e.payload_json);
@@ -548,10 +592,50 @@ async function verifyEnvelope(envelope) {
         throw chainFail('break-glass approvals commitment mismatch',
           'break_glass_receipts', i, 'approvals_commitment_mismatch');
       }
-      if (receipt.outcome === 'Granted' || (receipt.outcome && receipt.outcome.Granted !== undefined)) result.break_glass_granted++;
-      else result.break_glass_denied++;
+      const entryHex = bytesToHex(toBytes(e.entry_hash));
+      const redeemed = receipt.outcome && receipt.outcome.TokenRedeemed;
+      if (receipt.outcome === 'Granted' || (receipt.outcome && receipt.outcome.Granted !== undefined)) {
+        result.break_glass_granted++;
+        grants.set(entryHex, {
+          envelope: receipt.vault_envelope_id,
+          ruleset: bytesToHex(toBytes(receipt.ruleset_hash)),
+          request: bytesToHex(toBytes(receipt.request_hash)),
+          bucket: receipt.time_bucket,
+        });
+      } else if (redeemed) {
+        // Mirrors src/verify.rs RedemptionLedger: one signed row per spent
+        // nonce, naming the Granted receipt it redeems and restating it.
+        const nonce = bytesToHex(toBytes(redeemed.nonce));
+        const grantHex = bytesToHex(toBytes(redeemed.receipt_entry_hash));
+        const fail = (why) => chainFail(`break-glass token redemption invalid: ${why}`,
+          'break_glass_receipts', i, 'token_redemption');
+        if (redeemedNonces.has(nonce)) throw fail(`token nonce ${nonce} is redeemed twice`);
+        redeemedNonces.add(nonce);
+        const grant = grants.get(grantHex);
+        if (!grant) throw fail(`redemption names receipt ${grantHex} but no earlier Granted receipt has that hash`);
+        if (redeemedGrants.has(grantHex)) throw fail(`Granted receipt ${grantHex} is redeemed twice`);
+        redeemedGrants.add(grantHex);
+        if (grant.envelope !== receipt.vault_envelope_id
+          || grant.ruleset !== bytesToHex(toBytes(receipt.ruleset_hash))
+          || grant.request !== bytesToHex(toBytes(receipt.request_hash))) {
+          throw fail('redemption row does not restate the Granted receipt it redeems');
+        }
+        if (grant.bucket.start_epoch_s !== receipt.time_bucket.start_epoch_s
+          || grant.bucket.size_s !== receipt.time_bucket.size_s) {
+          throw fail('redemption row is stamped outside the bucket its grant was issued in');
+        }
+        if (approvals.length > 0 || (receipt.trustees_used && receipt.trustees_used.length > 0)) {
+          throw fail('redemption row carries approvals or names trustees');
+        }
+        result.break_glass_redeemed++;
+      } else {
+        result.break_glass_denied++;
+      }
     }
-    if (bg.entries.length > 0) result.checks.push(`Break-glass receipts verified (${bg.entries.length})`);
+    // Trustee signatures and the quorum are not checked: the envelope carries no trustee policy.
+    if (bg.entries.length > 0) {
+      result.checks.push(`Break-glass receipt chain intact${sigCheckable ? ' and device-signed' : ''} (${bg.entries.length}); approvals match the sealed commitments`);
+    }
 
     // Export receipts.
     const exp = envelope.ledgers.export_receipts;
@@ -604,6 +688,13 @@ async function verifyEnvelope(envelope) {
     }
 
     // Warnings & status.
+    if (result.authorship !== 'trusted') {
+      result.warnings.push('device key taken from the envelope itself — authorship is self-attested; compare the key against one published by the device owner, or supply it to confirm');
+    }
+    // Same text as src/envelope.rs.
+    if (result.break_glass_granted > 0) {
+      result.warnings.push(`${result.break_glass_granted} break-glass grant(s) present: trustee approvals are not verified offline`);
+    }
     if (envelope.provenance.pq_public_key) result.warnings.push('post-quantum signatures present but not verified in this offline viewer');
     else result.warnings.push('no post-quantum public key; PQ signatures not checked');
     // failure_count is derived from the artifact at assembly (artifact_hash is signature-bound;
@@ -687,11 +778,8 @@ async function verifyExportBundle(bundle, opts = {}) {
     // Authorship: compare the bundle's key against a caller-supplied trusted
     // key BEFORE the signature check, so "verified" means verified under the
     // key the caller trusts — the same semantics as the Rust `export_verify`.
-    const trustedHex = (opts.trustedDeviceKeyHex || '').trim().toLowerCase();
-    if (trustedHex) {
-      let trusted;
-      try { trusted = hexToBytes(trustedHex); } catch { throw new Error('the supplied device key is not valid hex'); }
-      if (trusted.length !== 32) throw new Error('the supplied device key must be 32 bytes (64 hex characters)');
+    const trusted = trustedKeyBytes(opts);
+    if (trusted) {
       if (!bytesEqual(trusted, pubKey)) {
         throw new Error('device key mismatch: this bundle names a different device key than the one you supplied');
       }

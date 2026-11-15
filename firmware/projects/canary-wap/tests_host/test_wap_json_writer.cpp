@@ -39,6 +39,16 @@
 // Reading the post byte for byte, as replaced_text() alone writes it, fails
 // 1846 checks (every name a browser shows a byte of as U+FFFD), and each of
 // the decoder's four range bounds dropped fails 41 to 85.
+//
+// And shown_text() (sweep F302), that shown text written for a string no page
+// posts back (a Bluetooth name the radio supplied): for every string of one
+// and two bytes, 2000 seeded ones of up to 32 bytes (half drawn from the
+// bytes UTF-8 turns on), and every buffer size for strings that mix them,
+// each an exact heap block, it is the text a browser shows for the string
+// replaced_text() wrote (the test's own control-byte reading, then
+// browser_utf8()), well-formed UTF-8 with no raw control byte, what
+// shows_as() reads the string as, whole in replaced_cap(n), and cut on a
+// character that does not fit, never inside one.
 
 // Arduino.h's global names first, as in the sketch's translation unit.
 #include "arduino_globals.h"
@@ -645,6 +655,94 @@ void test_replaced_text_cuts_on_a_character_boundary() {
   CHECK(wap_json::replaced_text(four, sizeof(four), nullptr) && four[0] == '\0');
 }
 
+// ── shown_text(): what a page shows, for a string no page posts back (sweep F302) ──
+
+// The text a page shows for `raw` by the test's own reading: replaced_text()'s
+// (each raw control byte as U+FFFD, expected_text()), then decoded as a
+// browser decodes it.
+std::string shown_expected(const std::string& raw) { return browser_utf8(expected_text(raw)); }
+
+// True when `t` holds no raw_control() byte and decodes to itself.
+bool clean_text(const std::string& t) {
+  for (unsigned char c : t) {
+    if (wap_json::raw_control(c)) return false;
+  }
+  return browser_utf8(t) == t;
+}
+
+void shown_text_is(const std::string& raw) {
+  Exact e(wap_json::replaced_cap(raw.size()));
+  CHECK(wap_json::shown_text(e.buf, e.cap, raw.c_str()));
+  const std::string got(e.buf);
+  CHECK(got == shown_expected(raw));
+  CHECK(clean_text(got));
+  CHECK(wap_json::shows_as(raw.c_str(), got.c_str()));
+  CHECK(answer_parses_as(got, got));
+}
+
+void test_shown_text_is_what_a_page_shows() {
+  for (int a = 1; a < 256; ++a) {
+    shown_text_is(std::string(1, (char)a));
+    for (int b = 1; b < 256; ++b) shown_text_is(std::string{(char)a, (char)b});
+  }
+  const unsigned char pool[] = {0x01, 0x1F, 0x09, 0x22, 0x5C, 0x41, 0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0,
+                                0xA2, 0xBF, 0xC0, 0xC1, 0xC2, 0xDF, 0xE0, 0xE1, 0xED, 0xEF, 0xF0, 0xF4,
+                                0xF5, 0xF8, 0xFF};
+  uint32_t seed = 0xb1e5eedu;
+  for (int k = 0; k < 2000; ++k) {
+    seed = seed * 1103515245u + 12345u;
+    const size_t n = 1 + (seed >> 16) % 32;
+    std::string s;
+    for (size_t i = 0; i < n; ++i) {
+      seed = seed * 1103515245u + 12345u;
+      s.push_back(k % 2 ? (char)(1 + (seed >> 16) % 255) : (char)pool[(seed >> 16) % sizeof(pool)]);
+    }
+    shown_text_is(s);
+  }
+  // 32 bytes of 0x01 are 96 bytes of text: whole in replaced_cap(32), and in
+  // one byte less, 31 whole replacements.
+  const std::string ones(32, '\x01');
+  {
+    Exact e(wap_json::replaced_cap(32));
+    CHECK(wap_json::shown_text(e.buf, e.cap, ones.c_str()) && std::strlen(e.buf) == 96);
+  }
+  {
+    Exact e(wap_json::replaced_cap(32) - 1);
+    CHECK(!wap_json::shown_text(e.buf, e.cap, ones.c_str()) && std::strlen(e.buf) == 93);
+  }
+  // Every buffer size: the longest run of whole characters of the shown text
+  // that fits (the shown text is well-formed, so its characters are its
+  // pieces), terminated, true only when nothing was left out.
+  const std::string inputs[] = {
+      std::string("caf\xC3\xA9\x01" "x\xE2\x82\xAC" "\x02\xF0\x9F\x90\xA6" "\t!"),
+      std::string("\x80\x01\xC3\xA9\xF8\xFF\x1F\xC0\xA2"),
+      std::string("ab\xE2\x82" "c\x01\xF0\x9F\x90" "d\xED\xA0\x80"),
+      std::string(30, 'n') + "\xE2\x82",
+  };
+  for (const std::string& s : inputs) {
+    const std::string whole = shown_expected(s);
+    for (size_t cap = 1; cap <= whole.size() + 2; ++cap) {
+      size_t fit = 0;
+      while (fit < whole.size()) {
+        const unsigned char c = (unsigned char)whole[fit];
+        const size_t len = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        if (fit + len > cap - 1) break;
+        fit += len;
+      }
+      Exact e(cap);
+      const bool all = wap_json::shown_text(e.buf, e.cap, s.c_str());
+      CHECK(all == (whole.size() <= cap - 1));
+      CHECK(std::string(e.buf) == whole.substr(0, fit));
+    }
+  }
+  char one[1] = {'x'};
+  CHECK(!wap_json::shown_text(one, 0, "a") && one[0] == 'x');
+  CHECK(!wap_json::shown_text(nullptr, 8, "a"));
+  CHECK(!wap_json::shown_text(one, 1, "a") && one[0] == '\0');
+  char four[4] = {'x', 'x', 'x', 'x'};
+  CHECK(wap_json::shown_text(four, sizeof(four), nullptr) && four[0] == '\0');
+}
+
 // The list's text read backwards (the F262 review). GET /api/wifi/scan,
 // GET /api/wifi and the BLE provisioning list show a network's control
 // bytes as U+FFFD, a browser shows any byte that is not UTF-8 the same way,
@@ -872,6 +970,7 @@ int main() {
   test_replaced_text_keeps_a_32_byte_ssid_whole();
   test_replaced_text_cuts_on_a_character_boundary();
   test_a_listed_name_is_read_back_to_its_own_bytes();
+  test_shown_text_is_what_a_page_shows();
   test_listed_by_shown_prefers_a_name_that_is_its_own_text();
   test_the_sketch_reads_a_post_back_to_the_cached_network();
   if (g_failures) {

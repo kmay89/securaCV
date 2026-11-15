@@ -62,7 +62,7 @@ impl CapabilityBoundaryRuntime {
         token_mgr: &BucketKeyManager,
         registry: &BackendRegistry,
     ) -> Result<Vec<CandidateEvent>> {
-        let (candidates, exported_state) = sandbox::run_in_sandbox(|| {
+        let (child_candidates, exported_state) = sandbox::run_in_sandbox(|| {
             let candidates = module.process(view, bucket, token_mgr, registry)?;
             let state = match registry.default_backend() {
                 Some(backend) => {
@@ -85,8 +85,95 @@ impl CapabilityBoundaryRuntime {
             }
         }
 
-        Ok(candidates)
+        admit_candidates(module, view, bucket, token_mgr, child_candidates)
     }
+}
+
+/// Most candidates one frame may carry out of the sandbox.
+pub const MAX_CANDIDATES_PER_FRAME: usize = 16;
+
+/// Confidence leaves the sandbox at this granularity (two decimals).
+const CONFIDENCE_STEP: f32 = 100.0;
+
+/// What a sandboxed module may say, and nothing else.
+///
+/// The child is a fork of a parent that holds the device signing key; the
+/// seccomp denylist keeps it from *sending* anything, but its one legitimate
+/// output — the candidate list — crossed back as free-form data: `zone_id`
+/// was any string the child chose and `correlation_token` any 32 bytes, both
+/// sealed verbatim and republished by the bridges. A hostile model library
+/// could have read the key out of its own copy-on-write heap and walked it
+/// out through either field. So the parent rebuilds every candidate from
+/// what it already knows: the module's declared zone ids, its allowed event
+/// types, the frame's bucket, and a token it mints itself from the view's
+/// features. The child's say is reduced to *which* declared zone, *which*
+/// allowed type, whether a token applies, and a two-decimal confidence.
+fn admit_candidates<M: Module>(
+    module: &M,
+    view: &InferenceView<'_>,
+    bucket: TimeBucket,
+    token_mgr: &BucketKeyManager,
+    child_candidates: Vec<CandidateEvent>,
+) -> Result<Vec<CandidateEvent>> {
+    if child_candidates.len() > MAX_CANDIDATES_PER_FRAME {
+        return Err(anyhow!(
+            "conformance: module returned {} candidates for one frame (max {})",
+            child_candidates.len(),
+            MAX_CANDIDATES_PER_FRAME
+        ));
+    }
+    let desc = module.descriptor();
+    let zones = module.declared_zone_ids();
+    let mut admitted = Vec::with_capacity(child_candidates.len());
+    for cand in child_candidates {
+        if !desc.allowed_event_types.contains(&cand.event_type) {
+            return Err(anyhow!(
+                "conformance: module {} returned event type {:?} it did not declare",
+                desc.id,
+                cand.event_type
+            ));
+        }
+        let zone_id = match zones.iter().find(|z| **z == cand.zone_id) {
+            Some(zone) => zone.clone(),
+            None => {
+                return Err(anyhow!(
+                    "conformance: module {} returned a zone id it did not declare",
+                    desc.id
+                ))
+            }
+        };
+        if cand.time_bucket != bucket {
+            return Err(anyhow!(
+                "conformance: module {} returned a time bucket other than the frame's",
+                desc.id
+            ));
+        }
+        if cand.attestation.is_some() {
+            return Err(anyhow!(
+                "conformance: module {} is the device itself and may not claim an attestation",
+                desc.id
+            ));
+        }
+        if !cand.confidence.is_finite() || !(0.0..=1.0).contains(&cand.confidence) {
+            return Err(anyhow!(
+                "conformance: module {} returned a confidence outside 0..=1",
+                desc.id
+            ));
+        }
+        let correlation_token = match cand.correlation_token {
+            Some(_) => Some(token_mgr.token_for_features(view.features_hash())?),
+            None => None,
+        };
+        admitted.push(CandidateEvent {
+            event_type: cand.event_type,
+            time_bucket: bucket,
+            zone_id,
+            confidence: (cand.confidence * CONFIDENCE_STEP).round() / CONFIDENCE_STEP,
+            correlation_token,
+            attestation: None,
+        });
+    }
+    Ok(admitted)
 }
 
 #[cfg(test)]

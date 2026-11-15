@@ -395,8 +395,12 @@ pub enum IntegrityStatus {
 pub struct EnvelopeReport {
     pub status: IntegrityStatus,
     pub sealed_events: u64,
+    /// `Granted` rows present. Their chain, device signature and approvals
+    /// commitment are checked; trustee signatures and the quorum are not.
     pub break_glass_granted: u64,
     pub break_glass_denied: u64,
+    /// `TokenRedeemed` rows: tokens actually spent at the unseal gate.
+    pub break_glass_redeemed: u64,
     pub export_receipts: u64,
     pub pq_checked: bool,
     pub warnings: Vec<String>,
@@ -406,7 +410,8 @@ pub struct EnvelopeReport {
 ///
 /// Mirrors `src/verify.rs`. Returns an error on any integrity, hash, or signature failure
 /// (status `compromised`); otherwise returns a report whose status is `Ok` or
-/// `ValidWithWarnings` (gaps, redactions, or PQ-not-checked).
+/// `ValidWithWarnings` (gaps, redactions, PQ-not-checked, or a break-glass grant, whose
+/// trustee approvals an envelope cannot prove).
 pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Result<EnvelopeReport> {
     if envelope.envelope_format != ENVELOPE_FORMAT {
         return Err(anyhow!(
@@ -447,7 +452,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     // exports its retained history), so the acceptable-signer set is the
     // lineage reconstructed from the envelope's own KeyRotation records,
     // anchored at the provenance key (see envelope_key_lineage).
-    ed25519_dalek::VerifyingKey::from_bytes(&envelope.provenance.device_public_key)
+    crate::crypto::signatures::verifying_key_strict(&envelope.provenance.device_public_key)
         .map_err(|e| anyhow!("invalid device public key: {}", e))?;
     let pq_key = parse_pq_key(envelope.provenance.pq_public_key.as_deref());
     let (lineage_keys, sealed_row_key) = envelope_key_lineage(
@@ -525,7 +530,9 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         })?;
     }
 
-    // 5. Break-glass receipts: chain + signatures + approvals commitment + tally.
+    // 5. Break-glass receipts: chain + device signatures + approvals commitment + tally.
+    // Trustee signatures and the quorum are not checked: the envelope carries no
+    // trustee policy. A grant is reported as present and downgrades the status.
     let bg_iter = envelope
         .ledgers
         .break_glass_receipts
@@ -557,6 +564,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         bg_head,
     )?;
     let (mut granted, mut denied) = (0u64, 0u64);
+    let mut redemptions = verify::RedemptionLedger::default();
     for (idx, entry) in envelope
         .ledgers
         .break_glass_receipts
@@ -582,8 +590,23 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         match receipt.outcome {
             crate::BreakGlassOutcome::Granted => granted += 1,
             crate::BreakGlassOutcome::Denied { .. } => denied += 1,
+            crate::BreakGlassOutcome::TokenRedeemed { .. } => {}
         }
+        // Chain-internal redemption rules (one redemption per nonce and per
+        // grant, restating the grant it redeems). The burn table is not part
+        // of an envelope, so the live-database reconciliation is not run here.
+        redemptions
+            .observe(&receipt, entry.entry_hash, &approvals)
+            .map_err(|e| {
+                chain_fail(
+                    "break_glass_receipts",
+                    idx,
+                    verify::FailureKind::TokenRedemption,
+                    format!("break-glass token redemption invalid: {}", e),
+                )
+            })?;
     }
+    let redeemed = redemptions.redeemed();
 
     // 6. Export receipts chain.
     let exp_iter = envelope.ledgers.export_receipts.entries.iter().map(|e| {
@@ -640,7 +663,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     // unsigned whole-envelope digest. Strict here; only the ledger walks
     // accept historical signers.
     let provenance_key =
-        ed25519_dalek::VerifyingKey::from_bytes(&envelope.provenance.device_public_key)
+        crate::crypto::signatures::verifying_key_strict(&envelope.provenance.device_public_key)
             .map_err(|e| anyhow!("invalid device public key: {}", e))?;
     verify_entry_signature(
         &provenance_key,
@@ -672,6 +695,13 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
     }
 
     // Warnings & status.
+    // Same text as verify_core.js.
+    if granted > 0 {
+        warnings.push(format!(
+            "{} break-glass grant(s) present: trustee approvals are not verified offline",
+            granted
+        ));
+    }
     let has_pq_material = envelope.provenance.pq_public_key.is_some();
     if has_pq_material && !pq_checked {
         warnings.push("post-quantum signatures present but not verified".to_string());
@@ -718,6 +748,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         sealed_events: envelope.ledgers.sealed_events.entries.len() as u64,
         break_glass_granted: granted,
         break_glass_denied: denied,
+        break_glass_redeemed: redeemed,
         export_receipts: envelope.ledgers.export_receipts.entries.len() as u64,
         pq_checked,
         warnings,
@@ -882,9 +913,9 @@ fn envelope_key_lineage(
         if rot.new != current {
             continue;
         }
-        let new_key = ed25519_dalek::VerifyingKey::from_bytes(&rot.new)
+        let new_key = crate::crypto::signatures::verifying_key_strict(&rot.new)
             .map_err(|e| anyhow!("key rotation at row {}: invalid new key: {}", rot.row, e))?;
-        let prev_key = ed25519_dalek::VerifyingKey::from_bytes(&rot.prev)
+        let prev_key = crate::crypto::signatures::verifying_key_strict(&rot.prev)
             .map_err(|e| anyhow!("key rotation at row {}: invalid prev key: {}", rot.row, e))?;
         crate::crypto::signatures::verify_rotation_attestation(
             &new_key,
@@ -925,7 +956,7 @@ fn envelope_key_lineage(
     let keys = keys_rev
         .iter()
         .map(|k| {
-            ed25519_dalek::VerifyingKey::from_bytes(k)
+            crate::crypto::signatures::verifying_key_strict(k)
                 .map_err(|e| anyhow!("invalid lineage key: {}", e))
         })
         .collect::<Result<Vec<_>>>()?;

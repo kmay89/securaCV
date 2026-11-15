@@ -45,6 +45,10 @@ export function confirmConsent(db, t) {
   db.audit('public', 'contact.consent', 'contact', c.id);
   return contactById(db, c.id);
 }
+// The person a token names, without acting on it: the page a link opens asks first (a link scanner's GET must
+// confirm or unsubscribe nobody; the button's POST does).
+export const byConsentToken = (db, t) => t ? db.get('SELECT id, email FROM contacts WHERE consent_token = ?', t) : null;
+export const byUnsubscribeToken = (db, t) => t ? db.get('SELECT id, email FROM contacts WHERE unsubscribe_token = ?', t) : null;
 export function unsubscribe(db, t) {
   const c = t ? db.get('SELECT * FROM contacts WHERE unsubscribe_token = ?', t) : null;
   if (!c) return null;
@@ -84,12 +88,12 @@ export const customerCounts = (db) => ({ all: db.get('SELECT COUNT(*) AS n FROM 
 
 export const canMarket = (c) => !!c && c.consent_marketing === 1 && !c.unsubscribed_at && !c.bounced_at;
 // A delivery failure for this address: no more campaign or automation mail until a human clears it.
-export function markBounced(db, email, { reason = '' } = {}) { const c = contactByEmail(db, email); if (!c) return null; db.run('UPDATE contacts SET bounced_at = ? WHERE id = ?', nowIso(), c.id); db.audit('system', 'contact.bounce', 'contact', c.id, { email: c.email, reason: reason.slice(0, 200) }); return contactById(db, c.id); }
+export function markBounced(db, email, { reason = '' } = {}) { const c = contactByEmail(db, email); if (!c) return null; db.run('UPDATE contacts SET bounced_at = ? WHERE id = ?', nowIso(), c.id); db.audit('system', 'contact.bounce', 'contact', c.id, { reason: reason.slice(0, 200) }); return contactById(db, c.id); }   // the audit chain is immutable, so the address is never written into it: the contact id is the name
 export function clearBounce(db, id) { db.run('UPDATE contacts SET bounced_at = NULL WHERE id = ?', id); db.audit('web', 'contact.bounce.clear', 'contact', id); return contactById(db, id); }
 
 export function joinWaitlist(db, contactId, sku, qty = 1) {
   db.run('INSERT INTO waitlist (contact_id, sku, qty, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(contact_id, sku) DO UPDATE SET qty = excluded.qty',
-    contactId, sku, Math.max(1, Number(qty) || 1), nowIso());
+    contactId, sku, Number.isInteger(Number(qty)) && Number(qty) >= 1 ? Math.min(Number(qty), 50) : 1, nowIso());   // whole, 1–50; the route checks the same (server.mjs)
   return db.get('SELECT * FROM waitlist WHERE contact_id = ? AND sku = ?', contactId, sku);
 }
 export const waitlistFor = (db, sku) => db.all('SELECT w.*, c.email, c.name, c.consent_marketing, c.unsubscribed_at FROM waitlist w JOIN contacts c ON c.id = w.contact_id WHERE w.sku = ? AND w.notified_at IS NULL ORDER BY w.created_at', sku);

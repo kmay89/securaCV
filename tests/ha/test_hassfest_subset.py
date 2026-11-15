@@ -17,7 +17,7 @@ from homeassistant.helpers.service import async_get_all_descriptions
 from homeassistant.loader import async_get_integration
 
 from conftest import REPO_ROOT, KernelMock
-from custom_components.securacv import binary_sensor, button, event, sensor
+from custom_components.securacv import binary_sensor, button, event, repairs, sensor
 from custom_components.securacv.const import DOMAIN
 
 INTEGRATION = REPO_ROOT / "custom_components" / "securacv"
@@ -129,6 +129,17 @@ async def test_strings_match_translations_and_every_entity_key_resolves(hass: Ho
     # The event entities' state attribute translations.
     assert translations[f"component.{DOMAIN}.entity.event.witness.state_attributes.event_type.state.boundary_crossing_object_large"] == "Person or vehicle"
     assert translations[f"component.{DOMAIN}.entity.event.verification_events.state_attributes.event_type.state.witness_key_changed"] == "Witness key changed"
+    # The Last event states a summary row sets (sensor.py's _SUMMARY_TYPES,
+    # HA28), in the words the timeline card's SUMMARY_METADATA shows for the
+    # same rows (sweep HA41; the card's own test holds the two together).
+    card = (INTEGRATION / "www" / "securacv-timeline-card.js").read_text(encoding="utf-8")
+    block = re.search(r"const SUMMARY_METADATA = \{(.*?)\n  \};", card, re.S)
+    assert block, "the card's SUMMARY_METADATA moved"
+    card_labels = dict(re.findall(r'(\w+): \{ label: "([^"]+)"', block.group(1)))
+    assert sorted(card_labels) == sorted(sensor._SUMMARY_TYPES)
+    for summary_type in sensor._SUMMARY_TYPES:
+        key = f"component.{DOMAIN}.entity.sensor.last_event.state.{summary_type}"
+        assert translations[key] == card_labels[summary_type], summary_type
 
     for category in ("config", "options", "issues", "exceptions", "services"):
         loaded = await translation.async_get_translations(hass, "en", category, {DOMAIN})
@@ -143,6 +154,9 @@ async def test_strings_match_translations_and_every_entity_key_resolves(hass: Ho
     for issue in ("no_kernel_found", "kernel_unreachable", "tofu_mismatch", "storage_replace", "entities_migrated", "mqtt_subscribe_failed"):
         assert f"component.{DOMAIN}.issues.{issue}.title" in issues, issue
     assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.step.confirm.title" in issues
+    # The fix flow's abort and its one error resolve too (repairs.py).
+    assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.abort.no_received_key" in issues
+    assert f"component.{DOMAIN}.issues.tofu_mismatch.fix_flow.error.key_changed" in issues
 
 
 def test_strings_pass_hassfest_s_translation_rules() -> None:
@@ -163,12 +177,18 @@ def test_strings_pass_hassfest_s_translation_rules() -> None:
             "(hassfest's exclusive 'fixable' group)"
         )
     # The one fixable issue is the rotate ceremony, and its confirm step
-    # carries the explanation the issue description used to.
+    # carries the explanation the issue description used to. Its text names
+    # exactly the two fingerprints, the only fields the issue holds (ledger
+    # F399): the core's plain confirm flow, the one an issue whose entry is
+    # gone gets, fills it from the issue's placeholders alone
+    # (repairs/issue_handler.py), so a slot beyond them would render
+    # unfilled there.
     tofu = strings["issues"]["tofu_mismatch"]
     assert set(tofu) == {"title", "fix_flow"}
     confirm = tofu["fix_flow"]["step"]["confirm"]
-    for placeholder in ("{pinned_fingerprint}", "{received_fingerprint}", "{url}"):
-        assert placeholder in confirm["description"], placeholder
+    slots = {field for _, field, _, _ in string_module.Formatter().parse(confirm["description"]) if field}
+    assert slots == {"pinned_fingerprint", "received_fingerprint"}
+    assert slots == set(repairs.TOFU_MISMATCH_FIELDS)
 
     # data_description keys must name a field in data (the same step).
     for section in ("config", "options"):

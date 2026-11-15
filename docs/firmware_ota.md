@@ -568,8 +568,9 @@ come with the engine — don't reimplement them.
   shared with the Python signer). All run in `firmware.yml`.
 - Bench (real device): build with a dev key embedded, serve a
   newer-versioned image from `mock_ota_server.py`
-  (`SECURACV_OTA_SKIP_CERT_VERIFY=1` dev builds accept the self-signed
-  cert), press Install in HA or the dashboard, watch the progress bar,
+  (`SECURACV_OTA_SKIP_CN_CHECK=1` dev builds skip the certificate hostname
+  check, and only that; the chain is still verified), press Install in HA
+  or the dashboard, watch the progress bar,
   confirm the version flips. Pull power mid-flash to prove rollback; check
   the witness chain for the `fw_update_*` records.
 

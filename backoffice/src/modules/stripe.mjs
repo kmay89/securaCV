@@ -3,7 +3,7 @@
 // subscription state. Two inputs: the signed webhook (live) and the CSV
 // export the weekly batch already uses (catch-up / offline).
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { timedFetch } from '../net.mjs';
+import { timedFetch, readJsonCapped } from '../net.mjs';
 
 // Stripe-Signature: t=<ts>,v1=<hex>[,v1=<hex>…]; signed_payload = `${t}.${body}`
 export function verifyStripeSignature(rawBody, header, secret, { now = Date.now() / 1000, toleranceS = 300 } = {}) {
@@ -11,7 +11,7 @@ export function verifyStripeSignature(rawBody, header, secret, { now = Date.now(
   const parts = Object.create(null); const v1 = [];
   for (const kv of String(header).split(',')) { const [k, v] = kv.split('=').map(s => s.trim()); if (k === 't') parts.t = v; if (k === 'v1') v1.push(v); }
   if (!parts.t || !v1.length) return false;
-  if (Math.abs(now - Number(parts.t)) > toleranceS) return false;
+  const ts = Number(parts.t); if (!Number.isFinite(ts) || Math.abs(now - ts) > toleranceS) return false;   // a timestamp that is not a number is not "within tolerance
   const expected = createHmac('sha256', secret).update(`${parts.t}.${Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody}`).digest('hex');
   const e = Buffer.from(expected);
   return v1.some(s => { const b = Buffer.from(s); return b.length === e.length && timingSafeEqual(b, e); });
@@ -56,6 +56,7 @@ export function eventToOrder(event) {
       ship: { line1: addr.line1 || '', line2: addr.line2 || '', city: addr.city || '', state: addr.state || '', zip: addr.postal_code || '', country: addr.country || 'US' },
       items, paid_at: new Date((o.created || Date.now() / 1000) * 1000).toISOString(),
       recovered_from: o.recovered_from?.checkout_session_id || null,   // the expired session this one reopened, if any
+      ships_on: /^\d{4}-\d{2}-\d{2}$/.test(o.metadata?.ships_on || '') ? o.metadata.ships_on : null,   // the ship date the site showed at checkout (createCheckout); the webhook keeps it
     };
   }
   if (type === 'charge.dispute.created' || type === 'charge.dispute.closed' || type === 'charge.dispute.updated') {
@@ -83,7 +84,7 @@ export async function fetchLineItems(cfg, sessionId, { fetchImpl = timedFetch } 
   if (!cfg.stripeApiKey) return null;
   const r = await fetchImpl(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}/line_items?limit=100&expand[]=data.price.product`, { headers: { authorization: `Bearer ${cfg.stripeApiKey}` } });
   if (!r.ok) throw new Error(`stripe line_items ${r.status} for ${sessionId}`);
-  const body = await r.json();
+  const body = await readJsonCapped(r);
   return (body.data || []).map(li => ({
     sku: li.price?.product?.metadata?.sku || li.price?.metadata?.sku || li.price?.product?.name || li.description,
     name: li.description || li.price?.product?.name || 'item', qty: li.quantity || 1,
@@ -99,7 +100,7 @@ export async function resolveDiscountCode(cfg, code, { fetchImpl = timedFetch } 
   const isPromo = /^promo_[A-Za-z0-9]+$/.test(code);
   const r = await fetchImpl(`https://api.stripe.com/v1/${isPromo ? 'promotion_codes' : 'coupons'}/${encodeURIComponent(code)}`, { headers: { authorization: `Bearer ${cfg.stripeApiKey}` } });
   if (!r.ok) return code;
-  const body = await r.json();
+  const body = await readJsonCapped(r);
   return (isPromo ? body.code : body.name || body.id) || code;
 }
 

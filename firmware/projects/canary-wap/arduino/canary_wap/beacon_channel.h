@@ -20,12 +20,12 @@
  *
  * Status: everything below is gated behind FEATURE_BEACON_CHANNEL (default
  * OFF). The REST surface is wired — beacon_api.h registers /api/beacon/...
- * from canary_wap.ino, every route behind the bcn_auth_gated trampoline,
- * which runs api_auth_check: the bearer or a landing session any host on
- * the network can mint (ledger F346). The /api/mesh and /api/bluetooth
- * routes take the same gate but for their two pair confirms, which take
- * the bearer alone since F346; /api/beacon/pair/confirm is not one of
- * them. The runtime
+ * from canary_wap.ino: the reads behind the bcn_auth_gated trampoline,
+ * which runs api_auth_check (the bearer or a landing session any host on
+ * the network can mint, ledger F346), and every POST (pairing, revocation,
+ * origination, cosign, cancel, silence, self-test) behind bcn_bearer_gated,
+ * the bearer alone, the way the /api/mesh and /api/bluetooth pair confirms
+ * are since F346. The runtime
  * loop is not: nothing in the sketch calls init(), set_enabled(), update()
  * or dispatch_espnow_message() yet (beacon_channel.cpp "Known limitations").
  */

@@ -47,8 +47,10 @@ struct Args {
     /// human report (exit 1 on chain failure, 2 on --strict warnings)
     #[arg(long)]
     json: bool,
-    /// Treat timeline-audit warnings (stale tail, missing heartbeats,
-    /// timestamp regressions) as failures (non-zero exit)
+    /// Treat warnings as failures (exit 2): timeline-audit warnings (stale
+    /// tail, missing heartbeats, timestamp regressions) and anchor-row
+    /// anomalies (a malformed tsa_anchors row, a stored token that does not
+    /// parse or does not cover the hash its row claims)
     #[arg(long)]
     strict: bool,
     /// Inspect the device key lineage instead of running full verification:
@@ -147,7 +149,7 @@ fn main() -> Result<()> {
                 "log_verify: database key from the {} (it does not anchor identity)",
                 found.source
             );
-            found.seed
+            found.seed.to_string()
         }),
     };
     let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
@@ -284,6 +286,11 @@ fn main() -> Result<()> {
                             id,
                             &verify_helpers::hex32(&entry_hash)[..16]
                         ),
+                        VerifiedItem::ClockProvenance { id, entry_hash } => println!(
+                            "  clock-provenance record {}: hash={} OK",
+                            id,
+                            &verify_helpers::hex32(&entry_hash)[..16]
+                        ),
                     }
                 }
             },
@@ -332,12 +339,22 @@ fn main() -> Result<()> {
     } else if args.high_water_mark.is_some() {
         println!("high-water-mark: not checked");
     }
+    if let Some(n) = report.anchors_checked {
+        println!(
+            "anchors: {n} checked (structural; countersignatures: log_anchor --db {} verify --ca \
+             <tsa-ca.pem>)",
+            args.db
+        );
+    }
     println!();
 
     println!("=== Break-Glass Receipts ===");
     println!(
-        "verified {} receipt entries ({} granted, {} denied)",
-        report.break_glass_receipts_verified, report.break_glass_granted, report.break_glass_denied
+        "verified {} receipt entries ({} granted, {} denied, {} redeemed)",
+        report.break_glass_receipts_verified,
+        report.break_glass_granted,
+        report.break_glass_denied,
+        report.break_glass_redeemed
     );
     println!();
 
@@ -346,6 +363,26 @@ fn main() -> Result<()> {
         "verified {} export receipt entries",
         report.export_receipts_verified
     );
+    println!();
+
+    println!("=== Clock Provenance ===");
+    match report.clock_provenance_verified {
+        Some(n) => println!(
+            "verified {n} clock-provenance record(s) (device clock vs TSA genTime, one per \
+             anchor; assessment: log_anchor --db {} verify)",
+            args.db
+        ),
+        // A failed report carries no count: the ledger is what failed, or
+        // the verdict failed elsewhere (before the walk or after it), and
+        // neither means it is empty.
+        None if !report.chain_valid => match &report.failure {
+            Some(f) if f.ledger == verify::FailedLedger::ClockProvenance => {
+                println!("clock-provenance ledger FAILED (see Diagnosis)")
+            }
+            _ => println!("not reported: verification failed (see Diagnosis)"),
+        },
+        None => println!("no clock-provenance records"),
+    }
 
     if !report.chain_valid {
         if let Some(failure) = &report.failure {
@@ -361,22 +398,55 @@ fn main() -> Result<()> {
         ));
     }
 
-    if !report.warnings.is_empty() {
+    // Anchor-row anomalies are a different finding from timeline anomalies
+    // (a damaged auxiliary row, not a gap in the record), so they print under
+    // their own heading — the clock-provenance cross-check findings with them,
+    // since both are about the anchors table.
+    let (anchor_warnings, timeline_warnings): (Vec<&String>, Vec<&String>) =
+        report.warnings.iter().partition(|w| {
+            matches!(
+                verify::classify_warning(w),
+                verify::WarningKind::AnchorAnomaly | verify::WarningKind::ClockProvenance
+            )
+        });
+    if !timeline_warnings.is_empty() {
         println!();
         println!("=== Timeline Audit ===");
         println!("The hash chain itself is valid; these flag anomalies the chain cannot see:");
-        for warning in &report.warnings {
-            println!("WARNING: {warning}");
-            if let Some(hint) = verify_explain::warning_hint(verify::classify_warning(warning)) {
-                println!("         hint: {hint}");
-            }
+        print_warnings(&timeline_warnings);
+    }
+    if !anchor_warnings.is_empty() {
+        let (clock_warnings, row_warnings): (Vec<&String>, Vec<&String>) = anchor_warnings
+            .iter()
+            .partition(|w| verify::classify_warning(w) == verify::WarningKind::ClockProvenance);
+        println!();
+        println!("=== Anchor Audit ===");
+        if !row_warnings.is_empty() {
+            println!(
+                "The ledgers verified and no anchored head is missing; these anchor rows cannot \
+                 vouch for anything:"
+            );
+            print_warnings(&row_warnings);
         }
-        if args.strict {
-            return Err(anyhow::anyhow!(
-                "verification passed but --strict treats {} timeline warning(s) as failure",
-                report.warnings.len()
-            ));
+        if !clock_warnings.is_empty() {
+            println!(
+                "The clock-provenance ledger verified; these records contradict the anchors \
+                 table or read the device clock far from the TSA's time:"
+            );
+            print_warnings(&clock_warnings);
         }
+    }
+    if args.strict && !report.warnings.is_empty() {
+        // Exit 2, the same code the --json path uses for --strict warnings, so
+        // a caller can tell "warnings promoted" from "chain failed" (exit 1).
+        eprintln!(
+            "Error: verification passed but --strict treats {} warning(s) as failure ({} \
+             timeline, {} anchor)",
+            report.warnings.len(),
+            timeline_warnings.len(),
+            anchor_warnings.len()
+        );
+        std::process::exit(2);
     }
 
     // B3 honesty: state what the verdict actually rests on. A self-anchored
@@ -393,6 +463,15 @@ fn main() -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn print_warnings(warnings: &[&String]) {
+    for warning in warnings {
+        println!("WARNING: {warning}");
+        if let Some(hint) = verify_explain::warning_hint(verify::classify_warning(warning)) {
+            println!("         hint: {hint}");
+        }
+    }
 }
 
 /// `--lineage` / `--checkpoints` inspection mode: per-item reports that keep

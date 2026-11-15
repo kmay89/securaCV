@@ -25,5 +25,15 @@ if [ "$MODE" = "frigate" ]; then
   exit 0
 fi
 
+# The seed reaches witnessd in DEVICE_KEY_SEED (from /data/device_key or the
+# device_key_seed option, run.sh). Left to itself witnessd would also write
+# that seed beside the sealed log, at /config/witness.ed25519.seed — inside
+# every Home Assistant backup and every file-sharing app's reach, the very
+# place the key was moved out of. This tells it the seed is kept elsewhere:
+# it uses the environment value as given, writes no file, and still refuses
+# an existing seed file that disagrees (an install from before this switch
+# keeps that check until run.sh has removed the identical copy).
+export DEVICE_KEY_SEED_PERSIST=0
+
 bashio::log.info "witnessd: starting the standalone kernel"
 exec /usr/local/bin/witnessd

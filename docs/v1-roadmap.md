@@ -1,261 +1,67 @@
-# SecuraCV v1 Roadmap
+# SecuraCV v1 — what gates the tag
 
-## The Two Pillars
+v1 means **everything documented works end-to-end** on a first-try install,
+`cargo test` passes, and no doc claims more than the code does. It needs both
+pillars: privacy-preserving detection and tamper-evident artifacts. This is
+the one definition; `CHANGELOG.md` `[1.0.0]` and the README status follow it.
 
-1. **Privacy-preserving detection** — events without surveillance
-2. **Tamper-evident artifacts** — cryptographic proof of integrity
+## The gate
 
-Both required for v1. CV flexibility without real crypto is just a detection pipeline. Crypto without CV flexibility is academically interesting but not useful.
+**On-device hardware validation.** Everything below is green in CI and
+unproven on real ESP32 boards. Run
+[`V1_BENCH_TEST_RUNBOOK.md`](V1_BENCH_TEST_RUNBOOK.md) (tracks A–E, issue
+#610; per-track procedures in
+[`hardware/v1_bench_validation_runbook.md`](hardware/v1_bench_validation_runbook.md)).
+When its sign-off matrix is all ✅, tag: README badge `v1-rc → v1.0`, date
+the `CHANGELOG.md` `[1.0.0]` entry, set the crate version in `Cargo.toml` to
+`1.0.0`.
 
----
+Nothing else blocks the tag. The rest of the open work is in
+[`audit/repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md); its
+section 0 lists the acts only a person can do. One of them deserves a look
+before shipping even though the definition above does not name it: until the
+release signing-key ceremony (U2 there) both flashers accept firmware on a
+checksum alone.
 
-## Current State
+## What is in v1
 
-> _Refreshed 2026-05-31 against the source tree. The earlier table predated the Stream A/B/C
-> work below and was stale (it still said detection was "Only StubDetector", the vault was "not
-> wired", and RTSP was "synthetic frames only" — all since superseded). Statuses below cite the
-> code that backs them._
+| Capability | Status | Where |
+|---|---|---|
+| Frame isolation | Works | `RawFrame` is type-enforced; `spec/invariants.md` |
+| Hash-chained, Ed25519-signed log | Works | `log_verify`; `tamper_demo` shows a modified log failing |
+| Event contract | Works | allowlist enforced |
+| Break-glass | Works | n-of-m trustee quorum, policy storage, approval flow |
+| Detection | Works; motion-only by default | `DetectorBackend` + `BackendRegistry`. A stock build reports motion, not classified objects, and `witnessd` warns so at startup. Object detection needs a `--features backend-tract` build and `detect.backend = "tract"` (`detect.tract_model` is optional; the pinned model loads when it is unset). With Frigate, detection is Frigate's job |
+| Video ingest | Works, feature-gated | file (`ingest-file-ffmpeg`) and RTSP (`rtsp-ffmpeg`) each have an end-to-end CI roundtrip; the GStreamer backend shares the interface and is not separately exercised |
+| Frigate → Home Assistant over MQTT | Works | `frigate_mqtt_e2e` and the `frigate-mqtt-e2e` job; the four-container stack (`verify_pipeline.sh`) is a manual smoke check |
+| Vault sealing | Wired, opt-in | needs a valid `BREAK_GLASS_SEAL_TOKEN`; `witnessd` says at startup whether sealing is on |
+| Device key | Software-held | OS-RNG seed kept 0600; rotation and DB re-key are operator commands ([`db_key_rotation.md`](db_key_rotation.md)) |
+| Sandboxing | Partial, by design | seccomp for adapters and the per-frame detection child (Linux). Detection backends are an audited boundary, not an enforced one ([`security/THREAT_MODEL.md`](security/THREAT_MODEL.md)) |
+| Firmware privacy | Works | no raw MAC or precise GPS on any API; `regression_check.sh` fails on either |
+| Firmware OTA | Works; canary-sense partial | signed pull-updates with A/B rollback ([`firmware_ota.md`](firmware_ota.md)); the ESP32-C6 pass rides the bench gate |
 
-| Component | Status | Reality |
-|-----------|--------|---------|
-| Frame isolation | ✅ Works | Type-level enforcement is real |
-| Hash-chained log | ✅ Works | `log_verify` proves integrity |
-| Event contract | ✅ Works | Allowlist enforced |
-| Break-glass structure | ✅ Works | Policy storage + approval flow |
-| Detection | ✅ Works (stub is the default) | `DetectorBackend` trait + `BackendRegistry`; `StubBackend`/`CpuBackend`/`TractBackend` (ONNX via `tract`). Default build registers the motion stub; `TractBackend` is feature-gated (`backend-tract`) and needs a `--model` (tests: `tests/tract_backend.rs`). |
-| Signatures | ✅ Works | Ed25519 signatures on log + `log_verify` checks |
-| Vault sealing | ✅ Wired (opt-in) | `witnessd` seals buffered frames via `seal_latest_frame()` → `Vault::seal_frame()` with real `VaultCryptoMode::{Classical,Pq,Hybrid}`; gated on a valid `BREAK_GLASS_SEAL_TOKEN`. Remaining work is key management + setup UX, not the encryption. |
-| RTSP ingestion | ✅ Works with `--features rtsp-ffmpeg` (CI-verified); not in the default build | `RtspSource` does real decode via GStreamer/FFmpeg (`src/ingest/rtsp.rs`, `rtsp_ffmpeg.rs`), synthetic only for explicit `stub://` URLs. Feature-gated (`rtsp-ffmpeg`/`rtsp-gstreamer`): neither is in the default build, and a plain build errors on an `rtsp://` URL rather than falling back to synthetic frames. The **ffmpeg** path now has an end-to-end CI roundtrip: the `ingest-rtsp` job serves the committed mp4 fixture over RTSP (MediaMTX + ffmpeg publisher) and `tests/rtsp_e2e.rs` drives the real `RtspSource` through decode → detection → signed events → verify. The GStreamer backend shares the same `RtspSource` interface but is not separately exercised in CI. |
-| Sandboxing | ⚠️ Partial (by design) | Optional seccomp sandbox: adapters opt in via `with_sandbox()` (frigate/mqtt/webhook/ble-presence); parsing then runs inside `parse_in_sandbox()` (`src/adapter/sandbox.rs`). The detection module itself runs in a forked, seccomp-restricted child process per frame (`execute_sandboxed`, `src/module_runtime/sandbox.rs`; Linux only). That is process isolation, not a WASM sandbox: no wasm runtime is a dependency, and WASM sandboxing is planned, not built. Detection backends remain a trusted/*audited* boundary by design (see `AGENTS.md`). |
+## Known gaps v1 ships with
 
----
+- **`export_verify` after a key rotation.** Given the current seed it fails
+  its lineage check, and its C2PA anchor belongs to one epoch. Needs a
+  maintainer decision ([`db_key_rotation.md`](db_key_rotation.md#verifier-clis)).
+- **Break-glass grants in an offline envelope.** The offline verifiers check
+  the receipt chain and the approvals commitment, not the trustee signatures
+  or the quorum, so an envelope that carries a grant reads
+  `valid_with_warnings` and says why. The kernel re-derives the quorum
+  against its database; proving it offline needs a wire-format revision
+  (issue #1580).
+- **Hardware-backed keys** (TPM / secure element): needs hardware.
 
-## v1 Definition
+## Not in v1
 
-v1 means **everything documented works end-to-end** — not a reduced "minimally credible" subset.
-This matches `CHANGELOG.md` [1.0.0] and is the single canonical definition for the project.
-Concretely, to tag v1:
+- GPU acceleration (`ort` backend) and WASM sandboxing
+- Encrypted-vault setup UX + hardware-backed keys (v1.1) — sealing itself is wired
+- Remote attestation
+- Performance guarantees: there is a harness, and no number is published ([`BENCHMARKS.md`](BENCHMARKS.md))
+- Face or plate detection: forbidden by design, in every version
 
-- Every feature described in the README/docs runs end-to-end on a first-try install.
-- `cargo test` passes cleanly.
-- At least one real CV backend, one real crypto/tamper path, and one real video source — **and any
-  other capability the docs claim** — actually works end-to-end, not merely compiles.
-- Documentation matches the code: honest about what is *enforced* vs *auditable*, with no claim
-  that outruns the implementation.
+## Decisions on record
 
-This is a **higher** bar than the earlier "minimally credible" framing, so adopting it makes the
-remaining gaps explicit rather than waiving them. **Open blockers to this bar (must close before
-tagging v1):**
-
-- ~~The Frigate → Home Assistant MQTT pipeline passes the release gate end-to-end —
-  `integrations/ha_frigate_mqtt/verify_pipeline.sh` exits `0` against a live stack.~~ **Automated in
-  CI:** `cargo test --test frigate_mqtt_e2e` drives a `frigate/events` payload → sealed log → real
-  `log_verify` (encrypted DB), and the `frigate-mqtt-e2e` job runs the real `frigate_bridge` binary
-  ingesting from a live mosquitto broker (`ci_smoke.sh`). The full 4-container operator stack with
-  real Frigate ML detection (`verify_pipeline.sh`, now corrected) stays a manual smoke check, since
-  ML detection on a fixture isn't deterministic.
-- ~~The "audit boundary vs security boundary" documentation item (Acceptance, below) is still open.~~
-  **Closed:** stated authoritatively in [`docs/security/THREAT_MODEL.md`](security/THREAT_MODEL.md)
-  under *Trust Boundaries → Audit Boundary vs Security Boundary*.
-- ~~RTSP ingestion is documented, so under this definition it is **in scope** and must work
-  (moved out of "nice to have").~~ **Closed:** the ffmpeg RTSP path now has an end-to-end CI
-  roundtrip (`ingest-rtsp` job + `tests/rtsp_e2e.rs`).
-- ~~Firmware must not surface raw MAC addresses or precise GPS over its APIs — the docs and
-  `spec/invariants.md` forbid it, so documented behavior must match actual.~~ **Closed:** every
-  firmware tree now routes operator-facing identity through the shared salted `device_pseudonym`
-  (`firmware/common/identity/`) and GPS through `gps_coarsen_deg` (`firmware/common/gnss/`);
-  `regression_check.sh` hard-fails on raw MAC or un-coarsened lat/lon in *any* tree
-  (see `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`).
-- **Still open:** all of the above gates are green **in CI**, but the v1 tag also waits on
-  **on-device hardware validation** (the kernel/bridge pipeline and firmware exercised on real
-  ESP32 devices, not just CI). The driver sheet that sequences the whole gate — tracks,
-  sign-off matrix, tag step — is
-  [`docs/V1_BENCH_TEST_RUNBOOK.md`](V1_BENCH_TEST_RUNBOOK.md); the detailed per-track
-  procedures, pass/fail criteria, and required artifacts are in
-  [`docs/hardware/v1_bench_validation_runbook.md`](hardware/v1_bench_validation_runbook.md)
-  (Track A: single canary → HA verified-✓; Track B: kernel pipeline smoke; Track C: 2–3 board
-  mesh/chirp fleet). Until that's done the README status stays `v1-rc`, the
-  `CHANGELOG.md` `[1.0.0]` entry stays `Unreleased`, and no tag is cut.
-
----
-
-## Work Streams (Parallel)
-
-### Stream A: CV Backend Abstraction
-
-**Goal:** Decouple detection from `StubDetector` (the pre-registry detector in `src/frame.rs`,
-since removed; the crate-root `DetectorBackend` now names the trait below)
-
-| Step | Deliverable | Est. Effort |
-|------|-------------|-------------|
-| A1 | **Done:** `DetectorBackend` trait + `BackendRegistry` | ✅ |
-| A2 | **Done:** Port `StubBackend` (+ bonus `CpuBackend`) | ✅ |
-| A3 | **Done:** `TractBackend` loads model + runs forward pass | ✅ |
-| A4 | **Done:** `TractBackend` produces correct boxes for test model | ✅ |
-| A5 | **Done:** Integration with `InferenceView` + registry routing | ✅ |
-
-> **Default-build caveat:** A1–A5 mean the `TractBackend` (ONNX) *exists and works when
-> compiled*. The default build does **not** enable it — `detect.backend=auto` resolves to a
-> frame-difference **motion** backend (`cpu`/`stub`), so a stock `witnessd` reports motion
-> presence, not classified objects. Real object detection requires a `--features backend-tract`
-> build **and** setting both `detect.backend=tract` and `detect.tract_model` (each alone is
-> insufficient). `witnessd` now logs a `WARN` at startup whenever a
-> motion-only backend is active so this is never silent. (In the primary Frigate-bridge
-> deployment, object detection is Frigate's job; this caveat is about the direct-ingest path.)
-
-**Total:** ~2-3 weeks
-
-### Stream B: Crypto Hardening
-
-**Goal:** One end-to-end tamper-evident path
-
-**v1 choice: Ed25519 signed log** (not encrypted vault)
-
-Rationale: Signed log is easier to demonstrate end-to-end without designing envelope formats and media storage semantics. The vault seal path is wired into `witnessd` (opt-in via `BREAK_GLASS_SEAL_TOKEN`); v1 leads with the signed log for the headline end-to-end demo, with vault sealing available as the optional sealed-evidence path.
-
-**Remaining crypto gaps to close:**
-- Device signing key is still seed-derived (an OS-RNG seed kept 0600, rotatable by command),
-  not hardware-backed. (The DB key is no longer coupled to it — see the B2 note below.)
-- Vault sealing is wired but opt-in/UX-gated; the remaining gap is key management (see the
-  device-key item above) and a seal setup UI (the trustee/quorum setup is the served console's
-  one-time bootstrap panel) — not the encryption itself.
-
-| Step | Deliverable | Est. Effort |
-|------|-------------|-------------|
-| B1 | **Done:** Ed25519 log signing in kernel + CLI paths | ✅ |
-| B2 | **Done except hardware-backed keys and one verifier gap:** OS-RNG device seed kept 0600 beside the database and resolved the same way by every write-side daemon; rotation and DB re-key are operator commands (`break_glass rotate-identity` / `rekey-db`). **Open:** hardware-backed keys (TPM / Secure Element) — needs hardware; and `export_verify` given the current seed after a rotation fails (not fixed, its own decision — see the B2 note) | hardware, plus one verifier decision |
-| B3 | **Done:** `log_verify` validates Ed25519 signatures | ✅ |
-| B4 | **Done:** Tampering demo (`tamper_demo` binary: modify log, verify fails) | ✅ |
-
-**B2 note:** The software half is **done** except one verifier gap (under **Still open** below).
-The SQLCipher DB key is decoupled from the device signing key (`SECURACV_DB_KEY_SEED` →
-`resolve_db_encryption_key`). The signing identity rotates
-in the kernel: `Kernel::rotate_device_identity` appends a retiring-key-signed `KeyRotation` record
-and a genesis-anchored `device_key_history` row, so the log verifies across the boundary, and
-`Kernel::open` accepts the current epoch's seed and refuses a retired one. Both are operator
-commands — `break_glass rekey-db` and `break_glass rotate-identity` (the successor seed is staged
-0600 and fsynced before the rotation commits, and never printed). The seed is generated from the OS
-RNG and kept 0600 in `<db>.ed25519.seed`; every write-side daemon resolves it the same way
-(`DEVICE_KEY_SEED`, else that file, else generate) and a seed file any other user can read is
-refused. See [`docs/db_key_rotation.md`](db_key_rotation.md). **Still open:** the higher bar of
-**hardware-backed keys** (TPM/Secure Element), which needs hardware to validate; and, in software,
-`export_verify` after a rotation. It still turns `--device-key-seed` (or `DEVICE_KEY_SEED`) into
-the genesis anchor and derives its C2PA trust anchor from that seed, so after
-`break_glass rotate-identity`, verifying with the current seed fails. Not fixed: it needs its own
-decision, because `log_verify`'s self-anchored fallback does not transfer directly — a
-seed-derived C2PA anchor belongs to one lineage epoch
-([Verifier CLIs](db_key_rotation.md#verifier-clis)). (The commands' home — `break_glass`
-subcommands, option (a) — is for the maintainer to confirm.)
-
-**Total:** ~2-3 weeks
-
-### Stream C: Real Video Ingestion
-
-**Goal:** Process actual video, not synthetic frames
-
-| Step | Deliverable | Est. Effort |
-|------|-------------|-------------|
-| C1 | **Done:** File reader (mp4→frames) via ffmpeg `FileSource` | ✅ |
-| C2 | **Done:** Pixel format handling (NV12→RGB; ffmpeg swscale to RGB24) | ✅ |
-| C3 | **Done:** Timestamp coarsening at capture (`TimeBucket::now_10min`) | ✅ |
-| C4 | GStreamer/FFmpeg RTSP source | ✅ (ffmpeg path CI-verified end-to-end; gstreamer shares the interface) |
-
-**Roundtrip proven:** the `ingest_run` binary processes a real mp4 end to
-end (file → frames → RGB → detection → signed events → verify), exercised
-in CI against a committed mp4 fixture. Run it with
-`cargo run --features ingest-file-ffmpeg --bin ingest_run -- --video clip.mp4`.
-
-**RTSP roundtrip proven:** `tests/rtsp_e2e.rs` (the `ingest-rtsp` CI job)
-serves the same fixture over RTSP via MediaMTX + an ffmpeg publisher and drives
-the real `RtspSource` (ffmpeg backend) through the identical
-decode → detection → signed events → verify path. Run it locally with
-`MEDIAMTX_BIN=/path/to/mediamtx SECURACV_RTSP_E2E=1 cargo test --features rtsp-ffmpeg --test rtsp_e2e`.
-
-**Total:** ~2-3 weeks
-
----
-
-## Recommended Order
-
-```
-
-Week 1-2:  A1, A2 (backend trait + stub)
-B1 (Ed25519 signing)
-
-Week 3-4:  A3 (tract loads model)
-B2, B3 (device key + verify)
-
-Week 5-6:  A4 (tract produces correct output)
-C1, C2 (file ingestion)
-
-Week 7-8:  A5 (InferenceView integration)
-C3 (timestamp coarsening)
-B4 (tampering demo)
-Integration testing
-
-```
-
----
-
-## What v1 Does NOT Include
-
-- **WASM sandboxing** — backends are trusted, must be audited
-- **GPU acceleration** — `ort` backend is v1.1
-- **Firmware OTA updates** — *since closed*: the engine was promoted to
-  [`firmware/common/ota/`](../firmware/common/ota/) and now ships signed
-  pull-updates (HTTPS manifest + Ed25519 release signature + SHA-256 + A/B
-  rollback) across the active firmware trees — see
-  [`docs/firmware_ota.md`](firmware_ota.md) and the
-  [Feature-Parity Dashboard](../firmware/FEATURES.md), which still marks
-  canary-sense partial pending ESP32-C6 bench validation. That bench pass
-  rides with the hardware-validation blocker above.
-- **Encrypted-vault UX / key management** — sealing is wired (opt-in), the device key rotates by
-  operator command (`break_glass rotate-identity`), and the trustee/quorum setup is the served
-  console's one-time bootstrap panel; the seal setup UI and hardware-backed keys are v1.1
-- **Real-time performance guarantees** — benchmark, don't promise ([how, and why no number is published](BENCHMARKS.md))
-- **Remote attestation** — future
-
-(RTSP was previously listed here as a stretch goal. Under the canonical "everything documented
-works end-to-end" definition it is a documented feature, so it is now **in scope** for v1 — see
-the v1 Definition and Acceptance Criteria.)
-
----
-
-## Acceptance Criteria
-
-### Must have:
-- [x] `cargo test` passes
-- [x] `StubBackend` works for motion detection
-- [x] `TractBackend` loads a model and runs forward pass
-- [x] `TractBackend` produces correct bounding boxes for a known test model
-- [x] Log entries are Ed25519 signed
-- [x] `log_verify` validates signatures and catches tampering
-- [x] Can process video from file
-- [x] Documentation states audit boundary vs security boundary (`docs/security/THREAT_MODEL.md` → *Trust Boundaries*)
-- [x] RTSP ingestion works end-to-end (ffmpeg path; `ingest-rtsp` CI job + `tests/rtsp_e2e.rs`)
-- [x] Frigate → HA MQTT pipeline gated in CI — `frigate_mqtt_e2e` (event → sealed log → `log_verify`)
-  + `frigate-mqtt-e2e` job (real bridge ingesting from a live mosquitto broker). The 4-container
-  operator stack (`verify_pipeline.sh`) remains a manual smoke check.
-- [x] Firmware APIs expose no raw MAC / precise GPS (every tree routes identity through the salted
-  `device_pseudonym` and GPS through `gps_coarsen_deg`; `regression_check.sh` hard-fails on either)
-
-### Nice to have:
-- [x] Performance benchmark harness (numbers deliberately unpublished — AGENTS.md rule 4) — [BENCHMARKS.md](BENCHMARKS.md)
-
-### Explicitly out of scope:
-- [ ] GPU acceleration
-- [ ] WASM sandboxing
-- [ ] Face/plate detection (forbidden by design)
-- [ ] Encrypted-vault setup UX + hardware-backed keys (v1.1) — sealing itself is already wired
-
----
-
-## Success Metrics
-
-v1 is successful if:
-
-1. `witnessd` runs with file input and tract detection
-2. Events are logged with Ed25519 signatures
-3. `log_verify --tamper-test` proves tampering is detectable
-4. External auditor can verify privacy claims by reading code
-5. Documentation doesn't overclaim
+- **Both firmware trees ship**, held at parity ([`../firmware/PARITY_PLAN.md`](../firmware/PARITY_PLAN.md)). Converging the Arduino sketch into `firmware/canary` is a post-v1 question.
+- **No bundled detection model.** The direct-ingest path has a one-command, hash-checked fetch (`scripts/fetch_detection_model.sh`).

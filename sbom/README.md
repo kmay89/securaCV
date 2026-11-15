@@ -2,20 +2,59 @@
 
 This directory holds the Software Bill of Materials (SBOM) story for SecuraCV:
 how each document is produced, and — for the firmware — the committed document
-itself. The output format is **CycloneDX 1.5 JSON**.
+itself. Every document is **CycloneDX JSON**. The firmware document is held to
+the **1.5** schema, strictly, by `lint.yml` and by `sbom.yml`'s gate; the
+`cargo-cyclonedx` and `cdxgen` documents are at the spec version each tool
+writes (1.3 and 1.7 at the pinned versions below), and the gate holds them to
+their format tag, subject and contents, not to a schema.
 
-## The three documents
+## The documents
 
 | Ecosystem | File | How it is produced |
 |-----------|------|--------------------|
 | Rust (kernel) | `sbom-rust.cdx.json` | `cargo-cyclonedx`, in `.github/workflows/sbom.yml` |
 | Node.js (device-api, SPA) | `sbom-node.cdx.json` | `@cyclonedx/cdxgen`, in `sbom.yml` |
 | C/C++ (ESP32 firmware) | [`sbom-firmware.cdx.json`](sbom-firmware.cdx.json) | **generated and committed** by [`scripts/gen_firmware_sbom.py`](../scripts/gen_firmware_sbom.py); byte-gated on every PR |
+| Rust (the Flasher / the Lab) | `sbom-flasher-rust.cdx.json`, `sbom-lab-rust.cdx.json` | `cargo-cyclonedx --target all` in `desktop/src-tauri` / `desktop-lab/src-tauri`, in `sbom.yml`: the app's crate graph for every target it is built for (the lockfile — the macOS-only crates the universal `.dmg` links are in it, not only the Linux runner's resolution), its path-linked crates included |
+| Node.js (the Flasher / the Lab) | `sbom-flasher-node.cdx.json`, `sbom-lab-node.cdx.json` | `@cyclonedx/cdxgen` on `desktop/` / `desktop-lab/` after `npm ci`, in `sbom.yml`: the npm tree the app's lockfile installs (today the Tauri CLI that builds it) |
 
-The Rust and Node documents are produced fresh by `sbom.yml` on every push to
-`main` that touches a dependency manifest, on pull requests, and on every
-published release (where all three are attached as release assets). They are
-not committed.
+The first three are on every release. A Flasher release (`flasher-v*`) adds
+the Flasher's two documents and a Lab release (`app-v*`) the Lab's two;
+`sbom.yml`'s gate refuses an app document that is empty or whose subject is
+not that app's own crate or npm package. Everything but the firmware document
+is produced fresh by `sbom.yml` on every push to `main` that touches a
+dependency manifest, on pull requests (which build both apps' documents), and
+for every published release, where they are attached as release assets. They
+are not committed.
+
+### The tools that write them
+
+| Tool | Version | Set in | Writes |
+|------|---------|--------|--------|
+| `cargo-cyclonedx` | 0.5.9 | `CARGO_CYCLONEDX_VERSION`, in `generate-sbom`'s job `env` in `sbom.yml` | the Rust documents, CycloneDX 1.3 |
+| `@cyclonedx/cdxgen` | 12.9.0 | `CDXGEN_VERSION`, beside it | the Node.js documents, CycloneDX 1.7 |
+
+Each is pinned to an exact release, the newest that was at least two weeks old
+when the pin was set, so which release of a tool writes a bill of materials no
+longer depends on the day it was built. A bump is an edit of that variable and
+of its row above. The install lines read the variable
+(`cargo install cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION" --locked`,
+`npm install -g --ignore-scripts "@cyclonedx/cdxgen@$CDXGEN_VERSION"`), and so
+does the key the built `cargo-cyclonedx` binary is cached under
+(`cargo-cyclonedx-<version>-<os>`, which moves only when the version does).
+`--locked` builds `cargo-cyclonedx` from the lockfile it was published with.
+The `cdxgen` pin is narrower: `cdxgen` names its direct dependencies exactly
+but publishes no shrinkwrap, so the ranges inside those dependencies still
+resolve when the job installs it (`--ignore-scripts` keeps any of them from
+running an install script there). Each document records the tool that wrote
+it in `metadata.tools`, and the step after the gate reads the pinned version
+back from there on every Rust and Node document the job uploads.
+`scripts/tests/test_gen_firmware_sbom.py` holds the install lines, the cache
+key and each row's version and variable to the two variables, and runs that
+step on documents in both tools' shapes. Nothing checks the "Writes" column:
+it is the spec version each tool writes by default at its pin, read off its
+output when the pin was set, so a bump that moves a tool's default has to
+edit it by hand.
 
 ## The firmware SBOM
 
@@ -155,10 +194,12 @@ Tests: `scripts/tests/test_gen_firmware_sbom.py`.
 
 ## Retrieving the SBOMs
 
-All three are attached as build artifacts on each `sbom.yml` run, and as
-release assets on every release cut from October 2026 on (firmware-release.yml,
-desktop-flasher-release.yml, lab-publish.yml and release.yml call `sbom.yml`
-once their release is published). Earlier releases mostly carry none — only
+All of them are attached as build artifacts on each `sbom.yml` run. The
+three project documents are release assets on every release cut from October
+2026 on: firmware-release.yml, desktop-flasher-release.yml, lab-publish.yml
+and release.yml call `sbom.yml` once their release is published. An app's own
+two documents are on its releases cut after sweep CI20 added them (November
+2026); earlier app releases carry the three only. Earlier releases mostly carry none — only
 `app-v0.1.0`, `flasher-v0.1.4` and `app-v0.2.2` did — and re-running
 `sbom.yml` for one of those tags fails by design: the tagged tree predates
 the generator, and an SBOM must describe the tree it ships with.

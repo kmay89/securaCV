@@ -16,10 +16,15 @@
 
 import AppIntents
 
+// Every string App Store Connect reads from an intent (title, description,
+// Siri phrases, short title) must avoid Apple's product names: build 39.1
+// (0.8.0) was rejected with ITMS-90626 because this description said
+// "iPhone". scripts/tests/test_ios_intent_strings.py holds every intent
+// string in the app to that rule.
 struct CheckFleetIntent: AppIntent {
     static let title: LocalizedStringResource = "Check the Fleet"
     static let description = IntentDescription(
-        "The fleet's one honest answer, from what this watch last heard from your iPhone.")
+        "The fleet's one honest answer, from the latest snapshot on your wrist.")
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         .result(dialog: IntentDialog(stringLiteral: GlanceAnswer.spoken(WristCache.load())))

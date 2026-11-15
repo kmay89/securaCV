@@ -61,9 +61,10 @@ MQTT-only; start at the [Canary walkthrough](#manual-walkthrough-canary-via-mqtt
    no Supervisor role and cannot install, start or stop other apps. You
    choose how long to keep sealed events (7 days, 30 days, 1 year), what to
    seal (every tracked object, or only Frigate alerts) and whether you want
-   the daily digest. The device signing key is generated once and kept at
-   `/config/.securacv/device_key`, inside your Home Assistant backups —
-   back it up.
+   the daily digest. The device signing key is generated once, shown once,
+   and kept in the app's own data (`/data/device_key` inside the app, not
+   under `/config`) — save it somewhere safe; see
+   [the device key and your backups](#the-device-key-and-your-backups).
 3. The done screen's one primary button is **Install the integration and
    restart Home Assistant**. It copies the integration the app carries into
    `/config/custom_components/securacv`, marks the copy as the app's own,
@@ -444,8 +445,9 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    already set up, a page loaded over your home WiFi arrives without its API
    token, so its saves are refused. The page carries the token only for the
    first-boot wizard, a request that already sends it, a device on the
-   Canary's own WiFi, or one BOOT tap: tap the Canary's BOOT button and
-   reload within 30 seconds (one tap unlocks one page load), or paste the
+   Canary's own WiFi, or one BOOT tap: keep the page open and tap the
+   Canary's BOOT button when its banner says to (the banner asks first, and
+   one tap unlocks one page where it stands, with no reload), or paste the
    token from your recovery kit into the dashboard. The Canary's own WiFi
    unlocks the page too, but it broadcasts only while the Canary is off
    your home network (before setup, or after it loses that network), so on
@@ -585,8 +587,22 @@ not data loss.
 
 #### Canary devices: "SecuraCV Canary <id>"
 
-One device per Canary, created the first time its `securacv/<id>/status`
-publish is seen, attached under the kernel device when one exists. Every
+One device per Canary, created by the first publish the integration sees
+from it on its `status`, `health`, `counts`, `chain`, `events`, `tamper`,
+`transport`, `mesh` or `chirp` topic (the `availability` topic alone creates
+none, and a device another topic created first takes the name its first
+status gives), attached under the kernel device when one exists. Its model
+is the product name for the `device_type` its status names (*Canary WAP*,
+*Canary Sense*, *Canary Dash*, and so on; *SecuraCV Canary* when the status
+names none, as the `firmware/canary` build's does, or names a type this
+release does not know), and its firmware is the `firmware_version` its
+`health` topic reports, which is where every Canary publishes it. A version
+on its `status` (only the `firmware/canary` build's carries one, as
+`firmware`) shows only until a health has reported one. The firmware, the
+board and the name its status gives are unsigned text from the broker,
+bounded to 64 characters; the model is picked from the product table by a
+`device_type` that is unsigned too, and is never the wire string itself. No
+serial number is set. Every
 unique id is `securacv_canary_<device_id>_<suffix>` with the suffix shown in
 parentheses. **Signed** means the publish carries the device's Ed25519
 signature and the integration checks it against the pinned key
@@ -602,11 +618,11 @@ says online; the **Online** sensor stays available to report offline.
    Sensors:
    - **Witness Count** — total witness records created (`witness_count`; signed `counts` topic)
    - **Chain Length** — hash-chain length, with `latest_hash` and `algorithm` (`chain_length`; signed `chain` topic)
-   - **Last Event** — latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28), every other stateless row `unknown` (`last_event`; signed `events` topic)
+   - **Last Event** — latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28; an entities card shows them as Daily summary and Quiet Hours summary, the timeline card's words, HA41), every other stateless row `unknown`; the event that creates it (a device's first on the topic) is shown too, verified and replay-gated like any other (HA44) (`last_event`; signed `events` topic)
    - **Health** — `healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version, and the committed-event egress's counters (`csi_event_egress`, `offline_queue`) as attributes when the firmware sends them (`health_status`; `health` and `egress` topics, unsigned)
    - **GPS Fix** — GPS fix status, with satellites and HDOP (`gps_fix`; `health` topic, unsigned)
    - **SD Wear Estimate** — estimated SD-card wear percent, only when the firmware reports its `sd` object (`sd_wear`; `health` topic, unsigned; diagnostic)
-   - **Radar Link** — `ok` / `stale` / `down` for the UART link to the radar module, canary-sense devices only (`radar_link`; `health` topic, unsigned; diagnostic)
+   - **Radar Link** — `ok` / `stale` / `down` for the UART link to the radar module, on a canary-sense, and on a canary-sentinel whose health reports a `radar` object, which a Sentinel Lite (no radar) never sends (`radar_link`; `health` topic, unsigned; diagnostic)
 
    Binary sensors:
    - **Online** — device connectivity, from the `status` topic (`online`; unsigned)
@@ -615,7 +631,7 @@ says online; the **Online** sensor stays available to report offline.
    - **Power Loss**, **SD Removed**, **SD Error**, **GPS Jamming**, **Unexpected Motion**, **Enclosure Open**, **GPIO Tamper**, **Watchdog Timeout**, **Unexpected Reboot**, **Memory Critical** — one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)
    - **SD Replacement Recommended** — the device recommends replacing its SD card (`sd_replace`; `health` topic, unsigned)
    - **Event ID Space Low** — ON once the device's event-id counter nears the end of its space, and after it wraps (Home Assistant then refuses its events); only for devices whose health carries the flag, the Canary base and the canary-wap (`event_id_space_low`; `health` topic, unsigned; diagnostic)
-   - **Motion** and **Occupancy** — standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)
+   - **Motion** and **Occupancy** — standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic, the event that creates them included (HA44), and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)
    - **WiFi AP**, **WiFi Station**, **MQTT**, **Bluetooth**, **Mesh Network**, **Chirp Network** — per-transport connectivity, diagnostic and **disabled by default** — enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it — see the [transport catalog](#transport-catalog))
    - **Mesh Connected** — Opera mesh peers present, with peer and relay counts (`mesh_connected`; `mesh` topic, unsigned)
    - **Chirp Active** — Chirp community network on: the canary-wap's channel is on (active, cooldown or muted) rather than disabled, with the firmware's own word in its `channel_state` attribute (`chirp_active`; `chirp` topic, unsigned)
@@ -661,7 +677,8 @@ Canary Sentinel (the multi-sensor fusion guardian) is **not released yet** —
 its Phase 1a firmware is compiled by CI but has not run on a bench
 ([project README](../firmware/projects/canary-sentinel/README.md)). When a
 unit is built by hand, its own discovery announces **Presence** and
-**Anomaly** binary sensors, a **Channel blinded** problem sensor, **Level**,
+**Anomaly** binary sensors, a **Channel blinded** problem sensor (on while a
+channel votes denied, or when the light sensor did not answer at boot), **Level**,
 **Confidence**, **Anomaly score**, **Occupancy**, **Range band** and
 **Corroborating modalities** sensors, the uptime / RSSI / free-heap
 diagnostics and the firmware update entity — all from the coarse fused
@@ -813,9 +830,15 @@ and writes **one zip** —
 `<config>/securacv/evidence` (directory `0700`, files `0600`, never under
 `www/`), holding the kernel's bundle verbatim
 (`securacv-events-<bucket>.json`), `evidence_viewer.html` (the offline
-checker), `README.txt` (the recipient's recipe) and `WITNESS_KEY.txt`
-(`verifying_key=…`, `fingerprint=…`, `kernel=…`). Nothing is added to,
-removed from or re-serialized in the bundle. A persistent notification,
+checker), `README.txt` (the recipient's recipe), `WITNESS_KEY.txt`
+(`verifying_key=…`, `fingerprint=…`, `kernel=…`) and `WITNESS_STATEMENT.txt`
+(the export read out in plain language for whoever receives it: the sealed
+events by kind, zone and ten-minute window in the owner's time zone, the
+kernel's own failure records in the window, what the record proves, what it
+does not — no pixels, no identity, no precise second, no proof of whose
+hand held the key — and how to check it; a reading of the bundle, never
+evidence, and the checker ignores it). Nothing is added to, removed from
+or re-serialized in the bundle. A persistent notification,
 **SecuraCV evidence export ready**, reads *"Evidence pack ready — last 24
 hours, 17 sealed events, chain verified ✓. Download the evidence pack (link
 valid 24 hours; also under Media → SecuraCV evidence). Send the whole zip to
@@ -966,6 +989,7 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/egress` | Device → HA | canary-wap only: its committed-event egress counters, right after each health publish, naming that health's `firmware_version` and `uptime` (retained) |
 | `securacv/{device_id}/events` | Device → HA | Witness record events |
 | `securacv/{device_id}/chain` | Device → HA | Hash chain state |
+| `securacv/{device_id}/state` | Device → HA | canary-sense: the retained room snapshot; its presence/occupants/breathing words carry a `state`-kind signature (`chain_length`, `seq`, `sig`) the kernel's fleet roll-call verifies — the readings beside them are unsigned |
 | `securacv/{device_id}/tamper` | Device → HA | Tamper alerts (immediate) |
 | `securacv/{device_id}/availability` | Device → HA | Online/offline (LWT, retained) |
 | `securacv/{device_id}/update/state` | Device → HA | Firmware update entity state (retained) |
@@ -1062,7 +1086,7 @@ existing: the integration listens for several signals no firmware publishes yet.
 |-------------|-----------|----------------------|--------|
 | `sd_remove` | SD Removed | both publish `{"type":"sd_remove"}` on the tamper topic when their `system.integrity` module sees a mounted card leave (the per-kind bridge: `csi_mqtt.cpp` on the WAP, `csi_event_egress.cpp` on the canary base); both also publish `sd_mounted` in their MQTT health once a card has mounted this boot (a card-less boot sends no key, so it never reads as removed), so the sensor stays on until the card is back | Implemented (canary base + WAP) |
 | `sd_error` | SD Error | both publish `{"type":"sd_error"}` on the tamper topic when their `system.integrity` module sees a mounted card fail; the canary base also publishes `sd_errors` in health | Implemented (canary base + WAP) |
-| `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
+| `memory_critical` | Memory Critical | derived HA-side from the health's free memory, read as the Health sensor reads it: `memory_free` (the Canary WAP's spelling, which the canary-sense, canary-sentinel, canary-vision and canary-display health bodies carry too), else `free_heap` (canary base); a health that carries neither as a number reads clear (HA48) | Implemented |
 | `enclosure` | Enclosure Open | a reed/hall enclosure contact on the board map's `TAMPER_PIN_DEFAULT`, on builds with `FEATURE_TAMPER_GPIO=1` (off in every shipped profile until the pin is bench-validated): both publish `{"type":"enclosure"}` on the tamper topic when their `system.integrity` module commits an opening, and both also publish `enclosure_open` in health, so the sensor stays on while the lid is off. The canary base's capacitive-touch tamper is published on the tamper topic with `"kind":"enclosure_tamper","type":"enclosure"` | Experimental |
 | `power_loss` | Power Loss | canary base publishes `{"type":"power_loss"}` on the tamper topic at boot (power-events classifier, `canary_power_events.h`); Canary WAP publishes the same shape on the tamper topic when its `system.integrity` module commits a brownout-boot tamper (`csi_mqtt.cpp`'s per-kind bridge) | Implemented (canary base + WAP) |
 | `gps_jamming` | GPS Jamming | none found | Experimental |
@@ -1205,7 +1229,9 @@ minutes it reports *SecuraCV can't reach the witness kernel* until you
 delete it. The app's own uninstall leaves `/config/witness.db*`,
 `/config/.securacv`, `/config/api_token` and the carried
 `/config/custom_components/securacv` in place — they are yours and part of
-your backups; the app's [documentation tab](../privacy_witness_kernel/DOCS.md#revoking-and-uninstalling)
+your backups — but removes the app's own data, the device key with it
+([the device key and your backups](#the-device-key-and-your-backups));
+the app's [documentation tab](../privacy_witness_kernel/DOCS.md#revoking-and-uninstalling)
 lists what to delete by hand. A HACS install is removed from HACS as usual
 after the entry is deleted. A Canary that left the fleet can be deleted
 from its device page; one still reporting, or still pinned, comes back on
@@ -1298,7 +1324,7 @@ and the [blueprints](blueprints/README.md).
 |---|---|---|
 | **No SecuraCV witness kernel found** | warning | Automatic found neither the app nor a sidecar; Canary devices still work. Install the app or the sidecar — the issue clears itself when a kernel entry loads. Only Canary devices? Dismiss it. |
 | **SecuraCV can't reach the witness kernel** | error | Fifteen minutes of failed backstops. Check the app or sidecar is running and the URL is right (⋮ → Reconfigure). Clears on the next success. |
-| **The witness kernel's key changed** | critical, fixable | Compare the received fingerprint with what the kernel prints (`docker exec securacv pair`, the app's panel, `doctor`). Submit the fix flow only if they match; it rotates the pin and keeps the previous key. Until then kernel rows show a key mismatch and are never shown as verified. |
+| **The witness kernel's key changed** | critical, fixable | Compare the received fingerprint with what the kernel prints (`docker exec securacv pair`, the app's panel, `doctor`). Submit the fix flow only if they match; it rotates the pin and keeps the previous key. If the kernel serves yet another key while the form is open, the form comes back with that key's fingerprint and says so; compare again. Right after a Home Assistant restart or a reload, or when the kernel has only announced the new key, the fix flow has nothing to confirm until the next check (every five minutes) sees the kernel serve it. Until then kernel rows show a key mismatch and are never shown as verified. A check that sees the kernel serve its pinned key again clears the issue. |
 | **The witness kernel's storage should be replaced** | warning | Export your evidence first, then replace the card or disk; the sealed log lives in the app's or sidecar's data directory and moves with it. |
 | **SecuraCV replaced the app's pwk_* entities** | warning | Informational, once: re-point automations and dashboards to the new ids ([the table](#entity-ids-pwk_--securacv_)) and dismiss. |
 | **SecuraCV can't subscribe to MQTT** | warning | Home Assistant's MQTT integration is not connected; install the broker, add the MQTT integration, reload SecuraCV. |
@@ -1322,7 +1348,7 @@ silent — are sensors and events, not issues.
 | The Export button is unavailable | The kernel is unreachable; both buttons follow the kernel's availability. |
 | The export notification's link says expired | Links live 24 hours. **Media → SecuraCV evidence** resolves each pack to a fresh link; or export again. |
 | `pwk_*` entities and `securacv_*` entities both show | The claim has not reached the bridge yet: it needs the broker, and a bridge from this release or later. `witness/claim_state` reads `claimed` once it has. |
-| Diagnostics show redacted values | By design: tokens, hosts, ids, keys, hashes, MACs, SSIDs, names and coordinates are redacted; fingerprints are truncated to eight characters. |
+| Diagnostics show redacted values | By design: tokens, hosts, ids, keys, hashes, MACs, SSIDs, names, coordinates, a Canary's hardware, chip, module and Bluetooth identifiers and its health counters are redacted; the kernel key's fingerprint is shown as its eight characters, and each Canary's key fingerprint as a correlation id (`key_correlation_id`) that links rows of the same dump and carries none of its digits. Each Canary's rows are keyed by its id cut to eight characters (`canary-k…`), or the whole id when it has eight or fewer (`garage`), with `#1`, `#2` after ids that share their eight characters; every Canary with a device page has a row, including one that has not published since Home Assistant started. Home Assistant writes three parts of the file itself, outside the redaction, and each can carry entry ids. The `issues` section lists every Repairs issue Home Assistant holds for SecuraCV, including ones you ignored and those of your other SecuraCV entries, each with the time it was raised; the id of an issue about an entry ends in that entry's id. No issue carries a host or a key: a kernel key-mismatch issue carries only the two key fingerprints its repair shows. The `setup_times` section is keyed by the id of every SecuraCV entry Home Assistant set up as it last started, so after a restart it names this entry and your other SecuraCV entries. And the file's name, `config_entry-securacv-<entry id>.json`, ends in the entry id. Before posting the file, remove the `issues` and `setup_times` sections (or replace the `setup_times` keys) and rename it. Its `home_assistant` section is Home Assistant's own too, and carries your instance's time zone. |
 
 ## Alternative Setup Modes
 
@@ -1442,6 +1468,45 @@ Supervisor role). Nothing to type.
 Back up the device key once the kernel is running: if it is lost, old event
 signatures can no longer be verified.
 
+#### The device key and your backups
+
+The seed the kernel's identity derives from is kept in the app's own data,
+`/data/device_key` inside the app's container (mode 0600), and in the app's
+`device_key_seed` option (the Configuration tab): the wizard writes the
+option, and a key the app generated itself, or carried over from `/config`,
+is recorded there on the next start, so the option is always where to copy
+it from. Nothing else on your Home Assistant reaches that
+directory: the File editor, Samba and SSH apps cannot read it, and a backup
+of Home Assistant's configuration alone does not carry it. A backup that
+**includes the SecuraCV app** does carry it (the app's data and options are
+part of that backup) — treat such a backup as holding the key. Uninstalling
+the app deletes its data, the key with it: export first, or copy the seed
+from the Configuration tab, if you may want the log or a replacement device
+later.
+
+Earlier releases kept the key at `/config/.securacv/device_key`, inside
+every backup and readable by every file-sharing app, where the 0600 mode
+protected nothing. The first start after the update moves it: the file is
+copied byte-for-byte into the app's data, held against the sealed log with
+the kernel's own verifier (the seed must open the log and derive its key),
+and only then removed from `/config`; the app's log says so in one line. A
+key the log does not accept is kept in both places and the log says why.
+The rotating API token the integration reads is unchanged at
+`/config/api_token`.
+
+The kernel's own copy goes too. In **standalone** mode the kernel used to
+keep the seed a second time, beside the log at
+`/config/witness.ed25519.seed`: the same key, back inside every backup. The
+app now starts the kernel with `DEVICE_KEY_SEED_PERSIST=0`, which tells it
+the seed is kept elsewhere, so a fresh install writes nothing there; and the
+first start after the update removes an existing copy once it is shown to
+hold, byte for byte, the key in use (one line in the log says so). A copy
+holding a different key is kept, with a warning, and the kernel refuses to
+open the log with two identities until a person removes the wrong one.
+Frigate mode (the wizard's default) never had such a copy, though an install
+that once ran standalone is cleaned up the same way. After one start on this
+release, nothing under `/config` holds the key.
+
 #### Advanced: manual configuration (optional)
 
 Skip the wizard only if you need a specific identity or a hand-tuned config —
@@ -1537,8 +1602,9 @@ cp -r privacy_witness_kernel /addons/privacy_witness_kernel
 
 The device key is a secret that establishes your device's cryptographic
 identity. You don't need to create one — the app generates a key on first
-start and persists it. Supply your own seed only when you want a specific
-identity (for instance, restoring from backup):
+start and keeps it in its own data ([where, and what your backups
+hold](#the-device-key-and-your-backups)). Supply your own seed only when
+you want a specific identity (for instance, restoring from backup):
 
 ```bash
 openssl rand -hex 32
@@ -1717,12 +1783,13 @@ kernel through its core `mqtt` integration:
 | `binary_sensor.pwk_chain_problem` | Binary Sensor | The kernel's **self**-report of a chain problem |
 | `button.pwk_verify_now` | Button | Ask the kernel to verify itself |
 
-The bridge asks Home Assistant for these ids with `default_entity_id`, which
-Home Assistant 2025.10 and later honors when it first registers an entity;
+The bridge asks Home Assistant for these ids with `default_entity_id`;
 `<zone>` is the zone id without its `zone:` prefix, as Home Assistant slugs
-it (`zone:back-gate` becomes `back_gate`). An entity your Home Assistant
-registered before keeps the id it has, and an older Home Assistant names the
-entity from the device name and the entity name.
+it (`zone:back-gate` becomes `back_gate`). Home Assistant 2025.10 and later
+tries to give each entity the id asked for when it first registers it, and
+adds `_2` when another entity already holds the id. An entity your Home
+Assistant registered before keeps the id it has, and an older Home Assistant
+names the entity from the device name and the entity name.
 
 These entities show the kernel's **self-report**: the dashboard and the
 blueprints label them *Chain OK (kernel-reported)*, never Verified. Once the
@@ -1792,18 +1859,35 @@ still needs from you, and why:
   wellbeing words the Wall shows — a restore therefore keeps that trust
   instead of re-pinning every device. The file is written `0600`, and
   `/api/fleet` serves the roll-call's coarse words only, never the keys.
+  **The device key is not**, on purpose too: it lives in the app's own data,
+  not under `/config` ([the device key and your backups](#the-device-key-and-your-backups)).
 
 On the **Docker sidecar** the port is published from the first start —
 that is how Home Assistant pairs — and the roll-call there serves **only the
 kernel's own row** unless you set `SECURACV_FLEET_ROLLCALL=1` in the compose
 file (`WITNESS_API_FLEET_ROLLCALL=full`): who is home is yours to opt into,
 never a side effect of pairing. `GET /api/identity` reports the mode as
-`fleet_rollcall`.
+`fleet_rollcall`. The **app** has the same switch as its `fleet_rollcall`
+option: `self` by default, because the route takes no token; set it to
+`full` for the Witness Wall.
 
 `online` on that roll-call is not a liveness proof: it means a signed chain
 publish verified against the pinned key within the last 180 s, no more —
 the exact wording is in
-[`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md).
+[`tvos/discovery/DISCOVERY.md`](../tvos/discovery/DISCOVERY.md). The
+presence/occupants/breathing words on a row are held to the same key: a
+canary-sense signs them on its `state` publish (the `state` kind of the
+device-signature canonical, with the device's chain length and a per-boot
+publish counter as the freshness pair), and the bridge serves words only
+from a publish that verifies against the pin with a pair newer than the
+last it saw. A `state` published on the broker by anyone else — or by
+firmware older than the envelope, which still carries the words but no
+signature — sets nothing on the roll-call, and the integration's own
+entities keep reading that topic exactly as before (unsigned, as the
+entity list above says). Turning the roll-call on (`full`) is therefore
+safe against a broker client inventing a room's wellbeing under a real
+device id; what it still cannot do is prove the device is present, and
+the sidecar's default stays `self`.
 
 ---
 
@@ -2000,8 +2084,18 @@ witness_api mint-viewer-token --label "living room tv" --base-url http://192.168
 witness_api revoke-viewer-token <token_id>
 ```
 
+That is the host form. In the kernel's root image it is the same binary
+inside the container, `docker exec <container> witness_api mint-viewer-token --label "living room tv"`,
+walked step by step in
+[container.md](container.md#mint-a-witness-wall-viewer-token); the Docker
+sidecar wraps it as
+`docker exec securacv entrypoint.sh mint-viewer-token --label "living room tv"`
+(see [frigate_integration.md](frigate_integration.md)).
+
 The command runs with the same `WITNESS_CONFIG` and `DEVICE_KEY_SEED` as
-the serving kernel. Its stdout is one JSON line, the pairing receipt, and
+the serving kernel; a config file written for `witnessd` is read for the
+keys the two share, and its `[rtsp]`, `[detect]` and other daemon-only
+blocks are skipped. Its stdout is one JSON line, the pairing receipt, and
 the only copy of the token that will ever exist: the kernel keeps its
 sha256 in the viewer-token file — `api.viewer_token_path` /
 `WITNESS_API_VIEWER_TOKEN_PATH`, defaulting to `viewer_tokens.json` beside
@@ -2009,10 +2103,10 @@ sha256 in the viewer-token file — `api.viewer_token_path` /
 or a revoke takes effect without a restart. The receipt carries the
 kernel's current verifying key, which the Wall pins at pairing: its
 "Verified" then means Ed25519 signatures checked against that pinned key,
-not whatever key the hub serves today. The Docker sidecar wraps both
-commands (`docker exec securacv entrypoint.sh mint-viewer-token …`,
-see [frigate_integration.md](frigate_integration.md)); the Home Assistant
-app reads the file but has no control that mints one yet.
+not whatever key the hub serves today. The sidecar wraps the revoke the
+same way (`docker exec securacv entrypoint.sh revoke-viewer-token <token_id>`);
+the Home Assistant app reads the file but has no control that mints one
+yet.
 
 ### Endpoints
 

@@ -36,8 +36,9 @@
 //!
 //! Each discovery config asks for its id above with `default_entity_id`
 //! (sweep HA16), `<zone>` being the zone name as Home Assistant slugs it.
-//! Home Assistant 2025.10 and later honors that key when it first registers
-//! an entity; an entity already in its registry keeps the id it has, and an
+//! Home Assistant 2025.10 and later tries to give an entity that id when it
+//! first registers it, adding `_2` when another entity holds it; an entity
+//! already in its registry keeps the id it has, and an
 //! older release ignores the key and names the entity from the device name
 //! and the entity name (`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`).
 //!
@@ -2062,9 +2063,10 @@ fn ha_slug(s: &str) -> String {
 
 /// The entity id a discovery config asks Home Assistant for, as its
 /// `default_entity_id` (sweep HA16): `<domain>.<object id>`, the object id
-/// slugged as Home Assistant would. Home Assistant 2025.10 and later keeps
+/// slugged as Home Assistant would. Home Assistant 2025.10 and later tries
 /// the part after the `.` as the object id when it first registers the
-/// entity (`homeassistant/components/mqtt/entity.py`); without it the id
+/// entity, adding `_2` when another entity holds it
+/// (`homeassistant/components/mqtt/entity.py`); without it the id
 /// came from the device name and the entity name.
 fn ha_entity_id(domain: &str, object_id: &str) -> String {
     format!("{domain}.{}", ha_slug(object_id))

@@ -37,6 +37,23 @@ DEPFLAGS = -MMD -MP
 override CXXFLAGS += $(DEPFLAGS)
 with_deps = $(1) && $(filter-out -o $@ -MMD -l% -Wl%,$(1)) -MM -MT $@ > $@.d
 
+# Flags one compiler has and the other refuses under -Werror. clang names
+# itself in --version (Apple's g++ included); GCC does not.
+ifeq ($(shell $(CXX) --version 2>/dev/null | grep -ci clang),0)
+# GCC only: a bounded strncpy in the CSI library, not a test's to fix.
+WNO_STRINGOP = -Wno-stringop-truncation
+else
+# clang's -Wall, not GCC's: constants the CSI library names and leaves unread,
+# and a loop whose variable only the lambda it calls advances.
+WNO_UNUSED_CONST = -Wno-unused-const-variable
+WNO_LAMBDA_LOOP  = -Wno-for-loop-analysis
+# clang's UBSan runtime is a separate package. Without it the UBSan suite
+# still runs, trapping (SIGILL) on undefined behavior instead of reporting it.
+ifneq ($(shell echo 'int main(){}' | $(CXX) -x c++ - -fsanitize=undefined -o /dev/null 2>/dev/null; echo $$?),0)
+UBSAN_TRAP = -fsanitize-trap=undefined
+endif
+endif
+
 MR60_DIR = ../common/sensors/mmwave_mr60
 MR60_SRC = $(MR60_DIR)/mr60_uart.cpp \
            $(MR60_DIR)/mr60_presence.cpp \
@@ -192,6 +209,7 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # gate is this header's State.
 PROVGATE_HDR = ../common/network/provisioning_gate.h
 PROVGATE_MAIN = ../canary/src/main.cpp
+PROVGATE_WAP_INO = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
 PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 
 # Improv Wi-Fi over BLE, the pure half (common/network/improv_core.h): the
@@ -576,8 +594,12 @@ CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
 # handle_provisioning_receipt(), with bearer_present_and_valid() and
 # send_host_refusal() they call, are cut verbatim out of securacv_network.cpp
 # by cut_functions.awk (SECAUTH_NET_INC) and driven over stand-ins for the
-# Host, the setup state, the SoftAP test, the tap and the receipt writer, on
-# the real AuthManager and the real provisioning_gate.h decisions.
+# Host, the setup state, the SoftAP test, the socket's peer and the receipt
+# writer, on the real AuthManager and the real provisioning_gate.h decisions.
+# The BOOT tap's step, provisioning_gate_take(), is cut with them and runs on
+# the real gate State and TapArbiter (sweep F354): two askers around one
+# tap, a lone asker whose address changes, and the 409 body, read beside the
+# WAP's handler in canary_wap.ino (SECAUTH_WAP_INO) for its keys and words.
 SECAUTH_SRC   = ../canary/lib/securacv_auth/src/securacv_auth.cpp
 SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
                 ../canary/include/canary_config.h \
@@ -586,10 +608,11 @@ SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
                 ../common/network/provisioning_gate.h \
                 $(wildcard stubs/securacv_auth/*.h)
 SECAUTH_READS = ../canary/lib/securacv_network/src/securacv_network.cpp
+SECAUTH_WAP_INO = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
 SECAUTH_BIN   = $(BUILD_DIR)/test_securacv_auth
 SECAUTH_INCS  = -I stubs/securacv_auth -I ../canary/lib/securacv_auth/src \
                 -I ../canary/include -I ../common
-SECAUTH_NET_SIGS = static void send_host_refusal(httpd_req_t* req) {|static bool bearer_present_and_valid(httpd_req_t* req) {|static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
+SECAUTH_NET_SIGS = static void send_host_refusal(httpd_req_t* req) {|static bool bearer_present_and_valid(httpd_req_t* req) {|static bool provisioning_gate_take(httpd_req_t* req,|static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 SECAUTH_NET_INC  = $(BUILD_DIR)/secauth_network.inc
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
@@ -639,6 +662,20 @@ DASHROUTES_JS = test_canary_dashboard_routes.test.js
 # Export saves the bundle POST /api/export answers inline (it named no file).
 DASHGATES_JS = test_canary_dashboard_gates.test.js
 
+# That dashboard's unlock banner and the BOOT tap (repo sweep F354): the
+# banner asks first, polling GET /api/provisioning-receipt from before the
+# press, takes the receipt's token without a reload, says so on a 409,
+# keeps asking from a hidden tab and stops on its window and on pagehide,
+# one timer and one request at a time. Its two-asker cases meet the firmware's own tap
+# step: tap_step_oracle.cpp compiles provisioning_gate_take(), cut from
+# securacv_network.cpp (TAPSTEP_INC, the cut SECAUTH_NET_SIGS also takes),
+# over the real provisioning_gate.h, and the test drives it by
+# TAP_STEP_ORACLE (it builds one itself when run alone).
+BANNER_JS     = test_canary_provisioning_banner.test.js
+TAPSTEP_SIGS  = static bool provisioning_gate_take(httpd_req_t* req,
+TAPSTEP_INC   = $(BUILD_DIR)/tap_step.inc
+TAP_ORACLE    = $(BUILD_DIR)/tap_step_oracle
+
 # POST /api/logs/<seq>/ack on both trees (repo sweep F214). Both registered
 # "/api/logs/*/ack", which esp_http_server's httpd_uri_match_wildcard never
 # matches (a `*` counts only at a template's end), so the per-entry
@@ -664,6 +701,10 @@ DASHGATES_JS = test_canary_dashboard_gates.test.js
 LOGACK_PIO_SRC  = ../canary/lib/securacv_network/src/securacv_network.cpp
 LOGACK_WAP_SRC  = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
 LOGACK_SIGS     = static bool log_ack_seq_from_uri(const char* uri, uint32_t* seq) {|static esp_err_t handle_log_ack(httpd_req_t* req) {
+# canary-wap's handler reads its body through http_body::read_request() and
+# answers a refusal with http_send_error() and http_body_refusal() (sweep
+# F300): cut with them.
+LOGACK_WAP_SIGS = $(LOGACK_SIGS)|static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* error_code) {|static const char* http_body_refusal(http_body::Result r) {
 LOGACK_PIO_INC  = $(BUILD_DIR)/log_ack_pio.inc
 LOGACK_WAP_INC  = $(BUILD_DIR)/log_ack_wap.inc
 LOGACK_BIN      = $(BUILD_DIR)/test_log_ack_route
@@ -829,6 +870,79 @@ NVSKEY_INC    = $(BUILD_DIR)/nvs_load_key.inc
 NVSKEY_BIN    = $(BUILD_DIR)/test_nvs_load_key
 NVSKEY_FE_BIN = $(BUILD_DIR)/test_nvs_load_key_require_fe
 
+# The flagship's TLS certificate load fails closed (repo sweep F421,
+# test_tls_load_der.cpp): tls_load_der_from_nvs() answers Loaded, Absent
+# (IDF's NVS says neither entry is stored) or Refused (one line, nothing
+# handed back, both buffers zeroed before they are freed), and initTls()
+# generates a certificate only on Absent, so a stored pair that could not be
+# read is never replaced by one whose pin no phone holds. The load and the
+# store are cut verbatim out of securacv_network.cpp, NvsManager's session
+# and blob calls and secure_zero() out of securacv_crypto.cpp, into one .inc,
+# compiled over stubs/nvs_key and stubs/nvs_manager's lock like the NVSKEY
+# suite above. It also reads securacv_network.cpp (initTls(), which needs
+# the whole network stack, is pinned by text) and the canary tree (no other
+# reader or writer of the two entries).
+TLSDER_NET_SRC     = ../canary/lib/securacv_network/src/securacv_network.cpp
+TLSDER_CRYPTO_SIGS = $(NVSLOCK_SIGS)|size_t NvsManager::getBytes(|size_t NvsManager::putBytes(|void secure_zero(
+TLSDER_NET_SIGS    = static KeyLoad tls_load_der_from_nvs(|static bool tls_store_der_to_nvs(
+TLSDER_HDRS        = $(NVSLOCK_HDRS) $(wildcard stubs/nvs_key/*.h)
+TLSDER_INC         = $(BUILD_DIR)/tls_load_der.inc
+TLSDER_BIN         = $(BUILD_DIR)/test_tls_load_der
+
+# The sibling witnesses' identity-key load fails closed (repo sweep F362,
+# test_witness_key_load_projects.cpp): canary-sense, canary-vision and
+# canary-sentinel draw a new key only when IDF's NVS says none is stored,
+# and every other answer (a failed lookup, a wrong length, a short read, a
+# stored zero key) disables signing for the boot and writes nothing.
+# load_or_generate_keypair() and secure_zero() are cut verbatim out of each
+# project's src/witness.cpp, with the four lines declaring the NVS names and
+# the key buffers taken from the same file (the recipe fails unless it finds
+# all four), into one .inc per project, compiled side by side over
+# stubs/nvs_key and canary-sense's canary/log.h. It also reads the three
+# sources (the functions byte-identical, init()'s refusal, one owner of the
+# key's entry).
+WITKEY_PROJECTS = canary-sense canary-vision canary-sentinel
+WITKEY_SRCS     = $(foreach p,$(WITKEY_PROJECTS),../projects/$(p)/src/witness.cpp)
+WITKEY_SIGS     = void secure_zero(|bool load_or_generate_keypair(
+WITKEY_DECLS    = ^(constexpr const char\* (NVS_NAMESPACE|KEY_PRIV) |uint8_t  s_(priv|pub)\[32\] )
+WITKEY_INCS     = $(foreach p,$(WITKEY_PROJECTS),$(BUILD_DIR)/witness_key_load_$(p).inc)
+WITKEY_HDRS     = ../projects/canary-sense/include/canary/log.h $(wildcard stubs/nvs_key/*.h)
+WITKEY_BIN      = $(BUILD_DIR)/test_witness_key_load_projects
+
+# The camera's thermal step (repo sweep F432, test_camera_thermal.cpp):
+# securacv_camera's camera_thermal.h, the miss counter, fail-safe throttle,
+# 70/80 C hysteresis and frame delay CameraManager::checkThermal() calls,
+# linked with securacv_thermal.cpp, the shared die-temperature provider,
+# built as is once per chip target over stubs/idf_tsens: the classic ESP32
+# of env:esp32cam (no sensor), and the ESP32-S3 on ESP-IDF 4.4.7 (the stock
+# units' Arduino 2.0.17 core, driver/temp_sensor.h) and on ESP-IDF 5.5.4
+# ([env:full]'s core 3, driver/temperature_sensor.h), each with the
+# sdkconfig.h that names the target, the esp_idf_version.h that picks the
+# driver, and a fake of that driver the suite drives. The provider's
+# thermal_sensor_present() is false on the classic ESP32 and true on the
+# S3, where the reads go through the driver. The provider installs the
+# driver once and never retries a failed install, so the S3 binaries run
+# three times, in a mode each: --tsens=ok, install-fails and enable-fails.
+# A chip with no sensor never throttles and reads as no sensor, three
+# misses throttle once, a stream's reset clears the count, and a driver
+# that will not start fails safe on every stream. It also reads the camera
+# and provider sources (checkThermal() reads only through the step; the
+# provider includes sdkconfig.h before it tests the target: IDF defines
+# CONFIG_IDF_TARGET_* there and nowhere on the command line, and without
+# that include the S3 compiled the sensorless stub too).
+CAMTHERM_DIR   = ../canary/lib/securacv_camera/src
+CAMTHERM_PROV  = ../canary/lib/securacv_thermal/src
+CAMTHERM_STUBS = stubs/idf_tsens
+CAMTHERM_READS = $(CAMTHERM_DIR)/securacv_camera.cpp $(CAMTHERM_DIR)/securacv_camera.h \
+                 $(CAMTHERM_DIR)/camera_thermal.h $(CAMTHERM_PROV)/securacv_thermal.cpp
+CAMTHERM_HDRS  = $(wildcard $(CAMTHERM_STUBS)/*/*.h $(CAMTHERM_STUBS)/*/*/*.h)
+CAMTHERM_BIN   = $(BUILD_DIR)/test_camera_thermal
+CAMTHERM_TARGETS = esp32 esp32s3_idf4 esp32s3_idf5
+CAMTHERM_BINS  = $(foreach t,$(CAMTHERM_TARGETS),$(CAMTHERM_BIN)_$(t))
+$(CAMTHERM_BIN)_esp32: CAMTHERM_TARGET = esp32
+$(CAMTHERM_BIN)_esp32s3_idf4: CAMTHERM_TARGET = esp32s3_idf4
+$(CAMTHERM_BIN)_esp32s3_idf5: CAMTHERM_TARGET = esp32s3_idf5
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -898,6 +1012,14 @@ VISCORE_SRC = $(VISION_SRC)/detect_config.cpp $(VISFSM_SRC) \
               $(EMU_DIR)/vision/vision_core_bindings.cpp $(EMU_DIR)/vision/vision_core_shim.cpp
 VISCORE_BIN = $(BUILD_DIR)/test_vision_core_bindings
 
+# Canary Vision's module link (src/vision/vision_mgr.cpp, compiled verbatim
+# against a scripted Grove Vision AI module in stubs/vision_mgr/): the boot
+# line's 1 or 0 and the `j` proof record's module_ok, from begin() and a
+# fresh NAME? round trip, never the module's own id (no id accessor call); and
+# invoke()'s int read as the status code it is (sweep F384).
+VISMGR_SRC = $(VISION_SRC)/vision/vision_mgr.cpp
+VISMGR_BIN = $(BUILD_DIR)/test_vision_module_link
+
 # Sentinel multi-sensor fusion brain (common/fusion/sentinel_fusion.*): the
 # board-agnostic evidence-fusion engine compiled by projects/canary-sentinel on
 # device and here on the host. Pins the anti-evasion scoring (independence
@@ -920,6 +1042,16 @@ SENT_PRESET_HDR = $(SENT_PROJ_INC)/canary/sentinel_config.h \
                   $(FUSION_DIR)/sentinel_fusion.h $(FUSION_DIR)/sentinel_channels.h
 PRESET_DOOR_BIN = $(BUILD_DIR)/test_sentinel_preset_door
 PRESET_LITE_BIN = $(BUILD_DIR)/test_sentinel_preset_mailbox_lite
+
+# The Sentinel's sensor links (projects/canary-sentinel's sentinel_links.h):
+# the radar object its health payload carries, judged by the rule its fusion
+# vote uses, and the BH1750's begin() result telling a unit with no light
+# sensor (the channel never votes, and channel_denied reports it) from a
+# blinded one (Denied), through the real engine under the door preset. The
+# project's src/main.cpp is passed in and held to calling those rules (no
+# host suite compiles it), so the read fails closed.
+SENT_LINKS_READS = ../projects/canary-sentinel/src/main.cpp
+SENT_LINKS_BIN = $(BUILD_DIR)/test_sentinel_links
 
 # Fleet-figure art tier (common/core/fleet_figures_art.h over
 # fleet_figures.h): every figure the firmware lookups can resolve has
@@ -1109,8 +1241,9 @@ $(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
 $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
 
-$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -DCANARY_MAIN_CPP='"$(abspath $(PROVGATE_MAIN))"' -o $@ test_provisioning_gate.cpp
+$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) $(PROVGATE_WAP_INO) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCANARY_MAIN_CPP='"$(abspath $(PROVGATE_MAIN))"' \
+	    -DCANARY_WAP_INO='"$(abspath $(PROVGATE_WAP_INO))"' -o $@ test_provisioning_gate.cpp
 
 $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_improv_core.cpp
@@ -1229,7 +1362,7 @@ $(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) $(MQTTQUEUE_HDR) M
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_backfill.cpp -o $@
 
 $(CANEGR_BIN): test_canary_event_egress.cpp $(CANEGR_SRC) $(CANEGR_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) -DCSI_TEST_HOST_BUILD \
 	    -DFEATURE_CSI=1 -DFEATURE_HA_MQTT=1 -DFEATURE_SD_STORAGE=1 -DFEATURE_WATCHDOG=1 \
 	    -I stubs/canary_egress -I ../canary/include -I ../canary/src \
 	    -I ../canary/lib/securacv_mqtt/src -I ../common/csi/src -I ../common \
@@ -1244,12 +1377,20 @@ $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUI
 	    -DCANARY_NETWORK_CPP='"$(abspath ../canary/lib/securacv_network/src/securacv_network.cpp)"' \
 	    $(CANDIAG_SRC) -o $@
 
+$(TAPSTEP_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(TAPSTEP_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
+
+$(TAP_ORACLE): tap_step_oracle.cpp $(PROVGATE_HDR) ../canary/include/canary_config.h $(TAPSTEP_INC) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../canary/include -I ../common \
+	    -DTAP_STEP_INC='"$(abspath $(TAPSTEP_INC))"' tap_step_oracle.cpp -o $@
+
 $(SECAUTH_NET_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(SECAUTH_NET_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
 
-$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
+$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_WAP_INO) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) $(SECAUTH_INCS) \
 	    -DCANARY_NETWORK_CPP='"$(abspath $(SECAUTH_READS))"' \
+	    -DCANARY_WAP_INO='"$(abspath $(SECAUTH_WAP_INO))"' \
 	    -DCANARY_FLAGSHIP_DIR='"$(abspath ../canary)"' \
 	    -DSECAUTH_NET_INC='"$(abspath $(SECAUTH_NET_INC))"' \
 	    test_securacv_auth.cpp $(SECAUTH_SRC) -o $@)
@@ -1281,20 +1422,20 @@ run-secauth-knobs:
 run: run-secauth-knobs
 
 $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
 	    test_csi_event_id_space.cpp $(IDSPACE_SRC) -o $@)
 
 $(CEILING_BIN): test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -DCSI_TEST_CLOCK -I $(IDSPACE_DIR) \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) -DCSI_TEST_HOST_BUILD -DCSI_TEST_CLOCK -I $(IDSPACE_DIR) \
 	    test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) -o $@)
 
 $(MODINT_BIN): test_csi_modules_integration.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) $(WNO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
 	    test_csi_modules_integration.cpp $(MODINT_SRC) -o $@)
 
 $(MODBOOT_BIN): test_csi_module_boot.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) $(WNO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
 	    test_csi_module_boot.cpp $(MODINT_SRC) -o $@)
 
@@ -1321,7 +1462,7 @@ $(DAILY_INC): $(DAILY_MAIN) cut_functions.awk Makefile | $(BUILD_DIR)
 
 $(DAILY_BIN): test_csi_daily_summary.cpp $(DAILY_INC) $(MODINT_SRC) $(MODINT_HDRS) \
               ../common/time/tz_rule.h Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_STRINGOP) $(WNO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src -I ../common \
 	    -I $(BUILD_DIR) -DCANARY_MAIN_CPP='"$(abspath $(DAILY_MAIN))"' \
 	    test_csi_daily_summary.cpp $(MODINT_SRC) -o $@)
@@ -1418,11 +1559,56 @@ $(NVSKEY_FE_BIN): test_nvs_load_key.cpp $(NVSKEY_INC) $(NVSKEY_HDRS) Makefile | 
 	    -I ../canary/lib/securacv_crypto/src -I ../canary/lib/securacv_witness/src -I ../common \
 	    -I ../canary/include -I $(BUILD_DIR) test_nvs_load_key.cpp -o $@
 
+$(TLSDER_INC): $(NVSLOCK_SRC) $(TLSDER_NET_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(TLSDER_CRYPTO_SIGS)' -f cut_functions.awk $(NVSLOCK_SRC) > $@.tmp && \
+	awk -v 'sigs=$(TLSDER_NET_SIGS)' -f cut_functions.awk $(TLSDER_NET_SRC) >> $@.tmp && \
+	mv $@.tmp $@
+
+$(TLSDER_BIN): test_tls_load_der.cpp $(TLSDER_INC) $(TLSDER_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
+	    -I ../common -I ../canary/include -I $(BUILD_DIR) test_tls_load_der.cpp -o $@
+
+.PHONY: run-tls-load-der
+run-tls-load-der: $(TLSDER_BIN)
+	./$(TLSDER_BIN) $(TLSDER_NET_SRC) $(NVSKEY_READS)
+run: run-tls-load-der
+
+$(BUILD_DIR)/witness_key_load_%.inc: ../projects/%/src/witness.cpp cut_functions.awk Makefile | $(BUILD_DIR)
+	grep -E '$(WITKEY_DECLS)' $< > $@.tmp
+	@test "$$(wc -l < $@.tmp)" -eq 4 || { \
+	  echo "$<: the NVS names and key buffers moved (expected 4 declaration lines)" >&2; exit 1; }
+	awk -v 'sigs=$(WITKEY_SIGS)' -f cut_functions.awk $< >> $@.tmp && mv $@.tmp $@
+
+$(WITKEY_BIN): test_witness_key_load_projects.cpp $(WITKEY_INCS) $(WITKEY_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I ../projects/canary-sense/include -I $(BUILD_DIR) \
+	    test_witness_key_load_projects.cpp -o $@
+
+.PHONY: run-witness-key-load-projects
+run-witness-key-load-projects: $(WITKEY_BIN)
+	./$(WITKEY_BIN) $(WITKEY_SRCS)
+run: run-witness-key-load-projects
+
+$(CAMTHERM_BINS): test_camera_thermal.cpp $(CAMTHERM_READS) $(CAMTHERM_HDRS) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(CAMTHERM_STUBS)/$(CAMTHERM_TARGET) -I $(CAMTHERM_STUBS)/common \
+	    -I $(CAMTHERM_DIR) -I $(CAMTHERM_PROV) -I ../canary/include \
+	    test_camera_thermal.cpp $(CAMTHERM_PROV)/securacv_thermal.cpp -o $@)
+
+.PHONY: run-camera-thermal
+run-camera-thermal: $(CAMTHERM_BINS)
+	./$(CAMTHERM_BIN)_esp32 $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf4 --tsens=ok $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf4 --tsens=install-fails $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf4 --tsens=enable-fails $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf5 --tsens=ok $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf5 --tsens=install-fails $(CAMTHERM_READS)
+	./$(CAMTHERM_BIN)_esp32s3_idf5 --tsens=enable-fails $(CAMTHERM_READS)
+run: run-camera-thermal
+
 $(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_PIO_SRC) > $@.tmp && mv $@.tmp $@
 
 $(LOGACK_WAP_INC): $(LOGACK_WAP_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
-	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_WAP_SRC) > $@.tmp && mv $@.tmp $@
+	awk -v 'sigs=$(LOGACK_WAP_SIGS)' -f cut_functions.awk $(LOGACK_WAP_SRC) > $@.tmp && mv $@.tmp $@
 
 $(LOGACK_BIN): test_log_ack_route.cpp $(LOGACK_PIO_INC) $(LOGACK_WAP_INC) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(BUILD_DIR) test_log_ack_route.cpp -o $@
@@ -1437,22 +1623,27 @@ $(VISION_PIPE_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefi
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_detection_pipeline.cpp -o $@
 
 $(VISION_PIPE_UBSAN_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -fsanitize=undefined -fno-sanitize-recover=all -I $(VISION_INC) -I $(VISION_CFG) \
+	$(if $(UBSAN_TRAP),@echo "note: $(CXX) has no UBSan runtime library: $(@F) traps with SIGILL on undefined behavior and prints no report")
+	$(CXX) $(CXXFLAGS) -fsanitize=undefined -fno-sanitize-recover=all $(UBSAN_TRAP) -I $(VISION_INC) -I $(VISION_CFG) \
 	    test_vision_detection_pipeline.cpp -o $@
 
 $(VISPROF_BIN): test_vision_profiles.cpp $(VISPROF_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) -I ../common/fleet_link test_vision_profiles.cpp -o $@
 
 $(VISFSM_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@)
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_LAMBDA_LOOP) -I $(VISION_INC) -I $(VISION_CFG) test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@)
 
 $(VISFSM_GRACE_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -DVISION_DWELL_END_GRACE_MS=$(VISFSM_GRACE_MS) -I $(VISION_INC) -I $(VISION_CFG) \
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WNO_LAMBDA_LOOP) -DVISION_DWELL_END_GRACE_MS=$(VISFSM_GRACE_MS) -I $(VISION_INC) -I $(VISION_CFG) \
 	    test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@)
 
 $(VISCORE_BIN): test_vision_core_bindings.cpp $(VISCORE_SRC) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -DARDUINO=10812 -I stubs/emscripten -I $(EMU_DIR)/shim -I $(EMU_DIR)/vision \
 	    -I $(VISION_INC) -I $(VISION_CFG) test_vision_core_bindings.cpp $(VISCORE_SRC) -o $@)
+
+$(VISMGR_BIN): test_vision_module_link.cpp $(VISMGR_SRC) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I stubs/vision_mgr -I $(VISION_INC) -I $(VISION_CFG) \
+	    -I ../boards/esp32-c3/pins test_vision_module_link.cpp $(VISMGR_SRC) -o $@)
 
 $(FUSION_BIN): test_sentinel_fusion.cpp $(FUSION_SRC) $(FUSION_HDR) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -DSENTINEL_FUSION_TEST_HOST -I $(FUSION_DIR) test_sentinel_fusion.cpp $(FUSION_SRC) -o $@)
@@ -1462,6 +1653,9 @@ $(PRESET_DOOR_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $
 
 $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/mailbox-lite/config.h Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="mailbox-lite"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/mailbox-lite test_sentinel_presets.cpp $(FUSION_SRC) -o $@)
+
+$(SENT_LINKS_BIN): test_sentinel_links.cpp $(FUSION_SRC) $(SENT_LINKS_READS) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/door test_sentinel_links.cpp $(FUSION_SRC) -o $@)
 
 $(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@)
@@ -1489,7 +1683,27 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+# The canary's sensing aggregator over that same trio (sweep F411):
+# securacv_sensing.cpp fed by real CSI windows, and the predicate
+# firmware/canary/src/main.cpp's sensing publish writes rssi_dbm under,
+# sensing_rssi_measured(). A window that heard nothing, or only frames below
+# the noise floor, is counted and carries a zero mean; the suite holds that
+# such a window is not a reading. main.cpp's call of the predicate is pinned
+# by scripts/tests/test_ha_discovery_canary_sensing_render.py.
+SENSRSSI_DIR = ../canary/lib/securacv_sensing/src
+SENSRSSI_BIN = $(BUILD_DIR)/test_canary_sensing_rssi
+
+$(SENSRSSI_BIN): test_canary_sensing_rssi.cpp $(CSIHAL_SRC) $(SENSRSSI_DIR)/securacv_sensing.cpp Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DCONFIG_IDF_TARGET_ESP32S3=1 -DCONFIG_ESP_WIFI_CSI_ENABLED=1 \
+	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) -I $(SENSRSSI_DIR) \
+	    test_canary_sensing_rssi.cpp $(CSIHAL_SRC) $(SENSRSSI_DIR)/securacv_sensing.cpp -o $@)
+
+.PHONY: run-canary-sensing-rssi
+run-canary-sensing-rssi: $(SENSRSSI_BIN)
+	./$(SENSRSSI_BIN)
+run: run-canary-sensing-rssi
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(VISMGR_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(SENT_LINKS_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE) $(TAP_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1567,9 +1781,11 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(VISFSM_BIN)
 	./$(VISFSM_GRACE_BIN)
 	./$(VISCORE_BIN)
+	./$(VISMGR_BIN)
 	./$(FUSION_BIN)
 	./$(PRESET_DOOR_BIN)
 	./$(PRESET_LITE_BIN)
+	./$(SENT_LINKS_BIN) $(SENT_LINKS_READS)
 	./$(LOOK_BIN)
 	./$(PLUMAGE_BIN)
 	./$(STORY_BIN)
@@ -1584,6 +1800,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(CHIRPPANEL_JS)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(DASHROUTES_JS)
 	$(NODE) --test $(DASHGATES_JS)
+	TAP_STEP_ORACLE=$(abspath $(TAP_ORACLE)) $(NODE) --test $(BANNER_JS)
 	./$(LOGACK_BIN)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) LOG_ACK_ROUTE_BIN=$(abspath $(LOGACK_BIN)) $(NODE) --test $(ROUTEMATCH_JS)
 

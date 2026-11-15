@@ -55,6 +55,8 @@ already chose it. Everything *around* Stripe is here.
 | User accounts and permissions (what every SaaS charges per seat for) | **People** | each person with their own password and authenticator, invited by a link that works once (they set their own password and scan a QR off the page — no QR service, the code is drawn here), four roles checked on every request (owner, ops, support, viewer), every action written down under the person's name, lockout per address and per person, a role change or a disable that applies to live sessions at once, *Your account* for password and authenticator rotation |
 | An audit trail you can prove, a SIEM's daily question (Datadog, a managed SOC) | **The chain and the SECURITY block** | every audit row marked under a key outside the database, verified daily and on demand, anchored off the box by the digest; the last 24 hours answered in one block; lockdown in one step; tripwires; `MAINTENANCE.md` |
 | Magic links, device alerts, a WAF's basics (Cloudflare Access, Auth0) | **The door and the watch** | a mailed sign-in link bound to the browser that asked (the authenticator still required); a mail and a push on a sign-in from a new network; scanners blocked, lockouts pushed; an admin allowlist and session-to-network binding; outsider text scrubbed and marked as data for the AI operator. All in [`SECURITY.md`](SECURITY.md) |
+| An "out of office" that the whole business keeps (Shopify's "pause store", a helpdesk's holiday hours, by hand across four tools) | **Away** | one date (Settings → Away, `backoffice away 2026-12-01`): the store's catalog, the ZIP estimate, Stripe's shipping option and the promise written on every order say the first batch after it; a ticket opened meanwhile is acknowledged with the date and its SLA clock starts the morning you return, so no alarm fires about a wait the customer was told; Home wears the strip, the doctor has the row; it ends by itself that morning, or on "I'm back" |
+| A deliverability checker (MXToolbox, Postmark's DMARC digest) | **Health · Mail domain** | the mail domain's SPF, DMARC (and its policy) and MX looked up every six hours as receivers read them; a missing record is a failing doctor row with the record to add — "why does our mail land in spam?" answered before a customer asks |
 | An admin login | **Auth** | password + authenticator code for everyone, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
 
 What is deliberately **not** here: the attestation service (LICENSING.md §2b
@@ -345,6 +347,7 @@ it, so a mail and the page never disagree.
 | Canceled | by itself: what is coming back and when | "Canceled Oct 28", the money line |
 | Refunded, in part or full | by itself, whoever recorded it (page, API, Stripe) | "Refunded $15.00", keep what arrived |
 | A support ticket | the acknowledgment with the ticket number and the SLA; every reply in the same thread | — |
+| You are away (Settings → Away) | the store says "Back Mon, Dec 1 · ships Tue, Dec 9" before they pay, the confirmation repeats it, the acknowledgment says "we're away until Mon, Dec 1, and you'll hear back within 24 hours of being back" | the promise it was made, which is the first batch after your return |
 
 Every order page has a **The customer knows** card: what their page says right
 now, the promise, every mail with whether it was sent, queued or failed, and the
@@ -424,6 +427,8 @@ src/modules/labels.mjs  the label bought from the ship bench (Shippo), the demo'
 src/modules/recovery.mjs every hosted checkout written down, the one follow-up an abandoned one gets, the conversion number
 src/modules/notify.mjs  the new-order nudge to the operator: a mail, and a push if NTFY_URL is set
 src/modules/promise.mjs the promise made at checkout, one honest line per state for the customer, the mails a person sends with one click, what the customer has been told
+src/modules/away.mjs    away mode: the day you are back, read by the cadence, the acknowledgment, the SLA clock and the SLA job; ends by itself that morning
+src/modules/maildns.mjs the mail domain's SPF, DMARC and MX as receivers read them (the maildns job, every six hours); the doctor's Mail domain row
 src/integrity.mjs       the audit chain (HMAC under a key outside the database), the anchor, the last-24-hours summary, lockdown, tripwires, the self-check at boot
 src/guard.mjs           the watch and the boundary: a scanner blocked, an address allowlist, session-to-network binding, outsider text scrubbed on the way in and marked as data in the API
 src/attention.mjs       the one scale of urgency (now / soon / calm) from stated deadlines; the sidebar badges, the home page, the Decide queue, every table row and the digest read it
@@ -432,7 +437,7 @@ src/server.mjs          public endpoints, the JSON API, the request pipeline
 src/admin.mjs           one page per module; src/admin_shop.mjs the storefront half (products, customers, discounts, analytics, batches, search, packing slips);
                         src/admin_ops.mjs the pack and ship benches, Health, the audit log; src/admin_mail.mjs campaigns, automations, the audience
 src/charts.mjs          inline-SVG charts: columns, line, ranked bars, sparklines, stat tiles — CSS hover tooltips, a table view under each
-src/jobs.mjs            outbox (+ scheduled campaigns) · inbox · probes · sla · stock · invoices · books · backup (checked, off-site) · restore_drill · reconcile · verify (the audit chain) · digest · automations · demo_reset
+src/jobs.mjs            outbox (+ scheduled campaigns) · inbox · probes · sla (defers while away) · stock · invoices · books · backup (checked, off-site) · restore_drill · reconcile · verify (the audit chain) · maildns · digest · automations · demo_reset
 src/modules/            catalog contacts mail imap stripe orders discounts analytics products search inventory devices warranty support
                         campaigns automations ledger invoices subscriptions status exceptions dashboard backup reconcile health demo
 tests/                  node --test; fakes for SMTP, IMAP, Stripe signatures, probes, GitHub

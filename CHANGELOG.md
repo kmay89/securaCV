@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### Flashers: About this board, read from the chip and the installed image; no hardware address on screen, in a report or in a file name
+### Flashers: About this board, read from the chip and the installed image; no hardware address on screen, in a report or in a file name (device-details PR 1, #<PR>)
 
 - **About this board, in both flashers and the Lab's native bench.** The
   browser flasher's hello card and the desktop Flasher's new This Board card
@@ -13,26 +13,35 @@
   SHA-256, and the flash it was built for beside the chip's own JEDEC size
   ("From the installed image") — and the chip's radios, cores and crystal
   ("From the maker’s datasheet": for the S3, C3 and C6 both ROM tools print
-  fixed strings there rather than reading anything). "Show technical names"
-  adds each row's technical name and the raw allowlisted field values; "Copy
-  these details" copies every row but the hardware address. A fact a flasher
+  fixed strings there rather than reading anything). A descriptor that names
+  the Arduino core (`arduino-lib-builder`, which every release up to 2.4.17
+  carries) reads "An Arduino sketch · its version can’t be read off the
+  board" on the Firmware row, by the test #1894 gave the readback line
+  beside it (no catalog product matched, and the name starts "arduino"). The
+  row shows the descriptor's own two strings only under "Show technical
+  names", and the copied details and a saved report's About rows carry the
+  row's words (a report's slot list still gives each slot's project and
+  version as the descriptor has them). "Show technical names" adds each
+  row's technical name and the raw allowlisted field values; "Copy these
+  details" copies every row but the hardware address. A fact a flasher
   cannot give says "Not checked yet", "Not checked", "Not on this chip",
   "Not reported" or, on the Lab's bench (which has no fuse or image read),
   "Read with the Flasher" — never a zero or a guess. The desktop carries a
   copy of the browser's row model; `desktop_parity.test.js` runs both over
-  4,140 fact sets and fails on any difference. The desktop reads the
+  5,796 fact sets and fails on any difference. The desktop reads the
   fuse-derived rows when asked ("Read the chip’s fuses", the cold-start
   card's read), and the line beside that button, and in its place after a
-  good read, says that a good read leaves the board in its ROM's download
-  mode, not running its firmware, and that to start its firmware again you
-  quit the Flasher first (while it is open, it can read a board that comes
-  back on its port, and that read stops the firmware again), then press its
-  reset button, or unplug it (and its battery, if it has one) and plug it
-  back in. The after-read line speaks for the latest read, and goes when a
-  write starts, since espflash hard-resets the board once the write is done.
-  The desktop's `detect_chip` now keeps espflash's chip line, revision,
-  crystal and features (`ChipInfo`), and its passport reads the bootloader's
-  image header and the descriptor's `secure_version` and ELF hash. Not built
+  good read, says that a good read leaves the board in download mode, not
+  running its firmware, and that to start the firmware again you quit the
+  Flasher first (while open, it can read a board that reconnects, which
+  stops the firmware again), then press the board's reset button, or unplug
+  it (and its battery, if it has one) and plug it back in. The after-read
+  line speaks for the latest read, and goes when a write starts, since
+  espflash hard-resets the board once the write is done. The card's lines
+  are written in the Flasher's concise voice (#1922). The desktop's
+  `detect_chip` now keeps espflash's chip line, revision, crystal and
+  features (`ChipInfo`), and its passport reads the bootloader's image
+  header and the descriptor's `secure_version` and ELF hash. Not built
   from the design (§6.2, §6.9): the This Board card's groups stack in one
   column, not a sidebar; one "Copy these details" copies the card, with no
   copy per row; and the desktop's connect line names the chip, its revision
@@ -120,7 +129,8 @@
   names and opera name (its `mDNS started`, `mDNS begin failed`,
   `mDNS re-announced on STA`, `mDNS re-announce failed` and
   `Identify requested` health lines, its `BLE initialized`, saved-name
-  repair, `Device name changed` and `Opera name changed` health lines,
+  repair (as 2.4.17 to 2.4.19 word it, and as F406 reworded it since),
+  `Device name changed` and `Opera name changed` health lines,
   and the chirp's `device prefix:` and Opera's `device name:`, its key
   fingerprint's last two bytes), the flagship's console cards (the boot
   welcome card's `(that's me: <device id>)`, the last card the flagship
@@ -187,6 +197,1385 @@
   cards, reveals, nursery strips, benches and failed installs run as their
   own functions on a stand-in page in `desktop_parity.test.js`; not run on a
   device. No firmware change.
+
+### Every anchor carries the device's own clock: witnessd seals a clock-provenance record per anchor row, and the verifiers and the court kit check it
+
+- **Clock provenance sealed per anchor** (`spec/quorum_unseal_v2.md` §4).
+  `witnessd` polls its own `tsa_anchors` table every 5 s (a local read; no
+  network) and, for every new anchor row, seals one device-signed,
+  hash-chained record into the new never-pruned `clock_provenance` ledger:
+  the device's 10-minute bucket at observation, the anchor row id, the
+  token's SHA-256, and — when the row appeared between two polls of a running
+  daemon — `observed_offset_s` (device wall clock − the token's `genTime`,
+  whole seconds, clamped to ±3600) with the measured `poll_gap_s` that bounds
+  how old the row could have been. A row already present at a daemon's first
+  poll, or first seen more than 3600 s after the previous completed poll,
+  gets a binding-only record (a clamped gap would state a false bound); the
+  wall clock and the gap are read once per poll under the database write
+  lock; anchors stored before the upgrade are never recorded. The record and its cursor advance share one transaction;
+  a failed append is a `StorageWriteFailed` record and backs the poll off
+  60 s; safe mode appends nothing. Signing domain
+  `securacv:pwk:clock-provenance:v1`; the stored payload literal is what is
+  hashed and signed. The ledger's head is a fifth anchor subject,
+  `clock_provenance_head` (appended last; `anchor-all`'s default subjects
+  and the policy's allowed heads list it). Every new field is a bucket, a
+  whole-second clamped difference or duration, a row id, a hash or a version
+  (Invariant III); `docs/design/clock_provenance.md` is the design, the
+  rejected alternatives and the Invariant II residual.
+- **`log_anchor verify`** (read-only, key-free) checks the ledger under the
+  database's key lineage (`clock provenance: N record(s), ledger
+  self-consistent …`) and prints one `clock:` line under every anchor —
+  prompt, delayed import (a positive offset is not evaluated), negative,
+  clamped, binding only — with notes for a disagreeing anchoring-host clock,
+  a sealed chain-head row whose bucket starts after the token's time, a
+  retained `ClockSkew` record near a beyond reading, and a step of more than
+  one bucket between consecutive evaluated readings. A clamped offset is a
+  bound, never a reading, for the host-clock note. Under `--policy
+  --require-current`, `clock_provenance_head` reads current when every
+  record after the covered hash seals a later anchor row — `witnessd` seals
+  one per anchor row, the run's own included, so plain equality could never
+  hold while it runs. A record whose anchor was deleted
+  or whose token was replaced fails the run; a broken ledger fails it. The
+  anchors table and the ledger are read from one snapshot, so a row anchored
+  and sealed while `verify` runs is neither (and `run_full_verify`'s
+  cross-check reads the two the same way). The
+  anchor policy gains `max_clock_offset_s` (default 600, at least 1): under
+  `--policy` a reading beyond it is a breach that makes the policy `NOT
+  SATISFIED`; without a policy it is a printed `WARNING`.
+- **`log_verify` / `run_full_verify`** walk the ledger as part of the verdict
+  (`failure.ledger = "clock_provenance"`), print `=== Clock Provenance ===`,
+  and add `clock_provenance_verified` to the report once a record exists
+  (a failed report says the ledger FAILED or was not reported — never that
+  it is empty)
+  (omitted otherwise, so the retained MQTT report is unchanged for every
+  database without one). A record naming a deleted or replaced anchor
+  (`clock provenance orphan: …`) or a prompt-or-negative offset beyond one
+  bucket (`clock offset: …`) is a warning under `=== Anchor Audit ===`; a
+  missing record never is. No warning carries a time or a full hash.
+- **`court_export`** walks the ledger under the kit's lineage and packages
+  the record of every packaged token (`clock_provenance/clock-NNNN.json`
+  beside the verbatim signed `clock-NNNN.payload.json`) when its token hash
+  matches the packaged bytes; `CUSTODY_AND_CONTROL.md` gains "Time source",
+  `VERIFICATION.md` step 3b re-derives every fact in POSIX `sh` with
+  `sha256sum`, `xxd`, `cut`, `date` and `openssl pkeyutl -rawin` (hex values
+  written into the commands; the key is the device key the custody record
+  names; step 2 per record, one-sided at the clamp, n/a for binding only),
+  and the manifest gains
+  `clock_provenance_ledger` (`self-consistent; identity unverified` /
+  `verification failed` / `absent`) and a per-anchor `clock_provenance`
+  object. A ledger that does not verify packages nothing (fail closed);
+  `clock_provenance_head` anchors are never packaged. Docs:
+  `docs/timestamping.md` ("Clock provenance", Honest limits, compatibility),
+  `docs/log_verify.md`, `docs/court_export.md`, `docs/failure_semantics.md`,
+  the runbook, the CPS template, `ENTERPRISE_CUSTODY.md`,
+  `PROVENANCE_INTEROP.md`, the glossary and the FAQ. Pinned by offline tests
+  with injected clock readings (`src/lib.rs`, `src/clock_provenance.rs`,
+  `src/tsa.rs`, `src/anchor_policy.rs`, `src/verify_runner.rs`,
+  `src/bin/witnessd.rs`, `tests/log_anchor_cli.rs`, `tests/court_export.rs`,
+  `tests/log_verify_anchors.rs`).
+- **Upgrade note.** `anchor-all` requests five subjects per TSA per run
+  instead of four (still constant run to run); until the first record exists
+  it anchors the `clock_provenance_head` sentinel, and `witnessd` then seals
+  records for that run's rows, so from the first post-upgrade `anchor-all`
+  until the next one, `verify --policy` with a policy listing
+  `clock_provenance_head` (including any policy without a `subjects` key)
+  reads it `NOT covered` and `NOT SATISFIED (1 subject(s) uncovered)`. **Run
+  `anchor-all` twice at upgrade**, the second about 5 s after the first.
+  Add `max_clock_offset_s`, or list `clock_provenance_head` in `subjects`,
+  only after every `log_anchor` that reads the policy is upgraded — an older
+  one refuses a key it does not know and a subject it does not know (`not a
+  ledger head`); omitting `subjects` gives new readers five heads and older
+  ones four.
+  An older `log_anchor` reads a `clock_provenance_head` row as a digest
+  anchor. The witnessd config gains no key.
+
+### canary-wap reads every request body whole and its mesh refuses a hash it could not make, the Sensing dashboard says when stored levels win, one header spells the Chirp advert, Home Assistant redacts what the device vocabulary names, the SBOM tools are pinned, the parity ledgers read the code, and the released cases' knobs carry help (#1961, wave 24)
+
+- **canary-wap reads every POST body whole or refuses it by name (F300).**
+  The sketch's 18 single `httpd_req_recv()` reads and `/api/peek/sensor`'s
+  hand loop, and the Bluetooth, Chirp, household, audible-chirp, RF
+  presence and CSI routes, parsed what one socket read held, so a body
+  split across TCP segments was parsed from its first segment: a padded
+  vault key was registered from the cut, a two-segment chirp send sent the
+  default ALERT, and a CSI setting of 75 could be stored as 7. Each handler
+  now reads `Content-Length` bytes through `http_body::read_request()` or
+  `read_all()` and answers 400 `body_too_large` or `body_read_failed` (or
+  its own file's error shape). Peek resolution and sensor, Wi-Fi connect
+  and AP-only, device name, and vault config and key move from 200 to 400
+  for a body that does not fit; no client the repos ship sends one that
+  big. The log ack keeps its old answer on purpose: a reason too long for
+  its buffer acknowledges with no reason, since the device keeps none.
+- **canary-wap's mesh refuses a fingerprint or opera id it could not hash,
+  and a boot that did not read its store writes none of it (F364, the mesh
+  slice).** `compute_fingerprint()` and `compute_opera_id()` are
+  `[[nodiscard]] bool`, and all eight callers refuse: no member is added,
+  loaded or joined under a zeroed fingerprint (a stored member skipped at
+  boot can still be dropped by a later save that boot, F458), and the
+  deny-list counts a key it cannot hash as removed (it failed open). A
+  mesh that did not read its store this boot (its own key did not hash,
+  safe mode, a failed ESP-NOW start) refuses the 5-minute save and every
+  owner command but clearing alerts, where a safe-mode enable, rename or
+  leave used to remove the stored opera; `POST /api/mesh/enable` answers
+  400 `enable_failed` there. A rotation in flight keeps its pending ACKs on
+  the right members across a removal.
+- **The Sensing dashboard says when stored thresholds win (F315).** `GET
+  /api/settings` gains a read-only `thresholds_source` (`stored`, `preset`
+  or `mixed`), and under the sensitivity slider the page says when levels
+  a calibration or the Tuning Lab saved make Sensitive, Balanced, Quiet and
+  the slider change nothing, and how to get them back. `web_assets_gz.h`
+  is regenerated, and `docs/csi_developer_api.md` documents the field and
+  the CSI routes' refusals.
+- **One header spells the BLE Chirp advert (F316).**
+  `firmware/common/fleet_link/fleet_chirp.h` is the 17-byte layout the
+  canary-wap sends and every firmware receiver parses (the canary tree's
+  roster feed and Scout pairing filter, canary-sense, canary-vision, the
+  display), host-tested by `test_fleet_chirp.cpp` and staged byte-identical
+  in the canary-wap sketch (`check_fleet_beacon_sync.sh`) and the display
+  sketch (`setup.sh regen`). No wire change: a scratch differential against
+  the old sender and receivers is identical. The canary-wap's own nearby
+  scan keeps its wider rule, its offsets asserted to the header. The iPhone
+  app's chirp tests read the header and pin the sender's whole call.
+- **Home Assistant: the diagnostics redaction set reads the device-details
+  vocabulary (HA56).** `spec/device_details_vocabulary.json` names each key
+  a Canary's answers use, its class and the firmware sources that send it,
+  and reaches the integration as the generated `device_vocabulary.py`
+  (`scripts/gen_device_vocabulary.py`; `lint.yml` runs its `--check`, which
+  refuses a row its named source does not send). `TO_REDACT` is the
+  integration's own keys plus every key of a redacted class, so a new row
+  is redacted with no edit to `diagnostics.py`. The set is unchanged at 46
+  keys and can only grow: the generator will not drop a key the committed
+  module redacts, because older Canaries still send renamed keys.
+- **CI: the SBOM tools are pinned and read back (CI26, the code half).**
+  `sbom.yml` installs cargo-cyclonedx 0.5.9 and cdxgen 12.9.0 from one job
+  variable each, caches the binary under its version, and a new step fails
+  unless each document's `metadata.tools` names the pinned release.
+  `test_gen_firmware_sbom.py`'s `SbomToolPins` holds every command that
+  installs or fetches a package by name (cargo, npm, npx, pnpm, yarn and
+  bun) and every `actions/cache` step that holds the binary; an install or
+  cache made another way is caught when it replaces the pinned one, and
+  the tool step reads what each document names.
+- **Docs: the parity ledgers read the code (F20, gaps #14 and #15;
+  maintainer to confirm).** `firmware/canary/CONSOLIDATION.md`'s system
+  monitor gap reads ⚠️ with what is missing named, since the flagship
+  ships `securacv_diagnostics` and the thermal watchdog, and the log gap
+  names its real remainder: no tree ever persisted a log acknowledgment.
+  `firmware/FEATURES.md`'s Health Monitoring rows follow the code, and
+  `test_docs_claims.py`'s `TheParityLedgersReadTheCode` holds each verdict
+  to its source.
+- **Enclosure knob help (C31, C30, C10 in part).** The released doorbell's
+  and Vision's last four bare knobs and the combo's and fit coupon's seven
+  lone knobs carry help read off their geometry, and the paper templates'
+  12 mirrored knobs sit one per line, each naming its source and the
+  `gen_templates.py --check` that holds it equal. `HELP_DEBT` holds the
+  released four and the templates at zero. Comment-only: every edited
+  part's CSG is byte-identical; `catalog.json`'s templates count moves 4 to
+  16. The website's carried copies follow with the next `--site` carry.
+- **Backlog:** F300, F315, F316, HA56, C30 and C31 are closed; F364, F20,
+  C10, CI26 and F36 now say what remains, and C33 waits on a maintainer's
+  pick (calibrating the frame's word width alone fails its scoop assert).
+  New from the wave: F455 (the flagship's and the common witness core's
+  SHA-256 helpers check nothing), F456-F468, HA62, HA63, C38 and CI27, ten
+  of them decisions for a maintainer.
+- Host-tested here: the canary-wap host suite under g++, clang++ 18 and
+  ASan/UBSan, the Sensing dashboard in Chromium, Home Assistant's tests on
+  real cores 2026.5.0 and 2026.10.1, and 63 OpenSCAD renders. The ESP32
+  PlatformIO and Arduino compiles, the iPhone app's first compile of the
+  Chirp test, the SBOM workflow itself, hassfest and the HACS validation
+  are CI's. Nothing was run on a device.
+
+### rusqlite 0.41: SQLite 3.39.4 to 3.53.4 under SQLCipher, and what the audit pass does not mean
+
+- **`rusqlite` 0.31 to 0.41** (`libsqlite3-sys` 0.28 to 0.39.1; SQLCipher
+  4.5.3 to 4.19.0, SQLite 3.39.4 to 3.53.4). Cipher defaults are unchanged
+  and a database written by either version opens in the other. One source
+  change: `verify::count_alarms` reads the count as `i64` and converts it
+  checked. Dependabot's hold on the `rusqlite` major is lifted.
+- **Two threads opening their first database at once no longer race
+  SQLCipher's start-up.** SQLCipher 4.19 finishes its own start-up in a hook
+  SQLite runs after it has let other threads through, and `rusqlite` 0.41 no
+  longer serializes first use, so a second thread's `PRAGMA key` could fail
+  (about 3 runs in 1,000 of the bridge's parallel tests). The kernel now
+  waits for that start-up before it opens or keys a database
+  (`ensure_sqlcipher_ready`).
+- **A damaged anchor row is still one row's problem.** The lenient anchor
+  reader types each stored value itself; TEXT that is not UTF-8, in any
+  column, is reported for that row (the old conversion panicked on it).
+- **RUSTSEC-2026-0459 is not fixed by this.** `cargo audit` passes again,
+  because the advisory is keyed on the crate version, but the SQLCipher
+  build still carries SQLite 3.53.4 and the fix is 3.54.0. `SECURITY.md`
+  ("Group 5") says who is exposed and what to do until `libsqlite3-sys`
+  can select the fixed `sqlcipher-src`.
+
+### The ledger verdict checks the anchors: a head that was anchored and is gone fails `log_verify`, witnessd's boot verify and `POST /verify`
+
+- **RFC 3161 anchors are part of the ledger verdict (structural).**
+  `run_full_verify` now walks every `tsa_anchors` row after the chains and the
+  high-water-mark: the row is read by storage class and typed, the stored
+  token must parse and cover the hash the row claims, and a head-kind row
+  (`chain_head`, `export_receipt_head`, `break_glass_receipt_head`,
+  `policy_head`) must name a hash in the history of the ledger it declares —
+  a live row, or a retention checkpoint whose device signature verifies under
+  a genesis-anchored lineage key. A head in neither is a new failure,
+  `anchor_regression` in ledger `anchors` (`entry_id` = the anchor row id):
+  rollback, truncation, or a different history than the one that was
+  anchored. The unsigned `ledger_id` column never decides it; it only
+  sharpens the diagnosis (at or below / newer than the retention cutoff, or no
+  position recorded). A damaged row, or a token that does not parse or does
+  not cover its row's hash, is a warning (`anchor #N: …; run log_anchor
+  verify`), never a failure: a database with one corrupt anchor row does not
+  boot witnessd into safe mode. `VerifyReport` gains `anchors_checked`
+  (omitted when the database has no anchors table, so the retained MQTT
+  report is byte-identical for every such database; a failed report counts
+  the rows checked before the failing one); nothing in the report carries a
+  `genTime` or more than a 16-hex prefix of a hash. `log_verify` prints
+  `anchors: N checked (structural; countersignatures: log_anchor --db <db>
+  verify --ca <tsa-ca.pem>)`, lists damaged rows under `=== Anchor Audit ===`
+  apart from the timeline audit, and `--strict` counts both (`… (1 timeline,
+  2 anchor)`, exit 2 in the human report too). Structural only: the kernel
+  never links a CMS implementation, so the TSA countersignature stays with
+  `log_anchor verify --ca` (`openssl ts -verify`); `docs/timestamping.md` says
+  which image carries the `openssl` CLI. `list_anchors_lenient` is lenient at
+  the SQLite storage-class level (`subject_hash is not a BLOB`,
+  `created_bucket_start is not an INTEGER`, …); `checkpoint_by_id` shares
+  `latest_checkpoint`'s decoder. Docs: `docs/log_verify.md` ("Anchors are
+  part of the verdict"), `docs/timestamping.md`, `ENTERPRISE_CUSTODY.md` §2,
+  the runbook's §3 checklist, C5 scope and §8 matrix, the CPS template's
+  4.12. Pinned by unit tests in `verify_runner.rs` and
+  `tests/log_verify_anchors.rs`, all offline over the fixture token.
+- **Upgrade note.** Run `log_anchor verify` before upgrading `witnessd`. A
+  chain head anchored into a database that an older `witnessd` then pruned
+  (before anchored heads were kept as checkpoints) now fails the ledger
+  verdict — `log_verify` exits 1 and `witnessd` boots into safe mode — until
+  `log_anchor relabel --id N --subject digest` records that membership is no
+  longer asserted (it refuses a head newer than the retention cutoff, any
+  head when no checkpoint exists, and every receipt-ledger and policy head:
+  those are rollback or truncation, not a legacy prune). A damaged anchor row
+  is a warning, not a failure. Never delete an anchor row to clear a finding.
+
+### v1 readiness: the fixes a session could finish, and a backlog that holds only open work (#1951)
+
+- **Offline envelopes say what they cannot prove.** An evidence envelope
+  with a break-glass grant reads `valid_with_warnings` in both verifiers
+  ("N break-glass grant(s) present: trustee approvals are not verified
+  offline"), and the viewer no longer says break-glass approvals verify. The
+  interim half of #1580.
+- **canary-wap Chirp checks freshness before the per-key limit**, so a
+  captured stale frame no longer counts against its origin key's hour (F436).
+- **A failed SHA-256 is refused** in the beacon, mesh and chirp helpers
+  (F364, slice 1b). The WAP host suite is clean under clang++ 18 and
+  ASan/UBSan; that run found and fixed four unaligned payload reads and a
+  one-byte over-read in `api_seal.h`'s `hex_decode()` (F434).
+- **TLS status and storage:** `/api/status` keeps why a stored certificate was
+  refused (F439); the WAP probes NVS for its TLS pair as the flagship does
+  (F440). The WAP dashboard's Opera rename shows a refusal (F444).
+- **iOS:** a pairing a Canary answers 403 to is no longer polled and offers
+  Pair again / Remove (F352); the birth day is windowed and shown in UTC
+  (A113); the Orientation sheet says when the glass refused a turn (A111);
+  the nearby card stands down per window (A92).
+- **Lab:** the Sense radar lab models the radar's vitals cadence (A129);
+  `gen_wap.py` reads the mDNS TXT records from the sketch (A131); the
+  onboarding probes hold the Join card's reach and read the splash's tail
+  (A110, A112); the Wall emulator re-vendored, an offline tile's toast says
+  offline (W40).
+- **Checks:** the flagship host suite runs under clang (F441); a lint for a
+  chip-target macro tested before `sdkconfig.h` (F442); the JSON-answer
+  guard's proof runs in a pool (CI22).
+- **Docs:** `docs/v1-roadmap.md` is one short page and replaces
+  `V1_LAUNCH_REVIEW.md`; the backlog (`docs/audit/repo_todo_sweep_2026-09.md`)
+  holds only open items, 2.1 MB to 290 KB; `IMPROVEMENT_ROADMAP.md` keeps the
+  two sections other docs point at. The tap-gate passages in the user and
+  security docs say one asker (F20's note); the Chirp spec describes the
+  flow the code runs (D20). Also closed: HA59, D15, D17, D21, D22.
+- Host-tested and CI-compiled; nothing here was run on a device.
+
+### canary-wap Chirp keeps its limits across the uptime wrap and under a flood; a read that failed is not a value that is missing, on the flagship's TLS pair, three witness keys, the canary's RSSI and the camera's thermal sensor (and the ESP32-S3 reads its die sensor for the first time); both dashboards draw names as text; witnessd checks the model it ships with; the desktop releases pin their AppImage tools and attach their own SBOMs; canary-wap says what happened and counts a Canary once; Home Assistant reads a battery only from a number; the flasher catalog and the build matrix take their facts from the source; the playground names a Modbus exception; the Lab's twins run the firmware; three claims are held to what ships; and the Lab's WAP page reads the sketch (#1920, wave 23)
+
+- **Home Assistant: the kernel's copy of the device key leaves `/config`
+  too.** In standalone mode `witnessd` wrote the environment seed beside the
+  sealed log (`/config/witness.ed25519.seed`) at its first start — the key
+  that PR #1935 moved into the app's own `/data`, back inside every Home
+  Assistant backup. The kernel grows one switch, `DEVICE_KEY_SEED_PERSIST`
+  (`crypto::device_seed_persist_policy`): unset keeps witnessd's historical
+  persisting, which the container image's operator commands rely on; `0`
+  makes witnessd resolve like every other daemon (`resolve_device_seed`:
+  the environment seed is used as given, never written, and an existing
+  seed file that disagrees is still refused); a typo is a startup error, not
+  a silent "persist". The app's witnessd service sets `0`, and `run.sh`
+  removes the copy an earlier release left once it holds, byte for byte,
+  the seed in use (`run_lib.sh remove_kernel_seed_copy`: fixed-word
+  verdicts, the seed never printed; a differing copy is kept with a
+  warning). The AppArmor profile grants no kernel process `w` on that file
+  anymore (the setup alone, for the removal), pinned by
+  `test_addon_store.py`; `test_run_lib.sh` and `test_config_render.sh`
+  cover the helper and the wiring; `DOCS.md`, `docs/homeassistant_setup.md`
+  and the app's changelog no longer say the copy is still there.
+- **Home Assistant: the evidence pack reads itself out.** Every
+  `securacv.export_evidence` zip now carries `WITNESS_STATEMENT.txt`
+  (`custom_components/securacv/witness_statement.py`): the export in plain
+  language for whoever receives it — the sealed events by kind, zone and
+  ten-minute window in the owner's time zone, the kernel's own failure
+  records in the window, what the record proves, what it does not (no
+  pixels, no identity, no precise second, no proof of whose hand held the
+  key, no proof it is the only history), and how to check it with the
+  viewer. Every number is read from the bundle's artifact; the statement
+  names the sealed file and its SHA-256, says it is a reading and not
+  evidence, and the checker ignores it. The README's file list and
+  `docs/homeassistant_setup.md` name it. Pinned by
+  `test_witness_statement.py` (counts, labels, the owner's clock, an
+  empty or unreadable bundle, the cap on window lines) and the pack tests
+  in both lanes. The strategy review found the incident moment to be the
+  one stage of the product with no plain-language surface; this is the
+  first half of closing it (the other half is the Lab showing the same
+  statement).
+- **canary-wap Chirp keeps its limits across the 49.7-day uptime wrap and
+  under a flood (sweep F416, F309, F417, D19).** The per-key witness limit and
+  the recent table give up their oldest row by age, and a rate row whose hour
+  has run out is dropped at the next loop pass, so two keys can no longer take
+  turns past four an hour after the wrap and a table left idle for 2^32 ms no
+  longer gives up a live window. Only a frame whose signatures verify puts its
+  nonce in the replay filter, so unsigned and badly signed floods no longer
+  raise its false-positive rate, and a frame that fails its signature checks
+  no longer keeps a heard chirp out; a frame signed under any key, or a relay
+  naming an origin key with no origin signature (v0.2's soft accept), still
+  can: written in spec §5.3 and the threat model, pinned by tests, and filed. The presence beacon's last-send age stops
+  at 254 minutes, where it read 5 minutes 2^32 ms after a send, and presence's
+  ten-minute relapse every 2^32 ms is written down as a known limit. The
+  threat model's Replay and Spoofed-origination cells, its Outstanding list
+  and the spec's §4.2, §5.3 and §8.2 examples match the code, pinned by
+  `test_chirp_spec_tables.py`. **Host-tested** (the canary-wap host suites
+  under g++, clang++ 18 `-Werror` with `-Wno-unknown-warning-option` (F434)
+  and ASan/UBSan, each fix with a case that fails on the old code); the ESP32
+  compile is CI's; the wrap is not bench-testable short of 49.7 days of
+  uptime. Filed: F435-F437, F445, D20.
+- **Firmware: a read that failed is not a value that is missing (sweep F421,
+  F362, F431, F432).** The flagship's TLS load answers Loaded, Absent or
+  Refused and makes a certificate only when NVS says none is stored (certgen
+  stays compiled out on stock units, F15; a lone entry's fate is F420);
+  canary-sense, canary-vision and canary-sentinel draw a witness key only when
+  NVS says none is stored and otherwise sign nothing that boot; the canary's
+  `/api/sensing` leaves `rssi_dbm` out for a window no radio measured; and the
+  classic-ESP32 camera no longer throttles its first PEEK stream or logs a
+  failing thermal sensor it does not have, reports `thermal_sensor_ok` false
+  there, and a stream reset no longer disarms the fail-safe. Review found the
+  die-temperature provider tested the chip-target macro before anything had
+  included `sdkconfig.h`, so it had been the sensorless stub on the ESP32-S3
+  too: it now includes `sdkconfig.h` first, and the S3's camera step, thermal
+  watchdog, envsens drift detector, self-test and health `temp_c` see real
+  readings for the first time, with no bench behind them yet. **Host-tested**
+  (three new suites, one compiled per chip target over fake IDF 4.4 and 5.5
+  drivers, under g++, clang++ 18, ASan/UBSan and valgrind, each failing on the
+  old code); the PlatformIO compiles are CI's, the S3 TSENS branch for the
+  first time; nothing bench-tested. Filed: F438-F442.
+- **Both dashboards draw stored and heard names as text, and the WAP's
+  Bluetooth and Chirp cards show what they hold (sweep F422, F423, #1836's
+  F350, F418).** The flagship's Bluetooth paired and scan lists and the WAP's
+  household list draw every name, address, label and role through
+  `escapeHtml()`, and Trust, Remove, forget and the role picker act on their
+  row by index, so no bond, radio or stored text reaches an attribute. Both
+  are latent today: no flagship route serves `/api/bluetooth` (F198), and no
+  pairing writes a household label yet (`household::add_irk()` has only the
+  self-test's caller). The WAP's Paired Devices card shows how full NimBLE's
+  bond store is and says when bonds the list does not show fill it; the status
+  line names the services a late bring-up left off until a reboot; weather,
+  mutual-aid and all-clear chirps get their own icons, and the loop-commands
+  guard's new rule CV13 holds every category to one branch and one icon of its
+  own. **Host-tested** (the Node suites, the guard's mutation self-test; a
+  headless Chromium probe was scratch, not committed); the sketch compiles are
+  CI's; not bench-tested. Filed: F443.
+- **Kernel: witnessd checks the model it ships with before it runs it, and
+  `witness_api` reads a witnessd config (sweep A102, A103).** witnessd
+  re-checks the default tract model (`vendor/models/tinyyolov2-8.onnx`)
+  against the SHA-256 `scripts/fetch_detection_model.sh` pins at every start
+  and builds the backend from the bytes it checked; a model named in
+  `detect.tract_model` or `WITNESS_TRACT_MODEL` loads as given, read once and
+  built from the bytes read, with its SHA-256 logged. `witness_api` reads a
+  witnessd config file, so the viewer-token mint and every other subcommand
+  run with the kernel's own `WITNESS_CONFIG`, and the Home Assistant guide
+  gives the root image's mint form. **Host-tested**, and the pinned,
+  symlinked, flipped and named loads were run end to end on the real model
+  under strace (one open each); not bench-tested. `Cargo.lock` unchanged.
+  Filed: D21.
+- **CI: pinned AppImage tools, the apps' own SBOMs, one cache key per core
+  (sweep CI19, CI20, CI21, CI23).** The desktop releases bundle their
+  AppImages with sha256-pinned tools and a pinned AppImage runtime (dated
+  releases, not `continuous`) through `.github/actions/pin-appimage-tools`,
+  and a verify step after each build proves the bundle used them. Flasher and
+  Lab releases attach their own Rust and npm SBOMs (`sbom-flasher-*`,
+  `sbom-lab-*`; the Rust one built for every target, so it is the app's
+  lockfile and not the Linux runner's resolution) beside the project's three,
+  and the release notes name what shipped. `setup-arduino-esp32` saves each
+  core's cache key right after its own install and clears before, not after,
+  an exclusive restore, so a warm release job no longer re-downloads its
+  cores; the display profile build's core gets its own cache. `CI.md`'s rule
+  table lists R11. **Host-tested** (the action's and `sbom.yml`'s own step
+  scripts against a modeled cache and a stand-in CLI, the seven documents
+  built and gated locally, the real download of the four AppImage files); the
+  restore/save path and the app SBOM steps show on this PR's runs; the real
+  AppImage bundle is proven only by a build-only dispatch nobody has pressed
+  yet (CI24). Filed: CI24-CI26.
+- **canary-wap says what happened (sweep F303, #1836's F359, F426, F295).**
+  The Opera name routes refuse a name with a byte below 0x20, past 32 bytes or
+  not whole UTF-8, in the rule's words, and every health-log line reaches the
+  ring scrubbed, so `GET /api/mesh` and `GET /api/logs` parse in a strict
+  reader (`check_wap_json_answers.py`'s new rule J12 holds the ring to that
+  one write). A pairing that reaches its 2-minute timeout logs why, as a
+  message and a detail that both reach the owner whole, saying when this side
+  had confirmed and pointing at the other Canary's log rather than naming a
+  cause it cannot know. `POST /api/vault/key` tells a key the device could not
+  save apart from a malformed one. The Chirp Channel State comments and the
+  entity's template default name the lowercase words the WAP sends, and the
+  mesh spec's §5.4 states the rule `pair/start` holds a name to.
+  **Host-tested** (new cut suites `test_opera_name_wap.cpp` and the grown
+  `test_mesh_liveness_wap.cpp`, `test_wap_sha_fail_modules.cpp` and
+  `test_ha_discovery_wap_render.py`, each failing on the old code, under g++,
+  clang++ 18 and ASan/UBSan); the ESP32 compiles are CI's; not bench-tested;
+  `wap.json` and `homeassistant.json` left byte-identical by this package's
+  edits (A90 moves `wap.json` by one line and HA41 regenerates
+  `homeassistant.json`). Filed: F444, F445, D22.
+- **canary-wap Bluetooth: a Canary counts once nearby, and the paired list's
+  one-time rebuild leaves out a bond the store records as unauthenticated
+  (sweep F425, #1836's F353 in part).** `GET /api/nearby` listed one Canary
+  twice when it was heard by its name (uppercase prefix) and by its chirp or
+  beacon (lowercase): the name's four hex digits are now folded to lowercase,
+  so every advert lands in one slot, and the Nearby list spells every Canary's
+  prefix in lowercase ("SCV-7e01"), a name-only Canary included. The one-time
+  rebuild of a paired list never saved by identity listed every bond with no
+  entry, a Just Works bond that escaped F191's delete among them: it now reads
+  each such bond's stored record (`ble_store_read_peer_sec()`) and leaves one
+  that says unauthenticated out of the list and in the store, where the bond
+  count beside the list counts it and Clear all removes it; nothing is
+  deleted, a record it cannot read is listed as before, and a list already
+  saved by identity is not rebuilt. The other half waits on a bench row that
+  the stored flag is right. **Host-tested** (g++, TSan, clang++ 18,
+  ASan/UBSan; the stand-in compared field for field with NimBLE-Arduino
+  2.3.8/2.5.0's `host/ble_store.h`); the ESP32 compiles are CI's; not
+  bench-tested. Filed: F437, F446.
+- **Home Assistant: the Health sensor reads a battery only from a number,
+  every voice answer says an unlisted event plainly, and the timeline names
+  the summary rows (sweep HA57, HA58, HA41).** A broker's `Infinity` no longer
+  raises out of the Health sensor's callback, a JSON `true` or a negative
+  charge no longer reads critical, and a finite number past 64 bits (which
+  Home Assistant's JSON writer refuses in a state attribute, so it failed the
+  recorder and every websocket subscription on the entity) or a string spelled
+  through a digit separator is no reading. Every voice answer says an event
+  type the dictionary does not list in words ("GPS lost", "held summary",
+  never an underscore). The timeline card and the Last event entity name the
+  two summary rows ("Daily summary", "Quiet Hours summary"), and the setup
+  guide and the Hub data's entity catalog say so. **Host-tested** (the stub
+  lane with the WAP MQTT harness, the real core at 2026.10.1 and the 2026.5.0
+  floor including a test that publishes the over-wide numbers over MQTT and
+  serializes the Health state as the recorder would, mypy both ways, the card
+  test; every change shown failing on the old code); no live Lovelace render
+  or Assist session; not bench-tested. The HACS mirror follows at its next
+  sync. Filed: HA60, HA61.
+- **The flasher catalog and the build matrix take their facts from the source
+  or refuse them (sweep F429, A71, C36).** The shared C constant readers
+  (`_tooling.read_const`, `c_const.js`) refuse a `#define` that runs on past a
+  block comment closed on a later line, and one whose `#` does not begin its
+  line as the compiler reads it; 23 shared rows, the macro rows held to `g++
+  -E` itself. The Bluetooth setup door is a `CAPABILITY_TRAINS` row (since
+  2.4.16), so the catalog's `setup_door` and both done cards' iPhone lead need
+  a pinned train that carries it; `flash.json` is byte-identical at 2.4.19.
+  `build_matrix.json`'s thermal feature is `FEATURE_THERMAL_WATCHDOG`, and
+  `lint_build_matrix.py` checks each claim against its own tree's flag through
+  a per-tree alias table, naming a lane whose tree it cannot check instead of
+  crashing on it; six unmapped claims remain to map or drop. **Host-tested**
+  (`test_flash_read_const` with its g++ oracle, `vision.test.js`, the tools
+  suite, `scripts/tests`, the flash page suites, `gen_flash --check`, the
+  lints; each change shown failing on the readers before it); neither flasher
+  tried by hand. Filed: C37.
+- **The 4.3B playground names a Modbus exception on the glass, and the
+  playground sim carried to the website prints what the station prints (sweep
+  F317, A109).** The RS485 tile reads "exception 2" and its tracker row "exc 2
+  • check register", sized by LVGL's own Montserrat metrics, where it used to
+  say "no reply • check A/B". The sim carried to the website's `/playground`
+  prints a Modbus exception, a CAN bus-off with its recovery, and a frame no
+  node acknowledges; `playground.json` carries them as per-station `faults`
+  rows the site does not yet draw, so it shows no dead button; the CAN
+  snippet's untyped TWAI configs, which did not compile, are fixed, and the
+  site's snippet compile is now a required CI gate (`PLAYGROUND_SNIPPETS=
+  require`). **Host-tested** (`test_fieldbus_glue.cpp` in three builds, the
+  new `test_playground_glass.cpp` on fake LVGL, `playground.test.js`; each
+  failing on the old code); the ESP32 playground and dash builds are CI's; not
+  seen on a 4.3B. The website's buttons for the new cases follow in a website
+  PR. Filed: W42.
+- **Lab: the Sense radar lab and the bench's help run what the firmware runs
+  (sweep A124, A125, A128).** The Sense page's radar lab no longer keeps a
+  vitals mirror of its own: it drives the firmware's presence FSM and
+  `sense-sim.js`'s `VitalsFSM` (the port of `mr60_vitals.cpp` held to the
+  native build) one frame per tick, and `sense.test.js` holds the lab to the
+  native driver per pass and per tick, catching five planted firmware changes.
+  The stall scene stays unplugged past any tuned stall window (`stall_ms +
+  3000`). The bench's troubleshooting flows name only the lights each card's
+  registry block lists, with per-card symptom wordings, and the charge-flicker
+  flow goes only where the registry flags the light to flicker (the watch).
+  **Host-tested** (Node 22 on the dist and under `LAB_CORES=native`, the
+  Chromium probes, the lab-lint eslint command; each change shown failing on
+  the old code); nothing on hardware; no dist move. Filed: A129, A130.
+- **Three claims held to what ships (sweep F427, F254 in part, F409 in
+  part).** The reference device-api's CSP `connect-src` is `'self'
+  http://*.local`; the eighteen IP-range sources it also listed match nothing
+  in CSP (headless Chromium ignored each), so nothing a browser enforces
+  changed, and the canary-vision docs now say a device entered or listed only
+  by IP is blocked; `security-headers.test.js` holds the served header to the
+  CSP3 grammar and to both docs. `magic_pairing.md` §9 has the hub hand-off's
+  six bench rows, and §3.6 says the session's join gates the HUB write, not
+  the open door. The iPhone's hub-login comment and footer stop saying the
+  phone cannot hand the hub over. The hardware checklist has the flagship's
+  one-asker BOOT tap row, and the F340 row's step 5 asks before it presses. A
+  served header string, one iOS string and docs; **host-tested and
+  Chromium-probed** (other browsers not tried); the Swift compile is CI's;
+  every new bench row is marked unrun; F254 and F409 retag `[human]`. Filed:
+  F447, F448.
+- **Lab: the canary-wap page shows a Chirp state the device sends, and reads
+  its mDNS ports from the sketch (sweep A90 in part, #1836's F366).** The
+  page's chirp topic sample is `{"state":"active"}`, a state the WAP enters
+  (it never enters `listening`), guarded against `chirp_channel.cpp`'s own
+  lines; whether `CHIRP_LISTENING` stays in the enum and the spec is a
+  decision. `gen_wap.py` reads the page's `_http._tcp` and `_securacv._tcp`
+  ports from `canary_wap.ino`'s `MDNS.addService()` calls at each of the
+  sketch's three mDNS starts and refuses by file, line and reason every
+  spelling it cannot read; `devices/wap.json` moves by the sample's one line.
+  **Host-tested** (`test_gen_wap_ap_facts.py`, 67 of whose cases fail on the
+  old generator; `wap.test.js`; `gen_csp.py --check`); no firmware changed; no
+  dist move. Filed: A131.
+- **Ledger (sweep F320, F21, F364, F420, D17, U1, W6, W14, W16).** F320 is
+  closed by trace (the harm went with F324's periodic heartbeat and
+  `mesh_session.h`'s `static_assert`); F21 retags `[human]` (every open box is
+  a bench row or F34's decision); F364 and F420 carry notes on what this wave
+  changed around them and what waits; D17 records the four #1836 filings
+  closed here by id and line and that this PR gave no new id twice; U1 lists
+  wave 23's bench rows; and W6, W14 and W16 record the halves the website's
+  #230, `98ef90f` and #245 closed. Nothing of this moves code.
+
+### canary-wap holds every radio-carried name to JSON and draws it as text, keeps its HTTPS slot and its identity honest before F15, and its modules use no SHA-256 they were refused; Chirp names an all-clear, keeps a mute across the clock's wrap and stops pricing a Sybil; the flasher offers the flagship's gated chips; Home Assistant says only what it was told; the Lab's Sense and Vision twins and its bench follow their firmware; and two device claims, two docs and two checks are set straight (#1919, wave 22)
+
+- **canary-wap gates every Bluetooth and Beacon name before JSON (sweep
+  F405, F406, F408).** The nearby scan takes a Canary's name prefix only as
+  four ASCII hex digits, so a name another radio advertises can no longer
+  break `GET /api/nearby`. The paired list, the saved Bluetooth name and the
+  Beacon set load only rows NVS returns whole, and every name is terminated
+  in its field; a refused paired row is rebuilt from the bond store, or
+  replaced once by the empty list. An empty list is now saved by removing the
+  row, so a Clear survives a reboot (the cleared list used to come back at
+  every boot). The Beacon set holds members only, and `GET /api/beacon/set`
+  writes names through `shown_text()`; Opera's peer names needed no code (a
+  trace). `check_wap_json_answers.py`'s J10 covers Beacon set names, and the
+  new J11 holds every append onto a `String` (230 self-test mutations).
+  **Host-tested only** (the real `bluetooth_channel.cpp` and `ble_nearby.h`
+  under g++ ASan/UBSan, TSan and clang++ 18, and the new
+  `test_beacon_set_load.cpp`); the ESP32 compiles are CI's; not run with a
+  radio, and Beacon is off in every stock build. Filed: F424, F425, CI22.
+- **canary-wap's dashboard draws radio text as text (sweep F407, F296,
+  F401).** A Bluetooth bond's name and address, and every field of a nearby
+  or scan row, are drawn as text, and Remove names its row by index, so no
+  bond text reaches an attribute or an `onclick`. BLE Discovery keeps
+  refreshing every 10 s after an empty, refused or missing answer, and
+  leaving the view leaves no timer. The Fleet sheet shows the pairing QR
+  route's own 400 text instead of always blaming the network name.
+  `web_assets_gz.h` is regenerated. **Host-tested** (19 new page cases fail
+  on the old pages; the small HTML reader they use matched Chromium locally,
+  a cross-check CI does not run); not run on a device. Filed: F422, F423.
+- **canary-wap keeps its HTTPS slot and its identity honest before F15
+  (sweep F404, F403, F400).** A stored TLS certificate that cannot be read
+  whole is refused: nothing is stored over a certificate the phones may have
+  pinned, HTTPS stays off that boot, and only an empty slot gets a new
+  certificate. One corrupt entry leaves its partner, so HTTPS then stays off
+  until a full flash erase; what a lone entry should get is a decision
+  (F420). A boot whose key fingerprint or genesis head did not hash no longer
+  registers the BLE status service, exports the witness HEAD or mounts the
+  signer; the identity's other readers are named in the code and left to a
+  decision (F419). The HTTPS port is one constant, bound as `port_secure`
+  (the old write did nothing), and `gen_wap.py` reads it; `devices/wap.json`
+  is byte-identical. The certificate load and the port are not reached on
+  stock units until F15 turns HTTPS on; the identity gate does not wait for
+  it. **Host-tested** (g++, clang++ 18 and ASan/UBSan; every behavior
+  test fails on the old code); the ESP32 compiles are CI's; not run on a
+  device. Filed: F419-F421, F434.
+- **canary-wap's modules use no SHA-256 they were refused (sweep F364,
+  slice 1a).** The vault fails a seal whose digest did not compute and
+  refuses a key whose id did not hash before anything is written; the USB
+  update drop answers `sha_failed` before any compare; the familiar-device
+  filters and Wi-Fi presence learn and count nothing from a failed hash; and
+  the mesh helper zeroes its output. **Host-tested only** (a new seam,
+  `test_wap_sha_fail_modules`, 408 checks under g++, clang++ 18 and
+  ASan/UBSan, valgrind-clean; the old sources fail 189 of them); the ESP32
+  compiles are CI's; not run on a device. F364 stays open for the Beacon,
+  Chirp, mesh, OTA and pseudonym hashes. Filed: F426.
+- **canary-wap Chirp names an all-clear, keeps a mute across the clock's
+  wrap, and its spec says what a Sybil costs (sweep F307, #1836's F361,
+  F308, D16).** `GET /api/chirp/recent` names an all-clear chirp's category
+  instead of "unknown". A mute set near uptime's 49.7-day wrap runs its full
+  length instead of ending at once, and a channel never muted reads unmuted
+  at any uptime. The spec puts Chirp on the shared radio channel and says how
+  its frames and Opera's are told apart. The spec and the threat model stop
+  pricing a Sybil: one device makes any number of session keys, the
+  ten-minute presence wait is a once-per-key delay, and the per-key rate
+  limit has a hole after the wrap (F416, open). **Host-tested** on the real
+  `chirp_channel.cpp` (46 command tests, 280,822 mute steps across the wrap)
+  and by `test_chirp_spec_tables.py`; the ESP32 compile is CI's; the wrap
+  cannot be bench-tested short of 49.7 days of uptime. Filed: F416-F418,
+  D18, D19.
+- **The flasher offers the flagship's gated chips, and its parity test
+  reaches what it claims (sweep F414, A93, A95).** The flagship's monitor
+  offers its battery, power-policy, diagnostics and data-management chips on
+  all four flagship products and MQTT only on the HA build: `gen_flash.py`
+  resolves a command behind one `#if FEATURE_X` per product env and refuses
+  by name every gate it cannot evaluate. `flash.json` is regenerated; the
+  browser flasher reads it, and the desktop Flasher embeds it at build time,
+  so the app offers the chips from its next release. The Vision's module-id
+  deny reads all of `firmware/common`, including two library sources
+  PlatformIO links without a build filter naming them. The browser monitor is
+  rendered in a test instead of pinned by regex. **Host-tested** (pytest,
+  node, a `g++ -E` comparison of the gate reader, the flasher probes in
+  Chromium); the desktop Flasher's builds are CI's; not tried on a board.
+  Filed: F429, F430, A123.
+- **Home Assistant says only what it was told (sweep HA53, F411, HA42).** A
+  health with no free-memory number no longer reads critical or claims 0
+  bytes free. The canary's Sensing RSSI is unknown until a real reading and
+  never shows an unmeasured 0 dBm; an install upgraded from older firmware
+  keeps that firmware's 0 dBm until the first reading. The last-event answer
+  says an unlisted type in words ("Daily summary"). **Host-tested** (the
+  stub-lane suite, 1021 passed; the real core at 2026.10.1 and 2026.5.0, 139
+  passed on each; a new `firmware/tests_host` suite on the real CSI code);
+  the canary firmware's compile is CI's; not bench-tested. `custom_components`
+  reaches the HACS mirror at its next sync. Filed: F431, HA57, HA58.
+- **The Lab's Sense and Vision twins are held to their firmware (sweep A106,
+  A107, A116, A117).** The Sense radar lab signs `presence_cleared` whenever
+  a tick turns Clear, as the device does, so the page's chain head reads one
+  past the example's; the Sense Lab's vitals path is held to the firmware's
+  on every tick; Vision tests about the FSM no longer fail on a legal retune
+  of the score seed; and the optical knobs are read by the shared constant
+  reader. `sense.json` is regenerated (one note). **Host-tested** (on the
+  committed dist and with `LAB_CORES=native`, the Chromium Sense probes,
+  mutation runs and on-disk retunes); no dist file moved. Filed: A124, A125.
+- **Two device claims match their firmware (sweep C35, F355).** Each board's
+  Thermals note, and `PIN_BUDGET.md`'s intro, name the firmware that
+  actually reads die temperature: the canary's passive
+  `FEATURE_THERMAL_WATCHDOG` (off on its classic-ESP32 envs) and the
+  canary-wap's `sys_monitor.h`; the display, Vision, Sense and Sentinel read
+  none. A canary-wap does not answer the Canary Vision SPA's pairing
+  (seen in a one-off headless Chromium run against a stub that answers like
+  the sketch), so the SPA and its docs now say a WAP pairs in the iPhone app,
+  from its recovery kit or over Bluetooth, and joins Home Assistant over
+  MQTT. The pairing flow and CORS are unchanged; whether the WAP should learn
+  the SPA's pairing is F357's call. **Host-tested** (a new `scripts/tests`
+  suite, canary-vision's `npm test`); nothing compiled; not run against a
+  WAP. Filed: F427, F428, F432, C36.
+- **Docs say what holds (sweep HA51, A118).** Six places no longer say Home
+  Assistant 2025.10 and later gives an entity the id asked for: it tries to,
+  and adds `_2` when another entity holds it. The glossary's Witness Wall
+  entry and `RUN_ON_APPLE_TV.md` give the root image's viewer-token mint form
+  with a link to `container.md`'s mint section, and send the receipt to
+  Settings → Verification. **Docs and host tests** (`test_docs_claims.py`,
+  `test_witnessd_unit.py`); nothing run under Home Assistant, docker or
+  systemd. Filed: HA59.
+- **The Lab's bench presses BOOT on a twin that reads it (sweep A99, A101,
+  C24).** A momentary BOOT press beside the strap toggle drives the twin's
+  button on the five boards whose firmware reads BOOT while running, and it
+  is let go on every path; its title says the bench restarts the twin on its
+  home network after the 10 s factory-reset hold. The Nightlight's card
+  keeps its download-mode guess, in the bench's own words. An enclosure
+  group's long note shows one sentence in its summary. **Host-tested and run
+  in headless Chromium** (`bench_probe.mjs` holds the press until the
+  firmware's 3 s and 10 s lines print); not bench-tested on hardware. Filed:
+  A126-A128.
+- **Two checks hold only what they guard (sweep F323, CI18).** The mesh
+  alert-history race test no longer fails on scheduling alone (the old one
+  failed 1 run in 10 pinned to one core beside busy loops; the fix passed 300
+  of 300), and `ci_policy_check.py`'s R11 refuses a `ubuntu_latest_ok` entry
+  whose file no longer names `ubuntu-latest` (the list is empty, so no
+  verdict changes). **Host-tested.** Filed: F433, CI23.
+- **The WAP guard self-tests get 30 minutes.** `check_wap_json_answers.py`'s
+  self-test grew to 230 mutations with J11, 13m07s of CPU locally, and CI
+  already took 12m49s on main at the smaller count (`firmware.yml` run
+  41770593222), so `firmware.yml`'s `wap-guard-selftests` job allows 30
+  minutes instead of 20. Running the mutations in parallel is the follow-up
+  (CI22).
+- **The sweep ledger:** 32 items ticked and F364's slice 1a done; the two
+  halves that closed by trace are folded into F408 and F411; F15, F261, F297
+  and F357 carry dated notes; and 33 items are filed (F416-F434, A123-A128,
+  HA57-HA59, C36, D18, D19, CI22, CI23). The nineteen ids D17 tracks still
+  name two items each, and no new pair was found. `IMPROVEMENT_ROADMAP.md`
+  has a wave 22 row and section.
+
+### Dependency advisories: zip 9 in both Tauri apps, three ignores retired
+
+- **The scheduled Dependency Audit of 2026-11-02 went red on `zip` 4.6.1
+  (RUSTSEC-2026-0429, 7.5 high: `extract` aborts the process on a symlink
+  entry with a large declared size) in the Flasher's and the Lab's lockfiles
+  (`desktop/src-tauri`, `desktop-lab/src-tauri`).** The crate came from
+  `tauri-plugin-updater` 2.14.0 alone, Windows-only, on the same
+  signed-archive-only path `SECURITY.md` Group 4 analyzes; Dependabot's own
+  security updates for it failed twice (2026-10-29, 2026-10-30) because no
+  4.x release is fixed. `tauri-plugin-updater` 2.14.1 requires `zip ^9`, so
+  both lockfiles take the updater bump and `zip` 9.2.2, and the three
+  Group 4 ignores (RUSTSEC-2026-0367 to -0369) leave `.cargo/audit.toml`
+  as that file promised they would once an updater 2.x took zip 9.
+  `cargo audit` reads one entry now, Group 3's `rsa`. Lockfile bumps and the
+  record; `cargo audit` and `cargo deny` are CI's.
+
+### Flashing says how long it will take, shows it's alive, and spends far less time on blank flash
+
+- **The safety copy skips blank flash (browser flasher).** It used to read
+  every byte of the chip before writing: 16 MB on a Canary Glance AMOLED,
+  the longest step of the install, mostly bytes known to be `0xFF`. The
+  flasher stub now checksums each 256 KB block on the chip (MD5), and only
+  blocks holding data are read. Blank blocks are filled locally, so the saved
+  file is the same byte for byte. A block whose check fails is read anyway.
+- **The first-contact erase clears only what holds data (browser
+  flasher).** Instead of a silent whole-chip erase, a board the flasher has
+  never written erases the blocks that hold data outside the new image's own
+  range, a piece at a time, with progress. The end state is the same as a
+  whole-chip erase: a test checks over random block maps that every byte ends
+  written, erased or proven blank. The stub's status is checked on every
+  piece, and no stub, no map or a refused erase falls back to the whole-chip
+  erase. Clean install, the Advanced box and a rescue still erase the whole
+  chip. `docs/unflashed_board_intake.md` explains why the map is safe on an
+  untrusted board: the stub computes it, not the board's own firmware.
+- **Every step up front, ticked off with its time (both flashers).** The
+  progress card lists the whole install before it starts (map the chip,
+  safety copy, download, authenticity check, clearing old firmware, write,
+  the chip's own check). The active step times itself live, and finished
+  steps keep their real duration. The clock line adds "about 0:40 left
+  overall" once this install has measured its own speeds, never from a
+  benchmark, and stays a plain clock when it can't honestly say. A whole-chip
+  erase, which reports nothing, keeps its size-shaped wording.
+- **A heartbeat (both flashers).** A dot beside the progress line blinks each
+  time the board or the download answers, so a working install looks
+  different from a hung one.
+- **The last install time.** The card says how long the whole install took
+  last time on this computer, and the done card says how long this one took,
+  step by step. The time is stored only in this browser or app.
+- **Desktop Flasher:** the step list, heartbeat and install times reach users
+  with the next Flasher release. Its `espflash` sidecar still reads and
+  erases the whole chip, because it reconnects for every command and the
+  per-block checks would cost more than they save.
+
+### The Home Assistant app declares its Frigate lists as lists (by the Supervisor's code 0.9.0 cannot start, and a bench check is owed), canary-wap reads its stored token and the Fleet QR's query whole and sends CSI rows and Bluetooth names as JSON, Chirp's trust rules do what its spec says, the flagship's BOOT tap goes to the one device asking, Home Assistant's diagnostics keep the kernel's host and key out and three contract gaps close, both flashers call a flavorless display a display, and the Lab's Vision constant reader, the enclosure checks, the viewer-token pointers and three hardware facts are set straight (#1916, wave 21)
+
+- **Release blocker, Home Assistant app 0.9.0: the two Frigate lists are
+  declared as lists, and list options are read whole (sweep HA38, HA39,
+  F321).** 0.9.0's `config.yaml` gives `frigate.cameras` and `frigate.labels`
+  the Supervisor's select syntax (`list(str)?`: one word from a fixed set,
+  here only `str`). By the Supervisor's own option code
+  (`supervisor/apps/options.py`), the app's default options fail that check,
+  which runs before every start and on the wizard's save, so every 0.9.0
+  install should fail to start. Both are lists now (`- str?`). Behind that,
+  `run.sh` read list options through bashio, which prints a list one item per
+  line, so a Frigate setup with labels set (the default) and a standalone one
+  with a camera configured stopped before the kernel started; it now reads
+  `cameras`, `frigate.cameras` and `frigate.labels` whole from
+  `/data/options.json`, stops with a reason in Frigate mode when that file
+  cannot be read, and gives a missing `min_confidence` 0.5. The wizard page
+  and the server spell zone ids by one rule, and the pairing screen's
+  unreadable-poll exits end from a fresh read of both Canaries. **Read from
+  the Supervisor's source and checked against a copy of its rules
+  (`test_addon_store.py`), not seen on a real install**; host tests on jq 1.6
+  and 1.7 and node; not run in the app image or on a Supervisor. **A person
+  should check 0.9.0 and this build on HA OS and decide on a patch release
+  (HA49).** The app's own CHANGELOG entry sits under `## Unreleased`, which
+  `scripts/bump_version.sh` does not rename. Filed: HA49, HA54, HA55.
+- **canary-wap reads its stored token and the Fleet QR's query whole, and its
+  sketch's SHA-256 helpers say when they fail (sweep F365, F364 in part,
+  F304).** The stored API token loads only on an exact read of a well-formed
+  token, and provisioning stores a new one only when NVS says none is stored,
+  so a read whose CRC failed no longer replaces the token every client holds;
+  a stored token the WAP cannot read fails provisioning (what a refusal that
+  persists should do is F402). The sketch's SHA-256 helpers answer whether
+  they hashed and zero their output when not, and each of their five callers
+  refuses what the hash was for: a failed key fingerprint or genesis head
+  fails provisioning and stays off BLE discovery, the boot's `[OK]` lines and
+  the self-verify, no chain link or record is made from a failed hash, and a
+  failed certificate fingerprint leaves HTTPS off. The module files are F364's
+  next slice. `GET /api/fleet/qr` reads its query and both values whole or
+  answers a 400 naming the field, so a 22-symbol password and a 63-character
+  passphrase with symbols in it are no longer cut; the Fleet sheet still shows
+  its own fixed hint for that 400 (F401). Other reads still drop
+  `getBytes()`'s count: `tls_load_from_nvs()` (F404), the Bluetooth store's
+  loads (F406) and `nvs_load_bytes()` (F363). **Host-tested** (the real
+  functions cut verbatim from the sketch, under g++, clang++ 18 and
+  ASan/UBSan); the ESP32 compiles are CI's; not bench-tested. Filed:
+  F401-F404.
+- **canary-wap: CSI rows and Bluetooth names reach their answers as JSON
+  (sweep F301, F302).** The CSI chokepoint turns `"`, `\` and `{` into `?`
+  too, in both trees, so every event row's card line, MQTT body and REST row
+  is JSON, and the card reader refuses what an older quote could forge. Every
+  Bluetooth name in `GET /api/bluetooth`, its scan results and its paired list
+  goes through `wap_json::shown_text()`, so those answers are strict UTF-8
+  JSON; rule J10 in `check_wap_json_answers.py` holds it (173 self-test
+  mutations; its docstring lists what it cannot see). Other radio text is not
+  covered: `GET /api/nearby` writes four advertised name bytes raw (F405), and
+  the mesh and beacon names are untraced (F408). **Host-tested only**; the
+  ESP32 compiles are CI's. Filed: F405-F408.
+- **canary-wap Chirp's trust rules (sweep F305, F311, F306, F415).** No ACK
+  but CONFIRMED dismisses a chirp, and a dismissed chirp takes no
+  confirmation. An ACK counts only from a key first seen ten minutes earlier;
+  presence beacons are unsigned, so this delays a Sybil and does not price
+  one, suppress votes still need no presence (F234), and the spec and
+  `FLEET_SEMANTICS.md` say both. Relays keep the TTL their origin signed, so a
+  chirp sent with any TTL but 15 no longer fails its signature one hop on. A
+  new session beacons no last-send age, so it no longer links itself to the
+  session before. Spec §3.2, §3.3, §3.4, §8.1 and §12.3 follow, and §12.3 is
+  static_asserted and pinned by `test_chirp_spec_tables.py`. **Host-tested**
+  on the real `chirp_channel.cpp`; the ESP32 compile is CI's; not bench-tested
+  on radios. Filed: F412, D16.
+- **The flagship's BOOT tap goes to the one device that asked (sweep F354,
+  F322, F358).** Its receipt and its home-LAN page load share one tap arbiter,
+  as the WAP's receipt has since F342: a second device asking around the press
+  gets `409 tap_contended`, and nothing is handed out. The dashboard's unlock
+  banner asks before the press, keeps asking from a hidden tab and takes the
+  token without a reload, and Save recovery kit retries with the token when
+  the banner's tap wins. The pairing screen says to leave the opera first on
+  `opera_exists`, and a timeout or a code mismatch says the two Canaries may
+  run different pairing firmware. **Host-tested** (a 240-interleaving sweep
+  over the real tap step; the dashboard's own poll run against it, 17 of 17
+  failing on main's page; a new shape rule in `check_route_security.py`); the
+  PlatformIO compiles are CI's; not bench-tested. The user and security docs
+  that still describe the old tap are listed under F20. Filed: F409, F410.
+- **Home Assistant: a diagnostics download carries no kernel host, served key
+  or health counter (sweep F399, F391).** The key-mismatch Repairs issue,
+  which every download of the integration includes, holds only the two key
+  fingerprints; the served key stays in memory, and the fix flow pins only a
+  key the kernel's authenticated API served. An issue the kernel's API
+  contradicts clears at the next check, where one kept over a restart used to
+  stay critical for good. Five health counters join the redaction set as a
+  second net, and no output changes. **Host-tested** in both Home Assistant
+  lanes (the real core at 2026.5.0 and 2026.10.1); not run against a live
+  kernel. Carried files: the HACS mirror follows one sync behind. Filed: HA52,
+  HA56.
+- **Home Assistant: three contract gaps close (sweep F368, HA48, HA44).** A
+  canary-wap's Signal Strength keeps its last reading across a reconnect
+  instead of showing 0 dBm, Memory Critical reads a canary-wap's
+  `memory_free`, and the `events` publish that creates Last Event, Motion and
+  Occupancy is shown by them, once. The contract suite's three strict expected
+  failures are passing tests. **Host-tested**: F368 and HA44 also on the real
+  core (2026.5.0 and 2026.10.1), HA48 in the stub lane only; the one-line
+  `csi_mqtt.cpp` change's compile is CI's; not bench-tested with a real
+  broker. Filed: F411, HA53.
+- **Lab: the Vision's generator and the test's `num()` read a firmware
+  constant by one strict rule (sweep F369).** `gen_vision.py` reads every
+  constant through `read_const`, and `vision.test.js`'s `num()` through its
+  JavaScript twin, both held to one committed case table, so a commented-out
+  or second definition is refused instead of read; a one-off scratch run,
+  not committed, also found the two readers agreeing on 200,000 fuzzed
+  inputs. The test's two `optical_features.h` readers keep their own pattern
+  (A117). `vision.json` and `flash.json` are unchanged. **Host-tested.**
+  Filed: A116, A117.
+- **Enclosure checks that held nothing now hold (sweep C34, C32, C26, C22).**
+  The cable gland's bush asserts its own squeezed fill at 90 %, and CI
+  requires the out-of-range configs to be refused; the design-language lint
+  refuses a knob that shares its help line with another statement, and a group
+  header that heads nothing; the 1.69's side-cluster knobs file under their
+  own header; and the Sense's screws carry SCR3 in the Lab's Assemble tab.
+  OpenSCAD 2021.01's CSG is byte-identical at the defaults, so no mesh moved.
+  **Render-checked and host-tested**; not print-validated.
+- **The unit file, the Wall and `tvos/README.md` give the viewer-token mint
+  step (sweep A104, A105).** `examples/witnessd.service` turns on the token
+  files and says how to pair a Wall, the tvOS Wall's Verification footer and
+  `tvos/README.md` give all three mint forms with `--label`, and
+  `docs/frigate_integration.md` points at Settings → Verification. Three
+  pointers elsewhere still lag (A118), and the setup guide's section is
+  A103's. **Host-tested** (`test_witnessd_unit.py`); the tvOS compile is CI's,
+  and nothing renders the footer yet (A119). Filed: A118, A119.
+- **Both flashers call a flavorless display a display, and point the WAP, the
+  Sense and the displays at the boot log instead of the self-check (sweep
+  A96, A97, F384).** Every surface in both flashers resolves a board's
+  descriptor through the display-aware match, and the WAP, the Sense and the
+  displays get a pointer to the boot log instead of a self-check ask nothing
+  answers; firmware the catalog does not name is still asked, now in both
+  flashers (A121). The Vision's module-id deny reads the Vision project, its
+  config and pins, and the six `firmware/common` translation units it
+  compiles, code only, not the shared headers (F414).
+  **Host-tested** (`desktop_parity.test.js`); which names real boards report
+  is a board check (A122). Filed: A120-A122, F414.
+- **Three hardware facts set straight (sweep D14, C20, F374).** The round
+  watch's pin map says what BOOT does there, the XIAO ESP32-S3 Sense's GNSS
+  row names no flag the WAP lacks (held by a new test), and a test comment's
+  date is 2026-08-08. Comments and board data only; not bench-tested. Filed:
+  F413, C35.
+- **Home Assistant entity ids, stated as far as they are proven (sweep HA16,
+  A108).** Both publishers have asked Home Assistant for the documented ids
+  since #1762; no live install has confirmed them, and the hardware checklist
+  and feature-gaps H1 now say so. The Lab's WAP sandbox says the ids are asked
+  for, how `<id>` is spelled, and that Home Assistant 2025.10 and later tries
+  to apply them at first registration (`_2` on a clash). **Docs and host
+  tests**; Home Assistant's handling was read from its source, not seen
+  running. Filed: HA50, HA51.
+- **The flagship's `dev_ha` env builds for size.** It is dev's debug image
+  plus the MQTT client, and it stood 3,551 bytes under its 1.9 MB OTA slot
+  before this wave. The tap banner's page text (about 14.6 KB in every canary
+  env) pushed it over. `dev_ha` now sets `debug_build_flags = -Os -g2 -ggdb2`
+  and unflags `-Og`, keeping dev's logging, features and partition table:
+  for a debug build PlatformIO strips `-Os` and adds `-Og` itself, so the
+  level is set there (unflagging `-Og` alone built a `-O0` image). The size
+  is CI's to show (compile-only env; never run on hardware).
+- **The sweep ledger:** 34 items ticked and F364's sketch slice done, W41 and
+  C23 found closed, and the second items filed as F365 (the HTTPS port write)
+  and F363 (Chirp's beacon age) renumbered F400 and F415. Nineteen more ids
+  name two items each, all from wave 20; D17 tracks them.
+
+
+## [2.4.19] - 2026-10-30
+
+> **Before you update.** Nothing to do first.
+> A Canary Glance AMOLED on a V2 board whose glass stayed black: install 2.4.19 with Flasher 0.12.4, Lab 0.3.4 or the browser flasher.
+
+### release: the 2.4.19 train (Flasher 0.12.4, Lab 0.3.4)
+
+- **What to do after updating.** Nothing on any Canary. A Canary Glance
+  AMOLED (Waveshare ESP32-S3-Touch-AMOLED-2.41, V2 board) that never lit:
+  install 2.4.19 over USB, then open the flasher's serial monitor. It should
+  print `first light 2/5: panel reset released (TCA9554 EXIO0 reads high)`
+  and the splash should light. If the colors look swapped or the picture is
+  mirrored, that is a one-line fix: say so. Built by CI; not yet booted on
+  our bench.
+- **What is in it.** The Glance AMOLED's V2 panel reset and Waveshare's V2
+  init (below), its learned PWR key and first-light trace, and Vision's and
+  the Sentinel's module truth (F384).
+- **Flasher 0.12.4 and Lab 0.3.4** carry the 2.4.19 catalog, so their
+  Canary Glance AMOLED install is the one that lights a V2 glass. The
+  browser flasher picks it up when the release redeploys the site.
+
+### The Glance AMOLED lights on a V2 board: its panel reset rides the IO expander, and nothing held it high
+
+- **The black glass, found.** On the Waveshare ESP32-S3-Touch-AMOLED-2.41
+  V2, the panel's reset is not a GPIO. It is TCA9554 EXIO0, with a 10 kΩ
+  pull-down to ground. The expander powers up with every line an input, so
+  the panel stayed in reset for as long as the firmware ran. The firmware
+  left the expander alone, because its pin map came from the CircuitPython
+  definition of an earlier board revision (panel reset on GPIO21, touch
+  reset on GPIO3). QSPI writes carry no acknowledgement, so the serial log
+  said the panel, the touch and the setup network were all up while the
+  glass showed nothing. The V2 wiring comes from Waveshare's own V2 tree
+  (`waveshareteam/ESP32-S3-Touch-AMOLED-2.41-V2`): the V2.0 schematic and
+  its three display examples.
+- **`display_init` releases the resets the way the vendor does.** EXIO0
+  (panel) and EXIO1 (touch) become outputs, are held low, then driven high.
+  EXIO0 is read back from the expander, and serial says
+  `first light 2/5: panel reset released (TCA9554 EXIO0 reads high)`, or
+  that the line is still low, or that the expander did not answer. The
+  first-light trace is now five lines.
+- **Nothing drives the board's inputs.** GPIO21 is the panel's TE output and
+  GPIO3 the touch INT on V2. The firmware used to pulse both as resets.
+  `pins.h` names them as inputs (`LCD_PIN_TE`, `TOUCH_PIN_INT`), with no
+  reset GPIO. It names the expander lines (EXIO2 RTC INT, EXIO3/4 IMU INT,
+  the expander's own INT on GPIO18). The pin budget now counts GPIO18 as
+  taken.
+- **The init is Waveshare's V2 sequence, byte for byte.** The page-0x13
+  `0xEB` write that only the CircuitPython init sends is gone.
+  `scripts/tests/test_amoled241_v2_wiring.py` holds the pin map, the
+  reset-before-`begin()` order and the init table to the vendor's tree, and
+  fails on the old map.
+
+### The iPhone app passes App Store Connect's Siri check, and its App Store submission is written down
+
+- **ITMS-90626 fixed.** App Store Connect rejected build 39.1 (0.8.0) after
+  upload: the Apple Watch app's "Check the Fleet" intent description said
+  "iPhone", and intent strings may not name Apple products. It now reads
+  "The fleet's one honest answer, from the latest snapshot on your wrist."
+  The rejection arrives by email after a green upload, so the new
+  `scripts/tests/test_ios_intent_strings.py` catches it on Linux first: it
+  reads every intent title, description, Siri phrase, short title, parameter
+  title and display title in the app, the watch app and the widgets, and
+  fails on an Apple product or service name. It was checked against the
+  rejected string.
+- **`ios/APP_STORE.md`**: the App Store submission checklist. It covers the
+  pre-submission checks, the App Store Connect record (category, URLs,
+  keywords, description), the privacy label answer and why it is "Data Not
+  Collected", the App Review notes with the demo fleet and every permission
+  explained, and the screenshots to take.
+
+### iOS 0.9.0 to TestFlight
+
+- **The iPhone app moves to 0.9.0** (`ios/project.yml` `MARKETING_VERSION`;
+  `ios-v0.8.1` is tagged, so the release workflow refuses to publish 0.8.1
+  again). It carries the three iPhone changes below in this
+  section: updating a Canary's software from its own screen, picking out the
+  Canary you just set up on every path, and the display flash step from the
+  Glance AMOLED change. No synced CloudKit record changed since 0.8.1, so no
+  schema promotion is owed.
+
+### The iPhone picks out the Canary you just set up, however you set it up, and a display owner never waits on a Bluetooth card
+
+- **"Watch it appear" names the new one on every path.** It used to tick a
+  Canary only when this phone had joined its setup network; set up from the
+  Bluetooth card, the Camera app or the Flasher, it listed every same-kind
+  Canary in the house or watched forever. It now remembers what was on the
+  network when the walkthrough opened and shows a later arrival as "new on
+  your network since you opened this" (`ArrivalWatch`, covered by
+  `ArrivalWatchTests`), and only when no setup-network identity is known,
+  so a different newcomer is never ticked in place of the Canary this phone
+  joined. The baseline needs ten seconds of uninterrupted running browse; a
+  stretch cut short by the browse stopping or the app leaving the
+  foreground starts over, so a slow Local Network prompt or a trip to the
+  Camera app never makes an old Canary look new. The watch now always
+  ends in words, and only the newest watch clock can end it.
+- **A display has its own door into setup.** Today's first-run card offers
+  "It has a screen? Scan its code", Set up lists "Add a display", and
+  `securacv://setup?what=display` opens the display walkthrough directly.
+  `scripts/tests/test_ios_setup_targets.py` holds the link's words, the
+  `SetupTarget` cases and their destinations to each other.
+
+### The iPhone updates a Canary's software: check, install and watch it restart, from the device's own screen
+
+- **Software update on every display and every paired WAP.** Each device
+  screen gains a section that shows the installed version, checks for a
+  newer one, and installs it after one confirmation. The phone never
+  touches firmware: it asks the Canary's own signed update engine to check
+  or install (`/api/ota/check`, `/api/ota/install`) and reads its status
+  back, step by step, with the download and install percentage. It then
+  watches the restart and says what the Canary came back on: "Updated to"
+  the new version, or "Still on" the old one with the device's own reason.
+  A display is asked on the home network, like its other settings. A WAP is
+  asked through its paired, pinned client with its bearer token, and its
+  release notes appear under "What's new". Firmware that predates the routes
+  answers 404, and the section says to update it once from a computer.
+- **One contract, held to both firmware families.** The model
+  (`ios/Sources/SecuraCV/Model/FirmwareUpdate.swift`) reads the display's 409
+  and the WAP's 400 "ota_busy" as the same "already running". It shows the
+  engine's own plain-language error sentences. `FirmwareUpdateTests` decodes
+  both firmware's status bodies, and the new
+  `scripts/tests/test_ios_firmware_update.py` holds the decoder's keys, the
+  engine's state words, its "No error" word and both busy answers to
+  `glass_web.cpp`, `canary_wap.ino` and `securacv_ota.cpp`.
+- **Moving the fleet to new Wi-Fi links the display walkthrough.** A display
+  under "Needs hands-on" now has a link into the app's own display setup
+  (scan the code on its screen, hand it the new Wi-Fi) instead of a footer
+  that pointed at iOS Settings.
+
+### The Glance AMOLED can no longer switch itself off at boot, says on serial where a dark glass stops, and the iPhone walks a blank display from the flasher to the fleet
+
+- **The PWR key's resting level is learned, not assumed.** The Waveshare
+  ESP32-S3-Touch-AMOLED-2.41's case PWR key reaches GPIO15 through the soft
+  power latch, and no source we can read says which level it rests at. The
+  old glue assumed active-low. On a board whose line rests LOW it read "PWR
+  held" from the first loop pass, powered the glass off three seconds later,
+  and on USB then waited forever for a release that never came. A new pure
+  model (`canary/io/pwr_key.h`, host-tested in `test_pwr_key.cpp`) learns the
+  resting level after boot and only acts on a press that began after
+  learning. A hold of 3 s powers off after its release, once the key has
+  rested for 1.5 s, so a tap can never power off even if the resting level
+  was mislearned. A "press" longer than 15 s is re-learned as the resting
+  level. The serial log prints `PWR key rests HIGH` or `rests LOW`,
+  which is the line a hardware test report needs. `power_off()` waits for
+  the release at most 10 s and arms the wake on the learned level.
+- **Four numbered "first light" lines on serial.** `display_init` now says
+  whether GPIO16 really reads high, when the QSPI bus and the Waveshare init
+  went out, and that the RAM was cleared before the splash lights it. QSPI
+  writes have no acknowledgement, so the lines say what was sent, not what
+  the panel took. They narrow a dark glass to power, bus, or init and pixels.
+- **The init writes the address window before display-on, where the bench
+  does.** The bytes up to first light now match the CircuitPython board
+  definition for this panel, the only bench-tested reference. The window is
+  derived from `pins.h` and checked against the controller's RAM at compile
+  time. The panel's pins, reset, init table, QSPI framing and brightness
+  path were checked against that reference and match it.
+- **The iPhone's display walkthrough starts at the flash.** A blank board
+  has no QR yet, and iOS has no USB serial, so the phone never flashes. Its
+  first step sends a computer the in-browser flasher's link through the share
+  sheet, with the Canary Glance AMOLED already picked (`?product=`). The step
+  names the Waveshare board, says the build has not been booted on our bench
+  yet, and points at the first-light lines if the glass stays dark.
+  `scripts/tests/test_ios_flasher_links.py` holds the product id to
+  `flash.json`. The family row now names the Glance AMOLED, the key step says
+  a Camera-app scan works too, and a display owner left waiting on a
+  Bluetooth card is told a display never appears there.
+
+### Vision and Sentinel tell the truth about their modules: the Grove module's 1 or 0, never its id, a sample from every good invoke and none from a failed one; the Sentinel's radar link reaches Home Assistant, and a missing light sensor is absent, not blinded, and still reported (F384; device-details PR 7, #1892)
+
+- **Vision's `module_id` is 1 or 0 (sweep F384).** It was the SSCMA
+  library's cached id accessor cast to `int`: the address of the library's
+  id buffer, non-zero whether or not the Grove Vision AI module had answered.
+  The boot line printed it and the desktop Flasher's boot-line proof read any
+  positive value as "the module answered", so a Vision whose module never
+  answered passed. `init()` now keeps one verdict, the library's `begin()`
+  and then a fresh NAME? round trip (`name(false)`, never the cache; skipped
+  when `begin()` failed, so a dead module costs no 3 s timeout), and the boot
+  line keeps its exact format, `Grove Vision AI ID=%d`, with 1 or 0 in it and
+  the ERROR line above it exactly with 0. A number, not `true`, so an older
+  Flasher's `> 0` gate still reads it right. The `j` proof record gains
+  `module_ok`, the same verdict as a bool.
+- **No code of the firmware's own asks the module for its id.** The
+  device-details design treats it as a per-unit identifier, and nothing in
+  the firmware calls the library's id accessor. One thing this library does not let the firmware
+  avoid: Seeed_Arduino_SSCMA 1.0.3's I2C `begin()` is `ID(false) &&
+  name(false)`, so the library itself asks once at boot and keeps the answer
+  in its private buffer, which nothing reads, prints or stores.
+- **`invoke()` is read as the status code it is.** Its `int` result
+  (`CMD_OK` is 0) was stored in a `bool`, so it read backwards: a successful
+  invoke that found no box gave no sample, so with a working module and an
+  empty room the presence FSM was never ticked and could not time a person
+  out, and the Aim card's empty-frame cadence did not run; a failed invoke
+  gave a sample built from the boxes the library still held from the last
+  good frame. A successful invoke now always gives a sample, empty or not,
+  and a failed one gives none. One consequence reaches past the FSM: the
+  Vision mirrors that presence onto the fleet beacon's alert flag and class
+  (`vision_tick()`), on by default and turned off by no Vision env, and the
+  beacon is readable by anything in radio range or on the LAN, unsigned by
+  design (`docs/TRUST_MODEL.md`). Before, with a working module the flag
+  stayed as it was after the room emptied, since only a box or a failed
+  invoke ticked the FSM; now it clears when the FSM times the person out,
+  which is what the device-details design lists for that surface (§7.3, the
+  `nearby` tier), not a new one. (Read from the code and the library source;
+  not run on a device.)
+- **The desktop Flasher reads `module_ok`.** The flash engine's receipt
+  (`monitor.rs`, shared with the Lab app's native bench) requires `module_ok`
+  to be `true` when a proof carries it, beside `i2c_ready` and a positive
+  `module_id`, which an older image's proof still passes or fails on as
+  before. The live boot line's proof now carries `module_ok` too: false on
+  `ID=0`, and false after the ERROR line an older image printed just above its
+  address, so a dead module is refused from either image. The Flasher's
+  `serial:vision` handler reads `module_ok` when present. No browser change:
+  the browser flasher proves a Vision through the camera bench, never the boot
+  log, and `desktop_parity.test.js` now holds it to having no such path.
+- **canary-sentinel's health carries its radar link.** The health publish it
+  carries from canary-sense takes a `radar` object (`link_ok`,
+  `last_frame_age_ms`, `frame_errors`, the contract Home Assistant's
+  radar-link diagnostic reads), and the Sentinel passed none, though it judged
+  the link for its fusion vote. It now passes it, judged by the same stall
+  rule (`include/canary/sentinel_links.h`): no object before a frame or a
+  whole stall window, and none on a build with no radar (Lite). Once the
+  radar has spoken, the object reads down exactly when the radar votes
+  `Denied`; a radar silent since boot reads down there while its channel
+  never votes, as an unwired one does, so this object is the only place it
+  shows. The integration gives a Canary the Radar link sensor when its
+  health reports the object, so a Sentinel with the radar gets one and a
+  Lite never grows a sensor that could only say "unknown"; a canary-sense
+  still gets it from its status. The object's frame age and error count are
+  what the device-details design classes as activity, which its policy keeps
+  off the broker tier: they ride the owner's broker here as a legacy
+  exception, the health object canary-sense already publishes, which the
+  design's PR 7 asks the Sentinel to publish too. Home Assistant's
+  diagnostics redaction does not list `last_frame_age_ms` yet; device-details
+  PR 16 adds it.
+- **A missing light sensor is absent, not blinded, and still reported.** The
+  Sentinel ignored the BH1750's `begin()`, so on a unit with no working light
+  sensor every read failed and voted `Denied`: a blinded channel for good,
+  and on a preset with the radar an `Anomaly` whenever the radar saw a body.
+  A sensor that did not answer at boot is now absent: the light channel never
+  votes, so it adds no suspicion, but the retained state's `channel_denied`
+  is true for it, so Home Assistant's Channel-blinded problem sensor stays on
+  (requirement R6: never a silent gap), and the boot console's `BH1750` row
+  reads `not found: absent, never votes, reported as channel_denied`. One
+  that answered and then fails a read is blinded, `Denied`, as before. So a
+  sensor unplugged while the unit is off still reaches the owner, as a
+  denied channel rather than as suspicion; R2's text in
+  `sentinel_requirements.h` now says that. On the wire only the anomaly
+  score (a blinded sensor raises it, an absent one does not), and the level
+  that score can lift to `Anomaly` (on every preset with the radar, it does
+  while the radar sees a body), tell the two apart, until the device-details
+  record carries the part's status (device-details PR 15). The vote and the
+  report are one rule each in `sentinel_links.h` (`light_sample()`,
+  `channel_denied_reported()`), which `main.cpp` calls.
+- **Docs.** The Vision README and both Grove guides say what `ID=1` and
+  `ID=0` mean, and that any other number is an older image whose ERROR line is
+  the only answer; `gen_vision.py` stages `ID=1`, `must()`s the 1-or-0
+  `printf`, and `vision.json` is regenerated. The Sentinel README, the Home
+  Assistant setup guide and `FAULT_MODEL.md` (which still said no firmware
+  published the radar object) describe the radar link and the light sensor as
+  they are now.
+- **Tests.** `test_vision_module_link.cpp` (new) compiles `vision_mgr.cpp`
+  against a scripted module and pins all of the Vision side in 55 checks; the
+  old file does not compile there (a pointer cast to `int`), and the old logic
+  shimmed in, or the inversion alone restored, fails it.
+  `test_sentinel_links.cpp` (new, 55 checks) runs the radar and light rules
+  alone and through the real fusion engine under the `door` preset, and
+  holds the Sentinel's `main.cpp`, which no host suite compiles, to calling
+  them: its `radar_link_health()`, `read_light()` and
+  `light_absent_at_boot()` bodies, the snapshot's `channel_denied` and both
+  health publishes are compared with their source text, comments and spacing
+  aside. The old light rule fails it in the header or in `main.cpp`, and so
+  does a radar object that never reaches a publish. Six new flash-engine
+  tests cover old and new proof records, both images' boot lines and a blank
+  line between the ERROR line and the ID line (three fail on the old rules);
+  a `desktop_parity.test.js` case holds the firmware's boot lines and the
+  proof record's `module_ok` value to the engine, and two Home Assistant
+  tests hold the radar-link gate (both fail on the old one). Built with
+  PlatformIO here, on this change over the 2.4.18 train, with the
+  `secrets/secrets.h` that `firmware.yml`'s "Generate CI secrets header"
+  step writes into the project and with `-DVALIDATION_BUILD=1` (with no
+  `secrets/secrets.h` a build compiles the project's committed
+  `include/secrets.ci.h` stub instead, a different image), but not with
+  CI's packages: this machine cannot reach the PlatformIO registry, so the
+  Vision and Lite builds link Arduino-ESP32 2.0.17 from a local install
+  instead of CI's `3.20017.241212` package of it, every build links local
+  copies of its libraries, and the Vision image carries their local paths
+  in its assert strings. The four Vision build envs (`flavors.json`) and
+  all five Sentinel envs compile. Against the same envs built the same way
+  from the 2.4.18 release commit (#1889), the Vision images grow by 32 to
+  96 bytes and the Sentinel door and Lite images by 256 and 128 bytes.
+  Built here, the five images `flavors.json` guards for the two projects
+  are `canary-vision-default` 1,439,568 of 1,966,080 bytes,
+  `canary-vision-xiao-c3` 1,449,600 of 1,966,080, `canary-vision-xiao-s3`
+  1,333,488 of 3,342,336, `canary-sentinel-door` 1,451,376 of 1,966,080
+  and `canary-sentinel-lite` 1,160,816 of 1,310,720; the Lite image is the
+  tightest fit, with 149,904 bytes to spare. These are not the sizes CI's
+  size guard prints. Built here, #1889's five come out 208, 208, 208, 32
+  and 80 bytes under the sizes its own CI run's guard printed for them
+  (1,439,680, 1,449,728, 1,333,664, 1,451,152 and 1,160,768); this
+  change's guard sizes are the ones its own CI run prints. Neither change
+  is compiled into the emulator, so its dist does not move.
+  Host-tested; not run on a device.
+
+### Home Assistant: every Canary's device page shows its firmware and its product, and a shared diagnostics dump keeps no digit of a Canary's key fingerprint (F391 in part, F392, HA45; device-details PR 2, #1891)
+
+- **The firmware on every Canary's device page.** Every firmware family
+  (the `firmware/canary` build, the canary-wap, Sense, Vision, Sentinel and
+  the displays) publishes `firmware_version` on its `health` topic and none
+  on `status`, and the integration read the version from `status` only, so
+  no Canary's device page showed one. The health subscription now runs the
+  trust-on-first-use pin first, unchanged, then records the version and
+  writes it as the device's software version. The `firmware/canary`
+  build's status carries its version too, under `firmware`, a key the
+  integration did not read; it is read now, so that build's page shows a
+  version from its first status. A status version is used only until a
+  health has reported one, a new version after an update is written again,
+  and a heartbeat that changes nothing writes nothing. That closes HA45,
+  filed by #1836's canary-wap contract fixture: its strict expected failure
+  in `test_wap_mqtt_contract.py`, which replays what the real `csi_mqtt.cpp`
+  publishes, is now a plain test.
+- **The model is the product.** A Canary's model was the constant "SecuraCV
+  Canary". It is now the product name for the `device_type` its status
+  names, from a table (`CANARY_PRODUCT_NAMES` in `const.py`, the names the
+  Apple apps use): Canary WAP, Canary Vision, Canary Sense, Canary
+  Sentinel, Canary Dash, Canary Nightstand, Canary Nightstand 7, Canary
+  Nightlight, Canary Watch Station, and "Canary display" for display
+  images older than the flavors' own types. A status that names no type (the
+  `firmware/canary` build's names none) or a type this release does not know
+  keeps "SecuraCV Canary"; the wire string is never shown. The type is
+  remembered while Home Assistant runs, so the canary-wap's last will
+  (`{"online": false}`, no `device_type`) keeps the model, and every
+  entity's device info applies the same rule, so an entity no longer writes
+  "SecuraCV Canary" back over it. The memory does not outlive a restart: a
+  Canary whose retained status is its last will reads "SecuraCV Canary"
+  again until it next names its type.
+- **Every value is bounded text from the broker.** Version, board and name
+  are cut to 64 printable characters: characters that neither print nor are
+  whitespace are dropped, so a dropped one leaves no space behind, then each
+  run of whitespace (a newline or a tab included) becomes one space
+  (`mqtt_payload.broker_text`); a version that is not a string (a number, an
+  object) is dropped instead of `str()`-ed onto the page. No serial number
+  is set on a Canary's device. A fact a publish leaves out is no longer
+  written as empty, so an update no longer clears the board or the address,
+  nor does the first status after a restart clear the version, board or
+  address the registry stored,
+  and a device that the availability topic announced first is registered by
+  the status that follows (before, that status wrote nothing to the
+  registry unless it carried a new version).
+- **The redaction set is ready for device details (F391, the part this PR
+  owns).** `TO_REDACT` gains `hw_token`, `mdns_host`, `serial_number`,
+  `chip_id`, `module_id`, `local_address`, `address` and `peer_address`,
+  named literally; the device-details vocabulary derives the set later.
+- **No digit of a Canary's key fingerprint in the diagnostics dump (F392).**
+  The config-entry dump kept 8 of each pinned Canary's 16 fingerprint
+  digits. A canary-wap serves its whole fingerprint to anyone in radio
+  range as its Bluetooth Device Information serial, and its Bluetooth name
+  and the fleet beacon carry the last four digits, so a posted dump let a
+  stranger nearby match the device. The trust row's `fingerprint` is
+  replaced by `key_correlation_id`: a keyed hash of the fingerprint under a
+  salt drawn for that one dump and never written, spelled in letters that
+  are not hex digits. Two Canaries pinned to one key share an id within a
+  dump; nothing links an id to a key or one dump to another. The kernel
+  key's own eight-character fingerprint is unchanged.
+- **Every Canary keeps its own row in the dump, and it says what the
+  device page says.** The dump keyed each Canary's rows by the first eight
+  characters of its id, and many ids share them: every canary-wap unit is
+  `canary-s3-…` or `canary-c3-…`, and a Sense (`canary_sense_001`) and a
+  Sentinel start alike, so one Canary's rows replaced another's and two
+  units pinned to one key could not be seen to share a correlation id. Ids
+  that share their eight characters now each get a per-dump ordinal
+  (`canary-s… #1`, `canary-s… #2`), numbered in the order the dump lists
+  them: the Canaries the integration has a record of, then every other
+  Canary with a device page, then an id only verification has seen (a
+  verdict held this run for a Canary whose page the owner has since
+  deleted; a chain or counts publish verified before the status makes the
+  page first, through the sensor that verifies it); no ninth character is
+  shown. Every Canary with a device page under the entry now
+  has a row (and a trust row when its key is pinned), whichever topic made
+  the page: a status, a health with or without a version, or a first
+  counts, chain, events, tamper, transport, mesh or chirp publish, each of
+  which adds entities and so the page; before, only a Canary the
+  integration had a record of (from its status, its availability or an
+  event it published) had one. The pages are read from the device
+  registry, so a Canary whose page predates a restart has a row before it
+  publishes again, every fact in it empty until it does (and its trust row
+  when its key is pinned). The per-Canary `firmware` and `hardware` are
+  the device page's own (the version health reported, else the status's,
+  and the board the status last named), so within a run they no longer
+  disagree with the page once a later status leaves a fact out; after a
+  restart the dump shows only what each Canary has published since, while
+  the page keeps the version, board and address the registry stored. The
+  file Home Assistant downloads also carries every Repairs issue it holds
+  for the integration, which it adds outside the sweep: the ones the owner
+  ignored and those of the integration's other entries too, each with the
+  time it was raised. An entry-scoped issue id ends in the entry id, and a
+  kernel key-mismatch issue carries the kernel's URL and the key it served.
+  None names a Canary. The file's `setup_times` section, Home Assistant's
+  too, is keyed by the id of every entry of the integration set up as Home
+  Assistant last started, and the file's name ends in the downloaded
+  entry's id. All of that predates this change; the issues are filed as
+  F399, whose scope names the rest, and the security docs and the setup
+  guide now say so, with the two sections to remove and the file to rename
+  before posting it.
+- **Tests.** `test_device_registry_versions.py` (new) drives the
+  integration's own subscriptions with each family's status and health
+  shape from `tests/fixtures/canary_mqtt_payloads.json`; in the monorepo it
+  also holds every fixture key to the producer named beside it, the
+  product table's keys to the device types `firmware/configs/*/*/config.h`
+  and the canary-wap publish, and its names to the Apple apps' table
+  (`ios/Shared/DeviceNaming.swift`), and holds every status producer to
+  spelling no version key but the flagship's `firmware`; those checks skip
+  in the HACS mirror, which carries neither (`python.yml` watches the files
+  they read). It also checks that a health without a version keeps the one
+  health reported, that a health-first Canary is named by a status that
+  changes nothing else, and that a restart keeps the registry's facts. The
+  stub suite's device registry now clears a field passed as None, as the
+  core's does, so a writer that sends None for a fact it lacks fails there
+  too. `test_diagnostics.py` and the real-core lane
+  (`tests/ha`) assert no run of four fingerprint characters anywhere in the
+  dump, that the dump's firmware is the device page's (health's over the
+  status's) and the board bounded, and that a value under each of the eight
+  new identifier keys is replaced at any depth by `async_redact_data` (the
+  core's own, in the real-core lane); the real-core lane also checks the
+  firmware and model on a device page, the flagship's status version, a
+  health-first Canary taking its status's name, and an update keeping the
+  board and the address. `test_diagnostics.py` also keeps two canary-wap
+  units, a Sense and a Sentinel in rows of their own, the two units'
+  correlation ids equal, and gives an id only verification has seen a row;
+  the real-core lane numbers a Canary whose chain was verified before its
+  status with the other pages, and its verdict after them once the owner
+  has deleted its page, and keys a row by eight characters of the
+  Canary's id (all of one with eight or fewer);
+  both suites give every Canary with a device page a row, the real-core
+  lane for a first publish on each of the eight topics that make a page
+  without a record (health with no version, counts, chain, events, tamper,
+  transport, mesh, chirp) and for a page kept through a reload, and both
+  number a Canary heard only on health after a status record its page
+  predates. The real-core
+  dump test's Canary key has a hex letter in every four-character run of
+  its fingerprint, and its kernel key is fixed: with the old key the scan
+  failed whenever the clock's bucket start spelled one of the fingerprint's
+  all-digit runs (246 of the 157,824 bucket starts in the three years from
+  2026-10-27), and a kernel key drawn fresh for each test shares four
+  characters with the Canary's fingerprint about once in a thousand runs.
+  The test asserts both preconditions. A real-core test holds what the
+  docs now say of the downloaded file's issues: an ignored issue and
+  another entry's are both in it; another sets up two entries before the
+  core is running, as a start does, and holds what the setup guide says of
+  the rest: the file's name ends in the entry id, its `setup_times` is
+  keyed by both entries' ids, and with that section and the issues removed
+  no id of either entry is left.
+  Every WAP id in the tests is one the WAP's suffix recipe can print, as
+  `scripts/tests/test_wap_name_examples.py` requires. `python.yml` now
+  also watches the eleven files outside its trees that the stub suite
+  already read (the dictionary, the voice sentences, the seven contract
+  vectors, and the viewer's verify and zip cores), found by
+  `scripts/check_path_filter_reads.py`. The stub suite passes on Python
+  3.11 and 3.13 (975 tests, 13 of them the contract fixture's strict
+  expected failures for gaps still open) and the real-core lane on Home
+  Assistant 2026.5.0 and 2026.10.1 (127 each). Host-tested; not run against
+  a device or a live broker.
 
 ## [2.4.18] - 2026-10-28
 
@@ -390,7 +1779,8 @@
   sent` line already reaches the SD card, F364). **Host-tested**
   (`test_chirp_commands_wap.cpp`, eight new tests on the real
   `chirp_channel.cpp`); the compiles are CI's; not bench-tested. Filed:
-  F361-F364.
+  F361-F364 (four numbers given before; F363 of them is now F415, and D17
+  tracks the rest).
 - **canary-wap: the stub server API is gone, and the Lab's WAP page reads its
   AP and port facts from the code the sketch runs (sweep F277).**
   `wap_server.cpp` defined every function `wap_server.h` declared as a stub
@@ -403,7 +1793,8 @@
   `httpd_ssl_start()` would overwrite. `devices/wap.json` is unchanged.
   **Host-tested** (a scratch-copy generator unittest, a route-match case, the
   J7 guard and its self-test); the ESP32 compiles are CI's; not run on a
-  device. Filed: F365, F366.
+  device. Filed: F400 (filed as F365, a number already taken) and F366 (a
+  number #1882 had given first; D17).
 - **canary-wap MQTT contract fixture (sweep F34, its fixture half).** A host
   harness runs the real `csi_mqtt.cpp`, records every publish with its QoS and
   retain flag, and delivers each discovery command word back to check the WAP

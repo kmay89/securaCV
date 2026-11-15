@@ -133,6 +133,7 @@
 #include "meta_daily_summary.h"  // meta_daily_summary_set_clock — the 23:55 summary's clock (F121)
 #include "nvs_store.h"
 #include "api_auth.h"
+#include "http_body_reader.h"   // a request body read whole, or refused (/api/ota/config)
 #include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
                                      // auto-generated prototype for
                                      // wifi_change_authorize()
@@ -170,9 +171,11 @@
 #include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
 #include "wap_json_writer.h"      // pure, host-tested: an SSID's control bytes as U+FFFD (F262)
 #include "receipt_authority.h"   // pure, host-tested: which address the receipt's base_url names (F255)
+#include "fleet_qr_query.h"      // pure, host-tested: GET /api/fleet/qr's query read whole or refused (F304)
 #include "host_guard.h"          // pure, host-tested: does the Host name THIS device (staged copy of firmware/common/network/, check_improv_sync.sh; F344)
 #include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
+#include "seal_api.h"            // GET /api/device/seal and api_auth.h's Sealed-header hook (api_seal.h)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
@@ -344,7 +347,7 @@ static volatile bool g_vault_test_pending = false;
 // (canary-local/tools/figures) holds it to the mDNS and MQTT sites and refuses
 // any other =, compound assignment, ++ or -- of the name (sweep F294).
 static const char* DEVICE_TYPE        = "canary-wap";
-static const char* FIRMWARE_VERSION   = "2.4.18-wap";  // Vision runtime config release train
+static const char* FIRMWARE_VERSION   = "2.4.19-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
@@ -439,6 +442,17 @@ static const uint32_t SD_SPI_SLOW = 1000000;
 
 static const int   AP_CHANNEL          = 1;
 static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for security
+// The HTTPS server's port (sweep F400): start_http_server() binds it as
+// ssl_config.port_secure, the field httpd_ssl_start() binds (it overwrites
+// ssl_config.httpd.server_port with it), and the boot and status lines print
+// it. canary-local/tools/gen_wap.py reads this line for the page's
+// https_port and refuses any other spelling of the HTTPS port.
+static const int   HTTPS_PORT          = 443;
+// Every https address the device spells names no port: the port-80
+// redirect's Location (receipt_authority.h), the receipt's base_url and the
+// address a pin is handed out for. So the server stays on the scheme's
+// default until they spell one.
+static_assert(HTTPS_PORT == 443, "the https addresses the device spells name no port");
 // F16: ask the driver for WPA2/WPA3 transition + PMF-capable on the SoftAP
 // (ap_security_policy.h). Runtime fallback: a core without SoftAP SAE, or a
 // driver refusal, keeps WPA2-PSK, logs why, and /api/wifi + /api/device-info
@@ -720,13 +734,24 @@ struct WitnessRecord {
   bool        verified;
 };
 
-// What nvs_load_key() found (sweep F360, the canary's rule). Absent is the
-// one answer that may lead to a new key: IDF's NVS says nothing is stored.
-// Refused means a key is, or may be, stored and was not read or not used;
-// no new identity may be made over it. Declared here, among the types and
-// above the sketch's first function, so the prototype the Arduino builder
-// hoists for nvs_load_key() sees it. One line: the host suite cuts it.
+// What nvs_load_key() found (sweep F360, the canary's rule), and, by the same
+// rule, nvs_load_token() (F365) and tls_load_from_nvs() (F404). Absent is the
+// one answer that may lead to a new key: NVS says nothing is stored. Refused
+// means a key is, or may be, stored and was not read or not used; no new
+// identity may be made over it. Declared here, among the types and above the
+// sketch's first function, so the prototypes the Arduino builder hoists for
+// those three see it. One line: the host suites cut it.
 enum class KeyLoad : uint8_t { Loaded, Absent, Refused };
+
+// What a record into g_last_record came to (sweep F364's review;
+// witness_record_last()): the serial log names a record only when one was
+// made. Before, setup() printed "[OK] Boot attestation" and loop() printed
+// the interval's table row after a record create_witness_record() refused (a
+// hash that did not run, or a chain provisioning refused), from
+// g_last_record as it stood: the zeros setup() left, or the last record
+// made, shown again as new. Here for the hoisted prototype, as KeyLoad is;
+// one line, which the host suite cuts.
+enum class RecordMade : uint8_t { Made, Unverified, Refused };
 
 struct DeviceIdentity {
   uint8_t  privkey[32];
@@ -752,6 +777,11 @@ struct DeviceIdentity {
   uint32_t key_born_ms;   // millis() when this boot generated the key…
   bool     key_is_new;    // …meaningful only if this boot is the one that made it.
   bool     key_refused;   // NVS holds, or may hold, a key this boot could not read: setup() halts (F360)
+  // Provisioning could not hash the key's fingerprint or the genesis head
+  // (sweep F364): the device is unnamed or its chain unanchored this boot, so
+  // create_witness_record() signs nothing and persist_chain_state() writes
+  // nothing. setup() goes on, as after any provisioning refusal (F336).
+  bool     chain_refused;
   bool     initialized;
   bool     tamper_active;
   char     device_id[32];
@@ -1255,13 +1285,32 @@ static void print_gps_block();
 static void print_help();
 static void print_quick_connect_details(const char* title);
 static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out);
+// The SHA-256 helpers and the hashes built on them answer whether every
+// mbedTLS step ran (sweep F364). On false the 32-byte output is zeroed, the
+// same bytes on every unit, and each caller refuses what the hash was for.
+// [[nodiscard]] goes on these declarations, not on the definitions: a
+// line-start attribute on a definition would hide its head from the sketch's
+// source guards, which read heads at column 0 (data_mgmt_api.h declares
+// hmac_sha256() by the same rule). tests_host/test_wap_sha_fail.cpp fails
+// each step under each caller and reads every call site.
+[[nodiscard]] static bool sha256_raw(const uint8_t* data, size_t n, uint8_t out[32]);
+[[nodiscard]] static bool sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]);
+[[nodiscard]] static bool compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]);
+[[nodiscard]] static bool tls_compute_cert_fingerprint();
+[[nodiscard]] static bool compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
+                                             uint32_t seq, uint32_t time_bucket, uint8_t out[32]);
+[[nodiscard]] static bool update_chain(const uint8_t payload_hash[32], uint32_t tb, WitnessRecord* rec);
 // log_health is declared extern in health_log.h for use by other modules
 void log_health(LogLevel level, LogCategory category, const char* message, const char* detail = nullptr);
 // A health-log line whose detail is an SSID (sweep F262): GET /api/logs
 // writes the detail through ArduinoJson, which writes a control byte raw, and
 // an SSID is whatever bytes an access point broadcast or a person typed. The
 // SSID goes in with its control bytes as U+FFFD (wap_json::replaced_text()),
-// cut on a character to the detail the ring keeps whole.
+// cut on a character to the detail the ring keeps whole. Since sweep F303
+// log_health() scrubs every message and detail itself (shown_text()), so
+// the ring holds well-formed text with or without this pass; it stays for
+// check rule J9, which holds every SSID a log line or printf is handed to
+// it (the Serial line and the /HEALTH file take the detail as given).
 static void log_health_ssid(LogLevel level, LogCategory category, const char* message, const char* ssid) {
   char shown[sizeof(HealthLogRingEntry::detail)];
   wap_json::replaced_text(shown, sizeof(shown), ssid);
@@ -1282,6 +1331,12 @@ static const char* wifi_state_name(WiFiProvState s);
 static void claim_catch_all_hostname();
 static void schedule_catch_all_claim();
 static void generate_mdns_hostname(char* out, size_t cap);
+// Whether this boot's identity is named and its chain anchored (sweeps
+// F364's review and F403). Four surfaces ask it first: BLE discovery (F364's
+// review), the BLE status service, the witness export's HEAD and the signer
+// (F403). Other readers of the device id, the fingerprint or the head do not
+// ask it yet; the definition names them.
+static bool identity_named_and_anchored();
 
 // ════════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
@@ -1608,30 +1663,45 @@ static void generate_mdns_hostname(char* out, size_t cap) {
 // SHA-256 WITH DOMAIN SEPARATION
 // ════════════════════════════════════════════════════════════════════════════
 
-static void sha256_raw(const uint8_t* data, size_t n, uint8_t out[32]) {
+// True when every mbedTLS step ran (sweep F364, hmac_sha256()'s rule from
+// F359). On the S3 and C3 the SHA engine is hardware: a start, an update or
+// a finish can answer an error (an update over a long input runs by DMA),
+// and after one the output is not, or not wholly, written, so it would keep
+// whatever the caller's stack held. On any failure `out` is zeroed and the
+// answer is false, and every caller refuses instead of using the bytes. The
+// context is freed on every path. Declared [[nodiscard]] with the forward
+// declarations above.
+static bool sha256_raw(const uint8_t* data, size_t n, uint8_t out[32]) {
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, data, n);
-  mbedtls_sha256_finish(&ctx, out);
+  int ret = mbedtls_sha256_starts(&ctx, 0);  // 0 = SHA-256, not SHA-224
+  if (ret == 0) ret = mbedtls_sha256_update(&ctx, data, n);
+  if (ret == 0) ret = mbedtls_sha256_finish(&ctx, out);
   mbedtls_sha256_free(&ctx);
+  if (ret != 0) {
+    memset(out, 0, 32);
+    return false;
+  }
+  return true;
 }
 
-static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]) {
+// "domain" || 0x00 || data, by sha256_raw()'s rule: false and 32 zero bytes
+// when any step fails.
+static bool sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]) {
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  
-  mbedtls_sha256_update(&ctx, (const uint8_t*)domain, strlen(domain));
-  uint8_t sep = 0x00;
-  mbedtls_sha256_update(&ctx, &sep, 1);
-  
-  if (data && n > 0) {
-    mbedtls_sha256_update(&ctx, data, n);
-  }
-  
-  mbedtls_sha256_finish(&ctx, out);
+  int ret = mbedtls_sha256_starts(&ctx, 0);
+  if (ret == 0) ret = mbedtls_sha256_update(&ctx, (const uint8_t*)domain, strlen(domain));
+  const uint8_t sep = 0x00;
+  if (ret == 0) ret = mbedtls_sha256_update(&ctx, &sep, 1);
+  if (ret == 0 && data && n > 0) ret = mbedtls_sha256_update(&ctx, data, n);
+  if (ret == 0) ret = mbedtls_sha256_finish(&ctx, out);
   mbedtls_sha256_free(&ctx);
+  if (ret != 0) {
+    memset(out, 0, 32);
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1861,10 +1931,18 @@ static bool verify_signature(const uint8_t pub[32], const uint8_t* msg, size_t l
   return Ed25519::verify(sig, pub, msg, len);
 }
 
-static void compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
+// False, with fp zeroed, when the hash did not run (sweep F364): the device
+// id, the SoftAP name, the mDNS name and the genesis head all derive from
+// it, and 8 zero bytes would name every unit alike.
+static bool compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
   uint8_t hash[32];
-  sha256_domain("securacv:pubkey:fingerprint", pub, 32, hash);
+  const bool ran = sha256_domain("securacv:pubkey:fingerprint", pub, 32, hash);
+  if (!ran) {
+    memset(fp, 0, 8);
+    return false;
+  }
   memcpy(fp, hash, 8);
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2122,47 +2200,183 @@ static bool nvs_store_token(const char* token_str) {
   return nvs->putBytes(NVS_KEY_API_TKN, token_str, len) == len;
 }
 
-static bool nvs_load_token(char* token_str, size_t max_len) {
-  NvsMainSession nvs(true);
-  if (!nvs.isOpen()) return false;
-  size_t n = nvs->getBytesLength(NVS_KEY_API_TKN);
-  if (n == 0 || n >= max_len) return false;
-  nvs->getBytes(NVS_KEY_API_TKN, token_str, n);
-  token_str[n] = '\0';
-  return strlen(token_str) >= 35;
+// The stored API token's length, asked of IDF's NVS before Preferences
+// reads it: stored_key_length()'s rule (sweep F360) for the token (sweep
+// F365). Only ESP_ERR_NVS_NOT_FOUND reads as no token; any other error is
+// NVS failing to say. ESP_OK sets *len.
+static esp_err_t stored_token_length(size_t* len) {
+  *len = 0;
+  nvs_handle_t h;
+  esp_err_t err = nvs_open(NVS_MAIN_NS, NVS_READONLY, &h);
+  if (err != ESP_OK) return err;
+  err = nvs_get_blob(h, NVS_KEY_API_TKN, nullptr, len);
+  nvs_close(h);
+  return err;
+}
+
+// The one token shape either writer stores (sweep F365): derive_api_token()
+// mints "cv_" + 32 characters of the unambiguous alphabet, and both flashers
+// seed "cv_" + 32 base62 characters (flash-core.js apiTokenShapeOk(),
+// provisioning.rs api_token_shape_ok()), and the first is a subset of the
+// second. Exactly 35 bytes, so a NUL or a byte past them is not a token.
+static bool api_token_well_formed(const char* t, size_t n) {
+  if (n != 35 || t[0] != 'c' || t[1] != 'v' || t[2] != '_') return false;
+  for (size_t i = 3; i < n; i++) {
+    const char c = t[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))) return false;
+  }
+  return true;
+}
+
+// Fails closed (sweep F365, nvs_load_key()'s rule): only a token NVS says is
+// not there answers Absent, the one answer provision_device() derives and
+// stores a token on. Every other way the stored token goes unread or unused
+// answers Refused with the buffer zeroed, and provisioning stores nothing
+// over it. Before, a session that did not open or a length lookup that
+// failed answered false, which provision_device() read as "no token" and
+// wrote a new one over the stored one; and getBytes()'s count was discarded,
+// so a read that failed after the length check (IDF checks the entry's data
+// CRC after it copies, and answers 0) was judged by strlen() over whatever
+// the buffer held: the zeroed static, so a new token went over the stored
+// one, or the bytes IDF copied before the CRC refused them, so they became
+// the bearer token.
+static KeyLoad nvs_load_token(char* token_str, size_t max_len) {
+  if (token_str == nullptr || max_len < 36) {  // the 35 bytes and a NUL; no caller passes less
+    if (token_str != nullptr && max_len > 0) memset(token_str, 0, max_len);
+    Serial.println("[!!] API token not loaded: no room for it");
+    return KeyLoad::Refused;
+  }
+  memset(token_str, 0, max_len);
+  size_t stored = 0;
+  const esp_err_t probe = stored_token_length(&stored);
+  if (probe == ESP_ERR_NVS_NOT_FOUND) return KeyLoad::Absent;
+  if (probe != ESP_OK) {
+    Serial.printf("[!!] API token not loaded: NVS could not say whether one is stored (%s)\n",
+                  esp_err_to_name(probe));
+    return KeyLoad::Refused;
+  }
+  if (stored != 35) {
+    Serial.printf("[!!] API token not loaded: the stored token is %u bytes, not 35\n",
+                  (unsigned)stored);
+    return KeyLoad::Refused;
+  }
+  // The read itself must answer all 35 bytes, and they must be a token.
+  size_t got = 0;
+  {
+    NvsMainSession nvs(true);
+    if (nvs.isOpen()) got = nvs->getBytes(NVS_KEY_API_TKN, token_str, stored);
+  }
+  if (got != stored) {
+    secure_zero(token_str, max_len);
+    Serial.printf("[!!] API token not loaded: the stored token could not be read (%u of %u bytes)\n",
+                  (unsigned)got, (unsigned)stored);
+    return KeyLoad::Refused;
+  }
+  token_str[stored] = '\0';
+  if (!api_token_well_formed(token_str, stored)) {
+    secure_zero(token_str, max_len);
+    Serial.println("[!!] API token not loaded: the stored token is not \"cv_\" and 32 letters or digits");
+    return KeyLoad::Refused;
+  }
+  return KeyLoad::Loaded;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // TLS CERTIFICATE GENERATION & MANAGEMENT
 // ════════════════════════════════════════════════════════════════════════════
 
-static bool tls_load_from_nvs() {
-  NvsMainSession nvs(true);
-  if (!nvs.isOpen()) return false;
+// Both certificate buffers back to nothing (sweep F404): each zeroed over
+// its whole allocation first (the key is secret, and a refused read may
+// have left part of either), freed, its pointer nulled and its length 0, so
+// start_http_server() has no certificate to serve. A length is set the
+// moment its buffer is allocated, so the zeroing covers what was allocated.
+static void tls_free_buffers() {
+  if (g_tls_cert_der) secure_zero(g_tls_cert_der, g_tls_cert_der_len);
+  free(g_tls_cert_der);
+  g_tls_cert_der = nullptr;
+  g_tls_cert_der_len = 0;
+  if (g_tls_key_der) secure_zero(g_tls_key_der, g_tls_key_der_len);
+  free(g_tls_key_der);
+  g_tls_key_der = nullptr;
+  g_tls_key_der_len = 0;
+}
 
-  size_t cert_len = nvs->getBytesLength(NVS_KEY_TLS_CERT);
-  size_t key_len  = nvs->getBytesLength(NVS_KEY_TLS_KEY);
-
-  if (cert_len == 0 || key_len == 0) return false;
-
-  g_tls_cert_der = (uint8_t*)malloc(cert_len);
-  g_tls_key_der  = (uint8_t*)malloc(key_len);
-  if (!g_tls_cert_der || !g_tls_key_der) {
-    free(g_tls_cert_der); g_tls_cert_der = nullptr;
-    free(g_tls_key_der);  g_tls_key_der = nullptr;
-    return false;
+// The stored certificate and its key. Absent only when IDF's NVS says neither
+// entry is stored (no namespace, or neither key in it): the one answer
+// init_tls_cert() makes and stores a new certificate on. Loaded only when
+// both are stored and each read answered all its bytes. Every other way the
+// pair goes unread answers Refused, with both buffers zeroed and freed and
+// one line saying why. The lengths are asked of IDF because Preferences
+// answers 0 alike for an entry never stored and for a lookup that failed.
+static KeyLoad tls_load_from_nvs() {
+  size_t cert_len = 0, key_len = 0;
+  esp_err_t cert_err = ESP_OK, key_err = ESP_OK;
+  nvs_handle_t h;
+  const esp_err_t opened = nvs_open(NVS_MAIN_NS, NVS_READONLY, &h);
+  if (opened == ESP_OK) {
+    cert_err = nvs_get_blob(h, NVS_KEY_TLS_CERT, nullptr, &cert_len);
+    key_err = nvs_get_blob(h, NVS_KEY_TLS_KEY, nullptr, &key_len);
+    nvs_close(h);
+  } else {
+    cert_err = key_err = opened;
+  }
+  if (cert_err == ESP_ERR_NVS_NOT_FOUND && key_err == ESP_ERR_NVS_NOT_FOUND) return KeyLoad::Absent;
+  const esp_err_t fault = (cert_err != ESP_OK && cert_err != ESP_ERR_NVS_NOT_FOUND) ? cert_err
+                        : (key_err != ESP_OK && key_err != ESP_ERR_NVS_NOT_FOUND) ? key_err
+                        : ESP_OK;
+  if (fault != ESP_OK) {
+    Serial.printf("[TLS] Certificate not loaded: NVS could not say whether one is stored (%s)\n",
+                  esp_err_to_name(fault));
+    return KeyLoad::Refused;
+  }
+  if (cert_err != ESP_OK || key_err != ESP_OK) {
+    Serial.printf("[TLS] Certificate not loaded: the %s is stored without the %s\n",
+                  cert_err == ESP_OK ? "certificate" : "key",
+                  cert_err == ESP_OK ? "key" : "certificate");
+    return KeyLoad::Refused;
+  }
+  if (cert_len == 0 || key_len == 0) {
+    Serial.printf("[TLS] Certificate not loaded: the stored pair is empty (%u and %u bytes)\n",
+                  (unsigned)cert_len, (unsigned)key_len);
+    return KeyLoad::Refused;
   }
 
-  nvs->getBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, cert_len);
-  nvs->getBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  key_len);
-  g_tls_cert_der_len = cert_len;
-  g_tls_key_der_len  = key_len;
-  return true;
+  NvsMainSession nvs(true);
+  if (!nvs.isOpen()) {
+    Serial.println("[TLS] Certificate not loaded: the NVS session did not open");
+    return KeyLoad::Refused;
+  }
+
+  g_tls_cert_der = (uint8_t*)malloc(cert_len);
+  g_tls_cert_der_len = g_tls_cert_der ? cert_len : 0;
+  g_tls_key_der  = (uint8_t*)malloc(key_len);
+  g_tls_key_der_len  = g_tls_key_der ? key_len : 0;
+  if (!g_tls_cert_der || !g_tls_key_der) {
+    tls_free_buffers();
+    Serial.printf("[TLS] Certificate not loaded: no memory for it (%u and %u bytes)\n",
+                  (unsigned)cert_len, (unsigned)key_len);
+    return KeyLoad::Refused;
+  }
+
+  const size_t cert_got = nvs->getBytes(NVS_KEY_TLS_CERT, g_tls_cert_der, cert_len);
+  const size_t key_got  = nvs->getBytes(NVS_KEY_TLS_KEY,  g_tls_key_der,  key_len);
+  if (cert_got != cert_len || key_got != key_len) {
+    tls_free_buffers();
+    Serial.printf("[TLS] Certificate not loaded: the stored pair could not be read "
+                  "(%u of %u and %u of %u bytes)\n",
+                  (unsigned)cert_got, (unsigned)cert_len, (unsigned)key_got, (unsigned)key_len);
+    return KeyLoad::Refused;
+  }
+  return KeyLoad::Loaded;
 }
 
 // True only when BOTH entries landed (F59): a certificate stored without
-// its key (or the reverse) would pass tls_load_from_nvs's presence check on
-// the next boot and hand mbedTLS a mismatched pair.
+// its key (or the reverse: a put that failed, or power lost between the two)
+// is refused by every later boot's tls_load_from_nvs() (F404), which makes
+// nothing over it, so HTTPS stays off until a full flash erase (see
+// init_tls_cert()). Before F404 any refused load went on to store a new
+// pair, so a key put that failed could leave the new certificate beside an
+// older key, a mismatched pair the next boot loaded.
 static bool tls_store_to_nvs() {
   if (!g_tls_cert_der || !g_tls_key_der) return false;
   NvsMainSession nvs(false);
@@ -2174,11 +2388,33 @@ static bool tls_store_to_nvs() {
   return cert_ok && key_ok;
 }
 
-static void tls_compute_cert_fingerprint() {
-  if (!g_tls_cert_der || g_tls_cert_der_len == 0) return;
+// The pin a phone keeps for the life of the pairing (sweep F364): false,
+// with the hex emptied, when there is no certificate or the hash did not
+// run. A fingerprint of 32 zero bytes would be handed out as a pin no
+// certificate has, and the phone would refuse this WAP from then on.
+static bool tls_compute_cert_fingerprint() {
+  g_tls_cert_fp_hex[0] = '\0';
+  if (!g_tls_cert_der || g_tls_cert_der_len == 0) return false;
   uint8_t cert_fp[32];
-  sha256_raw(g_tls_cert_der, g_tls_cert_der_len, cert_fp);
+  if (!sha256_raw(g_tls_cert_der, g_tls_cert_der_len, cert_fp)) return false;
   hex_to_str(g_tls_cert_fp_hex, cert_fp, 32);
+  return true;
+}
+
+// A certificate whose fingerprint did not compute is not used this boot
+// (sweep F364): no pin is handed out (tls_after_setup() reads the empty hex
+// and g_tls_cert_persisted), and init_tls_cert() answers false, so setup()
+// leaves g_tls_enabled false and start_http_server() opens no HTTPS listener
+// (it needs both buffers, freed here by tls_free_buffers()). A loaded
+// certificate stays in NVS and the next boot reloads it and hashes it again;
+// a generated one was not stored (init_tls_cert() hashes it first), and the
+// next boot makes another.
+static bool tls_refuse_unpinned_cert() {
+  tls_free_buffers();
+  g_tls_cert_persisted = false;
+  g_tls_cert_fp_hex[0] = '\0';
+  Serial.println("[TLS] Cert fingerprint not computed (SHA-256 failed) - HTTPS off this boot, no pin handed out");
+  return false;
 }
 
 #if SECURACV_HAS_TLS_CERTGEN
@@ -2312,13 +2548,30 @@ cleanup:
 #endif // SECURACV_HAS_TLS_CERTGEN
 
 static bool init_tls_cert() {
-  // Try loading from NVS first
-  if (tls_load_from_nvs()) {
+  // The stored certificate first (sweep F404): Loaded serves it; Refused
+  // (one is, or may be, stored and was not read whole) leaves HTTPS off this
+  // boot and makes and stores nothing over it, since phones may hold its pin;
+  // only Absent goes on to make one. A read refused on a corrupt entry has
+  // IDF erase that entry, and only that one: its partner stays, so every
+  // later boot refuses what is left and HTTPS stays off until a full flash
+  // erase (the factory reset keeps both entries). Only when both entries were
+  // corrupt does a later boot read Absent and make a new certificate, whose
+  // pin is not the one phones hold. Whether a lone entry should be refused
+  // (its partner's lookup may have missed for this boot only) or replaced
+  // (no certificate can be served under the old pin again) is not decided
+  // here; tests_host/test_wap_first_boot_nvs.cpp pins today's answer.
+  const KeyLoad stored = tls_load_from_nvs();
+  if (stored == KeyLoad::Loaded) {
     g_tls_cert_persisted = true;
-    tls_compute_cert_fingerprint();
+    if (!tls_compute_cert_fingerprint()) return tls_refuse_unpinned_cert();
     Serial.println("[TLS] Loaded certificate from NVS");
     Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
     return true;
+  }
+  if (stored != KeyLoad::Absent) {
+    Serial.println("[TLS] Stored certificate not used (see the certificate line above) - HTTPS off "
+                   "this boot, nothing stored over it");
+    return false;
   }
 
 #if SECURACV_HAS_TLS_CERTGEN
@@ -2327,6 +2580,12 @@ static bool init_tls_cert() {
     Serial.println("[TLS] Certificate generation FAILED");
     return false;
   }
+
+  // The pin before the store (sweep F364's review): a certificate whose
+  // fingerprint did not compute is never stored, so no later boot loads and
+  // serves a certificate whose pin no setup door handed out (the setup boot's
+  // receipt says http; stored, the next boot would turn HTTPS on with it).
+  if (!tls_compute_cert_fingerprint()) return tls_refuse_unpinned_cert();
 
   // Store in NVS for reuse across reboots. Only a confirmed store makes
   // this cert the one the next boot reloads; a failed store leaves it this
@@ -2338,7 +2597,6 @@ static bool init_tls_cert() {
     Serial.println("[TLS] WARNING: Failed to store cert in NVS — this boot's cert only; no pin will be handed out");
   }
 
-  tls_compute_cert_fingerprint();
   Serial.printf("[TLS] CN: securacv-%s\n", g_device.fingerprint_hex);
   Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
   return true;
@@ -2353,7 +2611,11 @@ static bool init_tls_cert() {
 // CHAIN OPERATIONS
 // ════════════════════════════════════════════════════════════════════════════
 
-static void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32], 
+// The chain link (sweep F364): false, with `out` zeroed, when the hash did
+// not run. Every caller refuses on false: update_chain() makes no link, and
+// the boot's SD-tail recovery and chain_tail_intact() cannot vouch for a
+// link they could not recompute.
+static bool compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
                                uint32_t seq, uint32_t time_bucket, uint8_t out[32]) {
   // Domain-separated: "securacv:fw:chain:v1" || 0x00 || prev || payload_hash || seq (BE) || time_bucket (BE)
   uint8_t buf[32 + 32 + 4 + 4];
@@ -2367,18 +2629,27 @@ static void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_has
   buf[69] = (time_bucket >> 16) & 0xFF;
   buf[70] = (time_bucket >> 8) & 0xFF;
   buf[71] = time_bucket & 0xFF;
-  
-  sha256_domain("securacv:fw:chain:v1", buf, sizeof(buf), out);
+
+  return sha256_domain("securacv:fw:chain:v1", buf, sizeof(buf), out);
 }
 
-static void update_chain(const uint8_t payload_hash[32], uint32_t tb, WitnessRecord* rec) {
-  rec->seq = ++g_device.seq;
+// The link is hashed before anything moves (sweep F364): a hash that did not
+// run leaves g_device.seq, g_device.chain_head and *rec as they were, so no
+// record carries 32 zero bytes as its chain hash and the next record links
+// to the head this one would have extended. Before, seq advanced first and
+// the head became whatever the failed hash left in rec->chain_hash.
+static bool update_chain(const uint8_t payload_hash[32], uint32_t tb, WitnessRecord* rec) {
+  const uint32_t seq = g_device.seq + 1;
+  uint8_t link[32];
+  if (!compute_chain_hash(g_device.chain_head, payload_hash, seq, tb, link)) return false;
+  rec->seq = seq;
   rec->time_bucket = tb;
   memcpy(rec->prev_hash, g_device.chain_head, 32);
   memcpy(rec->payload_hash, payload_hash, 32);
-  
-  compute_chain_hash(rec->prev_hash, payload_hash, rec->seq, tb, rec->chain_hash);
-  memcpy(g_device.chain_head, rec->chain_hash, 32);
+  memcpy(rec->chain_hash, link, 32);
+  g_device.seq = seq;
+  memcpy(g_device.chain_head, link, 32);
+  return true;
 }
 
 // {seq, chain_head} as the single 39-byte entry chain_state.h defines — the
@@ -2395,6 +2666,11 @@ static bool persist_chain_blob() {
 }
 
 static void persist_chain_state() {
+  // A chain provisioning could not anchor or name this boot (sweep F364,
+  // g_device.chain_refused) is not written: its head is 32 zero bytes, or a
+  // head this boot cannot vouch for, and the reboot, safe-mode and deep-sleep
+  // paths persist unconditionally. NVS keeps what it held.
+  if (g_device.chain_refused) return;
   // Only a write that landed moves seq_persisted and counts as a persist;
   // one that did not is counted beside it and retried after the next record,
   // then once per interval while the streak lasts, and a failure streak is
@@ -2542,7 +2818,11 @@ static void witness_recover_from_sd() {
   // ch/sig pair while editing seq to move the device sequence to an
   // arbitrary value (the same check verify_witness_log.py runs offline).
   uint8_t recomputed[32];
-  compute_chain_hash(rec.prev, rec.ph, rec.seq, rec.tb, recomputed);
+  if (!compute_chain_hash(rec.prev, rec.ph, rec.seq, rec.tb, recomputed)) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+               "Witness SD tail ignored: chain hash not computed (SHA-256 failed)", nullptr);
+    return;
+  }
   if (memcmp(recomputed, rec.ch, 32) != 0) {
     log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
                "Witness SD tail ignored: chain hash mismatch", nullptr);
@@ -2862,14 +3142,40 @@ static bool build_state_change(FixState from, FixState to, const char* reason,
 // WITNESS RECORD CREATION
 // ════════════════════════════════════════════════════════════════════════════
 
+// One line per run of hash failures, not one per record (sweep F364).
+static bool g_witness_hash_warned = false;
+
+static void witness_hash_failed(const char* what) {
+  if (g_witness_hash_warned) return;
+  g_witness_hash_warned = true;
+  log_health(SCV_LOG_ERROR, SCV_CAT_CRYPTO, "Witness record not made: SHA-256 failed", what);
+}
+
 static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {
-  // Hash payload
+  // Nothing is signed for an unnamed device or onto an unanchored chain
+  // (sweep F364): provisioning said so, and setup() went on. Said once in the
+  // health log too; no record is made this boot to re-arm the line.
+  if (g_device.chain_refused) {
+    witness_hash_failed("identity not provisioned");
+    return false;
+  }
+
+  // Hash payload. A hash that did not run makes no record (sweep F364): no
+  // link, no seq, no signature, nothing in the page ring, on the card or in
+  // NVS, and *out is left as it was.
   uint8_t payload_hash[32];
-  sha256_domain("securacv:fw:payload:v1", payload, len, payload_hash);
-  
+  if (!sha256_domain("securacv:fw:payload:v1", payload, len, payload_hash)) {
+    witness_hash_failed("payload hash");
+    return false;
+  }
+
   // Update chain
   uint32_t tb = time_bucket();
-  update_chain(payload_hash, tb, out);
+  if (!update_chain(payload_hash, tb, out)) {
+    witness_hash_failed("chain link");
+    return false;
+  }
+  g_witness_hash_warned = false;
   out->type = type;
   out->payload_len = len;
   
@@ -3061,6 +3367,7 @@ static bool verify_record_signature(const WitnessRecord* rec) {
 // SD-tail reconciliation at boot).
 static bool chain_tail_intact() {
   if (g_device.tamper_active || g_health.verify_failures != 0) return false;
+  if (g_device.chain_refused) return false;  // no chain this boot can vouch for (sweep F364)
   if (g_device.seq == 0) return true;   // genesis: nothing to walk yet
   if (g_last_record.seq != g_device.seq) {
     // Head restored from NVS/SD this boot; the record itself is not in RAM
@@ -3068,11 +3375,56 @@ static bool chain_tail_intact() {
     return true;
   }
   uint8_t recomputed[32];
-  compute_chain_hash(g_last_record.prev_hash, g_last_record.payload_hash,
-                     g_last_record.seq, g_last_record.time_bucket, recomputed);
+  // A link this pass cannot recompute is not vouched for (sweep F364).
+  if (!compute_chain_hash(g_last_record.prev_hash, g_last_record.payload_hash,
+                          g_last_record.seq, g_last_record.time_bucket, recomputed)) {
+    return false;
+  }
   if (memcmp(recomputed, g_last_record.chain_hash, 32) != 0) return false;
   if (memcmp(g_last_record.chain_hash, g_device.chain_head, 32) != 0) return false;
   return verify_record_signature(&g_last_record);
+}
+
+// One record into g_last_record (RecordMade, among the types above).
+// Unverified is a record made whose signature
+// did not verify, logged here as loop() logged it: the chain moved and the
+// row shows it, "!!". Refused is one never made: create_witness_record()
+// logged why, once per run of failures, and g_last_record is as it was.
+static RecordMade witness_record_last(const uint8_t* payload, size_t len, RecordType type) {
+  const uint32_t verify_failures = g_health.verify_failures;
+  if (create_witness_record(payload, len, type, &g_last_record)) return RecordMade::Made;
+  if (g_health.verify_failures == verify_failures) return RecordMade::Refused;
+  log_health(SCV_LOG_ERROR, SCV_CAT_CRYPTO, "Record verification failed", nullptr);
+  return RecordMade::Unverified;
+}
+
+// setup()'s boot attestation: "[OK]" and the record's seq and chain only for
+// a record made. tools/serial-monitor/canary_monitor.py reads that line as
+// "Boot attestation record created".
+static void record_boot_attestation(const uint8_t* payload, size_t len) {
+  if (witness_record_last(payload, len, RECORD_BOOT_ATTESTATION) == RecordMade::Made) {
+    Serial.printf("[OK] Boot attestation: seq=%u chain=", g_last_record.seq);
+    hex_print(g_last_record.chain_hash, 8);
+    Serial.println("...");
+  } else {
+    Serial.println("[!!] Boot attestation not recorded: no record was made, or its signature did not verify");
+  }
+}
+
+// loop()'s periodic self-verification of the last record made. Before one
+// is made this boot there is nothing to verify (g_last_record.seq is 0:
+// setup() zeroed it, and every record's seq is 1 or more), and a boot whose
+// chain provisioning refused makes none: g_health.crypto_healthy stays as
+// provisioning left it (false), with no CRITICAL line each interval saying a
+// signature failed. Before, the zeroed record was verified and failed.
+static void self_verify_last_record() {
+  if (g_device.chain_refused || g_last_record.seq == 0) return;
+  if (!verify_record_signature(&g_last_record)) {
+    log_health(SCV_LOG_CRITICAL, SCV_CAT_CRYPTO, "Self-verification FAILED", nullptr);
+    g_health.crypto_healthy = false;
+  } else {
+    g_health.crypto_healthy = true;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3100,17 +3452,26 @@ void log_health(LogLevel level, LogCategory category, const char* message, const
   entry.level = level;
   entry.category = category;
   entry.ack_status = ACK_STATUS_UNREAD;
-  
-  strncpy(entry.message, message ? message : "", sizeof(entry.message) - 1);
-  entry.message[sizeof(entry.message) - 1] = '\0';
-  
-  if (detail) {
-    strncpy(entry.detail, detail, sizeof(entry.detail) - 1);
-    entry.detail[sizeof(entry.detail) - 1] = '\0';
-  } else {
-    entry.detail[0] = '\0';
-  }
-  
+
+  // Every caller's text reaches the ring through this one scrub (sweep
+  // F303). GET /api/logs writes message and detail through ArduinoJson
+  // 7.4.1, which writes a control byte raw (JSON.parse refuses it) and every
+  // other byte as it is, and callers log text a person or a radio supplied
+  // (an Opera name, an SSID, a file name); F262 held only the SSIDs, through
+  // log_health_ssid(). wap_json::shown_text() writes each control byte JSON
+  // forbids raw and each piece that is not whole UTF-8 as U+FFFD, and cuts
+  // on a character to the field (strncpy() cut at a byte count, inside a
+  // character too), so the ring holds well-formed UTF-8 any strict reader
+  // takes. The shown text, not replaced_text()'s, since no page posts a log
+  // line back; log_health_ssid()'s replaced_text() pass before this one
+  // leaves well-formed text either way (at the detail's cap its cut can
+  // drop a final ill-formed sequence whole where this pass alone keeps a
+  // U+FFFD for its first byte). A NULL detail is "".
+  // check_wap_json_answers.py rule J12 holds the ring's two text fields to
+  // these two writes.
+  wap_json::shown_text(entry.message, sizeof(entry.message), message);
+  wap_json::shown_text(entry.detail, sizeof(entry.detail), detail);
+
   g_health_log_ring_head = (g_health_log_ring_head + 1) % HEALTH_LOG_RING_SIZE;
   if (g_health_log_ring_count < HEALTH_LOG_RING_SIZE) {
     g_health_log_ring_count++;
@@ -3708,6 +4069,27 @@ static esp_err_t http_send_error(httpd_req_t* req, int status_code, const char* 
   char response[128];
   snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error_code);
   return http_send_json(req, response);
+}
+
+// The error code a handler answers a refused POST body with (sweep F300),
+// through http_send_error(req, 400, ...) as handle_ota_config does. One
+// httpd_req_recv() is one socket read: the handlers parsed what it returned,
+// so a body in two TCP segments was parsed cut and one past the buffer was
+// cut at it and parsed anyway. Each now reads
+//   const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+//   if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+// (http_body_reader.h, host-tested: Content-Length bytes, a body that does
+// not fit refused before any of it is read) and keeps its own answer for no
+// body (body_len 0). The one exception is handle_log_ack, whose optional
+// reason the device never keeps: it refuses only a body that stops
+// arriving, and acknowledges with no reason one that does not fit.
+// tests_host/test_http_body_reader pins that shape at every call (the
+// exception by name), and that no other httpd_req_recv() call is left in
+// canary_wap.ino or the sketch's *_api.h files (it does not scan
+// csi_integration.cpp). A function of literals, so check_wap_json_answers.py
+// reads every error code http_send_error() can be handed.
+static const char* http_body_refusal(http_body::Result r) {
+  return r == http_body::TOO_LARGE ? "body_too_large" : "body_read_failed";
 }
 
 // The dashboard/settings/companion pages ship only as gzip (the uncompressed
@@ -4503,9 +4885,10 @@ static esp_err_t handle_audio_mute(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[64];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok ||
@@ -4588,9 +4971,10 @@ static esp_err_t handle_audio_selftest_post(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[96];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
@@ -4640,9 +5024,10 @@ static esp_err_t handle_audio_config_post(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[96];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok ||
@@ -4838,13 +5223,25 @@ static esp_err_t handle_log_ack(httpd_req_t* req) {
     return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, nullptr);
   }
   
-  // Read body for reason
+  // Read body for reason. The one handler that does not refuse a body too
+  // long for its buffer: it acknowledges the entry with no reason and leaves
+  // the body unread (httpd discards it), as it did before F300. The reason
+  // is optional and kept nowhere (acknowledge_log_entry() ignores it), while
+  // the dashboard's #ackReason input has no maxlength and submitAck() reads
+  // no answer, so refusing a long one left the entry unacknowledged with
+  // nothing shown. A body that stops arriving is still refused by name.
+  // firmware/tests_host/test_log_ack_route holds both.
   char content[128] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
-  
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read == http_body::READ_FAILED) return http_send_error(req, 400, http_body_refusal(read));
+
+  // `reason` points into `body`'s strings (ArduinoJson 7 copies them into
+  // the document), so the document outlives it: it was declared inside the
+  // `if`, and the pointer handed on below dangled.
   const char* reason = "";
-  if (ret > 0) {
-    JsonDocument body;
+  JsonDocument body;
+  if (read == http_body::OK && body_len > 0) {
     if (deserializeJson(body, content) == DeserializationError::Ok) {
       reason = body["reason"] | "";
     }
@@ -5023,9 +5420,11 @@ static esp_err_t handle_config_post(httpd_req_t* req) {
   g_health.http_requests++;
 
   char content[256] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   JsonDocument body;
-  if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
+  if (body_len == 0 || deserializeJson(body, content) != DeserializationError::Ok) {
     httpd_resp_set_status(req, "400 Bad Request");
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
@@ -6221,9 +6620,11 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
   
   // Read body
   char content[64] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   
-  if (ret <= 0) {
+  if (body_len == 0) {
     const char* resp = "{\"ok\":false,\"error\":\"No body\"}";
     return http_send_json(req, resp);
   }
@@ -6359,14 +6760,13 @@ static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
   }
 
   // Read body — generous limit to allow tuning multiple fields atomically.
+  // Read whole or refused (sweep F300): the loop here read until the buffer
+  // filled, so a body past 511 bytes was cut there and parsed anyway.
   char content[512] = {0};
-  int total = 0;
-  while (total < (int)sizeof(content) - 1) {
-    int r = httpd_req_recv(req, content + total, sizeof(content) - 1 - total);
-    if (r <= 0) break;
-    total += r;
-  }
-  if (total <= 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) {
     const char* resp = "{\"ok\":false,\"error\":\"No body\"}";
     return http_send_json(req, resp);
   }
@@ -6593,9 +6993,10 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[64];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
@@ -6610,6 +7011,11 @@ static esp_err_t handle_mesh_enable(httpd_req_t* req) {
   if (w != loop_command_ring::Wait::kDone) {
     return http_send_error(req, mesh_network::not_run_status(w), mesh_network::not_run_error(w));
   }
+  // Refused, with nothing changed, when the mesh did not read its store
+  // this boot (a refused init, safe mode; the health log says so). It was
+  // answered ok whatever ran, and in that state the enable removed the
+  // stored opera (sweep F364's review).
+  if (!ok) return http_send_error(req, 400, "enable_failed");
   log_health(SCV_LOG_INFO, SCV_CAT_MESH, enabled ? "Mesh enabled" : "Mesh disabled", nullptr);
 
   return http_send_json(req, "{\"ok\":true}");
@@ -6619,21 +7025,35 @@ static esp_err_t handle_mesh_pair_start(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[128];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  buf[ret > 0 ? ret : 0] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
 
+  // No body keeps the default name. A body that does not parse is refused
+  // (sweep F303): it was read as no name, so a request whose name did not
+  // fit the buffer (cut there, so no longer JSON) founded an opera under
+  // the default without a word. A body that does not fit is now refused
+  // before it is read (body_too_large, sweep F300), never cut.
   const char* opera_name = nullptr;
   JsonDocument body;
-  if (ret > 0 && deserializeJson(body, buf) == DeserializationError::Ok) {
+  if (body_len > 0) {
+    if (deserializeJson(body, buf) != DeserializationError::Ok) {
+      return http_send_error(req, 400, "invalid_json");
+    }
     opera_name = body["name"] | (const char*)nullptr;
   }
 
-  // The name rides in the command (truncated to MAX_OPERA_NAME_LEN, as
-  // start_pairing_initiator() stores it); none given keeps the default.
+  // The name rides in the command whole: one the rule refuses
+  // (mesh_network::opera_name_storable(), sweep F303) is answered in the
+  // rule's words, where it was cut at MAX_OPERA_NAME_LEN bytes, inside a
+  // character if one stood there; none given keeps the default.
+  if (opera_name != nullptr && !mesh_network::opera_name_storable(opera_name)) {
+    return http_send_error(req, 400, mesh_network::opera_name_refusal());
+  }
   mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_PAIR_START);
   if (opera_name) {
     cmd.flag = true;
-    strncpy(cmd.name, opera_name, mesh_network::MAX_OPERA_NAME_LEN);
+    strncpy(cmd.name, opera_name, mesh_network::MAX_OPERA_NAME_LEN);   // whole: the rule bounds it
     cmd.name[mesh_network::MAX_OPERA_NAME_LEN] = '\0';
   }
   bool ok = false;
@@ -6712,9 +7132,10 @@ static esp_err_t handle_mesh_remove(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[64];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
@@ -6749,22 +7170,26 @@ static esp_err_t handle_mesh_name(httpd_req_t* req) {
   g_health.http_requests++;
 
   char buf[128];
-  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-  if (ret <= 0) return http_send_error(req, 400, "invalid_body");
-  buf[ret] = '\0';
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, buf, sizeof(buf), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) return http_send_error(req, 400, "invalid_body");
 
   JsonDocument body;
   if (deserializeJson(body, buf) != DeserializationError::Ok) {
     return http_send_error(req, 400, "invalid_json");
   }
 
+  // The rule set_opera_name() holds the name to (sweep F303), refused here
+  // in its words: the length was the only test, so a name holding 0x01 was
+  // stored and made GET /api/mesh unparseable.
   const char* name = body["name"] | "";
-  if (strlen(name) == 0 || strlen(name) > mesh_network::MAX_OPERA_NAME_LEN) {
-    return http_send_error(req, 400, "invalid_name");
+  if (!mesh_network::opera_name_storable(name)) {
+    return http_send_error(req, 400, mesh_network::opera_name_refusal());
   }
 
   mesh_network::Command cmd = mesh_network::make_command(mesh_network::MESH_CMD_RENAME);
-  strncpy(cmd.name, name, mesh_network::MAX_OPERA_NAME_LEN);   // length checked above
+  strncpy(cmd.name, name, mesh_network::MAX_OPERA_NAME_LEN);   // whole: the rule bounds it
   cmd.name[mesh_network::MAX_OPERA_NAME_LEN] = '\0';
   bool ok = false;
   const loop_command_ring::Wait w = mesh_network::submit(cmd, &ok);
@@ -7177,9 +7602,11 @@ static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
   setup_wizard::touch();
 
   char content[256] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   JsonDocument body;
-  if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
+  if (body_len == 0 || deserializeJson(body, content) != DeserializationError::Ok) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
   // During setup: the wizard's pair token, or a lockout-throttled admin
@@ -7229,9 +7656,11 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // optional tz_iana — a maximal escaped password and SSID alone approach
   // the old 384, so the zone got its own headroom rather than a squeeze).
   char content[512] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
 
-  if (ret <= 0) {
+  if (body_len == 0) {
     JsonDocument doc;
     doc["ok"] = false;
     doc["error"] = "No body";
@@ -7455,6 +7884,11 @@ uint32_t ble_witness_get_total_records() {
 
 bool ble_witness_get_head_json(char* out, size_t out_len) {
   if (!out || out_len < 200) return false;
+  // Not under an identity this boot did not make (sweep F403): the head
+  // would be a refused chain's (32 zero bytes at genesis) and the key the
+  // one its fingerprint did not hash. The export counts a snapshot failure
+  // and keeps its placeholder.
+  if (!identity_named_and_anchored()) return false;
   // Compact field names because the whole payload has to fit in MTU 247
   // (244-byte ATT data) for a single read without long-read fallback.
   //   s  = current chain seq
@@ -7961,31 +8395,6 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
 // FLEET QR — server-side SVG QR code for provisioning new Canaries
 // ════════════════════════════════════════════════════════════════════════════
 
-// ESP-IDF's httpd_query_key_value does not percent-decode values, so a
-// password like "p@ss word" arrives as "p%40ss+word". Decode in place:
-// '+' → space, "%XX" → byte. Safe to run on the same buffer since the
-// decoded form is never longer than the encoded form.
-static void url_decode_inplace(char* s) {
-  char* w = s;
-  for (const char* r = s; *r; ) {
-    if (*r == '%' && isxdigit((unsigned char)r[1]) && isxdigit((unsigned char)r[2])) {
-      auto hex = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        return c - 'A' + 10;
-      };
-      *w++ = (char)((hex(r[1]) << 4) | hex(r[2]));
-      r += 3;
-    } else if (*r == '+') {
-      *w++ = ' ';
-      r++;
-    } else {
-      *w++ = *r++;
-    }
-  }
-  *w = '\0';
-}
-
 // Render a text payload as an SVG QR code response. Shared by the fleet
 // WiFi-credentials QR and the pairing-receipt QR.
 static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
@@ -8048,35 +8457,35 @@ static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
 static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   g_health.http_requests++;
 
-  char qs[256] = {};
-  char ssid[33] = {};
-  char pass[65] = {};
-
-  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) != ESP_OK) {
+  // The query and both values read whole and decoded, the password held to
+  // 64 bytes and the name to the 96 its shown form can take, or a 400 naming
+  // the field (fleet_qr_query.h, sweep F304): a cut password is never drawn
+  // into the code. No 'pass' is an open network.
+  fleet_qr::Credentials cred;
+  const fleet_qr::Read read = fleet_qr::read_request(req, &cred);
+  if (read != fleet_qr::Read::Ok) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "Missing query parameters", -1);
+    return httpd_resp_send(req, fleet_qr::refusal(read), -1);
   }
-
-  if (httpd_query_key_value(qs, "ssid", ssid, sizeof(ssid)) != ESP_OK
-      || ssid[0] == '\0') {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "ssid is required", -1);
-  }
-  httpd_query_key_value(qs, "pass", pass, sizeof(pass));
-
-  url_decode_inplace(ssid);
-  url_decode_inplace(pass);
 
   // The Fleet sheet fills the name in from GET /api/wifi, which shows the
   // home network's control bytes as U+FFFD (F262): that text is the home
   // network, and the scanning Canary joins by what the code says, so it
   // carries the network's own bytes (the F262 review).
-  if (wap_json::shows_as(g_wifi_creds.ssid, ssid)) {
-    strncpy(ssid, g_wifi_creds.ssid, sizeof(ssid) - 1);
-    ssid[sizeof(ssid) - 1] = '\0';
+  if (wap_json::shows_as(g_wifi_creds.ssid, cred.ssid)) {
+    strncpy(cred.ssid, g_wifi_creds.ssid, sizeof(cred.ssid) - 1);
+    cred.ssid[sizeof(cred.ssid) - 1] = '\0';
   }
+  // Only then is the name held to 32 bytes (F304's review): the home
+  // network's shown form can pass 32 though its own name does not.
+  if (!fleet_qr::name_fits(cred)) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, fleet_qr::refusal(fleet_qr::Read::SsidTooLong), -1);
+  }
+  const char* ssid = cred.ssid;
+  const char* pass = cred.pass;
 
   // The SECURACV: payload is ';'-delimited and the scanner's parser has no
   // escape sequence — credentials containing ';' would encode a QR that
@@ -8089,8 +8498,11 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
         -1);
   }
 
-  // Build SECURACV: payload
+  // Build SECURACV: payload. The longest is 112 bytes, so it is never cut.
   char payload[256];
+  static_assert(sizeof("SECURACV:S:;P:;;") - 1 + fleet_qr::kSsidMax + fleet_qr::kPassMax <
+                    sizeof(payload),
+                "the fleet QR payload must hold the longest name and password whole");
   snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
 
   return send_qr_svg(req, payload);
@@ -8769,12 +9181,13 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
 #endif
 
   char body[256];
-  int len = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (len <= 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, body, sizeof(body), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) {
     httpd_resp_set_status(req, "400 Bad Request");
     return http_send_json(req, "{\"ok\":false,\"error\":\"Missing request body\"}");
   }
-  body[len] = '\0';
 
   JsonDocument doc;
   if (deserializeJson(doc, body)) {
@@ -8919,11 +9332,12 @@ static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
 
   // Parse request body for chirp type
   char content[64];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   ChirpType chirpType = CHIRP_ALERT;  // Default
 
-  if (content_len > 0) {
-    content[content_len] = '\0';
+  if (body_len > 0) {
     JsonDocument doc;
     if (deserializeJson(doc, content) == DeserializationError::Ok) {
       const char* typeStr = doc["type"] | "";
@@ -9523,8 +9937,10 @@ static esp_err_t handle_identify(httpd_req_t* req) {
 
   uint32_t duration_ms = 15000;  // default ~15s, like Hue's identify
   char content[128] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (ret > 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len > 0) {
     JsonDocument body;
     if (deserializeJson(body, content) == DeserializationError::Ok && body["duration_ms"].is<uint32_t>()) {
       duration_ms = body["duration_ms"].as<uint32_t>();
@@ -9618,9 +10034,11 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
   g_health.http_requests++;
 
   char content[128] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
   JsonDocument doc;
-  if (ret <= 0) { doc["ok"] = false; doc["error"] = "No body"; }
+  if (body_len == 0) { doc["ok"] = false; doc["error"] = "No body"; }
   else {
     JsonDocument body;
     const char* name = nullptr;
@@ -9949,8 +10367,10 @@ static esp_err_t handle_vault_status(httpd_req_t* req) {
 static esp_err_t handle_vault_config(httpd_req_t* req) {
   g_health.http_requests++;
   char content[192] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (ret <= 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"No body\"}");
   }
   JsonDocument body;
@@ -9997,19 +10417,35 @@ static esp_err_t handle_vault_config(httpd_req_t* req) {
 static esp_err_t handle_vault_key_set(httpd_req_t* req) {
   g_health.http_requests++;
   char content[160] = {0};
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (ret <= 0) {
+  size_t body_len = 0;
+  const http_body::Result read = http_body::read_request(req, content, sizeof(content), &body_len);
+  if (read != http_body::OK) return http_send_error(req, 400, http_body_refusal(read));
+  if (body_len == 0) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"No body\"}");
   }
   JsonDocument body;
   if (deserializeJson(body, content) != DeserializationError::Ok) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
+  // Two refusals, in their own words (sweep F426): a key that is not 64 hex
+  // characters, and a well-formed key the device could not keep (its key id
+  // did not compute, or NVS did not open or refused the write). The second
+  // was answered as the first, so an owner who pasted the right key was told
+  // it was the wrong shape. Either way nothing changed: the key registered
+  // before, if any, is still the one. vault_snapshot logs the second.
   const char* pub = body["pubkey"];
-  if (!pub || !vault_snapshot::set_pubkey_hex(pub)) {
+  const vault_snapshot::KeySet set =
+      pub ? vault_snapshot::set_pubkey_hex(pub) : vault_snapshot::KeySet::Malformed;
+  if (set == vault_snapshot::KeySet::Malformed) {
     return http_send_json(req,
         "{\"ok\":false,\"error\":\"pubkey must be the 64-hex X25519 public key "
         "printed by unseal_snapshot.py gen-key\"}");
+  }
+  if (set != vault_snapshot::KeySet::Stored) {
+    return http_send_json(req,
+        "{\"ok\":false,\"error\":\"The device could not save this key (its key id did not "
+        "compute, or storage refused the write). Nothing changed. Try again, and check the "
+        "health log if it repeats.\"}");
   }
   char key_id[17];
   vault_snapshot::key_id_hex(key_id);
@@ -10208,6 +10644,34 @@ static esp_err_t handle_audio_transitions_auth(httpd_req_t* req) {
 }
 #endif
 
+// Per-device Ed25519 signature service. Mounts the keypair into a
+// dedicated module so csi_mqtt (and any future signed-egress path
+// like SD-resync) can stamp chain/event/counts publishes with a
+// signature HA verifies against its pinned-pubkey trust store.
+// Must come after generate_keypair has populated g_device.{priv,pub,fp}.
+// The fingerprint it is handed is the `fp` of every signed publish (and
+// the one /enroll prints), so it gets the lowercase spelling too; the
+// module copies it, and g_device.fingerprint_hex keeps hex_to_str's.
+// Not mounted under an identity this boot did not make (sweep F403): the
+// module's s_ready stays false, so every sign_* refuses
+// (device_signature.cpp, the common copy) and csi_mqtt publishes unsigned
+// ("signed":false), which HA marks unverified. register_api_routes() calls
+// it on each server start.
+static void device_signature_mount() {
+  if (!identity_named_and_anchored()) {
+    Serial.println("[--] Signed publishes off: the device is not named or its chain not anchored this boot");
+    log_health(SCV_LOG_WARNING, SCV_CAT_CRYPTO,
+               "Signer not mounted", "identity not provisioned this boot");
+    return;
+  }
+  char mqtt_fp_hex[mqtt_identity::FP_HEX_CAP];
+  mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);
+  device_signature::init(g_device.privkey,
+                         g_device.pubkey,
+                         g_device.device_id,
+                         mqtt_fp_hex);
+}
+
 // Register all route handlers on a given httpd server handle
 static void register_api_routes(httpd_handle_t server) {
   // UI — no auth required. / serves the headline Sensing dashboard;
@@ -10233,6 +10697,15 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_uri_t enroll_html_uri = { .uri = "/enroll", .method = HTTP_GET,
                                   .handler = device_identity_api::handle_enroll_html };
   httpd_register_uri_handler(server, &enroll_html_uri);
+
+  // The sealed bearer's handshake (api_seal.h, seal_api.h): the same public
+  // card plus an ephemeral X25519 key the identity key signs, so a client
+  // holding the pinned fingerprint can send the token sealed to THIS device
+  // and never in the clear. Unauthenticated like the card; no secret in the
+  // answer. The Flasher's fleet book opens one per device per quarter hour.
+  httpd_uri_t seal_uri = { .uri = "/api/device/seal", .method = HTTP_GET,
+                           .handler = seal_api::handle_seal };
+  httpd_register_uri_handler(server, &seal_uri);
 
   // Companion PWA (Web Bluetooth phone-side console). Three static assets,
   // no auth — the page itself is just HTML/JS/manifest; the BLE
@@ -10368,20 +10841,7 @@ static void register_api_routes(httpd_handle_t server) {
   mqtt_identity::public_key_hex(pubkey_hex, g_device.pubkey);
   csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION, pubkey_hex);
 
-  // Per-device Ed25519 signature service. Mounts the keypair into a
-  // dedicated module so csi_mqtt (and any future signed-egress path
-  // like SD-resync) can stamp chain/event/counts publishes with a
-  // signature HA verifies against its pinned-pubkey trust store.
-  // Must come after generate_keypair has populated g_device.{priv,pub,fp}.
-  // The fingerprint it is handed is the `fp` of every signed publish (and
-  // the one /enroll prints), so it gets the lowercase spelling too; the
-  // module copies it, and g_device.fingerprint_hex keeps hex_to_str's.
-  char mqtt_fp_hex[mqtt_identity::FP_HEX_CAP];
-  mqtt_identity::fingerprint_hex(mqtt_fp_hex, g_device.pubkey_fp);
-  device_signature::init(g_device.privkey,
-                         g_device.pubkey,
-                         g_device.device_id,
-                         mqtt_fp_hex);
+  device_signature_mount();
 }
 
 // GET /api/selftest wrapper: while the user is on the wizard's final step
@@ -10495,7 +10955,7 @@ static void start_http_server() {
       + ble_discovery_handlers + fleet_handlers + beacon_handlers
       + handler_headroom;
 
-  // ── Start HTTPS server (port 443) if TLS cert is available ──
+  // ── Start HTTPS server (HTTPS_PORT) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
   if (g_tls_enabled && g_tls_cert_der && g_tls_key_der) {
     httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();
@@ -10506,7 +10966,10 @@ static void start_http_server() {
     ssl_config.httpd.uri_match_fn = httpd_uri_match_wildcard;
     ssl_config.httpd.stack_size = 10240;  // Larger stack for TLS + camera
     ssl_config.httpd.max_uri_handlers = total_handlers;
-    ssl_config.httpd.server_port = 443;
+    // httpd_ssl_start() binds port_secure and writes it over
+    // httpd.server_port (sweep F400: that write was dead), so the port is
+    // set here and only here.
+    ssl_config.port_secure = HTTPS_PORT;
     // Long-lived MJPEG peek streams routinely sit between sends for
     // hundreds of ms while the camera captures the next JPEG. With the
     // 5 s default a single WiFi retransmit storm or AP scan sweep was
@@ -10519,8 +10982,10 @@ static void start_http_server() {
     ssl_config.httpd.lru_purge_enable  = true;
 
     if (httpd_ssl_start(&g_https_server, &ssl_config) == ESP_OK) {
-      Serial.println("[HTTPS] Server started on port 443");
-      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "HTTPS server started", "port 443");
+      Serial.printf("[HTTPS] Server started on port %d\n", HTTPS_PORT);
+      char port_detail[24];
+      snprintf(port_detail, sizeof(port_detail), "port %d", HTTPS_PORT);
+      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "HTTPS server started", port_detail);
 
       // Register all routes on HTTPS server
       register_api_routes(g_https_server);
@@ -10870,8 +11335,13 @@ register_extra_routes:
   httpd_uri_t fleet_opt = { .uri = "/api/fleet", .method = HTTP_OPTIONS, .handler = handle_fleet_options };
   httpd_register_uri_handler(active_server, &fleet_opt);
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started",
-             g_tls_enabled ? "HTTPS port 443" : "HTTP port 80");
+  char server_detail[24];
+  if (g_tls_enabled) {
+    snprintf(server_detail, sizeof(server_detail), "HTTPS port %d", HTTPS_PORT);
+  } else {
+    snprintf(server_detail, sizeof(server_detail), "HTTP port 80");
+  }
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started", server_detail);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -11411,6 +11881,34 @@ static bool fingerprint_is_nonzero(const uint8_t fingerprint[8]) {
   return false;
 }
 
+// Whether this boot's identity may leave the device (sweep F364's review,
+// F403): the device is named (its fingerprint hashed, so the device id and
+// fingerprint are set) and its chain anchored (a stored head loaded or the
+// genesis head hashed). After provisioning could not hash either
+// (g_device.chain_refused), the fingerprint, the device id or the head is
+// zero bytes or empty, the same on every such unit; and before a key exists
+// (a keygen that failed, after which setup() goes on) the fingerprint is
+// zero. setup() goes on otherwise (F336). These surfaces ask this first:
+// BLE discovery (Opera's SCV-0000 name and device-info id, every chirp's id
+// and head), the BLE status service (its GATT device name is the device id),
+// the witness export's HEAD (the chain head and public key a bonded peer
+// verifies against), and the signer (device_signature_mount(), so every
+// sign_* refuses). It used to be BLE discovery's alone, inside
+// #if FEATURE_BLE. Records and the chain persist refuse on chain_refused
+// themselves (F364). Not every reader asks yet: the MQTT bridge's identity
+// (handed over in setup() before the network starts, and used by a camera
+// QR join's re-init), the mDNS TXT device_id, the Improv claim and name, the
+// Bluetooth and console metadata, the mesh, the hourly chain backup (the
+// data-management pass in loop()) and, on a build that raises the SoftAP,
+// the HTTP routes (/api/status, /api/chain, /api/device-info, the enroll
+// card) and the MQTT client's boot init still read the refused values. What
+// a refused boot should serve there is not decided here.
+// tests_host/test_wap_sha_fail.cpp drives each gated surface after a refused
+// fingerprint and a refused genesis head.
+static bool identity_named_and_anchored() {
+  return !g_device.chain_refused && fingerprint_is_nonzero(g_device.pubkey_fp);
+}
+
 static bool resolve_ap_password(char* out_password, size_t out_len) {
   if (!out_password || out_len == 0) return false;
 
@@ -11914,16 +12412,25 @@ static bool provision_device() {
   g_device.born_day = nvs_load_u32(NVS_KEY_BORN, 0);
   g_device.born_exact = nvs_load_u32(NVS_KEY_BORN_EX, 0) != 0;
 
-  // Derive public key and fingerprint
+  // Derive public key and fingerprint. A fingerprint whose hash did not run
+  // (sweep F364) names nothing: 8 zero bytes would give this unit the device
+  // id, SoftAP name, mDNS name and genesis head every such unit gets. The
+  // names stay empty, the chain is refused (no record, no persist), and
+  // provisioning answers false once the chain state is loaded below, the
+  // place every refusal after the key comes (test_wap_hmac_fail.cpp).
   Ed25519::derivePublicKey(g_device.pubkey, g_device.privkey);
-  compute_fingerprint(g_device.pubkey, g_device.pubkey_fp);
-  hex_to_str(g_device.fingerprint_hex, g_device.pubkey_fp, 8);
-  Serial.printf("[PROV] Public key fingerprint: %s\n", g_device.fingerprint_hex);
+  if (compute_fingerprint(g_device.pubkey, g_device.pubkey_fp)) {
+    hex_to_str(g_device.fingerprint_hex, g_device.pubkey_fp, 8);
+    Serial.printf("[PROV] Public key fingerprint: %s\n", g_device.fingerprint_hex);
 
-  // ── Derive device identity from the pubkey fingerprint (never the MAC) ──
-  generate_device_id(g_device.device_id, sizeof(g_device.device_id));
-  generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
-  generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
+    // ── Derive device identity from the pubkey fingerprint (never the MAC) ──
+    generate_device_id(g_device.device_id, sizeof(g_device.device_id));
+    generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
+    generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
+  } else {
+    g_device.chain_refused = true;
+    Serial.println("[!!] Public key fingerprint not computed (SHA-256 failed): the device is not named this boot");
+  }
 
   // Load operator-configurable runtime settings (Device tab). Clamped on
   // load, so the record loop, time-coarsening bucket, and log threshold are
@@ -11968,10 +12475,18 @@ static bool provision_device() {
       case chain_state::Source::Genesis:
         // The seq stays whatever the legacy entry says (0 on a fresh
         // device), exactly as before the blob. The head is persisted below,
-        // after log_seq is loaded.
+        // after log_seq is loaded. It is the hash of the device id, so an
+        // unnamed device has none, and a hash that did not run leaves 32
+        // zero bytes (sweep F364): either way the chain is refused and no
+        // head is persisted.
         g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
-        sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
-                      strlen(g_device.device_id), g_device.chain_head);
+        if (g_device.chain_refused) break;
+        if (!sha256_domain("securacv:genesis:v1", (const uint8_t*)g_device.device_id,
+                           strlen(g_device.device_id), g_device.chain_head)) {
+          g_device.chain_refused = true;
+          Serial.println("[!!] Genesis chain head not computed (SHA-256 failed): no record this boot");
+          break;
+        }
         genesis = true;
         break;
     }
@@ -11991,6 +12506,14 @@ static bool provision_device() {
   // next health-log seq, not one the load would hand out again.
   if (genesis) persist_chain_state();
 
+  // A device not named, or a chain not anchored (sweep F364): refused here,
+  // after the chain state and the boot count, and before the token and the
+  // SoftAP key, which would be handed out under a name this boot has not got.
+  if (g_device.chain_refused) {
+    Serial.println("[!!] Provisioning refused: the identity's SHA-256 did not run");
+    return false;
+  }
+
   // The two mints come after the chain state. Each refuses a failed HMAC
   // (sweep F359), and the token's store can fail too; any of the three
   // returns false with g_device.initialized still false, and setup() goes on
@@ -12003,8 +12526,18 @@ static bool provision_device() {
   // wrote that branch over the stored chain state.
 
   // ── Derive API token (HKDF-style, 2-step) ──
+  // Only a token NVS says is not stored is derived and stored (sweep F365).
+  // A stored token this boot could not read or use is Refused: nothing is
+  // written over it (a flasher may have seeded it, and the phones that hold
+  // it would be locked out), the buffer is zeroed, which api_auth.h matches
+  // no header against, and provisioning answers false.
   Serial.println("[PROV] Deriving API token (HKDF-style, 2-step)...");
-  if (nvs_load_token(g_device.api_token_str, sizeof(g_device.api_token_str))) {
+  const KeyLoad token = nvs_load_token(g_device.api_token_str, sizeof(g_device.api_token_str));
+  if (token == KeyLoad::Refused) {
+    Serial.println("[!!] Stored API token not used (see the API token line above); nothing written over it");
+    return false;
+  }
+  if (token == KeyLoad::Loaded) {
     Serial.println("[PROV] Loaded existing API token from NVS");
   } else {
     if (!derive_api_token(g_device.privkey, g_device.api_token_str, sizeof(g_device.api_token_str))) {
@@ -12225,7 +12758,11 @@ static void handle_serial_commands() {
         Serial.printf("WiFi AP: %s\n", g_device.ap_ssid);
         Serial.printf("Password: %s\n", g_device.ap_password);
         Serial.printf("IP: %s\n", WiFi.softAPIP().toString().c_str());
-        Serial.printf("TLS: %s\n", g_tls_enabled ? "YES (port 443)" : "NO (port 80)");
+        if (g_tls_enabled) {
+          Serial.printf("TLS: YES (port %d)\n", HTTPS_PORT);
+        } else {
+          Serial.println("TLS: NO (port 80)");
+        }
         Serial.printf("Clients: %d\n", WiFi.softAPgetStationNum());
         {
           char redacted[16];
@@ -12548,38 +13085,63 @@ static esp_err_t handle_ota_install(httpd_req_t* req) {
 // POST /api/ota/config — persist update settings (NVS). Body (all fields
 // optional): {"manifest_url": "...", "auto_update": bool,
 // "local_http_allowed": bool}. An empty manifest_url clears the override.
+//
+// The body is read whole or refused (http_body_reader.h: one httpd_req_recv
+// is one socket read, so a body in two segments used to parse cut and a body
+// past the buffer was cut at it and parsed anyway), and the request is
+// all-or-nothing: every field is parsed and checked first, then every one is
+// stored. Before, local_http_allowed was stored and THEN the URL refused, so
+// a refused request still changed a setting; and a field of the wrong type
+// was skipped without a word.
 static esp_err_t handle_ota_config(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   g_health.http_requests++;
 
   char body[512];
-  int recv = httpd_req_recv(req, body, sizeof(body) - 1);
-  if (recv <= 0) {
-    return http_send_error(req, 400, "empty_body");
-  }
-  body[recv] = '\0';
+  size_t len = 0;
+  const http_body::Result read = http_body::read_all(
+      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
+      req->content_len, body, sizeof(body), HTTPD_SOCK_ERR_TIMEOUT, 3, &len);
+  if (read == http_body::TOO_LARGE) return http_send_error(req, 400, "body_too_large");
+  if (read == http_body::READ_FAILED) return http_send_error(req, 400, "body_read_failed");
+  if (len == 0) return http_send_error(req, 400, "empty_body");
 
   JsonDocument input;
-  if (deserializeJson(input, body) != DeserializationError::Ok) {
+  if (deserializeJson(input, body, len) != DeserializationError::Ok || !input.is<JsonObjectConst>()) {
     return http_send_error(req, 400, "invalid_json");
   }
 
-  // Order matters: apply the local-http opt-in first so a manifest_url
-  // pointing at a LAN server in the same request validates correctly.
-  if (input["local_http_allowed"].is<bool>()) {
-    securacv_ota_set_local_http_allowed(input["local_http_allowed"].as<bool>());
+  // Parse: a field that is present but not of its type is refused, never
+  // skipped or defaulted.
+  const bool has_local = !input["local_http_allowed"].isNull();
+  const bool has_url   = !input["manifest_url"].isNull();
+  const bool has_auto  = !input["auto_update"].isNull();
+  if ((has_local && !input["local_http_allowed"].is<bool>()) ||
+      (has_url && !input["manifest_url"].is<const char*>()) ||
+      (has_auto && !input["auto_update"].is<bool>())) {
+    return http_send_error(req, 400, "invalid_field");
+  }
+  const bool local = has_local ? input["local_http_allowed"].as<bool>() : securacv_ota_get_local_http_allowed();
+  const char* url  = has_url ? input["manifest_url"].as<const char*>() : nullptr;
+  const bool enabled = has_auto && input["auto_update"].as<bool>();
+
+  // Check: the URL against the local-http opt-in this same request sets (or
+  // the stored one), before anything is written.
+  if (url && url[0] != '\0' && !securacv_ota_url_allowed(url, local)) {
+    return http_send_error(req, 400, "url_rejected");
   }
 
-  if (input["manifest_url"].is<const char*>()) {
-    const char* url = input["manifest_url"].as<const char*>();
-    if (securacv_ota_set_manifest_url(url) != ESP_OK) {
-      return http_send_error(req, 400, "url_rejected");
-    }
+  // Apply, in the order the engine's own re-check needs (the opt-in first, so
+  // securacv_ota_set_manifest_url() sees it). A store that fails leaves the
+  // request answered as failed, with what was stored before it still in place.
+  if (has_local && securacv_ota_set_local_http_allowed(local) != ESP_OK) {
+    return http_send_error(req, 500, "store_failed");
   }
-
-  if (input["auto_update"].is<bool>()) {
-    const bool enabled = input["auto_update"].as<bool>();
-    securacv_ota_set_auto_update(enabled);
+  if (has_url && securacv_ota_set_manifest_url(url) != ESP_OK) {
+    return http_send_error(req, 500, "store_failed");
+  }
+  if (has_auto) {
+    if (securacv_ota_set_auto_update(enabled) != ESP_OK) return http_send_error(req, 500, "store_failed");
     csi_mqtt::set_update_auto_state(enabled);   // the loop task publishes it (F106)
   }
 
@@ -13410,10 +13972,7 @@ void setup() {
   uint8_t boot_payload[256];
   size_t boot_len = 0;
   if (build_boot_attestation(boot_payload, sizeof(boot_payload), &boot_len)) {
-    create_witness_record(boot_payload, boot_len, RECORD_BOOT_ATTESTATION, &g_last_record);
-    Serial.printf("[OK] Boot attestation: seq=%u chain=", g_last_record.seq);
-    hex_print(g_last_record.chain_hash, 8);
-    Serial.println("...");
+    record_boot_attestation(boot_payload, boot_len);  // "[OK]" only for a record made (sweep F364)
   }
 
   #if FEATURE_ACOUSTIC_EVENTS
@@ -13606,11 +14165,19 @@ static void ble_bringup_task(void*) {
 
       // BLE GATT Status Service — register on the shared NimBLE server
       // created by bluetooth_channel. Exposes battery, health, chain,
-      // and SD status to companion phones over standard GATT.
+      // and SD status to companion phones over standard GATT. Its device
+      // name is g_device.device_id, kept by pointer, so it is not
+      // registered under an identity this boot did not make (sweep F403:
+      // after a refused fingerprint the name was empty). The channel's
+      // services_missing then names the status service, which is true.
       #if FEATURE_BLE_STATUS
       {
         NimBLEServer* ble_server = NimBLEDevice::getServer();
-        if (ble_server) {
+        if (!identity_named_and_anchored()) {
+          Serial.println("[--] BLE GATT status service not registered: the device is not named or its chain not anchored this boot");
+          log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                     "BLE status service not started", "identity not provisioned this boot");
+        } else if (ble_server) {
           if (ble_status::init(ble_server, g_device.device_id, FIRMWARE_VERSION,
                                &g_device.seq)) {
             Serial.println("[OK] BLE GATT status service registered");
@@ -13635,7 +14202,14 @@ static void ble_bringup_task(void*) {
   // registry is up by now (web server started before the window cleared), so
   // the lifecycle witness events route through the chokepoint directly.
   #if FEATURE_BLE
-  {
+  if (!identity_named_and_anchored()) {
+    // Nothing named to broadcast (sweep F364's review): no init, no
+    // lifecycle event, and g_ble_mgr_result stays "not attempted".
+    g_ble_init_attempted = true;  // self-test: discovery is down, not skipped
+    Serial.println("[--] BLE Discovery not started: the device is not named or its chain not anchored this boot");
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "BLE Discovery not started", "identity not provisioned (SHA-256 failed)");
+  } else {
     g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
     Serial.println("[..] Initializing BLE Discovery subsystem...");
 
@@ -14803,10 +15377,13 @@ void loop() {
           s.routine_denied,
           s.urgent_sends);
 
-      // v0.3: also publish the Chirp NFPA-state surface for HA discovery.
-      // The Chirp ChirpState enum is mapped 1:1 to the NFPA-72 four-state
-      // model in the HA dashboard side; we publish the raw chirp state
-      // string here. Beacon publishing follows in its own gate.
+      // v0.3: also publish the Chirp channel's state for HA discovery: the
+      // word chirp_channel::state_name() spells for the shown state (spec
+      // §7.1: disabled, initializing, active, muted, cooldown; listening is
+      // in the enum, though nothing here sets it), lowercase and as it is.
+      // No NFPA-72 mapping is made, here or in Home Assistant, which shows
+      // the word and reads it as on or off (sweep F295). Beacon publishing
+      // follows in its own gate.
       csi_mqtt::publish_chirp_state(
           chirp_channel::state_name(chirp_channel::get_status().state));
     }
@@ -14866,15 +15443,20 @@ void loop() {
       return;
     }
 
-    if (!create_witness_record(payload, payload_len, RECORD_WITNESS_EVENT, &g_last_record)) {
-      log_health(SCV_LOG_ERROR, SCV_CAT_CRYPTO, "Record verification failed", nullptr);
-    }
+    // A record refused before it was signed (a hash that did not run, or a
+    // chain provisioning refused, sweep F364) is no verification failure,
+    // and has no row: create_witness_record() logs why once per run of
+    // failures, and g_last_record still holds the last record made (or the
+    // zeros setup() left), whose row would read as this interval's. A
+    // record whose signature did not verify is logged as one and shown, "!!".
+    const RecordMade made = witness_record_last(payload, payload_len, RECORD_WITNESS_EVENT);
 
     // Print table row
-    print_table_row(&g_last_record, &g_fix, g_state);
+    if (made != RecordMade::Refused) print_table_row(&g_last_record, &g_fix, g_state);
 
-    // Periodic status every 20 records
-    if (g_health.records_created % 20 == 0) {
+    // Periodic status every 20 records (made ones: a boot that makes none
+    // would print it every interval, its count stuck at 0)
+    if (made == RecordMade::Made && g_health.records_created % 20 == 0) {
       print_status_bar();
       print_table_header();
     }
@@ -14914,16 +15496,11 @@ void loop() {
   }
   #endif
 
-  // Periodic self-verification
+  // Periodic self-verification (of the last record made; none yet, or a
+  // refused chain, verifies nothing: self_verify_last_record())
   if (now - g_last_verify_ms >= VERIFY_INTERVAL_SEC * 1000) {
     g_last_verify_ms = now;
-    
-    if (!verify_record_signature(&g_last_record)) {
-      log_health(SCV_LOG_CRITICAL, SCV_CAT_CRYPTO, "Self-verification FAILED", nullptr);
-      g_health.crypto_healthy = false;
-    } else {
-      g_health.crypto_healthy = true;
-    }
+    self_verify_last_record();
   }
   
   // Small delay to prevent tight loop

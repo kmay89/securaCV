@@ -331,7 +331,7 @@
    "always": [
     {
      "label": "Fasteners",
-     "note": "M2 self-tappers through the plate's recessed seats into blind pilots in the shell's post ends — the render's `HARDWARE` line is the count and length: 4 × flat × 10 on the compact and battery builds, 8 × pan × 8 over 8 O-rings on the Outdoor build (four corners + two mid posts per long wall), plus the sun shield's own 4 × flat × 12 into the face. `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`)"
+     "note": "M2 self-tappers through the plate's recessed seats into blind pilots in the shell's post ends — the render's `HARDWARE` line is the count and length: 4 × flat × 10 on the compact and battery builds, 8 × pan × 10 over 8 O-rings and their 8 DIN 9021 washers on the Outdoor build (four corners + two mid posts per long wall), plus the sun shield's own 4 × flat × 12 into the face. `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`)"
     }
    ],
    "recipes": [
@@ -355,8 +355,8 @@
     },
     {
      "label": "Printed-enclosure weather kit",
-     "formula": "SCR3+ORG1+CW1+ADH1+PLUG1+SCR4+FIL1+VENT1+LP1",
-     "usd": 12.35,
+     "formula": "SCR3+ORG1+WSH1+CW1+ADH1+PLUG1+SCR4+FIL1+VENT1+LP1",
+     "usd": 12.75,
      "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
     }
    ],

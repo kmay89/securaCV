@@ -309,8 +309,8 @@ def test_the_voice_brief_records_the_same_value() -> None:
     )
     assert brief["canary_latest"]["event_type"] == "daily_summary"
     # The casual and night answers speak it as words, where they used to
-    # say "unknown"; the last-event answer reads the dictionary's label,
-    # which for a type it does not list is the id itself.
+    # say "unknown"; so does the last-event answer, where it used to say the
+    # id itself (sweep HA42), its first letter raised to start the sentence.
     assert _spoken_label(brief["canary_latest"]["event_type"]) == "daily summary"
     assert "the last thing witnessed was daily summary," in speak_whats_up(brief)
     night = fleet_brief(
@@ -319,7 +319,7 @@ def test_the_voice_brief_records_the_same_value() -> None:
         local_hour=2,
     )
     assert speak_whats_up(night).startswith("One thing in the last hour: daily summary,")
-    assert speak_last_event(brief).startswith("daily_summary, ")
+    assert speak_last_event(brief).startswith("Daily summary, ")
 
 
 @pytest.mark.parametrize("payload", ["not json at all", "5", '["daily_summary"]'])

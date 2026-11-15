@@ -86,15 +86,28 @@ fn main() -> Result<()> {
         let provided_seed = std::env::var("DEVICE_KEY_SEED").ok();
         // witnessd alone writes an environment seed to <db>.ed25519.seed when
         // no file exists yet, as it always has; every other daemon persists
-        // only a seed it generated.
-        let resolved = witness_kernel::crypto::resolve_device_seed_persisting_env(
-            &config.db_path,
-            provided_seed.as_deref(),
+        // only a seed it generated. DEVICE_KEY_SEED_PERSIST=0 turns that off
+        // for a deployment that keeps the seed elsewhere (the Home Assistant
+        // app's own /data): witnessd then resolves like the other daemons —
+        // the environment seed is used as given, never written, and a seed
+        // file that already exists must still agree with it.
+        let persist_env = witness_kernel::crypto::device_seed_persist_policy(
+            std::env::var(witness_kernel::crypto::DEVICE_KEY_SEED_PERSIST_ENV)
+                .ok()
+                .as_deref(),
         )?;
+        let resolved = if persist_env {
+            witness_kernel::crypto::resolve_device_seed_persisting_env(
+                &config.db_path,
+                provided_seed.as_deref(),
+            )?
+        } else {
+            witness_kernel::crypto::resolve_device_seed(&config.db_path, provided_seed.as_deref())?
+        };
         // Log where the identity came from (the environment, or which seed
         // file) so an operator can find it; the seed value is never logged.
         log::info!("device key seed: {}", resolved.source);
-        resolved.seed
+        resolved.seed.to_string()
     };
     let ruleset_hash = KernelConfig::ruleset_hash_from_id(&config.ruleset_id);
 
@@ -393,6 +406,7 @@ fn main() -> Result<()> {
         config.ingest.reconnect_backoff_max,
     );
     let mut clock_monitor = ClockMonitor::new(config.clock.skew_tolerance);
+    let mut anchor_observer = AnchorObserver::new(Instant::now());
     let mut heartbeat = HeartbeatScheduler::new(config.health.heartbeat);
     let mut disk_monitor =
         DiskMonitor::new(config.storage.min_free_bytes, config.storage.check_interval);
@@ -440,6 +454,13 @@ fn main() -> Result<()> {
         };
         clock_monitor.observe(
             bucket,
+            &mut kernel,
+            &mut pipeline,
+            kernel_version,
+            &cfg.ruleset_id,
+            ruleset_hash,
+        );
+        anchor_observer.tick(
             &mut kernel,
             &mut pipeline,
             kernel_version,
@@ -1067,6 +1088,221 @@ impl ClockMonitor {
     }
 }
 
+/// How often the daemon polls its own `tsa_anchors` table for rows to seal a
+/// clock-provenance record for (a local read; no network).
+const CLOCK_PROVENANCE_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// How long a failed poll holds the next one off.
+const CLOCK_PROVENANCE_RETRY_BACKOFF: Duration = Duration::from_secs(60);
+
+/// Seals one clock-provenance record per anchor row — the device's own clock
+/// measured against the token's genTime, bound by the hash of the token —
+/// into the never-pruned `clock_provenance` ledger
+/// (`Kernel::observe_anchors_for_clock_provenance`;
+/// `docs/design/clock_provenance.md`). `witnessd` is the only process whose
+/// wall clock stamps the sealed log and the only long-running holder of the
+/// device key, so it is the only process that can make that statement.
+///
+/// The first poll of a process has no completed predecessor, so the rows it
+/// finds are of unbounded age and get binding-only records; from then on each
+/// poll carries the measured gap since the previous COMPLETED poll (a stalled
+/// main loop widens the gap honestly instead of asserting a 5 s bound). A
+/// failed poll is sealed as a `StorageWriteFailed` failure, backs the next
+/// poll off, and does not count as completed. Safe mode never reaches the
+/// main loop, so nothing is appended there.
+/// Whole seconds (rounded up, at least 1) from `last` to `now`; `None` when
+/// there is no previous completed poll or the gap exceeds the 3600 s clamp
+/// (a row first seen after such a gap is of unbounded age).
+fn gap_since(last: Option<Instant>, now: Instant) -> Option<u32> {
+    let since = now.saturating_duration_since(last?);
+    let whole = since.as_secs() + u64::from(since.subsec_nanos() > 0);
+    (whole <= witness_kernel::CLOCK_PROVENANCE_CLAMP_S as u64).then(|| whole.max(1) as u32)
+}
+
+struct AnchorObserver {
+    last_poll_completed: Option<Instant>,
+    next_poll: Instant,
+    backoff_until: Option<Instant>,
+}
+
+impl AnchorObserver {
+    fn new(now: Instant) -> Self {
+        Self {
+            last_poll_completed: None,
+            next_poll: now,
+            backoff_until: None,
+        }
+    }
+
+    /// Whether a poll is due: the interval has elapsed and no backoff holds.
+    fn due(&self, now: Instant) -> bool {
+        now >= self.next_poll && self.backoff_until.is_none_or(|until| now >= until)
+    }
+
+    /// Whole seconds (rounded up, at least 1) since the previous completed
+    /// poll — the bound on how old a newly seen row can be — or `None` when
+    /// there is no bound to state: the first poll of this process, or a gap
+    /// over 3600 s (a stalled main loop, or an hour of failed polls). Both
+    /// seal binding-only records; a clamped gap would state a false bound.
+    #[cfg(test)]
+    fn poll_gap_s(&self, now: Instant) -> Option<u32> {
+        gap_since(self.last_poll_completed, now)
+    }
+
+    /// One poll with both clock readings injected (the tests' entry point):
+    /// see [`Self::poll_with`].
+    #[cfg(test)]
+    fn poll(
+        &mut self,
+        kernel: &mut Kernel,
+        now_wall_s: u64,
+        now_mono: Instant,
+        kernel_version: &str,
+    ) -> Result<Vec<witness_kernel::SealedClockProvenance>> {
+        self.poll_with(kernel, kernel_version, || (now_mono, Ok(now_wall_s)))
+            .map(Option::unwrap_or_default)
+    }
+
+    /// One poll: the kernel takes the write lock, then calls `read` ONCE for
+    /// the monotonic instant and the wall clock, so `W` and the gap are read
+    /// under the lock (a row committed while the poll waited for it is never
+    /// measured against an earlier reading). On success the poll counts as
+    /// completed at that instant; on failure it does not (the caller records
+    /// the failure). `Ok(None)`: the wall clock read before the epoch;
+    /// nothing was written and the next poll is one interval away.
+    fn poll_with<R>(
+        &mut self,
+        kernel: &mut Kernel,
+        kernel_version: &str,
+        read: R,
+    ) -> Result<Option<Vec<witness_kernel::SealedClockProvenance>>>
+    where
+        R: FnOnce() -> (
+            Instant,
+            std::result::Result<u64, std::time::SystemTimeError>,
+        ),
+    {
+        let last = self.last_poll_completed;
+        let mut read_at: Option<Instant> = None;
+        let out = kernel.observe_anchors_for_clock_provenance_with(kernel_version, || {
+            let (mono, wall) = read();
+            read_at = Some(mono);
+            match wall {
+                Ok(w) => Some((w, gap_since(last, mono))),
+                Err(e) => {
+                    log::warn!("clock provenance: wall clock unreadable: {e}");
+                    None
+                }
+            }
+        })?;
+        if let Some(at) = read_at {
+            self.next_poll = at + CLOCK_PROVENANCE_POLL_INTERVAL;
+            if out.is_some() {
+                self.last_poll_completed = Some(at);
+                self.backoff_until = None;
+            }
+        }
+        Ok(out)
+    }
+
+    /// A failed poll: back off, and leave `last_poll_completed` alone so the
+    /// next successful poll measures the whole gap.
+    fn record_failure(&mut self, now: Instant) {
+        self.backoff_until = Some(now + CLOCK_PROVENANCE_RETRY_BACKOFF);
+        self.next_poll = now + CLOCK_PROVENANCE_RETRY_BACKOFF;
+    }
+
+    fn tick(
+        &mut self,
+        kernel: &mut Kernel,
+        pipeline: &mut PipelineCounters,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+    ) {
+        self.tick_at(
+            kernel,
+            pipeline,
+            kernel_version,
+            ruleset_id,
+            ruleset_hash,
+            Instant::now(),
+            || {
+                (
+                    Instant::now(),
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_secs()),
+                )
+            },
+        );
+    }
+
+    /// The body of [`Self::tick`] with every clock reading injected, so the
+    /// tests never read a clock: `now_mono` decides whether a poll is due;
+    /// `read` is called once, under the kernel's write lock, for the instant
+    /// the poll measures at and the wall clock (an `Err` when it reads
+    /// before the epoch: no write, no failure record, try next interval).
+    #[allow(clippy::too_many_arguments)]
+    fn tick_at<R>(
+        &mut self,
+        kernel: &mut Kernel,
+        pipeline: &mut PipelineCounters,
+        kernel_version: &str,
+        ruleset_id: &str,
+        ruleset_hash: [u8; 32],
+        now_mono: Instant,
+        read: R,
+    ) where
+        R: FnOnce() -> (
+            Instant,
+            std::result::Result<u64, std::time::SystemTimeError>,
+        ),
+    {
+        if !self.due(now_mono) {
+            return;
+        }
+        match self.poll_with(kernel, kernel_version, read) {
+            Ok(None) => {
+                // A wall clock before the epoch is the clock monitor's
+                // finding, not a storage failure; `poll_with` already moved
+                // the next poll one interval on.
+            }
+            Ok(Some(sealed)) => {
+                for s in sealed {
+                    match s.record.observed_offset_s {
+                        Some(offset) => log::info!(
+                            "clock provenance: record #{} for anchor #{}: device clock {} vs TSA \
+                             genTime (row seen within {} s)",
+                            s.id,
+                            s.anchor_id,
+                            witness_kernel::clock_provenance::format_offset(offset),
+                            s.record.poll_gap_s.unwrap_or(0)
+                        ),
+                        None => log::info!(
+                            "clock provenance: record #{} binds anchor #{} (binding only: first \
+                             poll of this process, more than 3600 s since the previous completed \
+                             poll, or the token's genTime is unreadable)",
+                            s.id,
+                            s.anchor_id
+                        ),
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("clock provenance append failed: {e}");
+                kernel.report_storage_failure(
+                    &format!("clock provenance append failed: {e}"),
+                    kernel_version,
+                    ruleset_id,
+                    ruleset_hash,
+                );
+                pipeline.failures_recorded += 1;
+                self.record_failure(now_mono);
+            }
+        }
+    }
+}
+
 /// Seals one heartbeat record per 10-minute bucket carrying per-bucket
 /// counter deltas. Anchors the chain tail (see HeartbeatRecord docs).
 struct HeartbeatScheduler {
@@ -1616,20 +1852,13 @@ fn register_tract_backend(
 ) -> Result<()> {
     #[cfg(feature = "backend-tract")]
     {
-        use witness_kernel::config::TractFormat;
-        // Defaults to vendor/models/tinyyolov2-8.onnx (see fetch_detection_model.sh) when
-        // detect.tract_model is unset; a missing file yields a clear load error below.
-        let model_path = config.detect.tract_model_path();
-        let backend = match config.detect.tract_format {
-            // tiny-YOLOv2 has a fixed 416×416 input and resizes frames internally, so it does
-            // not need the ingest dimensions and works with any ingest backend.
-            TractFormat::Yolov2 => TractBackend::tiny_yolov2(&model_path)?,
-            TractFormat::PostNms => {
-                let (width, height) = tract_input_dimensions(config)?;
-                TractBackend::new(&model_path, width, height)?
-            }
-        };
-        registry.register(backend.with_threshold(config.detect.confidence_threshold));
+        // Neither detect.tract_model nor WITNESS_TRACT_MODEL set: the default
+        // vendor/models/tinyyolov2-8.onnx, read once and refused unless it hashes to the pin
+        // scripts/fetch_detection_model.sh checks (a missing file is a load error naming that
+        // script). Named: loaded as given, read once too, the sha256 of those bytes logged.
+        let model = config.detect.tract_model_file()?;
+        install_tract_backend(registry, config, &model)?;
+        log::info!("{}", model.startup_line());
         Ok(())
     }
     #[cfg(not(feature = "backend-tract"))]
@@ -1640,6 +1869,24 @@ fn register_tract_backend(
             "detect.backend=tract requires the backend-tract feature"
         ))
     }
+}
+
+/// Build the tract backend from a model file already read (and, for the default, checked) and
+/// register it. Either kind is built from the bytes that were hashed, never by reopening the
+/// path (`TractBackend::from_model_file`), so the startup line's sha256 is the running model's.
+/// tiny-YOLOv2 has a fixed 416×416 input and resizes frames internally, so it does not need the
+/// ingest dimensions and works with any ingest backend; `postnms` does.
+#[cfg(feature = "backend-tract")]
+fn install_tract_backend(
+    registry: &mut BackendRegistry,
+    config: &witness_kernel::config::WitnessdConfig,
+    model: &witness_kernel::config::TractModelFile,
+) -> Result<()> {
+    let backend = TractBackend::from_model_file(model, config.detect.tract_format, || {
+        tract_input_dimensions(config)
+    })?;
+    registry.register(backend.with_threshold(config.detect.confidence_threshold));
+    Ok(())
 }
 
 #[cfg(feature = "backend-tract")]
@@ -1764,21 +2011,22 @@ mod tests {
         use witness_kernel::config::ApiAccessSettings;
 
         // Defaults: no token path means no pairing files, and the roll-call
-        // is the Witness Wall's `full`.
+        // is the kernel's own row (`self`) — the Witness Wall's `full` is an
+        // opt-in, since the route takes no token.
         let api = api_config_from(&test_config()).expect("api config");
         assert_eq!(api.pairing, None);
-        assert_eq!(api.fleet_rollcall, FleetRollcall::Full);
+        assert_eq!(api.fleet_rollcall, FleetRollcall::SelfOnly);
 
         // What the config says is what the served API gets: the two pairing
         // files (`POST /api/pair` redeems the code, the bearer set it
-        // appends to) and the `self` roll-call — the keys `witness_api`
+        // appends to) and the `full` roll-call — the keys `witness_api`
         // wires, so a witnessd-served API honors them the same way.
         let mut config = test_config();
         config.api_token_path = Some(PathBuf::from("/data/api_token"));
         config.api_access = ApiAccessSettings {
             paired_token_path: Some(PathBuf::from("/data/paired_tokens.json")),
             pairing_code_path: Some(PathBuf::from("/data/pairing_code")),
-            fleet_rollcall: FleetRollcall::SelfOnly,
+            fleet_rollcall: FleetRollcall::Full,
             ..ApiAccessSettings::default()
         };
         let api = api_config_from(&config).expect("api config");
@@ -1789,7 +2037,7 @@ mod tests {
                 tokens_path: PathBuf::from("/data/paired_tokens.json"),
             })
         );
-        assert_eq!(api.fleet_rollcall, FleetRollcall::SelfOnly);
+        assert_eq!(api.fleet_rollcall, FleetRollcall::Full);
         assert_eq!(
             api.token_path.as_deref(),
             Some(std::path::Path::new("/data/api_token"))
@@ -1994,5 +2242,422 @@ mod tests {
             count_failures(&mut kernel, &cfg, FailureType::StorageFull),
             expected
         );
+    }
+
+    /// The default tract model is held to its pin (sweep A102). The committed 236-byte
+    /// post-NMS fixture stands in for the default: these tests hand its location and hash to
+    /// `tract_model_file_with_default`, since the real default path is relative to the working
+    /// directory and may hold a fetched model.
+    #[cfg(feature = "backend-tract")]
+    mod tract_model {
+        use super::*;
+        use witness_kernel::config::DEFAULT_TRACT_MODEL_SHA256;
+        use witness_kernel::detect::{DetectionCapability, ObjectClass};
+
+        const FIXTURE_SHA256: &str =
+            "eb5a1733bbbd0eabd14a286a8a156fd9b7596e1cb34778b64fc2e8bba70cc5dc";
+
+        fn fixture_bytes() -> Vec<u8> {
+            std::fs::read(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/test_detector.onnx"
+            ))
+            .expect("read the fixture")
+        }
+
+        /// The fixture with the person row's confidence moved from 0.9 to 0.225 (one byte).
+        fn flipped_bytes() -> Vec<u8> {
+            let mut bytes = fixture_bytes();
+            assert_eq!(bytes[116], 0x3f, "the fixture's layout moved");
+            bytes[116] ^= 0x01;
+            bytes
+        }
+
+        fn tract_config(tract_model: Option<std::path::PathBuf>) -> WitnessdConfig {
+            let mut config = test_config();
+            config.detect.backend = DetectBackendPreference::Tract;
+            config.detect.tract_model = tract_model;
+            config.detect.tract_format = TractFormat::PostNms;
+            config.rtsp.width = 4;
+            config.rtsp.height = 4;
+            config
+        }
+
+        fn persons(registry: &mut BackendRegistry) -> usize {
+            registry
+                .detect_with_capability(
+                    DetectionCapability::ObjectDetection,
+                    &[128u8; 4 * 4 * 3],
+                    4,
+                    4,
+                )
+                .expect("the tract backend answers")
+                .detections
+                .iter()
+                .filter(|d| d.class == ObjectClass::Person)
+                .count()
+        }
+
+        #[test]
+        fn the_pinned_default_is_installed_from_the_bytes_it_checked() {
+            let dir = tempfile::tempdir().unwrap();
+            let default = dir.path().join("tinyyolov2-8.onnx");
+            std::fs::write(&default, fixture_bytes()).unwrap();
+            let config = tract_config(None);
+            let model = config
+                .detect
+                .tract_model_file_with_default(&default, FIXTURE_SHA256)
+                .expect("the pinned bytes");
+            // Swapped after the check: the backend still runs the checked bytes.
+            std::fs::write(&default, flipped_bytes()).unwrap();
+            let mut registry = BackendRegistry::new();
+            install_tract_backend(&mut registry, &config, &model).expect("installed");
+            assert_eq!(persons(&mut registry), 1);
+        }
+
+        #[test]
+        fn a_swapped_default_is_refused_before_anything_is_installed() {
+            let dir = tempfile::tempdir().unwrap();
+            let default = dir.path().join("tinyyolov2-8.onnx");
+            std::fs::write(&default, flipped_bytes()).unwrap();
+            let err = tract_config(None)
+                .detect
+                .tract_model_file_with_default(&default, FIXTURE_SHA256)
+                .expect_err("not the pinned model");
+            assert!(
+                err.to_string().contains("scripts/fetch_detection_model.sh"),
+                "{err}"
+            );
+        }
+
+        #[test]
+        fn a_configured_model_is_installed_from_the_bytes_it_read() {
+            let dir = tempfile::tempdir().unwrap();
+            let custom = dir.path().join("custom.onnx");
+            std::fs::write(&custom, fixture_bytes()).unwrap();
+            let config = tract_config(Some(custom.clone()));
+            let model = config
+                .detect
+                .tract_model_file_with_default(std::path::Path::new("unused"), FIXTURE_SHA256)
+                .expect("a configured model is read");
+            assert_eq!(model.sha256(), FIXTURE_SHA256);
+            // Swapped after the read: the backend runs the bytes the startup line's hash is of.
+            std::fs::write(&custom, flipped_bytes()).unwrap();
+            let mut registry = BackendRegistry::new();
+            install_tract_backend(&mut registry, &config, &model).expect("installed");
+            assert_eq!(persons(&mut registry), 1);
+        }
+
+        #[test]
+        fn a_configured_model_registers_as_given() {
+            let dir = tempfile::tempdir().unwrap();
+            let custom = dir.path().join("custom.onnx");
+            std::fs::write(&custom, flipped_bytes()).unwrap();
+            let config = tract_config(Some(custom));
+            let mut registry = BackendRegistry::new();
+            register_tract_backend(&mut registry, &config).expect("a configured model loads");
+            assert_eq!(
+                persons(&mut registry),
+                0,
+                "the configured (flipped) model runs"
+            );
+        }
+
+        #[test]
+        fn register_holds_the_real_default_path_to_the_pin() {
+            // Whatever sits at the real default path here (nothing, in CI; a fetched model on a
+            // developer's tree), witnessd either refuses it, naming the fetch script, or it is
+            // the pinned model.
+            let mut config = tract_config(None);
+            config.detect.tract_format = TractFormat::Yolov2;
+            let mut registry = BackendRegistry::new();
+            match register_tract_backend(&mut registry, &config) {
+                Ok(()) => {
+                    let bytes = std::fs::read(config.detect.tract_model_path()).unwrap();
+                    use sha2::Digest;
+                    assert_eq!(
+                        hex::encode(sha2::Sha256::digest(&bytes)),
+                        DEFAULT_TRACT_MODEL_SHA256
+                    );
+                }
+                Err(err) => assert!(
+                    format!("{err:#}").contains("scripts/fetch_detection_model.sh"),
+                    "{err:#}"
+                ),
+            }
+        }
+
+        #[test]
+        fn postnms_still_needs_ingest_dimensions() {
+            let dir = tempfile::tempdir().unwrap();
+            let default = dir.path().join("tinyyolov2-8.onnx");
+            std::fs::write(&default, fixture_bytes()).unwrap();
+            let mut config = tract_config(None);
+            config.ingest.backend = IngestBackend::File;
+            let model = config
+                .detect
+                .tract_model_file_with_default(&default, FIXTURE_SHA256)
+                .unwrap();
+            let err = install_tract_backend(&mut BackendRegistry::new(), &config, &model)
+                .expect_err("file ingest has no fixed frame size");
+            assert!(
+                format!("{err:#}").contains("ingest width/height"),
+                "{err:#}"
+            );
+        }
+    }
+
+    // ---- AnchorObserver (clock provenance) ----
+    // Every instant is injected: a base `Instant` captured once and offsets
+    // from it, and wall-clock seconds as literals keyed to the committed
+    // fixture token's genTime (1781094804). No test reads the wall clock.
+
+    const FIXTURE_GEN_TIME: u64 = 1_781_094_804;
+
+    fn insert_fixture_anchor(kernel: &Kernel) -> i64 {
+        let path = format!(
+            "{}/tests/fixtures/tsa/reply.tsr",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let token = witness_kernel::tsa::parse_response(&std::fs::read(path).unwrap()).unwrap();
+        witness_kernel::tsa::ensure_anchor_table(&kernel.conn).unwrap();
+        let imprint: [u8; 32] = token.imprint.clone().try_into().unwrap();
+        witness_kernel::tsa::insert_anchor(&kernel.conn, "digest", &imprint, "(offline)", &token)
+            .unwrap()
+    }
+
+    #[test]
+    fn anchor_observer_due_and_gap_follow_the_completed_polls() {
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        assert!(obs.due(t0), "the first poll is due at start");
+        assert_eq!(obs.poll_gap_s(t0), None, "first poll of a process: no gap");
+        obs.last_poll_completed = Some(t0);
+        obs.next_poll = t0 + CLOCK_PROVENANCE_POLL_INTERVAL;
+        assert!(!obs.due(t0 + Duration::from_secs(4)));
+        assert!(obs.due(t0 + Duration::from_secs(5)));
+        // Whole seconds, rounded up, at least 1, and a bound only up to
+        // 3600 s: past it the row's age is unbounded (binding only).
+        assert_eq!(obs.poll_gap_s(t0), Some(1));
+        assert_eq!(obs.poll_gap_s(t0 + Duration::from_millis(5_001)), Some(6));
+        assert_eq!(obs.poll_gap_s(t0 + Duration::from_secs(5)), Some(5));
+        assert_eq!(obs.poll_gap_s(t0 + Duration::from_secs(3_600)), Some(3600));
+        assert_eq!(obs.poll_gap_s(t0 + Duration::from_millis(3_600_001)), None);
+        assert_eq!(obs.poll_gap_s(t0 + Duration::from_secs(90_000)), None);
+    }
+
+    #[test]
+    fn anchor_observer_backoff_holds_the_next_poll_and_keeps_the_gap_honest() {
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        obs.last_poll_completed = Some(t0);
+        let failed_at = t0 + Duration::from_secs(5);
+        obs.record_failure(failed_at);
+        assert!(!obs.due(failed_at + Duration::from_secs(59)));
+        assert!(obs.due(failed_at + CLOCK_PROVENANCE_RETRY_BACKOFF));
+        // A failed poll is not a completed one: the next gap spans it.
+        assert_eq!(obs.last_poll_completed, Some(t0));
+        assert_eq!(
+            obs.poll_gap_s(failed_at + CLOCK_PROVENANCE_RETRY_BACKOFF),
+            Some(65)
+        );
+    }
+
+    #[test]
+    fn anchor_observer_first_poll_binds_then_later_polls_measure() {
+        let (mut kernel, cfg) = test_kernel();
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        // First poll on a fresh database: initializes the cursor, seals nothing.
+        let sealed = obs
+            .poll(&mut kernel, FIXTURE_GEN_TIME, t0, &cfg.kernel_version)
+            .unwrap();
+        assert!(sealed.is_empty());
+        assert_eq!(obs.last_poll_completed, Some(t0));
+        assert_eq!(obs.next_poll, t0 + CLOCK_PROVENANCE_POLL_INTERVAL);
+
+        // A row appears; the next poll (5 s later) measures it.
+        let id = insert_fixture_anchor(&kernel);
+        let t1 = t0 + Duration::from_secs(5);
+        let sealed = obs
+            .poll(&mut kernel, FIXTURE_GEN_TIME + 3, t1, &cfg.kernel_version)
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, id);
+        assert_eq!(sealed[0].record.observed_offset_s, Some(3));
+        assert_eq!(sealed[0].record.poll_gap_s, Some(5));
+
+        // A new process (fresh observer) finds a row that appeared while no
+        // daemon ran: binding only.
+        let id2 = insert_fixture_anchor(&kernel);
+        let mut restarted = AnchorObserver::new(t1);
+        let sealed = restarted
+            .poll(&mut kernel, FIXTURE_GEN_TIME + 900, t1, &cfg.kernel_version)
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, id2);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+    }
+
+    #[test]
+    fn anchor_observer_a_gap_over_an_hour_seals_binding_only() {
+        let (mut kernel, cfg) = test_kernel();
+        let kv = cfg.kernel_version.clone();
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        assert!(obs
+            .poll(&mut kernel, FIXTURE_GEN_TIME, t0, &kv)
+            .unwrap()
+            .is_empty());
+        // An hour of failed polls: none completes, so the gap keeps growing.
+        obs.record_failure(t0 + Duration::from_secs(5));
+        let id = insert_fixture_anchor(&kernel);
+        let t1 = t0 + Duration::from_secs(3_700);
+        assert!(obs.due(t1));
+        let sealed = obs
+            .poll(&mut kernel, FIXTURE_GEN_TIME + 7_200, t1, &kv)
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, id);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        // The poll completed, so measuring resumes at the next one.
+        insert_fixture_anchor(&kernel);
+        let t2 = t1 + Duration::from_secs(5);
+        let sealed = obs
+            .poll(&mut kernel, FIXTURE_GEN_TIME + 2, t2, &kv)
+            .unwrap();
+        assert_eq!(sealed[0].record.observed_offset_s, Some(2));
+        assert_eq!(sealed[0].record.poll_gap_s, Some(5));
+    }
+
+    #[test]
+    fn anchor_observer_measures_at_the_instant_read_under_the_lock() {
+        let (mut kernel, cfg) = test_kernel();
+        let mut pipeline = PipelineCounters::default();
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        obs.poll(&mut kernel, FIXTURE_GEN_TIME, t0, &cfg.kernel_version)
+            .unwrap();
+        insert_fixture_anchor(&kernel);
+        // Due at t0 + 5 s; the lock was held 3 s, so the readings are taken
+        // at t0 + 8 s: the gap and the next poll follow that instant.
+        let due_at = t0 + Duration::from_secs(5);
+        let read_at = t0 + Duration::from_secs(8);
+        obs.tick_at(
+            &mut kernel,
+            &mut pipeline,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+            due_at,
+            || (read_at, Ok(FIXTURE_GEN_TIME + 4)),
+        );
+        assert_eq!(pipeline.failures_recorded, 0);
+        assert_eq!(obs.last_poll_completed, Some(read_at));
+        assert_eq!(obs.next_poll, read_at + CLOCK_PROVENANCE_POLL_INTERVAL);
+        let (offset, gap): (Option<i64>, Option<i64>) = kernel
+            .conn
+            .query_row(
+                "SELECT json_extract(payload_json, '$.observed_offset_s'), \
+                 json_extract(payload_json, '$.poll_gap_s') FROM clock_provenance \
+                 ORDER BY id DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((offset, gap), (Some(4), Some(8)));
+    }
+
+    #[test]
+    fn anchor_observer_failed_append_seals_a_storage_failure_and_backs_off() {
+        let (mut kernel, cfg) = test_kernel();
+        let mut pipeline = PipelineCounters::default();
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        obs.tick_at(
+            &mut kernel,
+            &mut pipeline,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+            t0,
+            || (t0, Ok(FIXTURE_GEN_TIME)),
+        );
+        assert_eq!(obs.last_poll_completed, Some(t0));
+        // Break the ledger so the next append fails, then give it a row.
+        kernel
+            .conn
+            .execute_batch("DROP TABLE clock_provenance;")
+            .unwrap();
+        insert_fixture_anchor(&kernel);
+        let t1 = t0 + Duration::from_secs(5);
+        obs.tick_at(
+            &mut kernel,
+            &mut pipeline,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+            t1,
+            || (t1, Ok(FIXTURE_GEN_TIME + 2)),
+        );
+        assert_eq!(pipeline.failures_recorded, 1);
+        assert_eq!(
+            count_failures(&mut kernel, &cfg, FailureType::StorageWriteFailed),
+            1
+        );
+        assert_eq!(
+            obs.last_poll_completed,
+            Some(t0),
+            "a failed poll is not completed"
+        );
+        assert_eq!(obs.backoff_until, Some(t1 + CLOCK_PROVENANCE_RETRY_BACKOFF));
+        // Inside the backoff a tick does nothing at all.
+        obs.tick_at(
+            &mut kernel,
+            &mut pipeline,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+            t1 + Duration::from_secs(10),
+            || (t1 + Duration::from_secs(10), Ok(FIXTURE_GEN_TIME + 12)),
+        );
+        assert_eq!(pipeline.failures_recorded, 1);
+        // The cursor did not move: the transaction rolled back.
+        let cursor: i64 = kernel
+            .conn
+            .query_row(
+                "SELECT last_anchor_id FROM clock_provenance_cursor WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn anchor_observer_unreadable_wall_clock_skips_the_poll_without_a_failure() {
+        let (mut kernel, cfg) = test_kernel();
+        let mut pipeline = PipelineCounters::default();
+        let t0 = Instant::now();
+        let mut obs = AnchorObserver::new(t0);
+        // A wall clock before the epoch, constructed without reading a clock.
+        let before_epoch = SystemTime::UNIX_EPOCH
+            .duration_since(SystemTime::UNIX_EPOCH + Duration::from_secs(1))
+            .map(|d| d.as_secs());
+        assert!(before_epoch.is_err());
+        obs.tick_at(
+            &mut kernel,
+            &mut pipeline,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+            t0,
+            || (t0, before_epoch),
+        );
+        assert_eq!(pipeline.failures_recorded, 0);
+        assert_eq!(obs.last_poll_completed, None);
+        assert_eq!(obs.next_poll, t0 + CLOCK_PROVENANCE_POLL_INTERVAL);
     }
 }

@@ -106,7 +106,8 @@ Before a byte is written:
 | every field fits its buffer whole — refused, never cut to fit (`securacv_ota_manifest_from_fields`); `ota_release.py verify` holds a release to the same sizes (`DEVICE_FIELD_BYTES`) before it is published | engine + CI | `MANIFEST_INVALID` |
 | manifest signature over every field | engine | `MANIFEST_SIG` |
 | `product` equals the compiled product id | engine | `MANIFEST_INVALID` |
-| `board` / `chip` equal the compiled board (`CANARY_FIGURE_HARDWARE`) and IDF target — **manifest_version 2** only; a v1 manifest carries no hardware fields and a v1 manifest that does is refused by the signer | engine | `BOARD_MISMATCH` |
+| `board` / `chip` equal the compiled board (`CANARY_FIGURE_HARDWARE`) and IDF target — signed by **manifest_version 2**; a v1 manifest carries no hardware fields (one that does is refused by the signer and by the parser), and the rule holds a manifest to every field it names whatever its version | engine | `BOARD_MISMATCH` |
+| `manifest_version` ≥ the device's persisted floor — raised to 2 the first time a signed v2 manifest verifies, so a v1 manifest (signed, but binding no board) is refused from then on and the hardware binding cannot be taken back by serving the older format | engine (`securacv_ota_manifest_version_ok`) | `MANIFEST_DOWNGRADE` |
 | `version` newer than max(running, NVS floor) | engine | `VERSION_ROLLBACK` |
 | running version ≥ `min_version` — **enforced now**, not logged: a device below the floor is told to install the intermediate release first | engine | `MIN_VERSION` |
 | `size` fits the inactive slot | engine + CI (`flavors.json` `size_guards`, `check_slot_budget.py`) | `SIZE_MISMATCH` |

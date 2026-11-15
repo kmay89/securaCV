@@ -124,6 +124,20 @@ ambiguity once you have more than one.
 
 ## Pairing from the Canary Vision app (zero typing)
 
+> **Status:** the WAP firmware this guide covers does not answer the Canary
+> Vision app's pairing yet. Its receipt route answers with no
+> `Access-Control-Allow-Origin`, so the browser hides the device's answer from
+> the app and the BOOT-tap step ends *The Canary didn't answer*; and past the
+> receipt the app asks `GET /api/v1/info` with `X-Canary-Token`, which the WAP
+> neither serves nor reads. Its dashboard QR and a pasted recovery kit stop at
+> the same check (sweep F355,
+> [discovery.md §2](../canary-vision/docs/discovery.md#2-peer-list-api)).
+> Add a WAP in the SecuraCV iPhone app instead, from the recovery kit its
+> dashboard saves (**Settings → Device → Save my recovery kit**) or through
+> its Bluetooth setup, and in Home Assistant, which finds it over MQTT. The
+> steps below are the app's flow as the reference server in
+> `canary-vision/device-api/` answers it.
+
 The `canary-vision` companion app pairs devices with the **BOOT-tap** flow —
 no tokens to copy:
 
@@ -137,8 +151,10 @@ no tokens to copy:
    token) itself. A press made before the app has asked is one no page of
    yours is asking for, and goes to whichever device asks first. If another
    device on your network asks during the same tap, a WAP hands out nothing
-   and the app stops with *Another device asked at the same time*: close any
-   other Canary pages, wait 10 seconds and try again.
+   (its `409 tap_contended`): close any other Canary pages, wait 10 seconds
+   and try again. The app says *Another device asked at the same time* only
+   for a device that sends that answer with CORS, which the WAP firmware does
+   not (status above).
 3. Confirm the pairing: tap **Blink to confirm** to make that exact box flash
    its LED, give it a name (becomes `canary-<name>.local`), and pick the room
    it watches.
@@ -149,7 +165,8 @@ Fallbacks (under *Other ways to pair*): scan the pairing QR from the device
 dashboard (**Settings → Device → Show QR** — requires the app to be served
 over HTTPS), paste a provisioning receipt JSON, or enter the device address +
 API token manually. The QR carries this device's API token, so the dashboard
-only renders it for an authenticated session.
+only renders it for an authenticated session. A WAP's QR, kit or token stops
+at the app's `GET /api/v1/info` check like the BOOT tap does (status above).
 
 Rooms are stored in the app only — devices never hold fleet-wide state.
 

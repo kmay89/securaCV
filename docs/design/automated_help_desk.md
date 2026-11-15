@@ -122,7 +122,7 @@ Two rules make it safe to run without a human per ticket:
     form, and filter the log tail against known-sensitive lines (the AP
     password print above all). "Public-only by construction" has to be true
     of the required artifact, not just intended by the voluntary one.
-    **Status: partly done in both flashers (ledger A118)** —
+    **Status: partly done in both flashers (ledger A132)** —
     `buildDiagnosticReport()` carries no hardware address at all, not even
     a tail: the base MAC is the station address in every Wi-Fi frame, so
     any part of it matches the board in radio range. Its serial tail is
@@ -143,7 +143,7 @@ Two rules make it safe to run without a human per ticket:
     110 m, and a chain-head prefix, one row per record) and its `g` card's
     latitude and longitude, and the lines that name the network a board
     joins all pass today. What remains for the report before the claims
-    lane can require it is those lines (A118); then the intake itself
+    lane can require it is those lines (A132); then the intake itself
     (Phase 3 proper).
 
 - **Phase 4 — the loop.** "This didn't help" buttons (shipped in Phase 1)

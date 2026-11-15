@@ -71,7 +71,9 @@ an exemption must be visible and reviewable, with a comment saying why):
       runner). Checked on the repo's own workflow files only, in main(); the
       unit tests' synthetic workflows are not workflows this repo runs.
       Exemptions: `ubuntu_latest_ok` (workflow file names) — a temporary
-      list for files another open change owns; it should be empty
+      list for files another open change owns; it should be empty, and a
+      listed file that no longer names the label fails until its entry is
+      deleted (a stale exemption would let the label back in unseen)
 """
 
 from __future__ import annotations
@@ -675,14 +677,29 @@ def floating_runners_in(wf: dict) -> list[str]:
 
 
 def check_floating_runners(path: str, policy: dict) -> list[str]:
-    """R11, on one of the repo's own workflow files (see main())."""
+    """R11, on one of the repo's own workflow files (see main()).
+
+    A file listed in ubuntu_latest_ok is exempt only while it still names the
+    label: once its runners are pinned the entry exempts nothing, and left in
+    place it would let a later edit bring `ubuntu-latest` back unseen, so a
+    listed file that names none (by the same floating_runners_in() reading)
+    is refused until its entry is deleted.
+    """
     name = os.path.basename(path)
-    if name in set(policy.get("ubuntu_latest_ok") or []):
-        return []
+    listed = name in set(policy.get("ubuntu_latest_ok") or [])
     with open(path, encoding="utf-8") as f:
         wf = yaml.safe_load(f)
     if not isinstance(wf, dict):
         return []  # check_workflow already reports a file that is no mapping
+    if listed:
+        if floating_runners_in(wf):
+            return []
+        return [
+            f"{name}: R11 — listed in ci-policy.yml ubuntu_latest_ok but "
+            f"names no ubuntu-latest (comments and a job's steps do not "
+            f"count): delete the entry, or a later edit that brings the "
+            f"floating label back passes unseen."
+        ]
     return [
         f"{name}: R11 — `{where}` names the floating `ubuntu-latest` runner "
         f"label, which GitHub moves to a new Ubuntu image under every job at "

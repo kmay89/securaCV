@@ -1,0 +1,169 @@
+{
+  "$comment": "One status and one health body per Canary family, in the keys each family's firmware publishes on <prefix>/<id>/status and <prefix>/<id>/health. Values are samples, not captures. Every family puts its firmware version on health as firmware_version, and none puts that key on status; the flagship's status alone carries its version, as firmware. Every family but the flagship names its device_type on status. In the monorepo, test_device_registry_versions.py holds every key here to the producer named beside it (path#function); the HACS mirror carries no firmware, so there that check skips and the rest run on these bodies.",
+  "families": {
+    "canary": {
+      "status_producer": "firmware/canary/src/main.cpp#mqtt_publish_status_update",
+      "health_producer": "firmware/canary/src/main.cpp#mqtt_publish_health_update",
+      "status": {
+        "uptime": 3600,
+        "free_heap": 182344,
+        "records_created": 12,
+        "seq": 12,
+        "state": "NOFIX",
+        "gps_fix": false,
+        "sd_healthy": true,
+        "chain_valid": true,
+        "firmware": "2.4.16"
+      },
+      "health": {
+        "uptime": 3600,
+        "free_heap": 182344,
+        "min_heap": 171200,
+        "records_created": 12,
+        "records_verified": 12,
+        "verify_failures": 0,
+        "chain_persists": 12,
+        "chain_persist_failures": 0,
+        "gps_healthy": false,
+        "crypto_healthy": true,
+        "sd_healthy": true,
+        "wifi_active": true,
+        "http_requests": 31,
+        "sd_writes": 40,
+        "sd_errors": 0,
+        "boot_count": 7,
+        "firmware_version": "2.4.16",
+        "public_key": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+        "tamper_detected": false,
+        "power_loss_detected": false,
+        "unexpected_reboot": false
+      }
+    },
+    "canary-wap": {
+      "status_producer": "firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp#publish_status",
+      "health_producer": "firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp#publish_health",
+      "status": {
+        "online": true,
+        "device_type": "canary-wap",
+        "csi_running": true,
+        "wifi_connected": true,
+        "rssi": -58
+      },
+      "health": {
+        "battery": 100,
+        "battery_present": false,
+        "memory_free": 141220,
+        "uptime": 3600,
+        "firmware_version": "2.4.16",
+        "public_key": "2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e",
+        "event_id_space_low": false
+      }
+    },
+    "canary-sense": {
+      "status_producer": "firmware/projects/canary-sense/src/net/mqtt_mgr.cpp#publish_status_retained",
+      "health_producer": "firmware/projects/canary-sense/src/net/mqtt_mgr.cpp#publish_health_retained",
+      "status": {
+        "device_id": "canary-sense-7d3f",
+        "device_type": "canary-sense",
+        "status": "online",
+        "ip": "192.168.1.51",
+        "rssi": -61,
+        "heap_free": 201344,
+        "heap_min": 188120,
+        "degraded": "normal",
+        "ts_ms": 3600000
+      },
+      "health": {
+        "battery": 100,
+        "battery_present": false,
+        "memory_free": 201344,
+        "uptime": 3600,
+        "firmware_version": "2.4.16",
+        "public_key": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+        "radar": {
+          "link_ok": true,
+          "last_frame_age_ms": 120,
+          "frame_errors": 0
+        }
+      }
+    },
+    "canary-vision": {
+      "status_producer": "firmware/projects/canary-vision/src/net/mqtt_mgr.cpp#publish_status_retained",
+      "health_producer": "firmware/projects/canary-vision/src/net/mqtt_mgr.cpp#publish_health_retained",
+      "status": {
+        "device_id": "canary-vision-1a2b",
+        "device_type": "canary-vision",
+        "status": "online",
+        "ip": "192.168.1.52",
+        "rssi": -55,
+        "heap_free": 154112,
+        "heap_min": 140032,
+        "degraded": "normal",
+        "ts_ms": 3600000
+      },
+      "health": {
+        "battery": 100,
+        "battery_present": false,
+        "memory_free": 154112,
+        "uptime": 3600,
+        "firmware_version": "2.4.16",
+        "public_key": "4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c"
+      }
+    },
+    "canary-sentinel": {
+      "status_producer": "firmware/projects/canary-sentinel/src/net/mqtt_mgr.cpp#publish_status_retained",
+      "health_producer": "firmware/projects/canary-sentinel/src/net/mqtt_mgr.cpp#publish_health_retained",
+      "status": {
+        "device_id": "canary-sentinel-9e8f",
+        "device_type": "canary-sentinel",
+        "status": "online",
+        "ip": "192.168.1.53",
+        "rssi": -66,
+        "heap_free": 176220,
+        "heap_min": 160004,
+        "degraded": "normal",
+        "ts_ms": 3600000
+      },
+      "health": {
+        "battery": 100,
+        "battery_present": false,
+        "memory_free": 176220,
+        "uptime": 3600,
+        "firmware_version": "2.4.16",
+        "public_key": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b",
+        "radar": {
+          "link_ok": true,
+          "last_frame_age_ms": 95,
+          "frame_errors": 0
+        }
+      }
+    },
+    "canary-display": {
+      "status_producer": "firmware/projects/canary-display/src/net/mqtt_mgr.cpp#publish_status_retained",
+      "health_producer": "firmware/projects/canary-display/src/net/mqtt_mgr.cpp#publish_health_retained",
+      "status": {
+        "device_id": "canary-dash-5c6d",
+        "device_type": "canary-dash",
+        "status": "online",
+        "ip": "192.168.1.54",
+        "rssi": -49,
+        "heap_free": 4120332,
+        "heap_min": 4010204,
+        "degraded": "normal",
+        "fleet_devices": 3,
+        "fleet_worst": "ok",
+        "fleet_all_verified": true,
+        "ts_ms": 3600000
+      },
+      "health": {
+        "battery": 100,
+        "battery_present": false,
+        "memory_free": 4120332,
+        "uptime": 3600,
+        "firmware_version": "2.4.16",
+        "power_loss_detected": false,
+        "unexpected_reboot": false
+      }
+    }
+  }
+}

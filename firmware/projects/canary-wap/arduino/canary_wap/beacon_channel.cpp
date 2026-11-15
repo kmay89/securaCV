@@ -124,6 +124,7 @@ static BeaconAuditEntry g_audit_log[AUDIT_LOG_MAX];
 static size_t g_audit_log_count = 0;     // total entries observed (caps at MAX)
 static size_t g_audit_head = 0;          // next slot to write
 static uint8_t g_audit_chain_head[32];
+static bool g_audit_head_known = true;   // false while the head could not be hashed
 
 // Pending origination (waiting on cosigner).
 struct PendingOrigination {
@@ -245,7 +246,7 @@ static const char* NVS_X25519_PUB  = "x25519_pub";
 // ════════════════════════════════════════════════════════════════════════════
 
 static void set_state(BeaconState new_state);
-static void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out);
+[[nodiscard]] static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out);
 static size_t build_alert_canonical(const BeaconAlertCanonical* c,
                                     uint8_t* out, size_t out_max);
 static size_t build_selftest_canonical(const BeaconSelfTestPayload* p,
@@ -256,7 +257,7 @@ static bool persist_beacon_set();
 static bool load_beacon_set();
 static void recompute_trouble_reasons();
 static bool rate_check_and_record(const uint8_t* fp, bool is_exercise);
-static void chain_audit_entry(BeaconAuditEntry* entry);
+static bool chain_audit_entry(BeaconAuditEntry* entry);
 static void on_espnow_recv(const uint8_t* mac, const uint8_t* data, int len, int8_t rssi);
 static void broadcast_message(const uint8_t* data, size_t len);
 
@@ -316,6 +317,21 @@ static void ensure_x25519_keypair() {
   }
 }
 
+// SHA-256 of `a` then `b` (`b_len` 0: `a` alone). False, with `out` zeroed,
+// when a step fails.
+[[nodiscard]] static bool sha256_two(const uint8_t* a, size_t a_len,
+                                     const uint8_t* b, size_t b_len, uint8_t out[32]) {
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  int rc = mbedtls_sha256_starts(&ctx, 0);
+  if (rc == 0) rc = mbedtls_sha256_update(&ctx, a, a_len);
+  if (rc == 0 && b_len > 0) rc = mbedtls_sha256_update(&ctx, b, b_len);
+  if (rc == 0) rc = mbedtls_sha256_finish(&ctx, out);
+  mbedtls_sha256_free(&ctx);
+  if (rc != 0) memset(out, 0, 32);
+  return rc == 0;
+}
+
 static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
                              uint8_t out_key[32]) {
   // Compute the shared secret via X25519, then HKDF-SHA256 it down to a
@@ -337,15 +353,9 @@ static bool ecdh_session_key(const uint8_t* their_x25519_pubkey,
   }
   // Domain-separate so the same shared secret can't be cross-purposed.
   static const char LABEL[] = "securacv:beacon:cosign:v0";
-  mbedtls_sha256_context ctx;
-  mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, (const uint8_t*)LABEL, sizeof(LABEL) - 1);
-  mbedtls_sha256_update(&ctx, shared, 32);
-  mbedtls_sha256_finish(&ctx, out_key);
-  mbedtls_sha256_free(&ctx);
+  const bool hashed = sha256_two((const uint8_t*)LABEL, sizeof(LABEL) - 1, shared, 32, out_key);
   beacon_cosign_aad::secure_zero(shared, sizeof(shared));
-  return true;
+  return hashed;
 }
 
 // Encrypt `plaintext_len` bytes of `plaintext` to the recipient identified by
@@ -407,15 +417,12 @@ static void set_state(BeaconState new_state) {
   if (g_state_callback) g_state_callback(old, new_state);
 }
 
-static void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
-  mbedtls_sha256_context ctx;
+// False, with the fingerprint zeroed, when the hash fails.
+[[nodiscard]] static bool compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
   uint8_t hash[32];
-  mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, pubkey, DEVICE_PUBKEY_SIZE);
-  mbedtls_sha256_finish(&ctx, hash);
-  mbedtls_sha256_free(&ctx);
+  const bool ok = sha256_two(pubkey, DEVICE_PUBKEY_SIZE, nullptr, 0, hash);
   memcpy(fp_out, hash, DEVICE_FP_SIZE);
+  return ok;
 }
 
 static size_t build_alert_canonical(const BeaconAlertCanonical* c,
@@ -671,6 +678,23 @@ static bool persist_beacon_set() {
   return true;
 }
 
+// The set holds only the members NVS returns whole (sweep F408 and its
+// review). getBytes() answers the bytes it read: short of
+// sizeof(BeaconSetEntry) for a row from another layout that is shorter, 0
+// for one that is longer (Preferences reads nothing into a buffer it does
+// not fit), 0 for a missing row, and 0 for a read whose data check failed
+// after IDF had copied the bytes. The answer used to be dropped, so the
+// entry kept whatever the buffer then held, and its name was never
+// terminated, which GET /api/beacon/set read past. An entry refused here is
+// not loaded, nor is a whole one that is no member (its `valid` byte not 1:
+// a hole an earlier load left where a row was refused or missing, which
+// persist_beacon_set() then saved), and each loaded entry's name ends at its
+// last byte. So the set and its count hold members only, and every reader of
+// them reads members: the empty-set trouble (recompute_trouble_reasons()),
+// a revoke and a self-test's match by fingerprint (a hole's is all zeros),
+// the status's set size, the answer. Before the review a refused entry was
+// kept as a hole and counted, so a set of refused rows did not read empty.
+// The health log counts the refused ones once.
 static bool load_beacon_set() {
   if (!flash_encryption_enabled()) {
     g_beacon_set_count = 0;
@@ -678,14 +702,32 @@ static bool load_beacon_set() {
     return false;
   }
   g_prefs.begin(NVS_NS, true);
-  g_beacon_set_count = g_prefs.getUChar(NVS_SET_COUNT, 0);
-  if (g_beacon_set_count > MAX_BEACON_SET) g_beacon_set_count = MAX_BEACON_SET;
-  for (uint8_t i = 0; i < g_beacon_set_count; i++) {
+  uint8_t saved = g_prefs.getUChar(NVS_SET_COUNT, 0);
+  if (saved > MAX_BEACON_SET) saved = MAX_BEACON_SET;
+  g_beacon_set_count = 0;
+  unsigned refused = 0;
+  for (uint8_t i = 0; i < saved; i++) {
     char key[16];
     snprintf(key, sizeof(key), "%s%u", NVS_SET_PREFIX, (unsigned)i);
-    g_prefs.getBytes(key, &g_beacon_set[i], sizeof(BeaconSetEntry));
+    BeaconSetEntry* e = &g_beacon_set[g_beacon_set_count];
+    const bool whole = g_prefs.getBytes(key, e, sizeof(BeaconSetEntry)) == sizeof(BeaconSetEntry);
+    uint8_t member = 0;
+    memcpy(&member, &e->valid, 1);   // a byte: a bool read from other bytes than 0 or 1 is undefined
+    if (!whole || member != 1) {
+      memset(e, 0, sizeof(BeaconSetEntry));
+      if (!whole) refused++;
+      continue;
+    }
+    e->name[BEACON_NAME_LEN] = '\0';
+    g_beacon_set_count++;
   }
   g_prefs.end();
+  if (refused > 0) {
+    char msg[80];
+    snprintf(msg, sizeof(msg), "beacon: set entries NVS did not return whole were left out (%u)",
+             refused);
+    health_log(SCV_LOG_WARNING, SCV_CAT_STORAGE, msg);
+  }
   return true;
 }
 
@@ -709,6 +751,21 @@ static bool persist_audit_entry(size_t index) {
   return true;
 }
 
+// The chain head after `entry`: SHA-256(entry's prev hash || entry).
+[[nodiscard]] static bool audit_head_after(const BeaconAuditEntry* entry, uint8_t out[32]) {
+  return sha256_two(entry->prev_audit_hash, 32,
+                    (const uint8_t*)entry, sizeof(BeaconAuditEntry), out);
+}
+
+// Re-derives the chain head from the ring's newest entry (the slot at
+// (head - 1) mod MAX when count == MAX, else slot count-1). An empty ring
+// leaves the head as it is.
+[[nodiscard]] static bool rederive_audit_head() {
+  if (g_audit_log_count == 0) return true;
+  const size_t newest_idx = (g_audit_head == 0) ? (g_audit_log_count - 1) : (g_audit_head - 1);
+  return audit_head_after(&g_audit_log[newest_idx], g_audit_chain_head);
+}
+
 static bool load_audit_log() {
   if (!flash_encryption_enabled()) {
     g_audit_log_count = 0;
@@ -729,21 +786,9 @@ static bool load_audit_log() {
     snprintf(key, sizeof(key), "%s%u", NVS_AUDIT_PREFIX, (unsigned)i);
     g_prefs.getBytes(key, &g_audit_log[i], sizeof(BeaconAuditEntry));
   }
-  // Re-derive the chain head from the most recently written entry
-  // (the slot at (head - 1) mod MAX when count == MAX, else slot
-  // count-1 in the pre-rotation regime).
-  if (cnt > 0) {
-    const size_t newest_idx = (head == 0) ? (cnt - 1) : (head - 1);
-    mbedtls_sha256_context ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_starts(&ctx, 0);
-    mbedtls_sha256_update(&ctx, g_audit_log[newest_idx].prev_audit_hash, 32);
-    mbedtls_sha256_update(&ctx, (const uint8_t*)&g_audit_log[newest_idx],
-                          sizeof(BeaconAuditEntry));
-    mbedtls_sha256_finish(&ctx, g_audit_chain_head);
-    mbedtls_sha256_free(&ctx);
-  }
   g_prefs.end();
+  // A head that did not hash is unknown until chain_audit_entry() derives it.
+  g_audit_head_known = rederive_audit_head();
   return true;
 }
 
@@ -930,16 +975,20 @@ static bool sd_recover_chain_head(uint8_t out[32]) {
   return beacon_audit_recover::recover_head(tail, got, from_start, out);
 }
 
-static void chain_audit_entry(BeaconAuditEntry* entry) {
-  memcpy(entry->prev_audit_hash, g_audit_chain_head, 32);
+// Appends `entry` to the chain. False, with the chain and both logs as they
+// were, when the head is unknown or the link did not hash: an entry is never
+// chained from, or to, a head that was not computed. The alarm path goes on.
+static bool chain_audit_entry(BeaconAuditEntry* entry) {
+  if (!g_audit_head_known) g_audit_head_known = rederive_audit_head();
   // New chain head = SHA-256(prev_head || entry_serialized).
-  mbedtls_sha256_context ctx;
-  mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, g_audit_chain_head, 32);
-  mbedtls_sha256_update(&ctx, (const uint8_t*)entry, sizeof(BeaconAuditEntry));
-  mbedtls_sha256_finish(&ctx, g_audit_chain_head);
-  mbedtls_sha256_free(&ctx);
+  uint8_t new_head[32];
+  memcpy(entry->prev_audit_hash, g_audit_chain_head, 32);
+  if (!g_audit_head_known || !audit_head_after(entry, new_head)) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "beacon audit: entry not recorded — chain hash failed");
+    return false;
+  }
+  memcpy(g_audit_chain_head, new_head, 32);
 
   // Tier 1: append-only SD audit log (the log of record — AGENTS item 9).
   // Best-effort: failure never blocks the alarm path.
@@ -957,6 +1006,7 @@ static void chain_audit_entry(BeaconAuditEntry* entry) {
   // Persist the single slot + the head + the count atomically per-slot.
   // FE-gated; refuses cleanly if flash encryption is off.
   persist_audit_entry(written_idx);
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1468,9 +1518,15 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey,
           const char* device_name) {
   if (g_initialized) return true;
   if (!device_privkey || !device_pubkey) return false;
+  uint8_t device_fp[DEVICE_FP_SIZE];
+  if (!compute_fingerprint(device_pubkey, device_fp)) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "beacon: device fingerprint hash failed — channel not initialized");
+    return false;
+  }
   memcpy(g_device_privkey, device_privkey, DEVICE_PRIVKEY_SIZE);
   memcpy(g_device_pubkey, device_pubkey, DEVICE_PUBKEY_SIZE);
-  compute_fingerprint(g_device_pubkey, g_device_fp);
+  memcpy(g_device_fp, device_fp, DEVICE_FP_SIZE);
   strncpy(g_device_name, device_name ? device_name : "", BEACON_NAME_LEN);
   g_device_name[BEACON_NAME_LEN] = '\0';
 
@@ -1485,6 +1541,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey,
   g_seen_frame_head = 0;
   memset(g_audit_log, 0, sizeof(g_audit_log));
   memset(g_audit_chain_head, 0, sizeof(g_audit_chain_head));
+  g_audit_head_known = true;
   g_audit_log_count = 0;
   g_audit_head = 0;
   g_active_alarm_valid = false;
@@ -1505,6 +1562,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey,
         memcmp(sd_head, g_audit_chain_head, 32) != 0) {
       const bool nvs_had_state = (g_audit_log_count > 0);
       memcpy(g_audit_chain_head, sd_head, 32);
+      g_audit_head_known = true;
       if (nvs_had_state) {
         health_log(SCV_LOG_WARNING, SCV_CAT_STORAGE,
                    "beacon audit: chain head recovered from SD log of record "
@@ -1619,8 +1677,16 @@ bool revoke_beacon_set_entry(const uint8_t* fingerprint) {
 // fingerprint from the full pubkey and revoke the entry.
 bool on_peer_tampered(const uint8_t* device_pubkey) {
   uint8_t fp[DEVICE_FP_SIZE];
-  compute_fingerprint(device_pubkey, fp);
-  bool revoked = revoke_beacon_set_entry(fp);
+  bool have_fp = compute_fingerprint(device_pubkey, fp);
+  // No fingerprint: the entry is found by its key, so it is revoked all the same.
+  for (uint8_t i = 0; !have_fp && i < g_beacon_set_count; i++) {
+    if (g_beacon_set[i].valid &&
+        memcmp(g_beacon_set[i].device_pubkey, device_pubkey, DEVICE_PUBKEY_SIZE) == 0) {
+      memcpy(fp, g_beacon_set[i].fingerprint, DEVICE_FP_SIZE);
+      have_fp = true;
+    }
+  }
+  bool revoked = have_fp && revoke_beacon_set_entry(fp);
   if (revoked) {
     health_log(SCV_LOG_ALERT, SCV_CAT_NETWORK,
                "beacon: paired neighbor revoked on tamper alert (v0.5 auto-revoke)");

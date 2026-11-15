@@ -52,6 +52,44 @@ describe('envelope verification parity', () => {
     assert.ok(report.checks.some((c) => /artifact bound/i.test(c)), 'artifact-binding check should run');
   });
 
+  // Without a trusted key the envelope's own provenance key is the only
+  // thing the signatures were checked against — the verdict is self-attested
+  // authorship, and the result must say so, exactly as verifyExportBundle does.
+  it('without a trusted key, authorship is self-attested and the report says so', async () => {
+    const report = await V.verifyEnvelope(loadFixture('valid_envelope.json'));
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.authorship, 'envelope');
+    assert.equal(report.device_public_key, loadFixture('valid_envelope.json').provenance.device_public_key);
+    assert.ok(report.warnings.some((w) => /self-attested/.test(w)), 'the self-attested note must be present');
+    assert.ok(report.checks.some((c) => /under the device key named in the envelope/.test(c)));
+  });
+
+  it('confirms authorship when the matching trusted key is supplied', async () => {
+    const envelope = loadFixture('valid_envelope.json');
+    const report = await V.verifyEnvelope(envelope, { trustedDeviceKeyHex: envelope.provenance.device_public_key.toUpperCase() });
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.authorship, 'trusted');
+    assert.ok(!report.warnings.some((w) => /self-attested/.test(w)));
+    assert.ok(report.checks.some((c) => /matches the trusted key you supplied/.test(c)));
+    assert.ok(report.checks.some((c) => /authorship confirmed against your trusted key/.test(c)));
+  });
+
+  it('rejects a non-matching trusted key before any signature is checked', async () => {
+    const report = await V.verifyEnvelope(loadFixture('valid_envelope.json'), { trustedDeviceKeyHex: '00'.repeat(32) });
+    assert.equal(report.ok, false);
+    assert.equal(report.status, 'compromised');
+    assert.match(report.error, /device key mismatch/);
+    assert.ok(!report.checks.some((c) => /signatures valid/.test(c)), 'no signature verdict may be reached under a key the caller did not trust');
+  });
+
+  it('refuses a malformed trusted key rather than ignoring it', async () => {
+    for (const bad of ['zz'.repeat(32), 'abcd']) {
+      const report = await V.verifyEnvelope(loadFixture('valid_envelope.json'), { trustedDeviceKeyHex: bad });
+      assert.equal(report.ok, false, `accepted trusted key ${bad}`);
+      assert.match(report.error, /supplied device key/);
+    }
+  });
+
   it('rejects a tampered artifact even when the digest is recomputed (P1)', async () => {
     const envelope = loadFixture('valid_envelope.json');
     // Doctor the human-readable artifact (swap a zone) and refresh the digest so the only thing
@@ -142,6 +180,35 @@ describe('envelope verification parity', () => {
     assert.equal(envelope.export_receipt_entry.receipt.auth_mode, 'self_export');
     assert.deepEqual(envelope.export_receipt_entry.receipt.window,
       { start_epoch_s: 600, end_epoch_s: 2400 });
+  });
+
+  // A Granted row no trustee approved: device-signed, commitment matching, the
+  // approval's signature filler. Same fixture and warning text as
+  // tests/envelope_fixtures.rs.
+  it('reports a break-glass grant as present, not verified — a forged grant is never ok', async () => {
+    const WARNING = '1 break-glass grant(s) present: trustee approvals are not verified offline';
+    const envelope = loadFixture('forged_grant_envelope.json');
+    const approvals = JSON.parse(envelope.ledgers.break_glass_receipts.entries[0].approvals_json);
+    assert.deepEqual(approvals[0].signature, new Array(64).fill(0xaa), 'filler signature');
+
+    const trusted = { trustedDeviceKeyHex: envelope.provenance.device_public_key };
+    for (const opts of [{}, trusted]) {
+      const report = await V.verifyEnvelope(envelope, opts);
+      assert.equal(report.ok, true, report.error);
+      assert.equal(report.status, 'valid_with_warnings');
+      assert.equal(report.break_glass_granted, 1);
+      assert.ok(report.warnings.includes(WARNING), report.warnings.join(' | '));
+      assert.ok(!report.checks.some((c) => /break-glass.*verified/i.test(c)), 'no check may call the receipts verified');
+    }
+
+    // The grant alone causes the warning: without the row, every other warning stays.
+    const withGrant = (await V.verifyEnvelope(envelope, trusted)).warnings;
+    const bg = envelope.ledgers.break_glass_receipts;
+    bg.entries = []; bg.count = 0; bg.head_hash = null;
+    envelope.whole_envelope_digest = await V.computeWholeEnvelopeDigest(envelope);
+    const bare = await V.verifyEnvelope(envelope, trusted);
+    assert.equal(bare.ok, true, bare.error);
+    assert.deepEqual(withGrant, [WARNING, ...bare.warnings]);
   });
 
   it('rejects a tampered payload (chain break)', async () => {

@@ -1861,11 +1861,19 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
   }
 
   // ── Sensor: rssi_dbm (CSI window mean RSSI) ──
+  // main.cpp's sensing publish carries rssi_dbm only when the last CSI
+  // window's mean was taken over a frame (none before the first window,
+  // after a window that heard nothing or only frames below the noise
+  // floor, or on a build without CSI). A body without it renders
+  // nothing, which Home Assistant ignores on a numeric sensor (this one
+  // is, by its unit), so the entity reads unknown before the first
+  // reading and keeps the last one after, where default(0) showed 0 dBm
+  // (sweep F411, as F368 did for the canary-wap's Signal Strength).
   if (all_ok) {
     JsonDocument doc;
     doc["name"] = "Sensing RSSI";
     doc["stat_t"] = s_topic_sensing;
-    doc["val_tpl"] = "{{ value_json.rssi_dbm | default(0) }}";
+    doc["val_tpl"] = "{{ value_json.rssi_dbm | default('') }}";
     doc["unit_of_meas"] = "dBm";
     doc["dev_cla"] = "signal_strength";
     doc["ent_cat"] = "diagnostic";

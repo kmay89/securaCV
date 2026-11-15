@@ -22,12 +22,13 @@ Use these documented defaults when validating:
   - `binary_sensor.pwk_<zone>_motion`
   - `sensor.pwk_last_event`.【F:docs/homeassistant_setup.md†L266-L277】
   - These ids need Home Assistant 2025.10 or later. The bridge asks for them
-    with `default_entity_id`, which Home Assistant 2025.10 and later honors
-    when it first registers an entity; `<zone>` is the zone id without its
-    `zone:` prefix, as Home Assistant slugs it (`zone:back-gate` becomes
-    `back_gate`). An entity your Home Assistant registered before keeps the id
-    it has, and an older Home Assistant names the entity from the device name
-    and the entity name.
+    with `default_entity_id`; `<zone>` is the zone id without its `zone:`
+    prefix, as Home Assistant slugs it (`zone:back-gate` becomes
+    `back_gate`). Home Assistant 2025.10 and later tries to give each entity
+    the id asked for when it first registers it, and adds `_2` when another
+    entity already holds the id. An entity your Home Assistant registered
+    before keeps the id it has, and an older Home Assistant names the entity
+    from the device name and the entity name.
   - With the PWK add-on, which this plan's preconditions use, the 2025.10
     condition always holds: the add-on needs Home Assistant 2026.5.0 or later.
     It matters only for a bridge run outside the add-on (the sidecar beside an

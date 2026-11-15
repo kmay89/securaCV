@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -47,6 +47,11 @@ pub const DOMAIN_POLICY_CHANGE_APPROVAL: &str = "securacv:pwk:policy-change-appr
 // The device's signature over an appended policy-change history record (the
 // chained ledger row itself, not a trustee's consent).
 pub const DOMAIN_POLICY_CHANGE_RECORD: &str = "securacv:pwk:policy-change-record:v1";
+// The device's signature over a clock-provenance record (the never-pruned
+// `clock_provenance` ledger: device clock vs TSA genTime, sealed once per
+// anchor row; `docs/design/clock_provenance.md`). 32 bytes, so the
+// length-prefixed signing message starts `20 00 00 00`.
+pub const DOMAIN_CLOCK_PROVENANCE: &str = "securacv:pwk:clock-provenance:v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureMode {
@@ -280,8 +285,24 @@ pub fn verify_ed25519_only(
     let signing_hash = domain_separated_hash(domain, entry_hash);
     let sig = ed25519_dalek::Signature::from_bytes(signature);
     verifying_key
-        .verify(&signing_hash, &sig)
+        .verify_strict(&signing_hash, &sig)
         .map_err(|e| anyhow!("signature verification failed: {}", e))
+}
+
+/// Parses an Ed25519 verifying key and refuses a **weak** one (a point of
+/// small order, the identity included). Under such a key `(R = identity,
+/// s = 0)` verifies for *every* message, so "signed by this key" proves no
+/// act of signing. Every key read from storage, the wire, a policy or a
+/// rotation record goes through here; `ed25519_dalek::VerifyingKey::from_bytes`
+/// alone accepts them.
+pub fn verifying_key_strict(
+    bytes: &[u8; 32],
+) -> Result<VerifyingKey, ed25519_dalek::SignatureError> {
+    let key = VerifyingKey::from_bytes(bytes)?;
+    if key.is_weak() {
+        return Err(ed25519_dalek::SignatureError::new());
+    }
+    Ok(key)
 }
 
 /// Compute the domain-separated signing hash for a chain entry.
@@ -325,7 +346,7 @@ fn verify_rotation_binding(
     sig_bytes.copy_from_slice(signature);
     let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
     verifying_key
-        .verify(
+        .verify_strict(
             &rotation_binding_hash(domain, prev_public_key, new_public_key),
             &sig,
         )
@@ -421,7 +442,7 @@ fn verify_ed25519(
     let signature_bytes = signatures.ed25519_signature_array()?;
     let sig = ed25519_dalek::Signature::from_bytes(&signature_bytes);
     verifying_key
-        .verify(signing_hash, &sig)
+        .verify_strict(signing_hash, &sig)
         .map_err(|e| anyhow!("signature verification failed: {}", e))
 }
 

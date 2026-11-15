@@ -321,6 +321,100 @@ def test_radar_link_state_decision():
     assert cls._link_state({}) == "unknown"
 
 
+# ─── which Canaries get the radar-link sensor ─────────────────────────
+#
+# canary-sentinel's health now carries the radar object canary-sense's does
+# (firmware/projects/canary-sentinel/src/main.cpp, radar_link_health()), but
+# only on a build with the radar: a Sentinel Lite sends none. The sensor
+# follows the object, so a Sentinel with the radar gets one and a Lite never
+# grows a sensor that could only say "unknown". The payloads below are each
+# firmware's own health shape.
+
+SENTINEL_HEALTH_WITH_RADAR = (
+    '{"battery":100,"battery_present":false,"memory_free":181234,"uptime":3600,'
+    '"firmware_version":"2.4.16","public_key":"' + "ab" * 32 + '",'
+    '"radar":{"link_ok":true,"last_frame_age_ms":120,"frame_errors":0}}'
+)
+SENTINEL_LITE_HEALTH = (
+    '{"battery":100,"battery_present":false,"memory_free":181234,"uptime":3600,'
+    '"firmware_version":"2.4.16","public_key":"' + "ab" * 32 + '"}'
+)
+
+
+def test_wants_radar_link_by_type_or_by_a_reported_radar():
+    wants = sensor_mod._wants_radar_link
+    # canary-sense: by its type, on status or health, radar object or not.
+    assert wants("status", "canary-sense", '{"device_type":"canary-sense"}')
+    assert wants("health", "canary-sense", SENTINEL_LITE_HEALTH)
+    # A Sentinel with the radar: by the object its health reports.
+    assert wants("health", "canary-sentinel", SENTINEL_HEALTH_WITH_RADAR)
+    # ...even before any status has named the device.
+    assert wants("health", None, SENTINEL_HEALTH_WITH_RADAR)
+    # A Sentinel Lite: no object, no sensor; its status alone never earns one.
+    assert not wants("health", "canary-sentinel", SENTINEL_LITE_HEALTH)
+    assert not wants("status", "canary-sentinel", '{"device_type":"canary-sentinel"}')
+    # Only a health payload's object counts: the same object on any other
+    # Canary's status topic earns nothing (the firmware never sends one there).
+    assert not wants("status", "canary-sentinel", SENTINEL_HEALTH_WITH_RADAR)
+    assert not wants("status", None, SENTINEL_HEALTH_WITH_RADAR)
+    # Other topics, and a `radar` that is not an object, never do.
+    assert not wants("events", "canary-sentinel", SENTINEL_HEALTH_WITH_RADAR)
+    assert not wants("health", "canary-sentinel", '{"radar":true}')
+    assert not wants("health", "canary-sentinel", '{"radar":[1,2]}')
+    assert not wants("health", "canary-sentinel", "not json")
+    assert not wants("health", "canary-wap", '{"firmware_version":"2.4.16"}')
+
+
+def _discover(monkeypatch, devices, messages):
+    """Run the integration's MQTT discovery and feed it `messages`; return
+    the entity classes it added, per device id."""
+    callbacks = []
+
+    async def subscribe(hass, topic, callback, *args, **kwargs):
+        callbacks.append((topic, callback))
+        return lambda: None
+
+    monkeypatch.setattr(sensor_mod.mqtt, "async_subscribe", subscribe)
+    hass = sensor_mod.HomeAssistant()
+    hass.data = {sensor_mod.DOMAIN: {}}
+    entry = types.SimpleNamespace(entry_id="e1")
+    entry.runtime_data = make_runtime(hass, devices=devices)
+    added = []
+    run(sensor_mod._setup_mqtt_sensors(hass, entry, "securacv", added.extend))
+    for topic, payload in messages:
+        suffix = topic.rsplit("/", 1)[-1]
+        for sub, callback in callbacks:
+            if sub == f"securacv/+/{suffix}":
+                callback(types.SimpleNamespace(topic=topic, payload=payload))
+    out = {}
+    for entity in added:
+        out.setdefault(entity._device_id, set()).add(type(entity).__name__)
+    return out
+
+
+def test_discovery_gives_a_sentinel_with_the_radar_its_radar_link_sensor(monkeypatch):
+    radar = "SecuraCVCanaryRadarLinkSensor"
+    added = _discover(
+        monkeypatch,
+        devices={
+            "door01": {"status": '{"device_type":"canary-sentinel"}'},
+            "mailbox01": {"status": '{"device_type":"canary-sentinel"}'},
+            "sense01": {"status": '{"device_type":"canary-sense"}'},
+        },
+        messages=[
+            ("securacv/door01/status", '{"device_type":"canary-sentinel"}'),
+            ("securacv/door01/health", SENTINEL_HEALTH_WITH_RADAR),
+            ("securacv/door01/health", SENTINEL_HEALTH_WITH_RADAR),
+            ("securacv/mailbox01/status", '{"device_type":"canary-sentinel"}'),
+            ("securacv/mailbox01/health", SENTINEL_LITE_HEALTH),
+            ("securacv/sense01/status", '{"device_type":"canary-sense"}'),
+        ],
+    )
+    assert radar in added["door01"], "a Sentinel whose health reports the radar gets the sensor"
+    assert radar not in added["mailbox01"], "a Sentinel Lite (no radar object) does not"
+    assert radar in added["sense01"], "a canary-sense still gets it from its status alone"
+
+
 def test_last_event_handler_survives_non_dict_payloads():
     """Regression: a bare JSON scalar/list on the events topic must degrade
     to the raw-payload fallback, not AttributeError out of the @callback

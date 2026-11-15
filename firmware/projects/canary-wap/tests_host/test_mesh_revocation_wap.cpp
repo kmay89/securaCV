@@ -16,7 +16,13 @@
 //   3. add_peer() refuses a deny-listed pubkey;
 //   4. init() restores the list (before the peers load), update() expires it
 //      every pass and re-persists it every 5 minutes;
-//   5. persistence is flash-encryption gated, like the peer list.
+//   5. persistence is flash-encryption gated, like the peer list;
+//   6. is_revoked_pubkey() fails closed on a key it cannot hash (sweep F364),
+//      and every call of compute_fingerprint() and compute_opera_id() in the
+//      file refuses on a false answer: beside the helpers' [[nodiscard]]
+//      (which catches a dropped answer, not one read and then ignored), the
+//      pin holds each call to `if (!compute_...(` (test_mesh_address_wap
+//      runs each caller's refusal).
 // And, on the staged copy: a removal is refused for exactly
 // REVOCATION_GRACE_MS (7 days).
 
@@ -100,9 +106,34 @@ void test_mesh_network_uses_the_list() {
   CHECK(count(load, "if(!flash_encryption_enabled())return;") == 1);
   CHECK(count(load, "mesh_revocation::decode(g_revoked,blob,got,millis())") == 1);
 
+  // A key that does not hash: true (removed) before the list is read, with
+  // the ALERT line that says why (F364's review).
   const std::string isr = squeeze(function_body(code, "is_revoked_pubkey"));
-  CHECK(count(isr, "returnmesh_revocation::contains(g_revoked,fp,millis());") == 1);
+  const std::string refused = "if(!compute_fingerprint(pubkey,fp)){";
+  const std::string lookup = "returnmesh_revocation::contains(g_revoked,fp,millis());";
+  CHECK(count(isr, refused) == 1);
+  CHECK(count(isr, lookup) == 1);
+  CHECK(isr.find(refused) < isr.find(lookup));
+  const std::string branch = isr.substr(isr.find(refused), isr.find(lookup) - isr.find(refused));
+  CHECK(count(branch, "returntrue;") == 1);
+  CHECK(count(branch, "return") == 1);
+  CHECK(count(branch, "health_log(SCV_LOG_ALERT,SCV_CAT_CRYPTO,") == 1);
   std::printf("PASS mesh_network_uses_the_list\n");
+}
+
+void test_every_fingerprint_and_opera_id_is_checked() {
+  bool ok = false;
+  const std::string raw = beacon_source_scan::read_source(MESH_NETWORK_CPP, &ok);
+  CHECK(ok);
+  const std::string code = squeeze(beacon_source_scan::strip_comments(raw));
+  for (const char* fn : {"compute_fingerprint(", "compute_opera_id("}) {
+    const std::string decl = std::string("staticbool") + fn;   // declaration, definition
+    const std::string refused = std::string("if(!") + fn;
+    CHECK(count(code, decl) == 2);
+    CHECK(count(code, refused) >= 1);
+    CHECK(count(code, fn) == count(code, refused) + 2);
+  }
+  std::printf("PASS every_fingerprint_and_opera_id_is_checked\n");
 }
 
 }  // namespace
@@ -110,6 +141,7 @@ void test_mesh_network_uses_the_list() {
 int main() {
   test_staged_grace();
   test_mesh_network_uses_the_list();
+  test_every_fingerprint_and_opera_id_is_checked();
   std::printf("\nALL mesh revocation (canary-wap) tests PASSED (%d checks)\n", g_checks);
   return 0;
 }

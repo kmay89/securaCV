@@ -308,7 +308,10 @@ The token rides the page only while the first-boot wizard is running, for a
 request that already carries the bearer token, for a request over the
 flagship's own access point, or for the one page load that spends a short
 BOOT tap: the tap opens a 30-second gate that exactly one consumer spends —
-that page load or one provisioning-receipt fetch, whichever asks first.
+a page load or a provisioning-receipt fetch from the one address asking for
+it. A second address asking from 10 seconds before the tap closes it for
+both, and the dashboard's unlock banner asks before the press, so the tap
+goes to that page (F354).
 
 A request whose `Host` header cannot name this device — an IP address, the
 `.local` name, a single label and a private-use suffix all can; a public
@@ -352,9 +355,9 @@ mistyped paste is dropped at its first refusal instead of being sent on
 every poll. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
 token waits at most about 60 s, or taps BOOT, which clears its address when
-the tap is served to it (F341): the flagship's tap still goes to the first
-asker (F354), so it is that browser's own receipt request or page load that
-has to be the one served. A host that strikes from 9 or more addresses
+the tap is served to it (F341): the flagship's tap goes to the one address
+asking for it (F354), so that browser's unlock banner has to be asking when
+BOOT is pressed. A host that strikes from 9 or more addresses
 within 60 s holds every untracked address while the shared overflow slot
 runs, and a tap does not clear that. The flagship has no Bluetooth lane
 that changes its Wi-Fi and no Bluetooth setup door, so there the way out is
@@ -587,6 +590,17 @@ with `POST /api/ota/config`, or the MQTT update entity's Install or
 auto-update switch, sent from whatever broker the bridge points at, which a
 session may re-point with a password typed), which installs only a newer
 signed image.
+A client that holds the device's pinned identity fingerprint may send the
+bearer sealed instead of plain: `GET /api/device/seal` agrees a session key
+over X25519 under the identity key's signature, and `Authorization: Sealed
+<sid>.<seq>.<hex>` carries the token under that key, bound to the method,
+the path and a counter (`api_seal.h`; both bearer gates open it before the
+same constant-time compare, under the same lockout). The desktop Flasher's
+fleet book sends the token no other way, so a host that answers to a
+Canary's name on the LAN, or relays to it, never reads the token; the
+plain `Bearer` form stays accepted for every other client, so for them
+the LAN posture above is unchanged (host-tested, not bench-tested).
+
 These routes take the bearer, never the session (`api_auth_check_bearer()`,
 except the receipt, which takes the accounted `api_auth_bearer_grant()`
 beside its own BOOT tap and setup-door claim; `api_auth.h` points here for
@@ -597,6 +611,10 @@ the list):
 - `POST /api/bluetooth/pair/confirm`, a lasting bond to the authenticated
   characteristics, the Wi-Fi credentials write among them, and
   `POST /api/mesh/pair/confirm`, an opera's secret (F346);
+- every Beacon write, `POST /api/beacon/*` (pair, revoke, originate, cosign,
+  cancel, silence, self-test; behind `FEATURE_BEACON_CHANNEL`, off): a
+  session on each of two WAPs was a dual-signed life-safety ALERT no human
+  sent;
 - `POST /api/wifi/disconnect` and `/api/wifi/forget` in every mode, first-boot
   setup included, and after first-boot setup `POST /api/wifi/connect` and
   `/api/wifi/ap-only`, each on every interface, the recovery portal's SoftAP
@@ -829,7 +847,10 @@ set `SECURACV_FLEET_ROLLCALL=1`: who is home is yours to opt into, never a
 side effect of pairing. And "online" there is a verified, chain-advancing
 signature seen within three minutes — stronger than a heartbeat, but not a
 liveness proof against someone who can publish on your MQTT broker
-(`tvos/discovery/DISCOVERY.md` spells out the difference).
+(`tvos/discovery/DISCOVERY.md` spells out the difference). The room words
+on a row are signed by the device as well (the `state` kind), so a broker
+client cannot author a real Canary's wellbeing; it can only replay what
+the device itself last said, and only once per freshness pair.
 
 ### Home Assistant pairing and what crosses your network
 
@@ -911,13 +932,46 @@ one). A custom AppArmor profile confines each process to the paths it needs.
 
 **Diagnostics are projections, not copies.** A Home Assistant diagnostics
 dump of the integration carries shapes — the kernel URL's scheme and port,
-a four-hex prefix of the kernel id, fingerprints cut to eight characters,
-availability flags, the latest event's type, window and attestation, digest
-counts, per-Canary firmware and online state — and is then swept by
-Home Assistant's redaction over tokens, the pairing token id, hosts, URLs,
-device ids, keys, hashes, entry ids, nonces, IP and MAC addresses, SSIDs,
-names, coordinates and the seed, so a value that reaches the dump through
-a path the projection did not foresee is still replaced.
+a four-hex prefix of the kernel id, the kernel key's eight-character
+fingerprint, availability flags, the latest event's type, window and
+attestation, digest counts, per-Canary firmware and online state under each
+Canary's id cut to eight characters (the whole id when it has eight or
+fewer, and a per-dump ordinal where two ids share their eight) — and is
+then swept by Home Assistant's redaction over tokens, the pairing token id,
+hosts, URLs, device ids, keys, hashes, entry ids, nonces, IP and MAC
+addresses, SSIDs, names, coordinates, the seed, the keys a Canary's answers
+use for its hardware token, mDNS host name, serial number, chip and module
+ids and Bluetooth addresses, and its health counters (uptime, boot count,
+card writes, web requests, the last camera frame's age), so a value that
+reaches the integration's dump through a path the projection did not
+foresee is still replaced. A Canary's key fingerprint keeps none of its
+digits: each pinned Canary gets a correlation id, a keyed hash of the
+fingerprint under a salt drawn for that one dump, which links rows of the
+same dump and nothing else. The sweep covers what the integration returns,
+not the whole file: Home Assistant adds to the download itself, unswept,
+every Repairs issue it holds for the integration, the ones the owner
+ignored and those of the integration's other entries included, each with
+the time it was raised to the microsecond. The id of each issue about an
+entry ends in that entry's id: the kernel key-mismatch fix flow finds its
+entry by it, and the file's name and `setup_times` section carry the same
+ids. No issue carries a host or a key. A kernel key-mismatch issue holds
+the pinned and the received key's eight-character fingerprints and nothing
+else; the key the kernel served is held only in memory, on the
+integration's kernel coordinator, where the fix flow reads it, and an issue
+an older version raised with the kernel's URL and the key in it is
+rewritten to its fingerprints at the next start that sets the integration
+up (any enabled entry of it does). Until then Home Assistant keeps that
+issue as written in `.storage/repairs.issue_registry`, which no download
+reaches while none of the integration's entries is loaded. The
+integration's other issues that carry a value about the install are not
+persistent, so Home Assistant writes only their ids and times (sweep F399).
+None of them names a Canary. Home Assistant adds a `setup_times` section
+too, keyed by the id of every entry of the integration it set up as it last
+started, so after a restart the section names this entry and the
+integration's other entries, and its own `home_assistant` section, which
+carries the instance's time zone. And it names the file after the entry
+(`config_entry-securacv-<entry id>.json`), so its name ends in the entry
+id.
 
 **Evidence exports sit behind Home Assistant's authentication.** An export
 is one zip under `<config>/securacv/evidence` (directory `0700`, files

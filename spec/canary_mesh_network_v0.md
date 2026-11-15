@@ -893,8 +893,11 @@ opera_id = SHA-256("securacv:opera:id:v0" || opera_secret)[0:16]
 
 Both trees found an opera on `POST /api/mesh/pair/start` when the device
 holds none, and then start the initiator pairing with it. canary-wap names it
-`"My Canary Opera"` (or the request's `name`) and keeps it in RAM if the
-flash-encryption-gated save is refused. The PlatformIO tree (v0.3, F33) does
+`"My Canary Opera"` (or the request's `name`, held to
+`mesh_network::opera_name_storable()`: 1 to 32 bytes of well-formed UTF-8 with
+no byte below 0x20; a name the rule refuses is a 400 in
+`opera_name_refusal()`'s words, and nothing is founded) and keeps it in RAM if
+the flash-encryption-gated save is refused. The PlatformIO tree (v0.3, F33) does
 the same on the same route, behind the gates that route already had (bearer
 token, rate limit, flash encryption), with the same default name (it takes
 no `name`; `POST /api/mesh/name` renames), but fails closed: the
@@ -1333,6 +1336,25 @@ ring). The loop task writes them; a save it does not start within 2 s does
 not run, and the periodic save (every 5 minutes) is the last one on flash.
 Host-tested (`test_mesh_commands_wap.cpp`, `test_loop_command_ring.cpp`);
 the Arduino compile is CI's; not bench-tested.
+
+**canary-wap: a mesh that did not read its store writes none of it (sweep
+F364's review).** `init()` reads the opera, its members, the deny-list and
+the counter records from NVS. Until it has, RAM holds none of them: in safe
+mode, where the sketch does not call it, after an `esp_now_init()` that
+failed, and after an `init()` refused because this device's own key did not
+hash (F364). The sketch's 5-minute save and the owner's commands still ran
+there, and wrote from that empty RAM: the save removed the last-seen
+record, so the next boot took members' earlier frames as fresh, and
+`enable`, `name` or `leave` removed the stored opera (`pair/start` founded
+a new one over it). Now nothing writes the store until `init()` has read
+it: both replay-counter saves answer false, and every changing route but
+the alerts `DELETE` is refused with nothing changed. `pair/start`,
+`pair/join`, `pair/confirm`, `leave`, `remove` and `name` answer their 400
+`*_failed` errors as for any refusal. `enable`, which answered ok whatever
+ran, answers 400 `enable_failed`. `pair/cancel` answers ok, as it always
+does: there is no pairing to end. The health log says why. Host-tested
+(`test_mesh_address_wap.cpp`); the Arduino compile is CI's; not
+bench-tested.
 
 **canary-wap: the status routes read what the loop task published (sweep
 F110).** `GET /api/mesh`, `/api/mesh/peers` and `/api/mesh/alerts` read the

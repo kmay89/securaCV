@@ -86,7 +86,9 @@ test("the recorded ceremony output matches the shipped CLI's behavior", () => {
 // ── 6. the drill really is a sandbox that burns its token ──────────────────
 test("the drill's sandbox + single-use claims trace to the CLI", () => {
   assert.ok(cliRs.includes("Nothing real is touched"), "drill sandbox promise drifted");
-  assert.ok(cliRs.includes("consume_break_glass_token_durably"), "drill single-use burn drifted");
+  // The drill spends its unseal token through the kernel's redemption, which
+  // burns the nonce durably AND appends the device-signed redemption receipt.
+  assert.ok(cliRs.includes("redeem_token_durably(&unseal_token)"), "drill single-use burn drifted");
   assert.ok(data.drill.exercises.length >= 4, "drill steps too thin");
 });
 

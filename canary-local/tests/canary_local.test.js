@@ -317,8 +317,16 @@ test("both apps' vendored Witness Wall says Born only when the device says the d
     assert.ok(fed.length >= 2, `${rel}: witness:fleet and connect both carry the row's birth day (${fed.length})`);
     // And both places the emulator shows a live row print it: a tile's toast,
     // and the connect panel's device list (escaped, since that one is HTML).
-    assert.match(src, /showToast\([A-Za-z_$][\w$]* \+ ' · online · chain intact' \+ \(([A-Za-z_$][\w$]*) && \1\.born \? ' · ' \+ \1\.born : ''\)\)/,
-      `${rel}: a live tile's toast lost its birth-day line — re-vendor with scripts/vendor_witness_emulator.sh`);
+    // The toast says the tile's own state first: offline for an offline row,
+    // presence only for a live one, the simulated chain for the demo alone.
+    // A live row's toast is plain (no tick): nothing was checked.
+    assert.match(src, /showToast\([A-Za-z_$][\w$]* \+ \([A-Za-z_$][\w$]* \? ' · offline' : liveFleet \? ' · online · presence only — not verified' : ' · online · chain intact'\) \+ \(([A-Za-z_$][\w$]*) && \1\.born \? ' · ' \+ \1\.born : ''\), !!liveFleet\)/,
+      `${rel}: a live tile's toast lost its offline branch, its presence-only wording or its birth-day line, or grew back its tick — re-vendor with scripts/vendor_witness_emulator.sh`);
+    // The script carries tv-emulator.js and highlight.js: any other import is
+    // a file missing beside the copy, and a module that never runs.
+    const imports = [...src.matchAll(/^import\b[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1]);
+    assert.deepStrictEqual(imports, ["./highlight.js"],
+      `${rel}: imports a file the vendoring does not carry`);
     assert.match(src, /\$\{([A-Za-z_$][\w$]*)\.born \? ' · ' \+ esc\(\1\.born\) : ''\}/,
       `${rel}: the connect panel lost its escaped birth-day line — re-vendor with scripts/vendor_witness_emulator.sh`);
   }

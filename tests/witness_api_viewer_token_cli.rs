@@ -148,6 +148,47 @@ fn mint_prints_the_receipt_once_and_revoke_removes_it() -> Result<()> {
     Ok(())
 }
 
+/// The mint runs with the same `WITNESS_CONFIG` as the serving kernel (sweep
+/// A103): a file written for `witnessd`, with its `[rtsp]`, `[detect]` and
+/// other daemon-only blocks, is read for the keys `witness_api` uses and the
+/// rest is skipped, where it used to fail every subcommand at load.
+#[test]
+fn the_mint_reads_a_witnessd_config_file() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let db = dir.path().join("witness.db");
+    let token_path = dir.path().join("api_token");
+    let viewer_path = dir.path().join("viewer_tokens.json");
+    let config = dir.path().join("witness.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "db_path = {db:?}\nruleset_id = {RULESET:?}\n\
+             [api]\naddr = \"127.0.0.1:8799\"\ntoken_path = {token_path:?}\n\
+             [ingest]\nbackend = \"rtsp\"\n\
+             [rtsp]\nurl = \"rtsp://admin:pw@192.168.1.100:554/stream\"\ntarget_fps = 10\n\
+             width = 1920\nheight = 1080\nbackend = \"auto\"\n\
+             [detect]\nbackend = \"tract\"\nconfidence = 0.6\n\
+             [zones]\nmodule_zone_id = \"zone:front_door\"\nsensitive = [\"zone:front_door\"]\n\
+             [storage_health]\nenabled = false\n",
+            db = db.to_string_lossy(),
+            token_path = token_path.to_string_lossy(),
+        ),
+    )?;
+
+    let out = witness_api(&config, &["help"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+
+    let out = witness_api(&config, &["mint-viewer-token", "--label", "hall tv"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let receipt: serde_json::Value = serde_json::from_str(stdout(&out).trim())?;
+    let token = receipt["sealed_log_token"].as_str().unwrap_or_default();
+    // The file's [api] block placed the viewer file beside its token path.
+    let set = ViewerTokenSet::load(&viewer_path)?;
+    assert_eq!(set.tokens.len(), 1);
+    assert!(set.matches(token).is_some());
+    Ok(())
+}
+
 /// `witness_api <subcommand>` on a host with no identity: no DEVICE_KEY_SEED
 /// and no seed file. The daemon path creates an identity there; a subcommand
 /// must not. `help` and `revoke-viewer-token` need none, and a mint refuses by

@@ -199,6 +199,10 @@ on:
       - "desktop-lab/INSTALL.md"
       - "desktop-lab/README.md"
       - "desktop-lab/ipad-guide.html"
+      # lab_settings holds each app's newest release-notes section (what the
+      # updater shows as `notes`) to the one-line-per-bullet fold both render
+      - "desktop/RELEASE_NOTES.md"
+      - "desktop-lab/RELEASE_NOTES.md"
       - ".github/workflows/flasher-release.yml"
       # desktop_parity holds the dev channel's other writers (the script every
       # firmware release and the Refresh button run, and that button's own
@@ -224,6 +228,15 @@ on:
       # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
       # and the display's are under globs above)
       - "firmware/canary/src/main.cpp"
+      # ...and a flagship chip behind one #if FEATURE_X is offered where the
+      # product's env resolves it to 1 (sweep A93): gen_flash.py and the
+      # desktop_parity oracle read each env's -D flags (platformio.ini and the
+      # extra_configs it pulls in) and the #ifndef defaults, and the oracle
+      # takes each product's env from build_matrix.json
+      - "firmware/canary/platformio.ini"
+      - "firmware/canary/include/canary_config.h"
+      - "firmware/provisioning/platformio_secure.ini"
+      - "firmware/build_matrix.json"
       # flash.test.js renders each family's identity lines (the Hardware ID,
       # the key fingerprint, the .local name, the MQTT client id and topics,
       # the setup network's name, the names the person typed, a peer's
@@ -238,7 +251,6 @@ on:
       - "firmware/projects/canary-sentinel/src/ha/ha_discovery.cpp"
       - "firmware/projects/canary-sentinel/include/canary/topics.h"
       - "firmware/canary/src/csi_modules_integration.cpp"
-      - "firmware/canary/include/canary_config.h"
       - "firmware/canary/include/log_level.h"
       - "firmware/canary/lib/securacv_witness/src/securacv_witness.cpp"
       - "firmware/canary/lib/securacv_ble_status/src/securacv_ble_status.cpp"
@@ -462,6 +474,10 @@ on:
       - "desktop-lab/INSTALL.md"
       - "desktop-lab/README.md"
       - "desktop-lab/ipad-guide.html"
+      # lab_settings holds each app's newest release-notes section (what the
+      # updater shows as `notes`) to the one-line-per-bullet fold both render
+      - "desktop/RELEASE_NOTES.md"
+      - "desktop-lab/RELEASE_NOTES.md"
       - ".github/workflows/flasher-release.yml"
       # desktop_parity holds the dev channel's other writers (the script every
       # firmware release and the Refresh button run, and that button's own
@@ -487,6 +503,15 @@ on:
       # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
       # and the display's are under globs above)
       - "firmware/canary/src/main.cpp"
+      # ...and a flagship chip behind one #if FEATURE_X is offered where the
+      # product's env resolves it to 1 (sweep A93): gen_flash.py and the
+      # desktop_parity oracle read each env's -D flags (platformio.ini and the
+      # extra_configs it pulls in) and the #ifndef defaults, and the oracle
+      # takes each product's env from build_matrix.json
+      - "firmware/canary/platformio.ini"
+      - "firmware/canary/include/canary_config.h"
+      - "firmware/provisioning/platformio_secure.ini"
+      - "firmware/build_matrix.json"
       # flash.test.js renders each family's identity lines (the Hardware ID,
       # the key fingerprint, the .local name, the MQTT client id and topics,
       # the setup network's name, the names the person typed, a peer's
@@ -501,7 +526,6 @@ on:
       - "firmware/projects/canary-sentinel/src/ha/ha_discovery.cpp"
       - "firmware/projects/canary-sentinel/include/canary/topics.h"
       - "firmware/canary/src/csi_modules_integration.cpp"
-      - "firmware/canary/include/canary_config.h"
       - "firmware/canary/include/log_level.h"
       - "firmware/canary/lib/securacv_witness/src/securacv_witness.cpp"
       - "firmware/canary/lib/securacv_ble_status/src/securacv_ble_status.cpp"
@@ -578,6 +602,12 @@ jobs:
           PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
           NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
           PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+          # playground.test.js compiles every bring-up snippet the website's
+          # /playground shows with g++ against the display's host fakes; without
+          # the variable a runner that has no g++ skips that compile and passes.
+          # `require` makes the missing tool a failure that names it (the test
+          # pins this line), as VISION_WASM32=require does for the wasm32 step.
+          PLAYGROUND_SNIPPETS: require
         run: |
           node --test canary-local/tests/canary_local.test.js
           node --test canary-local/tests/build_line.test.js
@@ -623,11 +653,13 @@ jobs:
           node --test canary-local/tests/lab_nav.test.js
           node --test canary-local/tests/lab_settings.test.js
           node --test canary-local/tests/lab_shell.test.js
+          node --test canary-local/tests/lab_app.test.js
           node --test canary-local/tests/playground.test.js
           node --test canary-local/tests/mode.test.js
           node --test canary-local/tests/mic.test.js
           node --test canary-local/tests/board_facts.test.mjs
           node --test canary-local/tests/csp.test.js
+          node --test canary-local/tests/head.test.js
           node --test canary-local/tests/probe_server.test.js
           node --test canary-local/tests/scene_figures.test.js
           node --test canary-local/tests/real_shapes.test.js
@@ -823,6 +855,16 @@ jobs:
         # inline work fails here, before it can ship. tests/csp.test.js mirrors
         # the rules; the browser probe runs in the wasm job below.
         run: python3 canary-local/tools/gen_csp.py --check
+      - name: Lab head drift (canonical link and share tags are derived; titles and descriptions are checked)
+        # tools/gen_head.py stamps one block into every Lab page's <head> from
+        # the page's own <title> and description: the canonical link and the
+        # share tags. None of the twenty-six pages had either, none said
+        # "SecuraCV" in its title, and twenty-one carried a description too
+        # long for a search result to show. --check names a stale block and
+        # refuses a title without the Lab's name, a description outside what
+        # a result shows, and the retired "nothing phones anywhere" claim.
+        # tests/head.test.js mirrors the rules.
+        run: python3 canary-local/tools/gen_head.py --check
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py

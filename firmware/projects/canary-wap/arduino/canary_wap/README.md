@@ -225,6 +225,7 @@ canary_wap/
 ├── ble_opera.h             # Opera BLE advertising
 ├── ble_chirp.h             # Chirp BLE protocol
 ├── ble_nearby.h            # Nearby Canary scanning
+├── ble_nearby_prefix.h     # A nearby name's device prefix: hex digits or refused
 ├── bluetooth_api.h         # Bluetooth REST API handlers
 ├── rf_presence.h/.cpp      # RF presence detection
 ├── rf_presence_api.h       # RF presence REST API

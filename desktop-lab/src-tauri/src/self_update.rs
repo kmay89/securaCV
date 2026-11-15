@@ -311,13 +311,66 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     }
 }
 
-/// Markdown release notes → the plain text a native dialog can show:
-/// keep the `- ` bullets, drop the `**bold**` markers, cap the length.
+/// The notes' paragraphs and `- ` bullets, each as one string: the notes are
+/// hard-wrapped (a bullet runs on over indented lines), so a line that does
+/// not open a bullet continues the block above it. `noteBlocks` in
+/// lab-settings.js is the same rule for the Settings panel.
+fn note_blocks(notes: &str) -> Vec<(bool, String)> {
+    let mut blocks: Vec<(bool, String)> = Vec::new();
+    let mut open = false;
+    for line in notes.lines().map(str::trim) {
+        if line.is_empty() {
+            open = false;
+        } else if let Some(rest) = line.strip_prefix("- ") {
+            blocks.push((true, rest.to_string()));
+            open = true;
+        } else {
+            match blocks.last_mut() {
+                Some((_, text)) if open => {
+                    text.push(' ');
+                    text.push_str(line);
+                }
+                _ => {
+                    blocks.push((false, line.to_string()));
+                    open = true;
+                }
+            }
+        }
+    }
+    blocks
+}
+
+/// Markdown release notes → the short plain text a native dialog can show.
+/// A dialog cannot scroll or fold, so: each paragraph whole, then one line per
+/// bullet, its `**bold**` headline (the whole bullet when it has none). The
+/// caller points to Updates & about for the rest. Capped all the same.
 fn notes_for_dialog(notes: &str) -> String {
-    let text = notes.replace("**", "");
-    let trimmed = text.trim();
-    let mut out: String = trimmed.chars().take(1200).collect();
-    if out.len() < trimmed.len() {
+    let mut parts: Vec<String> = Vec::new();
+    let mut list: Vec<String> = Vec::new();
+    for (item, text) in note_blocks(notes) {
+        if item {
+            let head = text
+                .strip_prefix("**")
+                .and_then(|t| t.split_once("**"))
+                .map_or(text.as_str(), |(head, _)| head);
+            list.push(format!(
+                "• {}",
+                head.replace("**", "").trim_end_matches([',', ':', ';'])
+            ));
+        } else {
+            if !list.is_empty() {
+                parts.push(list.join("\n"));
+                list.clear();
+            }
+            parts.push(text.replace("**", ""));
+        }
+    }
+    if !list.is_empty() {
+        parts.push(list.join("\n"));
+    }
+    let text = parts.join("\n\n");
+    let mut out: String = text.chars().take(1200).collect();
+    if out.len() < text.len() {
         out.push('…');
     }
     out
@@ -384,6 +437,7 @@ pub async fn routine_check(app: AppHandle) {
     if let Some(notes) = update.body.as_deref().filter(|n| !n.trim().is_empty()) {
         body.push_str("\n\nWhat's changing:\n");
         body.push_str(&notes_for_dialog(notes));
+        body.push_str("\n\nThe full notes are under Updates & about.");
     }
     body.push_str("\n\nThe update is signed and verified before it installs.");
 
@@ -412,5 +466,50 @@ pub async fn routine_check(app: AppHandle) {
         Ok(()) => app.restart(),
         // download_then_install already journaled the failure.
         Err(_) => done(&app),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The shape every release's notes have: a bold lead paragraph and bold-led
+    // bullets, all hard-wrapped (app-v0.3.3's, cut down).
+    const NOTES: &str =
+        "**The 2.4.18 firmware catalog is baked in, and the Flash page refuses an\n\
+image the board could not start.**\n\
+\n\
+- **Firmware 2.4.18 on the Flash page.** On a Canary WAP, save its recovery\n  \
+kit before you update one you cannot easily reach.\n\
+- **An image the board could not start is refused before anything is\n  \
+written:** the Flash page says so, and writes nothing.\n\
+- A bullet with no bold headline\n  stays whole.\n";
+
+    #[test]
+    fn wrapped_lines_join_their_block() {
+        let blocks = note_blocks(NOTES);
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(
+            blocks[1],
+            (
+                true,
+                "**Firmware 2.4.18 on the Flash page.** On a Canary WAP, save its recovery \
+                 kit before you update one you cannot easily reach."
+                    .to_string()
+            )
+        );
+        assert!(!blocks[0].0 && blocks[0].1.ends_with("could not start.**"));
+    }
+
+    #[test]
+    fn the_dialog_shows_the_lead_and_one_headline_per_bullet() {
+        assert_eq!(
+            notes_for_dialog(NOTES),
+            "The 2.4.18 firmware catalog is baked in, and the Flash page refuses an image \
+             the board could not start.\n\n\
+             • Firmware 2.4.18 on the Flash page.\n\
+             • An image the board could not start is refused before anything is written\n\
+             • A bullet with no bold headline stays whole."
+        );
     }
 }

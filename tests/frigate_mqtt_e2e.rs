@@ -627,14 +627,18 @@ fn frigate_bridge_run_seals_heartbeats_prunes_and_publishes_frigate_link() {
     let cfg = kernel_config(&db_path_str, Duration::from_secs(3600));
 
     // ── A row the bridge's boot retention pass must prune: sealed before the
-    // bridge starts, then aged past the one-hour retention. Retention ages
-    // rows by their sealed `created_at` (the coarse bucket start, a column
-    // outside the hash), which is how the store's own tests age rows too. ──
+    // bridge starts, sealed with a bucket two hours old so it is past the
+    // one-hour retention. Retention ages rows by their SIGNED time bucket
+    // (never the `created_at` column), so an expired row is sealed old. ──
     {
         let mut kernel = Kernel::open(&cfg).expect("open kernel");
+        let now = TimeBucket::now(600).expect("bucket").start_epoch_s;
         let candidate = CandidateEvent {
             event_type: EventType::BoundaryCrossingObjectSmall,
-            time_bucket: TimeBucket::now(600).expect("bucket"),
+            time_bucket: TimeBucket {
+                start_epoch_s: (now - 7200) / 600 * 600,
+                size_s: 600,
+            },
             zone_id: "zone:expired_row".to_string(),
             confidence: 0.6,
             correlation_token: None,
@@ -649,13 +653,6 @@ fn frigate_bridge_run_seals_heartbeats_prunes_and_publishes_frigate_link() {
                 cfg.ruleset_hash,
             )
             .expect("seed expired row");
-        kernel
-            .conn
-            .execute(
-                "UPDATE sealed_events SET created_at = created_at - 7200",
-                [],
-            )
-            .expect("age the seeded row");
     }
 
     // ── The stub broker injects a sentinel-laden Frigate 0.17 tracked object

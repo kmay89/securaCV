@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { netOf, sanitize, boundary, boundaryEach, cidrMatcher, Watch, knownNetwork, BOUNDARY_NOTICE } from '../src/guard.mjs';
-import { requestSignInLink, signInLink, loginWithLink, setupOperator, totp, clearLocks } from '../src/auth.mjs';
+import { requestSignInLink, signInLink, loginWithLink, setupOperator, totp, clearLocks, sessionFor } from '../src/auth.mjs';
 import { createApp } from '../src/server.mjs';
 import { openTicket, ticketById } from '../src/modules/support.mjs';
 import { recordOrder, orderById } from '../src/modules/orders.mjs';
@@ -33,7 +33,7 @@ test('a sign-in link: asked for by anyone (no enumeration), mailed once, opens o
   assert.equal(loginWithLink(db, { token: r.token, code: '000000', nonce: r.nonce }, { ip: '203.0.113.5', now }), null, 'wrong code: refused');
   assert.equal(db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'auth.link.failed'").n, 2);
   const s = loginWithLink(db, { token: r.token, code: totp(secret, { time: now }), nonce: r.nonce }, { ip: '203.0.113.5', now });
-  assert.ok(s?.id); assert.equal(s.via, 'link'); assert.equal(db.get('SELECT net FROM sessions WHERE id = ?', s.id).net, '203.0.113.0/24');
+  assert.ok(s?.id); assert.equal(s.via, 'link'); assert.equal(sessionFor(db, s.id).net, '203.0.113.0/24'); assert.equal(db.get('SELECT COUNT(*) AS n FROM sessions WHERE id = ?', s.id).n, 0, 'the row holds the hash, not the cookie');
   assert.equal(loginWithLink(db, { token: r.token, code: totp(secret, { time: now + 60000 }), nonce: r.nonce }, { ip: '203.0.113.5', now: now + 60000 }), null, 'once');
   assert.ok(db.get("SELECT id FROM audit_log WHERE action = 'auth.link.login' AND entity_id = 'o@errer.test'"));
   clearLocks();

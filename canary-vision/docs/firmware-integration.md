@@ -6,6 +6,8 @@ This document describes how to port the Canary Vision reference server (`device-
 
 The Node.js reference server in `device-api/` is a faithful model of the firmware HTTP API. It uses Express middleware to mirror the exact request/response behavior, status codes, and security checks that the ESP32 firmware must implement. The reference server is the source of truth for API behavior, and the test suite validates both.
 
+Status: no Canary firmware in this monorepo serves this API's pairing today (`GET /api/v1/info` with `X-Canary-Token`). The canary-wap shares some route names with it (`GET /api/provisioning-receipt`, `POST /api/identify`, `POST /api/device-name`) and the witness page shape (below), but not its auth header (the WAP takes `Authorization: Bearer`), `/api/v1/info` or its CORS, and it is paired in the SecuraCV iPhone app, not from this SPA ([discovery.md §2](discovery.md#2-peer-list-api)).
+
 | Concern | Reference Server | ESP32 Firmware |
 |---------|-----------------|----------------|
 | HTTP framework | Express 4 | ESP-IDF `httpd` or Arduino `WebServer` |
@@ -162,11 +164,10 @@ httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
 httpd_resp_set_hdr(req, "Content-Security-Policy",
     "default-src 'self'; script-src 'self'; style-src 'self'; "
-    "img-src 'self' data:; connect-src 'self' http://*.local http://192.168.* "
-    "http://10.* http://172.16.* ... http://172.31.*");
+    "img-src 'self' data:; connect-src 'self' http://*.local");
 ```
 
-The CSP `connect-src` string is ~300 bytes. Store it as a `const char[]` in flash (PROGMEM/DRAM) rather than constructing it dynamically.
+This is the reference device-api's header, byte for byte (`device-api/middleware/security-headers.js`; `tests/security/security-headers.test.js` holds this snippet to it). Its `connect-src` lets a page the device serves reach the device itself (`'self'`) and peers by their `.local` name on port 80, and no other device by IP: CSP cannot name an IP range (a wildcard may stand only for a host's whole leftmost label), so do not add sources such as `http://192.168.*`, which match nothing (headless Chromium ignores each as an invalid source). A peer the page should reach must answer on its `.local` name; [`security.md`](security.md#security-headers) lists what the header allows and refuses in Chromium. Store the policy as a `const char[]` in flash rather than constructing it dynamically.
 
 ## Host Validation on ESP32
 

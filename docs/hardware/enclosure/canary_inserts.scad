@@ -128,7 +128,7 @@ cg_gap    = 0.2;                            // cap floor clear of the barb tip
 cg_cav_l  = cg_top + cg_gap - cg_seat_z;    // 5.2: seat to the cap floor
 cg_a_free = PI/4*(cg_bush_od*cg_bush_od - cg_bush_id*cg_bush_id);
 cg_a_room = PI/4*(cg_bore*cg_bore - cg_cable*cg_cable);
-cg_fill   = 0.90;                           // the bush's fill of its cavity once squeezed — 0.90 is the O-ring rule's ceiling, but nothing holds it there (the overfill assert compares the bush with itself); it sets the bush's free length (cg_bush_l), and a fill above about 0.96 is refused only because the squeezed bush would rise out of the nose bore (asserted)
+cg_fill   = 0.90;                           // the bush's fill of its cavity once squeezed: it sets the bush's free length (cg_bush_l). 0.90 is the O-ring rule's ceiling, and a fill past it is refused (asserted: TPU does not compress, so 10 % is left for tolerance and heat); the squeezed bush must also stay inside the nose bore (asserted, about 0.96 at the defaults)
 cg_bush_l = cg_fill * cg_cav_l * cg_a_room / cg_a_free; // 3.71 free -> 4.68 squeezed in 5.2
 // cap: a floor that bears on the bush's end (its hole passes the cable, not
 // the bush), a groove that houses the barb, and a lip below it that snaps
@@ -147,8 +147,10 @@ cg_oring_d   = 1.0;                         // the flange O-ring's cord
 cg_oring_dep = 0.65;                        // its groove: + the cap's 0.1 of snap slack, the cord rests at 0.75 — 25 %
 assert(cg_squeeze >= 0.2 && cg_squeeze <= 0.3, "cg_squeeze: keep the bush in the 20-30 % squeeze band");
 assert(cg_bush_id < cg_cable && cg_bush_id > cg_seat_d - 1.5, "gland bush: the bore must grip the cable");
-assert(cg_bush_l * cg_a_free <= cg_fill * cg_cav_l * cg_a_room + 1e-6,
-       "gland bush overfills its cavity — TPU does not compress");
+// the bush's own squeezed fill, not the knob: a cg_bush_l set by hand is held too
+assert(cg_bush_l * cg_a_free <= 0.90 * cg_cav_l * cg_a_room + 1e-6,
+       str("gland bush: squeezed, it fills ", round(1e4 * cg_bush_l * cg_a_free / (cg_cav_l * cg_a_room)) / 100,
+           " % of its cavity, past the O-ring rule's 90 % ceiling (cg_fill, or a cg_bush_l set by hand) — TPU does not compress; leave 10 % for tolerance and heat"));
 assert(cg_seat_z + cg_bush_l * cg_a_free / cg_a_room <= cg_top,
        "gland bush: squeezed, it rises out of the nose bore into the barb groove");
 assert(cg_cap_hole < cg_bush_od && cg_cap_hole > cg_cable, "gland cap floor hole must pass the cable and stop the bush");

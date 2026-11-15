@@ -25,7 +25,7 @@
     },
     "hub": {
       "name": "The Hub (Home Assistant)",
-      "url": "https://securacv.com/lab",
+      "url": "https://securacv.com/home-assistant",
       "status": "shipping"
     },
     "ios-app": {

@@ -428,7 +428,7 @@ Every received Beacon frame goes through:
 
 ### 7.2 NFPA-72 state machine
 
-The publicly visible state surface is the four-state NFPA enum, published to HA as `sensor.<id>_beacon_state`, `<id>` being the device id as Home Assistant slugs it (`canary-s3-4dC2` becomes `canary_s3_4dc2`). The discovery config asks for that id with `default_entity_id`, which Home Assistant 2025.10 and later applies when it first registers the entity (sweep HA16):
+The publicly visible state surface is the four-state NFPA enum, published to HA as `sensor.<id>_beacon_state`, `<id>` being the device id as Home Assistant slugs it (`canary-s3-4dC2` becomes `canary_s3_4dc2`). The discovery config asks for that id with `default_entity_id`; Home Assistant 2025.10 and later tries to give the entity that id when it first registers it, and adds `_2` when another entity already holds the id (sweep HA16):
 
 ```
 NORMAL       — no active alarms, no trouble conditions, no supervisory
@@ -536,7 +536,7 @@ BEACON_PAIR_CONFIRM    — awaiting user code confirmation
 
 ## 10. REST API
 
-All endpoints take `api_auth_check()`: a bearer, or the dashboard session cookie, which the landing page mints for any host on the network (F346). So do `/api/mesh/*` and `/api/bluetooth/*`, but for their two pair confirms (`POST /api/mesh/pair/confirm` and `POST /api/bluetooth/pair/confirm`), which take the bearer alone since F346 (`api_auth_check_bearer()`); `/api/beacon/pair/confirm` still takes `api_auth_check()`, behind `FEATURE_BEACON_CHANNEL` (off). Hold-to-send actions also require the UI's hold timestamp.
+The reads (`GET`) take `api_auth_check()`: a bearer, or the dashboard session cookie, which the landing page mints for any host on the network (F346). Every `POST` takes the bearer alone (`api_auth_check_bearer()`, `beacon_api.h`'s `bcn_bearer_gated`), as the mesh and Bluetooth pair confirms do since F346: a session must not originate, cosign, cancel or silence an alert, pair or revoke a set member, or run the self-test — with two WAPs on one LAN a session-gated originate and cosign would be a dual-signed ALERT no human sent. Neither gate is open when no token was registered. Hold-to-send actions also require the UI's hold timestamp.
 
 | Endpoint | Method | Purpose |
 |---|---|---|

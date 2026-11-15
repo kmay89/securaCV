@@ -395,7 +395,7 @@ test("turned glass (F184): linesCut fails a line LVGL cut to an ellipsis, as its
 });
 
 test("turned glass (F184): cardInHalo holds the QR card over its halo's center, sides inside the stroke", async () => {
-  const { cardInHalo, haloOf } = await import("./onboard_glass.mjs");
+  const { cardInHalo, haloOf, wideCardCeiling } = await import("./onboard_glass.mjs");
   // The 800 px glass's Join card (232 px, 10 px corners) in its 300 px ring,
   // as on the portrait dash: the card's box is its white pixels, inclusive.
   const halo = { cx: 240, cy: 300, r: 150, stroke: 3, shown: true };
@@ -406,8 +406,17 @@ test("turned glass (F184): cardInHalo holds the QR card over its halo's center, 
   const dash = cardInHalo(card(232), halo);
   assert.strictEqual(dash.fail, null);
   assert.deepStrictEqual([dash.sides, dash.reach, dash.inner], [116, 159.9, 147]);
-  // Its corners reach past the ring (F155): failed only when held.
+  // Its corners reach past the ring: failed when held inside it, and held
+  // at the ceilings test_onboard_layout.cpp names (a bigger card, a card
+  // moved off the center, a smaller ring).
   assert.match(cardInHalo(card(232), halo, { corners: true }).fail, /corners reach 159\.9 px .* past its stroke/);
+  const ceiling = wideCardCeiling(readFileSync(join(REPO, "firmware/projects/canary-display/tests_host/test_onboard_layout.cpp"), "utf8"));
+  assert.deepStrictEqual(ceiling, { reach: 159.9, over: 12.9 });
+  assert.strictEqual(cardInHalo(card(232), halo, { ceiling }).fail, null);
+  assert.match(cardInHalo(card(234), halo, { ceiling }).fail, /corners reach 161\.3 px .* over the 159\.9 px and 12\.9 px/);
+  assert.match(cardInHalo(card(232, 0, -5), halo, { ceiling }).fail, /corners reach 163\.5 px/);
+  assert.match(cardInHalo(card(232), { ...halo, r: 149 }, { ceiling }).fail, /13\.9 px past its stroke's inner edge/);
+  assert.throws(() => wideCardCeiling("static const double kWideCardReach[2] = {159.9, 163.5};"), /names no kWideCardReach or kWideStrokeInner/);
   // Under Heirloom the Join stack sets the card 5 px above the ring's center
   // (F155): still over it, its sides 121 px out, inside the stroke.
   const heir = cardInHalo(card(232, 0, -5), halo);
@@ -653,6 +662,55 @@ test("turned glass (F184): framesOnGlass holds every frame to one glass, a turne
   assert.match(framesOnGlass([], 9, null), /before it announced/);
 });
 
+test("the splash bubble's tail is read off the frame, with and without it", async () => {
+  const { splashTail, tailInk, tailDrawn } = await import("./onboard_glass.mjs");
+  const k = splashTail(read(join(REPO, "firmware/projects/canary-display/include/canary/ui/splash_layout.h")),
+    read(join(ROOT, "emulator/test/glass_splash_test.cpp")));
+  assert.deepStrictEqual(k, { pad: 10, border: 1, side: 12, rise: 10, minInk: 30 });
+  assert.throws(() => splashTail("constexpr int kBubblePad = 10;", ""), /splash_layout\.h names no kBubbleBorder/);
+  // A 60x60 glass: the line's box at y 41, so the bubble's top edge is row 30.
+  const W = 60, H = 60, EDGE = 30;
+  const frame = (paint) => {
+    const data = new Uint8ClampedArray(W * H * 4);
+    const dot = (x, y, v = 20) => { data.fill(v, (y * W + x) * 4, (y * W + x) * 4 + 3); };
+    if (paint) paint(dot);
+    return { w: W, h: H, data };
+  };
+  // the bubble, and the tail as every flavor's dist draws it: 96 px in ten
+  // rows, 1 to 17 px wide and then 15, about column `cx`
+  const bubble = (dot) => { for (let y = EDGE; y < 50; y++) for (let x = 4; x < 56; x++) dot(x, y); };
+  const tail = (cx, lift = 0) => (dot) => {
+    [1, 3, 5, 7, 9, 11, 13, 15, 17, 15].forEach((n, r) => {
+      for (let x = cx - (n - 1) / 2; x <= cx + (n - 1) / 2; x++) dot(x, EDGE - 10 + r - lift);
+    });
+    bubble(dot);
+  };
+  const labels = [{ shown: true, opa: 255, text: "Oh! Hello.", x: 15, y: EDGE + 11, w: 30, h: 16 }];
+  const bird = { shown: true, x: 14, y: 0, w: 32, h: 12 };
+  const st = { labels, bird, base: { ...frame(), bird } };
+  const good = tailInk(frame(tail(30)), k, st);
+  assert.deepStrictEqual(good, { text: "Oh! Hello.", ink: 96, top: 20, left: 22, right: 38, edge: EDGE, cx: 30 });
+  assert.strictEqual(tailDrawn(good, k), null);
+  // no tail, a tail off the center line, one risen too far, one drawn up in the bird
+  assert.match(tailDrawn(tailInk(frame(bubble), k, st), k), /draws no tail on the bubble's top edge: 0 px/);
+  assert.match(tailDrawn(tailInk(frame(tail(36)), k, st), k), /stands off its center line: its ink spans columns 28\.\.44/);
+  assert.match(tailDrawn(tailInk(frame(tail(30, 3)), k, st), k), /reaches 13 rows above its top edge, past its 10/);
+  assert.match(tailDrawn(tailInk(frame(tail(30, 24)), k, st), k), /draws no tail/);
+  // the bird's box is not read (it moves between the two frames)
+  const moved = { ...bird, y: 14 };
+  assert.strictEqual(tailInk(frame((dot) => { dot(30, 15, 255); tail(30)(dot); }), k, { ...st, bird: moved }).top, 26);
+  // nothing to read against, or no line up, is a failure
+  assert.match(tailDrawn(tailInk(frame(tail(30)), k, { ...st, base: null }), k), /no frame without the bubble was kept/);
+  assert.match(tailDrawn(tailInk(frame(tail(30)), k, { ...st, labels: [{ ...labels[0], text: "" }] }), k), /no line of the splash is up/);
+  // every walk reads it, off a frame kept while no label was shown
+  const probe = read(join(ROOT, "tests/onboard_probe.mjs"));
+  for (const needle of ["if (!labels.some((l) => l.shown)) {", "await tailStep(st.labels);",
+    "await tailStep(await E(() => window.__emu.screenLabels()));", "const bad = tailDrawn(read, TAIL);",
+    'check(tailReads.length > 0, "the splash: no whole line was read with its bubble\'s tail");']) {
+    assert.ok(probe.includes(needle), `the probe holds the tail: ${needle}`);
+  }
+});
+
 test("turned glass (F184): cardAtLayout and haloAtLayout hold the card and halo where onboard_layout.h seats them", async () => {
   const { cardAtLayout, haloAtLayout, cardInHalo } = await import("./onboard_glass.mjs");
   const layout = { ring: { x: 90, y: 250, d: 300, stroke: 3 }, card: { x: 124, y: 284, side: 232, radius: 10 } };
@@ -839,9 +897,11 @@ test("turned wiring (F184): the firmware wears the saved rotation, the glass tur
   // The card and halo held to the layout, the stroke inked, on both Join reads.
   for (const needle of ["const bad = cardAtLayout(joinCardNow, layout) || haloAtLayout(halo, layout);",
     "const ink = haloInked(await onCanvas(haloInk, [halo]), 0, 3);",
-    "const h = cardInHalo(joinCardNow, halo, { corners: turn.corners, cornerR: CARD_RADIUS });",
-    'if (turn) inHalo = await holdJoin("the join scene", card);',
-    'if (turn) await holdJoin("with the stuck-phone hint up", cardHint);']) {
+    'const wide = turn ? !turn.corners : flavor === "dash";',
+    "const ceiling = wide ? WIDE_CEILING : null;",
+    "const h = cardInHalo(joinCardNow, halo, { corners: !!turn && turn.corners, cornerR: CARD_RADIUS, ceiling });",
+    'if (turn || wide) inHalo = await holdJoin("the join scene", card);',
+    'if (turn || wide) await holdJoin("with the stuck-phone hint up", cardHint);']) {
     assert.ok(probe.includes(needle), `the turned walk holds the Join layout: ${needle}`);
   }
   // The QR upright on every walk, before and after the hint.

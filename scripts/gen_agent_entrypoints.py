@@ -81,21 +81,28 @@ FOOTER = """
 
 ## The rest of the brief
 
-This file carries the non-negotiables only. The full brief — the repo map, the
-"where do I look for X" index, the CI gates, the detection-backend audit rules,
-the code style, and the Beacon/Chirp channel invariants — lives in
-[`AGENTS.md`]({up}AGENTS.md). Read it before any non-trivial change.
+This file carries the non-negotiables only. The repo map ("where do I look for
+X") and the CI gates are in [`AGENTS.md`]({up}AGENTS.md). The rules for one
+tree live in that tree, in its own `AGENTS.md`, and apply when you work there:
+[`src/`]({up}src/AGENTS.md) (the kernel: invariants in code, backend audit,
+dependencies), [`firmware/`]({up}firmware/AGENTS.md) (which copy is the source,
+host tests), [`firmware/projects/canary-wap/`]({up}firmware/projects/canary-wap/AGENTS.md)
+(the Beacon and Chirp invariants), [`firmware/projects/canary-display/`]({up}firmware/projects/canary-display/AGENTS.md)
+(the emulator dist), [`canary-local/`]({up}canary-local/AGENTS.md) (the Lab),
+[`docs/hardware/enclosure/`]({up}docs/hardware/enclosure/AGENTS.md) (CAD) and
+[`.github/`]({up}.github/AGENTS.md) (workflows and releases).
 
 Also worth having open:
 
-- [`docs/GLOSSARY.md`]({up}docs/GLOSSARY.md) — every proper noun in the project,
-  defined once. Read this before answering a question about what something is.
-- [`docs/FAQ.md`]({up}docs/FAQ.md) — the questions users actually ask, answered.
+- [`docs/GENERATED_FILES.md`]({up}docs/GENERATED_FILES.md) — which edit moves
+  which committed generator output, and in what order.
 - [`docs/README.md`]({up}docs/README.md) — the CI-enforced map of every doc.
 - [`docs/CONSOLIDATION.md`]({up}docs/CONSOLIDATION.md) — which similarly-named
   directory is the real one.
 - [`docs/FLIGHT_RULES.md`]({up}docs/FLIGHT_RULES.md) — the engineering
   constitution.
+- [`docs/GLOSSARY.md`]({up}docs/GLOSSARY.md) and [`docs/FAQ.md`]({up}docs/FAQ.md)
+  — for answering a person's question about what something is.
 """
 
 

@@ -215,6 +215,19 @@ stops repeating; anchoring a single per-run ledger-heads leaf (planned with the
 Merkle tree) removes that.
 → [timestamping](timestamping.md)
 
+### What if someone says the device's clock was wrong?
+
+Every anchor carries an answer. When a timestamp token is stored, `witnessd`
+measures its own clock against the token's time and seals the result — a
+device-signed record of the offset in whole seconds, with the poll gap that
+bounds it — and the next scheduled anchoring run fixes that record in a
+TSA's time. `log_anchor verify` prints the reading under every anchor and
+flags one more than a bucket (or your policy's `max_clock_offset_s`) away;
+a court kit carries the record of every token it packages. It does not make
+event times finer: a 10-minute bucket stays 10 minutes wide, only shifted
+by whatever the offset was.
+→ [timestamping](timestamping.md) · [design](design/clock_provenance.md)
+
 ---
 
 ## Honest status
@@ -223,11 +236,11 @@ Merkle tree) removes that.
 
 **No.** Treat it as prototype software under active development. Frame
 isolation, hash-chained logging, and break-glass quorum are implemented and
-exercised in CI. Much of the firmware is **CI-verified, not yet
-hardware-verified** — v1 is deliberately held until it's proven on real
+exercised in CI. Much of the firmware is **proven in CI, not yet on real
+hardware** — v1 is deliberately held until it's proven on real
 devices. Boards are individually labeled `verified` or `compile-tested` so you
 can tell which is which.
-→ [v1 roadmap](v1-roadmap.md) · [launch review](V1_LAUNCH_REVIEW.md) ·
+→ [v1 roadmap](v1-roadmap.md) ·
 [bench-test runbook](V1_BENCH_TEST_RUNBOOK.md)
 
 ### Is it certified? Audited?
@@ -410,8 +423,9 @@ fully open to us, and it's the half we do better than a camera.
 ### Do I need to buy anything from you?
 
 No. Print the case, buy the parts anywhere, flash it yourself — the whole path
-is open. Kits exist for people who'd rather not. Independent vendors can sell
-kits under the free "Works with SecuraCV" badge.
+is open. Kits are planned for people who'd rather not, and none is for sale
+until its radio is authorized. Independent vendors can sell their own builds
+under the free "Works with SecuraCV" badge.
 → [the ecosystem](https://securacv.com/ecosystem) ·
 [vendors](https://securacv.com/vendors)
 

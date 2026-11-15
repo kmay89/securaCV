@@ -165,9 +165,10 @@ which creates these three entities under the canary device:
 | `binary_sensor.<id>_mesh_channel_locked_to_sta` | binary_sensor | On = mesh is following your home WiFi |
 
 `<id>` is the device id as Home Assistant slugs it (`canary-s3-4dC2` becomes
-`canary_s3_4dc2`). The firmware asks for these ids with `default_entity_id`,
-which Home Assistant 2025.10 and later honors when it first registers an
-entity; an entity registered before keeps its id, and an older Home Assistant
+`canary_s3_4dc2`). The firmware asks for these ids with `default_entity_id`.
+Home Assistant 2025.10 and later tries to give each entity the id asked for
+when it first registers it, and adds `_2` when another entity already holds
+the id; an entity registered before keeps its id, and an older Home Assistant
 names it from the device and entity names
 (`sensor.canary_<id>_mesh_airtime`). Read from Home Assistant core's source,
 not seen in a running Home Assistant.

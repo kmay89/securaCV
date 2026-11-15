@@ -183,7 +183,7 @@ The flasher tries to fix the common failures before asking the user to:
   for it, a household peer's fingerprint or name, or a MAC-shaped token are
   replaced by a visible marker. The patterns name the lines the firmware
   prints (the tests render each from its source), so the tail is not
-  public-only by construction: a line no pattern names passes (ledger A118).
+  public-only by construction: a line no pattern names passes (ledger A132).
   Among those: the flagship's chain-head rows, the WAP's witness-table rows
   (a location printed to 3 decimals, about 110 m, and a chain-head prefix,
   one row per record) and its `g` card's latitude and longitude, and the

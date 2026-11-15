@@ -2,8 +2,10 @@
 // optional body text) on an interval; three consecutive failures raise an
 // exception, recovery resolves it. The public page says what is up with
 // 90-day uptime from the probe log, and incidents the operator writes.
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { nowIso } from '../db.mjs';
 import { raise, resolve } from './exceptions.mjs';
+import { readCapped, isPrivateAddress } from '../net.mjs';
 
 export const DEFAULT_PROBES = (cfg) => [
   { name: 'Website', url: cfg.siteOrigin + '/', expect_text: 'SecuraCV' },
@@ -22,13 +24,18 @@ export function upsertProbe(db, p) {
 export const listProbes = (db, { publicOnly = false } = {}) => db.all('SELECT * FROM probes WHERE (? = 0 OR public = 1) ORDER BY id', publicOnly ? 1 : 0);
 export const deleteProbe = (db, id) => db.run('DELETE FROM probes WHERE id = ?', id).changes;
 
-export async function runProbe(db, p, { fetchImpl = fetch, cfg = {}, now = nowIso, timeoutMs = 15_000 } = {}) {
+export async function runProbe(db, p, { fetchImpl = fetch, lookup = (h) => dnsLookup(h, { all: true }), cfg = {}, now = nowIso, timeoutMs = 15_000, maxBytes = 2 * 1024 * 1024 } = {}) {
   const t0 = Date.now(); let ok = false, detail = '';
   const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    // One deadline for headers AND body: a target that stalls mid-body must not stall the scheduler.
-    const r = await fetchImpl(p.url, { signal: ctl.signal, redirect: 'follow', headers: { 'user-agent': 'securacv-backoffice-probe/1' } });
-    const body = p.expect_text ? await Promise.race([r.text(), new Promise((_, rej) => ctl.signal.addEventListener('abort', () => rej(Object.assign(new Error('timeout'), { name: 'AbortError' }))))]) : '';
+    // Checked at every run, not only when the probe was saved: the name is resolved here and now, and if any address
+    // it resolves to is the box's own, a neighbor's or a private network's, nothing is sent. (The demo's probes watch
+    // its own loopback listener, by design.) A redirect is the probe's result, never followed, so a public name cannot
+    // bounce the probe inward; the body is read up to a budget, so a target cannot stream the scheduler out of memory.
+    const host = new URL(p.url).hostname.replace(/^\[|\]$/g, '');
+    if (!cfg.demo) { const addrs = await lookup(host); if (!addrs.length || addrs.some(a => isPrivateAddress(a.address))) throw new Error(`${host} resolves to a private or internal address — refused`); }
+    const r = await fetchImpl(p.url, { signal: ctl.signal, redirect: 'manual', headers: { 'user-agent': 'securacv-backoffice-probe/1' } });
+    const body = p.expect_text ? await Promise.race([readCapped(r, maxBytes), new Promise((_, rej) => ctl.signal.addEventListener('abort', () => rej(Object.assign(new Error('timeout'), { name: 'AbortError' }))))]) : '';
     ok = r.status === p.expect_status && (!p.expect_text || body.includes(p.expect_text));
     detail = ok ? `${r.status}` : `${r.status}${p.expect_text && !body.includes(p.expect_text) ? ` (missing "${p.expect_text}")` : ''}`;
   } catch (e) { detail = String(e.name === 'AbortError' ? 'timeout' : e.message || e).slice(0, 200); }

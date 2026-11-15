@@ -5,6 +5,75 @@ the build hash on `/healthz`, the Health page and `backoffice version` is the co
 CI stamped into the image. `tests/environment.test.mjs` holds the top entry here to
 the package version, so neither moves without the other.
 
+## 0.9.0
+
+- **The door never holds the house up.** Password and API-token verification
+  run off the event loop (`crypto.scrypt`, one password at a time, two
+  tokens), so a burst of logins or bearer calls no longer stalls the Stripe
+  webhook, `/store/checkout`, `/healthz` or the admin. The password cost
+  rises to scrypt N=2^17 (OWASP); every hash now records its cost
+  (`$scrypt$ln=17,r=8,p=1$…`), a hash from before verifies as it did and is
+  re-hashed on that person's next successful login, and the doctor's
+  *Password hashes at the current cost* row names who is still waiting (a
+  note, never a failure). The lockout, the one-login-per-code rule, the
+  same-work-for-an-unknown-email answer and the audit rows are unchanged;
+  the person's row and both locks are read again after the wait, so a
+  disable, a spent code or a lockout armed by failures queued ahead still
+  refuses before a session opens. `login`, `changePassword`,
+  `acceptInvite`, `verifyPassword`, `hashPassword` and `apiTokenFor` return
+  promises; `setupOperator` and the demo seed keep a sync hash
+  (`hashPasswordSync`) for the CLI and boot.
+- **Away mode.** One date the whole company reads (Settings → Away,
+  `backoffice away 2026-12-01 [--note '…']`, `--back`). While it stands, the
+  batch cadence counts from the morning you are back: the store's catalog
+  (`/store/catalog` now carries `away`), the ZIP estimate, the Checkout
+  Session's shipping option and the promise written on every webhook order
+  say the first batch after that day ("Back Mon, Dec 1 · ships Tue, Dec 9").
+  A date once shown is kept: the Checkout Session's `ships_on` rides its
+  metadata into the webhook's promise, and the thanks page reads the
+  order's stored promise (`estimateForShipDate`), so setting or clearing
+  away mode moves new purchases only.
+  A ticket opened meanwhile is acknowledged with the date and its SLA clock
+  starts at 9 am (operator time) on the return day; the `sla` job defers an
+  alarm whose clock ran out before that morning and reports how many it
+  held. Home wears a strip with the days to go, what the store is saying,
+  the tickets waiting and the one button; the doctor has an *Away* row (never
+  a failure); the digest carries it. It ends by itself that morning — the
+  date is compared, not a flag — or on "I'm back"; both ends are audit rows.
+  A walkthrough step (`away`) runs it on the demo page and in the test.
+  `src/modules/away.mjs`, `tests/away.test.mjs`, `MAINTENANCE.md` "Before you
+  go away".
+- **The mail domain, as receivers read it.** A `maildns` job (every six
+  hours) looks up the SPF record, the DMARC record and its policy, and the MX
+  of the `MAIL_FROM` (else `SUPPORT_ADDR`) domain; the doctor's *Mail domain*
+  row fails when one is missing and says which record to add, with a note on
+  `+all` and `p=none`. DKIM is the relay's key and is named, not checked. No
+  Health page waits on DNS: the row reads the job's last answer.
+  `src/modules/maildns.mjs`, `tests/maildomain.test.mjs`.
+- **`/.well-known/security.txt`** (and `/security.txt`) on the backoffice,
+  RFC 9116: the support address (the helpdesk files "security" as urgent),
+  an `Expires` inside a year, the canonical URL, the site's policy page. A
+  404 until `SUPPORT_ADDR` is set; a customer-facing path for
+  `ADMIN_ALLOW_CIDRS`.
+- **The door, reviewed.** Behind a trusted proxy the client's address is
+  the last `X-Forwarded-For` hop that proxy appended (read from the right,
+  trusted hops skipped), never the first hop the client wrote. The limiter,
+  the lockout and the scanner watch count a v6 address by its /64 and shed
+  their oldest entries instead of forgetting everything at once. Setting
+  up a new authenticator asks for the password, confirming it for a code
+  from the old one and the new; "log out everywhere else" asks for the
+  password; each step is audited with its address. Session ids and
+  invitation tokens are stored hashed (migration 016 ends the sessions and
+  open invitations from before), and an invitation link is shown once in
+  the answer to the click, never in a URL. The login forms refuse a
+  cross-site browser like every other POST. The audit mark now covers the
+  row's id and is JSON-encoded, the verifier walks from the lowest id and
+  names one below 1, and old marks still verify. The probe's "inside" test
+  reads every v6 spelling of a private address (`isPrivateAddress`,
+  `net.mjs`). `/api/users` and `health/external` are the owner's,
+  `/api/exceptions` is ops', running a backup through the API is the
+  owner's. `tests/perimeter.test.mjs`.
+
 ## 0.8.0
 
 - **The audit log is a chain.** Every row carries the previous row's mark

@@ -9,6 +9,7 @@
 #define SECURACV_AUDIBLE_CHIRP_API_H
 
 #include "esp_http_server.h"
+#include "http_body_reader.h"   // a POST body read whole, or refused by name (sweep F300)
 #include "audible_chirp.h"
 #include "api_auth.h"
 #include <ArduinoJson.h>
@@ -41,6 +42,23 @@ static inline esp_err_t send_json(httpd_req_t* req, const JsonDocument& doc) {
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_sendstr(req, response.c_str());
+}
+
+// A POST body, read whole or refused by name (sweep F300): nullptr when all
+// of it is in `buf` (NUL-terminated, *len bytes; 0 for no body, which each
+// route answers its own way), else the error this file answers with
+// doc["error"] and send_json(). One httpd_req_recv() is one socket read: the
+// handlers parsed what it returned, so a body in two TCP segments was parsed
+// cut and one past the buffer was cut at it and parsed anyway.
+// http_body::read_request() (http_body_reader.h, host-tested) reads
+// Content-Length bytes and refuses a body that does not fit before reading
+// any of it; tests_host/test_http_body_reader pins that no other
+// httpd_req_recv() call is left in this file.
+static const char* read_body(httpd_req_t* req, char* buf, size_t cap, size_t* len) {
+  const http_body::Result r = http_body::read_request(req, buf, cap, len);
+  if (r == http_body::TOO_LARGE) return "Request body too large";
+  if (r == http_body::READ_FAILED) return "Request body read failed";
+  return nullptr;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -90,8 +108,13 @@ inline esp_err_t handle_chirp_play(httpd_req_t* req) {
 
   // Read request body
   char content[128];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
-  if (content_len <= 0) {
+  size_t content_len = 0;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) {
+    doc["success"] = false;
+    doc["error"] = err;
+    return send_json(req, doc);
+  }
+  if (content_len == 0) {
     // No body = play default confirm pattern
     audible_chirp::chirp_confirm();
     doc["success"] = true;
@@ -99,7 +122,6 @@ inline esp_err_t handle_chirp_play(httpd_req_t* req) {
     doc["note"] = "Default pattern (no body provided)";
     return send_json(req, doc);
   }
-  content[content_len] = '\0';
 
   // Parse JSON
   JsonDocument input;
@@ -155,13 +177,17 @@ inline esp_err_t handle_chirp_test(httpd_req_t* req) {
 // Body: {"visual_only": true}
 inline esp_err_t handle_chirp_config(httpd_req_t* req) {
   char content[128];
-  int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
+  size_t content_len = 0;
 
   JsonDocument doc;
+  if (const char* err = read_body(req, content, sizeof(content), &content_len)) {
+    doc["success"] = false;
+    doc["error"] = err;
+    return send_json(req, doc);
+  }
 
   #if FEATURE_AUDIBLE_CHIRP
   if (content_len > 0) {
-    content[content_len] = '\0';
     JsonDocument input;
     if (deserializeJson(input, content) == DeserializationError::Ok) {
       if (input["visual_only"].is<JsonVariant>()) {

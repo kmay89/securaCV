@@ -143,6 +143,11 @@ jobs:
           shellcheck --shell=sh privacy_witness_kernel/discover_cameras.sh
 
       - name: Run run_lib tests
+        env:
+          # opt_list's cases hold exact bytes; this names the jq they must
+          # run on (the step above's 1.6), so a fallback to the runner's 1.7
+          # fails them instead of passing on a jq the app never runs (HA38).
+          PWK_REQUIRE_JQ: jq-1.6
         run: bash privacy_witness_kernel/tests/test_run_lib.sh
 
       # Lifts the kernel config heredocs out of run.sh (and the sidecar's

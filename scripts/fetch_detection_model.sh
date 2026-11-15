@@ -21,7 +21,9 @@ set -euo pipefail
 # Pinned model: tiny-YOLOv2 (ONNX Model Zoo, VOC, MIT). Raw-grid output is decoded + NMS'd on
 # the host (detect.tract_format = "yolov2", the default). Chosen because tract can run it — the
 # TF-exported SSD/SSDLite models use ONNX `Loop` ops for in-graph NMS that tract does not
-# implement. Update URL and SHA together.
+# implement. Update URL and SHA together, and src/config.rs's DEFAULT_TRACT_MODEL_SHA256 with
+# them: witnessd holds the default model to that pin at every start, and a unit test there reads
+# this file and fails when the two differ.
 MODEL_URL="https://github.com/onnx/models/raw/main/validated/vision/object_detection_segmentation/tiny-yolov2/model/tinyyolov2-8.onnx"
 MODEL_SHA256="583fb7fdc948435ceac9fa82efc7708701efe8382a859a3dd46526b155f5f2ae"
 

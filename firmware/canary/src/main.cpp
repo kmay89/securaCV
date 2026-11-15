@@ -401,12 +401,18 @@ static_assert(sizeof(g_ap_password) >= canary::net::AP_PASSWORD_LEN + 1,
 
 // Physical-presence gate (F20 gap #11). Opened by a short BOOT tap in
 // handle_boot_button(), which also sweeps a stamp past its TTL every pass
-// (expire(), sweep F347); the network lib takes it — from the receipt handler
-// or from a home-LAN page load, whichever asks first — through the hooks
-// registered in setup(). The State is this file's because the BOOT button is.
+// (expire(), sweep F347). The network lib reads the stamp (peek), judges it
+// for the asking address with its TapArbiter, and takes exactly that stamp
+// (take_exact) — from the receipt handler or a home-LAN page load, for the
+// one address asking (sweep F354) — through the hooks registered in setup().
+// The TTL is applied by the lib's judgment (tap_arbitrate()). The State is
+// this file's because the BOOT button is.
 static canary::net::provisioning_gate::State g_prov_gate = {0};
-static bool prov_gate_take_hook() {
-  return canary::net::provisioning_gate::take(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
+static uint32_t prov_gate_peek_hook() {
+  return canary::net::provisioning_gate::peek(g_prov_gate);
+}
+static bool prov_gate_take_exact_hook(uint32_t seen) {
+  return canary::net::provisioning_gate::take_exact(g_prov_gate, seen);
 }
 static bool prov_gate_is_open_hook() {
   return canary::net::provisioning_gate::is_open(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
@@ -1523,7 +1529,8 @@ void setup() {
     ScvNetworkManager& net = network_get_instance();
     // Wire the BOOT-tap gate before any route can be served (unregistered
     // hooks read as closed, so the order is belt-and-braces, not load-bearing).
-    network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);
+    network_set_provisioning_gate_hooks(prov_gate_peek_hook, prov_gate_take_exact_hook,
+                                        prov_gate_is_open_hook);
     // POST /api/reboot is a deliberate restart: the HTTP task only raises a
     // flag, and loop() runs the boot-health gate and restarts (the gate
     // writes a witness record, which is loop-task only).
@@ -3113,7 +3120,8 @@ static void handle_boot_button() {
         // Short tap: open the provisioning gate (F20 gap #11, WAP parity).
         // One tap admits exactly ONE consumer within PROVISIONING_GATE_TTL_MS:
         // one GET /api/provisioning-receipt, or one home-LAN dashboard load
-        // with its credential — whichever asks first (page_token_decide).
+        // with its credential, for the one address asking for it; a second
+        // address asking in the window closes it (tap_arbitrate(), F354).
         canary::net::provisioning_gate::open(g_prov_gate, millis());
         Serial.printf("[AUTH] Provisioning gate OPENED (one receipt fetch or one LAN page load, %lu seconds)\n",
                       (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
@@ -3450,7 +3458,18 @@ static void mqtt_publish_sensing_update() {
   doc["label"]      = sensing_label_name(s.activity_label);
   doc["motion"]     = s.motion_score;
   doc["breathing"]  = s.breathing_score;
-  doc["rssi_dbm"]   = (int)s.rssi_dbm;
+  /* rssi_dbm is a CSI window's mean. Before the first window (and for
+   * good on a build with no CSI) the snapshot holds sensing_init()'s
+   * zero, and a window that heard nothing, or only frames below the
+   * noise floor, still closes every second with a zero mean: no radio
+   * measured either. So the key is written only when the last window's
+   * mean was taken over a frame (sensing_rssi_measured). The Sensing
+   * RSSI template renders a body without it as nothing, which Home
+   * Assistant ignores on a numeric sensor: unknown before the first
+   * reading, the last reading kept after it, and no unmeasured 0 dBm
+   * (sweep F411). The local /api/sensing route applies the same rule
+   * (sweep F431). */
+  if (sensing_rssi_measured(&s)) doc["rssi_dbm"] = (int)s.rssi_dbm;
   doc["frames_in_window"] = s.frames_in_window;
   doc["channel"]    = s.channel;
   doc["time_bucket"] = s.time_bucket;

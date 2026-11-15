@@ -117,9 +117,11 @@ class SigningKernel:
     ``sig`` in the order the keys were written.
     """
 
-    def __init__(self, device_id: str = KERNEL_DEVICE_ID) -> None:
-        """Mint a fresh key."""
-        self.private = ed25519.Ed25519PrivateKey.generate()
+    def __init__(
+        self, device_id: str = KERNEL_DEVICE_ID, private: ed25519.Ed25519PrivateKey | None = None
+    ) -> None:
+        """Mint a fresh key, or take the one a test fixes."""
+        self.private = ed25519.Ed25519PrivateKey.generate() if private is None else private
         self.verifying_key = self.private.public_key().public_bytes_raw().hex()
         self.device_id = device_id
         self.entries: list[dict[str, Any]] = []

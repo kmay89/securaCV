@@ -145,6 +145,8 @@ struct AddCanarySheet: View {
     @EnvironmentObject var store: FleetStore
     @Binding var pairing: DiscoveredCanary?
     @Environment(\.dismiss) private var dismiss
+    /// The presenting window's stand-down (RootView owns it).
+    @Environment(\.nearbyOfferStandDown) private var standDown
     @State private var showingSetup = false
 
     var body: some View {
@@ -213,10 +215,10 @@ struct AddCanarySheet: View {
         }
         .presentationDetents([.medium, .large])
         // This sheet lists the nearby Canaries itself, and at .medium the
-        // root's card that slides up would show dimmed behind it: the card
-        // stands down while this sheet is up (NearbyOfferLatch).
-        .onAppear { store.nearbyOfferStandsDown = true }
-        .onDisappear { store.nearbyOfferStandsDown = false }
+        // root's card that slides up would show dimmed behind it: this
+        // window's card stands down while this sheet is up (NearbyOfferLatch).
+        .onAppear { standDown.wrappedValue = true }
+        .onDisappear { standDown.wrappedValue = false }
     }
 }
 

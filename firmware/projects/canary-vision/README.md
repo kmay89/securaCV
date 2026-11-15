@@ -24,7 +24,7 @@ Pins come from `firmware/boards/<board-id>/pins/pins.h` and are passed to `Wire.
 4. Build/Upload (host board's USB-C port):
    - `pio run -e canary-vision-xiao-c3 -t upload` (pick your env from the table)
 5. Monitor:
-   - `pio device monitor` — a non-zero `Grove Vision AI ID=...` line confirms the I2C link
+   - `pio device monitor` — `Grove Vision AI ID=1` confirms the module answered over I2C; `ID=0`, with an `ERROR: Grove Vision AI V2 not responding` line above it, means it did not. Any other number means an older image, which printed a memory address there, non-zero with or without a module: on one of those, only the ERROR line answers.
 
 ## Runtime detection settings (no rebuild for model swaps)
 

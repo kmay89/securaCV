@@ -1,10 +1,10 @@
 use anyhow::Result;
 use ed25519_dalek::SigningKey;
 use witness_kernel::{
-    verify_export_bundle, Approval, BreakGlass, BreakGlassTokenFile, CandidateEvent, EventType,
-    ExportAuthMode, ExportOptions, ExportReceipt, ExportWindow, InferenceBackend, Kernel,
-    KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
-    UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
+    verify_export_bundle, Approval, BreakGlass, BreakGlassReceipt, BreakGlassTokenFile,
+    CandidateEvent, EventType, ExportAuthMode, ExportOptions, ExportReceipt, ExportWindow,
+    InferenceBackend, Kernel, KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket,
+    TrusteeEntry, TrusteeId, UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
@@ -169,7 +169,9 @@ fn export_replay_of_token_file_is_refused_across_invocations() -> Result<()> {
     )?;
 
     // Second use with the re-parsed (fresh, unconsumed-looking) token must
-    // be refused by the persisted nonce even inside the validity bucket.
+    // be refused by the persisted nonce even inside the validity bucket —
+    // and the refusal now comes from the signed redemption row, which is
+    // consulted before the unsigned burn table.
     let err = kernel
         .export_events_authorized(
             cfg.ruleset_hash,
@@ -181,7 +183,7 @@ fn export_replay_of_token_file_is_refused_across_invocations() -> Result<()> {
         )
         .expect_err("replayed token file must be refused");
     assert!(
-        err.to_string().contains("already consumed"),
+        err.to_string().contains("already redeemed"),
         "unexpected error: {err}"
     );
 
@@ -430,5 +432,67 @@ fn export_receipt_serde_round_trips_both_generations() -> Result<()> {
     );
     let reparsed: ExportReceipt = serde_json::from_str(&json)?;
     assert_eq!(serde_json::to_string(&reparsed)?, json);
+    Ok(())
+}
+
+#[test]
+fn export_redeems_its_token_with_a_signed_row_a_deleted_burn_cannot_undo() -> Result<()> {
+    let cfg = KernelConfig {
+        db_path: ":memory:".to_string(),
+        ruleset_id: "ruleset:test".to_string(),
+        ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+        kernel_version: "0.0.0-test".to_string(),
+        retention: std::time::Duration::from_secs(60),
+        device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+        zone_policy: ZonePolicy::default(),
+    };
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let bucket = TimeBucket::now(600)?;
+    let (request, approval, policy) = authorize_export(&cfg, bucket)?;
+    kernel.set_break_glass_policy(&policy)?;
+    let (result, receipt) =
+        BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+    let mut token = result.expect("token");
+    let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+    kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;
+    let options = ExportOptions {
+        jitter_s: 0,
+        ..ExportOptions::default()
+    };
+
+    kernel.export_events_authorized(cfg.ruleset_hash, options, &mut token)?;
+
+    // The grant is followed by its device-signed redemption row.
+    let (payload, prev_hash): (String, Vec<u8>) = kernel.conn.query_row(
+        "SELECT payload_json, prev_hash FROM break_glass_receipts ORDER BY id DESC LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let row: BreakGlassReceipt = serde_json::from_str(&payload)?;
+    assert_eq!(
+        row.redeemed_token(),
+        Some((token.token_nonce(), receipt_entry_hash))
+    );
+    assert_eq!(prev_hash, receipt_entry_hash.to_vec());
+    let report = kernel.verify_sealed_log()?;
+    assert!(report.chain_valid, "{:?}", report.error);
+    assert_eq!(report.break_glass_redeemed, 1);
+
+    // Replay set-up: the unsigned burn row is deleted and the token file is
+    // re-read as unconsumed, inside the same bucket.
+    kernel
+        .conn
+        .execute("DELETE FROM consumed_break_glass_tokens", [])?;
+    let mut reread = BreakGlassTokenFile::from_token(&token)?.into_token()?;
+    let err = kernel
+        .export_events_authorized(cfg.ruleset_hash, options, &mut reread)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("already redeemed"), "{err}");
+    let exports: i64 = kernel
+        .conn
+        .query_row("SELECT COUNT(*) FROM export_receipts", [], |r| r.get(0))?;
+    assert_eq!(exports, 1, "the replay produced no second export");
     Ok(())
 }

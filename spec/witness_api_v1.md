@@ -183,6 +183,15 @@ genesis   = "000…0" (64 zeros)
 when absent. The Swift pre-image is pinned against device-produced vectors in
 `ios/Tests/SecuraCVTests/WitnessChainPreimageTests.swift`.
 
+**Known limit (stated, not fixed):** the pre-image joins its fields with `:`
+and carries no length prefixes, so it is not injective — a `zone` or
+`event_type` value that itself contains `:` lets two different records
+produce the same pre-image, hash and signature. A verifier of `reference_v1`
+must therefore reject any field value containing `:` (the producer never
+emits one; `zone` is sanitized to `[A-Za-z0-9_-]` upstream), and the next
+`chain_format` length-prefixes every field, the way the kernel's own
+`request_hash` and `token_signing_hash` already do.
+
 ### 4.2 `wap_v1` — canary-wap firmware
 
 Source of truth: `canary_wap.ino` `compute_chain_hash` /

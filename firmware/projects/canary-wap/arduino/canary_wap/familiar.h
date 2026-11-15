@@ -132,12 +132,14 @@ uint16_t compute_fingerprint(const FingerprintInputs& inputs);
 // ROTATING FILTER (daily "familiar" recognition)
 // ════════════════════════════════════════════════════════════════════════════
 
-// Record a fingerprint in today's filter.
+// Record a fingerprint in today's filter. A fingerprint whose salted hash
+// did not compute is not recorded (sweep F364).
 void note_fingerprint(uint16_t fp);
 
 // Is this fingerprint present in YESTERDAY's filter?
 // (Used by Phase 8's notification policy to mark an event as ambient.)
-// Returns false if no rotation has happened yet (cold boot, first day).
+// Returns false if no rotation has happened yet (cold boot, first day), or
+// if the fingerprint's salted hash did not compute (not counted as a query).
 bool is_ambient(uint16_t fp);
 
 // Call periodically from the main loop. Performs a rotation if
@@ -153,10 +155,12 @@ void rotate_now();
 
 // User pressed "Always ignore this pattern" on an alert; persist the
 // fingerprint to NVS. Subsequent events matching this fp will be marked
-// always-ignored by Phase 8.
+// always-ignored by Phase 8. False, with nothing added or persisted, if the
+// module is not initialized or the fingerprint's salted hash did not compute.
 bool always_ignore(uint16_t fp);
 
-// Query the always-ignore filter.
+// Query the always-ignore filter. False, and not counted as a query, if the
+// fingerprint's salted hash did not compute.
 bool is_always_ignored(uint16_t fp);
 
 // User-initiated reset — forget all always-ignore entries.

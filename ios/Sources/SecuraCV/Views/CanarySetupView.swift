@@ -5,7 +5,8 @@
 // the first thing on this screen is "near this phone" — the nearby card the
 // moment one is heard — and the family list comes second, for a Canary with
 // no door (a display) or a door that has closed. Then the steps for that
-// family (SetupGuide.canary), with the live part under each: read the setup
+// family (SetupGuide.canary), with the live part under each: send a blank
+// display's flasher link to a computer (the phone cannot flash), read the setup
 // key (scan the glass QR — the scan starts the join by itself — or type
 // it), join the Canary's setup network, pick your Wi-Fi from the networks
 // the Canary itself can see (prefilled when this phone remembered it), and
@@ -41,7 +42,7 @@ struct CanarySetupView: View {
             } header: {
                 Text("No card? Pick yours")
             } footer: {
-                Text("A display shows a QR on its glass; the others have a setup network as a fallback.")
+                Text("A display shows a QR on its glass (a blank one gets SecuraCV from a computer first); the others have a setup network as a fallback.")
             }
         }
         .navigationTitle("Add a Canary")
@@ -87,6 +88,7 @@ struct NearbyListenControl: View {
 struct CanaryFamilySetupView: View {
     let family: CanaryFamily
     @EnvironmentObject var store: FleetStore
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var portal = SetupPortalClient()
 
     @State private var setupSSID = ""
@@ -110,12 +112,22 @@ struct CanaryFamilySetupView: View {
     @State private var cameraDenied = false
     /// The watch for it on the network gave up waiting (it never spins on).
     @State private var watchTimedOut = false
+    @State private var watchClockStarted = false
+    /// Only the newest watch clock may end the watch: the join restarts it,
+    /// and an older, longer clock must not fire in the middle.
+    @State private var watchClockToken = 0
+    /// What was already on the network when this walkthrough opened, so a
+    /// same-kind Canary heard after it can be named as the new one even
+    /// when this phone never joined its setup network (ArrivalWatch).
+    @State private var arrivals = ArrivalWatch()
+    @State private var newcomerIDs: [String] = []
 
     var body: some View {
         List {
             ForEach(Array(SetupGuide.canary(family).enumerated()), id: \.element.id) { i, step in
                 SetupStepSection(index: i + 1, step: step) {
                     switch step.action {
+                    case .flashFromComputer: flashControl
                     case .nearbyCanary: NearbyListenControl(what: "the \(family.deviceType.role.lowercased())")
                     case .readSetupKey: keyControl
                     case .joinSetupNetwork: joinControl
@@ -127,7 +139,15 @@ struct CanaryFamilySetupView: View {
         }
         .navigationTitle(family.deviceType.role)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear(perform: prefill)
+        .onAppear {
+            prefill()
+            foldArrivals()
+        }
+        .onChange(of: store.discovery.found) { _, _ in foldArrivals() }
+        .onChange(of: store.discovery.isBrowsing) { _, _ in foldArrivals() }
+        // Leaving the foreground stops the browse; a stop and restart that
+        // land between two renders would never reach the onChange above.
+        .onChange(of: scenePhase) { _, phase in if phase != .active { arrivals.interrupt() } }
         .onChange(of: portal.networks) { _, networks in
             // The Canary's own list arrived: preselect the remembered
             // network when it can see it — and nothing otherwise (the
@@ -138,8 +158,11 @@ struct CanaryFamilySetupView: View {
         .onChange(of: portalChoice) { _, choice in matchPassword(to: choice.isEmpty ? homeSSID : choice) }
         .onChange(of: portal.phase) { _, phase in
             guard phase == .done else { return }
-            let ssid = effectiveSSID
-            if HouseholdWiFiStore.shouldRemember(toggleOn: remember, joined: true, ssid: ssid) {
+            // Remember only a network THIS phone handed over: a join
+            // finished on the Canary's own page (iOS's captive pop-up) names
+            // no network here, and the typed fields may be a different one.
+            if let ssid = portal.handedSSID,
+               HouseholdWiFiStore.shouldRemember(toggleOn: remember, joined: true, ssid: ssid) {
                 try? HouseholdWiFiStore.save(HouseholdWiFi(ssid: ssid, password: homePassword, savedAt: Date()))
                 remembered = HouseholdWiFiStore.load()
             }
@@ -198,6 +221,29 @@ struct CanaryFamilySetupView: View {
         } else if homePassword == remembered.password {
             homePassword = ""
         }
+    }
+
+    // MARK: - the flash
+
+    /// A computer's job, never the phone's (iOS has no USB serial): the
+    /// phone hands the computer the flasher link through the share sheet —
+    /// AirDrop to a Mac is one tap — with the product already picked where
+    /// we know it. Nothing here pretends to flash.
+    @ViewBuilder private var flashControl: some View {
+        ShareLink(item: FlasherLinks.webFlasher(product: FlasherLinks.glanceAMOLEDProduct),
+                  subject: Text("Flash a Canary Glance AMOLED"),
+                  message: Text("Open this on a computer in Chrome or Edge, then plug the Waveshare 2.41 AMOLED in with a data USB-C cable.")) {
+            Label("Send to my computer — Glance AMOLED", systemImage: "laptopcomputer.and.arrow.down")
+        }
+        ShareLink(item: URL(string: FlasherLinks.webFlasher)!,
+                  subject: Text("Flash a Canary display"),
+                  message: Text("Open this on a computer in Chrome or Edge, then plug the display in with a data USB-C cable.")) {
+            Label("Send to my computer — another display", systemImage: "square.and.arrow.up")
+        }
+        Link(destination: EcosystemMap.downloadURL) {
+            Label("Or get the SecuraCV Flasher app", systemImage: "arrow.down.app")
+        }
+        .font(.footnote)
     }
 
     // MARK: - the key
@@ -288,6 +334,15 @@ struct CanaryFamilySetupView: View {
             .disabled(effectiveSSID.isEmpty || portalBusy)
         }
         portalPhaseLine
+        if portal.phase == .reachingPortal || (portal.onSetupNetwork && portal.phase != .done) {
+            // iOS may open the Canary's page in its own pop-up the moment
+            // the phone is on the setup network; say what both ways out do
+            // (SetupPortal.captivePopupNote — the client watches /status
+            // meanwhile, so a join finished there lands here as done).
+            Text(SetupPortal.captivePopupNote)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder private var portalPhaseLine: some View {
@@ -307,7 +362,11 @@ struct CanaryFamilySetupView: View {
                 }
             }
         case .done:
-            Label("It's on \(effectiveSSID) — its own verdict. Its setup network goes away now, and this phone is back on your Wi-Fi.", systemImage: "checkmark.circle")
+            // Named only when this phone sent the name; a join finished on
+            // the Canary's own page is still its verdict, without the name.
+            Label(portal.handedSSID.map {
+                "It's on \($0) — its own verdict. Its setup network goes away now, and this phone is back on your Wi-Fi."
+            } ?? SetupPortal.joinedElsewhereLine, systemImage: "checkmark.circle")
                 .foregroundStyle(Theme.color(.calm))
         case .failed(let why):
             Label(why, systemImage: "exclamationmark.triangle")
@@ -316,6 +375,12 @@ struct CanaryFamilySetupView: View {
             if portal.onSetupNetwork {
                 Text("Fix it above and tap Join again — the phone is still on its setup network.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            // 192.168.4.1 is a local address: with Local Network off for
+            // this app the page never answers, and the browse already knows
+            // when that is the cause — say it, with the way to Settings.
+            if let advice = store.localNetworkAdvice {
+                RadioAdviceRow(advice: advice)
             }
         }
     }
@@ -417,6 +482,17 @@ struct CanaryFamilySetupView: View {
         return store.discovery.found.filter { isFamily($0) && NearbyCanaries.isSameDevice(suffix: suffix, host: $0.host) }
     }
 
+    /// Same-kind Canaries first heard after this walkthrough's baseline
+    /// settled — the new one, when no identity match exists (ArrivalWatch).
+    private var newcomers: [DiscoveredCanary] {
+        sameKind.filter { newcomerIDs.contains($0.id) }
+    }
+
+    private func foldArrivals() {
+        newcomerIDs = arrivals.observe(browsing: store.discovery.isBrowsing,
+                                       ids: sameKind.map(\.id), at: Date())
+    }
+
     /// The same kind of Canary on the network, when this walkthrough never
     /// learned which unit is the new one (it was set up from the card, or
     /// by the Flasher) — listed, never ticked.
@@ -437,6 +513,16 @@ struct CanaryFamilySetupView: View {
         } else if !seen.isEmpty {
             ForEach(seen) { d in discoveredRow(d, mine: true) }
             Text("It's on the Fleet tab now.").font(.caption).foregroundStyle(.secondary)
+        } else if joinedSuffix == nil, !newcomers.isEmpty {
+            // Only when no identity is known: a setup network this phone
+            // joined names exactly one Canary, and a different newcomer must
+            // never be ticked in its place.
+            // Set up from the card, the Camera app or the Flasher: it was not
+            // here when this walkthrough opened.
+            ForEach(newcomers) { d in discoveredRow(d, mine: true) }
+            Text("New on your network since you opened this, so it's almost certainly the one you just set up. It's on the Fleet tab now.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         } else if let advice = store.localNetworkAdvice {
             RadioAdviceRow(advice: advice)
         } else if joinedSuffix == nil && !sameKind.isEmpty {
@@ -449,7 +535,13 @@ struct CanaryFamilySetupView: View {
                 .fixedSize(horizontal: false, vertical: true)
         } else {
             ListeningRow(text: "Watching this network for the \(family.deviceType.role.lowercased())…", advice: nil)
-                .onAppear { store.startLocalNetworkDiscoveryIfConsented() }
+                .onAppear {
+                    store.startLocalNetworkDiscoveryIfConsented()
+                    // Set up some other way (the Camera app, the card): no
+                    // join here starts the clock, so this row does — with a
+                    // longer wait, since the person may not have started.
+                    if !watchClockStarted { startWatchClock(after: .seconds(180)) }
+                }
             Text("iOS asks for Local Network so this phone can see it on your Wi-Fi.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -479,11 +571,14 @@ struct CanaryFamilySetupView: View {
     }
 
     /// The network watch ends in words, not an endless spinner.
-    private func startWatchClock() {
+    private func startWatchClock(after wait: Duration = .seconds(90)) {
         watchTimedOut = false
+        watchClockStarted = true
+        watchClockToken += 1
+        let token = watchClockToken
         Task {
-            try? await Task.sleep(for: .seconds(90))
-            watchTimedOut = true
+            try? await Task.sleep(for: wait)
+            if token == watchClockToken { watchTimedOut = true }
         }
     }
 }

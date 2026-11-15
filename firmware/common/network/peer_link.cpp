@@ -8,6 +8,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Preferences.h>
+#include <esp_random.h>
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include <string.h>
@@ -36,6 +37,7 @@ int s_fd = -1;
 uint32_t s_bound_ip = 0;
 uint32_t s_next_hb_ms = 0;
 uint32_t s_seq = 0;
+uint8_t s_boot_id = 0;   ///< drawn once per boot in begin(); never 0 (peer_protocol.h REPLAY)
 uint32_t s_rx = 0, s_tx = 0, s_rejected = 0;
 bool s_announced = false;
 
@@ -103,6 +105,7 @@ void stamp(peer::Frame& f, uint32_t now_ms) {
   f.role = s_id.role;
   f.uptime_s = now_ms / 1000u;
   f.seq = ++s_seq;
+  f.boot_id = s_boot_id;
   f.flags = (s_hooks.hub_ok && s_hooks.hub_ok()) ? peer::FLAG_HUB_OK : 0;
   const peer::Election e = peer::elect(s_table, s_id.fp, f.uptime_s, (f.flags & peer::FLAG_HUB_OK) != 0, now_ms);
   if (e.who == peer::Election::Who::Hub) memset(f.coord_fp, 0, peer::FP_BYTES);
@@ -157,6 +160,13 @@ void begin(const Identity& id, const Hooks& hooks) {
   s_hooks = hooks;
   s_begun = true;
   s_table = peer::Table{};
+  // One random boot id per boot, so a receiver keys our replay window on
+  // (boot_id, seq) and a captured frame of an earlier boot is not a reboot.
+  while (s_boot_id == 0) {
+    uint8_t b = 0;
+    esp_fill_random(&b, sizeof(b));
+    s_boot_id = b;
+  }
 }
 
 void set_fp(const uint8_t fp[peer::FP_BYTES]) {

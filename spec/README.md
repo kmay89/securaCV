@@ -29,7 +29,7 @@ Canonical specification documents (authoritative sources; do not duplicate witho
 | [`break_glass.md`](break_glass.md) | — | Normative | 🟢 Stable — implemented by the `break_glass` CLI + kernel |
 | [`threat_model.md`](threat_model.md) | Draft v0.1 | Informative but binding | 🟢 Stable — the security/privacy boundary |
 | [`co_signing.md`](co_signing.md) | Draft v0.1 | Design note | ⚪ Design note — not yet a normative wire contract |
-| [`quorum_unseal_v2.md`](quorum_unseal_v2.md) | Draft v0.1 | Design specification | ⚪ Spec-only — the quorum/unseal v2 target design (threshold custody, ceremony, anchoring spine, disclosure surface); §3.1 quorum-gated policy mutation, §3.2 WYSIWYS approval, §3.6 human-context fields (break-glass), §5 `court export` (event bundles), and the §4 per-device anchoring primitives (typed subjects, TSA identity from the token, two-TSA anchor policy) are implemented; the rest is direction |
+| [`quorum_unseal_v2.md`](quorum_unseal_v2.md) | Draft v0.1 | Design specification | ⚪ Spec-only — the quorum/unseal v2 target design (threshold custody, ceremony, anchoring spine, disclosure surface); §3.1 quorum-gated policy mutation, §3.2 WYSIWYS approval, §3.6 human-context fields (break-glass), §5 `court export` (event bundles), and the §4 per-device anchoring primitives (typed subjects, TSA identity from the token, two-TSA anchor policy, a clock-provenance record sealed per anchor) are implemented; the rest is direction |
 | [`witness_mesh_os_v0.md`](witness_mesh_os_v0.md) | Draft v0.1 | Positioning + pointers | ⚪ Positioning — capability map, defers to the normative specs |
 | [`beacon_channel_v0.md`](beacon_channel_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — RF beacon channel (firmware scaffolding; bench status in `docs/audit/mesh_and_chirp_audit_v1.md`; **relay not built** — one radio hop today, `docs/FLEET_SEMANTICS.md` §6) |
 | [`chirp_channel_v0.md`](chirp_channel_v0.md) | Draft v0.2 | Normative (intended) | 🟡 Draft — Chirp, the community witness channel: signed template alerts over ESP-NOW radio (§2.2), not sound (the speaker's audible chirp is `audible_chirp.h`'s); canary-wap reference host-tested, C-ABI API in `firmware/common/chirp/chirp_channel.h` (audit: `docs/audit/mesh_and_chirp_audit_v1.md`) |
@@ -38,6 +38,14 @@ Canonical specification documents (authoritative sources; do not duplicate witho
 | [`gossip_replication_v0.md`](gossip_replication_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — mesh gossip replication (see F-08) |
 | [`household_keys_v0.md`](household_keys_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — household keys, the signed household-posture statement and the hub's attention rules; the hub side (checker, LAN API, attention engine, vectors) is host-tested, while the key satellite, the phone and watch clients and every witness-side consumer are **not built**, and nothing has been on a bench or had an external security review |
 | [`beacon_cap_gateway_v0.md`](beacon_cap_gateway_v0.md) | Draft v0.1, **specification only** | Informational | ⚪ Spec-only — explicitly **not implemented** until a future release |
+
+Machine-readable vocabularies (JSON, read by generators and lints, not prose):
+[`witness_dictionary.json`](witness_dictionary.json), the event, failure, attestation, claim and
+modality vocabularies `scripts/lint_dictionary_sync.py` holds every copy to; and
+[`device_details_vocabulary.json`](device_details_vocabulary.json), the keys a Canary's answers
+use, each with its class and the firmware sources that emit it, which
+`scripts/gen_device_vocabulary.py` writes into the Home Assistant integration's diagnostics
+redaction set.
 
 External canonical source (not under `spec/`): [`kernel/architecture.md`](../kernel/architecture.md).
 

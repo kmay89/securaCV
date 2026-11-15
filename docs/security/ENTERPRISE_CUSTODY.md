@@ -127,11 +127,35 @@ truncation but can never cause a false verify failure.
   fleet-level aggregate checkpoint anchored outward (TSA + OpenTimestamps).
   *Design specified:* `spec/quorum_unseal_v2.md` §4; standards research
   `PROVENANCE_INTEROP.md` §1.5.
-- **Fold anchor verification into `run_full_verify`** and require the CMS
-  countersignature to be checked in-boundary (see §4). `log_anchor verify` no
-  longer prints "OK" for a cryptographically unverified anchor — it prints
-  `UNVERIFIED` — but anchor checking is still a separate command; folding it in
-  makes truncation-past-an-anchor a hard verify failure.
+- **Fold anchor verification into `run_full_verify`.** *Shipped (structural):*
+  every `tsa_anchors` row is checked inside `run_full_verify` — row shape,
+  token imprint against the row, and for every head kind membership in the
+  declared ledger keyed on signed evidence only (a live row, or a retention
+  checkpoint whose device signature verifies under a lineage key). A head
+  that is in neither is `anchor_regression` — truncation past an anchor, a
+  rollback, or a different history than the one anchored is now a hard
+  verify failure in `log_verify`, witnessd's boot verify and `POST /verify`;
+  a damaged row or token is a warning (`docs/log_verify.md`). *Still
+  tracked:* the CMS countersignature stays delegated to `openssl ts -verify`
+  via `log_anchor verify --ca` — the kernel never links a CMS implementation
+  (see §4) — so the ledger verdict says the anchored states are present, not
+  that a TSA vouched for them.
+- **Clock provenance at every anchor.** *Shipped:* `witnessd` seals one
+  device-signed, hash-chained, never-pruned record per anchor row — the
+  device clock measured against the token's `genTime` in whole clamped
+  seconds, with the measured poll gap that bounds it, bound to the token by
+  its SHA-256 — and the ledger's head is the fifth anchor subject
+  (`clock_provenance_head`), so the next scheduled `anchor-all` fixes every
+  record in external time. The chain and signatures are part of the
+  `run_full_verify` verdict; a record that names a deleted or replaced
+  anchor, or an offset beyond one bucket, is a warning there and a failure
+  or `NOT SATISFIED` (`max_clock_offset_s`) under `log_anchor verify`;
+  `court_export` packages the record of every packaged token
+  (`docs/timestamping.md`, "Clock provenance"; design:
+  `docs/design/clock_provenance.md`). *Still tracked:* the record is the
+  device's own statement; a challenge to the device clock that also claims
+  key compromise before the next `clock_provenance_head` anchor is answered
+  by that anchor's cadence, not by the record.
 - **Cross-bind the receipt chains.** *Partly shipped:* every receipt-ledger
   head is an anchor subject of its own (`log_anchor --subject`, `anchor-all`),
   `court_export` packages the disclosure's own receipt-head token, and

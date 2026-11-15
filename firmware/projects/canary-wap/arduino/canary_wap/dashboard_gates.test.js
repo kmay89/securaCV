@@ -60,12 +60,23 @@
 //   * The reboot takes the API token (F361): Reboot Device and Retry full
 //     boot go through the same sign-in, so a session-only page's refusal
 //     says "Rebooting…" to nobody, and the card says the token is needed.
+//   * BLE Discovery keeps refreshing (F296): every pass schedules the next,
+//     an empty list and a refused or missing answer included, and a pass that
+//     ends after the view was left schedules nothing. Its nearby list draws
+//     each field as text (F405's page half), so a prefix of `<!--` leaves the
+//     rest of the list on screen.
+//   * The Fleet sheet shows the pairing QR's own refusal (F401): a 400 from
+//     GET /api/fleet/qr names what it refused, and the sheet shows those
+//     words, as text, where it used to say "Re-check the network name" for a
+//     password refusal too. Its handler is cut out of csi_dashboard_html.h.
 //
 // The page's own code is cut out of web_ui.h by markers that stand in the page
 // before and after these changes (so the old page runs here and fails on what
 // it does) and run against a stub DOM and a recording api(), the pattern of
-// recovery_kit.test.js beside this file. WAP_WEB_UI and WAP_INO point it at
-// another copy of the page and the sketch (an older tree's, to watch it fail).
+// recovery_kit.test.js beside this file. Markup a function writes is read as
+// a browser parses it (html_fragment.js beside this file). WAP_WEB_UI,
+// WAP_CSI_DASHBOARD and WAP_INO point it at another copy of the admin page,
+// the Sensing dashboard and the sketch (an older tree's, to watch it fail).
 //
 //   node --test firmware/projects/canary-wap/arduino/canary_wap/dashboard_gates.test.js
 
@@ -75,7 +86,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { parseFragment, textElement, shape, attr, HOSTILE } = require('./html_fragment.js');
+
 const UI = process.env.WAP_WEB_UI || path.join(__dirname, 'web_ui.h');
+const CSI = process.env.WAP_CSI_DASHBOARD || path.join(__dirname, 'csi_dashboard_html.h');
 const INO = process.env.WAP_INO || path.join(__dirname, 'canary_wap.ino');
 const src = fs.readFileSync(UI, 'utf8');
 
@@ -350,22 +364,53 @@ describe('Community tab: Opera and Chirp views gated on a first answer (F276)', 
   });
 });
 
-describe("BLE Discovery's 10 s refresh runs only while the Community panel is open (F276)", () => {
-  const ble = uiFunction('refreshBleDiscovery', true);
-  function blePage(panel) {
-    // One Canary near: refreshBleDiscovery() returns before its timer on an
-    // empty or refused nearby list, so only a listed one reaches the timer.
-    const near = { canaries: [{ device_id_prefix: 'a1b2', rssi_current: -60, rssi_quality: 'good', last_seen_sec_ago: 1 }],
+// The page's escapeHtml(), a one-line declaration, beside a DOM's text
+// serializer (html_fragment.js's textElement()).
+const escapeHtmlSrc = (() => {
+  const m = src.match(/\n    function escapeHtml\([^\n]*\n/);
+  assert.ok(m, 'escapeHtml() is in web_ui.h');
+  return m[0];
+})();
+
+// BLE Discovery's pass, with a timer model that knows which refresh is
+// waiting: setTimeout() adds one, clearTimeout() and firing take it away.
+// The nearby and status answers are a test's own (a value, or a function
+// api() calls on each request); by default the device is up with one Canary
+// near.
+const ONE_NEAR = { canaries: [{ device_id_prefix: 'a1b2', rssi_current: -60, rssi_quality: 'good', last_seen_sec_ago: 1 }],
                    non_canary_device_count: 0 };
-    const p = pageContext({ '/api/ble/status': { ble_available: true }, '/api/nearby': near },
-      { currentPanel: panel, currentCommunityTab: 'ble-discovery', bleDiscoveryTimer: 0,
-        peekActive: false, stopPeek() {}, stopCamInfoPolling() {} });
-    p.cleared = [];
-    p.ctx.clearTimeout = (id) => p.cleared.push(id);
-    vm.runInContext(ble + uiFunction('switchPanel', false) + uiFunction('selectCommunityTab', false) +
-      '\nglobalThis.__t = { refreshBleDiscovery, switchPanel, selectCommunityTab };\n', p.ctx);
-    return p;
-  }
+const BLE_UP = { ble_available: true };
+function blePage(panel, { status = BLE_UP, nearby = ONE_NEAR } = {}) {
+  const p = pageContext({ '/api/ble/status': status, '/api/nearby': nearby },
+    { currentPanel: panel, currentCommunityTab: 'ble-discovery', bleDiscoveryTimer: 0,
+      peekActive: false, stopPeek() {}, stopCamInfoPolling() {} });
+  p.cleared = [];
+  p.live = new Set();
+  p.ctx.setTimeout = (fn, ms) => {
+    p.timers.push(ms);
+    p.later.push(fn);
+    p.live.add(p.timers.length);
+    return p.timers.length;
+  };
+  p.ctx.clearTimeout = (id) => { p.cleared.push(id); p.live.delete(id); };
+  // The waiting refresh fires, as the browser runs it.
+  p.fire = () => {
+    assert.equal(p.live.size, 1, 'one refresh is waiting');
+    const [id] = p.live;
+    p.live.delete(id);
+    return p.later[id - 1]();
+  };
+  p.logged = [];
+  p.ctx.console = { error: (...a) => p.logged.push(a) };
+  p.ctx.document.createElement = () => textElement();
+  delete p.ctx.escapeHtml;
+  vm.runInContext(escapeHtmlSrc + uiFunction('refreshBleDiscovery', true) + uiFunction('switchPanel', false) +
+    uiFunction('selectCommunityTab', false) +
+    '\nglobalThis.__t = { refreshBleDiscovery, switchPanel, selectCommunityTab };\n', p.ctx);
+  return p;
+}
+
+describe("BLE Discovery's 10 s refresh runs only while the Community panel is open (F276)", () => {
   it('schedules the next refresh with the panel open', async () => {
     const p = blePage('community');
     await p.ctx.__t.refreshBleDiscovery();
@@ -385,6 +430,7 @@ describe("BLE Discovery's 10 s refresh runs only while the Community panel is op
       p.cleared.length = 0;
       leave(p);
       assert.ok(p.cleared.includes(1), `the waiting refresh (timer 1) is canceled (${p.cleared})`);
+      assert.equal(p.live.size, 0);
     });
   }
   it('opening the Community panel keeps a waiting refresh', async () => {
@@ -393,6 +439,147 @@ describe("BLE Discovery's 10 s refresh runs only while the Community panel is op
     p.cleared.length = 0;
     p.ctx.__t.switchPanel('community', false);
     assert.deepEqual(p.cleared, []);
+  });
+});
+
+// Sweep F296: the empty-list branch and the two `if (!answer) return` guards
+// returned before the reschedule, so after one empty list a Canary that came
+// into range showed only when the owner opened the view again. A refusal
+// comes from the page's own api() (answerTo()); null is what the guards test.
+describe('BLE Discovery keeps refreshing after an empty or refused list (F296)', () => {
+  const EMPTY = { canaries: [], non_canary_device_count: 3 };
+  const cases = [
+    ['an empty list', async () => ({ nearby: EMPTY })],
+    ['a nearby read no route took', async () => ({ nearby: await answerTo(IDF_404) })],
+    ['a nearby read with no answer', async () => ({ nearby: await answerTo('no answer') })],
+    ['no nearby answer at all', async () => ({ nearby: null })],
+    ['a status read no route took', async () => ({ status: await answerTo(IDF_404) })],
+    ['a status read with no answer', async () => ({ status: await answerTo('no answer') })],
+    ['no status answer at all', async () => ({ status: null })],
+    ['neither read taken (a build without the routes)',
+     async () => ({ status: await answerTo(IDF_404), nearby: await answerTo(IDF_404) })],
+  ];
+  for (const [name, answers] of cases) {
+    it(`${name} schedules the next refresh with the panel open, and nothing with it left`, async () => {
+      const open = blePage('community', await answers());
+      await open.ctx.__t.refreshBleDiscovery();
+      assert.deepEqual(open.timers, [10000]);
+      assert.equal(open.live.size, 1);
+      const left = blePage('status', await answers());
+      await left.ctx.__t.refreshBleDiscovery();
+      assert.deepEqual(left.timers, []);
+    });
+  }
+  it('an empty list says so, and the next pass lists a Canary that came into range', async () => {
+    let near = EMPTY;
+    const p = blePage('community', { nearby: () => near });
+    await p.ctx.__t.refreshBleDiscovery();
+    assert.match(p.el('bleNearbyList').innerHTML, /No nearby Canaries detected/);
+    near = ONE_NEAR;
+    await p.fire();
+    assert.match(p.el('bleNearbyList').innerHTML, /SCV-a1b2/);
+    assert.equal(p.live.size, 1);
+  });
+
+  // Ten passes and more, through every kind of answer: one refresh waits after
+  // each pass while the view is on screen, the one bleDiscoveryTimer names,
+  // and none once the panel or the view is left, a pass then in flight
+  // included.
+  it('keeps exactly one refresh waiting through every kind of pass, and none once the view is left', async () => {
+    const IDF = await answerTo(IDF_404);
+    const NONE = await answerTo('no answer');
+    let now = {};
+    const p = blePage('community', {
+      status: () => ('status' in now ? (typeof now.status === 'function' ? now.status() : now.status) : BLE_UP),
+      nearby: () => ('nearby' in now ? (typeof now.nearby === 'function' ? now.nearby() : now.nearby) : ONE_NEAR),
+    });
+    const one = (what) => {
+      assert.equal(p.live.size, 1, `${what}: one refresh waits`);
+      assert.ok(p.live.has(p.ctx.bleDiscoveryTimer), `${what}: it is the one bleDiscoveryTimer names`);
+    };
+    await p.ctx.__t.refreshBleDiscovery();                     // the view opens
+    one('the first pass');
+    const passes = [
+      ['an empty list', { nearby: EMPTY }],
+      ['a refused nearby read', { nearby: IDF }],
+      ['a refused status read', { status: IDF }],
+      ['a throw drawing the list', { nearby: { canaries: [null], non_canary_device_count: 0 } }],
+      ['a throw reading the status', { status: { ble_available: true, get opera() { throw new Error('status'); } } }],
+      ['no status answer', { status: null }],
+      ['one Canary near', {}],
+      ['no answer to either', { status: NONE, nearby: NONE }],
+      ['no nearby answer', { nearby: null }],
+      ['an empty list again', { nearby: EMPTY }],
+    ];
+    for (const [name, answers] of passes) {
+      now = answers;
+      await p.fire();
+      one(name);
+    }
+    // A throw no catch in the pass takes (its own log throws) still schedules.
+    now = { nearby: { canaries: [null] } };
+    p.ctx.console.error = () => { throw new Error('log'); };
+    await assert.rejects(p.fire(), /log/);
+    one('a throw out of the pass');
+    p.ctx.console.error = (...a) => p.logged.push(a);
+    // The panel is left while a pass waits for its nearby answer.
+    let answer;
+    now = { nearby: () => new Promise((r) => { answer = r; }) };
+    const inFlight = p.fire();
+    await settle();
+    assert.equal(typeof answer, 'function', 'the pass is waiting for /api/nearby');
+    p.ctx.__t.switchPanel('status');
+    assert.equal(p.live.size, 0, 'leaving the panel cancels');
+    answer(ONE_NEAR);
+    await inFlight;
+    assert.equal(p.live.size, 0, 'the pass in flight schedules nothing once the panel is left');
+    // Back on the panel, then another view picked while a pass is in flight.
+    p.ctx.__t.switchPanel('community', false);
+    now = {};
+    await p.ctx.__t.refreshBleDiscovery();
+    one('back on the panel');
+    now = { nearby: () => new Promise((r) => { answer = r; }) };
+    const inFlight2 = p.fire();
+    await settle();
+    p.ctx.__t.selectCommunityTab('opera');
+    assert.equal(p.live.size, 0, 'picking another view cancels');
+    answer(EMPTY);
+    await inFlight2;
+    assert.equal(p.live.size, 0, 'the pass in flight schedules nothing once the view is left');
+  });
+});
+
+// The nearby list's prefix is four bytes of another device's advertised name
+// (sweep F405, its page half): drawn into innerHTML as it came, `<!--`
+// commented out every row after it. Each field of a row is drawn as text.
+describe('the nearby list draws every field as text (F405)', () => {
+  const row = (over) => ({ ...ONE_NEAR.canaries[0], ...over });
+  async function drawn(canaries) {
+    const p = blePage('community', { nearby: { canaries, non_canary_device_count: 0 } });
+    await p.ctx.__t.refreshBleDiscovery();
+    return parseFragment(p.el('bleNearbyList').innerHTML);
+  }
+  const prefixes = (f) => f.elements.filter((e) => /font-family:var\(--mono\)/.test(attr(e, 'style') || '')).map((e) => e.text);
+
+  it('a prefix of <!-- leaves the rest of the list on screen', async () => {
+    const f = await drawn([row({ device_id_prefix: '<!--' }), row({ device_id_prefix: 'a1b2' })]);
+    assert.deepEqual(f.comments, []);
+    assert.deepEqual(prefixes(f), ['SCV-<!--', 'SCV-a1b2']);
+  });
+
+  it('a field that reads as markup makes no element, attribute or comment beyond the row\'s own', async () => {
+    const own = (await drawn([row({})])).elements;
+    for (const h of HOSTILE) {
+      const f = await drawn([row({ device_id_prefix: h, rssi_current: h, rssi_quality: h, last_seen_sec_ago: h })]);
+      const tag = h.slice(0, 30);
+      assert.deepEqual(f.elements.map(shape), own.map(shape), tag);
+      assert.deepEqual(f.comments, [], tag);
+      for (const e of f.elements) for (const [n, v] of e.attrs) assert.ok(!v.includes(h), `${tag}: ${e.tag} ${n}`);
+      assert.deepEqual(prefixes(f), [`SCV-${h}`], tag);
+      const spans = f.elements.filter((e) => e.tag === 'span').map((e) => e.text);
+      assert.deepEqual(spans, [`${h} dBm`, h], tag);
+      assert.equal(f.elements.at(-1).text, `${h}s`, tag);
+    }
   });
 });
 
@@ -919,5 +1106,329 @@ describe('The reboot takes the API token (F361)', () => {
     const card = slice('<p class="tnote">Rebooting this Canary takes the API token', 'onclick="confirmReboot()"');
     assert.ok(card.includes('<p class="tnote">Rebooting this Canary takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>'));
     assert.ok(card.length < 600, 'the note sits with the Save and Reboot buttons');
+  });
+});
+
+// ── Fleet sheet (F401) ───────────────────────────────────────────────────
+
+// The Sensing dashboard's "Make a code" handler, cut out of
+// csi_dashboard_html.h whole, beside that page's escapeHTML().
+const csi = fs.readFileSync(CSI, 'utf8');
+const fleetGenHandler = (() => {
+  const head = "document.getElementById('fleetGenBtn').addEventListener('click', async () => {";
+  const a = csi.indexOf(head);
+  assert.ok(a >= 0, 'the fleetGenBtn handler is in csi_dashboard_html.h');
+  const b = csi.indexOf('\n});\n', a);
+  return csi.slice(a, b + 5);
+})();
+const csiEscapeSrc = (() => {
+  const a = csi.indexOf('\nfunction escapeHTML(s) {');
+  assert.ok(a >= 0, 'escapeHTML() is in csi_dashboard_html.h');
+  return csi.slice(a + 1, csi.indexOf('\n}\n', a) + 3);
+})();
+// Every text GET /api/fleet/qr sends with its 400: fleet_qr_query.h's
+// refusal() and the literals handle_fleet_qr() sends itself (the ';' refusal).
+const QR_REFUSALS = (() => {
+  const q = fs.readFileSync(path.join(__dirname, 'fleet_qr_query.h'), 'utf8');
+  const texts = [...q.matchAll(/case Read::\w+: return "([^"]+)";/g)].map((m) => m[1]);
+  const ino = fs.readFileSync(INO, 'utf8');
+  const a = ino.indexOf('static esp_err_t handle_fleet_qr(httpd_req_t* req) {');
+  assert.ok(a >= 0, 'handle_fleet_qr() is in the sketch');
+  const body = ino.slice(a, ino.indexOf('\n}\n', a));
+  for (const m of body.matchAll(/httpd_resp_send\(\s*req,\s*"([^"]+)"/g)) texts.push(m[1]);
+  return texts;
+})();
+
+async function fleetSheet(res) {
+  const els = new Map();
+  const el = (id) => {
+    if (!els.has(id)) {
+      els.set(id, { id, value: '', innerHTML: '', style: { display: 'none' }, focus() {},
+                    addEventListener(type, fn) { this.on = this.on || {}; this.on[type] = fn; } });
+    }
+    return els.get(id);
+  };
+  el('fleetSsid').value = 'Home';
+  el('fleetPass').value = 'hunter22';
+  const asked = [];
+  const ctx = {
+    URLSearchParams,
+    document: { getElementById: el, createElement: () => textElement() },
+    cvFetch: async (url) => {
+      asked.push(url);
+      if (res === 'no answer') throw new TypeError('Failed to fetch');
+      return { status: res.status, ok: res.status >= 200 && res.status < 300, text: async () => res.body };
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(csiEscapeSrc + fleetGenHandler, ctx);
+  await el('fleetGenBtn').on.click();
+  const shown = parseFragment(el('fleetQrImg').innerHTML);
+  return { shown, html: el('fleetQrImg').innerHTML, wrap: el('fleetQrWrap').style.display, asked };
+}
+// One red paragraph, and what it reads.
+function said(r) {
+  assert.deepEqual(r.shown.elements.map(shape), ['p[style]'], 'one paragraph, nothing else');
+  assert.deepEqual(r.shown.comments, []);
+  assert.equal(r.wrap, '', 'the sheet shows it');
+  return r.shown.elements[0].text;
+}
+
+describe("The Fleet sheet shows the pairing QR's own refusal (F401)", () => {
+  it('reads the route the page asks', () => {
+    assert.ok(QR_REFUSALS.includes('Password is too long'));
+    assert.ok(QR_REFUSALS.includes('Network name is too long'));
+    assert.ok(QR_REFUSALS.some((t) => t.includes(';')), "the ';' refusal is read from the sketch");
+  });
+
+  it('a password refusal says so, and never says to re-check the network name', async () => {
+    const r = await fleetSheet({ status: 400, body: 'Password is too long' });
+    assert.deepEqual(r.asked, ['/api/fleet/qr?ssid=Home&pass=hunter22']);
+    const text = said(r);
+    assert.equal(text, 'Password is too long');
+    assert.doesNotMatch(text, /network name/i);
+  });
+
+  it('a network name refusal says so', async () => {
+    assert.equal(said(await fleetSheet({ status: 400, body: 'Network name is too long' })), 'Network name is too long');
+  });
+
+  it('shows every refusal the route sends as it sends it, and names the network only where the route does', async () => {
+    for (const why of QR_REFUSALS) {
+      const text = said(await fleetSheet({ status: 400, body: why }));
+      assert.equal(text, why);
+      if (!/network name/i.test(why)) assert.doesNotMatch(text, /network name/i, why);
+    }
+  });
+
+  it('a refusal that reads as markup is shown as text, a long one whole', async () => {
+    for (const body of ['<b>x</b>', ...HOSTILE, `<i>${'x'.repeat(2048)}</i>`]) {
+      assert.equal(said(await fleetSheet({ status: 400, body })), body.trim(), body.slice(0, 30));
+    }
+  });
+
+  it('a 400 with no words keeps the old wording', async () => {
+    for (const body of ['', '  \n']) {
+      assert.equal(said(await fleetSheet({ status: 400, body })),
+                   'Could not generate (error 400). Re-check the network name.');
+    }
+  });
+
+  it('any other failure names its status, shows none of its body, and does not blame the network name', async () => {
+    for (const [status, body] of [[500, '<b>boom</b> Network name is too long'], [403, '{"error":"forbidden"}'],
+                                  [404, 'Nothing matches the given URI']]) {
+      const text = said(await fleetSheet({ status, body }));
+      assert.equal(text, `Could not generate (error ${status}).`);
+      assert.doesNotMatch(text, /network name/i);
+    }
+  });
+
+  it('keeps the session and rate-limit hints', async () => {
+    assert.equal(said(await fleetSheet({ status: 401, body: '{"error":"unauthorized"}' })),
+                 'Session expired — reload this page and try again.');
+    assert.equal(said(await fleetSheet({ status: 429, body: '{"retry_after_s":30}' })),
+                 'Too many attempts — wait a minute, then retry.');
+  });
+
+  it('draws the code on success, and says the Canary is unreachable when nothing answers', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29 29"><path d="M0 0h1v1H0z"/></svg>';
+    const ok = await fleetSheet({ status: 200, body: svg });
+    assert.equal(ok.html, svg);
+    assert.equal(ok.wrap, '');
+    assert.match(said(await fleetSheet('no answer')), /Network error — is the Canary still reachable\?/);
+  });
+});
+
+// ── The note under the sensitivity slider (F315) ────────────────────────
+
+// GET /api/settings names where the levels core.presence runs come from
+// (thresholds_source: "stored", "preset" or "mixed"), and a stored level
+// wins over the Sensitive / Balanced / Quiet buttons and the slider. The
+// Sensing dashboard's COPY bank, the stretch of its script from the Pet
+// Mode switch's first state through the load-time sync
+// (syncSettingsFromServer), and the calibration's Accept handler, cut out
+// of csi_dashboard_html.h whole (the same markers stand in the page before
+// F315, so its old script runs here too), run against a stub DOM and a
+// recording cvFetch().
+const csiCopySrc = (() => {
+  const a = csi.indexOf('\nconst COPY = {');
+  assert.ok(a >= 0, 'the COPY bank is in csi_dashboard_html.h');
+  return csi.slice(a + 1, csi.indexOf('\n};\n', a) + 4);
+})();
+const csiSyncSrc = (() => {
+  const head = 'setSwitch(petSwitch, window.PET_MODE);\n';
+  const a = csi.indexOf(head);
+  assert.ok(a >= 0, "the Pet Mode switch's first state is in csi_dashboard_html.h");
+  const sync = csi.indexOf('(async function syncSettingsFromServer() {', a);
+  assert.ok(sync > a, 'the load-time settings sync follows it');
+  const b = csi.indexOf('\n})();\n', sync);
+  return csi.slice(a + head.length, b + 7);
+})();
+const csiAcceptSrc = (() => {
+  const head = "calibAcceptBtn.addEventListener('click', async () => {";
+  const a = csi.indexOf(head);
+  assert.ok(a >= 0, "the calibration's Accept handler is in csi_dashboard_html.h");
+  return csi.slice(a, csi.indexOf('\n});\n', a) + 5);
+})();
+// What GET /api/settings answers, the field aside (csi_integration.cpp's
+// handle_settings_get()).
+const SETTINGS = { pet_mode: false, preset: 'balanced', sensitivity: 50,
+                   quiet_hours: { enabled: false, start_min: 1380, end_min: 420 },
+                   privacy_ceiling: 'p0', filter_foreign: true, tz: '', tz_iana: '' };
+const withSource = (source) => ({ status: 200, body: JSON.stringify({ ...SETTINGS, thresholds_source: source }) });
+// The sources the device can send: the literals presence_thresholds_source()
+// returns (csi_settings_nvs.cpp), which the GET writes as they are.
+const SOURCES = (() => {
+  const nvs = fs.readFileSync(path.join(__dirname, 'csi_settings_nvs.cpp'), 'utf8');
+  const a = nvs.indexOf('const char* presence_thresholds_source(');
+  assert.ok(a >= 0, 'presence_thresholds_source() is in csi_settings_nvs.cpp');
+  const body = nvs.slice(a, nvs.indexOf('\n}\n', a));
+  return [...body.matchAll(/return "([^"]+)";/g)].map((m) => m[1]);
+})();
+
+// The page loaded against `routes` (a path to one answer, or to a list of
+// answers taken in turn, the last one kept), then settled.
+async function sensingPage(routes) {
+  const note = { id: 'sensNote', hidden: true, textContent: '' };   // as the markup ships it
+  const asked = [];
+  const ended = [];
+  const queue = new Map(Object.entries(routes).map(([k, v]) => [k, Array.isArray(v) ? [...v] : [v]]));
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+  const ctx = {
+    window: { PET_MODE: false },
+    document: { getElementById: (id) => (id === 'sensNote' ? note : null) },
+    cvFetch: async (url, opts) => {
+      asked.push(`${(opts && opts.method) || 'GET'} ${url}`);
+      const list = queue.get(url);
+      const res = !list ? { status: 404, body: 'Nothing matches the given URI' } : list.length > 1 ? list.shift() : list[0];
+      if (res === 'no answer') throw new TypeError('Failed to fetch');
+      return { status: res.status, ok: res.status >= 200 && res.status < 300,
+               json: async () => JSON.parse(res.body), text: async () => res.body };
+    },
+    setSwitch() {}, petSwitch: {}, lsGet: () => null, lsSet() {}, setMode() {},
+    sensitivitySlider: null, applyQhUiState() {}, applyZoneUi() {},
+    calibAcceptBtn: { addEventListener(type, fn) { this.on = this.on || {}; this.on[type] = fn; } },
+    endCalibration: (label) => ended.push(label),
+  };
+  vm.createContext(ctx);
+  vm.runInContext(csiCopySrc + csiSyncSrc + csiAcceptSrc + '\nglobalThis.__COPY = COPY;\n', ctx);
+  await settle();
+  return {
+    note, asked, ended, COPY: ctx.__COPY,
+    accept: async () => { await ctx.calibAcceptBtn.on.click(); await settle(); },
+  };
+}
+
+describe('the note under the sensitivity slider says when stored levels win (F315)', () => {
+  it('sits under the slider, which it describes, hidden until the device names a source', () => {
+    const a = csi.indexOf('<div class="tinker-row">');
+    assert.ok(a >= 0, 'the Details row is in csi_dashboard_html.h');
+    const row = parseFragment(csi.slice(a, csi.indexOf('</details>', a)));
+    const at = row.elements.findIndex((e) => e.tag === 'input' && attr(e, 'id') === 'sensitivitySlider');
+    assert.ok(at >= 0, 'the slider is in the Details row');
+    const next = row.elements[at + 1];
+    assert.ok(next && next.tag === 'p' && attr(next, 'id') === 'sensNote', 'the note is the element right under the slider');
+    assert.equal(attr(next, 'hidden'), '', 'it ships hidden');
+    assert.equal(next.text, '', 'and empty');
+    assert.equal(attr(row.elements[at], 'aria-describedby'), 'sensNote');
+  });
+
+  it('the device can send three sources, and the GET sends the one the page reads', () => {
+    assert.deepEqual([...SOURCES].sort(), ['mixed', 'preset', 'stored']);
+    const integ = fs.readFileSync(path.join(__dirname, 'csi_integration.cpp'), 'utf8');
+    const a = integ.indexOf('esp_err_t handle_settings_get(httpd_req_t* req) {');
+    assert.ok(a >= 0, 'handle_settings_get() is in csi_integration.cpp');
+    const get = integ.slice(a, integ.indexOf('\n}\n', a));
+    assert.ok(get.includes('\\"thresholds_source\\":\\"%s\\"'), 'GET /api/settings writes thresholds_source');
+    assert.ok(/thresholds_source = presence_thresholds_source\(/.test(get), 'from presence_thresholds_source()');
+  });
+
+  it('shows the words for a stored or mixed source, and nothing for the preset', async () => {
+    for (const source of SOURCES) {
+      const p = await sensingPage({ '/api/settings': withSource(source) });
+      assert.deepEqual(p.asked, ['GET /api/settings']);
+      if (source === 'preset') {
+        assert.equal(p.note.hidden, true, 'preset: no note');
+        assert.equal(p.note.textContent, '');
+      } else {
+        assert.equal(p.note.hidden, false, `${source}: the note shows`);
+        assert.equal(p.note.textContent, p.COPY.savedLevels[source], `${source}: its own words, from COPY`);
+      }
+    }
+  });
+
+  it('the words say what wins and name the way back', async () => {
+    const stored = (await sensingPage({ '/api/settings': withSource('stored') })).note.textContent;
+    const mixed = (await sensingPage({ '/api/settings': withSource('mixed') })).note.textContent;
+    assert.notEqual(stored, mixed);
+    for (const text of [stored, mixed]) {
+      assert.match(text, /calibration or the Tuning Lab/);
+      assert.match(text, /reset motion, active and breathing in the Tuning Lab\.$/);
+    }
+    assert.match(stored, /change nothing/);
+    assert.match(mixed, /set only the rest/);
+  });
+
+  it('names the buttons the saved levels override, never "the modes": Pet Mode keeps working', async () => {
+    // Above the note sit the Sensitive / Balanced / Quiet picker, then Pet
+    // Mode and Quiet hours. A saved level overrides only what the picker and
+    // the slider set (core.presence's three levels, csi_settings_nvs.cpp's
+    // reader); Pet Mode's gate (core_presence.cpp's on_init) and Quiet hours
+    // apply whatever is saved. So the words name the picker's buttons as the
+    // markup labels them, and never say "mode", which an owner reads as Pet
+    // Mode too.
+    const a = csi.indexOf('id="modeGroup"');
+    assert.ok(a >= 0, 'the mode picker is in csi_dashboard_html.h');
+    const start = csi.lastIndexOf('<div', a);
+    const picker = parseFragment(csi.slice(start, csi.indexOf('</div>', a) + 6));
+    const labels = picker.elements.filter((e) => e.tag === 'button').map((e) => e.text.trim());
+    assert.deepEqual(labels, ['Sensitive', 'Balanced', 'Quiet']);
+    const after = csi.slice(a, csi.indexOf('id="sensNote"', a));
+    assert.match(after, /<span>Pet Mode<\/span>/, 'Pet Mode sits between the picker and the note');
+    for (const source of ['stored', 'mixed']) {
+      const text = (await sensingPage({ '/api/settings': withSource(source) })).note.textContent;
+      for (const label of labels) assert.match(text, new RegExp(`\\b${label}\\b`), `${source}: names ${label}`);
+      assert.doesNotMatch(text, /\bmodes?\b/i, `${source}: no "mode", which reads as Pet Mode too`);
+    }
+  });
+
+  it('shows nothing for an answer without the field, a value it does not know, or no answer', async () => {
+    const hidden = async (routes) => {
+      const p = await sensingPage(routes);
+      assert.equal(p.note.hidden, true, JSON.stringify(routes).slice(0, 80));
+      assert.equal(p.note.textContent, '');
+    };
+    await hidden({ '/api/settings': { status: 200, body: JSON.stringify(SETTINGS) } });
+    for (const odd of ['STORED', 'constructor', '__proto__', 'toString', '', 3, null, ['stored'], ...HOSTILE]) {
+      await hidden({ '/api/settings': withSource(odd) });
+    }
+    await hidden({ '/api/settings': { status: 503, body: '{"ok":false,"reason":"settings store unavailable"}' } });
+    await hidden({ '/api/settings': 'no answer' });
+  });
+
+  it('a calibration that applied re-reads the source, so the note is right without a reload', async () => {
+    const p = await sensingPage({
+      '/api/settings': [withSource('preset'), withSource('stored')],
+      '/api/csi/calibrate/apply': { status: 200, body: '{"ok":true}' },
+    });
+    assert.equal(p.note.hidden, true);
+    await p.accept();
+    assert.deepEqual(p.asked, ['GET /api/settings', 'POST /api/csi/calibrate/apply', 'GET /api/settings']);
+    assert.equal(p.note.hidden, false);
+    assert.equal(p.note.textContent, p.COPY.savedLevels.stored);
+    assert.deepEqual(p.ended, [p.COPY.calibrate.done]);
+  });
+
+  it('a calibration that did not apply asks nothing more and leaves the note', async () => {
+    for (const apply of [{ status: 409, body: '{"ok":false}' }, 'no answer']) {
+      const p = await sensingPage({
+        '/api/settings': [withSource('mixed'), withSource('stored')],
+        '/api/csi/calibrate/apply': apply,
+      });
+      await p.accept();
+      assert.deepEqual(p.asked, ['GET /api/settings', 'POST /api/csi/calibrate/apply']);
+      assert.equal(p.note.textContent, p.COPY.savedLevels.mixed);
+      assert.deepEqual(p.ended, [p.COPY.calibrate.error]);
+    }
   });
 });

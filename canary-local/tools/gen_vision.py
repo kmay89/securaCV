@@ -48,7 +48,7 @@ import re
 from pathlib import Path
 
 from _pseudonym import SALT_B, client_id, pseudonym
-from _tooling import die, repo_root
+from _tooling import die, read_const, repo_root
 
 REPO = repo_root()
 FW = REPO / "firmware/projects/canary-vision"
@@ -105,10 +105,6 @@ def grab(path: Path, pattern: str, label: str, flags=0) -> str:
     return m.group(1)
 
 
-def igrab(path: Path, pattern: str, label: str) -> int:
-    return int(grab(path, pattern, label))
-
-
 # --------------------------------------------------------------------------- #
 # 1. identity + firmware constants (config.h / version.h / detect_config.h)
 # --------------------------------------------------------------------------- #
@@ -118,33 +114,37 @@ DEVICE_TYPE = grab(CONFIG_H, r'DEVICE_TYPE\s*=\s*"([^"]+)"', "device type")
 DEVICE_ID = grab(CONFIG_H, r'DEVICE_ID\s*=\s*"([^"]+)"', "device id")
 MODEL = grab(CONFIG_H, r'MODEL\s*=\s*"([^"]+)"', "model string")
 
-PERSON_TARGET = igrab(CONFIG_H, r"PERSON_TARGET\s*=\s*(\d+)", "PERSON_TARGET")
-SCORE_MIN = igrab(CONFIG_H, r"SCORE_MIN\s*=\s*(\d+)", "SCORE_MIN")
-LOST_TIMEOUT_MS = igrab(CONFIG_H, r"LOST_TIMEOUT_MS\s*=\s*(\d+)", "LOST_TIMEOUT_MS")
-DWELL_START_MS = igrab(CONFIG_H, r"DWELL_START_MS\s*=\s*(\d+)", "DWELL_START_MS")
-VOXEL_COLS = igrab(CONFIG_H, r"VOXEL_COLS\s*=\s*(\d+)", "VOXEL_COLS")
-VOXEL_ROWS = igrab(CONFIG_H, r"VOXEL_ROWS\s*=\s*(\d+)", "VOXEL_ROWS")
-FRAME_W = igrab(CONFIG_H, r"FRAME_W\s*=\s*(\d+)", "FRAME_W")
-FRAME_H = igrab(CONFIG_H, r"FRAME_H\s*=\s*(\d+)", "FRAME_H")
-INVOKE_PERIOD_MS = igrab(CONFIG_H, r"INVOKE_PERIOD_MS\s*=\s*(\d+)", "INVOKE_PERIOD_MS")
-INTERACTION_WINDOW_MS = igrab(CONFIG_H, r"INTERACTION_AFTER_LEAVE_WINDOW_MS\s*=\s*(\d+)",
-                              "INTERACTION_AFTER_LEAVE_WINDOW_MS")
-ZONE_INTERACTION_MS = igrab(CONFIG_H, r"ZONE_INTERACTION_MS\s*=\s*(\d+)", "ZONE_INTERACTION_MS")
-HEARTBEAT_MS = igrab(CONFIG_H, r"HEARTBEAT_MS\s*=\s*(\d+)", "HEARTBEAT_MS")
-AIM_PUBLISH_MS = igrab(CONFIG_H, r"AIM_PUBLISH_MS\s*=\s*(\d+)", "AIM_PUBLISH_MS")
-AIM_IDLE_PUBLISH_MS = igrab(CONFIG_H, r"AIM_IDLE_PUBLISH_MS\s*=\s*(\d+)", "AIM_IDLE_PUBLISH_MS")
-AIM_AUTO_OFF_MS = igrab(CONFIG_H, r"AIM_AUTO_OFF_MS\s*=\s*(\d+)", "AIM_AUTO_OFF_MS")
+# Every number here is read by _tooling.read_const, the rule gen_flash.py reads
+# the same constants by (sweep F369): comments are not code, a name is a whole
+# word defined once, the value is a plain decimal literal, and anything else is
+# refused by name rather than read as its first number. vision.test.js reads
+# them back with c_const.js, the same rule in JavaScript.
+PERSON_TARGET = read_const(CONFIG_H, "PERSON_TARGET", read)
+SCORE_MIN = read_const(CONFIG_H, "SCORE_MIN", read)
+LOST_TIMEOUT_MS = read_const(CONFIG_H, "LOST_TIMEOUT_MS", read)
+DWELL_START_MS = read_const(CONFIG_H, "DWELL_START_MS", read)
+VOXEL_COLS = read_const(CONFIG_H, "VOXEL_COLS", read)
+VOXEL_ROWS = read_const(CONFIG_H, "VOXEL_ROWS", read)
+FRAME_W = read_const(CONFIG_H, "FRAME_W", read)
+FRAME_H = read_const(CONFIG_H, "FRAME_H", read)
+INVOKE_PERIOD_MS = read_const(CONFIG_H, "INVOKE_PERIOD_MS", read)
+INTERACTION_WINDOW_MS = read_const(CONFIG_H, "INTERACTION_AFTER_LEAVE_WINDOW_MS", read)
+ZONE_INTERACTION_MS = read_const(CONFIG_H, "ZONE_INTERACTION_MS", read)
+HEARTBEAT_MS = read_const(CONFIG_H, "HEARTBEAT_MS", read)
+AIM_PUBLISH_MS = read_const(CONFIG_H, "AIM_PUBLISH_MS", read)
+AIM_IDLE_PUBLISH_MS = read_const(CONFIG_H, "AIM_IDLE_PUBLISH_MS", read)
+AIM_AUTO_OFF_MS = read_const(CONFIG_H, "AIM_AUTO_OFF_MS", read)
 HA_PREFIX = grab(CONFIG_H, r'HA_DISCOVERY_PREFIX\s*=\s*"([^"]+)"', "HA discovery prefix")
 OTA_PRODUCT = grab(CONFIG_H, r'#define SECURACV_OTA_PRODUCT\s+"([^"]+)"', "OTA product")
 
 BOUNDS = {
-    "score": [igrab(DETECT_CFG_H, r"DETECT_SCORE_MIN_LO\s*=\s*(\d+)", "score lo"),
-              igrab(DETECT_CFG_H, r"DETECT_SCORE_MIN_HI\s*=\s*(\d+)", "score hi")],
+    "score": [read_const(DETECT_CFG_H, "DETECT_SCORE_MIN_LO", read),
+              read_const(DETECT_CFG_H, "DETECT_SCORE_MIN_HI", read)],
     "target": [0, 255],
-    "lost_ms": [igrab(DETECT_CFG_H, r"DETECT_LOST_MS_LO\s*=\s*(\d+)", "lost lo"),
-                igrab(DETECT_CFG_H, r"DETECT_LOST_MS_HI\s*=\s*(\d+)", "lost hi")],
-    "dwell_ms": [igrab(DETECT_CFG_H, r"DETECT_DWELL_MS_LO\s*=\s*(\d+)", "dwell lo"),
-                 igrab(DETECT_CFG_H, r"DETECT_DWELL_MS_HI\s*=\s*(\d+)", "dwell hi")],
+    "lost_ms": [read_const(DETECT_CFG_H, "DETECT_LOST_MS_LO", read),
+                read_const(DETECT_CFG_H, "DETECT_LOST_MS_HI", read)],
+    "dwell_ms": [read_const(DETECT_CFG_H, "DETECT_DWELL_MS_LO", read),
+                 read_const(DETECT_CFG_H, "DETECT_DWELL_MS_HI", read)],
 }
 # the HA number entity for target really is 0..255 in ha_discovery.cpp
 must(HA_DISCOVERY_CPP, '"box", 0, 255, 1', "target number bounds")
@@ -468,6 +468,9 @@ must(MAIN_CPP, '(o.o)  ))     Connecting to MQTT...', "mqtt scene")
 must(MAIN_CPP, 'boot_kv("Sensor",  "Grove Vision AI V2 (SSCMA)")', "sensor kv")
 must(MAIN_CPP, 'boot_kvf("Profile", "%s  (watching for a %s)"', "profile kv")
 must(VISION_MGR_CPP, 'Grove Vision AI ID=%d', "i2c id line")
+# The value is the module verdict, 1 (answered) or 0 (did not), never the
+# module's own id (sweep F384): the staged line below shows the 1.
+must(VISION_MGR_CPP, 'printf("Grove Vision AI ID=%d\\n", g_module_ok ? 1 : 0)', "i2c id line's 1-or-0 value")
 must(VISION_MGR_CPP, "ERROR: Grove Vision AI V2 not responding", "i2c error line")
 must(WIFI_SUP_CPP, 'Connecting SSID=\\"%s\\" ...', "wifi connecting line")
 must(WIFI_SUP_CPP, "Connected IP=%s RSSI=%ddBm", "wifi connected line")
@@ -516,7 +519,7 @@ SERIAL = {
         {"tag": "[--]", "text": f"Rate   every {INVOKE_PERIOD_MS} ms"},
         {"tag": "[WIFI]", "text": 'Connecting SSID="Loft 2.4G" ...'},
         {"tag": "[WIFI]", "text": f"Connected IP={EX_IP} RSSI=-52dBm"},
-        {"tag": "[I2C]", "text": "Grove Vision AI ID=2"},
+        {"tag": "[I2C]", "text": "Grove Vision AI ID=1"},
         {"tag": "", "text": "              ,_,  ))"},
         {"tag": "", "text": "             (o.o)  ))     Connecting to MQTT..."},
         {"tag": "[--]", "text": f"Device ID  {DEVICE_ID}"},
@@ -529,7 +532,7 @@ SERIAL = {
     "ready": [
         "",
         f"  watching · invoke every {INVOKE_PERIOD_MS} ms · heartbeat every {HEARTBEAT_MS // 1000} s",
-        "  a non-zero Grove Vision AI ID is the handshake — ID=0 means check the I2C link",
+        "  Grove Vision AI ID=1 is the handshake — ID=0 means check the I2C link",
     ],
     "id_zero_hint": "Grove Vision AI ID=0 → I2C wiring/pins wrong, Grove cable on the wrong "
                     "socket, or module in bootloader mode (tap Reset).",
@@ -925,8 +928,8 @@ FLASH = {
     "port_rule": "Always through the XIAO's / DevKit's USB-C, never the module's. The module "
                  "port cannot see the ESP32, and the XIAO port cannot reach the Himax flash.",
     "quickstart": QUICKSTART,
-    "monitor": "pio device monitor — 115200 baud; a non-zero `Grove Vision AI ID=...` line "
-               "confirms the I2C link",
+    "monitor": "pio device monitor — 115200 baud; `Grove Vision AI ID=1` confirms the module "
+               "answered over I2C (ID=0: it did not)",
     "secrets": "cp secrets/secrets.example.h secrets/secrets.h — WiFi + MQTT fields. Your "
                "first USB flash with real secrets seeds the device's NVS; every signed OTA "
                "update it installs later inherits that setup automatically.",

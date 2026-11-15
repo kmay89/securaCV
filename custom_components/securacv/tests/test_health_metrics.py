@@ -5,7 +5,12 @@ tests run directly under the stub conftest harness.
 """
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from ..health_metrics import (
+    HA_ATTRIBUTE_INT_MAX,
     STORAGE_STATUS_CRITICAL,
     STORAGE_STATUS_DEGRADED,
     STORAGE_STATUS_GOOD,
@@ -19,6 +24,7 @@ from ..health_metrics import (
     kernel_storage,
     kernel_thermal,
     memory_free_bytes,
+    memory_free_reading,
     replacement_recommended,
     round_pct,
     storage_status,
@@ -127,6 +133,60 @@ def test_memory_free_reads_both_firmware_spellings():
     assert memory_free_bytes({}) == 0
 
 
+def test_memory_free_reading_tells_no_reading_from_zero():
+    """The same reader as memory_free_bytes, but None without a reading, so
+    Memory Critical can leave a health with no memory field off (HA48)."""
+    assert memory_free_reading({"memory_free": 1000, "free_heap": 2000}) == 1000
+    assert memory_free_reading({"memory_free": "junk", "free_heap": 2000}) == 2000
+    assert memory_free_reading({"memory_free": 0}) == 0
+    for body in ({}, {"memory_free": None}, {"free_heap": "junk"}, {"memory_free": [1]}):
+        assert memory_free_reading(body) is None, body
+        assert memory_free_bytes(body) == 0, body
+
+
+def test_memory_free_reading_takes_a_non_finite_number_as_no_reading():
+    """json.loads takes Infinity, NaN and 1e400 (an infinity), and int()
+    raises OverflowError on the infinities: a non-finite value is no
+    reading, so the other spelling is read, else None, and nothing raises
+    out of the Health or Memory Critical callback."""
+    for raw in ('{"memory_free": Infinity}', '{"free_heap": -Infinity}',
+                '{"memory_free": 1e400}', '{"free_heap": NaN}'):
+        body = json.loads(raw)
+        assert memory_free_reading(body) is None, raw
+        assert memory_free_bytes(body) == 0, raw
+    assert memory_free_reading(json.loads('{"memory_free": Infinity, "free_heap": 4096}')) == 4096
+
+
+def test_memory_free_reading_takes_a_bool_as_no_reading():
+    """A JSON true or false is not a byte count: int() read them as 1 and 0
+    bytes free, which both the Health sensor and Memory Critical showed as
+    critical (sweep HA53). A bool is skipped like junk, so the other
+    spelling is read, else None."""
+    for raw in ('{"memory_free": true}', '{"memory_free": false}', '{"free_heap": true}'):
+        body = json.loads(raw)
+        assert memory_free_reading(body) is None, raw
+        assert memory_free_bytes(body) == 0, raw
+    assert memory_free_reading(json.loads('{"memory_free": true, "free_heap": 4096}')) == 4096
+    # A number is still a number, in either spelling and as a numeric string.
+    assert memory_free_reading({"memory_free": 1}) == 1
+    assert memory_free_reading({"free_heap": "1023"}) == 1023
+
+
+def test_memory_free_reading_takes_a_negative_count_as_no_reading():
+    """Free heap is unsigned in both firmware (uint32_t, the WAP publishing
+    it with %lu), so a negative count is not one a unit sends: it is skipped
+    like junk, not read as low memory on both entities. The sign is read
+    before int() truncates, so -0.5 is not 0 bytes free."""
+    for raw in ('{"memory_free": -1}', '{"free_heap": -1}', '{"memory_free": -0.5}',
+                '{"memory_free": "-1"}', '{"free_heap": -1e9}'):
+        body = json.loads(raw)
+        assert memory_free_reading(body) is None, raw
+        assert memory_free_bytes(body) == 0, raw
+    assert memory_free_reading(json.loads('{"memory_free": -1, "free_heap": 512}')) == 512
+    assert memory_free_reading({"memory_free": 0}) == 0
+    assert memory_free_reading({"memory_free": 0.5}) == 0
+
+
 def test_battery_percent_reads_both_firmware_spellings():
     # canary-wap spelling: trusted with or without presence info.
     assert battery_percent({"battery": 88}) == 88
@@ -142,6 +202,102 @@ def test_battery_percent_reads_both_firmware_spellings():
     # Missing or junk values degrade to None, never to a false reading.
     assert battery_percent({}) is None
     assert battery_percent({"battery": "junk"}) is None
+
+
+# Every JSON scalar (and two containers) a broker can put in a battery key,
+# as the text json.loads takes (it takes NaN, Infinity and 1e400, an
+# infinity), and the reading it is (sweep HA57): the number int() reads,
+# truncated toward zero, or None for no reading. The same table as HA53's
+# memory readings, and memory_free_reading gives the same answer for each.
+_BATTERY_READINGS = [
+    # No reading: not a number a unit's uint8_t state of charge can be.
+    ("true", None),
+    ("false", None),
+    ("null", None),
+    ("NaN", None),
+    ("Infinity", None),
+    ("-Infinity", None),
+    ("1e400", None),
+    ("-1e400", None),
+    ("-1", None),
+    ("-0.5", None),
+    ('"-1"', None),
+    ('""', None),
+    ('"junk"', None),
+    ('"50.5"', None),
+    ("[50]", None),
+    ('{"pct": 50}', None),
+    # A string int() reads only through a sign or its digit separator (5
+    # and 50): a unit publishes a number, never a spelling of one.
+    ('"+5"', None),
+    ('"5_0"', None),
+    # A finite number past 64 bits: Home Assistant's JSON writer refuses the
+    # integer in a state attribute, so a reading it cannot carry is none.
+    ("1e300", None),
+    ("18446744073709551616", None),
+    # A reading. A string of digits reads as its number, a fraction
+    # truncates, and minus zero is zero (it is equal to 0, so it is no
+    # negative). Above 100 is read as sent, up to the largest integer Home
+    # Assistant carries: no unit sends it, and no threshold sits above.
+    ("0", 0),
+    ("-0.0", 0),
+    ("0.5", 0),
+    ("8", 8),
+    ("50.9", 50),
+    ('"50"', 50),
+    ('" 50 "', 50),
+    ("100", 100),
+    ("101", 101),
+    ("18446744073709551615", HA_ATTRIBUTE_INT_MAX),
+]
+
+
+@pytest.mark.parametrize(("raw", "reading"), _BATTERY_READINGS, ids=[r for r, _ in _BATTERY_READINGS])
+def test_battery_percent_reads_only_a_number_in_either_spelling(raw, reading):
+    """Sweep HA57: battery_percent did `int(value)` under TypeError and
+    ValueError only, so `Infinity` and `1e400` raised OverflowError out of
+    the Health callback, `true` read as 1 % (critical) and `false` as 0 %,
+    and a negative charge read as critical. It now reads a key's value as
+    memory_free_reading does, under `battery` and under `battery_soc` alike
+    (the latter only when battery_present is true, as before)."""
+    value = json.loads(raw)
+    for body in (
+        {"battery": value},
+        {"battery": value, "battery_present": True},
+        {"battery_soc": value, "battery_present": True},
+    ):
+        assert battery_percent(body) == reading, body
+        assert type(battery_percent(body)) is type(reading), body
+    # The gate stays: mains power is no battery, whatever the key says,
+    # and battery_soc without battery_present true is not trusted.
+    assert battery_percent({"battery": value, "battery_present": False}) is None
+    assert battery_percent({"battery_soc": value, "battery_present": False}) is None
+    assert battery_percent({"battery_soc": value}) is None
+    # One reader: free memory reads the same value the same way.
+    assert memory_free_reading({"memory_free": value}) == reading
+    assert memory_free_reading({"free_heap": value}) == reading
+
+
+_NO_BATTERY_NUMBER = [raw for raw, reading in _BATTERY_READINGS if reading is None]
+
+
+@pytest.mark.parametrize("raw", _NO_BATTERY_NUMBER, ids=_NO_BATTERY_NUMBER)
+def test_battery_percent_reads_past_a_key_with_no_number(raw):
+    """A `battery` that holds no number is read past like an absent one, as
+    memory_free_reading reads past a junk memory_free: battery_soc is then
+    the reading when battery_present is true, and only then."""
+    body = json.loads('{"battery": ' + raw + ', "battery_soc": 61, "battery_present": true}')
+    assert battery_percent(body) == 61
+    body = json.loads('{"battery": ' + raw + ', "battery_soc": 61}')
+    assert battery_percent(body) is None
+    # And a battery_soc with no number is no reading either.
+    body = json.loads('{"battery": ' + raw + ', "battery_soc": ' + raw + ', "battery_present": true}')
+    assert battery_percent(body) is None
+
+
+def test_a_number_in_battery_still_wins_over_battery_soc():
+    assert battery_percent({"battery": 9, "battery_soc": 61, "battery_present": True}) == 9
+    assert battery_percent({"battery": 0, "battery_soc": 61, "battery_present": True}) == 0
 
 
 def test_battery_charging_states():

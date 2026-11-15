@@ -381,29 +381,33 @@ void test_struct_handlers_check_the_payload_length() {
   CHECK(count(rx, "handle_heartbeat(peer,payload);") == 0);
   CHECK(count(rx, "handle_tamper_alert(peer,payload);") == 0);
   CHECK(count(rx, ",payload);") == 0);
-  // The two inline rekey cases gate before they cast.
+  // The two inline rekey cases gate before they read, and read a copy: a
+  // payload starts 38 bytes into the frame, unaligned for a uint32_t.
   const std::string rk_gate = "if(payload_len!=sizeof(OperaRekeyPayload))break;";
-  const std::string rk_cast = "constOperaRekeyPayload*rk=(constOperaRekeyPayload*)payload;";
+  const std::string rk_cast = "OperaRekeyPayloadcopy;memcpy(&copy,payload,sizeof(copy));constOperaRekeyPayload*rk=&copy;";
   const std::string ak_gate = "if(payload_len!=sizeof(OperaRekeyAckPayload))break;";
-  const std::string ak_cast = "constOperaRekeyAckPayload*ack=(constOperaRekeyAckPayload*)payload;";
+  const std::string ak_cast = "OperaRekeyAckPayloadcopy;memcpy(&copy,payload,sizeof(copy));constOperaRekeyAckPayload*ack=&copy;";
   CHECK(count(rx, rk_gate) == 1 && count(rx, rk_cast) == 1 && before(rx, rk_gate, rk_cast));
   CHECK(count(rx, ak_gate) == 1 && count(rx, ak_cast) == 1 && before(rx, ak_gate, ak_cast));
 
-  // Each handler refuses any other length before it casts.
-  struct Handler { const char* fn; const char* type; const char* var; };
+  // Each handler refuses any other length before it casts, or, where it
+  // reads a uint32_t, before it copies the payload out.
+  struct Handler { const char* fn; const char* type; const char* var; bool copied; };
   const Handler handlers[] = {
-    {"handle_heartbeat",        "HeartbeatPayload",       "hb"},
-    {"handle_auth_challenge",   "AuthChallengePayload",   "challenge"},
-    {"handle_auth_response",    "AuthResponsePayload",    "response"},
-    {"handle_tamper_alert",     "TamperAlertPayload",     "alert"},
-    {"handle_power_alert",      "PowerAlertPayload",      "alert"},
-    {"handle_offline_imminent", "OfflineImminentPayload", "alert"},
+    {"handle_heartbeat",        "HeartbeatPayload",       "hb",        false},
+    {"handle_auth_challenge",   "AuthChallengePayload",   "challenge", false},
+    {"handle_auth_response",    "AuthResponsePayload",    "response",  false},
+    {"handle_tamper_alert",     "TamperAlertPayload",     "alert",     true},
+    {"handle_power_alert",      "PowerAlertPayload",      "alert",     false},
+    {"handle_offline_imminent", "OfflineImminentPayload", "alert",     true},
   };
   for (const Handler& hd : handlers) {
     const std::string body = squeeze(function_body(code, hd.fn));
     CHECK(!body.empty());
     const std::string gate = std::string("if(payload_len!=sizeof(") + hd.type + "))return;";
-    const std::string cast = std::string("const") + hd.type + "*" + hd.var + "=(const" + hd.type + "*)payload;";
+    const std::string cast = hd.copied
+        ? std::string(hd.type) + "copy;memcpy(&copy,payload,sizeof(copy));const" + hd.type + "*" + hd.var + "=&copy;"
+        : std::string("const") + hd.type + "*" + hd.var + "=(const" + hd.type + "*)payload;";
     CHECK(count(body, gate) == 1);
     CHECK(count(body, cast) == 1);
     CHECK(before(body, gate, cast));
