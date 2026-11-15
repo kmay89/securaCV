@@ -18,3 +18,32 @@ Seeed Studio SSCMA model zoo and is licensed under the MIT License:
   https://github.com/Seeed-Studio/sscma-model-zoo
 (Also recorded beside the firmware that ships it, in
 firmware/projects/canary-vision/NOTICE.)
+
+Third-party programs bundled with the desktop apps
+--------------------------------------------------
+The SecuraCV Flasher and SecuraCV Lab installers bundle espflash, the flash
+engine, as a separate program. It is licensed under the MIT License or the
+Apache License, Version 2.0, at your option:
+  Copyright (c) 2022 The Espflash Project Developers
+  https://github.com/esp-rs/espflash
+The SecuraCV Flasher installers also bundle two things from Raspberry Pi's
+usbboot:
+  https://github.com/raspberrypi/usbboot
+rpiboot, the program that runs on your computer, is licensed under the Apache
+License, Version 2.0 (usbboot's LICENSE file). The mass-storage-gadget64 boot
+image that rpiboot sends to the board is not one program under that one
+license. usbboot's own mass-storage-gadget64/README.md calls it a bootloader
+image that loads a Linux initramfs, so it is a Linux system image whose
+components carry their own licenses, the Linux kernel's GNU General Public
+License, version 2, among them. usbboot names its source as the
+mass-storage-gadget64 branch of
+  https://github.com/raspberrypi/buildroot
+The macOS Flasher installers also bundle libusb as a separate dynamic library,
+licensed under the GNU Lesser General Public License, version 2.1 or later:
+  https://github.com/libusb/libusb
+The versions bundled are the ones pinned in .github/espflash-pins.env and in
+.github/workflows/desktop-flasher-release.yml. Each Flasher and Lab release
+built by those workflows attaches, as THIRD_PARTY_LICENSES.html, the full
+license texts of espflash, rpiboot and libusb and of every Rust crate compiled
+into the app. The license texts of the boot image's components are not
+reproduced there; the file names the image and points at its source.

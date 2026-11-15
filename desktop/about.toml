@@ -1,0 +1,43 @@
+# cargo-about configuration: the SecuraCV Flasher's third-party license notices.
+#
+# desktop-flasher-release.yml's `notices` job runs
+# .github/scripts/third_party_notices.sh, which renders every crate in
+# desktop/src-tauri/Cargo.lock with this file
+#   cargo about generate --locked -m desktop/src-tauri/Cargo.toml \
+#     -c desktop/about.toml .github/scripts/third_party_notices.hbs
+# and adds the bundled programs' license files; the finalize job attaches the
+# result to the release, beside the installers, as THIRD_PARTY_LICENSES.html.
+#
+# `accepted` is deny.toml's `[licenses] allow`, entry for entry: one license
+# policy for the repository's Rust code. A crate under any other license fails
+# the generate step, and so the release, until it is reviewed and added in
+# both files (scripts/tests/test_third_party_notices.py holds them equal).
+
+accepted = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "CC0-1.0",
+    "OpenSSL",
+    "WTFPL",
+    "CDLA-Permissive-2.0",
+    "blessing",
+]
+
+# Only what ships: the universal macOS build and the Linux x86_64 build.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+]
+
+# Dev-dependencies are compiled for tests, never into the app.
+ignore-dev-dependencies = true

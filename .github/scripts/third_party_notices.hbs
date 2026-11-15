@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>@APP@: third-party licenses</title>
+    <style>
+        @media (prefers-color-scheme: dark) {
+            body {
+                background: #333;
+                color: white;
+            }
+            a {
+                color: skyblue;
+            }
+        }
+        .container {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .licenses-list {
+            list-style-type: none;
+            margin: 0;
+            padding: 0;
+        }
+        .license-text {
+            max-height: 200px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+
+<body>
+    <main class="container">
+        <h1>@APP@: third-party licenses</h1>
+        <p>@APP@ is licensed under the Apache License, Version 2.0 (LICENSE and NOTICE in
+            <a href="https://github.com/kmay89/securaCV">its source repository</a>). Its installers also carry
+            software written by others, each under its own license: the Rust crates compiled into the app,
+            listed first, and the programs bundled beside it, listed after them. This file was written by
+            the release that built those installers, from the app's Cargo.lock and the versions that
+            release pinned.</p>
+
+        <h2>Rust crates, by license</h2>
+        <ul class="licenses-overview">
+            {{#each overview}}
+            <li><a href="#{{id}}">{{name}}</a> ({{count}})</li>
+            {{/each}}
+        </ul>
+
+        <ul class="licenses-list">
+            {{#each licenses}}
+            <li class="license">
+                <h3 id="{{id}}">{{name}}</h3>
+                <h4>Used by:</h4>
+                <ul class="license-used-by">
+                    {{#each used_by}}
+                    <li><a href="{{#if crate.repository}} {{crate.repository}} {{else}} https://crates.io/crates/{{crate.name}} {{/if}}">{{crate.name}} {{crate.version}}</a></li>
+                    {{/each}}
+                </ul>
+                <pre class="license-text">{{text}}</pre>
+            </li>
+            {{/each}}
+        </ul>
+
+        <h2>Bundled programs</h2>
+        <!-- bundled-programs -->
+    </main>
+</body>
+
+</html>

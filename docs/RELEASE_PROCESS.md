@@ -27,6 +27,82 @@ Dev builds are **full production builds** — same features, same signing key,
 same workflow. The only difference is the version suffix. You test exactly
 what users will run.
 
+## Who can sign
+
+A tag is the control surface; the key behind it has one of its own. Every job
+that is handed the release key (`firmware-release.yml`'s, and the two that
+sign with the same key, `flasher-release.yml` and `vision-model-release.yml`)
+runs in the GitHub environment **`firmware-release`**, and that environment is
+where `OTA_SIGNING_KEY_PEM` belongs. A repository-level secret can be read by
+any workflow file on any branch, so anyone who can push a branch can use it;
+an environment secret is read only by a job in that environment, after the
+environment's protection rules pass.
+
+What `firmware-release.yml` enforces by itself, on both paths:
+
+- **A dispatch signs only from `main`.** Dispatched from any other ref, the
+  signing job does not run and the run fails in its first seconds, in a job
+  outside the environment, with `Firmware Release signs only from main`:
+  nothing is built. "Update everything" pressed on any other ref does not
+  dispatch firmware at all; on a publish press its summary says which ref it
+  was pressed on.
+- **A tag signs only a commit that is on `main`.** `fw-v*` can be pushed at
+  any commit by anyone who can push a tag, so the first step fetches `main`'s
+  last 200 commits and refuses a commit that is not among them, before any
+  step reads the key. A commit on `main` but more than 200 commits behind its
+  tip is refused the same way: release from a newer one.
+
+Both checks are lines of `firmware-release.yml`, and the copy GitHub runs is
+the one at the commit being released. A tag on a commit that edits the file,
+or on a commit from before the checks existed, runs that copy, and while the
+key is a repository-level secret that run is handed the key. So the checks
+stop a tag or a dispatch made by mistake, not a person who can push a commit
+that changes the file: that takes the key in the environment and reviewers
+on it (below).
+
+The other two signers are held to the environment and to nothing else.
+Neither checks `main`, so two paths still sign from a branch: Flasher Factory
+Images with `channel: dev` builds and signs the HEAD of the branch it is
+dispatched on (bench bring-up is its purpose), and Vision Model Asset,
+dispatched by hand, signs the model manifest for the tag you name with the
+dispatch ref's copy of its scripts. Dispatched from a branch, either one
+runs that branch's copy of its workflow file.
+
+What only the repository's owner can add, once, in Settings (the workflow
+files name the environment; they cannot show that it is protected):
+
+1. **Environments → `firmware-release` → Required reviewers.** This is the
+   second person. With it set, every signing run waits for an approval:
+   Firmware Release, the Vision Model Asset run it starts near its end (and
+   then waits 20 minutes for, so approve that one too, or attach the model
+   afterwards from Actions → Vision Model Asset with the tag), and every
+   Flasher Factory Images press. GitHub creates the environment the first
+   time a job names it, with no rules: until reviewers are added it gates
+   nothing.
+2. **Move the key.** Add `OTA_SIGNING_KEY_PEM` as a secret of that
+   environment, then delete the repository-level secret of the same name.
+   While both exist the environment's copy is the one the signing jobs read,
+   and the repository-level copy is still readable from any branch.
+3. **Variables → `OTA_SIGNING_KEY_IN_ENVIRONMENT` = `true`.** "Update
+   everything" plans outside the environment, on purpose, and so cannot see
+   an environment secret. This variable is how it knows the key is there;
+   without it, with the repository-level secret deleted, it reports firmware
+   as gated and dispatches nothing.
+4. **Rules → Rulesets → a tag ruleset on `fw-v*`** that restricts updates
+   and deletions, with repository admins as the only bypass: a published
+   firmware tag can then not be moved or removed. Leave creation
+   unrestricted: the dispatch path creates its tag with the workflow's own
+   token, which cannot be made a bypass actor, and creation is what the
+   environment's reviewers gate.
+5. Optionally, the environment's **deployment branches and tags** (`main`
+   and `fw-v*`). GitHub then refuses, before the job starts, a job that names
+   the environment from any other branch, whatever that branch's copy of the
+   workflow says. That also stops a Flasher Factory Images `channel: dev`
+   bring-up from a branch outside the list, which is otherwise signed after
+   a reviewer approves it. It does not look at a tag's commit: an `fw-v*` tag
+   pushed anywhere still matches, and the reviewers are who stand in front
+   of that.
+
 ## Version + tag grammar
 
 | Intent | Source version (e.g. WAP) | Tag | GitHub | Who sees it |
@@ -63,9 +139,15 @@ the private key, embeds the **public** header in the canonical location, and
 syncs the two committed Arduino copies so `check_ota_sync.sh` stays green.
 Then, exactly as it prints:
 
-1. Add the private key as the `OTA_SIGNING_KEY_PEM` GitHub Actions secret
-   (Settings → Secrets and variables → Actions → New repository secret) — the
-   full PEM, `-----BEGIN PRIVATE KEY-----` through `-----END PRIVATE KEY-----`.
+1. Add the private key as the `OTA_SIGNING_KEY_PEM` secret of the
+   `firmware-release` environment (Settings → Environments →
+   `firmware-release` → Add environment secret; not a repository secret,
+   which any workflow file on any branch can read) — the full PEM,
+   `-----BEGIN PRIVATE KEY-----` through `-----END PRIVATE KEY-----` — and set
+   the repository variable `OTA_SIGNING_KEY_IN_ENVIRONMENT` to `true`
+   ([Who can sign](#who-can-sign) says why, and what else to set there).
+   The helper's own printout still says "New repository secret": use the
+   environment.
 2. Commit **only** the public `ota_release_key.h` files (never `releaser.pem`;
    `*.pem` is already gitignored).
 3. Cut a release (below) — CI signs with the secret.
@@ -81,7 +163,7 @@ firmware/scripts/check_ota_sync.sh           # engine copies in sync
 make -C firmware/projects/canary-wap/tests_host run   # host suites green
 # bump FIRMWARE_VERSION / CANARY_FW_VERSION in every variant, update CHANGELOG
 
-# 1) dev iteration
+# 1) dev iteration (the commit must be on main: a tag anywhere else is refused)
 git tag fw-v2.3.1-dev.2 && git push origin fw-v2.3.1-dev.2
 
 # 2) promote the SAME commit to stable once it has soaked
@@ -161,8 +243,10 @@ source can never disagree.
   targets no tag at all: it builds the dispatch branch's HEAD onto the rolling
   `fw-dev-latest` prerelease without a version bump, signed with the release
   key like every other path (it refuses to run without `OTA_SIGNING_KEY_PEM`
-  now that a key is pinned). That is the bring-up path — bench hardware
-  flashable from a branch, checked by both flashers like a release's images.
+  now that a key is pinned, and reads it from the `firmware-release`
+  environment, so it waits for that environment's reviewers where they are
+  set). That is the bring-up path — bench hardware flashable from a branch,
+  checked by both flashers like a release's images.
 
 Which products appear (flashable) in the in-browser flasher is decided by
 `manifest-flash.json` in the release the page reads — the stable channel's
@@ -288,8 +372,31 @@ Both write what they did to the run summary. Two things follow:
   construction — at the cost of needing the pinned release to exist. CI warns
   on every `canary-local` run while it doesn't.
 
+## Third-party license notices (the desktop apps)
+
+Firmware releases are not the only thing on the releases page. A Flasher
+(`flasher-v*`) or Lab (`app-v*`) release carries, beside its installers, a
+`THIRD_PARTY_LICENSES.html`: the license text of every Rust crate compiled
+into that app and of the programs bundled beside it (espflash; in the Flasher
+also rpiboot and libusb; the Flasher's boot image, a Linux system image, is
+named with its source, and its components' license texts are not
+reproduced). The app's release workflow writes
+it in its `notices` job and attaches it in `finalize`; it is a release asset,
+not a file inside the installer. The root [`NOTICE`](../NOTICE) names the
+bundled programs. Details and the failure mode:
+[`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md#the-master-button).
+
 ## Invariants CI enforces (don't fight them)
 
+- `firmware-release.yml` signs only a commit on `main`, and every job handed
+  the key (its own, `flasher-release.yml`'s and `vision-model-release.yml`'s)
+  runs in the `firmware-release` environment. The other two are held to the
+  environment only: a Flasher Factory Images `channel: dev` run and a
+  hand-dispatched Vision Model Asset run still sign from a branch. The
+  checks are the workflow files' own, so they hold for the copy at the
+  commit being released, not against a commit that edits one
+  ([Who can sign](#who-can-sign);
+  `.github/scripts/test_firmware_signing_gate.py`).
 - Signing key in CI must match the committed `ota_release_key.h` (rotation
   window via `ota_release_key_previous.h`).
 - Every manifest signature is re-verified after generation.

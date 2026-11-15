@@ -8,8 +8,12 @@
 # leaves the advisory DB to cargo-audit. Run locally with:
 #   cargo deny check bans licenses sources
 # The [advisories] section below is for a local `cargo deny check` (all
-# checks): it states the policy cargo-audit applies instead of leaving it to
-# cargo-deny's defaults, so the two gates never disagree.
+# checks): it states the policy instead of leaving it to cargo-deny's
+# defaults. It ignores exactly what cargo-audit ignores (.cargo/audit.toml),
+# and it is stricter in one place, on purpose: an unmaintained crate the
+# workspace depends on directly is an error here and a warning in
+# cargo-audit, so a local `cargo deny check advisories` stays red on those
+# until each is replaced (the triage: docs/security/ENTERPRISE_CUSTODY.md §7).
 
 [graph]
 # Check the platforms we actually ship (Linux daemon + tooling).
@@ -27,7 +31,11 @@ version = 2
 db-urls = ["https://github.com/rustsec/advisory-db"]
 unmaintained = "workspace"
 yanked = "warn"
-ignore = []
+# The same list as .cargo/audit.toml's `[advisories] ignore`, which carries
+# each entry's reason (and SECURITY.md its analysis: "Group 3" for this one).
+# The two move together; scripts/check_advisory_ignores.py, in audit.yml,
+# fails when they differ.
+ignore = ["RUSTSEC-2023-0071"]
 
 [licenses]
 version = 2
