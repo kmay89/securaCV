@@ -47,6 +47,11 @@ pub const DOMAIN_POLICY_CHANGE_APPROVAL: &str = "securacv:pwk:policy-change-appr
 // The device's signature over an appended policy-change history record (the
 // chained ledger row itself, not a trustee's consent).
 pub const DOMAIN_POLICY_CHANGE_RECORD: &str = "securacv:pwk:policy-change-record:v1";
+// The device's signature over a clock-provenance record (the never-pruned
+// `clock_provenance` ledger: device clock vs TSA genTime, sealed once per
+// anchor row; `docs/design/clock_provenance.md`). 32 bytes, so the
+// length-prefixed signing message starts `20 00 00 00`.
+pub const DOMAIN_CLOCK_PROVENANCE: &str = "securacv:pwk:clock-provenance:v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureMode {

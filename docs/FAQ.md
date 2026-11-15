@@ -215,6 +215,19 @@ stops repeating; anchoring a single per-run ledger-heads leaf (planned with the
 Merkle tree) removes that.
 → [timestamping](timestamping.md)
 
+### What if someone says the device's clock was wrong?
+
+Every anchor carries an answer. When a timestamp token is stored, `witnessd`
+measures its own clock against the token's time and seals the result — a
+device-signed record of the offset in whole seconds, with the poll gap that
+bounds it — and the next scheduled anchoring run fixes that record in a
+TSA's time. `log_anchor verify` prints the reading under every anchor and
+flags one more than a bucket (or your policy's `max_clock_offset_s`) away;
+a court kit carries the record of every token it packages. It does not make
+event times finer: a 10-minute bucket stays 10 minutes wide, only shifted
+by whatever the offset was.
+→ [timestamping](timestamping.md) · [design](design/clock_provenance.md)
+
 ---
 
 ## Honest status

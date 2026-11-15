@@ -181,6 +181,97 @@
   generator's pair reader and its two refusals stay tested. No
   `FIRMWARE_VERSION` bump. Host-tested; not run on a device.
 
+### Every anchor carries the device's own clock: witnessd seals a clock-provenance record per anchor row, and the verifiers and the court kit check it
+
+- **Clock provenance sealed per anchor** (`spec/quorum_unseal_v2.md` §4).
+  `witnessd` polls its own `tsa_anchors` table every 5 s (a local read; no
+  network) and, for every new anchor row, seals one device-signed,
+  hash-chained record into the new never-pruned `clock_provenance` ledger:
+  the device's 10-minute bucket at observation, the anchor row id, the
+  token's SHA-256, and — when the row appeared between two polls of a running
+  daemon — `observed_offset_s` (device wall clock − the token's `genTime`,
+  whole seconds, clamped to ±3600) with the measured `poll_gap_s` that bounds
+  how old the row could have been. A row already present at a daemon's first
+  poll, or first seen more than 3600 s after the previous completed poll,
+  gets a binding-only record (a clamped gap would state a false bound); the
+  wall clock and the gap are read once per poll under the database write
+  lock; anchors stored before the upgrade are never recorded. The record and its cursor advance share one transaction;
+  a failed append is a `StorageWriteFailed` record and backs the poll off
+  60 s; safe mode appends nothing. Signing domain
+  `securacv:pwk:clock-provenance:v1`; the stored payload literal is what is
+  hashed and signed. The ledger's head is a fifth anchor subject,
+  `clock_provenance_head` (appended last; `anchor-all`'s default subjects
+  and the policy's allowed heads list it). Every new field is a bucket, a
+  whole-second clamped difference or duration, a row id, a hash or a version
+  (Invariant III); `docs/design/clock_provenance.md` is the design, the
+  rejected alternatives and the Invariant II residual.
+- **`log_anchor verify`** (read-only, key-free) checks the ledger under the
+  database's key lineage (`clock provenance: N record(s), ledger
+  self-consistent …`) and prints one `clock:` line under every anchor —
+  prompt, delayed import (a positive offset is not evaluated), negative,
+  clamped, binding only — with notes for a disagreeing anchoring-host clock,
+  a sealed chain-head row whose bucket starts after the token's time, a
+  retained `ClockSkew` record near a beyond reading, and a step of more than
+  one bucket between consecutive evaluated readings. A clamped offset is a
+  bound, never a reading, for the host-clock note. Under `--policy
+  --require-current`, `clock_provenance_head` reads current when every
+  record after the covered hash seals a later anchor row — `witnessd` seals
+  one per anchor row, the run's own included, so plain equality could never
+  hold while it runs. A record whose anchor was deleted
+  or whose token was replaced fails the run; a broken ledger fails it. The
+  anchors table and the ledger are read from one snapshot, so a row anchored
+  and sealed while `verify` runs is neither (and `run_full_verify`'s
+  cross-check reads the two the same way). The
+  anchor policy gains `max_clock_offset_s` (default 600, at least 1): under
+  `--policy` a reading beyond it is a breach that makes the policy `NOT
+  SATISFIED`; without a policy it is a printed `WARNING`.
+- **`log_verify` / `run_full_verify`** walk the ledger as part of the verdict
+  (`failure.ledger = "clock_provenance"`), print `=== Clock Provenance ===`,
+  and add `clock_provenance_verified` to the report once a record exists
+  (a failed report says the ledger FAILED or was not reported — never that
+  it is empty)
+  (omitted otherwise, so the retained MQTT report is unchanged for every
+  database without one). A record naming a deleted or replaced anchor
+  (`clock provenance orphan: …`) or a prompt-or-negative offset beyond one
+  bucket (`clock offset: …`) is a warning under `=== Anchor Audit ===`; a
+  missing record never is. No warning carries a time or a full hash.
+- **`court_export`** walks the ledger under the kit's lineage and packages
+  the record of every packaged token (`clock_provenance/clock-NNNN.json`
+  beside the verbatim signed `clock-NNNN.payload.json`) when its token hash
+  matches the packaged bytes; `CUSTODY_AND_CONTROL.md` gains "Time source",
+  `VERIFICATION.md` step 3b re-derives every fact in POSIX `sh` with
+  `sha256sum`, `xxd`, `cut`, `date` and `openssl pkeyutl -rawin` (hex values
+  written into the commands; the key is the device key the custody record
+  names; step 2 per record, one-sided at the clamp, n/a for binding only),
+  and the manifest gains
+  `clock_provenance_ledger` (`self-consistent; identity unverified` /
+  `verification failed` / `absent`) and a per-anchor `clock_provenance`
+  object. A ledger that does not verify packages nothing (fail closed);
+  `clock_provenance_head` anchors are never packaged. Docs:
+  `docs/timestamping.md` ("Clock provenance", Honest limits, compatibility),
+  `docs/log_verify.md`, `docs/court_export.md`, `docs/failure_semantics.md`,
+  the runbook, the CPS template, `ENTERPRISE_CUSTODY.md`,
+  `PROVENANCE_INTEROP.md`, the glossary and the FAQ. Pinned by offline tests
+  with injected clock readings (`src/lib.rs`, `src/clock_provenance.rs`,
+  `src/tsa.rs`, `src/anchor_policy.rs`, `src/verify_runner.rs`,
+  `src/bin/witnessd.rs`, `tests/log_anchor_cli.rs`, `tests/court_export.rs`,
+  `tests/log_verify_anchors.rs`).
+- **Upgrade note.** `anchor-all` requests five subjects per TSA per run
+  instead of four (still constant run to run); until the first record exists
+  it anchors the `clock_provenance_head` sentinel, and `witnessd` then seals
+  records for that run's rows, so from the first post-upgrade `anchor-all`
+  until the next one, `verify --policy` with a policy listing
+  `clock_provenance_head` (including any policy without a `subjects` key)
+  reads it `NOT covered` and `NOT SATISFIED (1 subject(s) uncovered)`. **Run
+  `anchor-all` twice at upgrade**, the second about 5 s after the first.
+  Add `max_clock_offset_s`, or list `clock_provenance_head` in `subjects`,
+  only after every `log_anchor` that reads the policy is upgraded — an older
+  one refuses a key it does not know and a subject it does not know (`not a
+  ledger head`); omitting `subjects` gives new readers five heads and older
+  ones four.
+  An older `log_anchor` reads a `clock_provenance_head` row as a digest
+  anchor. The witnessd config gains no key.
+
 ### canary-wap reads every request body whole and its mesh refuses a hash it could not make, the Sensing dashboard says when stored levels win, one header spells the Chirp advert, Home Assistant redacts what the device vocabulary names, the SBOM tools are pinned, the parity ledgers read the code, and the released cases' knobs carry help (#1961, wave 24)
 
 - **canary-wap reads every POST body whole or refuses it by name (F300).**

@@ -286,6 +286,11 @@ fn main() -> Result<()> {
                             id,
                             &verify_helpers::hex32(&entry_hash)[..16]
                         ),
+                        VerifiedItem::ClockProvenance { id, entry_hash } => println!(
+                            "  clock-provenance record {}: hash={} OK",
+                            id,
+                            &verify_helpers::hex32(&entry_hash)[..16]
+                        ),
                     }
                 }
             },
@@ -358,6 +363,26 @@ fn main() -> Result<()> {
         "verified {} export receipt entries",
         report.export_receipts_verified
     );
+    println!();
+
+    println!("=== Clock Provenance ===");
+    match report.clock_provenance_verified {
+        Some(n) => println!(
+            "verified {n} clock-provenance record(s) (device clock vs TSA genTime, one per \
+             anchor; assessment: log_anchor --db {} verify)",
+            args.db
+        ),
+        // A failed report carries no count: the ledger is what failed, or
+        // the verdict failed elsewhere (before the walk or after it), and
+        // neither means it is empty.
+        None if !report.chain_valid => match &report.failure {
+            Some(f) if f.ledger == verify::FailedLedger::ClockProvenance => {
+                println!("clock-provenance ledger FAILED (see Diagnosis)")
+            }
+            _ => println!("not reported: verification failed (see Diagnosis)"),
+        },
+        None => println!("no clock-provenance records"),
+    }
 
     if !report.chain_valid {
         if let Some(failure) = &report.failure {
@@ -375,11 +400,15 @@ fn main() -> Result<()> {
 
     // Anchor-row anomalies are a different finding from timeline anomalies
     // (a damaged auxiliary row, not a gap in the record), so they print under
-    // their own heading.
-    let (anchor_warnings, timeline_warnings): (Vec<&String>, Vec<&String>) = report
-        .warnings
-        .iter()
-        .partition(|w| verify::classify_warning(w) == verify::WarningKind::AnchorAnomaly);
+    // their own heading — the clock-provenance cross-check findings with them,
+    // since both are about the anchors table.
+    let (anchor_warnings, timeline_warnings): (Vec<&String>, Vec<&String>) =
+        report.warnings.iter().partition(|w| {
+            matches!(
+                verify::classify_warning(w),
+                verify::WarningKind::AnchorAnomaly | verify::WarningKind::ClockProvenance
+            )
+        });
     if !timeline_warnings.is_empty() {
         println!();
         println!("=== Timeline Audit ===");
@@ -387,13 +416,25 @@ fn main() -> Result<()> {
         print_warnings(&timeline_warnings);
     }
     if !anchor_warnings.is_empty() {
+        let (clock_warnings, row_warnings): (Vec<&String>, Vec<&String>) = anchor_warnings
+            .iter()
+            .partition(|w| verify::classify_warning(w) == verify::WarningKind::ClockProvenance);
         println!();
         println!("=== Anchor Audit ===");
-        println!(
-            "The ledgers verified and no anchored head is missing; these anchor rows cannot \
-             vouch for anything:"
-        );
-        print_warnings(&anchor_warnings);
+        if !row_warnings.is_empty() {
+            println!(
+                "The ledgers verified and no anchored head is missing; these anchor rows cannot \
+                 vouch for anything:"
+            );
+            print_warnings(&row_warnings);
+        }
+        if !clock_warnings.is_empty() {
+            println!(
+                "The clock-provenance ledger verified; these records contradict the anchors \
+                 table or read the device clock far from the TSA's time:"
+            );
+            print_warnings(&clock_warnings);
+        }
     }
     if args.strict && !report.warnings.is_empty() {
         // Exit 2, the same code the --json path uses for --strict warnings, so
