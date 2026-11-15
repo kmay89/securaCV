@@ -2979,6 +2979,7 @@ mod tests {
                 "break_glass_receipts_verified",
                 "break_glass_granted",
                 "break_glass_denied",
+                "break_glass_redeemed",
                 "export_receipts_verified",
                 "alarm_count",
                 "checkpoint_cutoff_event_id",
