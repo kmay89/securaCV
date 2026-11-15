@@ -9,9 +9,12 @@ before it (below). `tests/migrations.test.mjs` holds every rule on this page.
 ## The rules
 
 1. **Additive only.** A migration creates tables, adds columns and indexes,
-   and fills them. It does not `DROP`, `RENAME`, or narrow a column. The build
-   before it must still run on the database after it, because that is what a
-   rollback is: the previous image on the current file.
+   and fills them. It does not `DROP`, `RENAME`, or narrow a column. Nothing
+   the build before it reads is taken away, so a rescue can still read the
+   migrated file with that build (`BACKOFFICE_ALLOW_NEWER_SCHEMA=1`, below).
+   That is a rescue, not a rollback: the previous build does not serve on a
+   migrated file. A rollback is the copy taken before the migration, put
+   back first, and then the previous build (below).
 2. **Contract later, and say so.** When a column or table is dead, the removal
    is its own migration in a later release than the one that stopped using it,
    with `-- contract: <what, and which release stopped using it>` as its first
@@ -37,9 +40,17 @@ before it (below). `tests/migrations.test.mjs` holds every rule on this page.
 - **A copy before the first pending migration.** On a file database that already
   has migrations, `openDb` writes `backups/pre-migrate-<stamp>-<first pending>.db`
   (`VACUUM INTO`, consistent, no lock held) before applying anything, and keeps
-  the newest five. Rolling a deploy back is: deploy the previous tag, then
-  `backoffice restore backups/pre-migrate-….db` (or `kit offline backoffice …`
-  on the server). The Health page counts the copies.
+  the newest five. The Health page counts the copies.
+- **Rolling back a release that migrated: the copy first, then the code.**
+  Stop the server; `backoffice restore backups/pre-migrate-<newest>.db` with
+  the build that is installed (it opens the migrated file, checks the copy
+  and puts it in place; the file it replaces is kept beside the database);
+  then install and start the previous build. On the server kit that is one
+  command, `kit rollback backoffice` (`infra/README.md`). The other order
+  cannot work: the previous build refuses the migrated file (next point), so
+  it never starts, and nothing is restored by starting it. What was written
+  between the migration and the rollback is in the replaced file, not in
+  the copy.
 - **A newer schema is refused.** A database carrying migrations this build does
   not know (an older image started after a newer one migrated the file) does
   not open; the message names them. `BACKOFFICE_ALLOW_NEWER_SCHEMA=1` opens it

@@ -77,6 +77,14 @@ A migration copies the database first (`backups/pre-migrate-…`); a build that
 finds a newer schema than it knows refuses to start and says which. Both are
 in the schema row on Health. Nothing else about an update needs a human.
 
+Going back from an update that migrated is that copy first, then the old
+build, in that order: stop the server, `backoffice restore
+backups/pre-migrate-<newest>.db` while the new build is still the one
+installed, then start the previous build. On the server kit, `kit rollback
+backoffice` does the three. Starting the previous build first cannot work:
+it refuses the migrated file. What was written after the migration stays in
+the file the restore replaced (kept beside the database), not in the copy.
+
 ## The bad day: something is not yours
 
 A sign-in you did not make. A token used that nobody uses. A change to a

@@ -31,7 +31,15 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   never the enforcement. The API answers to the same rule as the page it
   mirrors: `/api/users` is the owner's as `/users` is, `/api/exceptions` is
   ops' as `/exceptions` is, and running a backup through the API is a job
-  (owner) while reading the list of backups is not. A role change or a disable applies to the person's
+  (owner) while reading the list of backups is not. One read is refused as
+  a write: the customer's signed status link (`/o/<number>/<token>`),
+  together with the email the order was placed with, changes where an
+  unshipped order goes — and the admin shows that email. So the order page
+  shows the link, and `/api/orders/:number/status-url` returns it, only to
+  `owner` and `ops`, the roles that may change an address themselves;
+  `support` and `viewer` see that the page exists, not its link. The status
+  page never prints the email and its address form asks for it, so the link
+  alone (a forwarded mail, a browser history) moves no parcel. A role change or a disable applies to the person's
   live sessions at once. The last active owner cannot be demoted, disabled
   or removed. API tokens are owner-made and not bound to a role; their
   scope is the limit.
@@ -90,7 +98,9 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
 - **API tokens.** `bo_<id>.<secret>`; the secret is scrypt-hashed (N=2^12:
   256 random bits need less stretching than a phrase), so a copy of the
   table verifies nothing. A token can be read-only (`--read-only`,
-  or the Scope choice on Settings): GET only, for a dashboard or a monitor.
+  or the Scope choice on Settings): GET only, for a dashboard or a monitor,
+  and never the one GET that returns a customer's status link, which can
+  change an address.
   Revocation is immediate.
 - **Rotation.** Each person changes their own password on *Your account*
   (the current one is required) and sets up a new authenticator there: the
@@ -124,9 +134,12 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   neither are the store, the webhook, the status page or a customer's page,
   so a block is never a denial of service against the business.
   `ADMIN_ALLOW_CIDRS` makes the admin and its door exist only for the
-  networks you name (a home, an office, a VPN); every other network sees a
+  networks you name (a home, an office, a VPN: an address, a v4 or v6 CIDR,
+  `private`, `loopback`); every other network sees a
   404 for every admin path, while the store, the webhook and the customers'
-  pages stay open. `SESSION_BIND_IP=1` ends a session the moment it turns up
+  pages stay open. A rule that is none of those stops the server at boot
+  with the rule named, because a rule that matched nothing would be a 404
+  for the operator too. `SESSION_BIND_IP=1` ends a session the moment it turns up
   from another network than it was opened on, which is what a stolen cookie
   does; a phone that changes networks signs in again. Both are off by
   default and the Health page says which is on.
@@ -316,8 +329,19 @@ anchor, an intruder cannot touch without the anchor saying so.
   `BACKUP_ENCRYPTION_KEY` before it leaves the machine, read back with a
   HEAD, and pulled down and opened again by the weekly drill. The bucket
   never holds a readable database.
-- Secrets live in the environment, never in the database or the audit log;
-  the Settings page shows which are set, not what they are.
+- Secrets taken from the environment are never written to the database or
+  the audit log, and the Settings page shows which are set, not what they
+  are. Three secrets do live in the `settings` table: `app:secret` (the key
+  order and invoice links are signed under, made on first boot), and
+  `notify:ntfy_url` and `notify:ntfy_token` (the operator's push channel,
+  when it is saved from Settings rather than set as `NTFY_URL` and
+  `NTFY_TOKEN`). A copy of `backoffice.db` — a backup, a staging refresh, a
+  file on a laptop — is therefore a credential: whoever holds it can sign a
+  customer's status link, and can push to and read the phone's topic. The
+  file and its backups are `0600` and the off-site copy is sealed (above);
+  keep any other copy the same way. Settings never prints the token or the
+  topic back: both fields are empty with "set — blank keeps it", and the
+  topic is shown masked (its host and the last few characters).
 - Forgetting a person reaches every column their address was written into:
   the contact, their orders' addresses and notes, tickets, attachments,
   waitlist rows, outbox mail, the carts they opened, invoices billed to them,
