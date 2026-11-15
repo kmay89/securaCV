@@ -10,9 +10,12 @@ description = "Privacy Witness Kernel (PWK) - witnessd + tools + break_glass"
 
 [dependencies]
 anyhow = "1.0"
-# default-features off: the other default, `ffi-sqlite-wasm-rs`, only adds
-# wasm-only crates to the lockfile that no shipped target builds.
-rusqlite = { version = "0.41", default-features = false, features = ["bundled-sqlcipher", "cache"] }
+# default-features off: the other default, `ffi-sqlite-wasm-rs`, turns on the
+# wasm-only SQLite crates, which no shipped target builds. Since rusqlite 0.42
+# they sit in Cargo.lock regardless (`bundled-sqlcipher` names the optional
+# `sqlite-wasm-rs?/sqlcipher`), but no target compiles them here:
+# `cargo tree --target all -i sqlite-wasm-rs` prints nothing.
+rusqlite = { version = "0.43", default-features = false, features = ["bundled-sqlcipher", "cache"] }
 hkdf = "0.13"
 # Memory-hard KDF for the optional `seed-argon2id:v1:` device-seed format
 # (a passphrase seed must not be brute-forceable through the fast SHA-256

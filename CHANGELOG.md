@@ -1,6 +1,32 @@
 # Changelog
 
 ## [Unreleased]
+### rusqlite 0.43: SQLite 3.53.4 to 3.54.1 under SQLCipher 4.20, which fixes CVE-2026-119375 in the kernel's database
+
+- **`rusqlite` 0.41 to 0.43** (`libsqlite3-sys` 0.39.1 to 0.40.0;
+  `sqlcipher-src` 419.0.6 to 420.0.0, so SQLCipher 4.19.0 to 4.20.0 and
+  SQLite 3.53.4 to 3.54.1). The kernel needed no code change for the new
+  API. The lockfile also gains `sqlite-wasm-rs` and `rsqlite-vfs`, which
+  only a wasm build of `rusqlite` uses and no target here compiles, and
+  `thiserror` 2.0.21, which `rsqlite-vfs` requires.
+- **CVE-2026-119375 (the WAL page-size read) is fixed in the kernel's
+  SQLite.** RUSTSEC-2026-0502, filed against `sqlcipher-src` itself, made
+  `cargo audit` fail on the 419.0.6 entry; the lockfile now carries 420.0.0,
+  and this time the SQLite inside the build is the fixed one. A unit test
+  reads `sqlite_version()` through a kernel connection and fails below
+  3.54.0. Builds made before this change remain exposed, and
+  `SECURITY.md` ("Group 5") keeps the advice for them.
+- **The cipher settings a kernel database is written with are pinned by a
+  test** (KDF and its iteration count, page size, HMAC and its algorithm,
+  plaintext header size): a SQLCipher release that changed a default would
+  fail it instead of writing files older builds cannot open. SQLCipher 4.20
+  reports the same settings as 4.19. A fixture database written by the old
+  build verified as VALID with the new `log_verify`, and the reverse, in a
+  one-time check by hand; no `-wal` file was present in either.
+- **The start-up wait stays.** SQLite 3.54.1 still marks itself initialized
+  before it runs SQLCipher's start-up hook, so `ensure_sqlcipher_ready` is
+  still what keeps two threads from racing the first `PRAGMA key`.
+
 ### OpenTimestamps is the trust-kind-independent anchoring leg: nonced commitments on the `anchor-all` cadence, Bitcoin confirmation only against a header file you supply, proofs in the court kit
 
 - **OpenTimestamps is the trust-kind-independent anchoring leg**

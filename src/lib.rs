@@ -7957,6 +7957,88 @@ mod tests {
         Ok(())
     }
 
+    /// A keyed kernel database in a temporary directory, for the two
+    /// SQLCipher pins below.
+    fn keyed_kernel_for_sqlcipher_pins() -> Result<(tempfile::TempDir, Kernel)> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("pin.db").to_string_lossy().to_string();
+        let kernel = Kernel::open(&KernelConfig {
+            db_path,
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        })?;
+        Ok((dir, kernel))
+    }
+
+    /// The SQLite the kernel runs is at least 3.54.0, the release that fixed
+    /// CVE-2026-119375 (the WAL page-size read; RUSTSEC-2026-0502 against
+    /// `sqlcipher-src`, earlier RUSTSEC-2026-0459; SECURITY.md, Group 5).
+    /// The fix lives in the SQLite that SQLCipher bundles, not in a Rust
+    /// crate, so this asks the library a kernel connection actually runs.
+    /// A floor, not an equality: a later SQLite passes without an edit.
+    #[test]
+    fn linked_sqlite_is_at_least_3_54_0() -> Result<()> {
+        let (_dir, kernel) = keyed_kernel_for_sqlcipher_pins()?;
+        let version: String = kernel
+            .conn
+            .query_row("SELECT sqlite_version()", [], |row| row.get(0))?;
+        let parts = version
+            .split('.')
+            .map(str::parse::<u32>)
+            .collect::<std::result::Result<Vec<u32>, _>>()
+            .map_err(|e| anyhow!("unparsable sqlite_version() {version:?}: {e}"))?;
+        assert!(
+            parts.len() >= 2,
+            "sqlite_version() {version:?} has no minor version"
+        );
+        let linked = (
+            parts[0],
+            parts[1],
+            parts.get(2).copied().unwrap_or_default(),
+        );
+        assert!(
+            linked >= (3, 54, 0),
+            "linked SQLite {version} is older than 3.54.0 and carries CVE-2026-119375 \
+             (SECURITY.md, Group 5)"
+        );
+        Ok(())
+    }
+
+    /// The SQLCipher settings a kernel database is written with: the rows of
+    /// `PRAGMA cipher_settings` that decide the on-disk format (KDF and its
+    /// iteration count, page size, HMAC and its algorithm, plaintext header
+    /// size). The kernel sets none of them and takes SQLCipher's defaults,
+    /// and SQLCipher does not record them in the file: a release that
+    /// changed a default would write databases that older builds cannot open
+    /// and could not open the existing ones. Pinned to what SQLCipher 4.19.0
+    /// (rusqlite 0.41) reported; 4.20.0 reports the same. A new row fails
+    /// here too, so a setting SQLCipher adds is looked at before it ships.
+    #[test]
+    fn kernel_database_cipher_settings_are_pinned() -> Result<()> {
+        let (_dir, kernel) = keyed_kernel_for_sqlcipher_pins()?;
+        let mut stmt = kernel.conn.prepare("PRAGMA cipher_settings")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        assert_eq!(
+            rows,
+            [
+                "PRAGMA kdf_iter = 256000;",
+                "PRAGMA cipher_page_size = 4096;",
+                "PRAGMA cipher_use_hmac = 1;",
+                "PRAGMA cipher_plaintext_header_size = 0;",
+                "PRAGMA cipher_hmac_algorithm = HMAC_SHA512;",
+                "PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;",
+            ],
+            "SQLCipher's settings for a new kernel database changed"
+        );
+        Ok(())
+    }
+
     #[test]
     fn sqlcipher_migration_from_unencrypted() -> Result<()> {
         let dir = tempfile::tempdir()?;

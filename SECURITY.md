@@ -256,37 +256,60 @@ ignore entries are gone. This section is retained as an audit record; remove ent
 corresponding Dependabot alerts are closed, or — for Group 3 — once an
 upstream fix lets the ignore go.
 
-### Group 5 — SQLite WAL page-size read (RUSTSEC-2026-0459, Medium) — NOT YET FIXABLE in the SQLCipher build
+### Group 5 — SQLite WAL page-size read (CVE-2026-119375; RUSTSEC-2026-0502, earlier RUSTSEC-2026-0459) — RESOLVED
 
 - **Bug:** CVE-2026-119375. SQLite before 3.54.0 can return uninitialized
   page-cache memory when a process opens a database together with a sibling
   `-wal` file whose page size differs from the database's. A crafted pair of
   files makes ordinary queries return stale bytes from the process's memory.
   The vector is local and the victim has to open the files. CVSS 4.0: 6.8.
-- **Where it comes from:** `rusqlite`'s `bundled-sqlcipher` feature, which
+- **Where it came from:** `rusqlite`'s `bundled-sqlcipher` feature, which
   the kernel needs for its encrypted database. `libsqlite3-sys` 0.39.1
-  builds SQLCipher from `sqlcipher-src`, pinned to `=419.0.6`, which carries
-  SQLite 3.53.4. The plain bundled SQLite in the same release is 3.54.1 and
-  fixed; the SQLCipher build is not.
-- **What `cargo audit` shows, and what it does not:** the advisory is keyed
-  on the crate version (`patched >= 0.39.0`), so the audit has passed since
-  the `rusqlite` 0.41 upgrade. That pass says the crate version is new
-  enough. It does not say this build is fixed, and it is not.
-- **Exposure:** only a process that opens a database, with its `-wal`, that a
-  less trusted party could have written. `witnessd` and the bridges open
-  their own database in their own data directory; whoever can plant a `-wal`
-  there can already rewrite the log's files. The verifier and export
-  commands (`log_verify`, `export_verify`, `court_export`, `log_anchor`,
+  built SQLCipher from `sqlcipher-src`, pinned to `=419.0.6`: SQLCipher
+  4.19.0 on SQLite 3.53.4. The plain bundled SQLite in that release was
+  already 3.54.1; the SQLCipher build was not.
+- **The two advisory ids:** RUSTSEC-2026-0459 was keyed on the
+  `libsqlite3-sys` version, so `cargo audit` passed from the `rusqlite` 0.41
+  upgrade on while the SQLCipher build still carried SQLite 3.53.4 (this
+  section said so at the time). RUSTSEC-2026-0502 names `sqlcipher-src`
+  itself, at the 419.0.6 the root `Cargo.lock` carried, and failed the audit
+  on that entry. The lockfile now carries 420.0.0.
+- **Fix:** `rusqlite` 0.43.0, on `libsqlite3-sys` 0.40.0, which pins
+  `sqlcipher-src` `=420.0.0`: SQLCipher 4.20.0 on SQLite 3.54.1. Checked
+  against the live crates.io index on 2026-11-15: 0.40.0 is the first
+  `libsqlite3-sys` release that selects `sqlcipher-src` 420 (0.39.0 and
+  0.39.1 pin `=419.0.6`), and `rusqlite` 0.42.0 and 0.43.0 are the releases
+  that use it. Cipher defaults are unchanged.
+- **What keeps it fixed:** the unit test
+  `tests::linked_sqlite_is_at_least_3_54_0` (`src/lib.rs`) asks
+  `sqlite_version()` through a kernel connection and fails below 3.54.0, so
+  the check is on the library the kernel runs, not on a crate version. It was
+  run once by hand against the old lockfile (2026-11-15) and failed there on
+  3.53.4, as it should. Beside it,
+  `tests::kernel_database_cipher_settings_are_pinned` pins the SQLCipher
+  settings a kernel database is written with, so a release that changes a
+  default fails a test instead of writing files older builds cannot open.
+- **Old and new builds read each other's files:** checked once by hand on
+  2026-11-15, not by a standing test. The conformance fixture database
+  written by the old build passed the new `log_verify` (VALID), and one
+  written by the new build passed the old `log_verify` (VALID). The fixture
+  is in WAL journal mode but no `-wal` file was left beside it when it was
+  read, and it carries no anchor tables, so neither a pending `-wal` nor the
+  anchor readers were part of that check.
+- **Builds made before this change remain exposed.** Every kernel binary
+  built with an earlier `rusqlite` (SQLite 3.53.4 under `rusqlite` 0.41,
+  3.39.4 before it) carries the bug. For those builds the advice stands:
+  only a process that opens a database, with its `-wal`, that a less trusted
+  party could have written is exposed. `witnessd` and the bridges open their
+  own database in their own data directory; whoever can plant a `-wal` there
+  can already rewrite the log's files. The verifier and export commands
+  (`log_verify`, `export_verify`, `court_export`, `log_anchor`,
   `break_glass`) open the database they are pointed at and hold key material
   while they do, so the exposed case is running one of them on a database
-  directory received from someone else. Until the fix, check received
+  directory received from someone else. With such a build, check received
   evidence as an envelope (`envelope_verify`, the offline viewer), which
   reads JSON and never opens SQLite, and do not open a received database
   that arrives with a `-wal` file beside it.
-- **Fix not yet possible:** `sqlcipher-src` 420.0.0 carries SQLite 3.54.1,
-  but `libsqlite3-sys` 0.39.x pins `=419.0.6` exactly, so nothing we can
-  bump or patch selects it. The fix arrives with the first `libsqlite3-sys`
-  release that pins `sqlcipher-src` 420 or later.
 
 ## Non-goals
 
