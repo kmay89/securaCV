@@ -299,6 +299,13 @@ struct GstreamerRtspSource {
     last_error: Option<String>,
 }
 
+/// The whole pipeline, with no camera-supplied text in it. The URL is set on
+/// the element named `src` after parsing (see `GstreamerRtspSource::new`).
+#[cfg(any(feature = "rtsp-gstreamer", test))]
+const RTSP_PIPELINE_DESCRIPTION: &str =
+    "rtspsrc name=src latency=0 ! decodebin ! videoconvert ! video/x-raw,format=RGB ! \
+     appsink name=appsink sync=false max-buffers=1 drop=true";
+
 #[cfg(feature = "rtsp-gstreamer")]
 impl GstreamerRtspSource {
     /// Create a new GStreamer RTSP source.
@@ -310,15 +317,18 @@ impl GstreamerRtspSource {
     fn new(config: RtspConfig) -> Result<Self> {
         gstreamer::init().context("initialize gstreamer")?;
 
-        let pipeline_description = format!(
-            "rtspsrc location={} latency=0 ! decodebin ! videoconvert ! video/x-raw,format=RGB ! \
-             appsink name=appsink sync=false max-buffers=1 drop=true",
-            config.url
-        );
-        let pipeline = gstreamer::parse::launch(&pipeline_description)
+        // The description is a constant: the camera URL never passes through
+        // the launch parser, where a space or a `!` in it would be read as
+        // pipeline syntax (more elements, other properties). It is set as a
+        // property value on the named source instead.
+        let pipeline = gstreamer::parse::launch(RTSP_PIPELINE_DESCRIPTION)
             .context("build RTSP pipeline")?
             .downcast::<gstreamer::Pipeline>()
             .map_err(|_| anyhow::anyhow!("RTSP pipeline is not a Pipeline"))?;
+        pipeline
+            .by_name("src")
+            .context("rtspsrc element missing from pipeline")?
+            .set_property("location", config.url.as_str());
 
         let appsink = pipeline
             .by_name("appsink")
@@ -499,6 +509,15 @@ mod tests {
         let stats = source.stats();
         assert_eq!(stats.url, "stub://***@camera.local:554/stream");
         Ok(())
+    }
+
+    /// The camera URL is set as a property, never spliced into the launch
+    /// description: the description names the source and carries no location.
+    #[test]
+    fn pipeline_description_carries_no_camera_text() {
+        assert!(RTSP_PIPELINE_DESCRIPTION.starts_with("rtspsrc name=src "));
+        assert!(!RTSP_PIPELINE_DESCRIPTION.contains("location"));
+        assert!(!RTSP_PIPELINE_DESCRIPTION.contains('{'));
     }
 
     #[test]
