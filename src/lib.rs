@@ -8008,15 +8008,28 @@ mod tests {
         Ok(())
     }
 
-    /// The SQLCipher settings a kernel database is written with: the rows of
-    /// `PRAGMA cipher_settings` that decide the on-disk format (KDF and its
-    /// iteration count, page size, HMAC and its algorithm, plaintext header
-    /// size). The kernel sets none of them and takes SQLCipher's defaults,
-    /// and SQLCipher does not record them in the file: a release that
-    /// changed a default would write databases that older builds cannot open
-    /// and could not open the existing ones. Pinned to what SQLCipher 4.19.0
-    /// (rusqlite 0.41) reported; 4.20.0 reports the same. A new row fails
-    /// here too, so a setting SQLCipher adds is looked at before it ships.
+    /// The SQLCipher defaults a kernel database is written with, as far as
+    /// SQLCipher reports them. The kernel sets none of them, and SQLCipher
+    /// does not record them in the file, so a release that changed one would
+    /// write databases older builds cannot open and could not open the
+    /// existing ones. Pinned here: the six rows of `PRAGMA cipher_settings`,
+    /// plus four values that list leaves out and that also decide whether a
+    /// file opens: the cipher, the PBKDF2 iteration count that derives the
+    /// HMAC key (`fast_kdf_iter`), the page-number byte order inside the
+    /// HMAC (`cipher_hmac_pgno`) and the mask applied to the HMAC salt
+    /// (`cipher_hmac_salt_mask`). Read without an argument, none of these
+    /// pragmas changes anything.
+    ///
+    /// Not pinned, because no pragma reports them: the 16-byte salt header,
+    /// the key and IV sizes. A release that changed one of those passes this
+    /// test. The kernel's own keys are 32-byte HKDF outputs passed as
+    /// `x'<64 hex>'`, which SQLCipher takes as a raw key without the PBKDF2
+    /// pass that `kdf_iter` sets, so that row matters only for a key in
+    /// another form; it is pinned so that a change is looked at. A new
+    /// `cipher_settings` row fails here too.
+    ///
+    /// Pinned to what SQLCipher 4.19.0 (rusqlite 0.41) reported; 4.20.0
+    /// reports the same.
     #[test]
     fn kernel_database_cipher_settings_are_pinned() -> Result<()> {
         let (_dir, kernel) = keyed_kernel_for_sqlcipher_pins()?;
@@ -8036,6 +8049,20 @@ mod tests {
             ],
             "SQLCipher's settings for a new kernel database changed"
         );
+        for (pragma, expected) in [
+            ("cipher", "AES-256-CBC"),
+            ("fast_kdf_iter", "2"),
+            ("cipher_hmac_pgno", "le"),
+            ("cipher_hmac_salt_mask", "3a"),
+        ] {
+            let value: String = kernel
+                .conn
+                .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))?;
+            assert_eq!(
+                value, expected,
+                "SQLCipher's `PRAGMA {pragma}` for a new kernel database changed"
+            );
+        }
         Ok(())
     }
 

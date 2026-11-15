@@ -279,7 +279,11 @@ upstream fix lets the ignore go.
   against the live crates.io index on 2026-11-15: 0.40.0 is the first
   `libsqlite3-sys` release that selects `sqlcipher-src` 420 (0.39.0 and
   0.39.1 pin `=419.0.6`), and `rusqlite` 0.42.0 and 0.43.0 are the releases
-  that use it. Cipher defaults are unchanged.
+  that use it. Cipher defaults are unchanged: checked once by hand on
+  2026-11-15, by diffing the SQLCipher part of the amalgamation between
+  4.19.0 and 4.20.0 (only the version number, a wasm-only guard and the
+  error-path exits of `cipher_migrate` differ) and by comparing
+  `PRAGMA cipher_settings` and `cipher_default_settings` from both builds.
 - **What keeps it fixed:** the unit test
   `tests::linked_sqlite_is_at_least_3_54_0` (`src/lib.rs`) asks
   `sqlite_version()` through a kernel connection and fails below 3.54.0, so
@@ -287,15 +291,29 @@ upstream fix lets the ignore go.
   run once by hand against the old lockfile (2026-11-15) and failed there on
   3.53.4, as it should. Beside it,
   `tests::kernel_database_cipher_settings_are_pinned` pins the SQLCipher
-  settings a kernel database is written with, so a release that changes a
-  default fails a test instead of writing files older builds cannot open.
-- **Old and new builds read each other's files:** checked once by hand on
-  2026-11-15, not by a standing test. The conformance fixture database
-  written by the old build passed the new `log_verify` (VALID), and one
-  written by the new build passed the old `log_verify` (VALID). The fixture
-  is in WAL journal mode but no `-wal` file was left beside it when it was
-  read, and it carries no anchor tables, so neither a pending `-wal` nor the
-  anchor readers were part of that check.
+  defaults a kernel database is written with, as far as SQLCipher reports
+  them: the six rows of `PRAGMA cipher_settings`, plus the cipher, the
+  iteration count that derives the HMAC key, the page-number byte order in
+  the HMAC and the HMAC salt mask. A release that changes one of those fails
+  it; it passed against both the old and the new lockfile (by hand,
+  2026-11-15). Not pinned, because no pragma reports them: the 16-byte salt
+  header and the key and IV sizes. A release that changed one of those would
+  pass the test, and no standing test opens a file written by another
+  SQLCipher version.
+- **One fixture database, opened across the version boundary:** checked
+  once by hand on 2026-11-15, not by a standing test. The conformance
+  fixture database written by the old build passed the new `log_verify`
+  (VALID), and one written by the new build passed the old `log_verify`
+  (VALID). The fixture holds one sealed event, one break-glass grant and its
+  redemption, and one export receipt. `log_verify` was the only program
+  that opened the other version's file. Not covered: a pending `-wal`
+  written by the other version (the fixture is in WAL journal mode, but no
+  `-wal` file was left beside it), the TSA and OpenTimestamps anchor tables
+  and their readers (absent from the fixture), checkpoint rows (the table
+  was empty), clock-provenance records (there were none), a rotated device
+  key, a database rekeyed with `rekey_database_file`, a database migrated
+  from plaintext, and every other reader (`witnessd`, `export_verify`,
+  `court_export`, `log_anchor`, `break_glass`).
 - **Builds made before this change remain exposed.** Every kernel binary
   built with an earlier `rusqlite` (SQLite 3.53.4 under `rusqlite` 0.41,
   3.39.4 before it) carries the bug. For those builds the advice stands:
@@ -321,8 +339,11 @@ upstream fix lets the ignore go.
   engine (`desktop/flash-engine`). `quinn-udp` sits under `quinn` 0.11.11,
   an optional dependency of `reqwest` 0.12.28 that only `reqwest`'s `http3`
   feature (its HTTP/3 client over QUIC) turns on. `reqwest` 0.12.28 is
-  reached from `flash-engine`, and in the two apps also from the app crate,
-  `tauri` and `tauri-plugin-updater`.
+  reached from `flash-engine` and, in the two apps, also from the app crate
+  itself (`securacv-flasher` in `desktop/src-tauri`, `securacv-lab` in
+  `desktop-lab/src-tauri`). `tauri` 2.12.5 and `tauri-plugin-updater`
+  2.14.1 depend on `reqwest` 0.13.4 instead, which has no `quinn` edge in
+  these lockfiles.
 - **Compiled in? No.** No crate in the three graphs turns on `http3`; the
   lockfiles list `quinn` because `reqwest`'s `__rustls-ring` feature names
   `quinn?/ring`, a reference that does not enable the dependency.

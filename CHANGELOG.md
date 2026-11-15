@@ -7,8 +7,13 @@
   `sqlcipher-src` 419.0.6 to 420.0.0, so SQLCipher 4.19.0 to 4.20.0 and
   SQLite 3.53.4 to 3.54.1). The kernel needed no code change for the new
   API. The lockfile also gains `sqlite-wasm-rs` and `rsqlite-vfs`, which
-  only a wasm build of `rusqlite` uses and no target here compiles, and
-  `thiserror` 2.0.21, which `rsqlite-vfs` requires.
+  only a wasm build of `rusqlite` uses and no target here compiles. It moves
+  `thiserror` and `thiserror-impl` from 2.0.18 to 2.0.21. That move is
+  forced: `rsqlite-vfs` requires `^2.0.20`, and Cargo resolves one 2.x for
+  the whole graph. Unlike the two wasm crates, `thiserror` is compiled into
+  the kernel, through `rumqttc-next`. The 2.0.21 `thiserror-impl` builds on
+  `syn` 3, which the kernel already compiled for `serde_derive` and
+  `clap_derive`.
 - **CVE-2026-119375 (the WAL page-size read) is fixed in the kernel's
   SQLite.** RUSTSEC-2026-0502, filed against `sqlcipher-src` itself, made
   `cargo audit` fail on the 419.0.6 entry; the lockfile now carries 420.0.0,
@@ -16,13 +21,20 @@
   reads `sqlite_version()` through a kernel connection and fails below
   3.54.0. Builds made before this change remain exposed, and
   `SECURITY.md` ("Group 5") keeps the advice for them.
-- **The cipher settings a kernel database is written with are pinned by a
-  test** (KDF and its iteration count, page size, HMAC and its algorithm,
-  plaintext header size): a SQLCipher release that changed a default would
-  fail it instead of writing files older builds cannot open. SQLCipher 4.20
-  reports the same settings as 4.19. A fixture database written by the old
-  build verified as VALID with the new `log_verify`, and the reverse, in a
-  one-time check by hand; no `-wal` file was present in either.
+- **The SQLCipher defaults a kernel database is written with are pinned by
+  a test, as far as SQLCipher reports them:** the six rows of
+  `PRAGMA cipher_settings` (KDF iteration count, page size, HMAC on,
+  plaintext header size, HMAC and KDF algorithms), plus the cipher, the
+  iteration count that derives the HMAC key, the page-number byte order in
+  the HMAC and the HMAC salt mask. A SQLCipher release that changed one of
+  those would fail it. The salt header and the key and IV sizes are not
+  pinned, because no pragma reports them; a release that changed one would
+  pass. SQLCipher 4.20 reports the same values as 4.19 (the test was also run
+  once by hand against the old lockfile on 2026-11-15, and passed there). A
+  fixture database written by the old build verified as VALID with the new
+  `log_verify`, and the reverse, in a one-time check by hand; no `-wal` file
+  was present in either. No standing test opens a file written by another
+  SQLCipher version.
 - **The start-up wait stays.** SQLite 3.54.1 still marks itself initialized
   before it runs SQLCipher's start-up hook, so `ensure_sqlcipher_ready` is
   still what keeps two threads from racing the first `PRAGMA key`.
