@@ -52,7 +52,10 @@ pub trait FlashHost: Emit + Sync {
 
     /// Download a release asset, calling `on_chunk(done, total)` after each
     /// chunk, and answer the bytes plus the total the progress was measured
-    /// against. The default is the real download ([`crate::net::download`]).
+    /// against. The default is the real download ([`crate::net::download`]),
+    /// bounded by the declared size and by the largest image any Canary
+    /// holds ([`crate::image::LOCAL_IMAGE_MAX_BYTES`]) — the body is kept in
+    /// memory until its size and SHA-256 are checked.
     fn download<F>(
         &self,
         url: &str,
@@ -62,7 +65,13 @@ pub trait FlashHost: Emit + Sync {
     where
         F: FnMut(usize, u64) + Send,
     {
-        crate::net::download(url.to_string(), expected_size, Self::USER_AGENT, on_chunk)
+        crate::net::download(
+            url.to_string(),
+            expected_size,
+            crate::image::LOCAL_IMAGE_MAX_BYTES,
+            Self::USER_AGENT,
+            on_chunk,
+        )
     }
 }
 

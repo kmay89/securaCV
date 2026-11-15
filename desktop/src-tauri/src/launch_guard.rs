@@ -540,6 +540,17 @@ impl LaunchGuard {
         self.persist();
     }
 
+    /// Whether a sidecar named `name` is running right now: one this run
+    /// spawned through [`spawn_tracked`] whose [`Ticket`] is still held. The
+    /// window-close guard asks this about `espflash` before it lets a quit
+    /// through mid-write.
+    pub fn any_live(&self, name: &str) -> bool {
+        self.record
+            .lock()
+            .map(|r| r.sidecars.iter().any(|s| s.name == name))
+            .unwrap_or(false)
+    }
+
     /// Open the window during which this bundle is being overwritten. Anything
     /// that kills us in here leaves a bundle that only a reinstall can fix, so
     /// the marker has to be on disk *before* the first byte is written.
@@ -1173,5 +1184,27 @@ mod tests {
         let text = std::fs::read_to_string(dir.join("launch-state.json")).expect("record");
         let after: LaunchRecord = serde_json::from_str(&text).expect("parse");
         assert!(after.sidecars.is_empty());
+    }
+
+    #[test]
+    fn any_live_names_a_running_sidecar_and_only_that_one() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let g = LaunchGuard::open_at(Some(tmp.path().join("state")), None, "0.3.7");
+        assert!(!g.any_live("espflash"), "nothing spawned yet");
+
+        // rpiboot running is not espflash running: the quit guard must not
+        // ask about a board write because the Pi's USB boot is in flight.
+        g.track(4242, "rpiboot");
+        assert!(!g.any_live("espflash"));
+        assert!(g.any_live("rpiboot"));
+
+        g.track(4243, "espflash");
+        g.track(4244, "espflash");
+        assert!(g.any_live("espflash"));
+        g.forget(4243);
+        assert!(g.any_live("espflash"), "one of two is still running");
+        g.forget(4244);
+        assert!(!g.any_live("espflash"), "the last ticket dropped");
+        assert!(g.any_live("rpiboot"));
     }
 }

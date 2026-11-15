@@ -312,22 +312,56 @@ fn open_target(path: &str) -> Result<std::fs::File, String> {
         .custom_flags(libc::O_EXCL)
         .open(path)
         .map_err(|e| match e.kind() {
-            // Linux has no authopen: a normal account cannot open a raw disk,
-            // so name the narrowest grant first (this one device, until it is
-            // replugged) and the standing one second, with its cost.
-            // desktop/INSTALL.md "Write a Pi hub card (Linux)" says the same.
-            std::io::ErrorKind::PermissionDenied => format!(
-                "no permission to write {path} — on Linux a normal account can't open a raw \
-                 disk. For this card only, run `sudo chown \"$USER\" {path}` in a terminal and \
-                 type ERASE again (udev gives it back to root when the card is replugged). Or \
-                 add yourself to the `disk` group and log back in — but that group can write \
-                 every disk on this computer, including the one it runs from."
-            ),
+            std::io::ErrorKind::PermissionDenied => permission_message(path),
             _ => format!(
                 "couldn't open {path} exclusively: {e}. If the card just mounted, eject it in \
                  your file manager and try again."
             ),
         })
+}
+
+/// Linux has no authopen: a normal account cannot open a raw disk, so name
+/// the narrowest grant first (this one device, until it is replugged) and
+/// the standing one second, with its cost. One string, said by the probe
+/// (when the card is picked, and again before the download) and by the write
+/// itself — so it says "then type ERASE", which reads right whether or not
+/// ERASE was typed yet; desktop/INSTALL.md "Write a Pi hub card (Linux)"
+/// says the same.
+#[cfg(target_os = "linux")]
+fn permission_message(path: &str) -> String {
+    format!(
+        "no permission to write {path} — on Linux a normal account can't open a raw \
+         disk. For this card only, run `sudo chown \"$USER\" {path}` in a terminal, \
+         then type ERASE (udev gives it back to root when the card is replugged). Or \
+         add yourself to the `disk` group and log back in — but that group can write \
+         every disk on this computer, including the one it runs from."
+    )
+}
+
+/// Can this account open `path` for writing at all? Asked BEFORE the
+/// hundreds-of-MB download and the ~2.5 GB decompress, so a Linux account
+/// outside the `disk` group hears the `chown` line in under a second instead
+/// of after minutes of work it would have to repeat. Read/write with no
+/// `O_EXCL`, so an auto-mounted card still answers (the exclusive open is
+/// the write's own gate, moments later); only `PermissionDenied` is an
+/// answer here — any other failure is left for `open_target` to name with
+/// the device in hand. A no-op on macOS, where the probe would raise the
+/// `authopen` prompt early, and on Windows.
+pub fn probe_target(path: &str) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        match std::fs::OpenOptions::new().read(true).write(true).open(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                Err(permission_message(path))
+            }
+            _ => Ok(()),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Ok(())
+    }
 }
 
 /// macOS: unmount the whole disk (required before raw writes), then open the
@@ -915,6 +949,36 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("read-back verification FAILED"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn probe_target_names_the_grant_only_for_a_permission_refusal() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        // Writable: nothing to say.
+        let mine = dir.path().join("card");
+        std::fs::write(&mine, b"").unwrap();
+        assert_eq!(probe_target(mine.to_str().unwrap()), Ok(()));
+        // Missing: not this probe's call — open_target names it with the
+        // device in hand.
+        assert_eq!(
+            probe_target(dir.path().join("gone").to_str().unwrap()),
+            Ok(())
+        );
+        // Refused: the same chown line the write itself would give, so the
+        // person hears it before the download rather than after.
+        let theirs = dir.path().join("root-disk");
+        std::fs::write(&theirs, b"").unwrap();
+        std::fs::set_permissions(&theirs, std::fs::Permissions::from_mode(0o400)).unwrap();
+        let want = permission_message(theirs.to_str().unwrap());
+        let got = probe_target(theirs.to_str().unwrap());
+        // root can open anything, so the refusal only shows for a normal
+        // account; either way the message, when given, is the write's own.
+        if let Err(msg) = got {
+            assert_eq!(msg, want);
+            assert!(msg.contains("sudo chown"), "{msg}");
+        }
     }
 
     #[test]

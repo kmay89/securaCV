@@ -161,6 +161,14 @@ pub struct HubPreflight {
     staging_ok: bool,
     /// The OS family, so the UI can tailor a hint (e.g. macOS permission prompt).
     platform: String,
+    /// Linux only, and only for a disk the enumerator lists: whether this
+    /// account can open it for writing right now (`hub_io::write::probe_target`).
+    /// `None` where nothing was probed — no disk chosen, or an OS where the
+    /// write itself asks (macOS's authopen prompt).
+    disk_writable: Option<bool>,
+    /// The grant to make when `disk_writable` is false — the write's own
+    /// words, said before the download instead of after it.
+    disk_note: Option<String>,
 }
 
 fn parse_catalog() -> Result<(Value, CatalogView), String> {
@@ -460,11 +468,24 @@ pub async fn hub_flash(
     result?
 }
 
-/// The staging directory the pipeline downloads and decompresses into. Uses
-/// the OS temp dir; the cached `.xz` lives in the app cache dir instead so it
-/// survives between runs.
-fn staging_dir() -> std::path::PathBuf {
-    std::env::temp_dir()
+/// The staging directory the pipeline decompresses into (and downloads to,
+/// when there is no cache to keep the `.xz` in): the per-user app cache the
+/// cached `.xz` already lives in. The raw image carries the Wi-Fi passphrase,
+/// the account hash and the maintenance key once seeded, and the OS temp dir
+/// is shared with every account on the machine — a predictable name there
+/// was readable by any of them for the minutes a card takes, and a plant
+/// target besides. Falls back to the temp dir only when the app has no cache
+/// dir at all (xz.rs then still creates the file 0600 and refuses a planted
+/// one).
+fn staging_dir(app: &AppHandle) -> std::path::PathBuf {
+    match app.path().app_cache_dir() {
+        Ok(d) => {
+            let d = d.join("hub-images");
+            let _ = std::fs::create_dir_all(&d);
+            d
+        }
+        Err(_) => std::env::temp_dir(),
+    }
 }
 
 /// Sweep files a crash or pulled plug could have orphaned: the ~2.5 GB raw
@@ -474,12 +495,17 @@ fn staging_dir() -> std::path::PathBuf {
 /// Run once at startup, before this process flashes anything of its own, so it
 /// never races its own work.
 pub fn cleanup_orphans(app: &AppHandle) {
-    // Raw staging images: securacv-hub-<pid>.img in the OS temp dir.
-    if let Ok(entries) = std::fs::read_dir(staging_dir()) {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with("securacv-hub-") && name.ends_with(".img") {
-                let _ = std::fs::remove_file(e.path());
+    // Raw staging images: securacv-hub-<pid>.img in the staging dir — and in
+    // the OS temp dir too, where versions before 0.12.6 staged them. Swept
+    // before this process stages anything, so the `create_new` open in
+    // xz.rs never meets a stale orphan at its own name.
+    for dir in [staging_dir(app), std::env::temp_dir()] {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.starts_with("securacv-hub-") && name.ends_with(".img") {
+                    let _ = std::fs::remove_file(e.path());
+                }
             }
         }
     }
@@ -519,19 +545,41 @@ fn cache_name(url: &str) -> String {
 }
 
 /// Preflight the flash: is there room to stage the download + decompressed
-/// image, and what platform are we on (so the UI can pre-warn about, e.g., the
-/// macOS disk-permission prompt). Cheap and read-only.
+/// image, what platform are we on (so the UI can pre-warn about, e.g., the
+/// macOS disk-permission prompt) and — given the chosen `disk_path` — can
+/// this account open that disk for writing (Linux; `probe_target`). Cheap
+/// and read-only. The probe only ever opens a path the enumerator lists as
+/// a disk right now: the webview names the disk, and a script in it must
+/// not be able to point a read/write open at a FIFO or a terminal.
 #[tauri::command]
-pub fn hub_preflight() -> Result<HubPreflight, String> {
+pub fn hub_preflight(app: AppHandle, disk_path: Option<String>) -> Result<HubPreflight, String> {
     // The full-stack raw image is ~2.5 GB and the compressed download ~0.5 GB;
     // ask for 6 GB of headroom so decompression + the OS both breathe.
     const NEED: u64 = 6 * 1024 * 1024 * 1024;
-    let free = free_space_bytes(&staging_dir()).unwrap_or(u64::MAX);
+    let free = free_space_bytes(&staging_dir(&app)).unwrap_or(u64::MAX);
+    let (disk_writable, disk_note) = match disk_path.as_deref().map(str::trim) {
+        Some(path) if cfg!(target_os = "linux") && !path.is_empty() => {
+            let listed = enumerate()
+                .map(|disks| disks.iter().any(|d| d.path == path))
+                .unwrap_or(false);
+            if listed {
+                match hub_io::write::probe_target(path) {
+                    Ok(()) => (Some(true), None),
+                    Err(note) => (Some(false), Some(note)),
+                }
+            } else {
+                (None, None)
+            }
+        }
+        _ => (None, None),
+    };
     Ok(HubPreflight {
         staging_free_bytes: free,
         staging_need_bytes: NEED,
         staging_ok: free >= NEED,
         platform: std::env::consts::OS.to_string(),
+        disk_writable,
+        disk_note,
     })
 }
 
@@ -754,10 +802,20 @@ pub async fn hub_onboard(
     .await
     .map_err(|e| format!("couldn't ask: {e}"))?;
     if !approved {
-        return Err(
-            "not sent — the account stays uncreated; open the hub's own setup page instead"
-                .to_string(),
-        );
+        // A decline is the person's answer, not a transport hiccup: it comes
+        // back as a report (which the UI settles on and stops asking about),
+        // never as an `Err`, which the UI's not-ready retry loop would read
+        // as "try again in ten seconds" — twelve times over.
+        return Ok(OnboardReport {
+            ok: false,
+            created_user: false,
+            login_verified: false,
+            remaining: vec![],
+            note: Some(
+                "Not sent — the account stays uncreated; open the hub's own setup page instead."
+                    .to_string(),
+            ),
+        });
     }
     tauri::async_runtime::spawn_blocking(move || {
         let log = |line: String| {
@@ -854,6 +912,15 @@ fn hub_flash_blocking(
         .into_iter()
         .find(|d| d.path == disk_path)
         .ok_or_else(|| format!("{disk_path} is no longer connected — was it unplugged?"))?;
+
+    // 2b) Can this account open that disk at all? Linux has no authopen, so
+    //     an account outside the `disk` group used to learn that only after
+    //     the download, the ~2.5 GB decompress and the seed — then had to run
+    //     the chown line and do all of it again. Ask now, with no bytes
+    //     moved (probe_target: the same message the write itself gives; a
+    //     no-op on macOS, whose prompt belongs at the write).
+    #[cfg(target_os = "linux")]
+    hub_io::write::probe_target(&target.path)?;
 
     // Mint the connection UUID once, up front — the keyfile needs a stable
     // uuid= or HAOS re-imports it with a fresh identity (and possibly a fresh
@@ -974,7 +1041,7 @@ fn hub_flash_blocking(
                 let _ = std::fs::create_dir_all(d);
                 d.join(cache_name(&plan.image_url))
             }
-            None => staging_dir().join(cache_name(&plan.image_url)),
+            None => staging_dir(app).join(cache_name(&plan.image_url)),
         };
         log(format!("→ downloading {}", plan.image_url));
         let dl = match hub_io::fetch::download(&plan.image_url, &dest, cancel, &mut progress) {
@@ -1016,10 +1083,12 @@ fn hub_flash_blocking(
         }
     ));
 
-    // 5) Decompress to a raw image in a private temp file (it's ~2.5 GB — the
-    //    cached .xz is the artifact worth keeping, not the expanded image).
+    // 5) Decompress to a raw image in the user-private staging dir (it's
+    //    ~2.5 GB — the cached .xz is the artifact worth keeping, not the
+    //    expanded image). xz.rs creates it 0600 and refuses a file already
+    //    at the name.
     let raw_path = CleanupPath {
-        path: staging_dir().join(format!("securacv-hub-{}.img", std::process::id())),
+        path: staging_dir(app).join(format!("securacv-hub-{}.img", std::process::id())),
         active: true,
     };
     let raw = hub_io::xz::decompress(&xz_path, &raw_path.path, cancel, &mut progress)?;
@@ -1345,8 +1414,19 @@ fn ensure_maintenance_key(app: &AppHandle) -> Result<String, String> {
 /// What a self-setup run reported, for the UI.
 #[derive(Serialize)]
 pub struct HeadlessReport {
-    /// True when the remote runner finished with exit code 0.
+    /// Strictly all-connected: the remote runner finished with exit code 0
+    /// AND skipped nothing optional.
     ok: bool,
+    /// The remote runner finished (exit code 0) — nothing is half-built and
+    /// nothing is left to retry — even when one optional step is left for a
+    /// human (`remainder`). `finished && !ok` is a settled outcome, not a
+    /// failure: the UI shows the finish line with the remainder, not the
+    /// retry button or the network hint.
+    finished: bool,
+    /// What the runner left for the person when it finished without
+    /// completing an optional step: the text after `INCOMPLETE_OPTIONAL:`
+    /// (today "mqtt integration").
+    remainder: Option<String>,
     /// The remote exit code, when ssh got far enough to run anything.
     exit_code: Option<i32>,
     /// Calm advice when not ok — reachability vs. a partway stop.
@@ -1447,7 +1527,13 @@ fn hub_headless_blocking(
         hub_core::hub_headless::CONSOLE_PORT
     ));
     let (code, transcript) = run_ssh(&log, &args)?;
-    if code != 0 && hub_core::hub_headless::host_key_changed(&transcript) {
+    Ok(headless_report(code, &transcript, &known_hosts))
+}
+
+/// Read a run's exit code and transcript into the report the UI acts on.
+/// Pure, so the classification is unit-tested without ssh or a hub.
+fn headless_report(code: i32, transcript: &str, known_hosts: &std::path::Path) -> HeadlessReport {
+    if code != 0 && hub_core::hub_headless::host_key_changed(transcript) {
         // A changed host key is AMBIGUOUS. A reflash produces it — but so does
         // mDNS/DHCP handing this name to another machine, or a LAN peer
         // answering for the hub. Auto-clearing the pin (and, worse, the whole
@@ -1455,8 +1541,10 @@ fn hub_headless_blocking(
         // whatever replied. So: stop, say exactly what happened, and let the
         // operator re-pair deliberately. Re-running self-setup after a genuine
         // reflash is a decision, not a default.
-        return Ok(HeadlessReport {
+        return HeadlessReport {
             ok: false,
+            finished: false,
+            remainder: None,
             exit_code: Some(code),
             retry_later: false,
             note: Some(format!(
@@ -1467,9 +1555,18 @@ fn hub_headless_blocking(
                  {}. If you did not, stop and check what is answering at that address first.",
                 known_hosts.display()
             )),
-        });
+        };
     }
 
+    // What the runner deliberately left for a human, when it finished.
+    let remainder = if code == 0 {
+        transcript
+            .lines()
+            .find(|l| l.contains("INCOMPLETE_OPTIONAL:"))
+            .map(|l| l.split("INCOMPLETE_OPTIONAL:").nth(1).unwrap_or("").trim().to_string())
+    } else {
+        None
+    };
     let note = if code == 0 && transcript.contains("INCOMPLETE_OPTIONAL:") {
         // The executor finished, but deliberately carried on past a step it
         // could not complete (today: Home Assistant's MQTT config flow, which
@@ -1477,20 +1574,14 @@ fn hub_headless_blocking(
         // "nothing is half-built", NOT "everything is connected" — so report
         // the remainder instead of claiming success. Without this the user is
         // told MQTT is installed while HA is subscribed to nothing.
-        Some(
-            transcript
-                .lines()
-                .find(|l| l.contains("INCOMPLETE_OPTIONAL:"))
-                .map(|l| {
-                    let rest = l.split("INCOMPLETE_OPTIONAL:").nth(1).unwrap_or("").trim();
-                    format!("Setup finished, with one thing left for you: {rest}")
-                })
-                .unwrap_or_else(|| {
-                    "Setup finished, but one optional step needs finishing by hand in Home \
-                     Assistant."
-                        .to_string()
-                }),
-        )
+        Some(match remainder.as_deref() {
+            Some(rest) if !rest.is_empty() => {
+                format!("Setup finished, with one thing left for you: {rest}")
+            }
+            _ => "Setup finished, but one optional step needs finishing by hand in Home \
+                  Assistant."
+                .to_string(),
+        })
     } else if code == 0 {
         None
     } else if transcript.contains("isn't running yet") {
@@ -1524,16 +1615,19 @@ fn hub_headless_blocking(
     // themselves; the UI keeps trying.
     let retry_later = code != 0
         && (transcript.contains("isn't running yet")
-            || (code == 255 && !hub_core::hub_headless::host_key_changed(&transcript)));
-    Ok(HeadlessReport {
+            || (code == 255 && !hub_core::hub_headless::host_key_changed(transcript)));
+    HeadlessReport {
         // Fully-finished only: a run that skipped an optional step is reported
-        // as not-ok WITH a note, so the UI offers the retry/guidance path
-        // rather than a clean "all done".
+        // as not-ok WITH a note and the remainder — and as `finished`, so the
+        // UI settles on it (finish line, notification, record cleared)
+        // instead of offering a retry that would change nothing.
         ok: code == 0 && !transcript.contains("INCOMPLETE_OPTIONAL:"),
+        finished: code == 0,
+        remainder,
         exit_code: Some(code),
         note,
         retry_later,
-    })
+    }
 }
 
 /// Spawn `ssh` and stream every line of output (both channels) to the UI,
@@ -1623,7 +1717,41 @@ impl Drop for CleanupPath {
 
 #[cfg(test)]
 mod tests {
-    use super::local_hub_host;
+    use super::{headless_report, local_hub_host};
+
+    #[test]
+    fn a_finished_run_with_an_optional_step_left_is_settled_not_failed() {
+        let kh = std::path::Path::new("/x/known_hosts");
+        let r = headless_report(
+            0,
+            "→ mosquitto ok\nINCOMPLETE_OPTIONAL: mqtt integration \u{2014} finish it in Settings\n",
+            kh,
+        );
+        assert!(r.finished, "exit 0 is finished");
+        assert!(!r.ok, "ok stays the strict all-connected flag");
+        assert!(!r.retry_later);
+        assert_eq!(
+            r.remainder.as_deref(),
+            Some("mqtt integration \u{2014} finish it in Settings")
+        );
+        assert!(r
+            .note
+            .as_deref()
+            .unwrap()
+            .starts_with("Setup finished, with one thing left for you: mqtt integration"));
+
+        let clean = headless_report(0, "all installed\n", kh);
+        assert!(clean.ok && clean.finished && clean.remainder.is_none() && clean.note.is_none());
+
+        let early = headless_report(1, "Home Assistant Core isn't running yet\n", kh);
+        assert!(!early.ok && !early.finished && early.retry_later && early.remainder.is_none());
+
+        let unreachable = headless_report(255, "ssh: connect to host hub port 22222: refused\n", kh);
+        assert!(!unreachable.finished && unreachable.retry_later);
+
+        let stopped = headless_report(3, "step 4 failed\n", kh);
+        assert!(!stopped.finished && !stopped.retry_later && stopped.note.is_some());
+    }
 
     #[test]
     fn hub_host_answers_the_trimmed_address_it_checked() {

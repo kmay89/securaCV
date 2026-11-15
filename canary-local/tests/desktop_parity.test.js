@@ -294,8 +294,12 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   //    failure tolerance the browser applies.
   assert.match(libRs, /fn auto_backup_path/,
     "desktop lost the auto-backup path helper");
-  assert.match(appJs, /auto_backup_path/,
+  // The destination is worked out in Rust (backup_flash dest "auto" calls
+  // auto_backup_path itself); the webview never holds it as a write target.
+  assert.match(appJs, /invoke\("backup_flash", \{[^}]*dest: "auto"/,
     "desktop one-shot flash no longer takes the safety copy first");
+  assert.match(nativeFnBody(libRs, "backup_flash"), /auto_backup_path\(&app/,
+    "backup_flash's auto mode no longer computes its own destination");
   assert.match(html, /id="skip-backup"/,
     "the skip-backup choice must exist (batch operators) — and default to COPYING");
   assert.ok(!/id="skip-backup"[^>]*checked/.test(html),
@@ -1064,7 +1068,12 @@ test("device API token: both flashers mint the same credential shape and seed th
   assert.match(appJs, /secret_set/, "desktop app.js never stores secrets in the OS drawer");
   const flashJs = read(join(CANARY, "assets/flash.js"));
   assert.match(flashJs, /mintApiToken/, "browser flasher no longer mints the device API token");
-  assert.match(flashJs, /apiTokenToNvs/, "browser flasher no longer seeds the device API token");
+  // The seed is assembled in flash-core.js installSettingsSeed (shared with
+  // the confirm card's fit check), which the install calls.
+  assert.match(flashJs, /core\.installSettingsSeed\(/, "browser flasher no longer builds the install's settings seed");
+  assert.match(read(join(CANARY, "assets/flash-core.js")),
+    /export function installSettingsSeed\([^)]*\) \{[\s\S]*?apiTokenToNvs\(apiToken\)[\s\S]*?\n\}/,
+    "browser flasher no longer seeds the device API token");
 });
 
 test("secret drawer: the consent copy names exactly the stores the native side can answer", () => {
@@ -7381,14 +7390,12 @@ test("both flashers name a full-flash backup canary-<mac6>…-backup.bin, and th
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const flashJs = read(join(CANARY, "assets/flash.js"));
   assert.match(flashJs, /const name = `canary-\$\{macStamp\(\)\}-backup\.bin`;/, "the browser's backup name moved");
-  assert.match(appJs, /defaultPath: `canary-\$\{macStamp\(mac \|\| ""\)\}-backup\.bin`,/, "the desktop's backup name must be the browser's");
-  const browserStamp = (mac) => new Function("state", fnSource(flashJs, "macStamp") + "\nreturn macStamp;")({ mac })();
-  const deskStamp = new Function("state", fnSource(appJs, "macStamp") + "\nreturn macStamp;")({ mac: null });
-  for (const mac of ["AA:BB:CC:DD:EE:FF", "aa-bb-cc-dd-ee-ff", "0:1", "", null, "zz"]) {
-    assert.strictEqual(deskStamp(mac || ""), browserStamp(mac), `macStamp disagrees on ${String(mac)}`);
-  }
-  // The automatic safety copy is named by the engine's helper, whose own
-  // test pins the browser's scheme.
+  // The desktop names both backups in Rust now (the save panel is raised
+  // there, G4-01): the rescue bench's panel suggests the engine's
+  // rescue::backup_filename, and the automatic safety copy is named by the
+  // same helper. Its own test pins the browser's scheme.
+  assert.match(nativeFnBody(libRs, "backup_flash"), /rescue::backup_filename\(&mac, ""\)/,
+    "the desktop's backup name must be the browser's (the engine's helper)");
   assert.match(libRs, /\.join\(rescue::backup_filename\(&mac, &stamp\.to_string\(\)\)\)/);
   assert.ok(engineRs("rescue").includes('"canary-ddeeff-backup.bin"'), "rescue.rs no longer pins the browser's scheme");
 });
@@ -7649,4 +7656,163 @@ test("the install journey ships on both flashers: every step up front, a heartbe
     assert.strictEqual(ctx.line(e, l), core.journeyClockLine(e, l),
       `the flashers word the clock differently for ${e}s elapsed, ${l}s left`);
   }
+});
+
+// ── the 2026-11 audit's Flasher fixes, held in both frontends ────────────────
+// An inlined app.js constant (`const NAME =\n  "…" + "…";`) evaluated as JS.
+const deskConst = (appJs, name) => {
+  const m = new RegExp(`\\nconst ${name} =\\s*([\\s\\S]*?);\\n`).exec(appJs);
+  assert.ok(m, `desktop/src/app.js no longer inlines ${name}`);
+  return new Function(`return (${m[1]});`)();
+};
+
+test("G4-01: the two commands that write a file for the user take no path; Rust raises the save panel", () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const sig = (name) => {
+    const m = new RegExp(`\\nasync fn ${name}\\(([\\s\\S]*?)\\)\\s*->`).exec(libRs);
+    assert.ok(m, `couldn't read ${name}'s signature from lib.rs`);
+    return m[1];
+  };
+  for (const cmd of ["save_text_file", "backup_flash"]) {
+    assert.doesNotMatch(sig(cmd), /\b(path|out_path)\s*:/,
+      `${cmd} takes a path from the webview again — a script there has the same invoke the app has`);
+    assert.match(nativeFnBody(libRs, cmd), /ask_save_path\(/, `${cmd} no longer raises the save panel from Rust`);
+  }
+  assert.match(nativeFnBody(libRs, "ask_save_path"), /blocking_save_file\(\)/);
+  assert.match(nativeFnBody(libRs, "validated_chosen_path"), /symlink_metadata\(/,
+    "a save would write through a link planted at the chosen name");
+  // auto_backup_path answers Rust only: not a command, so its answer can't
+  // round-trip through the webview as a write target.
+  const handler = /generate_handler!\[([\s\S]*?)\]/.exec(libRs);
+  assert.ok(handler, "couldn't read the invoke handler list");
+  assert.doesNotMatch(handler[1], /\bauto_backup_path\b/, "auto_backup_path is a webview command again");
+  // …and the page names no destination: no JS save dialog, no path argument.
+  assert.doesNotMatch(appJs, /dialog\.save\(/, "app.js raises a JS save dialog and hands its path to Rust again");
+  assert.doesNotMatch(appJs, /\boutPath\s*:/, "app.js passes backup_flash a destination again");
+  assert.match(appJs, /invoke\("save_text_file", \{/);
+});
+
+test("G4-05: the udev rule grants the seated user only — no world-writable Canary port", () => {
+  const rules = read(join(ROOT, "desktop/src-tauri/packaging/canary-serial.rules"));
+  for (const line of rules.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#"))) {
+    assert.doesNotMatch(line, /MODE=/, `a rule line sets a mode again: ${line}`);
+    assert.match(line, /TAG\+="uaccess"/, `a rule line lost its seat-only grant: ${line}`);
+  }
+  // (The Lab's copy and both INSTALL.md heredocs are held equal to this file
+  // by the dpkg test above.)
+});
+
+test("G4-13: the Flasher's Open link is a LAN address or nothing — the JS twin of fleet.rs host_is_local", () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const block = /\nconst v4Octets = [\s\S]*?\nfunction hostIsLocal\(host\) \{[\s\S]*?\n\}\n/.exec(appJs);
+  assert.ok(block, "desktop/src/app.js no longer carries the hostIsLocal block");
+  const hostIsLocal = new Function(`${block[0]}\nreturn hostIsLocal;`)();
+  const fleetRs = read(join(ROOT, "desktop/src-tauri/src/fleet.rs"));
+  const list = (testName) => {
+    const m = new RegExp(`fn ${testName}\\(\\) \\{\\s*for h in \\[([\\s\\S]*?)\\]`).exec(fleetRs);
+    assert.ok(m, `couldn't read fleet.rs's ${testName} list`);
+    return [...m[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]);
+  };
+  const accept = list("local_hosts_pass"), refuse = list("public_hosts_are_refused");
+  assert.ok(accept.length >= 10 && refuse.length >= 10, "fleet.rs's host lists shrank — re-read them");
+  for (const h of accept) assert.ok(hostIsLocal(h), `app.js hostIsLocal refuses ${h}, which fleet.rs accepts`);
+  for (const h of refuse) assert.ok(!hostIsLocal(h), `app.js hostIsLocal accepts ${h}, which fleet.rs refuses`);
+  // The gate is applied where the Open button gets its address.
+  const baseFor = /\n {2}baseFor\(entry\) \{[\s\S]*?\n {2}\},\n/.exec(appJs);
+  assert.ok(baseFor, "fleetBook.baseFor moved");
+  assert.match(baseFor[0], /if \(!hostIsLocal\(host\)\) return null;/,
+    "fleetBook.baseFor builds an Open link for an off-LAN announcement again");
+});
+
+test("G4-16/G4-19: the settings-too-big and no-safety-copy sentences are one sentence in both flashers", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  assert.strictEqual(deskConst(appJs, "SETTINGS_TOO_BIG"), core.SETTINGS_TOO_BIG,
+    "the settings-too-big sentence drifted between flashers");
+  assert.strictEqual(deskConst(appJs, "BACKUP_SKIP_NO_SIZE"), core.BACKUP_SKIP_NO_SIZE,
+    "the no-safety-copy sentence drifted between flashers");
+  // The desktop says it when its engine refuses the same install: the
+  // classifier matches the engine's own words.
+  const engineWords = /Err\("provisioning values (do not fit in one NVS page)"/.exec(engineRs("provisioning"));
+  assert.ok(engineWords, "provisioning.rs's NVS-page refusal moved");
+  const classify = new Function(`const SETTINGS_TOO_BIG = ${JSON.stringify(core.SETTINGS_TOO_BIG)};\n` +
+    jsFnText(appJs, "classifyFlashError", "desktop/src/app.js") + "\nreturn classifyFlashError;")();
+  const v = classify(new Error("provisioning values " + engineWords[1]));
+  assert.strictEqual(v.kind, "settings-size");
+  assert.strictEqual(v.hint, core.SETTINGS_TOO_BIG);
+  // The browser checks the fit on the confirm card and carries a bake error
+  // and a skipped copy to the done card.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.match(jsFnText(flashJs, "phaseConfirm", "flash.js"), /core\.settingsSeedProblem\(/,
+    "the browser's confirm card no longer checks the settings fit before installing");
+  assert.match(flashJs, /phaseDone\(\{[^}]*backupSkipReason, bakeError/,
+    "the done card no longer hears why the settings or the safety copy were skipped");
+  assert.match(appJs, /if \(!skipBackup && !state\.flashBytes\) \{\s*appendFlashLog\(con, "⚠ No safety copy this time: " \+ BACKUP_SKIP_NO_SIZE/,
+    "the desktop install no longer says the safety copy was skipped");
+});
+
+test("G4-17: the setup-door note names the app's availability and the fallback, in both flashers", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  assert.match(core.SETUP_DOOR_NOTE, /TestFlight by invite today/);
+  assert.match(core.SETUP_DOOR_NOTE, /setup network/);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const wifiBake = /\n {2}wifi_bake: \{\s*what: "([^"]*)"/.exec(appJs);
+  assert.ok(wifiBake, "the desktop wifi_bake help moved");
+  assert.match(wifiBake[1], /TestFlight by invite today/, "the desktop wifi_bake help oversells the iPhone app again");
+  assert.match(wifiBake[1], /setup network/, "the desktop wifi_bake help lost the fallback");
+});
+
+test("G4-18: both restores run the chip-placement guard every other write at 0x0 runs", async () => {
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const restore = jsFnText(flashJs, "onRestoreFile", "flash.js");
+  const check = restore.indexOf("core.validateBackupFile("), placed = restore.indexOf("core.bootloaderPlacement(bytes, state.chip)");
+  assert.ok(check >= 0 && placed > check, "the browser's restore no longer runs core.bootloaderPlacement after validateBackupFile");
+  assert.ok(placed < restore.indexOf("startFlash("), "the placement check runs after the write starts");
+  // Same refusal title as the Advanced local-file picker.
+  assert.match(restore, /"That image wouldn’t start on this board"/);
+  assert.match(jsFnText(flashJs, "onLocalFile", "flash.js"), /That image wouldn’t start on this board/);
+  // The desktop: the chip reaches write_local_image and the guard runs there.
+  const body = nativeFnBody(libRs, "write_local_image");
+  assert.match(body, /\bchip: String\b/, "write_local_image no longer takes the chip");
+  assert.ok(body.indexOf("check_bootloader_offset(&bytes, &chip)?") > body.indexOf("check_local_image(&bytes)?"),
+    "write_local_image no longer runs check_bootloader_offset after check_local_image");
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  assert.match(jsFnText(appJs, "onRescueRestore", "desktop/src/app.js"),
+    /invoke\("write_local_image", \{[\s\S]*?\bchip,/, "the desktop restore no longer passes the chip");
+});
+
+test("G4-10: quitting the Flasher mid-write asks first, in the Lab's words", () => {
+  assert.match(libRs, /flash_engine::flash::BOARD_WRITES\.any\(\)[\s\S]{0,200}any_live\(flash_engine::sidecar::ESPFLASH\)/,
+    "the Flasher's close guard no longer keys on a live espflash write");
+  assert.match(libRs, /"A flash is still writing to the board\. Quitting now leaves it \\\n\s*unfinished — safe, you would flash it again\. Quit anyway\?"/,
+    "the Flasher's mid-write quit question moved");
+  const lgRs = read(join(ROOT, "desktop/src-tauri/src/launch_guard.rs"));
+  assert.match(lgRs, /pub fn any_live\(&self, name: &str\) -> bool/);
+  // Every command that writes the board marks itself for the guard.
+  for (const fn of ["flash_local_file", "write_local_image", "erase_chip"]) {
+    assert.match(nativeFnBody(libRs, fn), /BOARD_WRITES\.begin\(\)/, `${fn} writes the board unmarked`);
+  }
+});
+
+test("G4-06/07/08: hub self-setup settles on a finished run, asks once, and never runs twice", () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const hubRs = read(join(ROOT, "desktop/src-tauri/src/hub.rs"));
+  // 06: exit 0 is `finished` even with an optional step left; the UI settles on it.
+  assert.match(hubRs, /finished: code == 0,/);
+  assert.match(jsFnText(appJs, "hubRunHeadlessSetup", "desktop/src/app.js"), /report\.finished/,
+    "a finished run with an optional step left is shown as a failure again");
+  // 07: a declined account dialog is a report, not an Err the retry loop repeats.
+  assert.match(nativeFnBody(hubRs, "hub_onboard"), /if !approved \{[\s\S]*?return Ok\(OnboardReport \{/,
+    "declining the account dialog returns an Err again — the UI re-asks twelve times");
+  // 08: one tick at a time, one onboarding at a time.
+  assert.match(jsFnText(appJs, "hubRunOnboarding", "desktop/src/app.js"), /if \(hub\.onboardBusy\) return null;/);
+  assert.match(jsFnText(appJs, "hubStartFirstBoot", "desktop/src/app.js"), /if \(hub\.fbTicking \|\| handed\) return;/);
+  assert.match(jsFnText(appJs, "hubMaybeResume", "desktop/src/app.js"), /if \(hub\.resumeTicking \|\| handed\) return;/);
+});
+
+test("G4-04: a Linux hub write checks the disk permission before any byte is downloaded", () => {
+  const hubRs = read(join(ROOT, "desktop/src-tauri/src/hub.rs"));
+  const probe = hubRs.indexOf("hub_io::write::probe_target(&target.path)?");
+  const wifiUuid = hubRs.indexOf("let wifi_uuid = hub_io::seed::uuid_v4()");
+  assert.ok(probe > 0 && wifiUuid > probe, "the raw-disk permission probe moved after the download pipeline");
 });

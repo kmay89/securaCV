@@ -10,9 +10,14 @@
 # why the identical app "just works" there:
 #
 # 1) Permissions: opening /dev/ttyACM* needs membership in `dialout` unless a
-#    udev rule grants access. TAG+="uaccess" grants the logged-in user access
-#    on systemd systems; MODE=0666 is the universal fallback (same pattern as
-#    60-rpiboot.rules).
+#    udev rule grants access. TAG+="uaccess" grants the logged-in (seated)
+#    user access on systemd systems, and nobody else: a Canary's port carries
+#    its setup-network key in the boot log and the ROM download mode that can
+#    dump or erase the board, so no line here opens it to every account
+#    (MODE="0666"). A session that holds no seat (SSH, a remote desktop, a
+#    non-systemd init) gets no grant from uaccess: for those, the `dialout`
+#    group paragraph in INSTALL.md ("Fallback for the permission half only")
+#    is the way in.
 # 2) ModemManager: a just-plugged board — or one re-enumerating after the
 #    post-flash reset — looks like a modem. ModemManager opens the port,
 #    probes it with AT commands and toggles its control lines, which the
@@ -23,16 +28,16 @@
 #
 # 303a       = Espressif native USB-Serial/JTAG (every Canary's own USB-C port)
 # 1a86:55d3  = WCH CH343 (the Grove Vision AI V2 camera module's port)
-ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
-ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
+ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
 #
 # The catalog boards with no native USB reach the computer through a
 # USB-to-UART bridge chip instead, and /dev/ttyUSB* is root:dialout 0660 on a
 # stock desktop: the ESP32-CAM (its programmer board), the ESP32-WROOM
 # DevKit and the ESP32-C3-DevKitM-1. These bridges are generic parts that
-# plenty of other gadgets use, so they get seat access only (uaccess: the
-# logged-in user, not every account) — never MODE="0666" — plus the same
-# ModemManager opt-out. Scoped by product id, not by vendor:
+# plenty of other gadgets use, so they are scoped by product id, not by
+# vendor, and get the same seat-only grant (uaccess) and ModemManager
+# opt-out as the lines above:
 # 10c4:ea60  = Silicon Labs CP210x (CP2102 / CP2102N / CP2104)
 # 1a86:7523  = WCH CH340
 # 1a86:55d4  = WCH CH9102

@@ -29,6 +29,7 @@
 // Flasher; the card says so, and says where.
 
 import * as core from "./flash-core.js";
+const SETTINGS_TOO_BIG = core.SETTINGS_TOO_BIG;
 
 const tauri = () =>
   typeof window !== "undefined" && window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__ : null;
@@ -118,6 +119,16 @@ function classifyFlashError(err) {
       hint: "Nothing was written. It has no bootloader for this chip where the chip " +
         "loads one from, so the board couldn't start from it (the details say where). " +
         "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
+
+  // The typed settings don't fit the one NVS page they are written into
+  // (flash-engine provisioning.rs: "provisioning values do not fit in one NVS
+  // page"). The engine refuses after the download and before any write; the
+  // browser flasher refuses the same install on its confirm card
+  // (core.settingsSeedProblem) with this same sentence. Named, so it is not
+  // read as an unknown failure and coached toward download mode.
+  if (has("do not fit in one nvs page"))
+    return { kind: "settings-size", title: "Your settings don't fit on the board",
+      hint: SETTINGS_TOO_BIG };
 
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||

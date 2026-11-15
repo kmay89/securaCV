@@ -222,6 +222,9 @@ export function hostIsLocal(host) {
   for (const suffix of [".local", ".lan", ".internal", ".home.arpa"]) {
     if (h.endsWith(suffix) && h.length > suffix.length) return true;
   }
+  // A bare number is an address, not a name: a browser reads 3627734734 or
+  // 0xd83ad6ce as a public IPv4.
+  if (/^(0x[0-9a-f]+|\d+)$/.test(h)) return false;
   return !h.includes(".");
 }
 

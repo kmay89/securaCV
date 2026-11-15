@@ -39,7 +39,21 @@ pub fn decompress(
         read: 0,
     };
     let mut decoder = xz2::read::XzDecoder::new(counted);
-    let mut out = std::fs::File::create(dest)
+    // The raw image carries whatever the caller seeds into it next (a Wi-Fi
+    // passphrase, the owner account's hash, the maintenance key): it is born
+    // owner-only (0600 on Unix) rather than created world-readable and
+    // tightened later, and `create_new` refuses a file already at that
+    // name — a symlink planted at the predictable path fails the open
+    // instead of redirecting gigabytes somewhere else.
+    let mut open = std::fs::OpenOptions::new();
+    open.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.mode(0o600);
+    }
+    let mut out = open
+        .open(dest)
         .map_err(|e| format!("couldn't create the raw image {}: {e}", dest.display()))?;
 
     let mut hasher = sha2::Sha256::new();
@@ -124,6 +138,27 @@ mod tests {
         h.update(&raw);
         assert_eq!(out.sha256, crate::sha256_hex(h));
         assert!(ticks > 0);
+    }
+
+    #[test]
+    fn the_raw_image_is_private_and_never_written_over_an_existing_file() {
+        let raw = vec![7u8; 10_000];
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("p.img.xz");
+        std::fs::write(&src, xz_bytes(&raw)).unwrap();
+        let dest = dir.path().join("p.img");
+        decompress(&src, &dest, &CancelToken::default(), |_| {}).expect("fresh dest");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "the raw image must be owner-only, got {mode:o}");
+        }
+        // A file (or a planted link) already at the name is refused, not
+        // overwritten or followed.
+        let err = decompress(&src, &dest, &CancelToken::default(), |_| {}).unwrap_err();
+        assert!(err.contains("couldn't create the raw image"), "{err}");
+        assert_eq!(std::fs::read(&dest).unwrap(), raw, "the existing file is untouched");
     }
 
     #[test]
