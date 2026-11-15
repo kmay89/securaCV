@@ -164,13 +164,22 @@ devices/<slug>/device.json cad.params
   → gen_flash.py → gen_builder_manifest.py [--site <website-checkout>]
       (with --site it also carries the website's upstream-contract.json BACK as
        canary-local/devices/site_contract.json — the runtime paths the site fetches from
-       this tree; scripts/tests/test_site_contract.py holds every one to the tree)
+       this tree and the issue forms it opens here; scripts/tests/test_site_contract.py
+       holds every one to the tree. The same file carries the site's own addresses —
+       routes, published files, anchors — and scripts/lint_site_links.py holds every
+       securacv.com link in this tree to them, so a link to a page newer than the
+       carried copy is red until this carry is rerun)
   → gen_print_files.py --site <website-checkout>   (only with --site: the in-development
        cases' print-ready STLs + print/print-files.json — version, commit, the .scad's
        sha256, each file's sha256 — into the website; its --check and the website's
        tests/print-files.test.mjs both fail on a case edited after its last render)
   → gen_stamp.py --check, gen_mark_svg.py --check (report-only; a STAMP_REV bump is a human's call)
   → in the website repo, after the carry: its make-*-glb.mjs (the AR models re-read cad-dims.json)
+
+A Lab page's own <title> or description is an input too: canary-local/tools/gen_head.py
+stamps the canonical link and the share tags from them into the page's <head>, and its
+--check (canary-local.yml) also refuses a title without the Lab's name or a description
+a search result cannot show whole.
 ```
 
 Two things about that list that the old prose had wrong. `./setup.sh regen`

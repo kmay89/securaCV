@@ -534,6 +534,29 @@ class SiteCarry(unittest.TestCase):
         _, out, err = self.run_main("--site", str(self.site), "--check")
         self.assertIn("is stale against the site's", str(err))
 
+
+    def test_the_sites_own_addresses_are_carried_when_it_states_them(self):
+        """routes / files / anchors are the other half of the contract (what
+        this tree may link on the site). Carried normalized when present, and
+        a malformed one stops the run instead of gating nothing."""
+        full = {**self.CONTRACT,
+                "routes": ["/help", "/", "/help"],
+                "files": ["/store.json"],
+                "anchors": {"/help": ["s-safe-mode", "claims", "claims"], "/": ["install"]}}
+        (self.site / "upstream-contract.json").write_text(json.dumps(full), encoding="utf-8")
+        rc, _, _ = self.run_main("--site", str(self.site))
+        self.assertEqual(rc, 0)
+        carried = json.loads(gbm.SITE_CONTRACT_OUT.read_text(encoding="utf-8"))
+        self.assertEqual(carried["routes"], ["/", "/help"])
+        self.assertEqual(carried["files"], ["/store.json"])
+        self.assertEqual(carried["anchors"], {"/": ["install"], "/help": ["claims", "s-safe-mode"]})
+        self.assertEqual(list(carried["anchors"]), ["/", "/help"])   # keys sorted too
+        for bad in ({"routes": ["help"]}, {"files": "store.json"}, {"anchors": {"/help": "x"}},
+                    {"anchors": ["/help"]}):
+            (self.site / "upstream-contract.json").write_text(
+                json.dumps({**self.CONTRACT, **bad}), encoding="utf-8")
+            _, _, err = self.run_main("--site", str(self.site))
+            self.assertIsNotNone(err, bad)
     def test_a_malformed_contract_is_refused(self):
         for bad in ('{"paths": "x"}', '{"paths": ["/abs"]}', '{"paths": ["a/../b"]}',
                     '{"paths": [], "patterns": [3]}', "not json"):

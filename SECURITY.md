@@ -85,6 +85,17 @@ For structured security testing — what's in scope, what a tester is handed,
 what is explicitly out of bounds, and what counts as a finding —
 see [`docs/security/PENTEST_SCOPE.md`](docs/security/PENTEST_SCOPE.md).
 
+### The website is in scope too
+
+`securacv.com` names this file as its policy
+(`/.well-known/security.txt`), because the website's own repository is not
+public and a policy nobody can open is not a policy. Report a website issue
+through the same two private channels above. The site is static — no
+accounts, no credentials, no server-side code — so the interesting surface is
+content injection, its Content Security Policy and its response headers; the
+same applies to the in-browser Lab this repository publishes on GitHub Pages
+(`canary-local/`).
+
 ## Known dependency advisories
 
 Transitive dependencies occasionally carry published advisories that are

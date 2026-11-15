@@ -3,3 +3,9 @@ contact_links:
   - name: 💡 Community Ideas board (vote & browse — no GitHub know-how needed)
     url: https://securacv.com/ideas
     about: "Browse what people have suggested and back your favorites with a 👍. The friendly front door to everything below."
+  - name: 💛 The friendly feedback desk
+    url: https://securacv.com/feedback
+    about: "A calm, one-minute form for feedback, a snag, or just saying hi. No GitHub account needed — there's an email path too."
+  - name: 🔒 Security or privacy report
+    url: https://github.com/kmay89/securaCV/security/advisories/new
+    about: "Found a vulnerability or a privacy concern? Report it privately here, never as a public issue. SECURITY.md has the policy."

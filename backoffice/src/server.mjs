@@ -426,7 +426,11 @@ export function createApp({ db, cfg }) {
   return app;
 }
 
-export async function applyStripeEvent(app, m, event = null) {
+// `now` is the clock the "cadence of now" below reads. The HTTP handler leaves it at the real one; a
+// test passes its own, because a promise computed from the wall clock is right only until the calendar
+// moves (tests/away.test.mjs asserted a ship date that held from 21 Oct to 8 Nov 2026 and then went red
+// on every branch, with nothing changed).
+export async function applyStripeEvent(app, m, event = null, { now = new Date() } = {}) {
   const { db, cfg } = app;
   if (m.kind === 'order') {
     const catalog = await app.catalog().catch(() => null);
@@ -435,7 +439,7 @@ export async function applyStripeEvent(app, m, event = null) {
     // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying, written on the order as its promise.
     // A site checkout carries the ship date it showed (metadata.ships_on, createCheckout) and that date is kept, whatever the cadence or the away
     // date says by the time the webhook lands; a Payment Link or an import has none and is promised the cadence of now.
-    const est = estimateForShipDate(m.ships_on, m.ship?.zip || m.ship_zip, { cfg, state: m.ship?.state || m.ship_state }) || estimateForZip(m.ship?.zip || m.ship_zip, { cfg, db });
+    const est = estimateForShipDate(m.ships_on, m.ship?.zip || m.ship_zip, { cfg, state: m.ship?.state || m.ship_state }) || estimateForZip(m.ship?.zip || m.ship_zip, { now, cfg, db });
     const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe', promise: { ship_on: est.ships.ships_on, arrive_by: est.delivers?.latest || null } });
     if (created && order.email && order.items.length) { const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
       enqueue(db, { to: order.email, subject: `We have your ${cfg.product || 'SecuraCV'} order ${order.number}`, kind: 'transactional', ref: `order:${order.number}`, contactId: order.contact_id,

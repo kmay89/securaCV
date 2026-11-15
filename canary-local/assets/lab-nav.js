@@ -242,7 +242,11 @@ function rebuildBar(bar, M, route, at) {
   }
   nav.append(
     h("a", { href: SITE_ORIGIN + "/glossary" }, "Glossary"),
-    h("a", { href: SITE_ORIGIN + "/canary" }, "Help"),
+    // "Help" opens the Help Desk — the same page the static bar this module
+    // replaces says, and the same page securacv.com's own header opens. It
+    // used to open /canary here, the page a plugged-in Canary opens for
+    // itself, so the link changed destination the moment the script ran.
+    h("a", { href: SITE_ORIGIN + "/help" }, "Help"),
     h("span", { class: "scv-where" }, whereText),
   );
 

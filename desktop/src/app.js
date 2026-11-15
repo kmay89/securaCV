@@ -6482,21 +6482,21 @@ const ATLAS_FAMILY_GROUP = "The other windows onto your fleet";
 const ATLAS_LINKS = [
   ["Your Canaries on the web", [
     ["Home", "The project, start to finish.", SITE + "/"],
-    ["Meet the fleet", "Every Canary and what it witnesses.", SITE + "/fleet"],
-    ["Ecosystem", "How Canaries, the Hub and Home Assistant fit.", SITE + "/ecosystem"],
-    ["Gallery", "Real installs.", SITE + "/gallery"],
+    ["What you can have today", "Only what exists right now: builds, apps, the store.", SITE + "/today"],
+    ["Home Assistant", "Keep Frigate, add proof: the witness log beside your cameras.", SITE + "/home-assistant"],
+    ["Your Fleet", "Who your Canary hears nearby, live.", SITE + "/fleet"],
     ["Compare", "SecuraCV next to subscription cameras.", SITE + "/compare"],
   ]],
   ["Learn & try", [
     ["How it works", "The witness kernel, in plain language.", SITE + "/how-it-works"],
     ["The Lab", "The browser flasher this app grew from.", SITE + "/lab"],
     ["Test bench", "Wire a peripheral to the bench firmware.", SITE + "/playground"],
-    ["Checkup", "Read a board's health.", SITE + "/checkup"],
+    ["Canary Doctor", "What a healthy first boot reports, emulated.", SITE + "/checkup"],
   ]],
   ["Build & extend", [
-    ["Download", "This app, every platform.", SITE + "/download"],
-    ["Plugin", "Wire a Canary into your own stack.", SITE + "/plugin"],
-    ["Maker", "Build one from parts.", SITE + "/maker"],
+    ["Download", "This app, for Mac and Linux.", SITE + "/download"],
+    ["Plug It In", "What a Canary shows your computer over USB (a preview build).", SITE + "/plugin"],
+    ["Build one", "Five steps: pick, print, source, flash, check.", SITE + "/maker"],
     ["Factory", "How a Canary is born.", SITE + "/factory"],
   ]],
   // The rest of the family, named from the flashing bench — the moment of
@@ -6514,7 +6514,7 @@ const ATLAS_LINKS = [
     ["Source on GitHub", "Every line, open.", REPO],
     ["Changelog", "What changed, release by release.", REPO + "/blob/main/CHANGELOG.md"],
     ["Security", "How issues are handled.", REPO + "/blob/main/SECURITY.md"],
-    ["Errer Labs", "The people behind the birds.", SITE + "/#about"],
+    ["Errer Labs", "The people behind the birds.", SITE + "/about"],
   ]],
 ];
 
