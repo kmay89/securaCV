@@ -3464,7 +3464,7 @@ so — see D2 below.)
 
 - [ ] **A132 [code] The flashers' diagnostic report still passes serial lines
   that carry identity or a location (device-details finding P14).** Since
-  #<PR>, `sanitizeLogTail()` in both flashers
+  #1970, `sanitizeLogTail()` in both flashers
   (`canary-local/assets/flash-core.js`, `desktop/src/app.js`) replaces the
   lines `TAIL_IDENTITY` names with "[identity line: shown in the flasher, not
   in reports]", but a line no pattern names passes, so the report is not
@@ -3480,10 +3480,10 @@ so — see D2 below.)
   tail from the line shapes it may keep; and once the firmware answers `q`
   (device-details PR 10), replace each `securacv.canary.details/v1` line
   with its share projection. `docs/design/automated_help_desk.md` Phase 3
-  waits on this. Host-tested only. Found by device-details PR 1 (#<PR>).
+  waits on this. Host-tested only. Found by device-details PR 1 (#1970).
 
 - [ ] **A133 [code] The desktop Flasher's fleet book and stored device keys
-  are keyed by the hardware address (device-details PR 18).** Since #<PR>
+  are keyed by the hardware address (device-details PR 18).** Since #1970
   neither flasher draws the address unasked or puts it in a report or a file
   name, but `desktop/src/app.js` still keys each fleet-book entry by it
   (`bookKey(mac, deviceId)`, saved with the app's settings) and names each
@@ -3491,7 +3491,7 @@ so — see D2 below.)
   (`secretStore.key("canary", entry.mac || entry.deviceId, "token")`, the
   `canary:<mac>:token` item in `docs/flasher_profiles_fleet_book.md`). What
   remains: key both by the device id, and move the entries and keychain
-  items already stored. Found by device-details PR 1 (#<PR>).
+  items already stored. Found by device-details PR 1 (#1970).
 
 ---
 

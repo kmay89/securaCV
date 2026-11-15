@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### Flashers: About this board, read from the chip and the installed image; no hardware address on screen, in a report or in a file name (device-details PR 1, #<PR>)
+### Flashers: About this board, read from the chip and the installed image; no hardware address on screen, in a report or in a file name (device-details PR 1, #1970)
 
 - **About this board, in both flashers and the Lab's native bench.** The
   browser flasher's hello card and the desktop Flasher's new This Board card
