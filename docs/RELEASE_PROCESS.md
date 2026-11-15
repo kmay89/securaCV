@@ -142,8 +142,9 @@ Then, exactly as it prints:
 1. Add the private key as the `OTA_SIGNING_KEY_PEM` secret of the
    `firmware-release` environment (Settings → Environments →
    `firmware-release` → Add environment secret; not a repository secret,
-   which any workflow file on any branch can read) — the full PEM,
-   `-----BEGIN PRIVATE KEY-----` through `-----END PRIVATE KEY-----` — and set
+   which any workflow file on any branch can read) — the
+   full PEM, `-----BEGIN PRIVATE KEY-----` through
+   `-----END PRIVATE KEY-----` — and set
    the repository variable `OTA_SIGNING_KEY_IN_ENVIRONMENT` to `true`
    ([Who can sign](#who-can-sign) says why, and what else to set there).
    The helper's own printout still says "New repository secret": use the
