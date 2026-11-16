@@ -5534,6 +5534,64 @@
   the last boundary that fits.
 - **Date learned:** 2026-11
 
+### 2026-11-15 — canary-wap OTA routes and the landing session (2
+2026-11-15 — canary-wap OTA routes and the landing session (2.4.20). F361
+moved the two reboot routes to the bearer but left POST /api/ota/install and
+/api/ota/config on api_auth_check(). The landing page mints that session for
+any LAN host, so any of them could restart the unit through an install or
+re-point the update server. A route that restarts the unit or chooses where
+code comes from is a bearer route. When one route of a family moves, grep the
+family (ota/*, reboot, safe-mode) and move it whole. The docs-claims pins that
+held the old gate moved with it.
+
+### 2026-11-15 — canary-wap Wi-Fi scan state (2
+2026-11-15 — canary-wap Wi-Fi scan state (2.4.20). The scan paths marked
+WIFI_PROV_SCANNING from any state and restored IDLE on any unit with
+credentials. wifi_check_connection() watches only CONNECTING and CONNECTED, so
+one unauthenticated /api/wifi/scan?force=1 left a joined unit blind to link
+loss until a reboot. A side activity must never overwrite the state another
+state machine watches: leave a held link's state alone, and restore from the
+live radio, not from configuration.
+
+### 2026-11-15 — canary-wap BLE OTA (2
+2026-11-15 — canary-wap BLE OTA (2.4.20). The docs, ble_improv.h and
+bluetooth_channel.cpp all said the OTA characteristics were *_AUTHEN, but the
+code created them plain WRITE/READ, and neither write handler looked at the
+link: any connected central could ABORT a session or write into its image. A
+security property stated in comments needs a test that reads the code
+(test_ble_ota_policy now reads ble_ota.cpp's createCharacteristic properties).
+A session opened on one link is bound to that link's handle and address.
+
+### 2026-11-15 — canary-wap pair links (2
+2026-11-15 — canary-wap pair links (2.4.20). The landing fallback and
+/api/pair/token hardcoded http://192.168.4.1, the SoftAP address, which a unit
+on its owner's network no longer answers. A link a device hands out names the
+address the request came in under (its Host, validated, read before the first
+send purges headers) or is relative, never a setup-time constant.
+
+### 2026-11-15 — canary-wap TLS pin lifecycle (2
+2026-11-15 — canary-wap TLS pin lifecycle (2.4.20). init_tls_cert() served a
+certificate whose NVS store failed, and the pairing QR asked its own test
+(g_tls_enabled && fp) instead of tls_after_setup(), so it could pin a
+certificate the next boot replaces. When one predicate guards a value that
+gets handed out, every site that hands it out asks that predicate
+(test_receipt_grant had to cut tls_after_setup with the QR handler).
+
+### 2026-11-15 — canary-wap release_summary (2
+2026-11-15 — canary-wap release_summary (2.4.20). strncpy at 160 bytes split a
+multibyte character, and Home Assistant refused the retained update payload as
+invalid UTF-8. Any byte-length cut of user or release text headed for JSON or
+MQTT must end on a character boundary: back off over the continuation bytes
+and drop a lead byte whose sequence did not fit.
+
+### 2026-11-15 — canary-wap OTA slot exclusion (2
+2026-11-15 — canary-wap OTA slot exclusion (2.4.20). BLE OTA and the pull
+engine checked each other, but the USB drop-zone installer checked neither,
+and its esp_ota_begin could erase the inactive slot under a download. Every
+installer that opens the inactive slot must check every other, from both sides
+(the drop refuses while one is busy; ota_can_install defers while a drop-zone
+is open). When a new installer is added, grep esp_ota_begin.
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

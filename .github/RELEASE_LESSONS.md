@@ -13,6 +13,32 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-15 (l) — Short rules a parallel fix pass paid for (add-on, website), continued
+
+- **Symptom:** none of these reached a release. Each was caught by a reviewer
+  reading a leg's diff, not by a gate.
+- **Cause and fix, one per rule:**
+  - A Tauri command that writes a file must not take its destination from the
+    webview, even when the page got that path from a save dialog. A script
+    injected into the webview has the same invoke as the app's own code, and a
+    .json write lands in config files other tools execute. Raise the save
+    panel from Rust (blocking_save_file inside spawn_blocking) and compute any
+    automatic destination in Rust. Pin with a desktop_parity test that the
+    command signature has no path argument and app.js calls no dialog.save.
+  - Do not put a manifest-supplied size into Vec::with_capacity, and do not
+    read a download body without a bound. A pinned signature does not stop
+    whoever can edit the manifest from declaring 2^40. Cap the declared size
+    at the largest real artifact, and cut the transfer off once received bytes
+    pass min(declared, cap).
+  - Home Assistant's MQTT config flow on a Supervisor host opens as a MENU
+    (addon | broker), not a form. A hub plan that POSTs broker fields to it
+    can never succeed, because Mosquitto refuses an uncredentialed Core.
+    Answer {next_step_id: 'addon'} so HA fetches the add-on's discovery
+    credentials itself, and retry addon_connection_failed briefly when the
+    step runs right after a Mosquitto restart.
+- **Applies to:** any fix pass split across owners. A rule here is cheap to
+  check before the report is written and expensive after.
+
 ## 2026-11-15 (k) — Short rules a parallel fix pass paid for (add-on, website)
 
 - **Symptom:** none of these reached a release. Each was caught by a reviewer
