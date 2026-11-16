@@ -16,6 +16,17 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.4.3 — 2026-11-16
+
+**Hub setup from the hub's own console says plainly what is left for you.**
+
+- **The MQTT step is left for one click, with the reason.** The hub plan the
+  Lab carries no longer attempts the MQTT connection when it runs from the
+  hub's host console, where Home Assistant's API refuses Core's own token.
+  It installs everything else and tells you to press **Add** on the MQTT
+  card under Settings → Devices & Services, then Submit.
+- **Firmware 2.4.20** is the catalog this version carries.
+
 ## 0.4.2 — 2026-11-15
 
 **A flash in progress is no longer lost by accident, the status strip stops

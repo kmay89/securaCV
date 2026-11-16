@@ -1,4 +1,18 @@
 <!-- The Supervisor shows this file on the app's page after an update. Newest first. -->
+## 0.9.2
+
+- **"Only Frigate alerts" is checked against your own Frigate config.**
+  Where Frigate keeps its own camera config, the wizard now reads its
+  record setting (a camera's own `record.enabled`, else the top-level one;
+  Frigate's default is off) for the cameras SecuraCV seals. Frigate creates
+  alerts only for cameras that record, so when it records none of them the
+  choice is not applied, every tracked object is sealed instead, and the
+  done screen says why and how to turn alerts on. When only some of them
+  record, the choice is kept and the screen names the cameras that will
+  seal nothing. A config the wizard cannot read is taken at your word, as
+  before.
+- **The kernel, the integration and the app move to 0.9.2 together.**
+
 ## 0.9.1
 
 - **The encrypted database runs on a fixed SQLite.** The kernel inside the

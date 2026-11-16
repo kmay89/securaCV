@@ -17,6 +17,18 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.12.7 — 2026-11-16
+
+**Hub setup from the hub's own console says plainly what is left for you.**
+
+- **The MQTT step is left for one click, with the reason.** Setting up a
+  hub through its host console runs with Home Assistant Core's own token,
+  which can reach the add-on store but not Home Assistant's API. The setup
+  no longer attempts the MQTT connection from there: it installs everything
+  else and tells you to press **Add** on the MQTT card under Settings →
+  Devices & Services, then Submit.
+- **Firmware 2.4.20** is the catalog this version carries.
+
 ## 0.12.6 — 2026-11-15
 
 **A security and correctness pass: the app takes less on a page's word, says

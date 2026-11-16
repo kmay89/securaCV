@@ -930,3 +930,105 @@ def test_digest_automation_skips_when_blueprint_wants_a_device(monkeypatch, tmp_
     result = serve_wizard._setup_digest_automation("08:00")
     assert result["created"] is False
     assert "Blueprints" in result["detail"]
+
+
+# ---------------------------------------------------------------------------
+# "Only Frigate alerts" where Frigate keeps its own config: Frigate creates
+# alerts only for cameras that record, so the wizard reads the config's
+# record setting (a camera's own, else the top-level one; Frigate's default
+# is off) for the cameras SecuraCV seals.
+# ---------------------------------------------------------------------------
+
+FRIGATE_RECORDS_NONE = """\
+mqtt:
+  host: core-mosquitto
+cameras:
+  front_door:
+    ffmpeg:
+      inputs:
+        - path: rtsp://10.0.0.9/s
+          roles: [detect]
+  back_yard:
+    record:
+      enabled: false
+"""
+
+FRIGATE_RECORDS_ONE = """\
+record:
+  enabled: false
+cameras:
+  front_door:
+    record:
+      enabled: true
+  back_yard:
+    detect: {enabled: true}
+"""
+
+FRIGATE_RECORDS_ALL = """\
+record:
+  enabled: yes
+cameras:
+  front_door:
+    detect:
+      enabled: true
+  back_yard:
+    record: {enabled: true}
+"""
+
+
+def test_yaml_value_at_reads_block_and_flow_values():
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_ONE, ("record", "enabled")) == "false"
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_ONE, ("cameras", "front_door", "record", "enabled")) == "true"
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_ALL, ("cameras", "back_yard", "record", "enabled")) == "true"
+    # A key that is a block, a missing key, and a same-named deeper key.
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_ONE, ("cameras",)) is None
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_NONE, ("record", "enabled")) is None
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_NONE, ("enabled",)) is None
+
+
+def _frigate_owns(monkeypatch, tmp_path, text):
+    config = tmp_path / "addon_configs" / "ccab4aaf_frigate" / "config.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(serve_wizard, "ADDON_CONFIGS_DIR", tmp_path / "addon_configs")
+    monkeypatch.setattr(serve_wizard, "LEGACY_FRIGATE_CONF", tmp_path / "no-legacy.yml")
+    return config
+
+
+def _save_alerts_only(cameras):
+    return _bare_handler()._handle_save({
+        "mode": "frigate", "frigate_detected": True,
+        "cameras": [{"name": n} for n in cameras], "enable_reviews": True,
+    })
+
+
+def test_alerts_only_is_refused_when_frigate_records_none_of_the_sealed_cameras(save_env, monkeypatch, tmp_path):
+    _frigate_owns(monkeypatch, tmp_path, FRIGATE_RECORDS_NONE)
+    result = _save_alerts_only([])
+    assert result["ok"] is True
+    assert save_env["options"]["frigate"]["enable_reviews"] is False
+    assert result["frigate_config"].endswith(serve_wizard.ALERTS_ONLY_NO_RECORDING_NOTE)
+
+
+def test_alerts_only_names_the_cameras_that_will_seal_nothing(save_env, monkeypatch, tmp_path):
+    _frigate_owns(monkeypatch, tmp_path, FRIGATE_RECORDS_ONE)
+    result = _save_alerts_only([])
+    assert save_env["options"]["frigate"]["enable_reviews"] is True
+    note = result["frigate_config"]
+    assert "nothing is sealed from back_yard" in note and "front_door" not in note.split("nothing is sealed from")[1]
+    # Sealing only the camera that records says nothing more.
+    result = _save_alerts_only(["front_door"])
+    assert save_env["options"]["frigate"]["enable_reviews"] is True
+    assert "nothing is sealed" not in result["frigate_config"]
+    # Sealing only the one that does not record refuses the choice.
+    result = _save_alerts_only(["Back Yard"])
+    assert save_env["options"]["frigate"]["enable_reviews"] is False
+    assert result["frigate_config"].endswith(serve_wizard.ALERTS_ONLY_NO_RECORDING_NOTE)
+
+
+def test_alerts_only_is_kept_when_frigate_records_every_sealed_camera(save_env, monkeypatch, tmp_path):
+    _frigate_owns(monkeypatch, tmp_path, FRIGATE_RECORDS_ALL)
+    result = _save_alerts_only([])
+    assert save_env["options"]["frigate"]["enable_reviews"] is True
+    assert "was not applied" not in result["frigate_config"]
+    assert "nothing is sealed" not in result["frigate_config"]
