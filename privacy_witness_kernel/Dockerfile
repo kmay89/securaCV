@@ -29,7 +29,7 @@ ARG TARGETARCH
 # s6-overlay 3.2). pwk-wizard-tests.yml tests on that Python and that jq:
 # move its two pins when these tags move.
 FROM ghcr.io/home-assistant/amd64-base:3.24@sha256:6cc6bcf640d8dfd238590c0404825f831401a7754febd0f9f9c0c68c82d955b3 AS runtime-amd64
-FROM ghcr.io/home-assistant/aarch64-base:3.22@sha256:5f647e139079ca3d004d4e8e90495c1f77e97dcf533d0db4d62656ad66d8de1f AS runtime-arm64
+FROM ghcr.io/home-assistant/aarch64-base:3.24@sha256:48408ed8587f35994babee9ff7ef3e6c6fd3f87ea07fb1f4b11ff1c42401e92a AS runtime-arm64
 
 # Builder: pinned to the SAME Alpine release as the runtime base.
 # Alpine 3.22's own Rust (1.87) is older than the toolchain pinned below
