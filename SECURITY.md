@@ -320,6 +320,40 @@ upstream fix lets the ignore go.
   the root `Cargo.lock`. A binary built from 0.9.0 or earlier still carries
   the old SQLCipher: update it.
 
+- **Standing tests:** `tests::linked_sqlite_is_at_least_3_54_0` in
+  `src/lib.rs` asks the linked library for its version and fails below
+  3.54.0, and `tests::kernel_database_cipher_settings_are_pinned` pins the
+  cipher settings SQLCipher reports for a new kernel database. What no
+  pragma reports (the salt header, the key and IV sizes) is not pinned, and
+  no standing test opens a file written by another SQLCipher version; that
+  was checked once by hand on 2026-11-15 with the conformance fixture, in
+  both directions.
+
+### Group 6 — `quinn-udp` receive loop (RUSTSEC-2026-0538) — RESOLVED
+
+- **Advisory:** RUSTSEC-2026-0538, "Receive loop can spin after a truncated
+  datagram", against `quinn-udp` 0.5.15; patched in 0.5.16. Nothing beyond
+  that title is described here.
+- **Where it came from:** the lockfiles of the Flasher
+  (`desktop/src-tauri`), the Lab app (`desktop-lab/src-tauri`) and the flash
+  engine (`desktop/flash-engine`). `quinn-udp` sits under `quinn` 0.11.11,
+  an optional dependency of `reqwest` 0.12.28 that only `reqwest`'s `http3`
+  feature (its HTTP/3 client over QUIC) turns on. `reqwest` 0.12.28 is
+  reached from `flash-engine` and, in the two apps, also from the app crate
+  itself (`securacv-flasher` in `desktop/src-tauri`, `securacv-lab` in
+  `desktop-lab/src-tauri`). `tauri` 2.12.5 and `tauri-plugin-updater`
+  2.14.1 depend on `reqwest` 0.13.4 instead, which has no `quinn` edge in
+  these lockfiles.
+- **Compiled in? No.** No crate in the three graphs turns on `http3`; the
+  lockfiles list `quinn` because `reqwest`'s `__rustls-ring` feature names
+  `quinn?/ring`, a reference that does not enable the dependency.
+  `cargo tree --locked --target all -i quinn-udp` prints nothing in each of
+  the three crates, with default features and with `--all-features`
+  (2026-11-15). The audit reads the lockfile, so it failed all the same.
+- **Fix:** `quinn-udp` 0.5.16 in all three lockfiles. Only that package
+  entry (version and checksum) changed; each lockfile passes
+  `cargo metadata --locked`.
+
 ## Non-goals
 
 The following are explicitly out of scope:

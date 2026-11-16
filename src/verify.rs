@@ -29,6 +29,9 @@ pub enum FailedLedger {
     /// The clock-provenance ledger (device clock vs TSA `genTime`, one
     /// device-signed record per anchor row; `src/clock_provenance.rs`).
     ClockProvenance,
+    /// The OpenTimestamps anchor table (`ots_anchors`, auxiliary evidence
+    /// about the ledgers, checked structurally; serde `"ots_anchors"`).
+    OtsAnchors,
 }
 
 /// What kind of check failed. Drives the plain-language diagnosis the CLIs
@@ -64,7 +67,7 @@ pub enum FailureKind {
 pub struct VerifyFailure {
     pub ledger: FailedLedger,
     /// The row the check failed at; for `ledger == anchors` this is the
-    /// `tsa_anchors` row id.
+    /// `tsa_anchors` row id; for `ots_anchors`, the `ots_anchors` row id.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_id: Option<i64>,
     pub kind: FailureKind,
@@ -1276,7 +1279,7 @@ pub fn classify_warning(warning: &str) -> WarningKind {
         WarningKind::StaleTail
     } else if warning.starts_with("timeline audit could not run") {
         WarningKind::AuditUnavailable
-    } else if warning.starts_with("anchor #") {
+    } else if warning.starts_with("anchor #") || warning.starts_with("ots anchor #") {
         WarningKind::AnchorAnomaly
     } else if warning.starts_with("clock provenance ") || warning.starts_with("clock offset:") {
         WarningKind::ClockProvenance
