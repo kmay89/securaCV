@@ -35,6 +35,7 @@ struct SetupView: View {
     @State private var householdWiFi: HouseholdWiFi?
     @State private var hubLogin: HubSecretStore.BrokerLogin?
     @State private var path: [SetupTarget] = []
+    @State private var confirmRotate = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -67,6 +68,7 @@ struct SetupView: View {
                     Section {
                         Label("Hub login for your Canaries: \(login.username)", systemImage: "key.horizontal")
                         BrokerPasswordCopyButton(password: login.password)
+                        Button("Rotate broker login", role: .destructive) { confirmRotate = true }
                     } footer: {
                         Text("Minted on this phone when the hub was finished, kept in its Keychain. A camera or radar Canary takes it from the setup card over Bluetooth once it joins your Wi-Fi. If the card says it could not, copy it here and paste it into the Flasher's MQTT fields (Universal Clipboard carries it to your Mac). The copy clears after two minutes.")
                     }
@@ -93,6 +95,20 @@ struct SetupView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+            }
+            .confirmationDialog("Rotate the broker login?", isPresented: $confirmRotate, titleVisibility: .visible) {
+                Button("Forget it and set up the hub again", role: .destructive) {
+                    // The new password is minted and written to Mosquitto by
+                    // the hub walkthrough, which needs your Home Assistant
+                    // account; until then this phone hands no login over.
+                    HubProvisionPlan.setRotationRequested(true)
+                    HubSecretStore.forget()
+                    hubLogin = nil
+                    store.hubRunner.resetForRotationIfAsked()
+                    path = [.hub]
+                }
+            } message: {
+                Text("This phone forgets the login, and the hub walkthrough gives Mosquitto a new password. Every Canary that has the old one stops reporting to your hub until it is given the new one.")
             }
             .onAppear {
                 hubRecord = HubStore.load()

@@ -262,9 +262,10 @@ struct PairedSourceStore: Sendable {
 /// at pairing. The header banner, the footer, the character and the timeline
 /// all read it; only `.verified` may wear the word.
 enum VerificationStanding: Equatable, Sendable {
-    /// No walk this cycle: the source served no sealed log to us (an
-    /// unpaired Wall gets the kernel's 401), the Wall polls several sources,
-    /// or the source is gone.
+    /// No walk this cycle, and nothing to say about it: an unpaired Wall
+    /// was served no sealed log (the kernel's 401, a firmware board's
+    /// absence), the Wall polls several sources, or the source is gone. A
+    /// PAIRED Wall served no log is `.pairedNoLog`, not this.
     case none
     /// A walk ran, against the key the log itself supplied; nothing is
     /// pinned for this source. Internal consistency, not provenance — the
@@ -293,6 +294,18 @@ enum VerificationStanding: Equatable, Sendable {
     /// Paired, and the source refused this TV's token: revoked, or the hub
     /// lost its viewer-token file.
     case unauthorized
+    /// Paired, and the source answered the roll-call but served no sealed
+    /// log to this TV's token — nothing at all (`SealedLogFetch.absent`),
+    /// or a 200 whose body is not a sealed log. A reverse proxy routing
+    /// the one path and not the other, a kernel started without its
+    /// viewer-token path, or another host at the hub's address that simply
+    /// omits the route (and so never trips `.keyChanged`) all read this
+    /// way. A household pairs the TV to be told when its check stops, so
+    /// this is a warning in its own right — never folded into `.none`, the
+    /// calm self-report. The model says it only after several cycles in a
+    /// row (`WallModel.noLogCyclesBeforeSaid`), so one timeout does not
+    /// flap the banner.
+    case pairedNoLog
 
     /// The fold, as plain data. `servedKey` is the document's own
     /// `verifying_key` (lower-cased), read only when the walk produced a
@@ -300,7 +313,7 @@ enum VerificationStanding: Equatable, Sendable {
     static func derive(pinnedKey: String?, fetch: SealedLogFetch,
                        report: VerifyReport?, servedKey: String?) -> VerificationStanding {
         if pinnedKey != nil, fetch == .unauthorized { return .unauthorized }
-        guard let report else { return .none }
+        guard let report else { return pinnedKey == nil ? .none : .pairedNoLog }
         guard let pinnedKey else { return .unpaired }
         guard let servedKey, servedKey == pinnedKey else {
             return .keyChanged(pinned: pinnedKey, served: servedKey ?? "")

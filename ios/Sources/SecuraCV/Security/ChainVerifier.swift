@@ -27,6 +27,9 @@ enum ChainVerdict: Equatable {
     /// stronger than "unverified" is honest — and nothing weaker: it is not
     /// a tamper finding either.
     case unsupportedFormat(String)
+    /// This device holds no token for the Canary (its pairing came by
+    /// iCloud from another device): nothing was fetched, so no verdict.
+    case noToken
 
     var badge: TrustBadge {
         switch self {
@@ -34,7 +37,7 @@ enum ChainVerdict: Equatable {
         case .signedUnpinned: return .signed
         case .unsigned: return .unsigned
         case .brokenLink, .signatureFailed: return .failed
-        case .unsupportedFormat: return .unknown
+        case .unsupportedFormat, .noToken: return .unknown
         }
     }
 }

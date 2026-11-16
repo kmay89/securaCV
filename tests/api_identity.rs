@@ -155,7 +155,8 @@ fn api_identity_reports_key_and_chain_head() -> Result<()> {
             seal_event(kernel, cfg, "zone:a")?;
             seal_event(kernel, cfg, "zone:b")
         },
-        |_, _| {},
+        // The owner's opt-in, reported as such below; the default is `self`.
+        |cfg, _| cfg.fleet_rollcall = FleetRollcall::Full,
     )?;
     let (headers, body) = api.get("/api/identity")?;
     assert!(headers.contains("200 OK"), "headers: {headers}");
@@ -299,13 +300,15 @@ fn plant_peers(path: &Path) -> Result<()> {
 
 #[test]
 fn fleet_rollcall_self_serves_only_the_kernel_row() -> Result<()> {
-    // Full (the default): the planted peer is listed beside the kernel.
+    // Full (the owner's opt-in): the planted peer is listed beside the
+    // kernel.
     let full = TestApi::new(
         |_, _| Ok(()),
         |cfg, dir| {
             let path = dir.join("fleet_peers.json");
             plant_peers(&path).expect("plant");
             cfg.fleet_peers_path = Some(path);
+            cfg.fleet_rollcall = FleetRollcall::Full;
         },
     )?;
     let (headers, body) = full.request("GET", "/api/fleet", None)?;
@@ -320,15 +323,15 @@ fn fleet_rollcall_self_serves_only_the_kernel_row() -> Result<()> {
     let identity: Value = serde_json::from_str(&identity)?;
     assert_eq!(identity["fleet_rollcall"], "full");
 
-    // Self: the same file on disk, and the open read says nothing about
-    // who else is home.
+    // Self — the default, so nothing is set here: the same file on disk,
+    // and the open read says nothing about who else is home.
+    assert_eq!(ApiConfig::default().fleet_rollcall, FleetRollcall::SelfOnly);
     let own = TestApi::new(
         |_, _| Ok(()),
         |cfg, dir| {
             let path = dir.join("fleet_peers.json");
             plant_peers(&path).expect("plant");
             cfg.fleet_peers_path = Some(path);
-            cfg.fleet_rollcall = FleetRollcall::SelfOnly;
         },
     )?;
     let (headers, body) = own.request("GET", "/api/fleet", None)?;

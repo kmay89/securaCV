@@ -46,6 +46,10 @@ static const char*                 g_running_version = nullptr;
 static BreakGlassHook              g_break_glass     = nullptr;
 static bool                        g_last_break_glass = false;
 
+// The link whose BEGIN opened the session in flight (ble_ota.h). Written and
+// read on the NimBLE host task only (the two write callbacks).
+static SessionLink                 g_session_link;
+
 static NimBLEService*             g_service = nullptr;
 static NimBLECharacteristic*      g_control = nullptr;
 static NimBLECharacteristic*      g_data    = nullptr;
@@ -78,6 +82,7 @@ static void cleanup_sha() {
 
 static void abort_ota(const char* reason) {
   cleanup_sha();
+  session_link_release(g_session_link);   // the session is over, whoever opened it
   // A refused or failed session is not a break-glass session, whatever the
   // previous accepted BEGIN was; /api/bluetooth/ota reports the flag "for
   // that session" (docs/firmware_ota.md).
@@ -103,14 +108,44 @@ static bool ed25519_verify_adapter(const uint8_t sig[64], const uint8_t pub[32],
   return Ed25519::verify(sig, pub, msg, msg_len);
 }
 
+// ── The session's link (ble_ota.h has the rule) ─────────────────────────────
+
+static bool session_in_flight() {
+  return g_state == OTA_RECEIVING || g_state == OTA_VERIFYING;
+}
+
+static bool from_session_link(NimBLEConnInfo& info) {
+  const ble_addr_t addr = *info.getAddress().getBase();   // copied: the address is a temporary
+  return session_link_is(g_session_link, info.getConnHandle(), addr.type, addr.val);
+}
+
+// Whether the stack still holds the session's link: its handle, still with
+// its address (ble_improv's follow_link asks the same way).
+static bool session_link_held() {
+  NimBLEServer* server = NimBLEDevice::getServer();
+  if (!server || !g_session_link.bound || server->getConnectedCount() == 0) return false;
+  const NimBLEConnInfo live = server->getPeerInfoByHandle(g_session_link.conn_handle);
+  const ble_addr_t addr = *live.getAddress().getBase();
+  return session_link_is(g_session_link, live.getConnHandle(), addr.type, addr.val);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // CONTROL CHARACTERISTIC
 // ════════════════════════════════════════════════════════════════════════════
 
 class ControlCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& /*info*/) override {
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
     std::string val = c->getValue();
     if (val.empty()) return;
+
+    // A session in flight takes its control writes from its own link: an
+    // ABORT, a second BEGIN or an unknown command from any other connection
+    // would each end it below, so each is ignored while the stack still
+    // holds the session's link.
+    const bool in_flight = session_in_flight();
+    const bool mine      = in_flight && from_session_link(info);
+    const bool held      = in_flight && !mine && session_link_held();
+    if (!control_write_allowed(in_flight, mine, held)) return;
 
     uint8_t cmd = (uint8_t)val[0];
 
@@ -246,6 +281,12 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
     }
     g_sha_active = true;
 
+    // The session is this link's from here: its DATA and its control writes
+    // are taken from this connection alone until it ends.
+    {
+      const ble_addr_t addr = *info.getAddress().getBase();
+      session_link_bind(g_session_link, info.getConnHandle(), addr.type, addr.val);
+    }
     g_state = OTA_RECEIVING;
     g_last_error[0] = '\0';
     g_last_notify_pct = 0;
@@ -262,8 +303,9 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
 // ════════════════════════════════════════════════════════════════════════════
 
 class DataCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& /*info*/) override {
-    if (g_state != OTA_RECEIVING) return;
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
+    // Image bytes are taken while receiving, from the session's link only.
+    if (!data_write_allowed(g_state == OTA_RECEIVING, from_session_link(info))) return;
 
     std::string val = c->getValue();
     if (val.empty()) return;
@@ -371,10 +413,18 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]) {
   g_service = server->createService(OTA_SERVICE_UUID);
   if (!g_service) return false;
 
+  // Every characteristic asks for an encrypted link with an authenticated
+  // key (the bonded Numeric Comparison pairing), as ble_provision's do:
+  // NimBLE refuses the write or the read from an unpaired link and from one
+  // paired Just Works (the setup door's key). The image policy above stays
+  // the gate on WHAT is installed; this is the gate on WHO may start, feed
+  // or abort a session.
+  //
   // Control: writable + notifies state transitions back.
   g_control = g_service->createCharacteristic(
     OTA_CONTROL_UUID,
-    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY
+    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::WRITE_AUTHEN
+      | NIMBLE_PROPERTY::NOTIFY
   );
   g_control->setCallbacks(&g_control_cb);
 
@@ -383,13 +433,15 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]) {
   g_data = g_service->createCharacteristic(
     OTA_DATA_UUID,
     NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+      | NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::WRITE_AUTHEN
   );
   g_data->setCallbacks(&g_data_cb);
 
   // Status: read-or-subscribe for progress polling.
   g_status = g_service->createCharacteristic(
     OTA_STATUS_UUID,
-    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::READ_AUTHEN
+      | NIMBLE_PROPERTY::NOTIFY
   );
   uint8_t initial[8] = { (uint8_t)OTA_IDLE, 0, 0, 0, 0, 0, 0, 0 };
   g_status->setValue(initial, sizeof(initial));

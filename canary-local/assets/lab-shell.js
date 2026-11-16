@@ -157,6 +157,9 @@ function arrive() {
 }
 
 function navigate(id, push = true) {
+  // A flash on the bench on screen: renderContent() below replaces its
+  // frame, so every route change (the same bench again is a reload) asks.
+  if (!leaveBusyBench()) return;
   // `id` is always an allowlisted route (from routeId) or a literal bench slug
   // from a click handler. `view` is one of these literals and `hash` below is a
   // literal or a manifest slug — so nothing untrusted is echoed into location.
@@ -386,6 +389,8 @@ function renderTabbar(entry) {
 function renderContent(view, entry) {
   let c = document.querySelector(".content");
   if (!c) { c = h("main", { class: "content" }); document.querySelector(".main").append(c); }
+  // The bench frame is replaced below, and its busy word goes with it.
+  benchBusy = false;
   // A live view (Home, Your fleet) subscribed to the fleet poller; tell it
   // it is leaving so the subscription goes with it.
   for (const n of c.children) n.dispatchEvent(new Event("scv:leave"));
@@ -469,9 +474,11 @@ function benchView(entry) {
       step(next, "Next", "M9 6l6 6-6 6", "next"),
       // App only: the window has no browser chrome, so a bench that wedged
       // (a board unplugged mid-read, say) had no reload button anywhere.
+      // Disabled while a flash runs on this bench (the busy listener below):
+      // a reload would orphan the write's receipt and boot log.
       appViews()
-        ? h("button", { class: "stepper out", title: "Reload this bench (⌘R)", "aria-label": "Reload this bench",
-            onclick: () => APP_CTX.reloadBench() },
+        ? h("button", { class: "stepper out reload", title: "Reload this bench (⌘R)", "aria-label": "Reload this bench",
+            disabled: benchBusy, onclick: () => APP_CTX.reloadBench() },
             h("span", { html: ARROW("M20 12a8 8 0 11-2.3-5.7M20 4v5h-5") }))
         : null,
       // Website only. A new tab is a real place in a browser; in the app the
@@ -573,6 +580,36 @@ window.addEventListener("message", (e) => {
   // No place for it here: tell the frame to go on its own. The destination is
   // never sent back — the frame still holds the href it read from its own DOM.
   if (!followFramed(d.href)) e.source.postMessage({ source: "scv-lab-shell", type: "proceed" }, location.origin);
+});
+
+/* ---- a flash in progress on the bench on screen ----
+   flash-native.js posts `busy: true` as its write or its boot monitor starts
+   and `busy: false` once both are over. The write itself finishes in Rust
+   whatever the page does, but replacing the frame loses what only the page
+   holds: the receipt, the boot log and the Home's record of the flash — and
+   the returning bench reads (resets) the board. So while the word stands,
+   every way off the bench asks first, and the bar's reload button is
+   disabled. Same shape as the hand-off listener above: same origin, and only
+   from the bench actually on screen. Cleared when the frame is replaced. */
+let benchBusy = false;
+const BUSY_LEAVE = "A flash is still running on this bench. Leave anyway? The write finishes, but the receipt and boot log are lost.";
+// True when it is fine to replace the frame: nothing is running, or the
+// person said so. An accepted leave clears the word, so the one route
+// change that follows asks no second time.
+function leaveBusyBench() {
+  if (!benchBusy) return true;
+  if (!confirm(BUSY_LEAVE)) return false;
+  benchBusy = false;
+  return true;
+}
+window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin) return;
+  const d = e.data;
+  if (!d || d.source !== "scv-lab" || d.type !== "busy") return;
+  const frame = document.querySelector(".bench-frame");
+  if (!frame || e.source !== frame.contentWindow) return; // only the bench actually on screen
+  benchBusy = d.busy === true;
+  for (const b of document.querySelectorAll(".bench-bar .stepper.reload")) b.disabled = benchBusy;
 });
 
 // The ink that reads best on a #rrggbb accent, by WCAG contrast: dark on the
@@ -740,10 +777,11 @@ const APP_CTX = {
   focusSearch: () => { const i = document.querySelector(".side-search input"); if (i) { i.focus(); i.select(); } },
   reloadBench: () => {
     const f = document.querySelector(".bench-frame");
-    if (!f) return;
+    if (!f || !leaveBusyBench()) return;
     try { f.contentWindow.location.reload(); } catch { f.src = f.src; }
   },
   step: (dir) => {
+    if (!leaveBusyBench()) return;
     if (!CUR) { navigate(firstOf(M.stages[0]).slug); return; }
     const e = ROUTE[ROUTE.indexOf(CUR) + dir];
     if (e) navigate(e.bench.slug);
@@ -781,13 +819,16 @@ async function boot() {
   if (appViews()) {
     fleet.start();
     // The sidebar's online badge follows the poller — rebuilt only when the
-    // count moved, and never under a search in progress (a rebuild would
-    // drop the filter and the focus).
+    // count moved, and never under a search in progress or while the
+    // keyboard is anywhere in it (a rebuild would drop the filter and the
+    // focus); the next emit tries again.
     let shownOnline = -1;
     fleet.subscribe(() => {
       const n = fleet.onlineCount();
       const q = document.querySelector(".side-search input");
+      const side = document.querySelector(".side");
       if (n === shownOnline || document.hidden || (q && (q.value || document.activeElement === q))) return;
+      if (side && side.contains(document.activeElement)) return;
       shownOnline = n;
       if (document.querySelector(".side")) renderSidebar(currentView(), CUR);
     });

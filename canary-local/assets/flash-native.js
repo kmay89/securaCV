@@ -37,6 +37,7 @@
 // kept in st.mac, never read and never drawn — this bench shows none.
 
 import * as core from "./flash-core.js";
+const SETTINGS_TOO_BIG = core.SETTINGS_TOO_BIG;
 
 const tauri = () =>
   typeof window !== "undefined" && window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__ : null;
@@ -126,6 +127,16 @@ function classifyFlashError(err) {
       hint: "Nothing was written. It has no bootloader for this chip where the chip " +
         "loads one from, so the board couldn't start from it (the details say where). " +
         "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
+
+  // The typed settings don't fit the one NVS page they are written into
+  // (flash-engine provisioning.rs: "provisioning values do not fit in one NVS
+  // page"). The engine refuses after the download and before any write; the
+  // browser flasher refuses the same install on its confirm card
+  // (core.settingsSeedProblem) with this same sentence. Named, so it is not
+  // read as an unknown failure and coached toward download mode.
+  if (has("do not fit in one nvs page"))
+    return { kind: "settings-size", title: "Your settings don't fit on the board",
+      hint: SETTINGS_TOO_BIG };
 
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
@@ -242,9 +253,23 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   // every place the bench takes the port back or the monitor ends goes
   // through here, so a stopped monitor never leaves a live-looking Send.
   let monitorControls = [];
+  // Tell the Lab shell (lab-shell.js) when this bench is busy — a write in
+  // flight or the boot monitor holding the port — and when it is free again,
+  // so a route change or a reload asks before replacing this frame: the
+  // write itself finishes in Rust, but the receipt, the boot log and the
+  // Home's record of the flash live only here. Posted only when framed,
+  // only to the same origin, and only when the word changed.
+  let announced = null;
+  const announceBusy = () => {
+    const busy = !!(st.busy || st.monitoring);
+    if (busy === announced || window === window.top) return;
+    announced = busy;
+    try { window.parent.postMessage({ source: "scv-lab", type: "busy", busy }, location.origin); } catch { /* not framed by the shell */ }
+  };
   const setMonitoring = (on) => {
     st.monitoring = on;
     for (const c of monitorControls) c.disabled = !on;
+    announceBusy();
   };
   // The receipt card's serial:status / serial:log / serial:receipt listeners
   // belong to that card alone (sweep A85). A new flash, a new card and a
@@ -633,6 +658,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       autoUpdate: !!creds.autoUpdate,
     };
     st.busy = true;
+    announceBusy();
     go.disabled = true;
     go.textContent = "Flashing…";
     result.classList.add("flash-hidden");
@@ -697,6 +723,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       go.disabled = false;
       go.textContent = "Flash my Canary";
       st.busy = false;
+      announceBusy(); // still busy while the monitor holds the port
       st.chip = null; // the board reboots after a write; read it fresh next time
     }
   };

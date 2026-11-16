@@ -21,10 +21,16 @@
 #   • newer version already built as a DRAFT    → say "publish the draft" and
 #     dispatch nothing (a draft has no tag, so without this the Lab's draft
 #     re-planned as a release on every press)
+#   • …but that draft was built before the target last changed → rebuild it
+#     (the draft records its commit; publishing it would ship an older tree
+#     under the version the source now carries)
 #   • the site's published pages changed since the last successful deploy
 #     → redeploy (this is the "the docs need it" case)
 #   • an Apple target whose ENABLE_*_BUILD variable is off → don't spend a
 #     macOS runner on a workflow that would no-op
+#   • firmware without the release signing key, or pressed on any ref but
+#     main (Firmware Release signs only from main) → report it gated and
+#     dispatch nothing for it
 #
 # Why it doesn't go red for saying "bump the version": pressing this button is
 # always meant to be safe. A target needing a bump is INFORMATION — it is
@@ -43,7 +49,8 @@
 #                                   the other targets are still planned —
 #                                   `only:` is the narrowing knob)
 #   • a dev-channel firmware build → `firmware-release.yml` dispatched directly
-#                                   with `channel: dev` (never a smoke run)
+#                                   with `channel: dev` (never a smoke run;
+#                                   from main, the only ref it signs from)
 # A new thing to ship is a row in `.github/release-targets.yml`, not a new
 # launcher.
 name: Update everything (only what needs it)
@@ -98,22 +105,26 @@ jobs:
     permissions:
       contents: write
     outputs:
-      tags: ${{ steps.list.outputs.tags }}
+      drafts: ${{ steps.list.outputs.drafts }}
     steps:
-      - name: Read the draft releases' tag names
+      # Each draft with the commit it records (target_commitish: tauri-action
+      # sets it when it creates the draft, and desktop-release.yml's finalize
+      # job rewrites it after a rebuild). The plan holds the draft against the
+      # tree with it; a tag name alone cannot say what a draft was built from.
+      - name: Read the draft releases' tag names and commits
         id: list
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          if tags="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-                       --jq '[.[] | select(.draft) | .tag_name]' | jq -cs 'add // []')"; then
-            echo "draft releases: $tags"
+          if drafts="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                         --jq '[.[] | select(.draft) | {tag: .tag_name, sha: .target_commitish}]' | jq -cs 'add // []')"; then
+            echo "draft releases: $drafts"
           else
             echo "::warning::could not list draft releases; planning without them (a built-but-unpublished draft will re-plan as a release)"
-            tags="[]"
+            drafts="[]"
           fi
-          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "drafts=$drafts" >> "$GITHUB_OUTPUT"
 
   update:
     name: Work out what needs releasing, then release exactly that
@@ -163,37 +174,75 @@ jobs:
               core.setOutput('sha', '');
             }
 
-      - name: Is the OTA signing key ready?
+      - name: Can firmware be released from this press? (the OTA signing key, and the ref)
         # Firmware's gate. Reported here, before any dispatch, because the
         # alternative is what actually happened: the button says "releasing
         # firmware", a separate run dies 20s later on the key guard, and the
         # consequence (flasher dark, nothing can update) is three inferences from
         # the error. Both halves are needed and neither implies the other, so
         # check both — and never print the secret, only whether it is set.
+        #
+        # A third thing closes the same gate: the ref. This button dispatches
+        # every target on the ref it was pressed on, and Firmware Release signs
+        # only from main (its `main-only` job fails a dispatch from anywhere
+        # else, and its signing job does not run). Pressed on a branch or a
+        # tag, the plan would say "releasing firmware" and the run it started
+        # would publish nothing, so the gate is closed here and the table says
+        # which ref this press is on.
         id: otakey
         env:
-          HAS_SECRET: ${{ secrets.OTA_SIGNING_KEY_PEM != '' }}
+          # The key belongs to the firmware-release environment (the signing
+          # jobs run there; firmware-release.yml's header says why). This job
+          # plans and dispatches and is deliberately not in that environment,
+          # so it cannot see an environment secret, set or not. The owner says
+          # the key is there with a repository variable; a repository-level
+          # secret still counts, for a repository that has not moved it yet.
+          # If the variable is true and the secret is missing, the dispatched
+          # run stops on its own key guard, as it always did.
+          HAS_SECRET: ${{ secrets.OTA_SIGNING_KEY_PEM != '' || vars.OTA_SIGNING_KEY_IN_ENVIRONMENT == 'true' }}
+          # Firmware has no build-only mode, so only a publish press could have
+          # released it: only a publish press is told the ref is what stopped it.
+          PUBLISH: ${{ inputs.publish }}
         run: |
           set -euo pipefail
           embedded=$(python3 firmware/scripts/ota_key_state.py --json \
                      | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["embedded"]).lower())')
           python3 firmware/scripts/ota_key_state.py
-          echo "OTA_SIGNING_KEY_PEM secret set: ${HAS_SECRET}"
-          if [ "$embedded" = "true" ] && [ "$HAS_SECRET" = "true" ]; then
+          echo "OTA_SIGNING_KEY_PEM available (a repository secret, or OTA_SIGNING_KEY_IN_ENVIRONMENT is true): ${HAS_SECRET}"
+          key_ready=false
+          if [ "$embedded" = "true" ] && [ "$HAS_SECRET" = "true" ]; then key_ready=true; fi
+          on_main=false
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then on_main=true; fi
+          echo "pressed on main (Firmware Release signs only from there): ${on_main} (${GITHUB_REF})"
+          if [ "$key_ready" = "true" ] && [ "$on_main" = "true" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+          # A key that is not ready is reported on every press. A press off
+          # main with the key ready is reported when it could have released
+          # firmware, which a build-only press never does.
+          if [ "$key_ready" != "true" ] || { [ "$on_main" != "true" ] && [ "$PUBLISH" = "true" ]; }; then
             {
-              echo "### Firmware is not releasable yet"
+              echo "### Firmware is not releasable from this press"
               echo ""
-              echo "| half | state |"
+              echo "| needed | state |"
               echo "|---|---|"
               echo "| public key committed in \`ota_release_key.h\` | $([ "$embedded" = true ] && echo 'present ✓' || echo '**all zeros — OTA hard-disabled**') |"
-              echo "| \`OTA_SIGNING_KEY_PEM\` secret | $([ "$HAS_SECRET" = true ] && echo 'set ✓' || echo '**not set**') |"
+              echo "| \`OTA_SIGNING_KEY_PEM\` secret | $([ "$HAS_SECRET" = true ] && echo 'set ✓' || echo '**not set** (no repository secret, and the OTA_SIGNING_KEY_IN_ENVIRONMENT variable is not true)') |"
+              echo "| pressed on \`main\` (Firmware Release signs only from there) | $([ "$on_main" = true ] && echo 'yes ✓' || echo "**no — this press is on \`${GITHUB_REF}\`**") |"
               echo ""
-              echo "The firmware target is reported as gated below and nothing was"
-              echo "dispatched for it. See \`docs/RELEASE_BUTTONS.md\` §"
-              echo "\"Firmware will not release\"."
+              if [ "$key_ready" = "true" ]; then
+                echo "The signing key is ready. Firmware Release signs only from"
+                echo "\`main\`, so nothing is dispatched for firmware from this press:"
+                echo "press this button on \`main\` to release it. Where the firmware"
+                echo "row below describes the key ceremony, the ref is what is missing,"
+                echo "not the key."
+              else
+                echo "The firmware target is reported as gated below and nothing was"
+                echo "dispatched for it. See \`docs/RELEASE_BUTTONS.md\` §"
+                echo "\"Firmware will not release\"."
+              fi
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -204,12 +253,13 @@ jobs:
           ONLY: ${{ inputs.only }}
           FORCE: ${{ inputs.force }}
           PAGES_SINCE: ${{ steps.pages.outputs.sha }}
-          DRAFT_TAGS: ${{ needs.drafts.outputs.tags }}
+          DRAFTS: ${{ needs.drafts.outputs.drafts }}
           # Gates are preconditions, and a gated target would only no-op (or
           # fail), so there is no reason to spend a runner on it. Two kinds:
           # repo VARIABLES for the Apple targets (a developer account someone
           # has to set up), and one DERIVED gate for firmware — whether the
-          # release signing key actually exists, computed in the step above.
+          # release signing key actually exists and this press is on main, the
+          # one ref Firmware Release signs from, computed in the step above.
           ENABLE_TVOS_BUILD: ${{ vars.ENABLE_TVOS_BUILD }}
           ENABLE_IOS_BUILD: ${{ vars.ENABLE_IOS_BUILD }}
           OTA_SIGNING_KEY_READY: ${{ steps.otakey.outputs.ready }}
@@ -221,10 +271,11 @@ jobs:
           # drafts come separately, from the job above, and the planner reports
           # a draft at the source version as waiting to be published instead of
           # re-cutting it on every press (desktop-release.yml always builds the
-          # Lab as a draft; lab-publish.yml publishes it).
+          # Lab as a draft; lab-publish.yml publishes it) — unless the target
+          # changed since the commit the draft records, when it is rebuilt.
           git tag -l | python3 -c 'import json,sys; json.dump([t.strip() for t in sys.stdin if t.strip()], sys.stdout)' > /tmp/tags.json
           echo "tags found: $(python3 -c 'import json;print(len(json.load(open("/tmp/tags.json"))))')"
-          printf '%s\n' "${DRAFT_TAGS:-[]}" > /tmp/drafts.json
+          printf '%s\n' "${DRAFTS:-[]}" > /tmp/drafts.json
           echo "draft releases: $(cat /tmp/drafts.json)"
 
           gates="$(python3 -c '

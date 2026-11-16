@@ -50,10 +50,19 @@ waits out the 5 s busy timeout is a failed seal, recorded as
 `StorageWriteFailed`; it is not retried.
 
 **Crash and power loss.** A committed row survives; an uncommitted one is
-rolled back by the WAL. On the next start `witnessd` finds the last lifecycle
-record is `start` with no `shutdown_clean` and seals a `PowerLoss` failure
-record whose details say `unclean_shutdown` — a proxy that cannot tell power
-loss from a crash or a kill (`src/bin/witnessd.rs`; `failure_semantics.md`).
+rolled back by the WAL. On the next start `witnessd` asks whether the
+previous run sealed a clean shutdown (`Kernel::previous_run_ended_uncleanly()`):
+it did not if the newest lifecycle record is `start`, or if no lifecycle
+record is live and the log holds a checkpoint — a daemon that runs longer
+than its retention window prunes its own `start` record, and the prune
+writes its checkpoint in the same transaction. In either case one
+`PowerLoss` failure record is sealed whose details say `unclean_shutdown` —
+a proxy that cannot tell power loss from a crash or a kill. A log with no
+checkpoint and no lifecycle record is read as a first boot: if the database
+was lost or replaced, nothing at boot tells that from a new install, and
+catching it is the signed high-water mark's job where one is configured
+(`src/bin/witnessd.rs`; `failure_semantics.md`, *Unclean-shutdown
+detection*).
 
 **Boot.** Before the first append, `witnessd` verifies the chain from the
 latest checkpoint through the tail. A structural failure (a bad link, a bad
@@ -85,16 +94,19 @@ that wants "a wipe is detected" sets the mark path to append-only or external
 media; the module's own doc comment lists the residuals.
 
 **Retention.** Rows older than the configured retention are pruned behind a
-signed checkpoint, in one transaction with the delete. **As of this writing
-two clock faults turn that into loss:** the pass picks the newest row whose
-stamp is expired and deletes every row at or below its id, so a clock
-regression between two appends (a later row with an older stamp) sweeps
-in-retention rows out with it, and a forward step (an RTC-less hub taking
-its first NTP sync after boot) makes every row sealed minutes ago "older
-than retention". #1738 (open) changes the prune to a **prefix** and ages the
-rows this process sealed by the monotonic clock once the wall clock has
-stepped; its residuals are stated in `failure_semantics.md` on that branch.
-Until it lands, the host clock is trusted for retention, full stop.
+signed checkpoint, in one transaction with the delete. The prune is a
+**prefix**: the pass stops at the first row whose stamp is still inside
+retention, so a clock regression between two appends (a later row with an
+older stamp) cannot sweep in-retention rows out with it. A forward step (an
+RTC-less hub taking its first NTP sync after boot) cannot expire what this
+process just sealed: once the wall clock has run ahead of the monotonic
+clock by more than the step tolerance, the rows after that point are aged
+by the monotonic clock (`MonotonicAgeFloor`, `src/storage.rs`), and
+`witnessd` skips one retention pass after the clock monitor seals a
+`ClockSkew` record. Rows an earlier process sealed have no monotonic
+history and are aged by their wall-clock stamp alone, and a step larger
+than the 14-day sample ring outruns the floor: for those, the host clock is
+trusted (`failure_semantics.md`, *Retention under clock faults*).
 
 **Liveness.** A watchdog thread aborts the process when the main loop makes
 no progress for 60 s (`witnessd.rs`; unit-tested). Whether anything restarts
@@ -116,14 +128,11 @@ as head when it is strictly ahead of NVS *and* re-hashes and verifies under
 this device's key (`witness_store.h`, `sd_wins`, `tail_parse`;
 `test_witness_store_logic.cpp`). The record that tore is gone; its sequence
 number is reused by the next record, chained from the last complete one.
-**As of this writing the next append is written straight after the torn
-fragment**, so the fragment and that record become one malformed line
-mid-file, and `tools/verify_witness_log.py` reports it as an integrity
-failure: an ordinary power cut reads as tampering on the next verification,
-and the first post-reboot record is lost to the verifier with it. #1739
-(open) seals the fragment onto its own line before the first append of a
-mount and teaches the verifier to read a fragment the chain continues across
-as a power-cut scar.
+The writer asks once per mount whether the file ends in a torn line
+(`tail_is_torn`) and, if it does, terminates the fragment before its first
+append, so the fragment sits on a line of its own; `tools/verify_witness_log.py`
+reads a fragment the chain continues across (the record after it chains
+from the record before it) as a power-cut scar, not an integrity failure.
 
 **Power loss, no card.** NVS holds a head up to nine records old. The device
 resumes from it and **re-signs those sequence numbers with new content**:
@@ -260,15 +269,26 @@ it on a bench:
   make a router exist.
 - The 5-minute outage reboot is **not jittered**. Every Canary that saw the
   same access point drop reboots in lockstep at +300 s.
-- Because `ever_online` is RAM-only, a device that rebooted during a long
-  outage comes back as "never online". If the access point is still down its
-  join fails with `NotFound`, and after three attempts the policy opens the
-  **setup portal** (`wifi_should_open_setup`) — the header's own rationale
-  says a device that worked this morning should not start advertising an
-  open setup network, and the test `a_device_that_worked_before_never_throws_away_its_config`
-  assumes `ever_online` persists. The saved network keeps being retried
-  underneath the portal, so the device does rejoin when the router returns;
-  what it also does is expose the portal in the meantime.
+- `ever_online` is RAM-only for the **reboot** rule, on purpose (that is
+  what gives at most one reboot per association). The **setup** rule no
+  longer reads RAM alone. Since 2.4.20 each saved network carries a
+  persisted joined bit (`wifi_store::FLAG_JOINED`, set by `add()` and
+  `note_result(ok)`, kept in the flags byte the ring blob always had), and
+  the supervisors hand `wifi_should_open_setup` this power cycle's flag or
+  the ring's (`wifi_supervisor.cpp`; the display through
+  `canary::cfg::wifi_saved_any_joined()`). A device restarted by the same
+  power cut as its router, or by its own 5-minute outage reboot, therefore
+  retries quietly on `NotFound` instead of opening the setup portal (on the
+  display, the blocking wizard) three attempts in. Two things still open
+  setup after a restart: a ring in which no network has ever joined (a
+  seeded pair that was never proven; `import_legacy()` leaves the bit
+  clear), and ten minutes offline with saved networks
+  (`onboard::recovery_reraise_due`), which wipes nothing. A ring written
+  before 2.4.20 gets the bit at its first successful join on 2.4.20. Pinned
+  in `test_wifi_store.cpp` and `test_wifi_join_policy.cpp`
+  (`a_reboot_with_a_joined_ring_never_opens_setup`,
+  `a_seeded_ring_that_never_joined_still_opens_setup`, and the two
+  supervisors' wiring read from source).
 - The host tests are single-step property tests. Nothing models the
   composed behavior across reboots; the argument above is prose, not a
   proof, and a reader who wants the model checked should treat it as an
@@ -405,13 +425,13 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
 |---|---|
 | Two writers cannot fork the hub chain | `concurrent_writers_cannot_fork_the_chain` (`src/lib.rs`) |
 | Seal-then-verify round-trips any event sequence | proptest in `src/lib.rs` |
-| Unclean stop is sealed on reopen | `src/lib.rs` lifecycle tests |
+| Unclean stop is sealed on reopen, including after retention pruned the `start` record | `src/lib.rs` lifecycle tests (`unclean_shutdown_detected_after_retention_pruned_the_start_row`) |
 | Tail truncation / rollback fail closed with the mark | `src/verify_runner.rs` high-water-mark tests |
-| Retention prunes a prefix; a step cannot expire fresh rows | **not on main** — `retention_prunes_a_prefix_so_a_clock_regression_cannot_take_live_rows` and `storage::age_floor_tests` arrive with #1738 |
+| Retention prunes a prefix; a step cannot expire fresh rows | `retention_prunes_a_prefix_so_a_clock_regression_cannot_take_live_rows` (`src/lib.rs`), `storage::age_floor_tests` (`src/storage.rs`) |
 | One `ClockSkew` per excursion | `clock_monitor_seals_one_record_per_bucket_regression` (`witnessd.rs`) |
 | Device chain pair cannot tear; refused persists are retried | `test_chain_state.cpp`, `test_chain_persist.cpp` |
 | Torn tail is skipped on recovery | `test_witness_store_logic.cpp` (`tail_parse`) |
-| Torn tail is sealed before the next append and read as a scar | **not on main** — `tail_is_torn` and the scar cases in `tools/test_verify_witness_log.py` arrive with #1739 |
+| Torn tail is sealed before the next append and read as a scar | `test_witness_store_logic.cpp` (`tail_is_torn`), the power-cut scar case in `tools/test_verify_witness_log.py` |
 | Wi-Fi backoff bounded and jittered; never-online never reboots | `test_wifi_join_policy.cpp`, `scripts/lint_wifi_join_policy.py` |
 | Offline queue bounded, ordered, tamper-first | `test_mqtt_offline_queue.cpp` |
 | Silent radar fails safe | `test_mr60_uart.cpp` (stall cases) |

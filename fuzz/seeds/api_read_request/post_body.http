@@ -1,0 +1,6 @@
+POST /api/pair HTTP/1.1
+Host: 192.168.1.20:8799
+Content-Type: application/json
+Content-Length: 42
+
+{"code":"482913","label":"home-assistant"}

@@ -1592,6 +1592,90 @@ export function apiTokenToNvs(token) {
   return { blobs: { api_token: bytes, api_tkn: bytes } };
 }
 
+// ── the settings one install bakes, assembled in one place ─────────────────
+// Everything typed on the confirm card — Wi-Fi, the broker block, the dials,
+// the auto-update answer — and the minted API token are written as ONE NVS
+// page (buildNvsSeedImage). The install's bake and the confirm card's
+// up-front fit check both build their seed here, so the check can never
+// pass a seed the bake then assembles differently. `prov` rides along
+// because the done card's hub line and Ring ID come from what was sealed,
+// not from the form.
+export function installSettingsSeed({ catalog, product, wifi, mqtt, detect, reflex, autoUpdate, apiToken }) {
+  const dials = detect ? detectDials(catalog, product) : null;
+  const dInts = detect ? detectValuesToNvs(detect, dials) : { u8: {}, u32: {} };
+  const reflexes = reflex ? reflexDials(catalog, product) : null;
+  const rInts = reflex ? reflexValuesToNvs(reflex, reflexes) : { u32: {} };
+  // Broker + device id (usb-secrets) → the same NVS keys the native app writes.
+  const prov = mqtt ? mqttProvisioningToNvs(mqtt) : { strings: {}, u16: {}, u8: {} };
+  const tokenNvs = apiToken ? apiTokenToNvs(apiToken) : { blobs: {} };
+  return {
+    prov,
+    seed: {
+      wifi: wifi || null,
+      wifiScheme: (product && product.wifi_nvs) || "blob",
+      strings: prov.strings, u16: prov.u16, blobs: tokenNvs.blobs,
+      u8: { ...dInts.u8, ...prov.u8 }, u32: { ...dInts.u32, ...rInts.u32 },
+      // The OTA opt-in, seeded into the engine's own namespace
+      // ("securacv_ota"/auto_upd) — null means the checkbox never appeared
+      // (rescue, local file), and nothing is written.
+      autoUpdate: typeof autoUpdate === "boolean" ? autoUpdate : null,
+    },
+  };
+}
+
+// Blob-scheme boards (canary/wap) load their local-API bearer token from NVS
+// before deriving one, so an install that bakes Wi-Fi mints one and seeds it.
+export function wantsApiToken(product, wifi) {
+  return !!(product && product.wifi_nvs === "blob" && wifi);
+}
+
+// Will the settings typed for this install fit the one page they are written
+// into? Asked on the confirm card, BEFORE anything is downloaded or written:
+// the bake used to find out mid-install, drop every typed setting after a
+// 1.2-second notice, and finish as if the network had been left blank on
+// purpose. Returns null when they fit, else the builder's own reason. The
+// token is minted at bake time; a placeholder of the same shape stands in
+// for it here — the same bytes on the page.
+export function settingsSeedProblem(o) {
+  try {
+    const apiToken = wantsApiToken(o.product, o.wifi) ? "cv_" + "0".repeat(TOKEN_CHARS) : null;
+    buildNvsSeedImage(installSettingsSeed({ ...o, apiToken }).seed, NVS_PAGE);
+    return null;
+  } catch (e) {
+    return String((e && e.message) || e);
+  }
+}
+
+// What both flashers say when the typed settings are too big for that page.
+// The desktop Flasher's engine refuses the same install (provisioning.rs,
+// "provisioning values do not fit in one NVS page") and its app.js carries
+// this sentence too; tests/desktop_parity.test.js holds the two equal.
+export const SETTINGS_TOO_BIG =
+  "Nothing was written. The settings typed here (Wi-Fi, the hub, the dials) are baked into one small page " +
+  "of the board's settings region, and together they are too big for it. The broker's CA certificate can " +
+  "take most of that page by itself: paste one certificate rather than a chain, then install again.";
+
+// The confirm card's words for a settingsSeedProblem.
+export function settingsProblemText(problem) {
+  return /exceeds one page/.test(String(problem))
+    ? `${SETTINGS_TOO_BIG} (${problem})`
+    : `Nothing was written. These settings can't be baked in: ${problem}`;
+}
+
+// Why the automatic safety copy will not run although one was due — or null
+// when none was due (a restore, the Advanced skip, a copy already held this
+// session) or it will run. Today the one reason is a chip that did not report
+// its flash size: there is no length to read. The install used to go ahead
+// without the copy and say nothing; both flashers now say this sentence on
+// the install and after it (the desktop's twin is BACKUP_SKIP_NO_SIZE in
+// desktop/src/app.js; tests/desktop_parity.test.js holds the two equal).
+export const BACKUP_SKIP_NO_SIZE =
+  "the board did not report its flash size, so no safety copy could be taken";
+export function backupSkipReason({ flashBytes, isBackup, skipBackup, haveBackup }) {
+  if (isBackup || skipBackup || haveBackup) return null;
+  return flashBytes ? null : BACKUP_SKIP_NO_SIZE;
+}
+
 // The standard WiFi-QR payload (WPA assumed unless the password is empty).
 // Escaping per the de-facto spec: backslash the chars \ ; , " :
 export function wifiQrString(ssid, pass) {
@@ -2166,7 +2250,9 @@ export function hasSetupDoor(product) {
   return !!(product && product.setup_door === true);
 }
 export const SETUP_DOOR_NOTE =
-  "Leave blank for Sense, Vision and WAP: your iPhone hands them your Wi-Fi when you power them on near it.";
+  "Sense, Vision and WAP can be left blank if you have the SecuraCV iPhone app (TestFlight by invite today): " +
+  "it hands them your Wi-Fi at first power-on. Otherwise type the network here, or leave it blank and join the " +
+  "setup network the Canary raises — its key is shown after the install.";
 
 // ── a network name with no password is a question, not an answer ────────────
 // An SSID typed with the password left empty used to seed an OPEN join: the

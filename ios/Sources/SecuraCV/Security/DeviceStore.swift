@@ -19,6 +19,13 @@ struct PairedDeviceRef: Identifiable, Codable, Hashable, Sendable {
     /// for receipts that carried none. Public data — the same bytes any TLS
     /// client sees — so it rides beside the URL, not in the Keychain.
     var tlsCertFingerprint: String? = nil
+    /// The pairing receipt's `pubkey_fp` (16 lowercase hex). The first poll
+    /// pins the key the device serves only when that key derives this
+    /// fingerprint (FleetStore.pinOnFirstSight). Nil for a ref saved before
+    /// it was kept, or a receipt that carried none: first sight then pins
+    /// what the device serves (plain TOFU). Optional with a default, so
+    /// stored refs keep decoding.
+    var pubkeyFingerprint: String? = nil
 }
 
 @MainActor

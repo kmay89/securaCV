@@ -24,6 +24,8 @@ on:
       - "src/transport/frigate.rs"
       - "src/canonical_json.rs"
       - "src/module_runtime/**"
+      - "src/api/mod.rs"
+      - "src/adapter/webhook.rs"
       - ".github/workflows/fuzz.yml"
   push:
     branches: [ "main" ]
@@ -37,6 +39,8 @@ on:
       - "src/transport/frigate.rs"
       - "src/canonical_json.rs"
       - "src/module_runtime/**"
+      - "src/api/mod.rs"
+      - "src/adapter/webhook.rs"
       - ".github/workflows/fuzz.yml"
   schedule:
     # 04:20 UTC daily — the hunt runs while nobody is waiting on it.

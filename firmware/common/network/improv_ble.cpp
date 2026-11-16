@@ -734,6 +734,8 @@ bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
   }
   s_server->start();
 #else
+  // The 2.x floor is NimBLE-Arduino 2.4.0: NimBLEServer::start() returns
+  // bool from there on (2.3.x returned void, and this line does not compile).
   if (!s_server->start()) {
     Serial.println("[IMPROV] GATT start refused — door stays shut this boot");
     s_readvertise = true;
@@ -754,10 +756,17 @@ bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
   publish_state();
   publish_error();
   s_readvertise = true;
+  // The shut door has three causes, and the log names the one in force (the
+  // WAP's ble_improv.cpp says the same three): a never-provisioned unit whose
+  // window ran out before a reset is not a tap-only build.
   Serial.printf("[IMPROV] Improv Wi-Fi service up (%s).\n",
                 improv::door_open(s_session)
                     ? "door open: no credentials stored, first-boot window running"
-                    : (no_credentials ? "door shut: tap-only build" : "door shut: credentials stored"));
+                    : (no_credentials
+                           ? (s_session.window_spent
+                                  ? "door shut: first-boot window spent before the reset; a power cycle (or a BOOT tap) re-arms it"
+                                  : "door shut: tap-only build")
+                           : "door shut: credentials stored"));
   return true;
 }
 

@@ -78,7 +78,10 @@ impl FfmpegRtspSource {
 
     pub(crate) fn connect(&mut self) -> Result<()> {
         self.connected_at = Some(Instant::now());
-        log::info!("RtspSource: connected to {} (ffmpeg)", self.config.url);
+        log::info!(
+            "RtspSource: connected to {} (ffmpeg)",
+            super::redact_url_userinfo(&self.config.url)
+        );
         Ok(())
     }
 
@@ -149,7 +152,7 @@ impl FfmpegRtspSource {
     pub(crate) fn stats(&self) -> super::rtsp::RtspStats {
         super::rtsp::RtspStats {
             frames_captured: self.frame_count,
-            url: self.config.url.clone(),
+            url: super::redact_url_userinfo(&self.config.url),
         }
     }
 

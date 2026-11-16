@@ -7,8 +7,11 @@ this repository exposes it (the sealed-log document, /api/identity, the
 trust-on-first-use, over the AUTHENTICATED HTTP channel, and afterwards:
 
   - checks every retained announce's signature against the pin (contract C1),
-    so a rogue broker client cannot plant a "SecuraCV discovered" card that
-    points at its own host;
+    so an announce the pinned key did not sign changes nothing, and before a
+    pin exists against the key the announce itself names, so a "SecuraCV
+    sidecar" card shows a key's fingerprint only over an announce that key
+    signed (a card under a broker client's own key shows that client's
+    fingerprint, which the person compares with what `pair` printed);
   - shows the key's fingerprint next to the pairing-code field before a pin
     exists, so the person compares eight characters with what `pair` printed
     and types nothing new.
@@ -179,7 +182,9 @@ def parse_announce(payload: Any) -> Announce | None:
         return None
     try:
         data = json.loads(payload)
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except (json.JSONDecodeError, TypeError, ValueError, RecursionError):
+        # RecursionError: a payload nested past the interpreter's limit
+        # (64 KiB of `[` fits the cap) is no announce, not a traceback.
         return None
     if not isinstance(data, dict) or data.get("v") != ANNOUNCE_SCHEMA_VERSION:
         return None

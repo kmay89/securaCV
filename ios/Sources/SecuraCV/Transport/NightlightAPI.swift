@@ -29,7 +29,7 @@ enum NightlightAPI {
     /// GET /api/settings — tolerant by hand: unknown fields are ignored,
     /// missing ones keep their defaults, so an older firmware never breaks
     /// a newer app (or the other way round).
-    static func settings(at base: URL, session: URLSession = .shared) async throws -> NightlightSettings {
+    static func settings(at base: URL, session: URLSession = LANSession.plain) async throws -> NightlightSettings {
         guard DeviceAPI.isPrivate(base) else { throw DeviceError.notPrivateAddress }
         var req = URLRequest(url: base.appendingPathComponent("/api/settings"))
         req.timeoutInterval = 4
@@ -55,7 +55,7 @@ enum NightlightAPI {
     /// POST /api/set?k=&v= — one knob per request, exactly the contract the
     /// on-glass settings engine already validates and debounces.
     static func set(_ key: String, _ value: Int, at base: URL,
-                    session: URLSession = .shared) async throws {
+                    session: URLSession = LANSession.plain) async throws {
         guard DeviceAPI.isPrivate(base) else { throw DeviceError.notPrivateAddress }
         var comps = URLComponents(url: base.appendingPathComponent("/api/set"),
                                   resolvingAgainstBaseURL: false)

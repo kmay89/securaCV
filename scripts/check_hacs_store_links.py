@@ -23,6 +23,12 @@ AGENTS.md and CLAUDE.md (the mirror-owned prose the checker reads) and
 has them, and runs `lint_readme.py --source <this checkout>`. The checker is
 the mirror's on purpose: one slugger, one URL parser and one rule set for
 both repositories, so the two checks cannot disagree about what lands.
+A fifth file, the mirror's SECURITY.md (its security policy, which points
+here for the reporting channels), is laid out too when the mirror has one,
+so its links land in the same run. A mirror without it is not an error
+here, and the run says so: which prose files must exist is the checker's
+rule (it fails on a missing one itself), and a file this script demanded
+before the mirror carried it would turn every PR here red.
 
 FAIL CLOSED. Nothing here passes without the checker saying, in its own
 words, that it checked the links: an exit 0 counts only with its summary
@@ -30,7 +36,10 @@ line `links into kmay89/securaCV OK — <n> resolve ...` (n at least 1) on
 stdout. A checker that exits 0 without it (one older than
 securacv-homeassistant#28, which ignores --source and lints the prose
 instead; an empty or truncated download; a reworded summary) is exit 2, not
-a pass. A file that cannot be fetched, or comes back empty, is exit 2.
+a pass. A file that cannot be fetched, or comes back empty, is exit 2;
+the one exception is SECURITY.md answering 404 (or absent from a --from
+directory), which is laid out as absent. Any other failure to fetch it is
+exit 2 like the rest.
 
 RENAMING OR MOVING SOMETHING THE STORE PAGE LINKS, on purpose. Keep the old
 name alive in the same PR: an explicit `<a id="old-slug"></a>` on the line
@@ -69,7 +78,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 MIRROR = "kmay89/securacv-homeassistant"
 RAW = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
-PROSE = ("README.md", "AGENTS.md", "CLAUDE.md")
+PROSE = ("README.md", "AGENTS.md", "CLAUDE.md", "SECURITY.md")
+# Prose the mirror may not carry (yet): laid out when it is there, noted and
+# left out when it is not. Everything else in FILES must exist.
+OPTIONAL = frozenset({"SECURITY.md"})
 CHECKER = ".github/scripts/lint_readme.py"
 FILES = PROSE + (CHECKER,)
 ATTEMPTS = 3
@@ -87,11 +99,17 @@ HINT = ("check_hacs_store_links.py: a link on the HACS store page no longer "
         "merges; lint.yml's hacs-store-page-links comment has the order.")
 
 
+def absent(path: str, where: str) -> None:
+    print(f"check_hacs_store_links.py: the mirror has no {path} ({where}); "
+          "laid out without it, so its links are not part of this run.")
+
+
 def fetch(ref: str, dest: Path) -> str | None:
     """Download FILES at `ref` into `dest`; None on success, else why not."""
     for path in FILES:
         url = RAW.format(repo=MIRROR, ref=ref, path=path)
         data = b""
+        missing = False
         for attempt in range(1, ATTEMPTS + 1):
             try:
                 with urllib.request.urlopen(url, timeout=30) as r:
@@ -99,11 +117,20 @@ def fetch(ref: str, dest: Path) -> str | None:
                 if data:
                     break
                 why = "an empty body"
+            except urllib.error.HTTPError as e:
+                # 404 is an answer, not a failure to reach the mirror.
+                if e.code == 404 and path in OPTIONAL:
+                    missing = True
+                    break
+                why = str(e)
             except (urllib.error.URLError, OSError) as e:
                 why = str(e)
             if attempt == ATTEMPTS:
                 return f"{url}: {why} (after {ATTEMPTS} tries)"
             time.sleep(RETRY_PAUSE * attempt)
+        if missing:
+            absent(path, f"{url}: 404")
+            continue
         out = dest / path
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(data)
@@ -114,6 +141,9 @@ def copy_from(src: Path, dest: Path) -> str | None:
     """Copy FILES from a local mirror checkout; None on success."""
     for path in FILES:
         f = src / path
+        if not f.exists() and path in OPTIONAL:
+            absent(path, f"{f}: no such file")
+            continue
         if not f.is_file():
             return f"{f}: no such file"
         if f.stat().st_size == 0:

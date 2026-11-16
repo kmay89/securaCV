@@ -153,7 +153,10 @@ struct BrokerConfig {
 struct KernelConfig {
     /// The witness Event API base URL. Loopback by default.
     url: String,
-    /// File holding the API capability token.
+    /// File holding the credential presented to the Event API: a viewer
+    /// token (`witness_api mint-viewer-token`) or the rotating capability
+    /// token `witness_api` writes. Read afresh for every refresh
+    /// ([`read_kernel_token`]), never cached.
     #[serde(default)]
     token_path: Option<PathBuf>,
 }
@@ -272,6 +275,31 @@ fn clear(agent: &ureq::Agent, base: &str, token: Option<&str>) -> Result<()> {
     }
 }
 
+/// The kernel credential as of now: the trimmed contents of `token_path`,
+/// or `None` when no file is configured.
+///
+/// Read on every refresh, on purpose. The capability token `witness_api`
+/// writes to its token file rotates every ten minutes; contents read once
+/// at startup are refused from the next rotation on, the timeline goes
+/// unavailable until a restart, and every refused poll is an auth failure
+/// the API counts toward locking out this host's address. A viewer token
+/// does not rotate, and re-reading it costs one small file read a minute.
+///
+/// An unreadable or empty file is an error, so the caller makes no request
+/// with a credential it does not have (a request without one is a strike).
+fn read_kernel_token(kernel: &KernelConfig) -> Result<Option<String>> {
+    let Some(path) = kernel.token_path.as_ref() else {
+        return Ok(None);
+    };
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("reading kernel token {}", path.display()))?;
+    let token = contents.trim();
+    if token.is_empty() {
+        return Err(anyhow!("kernel token file {} is empty", path.display()));
+    }
+    Ok(Some(token.to_string()))
+}
+
 /// A read-only kernel fetch. `GET` is the only verb this binary uses against
 /// the kernel; see the module docs.
 fn kernel_get(agent: &ureq::Agent, url: &str, token: Option<&str>) -> Result<String> {
@@ -344,15 +372,12 @@ fn main() -> Result<()> {
         rear_shows_wellbeing: s.rear_shows_wellbeing,
     };
 
-    let kernel_token = match cfg.kernel.as_ref().and_then(|k| k.token_path.as_ref()) {
-        Some(p) => Some(
-            std::fs::read_to_string(p)
-                .with_context(|| format!("reading kernel token {}", p.display()))?
-                .trim()
-                .to_string(),
-        ),
-        None => None,
-    };
+    // Fail fast on a missing or empty token file. Only the check happens
+    // here: the contents are read again for every refresh, because the
+    // capability token rotates (`read_kernel_token`).
+    if let Some(k) = cfg.kernel.as_ref() {
+        read_kernel_token(k)?;
+    }
 
     if args.check {
         println!("BUSY Bar surface config OK");
@@ -530,7 +555,7 @@ fn main() -> Result<()> {
         if let Some(k) = cfg.kernel.as_ref() {
             if t.saturating_sub(last_timeline_ms) >= timeline_refresh_ms || last_timeline_ms == 0 {
                 last_timeline_ms = t;
-                match refresh_timeline(&agent, k, kernel_token.as_deref(), &zones) {
+                match refresh_timeline(&agent, k, &zones) {
                     Ok((entries, verdict)) => {
                         view.events_in_window = entries.len() as u32;
                         view.timeline = entries;
@@ -538,7 +563,7 @@ fn main() -> Result<()> {
                         view.link.kernel_live = Some(true);
                     }
                     Err(e) => {
-                        log::warn!("timeline refresh failed: {e}");
+                        log::warn!("timeline refresh failed: {e:#}");
                         view.timeline_verdict = LogVerdict::Unknown;
                         view.link.kernel_live = Some(false);
                     }
@@ -787,11 +812,14 @@ fn build_devices(
 fn refresh_timeline(
     agent: &ureq::Agent,
     kernel: &KernelConfig,
-    token: Option<&str>,
     zones: &ZoneTable,
 ) -> Result<(Vec<TimelineEntry>, LogVerdict)> {
+    // The credential as the file holds it NOW. A token file that cannot be
+    // read ends this refresh here, before any request: the caller logs it
+    // and the rear shows the timeline as unavailable until the next one.
+    let token = read_kernel_token(kernel)?;
     let url = format!("{}/api/sealed-log", kernel.url.trim_end_matches('/'));
-    let body = kernel_get(agent, &url, token)?;
+    let body = kernel_get(agent, &url, token.as_deref())?;
     let doc: serde_json::Value = serde_json::from_str(&body).context("sealed-log JSON")?;
     let entries = doc
         .get("entries")
@@ -902,3 +930,117 @@ fn walk_entry_hashes(entries: &[serde_json::Value], checkpoint_head: Option<&str
 
 /// Most timeline entries the scrubber holds (FR-4).
 const MAX_TIMELINE_ENTRIES: usize = 256;
+
+/// The daemon's own tests. The module is named `surface` so the CI lane's
+/// filter (`cargo test --features surface-busybar surface::`) runs them
+/// beside the decision layer's.
+#[cfg(test)]
+mod surface {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// A stand-in kernel: answers `requests` GETs with an empty sealed-log
+    /// document and returns the `X-Witness-Token` each one carried.
+    fn stand_in_kernel(requests: usize) -> (String, std::thread::JoinHandle<Vec<Option<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let url = format!("http://{}", listener.local_addr().expect("local addr"));
+        let server = std::thread::spawn(move || {
+            let mut presented = Vec::new();
+            for _ in 0..requests {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut head = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let head = String::from_utf8_lossy(&head).to_string();
+                presented.push(head.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.trim()
+                        .eq_ignore_ascii_case("x-witness-token")
+                        .then(|| value.trim().to_string())
+                }));
+                let body = r#"{"entries":[]}"#;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+            presented
+        });
+        (url, server)
+    }
+
+    fn no_zones() -> ZoneTable {
+        ZoneTable::build(std::iter::empty::<(&str, &str)>()).expect("an empty zone table")
+    }
+
+    #[test]
+    fn a_rewritten_token_file_is_presented_with_its_new_contents() {
+        // The Event API rewrites its capability token file every ten
+        // minutes. Read once at startup, the old contents were presented
+        // forever: every refresh after the first rotation was a 401, and a
+        // strike toward locking this host's address out of the API.
+        let (url, server) = stand_in_kernel(2);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let token_path = dir.path().join("api_token");
+        let kernel = KernelConfig {
+            url,
+            token_path: Some(token_path.clone()),
+        };
+        let agent = http_agent();
+        let zones = no_zones();
+
+        std::fs::write(&token_path, "token-before-rotation\n").expect("write token");
+        refresh_timeline(&agent, &kernel, &zones).expect("first refresh");
+        std::fs::write(&token_path, "token-after-rotation\n").expect("rewrite token");
+        refresh_timeline(&agent, &kernel, &zones).expect("second refresh");
+
+        assert_eq!(
+            server.join().expect("stand-in kernel"),
+            vec![
+                Some("token-before-rotation".to_string()),
+                Some("token-after-rotation".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unreadable_or_empty_token_file_skips_the_refresh_without_a_request() {
+        // Nothing listens here: a request would fail with a connection
+        // error, not with the token error asserted below.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let url = format!("http://{}", listener.local_addr().expect("local addr"));
+        drop(listener);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let token_path = dir.path().join("api_token");
+        let kernel = KernelConfig {
+            url,
+            token_path: Some(token_path.clone()),
+        };
+        let agent = http_agent();
+        let zones = no_zones();
+
+        let missing = refresh_timeline(&agent, &kernel, &zones).expect_err("no token file");
+        assert!(
+            format!("{missing:#}").contains("reading kernel token"),
+            "{missing:#}"
+        );
+        std::fs::write(&token_path, "\n").expect("write empty token");
+        let empty = refresh_timeline(&agent, &kernel, &zones).expect_err("empty token file");
+        assert!(format!("{empty:#}").contains("is empty"), "{empty:#}");
+
+        // No file configured is not an error: the request goes out bare.
+        let bare = KernelConfig {
+            url: kernel.url.clone(),
+            token_path: None,
+        };
+        assert_eq!(read_kernel_token(&bare).expect("no token configured"), None);
+    }
+}

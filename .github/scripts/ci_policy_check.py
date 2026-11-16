@@ -74,6 +74,15 @@ an exemption must be visible and reviewable, with a comment saying why):
       list for files another open change owns; it should be empty, and a
       listed file that no longer names the label fails until its entry is
       deleted (a stale exemption would let the label back in unseen)
+
+  R12 a workflow triggered by `workflow_run` with a `branches:` filter
+      checks where the triggering run came from, in the `if:` of every job
+      that can start on its own (`github.event.workflow_run.event`, or
+      `github.event.workflow_run.head_repository`): the filter matches the
+      head branch NAME, and a fork's pull request from a branch called
+      `main` carries it. A job that only `needs:` another is skipped with
+      it, unless its `if:` calls a status function that asks to run
+      regardless (`always()`, `failure()`, or the one for a canceled run)
 """
 
 from __future__ import annotations
@@ -225,6 +234,41 @@ def _local_action_sets_up_python(uses: str) -> bool:
         return any(str((s or {}).get("uses", "")).startswith("actions/setup-python@")
                    for s in steps)
     return False
+
+
+# workflow_run: the two context fields that say where the triggering run came
+# from (a `branches:` filter does not), and the status functions that let a
+# job run although the job it waits for was skipped.
+WORKFLOW_RUN_ORIGIN_RE = re.compile(
+    r"github\.event\.workflow_run\.(?:event|head_repository)\b")
+# (`cancell?ed`: GitHub spells its function with two l's; this file does not.)
+STATUS_FUNCTION_RE = re.compile(r"\b(?:always|failure|cancell?ed)\s*\(")
+
+
+def check_workflow_run_origin(label: str, triggers: dict, jobs: dict) -> list[str]:
+    """A `workflow_run` trigger filtered by `branches:` gates its jobs on the
+    triggering run's event or repository (the module docstring says why)."""
+    spec = triggers.get("workflow_run")
+    if not isinstance(spec, dict) or not norm_list(spec.get("branches")):
+        return []
+    problems = []
+    for job, jspec in jobs.items():
+        jspec = jspec or {}
+        cond = str(jspec.get("if") or "")
+        if WORKFLOW_RUN_ORIGIN_RE.search(cond):
+            continue
+        if jspec.get("needs") and not STATUS_FUNCTION_RE.search(cond):
+            continue  # skipped with the job it waits for
+        problems.append(
+            f"{label}: R12 — the trigger filters `branches:`, which "
+            f"matches the triggering run's head branch NAME (a fork's pull "
+            f"request from a branch of that name included), and job `{job}` "
+            f"does not check where that run came from. Add "
+            f"`github.event.workflow_run.event == 'push'` to its `if:` (or "
+            f"compare `github.event.workflow_run.head_repository.full_name` "
+            f"with `github.repository`)."
+        )
+    return problems
 
 
 def load_policy() -> dict:
@@ -501,6 +545,9 @@ def check_workflow(path: str, policy: dict) -> list[str]:
 
     # R10 — toolchain setup is a composite action, not an inline run: block
     problems.extend(check_inline_toolchains(name, jobs, policy))
+
+    # R12 — a `branches:` filter is not a check on who triggered it
+    problems.extend(check_workflow_run_origin(name, triggers, jobs))
 
     return problems
 

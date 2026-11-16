@@ -51,8 +51,15 @@ export function normalize(store) {
       authorization: p.authorization || null,
     });
   }
-  return { mode: store.mode, products, shipping_flat_cents: Math.round((store.shipping_flat || 0) * 100), fulfillment: store.fulfillment || {}, compliance: store.compliance || {} };
+  // What a waitlist form may enroll a visitor under that the catalog does not price, pack or sell yet (store.json's
+  // `waitlist.products`). Kept beside `products`, never in it: a row here has no price, so it cannot be listed, put
+  // in a cart, packed or counted. It only gives the thanks page and the in-stock mail a name to print (productName).
+  const waitlist = new Map();
+  for (const p of store.waitlist?.products || []) if (p?.id && !products.has(p.id)) waitlist.set(p.id, { sku: p.id, name: p.name || p.id });
+  return { mode: store.mode, products, waitlist, shipping_flat_cents: Math.round((store.shipping_flat || 0) * 100), fulfillment: store.fulfillment || {}, compliance: store.compliance || {} };
 }
+// The name a person reads for an id a form posted: the product's, else the waitlist row's, else the id as posted.
+export const productName = (catalog, sku) => catalog?.products?.get(sku)?.name || catalog?.waitlist?.get(sku)?.name || sku;
 
 export function resolveSku(catalog, skuOrName) {
   if (!skuOrName) return null;

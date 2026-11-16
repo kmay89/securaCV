@@ -131,7 +131,15 @@ key is public — which is never phrased as verified;
 **key changed** — an alarm, not a quiet downgrade — when the log is signed
 by any other key (the core deliberately does not follow rotations, so a
 re-keyed hub reads this way until it is re-paired); **refused** when the
-hub no longer accepts the token. A source that refuses the Wall — a 401
+hub no longer accepts the token; **no record served** when a paired hub
+answers the roll-call but serves no sealed log to the token — nothing at
+all, or a 200 whose body is not a sealed log — for three cycles running
+(`WallModel.noLogCyclesBeforeSaid`, so one timeout does not flap the
+banner): a warning ("Paired, but your hub served no sealed record this
+cycle"), never the calm self-report, because a household pairs the TV to
+be told when its check stops, and a host at the hub's address that simply
+omits the route never trips the key-changed alarm. A source that refuses
+the Wall — a 401
 for a revoked token, or for no token at all — is asked once per session,
 not every cycle: the kernel counts each refusal toward a per-address
 lockout that closes `/api/fleet` as well, and a Wall that kept knocking
@@ -316,8 +324,15 @@ one-header change instead of a per-board copy-paste.
   like the rest of its surface but with no token. Its first row is itself —
   `product: "witness-kernel"`, and `chain` only once a verify pass has
   actually run (the key is absent before that — a silent key is never a
-  claim). **The rows after it are the Canaries the hub has heard**, which is
-  what makes the Wall light up against a kernel:
+  claim). **The rows after it are the Canaries the hub has heard — once
+  its owner opts into the full roll-call.** By default the kernel serves
+  its own row alone (`api.fleet_rollcall: self` in its config,
+  `WITNESS_API_FLEET_ROLLCALL=self`): the route takes no token, and the
+  peer rows carry who-is-home words, so listing them is the owner's choice
+  (`docs/security/REMEDIATION-2026-11.md`, "Network services"). Set to
+  `full`, the rows are what makes the Wall light up against a kernel — and
+  a Wall that sees the kernel's row alone says which setting under its
+  headline (`WallView.hubListsOnlyItself`):
   - The kernel never speaks MQTT; `event_mqtt_bridge --fleet-peers-path
     <file>` does (both processes also read the same environment variable,
     `WITNESS_FLEET_PEERS_PATH`, so one export points them at one file). With
@@ -343,9 +358,11 @@ one-header change instead of a per-board copy-paste.
     between the two processes as a path on the same host. The Home
     Assistant add-on wires exactly this: `privacy_witness_kernel/run.sh`
     names `/config/fleet_peers.json` in both kernel config blocks and on the
-    bridge's argv, so an add-on install lists its Canaries as soon as its
-    MQTT publisher runs (the default) — and the Docker sidecar does the same
-    under `/data`. Neither advertises `_securacv._tcp`, and they differ in
+    bridge's argv, so an add-on install lists its Canaries once its
+    `fleet_rollcall` option is `full` (it ships `self`) and its MQTT
+    publisher runs (the default) — and the Docker sidecar does the same
+    under `/data`, opting in with `SECURACV_FLEET_ROLLCALL=1`
+    (`WITNESS_API_FLEET_ROLLCALL=full`). Neither advertises `_securacv._tcp`, and they differ in
     what is left to the owner. The add-on ships its 8799 host port disabled:
     the Wall reaches it once the owner enables that port and types
     `http://<home-assistant-host>:8799` — with the port, because the Wall

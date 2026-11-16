@@ -339,6 +339,38 @@ def test_fifteen_minutes_of_failures_raise_kernel_unreachable(monkeypatch):
     assert issue_id not in issues(hass)
 
 
+def test_a_reloaded_entry_clears_the_unreachable_issue_it_did_not_raise(monkeypatch):
+    """The issue was cleared only by the coordinator that had raised it. A
+    reload (or a reauth, a reconfigure, the key fix flow) starts a fresh
+    coordinator, which never did, so after an outage the owner had fixed
+    and reloaded past, Repairs kept "can't reach the witness kernel" open
+    until Home Assistant restarted, with the kernel answering."""
+    api = FakeApi(health=SecuraCVApiConnectionError("unable to reach API"))
+    hass, entry, _api, first = _coordinator(api=api)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(coord_mod.time, "monotonic", lambda: clock["now"])
+    issue_id = (DOMAIN, f"{ISSUE_KERNEL_UNREACHABLE}_{entry.entry_id}")
+    run(first.async_refresh())
+    clock["now"] += 15 * 60 + 1
+    run(first.async_refresh())
+    assert issue_id in issues(hass), "the outage raised it"
+
+    # The kernel is back and the entry is reloaded: a second coordinator on
+    # the same entry, with nothing to remember.
+    healthy = FakeApi()
+    second = SecuraCVKernelCoordinator(
+        hass, entry, healthy, auth_mode=AUTH_MODE_TOKEN_FILE, topic_prefix="witness", pinned_key=KEY
+    )
+    entry.runtime_data = make_runtime(hass, coordinator=second, api=healthy)
+    run(second.async_refresh())
+    assert second.last_update_success is True and second.backstop_ok is True
+    assert issue_id not in issues(hass)
+
+    # A healthy coordinator with no issue open clears nothing and breaks nothing.
+    run(second.async_refresh())
+    assert issue_id not in issues(hass) and second.backstop_ok is True
+
+
 def test_storage_replace_follows_the_status_report():
     api = FakeApi(status={"storage": {"status": "replacement_recommended", "wear_pct": 91}})
     hass, entry, _api, coordinator = _coordinator(api=api)

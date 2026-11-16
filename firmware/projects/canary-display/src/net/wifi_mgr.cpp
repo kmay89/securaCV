@@ -296,7 +296,13 @@ JoinFailure wifi_last_failure() { return s_last_failure; }
 bool wifi_wants_setup() {
   WifiRetry st;
   st.online      = s_online;
-  st.ever_online = s_ever_online;
+  // "Ever online" is this power cycle OR the ring: a saved network that has
+  // joined before (runtime_config's joined bit, persisted with the ring) is
+  // not a credential problem the wizard could fix, so a power cut that
+  // restarts the glass while the router is still rebooting no longer drops
+  // the dashboard into the "Connect your Canary" wizard on NotFound. The
+  // outage reboot (wifi_loop) keeps judging by the RAM flag alone.
+  st.ever_online = s_ever_online || canary::cfg::wifi_saved_any_joined();
   st.attempts    = s_attempts;
   // Three attempts is roughly 15 s on the shared backoff schedule: long enough
   // that a slow-booting router isn't mistaken for a wrong password, short

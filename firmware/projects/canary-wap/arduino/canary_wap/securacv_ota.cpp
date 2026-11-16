@@ -1420,11 +1420,14 @@ esp_err_t securacv_ota_boot_self_test(void)
 
         // The probes passed. Whether that confirms the image NOW or starts
         // the dwell is the pure core's call — and it knows whether init() has
-        // run yet. Every board calls this before securacv_ota_init() (the
-        // probes must run before the network comes up), so the dwell setting
-        // is not known here: the image stays pending and init() picks it up.
-        // A crash loop or a wedged radio inside the dwell reboots into the
-        // previous image by the bootloader's own pending-verify rule.
+        // run yet. The canary-wap calls this before securacv_ota_init(), so
+        // the dwell setting is not known there: the image stays pending and
+        // init() picks it up. The flagship, and since 2.4.20 the Sense,
+        // Sentinel, Vision and Display, call it from loop() at their healthy
+        // gate, after init(): the dwell is known and starts here (both orders
+        // are host-tested in test_ota_logic.cpp). A crash loop or a wedged
+        // radio inside the dwell reboots into the previous image by the
+        // bootloader's own pending-verify rule.
         if (securacv_ota_dwell_probes_passed(&s_dwell, s_ctx.initialized,
                                              s_ctx.config.confirm_dwell_ms) != SECURACV_OTA_DWELL_CONFIRM) {
             if (s_ctx.initialized) {
@@ -1868,6 +1871,13 @@ static esp_err_t ota_fetch_manifest_once(const char *url, bool *not_modified)
             if (err == ESP_OK) {
                 strncpy(s_ctx.etag, resp.etag, sizeof(s_ctx.etag) - 1);
                 s_ctx.etag[sizeof(s_ctx.etag) - 1] = '\0';
+            } else {
+                // The server answered and the parser REFUSED the body (a bad
+                // or missing signature, another product, a format downgrade,
+                // an over-long field, unparseable JSON): a distinct code, so
+                // the caller neither retries an answer that will not change
+                // nor overwrites the parser's last_error with "unreachable".
+                err = ESP_ERR_INVALID_RESPONSE;
             }
         } else {
             ESP_LOGE(TAG, "Manifest request failed: status=%d", status);
@@ -1875,6 +1885,9 @@ static esp_err_t ota_fetch_manifest_once(const char *url, bool *not_modified)
         }
     } else {
         ESP_LOGE(TAG, "Manifest request failed: %s", esp_err_to_name(err));
+        // ESP_ERR_INVALID_RESPONSE is this function's word for "answered
+        // and refused" (above); a transport error never borrows it.
+        if (err == ESP_ERR_INVALID_RESPONSE) err = ESP_FAIL;
     }
 
     if (resp.body != NULL) {
@@ -1923,8 +1936,19 @@ static esp_err_t ota_fetch_manifest(void)
             }
             return ESP_OK;
         }
+        if (err == ESP_ERR_INVALID_RESPONSE) {
+            // Refused, not unreachable: no retry, and last_error keeps the
+            // parser's word (MANIFEST_SIG, MANIFEST_DOWNGRADE,
+            // MANIFEST_INVALID, MANIFEST_PARSE), so every surface tells the
+            // owner what was refused instead of sending them to check the
+            // network. A forged or foreign manifest used to be verified and
+            // refused three times, then reported as a network failure.
+            return err;
+        }
     }
 
+    // Transport or HTTP-status failures only: the server was not reached, or
+    // did not answer 200/304.
     ota_set_error(SECURACV_OTA_ERR_MANIFEST_FETCH);
     return err;
 }

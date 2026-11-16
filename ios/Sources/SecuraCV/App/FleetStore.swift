@@ -74,6 +74,10 @@ final class FleetStore: ObservableObject {
     let ble = BLEConsole()
     let alerts = AlertCenter()
     let heartbeat = Heartbeat()
+    /// The hub walkthrough's engine, owned for the app's lifetime: its
+    /// 10–20 minute first-boot watch, the typed account and the "Your hub
+    /// is ready" notice outlive the walkthrough's screen (HubSetupView).
+    let hubRunner = HubSetupRunner()
     /// What actually needed you, and what we managed to do about it — the
     /// list the Alerts tab is a list OF.
     let alertLog = AlertLedger()
@@ -168,6 +172,9 @@ final class FleetStore: ObservableObject {
         ble.onBackgroundDoorSighting = { [weak self] heard in
             self?.considerBackgroundDoorSighting(heard)
         }
+        // The hub watch browses only behind the discovery consent; without
+        // it the watch probes the typed host or homeassistant.local.
+        hubRunner.mayBrowse = { [weak self] in self?.discoveryConsent == true }
 
         // A console's tamper NOTIFY would be the fastest signal (sub-second,
         // no polling in the path), but no WAP's console connects today: the
@@ -337,12 +344,16 @@ final class FleetStore: ObservableObject {
     /// alerts stacked on one tap was the first thing a newcomer met. The
     /// mDNS browse, and the Local Network prompt with it, waits for
     /// `startLocalNetworkDiscoveryIfConsented()`. Declining stops both and
-    /// clears anything they'd found.
-    func setDiscoveryConsent(_ granted: Bool) {
+    /// clears anything they'd found. `startBluetooth: false` records the
+    /// consent without the scan — the display walkthrough's tap, for a
+    /// device with no Bluetooth door — so that tap raises no Bluetooth
+    /// alert; the scan starts at its first real consumer (the next
+    /// foreground's startRadiosIfConsented, or a door-family screen).
+    func setDiscoveryConsent(_ granted: Bool, startBluetooth: Bool = true) {
         Consents.setDiscovery(granted)
         discoveryConsent = granted
         if granted {
-            ble.startScan()
+            if startBluetooth { ble.startScan() }
             listeningSince = Date()
             if localNetworkWanted { discovery.start() }
             startSentinel()
@@ -362,9 +373,8 @@ final class FleetStore: ObservableObject {
 
     /// The mDNS browse's one entry point — called by its first real
     /// consumer, never by the consent tap: the walkthrough's "Watch it
-    /// appear" row, the Fleet tab showing a real fleet, a Canary heard
-    /// saying it just joined a network (noteDoorsHeard), or a launch with a
-    /// paired fleet (onAppear). iOS's Local Network prompt follows the
+    /// appear" row, the Fleet tab showing a real fleet, the nearby sheet's
+    /// done card after a join, or a launch with a paired fleet (onAppear). iOS's Local Network prompt follows the
     /// first of these, which is the first moment there is something on the
     /// Wi-Fi to find. Once asked for, every later foreground restarts it
     /// (startRadiosIfConsented). Without consent it does nothing.
@@ -412,11 +422,11 @@ final class FleetStore: ObservableObject {
     /// The doors on the air, folded into the offer ledger — so "already
     /// offered" and "Not now" lapse for a Canary whose door left the air
     /// for longer than the freshness window and came back (a replug is a
-    /// new first boot) — and the first honest reason to start the browse:
-    /// a Canary announcing in its service data that it is provisioned has
-    /// just joined a Wi-Fi, and that network is now worth looking at. Runs
-    /// on every throttled burst of door adverts and on the sentinel tick
-    /// (decay is the case that produces no advert to ride).
+    /// new first boot). Runs on every throttled burst of door adverts and
+    /// on the sentinel tick (decay is the case that produces no advert to
+    /// ride). It starts no browse: a joined Canary drops its door, so no
+    /// "provisioned" advert reaches this; the nearby sheet's done card is
+    /// the consumer that starts it.
     private func noteDoorsHeard(now: Date = Date()) {
         guard discoveryConsent == true else { return }
         let heard = Array(ble.heard.values)
@@ -426,11 +436,6 @@ final class FleetStore: ObservableObject {
         ledger.observe(onAir: onAir, now: now)
         // Publish only movement: this runs every few seconds.
         if ledger != nearbyLedger { nearbyLedger = ledger }
-        let cutoff = now.addingTimeInterval(-NearbyCanaries.freshFor)
-        if !localNetworkWanted,
-           heard.contains(where: { $0.lastHeard >= cutoff && $0.improvServiceData?.state == .provisioned }) {
-            startLocalNetworkDiscoveryIfConsented()
-        }
     }
 
     /// A door heard while the app was in the background (BLEConsole's door
@@ -474,9 +479,31 @@ final class FleetStore: ObservableObject {
     }
 
     /// Is there a real (non-demo) fleet yet? Today's first-run card and
-    /// the walkthrough's ordering both turn on it.
+    /// the walkthrough's ordering both turn on it. Only a paired row or one
+    /// reached over a network counts: a Canary only HEARD over Bluetooth
+    /// (a brand-new one's own setup door, or a neighbor's through the wall)
+    /// still lists on the Fleet tab, but is not yet a fleet.
     var hasRealFleet: Bool {
-        !devices.devices.isEmpty || witnesses.contains { !$0.id.hasPrefix(DemoFleet.idPrefix) }
+        !devices.devices.isEmpty || witnesses.contains(where: Self.countsAsFleet)
+    }
+
+    /// The rows Today's hero counts as watching: a beacon-only row is not
+    /// watching anything for this phone yet; a paired row always counts,
+    /// and the demo rows keep counting in demo mode.
+    var watchingCount: Int {
+        let paired = Set(devices.devices.map(\.id))
+        return witnesses.filter {
+            $0.id.hasPrefix(DemoFleet.idPrefix) || paired.contains($0.id) || !Self.isBeaconOnly($0)
+        }.count
+    }
+
+    /// Heard over Bluetooth and never reached over a network
+    /// (the predicate wifiRolloutCandidates uses).
+    static func isBeaconOnly(_ w: Witness) -> Bool { w.seenViaBLE && w.baseURL == nil }
+
+    /// A non-demo row that is not beacon-only.
+    static func countsAsFleet(_ w: Witness) -> Bool {
+        !w.id.hasPrefix(DemoFleet.idPrefix) && !isBeaconOnly(w)
     }
 
     /// Every foreground: the Bluetooth scan always; the mDNS browse only
@@ -531,6 +558,8 @@ final class FleetStore: ObservableObject {
             // Listening again — see onAppear. Backgrounded time is not
             // evidence of a silent fleet.
             heartbeat.noteListening()
+            // A hub watch recorded before a relaunch picks up its clock.
+            hubRunner.resumeAfterRelaunch()
             Task {
                 await refreshNotificationStanding()
                 await refreshOnce()
@@ -1082,7 +1111,10 @@ final class FleetStore: ObservableObject {
         // A refused pairing sends nothing: each request would be a strike.
         if store.refusedPairings.holds(ref) { return (refusedRow(ref), []) }
         guard ref.deviceType.isHTTPPairable, let api = try? store.devices.api(for: ref) else {
-            return (Witness(id: ref.id, deviceType: ref.deviceType, name: ref.name), [])
+            var bare = Witness(id: ref.id, deviceType: ref.deviceType, name: ref.name)
+            // A pairing synced from another device carries no token here.
+            bare.tokenMissing = ref.deviceType.isHTTPPairable && store.devices.token(for: ref.id) == nil
+            return (bare, [])
         }
         // The dialect this repo's firmware actually serves, tried FIRST: a
         // WAP answers /api/status and /api/events/today, and no in-repo
@@ -1115,16 +1147,15 @@ final class FleetStore: ObservableObject {
         }
         var w = Witness(id: info.deviceID, deviceType: ref.deviceType, name: info.name)
         // TOFU: on FIRST sight of a device with no pinned key, fetch its
-        // public key and pin it — the pairing receipt deliberately carries no
-        // key, so this poll is where trust-on-first-use actually happens.
-        // pin() never overwrites: once pinned, the key is only ever READ, and
-        // a device that starts presenting a different key keeps failing the
-        // verification below (badge .failed → alert-severity, mute-proof) —
-        // the loud path a changed key must take.
-        if PinnedKeyStore.key(for: ref.id) == nil,
-           let pub = try? await api.publicKey() {
-            PinnedKeyStore.pin(pub, for: ref.id)
-        }
+        // public key and pin it — the pairing receipt carries the key's
+        // fingerprint (`pubkey_fp`), not the key, so this poll is where the
+        // key is first held; it is pinned only when it derives the
+        // receipt's fingerprint (pinOnFirstSight). pin() never overwrites:
+        // once pinned, the key is only ever READ, and a device that starts
+        // presenting a different key keeps failing the verification below
+        // (badge .failed → alert-severity, mute-proof) — the loud path a
+        // changed key must take.
+        w.keyMismatch = await pinOnFirstSight(ref, api: api)
         // Derive the device's fingerprint from the key we already pinned, using
         // the firmware's own scheme (Wire/DeviceFingerprint). Without this the
         // field stays empty, FleetMerge.attach can never tie a heard beacon to
@@ -1174,7 +1205,33 @@ final class FleetStore: ObservableObject {
                 w.lastEventSeverity = head.severity
             }
         }
+        // A key that is not the receipt's was never pinned, so the verdict
+        // above could only read "signed"; the row says what happened instead.
+        if w.keyMismatch { w.badge = .failed }
         return (w, events)
+    }
+
+    /// Pin the key a paired device serves, on first sight only, and only
+    /// when it derives the fingerprint its pairing receipt carried
+    /// (`PairedDeviceRef.pubkeyFingerprint`). A ref with no fingerprint
+    /// (saved before it was kept, or a receipt without one) pins what the
+    /// device serves, as before. Returns true when the device served a key
+    /// whose fingerprint differs from the receipt's: nothing is pinned, and
+    /// the caller marks the row failed so the mismatch is seen.
+    private static func pinOnFirstSight(_ ref: PairedDeviceRef, api: DeviceAPI) async -> Bool {
+        guard PinnedKeyStore.key(for: ref.id) == nil,
+              let pub = try? await api.publicKey() else { return false }
+        guard keyMatchesReceipt(pub, expected: ref.pubkeyFingerprint) else { return true }
+        PinnedKeyStore.pin(pub, for: ref.id)
+        return false
+    }
+
+    /// True when `expected` is nil (no receipt fingerprint to hold the key
+    /// to) or the key's derived fingerprint equals it, ignoring case.
+    nonisolated static func keyMatchesReceipt(_ pub: Data, expected: String?) -> Bool {
+        guard let expected else { return true }
+        guard let fp = DeviceFingerprint.hex(forPublicKey: pub) else { return false }
+        return fp.caseInsensitiveCompare(expected) == .orderedSame
     }
 
     /// Poll one WAP-dialect device: /api/status carried identity + the chain
@@ -1185,11 +1242,9 @@ final class FleetStore: ObservableObject {
                                 status: WapStatus) async -> (Witness, [TimelineEvent])? {
         var w = Witness(id: ref.id, deviceType: ref.deviceType, name: ref.name)
         // TOFU: same rule and same moment as the v1 path — first sight with
-        // no pinned key fetches and pins; pin() never overwrites.
-        if PinnedKeyStore.key(for: ref.id) == nil,
-           let pub = try? await api.publicKey() {
-            PinnedKeyStore.pin(pub, for: ref.id)
-        }
+        // no pinned key fetches and pins it when it derives the receipt's
+        // fingerprint; pin() never overwrites.
+        w.keyMismatch = await pinOnFirstSight(ref, api: api)
         // The trusted fingerprint is DERIVED from the pinned key, never read
         // off the wire: /api/status carries a self-claimed "fingerprint",
         // and a claim is not a derivation (the FleetMerge attribution rule).
@@ -1293,6 +1348,7 @@ final class FleetStore: ObservableObject {
             w.tamper = true
             w.tamperKind = TamperKind(wire: live.state)?.narration ?? ""
         }
+        if w.keyMismatch { w.badge = .failed }
         return (w, events)
     }
 

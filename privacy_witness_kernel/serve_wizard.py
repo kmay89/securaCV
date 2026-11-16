@@ -888,6 +888,22 @@ def _setup_digest_automation(digest_time: str) -> dict:
 # Frigate config destination (modern add-on path vs. legacy fallback)
 # ---------------------------------------------------------------------------
 
+# Said on the done screen when "Only Frigate alerts" was asked for on the
+# path where the wizard writes Frigate's camera config (_handle_save). The
+# bridge's reviews mode listens to `<prefix>/reviews` INSTEAD of
+# `<prefix>/events`, and Frigate creates review items only for a camera
+# that records (its review maintainer skips a camera whose `record.enabled`
+# is false), so with the detection-only config written here that choice
+# would leave the witness log with heartbeats and no events.
+ALERTS_ONLY_NOT_APPLIED_NOTE = (
+    '"Only Frigate alerts" was not applied — every tracked object is sealed '
+    "instead. Frigate creates alerts only for cameras that record, and the "
+    "camera config this wizard writes keeps recording off. To seal alerts "
+    "only: turn recording on in Frigate, then turn on frigate.enable_reviews "
+    "in this app's Configuration tab."
+)
+
+
 def _frigate_config_destination() -> tuple:
     """Pick where the generated Frigate config goes.
 
@@ -1348,7 +1364,10 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
           "frigate_detected": bool   (the cameras came from Frigate's own
                                       config: nothing to write for Frigate),
           "retention_days": int,
-          "enable_reviews": bool     (seal only Frigate alerts),
+          "enable_reviews": bool     (seal only Frigate alerts; not
+                                      accepted when this save writes
+                                      Frigate's config, which keeps
+                                      recording off — see below),
           "digest_enabled": bool,
           "digest_time": "HH:MM",
           "device_key_seed": str  (optional; omitted = keep/generate)
@@ -1370,6 +1389,21 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 cameras = []
             frigate_detected = bool(payload.get("frigate_detected", False))
             retention_days = int(payload.get("retention_days", 7))
+
+            # A Frigate camera config is written only when the wizard
+            # collected RTSP cameras itself (the write is further down).
+            rtsp_cameras = [c for c in cameras if isinstance(c, dict) and c.get("url")]
+            writes_frigate_config = bool(
+                mode == "frigate" and rtsp_cameras and not frigate_detected
+            )
+            # "Only Frigate alerts" needs recording on in Frigate, and the
+            # config written on that path is detection-only: accepting the
+            # choice there would leave a log of heartbeats and a done screen
+            # promising a first sealed event. The default (every tracked
+            # object) is stored instead and the response says why
+            # (ALERTS_ONLY_NOT_APPLIED_NOTE).
+            reviews_requested = bool(payload.get("enable_reviews", False))
+            enable_reviews = reviews_requested and not writes_frigate_config
             device_key_seed = str(payload.get("device_key_seed", "") or "").strip()
 
             # The sealed log's identity is bound to the existing seed, so a
@@ -1474,7 +1508,7 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     "mqtt_port": mqtt_port,
                     "mqtt_topic": "",
                     "topic_prefix": str(payload.get("frigate_topic_prefix", "") or "frigate"),
-                    "enable_reviews": bool(payload.get("enable_reviews", False)),
+                    "enable_reviews": enable_reviews,
                     "mqtt_username": mqtt_username,
                     "mqtt_password": mqtt_password,
                     "min_confidence": float(min_confidence) if min_confidence is not None else 0.5,
@@ -1557,8 +1591,7 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             # Frigate's own config there is nothing to write — Frigate
             # already has them — and nothing to merge later.
             frigate_note = ""
-            rtsp_cameras = [c for c in cameras if isinstance(c, dict) and c.get("url")]
-            if mode == "frigate" and rtsp_cameras and not frigate_detected:
+            if writes_frigate_config:
                 target, frigate_note = _frigate_config_destination()
                 if target is not None:
                     discovered = _discover_mqtt()
@@ -1573,12 +1606,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     )
                     self._write_frigate_config(
                         rtsp_cameras,
-                        retention_days,
                         broker_host,
                         broker_port,
                         needs_auth,
                         dest=target,
                     )
+                if reviews_requested:
+                    frigate_note = f"{frigate_note} {ALERTS_ONLY_NOT_APPLIED_NOTE}".strip()
             elif mode == "frigate" and frigate_detected:
                 frigate_note = (
                     "Frigate keeps its own camera config — nothing was written "
@@ -1611,7 +1645,6 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
     def _write_frigate_config(
         self,
         cameras: list,
-        retention_days: int,
         broker_host: str = "core-mosquitto",
         broker_port: int = 1883,
         needs_auth: bool = False,
@@ -1630,6 +1663,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
 
         Cameras are named by the shared slug (camera_slug, C8) so the name
         Frigate publishes is the one frigate_bridge's allowlist holds.
+
+        The config is detection-only: each input carries the `detect` role
+        alone and `record.enabled` is written false, so Frigate keeps no
+        footage because of this file. Recording, and snapshots (off by
+        Frigate's default; this file does not set them), are the person's
+        choice in Frigate. The wizard's `retention_days` is the witness
+        log's retention, never a video retention, and is not passed here.
         """
         # Emit a string as a single-quoted YAML scalar (doubling embedded
         # quotes), the same treatment the camera URL below gets. `broker_host`
@@ -1682,16 +1722,15 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 f"        - path: {yaml_url}",
                 "          roles:",
                 "            - detect",
-                "            - record",
                 "    detect:",
                 "      width: 1280",
                 "      height: 720",
                 "      fps: 5",
+                "    # Detection only. To keep footage, give the input above the",
+                "    # record role as well, and switch this block on:",
+                "    # https://docs.frigate.video/configuration/record",
                 "    record:",
-                "      enabled: true",
-                "      retain:",
-                f"        days: {retention_days}",
-                "        mode: motion",
+                "      enabled: false",
                 "",
             ]
         lines += [

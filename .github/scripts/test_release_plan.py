@@ -253,6 +253,199 @@ class DraftReleases(unittest.TestCase):
             json.dump({"version": version}, handle)
 
 
+class StaleDrafts(unittest.TestCase):
+    """A draft was trusted by its tag name alone: app-v0.4.1 built from commit
+    A stayed "waiting to be published" after a Lab fix landed at the same
+    0.4.1, and publishing it shipped A's bytes under the version main called
+    0.4.1. The workflow now passes each draft's commit, and the plan holds
+    the draft against the tree with real git, in a scratch repository."""
+
+    LAB = dict(DraftReleases.LAB, workflow="desktop-release.yml")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self.addCleanup(self._tmp.cleanup)
+        self._git("init", "-q", "-b", "main")
+        DraftReleases._version(self.root, "0.2.5")
+        self._write("desktop/app.txt", "built\n")
+        self._write("README.md", "one\n")
+        self.built = self._commit("the tree the draft was built from")
+
+    def _git(self, *args: str) -> str:
+        import subprocess
+
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid",
+                   GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+        return subprocess.run(["git", *args], cwd=self.root, env=env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def _write(self, rel: str, text: str) -> None:
+        path = os.path.join(self.root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    def _commit(self, message: str) -> str:
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", message)
+        return self._git("rev-parse", "HEAD")
+
+    def plan(self, drafts, **kwargs):
+        kwargs.setdefault("publish", True)
+        (decision,) = rp.build_plan([self.LAB], ["app-v0.2.4"], draft_tags=drafts,
+                                    repo_root=self.root,
+                                    changed_resolver=lambda target, latest: True, **kwargs)
+        return decision
+
+    def test_a_draft_behind_the_tree_is_rebuilt(self):
+        self._write("desktop/app.txt", "fixed after the draft was built\n")
+        head = self._commit("a Lab fix at the same version")
+
+        stale = self.plan([{"tag": "app-v0.2.5", "sha": self.built}])
+        self.assertEqual(stale.decision, rp.RELEASE)
+        self.assertTrue(stale.actionable)
+        self.assertEqual(stale.inputs, {"dry_run": "false"})
+        self.assertIn(self.built[:9], stale.reason)
+        self.assertIn("rebuilding", stale.reason)
+        self.assertIn("desktop-release.yml", stale.reason)
+
+        current = self.plan([{"tag": "app-v0.2.5", "sha": head}])
+        self.assertEqual(current.decision, rp.DRAFT_PENDING)
+        self.assertEqual(current.inputs, {})
+        self.assertIn(head[:9], current.reason)
+        self.assertIn("unchanged since", current.reason)
+        self.assertNotIn("not compared", current.reason)
+
+    def test_a_change_outside_the_watched_paths_leaves_the_draft_pending(self):
+        self._write("README.md", "two\n")
+        self._commit("docs only")
+        d = self.plan([{"tag": "app-v0.2.5", "sha": self.built}])
+        self.assertEqual(d.decision, rp.DRAFT_PENDING)
+
+    def test_a_commit_git_cannot_find_is_rebuilt_not_trusted(self):
+        d = self.plan([{"tag": "app-v0.2.5", "sha": "f" * 40}])
+        self.assertEqual(d.decision, rp.RELEASE)
+
+    def test_strings_and_objects_mix(self):
+        self._write("desktop/app.txt", "fixed after the draft was built\n")
+        self._commit("a Lab fix at the same version")
+        mixed = ["app-v0.1.1", {"tag": "app-v0.2.0", "sha": self.built}, {"tag": "app-v0.2.5", "sha": self.built}]
+        self.assertEqual(self.plan(mixed).decision, rp.RELEASE)
+        # The old shape still plans what it planned: a bare tag records no commit.
+        d = self.plan(["app-v0.1.1", "app-v0.2.5"])
+        self.assertEqual(d.decision, rp.DRAFT_PENDING)
+        self.assertIn("does not record the commit", d.reason)
+
+    def test_only_a_full_commit_id_is_held_against_the_tree(self):
+        from unittest import mock
+
+        self._write("desktop/app.txt", "fixed after the draft was built\n")
+        self._commit("a Lab fix at the same version")
+        # target_commitish is a branch name for a draft made by hand, and it
+        # is text from the API: neither reaches a git command line.
+        for sha in ("main", "", None, self.built[:12], "--output=/tmp/x", self.built.upper()):
+            with self.subTest(sha=sha), mock.patch.object(rp, "paths_changed") as git:
+                d = self.plan([{"tag": "app-v0.2.5", "sha": sha}])
+                self.assertEqual(d.decision, rp.DRAFT_PENDING)
+                self.assertIn("does not record the commit", d.reason)
+                git.assert_not_called()
+        with mock.patch.object(rp, "paths_changed") as git:
+            self.assertEqual(self.plan([{"tag": "app-v0.2.5"}]).decision, rp.DRAFT_PENDING)
+            git.assert_not_called()
+
+    def test_a_stale_draft_changes_nothing_else(self):
+        self._write("desktop/app.txt", "fixed after the draft was built\n")
+        self._commit("a Lab fix at the same version")
+        stale = [{"tag": "app-v0.2.5", "sha": self.built}]
+        # A build-only press builds regardless; an unselected target is skipped
+        # without asking git; a stale draft of an older version holds nothing.
+        self.assertEqual(self.plan(stale, publish=False).inputs, {"dry_run": "true"})
+        self.assertEqual(self.plan(stale, only={"flasher"}).decision, rp.SKIPPED)
+        DraftReleases._version(self.root, "0.2.6")
+        self.assertEqual(self.plan(stale).decision, rp.RELEASE)
+        self.assertIn("newer than the latest release", self.plan(stale).reason)
+
+    def test_draft_commits_reads_both_shapes_and_refuses_anything_else(self):
+        sha = "a" * 40
+        self.assertEqual(
+            rp.draft_commits(["app-v1", {"tag": "app-v2", "sha": sha}, {"tag": "app-v2", "sha": "b" * 40},
+                              {"tag": "app-v3", "sha": "main"}]),
+            {"app-v1": None, "app-v2": sha, "app-v3": None},
+        )
+        self.assertEqual(rp.draft_commits(None), {})
+        for bad in (5, {"sha": sha}, {"tag": 5}, ["app-v1"]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                rp.draft_commits([bad])
+
+    def test_the_cli_reads_objects_and_refuses_a_malformed_file(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+
+        lab = next(t for t in rp.load_catalog() if t["name"] == "lab")
+        version = rp.read_source_version(lab)
+        drafts = os.path.join(self.root, "drafts.json")
+
+        def run(payload):
+            with open(drafts, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(rp.sys, "stdin", io.StringIO("[]")), redirect_stdout(out), \
+                    mock.patch.object(rp.sys, "stderr", err):
+                code = rp.main(["--publish", "--only=lab", f"--drafts-file={drafts}"])
+            return code, out.getvalue(), err.getvalue()
+
+        # A draft with no usable commit plans as it always did.
+        code, out, _ = run([{"tag": f"app-v{version}", "sha": "main"}])
+        self.assertEqual(code, 0)
+        row = next(d for d in json.loads(out) if d["name"] == "lab")
+        self.assertEqual(row["decision"], rp.DRAFT_PENDING)
+        # One this checkout cannot find is rebuilt (paths_changed is conservative).
+        code, out, _ = run([{"tag": f"app-v{version}", "sha": "0" * 40}])
+        self.assertEqual(code, 0)
+        row = next(d for d in json.loads(out) if d["name"] == "lab")
+        self.assertEqual(row["decision"], rp.RELEASE)
+        self.assertIn("rebuilding", row["reason"])
+        for bad in ([5], [{"sha": "0" * 40}], {"tag": "app-v1"}):
+            code, _, err = run(bad)
+            self.assertEqual(code, 2, bad)
+            self.assertIn("drafts.json", err)
+
+
+class TheWorkflowsCarryTheDraftsCommit(unittest.TestCase):
+    """The plan can only hold a draft against the tree if the button passes
+    the draft's commit and the Lab's release records it after a rebuild
+    (tauri-action sets it only when it creates the draft; a rebuild reuses
+    the draft and would leave the old commit on it)."""
+
+    @staticmethod
+    def _workflow(name: str) -> dict:
+        import yaml as _yaml
+
+        with open(os.path.join(rp.REPO_ROOT, ".github", "workflows", name), encoding="utf-8") as handle:
+            return _yaml.safe_load(handle)
+
+    def test_the_button_lists_each_draft_with_its_commit(self):
+        doc = self._workflow("release-everything.yml")
+        (step,) = doc["jobs"]["drafts"]["steps"]
+        self.assertIn("select(.draft) | {tag: .tag_name, sha: .target_commitish}", step["run"])
+        # ...and that list, not a second one, is what the planner is handed.
+        self.assertEqual(doc["jobs"]["drafts"]["outputs"], {"drafts": "${{ steps.list.outputs.drafts }}"})
+        plan = next(s for s in doc["jobs"]["update"]["steps"] if s.get("id") == "plan")
+        self.assertEqual(plan["env"]["DRAFTS"], "${{ needs.drafts.outputs.drafts }}")
+        self.assertIn("--drafts-file=/tmp/drafts.json", plan["run"])
+
+    def test_the_lab_release_records_the_commit_it_built(self):
+        steps = self._workflow("desktop-release.yml")["jobs"]["finalize"]["steps"]
+        last = steps[-1]
+        self.assertIn('gh release edit "$TAG" --draft --target "$GITHUB_SHA"', last["run"],
+                      "finalize must end by recording the built commit on the draft")
+        # A tag push needs none of it: the tag is the record.
+        self.assertEqual(last.get("if"), "github.ref_type != 'tag'")
+
+
 class DecideInputs(unittest.TestCase):
     def test_publish_uses_the_real_inputs(self):
         d = rp.decide(VERSIONED, source_version="0.3.0", latest_version="0.2.0",

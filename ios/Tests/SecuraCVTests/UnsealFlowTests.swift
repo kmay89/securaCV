@@ -300,6 +300,28 @@ final class UnsealFlowTests: XCTestCase {
     // MARK: - UnsealModel
 
     @MainActor
+    func testAFileLargerThanAnySnapshotIsRefusedBeforeItIsRead() throws {
+        // A sparse file: its size is real to the file system, its bytes
+        // are never allocated — the guard reads the size, not the file.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("too-large-\(UUID().uuidString).svlt")
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: nil))
+        defer { try? FileManager.default.removeItem(at: url) }
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(UnsealModel.maxSealedFileBytes + 1))
+        try handle.close()
+        XCTAssertEqual(UnsealModel.fileSize(of: url), UnsealModel.maxSealedFileBytes + 1)
+
+        let model = UnsealModel(keys: memoryVaultKeys())
+        model.importFile(at: url)
+        XCTAssertNil(model.frame)
+        XCTAssertEqual(model.problem,
+                       SnapshotVaultError.ciphertextLengthOutOfRange(UnsealModel.maxSealedFileBytes + 1).localizedDescription,
+                       "refused on its size, before any read")
+        XCTAssertEqual(UnsealModel.maxSealedFileBytes, SvltHeader.size + SvltHeader.maxCiphertext + SvltHeader.tagSize)
+    }
+
+    @MainActor
     func testTheModelOpensOnlyItsOwnKeysFilesAndEveryExitDiscards() async throws {
         let keys = memoryVaultKeys()
         let model = UnsealModel(keys: keys)

@@ -153,7 +153,7 @@ final class NearbyCanaryCardLogicTests: XCTestCase {
 
     func testTheDoneCardSaysWhatTheCanaryDidWithTheHub() {
         XCTAssertEqual(NearbySetupLogic.hubEnding(.answered(.stored, host: "homeassistant.local")),
-                       "It reports to your hub at homeassistant.local.")
+                       "It took your hub's address (homeassistant.local); it shows under your hub once it connects.")
         XCTAssertEqual(NearbySetupLogic.hubEnding(.answered(.loginRefused, host: "homeassistant.local")),
                        "Your hub refused its login — open Set up → Your hub to re-mint the Canary login.")
         XCTAssertEqual(NearbySetupLogic.hubEnding(.noHub),
@@ -163,16 +163,20 @@ final class NearbyCanaryCardLogicTests: XCTestCase {
         // The endings the contract leaves to the Canary's byte: never a
         // claim the Canary did not make.
         XCTAssertTrue(NearbySetupLogic.hubEnding(.answered(.rejected, host: "h")).contains("didn't take"))
-        XCTAssertTrue(NearbySetupLogic.hubEnding(.answered(.none, host: "h")).contains("kept no hub"))
+        XCTAssertTrue(NearbySetupLogic.hubEnding(.answered(.none, host: "h")).contains("gave no answer"),
+                      "a byte that never left 0 is no answer, never 'kept no hub'")
+        XCTAssertTrue(NearbySetupLogic.hubEnding(.declined).contains("not handed over"))
         XCTAssertTrue(NearbySetupLogic.hubEnding(.answered(.unknown, host: "h")).contains("no answer in time"))
         XCTAssertTrue(NearbySetupLogic.hubEnding(.unsendable(host: "h")).contains("could not be handed over"))
-        XCTAssertFalse(NearbySetupLogic.hubEnding(.answered(.unknown, host: "h")).contains("reports to your hub"),
+        XCTAssertFalse(NearbySetupLogic.hubEnding(.answered(.unknown, host: "h")).contains("shows under your hub"),
                        "no answer is not a yes")
+        XCTAssertFalse(NearbySetupLogic.hubEnding(.answered(.stored, host: "h")).contains("reports to your hub"),
+                       "stored proves the Canary kept the address, not that the broker took its login")
         // Only the stored answer is settled; everything else names a next step.
         XCTAssertTrue(NearbySetupLogic.HubHandoff.answered(.stored, host: "h").settled)
         for open in [NearbySetupLogic.HubHandoff.notOffered, .noHub, .unsendable(host: "h"),
                      .answered(.rejected, host: "h"), .answered(.loginRefused, host: "h"),
-                     .answered(.none, host: "h"), .answered(.unknown, host: "h")] {
+                     .answered(.none, host: "h"), .answered(.unknown, host: "h"), .declined] {
             XCTAssertFalse(open.settled, "\(open)")
         }
     }

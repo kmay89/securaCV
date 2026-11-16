@@ -96,6 +96,29 @@ content injection, its Content Security Policy and its response headers; the
 same applies to the in-browser Lab this repository publishes on GitHub Pages
 (`canary-local/`).
 
+## Supported versions
+
+Only the newest release of each train receives security fixes. There are no
+maintenance branches and no backports: a fix ships as the next release of the
+train it is in, and every earlier release of that train stops being supported
+when it does. That is what the release tooling does, stated plainly; it is not
+a long-term-support promise, and there is no end-of-life date to wait for
+other than "a newer release exists". A dev or rc prerelease is never a
+supported version. The fix window for anything exploitable is the one under
+[What to expect back](#what-to-expect-back).
+
+| Train (its tags) | Supported | How a fix reaches you |
+|---|---|---|
+| **Canary firmware**, every product (`fw-v*`) | The newest stable release | Signed OTA. Every Canary checks once a day; you install from Home Assistant's Firmware update entity or the device's own dashboard, or the daily check installs it when Auto Update is on (both flashers ask at flash time, on by default; the engine's own default is off). A Canary with Auto Update off stays where it is until you install. Either flasher also puts the newest release on a board over USB. |
+| **Kernel, Home Assistant app (add-on) and integration**, one shared version | The newest version | The app: a new image version, which the Supervisor offers as an update. The integration: a release of the [HACS mirror](https://github.com/kmay89/securacv-homeassistant), which HACS offers. The kernel has no release of its own yet ([why](docs/RELEASE_BUTTONS.md#the-kernel-not-released-yet)); it reaches you inside the app image, or as a build from `main`. |
+| **SecuraCV Flasher** (`flasher-v*`) | The newest release | The app's own updater offers it; or download it from the repository's Releases. |
+| **SecuraCV Lab** (`app-v*`) | The newest release | The app checks at launch and every few hours, shows what changed, and installs only after you say yes. |
+| **iPhone, iPad and Apple Watch app** (`ios-v*`) | The newest build | Through Apple: TestFlight or the App Store, whichever you installed it from. |
+| **Witness Wall for Apple TV** (`tvos-v*`) | The newest build | Through Apple, the same way, once a build is in the store ([`tvos/README.md`](tvos/README.md) says where that stands). |
+
+How each train is cut, and what stops a release, is
+[`docs/RELEASE_BUTTONS.md`](docs/RELEASE_BUTTONS.md).
+
 ## Known dependency advisories
 
 Transitive dependencies occasionally carry published advisories that are
@@ -256,7 +279,7 @@ ignore entries are gone. This section is retained as an audit record; remove ent
 corresponding Dependabot alerts are closed, or — for Group 3 — once an
 upstream fix lets the ignore go.
 
-### Group 5 — SQLite WAL page-size read (CVE-2026-119375; RUSTSEC-2026-0502, earlier RUSTSEC-2026-0459) — RESOLVED
+### Group 5 — SQLite WAL page-size read (RUSTSEC-2026-0459 and RUSTSEC-2026-0502, Medium) — FIXED in kernel 0.9.1 (`rusqlite` 0.43)
 
 - **Bug:** CVE-2026-119375. SQLite before 3.54.0 can return uninitialized
   page-cache memory when a process opens a database together with a sibling
@@ -264,70 +287,47 @@ upstream fix lets the ignore go.
   files makes ordinary queries return stale bytes from the process's memory.
   The vector is local and the victim has to open the files. CVSS 4.0: 6.8.
 - **Where it came from:** `rusqlite`'s `bundled-sqlcipher` feature, which
-  the kernel needs for its encrypted database. `libsqlite3-sys` 0.39.1
-  built SQLCipher from `sqlcipher-src`, pinned to `=419.0.6`: SQLCipher
-  4.19.0 on SQLite 3.53.4. The plain bundled SQLite in that release was
-  already 3.54.1; the SQLCipher build was not.
-- **The two advisory ids:** RUSTSEC-2026-0459 was keyed on the
-  `libsqlite3-sys` version, so `cargo audit` passed from the `rusqlite` 0.41
-  upgrade on while the SQLCipher build still carried SQLite 3.53.4 (this
-  section said so at the time). RUSTSEC-2026-0502 names `sqlcipher-src`
-  itself, at the 419.0.6 the root `Cargo.lock` carried, and failed the audit
-  on that entry. The lockfile now carries 420.0.0.
-- **Fix:** `rusqlite` 0.43.0, on `libsqlite3-sys` 0.40.0, which pins
-  `sqlcipher-src` `=420.0.0`: SQLCipher 4.20.0 on SQLite 3.54.1. Checked
-  against the live crates.io index on 2026-11-15: 0.40.0 is the first
-  `libsqlite3-sys` release that selects `sqlcipher-src` 420 (0.39.0 and
-  0.39.1 pin `=419.0.6`), and `rusqlite` 0.42.0 and 0.43.0 are the releases
-  that use it. Cipher defaults are unchanged: checked once by hand on
-  2026-11-15, by diffing the SQLCipher part of the amalgamation between
-  4.19.0 and 4.20.0 (only the version number, a wasm-only guard and the
-  error-path exits of `cipher_migrate` differ) and by comparing
-  `PRAGMA cipher_settings` and `cipher_default_settings` from both builds.
-- **What keeps it fixed:** the unit test
-  `tests::linked_sqlite_is_at_least_3_54_0` (`src/lib.rs`) asks
-  `sqlite_version()` through a kernel connection and fails below 3.54.0, so
-  the check is on the library the kernel runs, not on a crate version. It was
-  run once by hand against the old lockfile (2026-11-15) and failed there on
-  3.53.4, as it should. Beside it,
-  `tests::kernel_database_cipher_settings_are_pinned` pins the SQLCipher
-  defaults a kernel database is written with, as far as SQLCipher reports
-  them: the six rows of `PRAGMA cipher_settings`, plus the cipher, the
-  iteration count that derives the HMAC key, the page-number byte order in
-  the HMAC and the HMAC salt mask. A release that changes one of those fails
-  it; it passed against both the old and the new lockfile (by hand,
-  2026-11-15). Not pinned, because no pragma reports them: the 16-byte salt
-  header and the key and IV sizes. A release that changed one of those would
-  pass the test, and no standing test opens a file written by another
-  SQLCipher version.
-- **One fixture database, opened across the version boundary:** checked
-  once by hand on 2026-11-15, not by a standing test. The conformance
-  fixture database written by the old build passed the new `log_verify`
-  (VALID), and one written by the new build passed the old `log_verify`
-  (VALID). The fixture holds one sealed event, one break-glass grant and its
-  redemption, and one export receipt. `log_verify` was the only program
-  that opened the other version's file. Not covered: a pending `-wal`
-  written by the other version (the fixture is in WAL journal mode, but no
-  `-wal` file was left beside it), the TSA and OpenTimestamps anchor tables
-  and their readers (absent from the fixture), checkpoint rows (the table
-  was empty), clock-provenance records (there were none), a rotated device
-  key, a database rekeyed with `rekey_database_file`, a database migrated
-  from plaintext, and every other reader (`witnessd`, `export_verify`,
-  `court_export`, `log_anchor`, `break_glass`).
-- **Builds made before this change remain exposed.** Every kernel binary
-  built with an earlier `rusqlite` (SQLite 3.53.4 under `rusqlite` 0.41,
-  3.39.4 before it) carries the bug. For those builds the advice stands:
-  only a process that opens a database, with its `-wal`, that a less trusted
-  party could have written is exposed. `witnessd` and the bridges open their
-  own database in their own data directory; whoever can plant a `-wal` there
-  can already rewrite the log's files. The verifier and export commands
-  (`log_verify`, `export_verify`, `court_export`, `log_anchor`,
+  the kernel needs for its encrypted database. Through kernel 0.9.0,
+  `libsqlite3-sys` 0.39.1 built SQLCipher from `sqlcipher-src`, pinned to
+  `=419.0.6`, which carries SQLite 3.53.4. The plain bundled SQLite in the
+  same release was 3.54.1 and fixed; the SQLCipher build was not.
+- **What `cargo audit` shows, and what it does not:** two advisories carry
+  this bug. RUSTSEC-2026-0459 is keyed on `libsqlite3-sys`
+  (`patched >= 0.39.0`), so it has passed since the `rusqlite` 0.41 upgrade.
+  That pass says the crate version is new enough. It does not say this build
+  is fixed, and it is not. RUSTSEC-2026-0502 (published 2026-10-30) is keyed
+  on `sqlcipher-src` itself (`patched >= 420.0.0`) and named that build:
+  `cargo audit` reported one vulnerability for the root `Cargo.lock`
+  (`sqlcipher-src` 419.0.6; run 2026-11-15) and the Dependency Audit was red.
+  It was never on the ignore list, because a fix could be reached.
+- **Exposure:** only a process that opens a database, with its `-wal`, that a
+  less trusted party could have written. `witnessd` and the bridges open
+  their own database in their own data directory; whoever can plant a `-wal`
+  there can already rewrite the log's files. The verifier and export
+  commands (`log_verify`, `export_verify`, `court_export`, `log_anchor`,
   `break_glass`) open the database they are pointed at and hold key material
   while they do, so the exposed case is running one of them on a database
-  directory received from someone else. With such a build, check received
-  evidence as an envelope (`envelope_verify`, the offline viewer), which
-  reads JSON and never opens SQLite, and do not open a received database
-  that arrives with a `-wal` file beside it.
+  directory received from someone else. On a kernel older than 0.9.1,
+  check received evidence as an envelope (`envelope_verify`, the offline
+  viewer), which reads JSON and never opens SQLite, and do not open a
+  received database that arrives with a `-wal` file beside it.
+- **Fix, taken in kernel 0.9.1:** `rusqlite` 0.43 with `libsqlite3-sys`
+  0.40.0, which pins `sqlcipher-src` `=420.0.0` (SQLCipher 4.20.0 on SQLite
+  3.54.1). `libsqlite3-sys` 0.39.x pinned `=419.0.6` exactly, which is why
+  nothing short of the `rusqlite` bump could select the fixed source. The
+  kernel's tests, `cargo clippy` and the `--no-default-features` tests pass
+  on the new build, and `cargo audit` no longer reports either advisory for
+  the root `Cargo.lock`. A binary built from 0.9.0 or earlier still carries
+  the old SQLCipher: update it.
+
+- **Standing tests:** `tests::linked_sqlite_is_at_least_3_54_0` in
+  `src/lib.rs` asks the linked library for its version and fails below
+  3.54.0, and `tests::kernel_database_cipher_settings_are_pinned` pins the
+  cipher settings SQLCipher reports for a new kernel database. What no
+  pragma reports (the salt header, the key and IV sizes) is not pinned, and
+  no standing test opens a file written by another SQLCipher version; that
+  was checked once by hand on 2026-11-15 with the conformance fixture, in
+  both directions.
 
 ### Group 6 — `quinn-udp` receive loop (RUSTSEC-2026-0538) — RESOLVED
 

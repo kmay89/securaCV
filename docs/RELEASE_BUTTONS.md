@@ -9,6 +9,9 @@ For the *why* behind firmware channels and version grammar, see
 [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md). This page is the operator's index.
 For failures we have already paid for once, see
 [`.github/RELEASE_LESSONS.md`](../.github/RELEASE_LESSONS.md).
+Which releases receive security fixes (the newest of each train, no
+backports) and how a fix reaches each surface is
+[`SECURITY.md` § Supported versions](../SECURITY.md#supported-versions).
 
 ---
 
@@ -28,10 +31,12 @@ dispatches only the ones that are ahead. Everything else it reports and skips.
 | never released | cuts the first release |
 | same version, but watched files changed | **"bump the version first"** — ships everything else |
 | same version, nothing changed | skips ✅ |
-| the Lab's newer version already built as a **draft** | 📝 reports it waiting — publish it with **Actions → "Publish the Lab (draft → live)"**; nothing is rebuilt (a draft is not re-checked against the tree, so if the Lab changed after it was built, `force: lab` rebuilds it first) |
+| the Lab's newer version already built as a **draft**, and the Lab unchanged since the commit the draft records | 📝 reports it waiting — publish it with **Actions → "Publish the Lab (draft → live)"**; nothing is rebuilt |
+| …but the Lab's watched files changed since that commit | rebuilds the draft in place (the row names the commit it was built from). Publish it after that run's **finalize** job finishes, which records the new commit; publishing earlier ships the old build. A draft that records no commit (one made by hand) is reported as waiting, and the row says it was not compared |
 | site pages changed since the last deploy | redeploys the site |
 | Apple target with `ENABLE_*_BUILD` off | leaves it alone (the workflow would no-op) |
 | firmware, but no OTA signing key | reports it gated, with the ceremony |
+| firmware, and the button was pressed on any ref but `main` | reports it gated and dispatches nothing for it: Firmware Release signs only from `main`, and the button dispatches on the ref it was pressed on. On a publish press the summary's first table names the ref. Every other target is still planned by its own rule |
 
 **Use it:** whenever you want the world to be current and don't want to think
 about which targets moved (everything but the kernel, which has no row: see
@@ -67,6 +72,23 @@ because this decision *is* the product.
   — so bump first unless a re-upload after a packaging fix is the point. See
   *An app release that already exists* below.
 
+**Where an app's third-party notices live.** On the release, beside the
+installers, as `THIRD_PARTY_LICENSES.html`: the license text of every Rust
+crate compiled into that app (for the macOS and Linux targets that ship) and
+of the programs bundled beside it: espflash in both apps, and in the Flasher
+also rpiboot and libusb. The boot image rpiboot sends to the Pi is named
+there with where its source is and no more: it is a Linux system image from
+Raspberry Pi's usbboot, and the license texts of its components (the Linux
+kernel's GPL among them) are not in the file. The release's own `notices` job
+writes it (`.github/scripts/third_party_notices.sh`, with `cargo-about` and
+the app's `about.toml`, whose accepted licenses are `deny.toml`'s), and
+`finalize` attaches it before it touches the updater manifest, so a release
+that cannot carry its notices stops there. It is not inside the installer,
+and a release cut before the `notices` job existed (Flasher 0.12.5, Lab
+0.4.1 and earlier) has none. A crate under a license nobody
+accepted fails the `notices` job on a build-only run too: review it, then add
+it to `deny.toml` and both `about.toml` files together.
+
 ---
 
 ## When you want exactly one thing
@@ -79,6 +101,22 @@ built commit can never disagree.
 
 **Use it:** cutting firmware and nothing else, or a dev-channel build
 (`2.4.0-dev.1`) that only dev-channel devices can see.
+
+**Who it signs for.** The job runs in the `firmware-release` environment,
+which is where the signing key lives, and signs only a commit on `main`: a
+dispatch from any other ref fails in its first seconds (`Firmware Release
+signs only from main`, in a job of its own, nothing built), and a `fw-v*` tag
+pushed at a commit `main` does not contain is refused in the first step,
+before the key is read (`release commit … is not on main`). The check looks
+at `main`'s last 200 commits, so a tag on an older `main` commit is refused
+too: release from a newer one. Both checks are the workflow file's own, read
+from the commit being released: they catch a mistake, not a commit that
+edits the file ([`RELEASE_PROCESS.md`](RELEASE_PROCESS.md#who-can-sign)). When the
+environment has required reviewers, the run waits for one of them to approve
+it, and so does the **Vision Model Asset** run it starts near the end and
+then waits 20 minutes for: approve both, or attach the model afterwards with
+Actions → Vision Model Asset and the tag. The reviewers are a repository
+setting ([Things no button can do for you](#things-no-button-can-do-for-you)).
 
 **It also redeploys the site.** The browser flasher on GitHub Pages reads the
 release from the site's own copy of it (a page in a browser cannot fetch a
@@ -164,7 +202,11 @@ same-origin then, so these assets could ship pre-ceremony, and this lit the
 flasher up while `Firmware Release` hard-stopped on the missing key. Not any
 more: this workflow signs like `Firmware Release` and refuses to run without
 `OTA_SIGNING_KEY_PEM`, since both flashers refuse an unsigned image once a
-key is pinned.
+key is pinned. It reads the key from the same `firmware-release` environment,
+so with required reviewers set, each press (either channel) waits for an
+approval; if the owner also limits which branches may deploy to that
+environment, a `channel: dev` bring-up from a branch outside the list never
+starts.
 
 **Don't:** expect it to help a tag that doesn't exist — it checks out the tag, so
 the tag has to be there first. It now fails with that sentence rather than a raw
@@ -399,6 +441,19 @@ own routes: the HACS mirror, the app image (`addon-image.yml`) and the
 Frigate sidecar image (`docker-sidecar.yml`), which publish from `main` and
 again on any `v*` tag. The standalone `witnessd` image ships from `main` too
 (`container-images.yml`, `:latest` and the commit sha, never a version tag).
+
+**The app image refuses a forgotten bump.** The Supervisor offers an update
+only when the app's version moves, and every push re-pushes
+`:<privacy_witness_kernel/config.yaml version>`, so a change merged without a
+bump would put new bytes under a version people already run and offer it to
+none of them (it happened to 0.9.0). `addon-image.yml` now stops before it
+builds, on pushes, when both are true: `privacy_witness_kernel/CHANGELOG.md`
+has entries under `## Unreleased`, and that arch's `:<version>` is already on
+GHCR (the probe `verify_published_image.sh` uses). The fix is the one its
+error names: `scripts/bump_version.sh <next version>`, and retitle
+`## Unreleased` to `## <next version>`. Until then `main` stays red for that
+workflow and nothing is pushed. It reads the CHANGELOG and nothing else: a
+change that lands with no entry there still moves the tag.
 Nor read `CHANGELOG.md`'s dated `## [0.1.0]` through `## [0.7.0]` headings as
 kernel releases: they record what landed under each version number, and none
 was ever tagged `v*` or published by `release.yml`.
@@ -462,7 +517,19 @@ different places:
 | half | lives in | check it |
 |---|---|---|
 | **public** | `firmware/common/ota/src/ota_release_key.h` | `python3 firmware/scripts/ota_key_state.py` |
-| **private** | the `OTA_SIGNING_KEY_PEM` Actions secret | Settings → Secrets and variables → Actions |
+| **private** | the `OTA_SIGNING_KEY_PEM` secret of the `firmware-release` environment (not a repository secret: any workflow file on any branch can read one of those) | Settings → Environments → firmware-release |
+
+The master button plans outside that environment and cannot see its secrets,
+so it also needs to be told the key is there: the repository **variable**
+`OTA_SIGNING_KEY_IN_ENVIRONMENT` set to `true` (Settings → Secrets and
+variables → Actions → Variables). Key in the environment and no variable
+reads as **gated**; a repository-level secret still counts on its own, for a
+repository that has not moved the key yet.
+
+Gated with both halves in place? Look at the ref. The master button
+dispatches on the ref it was pressed on and Firmware Release signs only from
+`main`, so a press on a branch or a tag gates firmware too, and on a publish
+press the summary's first table says which ref it was. Press it on `main`.
 
 All zeros is the shipped default and means OTA is **hard-disabled in firmware** —
 a safe default, but nothing can ship until it's replaced.
@@ -487,8 +554,10 @@ pip install cryptography
 Then, in this order:
 
 1. **Add the secret.** `pbcopy < ~/securacv-releaser.pem`, paste it as
-   `OTA_SIGNING_KEY_PEM`, then **`pbcopy < /dev/null`** — a master key left on
-   the clipboard goes wherever you paste next.
+   `OTA_SIGNING_KEY_PEM` under Settings → Environments → `firmware-release`
+   (create the environment if it is not there), then **`pbcopy < /dev/null`**
+   — a master key left on the clipboard goes wherever you paste next. Set the
+   `OTA_SIGNING_KEY_IN_ENVIRONMENT` variable to `true` (above).
 2. **Regenerate the catalog and commit four files**, not three:
    ```sh
    python3 canary-local/tools/gen_flash.py
@@ -603,6 +672,10 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
 | Each app states one version across three files | `desktop/scripts/check_app_versions.py` (lint + both app workflows) |
 | A display binary carries the identity it's published under | the product-string check in `firmware-release.yml` |
 | The signing key in CI matches the committed public key | `firmware-release.yml`, fails before building |
+| Firmware Release signs only a commit on `main` (a dispatch from another ref is a red run, and the master button does not dispatch firmware off `main`), and every job handed the OTA key runs in the `firmware-release` environment | `firmware-release.yml` (its `main-only` job, the signing job's `if:` and first step) and the firmware gate in `release-everything.yml`, run by `.github/scripts/test_firmware_signing_gate.py`. The other two signers, `flasher-release.yml` and `vision-model-release.yml`, are held to the environment only: a `channel: dev` Flasher Factory Images run and a hand-dispatched Vision Model Asset run still sign from a branch. The checks bind the copy of the file at the released commit, and that the environment has reviewers is a repository setting no test can see |
+| A published app (add-on) version is not re-pointed while the app's CHANGELOG has unreleased entries | the guard step in `addon-image.yml`, run by `.github/scripts/test_addon_image_guard.py` |
+| A Lab draft built before the Lab last changed is rebuilt, not offered for publishing | `.github/scripts/release_plan.py` (the draft's recorded commit), `desktop-release.yml`'s last finalize step; `.github/scripts/test_release_plan.py` |
+| A Flasher or Lab release carries its third-party license notices as `THIRD_PARTY_LICENSES.html`, beside the installers | the `notices` job and finalize's attach step in `desktop-flasher-release.yml` and `desktop-release.yml` (`.github/scripts/third_party_notices.sh`); `scripts/tests/test_third_party_notices.py` |
 | The flasher's pinned release actually resolves | advisory warning in `canary-local.yml` |
 | Every firmware release brings the dev channel (`fw-dev-latest`) up to itself unless a newer build is there, and a bring-up build older than stable is refused; both flashers say how its `fw_train` compares with their pinned one. A failed refresh on a stable release leaves it behind until **Refresh the dev channel**, and a dev release's until that button is pressed with its tag as `source` | `.github/scripts/dev_channel.py` in `firmware-release.yml` (every release), **Refresh the dev channel** and `flasher-release.yml` (`--check-train`), tested by `.github/scripts/test_dev_channel.py`; `desktop_parity.test.js` holds the flashers' sentence |
 | The hosted flasher reads its release from its own origin, at the path the site deploy writes it | `canary-local/tools/mirror_release.py` (in `pages.yml`), held to `flash-core.js` by `scripts/tests/test_pages_release_mirror.py`; `canary-local/tests/flash_mirror_probe.mjs` in Chromium |
@@ -624,6 +697,14 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
   2026-10-29).
 - **The OTA key ceremony.** It makes your master signing key; it has to happen on
   your machine.
+- **Putting a second person in front of the signing key.** The workflows name
+  the `firmware-release` environment; what it enforces is set in the
+  repository, once, by an owner: required reviewers on the environment
+  (Settings → Environments → firmware-release), the key stored there and the
+  repository-level copy deleted, the `OTA_SIGNING_KEY_IN_ENVIRONMENT`
+  variable, and a tag ruleset on `fw-v*`. Until the reviewers are set, the
+  environment exists and gates nothing. The steps are in
+  [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md#who-can-sign).
 - **Promoting the CloudKit schema.** A new field on a synced record
   (`PairedDevice.tlsCertFP`, the TLS pin the iPhone app dials through)
   exists in DEVELOPMENT from its first write and is **rejected by

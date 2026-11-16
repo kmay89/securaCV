@@ -105,9 +105,17 @@ Actions, naming the build staging runs.
    for healthy, roll back by itself if not), and with the variable
    `PRODUCTION_URL` set proves production answers `ok production <build>`.
    The backoffice writes a `deploy.boot` audit row the first time a build runs
-   on its database, so Home → Activity says what went live and when. Roll
-   back is the same button with the previous tag (`kit ps` on the server
-   shows it), or `kit deploy backoffice <previous>` over SSH.
+   on its database, so Home → Activity says what went live and when. Rolling
+   back is `kit rollback backoffice` over SSH (`kit ps` shows the tag it goes
+   back to). A release that migrated the database cannot be left by starting
+   the previous build: that build refuses the migrated file. So the kit stops
+   the app, restores the copy the backoffice took before the migration, and
+   only then deploys the previous tag; what was written since stays in the
+   file the restore replaced, kept beside the database. When no migration
+   separates the two builds, nothing is restored and it is a plain deploy —
+   which the same button with the previous tag also does. That button on a
+   release that migrated fails instead: production stays on the build it was
+   running and the log names `kit rollback backoffice`.
 
 ## Adding the next project
 
@@ -140,7 +148,7 @@ nothing new — the forced command already accepts any app under `/srv/apps`.
 | Promote staging's build to production | Actions → "Promote backoffice to production" (empty tag = what staging runs) |
 | Refresh staging from last night's production copy | `kit refresh backoffice-staging` (cron does it at 04:10; `kit cron` installs that on an older server) |
 | Deploy a specific build | `kit deploy backoffice <sha>` (the 12-char tag CI publishes) |
-| Roll back | `kit deploy backoffice <previous tag>` — `kit ps` shows the one before |
+| Roll back | `kit rollback backoffice` — to the tag `kit ps` shows as previous. If that build cannot open the database (the release being left migrated it), the copy taken before the migration is restored first, then the tag is deployed. `kit rollback backoffice /data/backups/<file>.db` restores the backup you name instead of the newest pre-migrate copy |
 | Change a secret | `kit env backoffice`, then `kit deploy backoffice` (same tag, restarts with the new env) |
 | Add or change a hostname | edit `/srv/edge/sites/<host>.caddy`, then `kit reload` |
 | Update the kit itself | `kit update` (git pull of this directory) |

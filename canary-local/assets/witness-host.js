@@ -74,7 +74,10 @@ if (invoke && frame) {
   };
   const bases = (sightings) => {
     const b = [];
-    try { const k = localStorage.getItem("scv-kernel"); if (k && /^http:\/\//i.test(k)) b.push(k); } catch {}
+    // The same scheme test as lab-app.js kernelBases() (lab_app.test.js
+    // holds the two equal): the fleet page saves an https:// hub too, and
+    // the native gate (lib.rs base_ok) takes either scheme.
+    try { const k = localStorage.getItem("scv-kernel"); if (k && /^https?:\/\//i.test(k)) b.push(k); } catch {}
     b.push("http://canary.local:8099", "http://canary.local:8799", "http://canary.local");
     // Boards last: witness_discover returns the FIRST /api/fleet that
     // answers, and a board's answer is its own one-row self-report.

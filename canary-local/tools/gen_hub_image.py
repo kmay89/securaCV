@@ -289,7 +289,7 @@ def main() -> None:
             "Raspberry Pi hub flasher (docs/design/raspberry_pi_hub_flashing.md). Every fact is "
             "derived from an existing source so it can't drift: the base OS version rides the Hub's "
             "upstream snapshot, the card floor is parsed from the flasher safety gate (hub_disk.rs), "
-            "and the baked-in payload is enumerated from the repo's own HA assets. Honest before an "
+            "and the payload is enumerated from the repo's own HA assets. Honest before an "
             "image is pinned: the URL is derivable from the version; sha256 stays empty (pinned=false) "
             "until the pin ceremony — the same posture as flash.json's all-zero release key."
         ),
@@ -333,7 +333,11 @@ def main() -> None:
             ),
         },
         "payload": {
-            "what": "The full-stack pre-bake: the hub boots already wired — no add-on hunting, no restarts.",
+            "what": (
+                "What the hub plan (hub_seed.json) brings up: the add-ons below installed and wired "
+                "by its steps, and the curated Frigate config placed. The dashboards, automations "
+                "and blueprints listed here ship in the repo for the owner to add; no step places them."
+            ),
             "integration": {
                 "domain": integration.get("domain", ""),
                 "name": integration.get("name", ""),
@@ -363,7 +367,12 @@ def main() -> None:
                 "the same secret the Canary flasher already collects (wifi-memory.js). Local-only: it "
                 "goes on the card, never to a cloud."
             ),
-            "seed": "A curated HA backup, restored at onboarding, brings the payload up pre-wired.",
+            "seed": (
+                "A narrated bundle (the hub_seed.json plan + the hub_seed_apply.py executor, "
+                "hub_provision_bundle.json) written to CONFIG/securacv/ on the boot partition, run by "
+                "the Flasher's first-boot companion over the HAOS developer console. True zero-touch "
+                "(the hub running it with no companion) is still planned."
+            ),
             "self_heal": (
                 "Inherited from HAOS: A/B rollback + Supervisor watchdog + hands-off updates; our "
                 "add-on rides the Supervisor update channel."

@@ -4,7 +4,7 @@
 // Health page, `backoffice doctor`, and the top of the morning digest.
 import { attention } from '../attention.mjs';
 import { shipFromIssues } from './labels.mjs';
-import { pushConfigured, newOrderOn, ntfyUrlFor } from './notify.mjs';
+import { pushConfigured, newOrderOn, ntfyUrlFor, maskTopic } from './notify.mjs';
 import { lastVerify, chainHead, securityText, securitySummary, nodeSupport } from '../integrity.mjs';
 import { taxVerdict } from './nexus.mjs';
 import { statfsSync, statSync } from 'node:fs';
@@ -56,7 +56,7 @@ export function doctor(db, cfg) {
   add('base_url', 'The codes on slips and labels point here', demo ? null : !defaultUrl, demo ? 'demo mode' : defaultUrl ? `BACKOFFICE_BASE_URL is ${cfg.baseUrl} — a phone scanning a slip lands nowhere` : cfg.baseUrl, 'set BACKOFFICE_BASE_URL to the address the phone reaches');
   const sh = shippingStatus();
   const edited = db.all('SELECT sku FROM product_overrides').map(r => r.sku); add('catalog', 'Store listing vs store.json', null, edited.length ? `${edited.length} edited here, not yet in the file: ${edited.join(', ')} — the store serves the edits; paste the patch from Products when convenient` : 'the store says what the file says');
-  add('push', 'Phone push on a new order', demo ? null : pushConfigured(db, cfg) ? (newOrderOn(db, cfg) ? true : null) : null, demo ? 'demo mode' : pushConfigured(db, cfg) ? (newOrderOn(db, cfg) ? `to ${ntfyUrlFor(db, cfg)}` : 'a topic is set, but new orders are set to stay quiet') : `no topic — a new order ${cfg.operatorEmail ? `mails ${cfg.operatorEmail}` : 'reaches nobody (OPERATOR_EMAIL is empty)'}`, 'paste an ntfy topic under Settings → Your phone');
+  add('push', 'Phone push on a new order', demo ? null : pushConfigured(db, cfg) ? (newOrderOn(db, cfg) ? true : null) : null, demo ? 'demo mode' : pushConfigured(db, cfg) ? (newOrderOn(db, cfg) ? `to ${maskTopic(ntfyUrlFor(db, cfg))}` : 'a topic is set, but new orders are set to stay quiet') : `no topic — a new order ${cfg.operatorEmail ? `mails ${cfg.operatorEmail}` : 'reaches nobody (OPERATOR_EMAIL is empty)'}`, 'paste an ntfy topic under Settings → Your phone');
   const tax = taxVerdict(db, cfg); add('sales_tax', 'Sales tax', tax.ok, tax.text, 'turn on the stripe_tax flag in Settings, and register in each state you owe');
   add('sign_in_links', 'Sign-in links (mailed, once, this browser only; the authenticator still needed)', demo ? null : cfg.smtpUrl ? true : null, demo ? 'demo mode (the link opens straight to the code step)' : cfg.smtpUrl ? `on · good for ${cfg.signInLinkMinutes} min` : 'off — needs SMTP_URL; password + authenticator only', 'set SMTP_URL');
   add('allowlist', 'Admin reachable only from allowed networks', demo ? null : cfg.adminAllowCidrs ? true : null, cfg.adminAllowCidrs ? `ADMIN_ALLOW_CIDRS = ${cfg.adminAllowCidrs} (everything else sees a 404; the store, the webhook and customers\' pages are open)` : 'any network — set ADMIN_ALLOW_CIDRS to your home, office or VPN ranges to hide the admin from the internet', 'set ADMIN_ALLOW_CIDRS');

@@ -1,0 +1,5 @@
+GET /api/sealed-log?from_seq=12 HTTP/1.1
+Host: 127.0.0.1:8799
+Accept: application/json
+X-Witness-Token: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+

@@ -52,7 +52,9 @@
  *     authenticated or bonded link) and back when it shuts; the key such a
  *     pairing yields is unauthenticated, so the console, OTA, witness-export
  *     and ble_provision characteristics (READ/WRITE_AUTHEN) still refuse
- *     it. Encryption is checked twice: by the command characteristic's
+ *     it (the OTA characteristics carry those properties since 2.4.20;
+ *     before it they were plain WRITE / READ, and any connected link could
+ *     write them). Encryption is checked twice: by the command characteristic's
  *     WRITE_ENC property, and again in the write handler, which refuses a
  *     write from an unencrypted link NotAuthorized whatever the stack let
  *     through.

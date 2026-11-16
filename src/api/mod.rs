@@ -302,9 +302,11 @@ pub struct ApiConfig {
     /// feature, configuring this is a startup error.
     pub tls: ApiTlsConfig,
     /// The fleet peer summary `event_mqtt_bridge --fleet-peers-path` writes
-    /// (`crate::fleet_peers`). When set, `/api/fleet` lists the Canaries the
-    /// bridge has heard beside the kernel's own row; unset (the default) or
-    /// missing on disk, the document is the kernel alone. Read per request,
+    /// (`crate::fleet_peers`). When set and `fleet_rollcall` is
+    /// [`FleetRollcall::Full`], `/api/fleet` lists the Canaries the bridge
+    /// has heard beside the kernel's own row; unset (the default), under
+    /// the default `self` roll-call, or missing on disk, the document is
+    /// the kernel alone. Read per request,
     /// never cached, so a bridge restart or a deleted file takes effect on
     /// the next poll.
     pub fleet_peers_path: Option<PathBuf>,
@@ -382,7 +384,11 @@ impl Default for ApiConfig {
             fleet_peers_path: None,
             viewer_token_path: None,
             pairing: None,
-            fleet_rollcall: FleetRollcall::Full,
+            // `self`, the documented default and the one the binaries'
+            // config resolves to: an embedder that sets only
+            // `fleet_peers_path` must not start serving every peer's
+            // presence words on the unauthenticated `/api/fleet`.
+            fleet_rollcall: FleetRollcall::default(),
         }
     }
 }
@@ -764,6 +770,7 @@ pub struct ApiServer {
     cfg: ApiConfig,
     kernel_cfg: KernelConfig,
     storage_health: Option<SharedStorageHealth>,
+    last_verify: Option<VerifyReport>,
 }
 
 impl ApiServer {
@@ -772,7 +779,20 @@ impl ApiServer {
             cfg,
             kernel_cfg,
             storage_health: None,
+            last_verify: None,
         }
+    }
+
+    /// Seed the server's last verify report — the verdict `/api/identity`
+    /// (`last_verify`), `/digest` and the `/api/fleet` self row (`chain`)
+    /// report until a `POST /verify` replaces it. witnessd passes the
+    /// report of its boot-time chain verification, so a freshly booted hub
+    /// reports the verdict it already computed instead of "no verify has
+    /// run". `None` (the default) leaves those fields absent until the
+    /// first `POST /verify`.
+    pub fn with_last_verify(mut self, report: Option<VerifyReport>) -> Self {
+        self.last_verify = report;
+        self
     }
 
     /// Attach a storage-health snapshot shared with the witnessd main loop.
@@ -872,20 +892,9 @@ impl ApiServer {
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_thread = shutdown.clone();
-        let cfg = self.cfg.clone();
-        let kernel_cfg = self.kernel_cfg.clone();
-        let storage_health = self.storage_health.clone();
-        let token_path = cfg.token_path.clone();
+        let token_path = self.cfg.token_path.clone();
         let join = std::thread::spawn(move || {
-            if let Err(err) = run_api(
-                listener,
-                cfg,
-                kernel_cfg,
-                storage_health,
-                &mut token_mgr,
-                shutdown_thread,
-                wrap,
-            ) {
+            if let Err(err) = run_api(listener, self, &mut token_mgr, shutdown_thread, wrap) {
                 log::error!("event api stopped: {}", err);
             }
         });
@@ -1074,25 +1083,33 @@ struct ServerState<'a> {
     cfg: &'a ApiConfig,
     kernel_cfg: &'a KernelConfig,
     storage_health: Option<&'a SharedStorageHealth>,
-    /// Most recent POST /verify outcome, surfaced in /digest and
-    /// /api/identity so consumers get chain status without re-running
-    /// verification on every request.
+    /// Most recent verify outcome — `POST /verify`, or before the first
+    /// one the report the server was seeded with
+    /// ([`ApiServer::with_last_verify`], witnessd's boot verification) —
+    /// surfaced in /digest, /api/identity and the /api/fleet self row so
+    /// consumers get chain status without re-running verification on every
+    /// request.
     last_verify: &'a mut Option<VerifyReport>,
 }
 
 fn run_api(
     listener: TcpListener,
-    cfg: ApiConfig,
-    kernel_cfg: KernelConfig,
-    storage_health: Option<SharedStorageHealth>,
+    server: ApiServer,
     token_mgr: &mut CapabilityTokenManager,
     shutdown: Arc<AtomicBool>,
     wrap: StreamWrap,
 ) -> Result<()> {
+    // `last_verify` starts as whatever the server was seeded with
+    // (`ApiServer::with_last_verify`); `POST /verify` replaces it.
+    let ApiServer {
+        cfg,
+        kernel_cfg,
+        storage_health,
+        mut last_verify,
+    } = server;
     let mut kernel = Kernel::open(&kernel_cfg)?;
     let mut auth_tracker = AuthFailureTracker::new();
     let mut rate_limiter = RateLimiter::new(cfg.rate_limit_per_minute);
-    let mut last_verify: Option<VerifyReport> = None;
     loop {
         if shutdown.load(Ordering::SeqCst) {
             break;
@@ -2037,6 +2054,43 @@ fn read_request<S: Read>(stream: &mut S) -> Result<HttpRequest> {
     })
 }
 
+/// Fuzz entry point (`fuzz/fuzz_targets/api_read_request.rs`): parse `bytes`
+/// as one Event API request exactly as a connection's read would, then run
+/// what reads the parsed request before any credential is checked — the two
+/// token extractors and the body accessor. Asserts the parser's own bounds:
+/// it never buffers a body past `REQUEST_BODY_DRAIN_MAX`, and a body a
+/// route accepts is exactly its declared length.
+///
+/// Compiled only under `--cfg fuzzing` (cargo-fuzz sets it, nothing else
+/// does — the `vault::format` precedent), so the shipped API surface does
+/// not grow by a parser entry point.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub fn fuzz_read_request(bytes: &[u8]) {
+    let mut stream = std::io::Cursor::new(bytes);
+    let Ok(request) = read_request(&mut stream) else {
+        return;
+    };
+    assert!(
+        request.body.len() <= REQUEST_BODY_DRAIN_MAX,
+        "read_request buffered {} body bytes, past the drain bound",
+        request.body.len()
+    );
+    let _ = request.bearer_token();
+    let _ = request.has_query_token();
+    if let Ok(body) = read_body(&request, REQUEST_BODY_DRAIN_MAX) {
+        let declared = request
+            .headers
+            .get("content-length")
+            .and_then(|v| v.parse::<usize>().ok());
+        assert_eq!(
+            Some(body.len()),
+            declared,
+            "an accepted body is exactly its declared length"
+        );
+    }
+}
+
 /// Why a request body was not read: the 400 the route answers with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BodyRefusal {
@@ -2260,9 +2314,11 @@ fn fleet_cors_headers(origin: Option<&str>) -> Vec<(&'static str, String)> {
 /// the shape `firmware/common/fleet_selfreport/fleet_selfreport.h` writes for
 /// a Canary, followed by the peers the MQTT bridge has heard
 /// (`crate::fleet_peers::fleet_rows`, already projected to the contract's
-/// words). `self_chain_ok` is the kernel's LAST computed verdict (`/verify`,
-/// or the boot verify witnessd records) and the key is omitted when none has
-/// run — a silent key is never a claim (DISCOVERY.md). `verified_through` is
+/// words). `self_chain_ok` is the kernel's LAST computed verdict (`POST
+/// /verify`, or before the first one the boot verification witnessd seeds
+/// the server with through [`ApiServer::with_last_verify`]) and the key is
+/// omitted when none has run — a silent key is never a claim
+/// (DISCOVERY.md). `verified_through` is
 /// "now", exactly what firmware sends: it is the device's self-report, and the
 /// Wall labels it as reported rather than as something the Wall measured.
 fn fleet_document(self_chain_ok: Option<bool>, peers: &[FleetRow]) -> String {
@@ -2555,10 +2611,32 @@ mod tests {
             prepare: impl FnOnce(&mut Kernel, &KernelConfig) -> Result<()>,
             configure: impl FnOnce(&mut ApiConfig, &std::path::Path),
         ) -> Result<Self> {
+            Self::spawn_seeded(prepare, configure, false)
+        }
+
+        /// Like [`Self::spawn`], the way witnessd starts the API: the
+        /// prepared log is verified first (`Kernel::verify_sealed_log`, the
+        /// boot check) and the server is seeded with that report.
+        fn spawn_boot_verified(
+            prepare: impl FnOnce(&mut Kernel, &KernelConfig) -> Result<()>,
+        ) -> Result<Self> {
+            Self::spawn_seeded(prepare, |_, _| {}, true)
+        }
+
+        fn spawn_seeded(
+            prepare: impl FnOnce(&mut Kernel, &KernelConfig) -> Result<()>,
+            configure: impl FnOnce(&mut ApiConfig, &std::path::Path),
+            boot_verify: bool,
+        ) -> Result<Self> {
             let dir = tempfile::tempdir()?;
             let cfg = sealed_log_kernel_config(&dir.path().join("witness.db"));
             let mut kernel = Kernel::open(&cfg)?;
             prepare(&mut kernel, &cfg)?;
+            let boot_report = if boot_verify {
+                Some(kernel.verify_sealed_log()?)
+            } else {
+                None
+            };
             drop(kernel);
 
             let mut api_config = ApiConfig {
@@ -2566,7 +2644,9 @@ mod tests {
                 ..ApiConfig::default()
             };
             configure(&mut api_config, dir.path());
-            let api_handle = ApiServer::new(api_config, cfg).spawn()?;
+            let api_handle = ApiServer::new(api_config, cfg)
+                .with_last_verify(boot_report)
+                .spawn()?;
             Ok(Self {
                 _dir: dir,
                 api_handle: Some(api_handle),
@@ -2675,6 +2755,91 @@ mod tests {
             verified += 1;
         }
         Ok(verified)
+    }
+
+    #[test]
+    fn default_config_serves_the_self_roll_call() -> Result<()> {
+        // The library default is the documented one. `Full` here meant an
+        // embedder who set only `fleet_peers_path` served every peer's
+        // presence words on the unauthenticated `/api/fleet`.
+        assert_eq!(ApiConfig::default().fleet_rollcall, FleetRollcall::SelfOnly);
+        assert_eq!(FleetRollcall::default(), FleetRollcall::SelfOnly);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let api = SealedLogTestApi::spawn_with(
+            |kernel, cfg| seal_event(kernel, cfg, "zone:a"),
+            |api_config, dir| {
+                let path = dir.join("fleet_peers.json");
+                planted_peer_summary(now)
+                    .write_atomic(&path)
+                    .expect("summary written");
+                api_config.fleet_peers_path = Some(path);
+            },
+        )?;
+        let (headers, body) = api.get("/api/fleet", false)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let doc: serde_json::Value = serde_json::from_str(&body)?;
+        let devices = doc["devices"].as_array().expect("devices array");
+        assert_eq!(devices.len(), 1, "body: {body}");
+        assert_eq!(devices[0]["product"], "witness-kernel");
+        assert!(!body.contains("Bedroom"), "body: {body}");
+        Ok(())
+    }
+
+    #[test]
+    fn boot_verify_report_reaches_identity_and_the_fleet_self_row() -> Result<()> {
+        // witnessd verifies the chain before it serves anything. That
+        // verdict used to stop at the daemon: `/api/identity` said
+        // `last_verify: null` and the `/api/fleet` self row carried no
+        // `chain` until some client issued `POST /verify`.
+        let api =
+            SealedLogTestApi::spawn_boot_verified(|kernel, cfg| seal_event(kernel, cfg, "zone:a"))?;
+        let (headers, body) = api.get("/api/identity", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let identity: serde_json::Value = serde_json::from_str(&body)?;
+        assert_eq!(identity["last_verify"]["ok"], true, "body: {body}");
+        assert_eq!(
+            identity["last_verify"]["verdict"],
+            "self-consistent; identity unverified"
+        );
+        assert_eq!(
+            identity["last_verify"]["at"].as_u64().unwrap_or(1) % 600,
+            0,
+            "coarse time only: {body}"
+        );
+        let (_, body) = api.get("/api/fleet", false)?;
+        let fleet: serde_json::Value = serde_json::from_str(&body)?;
+        assert_eq!(fleet["devices"][0]["chain"], "ok", "body: {body}");
+        drop(api);
+
+        // A log that fails the boot check — witnessd's safe mode, where the
+        // read and verify API stays up — reports the failure, not silence.
+        let api = SealedLogTestApi::spawn_boot_verified(|kernel, cfg| {
+            seal_event(kernel, cfg, "zone:a")?;
+            seal_event(kernel, cfg, "zone:b")?;
+            let rewritten = kernel.conn.execute(
+                "UPDATE sealed_events \
+                 SET payload_json = replace(payload_json, 'zone:a', 'zone:x') WHERE id = 1",
+                [],
+            )?;
+            assert_eq!(rewritten, 1);
+            Ok(())
+        })?;
+        let (_, body) = api.get("/api/identity", true)?;
+        let identity: serde_json::Value = serde_json::from_str(&body)?;
+        assert_eq!(identity["last_verify"]["ok"], false, "body: {body}");
+        let (_, body) = api.get("/api/fleet", false)?;
+        let fleet: serde_json::Value = serde_json::from_str(&body)?;
+        assert_eq!(fleet["devices"][0]["chain"], "degraded", "body: {body}");
+
+        // A later POST /verify still replaces the seeded report.
+        let (headers, report) = api.request("POST", "/verify", true)?;
+        assert!(headers.contains("200 OK"), "headers: {headers}");
+        let report: serde_json::Value = serde_json::from_str(&report)?;
+        assert_eq!(report["chain_valid"], false, "report: {report}");
+        Ok(())
     }
 
     #[test]
@@ -2884,6 +3049,8 @@ mod tests {
                     .write_atomic(&path)
                     .expect("summary written");
                 api_config.fleet_peers_path = Some(path);
+                // The owner's opt-in: the default roll-call is `self`.
+                api_config.fleet_rollcall = FleetRollcall::Full;
             },
         )?;
         let (headers, body) = api.get("/api/fleet", false)?;

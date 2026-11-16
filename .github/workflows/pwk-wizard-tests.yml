@@ -9,7 +9,7 @@ name: PWK Wizard Tests
 # tests (node:test, no browser), shellcheck over the entry scripts and the
 # s6 services, the run_lib unit tests and the kernel-config render check
 # (which also covers the Docker sidecar's copy of the same heredoc), all on
-# the app's jq 1.6 rather than the runner's 1.7 (sweep HA32). The
+# the app's jq 1.8.2 rather than the runner's 1.7 (sweep HA32). The
 # custom_components/securacv tests are run separately by python.yml
 # (ruff + mypy + pytest). Triggers on changes under privacy_witness_kernel/**
 # and on the integration manifest (the carried version must equal the app's),
@@ -54,12 +54,12 @@ jobs:
       - name: Set up Python
         # The app runs the panel (serve_wizard.py, integration_carry.py) on
         # the image's `apk add python3`, not on pyproject.toml's range. The
-        # runtime base is ghcr.io/home-assistant/<arch>-base:3.18 (Alpine
-        # 3.18), whose python3 is 3.11 (aports 3.18-stable). Test on what
+        # runtime base is ghcr.io/home-assistant/<arch>-base:3.22 (Alpine
+        # 3.22), whose python3 is 3.12 (aports 3.22-stable). Test on what
         # ships; move this pin when the base tag moves in the Dockerfile.
         uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install pytest (and PyYAML for the store-presentation checks)
         # PyYAML is a TEST dependency only: the app itself parses the two YAML
@@ -67,33 +67,34 @@ jobs:
         # because the image has no PyYAML.
         run: pip install pytest pyyaml
 
-      - name: Put the app's jq (1.6) first on PATH
+      - name: Put the app's jq (1.8.2) first on PATH
         # The app runs discover_cameras.sh, run.sh and run_lib.sh on the
-        # image's jq: Alpine 3.18's jq 1.6 (aports 3.18-stable builds the
-        # unpatched 1.6 release source), while ubuntu-latest ships 1.7. So the
-        # rest of this job runs on the jq-1.6 release binary, fetched by URL
-        # and pinned by sha256 (the same digest from the jqlang and the older
-        # stedolan release URL), and the pytest step's PWK_REQUIRE_JQ makes
-        # the parity cases fail if they ever run on another jq (sweep HA32).
+        # image's jq: Alpine 3.22's jq 1.8.2 (aports 3.22-stable builds the
+        # unpatched 1.8.2 release source), while the runner ships 1.7. So the
+        # rest of this job runs on the jq-1.8.2 release binary, fetched by URL
+        # and pinned by sha256 (the digest the release's own sha256sum.txt
+        # lists for it), and the pytest step's PWK_REQUIRE_JQ makes the
+        # parity cases fail if they ever run on another jq (sweep HA32).
         # Move both when the base tag moves in the Dockerfile.
         env:
-          JQ16_URL: https://github.com/jqlang/jq/releases/download/jq-1.6/jq-linux64
-          JQ16_SHA256: af986793a515d500ab2d35f8d2aecd656e764504b789b66d7e1a0b727a124c44
+          APP_JQ_VERSION: jq-1.8.2
+          APP_JQ_URL: https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
+          APP_JQ_SHA256: b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f
         run: |
           set -euo pipefail
-          dir="$RUNNER_TEMP/jq-1.6"
+          dir="$RUNNER_TEMP/$APP_JQ_VERSION"
           mkdir -p "$dir"
-          curl -fsSL --retry 3 -o "$dir/jq" "$JQ16_URL"
-          echo "$JQ16_SHA256  $dir/jq" | sha256sum -c -
+          curl -fsSL --retry 3 -o "$dir/jq" "$APP_JQ_URL"
+          echo "$APP_JQ_SHA256  $dir/jq" | sha256sum -c -
           chmod +x "$dir/jq"
-          test "$("$dir/jq" --version)" = "jq-1.6"
+          test "$("$dir/jq" --version)" = "$APP_JQ_VERSION"
           echo "$dir" >> "$GITHUB_PATH"
 
       - name: Run wizard, integration-carry and store-presentation tests
         env:
           CI: "true"
           # The version the parity cases must run on: the step above's jq.
-          PWK_REQUIRE_JQ: jq-1.6
+          PWK_REQUIRE_JQ: jq-1.8.2
         run: pytest privacy_witness_kernel/tests/ -v
 
       # The carried integration's version must equal the app's: the image
@@ -145,9 +146,9 @@ jobs:
       - name: Run run_lib tests
         env:
           # opt_list's cases hold exact bytes; this names the jq they must
-          # run on (the step above's 1.6), so a fallback to the runner's 1.7
+          # run on (the step above's 1.8.2), so a fallback to the runner's 1.7
           # fails them instead of passing on a jq the app never runs (HA38).
-          PWK_REQUIRE_JQ: jq-1.6
+          PWK_REQUIRE_JQ: jq-1.8.2
         run: bash privacy_witness_kernel/tests/test_run_lib.sh
 
       # Lifts the kernel config heredocs out of run.sh (and the sidecar's

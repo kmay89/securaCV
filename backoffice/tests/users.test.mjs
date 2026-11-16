@@ -6,7 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { testDb, testCfg, catalog, sampleOrder, fixture } from './helpers.mjs';
-import { setupOperator, login, clearLocks, sessionFor, inviteUser, inviteFor, acceptInvite, confirmTotp, pendingTotp, beginTotpRotation, changePassword, setRole, setStatus, removeUser, listUsers, userByEmail, can, ROLES, totp, carryLegacyOperator, hashPasswordSync, base32Encode, endOtherSessions } from '../src/auth.mjs';
+import { setupOperator, login, clearLocks, sessionFor, inviteUser, inviteFor, acceptInvite, confirmTotp, pendingTotp, beginTotpRotation, changePassword, setRole, setStatus, removeUser, listUsers, userByEmail, can, writeCapability, createApiToken, ROLES, totp, carryLegacyOperator, hashPasswordSync, base32Encode, endOtherSessions } from '../src/auth.mjs';
+import { orderStatusUrl } from '../src/modules/delivery.mjs';
 import { qrMatrix, qrSvg } from '../src/qr.mjs';
 import { createApp } from '../src/server.mjs';
 import { recordOrder, timeline, addNote } from '../src/modules/orders.mjs';
@@ -113,6 +114,35 @@ test('roles are enforced on every request: the sidebar shrinks, a forbidden POST
     const pid = userByEmail(b.db, 'sup@errer.test').id; removeUser(b.db, pid, { actor: 'ops@errer.test' }); assert.equal(userByEmail(b.db, 'sup@errer.test') ?? null, null); assert.equal((await b.as(S.sup).get('/')).status, 303);
     assert.equal(b.db.get("SELECT COUNT(*) AS n FROM audit_log WHERE actor = 'sup@errer.test'").n > 0, true, 'their past actions stay');
     assert.equal(listUsers(b.db).length, 3);
+  } finally { await b.close(); }
+});
+
+// The customer's signed status link changes the address of an order that has not shipped. Reading it is therefore
+// a write: the roles that may not change an address, and a read-only token, are refused the link everywhere it is shown.
+test('the customer\'s status link is a write capability: viewer, support and a read-only token never get it; owner, ops and a read + write token do', async () => {
+  for (const p of ['/api/orders/EL-000001/status-url', '/api/orders/EL-000001/status-url/', '/api/orders/EL%2D000001/status-url', '/api/orders/a%2Fb/status-url']) {
+    assert.ok(!can('viewer', 'GET', p) && !can('support', 'GET', p) && !can('viewer', 'HEAD', p) && !can('support', 'POST', p), p);
+    assert.ok(can('ops', 'GET', p) && can('owner', 'GET', p), p); assert.equal(writeCapability(p), true, p);
+  }
+  assert.equal(writeCapability('/api/orders/EL-000001'), false); assert.equal(writeCapability('/api/orders'), false); assert.equal(writeCapability('/api/orders/%zz/status-url'), true, 'a path that does not decode is refused');
+  assert.ok(can('viewer', 'GET', '/api/orders/EL-000001') && can('support', 'GET', '/api/orders/EL-000001/events'), 'reading the order itself is still a read');
+  const b = await boot({ secret: 'sekret' });
+  try {
+    const owner = await b.signIn('owner@errer.test', 'owner password 1234', totp(b.secret));
+    const mk = async (email, name, role) => { const u = inviteUser(b.db, { email, name, role }); await acceptInvite(b.db, u.invite_token, `${name} has a long password`); const p = pendingTotp(b.db, u.id); confirmTotp(b.db, u.id, totp(p)); return b.signIn(email, `${name} has a long password`, totp(p)); };
+    const ops = await mk('ops@errer.test', 'Oli Ops', 'ops'), sup = await mk('sup@errer.test', 'Sam Support', 'support'), vw = await mk('vw@errer.test', 'Val Viewer', 'viewer');
+    const { order } = recordOrder(b.db, sampleOrder(), { catalog: catalog() }); const link = orderStatusUrl(b.cfg, order); const api = `/api/orders/${order.number}/status-url`;
+    // the API: by role with a session, by scope with a token
+    for (const [who, s] of [['viewer', vw], ['support', sup]]) { const r = await b.as(s).get(api); assert.equal(r.status, 403, who); assert.ok(!(await r.text()).includes('/o/'), `${who} is told no, not the link`); }
+    assert.equal((await b.as(vw).get(`/api/orders/${order.number.replaceAll('-', '%2D')}/status-url`)).status, 403, 'an encoded number is the same order');
+    for (const s of [owner, ops]) { const r = await b.as(s).get(api); assert.equal(r.status, 200); assert.equal((await r.json()).url, link); }
+    const ro = createApiToken(b.db, 'dash', { scope: 'ro' }); const rw = createApiToken(b.db, 'cli');
+    let r = await fetch(b.base + api, { headers: { authorization: `Bearer ${ro}` } }); assert.equal(r.status, 403); assert.match((await r.json()).error, /read-only/);
+    assert.equal((await fetch(`${b.base}/api/orders/${order.number}`, { headers: { authorization: `Bearer ${ro}` } })).status, 200, 'the read-only token still reads the order');
+    r = await fetch(b.base + api, { headers: { authorization: `Bearer ${rw}` } }); assert.equal(r.status, 200); assert.equal((await r.json()).url, link);
+    // the order page: the link for the roles that may change an address, a plain note for the rest
+    for (const [who, s] of [['viewer', vw], ['support', sup]]) { const page = await (await b.as(s).get(`/orders/${order.id}`)).text(); assert.ok(!page.includes('/o/'), `${who}'s order page carries no status link`); assert.ok(page.includes('the customer has a status page'), who); }
+    for (const s of [owner, ops]) assert.ok((await (await b.as(s).get(`/orders/${order.id}`)).text()).includes(`href="${link}"`));
   } finally { await b.close(); }
 });
 

@@ -32,6 +32,27 @@ assert_eq "fallback" "$(resolve_value "" "" "fallback")" \
 assert_eq "" "$(resolve_value "" "" "")" \
     "resolve_value: all empty yields empty"
 
+# ---- camera_url_for_log ----------------------------------------------------
+assert_eq "rtsp://***@10.0.0.5:554/stream1" \
+    "$(camera_url_for_log "rtsp://admin:hunter2@10.0.0.5:554/stream1")" \
+    "camera_url_for_log: the login is replaced, the host and path stay"
+assert_eq "rtsp://10.0.0.5/stream1" \
+    "$(camera_url_for_log "rtsp://10.0.0.5/stream1")" \
+    "camera_url_for_log: a URL with no login is unchanged"
+assert_eq "rtsp://***@cam.local/live" \
+    "$(camera_url_for_log "rtsp://admin:p@ss/w0rd@cam.local/live")" \
+    "camera_url_for_log: a password holding @ and / leaks no tail of itself"
+assert_eq "rtsp://cam.local/live" \
+    "$(camera_url_for_log "rtsp://cam.local/live?user=admin&password=hunter2")" \
+    "camera_url_for_log: a login carried in the query is dropped"
+assert_eq "***@cam.local/live" \
+    "$(camera_url_for_log "admin:hunter2@cam.local/live")" \
+    "camera_url_for_log: no scheme, still no login"
+case "$(camera_url_for_log "rtsp://admin:hunter2@10.0.0.5:554/s?token=abc")" in
+    *hunter2*|*admin*|*abc*) echo "FAIL: camera_url_for_log leaked a secret" >&2; FAILURES=$((FAILURES + 1)) ;;
+    *) echo "ok: camera_url_for_log: no part of the login or the query survives" ;;
+esac
+
 # ---- resolve_frigate_topic -------------------------------------------------
 assert_eq "frigate/events" "$(resolve_frigate_topic "" "")" \
     "resolve_frigate_topic: defaults to frigate/events"

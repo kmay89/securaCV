@@ -1,6 +1,73 @@
 <!-- The Supervisor shows this file on the app's page after an update. Newest first. -->
-## Unreleased
+## 0.9.1
 
+- **The encrypted database runs on a fixed SQLite.** The kernel inside the
+  app is built with SQLCipher 4.20.0 on SQLite 3.54.1 (`rusqlite` 0.43). The
+  build before it carried SQLite 3.53.4, which could return stale memory when
+  a database was opened beside a `-wal` file with a different page size
+  (RUSTSEC-2026-0502). Nothing to do: the update replaces the binary.
+- **The Frigate config the wizard writes is detection-only.** When no
+  Frigate config was found, the wizard wrote one that gave every camera the
+  `record` role, set `record.enabled: true` and kept motion video for as
+  many days as you chose for sealed events (up to a year). It now writes the
+  `detect` role alone and `record.enabled: false`, with a comment pointing
+  at Frigate's record docs; the wizard's retention is the witness log's and
+  is no longer passed to that file. Snapshots are not set, so they stay at
+  Frigate's default (off). The camera screen and DOCS.md say so. Pinned by
+  `test_write_frigate_config_is_detection_only` and a save-path test that
+  picks one year and finds no `record` role, no `retain` block and no 365 in
+  the written file.
+- **"Only Frigate alerts" is not offered where it cannot seal.** Alerts mode
+  listens to Frigate's review items instead of its events, and Frigate
+  creates review items only for cameras that record. With the detection-only
+  config above that choice would have left a log of heartbeats while the
+  done screen promised a first sealed event. On the path where the wizard
+  writes Frigate's config the choice is disabled with the reason, the page
+  never sends it, and the server stores "every tracked object" and says why
+  on the done screen. The choice, DOCS.md and the option list now say it
+  needs recording on in Frigate. Pinned by three save-path tests (RTSP
+  cameras with `enable_reviews: true`, with and without a file written, and
+  the Frigate-owned path where the choice is kept) and four page tests.
+- **Base image moved off an unsupported Alpine.** The runtime bases and both
+  build stages were on Alpine 3.18, out of security support since May 2025.
+  They are on 3.22 (GStreamer 1.26, SQLite 3.49, Python 3.12, jq 1.8.2,
+  bashio 0.19.0), whose security support ends 2027-05-01; the date is
+  written beside the pin. Tag and digest are literal on all four `FROM`
+  lines (no `ARG` carries either), so a dependency updater can move them.
+  `run.sh` reads the hostname through `bashio::app.hostname`. Pinned by
+  `tests/test_base_image_pins.py`: one release across all bases, not older
+  than 3.22, digest on every line, and the workflow's Python and jq equal to
+  what the Dockerfile says the release ships.
+- **A quote or a backslash in a standalone camera URL no longer breaks the
+  kernel's config file.** `run.sh` pasted the URL between quotes, so such a
+  password made `witness_config.json` invalid JSON and the kernel exited on
+  a parse error at every start. The URL is now JSON-encoded by jq; the file
+  parses and carries the exact URL. Not fixed here: the kernel still places
+  the URL in a GStreamer launch string, where a backslash is read as an
+  escape and a space ends the value, so a password holding either can still
+  fail in the kernel's pipeline until `src/ingest/rtsp.rs` sets `location`
+  as a property. Pinned in `tests/test_config_render.sh` with `pa"ss\word`
+  rendered through the script's own encoding line (the file parses,
+  `rtsp.url` round-trips byte for byte).
+- **The done screen and the docs name the card and the button Home Assistant
+  shows.** They sent you to a "SecuraCV discovered" card and its "Configure"
+  button; no card has that title and a discovered card's button reads "Add".
+  They now say: the *SecuraCV app* card under Discovered, press Add. Pinned
+  in `tests/test_wizard_setup_flow.test.js` (both done-screen paths) and
+  `tests/test_serve_wizard_setup.py` (the title is derived from the
+  integration's `flow_title` and discovery step).
+- **The add-on's tests run on what the new base ships.** `python-version`
+  3.11 -> 3.12 and the pinned jq release binary 1.6 -> 1.8.2 (sha256 from
+  the release's own `sha256sum.txt`, version asserted before it goes on
+  PATH); `PWK_REQUIRE_JQ` is `jq-1.8.2` in both steps.
+  `tests/test_base_image_pins.py` fails if the Dockerfile and these pins
+  move apart.
+- **The camera login stays out of the app's log.** In standalone mode the
+  start-up log printed the half of the camera URL that holds the username
+  and password and hid the host. It now prints the scheme, host and path
+  with the login replaced by `***`, and drops the query string (some cameras
+  take the login there). Pinned in `tests/test_run_lib.sh`
+  (`camera_url_for_log`).
 - **The device key leaves `/config`.** The seed the sealed log's identity
   derives from was kept at `/config/.securacv/device_key`, mode 0600 — which
   protects nothing there: every Home Assistant backup carries `/config`, and

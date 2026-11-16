@@ -64,6 +64,7 @@ import os
 import secrets
 import shutil
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -81,6 +82,9 @@ DEFAULT_BASE_URL = os.environ.get("SUPERVISOR_URL", "http://supervisor")
 # are looked for: the hub's own filesystem. Tests point it at a temp tree, and
 # so would a runner that mounts the hub's ssl folder somewhere other than /ssl.
 DEFAULT_FILES_ROOT = Path("/")
+# The MQTT flow's add-on path, retried while Mosquitto restarts under it.
+ADDON_FLOW_ATTEMPTS = 4
+ADDON_FLOW_RETRY_S = 5.0
 
 
 def under_root(root: Path, path: str) -> Path:
@@ -345,16 +349,14 @@ def plan_actions(
                     kind="core_config_entry",
                     label=f"{handler} integration",
                     already=have,
-                    # Best-effort ON PURPOSE. Home Assistant may answer this
-                    # manually-started flow with a form asking for broker
-                    # credentials — the Mosquitto add-on authenticates against
-                    # HA users, and a hand-started flow doesn't inherit the
-                    # add-on discovery that would supply them. Treating that as
-                    # fatal would abort provisioning BEFORE Frigate and the
-                    # witness kernel install, which is strictly worse than not
-                    # attempting the connect at all. So: try it, and if Home
-                    # Assistant wants more than the plan can supply, say so and
-                    # keep going.
+                    # Best-effort ON PURPOSE. The flow is answered through the
+                    # Mosquitto add-on's own discovery (create_config_entry),
+                    # but a broker that never comes back, or a Home Assistant
+                    # that answers some other way, must not abort provisioning
+                    # BEFORE Frigate and the witness kernel install, which is
+                    # strictly worse than not attempting the connect at all.
+                    # So: try it, and if it does not finish, say so and keep
+                    # going.
                     optional=True,
                     reason="Home Assistant is already connected to it" if have else "",
                     handler=handler,
@@ -647,17 +649,46 @@ class SupervisorClient:
 
         Home Assistant has no "just make me this entry" endpoint — an
         integration is set up by walking its config flow, the same steps the
-        browser dialog walks. Two calls: POST the handler to open a flow, then
-        POST the answers to the flow id it returns.
+        browser dialog walks. POST the handler to open a flow, then answer it.
+
+        On a Supervisor host the MQTT flow opens as a MENU ("addon" or
+        "broker"). Answering "addon" is what the browser's "Use the add-on"
+        click does: Home Assistant asks the Supervisor for the Mosquitto
+        add-on's discovery record and signs in with the service credentials
+        the add-on handed over there — no password is typed, minted or
+        committed. Only a flow that opens without that menu gets the plain
+        broker form (``data``).
         """
         flow = self._req("POST", "/core/api/config/config_entries/flow",
                          {"handler": handler, "show_advanced_options": False})
         if not isinstance(flow, dict):
             raise SupervisorError(f"{handler}: unexpected config-flow response")
+        attempt = 0
+        while (isinstance(flow, dict) and flow.get("type") == "menu"
+               and "addon" in (flow.get("menu_options") or []) and flow.get("flow_id")):
+            result = self._req("POST", f"/core/api/config/config_entries/flow/{flow['flow_id']}",
+                               {"next_step_id": "addon"})
+            attempt += 1
+            # The add-on path aborts with addon_connection_failed while the
+            # broker is still coming back from the mqtt-login restart: a short
+            # wait and a fresh flow is the whole fix, a few times over.
+            if (isinstance(result, dict) and result.get("type") == "abort"
+                    and result.get("reason") == "addon_connection_failed"
+                    and attempt < ADDON_FLOW_ATTEMPTS):
+                time.sleep(ADDON_FLOW_RETRY_S)
+                flow = self._req("POST", "/core/api/config/config_entries/flow",
+                                 {"handler": handler, "show_advanced_options": False})
+                continue
+            if isinstance(result, dict) and (
+                    result.get("type") == "create_entry"
+                    or (result.get("type") == "abort"
+                        and result.get("reason") in ("single_instance_allowed", "already_configured"))):
+                return
+            self._raise_unfinished(handler, result)
+        if not isinstance(flow, dict):
+            raise SupervisorError(f"{handler}: unexpected config-flow response")
         # Two shapes that both mean "nothing left to do":
-        #   create_entry — the flow self-completed (discovery already supplied
-        #                  everything, which is the happy path on a hub where
-        #                  the Mosquitto add-on was found automatically);
+        #   create_entry — the flow self-completed;
         #   abort        — usually single_instance_allowed / already_configured,
         #                  i.e. Home Assistant is ALREADY connected. Treating
         #                  that as an error would fail a correctly-provisioned
@@ -675,18 +706,29 @@ class SupervisorClient:
                 f"{handler}: Home Assistant did not return a config flow to answer "
                 f"(got {flow.get('reason') or flow.get('type') or 'nothing'})"
             )
+        # The fallback for a flow with no add-on menu: the broker form.
         result = self._req("POST", f"/core/api/config/config_entries/flow/{flow_id}", data)
-        if isinstance(result, dict) and result.get("type") == "form":
-            errs = result.get("errors") or {}
-            raise SupervisorError(
-                f"{handler}: Home Assistant wants more than the plan supplies "
-                f"(step {result.get('step_id')!r}"
-                + (f", {errs}" if errs else "")
-                + "). The Mosquitto add-on authenticates against Home Assistant "
-                "users, and a hand-started flow does not inherit the add-on "
-                "discovery that supplies them — so finish MQTT in Settings > "
-                "Devices & Services. Everything else in this plan still applied."
-            )
+        if isinstance(result, dict) and result.get("type") != "create_entry":
+            self._raise_unfinished(handler, result)
+
+    @staticmethod
+    def _raise_unfinished(handler: str, result: object) -> None:
+        """Say why a config flow did not end in an entry, and what to do."""
+        r = result if isinstance(result, dict) else {}
+        kind = r.get("type") or "nothing"
+        if kind == "abort":
+            detail = f"it stopped: {r.get('reason') or 'no reason given'}"
+        elif kind == "form":
+            errs = r.get("errors") or {}
+            detail = f"it asked for step {r.get('step_id')!r}" + (f", {errs}" if errs else "")
+        else:
+            detail = f"it answered {kind!r}"
+        raise SupervisorError(
+            f"{handler}: Home Assistant did not finish connecting through the "
+            f"Mosquitto add-on's discovery ({detail}). Finish MQTT in Settings > "
+            "Devices & Services (Add on the MQTT card, then Submit). Everything else in this "
+            "plan still applied."
+        )
 
     def start_addon(self, slug: str) -> None:
         self._req("POST", f"/addons/{slug}/start")
@@ -931,7 +973,20 @@ def _perform(
             )
         os.makedirs(os.path.dirname(a.dest), exist_ok=True)
         # cp -L semantics: dereference so a symlinked source lands as real bytes.
-        shutil.copyfile(src, a.dest, follow_symlinks=True)
+        # Written beside the destination, then renamed over it: a copy cut off
+        # mid-write (a full card, a dropped session) must leave no config.yml,
+        # because the next run's never_overwrite skip would adopt a truncated
+        # one as the owner's own edits.
+        tmp = a.dest + ".tmp"
+        try:
+            shutil.copyfile(src, tmp, follow_symlinks=True)
+            os.replace(tmp, a.dest)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise
     else:  # pragma: no cover - guarded by the dataclass kinds above
         raise SupervisorError(f"unknown action kind {a.kind!r}")
 

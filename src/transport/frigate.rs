@@ -515,13 +515,27 @@ pub fn camera_slug(name: &str) -> String {
 /// Sanitize a zone name for use as a zone_id.
 ///
 /// - Converts to lowercase
-/// - Replaces non-alphanumeric characters (except '_' and '-') with '_'
+/// - Replaces every character outside ASCII `[a-z0-9_-]` with '_'
 /// - Limits length to 64 characters
+///
+/// The result is always inside the alphabet the kernel's zone allowlist
+/// accepts (`validate_zone_id`: `^zone:[a-z0-9_-]{1,64}$`). The test used to
+/// be Unicode `is_alphanumeric`, which kept `ü`, `é` or `台` — so a zone or
+/// camera named `Küche` produced `zone:küche`, the kernel refused every
+/// event from it, and the log filled with `GapMissingData` records for what
+/// was a naming problem. Every name that already produced an accepted id
+/// produces the same id now; only the refused ones move.
+///
+/// The mapping is lossy on purpose, like [`camera_slug`]: names that differ
+/// only in replaced characters share one zone id (`Küche` and `Kéche` are
+/// both `k_che`; two names written entirely in a non-Latin script are told
+/// apart by length alone). An empty name stays empty, which the kernel
+/// refuses.
 pub fn sanitize_zone_name(name: &str) -> String {
     name.to_lowercase()
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || c == '_' || c == '-' {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
                 c
             } else {
                 '_'
@@ -658,6 +672,44 @@ mod tests {
     fn sanitize_limits_length() {
         let long_name = "a".repeat(100);
         assert_eq!(sanitize_zone_name(&long_name).len(), 64);
+    }
+
+    #[test]
+    fn sanitize_yields_zone_ids_the_kernel_accepts_for_non_ascii_names() {
+        // Unicode letters used to pass through (`zone:küche`), and the
+        // kernel's ASCII allowlist then refused every event of that zone.
+        for (name, id) in [
+            ("Küche", "k_che"),
+            ("café", "caf_"),
+            ("Entrée Nord", "entr_e_nord"),
+            ("Кухня", "_____"),
+            ("台所", "__"),
+        ] {
+            assert_eq!(sanitize_zone_name(name), id, "{name}");
+            assert!(
+                crate::validate_zone_id(&format!("zone:{id}")).is_ok(),
+                "zone:{id} (from {name}) must be a zone id the kernel accepts"
+            );
+        }
+        // Truncation counts characters, and the result is ASCII.
+        let long = sanitize_zone_name(&"ü".repeat(100));
+        assert_eq!(long, "_".repeat(64));
+        assert!(crate::validate_zone_id(&format!("zone:{long}")).is_ok());
+
+        // Every name that already produced an accepted id keeps it.
+        for (name, id) in [
+            ("Front Door", "front_door"),
+            ("Zone #1", "zone__1"),
+            ("porch-area", "porch-area"),
+            ("BACK yard!", "back_yard_"),
+            ("İstanbul", "i_stanbul"),
+            ("\u{1F3E0} door", "__door"),
+        ] {
+            assert_eq!(sanitize_zone_name(name), id, "{name}");
+        }
+        // An empty name is still refused by the kernel, not papered over.
+        assert_eq!(sanitize_zone_name(""), "");
+        assert!(crate::validate_zone_id("zone:").is_err());
     }
 
     #[test]

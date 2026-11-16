@@ -1,7 +1,8 @@
 // Host test for firmware/common/time/tz_rule.h (repo sweep F28) — the fleet's
 // IANA -> POSIX table, the rule validator, the local minute-of-day the CSI
 // chokepoint's clock offset now keys on, and the two small input helpers the
-// settings handlers use.
+// settings handlers use — and what the display's join does with the zone its
+// portal collects (a POSIX rule from the page, an IANA name from the iPhone).
 //
 // glibc honors the same POSIX TZ rules newlib does (setenv + tzset +
 // localtime_r), so the DST vectors below are the real transitions the device
@@ -404,6 +405,124 @@ static void test_resolve() {
   report("resolve", f0);
 }
 
+// The display's join (provision.cpp handle_join) resolves the portal's "tz"
+// field with this one expression: a valid POSIX rule is kept, a known IANA
+// name is mapped through the table, anything else keeps the compiled seed.
+// The iPhone sends its zone as an IANA name; the join used to store that name
+// as the rule, marked chosen by a human, and newlib — which cannot parse it —
+// ran the glass on UTC with nothing left to correct it.
+static tz_rule::Resolve join_field(const char* field, char* out) {
+  return tz_rule::resolve(tz_rule::posix_valid(field) ? field : nullptr, field, out);
+}
+
+static std::string squeezed_file(const std::string& path) {
+  std::ifstream f(path);
+  if (!f) {
+    std::fprintf(stderr, "FAIL: cannot open %s\n", path.c_str());
+    g_fail++;
+    return std::string();
+  }
+  std::stringstream ss;
+  ss << f.rdbuf();
+  std::string out;
+  for (char c : ss.str()) {
+    if (c != ' ' && c != '\t' && c != '\n' && c != '\r') out += c;
+  }
+  return out;
+}
+
+static void test_display_join_field() {
+  const int f0 = g_fail;
+  char out[tz_rule::MAX_POSIX_LEN + 1] = "seed";
+
+  // The iPhone: an IANA name in, the table's rule out.
+  CHECK(!tz_rule::posix_valid("America/New_York"));          // what used to be stored as the rule
+  CHECK(join_field("America/New_York", out) == tz_rule::Resolve::OK);
+  CHECK(std::strcmp(out, "EST5EDT,M3.2.0,M11.1.0") == 0);
+  CHECK(join_field("Europe/Berlin", out) == tz_rule::Resolve::OK);
+  CHECK(std::strcmp(out, "CET-1CEST,M3.5.0,M10.5.0/3") == 0);
+  CHECK(join_field("UTC", out) == tz_rule::Resolve::OK);
+  CHECK(std::strcmp(out, "UTC0") == 0);
+
+  // The portal page's picker: a POSIX rule in, the same rule out.
+  CHECK(join_field("PST8PDT,M3.2.0,M11.1.0", out) == tz_rule::Resolve::OK);
+  CHECK(std::strcmp(out, "PST8PDT,M3.2.0,M11.1.0") == 0);
+  CHECK(join_field("IST-5:30", out) == tz_rule::Resolve::OK);
+  CHECK(std::strcmp(out, "IST-5:30") == 0);
+
+  // Anything else: not OK, and nothing written — the compiled seed stands,
+  // never UTC.
+  std::strcpy(out, "seed");
+  CHECK(join_field("Mars/Olympus_Mons", out) == tz_rule::Resolve::UNKNOWN_ZONE);
+  CHECK(join_field("america/new_york", out) == tz_rule::Resolve::UNKNOWN_ZONE);
+  CHECK(join_field("not a rule", out) != tz_rule::Resolve::OK);
+  CHECK(join_field("EST5EDT,M13.2.0,M11.1.0", out) != tz_rule::Resolve::OK);   // month 13
+  CHECK(join_field("", out) == tz_rule::Resolve::NONE);
+  CHECK(join_field(nullptr, out) == tz_rule::Resolve::NONE);
+  CHECK(std::strcmp(out, "seed") == 0);
+
+  // Every zone the table knows comes out as a rule this device parses to the
+  // end, whichever way the phone names it.
+  size_t n = 0;
+  const tz_rule::ZoneRule* z = tz_rule::zones(&n);
+  for (size_t i = 0; i < n; i++) {
+    char r[tz_rule::MAX_POSIX_LEN + 1] = "";
+    CHECK(join_field(z[i].iana, r) == tz_rule::Resolve::OK);
+    CHECK(tz_rule::posix_valid(r));
+    if (!tz_rule::posix_valid(z[i].iana)) CHECK(std::strcmp(r, z[i].posix) == 0);
+  }
+
+  // And every rule the portal page's picker offers passes the grammar gate
+  // tz_set_manual applies, so the gate refuses no choice the page can make.
+  {
+    std::ifstream f(PORTAL_SRC);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    const std::string src = ss.str();
+    const size_t a = src.find("var TZS=[");
+    const size_t b = a == std::string::npos ? a : src.find("];", a);
+    CHECK(a != std::string::npos && b != std::string::npos);
+    if (a != std::string::npos && b != std::string::npos) {
+      const std::string block = src.substr(a, b - a);
+      const std::regex row("\\[\"([^\"]*)\",\"([^\"]*)\",\"([^\"]*)\"\\]");
+      size_t rows = 0;
+      for (std::sregex_iterator it(block.begin(), block.end(), row), end; it != end; ++it) {
+        rows++;
+        const std::string rule = (*it)[2];
+        if (!tz_rule::posix_valid(rule.c_str())) {
+          std::fprintf(stderr, "FAIL: portal rule %s fails posix_valid\n", rule.c_str());
+          g_fail++;
+        }
+      }
+      CHECK(rows >= 20);
+    }
+  }
+
+  // The two display sources no host build compiles, read for the wiring:
+  // handle_join resolves the field as above and no longer stores it raw, and
+  // tz_set_manual refuses a rule that fails the grammar before persisting it
+  // as a human's final word (the join's caller and /api/tz both go through it).
+  const std::string portal = squeezed_file(PORTAL_SRC);
+  CHECK(portal.find("tz_rule::resolve(tz_rule::posix_valid(tz.c_str())?tz.c_str():nullptr,tz.c_str(),rule)"
+                    "==tz_rule::Resolve::OK") != std::string::npos);
+  CHECK(portal.find("snprintf(g->join_tz,sizeof(g->join_tz),\"%s\",rule);") != std::string::npos);
+  CHECK(portal.find("snprintf(g->join_tz,sizeof(g->join_tz),\"%s\",tz.c_str());") == std::string::npos);
+
+  std::string tz_auto_path = PORTAL_SRC;
+  const std::string leaf = "provision.cpp";
+  CHECK(tz_auto_path.size() > leaf.size() &&
+        tz_auto_path.compare(tz_auto_path.size() - leaf.size(), leaf.size(), leaf) == 0);
+  tz_auto_path.replace(tz_auto_path.size() - leaf.size(), leaf.size(), "tz_auto.cpp");
+  const std::string tz_auto = squeezed_file(tz_auto_path);
+  const size_t fn = tz_auto.find("booltz_set_manual(constchar*posix){");
+  const size_t gate = tz_auto.find("if(!tz_rule::posix_valid(posix))returnfalse;", fn == std::string::npos ? 0 : fn);
+  const size_t persist = tz_auto.find("apply_and_persist(posix,nullptr,/*final_rule=*/true);",
+                                      fn == std::string::npos ? 0 : fn);
+  CHECK(fn != std::string::npos && gate != std::string::npos && persist != std::string::npos);
+  CHECK(gate < persist);                                      // refused before it is stored
+  report("display_join_field", f0);
+}
+
 static void test_json_string_field() {
   const int f0 = g_fail;
   char v[48];
@@ -435,6 +554,7 @@ int main() {
   test_utc_matches_old_formula();
   test_portal_parity();
   test_resolve();
+  test_display_join_field();
   test_json_string_field();
   if (g_fail) {
     std::fprintf(stderr, "\n%d TZ_RULE CHECK(S) FAILED\n", g_fail);

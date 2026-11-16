@@ -123,11 +123,14 @@ everywhere else):
    `llmnr=2`/`mdns=2` on `[connection]` — the values HAOS's own default wired
    profile uses — so a Wi-Fi-only hub answers `homeassistant.local` at the OS
    resolver, keeping the no-monitor promise.
-2. **securaCV, zero-touch** — seed a curated **HA backup / first-boot config** into
-   the boot partition so onboarding brings up Mosquitto + the PWK add-on (and, at
-   the chosen scope, dashboards + blueprints + the integration) already wired. First
-   boot → HA onboarding → the **SecuraCV** panel is already there and Canaries are
-   already discoverable over MQTT.
+2. **securaCV, zero-touch** — seed the narrated provisioning bundle (the
+   `hub_seed.json` plan + the `hub_seed_apply.py` executor; see the provisioning
+   bundle below — it superseded the early curated-*backup* idea) into
+   `CONFIG/securacv/` on the boot partition; the Flasher's first-boot companion
+   runs it over the HAOS developer console, installing and wiring Mosquitto, the
+   MQTT connection, Frigate with its curated config, and the SecuraCV app. The
+   dashboards, automations and blueprints ship in the repo for the owner to add;
+   no step places them. True zero-touch (no companion) is still planned.
 
 We do **not** fork HAOS, host a mirror, or phone home. We post-process a pinned,
 checksummed official image and write two files into its boot partition — the same
@@ -362,8 +365,8 @@ Raspberry Pi Imager.
     integrity manifest — the same set the generator's `--build` produces; the
     self-documenting `provision.sh` means there's no separate README to drift.
   - *App opt-in + companion-run provisioning (landed 2026-08-01; real-HAOS boot
-    validation OUTSTANDING):* the Hub tab's "Let this app finish hub setup by
-    itself" toggle seeds two things through the same guarded injection as the
+    validation OUTSTANDING):* the Hub tab's "Put the self-setup bundle and maintenance
+    key on the card" checkbox seeds two things through the same guarded injection as the
     Wi-Fi keyfile: the provisioning bundle under `CONFIG/securacv/` (now carrying
     `host_provision.sh`, a wrapper that borrows python3 + the Supervisor token
     from the running Core container, so the bundle is runnable from the ONE
@@ -539,11 +542,13 @@ Raspberry Pi Imager.
    Straight to the in-app SD/USB/NVMe writer, not a scripted-recipe interim — the
    "flash it like a Canary" experience end to end. Accepts the bigger lift and the
    wrong-disk footgun, which §7 and §9 mitigate with the safety-first sequencing.
-3. **Pre-bake scope → the full stack.** The flashed hub boots with Wi-Fi +
-   Mosquitto + the PWK add-on **and** Frigate/go2rtc + the Lovelace dashboards +
-   the alert/digest blueprints already wired — the most "magical" out-of-box. Cost:
-   more surface to keep working across HA versions; the curated backup is
-   version-pinned and drift-checked like the rest of the catalog.
+3. **Pre-bake scope → the full stack.** The flashed hub is brought up with Wi-Fi +
+   Mosquitto + the SecuraCV app **and** Frigate/go2rtc with its curated config,
+   by the provisioning bundle the Flasher's companion runs. The Lovelace dashboards
+   and the alert/digest blueprints ship in the repo for the owner to add; no step
+   pre-wires them. Cost: more surface to keep working across HA versions; the
+   executor bundle (not a curated backup) is version-pinned and drift-checked
+   (`hub_provision_bundle.json` pins each file's SHA-256).
 
 Cross-reference: [`flasher_experience.md`](flasher_experience.md) §"Adjacent
 bets" (the native-app / pre-baked-image framing) and §7.7 of

@@ -963,7 +963,6 @@ def test_write_frigate_config_rejects_bad_scheme(monkeypatch, tmp_path):
     handler._write_frigate_config(
         [{"name": "evil", "url": "file:///etc/passwd"},
          {"name": "good", "url": "rtsp://10.0.0.9/stream"}],
-        retention_days=1,
     )
     text = written["text"]
     assert "file:///etc/passwd" not in text
@@ -982,7 +981,6 @@ def test_write_frigate_config_quotes_broker_host_against_yaml_injection(monkeypa
     handler = _bare_handler()
     handler._write_frigate_config(
         [{"name": "cam", "url": "rtsp://10.0.0.9/stream"}],
-        retention_days=1,
         broker_host="evil\nlogger:\n  level: debug",
     )
     text = written["text"]
@@ -995,6 +993,47 @@ def test_write_frigate_config_quotes_broker_host_against_yaml_injection(monkeypa
         assert "logger" not in parsed
     except ImportError:
         pass  # structural assertions above already prove containment
+
+
+# The generated config is detection-only (G3-03): the wizard's retention
+# setting is the witness log's, never a video retention, and the file the
+# wizard writes must not switch Frigate's recording on. This fails on the
+# old writer, which took a retention_days argument, gave every input the
+# `record` role, wrote `record.enabled: true` and retained motion video for
+# the sealed-event retention period.
+def test_write_frigate_config_is_detection_only(monkeypatch):
+    import inspect
+
+    assert "retention_days" not in inspect.signature(
+        serve_wizard.WizardHandler._write_frigate_config
+    ).parameters
+    written = {}
+    monkeypatch.setattr(
+        serve_wizard.Path, "write_text",
+        lambda self, text: written.update(text=text), raising=False,
+    )
+    handler = _bare_handler()
+    handler._write_frigate_config(
+        [{"name": "front", "url": "rtsp://10.0.0.9/a"},
+         {"name": "back", "url": "rtsp://10.0.0.9/b"}],
+    )
+    text = written["text"]
+    assert "- record" not in text
+    assert "retain:" not in text
+    assert "snapshots" not in text
+    # The one `enabled: true` is mqtt's, above `cameras:`; none follows it.
+    assert "enabled: true" not in text.split("cameras:", 1)[1]
+    assert text.count("            - detect\n") == 2
+    assert text.count("    record:\n      enabled: false\n") == 2
+    try:
+        import yaml
+    except ImportError:
+        return  # the structural assertions above already hold the text
+    parsed = yaml.safe_load(text)
+    for cam in ("front", "back"):
+        assert parsed["cameras"][cam]["ffmpeg"]["inputs"][0]["roles"] == ["detect"]
+        assert parsed["cameras"][cam]["record"] == {"enabled": False}
+        assert "snapshots" not in parsed["cameras"][cam]
 
 
 # ---------------------------------------------------------------------------
@@ -1500,7 +1539,7 @@ def test_frigate_dest_never_overwrites_existing_addon_config(
     # write to the returned target.
     handler = _bare_handler()
     handler._write_frigate_config(
-        [{"name": "cam", "url": "rtsp://10.0.0.9/s"}], retention_days=1, dest=target
+        [{"name": "cam", "url": "rtsp://10.0.0.9/s"}], dest=target
     )
     assert existing.read_text() == "mqtt:\n  enabled: true\n"
     assert target.exists()
@@ -1687,10 +1726,11 @@ def _shell_go2rtc_rows(payload):
     return json.loads(out.stdout)
 
 
-# The add-on runs Alpine 3.18's jq, 1.6 (the base tag test_addon_store.py
-# pins; aports 3.18-stable builds the unpatched 1.6 release source); the
-# runner's is 1.7. pwk-wizard-tests.yml puts the jq-1.6 release binary, pinned
-# by sha256, first on PATH and names the version it must report in
+# The add-on runs Alpine 3.22's jq, 1.8.2 (the release the Dockerfile pins,
+# held to this workflow pin by test_base_image_pins.py; aports 3.22-stable
+# builds the 1.8.2 release source); the runner's is 1.7.
+# pwk-wizard-tests.yml puts the jq-1.8.2 release binary, pinned by sha256,
+# first on PATH and names the version it must report in
 # PWK_REQUIRE_JQ, so the cases above run on the add-on's jq. A CI run that
 # falls back to the runner's jq, or loses the variable, fails here instead of
 # passing the parity cases on a jq the add-on never runs (sweep HA32).
@@ -1698,8 +1738,8 @@ def test_go2rtc_parity_runs_on_the_jq_ci_requires():
     want = os.environ.get("PWK_REQUIRE_JQ")
     if not want:
         if os.environ.get("CI"):
-            pytest.fail("CI must name the jq the parity cases run on (PWK_REQUIRE_JQ, e.g. jq-1.6)")
-        pytest.skip("PWK_REQUIRE_JQ is not set (CI sets it to the add-on's jq-1.6)")
+            pytest.fail("CI must name the jq the parity cases run on (PWK_REQUIRE_JQ, e.g. jq-1.8.2)")
+        pytest.skip("PWK_REQUIRE_JQ is not set (CI sets it to the add-on's jq-1.8.2)")
     if shutil.which("jq") is None:
         pytest.fail("jq is not installed: discover_cameras.sh cannot be held to the reference")
     got = subprocess.run(["jq", "--version"], capture_output=True, text=True, timeout=30)
@@ -1737,13 +1777,14 @@ _RUN_LIB = _MODULE_PATH.parent / "run_lib.sh"
 _PICK_START = "    GO2RTC_DISCOVERY=$(bashio::config 'go2rtc_discovery')\n"
 _PICK_END = "    # Build configuration file\n"
 _PICK_DISCOVER = '/usr/local/bin/discover_cameras.sh "$GO2RTC_URL"'
-# bashio::config and bashio::config.has_value as bashio v0.15.0 (the version
-# the app's 3.18 base image pins; lib/config.sh, unchanged through bashio's
-# main branch) writes them, reading the options from $TEST_OPTIONS instead of
-# the Supervisor. The part that matters: an array option is printed one
-# compact element per line (`.key[]` through `jq --raw-output -c -M`), never
-# as a JSON array, and an empty one prints nothing. `|| true` after `read`
-# only keeps its end-of-input status from tripping `set -e` here.
+# bashio::config and bashio::config.has_value as bashio v0.19.0 writes them
+# (the version the app's 3.22 base image carries; the bashio::config query
+# in lib/config.sh is unchanged from v0.15.0, the 3.18 base's), reading the
+# options from $TEST_OPTIONS instead of the Supervisor. The part that
+# matters: an array option is printed one compact element per line
+# (`.key[]` through `jq --raw-output -c -M`), never as a JSON array, and an
+# empty one prints nothing. `|| true` after `read` only keeps its
+# end-of-input status from tripping `set -e` here.
 _PICK_STUBS = r"""set -euo pipefail
 bashio::config() {
     local key=${1}

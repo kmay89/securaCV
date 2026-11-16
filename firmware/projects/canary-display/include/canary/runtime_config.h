@@ -68,6 +68,11 @@ const char* wifi_saved_pass(int idx);
 // ring and points the legacy pair at the network on the air; a failure only
 // counts (RAM), so a flaky router does not wear the flash.
 void wifi_saved_note_result(int idx, bool ok);
+// True when any saved network has associated at least once (the ring's
+// joined bit, persisted with it): the setup rule's "ever online" across a
+// power cut, so a router that is still rebooting is retried, not mistaken
+// for a credential problem the wizard could fix.
+bool wifi_saved_any_joined();
 
 // Erase the stored WiFi credentials (settings › reset › wifi › forget, and
 // the BOOT button's 10 s factory-reset hold) so the join wizard reopens on

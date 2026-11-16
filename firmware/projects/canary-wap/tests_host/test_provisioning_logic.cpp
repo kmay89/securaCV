@@ -9,7 +9,11 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <string>
 
+#include "host_guard.h"
 #include "provisioning_logic.h"
 
 using namespace provisioning_logic;
@@ -55,6 +59,117 @@ static void test_scan_cache() {
   // Wrap-safe.
   uint32_t near_wrap = 0xFFFFFF00u;
   CHECK(scan_cache_fresh(near_wrap + 1000u /* wraps */, near_wrap, true, TTL));
+}
+
+// A sweep never takes a held link out of the state machine's sight. Before,
+// GET /api/wifi/scan (no credential, on the home network too) and the
+// Bluetooth door's scan marked the state SCANNING from any state and handed
+// back IDLE on any unit with credentials, and in neither does
+// wifi_check_connection() watch the link: one request on a joined WAP, and
+// no link loss was seen, no saved network rotated to, no management AP
+// re-raised, until a reboot.
+static void test_scan_and_the_link_state() {
+  // Starting a sweep: a held link keeps its state, anything else gives it up.
+  CHECK(!scan_takes_link_state(true));
+  CHECK(scan_takes_link_state(false));
+  // Handing the state back, from the live link. A station that is up is
+  // CONNECTED whether or not credentials are on file ...
+  CHECK(state_after_scan(true, true) == AfterScan::Connected);
+  CHECK(state_after_scan(true, false) == AfterScan::Connected);
+  // ... and one that is not is what it was before: IDLE with credentials,
+  // AP-only without.
+  CHECK(state_after_scan(false, true) == AfterScan::Idle);
+  CHECK(state_after_scan(false, false) == AfterScan::ApOnly);
+}
+
+// The sketch asks those two and nothing else: SCANNING is assigned once,
+// under scan_takes_link_state(), and IDLE once, from state_after_scan(); the
+// old hand-back is gone, and each of the two sweep starts and four hand-backs
+// goes through the two helpers. Read from the sketch beside this test,
+// from the tests_host directory (the Makefile's) or the repo root.
+static std::string sketch_file(const char* name) {
+  for (const char* dir : {"../arduino/canary_wap/", "firmware/projects/canary-wap/arduino/canary_wap/"}) {
+    std::ifstream in(std::string(dir) + name, std::ios::binary);
+    if (in) return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  return std::string();
+}
+
+static std::string sketch_source() { return sketch_file("canary_wap.ino"); }
+
+static size_t count_of(const std::string& text, const char* needle) {
+  size_t n = 0;
+  for (size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) n++;
+  return n;
+}
+
+static void test_the_sketch_wires_the_scan_rule() {
+  const std::string ino = sketch_source();
+  CHECK(!ino.empty());
+  if (ino.empty()) return;
+  CHECK(count_of(ino, "g_wifi_status.state = WIFI_PROV_SCANNING;") == 1);
+  CHECK(count_of(ino, "  if (provisioning_logic::scan_takes_link_state(g_wifi_status.state == "
+                      "WIFI_PROV_CONNECTED)) {\n"
+                      "    g_wifi_status.state = WIFI_PROV_SCANNING;\n") == 1);
+  CHECK(count_of(ino, "g_wifi_status.state = WIFI_PROV_IDLE;") == 1);
+  CHECK(count_of(ino, "provisioning_logic::state_after_scan(WiFi.isConnected(), "
+                      "g_wifi_creds.configured)") == 1);
+  CHECK(count_of(ino, "? WIFI_PROV_IDLE : WIFI_PROV_AP_ONLY") == 0);
+  // One definition and two calls of the mark; one definition and four calls
+  // of the hand-back.
+  CHECK(count_of(ino, "wifi_scan_mark_state();") == 2);
+  CHECK(count_of(ino, "static void wifi_scan_mark_state() {") == 1);
+  CHECK(count_of(ino, "wifi_scan_restore_state();") == 4);
+  CHECK(count_of(ino, "static void wifi_scan_restore_state() {") == 1);
+  // Each sweep the sketch starts for an asker marks through the helper (the
+  // first-boot pre-scan runs before any link and marks nothing).
+  CHECK(count_of(ino, "    wifi_scan_mark_state();\n    WiFi.scanNetworks(true, false, false, 300);") == 1);
+  CHECK(count_of(ino, "    wifi_scan_mark_state();\n    if (WiFi.scanNetworks(true, false, false, 300) != "
+                      "WIFI_SCAN_RUNNING) {") == 1);
+}
+
+// A pair link names the address the request came in under. The landing
+// page's paste-this fallback and GET /api/pair/token's pair_url both printed
+// http://192.168.4.1, the setup network's address, on a unit that had left
+// it: a link that reached nothing once the SoftAP was down.
+static bool pair_host(const char* host) {
+  return pair_link_host_ok(host, canary::net::host_names_this_device(host));
+}
+
+static void test_pair_link_host() {
+  // The ways a household reaches the unit, a port kept.
+  CHECK(pair_host("canary-7916.local"));
+  CHECK(pair_host("192.168.1.44"));
+  CHECK(pair_host("192.168.1.44:80"));
+  CHECK(pair_host("canary-7916"));
+  CHECK(pair_host("[fe80::1]:80"));
+  // The setup network's two names, while they are what the browser asked.
+  CHECK(pair_host("192.168.4.1"));
+  CHECK(pair_host("canary.local"));
+  // Not a name of this device: no link is spelled from it.
+  CHECK(!pair_host("evil.example.com"));
+  CHECK(!pair_host(""));
+  CHECK(!pair_link_host_ok(nullptr, true));
+  CHECK(!pair_link_host_ok("canary-7916.local", false));
+  // The Host goes into HTML and JSON: one byte outside the alphabet and it
+  // is not used, whatever the name rule said.
+  for (const char* host : {"x<script>.local", "a\"b.local", "a b.local", "a/b.local", "a%41.local",
+                           "a&b.local", "a'b.local", "a\\b.local", "a_b.local", "a\r\nb.local"}) {
+    CHECK(!pair_link_host_ok(host, true));
+  }
+
+  // The sketch: neither answer spells the setup address, both take the
+  // authority from the one helper, and that helper asks both rules.
+  const std::string csi = sketch_file("csi_integration.cpp");
+  CHECK(!csi.empty());
+  if (csi.empty()) return;
+  CHECK(count_of(csi, "http://192.168.4.1") == 0);
+  CHECK(count_of(csi, "\"<div class=\\\"url\\\">http://%s/?cv_pair=%s</div>\";") == 1);
+  CHECK(count_of(csi, "\\\"pair_url\\\":\\\"%s/companion?token=%s\\\"}\",") == 1);
+  CHECK(count_of(csi, "provisioning_logic::pair_link_host_ok(out, "
+                      "canary::net::host_names_this_device(out))") == 1);
+  CHECK(count_of(csi, "const bool have_host = pair_link_authority(req, host, sizeof(host));") == 1);
+  CHECK(count_of(csi, "if (csi_integration::pair_link_authority(req, host, sizeof(host))) {") == 1);
 }
 
 static void test_sta_join() {
@@ -502,6 +617,9 @@ static void test_security_profile_transitions() {
 int main() {
   test_setup_timeout();
   test_scan_cache();
+  test_scan_and_the_link_state();
+  test_the_sketch_wires_the_scan_rule();
+  test_pair_link_host();
   test_sta_join();
   test_ota_confirm_link_healthy();
   test_ap_teardown();

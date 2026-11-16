@@ -34,10 +34,12 @@ final class FleetWiFiRolloutTests: XCTestCase {
         XCTAssertTrue(candidate("a", pinned: true).path.isHTTP)
     }
 
-    func testBondedBLEOutranksCleartextEvenWhenOnline() {
-        // Online but unpinned, and in Bluetooth range: the bonded lane wins
-        // over the one that would leak the password (roadmap row 13).
-        XCTAssertEqual(candidate("a", ble: true).path, .ble)
+    func testASelfClaimedBluetoothLaneNeverOutranksTheLAN() {
+        // Online but unpinned, and "in Bluetooth range": the Bluetooth peer
+        // names itself by a console id the phone cannot check, so the
+        // password rides plain http behind its disclosure, never the
+        // unverified lane (G1-08).
+        XCTAssertEqual(candidate("a", ble: true).path, .httpCleartext)
     }
 
     func testPinnedHTTPSOutranksBLEWhenOnline() {
@@ -46,14 +48,15 @@ final class FleetWiFiRolloutTests: XCTestCase {
     }
 
     func testAPinIsNoUseToADarkDevice() {
-        XCTAssertEqual(candidate("a", online: false, ble: true, pinned: true).path, .ble)
+        XCTAssertEqual(candidate("a", online: false, ble: true, pinned: true).path, .unreachable)
         XCTAssertEqual(candidate("a", online: false, pinned: true).path, .unreachable)
     }
 
-    // Policy only: no WAP fills bleReachable today, since the app dials only
-    // a peripheral advertising the console service (ledger A65).
-    func testADarkCanaryOnTheBondedLaneRidesBLE() {
-        XCTAssertEqual(candidate("a", online: false, ble: true).path, .ble)
+    // No WAP fills bleReachable today (ledger A65), and a console that
+    // claims an id proves nothing: a dark Canary is unreachable until the
+    // console proves identity with a nonce signed by the pinned key.
+    func testADarkCanaryHeardOnlyOverBluetoothIsUnreachable() {
+        XCTAssertEqual(candidate("a", online: false, ble: true).path, .unreachable)
     }
 
     func testADisplayIsHandsOn() {
@@ -84,7 +87,8 @@ final class FleetWiFiRolloutTests: XCTestCase {
             candidate("http", rssi: -70),
         ])
         XCTAssertEqual(plan.pilot?.id, "http")
-        XCTAssertEqual(plan.followers.map(\.id), ["ble"])
+        XCTAssertTrue(plan.followers.isEmpty)
+        XCTAssertEqual(plan.unreachable.map(\.id), ["ble"], "never handed the password over Bluetooth")
     }
 
     func testAPinnedPilotOutranksACleartextOne() {
@@ -106,7 +110,8 @@ final class FleetWiFiRolloutTests: XCTestCase {
             candidate("pinned-strong", rssi: -45, pinned: true),
         ])
         XCTAssertEqual(plan.pilot?.id, "pinned-strong")
-        XCTAssertEqual(plan.followers.map(\.id), ["pinned-weak", "plain", "ble"])
+        XCTAssertEqual(plan.followers.map(\.id), ["pinned-weak", "plain"])
+        XCTAssertEqual(plan.unreachable.map(\.id), ["ble"])
     }
 
     // MARK: - the cleartext disclosure
@@ -144,7 +149,8 @@ final class FleetWiFiRolloutTests: XCTestCase {
         let (kept, declined) = plan.excludingCleartext()
         XCTAssertEqual(declined.map(\.id), ["clear"])
         XCTAssertEqual(kept.pilot?.id, "pinned")
-        XCTAssertEqual(kept.followers.map(\.id), ["dark"])
+        XCTAssertTrue(kept.followers.isEmpty, "a dark Canary heard only over Bluetooth is not pushed to")
+        XCTAssertEqual(kept.unreachable.map(\.id), ["dark"])
         XCTAssertFalse(kept.needsCleartextDisclosure)
         XCTAssertFalse(plan.allPushesAreCleartext)
     }

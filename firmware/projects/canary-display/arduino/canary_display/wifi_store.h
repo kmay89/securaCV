@@ -8,7 +8,11 @@
  * household with a guest network and a main one, had to be re-provisioned
  * each time. This header is the one store: up to MAX_NETWORKS saved networks,
  * which one worked last, how often each has failed, and a pick rule that
- * prefers what the radio can actually see.
+ * prefers what the radio can actually see — and, since 2.4.20, whether each
+ * has ever joined (FLAG_JOINED), the fleet's "ever online" across a power
+ * cut: a network that has associated before is not a credential problem a
+ * setup portal could fix, so a router still rebooting after the blackout
+ * that restarted the Canary is retried, never surrendered to the street.
  *
  * It is DATA LOGIC ONLY. The board owns the bytes (an NVS blob under
  * `wifi_nets` in the `securacv` namespace) and the radio; this header owns
@@ -47,12 +51,19 @@ static constexpr uint8_t VERSION = 1;
 static constexpr uint8_t FAILS_MAX = 250;
 /// NVS key for the serialized ring (namespace "securacv").
 static constexpr const char* NVS_KEY = "wifi_nets";
+/// Network::flags: this network has associated at least once. Set by add()
+/// (a network that just worked) and note_result(ok); import_legacy() clears
+/// it, because a seeded pair (a flasher's, a compiled secret's) has not
+/// joined yet and a wrong one must still open setup. Rides in the byte the
+/// blob always carried, so the format is unchanged; blobs written before
+/// 2.4.20 read as "never joined" until the next association sets it.
+static constexpr uint8_t FLAG_JOINED = 0x01;
 
 struct Network {
   char ssid[wifi_credential::SSID_MAX_BYTES + 1];
   char pass[wifi_credential::PASSWORD_MAX_BYTES + 1];
   uint8_t fails;   ///< consecutive failed joins, saturating
-  uint8_t flags;   ///< reserved (0)
+  uint8_t flags;   ///< FLAG_* bits; the rest reserved (0)
 };
 
 struct Store {
@@ -122,7 +133,7 @@ inline bool add(Store& s, const char* ssid, const char* pass) {
   }
   detail::copy_field(s.nets[idx].pass, sizeof(s.nets[idx].pass), pass ? pass : "");
   s.nets[idx].fails = 0;
-  s.nets[idx].flags = 0;
+  s.nets[idx].flags = FLAG_JOINED;   // it just worked
   s.last_good = (uint8_t)idx;
   return true;
 }
@@ -144,15 +155,27 @@ inline bool remove(Store& s, const char* ssid) {
   return true;
 }
 
-/** @brief Record a join verdict for the network at `idx`. */
+/** @brief Record a join verdict for the network at `idx`. A success also
+ * sets FLAG_JOINED (a failure never clears it: the network worked once). */
 inline void note_result(Store& s, int idx, bool ok) {
   if (idx < 0 || idx >= (int)s.count) return;
   if (ok) {
     s.nets[idx].fails = 0;
+    s.nets[idx].flags |= FLAG_JOINED;
     s.last_good = (uint8_t)idx;
   } else if (s.nets[idx].fails < FAILS_MAX) {
     s.nets[idx].fails++;
   }
+}
+
+/** @brief True when any saved network has associated at least once — the
+ * "ever online" a supervisor hands wifi_should_open_setup beside its RAM
+ * flag, so a reboot during an outage does not read as a first boot. */
+inline bool any_joined(const Store& s) {
+  for (uint8_t i = 0; i < s.count && i < MAX_NETWORKS; i++) {
+    if (s.nets[i].flags & FLAG_JOINED) return true;
+  }
+  return false;
 }
 
 /**
@@ -187,11 +210,15 @@ inline int pick(const Store& s, const char* const* visible, const int32_t* rssi,
   return (previous + 1) % (int)s.count;
 }
 
-/** @brief Fold the legacy single pair into the ring (first load). */
+/** @brief Fold the legacy single pair into the ring (first load). Seeded,
+ * not joined: the pair may have been typed into a flasher and never tried,
+ * so it carries no FLAG_JOINED until an association sets it. */
 inline bool import_legacy(Store& s, const char* ssid, const char* pass) {
   if (ssid == nullptr || ssid[0] == '\0') return false;
   if (find(s, ssid) >= 0) return false;
-  return add(s, ssid, pass);
+  if (!add(s, ssid, pass)) return false;
+  s.nets[s.last_good].flags &= (uint8_t)~FLAG_JOINED;
+  return true;
 }
 
 /** @brief Serialize to exactly BLOB_BYTES. Returns 0 if `cap` is too small. */
