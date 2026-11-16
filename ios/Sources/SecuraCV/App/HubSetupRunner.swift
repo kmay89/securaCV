@@ -74,6 +74,37 @@ final class HubSetupRunner: ObservableObject {
     /// countdown to "maybe go find it" the same way the Flasher does.
     @Published private(set) var watchStartedAt: Date?
 
+    /// The account form and the typed address, held here — the runner
+    /// lives as long as the app (FleetStore.hubRunner), so closing the
+    /// walkthrough mid-boot keeps what was typed. Memory only, never
+    /// persisted; the owner fields are cleared when the hub is finished.
+    @Published var draftName = ""
+    @Published var draftUsername = ""
+    @Published var draftPassword = ""
+    @Published var draftConfirm = ""
+    @Published var draftShowPassword = false
+    @Published var draftTypedHost = ""
+
+    var draftLogin: HubOwnerLogin {
+        HubOwnerLogin(name: draftName, username: draftUsername, password: draftPassword)
+    }
+
+    /// The confirm field exists only while the password is hidden.
+    var draftPasswordsMatch: Bool { draftShowPassword || draftConfirm == draftPassword }
+
+    /// Whether the Bonjour browse may run: the discovery consent
+    /// (FleetStore wires it). Without it the watch probes the typed host
+    /// or `homeassistant.local` only, which needs no browse.
+    var mayBrowse: () -> Bool = { false }
+
+    /// A watch in progress survives a relaunch: when it started and the
+    /// address typed for it, so the 25-minute clock keeps counting from the
+    /// power-on (resumeAfterRelaunch).
+    static let watchStartedKey = "hub_watch_started_at_v1"
+    static let watchHostKey = "hub_watch_typed_host_v1"
+    /// A watch older than this is not picked up again on a relaunch.
+    static let resumeWithin: TimeInterval = 6 * 60 * 60
+
     let discovery = HubDiscovery()
     private var watchTask: Task<Void, Never>?
     private var bag = Set<AnyCancellable>()
@@ -99,9 +130,69 @@ final class HubSetupRunner: ObservableObject {
     /// default `homeassistant.local` are tried, in that order.
     func startWatching(typedHost: String? = nil) {
         stopWatching()
-        watchStartedAt = Date()
+        let now = Date()
+        watchStartedAt = now
         phase = .watching(.offline)
+        UserDefaults.standard.set(now, forKey: Self.watchStartedKey)
+        UserDefaults.standard.set(typedHost ?? "", forKey: Self.watchHostKey)
         runWatch(typedHost: typedHost)
+    }
+
+    /// A relaunch (or a return to the foreground) with a watch recorded and
+    /// none running here: pick it up with its original start time.
+    func resumeAfterRelaunch(now: Date = Date()) {
+        guard phase == .idle,
+              let start = UserDefaults.standard.object(forKey: Self.watchStartedKey) as? Date else { return }
+        guard now.timeIntervalSince(start) < Self.resumeWithin else {
+            Self.forgetRecordedWatch()
+            return
+        }
+        let host = UserDefaults.standard.string(forKey: Self.watchHostKey) ?? ""
+        if draftTypedHost.isEmpty { draftTypedHost = host }
+        watchStartedAt = start
+        phase = .watching(.offline)
+        runWatch(typedHost: host.isEmpty ? nil : host)
+    }
+
+    /// The person stopped the watch: nothing is resumed later.
+    func cancelWatching() {
+        stopWatching()
+        Self.forgetRecordedWatch()
+        watchStartedAt = nil
+        phase = .idle
+    }
+
+    /// Back to the start, so the walkthrough can run again on this runner
+    /// (it lives as long as the app, so nothing else returns a finished
+    /// one to `.idle`). The typed drafts are kept.
+    func reset() {
+        stopWatching()
+        Self.forgetRecordedWatch()
+        phase = .idle
+        hubURL = nil
+        steps = []
+        stepState = [:]
+        log = []
+        leftovers = []
+        onboardOutcome = nil
+        watchStartedAt = nil
+    }
+
+    /// Set up → Rotate broker login after the walkthrough already finished
+    /// in this app session: a `.done` runner shows no Start or Finish, so
+    /// the re-mint could not run until a relaunch. Only a finished runner
+    /// is reset; a watch or a run in progress honors the rotation itself.
+    static func resetsForRotation(phase: Phase, rotationRequested: Bool) -> Bool {
+        rotationRequested && phase == .done
+    }
+
+    func resetForRotationIfAsked(rotationRequested: Bool = HubProvisionPlan.rotationRequested()) {
+        if Self.resetsForRotation(phase: phase, rotationRequested: rotationRequested) { reset() }
+    }
+
+    static func forgetRecordedWatch() {
+        UserDefaults.standard.removeObject(forKey: watchStartedKey)
+        UserDefaults.standard.removeObject(forKey: watchHostKey)
     }
 
     /// Pick the watch back up after the screen went away and returned (its
@@ -110,12 +201,13 @@ final class HubSetupRunner: ObservableObject {
     /// another tab mid-boot does not lose the hub. A watch already running,
     /// or a phase past watching, is left alone.
     func resumeWatching(typedHost: String? = nil) {
-        guard watchTask == nil, case .watching = phase else { return }
+        // A hub already answered is past watching: hubAnswered ran once.
+        guard watchTask == nil, case .watching(let probe) = phase, probe != .ready else { return }
         runWatch(typedHost: typedHost)
     }
 
     private func runWatch(typedHost: String?) {
-        discovery.start()
+        if mayBrowse() { discovery.start() }
         watchTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
@@ -128,7 +220,10 @@ final class HubSetupRunner: ObservableObject {
                         self.note(Self.line(for: probe))
                     }
                     self.phase = .watching(probe)
-                    if probe == .ready { return }   // the screen takes over
+                    if probe == .ready {           // the finish takes over
+                        self.hubAnswered()
+                        return
+                    }
                 }
                 try? await Task.sleep(for: .seconds(5))
             }
@@ -139,6 +234,25 @@ final class HubSetupRunner: ObservableObject {
         watchTask?.cancel()
         watchTask = nil
         discovery.stop()
+    }
+
+    /// The hub answered. Say so once (only if notifications are already
+    /// allowed — nothing here asks), and finish by itself when the account
+    /// form is complete; otherwise the walkthrough's button is the
+    /// fallback. Here, not in the view, so it happens with the sheet closed.
+    private func hubAnswered() {
+        let finishing = HubWalkthrough.finishesByItself(ready: true,
+                                                        loginProblem: draftLogin.problem(),
+                                                        passwordsMatch: draftPasswordsMatch)
+        Task {
+            await CourtesyNotice.postIfAlreadyAllowed(title: HubWalkthrough.readyNoticeTitle,
+                                                      body: HubWalkthrough.readyNoticeBody(finishing: finishing),
+                                                      threadID: HubWalkthrough.readyNoticeThreadID)
+        }
+        if finishing {
+            let login = draftLogin
+            Task { await self.finish(login: login) }
+        }
     }
 
     /// Typed first, then the one discovered hub, then the default name —
@@ -224,6 +338,9 @@ final class HubSetupRunner: ObservableObject {
                                 finishedAt: finished ? Date() : nil))
         if finished {
             phase = .done
+            Self.forgetRecordedWatch()
+            draftPassword = ""
+            draftConfirm = ""
         } else {
             phase = .failed("The hub's setup stopped partway — the step list says where. Nothing is half-done in a way a retry can't finish: every step is skipped once it is there.")
         }
@@ -240,12 +357,13 @@ final class HubSetupRunner: ObservableObject {
     /// there); false the moment one fails, with the rest left untouched.
     private func provision(api: HubAPI, session: HubSession) async -> Bool {
         note("Reading what the hub already has…")
-        let observed = HubProvisionPlan.observe(
+        var observed = HubProvisionPlan.observe(
             repositories: await api.supervisorGET("store/repositories", session: session),
             addons: await api.supervisorGET("addons", session: session),
             mosquittoInfo: await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.mosquittoSlug), session: session),
             kernelInfo: await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.kernelSlug), session: session),
             configEntries: await api.coreGET("config/config_entries/entry", session: session))
+        observed.rotateLogin = HubProvisionPlan.rotationRequested()
         let plan = HubProvisionPlan.plan(observed: observed)
         steps = plan
         if HubProvisionPlan.todo(plan).isEmpty {
@@ -309,9 +427,11 @@ final class HubSetupRunner: ObservableObject {
                 guard let path else { return .failed(Self.noPath) }
                 // Keep a password this phone already minted (a re-run must
                 // not lock out Canaries flashed with the first one); mint
-                // one only when none exists.
+                // one only when none exists, or when the owner asked to
+                // rotate it (Set up → Rotate broker login).
+                let rotating = HubProvisionPlan.rotationRequested()
                 let password: String
-                if let kept = HubSecretStore.brokerLogin(), kept.username == username {
+                if !rotating, let kept = HubSecretStore.brokerLogin(), kept.username == username {
                     password = kept.password
                 } else {
                     guard let minted = HubProvisionPlan.mintPassword() else {
@@ -328,6 +448,7 @@ final class HubSetupRunner: ObservableObject {
                 try await api.supervisorPOST(HubProvisionPlan.restartPath(slug: HubProvisionPlan.mosquittoSlug),
                                              session: session, timeout: 120)
                 try HubSecretStore.set(.init(username: username, password: password))
+                if rotating { HubProvisionPlan.setRotationRequested(false) }
                 return .done
             case .connectMQTT:
                 // The add-on announces itself; accept the card it raised.

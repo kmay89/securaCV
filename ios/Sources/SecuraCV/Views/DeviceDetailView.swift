@@ -103,6 +103,22 @@ struct DeviceDetailView: View {
                 .sheet(item: $repairing) { PairView(canary: $0) }
             }
 
+            // Listed through iCloud, but this device holds no token for it:
+            // nothing can be polled, verified or updated here until its
+            // recovery kit is added on this device.
+            if liveWitness.tokenMissing {
+                Section {
+                    Label("Not yet paired on this device.", systemImage: "key.slash")
+                        .foregroundStyle(Theme.color(.warn))
+                    if let target = store.discovery.found.first(where: { $0.deviceID == witness.id }) {
+                        Button("Add its recovery kit") { repairing = target }
+                    }
+                } footer: {
+                    Text("Your Canary list syncs through your iCloud; each device's pairing token does not. Open this Canary's recovery kit (or pair it) on this device too.")
+                }
+                .sheet(item: $repairing) { PairView(canary: $0) }
+            }
+
             Section("Trust") {
                 LabeledContent("Signature") {
                     Label(witness.badge.label, systemImage: witness.badge.sfSymbol)
@@ -444,6 +460,12 @@ struct DeviceDetailView: View {
     }
 
     private func verifyNow() async -> ChainVerdict {
+        // A pairing that came by iCloud has no token on this device: say
+        // that, never "Unsigned" for a chain nobody fetched.
+        if let ref = store.devices.devices.first(where: { $0.id == witness.id }),
+           store.devices.token(for: ref.id) == nil {
+            return .noToken
+        }
         guard let ref = store.devices.devices.first(where: { $0.id == witness.id }),
               let api = try? store.devices.api(for: ref),
               let page = try? await api.witness(last: 100) else {
@@ -460,6 +482,7 @@ struct DeviceDetailView: View {
         case .brokenLink(let seq): return "Broken at #\(seq)"
         case .signatureFailed: return "FAILED"
         case .unsupportedFormat: return "Unverified — unknown chain format"
+        case .noToken: return "Paired on another device — add its recovery kit here"
         }
     }
 }

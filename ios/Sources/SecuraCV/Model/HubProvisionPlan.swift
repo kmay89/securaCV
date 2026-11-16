@@ -35,6 +35,9 @@ struct HubObserved: Equatable, Sendable {
     var brokerLogins: Set<String> = []
     /// The kernel add-on's current `mode` option, when installed.
     var kernelMode: String?
+    /// The owner asked to rotate the Canary broker login (Set up → Rotate
+    /// broker login): the login is re-minted even though Mosquitto has it.
+    var rotateLogin: Bool = false
 }
 
 /// One thing the phone does to the hub. The values are the exact calls
@@ -133,7 +136,7 @@ enum HubProvisionPlan {
             return HubPlannedAction(action: .startAddon(slug: slug, friendly: friendly), already: running,
                                     reason: running ? "already running" : "")
         }
-        let loginPresent = o.brokerLogins.contains(canaryUsername)
+        let loginPresent = o.brokerLogins.contains(canaryUsername) && !o.rotateLogin
         let mqttConnected = o.configEntryDomains.contains("mqtt")
         let securacvConnected = o.configEntryDomains.contains("securacv")
         let modeSet = o.kernelMode == kernelMode
@@ -264,6 +267,19 @@ enum HubProvisionPlan {
         guard let v = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let d = v["data"] as? [String: Any] else { return nil }
         return d["options"] as? [String: Any]
+    }
+
+    /// A rotation the owner asked for in Set up, kept until the hub
+    /// walkthrough has written the new password (it needs the owner's Home
+    /// Assistant account, so it cannot happen on the tap itself).
+    static let rotateLoginKey = "hub_rotate_broker_login_v1"
+
+    static func rotationRequested(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: rotateLoginKey)
+    }
+
+    static func setRotationRequested(_ wanted: Bool, in defaults: UserDefaults = .standard) {
+        if wanted { defaults.set(true, forKey: rotateLoginKey) } else { defaults.removeObject(forKey: rotateLoginKey) }
     }
 
     /// Mosquitto's `logins` with this account appended — read → append →
