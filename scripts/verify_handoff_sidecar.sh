@@ -7,7 +7,8 @@
 # own. Checks the file digest, every embedded record's entry hash and Ed25519
 # signature (the signing domain is chosen here, by ledger, never read from the
 # sidecar), the grant -> redemption -> unseal-record / export joins, the
-# plaintext pairing and the recipient commitment. It does not check PQ
+# plaintext pairing, an export bundle's events against the artifact hash its
+# receipt signed, and the recipient commitment. It does not check PQ
 # signatures, the quorum behind the grant, or TSA countersignatures:
 # `handoff_sidecar verify --db ... --ca ...` does. docs/handoff_sidecars.md.
 #
@@ -55,9 +56,10 @@ case $(jq -j .disclosure "$S") in
     else echo "DECLARED pairing"; want=""; fi ;;
   export)
     grep -qF -- "\"receipt\":$(rec export_receipt),\"prev_hash\":" "$F" || fail "pairing: the signed receipt is not in this bundle"
+    [ "$(jq -cj .artifact "$F" | sha256sum | cut -c1-64)" = "$(rec export_receipt | jq -j ".artifact_hash|$HEX")" ] || fail "pairing: the bundle's events are not the ones the receipt signed"
     a=$(rec export_receipt | jq -j ".authorizing_receipt // empty|$HEX")
     [ -z "$a" ] || [ "$a" = "$(eh grant)" ] || fail "links: authorizing grant"
-    echo "OK   pairing: the bundle embeds the signed export receipt"
+    echo "OK   pairing: the bundle embeds the signed export receipt, and its events hash to the receipt's artifact hash"
     want=$(rec export_receipt | jq -j ".context.recipient_commitment // empty|$HEX") ;;
 esac
 # 4. recipient

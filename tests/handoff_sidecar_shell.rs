@@ -7,6 +7,7 @@
 
 use anyhow::Result;
 use ed25519_dalek::SigningKey;
+use sha2::Digest;
 use std::path::Path;
 use std::process::Command;
 use witness_kernel::break_glass::{
@@ -235,6 +236,28 @@ fn shell_recipe_matches() -> Result<()> {
             let (ok, _) = run(shell, side, file, &"00".repeat(32));
             assert!(!ok);
         }
+        // An export bundle whose events were edited, with the unsigned
+        // sidecar's file digest recomputed to match: the receipt is still in
+        // the bundle, but its signed artifact hash no longer covers the events.
+        // Edited as text, so every other byte of the bundle (the embedded
+        // receipt included) stays exactly as the kernel wrote it.
+        let before = String::from_utf8(std::fs::read(&bundle_path)?)?;
+        let after = before.replacen("\"zone_id\":\"", "\"zone_id\":\"x", 1);
+        assert_ne!(before, after, "the bundle carries a zone id to edit");
+        let edited = after.into_bytes();
+        let edited_path = dir.path().join("edited-bundle.json");
+        std::fs::write(&edited_path, &edited)?;
+        let mut sc: serde_json::Value = serde_json::from_slice(&std::fs::read(&export_sidecar)?)?;
+        sc["file"]["sha256"] =
+            serde_json::Value::String(hex::encode(sha2::Sha256::digest(&edited)));
+        let edited_sidecar = dir.path().join("edited-sidecar.json");
+        std::fs::write(&edited_sidecar, serde_json::to_vec(&sc)?)?;
+        let (ok, text) = run(shell, &edited_sidecar, &edited_path, &key);
+        assert!(!ok, "{shell}: edited events must fail: {text}");
+        assert!(
+            text.contains("FAIL pairing: the bundle's events are not the ones the receipt signed"),
+            "{shell}: {text}"
+        );
     }
     Ok(())
 }
