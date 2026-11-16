@@ -3830,7 +3830,7 @@ dependencies = [
 
 [[package]]
 name = "securacv-flasher"
-version = "0.12.6"
+version = "0.12.7"
 dependencies = [
  "base64 0.23.1",
  "chacha20poly1305",

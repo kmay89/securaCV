@@ -57,6 +57,31 @@
   backlog the phrase "finding P<n>" belongs to the one entry the row names;
   any other entry cites that entry's id.
 - Docs and one test. No code, firmware or generated file changes.
+### The 2.4.20 follow-ups: kernel, integration and app 0.9.2, Flasher 0.12.7, Lab 0.4.3, iOS 0.9.2
+
+- **The Home Assistant app's wizard checks "Only Frigate alerts" against
+  Frigate's own config (G3-03 residual).** Where Frigate keeps its camera
+  config, the wizard reads its record setting for the cameras SecuraCV
+  seals. Frigate creates alerts only for cameras that record: when none of
+  them record, alerts-only is not applied and the done screen says why;
+  when some do not, it names them. Pinned in
+  `privacy_witness_kernel/tests/test_serve_wizard_setup.py`.
+- **Hub setup from the host console leaves the MQTT step with its reason
+  (G4-06 root cause).** `hub_host_provision.sh` borrows Core's own
+  Supervisor token, and the Supervisor's proxy to Home Assistant admits only
+  an app's token, so the integration call there could never pass. The host
+  runner now passes `--no-core-api`: the executor skips the lookup and the
+  flow, installs everything else, and reports the MQTT integration as one
+  click to finish. Pinned in `canary-local/tools/tests/test_hub_seed_apply.py`
+  (`HostConsoleRun`).
+- **The sidecar's `pair` names the button a Discovered card shows.** It
+  printed "card → Configure"; a discovered flow's button reads **Add**. The
+  pairing fixture, the end-to-end check and the setup docs moved with it.
+- **iOS 0.9.2.** A declined hub hand-over no longer shows "Handing it your
+  hub ()" while the join finishes; the hub watch's record is spent once the
+  hub answers, so a relaunch after a failed finish does not announce "Your
+  hub is ready" again; and a Canary known only through Home Assistant is
+  described as having no direct address, not as unpaired.
 
 ### Two standing tests behind the rusqlite 0.43 bump: the linked SQLite's version floor and the SQLCipher settings a kernel database is written with
 

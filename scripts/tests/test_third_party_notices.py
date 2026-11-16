@@ -116,7 +116,9 @@ class TheReleaseWorkflows(unittest.TestCase):
                 self.assertIn(
                     f'bash .github/scripts/third_party_notices.sh {app} "$RUNNER_TEMP/notices/THIRD_PARTY_LICENSES.html"',
                     runs)
-                self.assertIn('cargo install cargo-about --version "$CARGO_ABOUT_VERSION" --locked', runs)
+                # The binary needs the `cli` feature: without it `cargo install`
+                # succeeds and installs nothing (the 0.12.6 / 0.4.2 release runs).
+                self.assertIn('cargo install cargo-about --version "$CARGO_ABOUT_VERSION" --locked --features cli', runs)
                 upload = notices["steps"][-1]
                 self.assertTrue(upload["uses"].startswith("actions/upload-artifact@"))
                 self.assertEqual(upload["with"]["name"], "third-party-licenses")

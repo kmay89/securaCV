@@ -665,6 +665,48 @@ class ScriptedSupervisor(hsa.SupervisorClient):
         return self.answers.pop(0)
 
 
+class HostConsoleRun(unittest.TestCase):
+    """The HAOS host console borrows Core's own Supervisor token, which the
+    Supervisor's proxy to Home Assistant refuses: an integration step from
+    there can never pass. It is left for a click, with the reason, and is
+    never attempted; everything else still runs."""
+
+    def _run(self, core_api):
+        repo = Path(hsa.__file__).resolve().parents[2]
+        client = FakeClient()
+        observed = hsa.observe(client, REAL_PLAN, core_api=core_api)
+        steps = hsa.plan_actions(REAL_PLAN, observed)
+        with tempfile.TemporaryDirectory() as tmp:
+            for st in steps:
+                for a in st.actions:
+                    if a.kind == "write_config":
+                        a.dest = str(Path(tmp) / Path(a.dest).name)
+            incomplete = hsa.execute(steps, client, repo, core_api=core_api)
+        return client, incomplete
+
+    def test_without_the_core_api_the_integration_is_left_with_its_reason(self):
+        client, incomplete = self._run(core_api=False)
+        names = [c[0] for c in client.calls]
+        self.assertNotIn("get_config_entry_domains", names, "the lookup cannot be authorized here")
+        self.assertNotIn("create_config_entry", names, "the flow cannot be authorized here")
+        self.assertEqual(incomplete, ["mqtt integration"])
+        # The rest of the plan still ran: the broker and Frigate installed.
+        self.assertIn(("install_addon", MOSQUITTO_SUP), client.calls)
+        self.assertIn(("install_addon", FRIGATE_SUP), client.calls)
+
+    def test_with_the_core_api_the_integration_is_attempted(self):
+        client, incomplete = self._run(core_api=True)
+        names = [c[0] for c in client.calls]
+        self.assertIn("get_config_entry_domains", names)
+        self.assertIn("create_config_entry", names)
+        self.assertEqual(incomplete, [])
+
+    def test_the_host_runner_passes_the_flag_and_the_executor_takes_it(self):
+        runner = (TOOLS / "hub_host_provision.sh").read_text(encoding="utf-8")
+        self.assertRegex(runner, r"hub_seed_apply\.py --plan \S+ --assets-root \S+ --no-core-api \"\$@\"")
+        self.assertIn("--no-core-api", (TOOLS / "hub_seed_apply.py").read_text(encoding="utf-8"))
+
+
 class MqttConnectThroughTheAddon(unittest.TestCase):
     """On a Supervisor host the MQTT flow opens as a menu; the plan answers
     "addon", which signs Home Assistant in with the credentials the Mosquitto
