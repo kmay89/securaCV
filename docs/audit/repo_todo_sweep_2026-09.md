@@ -325,6 +325,53 @@ so — see D2 below.)
   `test_fleet_chirp.cpp`'s golden vector. From code. Found by F316's review
   (#1961).
 
+- [ ] **F481 [code] canary-wap: the Wi-Fi sensing probe broadcasts a counter
+  that dates the boot, and nothing reads it.** While sensing runs,
+  `probe_pump()` (`csi_integration.cpp`) sends `csi_probe_pkt_t` as an
+  unencrypted ESP-NOW broadcast, up to 10 a second: "CVP", a version and
+  `seq`, which `csi_probe::init()` zeroes and `build_packet()` raises by one
+  a frame (a host build with `probe_pump()`'s settings: 1 on the first frame,
+  600 on the 600th, 60 s on). No firmware parses the payload, so the count
+  only tells a radio in range how long the probe has run. F382 lists the
+  other broadcasts that date a boot, not this one, and neither security doc
+  names the probe. What remains: send 0 or start at a random value, in both
+  copies of `csi_probe.cpp` (`csi_probe_test.cpp`'s `test_seq_monotonic`
+  moves with a 0), and name the broadcast in `THREAT_MODEL.md`. From code and
+  a host run. Found by the device-details design
+  (`docs/design/device_details.md` §7.2).
+
+- [ ] **F482 [code+decision] canary-wap Chirp: a session the spec calls
+  unlinkable leaves under the unit's fixed Wi-Fi address, and an unset clock
+  puts the uptime in the header.** `broadcast_message()`
+  (`chirp_channel.cpp`) sends on the station interface and nothing under
+  `firmware/` sets an interface address (F377), so one address sends the home
+  network's frames, the Opera mesh's and every session's;
+  `spec/chirp_channel_v0.md` §6 says "Ephemeral session ID (unlinkable to
+  device)" and `THREAT_MODEL.md` "unlinkable to Opera membership". With no
+  wall clock, `send_presence()` and `mute()` send `millis() / 1000` as the
+  `timestamp`, which §3.1 rules out ("NOT millis()/1000"): a host run 7,384 s
+  after boot sent 7384. No receiver reads `last_chirp_age_min` or a mute
+  frame (`handle_mute()` is empty). Decide whether the claims or the address
+  change, and whether the unread fields stay; send 0 for an unset clock. From
+  code and a host run. Found by the device-details design
+  (`docs/design/device_details.md` §7.2).
+
+- [ ] **F483 [code+decision] Canary Vision broadcasts what it sees, with no
+  key, on three carriers, and the two security docs do not say so.** While a
+  detection is held, `fleet_beacon_payload_build()` (canary-vision
+  `src/net/`) sends the version-2 bytes: the watch profile's class (person or
+  animal today) and a 0 to 100 confidence. `fleet_beacon_adv.cpp` advertises
+  them over Bluetooth, `fleet_espnow.cpp` broadcasts them and `fleet_udp.cpp`
+  multicasts them on the home network, every 5 s and at once when a
+  detection starts, ends or changes class; all three default on. So a radio
+  in range, or any host on the network, reads when someone is in view. That
+  is by design (`fleet_beacon.h`), but `THREAT_MODEL.md` and
+  `SECURITY_MODEL.md` list the beacon's version-1 fields only. What remains:
+  both say what Vision sends and to whom; decide whether it stays in the
+  clear, is coarsened, or goes only to a paired display (the device-details
+  design's §7.3 and §14). From code. Found by the device-details design
+  (`docs/design/device_details.md` §7.2).
+
 ### Network surface & provisioning
 
 - [ ] **F15 [code] No TLS on the canary.local HTTP/peek surface.** The one
@@ -645,11 +692,13 @@ so — see D2 below.)
   set up with is its token for life. After F334, F345, F346 and F361 it is the
   only post-setup grant of a new bond, a vault key or a reboot, and the only
   one of a network move over HTTP (a session can still remove a bond or the
-  vault key, rejoin the stored network, and start the firmware install,
-  which restarts the unit only into a newer signed image; and a peer already
-  bonded through the pairing confirm or a passkey, one a session made
-  before F346 among them, still moves the network with no token, over the
-  Bluetooth credentials write that
+  vault key and rejoin the stored network; since the 2.4.20 train (#1972)
+  `POST /api/ota/install` and `POST /api/ota/config` take the bearer, so the
+  one install left to a session is one sent from a broker it re-pointed the
+  MQTT bridge at, which restarts the unit only into a newer signed image; and
+  a peer already bonded through the pairing confirm or a passkey, one a
+  session made before F346 among them, still moves the network with no
+  token, over the Bluetooth credentials write that
   `ble_provision.cpp` hands to `ble_request_wifi_provisioning()`), and the
   setup door's winner after the owner's own Forget or hold keeps it
   (magic_pairing.md §3.7, §8). Options: a
@@ -1152,22 +1201,23 @@ so — see D2 below.)
   cores' SDK configurations; not probed. Found by the device-details
   design's privacy review (`docs/design/device_details.md` §11, finding P3).
 
-- [ ] **F379 [code] canary-wap: `GET /api/selftest` gives any host on the
-  home network the network's name, address, channel and signal, the
+- [ ] **F379 [code+decision] canary-wap: `GET /api/selftest` gives any host
+  on the home network the network's name, address, channel and signal, the
   microphone's level, the battery voltage, the uptime in milliseconds and
   the last crash's stage and reason.** The WAP's `check_route_security.py`
   allowlists it as "wizard step-5 health check on the AP (no secrets)", but
   `handle_selftest_wrap()` (`canary_wap.ino`) and `handle_selftest()`
   (`selftest_api.h`) never ask which interface a request came in on. After
   the join `probe_wifi()` sends `rssi_dbm`, `ssid`, `ip` and `channel` (and
-  the name and signal again in `detail`), `probe_bluetooth()`
+  the signal in dBm as the row's `code`, and the name and signal again in
+  `detail`; `probe_power()`'s `code` is the charge percent), `probe_bluetooth()`
   `last_crash_stage` and `last_crash_reason`, `probe_microphone()`
   `last_rms`, `probe_power()` `voltage_mv`, `probe_gpio()` `uptime_ms`.
   What remains: full metrics only on the SoftAP interface
   (`provisioning_gate.h`'s `request_on_softap()`), verdict words elsewhere,
-  the microphone level on no open route (device-details PR 8); whether a
-  row's `detail` leaves the other interfaces with its metrics is open in the
-  design's §14. From code; not probed. Found by the device-details design's
+  the microphone level on no open route (device-details PR 8). Decide
+  whether a row's `code` and `detail` leave the other interfaces with its
+  metrics (the design's §14). From code; not probed. Found by the device-details design's
   privacy review (`docs/design/device_details.md` §11, finding P5).
 
 - [ ] **F380 [code] canary-wap: the public `/api/device-info` serves
@@ -1218,11 +1268,12 @@ so — see D2 below.)
   What remains: whole hours from a per-boot random offset, through one
   host-tested helper, wherever an uptime stays; the rest dropped, or sent as
   0 where no receiver reads it (device-details PRs 8 and 11). Decide how the
-  heartbeat keeps the peer link's reboot rule (`REBOOT_SEQ_WINDOW`,
-  `REBOOT_UPTIME_WINDOW_S` and `elect()` in `peer_protocol.h`, which read
-  `seq` and `uptime_s`) beside values that do not date the boot. From code;
-  not probed. Found by the device-details design's privacy review
-  (`docs/design/device_details.md` §11, finding P9).
+  heartbeat keeps #1932's reboot rule (`accept()` in `peer_protocol.h`, which
+  takes a claimed new boot only from a frame whose `seq` is at most
+  `REBOOT_SEQ_WINDOW` and whose `uptime_s` is under `REBOOT_UPTIME_WINDOW_S`)
+  beside a `seq` and an `uptime_s` that do not date the boot (the design's
+  §5.5 and §14). From code; not probed. Found by the device-details design's
+  privacy review (`docs/design/device_details.md` §11, finding P9).
 
 - [ ] **F383 [code] The display's `/api/device` and `/api/log` skip the Host
   guard, and `/api/device` serves the home network's name, the IP, the signal
@@ -1310,9 +1361,10 @@ so — see D2 below.)
   values only to the bearer, `/api/wifi`'s three also on the SoftAP interface
   (`request_on_softap()`), and the two dropped from `/api/device-info`.
   Decide whether the crash moves too: a session still reads the health log's
-  "Last reset: ..." line and the tamper word on `/api/events/today`, and any
-  host reads `safe_mode` on `/api/selftest` and in `/api/help-qr`'s QR (the
-  design's §14 gives each one's cost). From code; not probed. Found by the
+  "Last reset: ..." line, the tamper word on `/api/events/today` and
+  `/api/csi/stream` and `/api/status`'s `safe_mode`, and any host reads
+  `safe_mode` on `/api/selftest` and in `/api/help-qr`'s QR (the design's §14
+  gives each one's cost). From code; not probed. Found by the
   device-details design's privacy review (`docs/design/device_details.md`
   §11, finding P21).
 
@@ -1340,7 +1392,7 @@ so — see D2 below.)
   display's (`src/net/glass_web.cpp`) send the body with
   `Access-Control-Allow-Origin: *`. The signal moves with bodies in the room,
   and the poll clock says when a Witness Wall or anyone else last looked. No
-  file outside `firmware/` names `wall_polled_s_ago`, and no app reads `rssi`
+  code outside `firmware/` reads `wall_polled_s_ago`, and no app reads `rssi`
   from this route. Sense, Vision and Sentinel also multicast the signal every
   10 s in the peer heartbeat (`hb.rssi` in each `main.cpp`), which receivers
   store and nothing reads. What remains (device-details PR 11): drop both
@@ -3040,12 +3092,13 @@ so — see D2 below.)
   `main.cpp` is an emulator input, so the change is a dist rebuild (pinned
   emsdk) for every display flavor. From code. Found by D14 (#1916).
 
-- [ ] **F430 [code] The general identifier lint is not built (device-details
-  PR 4), and `boot_info_t` still carries a `mac_address` slot.** F384 (#1892)
-  left the lint to device-details PR 4: a lint over every product's sources
-  that denies reading or publishing a per-unit identifier. The one case that
-  exists is `desktop_parity.test.js`'s Vision-only `AI.ID(` deny
-  (`sscmaIdCalls()`, F384, F414). `firmware/scripts/regression_check.sh`
+- [ ] **F430 [code+decision] The general identifier lint is not built
+  (device-details PR 4), and `boot_info_t` still carries a `mac_address`
+  slot.** F384 (#1892) left the lint to device-details PR 4: a lint over
+  every product's sources that denies reading or publishing a per-unit
+  identifier. The one case that exists is `desktop_parity.test.js`'s deny on
+  any call of a method named `ID` in Vision's sources (`sscmaIdCalls()`,
+  F384, F414). `firmware/scripts/regression_check.sh`
   checks three MAC reads (`esp_efuse_mac_get_default`, `WiFi.macAddress()`,
   `getEfuseMac()`) and nothing else per unit: not the eFuse optional unique
   id, the flash chip's unique id, the calibration trims, the IEEE 802.15.4
@@ -3058,10 +3111,12 @@ so — see D2 below.)
   denies, its allowlist, its `KNOWN_LEAK` rows and where it runs (`lint.yml`
   and `firmware.yml`). Its deny list comes from the vocabulary's `never` rows,
   which `spec/device_details_vocabulary.json` does not hold yet
-  (device-details PR 3, behind HA62). What remains: build it as an unfiltered
-  `scripts/lint_*.py` with the F384 deny and F376's USB rule folded in, and
-  remove the `mac_address` field from `boot_banner.h` and from the WAP and
-  display sketches' staged copies, with a dist rebuild
+  (device-details PR 3), and PR 3 writes no row until the maintainer decides
+  HA62 and the class question in the design's §2.2 (the decision). What
+  remains: build it as an unfiltered `scripts/lint_*.py` with the F384 deny
+  and F376's USB rule folded in, and remove the `mac_address` field and its
+  "MAC" line from `boot_banner.h` and `boot_banner.cpp`, and from the WAP's
+  and the display sketch's staged copies of both, with a dist rebuild
   (`canary-local/emulator/build.sh` compiles `boot_banner.cpp`; device-details
   PR 17). From code. Found by F414 (#1919), whose title named the gap, and by
   the device-details design's privacy review (`docs/design/device_details.md`
@@ -3214,6 +3269,37 @@ so — see D2 below.)
     probes do not score a whole number each). The display lane's note on
     /checkup moves with the next carry (`scripts/carry_to_site.py`).
   From code and the website's files. Found by the device-details survey.
+
+- [ ] **F479 [code+decision] canary-wap: the `/admin` page ships 67,638 B of
+  gzip, 2,102 B past the 64 KB the house rule names, and no gate measures
+  it.** `web_assets_gz.h`: "CANARY_UI_HTML: 299020 B raw -> 67638 B gzip".
+  `firmware/LESSONS_LEARNED.md` ("Keep web_ui.h under 64KB", "Script checks
+  file size") and `.github/PULL_REQUEST_TEMPLATE.md` state the rule for the
+  raw file, which is compiled out: `regression_check.sh`'s "Build: web_ui.h
+  size" passes any size once `web_assets_gz.h` exists, and
+  `gen_web_assets_gz.py --check` compares bytes only. The page passed 65,536 B
+  in #1919 and grew in #1920, #1951 and the 2.4.20 train (#1972). The
+  device-details design holds 65,536 B of gzip as a hard ceiling (its §14),
+  and its PR 6 (#1971) did not build the `/admin` budget gate it planned.
+  Decide whether the ceiling stands (the page then loses 2,103 B or more) or
+  moves; then `--check` prints each asset's size and fails past it, and the
+  two documents say what is checked. Measured at `62bc0bc7`. Found by the
+  device-details design (`docs/design/device_details.md` §5.3).
+
+- [ ] **F480 [code] `improv_ble.cpp`'s reset guard takes IDF 5.1.0 as the
+  floor for three reset reasons that 5.1.0 to 5.1.3 do not have.**
+  `reset_is_power_cycle()` (`firmware/common/network/improv_ble.cpp`) and its
+  mirror in `canary_wap.ino` put `ESP_RST_USB`, `ESP_RST_JTAG` and
+  `ESP_RST_PWR_GLITCH` behind `ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1,
+  0)`, under comments that they "exist from IDF 5.1". By `esp_system.h` at
+  espressif/esp-idf's release tags (read 2026-11-16), USB and JTAG first
+  appear in v5.2.0 and the glitch reason in v5.3.0; v5.1.4 and v5.2.2 carry
+  all three. Compiled on a host against each tag's enum, the function fails
+  on v5.1.0, v5.1.3, v5.2.0 and v5.2.1. No platform pinned in `platforms.ini`
+  builds the file on one of those, so no build changes today. Correct the
+  comments and move the guard to a floor that holds (5.3.0 is the first minor
+  release with all three). Found by the device-details design
+  (`docs/design/device_details.md` §2.3).
 
 ---
 
@@ -3815,6 +3901,20 @@ so — see D2 below.)
   the rest of the device-details design's finding
   (`docs/design/device_details.md` §11, finding P12).
 
+- [ ] **A134 [code+decision] The iPhone app's display settings never land:
+  its `POST /api/set` sends no CSRF token, and the display answers 403.**
+  `NightlightAPI.set()` (`ios/Sources/SecuraCV/Transport/`), which
+  `GlassAPI.set()` calls, sets no `X-CSRF-Token`, and nothing in the app
+  reads the `csrf` that `GET /api/settings` hands it. The display's
+  `handle_settings_set()` asks `write_blocked()` (canary-display
+  `src/net/glass_web.cpp`), which answers `{"ok":false,"err":"csrf"}` without
+  the header. `GlassSettingsSheet` then says the knob "didn't stick";
+  `NightlightSection` drops the refusal (`try?`) and keeps the value it drew.
+  Decide which side changes: the app echoes the token, or `/api/set` holds to
+  `foreign_blocked()` alone, as the OTA kick routes do; then pin the request
+  in `GlassSettingsTests`. From code; not run on a device. Found by the
+  device-details design (`docs/design/device_details.md` §9).
+
 ---
 
 ## 3. Home Assistant (monorepo `custom_components/` + HACS mirror)
@@ -4032,16 +4132,20 @@ so — see D2 below.)
   §2.2, with its own: whether the built `keys` rows become its `legacy`
   entries). From code and the generator's tests. Found by HA56 (#1961).
 
-- [ ] **HA63 [decision] Four uptime counters a Canary sends are in no redacted
+- [ ] **HA63 [decision] Six uptime counters a Canary sends are in no redacted
   class.** The vocabulary's scanner finds firmware sources emitting `uptime_s`
   (`common/network/node_status.h` and its display and WAP copies, the sense,
   sentinel and vision `mqtt_mgr.cpp`, the WAP's `witness_page.h`), `uptime_ms`
   (the WAP's `identity_json.h`, `selftest_api.h` and sketch,
   `securacv_network.cpp`, `securacv_mesh`'s `mesh_api.cpp`), `uptime_sec`
   (`diagnostics_json.h`, `securacv_network.cpp`, `wap_diagnostics.h`,
-  `rf_presence_api.h`, the WAP sketch) and `bucket_uptime_s` (the 10-minute
+  `rf_presence_api.h`, the WAP sketch), `bucket_uptime_s` (the 10-minute
   coarsened uptime Sense, Sentinel and Vision sign into an event, which
-  `signature.py` verifies); none is in `TO_REDACT`. By F391's reasoning the
+  `signature.py` verifies), `up_s` (the display's `GET /api/device`,
+  `handle_device()` in `src/net/glass_web.cpp` and its sketch copy) and `up`
+  (the WAP's Bluetooth console snapshot, `build_snapshot()` in
+  `ble_console.cpp`); none is in `TO_REDACT`. (`stream_uptime_ms`, the camera
+  stream's age, is not a device uptime.) By F391's reasoning the
   first three are health counters; `bucket_uptime_s` is coarsened on purpose
   and part of a signed event. No dump carries a raw device answer today (layer
   1 projects everything), so no leak is known. Which class each takes waits on
@@ -4599,6 +4703,42 @@ major, by theme") — work its themes, then tick here.
   five, the threshold does not change at night, and receivers do not enforce
   the hours), or decide on a night threshold. From code. Found by D16's review
   (#1919).
+
+- [ ] **D24 [code] `board_capability_map_43b.md` rates the 4.3B's microSD
+  "Staged (CS blocker)", which the tree no longer bears out.** Its row and its
+  section "## 5. microSD — real, but blocked on a chip-select problem"
+  describe an SPI driver that cannot drive a chip-select held by the CH422G
+  expander, while `src/fleet/sd_archive.cpp` mounts that slot over the S3's
+  SDMMC host in 1-bit mode and `canary-display-dash-sd` compiles it with
+  `FEATURE_SD_STORAGE` on, which the device-details design's ladder rates
+  "Built, waiting on a bench check" (its §7.1 and §7.5). What remains: the
+  row and the section say what is built and what waits on the bench. From
+  code. Found by the device-details design (`docs/design/device_details.md`
+  §7.1).
+
+- [ ] **D25 [code] The MR60 notes say every frame past the five decoded types
+  is counted unknown; a frame longer than 32 bytes is counted as a CRC
+  error.** `docs/hardware/mr60bha2_radar_notes.md` §2 says everything in its
+  table "arrives as a **well-framed unknown** and increments
+  `unknown_count()`", and the header comment of `mr60_uart.h` ("Any
+  well-framed record (both checksums valid) whose type is none of the above
+  is counted as `unknown`") leaves out the same case: `classify_()` in
+  `mr60_uart.cpp` refuses a frame whose payload is longer than
+  `MR60_MAX_PAYLOAD` (32) as `Oversized`, and `push()` counts it in
+  `crc_error_count_`, which Sense publishes as `frame_errors`. By the notes'
+  own table the 3D point cloud (0x0A08) carries a record per target, so one
+  with several targets may be that long (not measured). What remains: both
+  say what the parser does with an oversized frame, and a bench capture says
+  which frames arrive and how long they are. From code. Found by the
+  device-details design (`docs/design/device_details.md` §7.3).
+
+- [ ] **D26 [code] A comment in `firmware/canary/platformio.ini` says
+  "Release/release_ha are the published OTA images"; only `release_ha` is.**
+  `firmware-release.yml` builds both and packages `release_ha` alone
+  ("release_ha is the recommended image"), and `build_flash_manifest.py` maps
+  `securacv-canary` to it. What remains: the comment names the one published
+  image. From code. Found by the device-details design
+  (`docs/design/device_details.md` §7.1).
 
 ---
 
