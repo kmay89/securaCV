@@ -28,18 +28,20 @@ Heading grammar is `## <version> — <YYYY-MM-DD>`.
 - **Firmware 2.4.20** is the catalog this version carries.
 - **Third-party notices ship beside the installers** as
   `THIRD_PARTY_LICENSES.html`, for the first time.
-- **Coming from 0.4.1, this update also brings 0.4.2**, which was built but
-  never published:
-  - Leaving or quitting a running flash asks first, and the updater waits
-    until the flash is done.
-  - The status strip updates in place and speaks only when something
-    changes; the Home and Your fleet no longer redraw under the keyboard.
-  - Open links and the hub address are limited to your own network.
-  - The flash bench names settings too long for the board and refuses a
-    backup made for another chip.
-  - The app's window is granted only events and opening links.
-  - On Linux the serial rule no longer opens a Canary's port to every
-    account (over SSH, join the `dialout` group once).
+
+**Coming from 0.4.1, this update also brings 0.4.2**, which was built but
+never published:
+
+- Leaving or quitting a running flash asks first, and the updater waits
+  until the flash is done.
+- The status strip updates in place and speaks only when something
+  changes; the Home and Your fleet no longer redraw under the keyboard.
+- Open links and the hub address are limited to your own network.
+- The flash bench names settings too long for the board and refuses a
+  backup made for another chip.
+- The app's window is granted only events and opening links.
+- On Linux the serial rule no longer opens a Canary's port to every
+  account (over SSH, join the `dialout` group once).
 
 ## 0.4.2 — 2026-11-15
 
