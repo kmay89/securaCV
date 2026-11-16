@@ -279,28 +279,27 @@ ignore entries are gone. This section is retained as an audit record; remove ent
 corresponding Dependabot alerts are closed, or — for Group 3 — once an
 upstream fix lets the ignore go.
 
-### Group 5 — SQLite WAL page-size read (RUSTSEC-2026-0459 and RUSTSEC-2026-0502, Medium) — FIX REACHABLE (a `rusqlite` bump), NOT YET TAKEN
+### Group 5 — SQLite WAL page-size read (RUSTSEC-2026-0459 and RUSTSEC-2026-0502, Medium) — FIXED in kernel 0.9.1 (`rusqlite` 0.43)
 
 - **Bug:** CVE-2026-119375. SQLite before 3.54.0 can return uninitialized
   page-cache memory when a process opens a database together with a sibling
   `-wal` file whose page size differs from the database's. A crafted pair of
   files makes ordinary queries return stale bytes from the process's memory.
   The vector is local and the victim has to open the files. CVSS 4.0: 6.8.
-- **Where it comes from:** `rusqlite`'s `bundled-sqlcipher` feature, which
-  the kernel needs for its encrypted database. `libsqlite3-sys` 0.39.1
-  builds SQLCipher from `sqlcipher-src`, pinned to `=419.0.6`, which carries
-  SQLite 3.53.4. The plain bundled SQLite in the same release is 3.54.1 and
-  fixed; the SQLCipher build is not.
+- **Where it came from:** `rusqlite`'s `bundled-sqlcipher` feature, which
+  the kernel needs for its encrypted database. Through kernel 0.9.0,
+  `libsqlite3-sys` 0.39.1 built SQLCipher from `sqlcipher-src`, pinned to
+  `=419.0.6`, which carries SQLite 3.53.4. The plain bundled SQLite in the
+  same release was 3.54.1 and fixed; the SQLCipher build was not.
 - **What `cargo audit` shows, and what it does not:** two advisories carry
   this bug. RUSTSEC-2026-0459 is keyed on `libsqlite3-sys`
   (`patched >= 0.39.0`), so it has passed since the `rusqlite` 0.41 upgrade.
   That pass says the crate version is new enough. It does not say this build
   is fixed, and it is not. RUSTSEC-2026-0502 (published 2026-10-30) is keyed
-  on `sqlcipher-src` itself (`patched >= 420.0.0`) and does name this build:
-  `cargo audit` reports one vulnerability for the root `Cargo.lock`
-  (`sqlcipher-src` 419.0.6; run 2026-11-15), so the Dependency Audit is red
-  until the fix below is taken. It is not on the ignore list, and does not
-  belong there: a fix can be reached.
+  on `sqlcipher-src` itself (`patched >= 420.0.0`) and named that build:
+  `cargo audit` reported one vulnerability for the root `Cargo.lock`
+  (`sqlcipher-src` 419.0.6; run 2026-11-15) and the Dependency Audit was red.
+  It was never on the ignore list, because a fix could be reached.
 - **Exposure:** only a process that opens a database, with its `-wal`, that a
   less trusted party could have written. `witnessd` and the bridges open
   their own database in their own data directory; whoever can plant a `-wal`
@@ -308,16 +307,18 @@ upstream fix lets the ignore go.
   commands (`log_verify`, `export_verify`, `court_export`, `log_anchor`,
   `break_glass`) open the database they are pointed at and hold key material
   while they do, so the exposed case is running one of them on a database
-  directory received from someone else. Until the fix, check received
-  evidence as an envelope (`envelope_verify`, the offline viewer), which
-  reads JSON and never opens SQLite, and do not open a received database
-  that arrives with a `-wal` file beside it.
-- **Fix reachable, not yet taken:** `sqlcipher-src` 420.0.0 carries SQLite
-  3.54.1. `libsqlite3-sys` 0.39.x pins `=419.0.6` exactly, which is why
-  nothing could select it; `libsqlite3-sys` 0.40.0 pins `=420.0.0`, and
-  `rusqlite` 0.42 and 0.43 depend on it. So the fix is a `rusqlite` bump
-  from 0.41 in `Cargo.toml` and `Cargo.lock`, with the kernel's tests run on
-  the new SQLCipher build. Until it lands, the workaround above stands.
+  directory received from someone else. On a kernel older than 0.9.1,
+  check received evidence as an envelope (`envelope_verify`, the offline
+  viewer), which reads JSON and never opens SQLite, and do not open a
+  received database that arrives with a `-wal` file beside it.
+- **Fix, taken in kernel 0.9.1:** `rusqlite` 0.43 with `libsqlite3-sys`
+  0.40.0, which pins `sqlcipher-src` `=420.0.0` (SQLCipher 4.20.0 on SQLite
+  3.54.1). `libsqlite3-sys` 0.39.x pinned `=419.0.6` exactly, which is why
+  nothing short of the `rusqlite` bump could select the fixed source. The
+  kernel's tests, `cargo clippy` and the `--no-default-features` tests pass
+  on the new build, and `cargo audit` no longer reports either advisory for
+  the root `Cargo.lock`. A binary built from 0.9.0 or earlier still carries
+  the old SQLCipher: update it.
 
 ## Non-goals
 

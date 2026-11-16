@@ -1,6 +1,11 @@
 <!-- The Supervisor shows this file on the app's page after an update. Newest first. -->
 ## 0.9.1
 
+- **The encrypted database runs on a fixed SQLite.** The kernel inside the
+  app is built with SQLCipher 4.20.0 on SQLite 3.54.1 (`rusqlite` 0.43). The
+  build before it carried SQLite 3.53.4, which could return stale memory when
+  a database was opened beside a `-wal` file with a different page size
+  (RUSTSEC-2026-0502). Nothing to do: the update replaces the binary.
 - **The Frigate config the wizard writes is detection-only.** When no
   Frigate config was found, the wizard wrote one that gave every camera the
   `record` role, set `record.enabled: true` and kept motion video for as
