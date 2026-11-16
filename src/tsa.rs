@@ -1084,15 +1084,33 @@ fn anchor_select_sql(conn: &Connection) -> Result<String> {
 type RawAnchorRow = [RawValue; 12];
 
 /// One stored value by storage class. `BadText` is TEXT that is not UTF-8;
-/// no column accepts it.
+/// no column accepts it. Shared with the `ots_anchors` reader
+/// (`crate::ots::list_ots_anchors_lenient`).
 #[derive(Clone, Debug, PartialEq)]
-enum RawValue {
+pub(crate) enum RawValue {
     Null,
     Integer(i64),
     Real,
     Text(String),
     Blob(Vec<u8>),
     BadText,
+}
+
+/// Column `i` of `row` by storage class, never typed: TEXT that is not UTF-8
+/// stays TEXT (`BadText`), so the row reports the column instead of failing
+/// the whole read (rusqlite 0.41 made `ValueRef` to `Value` fallible there).
+pub(crate) fn raw_value(row: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<RawValue> {
+    use rusqlite::types::ValueRef;
+    Ok(match row.get_ref(i)? {
+        ValueRef::Null => RawValue::Null,
+        ValueRef::Integer(v) => RawValue::Integer(v),
+        ValueRef::Real(_) => RawValue::Real,
+        ValueRef::Blob(b) => RawValue::Blob(b.to_vec()),
+        ValueRef::Text(t) => match std::str::from_utf8(t) {
+            Ok(s) => RawValue::Text(s.to_owned()),
+            Err(_) => RawValue::BadText,
+        },
+    })
 }
 
 /// The anchor columns in [`anchor_select_sql`] order, for the per-column
@@ -1205,24 +1223,14 @@ fn decode_anchor_row(raw: &RawAnchorRow) -> std::result::Result<AnchorRecord, St
 /// genuine SQLite errors — propagate. A row whose `id` itself is not an
 /// INTEGER is reported under id `-1`.
 pub fn list_anchors_lenient(conn: &Connection) -> Result<Vec<(i64, Result<AnchorRecord>)>> {
-    use rusqlite::types::ValueRef;
     let sql = anchor_select_sql(conn)?;
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| {
         let mut raw: RawAnchorRow = std::array::from_fn(|_| RawValue::Null);
         for (i, slot) in raw.iter_mut().enumerate() {
-            *slot = match row.get_ref(i)? {
-                ValueRef::Null => RawValue::Null,
-                ValueRef::Integer(v) => RawValue::Integer(v),
-                ValueRef::Real(_) => RawValue::Real,
-                ValueRef::Blob(b) => RawValue::Blob(b.to_vec()),
-                // TEXT that is not UTF-8 stays TEXT: the row reports the
-                // column instead of failing the whole read.
-                ValueRef::Text(t) => match std::str::from_utf8(t) {
-                    Ok(s) => RawValue::Text(s.to_owned()),
-                    Err(_) => RawValue::BadText,
-                },
-            };
+            // TEXT that is not UTF-8 stays TEXT: the row reports the
+            // column instead of failing the whole read.
+            *slot = raw_value(row, i)?;
         }
         Ok(raw)
     })?;

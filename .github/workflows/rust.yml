@@ -361,6 +361,13 @@ jobs:
       run: cargo clippy --all-targets --features tsa -- -D warnings
     - name: Test (tsa, offline)
       run: cargo test --verbose --features tsa --test log_anchor_cli
+    # The ots feature adds the OpenTimestamps calendar client (ureq) to the
+    # same online loop; the CLI tests stay offline (the leg's logic is tested
+    # through the CalendarTransport trait with an in-process fake).
+    - name: Clippy (tsa, ots)
+      run: cargo clippy --all-targets --features tsa,ots -- -D warnings
+    - name: Test (tsa, ots, offline)
+      run: cargo test --verbose --features tsa,ots --test log_anchor_cli
     - name: Clippy (surface-busybar)
       run: cargo clippy --all-targets --features surface-busybar -- -D warnings
     # The surface's tests ARE its privacy contract: which card class may reach

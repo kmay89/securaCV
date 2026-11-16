@@ -346,6 +346,13 @@ fn main() -> Result<()> {
             args.db
         );
     }
+    if let Some(n) = report.ots_anchors_checked {
+        println!(
+            "ots anchors: {n} checked (structural; Bitcoin attestations: log_anchor --db {} verify \
+             --bitcoin-headers <file>)",
+            args.db
+        );
+    }
     println!();
 
     println!("=== Break-Glass Receipts ===");
