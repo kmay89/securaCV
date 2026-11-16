@@ -1,27 +1,18 @@
 # Changelog
 
 ## [Unreleased]
+
+## [2.4.21] - 2026-11-16
+
+> **Before you update.** Built by CI; the device changes are not yet booted on our bench.
+> canary-wap: the 10-second hold now also removes the vault's recipient key (every capture trigger off) and a custom update server. After a hold, register the key, re-arm the triggers and re-enter the server. Before handing on a WAP that still runs 2.4.20, press Remove key and empty the update-server field by hand.
+> Canary Vision: live detection leaves the fleet beacon unless you turn on the new **Broadcast detection** switch (over MQTT), so a display that alerted straight from the beacon stops until you do.
+> Home Assistant: Export evidence (the action, the button and the timeline card's Export) and Staged firmware update refuse a signed-in user who is not an administrator. An automation carries no user and keeps working; a script runs as the person who started it.
+> Frigate: updating never rewrites a Frigate config that already exists, so a hub set up earlier keeps publishing a retained JPEG of every tracked object until each camera gets `mqtt: enabled: false` and Frigate restarts. Clear the JPEGs the broker already holds with a zero-length retained publish to each `frigate/<camera>/<label>/snapshot`.
+> `hap_bridge`: finish Add Accessory, setup code included, within three minutes of opening it, or start again.
+
 ### The second audit round: firmware 2.4.21, kernel, integration and app 0.9.3, Flasher 0.12.8, Lab 0.4.4, iOS 0.9.3
 
-- **Before you update.** Home Assistant: Export evidence (the action, the
-  button and the timeline card's Export) and Staged firmware update now
-  refuse a signed-in user who is not an administrator, so a wall tablet
-  signed in as a household account can no longer export or start a
-  rollout; an automation carries no user and keeps working, and a script
-  runs as the person who started it. Frigate: updating never rewrites a
-  Frigate config that already exists, so a hub set up earlier keeps
-  publishing a retained JPEG of every tracked object until each camera
-  gets `mqtt: enabled: false` and Frigate restarts; clear the JPEGs the
-  broker already holds with a zero-length retained publish to each
-  `frigate/<camera>/<label>/snapshot`. Canary Vision: its live detection
-  leaves the fleet beacon unless you turn on the new **Broadcast
-  detection** switch, so a display that showed it straight from the
-  beacon stops until you do; the switch is set over MQTT only. canary-wap:
-  after a 10 s hold, register the vault key and re-arm its triggers again
-  (and re-enter a custom update server); before handing on a WAP that
-  still runs 2.4.20, press Remove key and empty the update-server field by
-  hand. `hap_bridge`: finish Add Accessory, setup code included, within
-  three minutes of opening it, or start again.
 - **Exporting evidence and staged updates are for administrators only
   (A2-01).** Any signed-in Home Assistant user could run
   `securacv.export_evidence` and `securacv.staged_update`, and every export
@@ -69,10 +60,12 @@
 - **Canary Vision keeps "is someone in this room" off the cleartext beacon
   by default (A2-07).** The fleet beacon on BLE, ESP-NOW and LAN multicast
   carried the live detection (the alert flag, the class and the
-  confidence). That is now the owner's opt-in, Home Assistant's
+  confidence). That is now an opt-in, Home Assistant's
   **Broadcast detection** switch (`securacv/<id>/beacon/set`, stored on the
   Vision), off by default; opted out, no frame carries a detection and a
-  detection sends no extra frame. Pinned by
+  detection sends no extra frame. The switch is an unsigned MQTT command,
+  so anyone holding a broker login can turn it on, the Canaries' shared
+  login included, not only the owner. Pinned by
   `test_vision_beacon_payload.cpp` over the real payload builder. The
   Lab's Vision catalog generator (`gen_vision.py`) describes the switch and
   its two topics.
@@ -86,12 +79,15 @@
   frame, and a Canary from the broker or the signed chain takes the
   longest-silent pseudo witness's slot on a full roster; a beacon, a
   chirp or an mDNS announcement never displaces a row. On a glass with no
-  broker every Canary is a pseudo witness, so a silent one now drops off
-  instead of going red. Pinned in `test_fleet_beacon_model.cpp`.
+  broker, a Canary heard only over the beacon or Chirp is a pseudo witness,
+  so a silent one now drops off instead of going red; a Canary the glass
+  also sees announced over mDNS on the same Wi-Fi still goes red when it
+  falls silent. Pinned in `test_fleet_beacon_model.cpp`.
 - **A display's receipt, log and update status refuse a rebinding page
   (A2-12), and its LAN-open writes are written down (A2-11).**
   `/api/device` (which names the home Wi-Fi network), `/api/log` and
-  `/api/ota/status` now answer a Host that is a public domain with
+  `/api/ota/status` now answer any other Host (a public domain, and also a
+  router name such as `.fritz.box` or `.localdomain`) with
   `403 {"ok":false,"err":"host"}`, as the writes and the per-witness reads
   already did; the IP, the `.local` name, a single label, `.lan`,
   `.internal` and `.home.arpa` are unaffected. Pinned by
@@ -119,8 +115,8 @@
   out. Unit- and loopback-socket-tested; not run against an Apple
   controller.
 - **canary-wap's 10 s hold clears the camera vault key and the update
-  server override (A2-18).** The hold kept the vault's registered unlock
-  key and its armed triggers, so a WAP handed to a new owner went on
+  server override (A2-18).** The hold kept the vault's registered recipient
+  key (the public key frames are sealed to) and its armed triggers, so a WAP handed to a new owner went on
   sealing camera frames to the previous owner's key, and kept polling a
   custom update server. It now removes the key with every trigger saved
   off and erases the override; the identity key, the API token and the
@@ -129,7 +125,8 @@
 - **Release builds link the libraries they name (A2-19).** The signed
   release and factory rows installed Library Manager's newest Crypto,
   ArduinoJson, NimBLE-Arduino and PubSubClient on the day they ran, and
-  every PlatformIO `lib_deps` entry was a range. Each is now an exact pin
+  most PlatformIO `lib_deps` entries were ranges (GFX, LVGL 9 and the
+  Vision's SSCMA tag were already exact). Each is now an exact pin
   at the version the fw-v2.4.20 release build resolved, in
   `firmware/canary/platformio.ini`, `firmware/envs/platformio/*.ini`, the
   WAP's `sketch.yaml` and the release workflows' library rows, so 2.4.21

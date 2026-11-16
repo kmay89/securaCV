@@ -77,8 +77,8 @@ GET /api/fleet        →  200 application/json
   honestly say** — a stale reading omits rather than lies, and a client must
   render absence as "cannot say", never as an empty calm room. These are the
   same coarse facts the fleet already tells anyone in radio range over the
-  BLE presence beacon (the v2 detect class, while a Vision's owner has
-  turned on Broadcast detection; off by default) and the display's glass (`wb`/
+  BLE presence beacon (the v2 detect class, while a Vision's Broadcast
+  detection switch is on; off by default) and the display's glass (`wb`/
   `br`); this surface deliberately carries **nothing finer** — no range, no
   lux, and no vital-sign numbers (BPM is P1-gated on the device itself).
 - **No secrets, no raw media** — this is coarse fleet *presence and health*,

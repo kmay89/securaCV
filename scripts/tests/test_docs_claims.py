@@ -118,8 +118,9 @@ BANNED = (
      "with_no_client_auth() and the WAP's httpd_ssl_config_t carries only the "
      "server certificate and key; the iPhone app pins the receipt's tls_cert_fp"),
     ("a witness's clock comes from GPS",
-     "only the flagship and the WAP take time from GPS; sense and vision have "
-     "no clock source of their own; the displays sync SNTP"),
+     "only the flagship and the WAP take time from GPS; every product without "
+     "GPS syncs SNTP: the displays, and the Sense, the Vision and the Sentinel "
+     "through the shared Wi-Fi supervisor's start_clock()"),
     ("WiFi AP BSSID derived from device identity",
      "nothing in the firmware sets a derived or random MAC; the BSSID is the "
      "radio's factory address and carries Espressif's OUI"),

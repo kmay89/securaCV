@@ -128,7 +128,7 @@ and threshold tuning after the device is mounted. Empty frames publish at
 forgotten toggle can't stream box telemetry forever. Constants in
 `include/canary/config.h` (`AIM_*`).
 
-## Broadcast detection (owner opt-in, off by default)
+## Broadcast detection (off by default)
 
 The fleet beacon (BLE advert, ESP-NOW, LAN multicast) lets a Canary display
 hear this witness with no broker. It is cleartext on every band, so anyone in
@@ -138,7 +138,10 @@ clear, the class is `none` and the confidence is unknown, and a detection
 edge sends no extra frame.
 
 The HA switch `Broadcast detection` (`securacv/<device_id>/beacon/set`,
-retained state on `beacon/state`) is the owner's opt-in. Turned on, the beacon
+retained state on `beacon/state`) turns it on. It is an unsigned MQTT command,
+so anyone holding a broker login can turn it on, the Canaries' shared login
+included, not only the owner: the broker's logins are its boundary, as they
+are for every other command topic. Turned on, the beacon
 carries the live detection (the `ALERT` flag, the watch profile's class and
 the confidence), so a display alerts directly, and so can anyone else who
 listens. Turned off, the next frame is clear. The setting persists in NVS
@@ -173,7 +176,7 @@ Base:
 - `securacv/<device_id>/cfg/state` (retained; live detection settings + watch profile)
 - `securacv/<device_id>/cfg/{target,score,lost,dwell,profile}/set` (commands)
 - `securacv/<device_id>/beacon/state` (retained ON/OFF) and `beacon/set`: the
-  Broadcast detection opt-in above
+  Broadcast detection switch above
 
 ### The clocks and the cell on an event row
 

@@ -601,8 +601,8 @@ off no phone reaches the door. Holding a WAP's BOOT button
 for 10 seconds (the serial console says "keep holding" at 3 s) is its
 factory reset: the saved Wi-Fi networks, the broker settings, the device
 name and the first-boot flag are cleared and the setup wizard runs again;
-on a release after 2.4.20 the hold also removes the camera vault's unlock
-key, turns every vault capture trigger off and erases an update-server
+on a release after 2.4.20 the hold also removes the camera vault's
+recipient key (the public key frames are sealed to), turns every vault capture trigger off and erases an update-server
 override (2.4.20 and earlier keep all three, so first press Remove key
 under Camera → Sealed Alarm Snapshots, and empty Settings → Device →
 Advanced: update server, then Save Update Settings);
