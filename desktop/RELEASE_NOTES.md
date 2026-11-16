@@ -28,6 +28,23 @@ and what to expect after updating. Heading grammar is
   else and tells you to press **Add** on the MQTT card under Settings →
   Devices & Services, then Submit.
 - **Firmware 2.4.20** is the catalog this version carries.
+- **Third-party notices ship beside the installers** as
+  `THIRD_PARTY_LICENSES.html`, for the first time.
+- **Coming from 0.12.5, this update also brings 0.12.6.** Its release
+  published installers but never reached installed Flashers, so its changes
+  arrive now:
+  - You choose where saved files go: the health report and flash backups
+    open your system's save panel.
+  - The hub image's staging copy, which holds your Wi-Fi password and the
+    hub's SSH key, is readable by your account only.
+  - On Linux a hub card write checks the disk first, and the serial rule no
+    longer opens a Canary's port to every account (over SSH, join the
+    `dialout` group once).
+  - Hub setup that finishes with one click left shows as done; closing
+    the window during a write asks first; Open goes to your own network
+    only.
+  - Settings too long for the board, and a backup made for another chip,
+    are refused by name before anything is written.
 
 ## 0.12.6 — 2026-11-15
 
