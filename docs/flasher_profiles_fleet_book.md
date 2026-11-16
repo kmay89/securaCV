@@ -67,7 +67,8 @@ own exactly as before.
   `canary:<mac>:token` — this is what makes the fleet book able to talk to
   the board with no pairing dance.
 - The browser flasher seeds the same keys and shows the token **once** on
-  its done card (the Nursery roster stays public-facts-only by design).
+  its done card (the Nursery roster keeps no token; it keeps each board's
+  hardware address only to recognize it, and shows none of it).
 - The shape and key set are drift-gated in
   `canary-local/tests/desktop_parity.test.js`; the NVS layout round-trips in
   `canary-local/tests/flash.test.js` and `provisioning.rs`'s unit tests.

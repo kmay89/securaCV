@@ -1,7 +1,7 @@
 # Unflashed boards — what protects you, and what can't
 
 Status: Normative
-Last Updated: 2026-07-26
+Last Updated: 2026-10-28
 
 We tell people to buy a bare ESP32 board and flash it themselves. That is a
 real advantage — you can see the silicon, there's no vendor cloud, and the
@@ -176,6 +176,44 @@ honest boards. A clone that slips past those three is caught instead by the
 duplicate check against the session roster: two "new" boards sharing one
 address is a far louder signal than any vendor list.
 
+The checks read the address; neither flasher shows it unless asked. The base
+MAC is the station address in every Wi-Fi frame the board sends, and the
+Bluetooth address and the setup network's BSSID are derived from it, so even
+its last two bytes match the board in radio range. Both flashers draw a
+"Hardware address · Show" row that reveals the whole address on that page
+only, never copy it, and never write it into a saved report, a diagnostic
+report or a file name (saved files are named by the local date and a counter).
+The Lab's native bench keeps the address detect_chip returns and shows none of
+it. espflash prints the address in its board info on every connect, so a
+failed run's error carries it too: the flash engine masks it in every error it
+builds from espflash's output, and the desktop's status lines and event log
+and the Lab bench's failure details mask it again where they draw it.
+`canary-local/tests/desktop_parity.test.js` holds all three to that: it runs
+each flasher's own drawing code for its connect card, its report and its
+nursery strip on a stand-in page (no byte of the address before Show, the
+whole address after, none in a copy), drives the Lab bench's whole page, and
+runs a failed install, health check and Lab-bench flash whose error still
+carries the address.
+
+### 3b. What the chip is
+
+Beside the block-0 security fields, both flashers read a few factory fields
+from eFuse blocks 1 and 2 for the About-this-board rows: the package, the wafer
+revision, the flash and PSRAM inside the package, and the block version that
+says whether factory calibration was written. Those fields share 32-bit words
+with per-chip trims (LDO and bias trims, ADC init codes, the temperature
+calibration), and the ROM's `READ_REG` returns whole words, so the allowlist is
+per **field**: block, word, bit and width from espefuse 5.6.0's
+`efuse_defs/<chip>.yaml`, the same table in `intake.js` (`CHIP_FUSE_FIELDS`)
+and `efuse.rs` (`ALLOWED_S3`, `ALLOWED_C3`, `ALLOWED_C6`). Each word is reduced
+to its allowed fields the moment it is read and kept nowhere: block 1 words
+0–2 (the MAC and the pad config), block 2 words 0–3 (the optional unique id)
+and 5–7 (the rest of the ADC calibration) and block 3 are never read, and on
+the C6 nothing in block 2 is. "Factory calibration: present" is decided from
+the block-version fields alone, as IDF's `esp_efuse_rtc_calib_get_ver` does.
+`intake.test.mjs` proves a word with every trim bit set decodes exactly like
+one with none. The classic ESP32 has no table and says "Not checked".
+
 ### 4. What it arrived running
 
 Matched on the `esp_app_desc_t` project name — a real string read off the
@@ -301,11 +339,15 @@ into the bootloader with the sequences the vendored esptool-js uses, chosen
 by the port as it and the pinned espflash choose (a chip's own
 USB-Serial/JTAG port, `0x303A:0x1001`, gets only its own sequence; any
 other port gets the classic bridge sequence first and the USB-Serial/JTAG
-sequence if that finds nothing), `SYNC`, six `READ_REG`s at eFuse block 0.
-Those are the only two commands the module can send — nothing in it
-writes, burns or uploads a stub — and a probe that cannot reach the ROM
-reports "not checked", never "clean". The flash engine stays
-espflash-the-CLI; this is six register reads, not a second flasher.
+sequence if that finds nothing), `SYNC`, six `READ_REG`s at eFuse block 0,
+then the block-1/2 words the field allowlist above names — four on the S3
+and the C3, two on the C6 — each reduced to its allowed fields as it
+arrives. Those are the only two commands the module can send — nothing in
+it writes, burns or uploads a stub — and a probe that cannot reach the ROM
+reports "not checked", never "clean"; a block-1/2 word that does not answer
+leaves the About rows at "Not checked" without touching the security
+verdict. The flash engine stays espflash-the-CLI; this is ten register
+reads at most, not a second flasher.
 
 The read does **not** end by resetting the board into its firmware, on
 success or on failure. The button sits under the hold-BOOT instructions,
@@ -317,6 +359,70 @@ chip stays in the ROM's download mode until the install, which resets into
 the ROM itself, or until it is unplugged. It used to end in a hard reset,
 which handed a BOOT-held board to that firmware before anything was
 written.
+
+The same read also runs from *Read the chip's fuses* in the desktop's
+*This board* details, which offer it for any connected ESP32, not only one
+brought up with BOOT held, until a read has been tried on that board: a
+read that fails, brings back no chip fields, or meets a chip with no table
+takes the button away too, and it comes back when the chip is read again (a
+re-plug, or *re-read chip*). It ends the same way, so after a good read the
+board is in the ROM's download mode, not running its firmware. The line
+beside that button says so before the click, and after a good read the same
+advice takes the button's place: to start the firmware again, quit the
+Flasher first, then press the board's reset button, or unplug it, and its
+battery if it has one, and plug it back in.
+
+Quitting comes first because the Flasher reads a board that comes back on
+its port. Outside its serial monitor the poll (`pollPorts`, once a second)
+has no unplug grace: a poll that misses the port drops the board, and the
+next one that finds it runs `detect_chip` (`espflash board-info`) and then
+the passport's `read-flash`es. In the pinned espflash 3.3.0 each of those
+connects through a reset into the ROM (`--before default-reset`), loads
+espflash's stub and exits without resetting the chip back: its `board_info`
+and `read_flash` never call `reset_after`, so the `--after hard-reset`
+default goes unused, and the board comes back stopped in the stub. A
+re-plug that leaves the port gone for a poll is a disconnect, and so is a
+reset that drops a chip's own USB-Serial/JTAG port off the bus that long
+(app.js's watcher says a re-enumeration is usually 1–3 s). A USB-bridge
+board's port stays through its reset button, and a running serial monitor
+rides a short gap out without reading the board, but the line leans on
+neither. The same reads run on every connect, so the Flasher's connect
+stops a board's firmware too, before any fuse read.
+
+The battery is named because a board whose battery powers it without its
+firmware's help (the WAP's battery build, the Watch Station) stays powered
+with only its USB cable pulled, and so stays in the ROM. Not every board
+with a battery is one of those: the AMOLED 2.41's battery rail rides GPIO16,
+a latch its firmware must raise early in boot or lose power
+(`firmware/boards/waveshare-esp32s3-amoled241/pins/pins.h`, and the first
+lines of `setup()` in `firmware/projects/canary-display/src/main.cpp`), and
+in the ROM no firmware is running to raise it, so pulling its cable powers
+it off; and nothing in `firmware/` drives the Touch 1.69's SYS_EN latch
+(GPIO41), so the repo cannot say which way that one goes.
+
+The line that takes the button's place after a good read speaks for the
+latest read on that board, and only until the bench writes to it. A later
+read that throws takes it away, since that read may never have opened the
+port, or may have met a board re-plugged mid-read. So does each write (an
+install, a local file, a restore or an erase), as it starts: it connects
+through a reset of its own, and in the pinned espflash 3.3.0 a `write-bin`
+or `erase-flash` that finishes calls `reset_after`, a hard reset under the
+default `--after hard-reset` (the engine passes no `--after`), which starts
+whatever is now on the chip. After an install or a local file the
+post-flash serial monitor is watching that boot, and advice to quit the
+Flasher then would drop the watch.
+
+`canary-local/tests/desktop_parity.test.js` draws the card and holds both
+lines to their place, shown and not just present (no hidden property or
+attribute, and no inline style or `styles.css` rule that hides them with
+`display: none` or `visibility: hidden`, in the card's tree as `index.html`
+writes its ancestors). It holds the after-read line to the latest read,
+never beside the offer to read again, and gone once each of those writes
+starts. It drives the poll through a re-plug to hold the reason for
+quitting first, and fails when the pinned espflash moves off 3.3.0, so that
+reason is read again. All of this is read from the code and espflash's
+source: like the rest of the read, where it leaves the board is host-tested
+only (U1, below).
 
 Getting into the ROM is a reset too, which is why the port picks the
 sequence. A BOOT-held S3, C3 or C6 presents its USB-Serial/JTAG port. The
@@ -345,9 +451,10 @@ between the two files — as a set and per chip — plus the block-0 geometry an
 each native `EFUSE_BASE` against the vendored esptool-js bundle, so the two
 tables cannot drift apart unnoticed. Where the browser reads the fuses
 automatically at intake, the desktop reads them on demand (the *Read its
-security fuses* button on the connect step), bound to the board it read them
-from and cleared when that board goes away; once read, a stop-level finding
-refuses both flash paths, as the browser's blocked confirm card does.
+security fuses* button on the connect step, or *Read the chip's fuses* in
+*This board*'s details), bound to the board it read them from and cleared
+when that board goes away; once read, a stop-level finding refuses both
+flash paths, as the browser's blocked confirm card does.
 
 Two other routes were considered and not taken: bumping the pinned espflash
 to 4.x, whose `board-info` prints a `GET_SECURITY_INFO` summary (a flags
@@ -360,18 +467,25 @@ sidecar with its own interpreter and pins.
 reset sequences are host-tested against the vendored esptool-js
 implementation, and the choice of sequence by port and the line moves after
 the read (the park, and nothing else) against a scripted board; none of it
-is proven on a physical board. That a native-USB board held in BOOT is
-still in the ROM after the read is the bench check this owes. A protocol
-mistake fails as "not checked", not as a wrong verdict.
+is proven on a physical board. The bench check this owes: that a
+native-USB board held in BOOT, or a board that was running its firmware, is
+still in the ROM after a good read; that, with the Flasher closed, its reset
+button or a full power cycle (USB and any battery) then starts its
+firmware; that with the Flasher open a re-plug leaves it stopped in
+espflash's stub instead; and that an AMOLED 2.41 on its battery powers off
+when its USB cable is pulled. A protocol mistake fails as "not checked",
+not as a wrong verdict.
 
 The desktop app **can** now read what firmware is resident: `board_passport`
-reads the partition table, otadata and the booted slot's `esp_app_desc_t` over
-the same serial link, so the connect step names the firmware, its version and
-the slot it boots from. (Superseded claim: this section used to say it could
-not, because `espflash board-info` reports only chip, revision, crystal and
-MAC.) The first-contact decision remains a **checkbox that defaults to on**
-rather than an inference — the safe default for a board of unknown provenance
-is to wipe it, and the passport tells you what you would be wiping.
+reads the bootloader's image header, the partition table, otadata and the
+booted slot's `esp_app_desc_t` over the same serial link, so the connect step
+names the firmware, its version and the slot it boots from, and the This Board
+card shows what flash the image was built for beside the chip's own reading.
+(Superseded claim: this section used to say it could not, because `espflash
+board-info` reports only chip, revision, crystal and MAC.) The first-contact
+decision remains a **checkbox that defaults to on** rather than an inference —
+the safe default for a board of unknown provenance is to wipe it, and the
+passport tells you what you would be wiping.
 
 The desktop app also checks the flash **capacity** claim during its automatic
 safety copy: the whole chip is already in memory at that moment, so it compares

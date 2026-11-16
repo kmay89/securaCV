@@ -192,10 +192,18 @@ pub struct AppDesc {
     pub time: String,
     pub date: String,
     pub idf_ver: String,
+    /// The image's own anti-rollback number (what the bootloader compares
+    /// with the chip's SECURE_VERSION fuse) — a build fact.
+    pub secure_version: u32,
+    /// The first 8 bytes of the app ELF's SHA-256, as 16 lowercase hex
+    /// digits; `None` on a descriptor too short to hold it. The same on
+    /// every board running this image (flash-core.js parseAppDescriptor).
+    pub elf_sha256_prefix: Option<String>,
 }
 
-/// 256-byte `esp_app_desc_t`: magic 0xABCD5432 @0, version @16(32),
-/// project_name @48(32), time @80(16), date @96(16), idf_ver @112(32).
+/// 256-byte `esp_app_desc_t`: magic 0xABCD5432 @0, secure_version @4,
+/// version @16(32), project_name @48(32), time @80(16), date @96(16),
+/// idf_ver @112(32), app_elf_sha256 @144(32).
 pub fn parse_app_descriptor(bytes: &[u8]) -> Option<AppDesc> {
     if bytes.len() < 128 || u32le(bytes, 0) != APP_DESC_MAGIC {
         return None;
@@ -206,6 +214,82 @@ pub fn parse_app_descriptor(bytes: &[u8]) -> Option<AppDesc> {
         time: cstr(bytes, 80, 16),
         date: cstr(bytes, 96, 16),
         idf_ver: cstr(bytes, 112, 32),
+        secure_version: u32le(bytes, 4),
+        elf_sha256_prefix: (bytes.len() >= 152)
+            .then(|| bytes[144..152].iter().map(|b| format!("{b:02x}")).collect()),
+    })
+}
+
+// ── the bootloader's image header (what flash the image was BUILT for) ───────
+/// The second-stage bootloader is an ESP image: magic 0xE9, the segment
+/// count, the SPI mode byte, then a byte whose high nibble is the flash size
+/// and low nibble the flash frequency the image was built for (esptool
+/// `bin_image.py`; esptool 5.6.0 `targets/<chip>.py` `FLASH_FREQUENCY`). The
+/// image's claim about the board, which the chip's JEDEC reading can
+/// contradict — flash-core.js parseBootloaderHeader reads the same bytes the
+/// same way.
+pub const IMAGE_HEADER_MAGIC: u8 = 0xe9;
+
+/// Where the bootloader sits: 0x1000 on the classic ESP32, 0x0 on the S3, C3
+/// and C6 (`chip` is the canonical spelling detect_chip returns).
+pub fn bootloader_offset(chip: &str) -> u32 {
+    if chip.eq_ignore_ascii_case("ESP32") {
+        0x1000
+    } else {
+        0x0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BootHeader {
+    pub flash_mode: Option<&'static str>,
+    pub flash_mhz: Option<u32>,
+    /// The C6 writes 0x0 for both 40 and 80 MHz (esptool's ROM workaround),
+    /// so its header cannot say which; this carries both, `flash_mhz` none.
+    pub flash_mhz_either: Option<[u32; 2]>,
+    pub flash_bytes: Option<u64>,
+    pub mode_code: u8,
+    pub size_code: u8,
+    pub freq_code: u8,
+}
+
+pub fn parse_bootloader_header(bytes: &[u8], chip: &str) -> Option<BootHeader> {
+    if bytes.len() < 4 || bytes[0] != IMAGE_HEADER_MAGIC {
+        return None;
+    }
+    let size_code = bytes[3] >> 4;
+    let freq_code = bytes[3] & 0x0f;
+    let c6 = chip.eq_ignore_ascii_case("ESP32-C6");
+    let flash_mhz = if c6 {
+        match freq_code {
+            0x2 => Some(20),
+            _ => None,
+        }
+    } else {
+        match freq_code {
+            0x0 => Some(40),
+            0x1 => Some(26),
+            0x2 => Some(20),
+            0xf => Some(80),
+            _ => None,
+        }
+    };
+    Some(BootHeader {
+        flash_mode: match bytes[2] {
+            0 => Some("QIO"),
+            1 => Some("QOUT"),
+            2 => Some("DIO"),
+            3 => Some("DOUT"),
+            4 => Some("FAST_READ"),
+            5 => Some("SLOW_READ"),
+            _ => None,
+        },
+        flash_mhz,
+        flash_mhz_either: (c6 && freq_code == 0).then_some([40, 80]),
+        flash_bytes: (size_code <= 7).then(|| (1u64 << size_code) * 1024 * 1024),
+        mode_code: bytes[2],
+        size_code,
+        freq_code,
     })
 }
 
@@ -718,13 +802,67 @@ mod tests {
         d[16..23].copy_from_slice(b"v1.2.3\0");
         d[48..56].copy_from_slice(b"canary\0\0");
         d[96..107].copy_from_slice(b"2026-07-26\0");
+        d[4..8].copy_from_slice(&3u32.to_le_bytes()); // secure_version
+        for (i, b) in d[144..176].iter_mut().enumerate() {
+            *b = 0xa0 + i as u8; // app_elf_sha256
+        }
         let a = parse_app_descriptor(&d).unwrap();
         assert_eq!(a.version, "v1.2.3");
         assert_eq!(a.project_name, "canary");
         assert_eq!(a.date, "2026-07-26");
+        assert_eq!(a.secure_version, 3);
+        // The first 8 bytes of the ELF SHA-256 only — flash.test.js feeds the
+        // browser parser the same bytes and pins the same 16 digits.
+        assert_eq!(a.elf_sha256_prefix.as_deref(), Some("a0a1a2a3a4a5a6a7"));
+        // A descriptor cut before the hash still parses, with no prefix.
+        assert_eq!(
+            parse_app_descriptor(&d[..140]).unwrap().elf_sha256_prefix,
+            None
+        );
         // Wrong magic or too-short → None.
         assert!(parse_app_descriptor(&[0u8; 256]).is_none());
         assert!(parse_app_descriptor(&d[..100]).is_none());
+    }
+
+    #[test]
+    fn bootloader_header_reads_what_the_image_was_built_for() {
+        // The vectors flash.test.js feeds flash-core.js parseBootloaderHeader.
+        let s3 = parse_bootloader_header(&[0xe9, 0x03, 0x02, 0x2f], "ESP32-S3").unwrap();
+        assert_eq!(s3.flash_mode, Some("DIO"));
+        assert_eq!(s3.flash_mhz, Some(80));
+        assert_eq!(s3.flash_bytes, Some(4 * 1024 * 1024));
+        assert_eq!(s3.flash_mhz_either, None);
+        let qio = parse_bootloader_header(&[0xe9, 0x04, 0x00, 0x30], "ESP32-C3").unwrap();
+        assert_eq!(qio.flash_mode, Some("QIO"));
+        assert_eq!(qio.flash_mhz, Some(40));
+        assert_eq!(qio.flash_bytes, Some(8 * 1024 * 1024));
+        // The C6's 0x0 is 40 OR 80 MHz; the header cannot say which.
+        let c6 = parse_bootloader_header(&[0xe9, 0x03, 0x02, 0x20], "ESP32-C6").unwrap();
+        assert_eq!(c6.flash_mhz, None);
+        assert_eq!(c6.flash_mhz_either, Some([40, 80]));
+        // No image there (an erased chip, or ciphertext) → None, not a guess.
+        assert!(parse_bootloader_header(&[0xff; 32], "ESP32-S3").is_none());
+        assert!(parse_bootloader_header(&[0xe9, 0x03], "ESP32-S3").is_none());
+        // Every size code esptool writes, 1 MB (0x0) to 128 MB (0x7); past it, no size.
+        for (code, mb) in [
+            (0u8, Some(1u64)),
+            (4, Some(16)),
+            (5, Some(32)),
+            (6, Some(64)),
+            (7, Some(128)),
+            (8, None),
+        ] {
+            let h = parse_bootloader_header(&[0xe9, 0x03, 0x02, (code << 4) | 0x0f], "ESP32-S3")
+                .unwrap();
+            assert_eq!(
+                h.flash_bytes,
+                mb.map(|m| m * 1024 * 1024),
+                "size code {code}"
+            );
+        }
+        assert_eq!(bootloader_offset("ESP32"), 0x1000);
+        assert_eq!(bootloader_offset("ESP32-S3"), 0x0);
+        assert_eq!(bootloader_offset("ESP32-C6"), 0x0);
     }
 
     #[test]
