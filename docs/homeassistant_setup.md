@@ -197,7 +197,7 @@ must use the **same MQTT broker** as Frigate and the sidecar.
    SecuraCV pairing code: 483921   (valid 10 minutes, 5 attempts)
    Kernel key fingerprint: ab12cd34   (Home Assistant shows the same fingerprint before it pairs)
    Kernel URL to confirm in Home Assistant: http://<this docker host>:8799
-   In Home Assistant: Settings → Devices & Services → the discovered "SecuraCV sidecar" card → Configure → enter the code.
+   In Home Assistant: Settings → Devices & Services → the "SecuraCV sidecar" card under Discovered → Add → enter the code.
    ```
 
    The code is printed once, on that terminal only; the daemon's log never

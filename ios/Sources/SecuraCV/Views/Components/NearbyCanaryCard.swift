@@ -399,7 +399,13 @@ struct NearbySetupSheet: View {
                     }
                 case .handingOverHub:
                     Section {
-                        HStack { ProgressView(); Text("Handing it your hub (\(hubHost ?? "")) — a few seconds.") }
+                        // hubHost is set only once a hand-over is under way: a
+                        // declined one, or one with nothing to hand, is finishing.
+                        HStack {
+                            ProgressView()
+                            Text(hubHost.map { "Handing it your hub (\($0)) — a few seconds." }
+                                 ?? "Finishing setup — a few seconds.")
+                        }
                     }
                 case .done:
                     doneSection

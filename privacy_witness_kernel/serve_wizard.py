@@ -718,6 +718,59 @@ def yaml_child_keys(text: str, path: tuple) -> list | None:
     return children
 
 
+def yaml_value_at(text: str, path: tuple) -> str | None:
+    """The scalar value of the key at `path` (`enabled: true` -> "true"), or
+    None when the path is absent or the key holds a block, not a value. A
+    one-level flow mapping on the parent (`record: {enabled: true}`) is read
+    too. Same walk, same rules as yaml_child_keys."""
+    lines = list(_yaml_lines(text))
+    index = 0
+    level_indent = 0
+    parent_indent = -1
+    for depth, want in enumerate(path):
+        if depth > 0:
+            if index >= len(lines) or lines[index][0] <= parent_indent:
+                return None
+            level_indent = lines[index][0]
+        while index < len(lines):
+            line_indent, key, rest = lines[index]
+            if line_indent < level_indent:
+                return None
+            if line_indent == level_indent and key == want:
+                parent_indent = line_indent
+                index += 1
+                if depth == len(path) - 1:
+                    return rest or None
+                if rest:
+                    if depth == len(path) - 2 and rest.startswith("{") and rest.endswith("}"):
+                        for pair in rest[1:-1].split(","):
+                            k, sep, v = pair.partition(":")
+                            if sep and k.strip().strip("'\"") == path[-1]:
+                                return v.strip().strip("'\"") or None
+                    return None
+                break
+            index += 1
+        else:
+            return None
+    return None
+
+
+def _yaml_bool(value: str) -> bool | None:
+    """A YAML boolean as Frigate's config reads it, or None when the value
+    is not one this reader can read (an alias, a tag, a template)."""
+    word = value.strip().strip("'\"").lower()
+    if word in ("true", "yes", "on", "1"):
+        return True
+    if word in ("false", "no", "off", "0"):
+        return False
+    return None
+
+
+# Anchors, aliases and merge keys (`&defaults`, `*defaults`, `<<:`) can carry
+# a record setting this small reader does not resolve.
+_YAML_INDIRECTION_RE = re.compile(r"(?:^|[\s:\[{,-])[&*][^\s,\]}]+|<<\s*:", re.M)
+
+
 # ---------------------------------------------------------------------------
 # Frigate: find its config, read its camera list
 # ---------------------------------------------------------------------------
@@ -762,6 +815,40 @@ def frigate_camera_names(path) -> list | None:
         if name and name not in seen:
             seen.append(name)
     return seen
+
+
+def frigate_recording(path, selected: list) -> tuple | None:
+    """Which of the cameras SecuraCV seals Frigate records, read from
+    Frigate's own config: (recording, not_recording), by camera name. A
+    camera's own `record.enabled` wins over the top-level one, and Frigate's
+    default is off. `selected` empty means every camera the config declares.
+    None when the wizard cannot tell: the file cannot be read, declares no
+    cameras, uses YAML anchors, aliases or merge keys, or holds a record
+    value that is not a plain boolean. The person's choice then stands: a
+    setting this reader did not see is never taken for "off"."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if _YAML_INDIRECTION_RE.search(text):
+        return None
+    declared = yaml_child_keys(text, ("cameras",)) or []
+    wanted = {camera_slug(name) for name in selected}
+    names = [name for name in declared if not wanted or camera_slug(name) in wanted]
+    if not names:
+        return None
+    top = yaml_value_at(text, ("record", "enabled"))
+    default = _yaml_bool(top) if top is not None else False
+    if default is None:
+        return None
+    recording, not_recording = [], []
+    for name in names:
+        own = yaml_value_at(text, ("cameras", name, "record", "enabled"))
+        records = default if own is None else _yaml_bool(own)
+        if records is None:
+            return None
+        (recording if records else not_recording).append(name)
+    return recording, not_recording
 
 
 # ---------------------------------------------------------------------------
@@ -902,6 +989,39 @@ ALERTS_ONLY_NOT_APPLIED_NOTE = (
     "only: turn recording on in Frigate, then turn on frigate.enable_reviews "
     "in this app's Configuration tab."
 )
+
+
+# The same rule on the path where Frigate keeps its own config: alerts-only
+# is stored as asked unless Frigate's config records on none of the cameras
+# SecuraCV seals, which would leave the log with heartbeats and no events.
+ALERTS_ONLY_NO_RECORDING_NOTE = (
+    '"Only Frigate alerts" was not applied — every tracked object is sealed '
+    "instead. Frigate creates alerts only for cameras that record, and its "
+    "config records none of the cameras SecuraCV seals. To seal alerts only: "
+    "turn recording on for them in Frigate, then turn on "
+    "frigate.enable_reviews in this app's Configuration tab."
+)
+
+
+def alerts_only_on_frigate_config(config_path, selected: list) -> tuple:
+    """(enable_reviews, note) for "Only Frigate alerts" where Frigate keeps
+    its own config. Refused, with ALERTS_ONLY_NO_RECORDING_NOTE, only when
+    the config is read and records none of the sealed cameras; a note names
+    the cameras that will seal nothing when only some record."""
+    verdict = frigate_recording(config_path, selected) if config_path is not None else None
+    if verdict is None:
+        return True, ""
+    recording, not_recording = verdict
+    if not recording:
+        return False, ALERTS_ONLY_NO_RECORDING_NOTE
+    if not_recording:
+        return True, (
+            'With "Only Frigate alerts", nothing is sealed from '
+            + ", ".join(not_recording)
+            + ": Frigate creates alerts only for cameras that record, and its "
+            + ("config does not record it." if len(not_recording) == 1 else "config does not record them.")
+        )
+    return True, ""
 
 
 def _frigate_config_destination() -> tuple:
@@ -1404,6 +1524,14 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             # (ALERTS_ONLY_NOT_APPLIED_NOTE).
             reviews_requested = bool(payload.get("enable_reviews", False))
             enable_reviews = reviews_requested and not writes_frigate_config
+            # Where Frigate keeps its own config, read it: alerts-only on
+            # cameras it does not record seals nothing either.
+            reviews_note = ""
+            if enable_reviews and mode == "frigate" and frigate_detected:
+                selected = [str(c["name"]) for c in cameras if isinstance(c, dict) and c.get("name")]
+                enable_reviews, reviews_note = alerts_only_on_frigate_config(
+                    find_frigate_config(), selected
+                )
             device_key_seed = str(payload.get("device_key_seed", "") or "").strip()
 
             # The sealed log's identity is bound to the existing seed, so a
@@ -1620,6 +1748,8 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     + (", ".join(camera_slugs) if camera_slugs else "every camera Frigate reports")
                     + "."
                 )
+                if reviews_note:
+                    frigate_note = f"{frigate_note} {reviews_note}"
 
             # NOTE: the add-on restart is deliberately NOT triggered here —
             # do_POST schedules it (_restart_addon_soon) after the response is

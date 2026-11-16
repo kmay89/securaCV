@@ -13,6 +13,30 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-16 — The new notices job's first run installed nothing: `cargo-about` builds its binary only with the `cli` feature
+
+- **Symptom:** the 2.4.20 train's Flasher 0.12.6 and Lab 0.4.2 release runs
+  failed in "Third-party license notices" with `error: no such command:
+  about`. `finalize` needs that job, so it never ran: Flasher 0.12.6 was
+  left published with its installers, a placeholder body and no updater
+  manifest (installed Flashers stayed on 0.12.5), and Lab 0.4.2 stayed a
+  draft.
+- **Cause:** `cargo install cargo-about --version 0.9.3 --locked` compiles
+  the crate and then warns "none of the package's binaries are available
+  for install using the selected features: bin cargo-about requires the
+  features: `cli`" and exits 0. The job was added in this train, and the
+  notices job runs only in the release workflows, so no pull-request check
+  ever ran the install; the local trial that proved the job's script had
+  installed the binary another way.
+- **Fix:** `--features cli` in both workflows' install step, pinned in
+  `scripts/tests/test_third_party_notices.py`. Flasher 0.12.7 and Lab 0.4.3
+  are the first releases with notices, and their notes fold in 0.12.6's and
+  0.4.2's changes, which never reached installed apps.
+- **Applies to:** any tool a release job installs. Prove the exact install
+  command the workflow runs (same flags, a clean `--root`), not the tool
+  itself, and treat a `cargo install` warning as a failure. A step that only
+  runs at release time has no other test before the release that needs it.
+
 ## 2026-11-15 (n) — A commit made from a file list leaves out the file the list did not know
 
 - **Symptom:** the iOS commit referenced `RefuseRedirects.swift` and did not
