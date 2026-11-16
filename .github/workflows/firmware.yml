@@ -162,9 +162,9 @@ jobs:
   #                        espressif32 platform with the pioarduino fork:
   #                        both ship a package literally named
   #                        `framework-arduinoespressif32` at incompatible
-  #                        versions (2.0.17 vs 3.3.8). Sharing
+  #                        versions (2.0.17 vs 3.3.12). Sharing
   #                        ~/.platformio, pioarduino sees 2.0.17 already
-  #                        "installed", skips its own 3.3.8, and its build
+  #                        "installed", skips its own 3.3.12, and its build
   #                        script fails with FRAMEWORK_DIR=None before any
   #                        compile. (canary's `full` env hits this; a
   #                        project that is pioarduino-only, like
@@ -320,18 +320,32 @@ jobs:
             fi
             echo "Firmware size: $SIZE / $SLOT bytes ($((SIZE * 100 / SLOT))% of $SLOT_NAME)"
           }
+          # Core 2.0.17's own WebServer (library version 2.0.0) sizes a stack
+          # buffer from the client's multipart boundary (GHSA-8cmm-3887-r32j).
+          # The core-2 envs that serve HTTP link the patched copy in
+          # firmware/third_party instead (its README.md), through their
+          # lib_extra_dirs; every env's dependency graph is in its build log,
+          # so a log that names the core's copy fails the leg.
+          webserver_gate() {
+            if grep -Eq -e '\|-- WebServer @ 2\.0\.0([^.0-9+]|$)' "$1"; then
+              echo "::error::$2 links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j). Add ../../third_party to its lib_extra_dirs: firmware/third_party/WebServer-2.0.17-securacv/README.md."
+              exit 1
+            fi
+          }
           for e in $(jq -r '.build_envs[]' <<< "$FLAVOR_JSON"); do
             GROUP=$(jq -r --arg e "$e" '(.core_dir_groups // {})[$e] // empty' <<< "$FLAVOR_JSON")
+            LOG="$RUNNER_TEMP/pio-run-$e.log"
             if [ -n "$GROUP" ]; then
               echo "── pio run -e $e (shared PLATFORMIO_CORE_DIR group: $GROUP) ──"
-              PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-$GROUP" pio run -e "$e"
+              PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-$GROUP" pio run -e "$e" 2>&1 | tee "$LOG"
             elif jq -e --arg e "$e" '(.isolated_core_envs // []) | index($e)' <<< "$FLAVOR_JSON" > /dev/null; then
               echo "── pio run -e $e (isolated PLATFORMIO_CORE_DIR) ──"
-              PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-$e" pio run -e "$e"
+              PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-$e" pio run -e "$e" 2>&1 | tee "$LOG"
             else
               echo "── pio run -e $e ──"
-              pio run -e "$e"
+              pio run -e "$e" 2>&1 | tee "$LOG"
             fi
+            webserver_gate "$LOG" "$e"
             while IFS= read -r GUARD; do
               [ -n "$GUARD" ] || continue
               case "$(jq -r '.bin' <<< "$GUARD")" in
@@ -617,16 +631,26 @@ jobs:
             gfx: "1.4.9"
             nimble: "1.4.3"
             lvgl: "8.4.0"
+            # The core's own WebServer sizes a stack buffer from the client's
+            # multipart boundary (GHSA-8cmm-3887-r32j); the compiles below pass
+            # this patched copy with --library, as the release rows do. The
+            # 3.x row names none: its core carries the upstream fix.
+            # firmware/third_party/WebServer-2.0.17-securacv/README.md.
+            webserver: firmware/third_party/WebServer-2.0.17-securacv
           - name: "3.x"
             # The Boards Manager default line — everything-latest pairing:
             # GFX 1.6.x / NimBLE 2.x / LVGL 9.x (the source is dual-major
             # for all three splits; see lvgl_port.cpp + core_compat.h).
-            version: "3.3.10"
+            version: "3.3.12"
             gfx: "1.6.6"
-            nimble: "2.5.0"
+            nimble: "2.5.2"
             lvgl: "9.5.0"
     steps:
       - uses: actions/checkout@v7
+      # check_webserver_link.py (the compile steps below) is stdlib only.
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
 
       - name: Install Arduino CLI + ESP32 core ${{ matrix.core.version }} (cached, libs pinned per core line)
         uses: ./.github/actions/setup-arduino-esp32
@@ -675,19 +699,48 @@ jobs:
         # flavor_select.h) default to watch, and missing secrets fall back to
         # secrets.ci.h -> the onboarding wizard. This leg is the regression
         # test for that promise — it compiles the sketch exactly as
-        # downloaded, before setup.sh ever runs.
+        # downloaded, before setup.sh ever runs. The one addition is the core
+        # 2.0.17 row's patched WebServer (matrix.core.webserver), passed as
+        # every 2.0.17 build that ships passes it; the sketch is untouched.
+        # The compile reports in JSON (builder_result.used_libraries names
+        # every library it linked), and check_webserver_link.py echoes the
+        # compiler's output, fails a failed compile, and on the 2.0.17 row
+        # fails a build that linked any WebServer but that copy: passing
+        # --library is not proof it was used.
         if: matrix.flavor.name == 'watch'
+        env:
+          WEBSERVER_LIB: ${{ matrix.core.webserver }}
         run: |
+          LIBARGS=()
+          EXPECT=()
+          if [ -n "$WEBSERVER_LIB" ]; then
+            LIBARGS=(--library "$GITHUB_WORKSPACE/$WEBSERVER_LIB")
+            EXPECT=(--expect "$GITHUB_WORKSPACE/$WEBSERVER_LIB")
+          fi
           LIBDIR="$(arduino-cli config get directories.user)/libraries"
           mkdir -p "${LIBDIR}"
           cp firmware/projects/canary-display/arduino/canary_display/lv_conf.h "${LIBDIR}/lv_conf.h"
-          arduino-cli compile \
+          RESULT="$RUNNER_TEMP/display-zip-compile.json"
+          arduino-cli compile --format json \
+            "${LIBARGS[@]}" \
             --fqbn ${{ matrix.flavor.fqbn }} \
             --output-dir /tmp/display-zip-build \
-            firmware/projects/canary-display/arduino/canary_display/canary_display.ino
+            firmware/projects/canary-display/arduino/canary_display/canary_display.ino > "$RESULT" || true
+          python3 firmware/scripts/check_webserver_link.py cli "$RESULT" "${EXPECT[@]}"
 
       - name: Stage + compile ${{ matrix.flavor.name }}
+        # On the core 2.0.17 row, --library the patched WebServer
+        # (matrix.core.webserver), exactly as the release rows build, and
+        # hold the build to it through the JSON result, as the step above.
+        env:
+          WEBSERVER_LIB: ${{ matrix.core.webserver }}
         run: |
+          LIBARGS=()
+          EXPECT=()
+          if [ -n "$WEBSERVER_LIB" ]; then
+            LIBARGS=(--library "$GITHUB_WORKSPACE/$WEBSERVER_LIB")
+            EXPECT=(--expect "$GITHUB_WORKSPACE/$WEBSERVER_LIB")
+          fi
           cd firmware/projects/canary-display
           ./setup.sh arduino ${{ matrix.flavor.name }}
           # LVGL resolves lv_conf.h relative to the libraries dir root
@@ -695,10 +748,13 @@ jobs:
           # so the library compiles against the project's config.
           LIBDIR="$(arduino-cli config get directories.user)/libraries"
           cp arduino/canary_display/lv_conf.h "${LIBDIR}/lv_conf.h"
-          arduino-cli compile \
+          RESULT="$RUNNER_TEMP/display-compile.json"
+          arduino-cli compile --format json \
+            "${LIBARGS[@]}" \
             --fqbn ${{ matrix.flavor.fqbn }} \
             --output-dir /tmp/display-build \
-            arduino/canary_display/canary_display.ino
+            arduino/canary_display/canary_display.ino > "$RESULT" || true
+          python3 "$GITHUB_WORKSPACE/firmware/scripts/check_webserver_link.py" cli "$RESULT" "${EXPECT[@]}"
 
   csi-sketch-sync:
     name: CSI Sketch Copy Sync

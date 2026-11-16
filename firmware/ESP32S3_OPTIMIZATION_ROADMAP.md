@@ -55,7 +55,7 @@ Today the shipping profiles are split across **two** toolchains:
   a floating `^7.0.0` until 2026-09-22, [`PLATFORMS.md`](PLATFORMS.md)), whose
   `framework=arduino` package is **Arduino 2.0.17 / IDF 4.4.7** — and so is 7.x's
   ([`canary/platformio.ini`](canary/platformio.ini), `[env]` `platform =`).
-- `[env:full]` pins the **pioarduino** fork `55.03.38-1` = **Arduino 3.3.8 / IDF 5.5.4**
+- `[env:full]` pins the **pioarduino** fork `55.03.312-1` = **Arduino 3.3.12 / IDF 5.5.5**
   ([`canary/platformio.ini`](canary/platformio.ini) `[env:full]` block) because NimBLE 2.x
   requires core 3.x.
 
@@ -187,7 +187,7 @@ What landed instead of a default-build gate:
   canary tree**: `framework = arduino` ships a precompiled core + bootloader, so
   `CONFIG_NVS_ENCRYPTION` / `CONFIG_SECURE_FLASH_ENC_ENABLED` in any `sdkconfig.defaults` are inert
   here (the 2.0.17 core's own sdkconfig leaves `CONFIG_SECURE_FLASH_ENC_ENABLED` unset, and NVS
-  encryption depends on it; the 3.3.8 core's, which `env:full` and the canary-wap build on, leaves
+  encryption depends on it; the 3.3.12 core's, which `env:full` and the canary-wap build on, leaves
   `CONFIG_NVS_ENCRYPTION` unset; only the ESP-IDF project `canary-ota` builds with it set, and its
   partition table has no `nvs_keys` partition). It needs
   the arduino-as-IDF-component migration (item 9) and is then a Tier-3 concern — and the point

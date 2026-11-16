@@ -90,7 +90,134 @@ UPSTREAM: dict[str, str] = {
 # GHSA id → why it does not affect the pinned versions, for an advisory whose
 # range this script cannot read or that a reviewer has ruled out. An entry is
 # a reviewed claim about the versions pinned today; remove it when a pin moves.
-REVIEWED: dict[str, str] = {}
+# Reviewed 2026-11-16 at arduino-esp32 2.0.17 and 3.3.12, ESP-IDF 4.4.7 and
+# 5.5.5. Each names the code that is not linked, or the fix and its test.
+REVIEWED: dict[str, str] = {
+    "GHSA-8cmm-3887-r32j": (
+        "In range for 2.0.17 only (3.3.12 carries upstream's fix), and every core-2 build that "
+        "compiles WebServer links firmware/third_party/WebServer-2.0.17-securacv/src/Parsing.cpp "
+        "instead of the core's copy: a boundary over 70 bytes is refused and the buffer is "
+        "fixed-size. scripts/tests/test_vendored_webserver_core2.py holds every such env and "
+        "release row to that copy and firmware/tests_host/test_webserver_boundary.cpp drives "
+        "the parser under AddressSanitizer; compile-tested and host-tested, not bench-tested. "
+        "firmware/canary serves HTTP on esp_http_server "
+        "(firmware/canary/lib/securacv_network/src/securacv_network.h) and links no WebServer."
+    ),
+    "GHSA-28hv-fwm3-rpcq": (
+        "Digest-auth URI replay in WebServer::authenticate(), in range for 2.0.17 only. No "
+        "firmware source calls authenticate() or requestAuthentication(): the WebServer users "
+        "are firmware/common/network/node_http.cpp, setup_portal.cpp and the display's "
+        "glass_web.cpp and provision.cpp, and the display gates writes with its own Host/Origin "
+        "check and per-boot CSRF token (firmware/projects/canary-display/src/net/glass_web.cpp)."
+    ),
+    "GHSA-92j9-c75g-2c5f": (
+        "NBNS name_len overflow in the core's NetBIOS library, in range for 2.0.17 only. No "
+        "firmware source includes NetBIOS.h or calls NBNS.begin(), so the library is not "
+        "compiled into any image and nothing listens on UDP/137; LAN naming is ESPmDNS "
+        "(firmware/projects/canary-vision/src/net/mdns_mgr.cpp)."
+    ),
+    "GHSA-9vfw-wx65-c872": (
+        "CSRF on HTTPUpdateServer's /update upload and two OTA example sketches, in range for "
+        "2.0.17 only (< 3.2.1). No firmware includes HTTPUpdateServer or registers a WebServer "
+        "upload handler; the display's /api/ota/* routes take no body and start the signed "
+        "pull-OTA (firmware/projects/canary-display/src/net/glass_web.cpp), and firmware/canary's "
+        "upload handler is compiled out of every SECURACV_BUILD_RELEASE image "
+        "(firmware/canary/lib/securacv_network/src/securacv_network.cpp)."
+    ),
+    "GHSA-vqp8-ppw3-8mc7": (
+        "Path traversal in WebServer::serveStatic(); the range '<=3.3.11, 4.0.0-alpha1' is "
+        "unreadable here, covers 2.0.17 and excludes 3.3.12, which carries the fix. No firmware "
+        "source calls serveStatic() or registers its own RequestHandler: every route in "
+        "firmware/common/network/node_http.cpp, setup_portal.cpp and the display's "
+        "glass_web.cpp and provision.cpp is a fixed on()/onNotFound() handler."
+    ),
+    "GHSA-w887-pg2w-mfj2": (
+        "Plaintext WebServer::authenticate(user, pass) and AuthenticationMiddleware accept a "
+        "bare username; the range '<=3.3.11, 4.0.0-alpha1' is unreadable here, covers 2.0.17 "
+        "and excludes 3.3.12, which carries the fix. No firmware source calls authenticate() "
+        "or uses AuthenticationMiddleware; the display's write gate is its own Origin and CSRF "
+        "check (firmware/projects/canary-display/src/net/glass_web.cpp)."
+    ),
+    "GHSA-5476-9jjq-563m": (
+        "CRLF injection through WebServer::sendHeader(); the range '<= 3.3.0-alpha1, <= 3.2.0' "
+        "is unreadable here, covers 2.0.17 and excludes 3.3.12, which rejects CR/LF. Every "
+        "sendHeader() call in firmware/common/network/node_http.cpp, setup_portal.cpp and the "
+        "display's glass_web.cpp and provision.cpp passes a literal name and value, so no "
+        "request data reaches a header."
+    ),
+    "GHSA-rhcj-7qrh-rrwh": (
+        "A pull_request_target weakness in upstream's own dangerjs.yml workflow, ranged by one "
+        "master commit, not a version. It is not code in the 2.0.17 or 3.3.12 core packages we "
+        "install (firmware/envs/platformio/platforms.ini and the arduino-cli rows), so no image "
+        "contains it, and the advisory reports no tampered release."
+    ),
+    "GHSA-h52q-xhg2-6jw8": (
+        "Poisoned-pipeline weaknesses in upstream's tests_results.yml and tests_wokwi.yml "
+        "workflows, ranged by commits (fixed in a7cec020, 2024), not versions. It is not code "
+        "in the 2.0.17 or 3.3.12 core packages we install (firmware/envs/platformio/"
+        "platforms.ini and the arduino-cli rows), so no image contains it, and the advisory "
+        "reports no tampered release."
+    ),
+    "GHSA-9w88-r2vm-qfc4": (
+        "Range 'NA': the flaws are in ESP-IDF's BluFi example (examples/bluetooth/blufi/main/"
+        "blufi_example_main.c, blufi_security.c), which no Arduino core links at 4.4.7 or 5.5.5. "
+        "No firmware source calls esp_blufi_*; BLE onboarding is Improv over NimBLE-Arduino "
+        "(firmware/common/network/improv_ble.cpp)."
+    ),
+    # The four below name ESP-IDF v5.5.5 (fixed in 5.5.6). Two independent
+    # reviews read each against the sdkconfig and archives the 3.3.12 core
+    # ships prebuilt (esp32-core-3.3.12-libs, the esp32-arduino-libs that
+    # pioarduino 55.03.312-1 names; the arduino-cli esp32s3-libs zip carries
+    # the same sdkconfig, liblwip.a and libbt.a; CONFIG_IDF_INIT_VERSION
+    # "5.5.5"). Every core-3 image is an ESP32-S3 or ESP32-C6
+    # (firmware/envs/platformio/platforms.ini's [platform_core3] users and the
+    # 3.3.12 arduino-cli rows), and no env rebuilds the IDF (no
+    # custom_sdkconfig, no board_espidf.*, no framework = arduino, espidf), so
+    # those prebuilt libs are the ones linked. PrebuiltSdkconfigVerdicts in
+    # scripts/tests/test_check_firmware_advisories.py fails if either changes.
+    "GHSA-ch63-jxm5-vmvf": (
+        "lwIP dns_lookup() overruns its caller's one-address buffer only when "
+        "CONFIG_LWIP_DNS_MAX_HOST_IP is 2 or more, and the ESP-IDF 5.5.5 that arduino-esp32 "
+        "3.3.12 ships prebuilt sets it to 1 on every chip (esp32s3, esp32c6, esp32c3, esp32), so "
+        "a cache entry holds one address. No env rebuilds the IDF (no custom_sdkconfig, no "
+        "board_espidf.custom_sdkconfig, no framework = arduino, espidf; "
+        "scripts/tests/test_check_firmware_advisories.py holds that), so the stock libs pinned "
+        "by firmware/envs/platformio/platforms.ini [platform_core3] are the ones linked. The "
+        "advisory names ESP-IDF 5.1 and earlier unaffected, so core 2.0.17's 4.4.7 is out of range."
+    ),
+    "GHSA-49x8-xqjg-2pjg": (
+        "The flaw is in ESP-TEE's RISC-V trap entry, which is compiled only into a build with "
+        "CONFIG_SECURE_ENABLE_TEE and a tee partition, and is reached only by code already "
+        "running on the device; the 3.3.12 core's prebuilt ESP-IDF 5.5.5 leaves that option "
+        "unset on esp32c6 and links no esp_tee library, and the ESP32-S3 has no ESP-TEE at all. "
+        "No C6 env rebuilds the IDF or carries a tee partition "
+        "(firmware/projects/canary-display/partitions_display_4mb.csv, min_spiffs.csv in "
+        "firmware/envs/platformio/canary-sense.ini and canary-sentinel.ini), so no Canary image "
+        "contains the trap code."
+    ),
+    "GHSA-rjvf-fxv5-x87j": (
+        "The overflow is in the Bluedroid BLE Mesh adapter's bt_mesh_bta_gatts_cb, which "
+        "ESP-IDF 5.5.5 compiles only with CONFIG_BLE_MESH_NODE plus PB_GATT or the GATT proxy "
+        "server, and the 3.3.12 core's prebuilt libs leave NODE and PB_GATT unset on every chip, "
+        "so the handler is absent even from the classic-ESP32 Bluedroid libbt.a. The advisory "
+        "also names ESP-IDF 5.1 and earlier: 4.4.7 compiles the handler under the same guard "
+        "(mesh_bearer_adapt.c), and arduino-esp32 2.0.17's prebuilt libs leave NODE and PB_GATT "
+        "unset too, so its esp32, esp32s3 and esp32c3 libbt.a carry no bt_mesh_bta_gatts_cb. "
+        "Every core-3 image is an ESP32-S3 or ESP32-C6 built with the NimBLE host "
+        "(firmware/envs/platformio/platforms.ini), no firmware source calls esp_ble_mesh_*, and "
+        "our BLE is NimBLE-Arduino (firmware/common/network/improv_ble.cpp)."
+    ),
+    "GHSA-xcpr-5mqp-9qvv": (
+        "The A2DP sink parser runs only after a paired Classic Bluetooth audio source connects "
+        "to a Bluedroid build that called esp_a2d_sink_init; the ESP32-S3 and ESP32-C6 have no "
+        "Classic Bluetooth radio, and the 3.3.12 core's prebuilt ESP-IDF 5.5.5 builds them "
+        "without Bluedroid or A2DP. No core-3 env targets the classic ESP32 (every user of "
+        "firmware/envs/platformio/platforms.ini's core-3 pin is an S3 or C6, and the classic "
+        "esp32cam and esp32-wroom envs in firmware/canary/platformio.ini stay on core 2.0.17, "
+        "whose ESP-IDF 4.4.7 the advisory does not list), and no firmware source calls "
+        "esp_a2d_* or esp_bt_gap_*."
+    ),
+}
 
 _CONSTRAINT_RE = re.compile(r"^(>=|<=|==|=|>|<)?\s*v?(\d+(?:[.-]\d+)*)$")
 

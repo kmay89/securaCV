@@ -27,7 +27,7 @@ profiles:
     notes: XIAO ESP32-S3 Sense — OPI PSRAM enabled (required for camera streaming)
     fqbn: esp32:esp32:XIAO_ESP32S3:PSRAM=opi,FlashSize=8M,CDCOnBoot=default,USBMode=hwcdc
     platforms:
-      - platform: esp32:esp32 (3.3.8)
+      - platform: esp32:esp32 (3.3.12)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     # esp_camera ships inside the esp32 core (3.x), but NimBLE-Arduino (2.x)
     # is a separate library the FULL profile's BLE stack needs — ble_config.h

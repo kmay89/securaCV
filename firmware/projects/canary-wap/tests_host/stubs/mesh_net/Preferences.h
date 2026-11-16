@@ -4,7 +4,7 @@
  * real one does. A test can count the writes each key took
  * (host_sim::nvs_writes, "<namespace>/<key>") and make every write fail
  * (host_sim::nvs_writes_fail): on the Arduino-ESP32 cores canary-wap
- * builds with (PlatformIO's pinned 3.3.8, the Arduino CLI leg's latest
+ * builds with (PlatformIO's pinned 3.3.12, the Arduino CLI leg's latest
  * 3.x), putBytes returns 0 when nvs_set_blob or nvs_commit fails (a full
  * or worn partition), and the value is not stored. A zero-length
  * putBytes (or a null value) is refused the same way and writes nothing,
@@ -13,8 +13,8 @@
  * returns strlen, 0.
  *
  * remove() and isKey() follow Arduino-ESP32's Preferences.cpp, which is
- * byte-identical in 3.3.8 (PlatformIO's pin) and 3.3.12 (the latest 3.x
- * tag when sweep F137 read it): remove() refuses a read-only handle or a
+ * byte-identical in 3.3.8 (PlatformIO's pin when sweep F137 read it) and
+ * 3.3.12 (then the latest 3.x tag, the pin since 2026-11-16): remove() refuses a read-only handle or a
  * null key before NVS sees it (false, nothing logged), and otherwise calls
  * nvs_erase_key(), which answers ESP_ERR_NVS_NOT_FOUND for a key that is
  * not there; Preferences logs that at error level ("nvs_erase_key fail")

@@ -1,5 +1,5 @@
 /* The chip target as sdkconfig.h names it, for the ESP32-S3 on the core-3
- * line ([env:full]: pioarduino, Arduino-ESP32 3.3.8 / ESP-IDF 5.5.4;
+ * line ([env:full]: pioarduino, Arduino-ESP32 3.3.12 / ESP-IDF 5.5.5;
  * test_camera_thermal.cpp, sweep F432). IDF defines CONFIG_IDF_TARGET_* in
  * this header and nowhere on the compiler's command line. */
 #ifndef STUB_IDF_TSENS_SDKCONFIG_ESP32S3_IDF5_H

@@ -143,6 +143,50 @@
   advisory page or the libraries bundled inside ESP-IDF, and says so on
   every run. Pinned by `test_check_firmware_advisories.py`, which makes no
   network request.
+- **Its first run, triaged: two advisories reached shipped firmware.** It
+  flagged 18 advisories against the pinned cores, and each was read
+  against the code. GHSA-8cmm-3887-r32j (critical): core 2.0.17's
+  WebServer sized a stack buffer from a client's multipart boundary while
+  it parsed the request, before any of our handlers ran, so any host on
+  the LAN could overflow the stack of canary-vision and the core-2
+  displays (watch, nightstand-s3, touch169, amoled241, nightlight-c3)
+  with bytes it chose: a remote crash, and per the advisory possibly code
+  execution. Their images through 2.4.20 carry it, and no 2.x release
+  fixes it. From 2.4.21 those builds link a vendored copy of 2.0.17's WebServer
+  with upstream's fix backported (a boundary over 70 bytes is refused,
+  `firmware/third_party/WebServer-2.0.17-securacv`), and nothing else
+  changed in it. Pinned by `test_vendored_webserver_core2.py` and by the
+  `test_webserver_boundary.cpp` host test under AddressSanitizer;
+  compile-tested, not run on a device. Each of those builds is also
+  checked for the WebServer it says it linked (the PlatformIO dependency
+  graph, arduino-cli's JSON result; `check_webserver_link.py`): CI fails
+  one that linked the core's copy, and the release and flasher workflows
+  withhold its image. The flagship links no WebServer.
+  GHSA-g764-gwc3-75m5 (ESP-IDF 5.5.4's DHCP server on every core-3
+  SoftAP) is fixed by the move to 3.3.12 / ESP-IDF 5.5.5 below, which is
+  compile-tested on the new core and not yet on a bench. The rest reach
+  no image (an API we never call, a library we never include, upstream's
+  own CI, or an ESP-IDF example); `REVIEWED` in
+  `check_firmware_advisories.py` records each verdict with the file that
+  shows it, and a test holds every entry to a GHSA id and a cited file or
+  version. Four ESP-IDF advisories that name the new 5.5.5 itself (fixed
+  in 5.5.6) reach no image either, each read against the sdkconfig and
+  libraries the 3.3.12 core ships prebuilt: GHSA-ch63-jxm5-vmvf (lwIP DNS;
+  the cache holds one address), GHSA-49x8-xqjg-2pjg (ESP-TEE; not built),
+  GHSA-rjvf-fxv5-x87j (Bluedroid BLE Mesh GATT; not built, on core 2
+  either) and GHSA-xcpr-5mqp-9qvv (Bluedroid A2DP sink; the S3 and C6 have
+  no Classic Bluetooth), and a test fails if an env rebuilds the IDF or a
+  core-3 build targets a chip other than the ESP32-S3 or ESP32-C6.
+- **The core-2 line is end of life, and that is the residual.** The
+  flagship, canary-vision and the core-2 displays build on arduino-esp32
+  2.0.17 with ESP-IDF 4.4.7, and ESP-IDF 4.4 receives no further fixes, so
+  a flaw found later in its Wi-Fi, lwIP, mbedTLS or Bluetooth stays in
+  those images; the advisory check cannot warn about it, because recent
+  ESP-IDF advisories list no v4.4 release among their affected versions
+  (GHSA-rjvf-fxv5-x87j says only in its text that v5.1 and earlier are
+  affected and get no fix). Moving canary-vision and the
+  core-2 displays to core 3 is the follow-up, each after a bench pass on
+  its board (`firmware/PLATFORMS.md`, `THREAT_MODEL.md`).
 - **The docs say what the code does (A2-21, A2-10, A2-17).** The threat
   model no longer claims reproducible builds or a binary hash you can
   compare (the images embed their compile date), and its supply-chain
@@ -156,6 +200,48 @@
   heart and breathing rates are unsigned, and Home Assistant's own
   entities check no signature. The page and the FAQ's phone-home answer
   now say so, and name the Sense's clock sync.
+
+### Firmware toolchain: the core-3 line moves to Arduino-ESP32 3.3.12 / ESP-IDF 5.5.5
+
+- **Every core-3 build moves to arduino-esp32 3.3.12 on ESP-IDF 5.5.5
+  (GHSA-g764-gwc3-75m5).** ESP-IDF 5.5.4's lwIP DHCP server reads past
+  its buffer while it parses a client's options, and every core-3 product
+  that runs a SoftAP runs that server. ESP-IDF 5.5.5 fixes it.
+  `platform_core3` moves from pioarduino `55.03.38-1` to `55.03.312-1`,
+  which moves canary-wap, canary-sense, canary-sentinel (`door`, `window`,
+  `hallway`, `demo-head`), the display dash family with `dash7`,
+  `nightstand7` and `nightstand-c6`, and canary `[env:full]` in one edit,
+  and in `pio project config` before and after, this move changes those
+  envs' resolved `platform` and nothing else. The Arduino-CLI rows move with it (the WAP's release
+  rows, `ram_audit.yml`, the CSI-module matrix and the display's core-3
+  rows in `firmware.yml` and both release workflows), and so do both
+  `sketch.yaml` files, so the WAP and the display's core-3 rows now share
+  one core and the SBOM lists one arduino-esp32 3.x component. The
+  display's core-3 rows and profiles also move NimBLE-Arduino 2.5.0 to
+  2.5.2, the version the PlatformIO dash envs already link (2.5.1 fixed a
+  build and crash on core 3.3.11 for C5/C6 targets).
+- **What 3.3.12 changes that a user can see.** Its WebServer hardening
+  answers a request line or URI over its new limits with 414 or 431 and
+  drops a client that takes more than 10 s to send its headers; the
+  display's glass page and setup portal and the canary-sense / sentinel
+  setup portals run on it. The core also brings a newer mDNS component
+  (fleet discovery) and LittleFS (the WAP's filesystem).
+- **Re-read, not respelled.** The claims this tree makes about the core's
+  internals were checked against 3.3.12 / IDF 5.5.5 and still hold:
+  esp-mqtt's publish path and network-timeout default (IDF 5.5.5 pins
+  esp-mqtt `0e9ec17`; the only change from `6af4446` that the bridge
+  touches is that `esp_mqtt_client_stop()` no longer gives up when its
+  DISCONNECT write fails), every chip's precompiled sdkconfig still
+  leaving `CONFIG_ESP_TLS_INSECURE` and `CONFIG_NVS_ENCRYPTION` unset, no
+  `mbedtls/x509write_crt.h` in the libs, IDF's NVS sources byte-identical
+  to 5.5.4's, and the C6's `Serial` on UART0 (GPIO16/17) when CDC-on-boot
+  is off. `firmware/canary/scripts/check_route_security.py` also refuses
+  `custom_pio_lock`, a build key 55.03.312-1 reads and 55.03.38-1 did not.
+- **Not yet on a bench.** Every board on this line is compile-tested on
+  the new pin until a bench pass: canary-wap (camera, SD, LittleFS with
+  A/B rollback, BLE pairing, mDNS, MQTT over TLS), the display's RGB
+  panels under WiFi, nightstand-c6's SPI panel, and canary-sense's radar
+  UART.
 
 ### The 2.4.20 follow-ups: kernel, integration and app 0.9.2, Flasher 0.12.7, Lab 0.4.3, iOS 0.9.2
 

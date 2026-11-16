@@ -91,7 +91,7 @@ size_t health_ring_message() {
   return n;
 }
 
-// Arduino-ESP32 3.3.8's Preferences, as load_beacon_set() calls it, over one
+// Arduino-ESP32 3.3.12's Preferences, as load_beacon_set() calls it, over one
 // in-memory namespace. getBytes() answers as Preferences::getBytes() does:
 // the row's length (0) for a missing or empty row, 0 with nothing read for a
 // row longer than the buffer, and otherwise what nvs_get_blob() answers,

@@ -189,6 +189,9 @@ jobs:
           cp _tooling/firmware/scripts/make_factory.py firmware/scripts/make_factory.py
           cp _tooling/firmware/scripts/build_flash_manifest.py firmware/scripts/build_flash_manifest.py
           cp _tooling/firmware/scripts/stamp_app_desc.py firmware/scripts/stamp_app_desc.py
+          # The WebServer link check the build steps below run on their logs
+          # (GHSA-8cmm-3887-r32j); a tag cut before it existed has none.
+          cp _tooling/firmware/scripts/check_webserver_link.py firmware/scripts/check_webserver_link.py
           mkdir -p canary-local/devices
           cp _tooling/canary-local/devices/flash.json canary-local/devices/flash.json
           # The display env list is derived, not typed (flavor_envs.py,
@@ -306,13 +309,42 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
-          pio run -e canary-vision-default -e canary-vision-xiao-c3 -e canary-vision-xiao-s3
+          # Every canary-vision env serves HTTP on core 2.0.17, whose own
+          # WebServer sizes a stack buffer from the client's multipart boundary
+          # (GHSA-8cmm-3887-r32j); a tree that carries $WEBSERVER_LIB links
+          # that patched copy through lib_extra_dirs, and each log's dependency
+          # graph says which one an env linked. With the copy present, linking
+          # the core's fails, as firmware.yml's webserver_gate does on every
+          # push. A tag cut before the copy existed builds as it was released,
+          # with the core's WebServer, and warns that it does.
+          WEBSERVER_LIB="$GITHUB_WORKSPACE/firmware/third_party/WebServer-2.0.17-securacv"
+          CHECK="$GITHUB_WORKSPACE/firmware/scripts/check_webserver_link.py"
+          LOG="$RUNNER_TEMP/pio-run-canary-vision.log"
+          pio run -e canary-vision-default -e canary-vision-xiao-c3 -e canary-vision-xiao-s3 2>&1 | tee "$LOG"
+          BUILT=${PIPESTATUS[0]}
+          if [ "$BUILT" -ne 0 ]; then exit "$BUILT"; fi
+          if ! python3 "$CHECK" pio "$LOG"; then
+            if [ -d "$WEBSERVER_LIB" ]; then
+              echo "::error::canary-vision links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j). Its envs list ../../third_party in lib_extra_dirs: firmware/third_party/WebServer-2.0.17-securacv/README.md."
+              exit 1
+            fi
+            echo "::warning::this tag predates firmware/third_party/WebServer-2.0.17-securacv — its canary-vision images link core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j), as that release did"
+          fi
           # The C3 Super Mini reach port — non-blocking, same reasoning as the
-          # canary reach ports above.
-          if pio run -e canary-vision-c3-super-mini; then
-            echo "✓ canary-vision-c3-super-mini"
-          else
+          # canary reach ports above. With the copy present, one that links
+          # the core's WebServer is withheld, as a failed build is.
+          LOG="$RUNNER_TEMP/pio-run-canary-vision-c3-super-mini.log"
+          pio run -e canary-vision-c3-super-mini 2>&1 | tee "$LOG"
+          BUILT=${PIPESTATUS[0]}
+          if [ "$BUILT" -ne 0 ]; then
             echo "::warning::canary-vision-c3-super-mini failed to build — absent from this flasher build"
+          elif python3 "$CHECK" pio "$LOG"; then
+            echo "✓ canary-vision-c3-super-mini"
+          elif [ -d "$WEBSERVER_LIB" ]; then
+            rm -rf .pio/build/canary-vision-c3-super-mini
+            echo "::error::canary-vision-c3-super-mini links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j) — withheld from this flasher build"
+          else
+            echo "::warning::this tag predates firmware/third_party/WebServer-2.0.17-securacv — canary-vision-c3-super-mini links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j), as that release did"
           fi
 
       - name: Build canary-sense (release)
@@ -338,8 +370,8 @@ jobs:
           PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense" \
             pio run -e canary-sense-default -e canary-sense-wellbeing
 
-      - name: Install Arduino CLI + ESP32 core 3.3.8 (WAP row, exclusive)
-        # Pinned to the WAP sketch.yaml's core (3.3.8, the core inside
+      - name: Install Arduino CLI + ESP32 core 3.3.12 (WAP row, exclusive)
+        # Pinned to the WAP sketch.yaml's core (3.3.12, the core inside
         # platform_core3), read from this dispatch ref, not from the tag: a
         # refresh of an older tag builds its WAP image on today's pin, not on
         # the core that tag's own release used. firmware.yml's PR row keeps
@@ -352,11 +384,11 @@ jobs:
         # (installing one already present is a no-op) and the unversioned
         # FQBN would take the newer (RELEASE_LESSONS 2026-07-29 (k)). The
         # action uninstalls the installed esp32:esp32 release before
-        # installing, and fails the step unless 3.3.8 is the one installed
+        # installing, and fails the step unless 3.3.12 is the one installed
         # afterwards.
         uses: ./.github/actions/setup-arduino-esp32
         with:
-          core-version: "3.3.8"
+          core-version: "3.3.12"
           exclusive-core: "true"
           # Exact library pins, the same as firmware-release.yml's WAP row:
           # a factory image is flashed onto new devices, so it must not link
@@ -387,7 +419,7 @@ jobs:
 
       - name: Install ESP32 core 2.0.17 + display libraries (core-2 row, exclusive)
         # SPI-panel row (watch). Exclusive because the wap row above installed
-        # core 3.3.8 into this same ~/.arduino15 — see the action's
+        # core 3.3.12 into this same ~/.arduino15 — see the action's
         # exclusive-core input and RELEASE_LESSONS 2026-07-29 (k).
         uses: ./.github/actions/setup-arduino-esp32
         with:
@@ -415,30 +447,61 @@ jobs:
         #
         # Older-tag tolerance is kept: this workflow checks out an existing
         # fw-v* tag, which may predate the display sketch entirely.
+        #
+        # --library: core 2.0.17's own WebServer sizes a stack buffer from the
+        # client's multipart boundary (GHSA-8cmm-3887-r32j) and no 2.x release
+        # fixes it, so the watch links the patched copy the tag carries; a
+        # --library library wins over the core's. Passing it is not proof the
+        # build used it, so the compile reports in JSON
+        # (builder_result.used_libraries) and check_webserver_link.py echoes
+        # the compiler's output, then holds the one WebServer to that copy;
+        # an image that linked any other is withheld, as a failed build is.
+        # A tag cut before that copy existed builds as it was released, with
+        # the core's WebServer, and warns that it does (as the Vision and
+        # board-env steps do). firmware/third_party/WebServer-2.0.17-securacv/README.md.
+        env:
+          WEBSERVER_LIB: firmware/third_party/WebServer-2.0.17-securacv
         run: |
           if [ ! -d firmware/projects/canary-display/arduino/canary_display ]; then
             echo "::warning::this tag predates the display sketch — display products absent from this rebuild"
             exit 0
+          fi
+          LIBARGS=()
+          EXPECT=()
+          if [ -d "$WEBSERVER_LIB" ]; then
+            LIBARGS=(--library "$GITHUB_WORKSPACE/$WEBSERVER_LIB")
+            EXPECT=(--expect "$GITHUB_WORKSPACE/$WEBSERVER_LIB")
+          else
+            echo "::warning::this tag predates $WEBSERVER_LIB — its watch image links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j), as that release did"
           fi
           cd firmware/projects/canary-display/arduino/canary_display
           rm -f flavor_local.h
           LIBDIR="$(arduino-cli config get directories.user)/libraries"
           mkdir -p "${LIBDIR}"
           cp lv_conf.h "${LIBDIR}/lv_conf.h"
-          if ! arduino-cli compile \
+          RESULT="$RUNNER_TEMP/display-watch-compile.json"
+          arduino-cli compile --format json \
+              "${LIBARGS[@]}" \
               --fqbn 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc' \
-              --output-dir /tmp/display-watch-build canary_display.ino; then
-            echo "::warning::canary-display 'watch' build failed — absent from the browser flasher this rebuild"
-          fi
+              --output-dir /tmp/display-watch-build canary_display.ino > "$RESULT" || true
+          RC=0
+          python3 "$GITHUB_WORKSPACE/firmware/scripts/check_webserver_link.py" cli "$RESULT" "${EXPECT[@]}" || RC=$?
+          case "$RC" in
+            0) ;;
+            2) rm -rf /tmp/display-watch-build
+               echo "::warning::canary-display 'watch' build failed — absent from the browser flasher this rebuild" ;;
+            *) rm -rf /tmp/display-watch-build
+               echo "::error::canary-display 'watch' did not link $WEBSERVER_LIB (GHSA-8cmm-3887-r32j) — withheld from the browser flasher this rebuild" ;;
+          esac
 
-      - name: Install ESP32 core 3.3.10 + display libraries (core-3 row, exclusive)
+      - name: Install ESP32 core 3.3.12 + display libraries (core-3 row, exclusive)
         # RGB-panel row (dash + modes): only GFX 1.6.x takes the bounce buffers
         # that keep the 4.3B glass from flickering under WiFi load
         # (display_dash.cpp, RELEASE_LESSONS 2026-07-28 (j)).
         if: hashFiles('firmware/projects/canary-display/arduino/canary_display/canary_display.ino') != ''
         uses: ./.github/actions/setup-arduino-esp32
         with:
-          core-version: "3.3.10"
+          core-version: "3.3.12"
           exclusive-core: "true"
           libraries: |
             GFX Library for Arduino@1.6.6
@@ -446,7 +509,7 @@ jobs:
             PubSubClient@2.8.0
             Crypto@0.4.0
             ArduinoJson@7.4.3
-            NimBLE-Arduino@2.5.0
+            NimBLE-Arduino@2.5.2
 
       - name: Build canary-display dash + modes (arduino-cli, core-3 fqbn + staged lv_conf.h)
         run: |
@@ -571,12 +634,29 @@ jobs:
               isolated) PIO=(env "PLATFORMIO_CORE_DIR=$GITHUB_WORKSPACE/.pio-core-$E" pio run -e "$E") ;;
               *)        PIO=(env "PLATFORMIO_CORE_DIR=$GITHUB_WORKSPACE/.pio-core-$CORE" pio run -e "$E") ;;
             esac
-            if "${PIO[@]}" </dev/null; then
-              rm -rf "${STAGE:?}/$E"
-              cp -R ".pio/build/$E" "$STAGE/$E"
-            else
+            # The core-2 envs serve HTTP on 2.0.17 and, in a tree that carries
+            # firmware/third_party/WebServer-2.0.17-securacv, link that
+            # patched copy (GHSA-8cmm-3887-r32j); the log's dependency graph
+            # says which copy an env linked. With the copy present, one that
+            # linked the core's is withheld, as a failed build is; a tag cut
+            # before the copy existed is rebuilt as released, with a warning.
+            LOG="$RUNNER_TEMP/pio-run-$E.log"
+            "${PIO[@]}" </dev/null 2>&1 | tee "$LOG"
+            BUILT=${PIPESTATUS[0]}
+            if [ "$BUILT" -ne 0 ]; then
               echo "::warning::${E} build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
+              continue
             fi
+            if ! python3 "$GITHUB_WORKSPACE/firmware/scripts/check_webserver_link.py" pio "$LOG"; then
+              if [ -d "$GITHUB_WORKSPACE/firmware/third_party/WebServer-2.0.17-securacv" ]; then
+                rm -rf ".pio/build/$E"
+                echo "::error::${E} links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j) — withheld from the browser flasher this rebuild"
+                continue
+              fi
+              echo "::warning::this tag predates firmware/third_party/WebServer-2.0.17-securacv — ${E} links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j), as that release did"
+            fi
+            rm -rf "${STAGE:?}/$E"
+            cp -R ".pio/build/$E" "$STAGE/$E"
           done < <(jq -r '.[] | [.env, .core] | @tsv' <<<"$DISPLAY_ENVS")
           mkdir -p .pio/build
           cp -R "$STAGE"/. .pio/build/

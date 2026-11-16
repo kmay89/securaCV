@@ -10,7 +10,7 @@ the same code in a plain hosted translation unit. Sweep F212's first
 identity_json.h passed every host test and could not compile in the sketch:
 `using namespace wap_json;` and then `boolean(w, ...)`, ambiguous next to
 Arduino.h's typedef. tests_host/arduino_globals.h carries those names
-(arduino-esp32 3.3.8's), and the Makefile puts it in front of every
+(arduino-esp32 3.3.12's), and the Makefile puts it in front of every
 translation unit it compiles with `-include` (sweep F229): the sketch builds
 put Arduino.h in front of the .ino, and the suites put its names in front of
 the sketch's .cpp files too, which is stricter than those files' own

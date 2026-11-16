@@ -29,6 +29,13 @@ This script derives the document from the files the build actually reads:
   firmware/common/*/library.{json,properties}
   firmware/canary/lib/*/library.json       the first-party libraries the
                                            images are built from
+  firmware/third_party/*/library.properties
+                                           the upstream libraries built from
+                                           a patched, committed copy (each
+                                           one's README.md), linked by every
+                                           env whose lib_extra_dirs lists
+                                           that storage and every Arduino-CLI
+                                           row that passes it with --library
   .github/workflows/*.yml                  the esp32:esp32 core versions the
                                            Arduino-CLI build path pins through
                                            .github/actions/setup-arduino-esp32
@@ -50,9 +57,9 @@ the remedy):
       profile;
   (b) every core a sketch profile pins is a workflow pin, or the Arduino core
       inside that product's PlatformIO platform (PLATFORM_FACTS) — the WAP
-      sketch's 3.3.8 tracks the pioarduino platform while its Arduino-CLI
-      rows build on the action's "latest", a recorded release decision
-      (firmware/PLATFORMS.md), not a drift;
+      sketch's 3.3.12 tracks the pioarduino platform while firmware.yml's
+      Arduino-CLI PR row builds on the action's "latest", a recorded release
+      decision (firmware/PLATFORMS.md), not a drift;
   (c) every library a workflow row pins on its core line (GFX / lvgl / NimBLE
       split their majors along the core boundary) is pinned to the same
       version by every profile, of a product that row builds, on that core.
@@ -75,6 +82,16 @@ What is STILL declared by hand — and where, so it is reviewable:
   states (exact when the spec is exact, a `securacv:version_spec` property
   when it is a range) — PlatformIO has no lockfile, so the resolved version is
   only known to the build that ran.
+  VENDORED_FACTS below says, for each firmware/third_party library, what it
+  was copied from, which Arduino core it belongs to and which advisories its
+  patch resolves: its manifest names only the copy. That becomes the
+  component's CycloneDX `pedigree` (ancestor + backport patch). A directory
+  with no entry, an entry with no directory, a manifest version that does
+  not name the declared core, and a build path on any other core each fail
+  generation. The copy is group `securacv` (built from this repository's
+  sources), so scripts/check_firmware_advisories.py does not compare it;
+  the upstream advisories are still compared with the Arduino core it came
+  from, which every product that links it also depends on.
 
 Determinism: sorted components, dependencies and properties; a serialNumber
 derived (UUIDv5) from the content; NO timestamp unless `--timestamp` is given,
@@ -125,6 +142,7 @@ FLAVORS = REPO / "firmware" / "flavors.json"
 PLATFORMS_INI = REPO / "firmware" / "envs" / "platformio" / "platforms.ini"
 COMMON_DIR = REPO / "firmware" / "common"
 CANARY_LIB_DIR = REPO / "firmware" / "canary" / "lib"
+THIRD_PARTY_DIR = REPO / "firmware" / "third_party"
 WORKFLOWS = REPO / ".github" / "workflows"
 ARDUINO_ACTION = "./.github/actions/setup-arduino-esp32"
 # The workflows whose Arduino-CLI rows build an image that ships: the signed
@@ -142,7 +160,9 @@ SPEC_VERSION = "1.5"
 # `securacv:check` property names the schema gate.
 # 1.2.0: the libraries a release row installs through arduino-cli are
 # components (`arduino-lib:`), and `securacv:resolved` is only on a range.
-GENERATOR_VERSION = "1.2.0"
+# 1.3.0: the firmware/third_party libraries are components (`vendored:`) with
+# a CycloneDX pedigree, joined to the products whose builds link them.
+GENERATOR_VERSION = "1.3.0"
 ROOT_REF = "securacv-firmware"
 # The exact spec lint.yml and sbom.yml install for --validate. The extra is
 # load-bearing (jsonschema[format-nongpl]: the iri-reference checker), and
@@ -172,12 +192,12 @@ PLATFORM_FACTS: dict[str, dict] = {
         "website": "https://registry.platformio.org/platforms/platformio/espressif32",
     },
     "https://github.com/pioarduino/platform-espressif32/releases/download/"
-    "55.03.38-1/platform-espressif32.zip": {
+    "55.03.312-1/platform-espressif32.zip": {
         "name": "pioarduino/platform-espressif32",
-        "version": "55.03.38-1",
+        "version": "55.03.312-1",
         "exact": True,
-        "arduino_core": "3.3.8",
-        "esp_idf": "5.5.4",
+        "arduino_core": "3.3.12",
+        "esp_idf": "5.5.5",
         "website": "https://github.com/pioarduino/platform-espressif32",
     },
 }
@@ -186,6 +206,38 @@ LICENSES = {
     # SPDX ids for the two frameworks; declared, not read from the packages.
     "arduino-esp32": "LGPL-2.1-or-later",
     "esp-idf": "Apache-2.0",
+}
+
+# Hand-declared facts for each library vendored under firmware/third_party,
+# keyed by its directory name: upstream code built from a committed copy with
+# a fix backported (firmware/third_party/README.md). The copy's own
+# library.properties names only the copy (`WebServer`, `2.0.17+securacv.1`);
+# where it came from, the one core it belongs to and what the patch resolves
+# are typed here once and become its CycloneDX pedigree. The bytes are held
+# to that origin by scripts/tests/test_vendored_webserver_core2.py, against
+# the upstream sha256 of every file its README records.
+VENDORED_FACTS: dict[str, dict] = {
+    "WebServer-2.0.17-securacv": {
+        "upstream": "espressif/arduino-esp32",
+        "upstream_path": "libraries/WebServer",
+        # A library of this core's tag: every build that links the copy must
+        # be on this core (a later core carries its own, fixed WebServer).
+        "arduino_core": "2.0.17",
+        # The upstream library.properties at that tag: the name the copy
+        # keeps, and the version a build log prints for the core's own copy.
+        "upstream_name": "WebServer",
+        "upstream_version": "2.0.0",
+        "license": LICENSES["arduino-esp32"],
+        "resolves": ("GHSA-8cmm-3887-r32j",),
+        "notes": "Upstream's fix (bb86048, first released in 3.3.8) refuses a multipart "
+                 "boundary over 70 characters in _parseRequest; this copy carries that cap "
+                 "and adds its own two: the same cap in _parseForm, and a fixed-size "
+                 "boundary buffer in place of the stack array the client's boundary sized. "
+                 "Nothing else is backported. Host-tested under AddressSanitizer, and "
+                 "compiled by the CI builds that link it; not run on a device. Every "
+                 "file's upstream sha256 and the exact diff: "
+                 "firmware/third_party/WebServer-2.0.17-securacv/README.md.",
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -406,8 +458,7 @@ def first_party_libs(base: Path, prefix: str) -> list[dict]:
             name, version, license_id = data.get("name"), data.get("version"), data.get("license")
             src = manifest
         elif props.exists():
-            kv = dict(ln.split("=", 1) for ln in _lines(props.read_text(encoding="utf-8"))
-                      if "=" in ln)
+            kv = _properties(props)
             name, version, license_id = kv.get("name"), kv.get("version"), kv.get("license")
             src = props
         else:
@@ -422,6 +473,57 @@ def first_party_libs(base: Path, prefix: str) -> list[dict]:
     return libs
 
 
+def _properties(path: Path) -> dict[str, str]:
+    """An Arduino library.properties as {key: value}."""
+    return dict((k.strip(), v.strip()) for k, v in
+                (ln.split("=", 1) for ln in _lines(path.read_text(encoding="utf-8"))
+                 if "=" in ln and not ln.startswith("#")))
+
+
+def vendored_libs() -> list[dict]:
+    """One entry per THIRD_PARTY_DIR/<dir>: the copy's name and version from
+    its library.properties, and the VENDORED_FACTS declared for it.
+
+    Refused, not skipped: a directory with no facts (the document would list
+    a patched library with no origin), facts with no directory (a pedigree
+    for code nothing builds), a directory with no manifest, and a manifest
+    version that is not `<arduino_core>+securacv.<n>` — the version is how a
+    build log tells the copy from the core's (`WebServer @ 2.0.0`), and it
+    must name the core the facts say the copy belongs to."""
+    dirs = (sorted(p for p in THIRD_PARTY_DIR.iterdir() if p.is_dir())
+            if THIRD_PARTY_DIR.is_dir() else [])
+    stale = sorted(set(VENDORED_FACTS) - {d.name for d in dirs})
+    if stale:
+        raise SystemExit(f"gen_firmware_sbom.py: VENDORED_FACTS names {', '.join(stale)}, "
+                         f"which is not a directory of "
+                         f"{THIRD_PARTY_DIR.relative_to(REPO)} — drop the entry with the copy")
+    libs: list[dict] = []
+    for d in dirs:
+        rel = d.relative_to(REPO)
+        facts = VENDORED_FACTS.get(d.name)
+        if facts is None:
+            raise SystemExit(f"gen_firmware_sbom.py: {rel} has no VENDORED_FACTS entry — "
+                             f"declare what it was copied from, the Arduino core it belongs "
+                             f"to and the advisories its patch resolves before regenerating")
+        manifest = d / "library.properties"
+        if not manifest.is_file():
+            raise SystemExit(f"gen_firmware_sbom.py: {rel} has no library.properties")
+        kv = _properties(manifest)
+        name, version = kv.get("name"), kv.get("version")
+        if not name or not version:
+            raise SystemExit(f"gen_firmware_sbom.py: {manifest.relative_to(REPO)} lacks a "
+                             f"name or version")
+        if not re.fullmatch(re.escape(facts["arduino_core"]) + r"\+securacv\.\d+", version):
+            raise SystemExit(f"gen_firmware_sbom.py: {manifest.relative_to(REPO)} says "
+                             f"version={version}, but VENDORED_FACTS declares the copy "
+                             f"from core {facts['arduino_core']} — write it "
+                             f"{facts['arduino_core']}+securacv.<n>")
+        libs.append({"ref": f"vendored:{d.name}", "dir": d.resolve(), "name": name,
+                     "version": version, "path": str(rel),
+                     "manifest": str(manifest.relative_to(REPO)), **facts})
+    return libs
+
+
 _MATRIX_EXPR = re.compile(r"^\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\s*\}\}$")
 _MATRIX_ANY = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\s*\}\}")
 # The sketch a workflow row goes on to compile: an explicit `.ino` under a
@@ -431,6 +533,10 @@ _MATRIX_ANY = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\s
 _INO_TARGET_RE = re.compile(
     r"firmware/projects/([A-Za-z0-9_.-]+)/arduino/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.ino\b")
 _CD_SKETCH_RE = re.compile(r"\bcd\s+firmware/projects/([A-Za-z0-9_.-]+)/arduino/[A-Za-z0-9_.-]+\b")
+# A firmware/third_party library a row hands arduino-cli (`--library`, never
+# the `--libraries` storage flag), named in the step's run: block or its env:.
+_VENDORED_PATH_RE = re.compile(r"\bfirmware/third_party/([A-Za-z0-9_.+-]+)")
+_LIBRARY_FLAG_RE = re.compile(r"--library(?![A-Za-z0-9_-])")
 
 
 def _yaml():
@@ -476,8 +582,25 @@ def _products_built(steps: list[dict]) -> list[str]:
     return sorted(found)
 
 
+def _vendored_passed(steps: list[dict], resolve) -> list[str]:
+    """The firmware/third_party directories these steps hand arduino-cli: a
+    path named in the run: block or the env: of a step whose run: block
+    passes --library, after `resolve` (the row's matrix entry) — so a matrix
+    leg whose entry has no such key names nothing. Comment lines are not
+    read."""
+    found: set[str] = set()
+    for step in steps:
+        run = "\n".join(ln for ln in str(step.get("run") or "").splitlines()
+                        if not ln.strip().startswith("#"))
+        if not _LIBRARY_FLAG_RE.search(run):
+            continue
+        text = "\n".join([run, *(str(v) for v in (step.get("env") or {}).values())])
+        found.update(_VENDORED_PATH_RE.findall(resolve(text)))
+    return sorted(found)
+
+
 def arduino_core_pins() -> list[dict]:
-    """[{version|None, where, libraries, products}] for every
+    """[{version|None, where, libraries, products, vendored}] for every
     setup-arduino-esp32 call in the workflows. A literal `core-version` is a
     pin; `${{ matrix.a.b }}` resolves through the job's strategy.matrix, and
     the row's library pins through the same matrix entry; empty means the
@@ -485,7 +608,9 @@ def arduino_core_pins() -> list[dict]:
     compile — read off the run: blocks up to the job's next core install,
     because the release jobs install the WAP's core and both display cores
     in one job. A row that names no sketch is refused: the SBOM could not
-    say which product's sketch.yaml it must agree with."""
+    say which product's sketch.yaml it must agree with. `vendored` are the
+    firmware/third_party directories those steps pass with --library
+    (_vendored_passed), resolved through the same matrix entry."""
     yaml = _yaml()
     pins: list[dict] = []
     for path in sorted(WORKFLOWS.glob("*.yml")):
@@ -522,14 +647,18 @@ def arduino_core_pins() -> list[dict]:
                             resolved = [_resolve_matrix(ln, axis, entry) for ln in lib_lines]
                             pins.append({"version": str(entry[key]), "where": where,
                                          "libraries": _library_pins(resolved, where),
-                                         "products": products})
+                                         "products": products,
+                                         "vendored": _vendored_passed(
+                                             following,
+                                             lambda t, a=axis, e=entry: _resolve_matrix(t, a, e))})
                     continue
                 if "${{" in raw:
                     raise SystemExit(f"gen_firmware_sbom.py: {where} passes core-version "
                                      f"as an expression this script cannot resolve: {raw}")
                 pins.append({"version": raw or None, "where": where,
                              "libraries": _library_pins(lib_lines, where),
-                             "products": products})
+                             "products": products,
+                             "vendored": _vendored_passed(following, lambda t: t)})
     return pins
 
 
@@ -719,6 +848,26 @@ def build_document(timestamp: str | None = None) -> dict:
             comp["licenses"] = [{"license": {"id": lib["license"]}}]
         add(lib["ref"], comp)
 
+    # The firmware/third_party copies, and every build that links one: a
+    # PlatformIO env whose lib_extra_dirs lists the storage (PlatformIO
+    # searches it ahead of the framework's libraries) and an Arduino-CLI row
+    # that passes the directory with --library. Each must be on the core the
+    # copy belongs to; a copy of one core's library in another core's build
+    # would be a record of the mistake, not of the build.
+    vendored = vendored_libs()
+    vendored_envs: dict[str, set[str]] = {v["ref"]: set() for v in vendored}
+    vendored_rows: dict[str, set[str]] = {v["ref"]: set() for v in vendored}
+
+    def link_vendored(v: dict, core: str | None, where: str, products: list[str]) -> None:
+        if core != v["arduino_core"]:
+            raise SystemExit(
+                f"gen_firmware_sbom.py: {where} links {v['path']} ({v['name']} "
+                f"{v['version']}, a library of core {v['arduino_core']}) on core "
+                f"{core or 'latest'} — a later core carries its own copy; drop the "
+                f"storage from that env's lib_extra_dirs, or the --library from that row")
+        for product_name in products:
+            dep(f"product:{product_name}", v["ref"])
+
     for product in flavors:
         name, pdir = product["name"], REPO / product["dir"]
         cfg = PioConfig(pdir)
@@ -747,6 +896,11 @@ def build_document(timestamp: str | None = None) -> dict:
             dep(pref, f"platform:{section}")
             boards.add(facts["board"])
             reaches_common = reaches_common or facts["reaches_common"]
+            if THIRD_PARTY_DIR.resolve() in {(pdir / e).resolve() for e in facts["lib_extra_dirs"]}:
+                for v in vendored:
+                    link_vendored(v, PLATFORM_FACTS[literal]["arduino_core"],
+                                  f"{name}:{env}", [name])
+                    vendored_envs[v["ref"]].add(f"{name}:{env}")
             for spec in facts["lib_deps"]:
                 lib = parse_lib_spec(spec)
                 key = (f"lib:{lib['group']}/{lib['name']}" if lib["group"]
@@ -902,6 +1056,73 @@ def build_document(timestamp: str | None = None) -> dict:
     for pin in workflow_pins:
         dep(ROOT_REF, core_path(pin["version"], f"arduino-cli ({pin['where']})"))
 
+    by_dir = {Path(v["path"]).name: v for v in vendored}
+    for pin in workflow_pins:
+        for dirname in pin.get("vendored") or ():
+            v = by_dir.get(dirname)
+            if v is None:
+                raise SystemExit(
+                    f"gen_firmware_sbom.py: {pin['where']} passes --library "
+                    f"{THIRD_PARTY_DIR.relative_to(REPO)}/{dirname}, which is not a "
+                    f"library directory there")
+            link_vendored(v, pin["version"], f"{pin['where']} (core "
+                          f"{pin['version'] or 'latest'})", pin["products"])
+            vendored_rows[v["ref"]].add(f"arduino-cli ({pin['where']})")
+    for v in vendored:
+        envs, rows = sorted(vendored_envs[v["ref"]]), sorted(vendored_rows[v["ref"]])
+        if not envs and not rows:
+            raise SystemExit(
+                f"gen_firmware_sbom.py: no build env lists {v['path']} (through "
+                f"{THIRD_PARTY_DIR.relative_to(REPO)} in lib_extra_dirs) and no Arduino-CLI "
+                f"row passes it with --library — delete the copy and its VENDORED_FACTS "
+                f"entry rather than record a patched library nothing builds")
+        upstream, tag, upath = v["upstream"], v["arduino_core"], v["upstream_path"]
+        add(v["ref"], {
+            "type": "library",
+            "group": "securacv",
+            "name": v["name"],
+            "version": v["version"],
+            "description": f"{upath} of {upstream} {tag}, built from the patched copy in "
+                           f"{v['path']} instead of the core's own",
+            "licenses": [{"license": {"id": v["license"]}}],
+            "pedigree": {
+                "ancestors": [{
+                    "type": "library",
+                    "group": upstream.split("/", 1)[0],
+                    "name": v["upstream_name"],
+                    "version": v["upstream_version"],
+                    "description": f"{upath} at {upstream} tag {tag}; "
+                                   f"{v['upstream_version']} is that library.properties' "
+                                   f"own version",
+                    "purl": f"pkg:github/{upstream}@{tag}#{upath}",
+                    "externalReferences": [{
+                        "type": "vcs",
+                        "url": f"https://github.com/{upstream}/tree/{tag}/{upath}",
+                    }],
+                }],
+                "patches": [{
+                    "type": "backport",
+                    "resolves": [{
+                        "type": "security",
+                        "id": ghsa,
+                        "source": {
+                            "name": "GitHub Security Advisories",
+                            "url": f"https://github.com/{upstream}/security/advisories/{ghsa}",
+                        },
+                    } for ghsa in v["resolves"]],
+                }],
+                "notes": v["notes"],
+            },
+            "properties": props({
+                "securacv:path": v["path"],
+                "securacv:manifest": v["manifest"],
+                "securacv:first_party": "false",
+                "securacv:provenance": f"{v['path']}/README.md",
+                **({"securacv:envs": ",".join(envs)} if envs else {}),
+                **({"securacv:build_paths": "; ".join(rows)} if rows else {}),
+            }),
+        })
+
     # The libraries the release rows install are part of what ships: the WAP
     # release image and the display images built through arduino-cli link
     # them, not the PlatformIO lib_deps above. One component per name and
@@ -945,7 +1166,7 @@ def build_document(timestamp: str | None = None) -> dict:
             "Move the pin that is wrong — the sketch.yaml profile, or the workflow row's "
             "core-version / library pins (through .github/actions/setup-arduino-esp32) — "
             "and regenerate; firmware/PLATFORMS.md records which axis leads and why the "
-            "WAP's Arduino-CLI rows float on the action's latest.")
+            "WAP's Arduino-CLI PR row floats on the action's latest.")
     for pin in sketch_pins:
         core_path(pin["version"], f"sketch.yaml ({pin['sketch']}/{pin['profile']})")
 
@@ -977,9 +1198,9 @@ def build_document(timestamp: str | None = None) -> dict:
             "version": GENERATOR_VERSION,
             "description": "scripts/gen_firmware_sbom.py — derives this document from "
                            "flavors.json, the resolved PlatformIO configs, platforms.ini, "
-                           "the first-party library manifests, the workflows' Arduino "
-                           "core pins and the sketch.yaml profiles (the two Arduino axes "
-                           "are asserted to agree)",
+                           "the first-party and vendored library manifests, the workflows' "
+                           "Arduino core pins and the sketch.yaml profiles (the two Arduino "
+                           "axes are asserted to agree)",
         }]},
         "component": {
             "type": "firmware",
@@ -998,7 +1219,9 @@ def build_document(timestamp: str | None = None) -> dict:
             "securacv:generator": "scripts/gen_firmware_sbom.py",
             "securacv:check": "python3 scripts/gen_firmware_sbom.py --check --validate",
             "securacv:declared_by_hand": "PLATFORM_FACTS (Arduino core / ESP-IDF release per "
-                                         "platform literal); everything else is derived",
+                                         "platform literal) and VENDORED_FACTS (the origin "
+                                         "and resolved advisories of each firmware/"
+                                         "third_party copy); everything else is derived",
         }),
     })
     return {

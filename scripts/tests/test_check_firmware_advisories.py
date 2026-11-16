@@ -19,7 +19,14 @@ What is pinned and why:
   • the committed SBOM: every third-party name maps to an upstream, and the
     only gaps are the floating lib_deps of FLOATING_PRODUCTS;
   • RELEASE_WORKFLOWS equals gen_firmware_sbom.py's, and audit.yml runs the
-    check weekly with the job's own token and no secret.
+    check weekly with the job's own token and no secret;
+  • every REVIEWED key is a well-formed GHSA id and every verdict names a
+    file or a version, and a repository file it names exists;
+  • the verdicts that rest on the 3.3.12 core's prebuilt sdkconfig keep their
+    footing: no .ini rebuilds the IDF (custom_sdkconfig, board_espidf.*,
+    custom_component*, boards_dir, a project boards/ JSON with an espidf key,
+    framework = arduino, espidf on a core-3 env), and every core-3 env and
+    sketch.yaml profile is an ESP32-S3 or an ESP32-C6.
 
 No test makes a network request. Discovered by lint.yml's
 `unittest discover -s scripts/tests`.
@@ -29,6 +36,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -282,6 +290,118 @@ class TheTree(unittest.TestCase):
         self.assertEqual(runs[0]["run"].strip(), "python3 scripts/check_firmware_advisories.py")
         self.assertEqual(runs[0]["env"], {"GH_TOKEN": "${{ github.token }}"})
         self.assertNotIn("secrets.", text)
+
+
+class Reviewed(unittest.TestCase):
+    """A REVIEWED entry silences an advisory for every pinned version, so it
+    must name what it was reviewed against: a well-formed GHSA id (the OSV
+    schema's alphabet), and a verdict that cites a file or a version. A file
+    in this repository that a verdict cites must exist, so a rename or a
+    deletion reopens the review instead of leaving a dead citation."""
+
+    GHSA = re.compile(r"GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}")
+    PATH = re.compile(r"[\w.-]+(?:/[\w.-]+)+\.\w+")
+    VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
+    OURS = ("firmware/", "scripts/", "src/", "spec/", "docs/", "sbom/", ".github/")
+
+    def test_every_key_is_a_ghsa_id_and_every_verdict_names_a_file_or_a_version(self):
+        self.assertTrue(ca.REVIEWED)
+        for ghsa, why in ca.REVIEWED.items():
+            self.assertTrue(self.GHSA.fullmatch(ghsa), ghsa)
+            self.assertNotIn(ghsa, why, "a verdict says why, not which")
+            paths, versions = self.PATH.findall(why), self.VERSION.findall(why)
+            self.assertTrue(paths or versions, f"{ghsa} names no file and no version")
+            for path in paths:
+                if path.startswith(self.OURS):
+                    self.assertTrue((REPO / path).exists(), f"{ghsa} cites {path}")
+
+    def test_the_check_rejects_a_malformed_id(self):
+        for bad in ("GHSA-aaaa", "GHSA-8cmm-3887-r32", "ghsa-8cmm-3887-r32j",
+                    "GHSA-8cmm-3887-r32j ", "CVE-2026-42854", "GHSA-8cmm-3887-r3bj"):
+            self.assertIsNone(self.GHSA.fullmatch(bad), bad)
+
+
+class PrebuiltSdkconfigVerdicts(unittest.TestCase):
+    """The REVIEWED verdicts for the ESP-IDF 5.5.5 advisories rest on the
+    sdkconfig the 3.3.12 core ships prebuilt for the ESP32-S3 and the
+    ESP32-C6 (DNS cache of one address, no ESP-TEE, NimBLE host, no
+    Bluedroid). They hold only while no env rebuilds the IDF with its own
+    sdkconfig and every core-3 build is one of those two chips; a change to
+    either fails here, which reopens those reviews."""
+
+    VERDICTS = ("GHSA-ch63-jxm5-vmvf", "GHSA-49x8-xqjg-2pjg",
+                "GHSA-rjvf-fxv5-x87j", "GHSA-xcpr-5mqp-9qvv")
+    CHIPS = ("esp32s3", "esp32c6")
+
+    @staticmethod
+    def _chip(text: str) -> str:
+        return re.sub(r"[-_]", "", text.lower())
+
+    def test_the_verdicts_are_reviewed(self):
+        for ghsa in self.VERDICTS:
+            self.assertIn(ghsa, ca.REVIEWED)
+
+    # pioarduino 55.03.312-1 recompiles the IDF for an env's custom_sdkconfig,
+    # for an espidf.custom_sdkconfig in the board manifest (which an env's
+    # board_espidf.* key, or a board JSON from boards_dir or the project's own
+    # boards/, puts there) and for custom_component_* keys; `framework =
+    # arduino, espidf` builds the whole IDF. Any of them would replace the
+    # prebuilt sdkconfig the verdicts were read against.
+    REBUILD_KEY = re.compile(
+        r"\s*(?:custom_sdkconfig|board_espidf\.[\w.]+|custom_component\w*|boards_dir)\s*=")
+
+    def test_no_env_rebuilds_the_idf_with_its_own_sdkconfig(self):
+        inis = [p for p in (REPO / "firmware").rglob("*.ini") if ".pio" not in p.parts]
+        self.assertTrue(inis)
+        for ini in inis:
+            for n, line in enumerate(ini.read_text(encoding="utf-8").splitlines(), 1):
+                code = re.split(r"\s;|^;", line, maxsplit=1)[0]
+                self.assertIsNone(self.REBUILD_KEY.match(code),
+                                  f"{ini.relative_to(REPO)}:{n}")
+        for ini in (REPO / "firmware").rglob("platformio.ini"):
+            for board in (ini.parent / "boards").glob("*.json"):
+                self.assertNotIn("espidf", json.loads(board.read_text(encoding="utf-8")),
+                                 f"{board.relative_to(REPO)}")
+
+    def test_the_rebuild_guard_sees_every_trigger(self):
+        for line in ("custom_sdkconfig = CONFIG_LWIP_DNS_MAX_HOST_IP=2",
+                     "board_espidf.custom_sdkconfig = CONFIG_SECURE_ENABLE_TEE=y",
+                     "custom_component_add = espressif/esp_tee",
+                     "boards_dir = boards"):
+            self.assertIsNotNone(self.REBUILD_KEY.match(line), line)
+        self.assertIsNone(self.REBUILD_KEY.match("board_build.partitions = min_spiffs.csv"))
+
+    def test_every_core3_build_is_an_esp32s3_or_an_esp32c6(self):
+        gs = _load("gen_firmware_sbom", "scripts/gen_firmware_sbom.py")
+        import configparser
+        plat = configparser.ConfigParser(interpolation=None)
+        plat.read(REPO / "firmware" / "envs" / "platformio" / "platforms.ini", encoding="utf-8")
+        core3 = plat["platform_core3"]["platform"].strip()
+        seen = 0
+        for ini in sorted((REPO / "firmware").rglob("platformio.ini")):
+            if ".pio" in ini.parts:
+                continue
+            cfg = gs.PioConfig(ini.parent)
+            for name in cfg.envs():
+                env = cfg.env(name)
+                if env.get("platform", "").strip() != core3:
+                    continue
+                seen += 1
+                self.assertNotIn("espidf", env.get("framework", ""),
+                                 f"{ini.relative_to(REPO)} env:{name} builds the IDF itself")
+                chip = self._chip(env.get("board_build.mcu") or env.get("board", ""))
+                self.assertTrue(any(c in chip for c in self.CHIPS),
+                                f"{ini.relative_to(REPO)} env:{name} builds core 3 for {chip!r}")
+        self.assertGreater(seen, 0, "no env resolved to [platform_core3]")
+        import yaml
+        for sketch in sorted((REPO / "firmware").rglob("sketch.yaml")):
+            for name, prof in (yaml.safe_load(sketch.read_text(encoding="utf-8"))
+                               .get("profiles") or {}).items():
+                cores = [p.get("platform", "") for p in prof.get("platforms") or []]
+                if any(c.startswith("esp32:esp32 (3.") for c in cores):
+                    chip = self._chip(prof["fqbn"].split(":")[2])
+                    self.assertTrue(any(c in chip for c in self.CHIPS),
+                                    f"{sketch.relative_to(REPO)} profile {name} is {chip!r}")
 
 
 if __name__ == "__main__":

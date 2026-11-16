@@ -39,6 +39,6 @@ it needs one (`projects/canary-wap/`, `projects/canary-display/`).
 
 ## Lessons
 
-`LESSONS_LEARNED.md` holds 190 dated entries. Grep it for the subsystem you
+`LESSONS_LEARNED.md` holds 191 dated entries. Grep it for the subsystem you
 are touching (`rg <subsystem> firmware/LESSONS_LEARNED.md`); do not read it
 whole. Append an entry when you pay for a new one.

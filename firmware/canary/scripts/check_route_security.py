@@ -4581,9 +4581,12 @@ def symbol_binding_problems(sources: dict, includes: dict) -> list:
 # include_dir, a linker script; a key in any case, as configparser lowercases
 # it), pioarduino's `custom_component_add` (each entry an ESP-IDF component the
 # IDF component manager fetches from Espressif's registry into [env:full]'s
-# build, platform-espressif32 55.03.38's espidf.py and component_manager.py:
+# build, platform-espressif32 55.03.312-1's espidf.py and component_manager.py:
 # code no rule reads, which library_problems does not hold, as it is no
-# library), PlatformIO's own `!command` dynamic value (a command run at build
+# library), its `custom_pio_lock` (true installs the pio-lock package into the
+# build's Python environment and registers its targets with SCons, the same
+# release's platform.py and builder/main.py: build-time code no rule reads),
+# PlatformIO's own `!command` dynamic value (a command run at build
 # time whose stdout becomes flags) and a `${sysenv.*}` reference (the
 # build-time environment's value, which can bring a library or a flag the
 # check cannot read: the file text is read, so an empty environment at check
@@ -4591,7 +4594,9 @@ def symbol_binding_problems(sources: dict, includes: dict) -> list:
 # include-path flags, `@file` and `!command` were added in F338's fifth
 # review, which found each slipped the first version of this rule;
 # `${sysenv.*}` anywhere, and a key in any case, in its eleventh round;
-# `custom_component_add` in that round's second review.)
+# `custom_component_add` in that round's second review; `custom_pio_lock`
+# when platform_core3 moved to 55.03.312-1, which reads it; 55.03.38-1 did
+# not.)
 _BUILD_INPUT = re.compile(
     r"(?<![\w-])(?:-Wl,|-Xlinker\b|--wrap\b|--defsym\b|-T(?=\s*[\w$./])"
     r"|--?include\b|--?imacros\b"
@@ -4599,7 +4604,7 @@ _BUILD_INPUT = re.compile(
     r"|--sysroot\b|--?specs\b|-fplugin\b|-wrapper\b|-Xpreprocessor\b|-Xassembler\b"
     r"|-Wp,|-Wa,|-B(?=[\s/$.=~]))"
     r"|^[ \t]*(?i:extra_scripts?|lib_extra_dirs|src_dir|lib_dir|include_dir|"
-    r"board_build\.ldscript|custom_component_add)[ \t]*[=:]"
+    r"board_build\.ldscript|custom_component_add|custom_pio_lock)[ \t]*[=:]"
     r"|(?:symlink|file)://"
     r"|\$\{\s*(?i:sysenv)\s*\."
     r"|(?:^[ \t]*|[=:,][ \t]*)![ \t]*(?=\S)"

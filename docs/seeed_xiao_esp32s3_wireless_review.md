@@ -47,7 +47,7 @@ sleep/TX-power plumbing. Four gaps were found and fixed on this branch:
 | WiFi mode discipline | `WIFI_AP_STA` at provisioning, dropped to `WIFI_STA` once the home link holds (F4) | `WiFi.mode()` must be set appropriately before operations | ✅ (goes beyond Seeed: avoids Espressif's unstable AP+client+BLE combo) |
 | Bluetooth Classic | Not used anywhere | "The ESP32-S3 has no Bluetooth Classic hardware in the chip" | ✅ |
 | BLE library | NimBLE-Arduino 2.3.8 (`[env:full]`) | Examples use bluedroid `BLEDevice.h`; NimBLE-Arduino named as the lighter alternative | ✅ (NimBLE is the better of Seeed's two options; ~half the flash/RAM) |
-| Core 3.x API level | NimBLE 2.x `NimBLEConnInfo&` callbacks, pioarduino core 3.3.8 / IDF 5.5.4 | Wiki flags breaking changes for Arduino-ESP32 ≥ 3.0.0 | ✅ |
+| Core 3.x API level | NimBLE 2.x `NimBLEConnInfo&` callbacks, pioarduino core 3.3.12 / IDF 5.5.5 (3.3.8 / 5.5.4 at review time) | Wiki flags breaking changes for Arduino-ESP32 ≥ 3.0.0 | ✅ |
 | BLE scan params | Passive scan, interval 320 units (200 ms), window 160 units (100 ms) (`ble_scout_nimble.cpp`) | Example: `setInterval(100); setWindow(99)` (window ≤ interval); "active scan uses more power" | ✅ (window ≤ interval respected; passive chosen deliberately for privacy + power) |
 | MTU | 247 (single LE Data Length Extension packet, no fragmentation) | Suggests `setMTU(517)` for max throughput | ✅ deliberate tradeoff — status reads are ≤244 B; documented at the call site |
 | Notify cadence | 5 s status update interval | "delay(10) — bluetooth stack will go into congestion if too many packets are sent" | ✅ (far below congestion territory) |

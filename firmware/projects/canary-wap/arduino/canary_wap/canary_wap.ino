@@ -12384,7 +12384,7 @@ static bool start_wifi_ap() {
 // chain state beside it, for a later boot that can read them. Corruption is
 // IDF's to meet first, and the sketch sees only its answer. An entry whose
 // data CRC fails IDF erases inside the read it refuses, leaving the blob's
-// index, so that boot halts; on IDF 5.5 (this sketch's core 3.3.8) the next
+// index, so that boot halts; on IDF 5.5 (this sketch's core 3.3.12) the next
 // boot's nvs_flash_init() erases an index whose data is gone, so that boot
 // finds no key and makes a new identity. A data chunk whose header fails
 // IDF's check is erased when IDF loads the page, and the index with it in
@@ -14540,7 +14540,7 @@ static void factory_reset_by_hold() {
   #if FEATURE_VAULT_SNAPSHOT
   // Safe on the loop task, and in safe mode, where init() never ran and the
   // trigger defaults it persists are already all off.
-  vault_snapshot::clear_pubkey();   // the unlock key, and every trigger off
+  vault_snapshot::clear_pubkey();   // the vault's recipient public key, and every trigger off
   #endif
   if (securacv_ota_set_manifest_url(nullptr) != ESP_OK) {
     Serial.println("[RESET] Update manifest override: NVS refused the erase (kept)");

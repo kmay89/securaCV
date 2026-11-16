@@ -2,10 +2,12 @@
 # first-party code. Only genuinely third-party or mechanically
 # generated trees are excluded.
 
-# Third-party dependency trees. Nothing third-party is committed today
-# (vendor/ holds only gitignored fetched ONNX models), but anything that
-# ever lands there must not count as first-party code.
+# Third-party dependency trees. vendor/ holds only gitignored fetched ONNX
+# models, but anything that ever lands there must not count as first-party
+# code. firmware/third_party/ is committed upstream code, patched where its
+# README says (arduino-esp32 2.0.17's WebServer, for the core-2 builds).
 vendor/** linguist-vendored
+firmware/third_party/** linguist-vendored
 
 # Arduino IDE parity sketch for Canary Display: mechanically generated
 # from the canonical PlatformIO tree (see

@@ -396,7 +396,7 @@ static key_at_rest::Facts key_at_rest_facts() {
   // so it is written in plaintext). NVS is ciphertext only under NVS
   // encryption, which neither Arduino core this tree builds on compiles in
   // (2.0.17's precompiled sdkconfig leaves CONFIG_SECURE_FLASH_ENC_ENABLED,
-  // and with it CONFIG_NVS_ENCRYPTION, unset; 3.3.8's, env:full's, leaves
+  // and with it CONFIG_NVS_ENCRYPTION, unset; 3.3.12's, env:full's, leaves
   // CONFIG_NVS_ENCRYPTION unset). So on every canary image the
   // key's NVS is plaintext, fused board or not, and this fact is false — set
   // here, not read, so no core's sdkconfig can make it claim more. It learns

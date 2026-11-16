@@ -79,10 +79,11 @@ resolver against PlatformIO's own `pio project config` for every build env
 
 | From | What the document takes |
 |------|-------------------------|
-| `firmware/flavors.json` | the products (`canary`, `canary-wap`, `canary-vision`, `canary-display`, `canary-sense`), their project dir, the envs CI builds and the subset that ships |
+| `firmware/flavors.json` | the products (`canary`, `canary-wap`, `canary-vision`, `canary-display`, `canary-sense`, `canary-sentinel`), their project dir, the envs CI builds and the subset that ships |
 | each project's `platformio.ini` + its `extra_configs` | the **resolved** config of every build env: `platform`, `framework`, `board`, `lib_deps`, `lib_extra_dirs` — through `extends` chains and `${section.option}` interpolation, the same way PlatformIO reads them |
 | `firmware/envs/platformio/platforms.ini` | which pin section each env's platform literal is ([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md)) |
 | `firmware/common/*/library.json` / `library.properties`, `firmware/canary/lib/*/library.json` | the first-party libraries (name, version, license) the images are built from |
+| `firmware/third_party/*/library.properties` | the upstream libraries built from a patched, committed copy ([`firmware/third_party/README.md`](../firmware/third_party/README.md)): the copy's name and version, and which builds link it — every build env whose `lib_extra_dirs` lists that storage and every Arduino-CLI row that passes the directory with `--library` |
 | `.github/workflows/*.yml` | every `esp32:esp32` core version the Arduino-CLI build path pins through `.github/actions/setup-arduino-esp32` (a literal, a matrix axis, or the action's "latest"), with each row's library pins and the sketch it goes on to compile |
 | `firmware/projects/*/arduino/*/sketch.yaml` | the other Arduino axis: the core (`esp32:esp32 (X.Y.Z)`) and library pins of every sketch profile, parsed from YAML — the files' comments quote core numbers too |
 | `firmware/canary/include/canary_config.h` | `FIRMWARE_VERSION` — the one release train (`scripts/lint_fw_version_sync.sh` holds the other six copies to it) |
@@ -94,7 +95,12 @@ component; and every library a release row installs through `arduino-cli`
 (`firmware-release.yml`, `flasher-release.yml`: the signed WAP image and the
 display images built that way, and the Flasher's factory images) an
 `arduino-lib:<name>@<version>` `library` component, with those rows as its
-`securacv:build_paths` and the products they build depending on it. The `dependencies` graph joins them: product → platform → Arduino
+`securacv:build_paths` and the products they build depending on it. Each
+`firmware/third_party` copy is a `vendored:<dir>` `library` component with a
+`pedigree` (below), its envs in `securacv:envs`, its Arduino-CLI rows in
+`securacv:build_paths`, and the products those builds belong to depending on
+it: today the core-2 WebServer with the GHSA-8cmm-3887-r32j backport, linked
+by Vision, the core-2 displays and Sentinel Lite. The `dependencies` graph joins them: product → platform → Arduino
 core → ESP-IDF, product → libraries. Which envs a platform or library serves is
 in each component's `securacv:envs` property; which build paths reach an
 Arduino core — PlatformIO platform sections, workflow rows, sketch profiles —
@@ -137,7 +143,7 @@ version to agree with, and a sketch may pin libraries its row leaves floating
 float; neither ships an image).
 That leaves one recorded residual, not a drift: the WAP's release rows
 (`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
-`csi_module_disable_matrix.yml`) pin 3.3.8, the WAP sketch's core and the one
+`csi_module_disable_matrix.yml`) pin 3.3.12, the WAP sketch's core and the one
 inside `platform_core3`, so rule 1 holds them to the sketch; `firmware.yml`'s
 PR row still builds on "latest" by design, the early warning for the next
 core, and appears under the `framework:arduino-esp32@latest` component. That
@@ -149,7 +155,7 @@ holds each WAP row to its side of the split.
 
 ### What is still declared by hand
 
-Two facts are not in any file of ours, and are typed into the generator once,
+Three facts are not in any file of ours, and are typed into the generator once,
 where a reviewer can see them:
 
 - **`PLATFORM_FACTS`** — for each platform literal in `platforms.ini`, the
@@ -162,6 +168,17 @@ where a reviewer can see them:
   line ships today, not a promise. Since 2026-09-22 every section pins
   exactly (canary's `espressif32 @ ^7.0.0` was the last float —
   `firmware/PLATFORMS.md`), so the document carries no such component today.
+- **`VENDORED_FACTS`** — for each `firmware/third_party` copy, what it was
+  copied from (repository, tag, path, and the upstream manifest's own name and
+  version), the one Arduino core it belongs to, and the advisories its patch
+  resolves. They become the `vendored:<dir>` component's CycloneDX `pedigree`
+  (one ancestor, one `backport` patch). The copy is group `securacv`, built
+  from this repository's sources, so `check_firmware_advisories.py` does not
+  compare it; upstream's advisories are still compared with the core it came
+  from, which every product that links it also depends on. Generation fails
+  on a directory with no entry, an entry with no directory, a manifest version
+  that is not `<core>+securacv.<n>`, a build that links the copy on any other
+  core, and a copy no build links.
 - **The two framework licenses** (LGPL-2.1-or-later for arduino-esp32,
   Apache-2.0 for ESP-IDF).
 
@@ -222,8 +239,9 @@ python3 scripts/gen_firmware_sbom.py --verify-with-pio     # needs `pio` on PATH
 ```
 
 Run the first after changing a platform pin, a `lib_deps` line, a library
-manifest, an Arduino core pin in a workflow, a `sketch.yaml` profile, or the
-firmware version, and commit the result in the same change. `--validate`
+manifest (a `firmware/third_party` copy's included), an Arduino core pin in a
+workflow, a `sketch.yaml` profile, or the firmware version, and commit the
+result in the same change. `--validate`
 needs `pip install 'cyclonedx-python-lib[json-validation]==11.12.0'` (the
 generator names that spec when the import fails, and the unit tests hold
 every workflow's pip line and this page to that one string); it is read-only,
