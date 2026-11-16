@@ -851,6 +851,52 @@ def frigate_recording(path, selected: list) -> tuple | None:
     return recording, not_recording
 
 
+def frigate_mqtt_images(path) -> list | None:
+    """The cameras in Frigate's own config that leave its per-camera MQTT
+    images on, in file order: every declared camera whose `mqtt.enabled` is
+    not false. Frigate publishes them unless the camera turns them off (the
+    top-level `mqtt:` is the broker connection and has no say), and
+    `snapshots.enabled` does not cover them. None when the wizard cannot
+    tell: the file cannot be read, declares no cameras, uses YAML anchors,
+    aliases or merge keys, or holds an mqtt value that is not a plain
+    boolean. The wizard then says nothing rather than guess."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if _YAML_INDIRECTION_RE.search(text):
+        return None
+    declared = yaml_child_keys(text, ("cameras",)) or []
+    if not declared:
+        return None
+    left_on = []
+    for name in declared:
+        own = yaml_value_at(text, ("cameras", name, "mqtt", "enabled"))
+        publishes = True if own is None else _yaml_bool(own)
+        if publishes is None:
+            return None
+        if publishes and name not in left_on:
+            left_on.append(name)
+    return left_on
+
+
+def frigate_mqtt_images_note(config_path) -> str:
+    """The done screen's line where Frigate keeps its own config and leaves
+    its per-camera MQTT images on; "" when every camera turns them off or
+    the wizard cannot tell (frigate_mqtt_images)."""
+    left_on = frigate_mqtt_images(config_path) if config_path is not None else None
+    if not left_on:
+        return ""
+    which = "that camera" if len(left_on) == 1 else "each of those cameras"
+    return (
+        "Frigate's config leaves its MQTT snapshot images on for "
+        + ", ".join(left_on)
+        + ": for each object they track, Frigate publishes a cropped JPEG to "
+        "the broker, which keeps it as a retained message. To stop that, add "
+        f"mqtt: {{enabled: false}} under {which} in {config_path}, then restart Frigate."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Daily digest automation (created for real, or honestly skipped)
 # ---------------------------------------------------------------------------
@@ -1748,6 +1794,11 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     + (", ".join(camera_slugs) if camera_slugs else "every camera Frigate reports")
                     + "."
                 )
+                # The one thing the wizard did not write and still checks:
+                # Frigate's per-camera MQTT images, on unless a camera says off.
+                images_note = frigate_mqtt_images_note(find_frigate_config())
+                if images_note:
+                    frigate_note = f"{frigate_note} {images_note}"
                 if reviews_note:
                     frigate_note = f"{frigate_note} {reviews_note}"
 
@@ -1800,6 +1851,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
         Frigate's default; this file does not set them), are the person's
         choice in Frigate. The wizard's `retention_days` is the witness
         log's retention, never a video retention, and is not passed here.
+
+        Each camera also gets `mqtt.enabled: false`. That camera-level key
+        is not the broker block at the top: it is Frigate's per-camera image
+        publishing, on by default, which sends a cropped JPEG of each
+        tracked object to `frigate/<camera>/<label>/snapshot` as a retained
+        message, whatever `snapshots.enabled` says. Frigate's `frigate/events`
+        messages, the ones SecuraCV seals, are published either way.
         """
         # Emit a string as a single-quoted YAML scalar (doubling embedded
         # quotes), the same treatment the camera URL below gets. `broker_host`
@@ -1860,6 +1918,10 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 "    # record role as well, and switch this block on:",
                 "    # https://docs.frigate.video/configuration/record",
                 "    record:",
+                "      enabled: false",
+                "    # Frigate publishes a JPEG of every object it tracks to the",
+                "    # broker unless this says off. Events still flow either way.",
+                "    mqtt:",
                 "      enabled: false",
                 "",
             ]

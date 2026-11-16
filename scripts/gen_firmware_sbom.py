@@ -57,7 +57,11 @@ the remedy):
       split their majors along the core boundary) is pinned to the same
       version by every profile, of a product that row builds, on that core.
 A row on "latest" has nothing to agree with, and a sketch may pin more
-libraries than its row does; neither is a finding.
+libraries than its row does; neither is a finding. Separately, every library
+a release row (RELEASE_WORKFLOWS) installs must name one exact version
+(check_release_rows_pinned): `arduino-cli lib install Name` is Library
+Manager's newest that day, in a signed image. Those libraries are emitted as
+`arduino-lib:<name>@<version>` components of the products the row builds.
 
 What is STILL declared by hand — and where, so it is reviewable:
   PLATFORM_FACTS below maps each platform literal to the Arduino core and
@@ -123,6 +127,11 @@ COMMON_DIR = REPO / "firmware" / "common"
 CANARY_LIB_DIR = REPO / "firmware" / "canary" / "lib"
 WORKFLOWS = REPO / ".github" / "workflows"
 ARDUINO_ACTION = "./.github/actions/setup-arduino-esp32"
+# The workflows whose Arduino-CLI rows build an image that ships: the signed
+# OTA release and the Flasher's factory images. A library on one of their
+# rows must name an exact version (check_release_rows_pinned), because
+# `arduino-cli lib install Name` installs Library Manager's newest that day.
+RELEASE_WORKFLOWS = ("firmware-release.yml", "flasher-release.yml")
 PROJECTS = REPO / "firmware" / "projects"
 SKETCH_GLOB = "*/arduino/*/sketch.yaml"
 VERSION_HEADER = REPO / "firmware" / "canary" / "include" / "canary_config.h"
@@ -131,7 +140,9 @@ OUT = REPO / "sbom" / "sbom-firmware.cdx.json"
 SPEC_VERSION = "1.5"
 # 1.1.0: the sketch.yaml profiles became build paths of their core, and the
 # `securacv:check` property names the schema gate.
-GENERATOR_VERSION = "1.1.0"
+# 1.2.0: the libraries a release row installs through arduino-cli are
+# components (`arduino-lib:`), and `securacv:resolved` is only on a range.
+GENERATOR_VERSION = "1.2.0"
 ROOT_REF = "securacv-firmware"
 # The exact spec lint.yml and sbom.yml install for --validate. The extra is
 # load-bearing (jsonschema[format-nongpl]: the iri-reference checker), and
@@ -635,6 +646,31 @@ def check_core_pin_agreement(workflow_pins: list[dict], sketch_pins: list[dict],
     return findings
 
 
+def _is_release_row(pin: dict) -> bool:
+    return pin["where"].split(":", 1)[0] in RELEASE_WORKFLOWS
+
+
+def check_release_rows_pinned(workflow_pins: list[dict]) -> list[str]:
+    """Every library a release row installs names one exact version
+    (findings; empty: holds). The action runs `arduino-cli lib install` on
+    each line as written, so a bare name is Library Manager's newest release
+    on the day the image is built and signed, and no file records which one.
+    A PR row (firmware.yml) may float on purpose: it is the early warning,
+    and it ships nothing."""
+    findings: list[str] = []
+    for wp in workflow_pins:
+        if not _is_release_row(wp):
+            continue
+        for name, ver in sorted(wp["libraries"].items()):
+            if not ver or set(ver) & _RANGE_CHARS:
+                findings.append(f"{wp['where']} (core {wp['version'] or 'latest'}) installs "
+                                f"{name} with no exact version ({name}@{ver or ''}): pin it "
+                                f"as {name}@X.Y.Z, the version the last green build "
+                                f"installed, and the same version in the sketch.yaml "
+                                f"profile on that core")
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # The document.
 
@@ -806,7 +842,10 @@ def build_document(timestamp: str | None = None) -> dict:
                 "securacv:version_spec": lib["spec"] or "(unpinned)",
                 "securacv:exact_pin": str(lib["exact"]).lower(),
                 "securacv:envs": ",".join(sorted(lib_envs[ref])),
-                "securacv:resolved": "at build time — PlatformIO keeps no lockfile",
+                # An exact spec resolves to that one release; only a range
+                # leaves the version to the day of the build.
+                **({} if lib["exact"] else
+                   {"securacv:resolved": "at build time — PlatformIO keeps no lockfile"}),
             }),
         }
         if lib["group"]:
@@ -855,8 +894,44 @@ def build_document(timestamp: str | None = None) -> dict:
         return ref
 
     workflow_pins = arduino_core_pins()
+    unpinned = check_release_rows_pinned(workflow_pins)
+    if unpinned:
+        raise SystemExit(
+            "gen_firmware_sbom.py: a release row installs a library with no exact "
+            "version:\n  - " + "\n  - ".join(unpinned))
     for pin in workflow_pins:
         dep(ROOT_REF, core_path(pin["version"], f"arduino-cli ({pin['where']})"))
+
+    # The libraries the release rows install are part of what ships: the WAP
+    # release image and the display images built through arduino-cli link
+    # them, not the PlatformIO lib_deps above. One component per name and
+    # exact version (check_release_rows_pinned guarantees the version), with
+    # the rows that install it as its build paths.
+    arduino_libs: dict[str, dict] = {}
+    for pin in workflow_pins:
+        if not _is_release_row(pin):
+            continue
+        for lib_name, lib_ver in pin["libraries"].items():
+            ref = f"arduino-lib:{lib_name}@{lib_ver}"
+            entry = arduino_libs.setdefault(ref, {"name": lib_name, "version": lib_ver,
+                                                  "paths": set(), "products": set()})
+            entry["paths"].add(f"arduino-cli ({pin['where']})")
+            entry["products"].update(pin["products"])
+    for ref, entry in arduino_libs.items():
+        add(ref, {
+            "type": "library",
+            "name": entry["name"],
+            "version": entry["version"],
+            "description": "Arduino Library Manager release a release row installs "
+                           "(arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+            "properties": props({
+                "securacv:version_spec": entry["version"],
+                "securacv:exact_pin": "true",
+                "securacv:build_paths": "; ".join(sorted(entry["paths"])),
+            }),
+        })
+        for product in sorted(entry["products"]):
+            dep(f"product:{product}", ref)
 
     # The other Arduino axis. Asserted before it is folded in: a document
     # that listed a profile on a core no build path agrees with would be a

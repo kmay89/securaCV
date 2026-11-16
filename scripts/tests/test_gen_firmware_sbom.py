@@ -39,7 +39,14 @@ What is pinned and why:
     check is green on the tree and red on a workflow pin no profile carries,
     a sketch pin neither axis knows, a library off its core line (and the
     PlatformIO-core allowance is per product) — a finding fails generation;
-    a sketch.yaml with no profiles is refused.
+    a sketch.yaml with no profiles is refused;
+  • release rows name exact library versions (A2-19): every library a
+    firmware-release.yml / flasher-release.yml row installs carries one
+    exact version (a bare name was Library Manager's newest on the day the
+    image was signed), an unversioned one fails generation, a PR row may
+    float, the WAP rows equal the WAP profile, the release rows' libraries
+    are `arduino-lib:` components of the products they build, and the
+    PlatformIO lib_deps under firmware/envs/platformio are exact pins.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -902,7 +909,8 @@ class ArduinoCorePins(unittest.TestCase):
         self.assertEqual(by[("canary_display", "watch")]["libraries"]["GFX Library for Arduino"],
                          "1.4.9")
         self.assertEqual(by[("canary_wap", "xiao_sense")]["product"], "canary-wap")
-        self.assertIsNone(by[("canary_wap", "xiao_sense")]["libraries"]["NimBLE-Arduino"])
+        self.assertEqual(by[("canary_wap", "xiao_sense")]["libraries"]["NimBLE-Arduino"],
+                         "2.5.2")
         # the display file's comments name 2.0.17 too; only two profiles pin it
         self.assertEqual(sum(p["version"] == "2.0.17" for p in self.sketch
                              if p["sketch"] == "canary_display"), 2)
@@ -1082,6 +1090,105 @@ class ArduinoCorePins(unittest.TestCase):
                       paths["framework:arduino-esp32@3.3.10"])
         self.assertIn("sketch.yaml (canary_display/watch)", paths["framework:arduino-esp32@2.0.17"])
         self.assertNotIn("sketch.yaml", paths["framework:arduino-esp32@latest"])
+
+
+class ReleaseRowLibraryPins(unittest.TestCase):
+    """A2-19: a signed or factory image links the library versions its row
+    names, never whatever Library Manager or the PlatformIO registry has as
+    newest on the day it is built."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = gs.arduino_core_pins()
+        cls.doc = _doc()
+
+    def test_every_release_row_library_names_one_exact_version(self):
+        release = [w for w in self.workflow if gs._is_release_row(w)]
+        self.assertEqual({w["where"].split(":")[0] for w in release}, set(gs.RELEASE_WORKFLOWS))
+        for w in release:
+            for name, ver in w["libraries"].items():
+                self.assertRegex(ver or "", r"^\d+(\.\d+)+$", (w["where"], w["version"], name))
+        self.assertEqual(gs.check_release_rows_pinned(self.workflow), [])
+
+    def test_the_wap_release_rows_install_what_the_wap_profile_pins(self):
+        pins = {"Crypto": "0.4.0", "ArduinoJson": "7.4.3", "NimBLE-Arduino": "2.5.2"}
+        wap = {w["where"]: w["libraries"] for w in self.workflow
+               if w["version"] == "3.3.8" and "canary-wap" in w["products"]
+               and w["where"].split(":")[0] in gs.RELEASE_WORKFLOWS + ("ram_audit.yml",)}
+        self.assertEqual(sorted(wap), ["firmware-release.yml:build-sign-release",
+                                       "flasher-release.yml:factory-images",
+                                       "ram_audit.yml:ram-audit"])
+        for where, libs in wap.items():
+            self.assertEqual(libs, pins, where)
+        profile = [p for p in gs.sketch_core_pins(gs.load_json(gs.FLAVORS))
+                   if p["profile"] == "xiao_sense"]
+        self.assertEqual([p["libraries"] for p in profile], [pins])
+
+    def test_an_unversioned_library_on_a_release_row_is_refused_and_a_pr_row_may_float(self):
+        for where in ("firmware-release.yml:build-sign-release",
+                      "flasher-release.yml:factory-images"):
+            for bad in (None, "^2.5.0"):
+                rows = [dict(w, libraries=dict(w["libraries"], **{"NimBLE-Arduino": bad}))
+                        if w["where"] == where and w["version"] == "3.3.8" else w
+                        for w in self.workflow]
+                findings = gs.check_release_rows_pinned(rows)
+                self.assertEqual(len(findings), 1, findings)
+                self.assertIn(f"{where} (core 3.3.8) installs NimBLE-Arduino with no exact "
+                              f"version", findings[0])
+        # firmware.yml's PR row floats by design: it ships nothing
+        pr = [w for w in self.workflow if w["where"] == "firmware.yml:build-arduino-cli"]
+        self.assertTrue(pr and all(v is None for v in pr[0]["libraries"].values()), pr)
+        self.assertEqual(gs.check_release_rows_pinned(pr), [])
+
+    def test_an_unversioned_release_row_fails_generation(self):
+        doctored = [dict(w, libraries=dict(w["libraries"], Crypto=None))
+                    if gs._is_release_row(w) else w for w in self.workflow]
+        with mock.patch.object(gs, "arduino_core_pins", return_value=doctored):
+            with self.assertRaises(SystemExit) as cm:
+                gs.build_document()
+        self.assertIn("no exact version", str(cm.exception))
+        self.assertIn("Crypto", str(cm.exception))
+
+    def test_the_release_rows_libraries_are_components_of_the_products_they_build(self):
+        comps = {c["bom-ref"]: c for c in self.doc["components"]}
+        deps = {d["ref"]: set(d["dependsOn"]) for d in self.doc["dependencies"]}
+        self.assertIn("arduino-lib:NimBLE-Arduino@2.5.2", deps["product:canary-wap"])
+        self.assertIn("arduino-lib:NimBLE-Arduino@2.5.0", deps["product:canary-display"])
+        self.assertIn("arduino-lib:NimBLE-Arduino@1.4.3", deps["product:canary-display"])
+        self.assertNotIn("arduino-lib:NimBLE-Arduino@2.5.0", deps["product:canary-wap"])
+        arduino = [c for ref, c in comps.items() if ref.startswith("arduino-lib:")]
+        self.assertTrue(arduino)
+        for c in arduino:
+            self.assertEqual(c["bom-ref"], f"arduino-lib:{c['name']}@{c['version']}")
+            paths = {p["value"] for p in c["properties"] if p["name"] == "securacv:build_paths"}
+            self.assertEqual(len(paths), 1, c["bom-ref"])
+            for path in next(iter(paths)).split("; "):
+                self.assertRegex(path, r"^arduino-cli \((firmware|flasher)-release\.yml:", path)
+
+    def test_the_platformio_env_inis_pin_every_library_exactly(self):
+        # Every lib_deps entry the inis under firmware/envs/platformio feed
+        # is an exact pin, so an SBOM library used by an env of those
+        # products has a version. firmware/canary/platformio.ini carries its
+        # own lib_deps, pinned the same way, so no product's library is a
+        # range: the set below stays empty and the test holds the whole tree.
+        floating_products: set[str] = set()
+        for c in self.doc["components"]:
+            if not c["bom-ref"].startswith("lib:"):
+                continue
+            props = {p["name"]: p["value"] for p in c["properties"]}
+            if props["securacv:exact_pin"] == "true":
+                self.assertIn("version", c, c["bom-ref"])
+                self.assertNotIn("securacv:resolved", props, c["bom-ref"])
+                continue
+            envs = props["securacv:envs"].split(",")
+            self.assertEqual({e.split(":")[0] for e in envs} - floating_products, set(),
+                             (c["bom-ref"], envs))
+        for ini in sorted((REPO / "firmware/envs/platformio").glob("*.ini")):
+            for section, opts in gs.parse_ini(ini).items():
+                for spec in gs._lines(opts.get("lib_deps", "")):
+                    if spec.startswith("${"):
+                        continue
+                    self.assertTrue(gs.parse_lib_spec(spec)["exact"], (ini.name, section, spec))
 
 
 if __name__ == "__main__":

@@ -1235,7 +1235,7 @@ test("the splash's tail on LVGL 8.4 (F185, F159): glass_turn.sh plays the REAL s
       assert.ok(cfg && board, `${n} names its config and pin map`);
       return [cfg, board, flags.split("\n").includes("-DCD_LEAN_BUILD=1") ? "-DCD_LEAN_BUILD=1" : ""].join(" ").trim();
     }));
-  const lv8 = builds("lvgl/lvgl@^8.4.0");
+  const lv8 = builds("lvgl/lvgl@8.4.0");
   assert.ok(lv8.size >= 5 && lv8.has("watch xiao-esp32s3-round") && lv8.has("nightlight waveshare-esp32c3-lcd147 -DCD_LEAN_BUILD=1"),
     `the ini's LVGL 8.4 builds read: ${[...lv8].join("; ")}`);
   const suites = [...sh.matchAll(/^splash_suite (\S+) (\S+) (\S+)(.*)$/gm)].map((m) => [m[2], m[3], m[4].trim()].join(" ").trim());
@@ -1252,7 +1252,7 @@ test("the splash's tail on LVGL 8.4 (F185, F159): glass_turn.sh plays the REAL s
   assert.ok(dashFlavor, "build.sh's dash flavor (its last branch) names its pin map and config");
   assert.deepStrictEqual(suites.filter((x) => x.startsWith("dash ")), [`${dashFlavor[2]} ${dashFlavor[1]}`],
     "one splash suite for the emulator's dash, in the config and pin map build.sh compiles it with");
-  assert.ok(!builds("lvgl/lvgl@^8.4.0").has(`${dashFlavor[2]} ${dashFlavor[1]}`) &&
+  assert.ok(!builds("lvgl/lvgl@8.4.0").has(`${dashFlavor[2]} ${dashFlavor[1]}`) &&
     builds("lvgl/lvgl@9.5.0").has(`${dashFlavor[2]} ${dashFlavor[1]}`),
   "the dash's env builds LVGL 9.5 (so its 8.4 render is the emulator's alone)");
   assert.ok(sh.includes('"$OUT/splash_${name}_test" || splash_failed+=("$name")') &&

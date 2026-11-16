@@ -1064,3 +1064,35 @@ def test_a_setting_the_reader_cannot_resolve_keeps_the_persons_choice(save_env, 
         assert "was not applied" not in result["frigate_config"]
         assert "nothing is sealed" not in result["frigate_config"]
 
+
+
+# Where Frigate keeps its own config the wizard writes nothing to it, but the
+# done screen names the cameras that leave Frigate's per-camera MQTT images on
+# (a retained JPEG of every tracked object on the broker), ahead of any
+# alerts-only note; a config that turns them off everywhere adds nothing.
+def test_save_names_frigate_cameras_that_publish_mqtt_images(save_env, monkeypatch, tmp_path):
+    config = _frigate_owns(monkeypatch, tmp_path, FRIGATE_RECORDS_NONE)
+    result = _bare_handler()._handle_save({
+        "mode": "frigate", "frigate_detected": True, "cameras": [{"name": "front_door"}],
+    })
+    assert result["ok"] is True
+    note = result["frigate_config"]
+    assert note.startswith("Frigate keeps its own camera config — nothing was written to it.")
+    assert "MQTT snapshot images on for front_door, back_yard:" in note
+    assert str(config) in note
+    assert config.read_text(encoding="utf-8") == FRIGATE_RECORDS_NONE  # untouched
+
+    # The alerts-only refusal still ends the note.
+    result = _save_alerts_only([])
+    assert "MQTT snapshot images on for" in result["frigate_config"]
+    assert result["frigate_config"].endswith(serve_wizard.ALERTS_ONLY_NO_RECORDING_NOTE)
+
+    _frigate_owns(monkeypatch, tmp_path, (
+        "cameras:\n"
+        "  front_door:\n    mqtt:\n      enabled: false\n"
+        "  back_yard:\n    mqtt: {enabled: false}\n"
+    ))
+    result = _bare_handler()._handle_save({
+        "mode": "frigate", "frigate_detected": True, "cameras": [{"name": "front_door"}],
+    })
+    assert "MQTT snapshot images" not in result["frigate_config"]

@@ -358,10 +358,15 @@ jobs:
         with:
           core-version: "3.3.8"
           exclusive-core: "true"
+          # Exact library pins, the same as firmware-release.yml's WAP row:
+          # a factory image is flashed onto new devices, so it must not link
+          # whatever Library Manager has as newest on the day it is built.
+          # scripts/gen_firmware_sbom.py refuses an unversioned library on
+          # this row and holds each pin to the WAP sketch.yaml profile.
           libraries: |
-            Crypto
-            ArduinoJson
-            NimBLE-Arduino
+            Crypto@0.4.0
+            ArduinoJson@7.4.3
+            NimBLE-Arduino@2.5.2
 
       - name: Build canary-wap (arduino-cli)
         run: |
@@ -391,9 +396,9 @@ jobs:
           libraries: |
             GFX Library for Arduino@1.4.9
             lvgl@8.4.0
-            PubSubClient
-            Crypto
-            ArduinoJson
+            PubSubClient@2.8.0
+            Crypto@0.4.0
+            ArduinoJson@7.4.3
             NimBLE-Arduino@1.4.3
 
       - name: Build canary-display watch (arduino-cli, core-2 fqbn + staged lv_conf.h)
@@ -438,9 +443,9 @@ jobs:
           libraries: |
             GFX Library for Arduino@1.6.6
             lvgl@9.5.0
-            PubSubClient
-            Crypto
-            ArduinoJson
+            PubSubClient@2.8.0
+            Crypto@0.4.0
+            ArduinoJson@7.4.3
             NimBLE-Arduino@2.5.0
 
       - name: Build canary-display dash + modes (arduino-cli, core-3 fqbn + staged lv_conf.h)

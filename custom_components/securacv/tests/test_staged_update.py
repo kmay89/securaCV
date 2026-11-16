@@ -33,6 +33,7 @@ class _FakeHass:
         self._states = states
         self._flip_after = flip_after
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        self.contexts: list[Any] = []
         self._polls: dict[str, int] = {}
         self.clock = 0.0
         self.states = types.SimpleNamespace(get=self._get)
@@ -41,8 +42,12 @@ class _FakeHass:
     def _get(self, entity_id: str) -> _State | None:
         return self._states.get(entity_id)
 
-    async def _call(self, domain: str, service: str, data: dict[str, Any], blocking: bool = False) -> None:
+    async def _call(
+        self, domain: str, service: str, data: dict[str, Any], blocking: bool = False,
+        context: Any = None,
+    ) -> None:
         self.calls.append((domain, service, dict(data)))
+        self.contexts.append(context)
         self._polls[data["entity_id"]] = 0
 
     async def sleep(self, seconds: float) -> None:
@@ -102,6 +107,39 @@ def test_the_first_node_that_never_reports_aborts_the_rest() -> None:
     assert result.aborted and "update.porch_firmware" in str(result.reason) and "600 s" in str(result.reason)
     assert [c[2]["entity_id"] for c in hass.calls] == ["update.hallway_firmware", "update.porch_firmware"]
     assert result.as_dict()["aborted"] is True
+
+
+def test_every_install_carries_the_caller_s_context(monkeypatch) -> None:
+    """securacv.staged_update hands its call's context to rollout.async_run,
+    and every update.install goes out under it: the install then carries the
+    user who started the rollout, and Home Assistant's per-entity control
+    check runs against that user. Before, each install went out under a
+    fresh context that named nobody."""
+    caller = types.SimpleNamespace(user_id="admin-user-id", id="ctx-1")
+    hass = _FakeHass(_fleet(), {"update.hallway_firmware": 1, "update.porch_firmware": 1,
+                                "update.shed_firmware": 1})
+    result = run(rollout.async_run(
+        hass, sorted(_fleet()), node_timeout_s=600, poll_s=5, clock=hass.now, sleep=hass.sleep,
+        context=caller))
+    assert len(result.installed) == 3
+    assert hass.contexts == [caller, caller, caller]
+
+    # Through the action: the handler passes call.context, not a new one.
+    seen: list[Any] = []
+
+    async def _fake_run(hass_, entity_ids, *, node_timeout_s, context=None):
+        seen.append(context)
+        return rollout.RolloutResult(installed=list(entity_ids))
+
+    monkeypatch.setattr(rollout, "async_run", _fake_run)
+    call = types.SimpleNamespace(
+        data={services.ATTR_ENTITY_ID: ["update.hallway_firmware"],
+              services.ATTR_NODE_TIMEOUT: 600},
+        context=caller,
+    )
+    response = run(services._async_staged_update(object(), call))
+    assert seen == [caller]
+    assert response["installed"] == ["update.hallway_firmware"]
 
 
 def test_a_node_still_in_progress_is_not_done() -> None:

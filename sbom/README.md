@@ -90,7 +90,11 @@ resolver against PlatformIO's own `pio project config` for every build env
 Each product is a `firmware` component; each PlatformIO platform package a
 `platform` component; each Arduino core and ESP-IDF release a `framework`
 component; every `lib_deps` entry and every first-party library a `library`
-component. The `dependencies` graph joins them: product → platform → Arduino
+component; and every library a release row installs through `arduino-cli`
+(`firmware-release.yml`, `flasher-release.yml`: the signed WAP image and the
+display images built that way, and the Flasher's factory images) an
+`arduino-lib:<name>@<version>` `library` component, with those rows as its
+`securacv:build_paths` and the products they build depending on it. The `dependencies` graph joins them: product → platform → Arduino
 core → ESP-IDF, product → libraries. Which envs a platform or library serves is
 in each component's `securacv:envs` property; which build paths reach an
 Arduino core — PlatformIO platform sections, workflow rows, sketch profiles —
@@ -119,8 +123,18 @@ it — naming the row, the profile and the remedy:
    or the sketch dir it `cd`s into) — the release jobs install the WAP's core
    and both display cores in one job.
 
+A fourth rule is about the release rows alone: every library a
+`firmware-release.yml` or `flasher-release.yml` row installs names one exact
+version (`NimBLE-Arduino@2.5.2`), or generation fails naming the row. The
+action runs `arduino-cli lib install` on each line as written, so a bare name
+was Library Manager's newest release on the day the image was built and
+signed, recorded nowhere but that run's log. A bump is a reviewed edit of the
+row and of the sketch.yaml profile on its core, which rule 3 holds equal.
+
 Not asserted, on purpose: a workflow row on the action's "latest" has no
-version to agree with, and a sketch may pin libraries its row leaves floating.
+version to agree with, and a sketch may pin libraries its row leaves floating
+(`firmware.yml`'s PR rows and `csi_module_disable_matrix.yml`'s row still
+float; neither ships an image).
 That leaves one recorded residual, not a drift: the WAP's release rows
 (`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
 `csi_module_disable_matrix.yml`) pin 3.3.8, the WAP sketch's core and the one
@@ -157,11 +171,37 @@ And two things are deliberately **not** claimed:
   Their versions are fixed by the IDF release, which nothing in this tree pins
   independently; the old template's numbers for them were a guess dressed as a
   record. The `esp-idf` component says so in `securacv:bundled_components`.
-- **Resolved library versions.** PlatformIO keeps no lockfile. A `lib_deps`
-  entry with an exact spec (`GFX Library for Arduino@1.6.6`) gets a `version`;
-  a range (`ArduinoJson@^7.0.0`) gets only `securacv:version_spec` and
-  `securacv:resolved: at build time`. The version a given build linked is in
-  that build's log, not here.
+- **Resolved versions of a range.** PlatformIO keeps no lockfile. A
+  `lib_deps` entry with an exact spec (`GFX Library for Arduino@1.6.6`) gets a
+  `version`; a range (`^7.0.0`) gets only `securacv:version_spec` and
+  `securacv:resolved: at build time`, and the version a given build linked is
+  in that build's log, not here. Every `lib_deps` entry in
+  `firmware/envs/platformio/*.ini` is an exact pin (the versions the
+  fw-v2.4.20 release build resolved), so the products those inis configure
+  carry versions; `firmware/canary/platformio.ini` states its own `lib_deps`,
+  and a range there is still recorded only as a range.
+
+### Advisories
+
+Dependabot has no PlatformIO or Arduino ecosystem, and OSV and the GitHub
+Advisory Database have none for Arduino C/C++ libraries or ESP-IDF, so a
+scanner fed this document's purls would match nothing and pass.
+[`scripts/check_firmware_advisories.py`](../scripts/check_firmware_advisories.py),
+run weekly by `audit.yml`'s `firmware-advisories` job, reads the upstreams'
+own records instead: each third-party component's upstream repository (its
+`UPSTREAM` table) and that repository's published GitHub security advisories,
+whose affected ranges it compares with the component's exact `version`. It
+fails on a match; on a range it cannot read, until its `REVIEWED` table
+records a verdict; and on a third-party component with no exact version or
+no known upstream, so it cannot pass on a component it never compared. The
+one component it leaves unchecked, and says so, is the Arduino core on the
+action's "latest" that only `firmware.yml`'s PR row builds. It needs no
+secret (the job's own token, for the rate limit). It does not cover
+Espressif's own advisory page, a CVE with no repository advisory, the
+libraries bundled inside ESP-IDF (not enumerated here) or the libraries'
+transitive dependencies; its output says so on every run.
+`python3 scripts/check_firmware_advisories.py --coverage` runs the coverage
+half offline. Tests: `scripts/tests/test_check_firmware_advisories.py`.
 
 ### Determinism
 

@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:e440afb6-6abf-5028-b985-02b7cd002d9f",
+  "serialNumber": "urn:uuid:016a95ba-8600-54d2-9c88-6e8923ef0e7e",
   "version": 1,
   "metadata": {
     "tools": {
@@ -10,7 +10,7 @@
           "type": "application",
           "group": "securacv",
           "name": "gen_firmware_sbom.py",
-          "version": "1.1.0",
+          "version": "1.2.0",
           "description": "scripts/gen_firmware_sbom.py — derives this document from flavors.json, the resolved PlatformIO configs, platforms.ini, the first-party library manifests, the workflows' Arduino core pins and the sketch.yaml profiles (the two Arduino axes are asserted to agree)"
         }
       ]
@@ -20,7 +20,7 @@
       "bom-ref": "securacv-firmware",
       "group": "securacv",
       "name": "securacv-firmware",
-      "version": "2.4.20",
+      "version": "2.4.21",
       "description": "SecuraCV Canary firmware — every PlatformIO product firmware/flavors.json builds",
       "properties": [
         {
@@ -49,6 +49,216 @@
     ]
   },
   "components": [
+    {
+      "type": "library",
+      "name": "ArduinoJson",
+      "version": "7.4.3",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "7.4.3"
+        }
+      ],
+      "bom-ref": "arduino-lib:ArduinoJson@7.4.3"
+    },
+    {
+      "type": "library",
+      "name": "Crypto",
+      "version": "0.4.0",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "0.4.0"
+        }
+      ],
+      "bom-ref": "arduino-lib:Crypto@0.4.0"
+    },
+    {
+      "type": "library",
+      "name": "GFX Library for Arduino",
+      "version": "1.4.9",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "1.4.9"
+        }
+      ],
+      "bom-ref": "arduino-lib:GFX Library for Arduino@1.4.9"
+    },
+    {
+      "type": "library",
+      "name": "GFX Library for Arduino",
+      "version": "1.6.6",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "1.6.6"
+        }
+      ],
+      "bom-ref": "arduino-lib:GFX Library for Arduino@1.6.6"
+    },
+    {
+      "type": "library",
+      "name": "NimBLE-Arduino",
+      "version": "1.4.3",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "1.4.3"
+        }
+      ],
+      "bom-ref": "arduino-lib:NimBLE-Arduino@1.4.3"
+    },
+    {
+      "type": "library",
+      "name": "NimBLE-Arduino",
+      "version": "2.5.0",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "2.5.0"
+        }
+      ],
+      "bom-ref": "arduino-lib:NimBLE-Arduino@2.5.0"
+    },
+    {
+      "type": "library",
+      "name": "NimBLE-Arduino",
+      "version": "2.5.2",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "2.5.2"
+        }
+      ],
+      "bom-ref": "arduino-lib:NimBLE-Arduino@2.5.2"
+    },
+    {
+      "type": "library",
+      "name": "PubSubClient",
+      "version": "2.8.0",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "2.8.0"
+        }
+      ],
+      "bom-ref": "arduino-lib:PubSubClient@2.8.0"
+    },
+    {
+      "type": "library",
+      "name": "lvgl",
+      "version": "8.4.0",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "8.4.0"
+        }
+      ],
+      "bom-ref": "arduino-lib:lvgl@8.4.0"
+    },
+    {
+      "type": "library",
+      "name": "lvgl",
+      "version": "9.5.0",
+      "description": "Arduino Library Manager release a release row installs (arduino-cli lib install, .github/actions/setup-arduino-esp32)",
+      "properties": [
+        {
+          "name": "securacv:build_paths",
+          "value": "arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images)"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "9.5.0"
+        }
+      ],
+      "bom-ref": "arduino-lib:lvgl@9.5.0"
+    },
     {
       "type": "library",
       "group": "securacv",
@@ -1083,10 +1293,6 @@
           "value": "true"
         },
         {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
-        },
-        {
           "name": "securacv:version_spec",
           "value": "1.0.3"
         }
@@ -1112,25 +1318,22 @@
         },
         {
           "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
+          "value": "true"
         },
         {
           "name": "securacv:version_spec",
-          "value": "^7.0.0"
+          "value": "7.4.3"
         }
       ],
       "group": "bblanchon",
+      "version": "7.4.3",
       "externalReferences": [
         {
           "type": "website",
           "url": "https://registry.platformio.org/libraries/bblanchon/ArduinoJson"
         }
       ],
-      "bom-ref": "lib:bblanchon/ArduinoJson@^7.0.0"
+      "bom-ref": "lib:bblanchon/ArduinoJson@7.4.3"
     },
     {
       "type": "library",
@@ -1138,29 +1341,26 @@
       "properties": [
         {
           "name": "securacv:envs",
-          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes"
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes,canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3"
         },
         {
           "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
+          "value": "true"
         },
         {
           "name": "securacv:version_spec",
-          "value": "^1.4.1"
+          "value": "1.4.3"
         }
       ],
       "group": "h2zero",
+      "version": "1.4.3",
       "externalReferences": [
         {
           "type": "website",
           "url": "https://registry.platformio.org/libraries/h2zero/NimBLE-Arduino"
         }
       ],
-      "bom-ref": "lib:h2zero/NimBLE-Arduino@^1.4.1"
+      "bom-ref": "lib:h2zero/NimBLE-Arduino@1.4.3"
     },
     {
       "type": "library",
@@ -1168,119 +1368,26 @@
       "properties": [
         {
           "name": "securacv:envs",
-          "value": "canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:full"
+          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground,canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing,canary-wap:canary-wap-default,canary-wap:canary-wap-usbdrive,canary:full"
         },
         {
           "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
+          "value": "true"
         },
         {
           "name": "securacv:version_spec",
-          "value": "^2.3.8"
+          "value": "2.5.2"
         }
       ],
       "group": "h2zero",
+      "version": "2.5.2",
       "externalReferences": [
         {
           "type": "website",
           "url": "https://registry.platformio.org/libraries/h2zero/NimBLE-Arduino"
         }
       ],
-      "bom-ref": "lib:h2zero/NimBLE-Arduino@^2.3.8"
-    },
-    {
-      "type": "library",
-      "name": "NimBLE-Arduino",
-      "properties": [
-        {
-          "name": "securacv:envs",
-          "value": "canary-sense:canary-sense-default,canary-sense:canary-sense-wellbeing"
-        },
-        {
-          "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
-        },
-        {
-          "name": "securacv:version_spec",
-          "value": "^2.4.0"
-        }
-      ],
-      "group": "h2zero",
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://registry.platformio.org/libraries/h2zero/NimBLE-Arduino"
-        }
-      ],
-      "bom-ref": "lib:h2zero/NimBLE-Arduino@^2.4.0"
-    },
-    {
-      "type": "library",
-      "name": "NimBLE-Arduino",
-      "properties": [
-        {
-          "name": "securacv:envs",
-          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground"
-        },
-        {
-          "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
-        },
-        {
-          "name": "securacv:version_spec",
-          "value": "^2.5.0"
-        }
-      ],
-      "group": "h2zero",
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://registry.platformio.org/libraries/h2zero/NimBLE-Arduino"
-        }
-      ],
-      "bom-ref": "lib:h2zero/NimBLE-Arduino@^2.5.0"
-    },
-    {
-      "type": "library",
-      "name": "NimBLE-Arduino",
-      "properties": [
-        {
-          "name": "securacv:envs",
-          "value": "canary-vision:canary-vision-c3-super-mini,canary-vision:canary-vision-default,canary-vision:canary-vision-xiao-c3,canary-vision:canary-vision-xiao-s3"
-        },
-        {
-          "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
-        },
-        {
-          "name": "securacv:version_spec",
-          "value": "~1.4.3"
-        }
-      ],
-      "group": "h2zero",
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://registry.platformio.org/libraries/h2zero/NimBLE-Arduino"
-        }
-      ],
-      "bom-ref": "lib:h2zero/NimBLE-Arduino@~1.4.3"
+      "bom-ref": "lib:h2zero/NimBLE-Arduino@2.5.2"
     },
     {
       "type": "library",
@@ -1292,25 +1399,49 @@
         },
         {
           "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
+          "value": "true"
         },
         {
           "name": "securacv:version_spec",
-          "value": "^2.8"
+          "value": "2.8.0"
         }
       ],
       "group": "knolleary",
+      "version": "2.8.0",
       "externalReferences": [
         {
           "type": "website",
           "url": "https://registry.platformio.org/libraries/knolleary/PubSubClient"
         }
       ],
-      "bom-ref": "lib:knolleary/PubSubClient@^2.8"
+      "bom-ref": "lib:knolleary/PubSubClient@2.8.0"
+    },
+    {
+      "type": "library",
+      "name": "lvgl",
+      "properties": [
+        {
+          "name": "securacv:envs",
+          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "8.4.0"
+        }
+      ],
+      "group": "lvgl",
+      "version": "8.4.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/lvgl/lvgl"
+        }
+      ],
+      "bom-ref": "lib:lvgl/lvgl@8.4.0"
     },
     {
       "type": "library",
@@ -1323,10 +1454,6 @@
         {
           "name": "securacv:exact_pin",
           "value": "true"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
         },
         {
           "name": "securacv:version_spec",
@@ -1345,36 +1472,6 @@
     },
     {
       "type": "library",
-      "name": "lvgl",
-      "properties": [
-        {
-          "name": "securacv:envs",
-          "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes"
-        },
-        {
-          "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
-        },
-        {
-          "name": "securacv:version_spec",
-          "value": "^8.4.0"
-        }
-      ],
-      "group": "lvgl",
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://registry.platformio.org/libraries/lvgl/lvgl"
-        }
-      ],
-      "bom-ref": "lib:lvgl/lvgl@^8.4.0"
-    },
-    {
-      "type": "library",
       "name": "GFX Library for Arduino",
       "properties": [
         {
@@ -1384,10 +1481,6 @@
         {
           "name": "securacv:exact_pin",
           "value": "true"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
         },
         {
           "name": "securacv:version_spec",
@@ -1417,10 +1510,6 @@
           "value": "true"
         },
         {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
-        },
-        {
           "name": "securacv:version_spec",
           "value": "1.6.6"
         }
@@ -1445,25 +1534,22 @@
         },
         {
           "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
+          "value": "true"
         },
         {
           "name": "securacv:version_spec",
-          "value": "^0.4.0"
+          "value": "0.4.0"
         }
       ],
       "group": "rweather",
+      "version": "0.4.0",
       "externalReferences": [
         {
           "type": "website",
           "url": "https://registry.platformio.org/libraries/rweather/Crypto"
         }
       ],
-      "bom-ref": "lib:rweather/Crypto@^0.4.0"
+      "bom-ref": "lib:rweather/Crypto@0.4.0"
     },
     {
       "type": "platform",
@@ -1539,7 +1625,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary",
-      "version": "2.4.20",
+      "version": "2.4.21",
       "description": "PlatformIO product `canary` (firmware/canary)",
       "properties": [
         {
@@ -1569,7 +1655,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-display",
-      "version": "2.4.20",
+      "version": "2.4.21",
       "description": "PlatformIO product `canary-display` (firmware/projects/canary-display)",
       "properties": [
         {
@@ -1599,7 +1685,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-sense",
-      "version": "2.4.20",
+      "version": "2.4.21",
       "description": "PlatformIO product `canary-sense` (firmware/projects/canary-sense)",
       "properties": [
         {
@@ -1629,7 +1715,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-sentinel",
-      "version": "2.4.20",
+      "version": "2.4.21",
       "description": "PlatformIO product `canary-sentinel` (firmware/projects/canary-sentinel)",
       "properties": [
         {
@@ -1659,7 +1745,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-vision",
-      "version": "2.4.20",
+      "version": "2.4.21",
       "description": "PlatformIO product `canary-vision` (firmware/projects/canary-vision)",
       "properties": [
         {
@@ -1689,7 +1775,7 @@
       "type": "firmware",
       "group": "securacv",
       "name": "securacv-canary-wap",
-      "version": "2.4.20",
+      "version": "2.4.21",
       "description": "PlatformIO product `canary-wap` (firmware/projects/canary-wap)",
       "properties": [
         {
@@ -1717,6 +1803,46 @@
     }
   ],
   "dependencies": [
+    {
+      "ref": "arduino-lib:ArduinoJson@7.4.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "arduino-lib:Crypto@0.4.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "arduino-lib:GFX Library for Arduino@1.4.9",
+      "dependsOn": []
+    },
+    {
+      "ref": "arduino-lib:GFX Library for Arduino@1.6.6",
+      "dependsOn": []
+    },
+    {
+      "ref": "arduino-lib:NimBLE-Arduino@1.4.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "arduino-lib:NimBLE-Arduino@2.5.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "arduino-lib:NimBLE-Arduino@2.5.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "arduino-lib:PubSubClient@2.8.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "arduino-lib:lvgl@8.4.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "arduino-lib:lvgl@9.5.0",
+      "dependsOn": []
+    },
     {
       "ref": "canarylib:securacv_audio",
       "dependsOn": []
@@ -1878,39 +2004,27 @@
       "dependsOn": []
     },
     {
-      "ref": "lib:bblanchon/ArduinoJson@^7.0.0",
+      "ref": "lib:bblanchon/ArduinoJson@7.4.3",
       "dependsOn": []
     },
     {
-      "ref": "lib:h2zero/NimBLE-Arduino@^1.4.1",
+      "ref": "lib:h2zero/NimBLE-Arduino@1.4.3",
       "dependsOn": []
     },
     {
-      "ref": "lib:h2zero/NimBLE-Arduino@^2.3.8",
+      "ref": "lib:h2zero/NimBLE-Arduino@2.5.2",
       "dependsOn": []
     },
     {
-      "ref": "lib:h2zero/NimBLE-Arduino@^2.4.0",
+      "ref": "lib:knolleary/PubSubClient@2.8.0",
       "dependsOn": []
     },
     {
-      "ref": "lib:h2zero/NimBLE-Arduino@^2.5.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "lib:h2zero/NimBLE-Arduino@~1.4.3",
-      "dependsOn": []
-    },
-    {
-      "ref": "lib:knolleary/PubSubClient@^2.8",
+      "ref": "lib:lvgl/lvgl@8.4.0",
       "dependsOn": []
     },
     {
       "ref": "lib:lvgl/lvgl@9.5.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "lib:lvgl/lvgl@^8.4.0",
       "dependsOn": []
     },
     {
@@ -1922,7 +2036,7 @@
       "dependsOn": []
     },
     {
-      "ref": "lib:rweather/Crypto@^0.4.0",
+      "ref": "lib:rweather/Crypto@0.4.0",
       "dependsOn": []
     },
     {
@@ -1972,10 +2086,10 @@
         "common:fleet_link",
         "common:fusion",
         "common:ota",
-        "lib:bblanchon/ArduinoJson@^7.0.0",
-        "lib:h2zero/NimBLE-Arduino@^2.3.8",
-        "lib:knolleary/PubSubClient@^2.8",
-        "lib:rweather/Crypto@^0.4.0",
+        "lib:bblanchon/ArduinoJson@7.4.3",
+        "lib:h2zero/NimBLE-Arduino@2.5.2",
+        "lib:knolleary/PubSubClient@2.8.0",
+        "lib:rweather/Crypto@0.4.0",
         "platform:platform_core3",
         "platform:platform_s3c3"
       ]
@@ -1983,20 +2097,29 @@
     {
       "ref": "product:canary-display",
       "dependsOn": [
+        "arduino-lib:ArduinoJson@7.4.3",
+        "arduino-lib:Crypto@0.4.0",
+        "arduino-lib:GFX Library for Arduino@1.4.9",
+        "arduino-lib:GFX Library for Arduino@1.6.6",
+        "arduino-lib:NimBLE-Arduino@1.4.3",
+        "arduino-lib:NimBLE-Arduino@2.5.0",
+        "arduino-lib:PubSubClient@2.8.0",
+        "arduino-lib:lvgl@8.4.0",
+        "arduino-lib:lvgl@9.5.0",
         "common:boot",
         "common:csi",
         "common:fleet_link",
         "common:fusion",
         "common:ota",
-        "lib:bblanchon/ArduinoJson@^7.0.0",
-        "lib:h2zero/NimBLE-Arduino@^1.4.1",
-        "lib:h2zero/NimBLE-Arduino@^2.5.0",
-        "lib:knolleary/PubSubClient@^2.8",
+        "lib:bblanchon/ArduinoJson@7.4.3",
+        "lib:h2zero/NimBLE-Arduino@1.4.3",
+        "lib:h2zero/NimBLE-Arduino@2.5.2",
+        "lib:knolleary/PubSubClient@2.8.0",
+        "lib:lvgl/lvgl@8.4.0",
         "lib:lvgl/lvgl@9.5.0",
-        "lib:lvgl/lvgl@^8.4.0",
         "lib:moononournation/GFX Library for Arduino@1.4.9",
         "lib:moononournation/GFX Library for Arduino@1.6.6",
-        "lib:rweather/Crypto@^0.4.0",
+        "lib:rweather/Crypto@0.4.0",
         "platform:platform_core3",
         "platform:platform_s3c3"
       ]
@@ -2009,10 +2132,10 @@
         "common:fleet_link",
         "common:fusion",
         "common:ota",
-        "lib:bblanchon/ArduinoJson@^7.0.0",
-        "lib:h2zero/NimBLE-Arduino@^2.4.0",
-        "lib:knolleary/PubSubClient@^2.8",
-        "lib:rweather/Crypto@^0.4.0",
+        "lib:bblanchon/ArduinoJson@7.4.3",
+        "lib:h2zero/NimBLE-Arduino@2.5.2",
+        "lib:knolleary/PubSubClient@2.8.0",
+        "lib:rweather/Crypto@0.4.0",
         "platform:platform_core3"
       ]
     },
@@ -2024,9 +2147,9 @@
         "common:fleet_link",
         "common:fusion",
         "common:ota",
-        "lib:bblanchon/ArduinoJson@^7.0.0",
-        "lib:knolleary/PubSubClient@^2.8",
-        "lib:rweather/Crypto@^0.4.0",
+        "lib:bblanchon/ArduinoJson@7.4.3",
+        "lib:knolleary/PubSubClient@2.8.0",
+        "lib:rweather/Crypto@0.4.0",
         "platform:platform_core3",
         "platform:platform_s3c3"
       ]
@@ -2040,24 +2163,27 @@
         "common:fusion",
         "common:ota",
         "lib:Seeed-Studio/Seeed_Arduino_SSCMA@1.0.3",
-        "lib:bblanchon/ArduinoJson@^7.0.0",
-        "lib:h2zero/NimBLE-Arduino@~1.4.3",
-        "lib:knolleary/PubSubClient@^2.8",
-        "lib:rweather/Crypto@^0.4.0",
+        "lib:bblanchon/ArduinoJson@7.4.3",
+        "lib:h2zero/NimBLE-Arduino@1.4.3",
+        "lib:knolleary/PubSubClient@2.8.0",
+        "lib:rweather/Crypto@0.4.0",
         "platform:platform_s3c3"
       ]
     },
     {
       "ref": "product:canary-wap",
       "dependsOn": [
+        "arduino-lib:ArduinoJson@7.4.3",
+        "arduino-lib:Crypto@0.4.0",
+        "arduino-lib:NimBLE-Arduino@2.5.2",
         "common:boot",
         "common:csi",
         "common:fleet_link",
         "common:fusion",
         "common:ota",
-        "lib:bblanchon/ArduinoJson@^7.0.0",
-        "lib:h2zero/NimBLE-Arduino@^2.3.8",
-        "lib:rweather/Crypto@^0.4.0",
+        "lib:bblanchon/ArduinoJson@7.4.3",
+        "lib:h2zero/NimBLE-Arduino@2.5.2",
+        "lib:rweather/Crypto@0.4.0",
         "platform:platform_core3"
       ]
     },

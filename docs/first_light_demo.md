@@ -20,7 +20,8 @@ with the two boards can run it today.
    its own NPU. No pixels leave the camera — the host firmware receives
    boxes and scores over I2C, nothing else.
 2. **The edge, on air, immediately.** The Vision's presence FSM debounces
-   the detection; the moment it flips, the fleet-link presence beacon
+   the detection; with the Vision's Broadcast detection on (off by default,
+   step 4 below), the moment it flips, the fleet-link presence beacon
    (alert + class + confidence, 13 bytes) goes out on every carrier at once
    — including ESP-NOW, the router-free band this demo rides.
 3. **The glass reacts.** The Nightlight's pair-demo card pulses amber,
@@ -82,7 +83,17 @@ data or the Lab's Vision bench).
    (`SCV-XXXX`). **Tap** to keep it — the lock is remembered across
    reboots, and the card ignores every other camera from then on.
    **Double-press** forgets it; **hold** leaves the demo.
-4. Wave at the camera. On a host with a user LED, watch the LED, then the
+4. Turn on the Vision's **Broadcast detection**, either with Home
+   Assistant's switch on its device page or by publishing `ON` to
+   `securacv/<device_id>/beacon/set`. It is off by default because the
+   beacon is cleartext: while it is on, anyone in radio range or on the LAN
+   reads the detection too. Without it the glass hears the camera but never
+   a detection. The switch is set only over MQTT, so the Vision needs a
+   broker once; the setting is stored on the Vision, and its 10 s
+   factory-reset hold, which forgets the Wi-Fi and the broker, keeps it, so
+   a Vision turned on that way and then held 10 s meets the glass
+   router-free (read from the code, not yet run on the pair).
+5. Wave at the camera. On a host with a user LED, watch the LED, then the
    glass; on the XIAO ESP32-C3, watch the glass and read the camera's side
    on serial.
 

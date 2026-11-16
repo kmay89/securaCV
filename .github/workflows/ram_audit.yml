@@ -63,10 +63,12 @@ jobs:
         uses: ./.github/actions/setup-arduino-esp32
         with:
           core-version: "3.3.8"
+          # The WAP release rows' exact library pins, so the audit measures
+          # the libraries a release links, not Library Manager's newest.
           libraries: |
-            Crypto
-            ArduinoJson
-            NimBLE-Arduino
+            Crypto@0.4.0
+            ArduinoJson@7.4.3
+            NimBLE-Arduino@2.5.2
 
       - name: Compile firmware (same flags as the CI build job)
         run: |

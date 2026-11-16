@@ -433,6 +433,28 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     publish_cfg(mqtt, t, p);
   }
 
+  // Broadcast detection switch (canary/detect_config.h beacon_detect): the
+  // owner's opt-in, off by default. On, the fleet beacon carries the live
+  // detection (ALERT flag, class, confidence) so a display alerts with no
+  // broker; the beacon is cleartext on every band (BLE, ESP-NOW, LAN
+  // multicast), so anyone in radio range or on the home network reads it too.
+  {
+    char t[192], p[1024];
+    topic_for("switch", "beacon_detect", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Broadcast detection\","
+             "\"unique_id\":\"%s_beacon_detect\","
+             "\"state_topic\":\"%s\","
+             "\"command_topic\":\"%s\","
+             "\"icon\":\"mdi:access-point\","
+             "\"entity_category\":\"config\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.beacon_state, topics.beacon_cmd, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+
   // Identify button (HAP-style): blinks the LED for 10 s so the wizard's
   // "which device is which" moment works from HA and the companion app.
   {

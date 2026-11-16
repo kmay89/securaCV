@@ -79,8 +79,8 @@ jobs:
         with:
           core-version: "3.3.8"
           libraries: |
-            Crypto
-            ArduinoJson
+            Crypto@0.4.0
+            ArduinoJson@7.4.3
 
       - name: Compile with ${{ matrix.module }} disabled
         run: |

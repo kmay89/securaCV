@@ -128,6 +128,24 @@ and threshold tuning after the device is mounted. Empty frames publish at
 forgotten toggle can't stream box telemetry forever. Constants in
 `include/canary/config.h` (`AIM_*`).
 
+## Broadcast detection (owner opt-in, off by default)
+
+The fleet beacon (BLE advert, ESP-NOW, LAN multicast) lets a Canary display
+hear this witness with no broker. It is cleartext on every band, so anyone in
+radio range or on the home network reads it. By default it carries the
+witness's identity and health bytes and **no detection**: the `ALERT` flag is
+clear, the class is `none` and the confidence is unknown, and a detection
+edge sends no extra frame.
+
+The HA switch `Broadcast detection` (`securacv/<device_id>/beacon/set`,
+retained state on `beacon/state`) is the owner's opt-in. Turned on, the beacon
+carries the live detection (the `ALERT` flag, the watch profile's class and
+the confidence), so a display alerts directly, and so can anyone else who
+listens. Turned off, the next frame is clear. The setting persists in NVS
+(`det_beacon`, `include/canary/detect_config.h`) and a watch profile never
+changes it. The payload builder is host-tested in the display's suite
+([`test_vision_beacon_payload.cpp`](../canary-display/tests_host/test_vision_beacon_payload.cpp)).
+
 ## Runtime robustness (ESP32-S3 tree parity)
 
 Ported from the ACTIVE `firmware/canary` (ESP32-S3) tree, 2026-07:
@@ -154,6 +172,8 @@ Base:
 - `securacv/<device_id>/status` (retained; availability: online/offline)
 - `securacv/<device_id>/cfg/state` (retained; live detection settings + watch profile)
 - `securacv/<device_id>/cfg/{target,score,lost,dwell,profile}/set` (commands)
+- `securacv/<device_id>/beacon/state` (retained ON/OFF) and `beacon/set`: the
+  Broadcast detection opt-in above
 
 ### The clocks and the cell on an event row
 

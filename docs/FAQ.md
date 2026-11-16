@@ -601,10 +601,21 @@ off no phone reaches the door. Holding a WAP's BOOT button
 for 10 seconds (the serial console says "keep holding" at 3 s) is its
 factory reset: the saved Wi-Fi networks, the broker settings, the device
 name and the first-boot flag are cleared and the setup wizard runs again;
+on a release after 2.4.20 the hold also removes the camera vault's unlock
+key, turns every vault capture trigger off and erases an update-server
+override (2.4.20 and earlier keep all three, so first press Remove key
+under Camera → Sealed Alarm Snapshots, and empty Settings → Device →
+Advanced: update server, then Save Update Settings);
 the Ed25519 identity key, the witness chain and the sealed records are
 kept, so every hub and display that pinned the key still recognizes it
 (every Canary with a BOOT button has the same 10-second hold —
-`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). The
+`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). Handing
+a WAP to someone else? The hold keeps its identity key and its API token,
+so whoever held that token still holds it; an install in either flasher
+starts its on-board settings and keys over instead (its factory image
+starts NVS over: a new key, a new token), and neither empties the microSD
+card, so copy what you want from its `/WITNESS` and `/VAULT` folders and
+then delete them. The
 hold needs no token and no tap and works whatever the lockout is doing, but
 it keeps the API token and opens the setup door to whichever Bluetooth
 device connects first, so it is the last way out when BOOT taps keep

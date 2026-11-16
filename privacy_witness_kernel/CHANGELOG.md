@@ -1,4 +1,18 @@
 <!-- The Supervisor shows this file on the app's page after an update. Newest first. -->
+## 0.9.3
+
+- **Frigate's per-camera MQTT images are off in every config the wizard
+  writes.** Frigate otherwise publishes a cropped JPEG of every object it
+  tracks, per camera, to the broker, a switch separate from snapshots. The
+  configs the wizard writes now set `mqtt: enabled: false` on each camera,
+  and where Frigate keeps its own config the done screen says to turn
+  those images off there too.
+- **Exporting evidence is for administrators.** The integration's Export
+  evidence action and button, and the staged-update action, now refuse a
+  Home Assistant user who is not an administrator. An export prunes only
+  its own entry's oldest packs, never another kernel entry's.
+- **The kernel, the integration and the app move to 0.9.3 together.**
+
 ## 0.9.2
 
 - **"Only Frigate alerts" is checked against your own Frigate config.**

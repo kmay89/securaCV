@@ -5592,6 +5592,38 @@ installer that opens the inactive slot must check every other, from both sides
 (the drop refuses while one is busy; ota_can_install defers while a drop-zone
 is open). When a new installer is added, grep esp_ota_begin.
 
+### 2026-11-16 — kernel hap_bridge: the bytes behind the message that opens a session (0.9.3)
+- **What happened:** The HomeKit bridge moved a whole socket read into its plaintext buffer before Pair Verify finished. It armed the session on M3, promoted it after writing M4, and then kept parsing the rest of that same buffer as plaintext. A host on the path that appended a plaintext `POST /pairings` ADD_PAIRING to the controller's M3 segment got an admin pairing of its own, with the verified controller's rights.
+- **Root cause:** The switch from plaintext to encrypted happened between two requests in one buffer. Only bytes read after the switch were decrypted; bytes already buffered kept the old mode.
+- **Fix:** When the session is promoted, the leftover buffered bytes go back in front of the undecrypted buffer and are opened as frames. Anything that does not authenticate ends the connection.
+- **Regression check:** `plaintext_after_m3_in_the_same_read_does_not_run_as_the_controller` in `src/bridge/hap/server.rs` feeds M3 and the injected request in one read, and asserts no new pairing and a closed connection. Any stream that upgrades mid-buffer (STARTTLS-style) needs the same test: the bytes behind the upgrade message, in the same read.
+- **Date learned:** 2026-11
+
+### 2026-11-16 — kernel hap_bridge: a torn-down session left its authority behind (0.9.3)
+- **What happened:** After a frame failed to authenticate, the bridge dropped only the session. The socket stayed open in plaintext and Pair Verify still held the controller it had verified. A bare plaintext M1 from an on-path host then got session keys from its own Diffie-Hellman under that controller's admin rights, with no M3 from anyone.
+- **Root cause:** A teardown cleared the keys but not the identity that had authorized them. A new handshake also inherited the previous one's verified state instead of starting clean.
+- **Fix:** Every M1 starts Pair Verify from a fresh state. A failed frame ends the connection (session, pending session, Pair Verify and buffers dropped, and the socket shut down), never a fall-back to plaintext on the same stream.
+- **Regression check:** `a_new_m1_forgets_the_controller_the_last_exchange_verified` (`src/bridge/hap/pairing.rs`) and `a_corrupt_frame_then_a_bare_m1_does_not_reopen_the_session` (`src/bridge/hap/server.rs`).
+- **Date learned:** 2026-11
+
+### 2026-11-16 — canary-display roster eviction
+2026-11-16 — canary-display roster eviction (audit A2-09, second review). upsert() learned to evict a pseudo witness so a real identity could take its slot. That gave the eviction power to every on_* ingest by default, including the unauthenticated mDNS browse. Any LAN host announcing role=witness could then push beacon-heard Canaries off a hub-less glass, and they never came back, because a pseudo witness only takes a free slot. A seat function that can displace a row must take the caller's trust as an argument (may_evict), and every unauthenticated caller must pass false. Pin one unauthenticated caller against a full roster in the host test (test_fleet_beacon_model.cpp).
+
+### 2026-11-16 — canary-vision beacon detection opt-in
+2026-11-16 — canary-vision beacon detection (audit A2-07). The fleet beacon carried live person presence and confidence in cleartext on BLE, ESP-NOW and LAN multicast by default. The code called this 'ungated on purpose', so that every band said the same thing. Matching every band is not consent: a field any passive listener can read must be an owner opt-in, off by default. Gate the input, not only the bytes. While the owner has not opted in, a detection edge must not move the beacon generation either, or the timing of an off-schedule frame still reveals the edge (test_vision_beacon_payload.cpp).
+
+### 2026-11-16 — canary-wap factory reset scope (after 2.4.20)
+2026-11-16 — canary-wap factory reset scope (audit A2-18). The 10 s hold cleared Wi-Fi, the broker, the name and the first-boot flag, and nothing else. Two other owner choices lived in NVS and the hold never reached them: the camera vault's recipient key and triggers (main namespace, which vault_snapshot::init() re-adopts every boot) and the OTA manifest override ("securacv_ota"). So a unit handed to a new owner kept sealing frames to the previous owner's key and polling their server, while the FAQ called the hold a factory reset. Every NVS key that holds an owner's recipient, server or armed trigger belongs either in the hold's cleared list or in its comment's Kept list with the reason. When a feature adds such a key, grep factory_reset_by_hold and decide, and add its clear to recovery_kit.test.js's walk row.
+
+### 2026-11-16 — recovery_kit.test.js call walk blind spot
+2026-11-16 — recovery_kit.test.js call walk blind spot (audit A2-18). sketchCallWalk found calls with /(?:^|[^\w.>:])name\s*\(/g. matchAll consumed the boundary character, and the `(` of `if (` had already been consumed by the match on `if`, so a call written as `if (f(...))` was never walked. Every "nothing the hold reaches names X" row was blind to such a callee: log_health's attention check, and the hold's own new OTA erase. A static call walker must look behind for the boundary ((?<![\w.>:])), not consume it. A row that pins a callee should also assert that the walk reaches it, so the walker's reach is tested, not assumed.
+
+### 2026-11-16 — iOS display settings write token (iOS 0.9.3)
+2026-11-16 — iOS display settings write token (iOS 0.9.3). Every display's write guard (glass_web.cpp write_blocked()) answers 403 {"err":"csrf"} to a POST /api/set without this boot's token in X-CSRF-Token, whoever sends it. The device's own mirror page sent the token. The iPhone app's NightlightAPI.set sent a bare POST, so no setting written from the phone saved on any display. One of its three callers (NightlightSection) used `try?` and dropped the refusal silently, and the other two showed only a generic failure. A client of a guarded device route must send what the guard reads. Its tests should drive the real request through a stub that refuses without it (GlassSettingsTests' GlassWriteStubProtocol). A per-boot token is read right before the write and never cached, and a csrf refusal is retried once after a fresh read.
+
+### 2026-11-16 — Pinning a lib_deps range changes a string other gates match literally
+Turning a PlatformIO lib_deps range into an exact pin changes a string that other gates match literally. canary-local/tests/onboard.test.js selected the LVGL 8.4 envs by 'lvgl/lvgl@^8.4.0' and went red on 'lvgl/lvgl@8.4.0'. One of its assertions would have kept passing vacuously, because it negates a lookup of the old string. Before pinning, grep every test and script for the old spec string and update each reader in the same change. check_route_security.py's fixtures still carry the old ranges; they are fixtures keyed by owner/name and do not need to change.
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:
