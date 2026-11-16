@@ -647,10 +647,18 @@ jobs:
             lvgl: "9.5.0"
     steps:
       - uses: actions/checkout@v7
-      # check_webserver_link.py (the compile steps below) is stdlib only.
+      # check_webserver_link.py (the compile steps below) is stdlib only. The
+      # same python3 also runs core 2.0.17's bundled esptool.py (4.5.1) from
+      # its build recipe, and that imports pyserial, which a setup-python
+      # interpreter does not carry: without it the 2.0.17 dash build failed
+      # with "No module named 'serial'". Pinned exactly (CI.md R10), the
+      # version esptool 4.x declares; the release jobs get it through their
+      # esptool==4.12.0 install.
       - uses: actions/setup-python@v7
         with:
           python-version-file: pyproject.toml
+      - name: pyserial for the core's own esptool.py
+        run: python3 -m pip install --disable-pip-version-check pyserial==3.5
 
       - name: Install Arduino CLI + ESP32 core ${{ matrix.core.version }} (cached, libs pinned per core line)
         uses: ./.github/actions/setup-arduino-esp32
