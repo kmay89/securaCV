@@ -169,6 +169,32 @@
 #define DEVICE_TYPE           "canary"
 #define FIRMWARE_VERSION      "2.4.20"
 
+// What this build is, in the words a person reads. A name a surface shows
+// comes from the build, never from one literal every env shares: the mDNS
+// `model` used to say "XIAO ESP32S3" on the ESP32-CAM, WROOM and Freenove
+// ports, and Home Assistant's Model said "Canary v1" on all of them.
+//   CANARY_PRODUCT_NAME  the product every env in this tree builds
+//                        (devices/canary/device.json "name"): Home
+//                        Assistant's Model.
+//   CANARY_BOARD_NAME    the board this env was made for, spelled as its
+//                        firmware/boards/<id>/pins/pins.h BOARD_NAME says
+//                        (check_board_registry.py check 10 holds both
+//                        spellings to it): the mDNS TXT `model` and Home
+//                        Assistant's Hardware. The base env's board is the
+//                        XIAO ESP32-S3 Sense (platformio.ini [env] board =
+//                        seeed_xiao_esp32s3, whose board definition defines
+//                        ARDUINO_XIAO_ESP32S3; devices/canary/device.json
+//                        board_id xiao-esp32s3-sense). Each board port names
+//                        its own board with -DCANARY_BOARD_NAME. A build that
+//                        names none leaves it undefined, and both surfaces
+//                        then omit it ("cannot say"), never borrow a name.
+#define CANARY_PRODUCT_NAME   "Canary"
+#ifndef CANARY_BOARD_NAME
+  #if defined(ARDUINO_XIAO_ESP32S3)
+    #define CANARY_BOARD_NAME "XIAO ESP32-S3 Sense"
+  #endif
+#endif
+
 // Optional build-time provenance for the 'f' fingerprint command. CI/PlatformIO
 // can inject the short commit with -DFIRMWARE_GIT_HASH=\"abc1234\"; when it
 // isn't injected the build timestamp (__DATE__/__TIME__) still identifies the

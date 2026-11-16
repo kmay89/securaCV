@@ -755,7 +755,7 @@
         {
           "suffix": "health",
           "retain": true,
-          "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":183424,\"uptime\":41,\"firmware_version\":\"2.4.20\",\"public_key\":\"2152f8d1\u2026\"}"
+          "payload": "{\"battery_present\":false,\"memory_free\":183424,\"uptime\":41,\"firmware_version\":\"2.4.20\",\"public_key\":\"2152f8d1\u2026\"}"
         },
         {
           "suffix": "chain",

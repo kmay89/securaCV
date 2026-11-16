@@ -1123,7 +1123,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <div class="identity-row">
             <span class="identity-label">Firmware</span>
-            <span class="identity-value" id="firmware">3.1.0</span>
+            <span class="identity-value" id="firmware">--</span>
           </div>
         </div>
       </div>
@@ -2639,7 +2639,6 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin-bottom:0.75rem;">
         <span style="font-size:1.25rem;">🐥</span>
         <span style="font-weight:600;font-size:0.9rem;">SecuraCV Canary</span>
-        <span style="color:var(--muted);font-size:0.75rem;">v3.1.0</span>
       </div>
       <p style="font-size:0.7rem;color:var(--muted);margin-bottom:0.5rem;">
         Privacy-first witness device for accountability without surveillance.
@@ -3671,7 +3670,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('freeHeap').textContent = Math.round(data.free_heap / 1024);
       document.getElementById('fingerprint').textContent = data.fingerprint || '--';
       document.getElementById('pubkey').textContent = truncateHash(data.pubkey, 16);
-      document.getElementById('firmware').textContent = data.firmware || '3.0.0';
+      document.getElementById('firmware').textContent = data.firmware || '--';
 
       if (data.gps) updateGps(data.gps);
       updateBadges(data);
@@ -3776,7 +3775,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // Device Info
       if (data.device) {
         const dev = data.device;
-        document.getElementById('sysChip').textContent = (dev.model || 'ESP32') + ' rev ' + (dev.revision || '?');
+        document.getElementById('sysChip').textContent = (dev.model || '--') + ' rev ' + (dev.revision || '?');
         document.getElementById('sysCores').textContent = dev.cores || '--';
         document.getElementById('sysFreq').textContent = dev.freq_mhz || '--';
         document.getElementById('sysFlash').textContent = ((dev.flash_size || 0) / (1024 * 1024)).toFixed(0);

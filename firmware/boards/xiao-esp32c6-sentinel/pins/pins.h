@@ -18,6 +18,19 @@
 #define BOARD_XIAO_ESP32C6_SENTINEL 1
 #endif
 
+// Which physical board this is, in the fleet-figure vocabulary. Named here
+// rather than in the build env because THIS header is what a build compiles
+// against, so the id cannot drift away from the pins it travels with. It is
+// the `hw` that GET /api/status, the GET /api/fleet row and the mDNS TXT
+// carry (main.cpp, mdns_mgr.cpp and ota_mgr.cpp include this header for it;
+// check_board_registry.py check 11), and the board a version-2 OTA manifest
+// binds to (release manifests are version 1 today, which bind no board).
+// The board has no figure yet (canary-local/devices/figures.json lists it
+// under hardware.unmapped), so canary::figures::my_figure() returns nullptr.
+#ifndef CANARY_FIGURE_HARDWARE
+#define CANARY_FIGURE_HARDWARE "xiao-esp32c6-sentinel"
+#endif
+
 #define BOARD_NAME    "Seeed XIAO ESP32-C6 (Sentinel Standard)"
 #define BOARD_ID      "xiao-esp32c6-sentinel"
 #define BOARD_VENDOR  "Seeed Studio"

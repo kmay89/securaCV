@@ -1357,7 +1357,12 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
         if isinstance(public_key, str):
             public_key = normalize_hex(public_key)
         self._attr_extra_state_attributes = {
-            "battery_percent": 100 if battery is None else battery,
+            # No battery reading is unknown, never 100: no battery reported
+            # (mains power, or a board that reads none; Sense, Vision and
+            # Sentinel used to send a hard-coded 100 beside battery_present:
+            # false, device-details §1.4), or a present battery whose charge
+            # is not a number (sweep HA57's readings; HA60).
+            "battery_percent": battery,
             # The reading, or None with none: never a 0 nobody sent.
             "memory_free_bytes": memory_free,
             # Broker values, each as the core can carry it: an integer

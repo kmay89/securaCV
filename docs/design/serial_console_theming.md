@@ -121,8 +121,10 @@ hash-agnostic given a fixed input string).
 ## Phase 2 (implemented): the animated wake — `a`
 
 The animation with a job. The `a` command runs the real self-test and reveals
-its ten probes one at a time — `[..] -> [OK]` / `[!!]` with each probe's real
-name + duration — then settles into the identity card. The animation **is** the
+its nine probes one at a time — `[..] -> [OK]` / `[!!]` with each probe's real
+name + duration; the watchdog row, which checks nothing yet, reads `[--]` "not
+a probe" from the first frame and is counted as neither — then settles into the
+identity card. The animation **is** the
 health check, not filler.
 
 ```
@@ -131,7 +133,7 @@ health check, not filler.
 | [OK] Device keys                              40ms |  ...  | [!!] SD card                       5ms |
 | [..] SD card                                       |  -->  | [OK] Wi-Fi radio                   8ms |
 | [~~] Wi-Fi radio                                   |       |  ...                                   |
-| Health    checking...   4/10 reported              |       | Health    90%   9/10 probes passed     |
+| Health    checking...   4/9 reported               |       | Health    88%   8/9 probes passed      |
 +----------------------------------------------------+       +----------------------------------------+
 ```
 
@@ -148,7 +150,7 @@ a **Tier-1, skippable bonus** that degrades cleanly:
 - **Press any key to skip:** any RX byte reveals the rest and jumps to the final
   frame; the sequence always converges to the same static end-state, so a
   scrollback capture is clean.
-- The running frame **never shows the final score** (only "N/10 reported"), so
+- The running frame **never shows the final score** (only "N/9 reported"), so
   the reveal isn't spoiled — the score appears only on the completed frame.
 
 Pure composition in `firmware/common/ui/console_wake.h`; timing / skip /

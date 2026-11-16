@@ -15,7 +15,11 @@ What is pinned and why:
     old `thermal` entry (FEATURE_DIAGNOSTICS, the canary's self-test flag)
     fails, a thermal claim on an env that sets FEATURE_THERMAL_WATCHDOG=0
     fails, and the canary-wap's thermal passes only through its alias
-    (FEATURE_SYS_MONITOR); the alias and unmapped tables cannot rot.
+    (FEATURE_SYS_MONITOR); the alias and unmapped tables cannot rot;
+  • a probe count a matrix string states is the flagship self-test's, read
+    from its TESTS[] table (a row with no probe function is not a probe): the
+    display lane's note kept "the canary tree's 10-probe suite" after the
+    suite became nine probes, and that note reaches the website's /checkup.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -25,6 +29,7 @@ import copy
 import importlib.util
 import io
 import json
+import re
 import sys
 import unittest
 from contextlib import redirect_stdout
@@ -255,6 +260,47 @@ class FeatureClaimsHeldToTheirTree(unittest.TestCase):
         self.assertEqual(Path(lbm.tree_suite().__file__).resolve(),
                          (REPO / "scripts/tests/test_board_thermal_notes.py").resolve())
 
+
+class ProbeCountsAreTheSuites(unittest.TestCase):
+    def test_the_suite_is_read_from_its_table(self):
+        src = (REPO / lbm.DIAG_CPP).read_text(encoding="utf-8")
+        rows = re.findall(r'\{"(\w+)",\s*(test_\w+|nullptr)\}', src)
+        self.assertGreaterEqual(len(rows), 2, "the table's rows are found")
+        probes = sum(1 for _name, fn in rows if fn != "nullptr")
+        self.assertEqual(lbm.flagship_probe_count(src), probes)
+        self.assertEqual(probes, 9, "nine probes and the watchdog row, as the notes say")
+
+    def test_a_row_with_no_probe_and_a_commented_row_are_not_counted(self):
+        src = """static const selftest_def_t TESTS[SELFTEST_COUNT] = {
+  {"nvs_rw",   test_nvs},
+  /* {"old",   test_old}, */
+  // {"older", test_older},
+  {"watchdog", nullptr},
+  {"chain_ok", test_chain},
+};"""
+        self.assertEqual(lbm.flagship_probe_count(src), 2)
+        self.assertIsNone(lbm.flagship_probe_count("int x;"), "no table reads as None")
+
+    def test_the_committed_matrix_states_the_suites_count(self):
+        matrix, _flavors, _manifests = _tree()
+        self.assertEqual(lbm.probe_count_errors(matrix, 9), [])
+        said = [t for _w, t in lbm._strings(matrix) if lbm._PROBE_COUNT_RE.search(t)]
+        self.assertGreaterEqual(len(said), 2, "the selftest note and the display lane state it")
+
+    def test_a_stale_count_is_refused_in_every_spelling(self):
+        matrix, _flavors, _manifests = _tree()
+        for stale in ("the canary tree's 10-probe suite", "a ten-probe self-test",
+                      "the 10 probes", "Ten probes run at boot"):
+            mutated = copy.deepcopy(matrix)
+            lane = next(p for p in mutated["products"] if p["id"] == "canary-display-watch")
+            lane["note"] = f"'selftest' here is not {stale}."
+            errors = lbm.probe_count_errors(mutated, 9)
+            self.assertEqual(len(errors), 1, (stale, errors))
+            self.assertIn("products[canary-display-watch].note", errors[0])
+        for fine in ("the nine-probe suite", "9 probes", "not a probe", "the probe rows"):
+            mutated = copy.deepcopy(matrix)
+            mutated["products"][0]["note"] = fine
+            self.assertEqual(lbm.probe_count_errors(mutated, 9), [], fine)
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

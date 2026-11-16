@@ -74,7 +74,9 @@ on:
       # the canary-wap's csi_mqtt.cpp are listed above), the product-name
       # table's keys to the device types the firmware configs publish, with
       # the displays' fleet model for the one legacy type, and its names to
-      # the Apple apps' table.
+      # the Apple apps' table. test_absent_battery.py reads the Sense, Vision
+      # and Sentinel mqtt_mgr.cpp below too: it holds their retained health
+      # (publish_health_retained) to battery_present with no battery value.
       - 'firmware/configs/*/*/config.h'
       - 'firmware/projects/canary-sense/src/net/mqtt_mgr.cpp'
       - 'firmware/projects/canary-vision/src/net/mqtt_mgr.cpp'
@@ -196,7 +198,9 @@ on:
       # the canary-wap's csi_mqtt.cpp are listed above), the product-name
       # table's keys to the device types the firmware configs publish, with
       # the displays' fleet model for the one legacy type, and its names to
-      # the Apple apps' table.
+      # the Apple apps' table. test_absent_battery.py reads the Sense, Vision
+      # and Sentinel mqtt_mgr.cpp below too: it holds their retained health
+      # (publish_health_retained) to battery_present with no battery value.
       - 'firmware/configs/*/*/config.h'
       - 'firmware/projects/canary-sense/src/net/mqtt_mgr.cpp'
       - 'firmware/projects/canary-vision/src/net/mqtt_mgr.cpp'

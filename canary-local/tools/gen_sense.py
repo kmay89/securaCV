@@ -572,7 +572,7 @@ TOPICS = [
      "payload": '{"v":1,"length":313,"latest_hash":"9c2e…","algorithm":"ed25519","alg":"ed25519","fp":"%s","sig":"…"}' % EX_FP,
      "note": "HA rebuilds the canonical from (device_id, length, latest_hash) and verifies against the TOFU-pinned pubkey"},
     {"suffix": "health", "retained": True, "cadence": "~60 s + on reconnect",
-     "payload": '{"battery":100,"battery_present":false,"memory_free":145120,"uptime":312,"firmware_version":"%s","public_key":"…","radar":{"link_ok":true,"last_frame_age_ms":412,"frame_errors":0}}' % FW_VERSION,
+     "payload": '{"battery_present":false,"memory_free":145120,"uptime":312,"firmware_version":"%s","public_key":"…","radar":{"link_ok":true,"last_frame_age_ms":412,"frame_errors":0}}' % FW_VERSION,
      "note": "carries the pubkey Home Assistant TOFU-pins on first sight — the green-badge trust anchor — and the radar-link object HA's diagnostic sensor reads (link_ok / last_frame_age_ms / frame_errors)"},
     {"suffix": "update/state", "retained": True, "cadence": "on OTA state change",
      "payload": '{"installed_version":"%s","latest_version":"%s","in_progress":false,"update_percentage":null}' % (FW_VERSION, FW_VERSION)},
@@ -635,13 +635,31 @@ EVENT_KEYS = (_keys(_between(_fn(MAIN_CPP, "static void record_event_now("), "co
                              "canary::cfg::get()", "event format"))
               + _keys(_fn(WITNESS_CPP, "bool sign_event_envelope(")))
 CHAIN_KEYS = _keys(_between(_fn(MQTT_CPP, "void publish_chain_retained("), "if (signed_ok) {", "} else {", "chain"))
+# The retained health: publish_health_retained's body format, then the radar
+# object it appends last (its keys after "radar", nested). The example used to
+# be typed whole, and kept a "battery":100 the firmware stopped sending.
+_health_fn = _fn(MQTT_CPP, "void publish_health_retained(")
+HEALTH_KEYS = (_keys(_between(_health_fn, "snprintf(msg, sizeof(msg),", "publish_checked(", "health format"))
+               + _keys(_between(_health_fn, "snprintf(radar_json, sizeof(radar_json),", ");", "health radar object")))
 SENSE_KEYS = {"state": STATE_KEYS, "events": EVENT_KEYS, "chain": CHAIN_KEYS}
+
+
+def _flat(obj):
+    out = []
+    for k, v in obj.items():
+        out.append(k)
+        if isinstance(v, dict):
+            out += _flat(v)
+    return out
+
+
 for label, payload, keys in (("state", STATE_PAYLOAD, STATE_KEYS),
                              ("state (wellbeing)", STATE_PAYLOAD_WELLBEING, STATE_KEYS_WELLBEING),
                              ("events", EVENT_PAYLOAD, EVENT_KEYS),
-                             ("chain", next(t for t in TOPICS if t["suffix"] == "chain")["payload"], CHAIN_KEYS)):
-    if list(json.loads(payload)) != keys:
-        die(f"Sense {label} example keys {list(json.loads(payload))} are not the firmware's {keys}")
+                             ("chain", next(t for t in TOPICS if t["suffix"] == "chain")["payload"], CHAIN_KEYS),
+                             ("health", next(t for t in TOPICS if t["suffix"] == "health")["payload"], HEALTH_KEYS)):
+    if _flat(json.loads(payload)) != keys:
+        die(f"Sense {label} example keys {_flat(json.loads(payload))} are not the firmware's {keys}")
 if EVENT_KEYS[-4:] != ["v", "alg", "fp", "sig"] or len(STATE_KEYS_WELLBEING) != len(STATE_KEYS) + 3:
     die("the Sense event envelope or the state's vitals block moved")
 # seq rides the chain: record_event_now's seq is chain_length() + 1, and the

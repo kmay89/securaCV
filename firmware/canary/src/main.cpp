@@ -3752,8 +3752,9 @@ static void show_fleet_nearby() {
 #endif
 
 #if FEATURE_DIAGNOSTICS
-// 'a' — the animated wake: the 10 self-test probes light up [..] -> [OK]/[!!]
-// as they report (real per-probe results), then it settles into the identity
+// 'a' — the animated wake: the self-test's probes light up [..] -> [OK]/[!!]
+// as they report (real per-probe results; a row the suite lists but does not
+// check reads [--] "not a probe"), then it settles into the identity
 // card. On a confirmed ANSI terminal the fixed-height block repaints in place;
 // on the plain ASCII floor there's no cursor control, so it prints the finished
 // checklist once. Press any key to skip the reveal. Read-only (Tier::Diag).
@@ -3768,25 +3769,28 @@ static void run_wake() {
   int n = st.total_count;
   if (n > SELFTEST_COUNT) n = SELFTEST_COUNT;
   scene::WakeProbe probes[SELFTEST_COUNT];
+  // Every row's state is scene::probe_state()'s (host-tested): a row the
+  // suite lists but does not check reads "not a probe" from the first frame
+  // on, never Pass or Fail; a probe is pending until revealed.
+  auto state_of = [&st](int i, bool revealed) {
+    return scene::probe_state(st.tests[i].not_a_probe, revealed, st.tests[i].passed);
+  };
   for (int i = 0; i < n; ++i) {
     probes[i].label = st.tests[i].name;
-    probes[i].state = scene::ProbeState::Pending;
+    probes[i].state = state_of(i, false);
     probes[i].ms = st.tests[i].duration_ms;
   }
 
   if (!caps.ansi) {
     // ASCII floor: no cursor control — reveal all and print the block once.
-    for (int i = 0; i < n; ++i)
-      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
-                                           : scene::ProbeState::Fail;
+    for (int i = 0; i < n; ++i) probes[i].state = state_of(i, true);
     scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
   } else {
     scene::hide_cursor(r);
     scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, false);
     bool skipped = false;
     for (int i = 0; i < n && !skipped; ++i) {
-      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
-                                           : scene::ProbeState::Fail;
+      probes[i].state = state_of(i, true);
       scene::cursor_up(r, scene::wake_height(n));
       scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, i == n - 1);
       uint32_t until = millis() + 180;
@@ -3795,9 +3799,7 @@ static void run_wake() {
       }
     }
     if (skipped) {
-      for (int j = 0; j < n; ++j)
-        probes[j].state = st.tests[j].passed ? scene::ProbeState::Pass
-                                             : scene::ProbeState::Fail;
+      for (int j = 0; j < n; ++j) probes[j].state = state_of(j, true);
       scene::cursor_up(r, scene::wake_height(n));
       scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
     }
@@ -4172,8 +4174,10 @@ static void handle_serial_commands() {
                       snap.sd.usage_pct, snap.sd.total_writes,
                       snap.sd.write_errors);
         if (snap.selftest.has_run) {
+          // Over the probes, as `t` counts them: the watchdog row, which
+          // checks nothing, is neither a pass nor a probe.
           Serial.printf("  Self-test: %u/%u passed (%u%% health)\n",
-                        snap.selftest.passed_count, snap.selftest.total_count,
+                        snap.selftest.passed_count, selftest_probe_count(&snap.selftest),
                         snap.selftest.health_score);
         }
         Serial.printf("  Reset reason: %u\n", snap.reset_reason);
@@ -4285,8 +4289,10 @@ static void handle_serial_commands() {
       diag_run_selftest();
       selftest_report_t st;
       if (diag_get_selftest(&st)) {
+        // Over the probes: a listed row that checks nothing (the watchdog's)
+        // is neither a pass nor a probe.
         Serial.printf("  Self-test : %u/%u probes · %u%% health\n",
-                      st.passed_count, st.total_count, st.health_score);
+                      st.passed_count, selftest_probe_count(&st), st.health_score);
       }
 #else
       Serial.println("  Self-test : diagnostics not compiled in");
