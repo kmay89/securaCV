@@ -1,6 +1,79 @@
 # Changelog
 
 ## [Unreleased]
+### Every disclosed file carries its handoff sidecar; the device records the decrypt; a quorum export names its grant
+
+- **Release coupling — merge gate.** This change adds a receipt outcome
+  (`Unsealed`) that every reader built from the token-redemption change
+  (#1936) fails to parse (`unknown variant`); a `witnessd` of that era boots
+  into safe mode on such a row. The plan was to merge it before the first
+  release that contains #1936. That did not happen: kernel 0.9.1, Flasher
+  0.12.5 and Lab app 0.4.1 carry #1936 without this reader. The owner
+  confirmed on 2026-11-16 that no deployment reads these ledgers yet, so
+  what remains is the upgrade order below.
+- **Upgrade order.** Upgrade `witnessd`, `break_glass`, `log_verify`,
+  `envelope_verify`, `court_export` and every observer host **before the
+  first unseal recorded by this build** — the same rule `TokenRedeemed`
+  rows carried. A bundle whose receipt carries `context` or
+  `authorizing_receipt` (every quorum export from this build) needs a
+  verifier from this build, including the website's copy of
+  `viewer/verify_core.js`, which ships in the same release (a separate
+  website PR carries it; until it merges, the website's copy of
+  `viewer/verify_core.js` and the two new fixtures stay stale — the weekly
+  "Update everything" carry diff shows it, or run
+  `python3 scripts/carry_to_site.py --site <checkout>` and then
+  `git -C <checkout> diff`. `--check` covers only the downloads carry).
+- **Handoff sidecars** (`spec/quorum_unseal_v2.md` §5). `break_glass unseal`,
+  the break-glass console, the drill and `export_events` write
+  `<file>.securacv-handoff.json` beside every disclosed file: canonical
+  `securacv-cjson-v1`, no trailing newline, 0600, never overwritten. It
+  embeds the device-signed rows of the disclosure verbatim (grant,
+  redemption and unseal record, or export receipt), references RFC 3161
+  tokens by SHA-256 (selected by hash only), carries one 600 s bucket as its
+  only time value, and labels everything else declared. It adds no signing
+  domain. New tool `handoff_sidecar emit | verify | redact` (in the release
+  and container bin lists) and a POSIX recipe,
+  `scripts/verify_handoff_sidecar.sh` (`sha256sum`, `openssl` ≥ 3.0, `jq`; no
+  `xxd`). Guide: `docs/handoff_sidecars.md`; design:
+  `docs/design/handoff_sidecars.md`.
+- **The unseal record.** After #1936's burn-first redemption and a
+  successful decrypt, and before any byte is written, the kernel appends a
+  device-signed `Unsealed { redemption_entry_hash, plaintext_commitment,
+  recipient_commitment? }` row; the commitments are salted
+  (`securacv:pwk:unsealed-plaintext:v1`, `securacv:pwk:handoff-recipient:v1`)
+  with salts that exist only in the sidecar, so the never-pruned ledger holds
+  no media fingerprint and no recipient name. Fail-closed order: before the
+  burn an earlier sidecar at the output path is moved aside (restored on any
+  failure, so a re-run with a spent or wrong token never destroys an earlier
+  disclosure's salts) and the sidecar path is proven writable; then the row,
+  the sidecar (created `O_EXCL` at its final path — no hard link, so FAT,
+  exFAT and SMB media work), the `.raw`.
+  `--recipient-file` (preferred) and `--recipient-name/-org/-key` declare
+  the recipient; it is never verified and never printed. Verifiers apply
+  U1–U5 (`token_redemption`).
+- **`ExportReceipt` gains two trailing optional fields**: `context`
+  (`{operator?, recipient_commitment?}`, declared — a self-export's
+  `--requested-by/--reason/--case-ref/--requester-key`) and
+  `authorizing_receipt` (the Granted receipt a quorum export spent, set on
+  every quorum export). A quorum export never restates an operator
+  (`--requested-by` conflicts with `--break-glass-token`). Receipts without
+  them serialize byte-identically. R0–R6 under the new
+  `FailureKind::ExportAuthorization` run in `log_verify`, the Rust and JS
+  envelope walks and `handoff_sidecar verify`; R0/R1/R6 in
+  `verify_export_bundle` and the viewer.
+- **Reports.** `VerifyReport.break_glass_unsealed` and
+  `export_receipts_authorized` are omitted while zero, so the MQTT/API
+  report is byte-identical until the first unseal record or authorizing
+  receipt exists.
+- **`court_export`** verifies a supplied sidecar (refusing a contradicting
+  one before the kit directory exists) or generates one, and adds the
+  `Disclosure context` and `Handoff sidecar` sections, `VERIFICATION.md`
+  steps, README item 8, and the MANIFEST `evidence.context`,
+  `evidence.authorizing_receipt` and `handoff` keys.
+- **Viewer.** `viewer/verify_core.js` serializes the new fields, applies the
+  same rules with the same strings, annotates (never softens) an entry-hash
+  mismatch on a receipt with unknown fields, and shows the declared fields;
+  the Home Assistant copy of the viewer is rebuilt.
 ### The 2.4.20 follow-ups: kernel, integration and app 0.9.2, Flasher 0.12.7, Lab 0.4.3, iOS 0.9.2
 
 - **The Home Assistant app's wizard checks "Only Frigate alerts" against

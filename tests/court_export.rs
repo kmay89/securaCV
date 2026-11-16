@@ -150,6 +150,21 @@ fn assembles_kit_and_manifest_hashes_are_correct() -> Result<()> {
     assert_eq!(manifest["evidence"]["sha256"], bundle_hex.as_str());
     assert_eq!(manifest["evidence"]["auth_mode"], "self_export");
     assert_eq!(manifest["anchored"], false, "no anchors were recorded");
+    // The handoff sidecar is generated, hashed in files[], and the new
+    // evidence keys are present (null for a receipt without them).
+    assert!(manifest["evidence"]["context"].is_null());
+    assert!(manifest["evidence"]["authorizing_receipt"].is_null());
+    assert_eq!(manifest["handoff"]["source"], "generated");
+    assert_eq!(manifest["handoff"]["recipient_binding"], "none");
+    assert_eq!(
+        manifest["handoff"]["file"],
+        "evidence/witness_export.json.securacv-handoff.json"
+    );
+    assert!(manifest["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["path"] == "evidence/witness_export.json.securacv-handoff.json"));
     for file in manifest["files"].as_array().expect("files array") {
         let path = kit.join(file["path"].as_str().expect("path"));
         let bytes = std::fs::read(&path)?;
@@ -1768,5 +1783,323 @@ fn ots_client_reads_fixtures_and_our_proofs() -> Result<()> {
     std::fs::write(&ours, ots_proof(&[0x5au8; 32]).to_bytes())?;
     let o = Command::new("ots").arg("info").arg(&ours).output()?;
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    Ok(())
+}
+
+// ---- handoff sidecars in the kit (spec/quorum_unseal_v2.md §5) ----
+
+const HANDOFF: &str = "witness_export.json.securacv-handoff.json";
+
+/// A self-export with a declared operator context and a recipient, and its
+/// handoff sidecar beside the bundle (as `export_events` writes it).
+fn make_context_bundle(dir: &Path) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    use witness_kernel::break_glass::OperatorContext;
+    use witness_kernel::handoff::{self, HandoffRecipient};
+    let db_path = dir.join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let recipient = HandoffRecipient::new("Dana Reyes", None, None)?;
+    let salt = handoff::fresh_salt();
+    let context = witness_kernel::ExportContext::new(
+        Some(OperatorContext::new(
+            "Dana Owner",
+            "owner-recovery",
+            Some("HOA-114"),
+            None,
+        )?),
+        Some(handoff::recipient_commitment(&salt, &recipient)),
+    )?;
+    let bundle = kernel.export_events_bundle_self_with(
+        cfg.ruleset_hash,
+        ExportOptions::default(),
+        context,
+    )?;
+    let bytes = serde_json::to_vec(&bundle)?;
+    let bundle_path = dir.join("witness_export.json");
+    std::fs::write(&bundle_path, &bytes)?;
+    let sidecar = handoff::build_export_sidecar(
+        &kernel.conn,
+        &bytes,
+        "witness_export.json",
+        Some((&recipient, Some(salt))),
+        handoff::handoff_bucket_now()?,
+        "test",
+    )?;
+    handoff::write_sidecar_new(
+        &handoff::sidecar_path_for(&bundle_path),
+        &sidecar.to_canonical_bytes()?,
+    )?;
+    Ok((db_path, bundle_path))
+}
+
+#[test]
+fn a_supplied_valid_sidecar_is_copied_verbatim() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_context_bundle(temp.path())?;
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let supplied = std::fs::read(temp.path().join(HANDOFF))?;
+    assert_eq!(std::fs::read(kit.join("evidence").join(HANDOFF))?, supplied);
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["handoff"]["source"], "supplied");
+    assert_eq!(
+        manifest["handoff"]["recipient_binding"],
+        "receipt_commitment"
+    );
+    assert_eq!(
+        manifest["handoff"]["sha256"],
+        hex::encode(Sha256::digest(&supplied)).as_str()
+    );
+    assert_eq!(
+        manifest["evidence"]["context"]["operator"]["requester_name"],
+        "Dana Owner"
+    );
+    assert!(manifest["evidence"]["context"]["recipient_commitment"].is_string());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(&format!(
+            "  handoff:   evidence/{HANDOFF} (supplied, verified); recipient: receipt_commitment"
+        )),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sidecar_that_contradicts_the_bundle_refuses_the_kit() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_context_bundle(temp.path())?;
+    // Replace the sidecar with one describing other bytes (canonical, so
+    // only the content checks decide).
+    let side = temp.path().join(HANDOFF);
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&side)?)?;
+    v["file"]["sha256"] = serde_json::Value::String("00".repeat(32));
+    std::fs::remove_file(&side)?;
+    std::fs::write(
+        &side,
+        witness_kernel::canonical_json::to_canonical_bytes(&v)?,
+    )?;
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("custody break: the handoff sidecar beside the bundle does not describe this bundle (file: sha256 "), "{err}");
+    assert!(err.contains(&format!("Remove or replace {} (handoff_sidecar emit writes a fresh one) — a kit must not carry a sidecar that contradicts its evidence. Refusing to package.", side.display())), "{err}");
+    assert!(!kit.exists(), "no kit directory is created");
+    Ok(())
+}
+
+#[test]
+fn an_absent_sidecar_is_generated_committed_not_disclosed() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_context_bundle(temp.path())?;
+    std::fs::remove_file(temp.path().join(HANDOFF))?;
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["handoff"]["source"], "generated");
+    assert_eq!(
+        manifest["handoff"]["recipient_binding"],
+        "committed_not_disclosed"
+    );
+    let generated = std::fs::read(kit.join("evidence").join(HANDOFF))?;
+    assert!(!String::from_utf8_lossy(&generated).contains("Dana Reyes"));
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(readme.contains(&format!("8. `evidence/{HANDOFF}` — the handoff sidecar")));
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(verification.contains(&format!(
+        "sha256sum evidence/{HANDOFF}   # expect: {}",
+        hex::encode(Sha256::digest(&generated))
+    )));
+    assert!(verification.contains("Each `token_sha256` in the handoff sidecar equals one line printed by `sha256sum anchors/*.der`."));
+    assert!(verification.contains(&format!("handoff_sidecar verify --file evidence/witness_export.json --sidecar evidence/{HANDOFF} --anchors-dir anchors --public-key-file <device.pub> [--ca <tsa-ca.pem>]")));
+    Ok(())
+}
+
+#[test]
+fn the_disclosure_context_labels_declared_and_trustee_consented_fields() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_context_bundle(temp.path())?;
+    let kit = temp.path().join("kit");
+    assert!(run_court_export(&db, &bundle, &kit).status.success());
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(custody.contains("## Disclosure context"));
+    assert!(custody.contains("| Requester | Dana Owner |"));
+    assert!(custody.contains("| Case reference | HOA-114 |"));
+    assert!(custody.contains("| Authorizing grant | not applicable (not a quorum export) |"));
+    assert!(custody.contains("| Source of these fields | declared by the exporting operator (device-key holder), recorded in the device-signed receipt; not trustee-consented |"));
+    assert!(custody
+        .contains("| Recipient | committed in the signed receipt; named in the handoff sidecar |"));
+    assert!(custody.contains("## Handoff sidecar"));
+    assert!(custody.contains("Recipient binding: receipt_commitment."));
+    assert!(
+        !custody.contains("Dana Reyes"),
+        "the recipient's name is never rendered in the custody record"
+    );
+
+    // A quorum export's fields come from its grant and are labeled
+    // trustee-consented.
+    let temp = tempfile::tempdir()?;
+    let db_path = temp.path().join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let alice = ed25519_dalek::SigningKey::from_bytes(&[41u8; 32]);
+    let policy = witness_kernel::QuorumPolicy::new(
+        1,
+        vec![witness_kernel::TrusteeEntry {
+            id: witness_kernel::TrusteeId::new("alice"),
+            public_key: alice.verifying_key().to_bytes(),
+        }],
+    )?;
+    kernel.set_break_glass_policy(&policy)?;
+    let bucket = TimeBucket::now(600)?;
+    let request = witness_kernel::UnlockRequest::new(
+        witness_kernel::EXPORT_EVENTS_ENVELOPE_ID,
+        cfg.ruleset_hash,
+        "records request",
+        bucket,
+    )?
+    .with_context(witness_kernel::break_glass::OperatorContext::new(
+        "Riley Requester",
+        "legal-request",
+        Some("CASE-9"),
+        None,
+    )?)?;
+    let approval = witness_kernel::Approval::signed(
+        witness_kernel::TrusteeId::new("alice"),
+        request.request_hash(),
+        &alice,
+    );
+    let (result, receipt) = witness_kernel::BreakGlass::authorize(
+        &policy,
+        &request,
+        std::slice::from_ref(&approval),
+        bucket,
+    );
+    let mut token = result?;
+    let granted = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+    kernel.sign_break_glass_token(&mut token, granted)?;
+    let bundle = kernel.export_events_bundle_authorized(
+        cfg.ruleset_hash,
+        ExportOptions::default(),
+        &mut token,
+    )?;
+    let bundle_path = temp.path().join("witness_export.json");
+    std::fs::write(&bundle_path, serde_json::to_vec(&bundle)?)?;
+    drop(kernel);
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db_path, &bundle_path, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(custody.contains(&format!(
+        "| Authorizing grant | `{}` — the trustee-approved break-glass receipt this export spent; trustees named: alice |",
+        hex::encode(granted)
+    )), "{custody}");
+    assert!(custody.contains("| Requester | Riley Requester |"));
+    assert!(custody.contains(&format!(
+        "| Source of these fields | trustee-consented: bound into the request hash the trustees approved (grant {}…) |",
+        &hex::encode(granted)[..16]
+    )));
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(
+        manifest["evidence"]["authorizing_receipt"],
+        hex::encode(granted).as_str()
+    );
+    assert!(manifest["evidence"]["context"].is_null());
+    assert_eq!(manifest["handoff"]["recipient_binding"], "none");
+    Ok(())
+}
+
+/// An unseal sidecar whose `file` names the bundle's bytes verifies on its
+/// own (real rows, a declared pairing), but a kit carries the export sidecar
+/// of its bundle: court_export refuses it as a custody break.
+#[test]
+fn an_unseal_sidecar_beside_a_bundle_refuses_the_kit() -> Result<()> {
+    use witness_kernel::handoff::{self, HandoffFile, UnsealSelector};
+    let temp = tempfile::tempdir()?;
+    let db_path = temp.path().join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let alice = ed25519_dalek::SigningKey::from_bytes(&[41u8; 32]);
+    let policy = witness_kernel::QuorumPolicy::new(
+        1,
+        vec![witness_kernel::TrusteeEntry {
+            id: witness_kernel::TrusteeId::new("alice"),
+            public_key: alice.verifying_key().to_bytes(),
+        }],
+    )?;
+    kernel.set_break_glass_policy(&policy)?;
+    let bucket = TimeBucket::now(600)?;
+    let request =
+        witness_kernel::UnlockRequest::new("vault:1", cfg.ruleset_hash, "records request", bucket)?;
+    let approval = witness_kernel::Approval::signed(
+        witness_kernel::TrusteeId::new("alice"),
+        request.request_hash(),
+        &alice,
+    );
+    let (result, receipt) = witness_kernel::BreakGlass::authorize(
+        &policy,
+        &request,
+        std::slice::from_ref(&approval),
+        bucket,
+    );
+    let mut token = result?;
+    let granted = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+    kernel.sign_break_glass_token(&mut token, granted)?;
+    kernel.redeem_token_durably(&token)?;
+
+    let bundle = kernel.export_events_bundle_self(cfg.ruleset_hash, ExportOptions::default())?;
+    let bytes = serde_json::to_vec(&bundle)?;
+    let bundle_path = temp.path().join("witness_export.json");
+    std::fs::write(&bundle_path, &bytes)?;
+    let sidecar = handoff::build_unseal_sidecar(
+        &kernel.conn,
+        &kernel.device_verifying_key(),
+        UnsealSelector::Grant(granted),
+        &HandoffFile {
+            bytes: bytes.len() as u64,
+            name: "witness_export.json".to_string(),
+            sha256: hex::encode(Sha256::digest(&bytes)),
+        },
+        None,
+        None,
+        handoff::handoff_bucket_now()?,
+        "test",
+    )?;
+    assert_eq!(sidecar.pairing, handoff::Pairing::Declared);
+    assert_eq!(sidecar.recipient_binding, handoff::RecipientBinding::None);
+    let side = temp.path().join(HANDOFF);
+    handoff::write_sidecar_new(&side, &sidecar.to_canonical_bytes()?)?;
+    drop(kernel);
+
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db_path, &bundle_path, &kit);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains(
+            "custody break: the handoff sidecar beside the bundle does not describe this bundle \
+             (records: this is an unseal sidecar; a kit carries the export sidecar of its bundle)."
+        ),
+        "{err}"
+    );
+    assert!(!kit.exists(), "no kit directory is created");
     Ok(())
 }

@@ -50,6 +50,7 @@ with them.
 | `evidence/` | The bundle exactly as exported (plus its C2PA sidecar, if any) |
 | `anchors/*.der` | The RFC 3161 tokens relevant to THIS disclosure, verbatim as bare DER TimeStampTokens (verified with `openssl ts -verify … -token_in`; a `.tsr` is a full response and takes no such flag), each one's embedded imprint checked against the digest its row claims: tokens over the bundle's exact bytes (called out as such), any token over this disclosure's own signed export receipt entry hash (called out as such, whatever its stored subject — `export_receipt_head` or a `digest` anchor made from `receipts --verbose`), plus chain-head tokens. Digest anchors for other exports, later export-receipt heads, empty-ledger sentinels, break-glass and policy heads are deliberately excluded — including them would disclose that those acts exist |
 | `clock_provenance/clock-NNNN.json` + `clock-NNNN.payload.json` | For every packaged token that has one, the producing device's own clock-provenance record ([`timestamping.md`](timestamping.md), "Clock provenance"): what the device's clock read against that token's `genTime`. The `.payload.json` file is the exact signed bytes; the `.json` beside it carries `prev_hash`, `entry_hash`, the signing domain, the Ed25519 signature and the lineage key it verifies under. Absent when no packaged token has a record |
+| `evidence/<bundle>.securacv-handoff.json` | The handoff sidecar ([`handoff_sidecars.md`](handoff_sidecars.md)): this disclosure's device-signed records — the export receipt, and for a quorum export its grant and redemption — verbatim, for a downstream chain-of-custody system. Copied verbatim when one sits beside the bundle (after it verifies), generated otherwise |
 | `anchors/ots-NNNN-<subject>.ots` | The OpenTimestamps proofs relevant to THIS disclosure ([`design/opentimestamps_leg.md`](design/opentimestamps_leg.md)), the stored proof verbatim, selected by the same rule as the tokens — by hash first (bundle bytes, this disclosure's receipt entry), chain heads in this database's history last — and each one's digest checked against the row. Each says either "attests Bitcoin block N" (with the merkle root the reader looks up) or "pending (not yet in a Bitcoin block)"; never "confirmed". Absent when no proof qualifies |
 | `MANIFEST.json` | Machine-readable list of every kit file with its SHA-256 |
 
@@ -140,7 +141,37 @@ with them.
    disclose activity outside this export, so a kit carries the records of
    its own tokens and leaves the ledger's own anchors in the producing
    database.
-5. **OpenTimestamps proofs**: a proof is packaged only when it parses and
+5. **Handoff sidecar**: a `<bundle>.securacv-handoff.json` beside the input
+   bundle is checked against the bundle and the database
+   (`handoff_sidecar verify --db` semantics, under the lineage the kit
+   derives) **before the kit directory exists**. Any FAIL refuses the whole
+   kit: `custody break: the handoff sidecar beside the bundle does not
+   describe this bundle (<subject>: <detail>). Remove or replace <path>
+   (handoff_sidecar emit writes a fresh one) — a kit must not carry a sidecar
+   that contradicts its evidence. Refusing to package.` A sidecar that holds
+   is copied verbatim (`source: supplied`) — it may name the recipient, so
+   run `handoff_sidecar redact` first and put the redacted copy beside the
+   bundle to keep the name out of a kit. Without one, the kit generates one
+   (`source: generated`; recipient binding `committed_not_disclosed` when the
+   receipt commits to a recipient, else `none`). `CUSTODY_AND_CONTROL.md`
+   gains a **Disclosure context** section — authorization, the authorizing
+   grant (with the trustees it names), requester, reason code, case
+   reference, requester key, and a **Source of these fields** row that says
+   whether they are trustee-consented (read from the grant, bound into the
+   request hash the trustees approved) or declared by the exporting operator
+   (a self-export), and how the recipient is recorded — and a **Handoff
+   sidecar** section. `VERIFICATION.md` step 1 adds the sidecar's
+   `sha256sum`, step 3 notes that each `token_sha256` in the sidecar equals a
+   line of `sha256sum anchors/*.der`, and step 4 adds `handoff_sidecar verify
+   --file evidence/<bundle> --sidecar evidence/<sidecar> --anchors-dir
+   anchors --public-key-file <device.pub> [--ca <tsa-ca.pem>]` (or the shell
+   recipe). `README.md` names it as item 8. The manifest gains
+   `evidence.context` (null, or `{operator, recipient_commitment}`),
+   `evidence.authorizing_receipt` (null or hex) and a `handoff` object
+   (`file`, `sha256`, `source`, `pairing`, `recipient_binding`); `files[]`
+   hashes the sidecar. The terminal prints
+   `handoff:   evidence/<sidecar> (supplied, verified | generated); recipient: <binding>`.
+6. **OpenTimestamps proofs**: a proof is packaged only when it parses and
    its digest equals the row's hash, else `WARNING: ots anchor #N excluded
    from the kit: …`; a chain-head proof whose hash is not in this database's
    history is excluded likewise. Its state is derived from the proof, never
@@ -168,7 +199,7 @@ with them.
    `ots:       N proof(s), B attest a Bitcoin block, P pending`. A bundle
    digest gets a proof from `log_anchor request --policy p.json --file
    bundle.json` (online) or `query --policy` then `import --ots-dir`.
-6. **Fresh output directory**: the manifest attests every file in the kit,
+7. **Fresh output directory**: the manifest attests every file in the kit,
    so `--output-dir` must be absent or empty — a directory with any
    pre-existing content is refused.
 

@@ -74,6 +74,7 @@ COPY --from=build /app/target/release/envelope_verify /usr/local/bin/envelope_ve
 COPY --from=build /app/target/release/break_glass /usr/local/bin/break_glass
 COPY --from=build /app/target/release/log_anchor /usr/local/bin/log_anchor
 COPY --from=build /app/target/release/court_export /usr/local/bin/court_export
+COPY --from=build /app/target/release/handoff_sidecar /usr/local/bin/handoff_sidecar
 COPY --from=build /app/target/release/witness_api /usr/local/bin/witness_api
 
 ENV WITNESS_API_ADDR=0.0.0.0:8799

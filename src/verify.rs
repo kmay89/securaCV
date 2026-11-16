@@ -56,8 +56,14 @@ pub enum FailureKind {
     /// The break-glass receipt chain's record of token redemptions is
     /// inconsistent: one nonce redeemed twice, a redemption that names no
     /// earlier `Granted` receipt (or restates it wrongly), or a nonce burned
-    /// in the anti-replay table with no signed redemption row behind it.
+    /// in the anti-replay table with no signed redemption row behind it, or an
+    /// unseal record that names no redemption or repeats one.
     TokenRedemption,
+    /// An export receipt's link to the break-glass grant that authorized it
+    /// (`authorizing_receipt`) does not hold: the grant is missing, is for
+    /// another envelope, was never spent, authorized two exports, or the
+    /// receipt restates an operator beside it (rules R0–R6).
+    ExportAuthorization,
 }
 
 /// Structured verification failure. `Display` reproduces the exact legacy
@@ -119,6 +125,8 @@ pub struct BreakGlassReceiptCounts {
     pub denied: u64,
     /// `TokenRedeemed` rows: one per token actually spent at the unseal gate.
     pub redeemed: u64,
+    /// `Unsealed` rows: one per decrypt the device recorded after a redemption.
+    pub unsealed: u64,
 }
 
 /// What a checkpoint's signature was found to cover (see `log::checkpoint_message`).
@@ -811,7 +819,7 @@ where
         match receipt.outcome {
             BreakGlassOutcome::Granted => granted += 1,
             BreakGlassOutcome::Denied { .. } => denied += 1,
-            BreakGlassOutcome::TokenRedeemed { .. } => {}
+            BreakGlassOutcome::TokenRedeemed { .. } | BreakGlassOutcome::Unsealed { .. } => {}
         }
         let approvals: Vec<Approval> = serde_json::from_str(&approvals_json)?;
         let commitment = approvals_commitment(&approvals);
@@ -828,6 +836,28 @@ where
                 ),
             ));
         }
+        let mut observe = || {
+            redemptions
+                .observe(&receipt, entry_hash, &approvals)
+                .map_err(|e| {
+                    fail(
+                        FailedLedger::BreakGlassReceipts,
+                        Some(id),
+                        FailureKind::TokenRedemption,
+                        format!("integrity check failed at receipt id {}: {}", id, e),
+                    )
+                })
+        };
+        // An unseal record's own rules (U1–U5) run before the per-receipt
+        // quorum and attribution check, so a row that names trustees fails
+        // as U5 (`token_redemption`) here exactly as in the envelope walks,
+        // which carry no quorum check. U5 refuses any approvals or trustee
+        // at all, so it is stricter than attribution and nothing is lost.
+        // Granted, Denied and #1936's TokenRedeemed rows keep their order.
+        let unsealed = matches!(receipt.outcome, BreakGlassOutcome::Unsealed { .. });
+        if unsealed {
+            observe()?;
+        }
         verify_receipt_quorum(policy, &history, &receipt, &approvals).map_err(|e| {
             fail(
                 FailedLedger::BreakGlassReceipts,
@@ -836,16 +866,9 @@ where
                 format!("{}", e),
             )
         })?;
-        redemptions
-            .observe(&receipt, entry_hash, &approvals)
-            .map_err(|e| {
-                fail(
-                    FailedLedger::BreakGlassReceipts,
-                    Some(id),
-                    FailureKind::TokenRedemption,
-                    format!("integrity check failed at receipt id {}: {}", id, e),
-                )
-            })?;
+        if !unsealed {
+            observe()?;
+        }
 
         on_receipt(id, entry_hash);
 
@@ -869,6 +892,7 @@ where
         granted,
         denied,
         redeemed: redemptions.redeemed(),
+        unsealed: redemptions.unsealed(),
     })
 }
 
@@ -1320,6 +1344,19 @@ pub struct RedemptionLedger {
     grants: std::collections::HashMap<[u8; 32], GrantFacts>,
     redeemed_nonces: std::collections::HashSet<[u8; 32]>,
     redeemed_grants: std::collections::HashSet<[u8; 32]>,
+    /// Redemption rows by their chain hash, so an `Unsealed` row can be
+    /// checked against the redemption it completes (U1–U5).
+    redemptions: std::collections::HashMap<[u8; 32], RedemptionFacts>,
+    unsealed_redemptions: std::collections::HashSet<[u8; 32]>,
+}
+
+/// What an `Unsealed` row must restate from the redemption it completes.
+#[derive(Debug, Clone)]
+struct RedemptionFacts {
+    vault_envelope_id: String,
+    ruleset_hash: [u8; 32],
+    request_hash: [u8; 32],
+    time_bucket: crate::TimeBucket,
 }
 
 impl RedemptionLedger {
@@ -1391,6 +1428,60 @@ impl RedemptionLedger {
                          recorded once, on the grant"
                     ));
                 }
+                self.redemptions.insert(
+                    entry_hash,
+                    RedemptionFacts {
+                        vault_envelope_id: receipt.vault_envelope_id.clone(),
+                        ruleset_hash: receipt.ruleset_hash,
+                        request_hash: receipt.request_hash,
+                        time_bucket: receipt.time_bucket,
+                    },
+                );
+                Ok(())
+            }
+            BreakGlassOutcome::Unsealed {
+                redemption_entry_hash,
+                ..
+            } => {
+                // U1: names an earlier redemption row.
+                let Some(redemption) = self.redemptions.get(redemption_entry_hash) else {
+                    return Err(anyhow!(
+                        "unseal record names receipt {} but no earlier redemption row has that hash",
+                        hex::encode(redemption_entry_hash)
+                    ));
+                };
+                // U2: at most one unseal record per redemption.
+                if !self.unsealed_redemptions.insert(*redemption_entry_hash) {
+                    return Err(anyhow!(
+                        "redemption {} is recorded as unsealed twice — a token releases one cleartext",
+                        hex::encode(redemption_entry_hash)
+                    ));
+                }
+                // U3: an export:events token is receipted in the export chain.
+                if redemption.vault_envelope_id == crate::EXPORT_EVENTS_ENVELOPE_ID {
+                    return Err(anyhow!(
+                        "unseal record names the redemption of an export:events token"
+                    ));
+                }
+                // U4: restates its redemption.
+                if redemption.vault_envelope_id != receipt.vault_envelope_id
+                    || redemption.ruleset_hash != receipt.ruleset_hash
+                    || redemption.request_hash != receipt.request_hash
+                {
+                    return Err(anyhow!(
+                        "unseal record does not restate the envelope, ruleset and request hash \
+                         of the redemption it records"
+                    ));
+                }
+                if redemption.time_bucket != receipt.time_bucket {
+                    return Err(anyhow!(
+                        "unseal record is stamped outside its redemption's bucket"
+                    ));
+                }
+                // U5: carries no approvals.
+                if !approvals.is_empty() || !receipt.trustees_used.is_empty() {
+                    return Err(anyhow!("unseal record carries approvals or names trustees"));
+                }
                 Ok(())
             }
         }
@@ -1399,6 +1490,23 @@ impl RedemptionLedger {
     /// How many redemption rows were observed.
     pub fn redeemed(&self) -> u64 {
         self.redeemed_nonces.len() as u64
+    }
+
+    /// How many `Unsealed` rows were observed.
+    pub fn unsealed(&self) -> u64 {
+        self.unsealed_redemptions.len() as u64
+    }
+
+    /// The envelope a `Granted` receipt (by chain hash) was issued for.
+    pub(crate) fn grant_envelope(&self, grant: &[u8; 32]) -> Option<&str> {
+        self.grants
+            .get(grant)
+            .map(|facts| facts.vault_envelope_id.as_str())
+    }
+
+    /// Whether the chain holds a redemption row for this `Granted` receipt.
+    pub(crate) fn grant_redeemed(&self, grant: &[u8; 32]) -> bool {
+        self.redeemed_grants.contains(grant)
     }
 
     /// After the walk: the unsigned `consumed_break_glass_tokens` table and
@@ -1446,6 +1554,189 @@ impl RedemptionLedger {
         }
         Ok(())
     }
+}
+
+/// Pure cross-ledger rule (R0–R6) shared by `run_full_verify`, the
+/// evidence-envelope walk, `handoff::verify_sidecar` and (mirrored)
+/// `viewer/verify_core.js`. `ledger` is a completed walk of the break-glass
+/// chain; `exports` are `(row id or envelope index, payload_json)` in chain
+/// order. Payloads parse tolerantly (`serde_json::Value`): a receipt without
+/// `authorizing_receipt` is a legacy or non-quorum receipt and is skipped.
+/// Returns how many receipts name their authorizing grant; on a failure,
+/// the offending row and the rule's exact text.
+pub fn check_export_authorizations<'a>(
+    ledger: &RedemptionLedger,
+    exports: impl IntoIterator<Item = (i64, &'a str)>,
+) -> std::result::Result<u64, (i64, String)> {
+    let mut seen: std::collections::HashMap<[u8; 32], i64> = std::collections::HashMap::new();
+    let mut authorized = 0u64;
+    for (id, payload) in exports {
+        let value: serde_json::Value = match serde_json::from_str(payload) {
+            Ok(value) => value,
+            // The export walk already parsed (and hashed) every payload;
+            // an unparseable one is not this rule's to report.
+            Err(_) => continue,
+        };
+        let Some(grant) = export_authorization_shape(&value).map_err(|why| (id, why))? else {
+            continue;
+        };
+        // R2: names a Granted receipt.
+        let Some(envelope) = ledger.grant_envelope(&grant) else {
+            return Err((
+                id,
+                format!(
+                    "export receipt names authorizing receipt {} but no Granted break-glass \
+                     receipt has that hash",
+                    hex::encode(grant)
+                ),
+            ));
+        };
+        // R3: the grant is for export:events.
+        if envelope != crate::EXPORT_EVENTS_ENVELOPE_ID {
+            return Err((
+                id,
+                format!(
+                    "export receipt's authorizing grant {} is for envelope '{}', not export:events",
+                    hex::encode(grant),
+                    crate::break_glass::display_safe(envelope)
+                ),
+            ));
+        }
+        // R4: the grant's token was spent.
+        if !ledger.grant_redeemed(&grant) {
+            return Err((
+                id,
+                format!(
+                    "export receipt's authorizing grant {} has no redemption row — its token was \
+                     never spent",
+                    hex::encode(grant)
+                ),
+            ));
+        }
+        // R5: one export per grant.
+        if let Some(first) = seen.insert(grant, id) {
+            return Err((
+                id,
+                format!(
+                    "export receipts {} and {} both name authorizing grant {} — a grant \
+                     authorizes one export",
+                    first,
+                    id,
+                    hex::encode(grant)
+                ),
+            ));
+        }
+        authorized += 1;
+    }
+    Ok(authorized)
+}
+
+/// The structural export-authorization rules (R0, R1, R6) over one receipt
+/// payload, shared with `verify_export_bundle`. `Ok(None)` when the receipt
+/// names no authorizing receipt; `Ok(Some(grant))` when its shape holds.
+pub(crate) fn export_authorization_shape(
+    value: &serde_json::Value,
+) -> std::result::Result<Option<[u8; 32]>, String> {
+    let Some(raw) = value.get("authorizing_receipt").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    // R0: a 32-byte array.
+    let grant = bytes32_from_json(raw)
+        .ok_or_else(|| "export receipt's authorizing_receipt is not a 32-byte array".to_string())?;
+    // R1: only a break-glass export names a grant.
+    match value.get("auth_mode") {
+        Some(serde_json::Value::String(mode)) if mode == "break_glass" => {}
+        other => {
+            // A forged mode reaches log_verify / envelope_verify output, so
+            // it goes through display_safe (verify_core.js applies the same
+            // displaySafe). A non-string mode is named by kind, not echoed:
+            // serde and JSON.stringify render numbers differently, and both
+            // verifiers must print the same string.
+            let mode = match other {
+                None | Some(serde_json::Value::Null) => "absent".to_string(),
+                Some(serde_json::Value::String(mode)) => crate::break_glass::display_safe(mode),
+                Some(_) => "a non-string value".to_string(),
+            };
+            return Err(format!(
+                "export receipt names an authorizing receipt but its auth_mode is {}, not \
+                 break_glass",
+                mode
+            ));
+        }
+    }
+    // R6: a quorum export's operator is its grant's, never restated.
+    if value
+        .get("context")
+        .and_then(|c| c.get("operator"))
+        .is_some_and(|op| !op.is_null())
+    {
+        return Err(
+            "export receipt carries an operator context beside its authorizing receipt \
+                    (a quorum export's operator is its grant's)"
+                .to_string(),
+        );
+    }
+    Ok(Some(grant))
+}
+
+fn bytes32_from_json(value: &serde_json::Value) -> Option<[u8; 32]> {
+    let arr = value.as_array()?;
+    if arr.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (slot, v) in out.iter_mut().zip(arr) {
+        *slot = u8::try_from(v.as_u64()?).ok()?;
+    }
+    Some(out)
+}
+
+/// Re-walk the break-glass chain's payloads into a [`RedemptionLedger`],
+/// then apply [`check_export_authorizations`] to every export receipt.
+/// Runs after both chains verified (it checks no hash or signature).
+pub fn verify_export_authorizations(conn: &Connection) -> Result<u64> {
+    let mut ledger = RedemptionLedger::default();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, payload_json, approvals_json, entry_hash FROM break_glass_receipts ORDER BY id ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let payload: String = row.get(1)?;
+            let approvals_json: String = row.get(2)?;
+            let receipt: BreakGlassReceipt = serde_json::from_str(&payload)?;
+            let approvals: Vec<Approval> = serde_json::from_str(&approvals_json)?;
+            let entry_hash = blob32(row, 3)?;
+            ledger
+                .observe(&receipt, entry_hash, &approvals)
+                .map_err(|e| {
+                    fail(
+                        FailedLedger::BreakGlassReceipts,
+                        Some(id),
+                        FailureKind::TokenRedemption,
+                        format!("integrity check failed at receipt id {}: {}", id, e),
+                    )
+                })?;
+        }
+    }
+    let mut stmt = conn.prepare("SELECT id, payload_json FROM export_receipts ORDER BY id ASC")?;
+    let exports: Vec<(i64, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    check_export_authorizations(&ledger, exports.iter().map(|(id, p)| (*id, p.as_str()))).map_err(
+        |(id, why)| {
+            fail(
+                FailedLedger::ExportReceipts,
+                Some(id),
+                FailureKind::ExportAuthorization,
+                format!(
+                    "integrity check failed at export receipt id {}: {}",
+                    id, why
+                ),
+            )
+        },
+    )
 }
 
 /// Re-derive a break-glass receipt's quorum against the policy that was
