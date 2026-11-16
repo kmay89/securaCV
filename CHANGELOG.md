@@ -82,6 +82,185 @@
   `ots`: run the online leg from an operator host built with
   `--features tsa,ots`. `ots verify` needs a Bitcoin node; without one, use
   the manual explorer step `VERIFICATION.md` prints.
+### Honest names: what the Canaries, their pages and Home Assistant show comes from the build and the board, never one literal every build shares, and Home Assistant shows a battery nobody read as unknown (F398, HA60; device-details §1.4, PR 6, #1971)
+
+- **The flagship names its board, or no board.** The mDNS TXT `model` was
+  "XIAO ESP32S3" on every env, the ESP32-CAM, WROOM and Freenove ports
+  included, and the Model its Home Assistant discovery sends was "Canary
+  v1", a name no release carries. `firmware/canary/include/canary_config.h`
+  now defines `CANARY_PRODUCT_NAME` ("Canary", `devices/canary/device.json`'s
+  name) and `CANARY_BOARD_NAME`: "XIAO ESP32-S3 Sense" on the envs built on
+  `seeed_xiao_esp32s3` (whose board definition defines
+  `ARDUINO_XIAO_ESP32S3`), and each board port names its own in its env
+  ("AI-Thinker ESP32-CAM", "ESP32-WROOM-32 DevKit", "Freenove
+  ESP32-S3-WROOM CAM"). The mDNS `model` carries the board; the discovery
+  device says Model "Canary" and Hardware (`hw`) the board. A build that
+  names no board omits both: `common/network/mdns_txt.h` leaves `model` out
+  when it is null or empty, as it leaves out `hw` (it published `model=`
+  empty). Every other family passes a model, so their adverts do not
+  change. The flagship still sends no `hw` board token until a flagship
+  figure exists. Wire changes: a XIAO flagship's `model` reads "XIAO
+  ESP32-S3 Sense" (was "XIAO ESP32S3"), and its discovery device has Model
+  "Canary" and a Hardware row.
+- **The flagship's watchdog self-test says "not a probe".** It returned
+  `true` on both branches of its `#if`, so every run counted a pass nothing
+  checked: a tenth of the health score that the fleet beacon's health byte,
+  the BLE health characteristic, the boot's low-score warning and the OTA
+  confirm gate (50%) read. The row stays in the table with no probe
+  function, and the runner moved into `securacv_diagnostics.h`
+  (`selftest_run()`, which `diag_run_selftest()` calls with the table), so
+  the scoring is host-tested over stub probes: a row with no probe is marked
+  `not_a_probe` and never called, and the score is the passes over the
+  probes. `GET /api/diagnostics` and `GET /api/selftest` spell the row
+  `{"name":"watchdog","probe":false}` (no `passed`, no `ms`) and count
+  `total` over the probes (9); `/api/selftest` now builds its body with the
+  same row writer (`diagnostics_json::selftest()`) in place of its own
+  `snprintf` chain, which gave every row `passed` and counted every row. The
+  console's `t` and `d` print "x/9", and the wake scene draws `[--] watchdog
+  ... not a probe` (`scene::probe_state()`). A unit with every probe passing
+  still scores 100; one with exactly four of nine passing now scores 44,
+  under the OTA gate's 50, where the free pass made it 50. Both flashers
+  grade the self-manifest's `health` (the console's `j`, the same score)
+  with one rule (`healthVerdict()` in `canary-local/assets/flash-core.js`
+  and `desktop/src/app.js`: 80 or more "Self-check passed", 50 or more "Up,
+  with minor warnings"), so seven of nine passing scores 77 and reads "Up,
+  with minor warnings", where the free pass made it 80 and "Self-check
+  passed"; and the boot's low-score warning (`score < 70`) now logs at six
+  of nine (66), where the free pass made it 70 and it did not.
+- **The dashboards show no version they were not told.** The flagship's
+  Firmware row read "2.0.1" until `GET /api/status` answered and fell back
+  to it; the WAP's `/admin` read "3.1.0" and fell back to "3.0.0", printed
+  "v3.1.0" in its footer, and wrote "ESP32" when `/api/system` named no
+  chip. All of them now read "--" until there is a value, and the footer's
+  version is gone. `/admin`'s gzip is 67,494 B with this change, 34 B under
+  main's 67,528 B at 7185559c (`web_assets_gz.h`, regenerated).
+- **canary-wap names its own hardware target.** The boot banner's Model and
+  Board, the serial system monitor's title and humidity note, and Improv's
+  hardware string said the S3's names on the C3 build. `build_config.h`
+  defines `HARDWARE_BOARD_NAME` ("XIAO ESP32-S3 Sense" or "XIAO ESP32-C3")
+  and `HARDWARE_CHIP_NAME` per target, and every one of those reads them;
+  Improv's hardware string on the S3 becomes "XIAO ESP32-S3 Sense" (was
+  "XIAO ESP32-S3"), and its three mDNS adverts' `model` reads
+  `HARDWARE_BOARD_NAME` too ("XIAO ESP32-S3 Sense" or "XIAO ESP32-C3"; it
+  was the literal "XIAO ESP32S3" or "XIAO ESP32C3" under an `#if`/`#else`
+  pair), so one device names its board one way everywhere. The chip model
+  fallback is empty, not "ESP32-S3": the serial monitor prints "not
+  reported" and `/admin` "--". The monitor's PSRAM note ("8MB on XIAO
+  Sense") prints only where the target has PSRAM (`HW_HAS_PSRAM`), so the C3
+  build no longer prints it. The S3 target defines `CANARY_FIGURE_HARDWARE
+  "board:seeed_xiao_esp32s3"`, the key `canary-local/devices/figures.json`
+  maps to the WAP's figure, so `GET /api/status` (as `node_status.hw`) and
+  the `GET /api/fleet` self row (`hw`) carry it; the C3 defines none and
+  both omit it. The WAP's OTA engine reads no board token, so no update
+  binding changes. The Lab's WAP serial preview and board row
+  (`canary-local/devices/wap.json`) read the banner's Model and Board from
+  `build_config.h` and `setup()` too (`gen_wap.py`); its Model line had been
+  typed as "Seeed XIAO ESP32-S3 Sense", which the firmware never printed,
+  and its board row said "XIAO ESP32S3". `gen_wap.py`'s reader of the
+  sketch's mDNS TXT records (#1951) lists `model` by key as before:
+  `wap.json`'s TXT list does not move.
+- **The display mirror page names its kind and its signal honestly.** It
+  called every display but the watch a "wall panel" (a nightstand, the
+  nightlight, the 7" nightstand) and printed the Wi-Fi reading, a dBm value,
+  as "dB". The Kind now comes from the device type `GET /api/status` names
+  (`node`, the mDNS `dt`): "round watch glass", "wall panel", "nightstand
+  glass" or "nightlight", the type itself for one with no word, "--" with no
+  answer. The signal reads as the glass's own word ("strong signal", "ok
+  signal", "weak signal", `theme.cpp` `signal_word()`'s bands) rather than
+  with the missing unit, because `microcopy_lint.sh`'s glass plain-words
+  audit keeps "dBm" out of this page's strings. `mirror_html.h` is included
+  only by `glass_web.cpp`, which the emulator does not compile, so the
+  emulator dist does not move; the sketch copy is regenerated
+  (`setup.sh regen`).
+- **Sense, Vision and Sentinel name their boards, and stop reporting a
+  battery they do not read.** `esp32c3-super-mini`, `xiao-esp32c6-sentinel`
+  and `xiao-esp32c3-sentinel-lite` define their `CANARY_FIGURE_HARDWARE`, so
+  `GET /api/status` and the `GET /api/fleet` row carry it as `hw` (none of
+  them has a figure yet). The token is defined in the board's `pins.h`, and
+  only each trio project's `main.cpp` included that header: its
+  `mdns_mgr.cpp` and `ota_mgr.cpp` test the token and never saw it, so on no
+  Sense, Vision or Sentinel board (the four that already had a token
+  included) did the mDNS TXT carry `hw`, or the OTA engine get the board it
+  binds a version-2 manifest to; the display's `ota_mgr.cpp` had the same
+  gap. Each now includes `pins.h`: the mDNS TXT gains `hw` on every Sense,
+  Vision and Sentinel env, and the OTA engine is told the board on those and
+  on every display env whose board header defines a token (12 of the 22;
+  the ten built on the 4.3B and 4.3C boards have none). The binding is
+  inert today: the release workflows write version-1 manifests, which bind
+  no board. Their retained health drops `"battery":100` and keeps
+  `"battery_present":false`. The Lab's Sense and Vision MQTT panes
+  (`gen_sense.py`, `gen_vision.py`) show the health without it too, and
+  `gen_sense.py` now holds its typed health example to
+  `publish_health_retained()`'s keys the way `gen_vision.py` already did.
+  The display's health still sends 100: its `mqtt_mgr.cpp` is
+  emulator-compiled, so that fix rides the display dist PR.
+- **Home Assistant shows a battery nobody read as unknown, never 100
+  (closes HA60).** The Health sensor's `battery_percent` attribute was 100
+  whenever `health_metrics.battery_percent()` gave no reading. It is now
+  that reading or unknown (`None`): for a Canary that reports no battery
+  (Sense, Vision and Sentinel; a canary-wap on mains power, which still
+  sends 100 beside `battery_present` false), and for a present battery
+  whose charge is no number (#1920's HA57 readings: null, a bool, a
+  negative, a non-finite or over-wide number, a string that is no number).
+  The state is unchanged: no reading is still healthy. HA60
+  asked for a decision before this attribute's contract changed; it is
+  taken the way HA53 took `memory_free_bytes`, because the 100 was a charge
+  nobody sent. An automation that compares `battery_percent` to a number
+  must expect unknown on such a Canary. The battery blueprint
+  (`docs/blueprints/canary_battery_health.yaml`) reads unknown as 0, so
+  its "battery low" and "battery recovered" pushes now need a battery whose
+  charge was read (`battery_percent is number`): the Health sensor also
+  enters and leaves "warning" on low memory, and on a mains Canary the
+  recovered push would have read "Battery back to 0%". The tests that held
+  the 100 now hold unknown: in `test_wap_mqtt_contract.py`, the no-reading
+  rows of the battery table (whose type check is an `int` for a reading and
+  `None` for none) and the `battery_soc` cases (#1920), the memory test's
+  mains unit (#1919) and the mains health (#1836); and the real-core lane's
+  over-wide number test (`tests/ha/test_entities.py`, #1920). #1891's
+  `fixtures/canary_mqtt_payloads.json` and #1892's two Sentinel sample
+  bodies (`test_modality_and_radar.py`) lose the trio's `battery` key, which
+  the fixture's own producer check refused once the firmware stopped
+  spelling it.
+- **The count that reaches the website says nine.** `firmware/build_matrix.json`'s
+  display lane note, which `scripts/carry_to_site.py` copies to the
+  website's /checkup page, said "the canary tree's 10-probe suite"; it says
+  nine-probe, as the selftest feature note does, and
+  `scripts/lint_build_matrix.py` now refuses any probe count in the matrix
+  that is not the suite's, read from `TESTS[]` in `securacv_diagnostics.cpp`
+  (a row with no probe function is not counted), beside #1920's per-tree
+  feature-flag check.
+- **The board registry check runs on every PR.**
+  `firmware/scripts/check_board_registry.py` reads the device manifests
+  (`devices/<slug>/device.json`: the env-to-board join of check 9, and check
+  10's product name and board ports), but it ran only in `firmware.yml`, whose
+  path filter lists no `devices/` path, so a PR that edited a manifest alone
+  ran no check. It moves to `lint.yml`, which has no path filter, and
+  `scripts/tests/test_board_registry_runs_on_its_inputs.py` runs it with the
+  path-filter read recorder and fails when a workflow that runs it on a pull
+  request has a filter that misses a file it read.
+- **Held by tests that fail on the old code:**
+  `firmware/scripts/check_board_registry.py` check 10 (each name and token
+  from the board's `pins.h`, the flagship's ports and the WAP's targets
+  included, and each surface that shows one reading its macro: the mDNS
+  `model`, Home Assistant's Model and Hardware, Improv's hardware string, the
+  WAP's mDNS `model`, monitor (its PSRAM note behind `HW_HAS_PSRAM`) and chip
+  fallback, and its `/api/status` and `/api/fleet` tokens) and check 11
+  (every file that tests the token includes the header that defines it): 38
+  errors on main's tree at 7185559c. `test_canary_diagnostics.cpp` (the
+  runner over stub probes, the `/api/selftest` body and its handler, which
+  runs the suite before it reads the report, the console's counts and the
+  wake's row states at all four places it sets them, read from `main.cpp`,
+  and the "Self-test complete" health log's count), `test_mdns_txt.cpp`,
+  `test_console_scene.cpp`, `firmware/tests_host/test_honest_names.test.js`
+  (the mirror's receipt run against stubbed answers, and both dashboards'
+  Firmware rows), `gen_sense.py`'s key check, `lint_build_matrix.py`'s probe
+  count, `custom_components/securacv/tests/test_absent_battery.py` (the HA
+  attribute, the three health bodies and the blueprint) and the Home
+  Assistant tests named above: with the attribute put back to 100, 61 of
+  the stub lane's tests fail. `canary-local/tools/tests/test_gen_wap_ap_facts.py`'s
+  model case plants the `#if`/`#else` pair the sketch no longer has, so the
+  generator's pair reader and its two refusals stay tested. No
+  `FIRMWARE_VERSION` bump. Host-tested; not run on a device.
 ### Flashers: About this board, read from the chip and the installed image; no hardware address on screen, in a report or in a file name (device-details PR 1, #1970)
 
 - **About this board, in both flashers and the Lab's native bench.** The

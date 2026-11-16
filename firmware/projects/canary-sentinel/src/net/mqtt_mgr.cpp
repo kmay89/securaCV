@@ -244,7 +244,7 @@ void publish_event(const Topics& topics, const char* json_payload) {
 }
 
 void publish_health_retained(const Topics& topics, const RadarLinkHealth* radar) {
-  // Same field set as canary-wap's mains-powered health publish: HA's
+  // canary-wap's mains-powered health field set, less its `battery` (below): HA's
   // health handler reads memory/uptime/firmware and — crucially —
   // TOFU-pins the device from `public_key` on first sight. The optional
   // `radar` object is the wire contract HA's radar-link diagnostic sensor
@@ -262,10 +262,13 @@ void publish_health_retained(const Topics& topics, const RadarLinkHealth* radar)
              (unsigned long)radar->last_frame_age_ms,
              (unsigned long)radar->frame_errors);
   }
+  // No `battery` value: this board reads no battery, so there is no charge
+  // to report, and `battery_present: false` says so. It used to send 100
+  // beside that, a charge nothing measured; Home Assistant reads the absent
+  // value as unknown (health_metrics.battery_percent).
   char msg[512];
   const int n = snprintf(msg, sizeof(msg),
            "{"
-           "\"battery\":100,"
            "\"battery_present\":false,"
            "\"memory_free\":%lu,"
            "\"uptime\":%lu,"

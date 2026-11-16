@@ -981,15 +981,10 @@ jobs:
         # default feature set.
         run: bash firmware/scripts/test_feature_sanity.sh
 
-      - name: Check board registry
-        # firmware/boards/boards.json is the single source of truth for
-        # supported hardware (the board-level flavors.json). This guard
-        # keeps the registry, the board directories, the pin headers, the
-        # build environments, and the boards README consistent — and
-        # enforces the "pins are data" rule (pins.h = #define only) plus
-        # tier_evidence for any board claiming hardware validation.
-        # Contract: firmware/PORTING.md.
-        run: python3 firmware/scripts/check_board_registry.py
+      # The board registry check (firmware/scripts/check_board_registry.py)
+      # runs in lint.yml, not here: it reads devices/<slug>/device.json
+      # (checks 9 and 10), which this workflow's path filter does not list,
+      # so a PR that edited a manifest alone ran no check here.
 
       - name: Check pin budget (the board fullness gauge)
         # firmware/boards/PIN_BUDGET.md is generated from the data-only

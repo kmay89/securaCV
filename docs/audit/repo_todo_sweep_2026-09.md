@@ -2897,6 +2897,52 @@ so — see D2 below.)
   and the answer shown) or goes; either edit regenerates `web_assets_gz.h`.
   From code. Found by F300's review (#1961).
 
+- [ ] **F398 [code+decision] What the honest-names change left: two display
+  strings, ten display envs and the flagship with no board token, the
+  canary-wap's mains battery value, and the website's ten-probe copy.**
+  #1971 (device-details PR 6) made the names, board tokens, versions and
+  fallbacks each surface shows come from the build and the board. Open after
+  it:
+  - *canary-display, two strings in emulator inputs.* Its health still sends
+    `"battery":100` beside `"battery_present":false` (`src/net/mqtt_mgr.cpp`
+    `publish_health_retained()`), and the Touch 1.69's boot banner falls to
+    the `#else` glass line, `ST7789 1.47\" 172x320 portrait SPI (no touch)`
+    (`src/main.cpp`). Each fix is a dist rebuild (pinned emsdk) for every
+    display flavor: device-details PR 17.
+  - *Ten display envs name no board.* `canary-display-playground` and the
+    eight `canary-display-dash-*` envs built on `waveshare-esp32s3-lcd43b`,
+    and `canary-display-dash-mic` on `waveshare-esp32s3-lcd43c`: neither
+    board's `pins.h` defines `CANARY_FIGURE_HARDWARE`, so their
+    `/api/status`, `/api/fleet` row, mDNS TXT and OTA engine carry no `hw`.
+    `canary-local/devices/figures.json` names neither board. Define the two
+    tokens and extend `check_board_registry.py` check 10 to the display's
+    boards; the emulator compiles neither header.
+  - *canary-wap on mains [decision].* `csi_mqtt.cpp` `publish_health()` still
+    sends `"battery":100` beside `"battery_present":false`. Home Assistant
+    reads it as unknown since #1971, so nothing shows it; dropping the value
+    changes a wire body `test_wap_mqtt_contract.py`'s record pins.
+  - *The flagship names no board token.* No canary-tree build defines
+    `CANARY_FIGURE_HARDWARE`, so its mDNS TXT, `/api/status`, `/api/fleet`
+    row (`securacv_network.cpp`) and OTA engine (`main.cpp`) carry no `hw`;
+    the mDNS `model` names the board in words. By decision (2026-10-22) it
+    stays so until a flagship figure exists.
+  - *Website (`kmay89/securacv_website`, read at its `main` `c7efe8b`).*
+    `onboarding-spec.json` lists `watchdog` as a probe that "checks"
+    `configured` with the fix "Reboot to re-arm it.", says `healthPerProbe`
+    10, gives the provenance "TESTS[] (10 probes) + diag_run_selftest();
+    health_score = passed*100/10" and calls the console's `a` the "Animated
+    reveal of the 10-probe self-test"; `js/checkup.js` falls back to 10 per
+    probe; `tests/plugin-facts.test.mjs` pins `healthPerProbe` 10 and "exactly
+    10 probes"; `checkup.html` says "10-probe" in its descriptions and deck,
+    "10 probes" in the boot self-test's heading and "Each probe is worth
+    10%"; `help.html` says "The 10-probe self-test" and "the 10 probes, one
+    JSON verdict; reachable even on the setup network" (that route, open on
+    the setup network, is the canary-wap's, whose suite is its own). Each
+    moves to nine probes and a watchdog row that is "not a probe" (nine
+    probes do not score a whole number each). The display lane's note on
+    /checkup moves with the next carry (`scripts/carry_to_site.py`).
+  From code and the website's files. Found by the device-details survey.
+
 ---
 
 ## 2. Apps (desktop Flasher, Lab, iOS, tvOS)
@@ -3674,17 +3720,6 @@ so — see D2 below.)
   by name, so with go2rtc discovery on the primary camera can be a discovered
   one while a camera is configured. Decide the precedence, then hold it with a
   `test_serve_wizard.py` case. From code. Found by HA38 (#1916).
-
-- [ ] **HA60 [code+decision] Health's `battery_percent` attribute reads 100
-  when a present battery sends no number.** `sensor.py` shows
-  `battery_percent` 100 when `battery_percent()` is None. That is right on
-  mains (the canary-wap sends 100 with `battery_present` false), but on a unit
-  with `battery_present` true and a bool, non-finite, negative, over-wide or
-  separator-spelled charge (each no reading since HA57, #1920) it shows a 100
-  nobody sent. HA53 made `memory_free_bytes` None for no reading; doing the
-  same here changes an attribute contract dashboards may read
-  (`test_health_and_egress_read_as_the_wap_sent_them` pins 100 on mains), so
-  it is a decision first. From code. Found by HA57 (#1920).
 
 - [ ] **HA61 [decision] One spoken vocabulary for the lowercase wire ids.**
   HA58 (#1920) keeps an unlisted id's own case, so the lowercase ids are said

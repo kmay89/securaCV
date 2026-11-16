@@ -15,8 +15,11 @@ through scripts/_device_join.py, so the two lints cannot disagree). Each
 product's feature claims are held to its own tree (section 2a-bis): the flag
 the tree spells the feature with (featureCatalog's, or FLAG_ALIASES') must be
 #define'd there, and a reading must be under it (thermal: a die-temperature
-read), read by the sweep-C35 suite's tree reader. It is a cheap grep-style
-check (no PlatformIO), run in .github/workflows/lint.yml.
+read), read by the sweep-C35 suite's tree reader. Every count of the flagship
+self-test's probes a note states is held to the suite itself
+(securacv_diagnostics.cpp's TESTS[]: a lane's note reaches the website's
+/checkup page). It is a cheap grep-style check (no PlatformIO), run in
+.github/workflows/lint.yml.
 
 Exit non-zero on any drift, printing every problem.
 """
@@ -226,6 +229,64 @@ def device_join_errors(matrix: dict, flavors: list, manifests: list, root: Path)
     return errors
 
 
+# The flagship's boot self-test (FEATURE_DIAGNOSTICS, the catalog's
+# `selftest` flag): its table lists every row, and a row with no probe
+# function (nullptr) is listed and never run, so it is not a probe.
+DIAG_CPP = "firmware/canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp"
+_COUNT_WORDS = {w: n for n, w in enumerate(
+    ("zero one two three four five six seven eight nine ten eleven twelve "
+     "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty").split())}
+# "10-probe", "nine-probe", "10 probes", "ten probes": a count of probes.
+_PROBE_COUNT_RE = re.compile(
+    r"\b(\d+|" + "|".join(_COUNT_WORDS) + r")(?:-probe\b|\s+probes\b)", re.I)
+
+
+def flagship_probe_count(src: str):
+    """The probes in the flagship self-test's TESTS[] table (rows that name a
+    probe function), or None when the table cannot be read."""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    src = re.sub(r"//[^\n]*", "", src)
+    m = re.search(r"\bTESTS\s*\[\s*SELFTEST_COUNT\s*\]\s*=\s*\{(.*?)\n\s*\};", src, re.S)
+    if not m:
+        return None
+    fns = re.findall(r'\{\s*"[^"]+"\s*,\s*([A-Za-z_]\w*)\s*\}', m.group(1))
+    if not fns:
+        return None
+    return sum(1 for fn in fns if fn not in ("nullptr", "NULL"))
+
+
+def _strings(node, where="build_matrix.json"):
+    """(where, text) for every string in the matrix, a product named by id."""
+    if isinstance(node, str):
+        yield where, node
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            yield from _strings(v, f"{where}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            tag = v.get("id") if isinstance(v, dict) and isinstance(v.get("id"), str) else i
+            yield from _strings(v, f"{where}[{tag}]")
+
+
+def probe_count_errors(matrix: dict, probes: int) -> list[str]:
+    """Every count of probes a matrix string states is the flagship
+    self-test's. The selftest feature is FEATURE_DIAGNOSTICS, the canary
+    tree's suite, and scripts/carry_to_site.py copies each lane's `note` to
+    the website's /checkup page: the display lane's note said "the canary
+    tree's 10-probe suite" after the suite became nine probes."""
+    errors: list[str] = []
+    for where, text in _strings(matrix):
+        for m in _PROBE_COUNT_RE.finditer(text):
+            word = m.group(1).lower()
+            n = int(word) if word.isdigit() else _COUNT_WORDS[word]
+            if n != probes:
+                errors.append(
+                    f'{where}: says "{m.group(0)}", but the flagship self-test has '
+                    f"{probes} probes (the rows of TESTS[] in {DIAG_CPP} that name a "
+                    f"probe function) — say {probes}, or name the suite without a count")
+    return errors
+
+
 def lane_coverage_errors(matrix: dict, flavors: list) -> list[str]:
     """Every product flavors.json ships has a lane; no unreleased one does.
 
@@ -416,6 +477,18 @@ def collect(root: Path = ROOT) -> list[str]:
         err(e)
     for e in device_join_errors(matrix, flavors, manifests, root):
         err(e)
+
+    # ── 2b-quater. a probe count a note states is the flagship self-test's ───
+    # A lane's note reaches the website's /checkup page (carry_to_site.py), so
+    # a stale count is a false sentence on the site, not just in this file.
+    diag = root / DIAG_CPP
+    probes = flagship_probe_count(diag.read_text()) if diag.is_file() else None
+    if probes is None:
+        err(f"cannot read the flagship self-test's TESTS[] table in {DIAG_CPP}: "
+            f"the probe counts in build_matrix.json would go unchecked")
+    else:
+        for e in probe_count_errors(matrix, probes):
+            err(e)
 
     # ── 2c. the default recommendation must resolve to a real product/level ───
     by_id = {p["id"]: p for p in matrix.get("products", [])}

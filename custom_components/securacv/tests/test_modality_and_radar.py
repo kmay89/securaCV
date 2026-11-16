@@ -331,12 +331,12 @@ def test_radar_link_state_decision():
 # firmware's own health shape.
 
 SENTINEL_HEALTH_WITH_RADAR = (
-    '{"battery":100,"battery_present":false,"memory_free":181234,"uptime":3600,'
+    '{"battery_present":false,"memory_free":181234,"uptime":3600,'
     '"firmware_version":"2.4.16","public_key":"' + "ab" * 32 + '",'
     '"radar":{"link_ok":true,"last_frame_age_ms":120,"frame_errors":0}}'
 )
 SENTINEL_LITE_HEALTH = (
-    '{"battery":100,"battery_present":false,"memory_free":181234,"uptime":3600,'
+    '{"battery_present":false,"memory_free":181234,"uptime":3600,'
     '"firmware_version":"2.4.16","public_key":"' + "ab" * 32 + '"}'
 )
 

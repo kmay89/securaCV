@@ -279,6 +279,20 @@ static void test_hardware_reports_the_board_not_the_product() {
   CHECK(has(s, "\"hw\":\"waveshare-esp32s3-lcd7\"}"));
 }
 
+// The board tokens device-details §1.4 turned on: the WAP's S3 target sends
+// the PlatformIO board figures.json keys it on (a `board:` id, colon and
+// all), the trio their pins headers' ids. Each closes the row as given.
+static void test_the_new_board_tokens_close_the_row_as_given() {
+  const char* tokens[] = {"board:seeed_xiao_esp32s3", "esp32c3-super-mini",
+                          "xiao-esp32c6-sentinel", "xiao-esp32c3-sentinel-lite"};
+  for (const char* hw : tokens) {
+    FleetSelfDevice d = sample();
+    d.hardware = hw;
+    const std::string want = std::string("\"hw\":\"") + hw + "\"}";
+    CHECK(has(build(d), want.c_str()));
+  }
+}
+
 // ── the hub state: three answers, and silence is not one of the three ───────
 static void test_hub_is_omitted_when_the_device_has_no_opinion() {
   FleetSelfDevice d = sample();          // sample() leaves hub at UNKNOWN (0)
@@ -441,6 +455,7 @@ int main() {
   test_born_day_reports_the_day_and_its_confidence();
   test_hardware_is_omitted_until_the_board_names_itself();
   test_hardware_reports_the_board_not_the_product();
+  test_the_new_board_tokens_close_the_row_as_given();
   test_hub_is_omitted_when_the_device_has_no_opinion();
   test_hub_distinguishes_none_from_down();
   test_wellbeing_is_omitted_until_someone_can_say();

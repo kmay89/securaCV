@@ -376,7 +376,9 @@ catches it only when the float drifts above 4.4 V.
   integration's Health sensor derives healthy/warning/critical from it —
   battery thresholds (warning < 25%, critical < 10%) apply only while
   *discharging*, so a charging or mains-powered device never false-alarms —
-  and exposes the battery detail as entity attributes for automations.
+  and exposes the battery detail as entity attributes for automations. On
+  mains its `battery_percent` attribute is unknown, not the 100 the topic
+  carries: there is no battery to read.
   Ready-made automations (low-battery push alert, worn-cell replacement
   reminder, recovery notice) ship in
   the [`canary_battery_health.yaml`](../blueprints/canary_battery_health.yaml) blueprint.

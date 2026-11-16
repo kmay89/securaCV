@@ -111,6 +111,26 @@ static void the_worst_case_fits_the_cap() {
   CHECK(out[n - 1] == '}', "closed");
 }
 
+// The board tokens device-details §1.4 turned on, as each build passes them:
+// the WAP's S3 target names the PlatformIO board figures.json keys it on
+// (a `board:` id, colon and all), the trio their pins headers' ids. Each is
+// written as given, after `uptime_s` and `product`.
+static void the_board_tokens_are_written_as_given() {
+  const char* tokens[] = {"board:seeed_xiao_esp32s3", "esp32c3-super-mini",
+                          "xiao-esp32c6-sentinel", "xiao-esp32c3-sentinel-lite"};
+  for (const char* hw : tokens) {
+    NodeStatus s = blank();
+    s.node = "canary-wap"; s.product = "securacv-canary-wap"; s.fw = "2.4.16-wap"; s.hardware = hw;
+    s.uptime_s = 5;
+    char out[NODE_STATUS_BODY_CAP];
+    node_status_build(out, sizeof(out), &s);
+    const std::string want = std::string(",\"product\":\"securacv-canary-wap\",\"hw\":\"") + hw + "\"}";
+    CHECK(std::string(out).size() >= want.size() &&
+          std::string(out).compare(std::string(out).size() - want.size(), want.size(), want) == 0,
+          "%s: %s", hw, out);
+  }
+}
+
 static void a_small_buffer_never_overflows() {
   NodeStatus s = blank();
   s.node = "canary-sense"; s.fw = "1.2.3"; s.name = "A long enough name to clip";
@@ -132,6 +152,7 @@ int main() {
   strings_are_escaped();
   the_worst_case_fits_the_cap();
   a_small_buffer_never_overflows();
+  the_board_tokens_are_written_as_given();
   if (g_failures) {
     std::printf("test_node_status: %d failure(s)\n", g_failures);
     return 1;
