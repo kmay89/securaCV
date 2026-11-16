@@ -1599,7 +1599,7 @@ fn headless_report(code: i32, transcript: &str, known_hosts: &std::path::Path) -
              ready to be set up yet. Try again in a few minutes."
                 .to_string(),
         )
-    } else if code == 255 && !hub_core::hub_headless::host_key_changed(&transcript) {
+    } else if code == 255 && !hub_core::hub_headless::host_key_changed(transcript) {
         // 255 is ssh's own "couldn't connect/authenticate" — most often the
         // console isn't up yet (it opens during boot) or the card was flashed
         // without the self-setup option.
