@@ -1,6 +1,165 @@
 # Changelog
 
 ## [Unreleased]
+### The second audit round: firmware 2.4.21, kernel, integration and app 0.9.3, Flasher 0.12.8, Lab 0.4.4, iOS 0.9.3
+
+- **Before you update.** Home Assistant: Export evidence (the action, the
+  button and the timeline card's Export) and Staged firmware update now
+  refuse a signed-in user who is not an administrator, so a wall tablet
+  signed in as a household account can no longer export or start a
+  rollout; an automation carries no user and keeps working, and a script
+  runs as the person who started it. Frigate: updating never rewrites a
+  Frigate config that already exists, so a hub set up earlier keeps
+  publishing a retained JPEG of every tracked object until each camera
+  gets `mqtt: enabled: false` and Frigate restarts; clear the JPEGs the
+  broker already holds with a zero-length retained publish to each
+  `frigate/<camera>/<label>/snapshot`. Canary Vision: its live detection
+  leaves the fleet beacon unless you turn on the new **Broadcast
+  detection** switch, so a display that showed it straight from the
+  beacon stops until you do; the switch is set over MQTT only. canary-wap:
+  after a 10 s hold, register the vault key and re-arm its triggers again
+  (and re-enter a custom update server); before handing on a WAP that
+  still runs 2.4.20, press Remove key and empty the update-server field by
+  hand. `hap_bridge`: finish Add Accessory, setup code included, within
+  three minutes of opening it, or start again.
+- **Exporting evidence and staged updates are for administrators only
+  (A2-01).** Any signed-in Home Assistant user could run
+  `securacv.export_evidence` and `securacv.staged_update`, and every export
+  removes the entry's oldest packs past its keep limit, so a login that is
+  not an administrator could delete older evidence packs by exporting
+  repeatedly. Both actions now register through Home Assistant's
+  `async_register_admin_service` (`Unauthorized` for a non-administrator,
+  `UnknownUser` for a user who no longer exists), and the Export evidence
+  button checks whoever presses it the same way. The dashboard's Export
+  evidence tile asks before it presses, and the timeline card's Export
+  says *Export refused — only a Home Assistant administrator can export
+  evidence.* `staged_update` sends each `update.install` under its
+  caller's context, so Home Assistant's per-entity permission check runs
+  against that user. Pinned by `test_services.py`, `test_button.py`,
+  `test_staged_update.py` and `tests/ha/test_services.py`.
+- **One kernel entry's export no longer removes another entry's evidence
+  packs (A2-02).** The keep limit is per entry: an export removes only its
+  own entry's oldest packs past its limit, along with any older pack no
+  configured entry owns. With two entries the folder can now hold up to
+  the sum of their limits. Pinned by `test_evidence.py`.
+- **Occupancy from a Sense's unsigned `state` snapshot reads unsigned
+  (A2-05).** It carried the device's last `events` verdict, so a forged
+  retained `presence` read `verified: true`; a change from the snapshot
+  now reads `verified: false`, `trust_reason: unsigned`. An automation that
+  checks `verified` sees those changes as unsigned. Pinned by
+  `test_unsigned_trust_attrs.py`.
+- **Frigate's per-camera MQTT images are off in every config SecuraCV
+  writes or ships (A2-04).** Frigate publishes a retained JPEG of every
+  tracked object to the broker whatever `snapshots` says. The setup
+  wizard's config, the hub plan's curated config, the Docker stack's
+  `frigate.yml` and the Jetson detector's config now set
+  `mqtt: enabled: false` on each camera, and where Frigate keeps its own
+  config the wizard's last screen names the cameras that leave them on.
+  The hub plan and its provisioning bundle are regenerated. Pinned by
+  `test_write_frigate_config_turns_off_per_camera_mqtt_images` and
+  `canary-local/tools/tests/test_frigate_camera_mqtt.py`.
+- **What a broker login can do is written down, not fenced (A2-03).** On
+  the Mosquitto app's 7.x line every login it accepts can read and publish
+  every topic (its documented ACL recipe is not consulted,
+  home-assistant/addons#4721), so any broker login, the Canaries' shared
+  one included, can publish to Frigate's event topic, which the bridge
+  seals as claims. No ACL is shipped, because on that app it would
+  restrict nothing; `docs/frigate_integration.md`, `THREAT_MODEL.md` and
+  `TRUST_MODEL.md` now say so. Not closed.
+- **Canary Vision keeps "is someone in this room" off the cleartext beacon
+  by default (A2-07).** The fleet beacon on BLE, ESP-NOW and LAN multicast
+  carried the live detection (the alert flag, the class and the
+  confidence). That is now the owner's opt-in, Home Assistant's
+  **Broadcast detection** switch (`securacv/<id>/beacon/set`, stored on the
+  Vision), off by default; opted out, no frame carries a detection and a
+  detection sends no extra frame. Pinned by
+  `test_vision_beacon_payload.cpp` over the real payload builder. The
+  Lab's Vision catalog generator (`gen_vision.py`) describes the switch and
+  its two topics.
+- **An unsigned broadcast no longer leaves a display in lasting alarm
+  (A2-09).** A beacon or Chirp from a fingerprint suffix no signed identity
+  claims seats a pseudo witness `SCV-XXXX`. It used to turn red "witness
+  lost" when it went silent, cancel the household's acknowledgment, hold
+  an unsigned Alert or Tamper until reboot, and fill the roster so a real
+  Canary was dropped. Now its silence reads at most amber, it leaves after
+  10 minutes, an unsigned Alert or Tamper clears 30 minutes after its last
+  frame, and a Canary from the broker or the signed chain takes the
+  longest-silent pseudo witness's slot on a full roster; a beacon, a
+  chirp or an mDNS announcement never displaces a row. On a glass with no
+  broker every Canary is a pseudo witness, so a silent one now drops off
+  instead of going red. Pinned in `test_fleet_beacon_model.cpp`.
+- **A display's receipt, log and update status refuse a rebinding page
+  (A2-12), and its LAN-open writes are written down (A2-11).**
+  `/api/device` (which names the home Wi-Fi network), `/api/log` and
+  `/api/ota/status` now answer a Host that is a public domain with
+  `403 {"ok":false,"err":"host"}`, as the writes and the per-witness reads
+  already did; the IP, the `.local` name, a single label, `.lan`,
+  `.internal` and `.home.arpa` are unaffected. Pinned by
+  `test_glass_web_host_guard.cpp`. The threat model now says that any host
+  on the LAN can change a display's settings (all but the weather opt-in
+  pair) and time zone, and start the install of a newer release that
+  verifies against the pinned Ed25519 release key even with Auto Update
+  off; that is unchanged.
+- **iOS 0.9.3: display settings save from the iPhone (A2-08).** Every
+  display refuses a write without its per-boot token, and the app never
+  sent one, so no setting written from the phone saved. The app now reads
+  the token right before each write, retries once after a display restart,
+  and reports any other refusal as it came. Pinned by four XCTests in
+  `GlassSettingsTests.swift`.
+- **The Apple Home bridge closes four LAN holes (A2-13 to A2-16).** After
+  a frame failed to authenticate, a host on the LAN could send a bare Pair
+  Verify M1, ride the paired controller's admin rights and add itself as
+  a permanent admin; now every M1 starts Pair Verify from nothing, a
+  failed frame ends the connection, and bytes behind M3 must authenticate
+  under the new session. A controller removed in the Home app is refused
+  at its next request, hears nothing more and is disconnected within a
+  tick. The Bonjour advertisement follows the pairing table while the
+  bridge runs. Sockets that never pair share a budget of four (two per
+  address) and close 180 s after accept, so they cannot lock a controller
+  out. Unit- and loopback-socket-tested; not run against an Apple
+  controller.
+- **canary-wap's 10 s hold clears the camera vault key and the update
+  server override (A2-18).** The hold kept the vault's registered unlock
+  key and its armed triggers, so a WAP handed to a new owner went on
+  sealing camera frames to the previous owner's key, and kept polling a
+  custom update server. It now removes the key with every trigger saved
+  off and erases the override; the identity key, the API token and the
+  sealed files on the card stay. Pinned by `recovery_kit.test.js`; read
+  from the code, not run on a device.
+- **Release builds link the libraries they name (A2-19).** The signed
+  release and factory rows installed Library Manager's newest Crypto,
+  ArduinoJson, NimBLE-Arduino and PubSubClient on the day they ran, and
+  every PlatformIO `lib_deps` entry was a range. Each is now an exact pin
+  at the version the fw-v2.4.20 release build resolved, in
+  `firmware/canary/platformio.ini`, `firmware/envs/platformio/*.ini`, the
+  WAP's `sketch.yaml` and the release workflows' library rows, so 2.4.21
+  links the same library code as 2.4.20. `scripts/gen_firmware_sbom.py`
+  refuses an unversioned library on a release row, and
+  `sbom/sbom-firmware.cdx.json` records every version. `firmware.yml`'s PR
+  rows still float, as the early warning.
+- **The firmware's libraries are checked against published advisories
+  (A2-20).** `audit.yml`'s new weekly `firmware-advisories` job
+  (`scripts/check_firmware_advisories.py`) compares each exact version in
+  the firmware SBOM with its upstream repository's published GitHub
+  security advisories, and fails on a match, an unreadable range, or a
+  component with no exact version. It does not read Espressif's own
+  advisory page or the libraries bundled inside ESP-IDF, and says so on
+  every run. Pinned by `test_check_firmware_advisories.py`, which makes no
+  network request.
+- **The docs say what the code does (A2-21, A2-10, A2-17).** The threat
+  model no longer claims reproducible builds or a binary hash you can
+  compare (the images embed their compile date), and its supply-chain
+  section names the pins and the advisory check; it also names SNTP on
+  the Sense, the Vision and the Sentinel. The mesh and Chirp audit no
+  longer says `POST /api/chirp/send` checks a 2-second hold (no such check
+  exists), and `SECURITY-AUDIT.md` R-5 no longer claims the canary-vision
+  reference API expires tokens server-side.
+- **Website: Watch Over a Parent says which readings are signed (A2-06).**
+  The Sense signs its presence, occupancy and breathing-lock words; its
+  heart and breathing rates are unsigned, and Home Assistant's own
+  entities check no signature. The page and the FAQ's phone-home answer
+  now say so, and name the Sense's clock sync.
+
 ### The 2.4.20 follow-ups: kernel, integration and app 0.9.2, Flasher 0.12.7, Lab 0.4.3, iOS 0.9.2
 
 - **The Home Assistant app's wizard checks "Only Frigate alerts" against
