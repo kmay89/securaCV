@@ -323,7 +323,7 @@ test("only an address on this network gets an Open link or is saved as the hub",
   const fn = libRs.slice(libRs.indexOf("fn local_hosts_pass_and_public_hosts_are_refused"));
   const lists = [...fn.matchAll(/for h in \[([\s\S]*?)\]/g)].map((m) => [...m[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]));
   assert.strictEqual(lists.length, 2, "lib.rs's host test lost its accept/refuse lists");
-  assert.ok(lists[0].includes("canary.local") && lists[1].includes("example.com"), "the lists changed shape");
+  assert.ok(lists[0].some((h) => h === "canary.local") && lists[1].some((h) => h === "example.com"), "the lists changed shape");
   for (const h of lists[0]) assert.strictEqual(app.hostIsLocal(h), true, `${h} is local to lib.rs and must be here`);
   for (const h of lists[1]) assert.strictEqual(app.hostIsLocal(h), false, `${h} is refused by lib.rs and must be here`);
   assert.strictEqual(app.hostIsLocal("[fe80::1]"), true, "brackets are stripped, as lib.rs does");

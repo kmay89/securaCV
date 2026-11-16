@@ -147,7 +147,8 @@ test("a missing Mosquitto or Frigate is offered as a my-HA link, never an instal
   const view = t.preflightView({ mosquitto: false, frigate: false, mqtt_service: false }, LINKS);
   assert.strictEqual(view.ready, false);
   assert.strictEqual(view.title, "Prerequisites need attention");
-  assert.match(view.html, new RegExp(`href="${LINKS.mosquitto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
+  const hrefs = [...view.html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
+  assert.ok(hrefs.some((h) => h === LINKS.mosquitto), "the Mosquitto link is on the card, whole");
   assert.match(view.html, /Install Mosquitto</);
   assert.match(view.html, /Install Frigate</);
   assert.match(view.html, /target="_blank" rel="noopener"/);

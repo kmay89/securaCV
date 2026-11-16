@@ -134,7 +134,7 @@ test('the customer\'s status link is a write capability: viewer, support and a r
     const { order } = recordOrder(b.db, sampleOrder(), { catalog: catalog() }); const link = orderStatusUrl(b.cfg, order); const api = `/api/orders/${order.number}/status-url`;
     // the API: by role with a session, by scope with a token
     for (const [who, s] of [['viewer', vw], ['support', sup]]) { const r = await b.as(s).get(api); assert.equal(r.status, 403, who); assert.ok(!(await r.text()).includes('/o/'), `${who} is told no, not the link`); }
-    assert.equal((await b.as(vw).get(`/api/orders/${order.number.replace('-', '%2D')}/status-url`)).status, 403, 'an encoded number is the same order');
+    assert.equal((await b.as(vw).get(`/api/orders/${order.number.replaceAll('-', '%2D')}/status-url`)).status, 403, 'an encoded number is the same order');
     for (const s of [owner, ops]) { const r = await b.as(s).get(api); assert.equal(r.status, 200); assert.equal((await r.json()).url, link); }
     const ro = createApiToken(b.db, 'dash', { scope: 'ro' }); const rw = createApiToken(b.db, 'cli');
     let r = await fetch(b.base + api, { headers: { authorization: `Bearer ${ro}` } }); assert.equal(r.status, 403); assert.match((await r.json()).error, /read-only/);
