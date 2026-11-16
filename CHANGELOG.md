@@ -6,9 +6,11 @@
 - **Release coupling — merge gate.** This change adds a receipt outcome
   (`Unsealed`) that every reader built from the token-redemption change
   (#1936) fails to parse (`unknown variant`); a `witnessd` of that era boots
-  into safe mode on such a row. It must merge before the first release that
-  contains #1936, and the release checklist says so
-  (`.github/RELEASE_LESSONS.md`).
+  into safe mode on such a row. The plan was to merge it before the first
+  release that contains #1936. That did not happen: kernel 0.9.1, Flasher
+  0.12.5 and Lab app 0.4.1 carry #1936 without this reader. The owner
+  confirmed on 2026-11-16 that no deployment reads these ledgers yet, so
+  what remains is the upgrade order below.
 - **Upgrade order.** Upgrade `witnessd`, `break_glass`, `log_verify`,
   `envelope_verify`, `court_export` and every observer host **before the
   first unseal recorded by this build** — the same rule `TokenRedeemed`

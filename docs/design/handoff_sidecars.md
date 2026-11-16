@@ -15,8 +15,11 @@ the format literal `securacv-handoff:v1`.
 > **Release coupling (merge gate).** The `Unsealed` outcome is a new
 > `BreakGlassOutcome` variant. Every reader built from the token-redemption
 > change (#1936) parses each break-glass row strictly and fails on it with
-> `unknown variant` — a #1936-era `witnessd` boots into safe mode. So this
-> change must merge before the first release that contains #1936, and every
+> `unknown variant` — a #1936-era `witnessd` boots into safe mode. The
+> design gated this change on merging before the first release that
+> contains #1936 (D10 below); as built, kernel 0.9.1, Flasher 0.12.5 and Lab
+> app 0.4.1 shipped #1936 first, and the owner confirmed on 2026-11-16 that
+> no deployment reads these ledgers yet. What still holds is that every
 > reader (`witnessd`, `break_glass`, `log_verify`, `envelope_verify`,
 > `court_export`, every observer host) is upgraded before the first unseal
 > recorded by this build. `pre_d_reader_rejects_unsealed_rows`
