@@ -225,7 +225,7 @@ QUORUM = {
         {"method": "POST", "path": "/breakglass/request", "desc": "open a session ({envelope, purpose, requested_by?+reason?, case_ref?}) — requested_by and reason are optional together (a partial pair, or case_ref alone, is refused as 400 partial_operator_context); returns the request_hash plus every field it binds, so trustees can be handed the full preimage"},
         {"method": "GET", "path": "/breakglass/status", "desc": "{envelope, purpose, requested_by, reason, case_ref, ruleset_hash, time_bucket, request_hash, needed, collected, ready}"},
         {"method": "POST", "path": "/breakglass/approve", "desc": "verify + count one trustee's Ed25519 signature"},
-        {"method": "POST", "path": "/breakglass/unseal", "desc": "only if ready → authorize + unseal to an operator dir"},
+        {"method": "POST", "path": "/breakglass/unseal", "desc": "only if ready → authorize + unseal to an operator dir, with a handoff sidecar beside the file"},
         {"method": "POST", "path": "/breakglass/close", "desc": "discard the session + approvals"},
     ],
     "cli": ["request", "approve", "authorize", "receipts", "unseal", "policy set", "policy show", "policy history", "db-key"],

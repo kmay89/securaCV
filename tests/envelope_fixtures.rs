@@ -148,3 +148,40 @@ fn forged_grant_fixture_is_never_ok() {
     expected.insert(0, WARNING.to_string());
     assert_eq!(report.warnings, expected);
 }
+
+/// The handoff-era envelope (regenerate with
+/// `cargo run --example gen_handoff_fixtures`): a grant, its redemption and
+/// the device-signed `Unsealed` row, then an `export:events` grant and
+/// redemption spent by the quorum export that names it. The U and R rules
+/// hold, and the new counts are reported.
+#[test]
+fn unsealed_fixture_verifies_and_counts_the_unseal_record_and_authorized_export() {
+    let envelope = load("valid_envelope_unsealed.json");
+    let report =
+        verify_envelope(&envelope, SignatureMode::Compat).expect("unsealed fixture must verify");
+    assert_eq!(report.break_glass_granted, 2);
+    assert_eq!(report.break_glass_redeemed, 2);
+    assert_eq!(report.break_glass_unsealed, 1);
+    assert_eq!(report.export_receipts_authorized, 1);
+    assert_eq!(
+        envelope.export_receipt_entry.receipt.auth_mode,
+        Some(ExportAuthMode::BreakGlass)
+    );
+    // Every pre-existing fixture reports zero of both.
+    for name in [
+        "valid_envelope.json",
+        "valid_envelope_legacy.json",
+        "valid_envelope_rotated.json",
+        "valid_envelope_self_export.json",
+    ] {
+        let report = verify_envelope(&load(name), SignatureMode::Compat).expect(name);
+        assert_eq!(
+            (
+                report.break_glass_unsealed,
+                report.export_receipts_authorized
+            ),
+            (0, 0),
+            "{name}"
+        );
+    }
+}

@@ -2151,6 +2151,13 @@ are disclosures and log a tamper-evident receipt each; `/events/latest`,
 `/events?since_bucket=`, `/digest`, `/api/identity` and `/api/sealed-log`
 are state reads and log none. Receipts are never pruned.
 
+An API bundle travels over HTTP, so the hub writes no handoff sidecar for it
+(nothing lands on the hub's disk). To hand a saved bundle to someone with its
+signed receipt rows in a sidecar, run `handoff_sidecar emit --file
+<bundle> --db witness.db` on the hub ([handoff sidecars](handoff_sidecars.md)).
+The break-glass console's unseal does write one, beside the file on the
+server; its reply's `handoff_sidecar` names it.
+
 ### `/events/latest` Response (Event)
 
 ```json

@@ -203,6 +203,36 @@ describe('a hostile bundle renders as text, never as markup', () => {
     assert.match(markup, /Disclosure record/, 'the export path rendered its receipt panel');
   });
 
+  it('a disclosure context whose every string is a tag (operator, reason, case, key, grant)', async () => {
+    const report = {
+      ok: true, status: 'valid_with_warnings', authorship: 'bundle', inconclusive: false,
+      checks: [TAG], warnings: [TAG], events: 3, failures: 0, buckets: 1, batches: 1,
+      device_public_key: TAG, artifact_hash: TAG, entry_hash: TAG,
+    };
+    for (const name of ['export_bundle/valid_bundle_self_context.json', 'export_bundle/valid_bundle_quorum.json']) {
+      const bundle = hostile(loadJson(name));
+      const receipt = bundle.receipt_entry.receipt;
+      if (receipt.context && receipt.context.operator) {
+        // The fixture leaves requester_key null; a hostile one is rendered too.
+        receipt.context.operator.requester_key = TAG;
+      }
+      const page = loadPage({ verifyExportBundle: async () => report });
+      await page.process(bundle, TAG);
+      await settle();
+      const markup = page.writes.join('\n');
+      assertInert(markup, `a disclosure-context field (${name})`);
+      if (name.endsWith('self_context.json')) {
+        assert.match(markup, /<dt>Declared operator<\/dt><dd>&lt;img src=x/, 'the operator row rendered, escaped');
+        assert.match(markup, /<dt>Reason code<\/dt><dd>&lt;img src=x/);
+        assert.match(markup, /<dt>Case reference<\/dt><dd>&lt;img src=x/);
+        assert.match(markup, /<dt>Requester key \(claimed\)<\/dt><dd class="mono">&lt;img src=x/);
+        assert.match(markup, /<dt>Recipient<\/dt>/);
+      } else {
+        assert.match(markup, /<dt>Authorizing grant<\/dt><dd class="mono">[0-9a-f]{64} /, 'the grant row rendered');
+      }
+    }
+  });
+
   it('a rejected file shows the verifier’s reason as text', async () => {
     const page = loadPage({ verifyEnvelope: async () => ({ ok: false, status: 'compromised', checks: [TAG], warnings: [], error: TAG }) });
     await page.process(loadJson('envelope/valid_envelope.json'), TAG);

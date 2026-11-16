@@ -3850,3 +3850,23 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
   today is evidence about what is being read today. A roadmap row is a claim
   to verify, not an instruction to execute, and a docs pass that reverses a
   commit's stated reason has to show why that reason was wrong.
+
+### 2026-11-08 — a release that contains `TokenRedeemed` rows must also contain the `Unsealed` reader
+
+- **Symptom (prevented, not paid):** the break-glass receipt chain gained a
+  new outcome twice in a row — `TokenRedeemed` (#1936), then `Unsealed`
+  (handoff sidecars). Every Rust reader parses each row strictly, so a
+  reader one change behind fails the whole walk with `unknown variant`, and
+  a `witnessd` of that era boots into safe mode.
+- **Cause:** a new enum variant in a never-pruned, signed ledger is a
+  format break for every older reader, not an additive field. A trailing
+  optional field on `TokenRedeemed` would have avoided it, but only by
+  decrypting before the burn, which #1936's burn-first rule forbids.
+- **Fix:** a merge gate — the `Unsealed` reader merges before the first
+  release tag that contains #1936 — and an upgrade order in the CHANGELOG,
+  `spec/break_glass.md` and `docs/handoff_sidecars.md`: every reader before
+  the first unseal recorded by the new build. `pre_d_reader_rejects_unsealed_rows`
+  (`src/disclosure_tests.rs`) pins the break so the docs stay true.
+- **Applies to:** any release that ships a new receipt outcome or ledger
+  record variant: check that no release tag contains the writer without the
+  reader, and say the upgrade order in the release notes.

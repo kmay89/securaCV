@@ -148,14 +148,24 @@ pub fn explain_failure(kind: FailureKind) -> FailureExplanation {
         },
         FailureKind::TokenRedemption => FailureExplanation {
             what: "the break-glass chain's record of spent tokens is inconsistent: a nonce \
-                   redeemed twice, a redemption naming no earlier Granted receipt, or a nonce \
-                   burned in the anti-replay table with no signed redemption row behind it.",
+                   redeemed twice, a redemption naming no earlier Granted receipt, a nonce \
+                   burned in the anti-replay table with no signed redemption row behind it, \
+                   or an unseal record that names no redemption or repeats one.",
             likely_causes: "a single-use token was replayed (its burn row deleted and the \
                    token presented again); a redemption row was forged or removed from the \
                    chain tail; the token was spent by a build that wrote no redemption rows.",
             next_steps: "treat the unseal as possibly repeated. Compare the chain head \
                    against its last anchor, ask who held the token file, and check the \
                    vault for an unsealed artifact that no redemption row accounts for.",
+        },
+        FailureKind::ExportAuthorization => FailureExplanation {
+            what: "an export receipt's link to the break-glass grant that authorized it does \
+                   not hold: the grant is missing, is for another envelope, was never spent, \
+                   authorized two exports, or the receipt restates an operator beside it.",
+            likely_causes: "a forged or edited export receipt; a grant or redemption row \
+                   removed from the break-glass chain.",
+            next_steps: "compare both chain heads against their last anchors and list who held \
+                   the device key.",
         },
     }
 }

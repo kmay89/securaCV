@@ -101,3 +101,18 @@ different way; the zip you hold is the self-verifying bundle, not the kit.
   fails if the copy drifts. Refresh it with
   `node viewer/build.mjs && cp viewer/evidence_viewer.html custom_components/securacv/www/securacv-evidence-viewer.html`.
 - Tests: `node --test viewer/verify_core.test.js viewer/timeline_core.test.js viewer/zip_core.test.js`.
+- Receipt fields: `serExportReceipt` serializes the optional trailing fields
+  `auth_mode`, `window`, `token_id`, `context` (`{operator?,
+  recipient_commitment?}`, declared at export) and `authorizing_receipt`
+  (the Granted break-glass receipt a quorum export spent) only when present,
+  in `src/lib.rs` struct order, so every receipt generation re-derives the
+  signed entry hash. An unknown receipt field only **annotates** an
+  entry-hash mismatch ("this receipt also carries field(s) this verifier
+  does not know …"); it never softens `compromised`.
+- Rules shared with the Rust verifier, same strings: the unseal-record rules
+  U1–U5 in the break-glass walk (`token_redemption`) and the
+  export-authorization rules R0–R6 across both ledgers
+  (`export_authorization`; R0, R1 and R6 also on a lone bundle). The page
+  shows a receipt's declared operator, its recipient commitment ("the name
+  is in the handoff sidecar, not in this file") and its authorizing grant,
+  every value escaped.

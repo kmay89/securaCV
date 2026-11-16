@@ -78,7 +78,7 @@ jobs:
         run: |
           docker run --rm --entrypoint /bin/sh witnessd:ci -c '
             set -e
-            for bin in witnessd log_verify export_events export_verify envelope_verify break_glass log_anchor court_export witness_api; do
+            for bin in witnessd log_verify export_events export_verify envelope_verify break_glass log_anchor court_export handoff_sidecar witness_api; do
               command -v "$bin" >/dev/null
               if ldd "/usr/local/bin/$bin" | grep -q "not found"; then
                 echo "missing shared libraries for $bin" >&2
@@ -90,6 +90,7 @@ jobs:
             export_verify --help >/dev/null
             log_anchor --help >/dev/null
             court_export --help >/dev/null
+            handoff_sidecar --help >/dev/null
             usage=$(witness_api help 2>&1)
             case "$usage" in
               *mint-viewer-token*) ;;

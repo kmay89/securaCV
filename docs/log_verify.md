@@ -49,14 +49,34 @@ For break-glass receipts, `log_verify`:
    - recompute `entry_hash = SHA256(prev_hash || payload_json)`
    - verify the Ed25519 signature over `entry_hash`
    - verify the approvals commitment matches the stored approvals JSON
-2) Report success/failure.
+   - apply the token-redemption rules (`token_redemption`): one redemption
+     per nonce and per grant, restating its grant — and, for an `Unsealed`
+     row, that it names an earlier redemption, is the only one for it, is
+     not an `export:events` redemption, restates the redemption's envelope,
+     ruleset, request hash and bucket, and carries no approvals (U1–U5).
+     For an `Unsealed` row these run before the per-receipt quorum and
+     attribution check, so a forged row naming trustees reports U5 as
+     `token_redemption`, exactly as `envelope_verify` and the viewer do
+2) Report success/failure. The count line reads `verified N receipt entries
+   (G granted, D denied, R redeemed, U unsealed)`; `, U unsealed` appears only
+   when an unseal record exists, and the JSON report's `break_glass_unsealed`
+   is omitted while there is none (and on a failed report).
 
 For export receipts, `log_verify`:
 1) Iterates `export_receipts` in ascending id:
    - verify each `prev_hash` matches the running expected chain head
    - recompute `entry_hash = SHA256(prev_hash || payload_json)`
    - verify the Ed25519 signature over `entry_hash`
-2) Report success/failure.
+2) Then, before the clock-provenance walk, check every export receipt that
+   names its authorizing grant (`authorizing_receipt`) against the
+   break-glass chain (R0–R6, `spec/break_glass.md` "Auditing receipts"): a
+   real, redeemed `export:events` grant, named by one export only, with no
+   operator restated beside it. A failure is `FailedLedger::ExportReceipts`
+   with the new kind `export_authorization` (`integrity check failed at
+   export receipt id N: <rule>`).
+3) Report success/failure. The count line gains `, A name their authorizing
+   grant` when any does; the JSON report's `export_receipts_authorized` is
+   omitted while none does.
 
 For the clock-provenance ledger (`docs/timestamping.md`, "Clock
 provenance"), `log_verify`:

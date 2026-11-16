@@ -22,8 +22,10 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use witness_kernel::break_glass::{display_safe, BreakGlassReceipt};
 use witness_kernel::clock_provenance::{self, ClockProvenanceRow};
 use witness_kernel::crypto::signatures::{SignatureMode, DOMAIN_CLOCK_PROVENANCE};
+use witness_kernel::handoff;
 use witness_kernel::ots;
 use witness_kernel::tsa::AnchorSubject;
 use witness_kernel::{
@@ -120,6 +122,98 @@ struct KitAnchor {
     /// The token's `SignerInfo` identity (`TsaSigner::sid_hex`), for the
     /// custody record when no certificate is embedded.
     signer_sid: Option<String>,
+}
+
+/// The handoff sidecar the kit carries beside the bundle.
+struct KitHandoff {
+    /// `<bundle>.securacv-handoff.json`, under `evidence/`.
+    file_name: String,
+    /// SHA-256 (64 hex) of the sidecar bytes as packaged.
+    sha256: String,
+    /// `supplied` (verified and copied verbatim) or `generated`.
+    source: &'static str,
+    /// The sidecar's recipient binding.
+    binding: handoff::RecipientBinding,
+    /// The sidecar's pairing (always `export_receipt` for a kit's sidecar).
+    pairing: handoff::Pairing,
+}
+
+/// Locate the handoff sidecar beside the bundle (verify it, or generate one)
+/// BEFORE the kit directory exists, so a contradicting sidecar refuses the
+/// whole kit. Returns the bytes to package and their description.
+fn kit_handoff(
+    conn: &Connection,
+    bundle_path: &str,
+    bundle_bytes: &[u8],
+    bundle_file_name: &str,
+    trusted_genesis: Option<&ed25519_dalek::VerifyingKey>,
+) -> Result<(Vec<u8>, KitHandoff)> {
+    let beside = handoff::sidecar_path_for(Path::new(bundle_path));
+    let file_name = format!("{}{}", bundle_file_name, handoff::HANDOFF_SUFFIX);
+    let (bytes, source) = if beside.exists() {
+        let bytes = std::fs::read(&beside)
+            .map_err(|e| anyhow!("cannot read {}: {}", beside.display(), e))?;
+        let report = handoff::verify_sidecar_with_db(
+            conn,
+            &bytes,
+            Path::new(bundle_path),
+            &handoff::VerifyOptions {
+                pinned: trusted_genesis.copied(),
+                anchors_dir: None,
+                tsa_cas: &[],
+            },
+        )?;
+        if let Some(fail) = report.first_failure() {
+            return Err(anyhow!(
+                "custody break: the handoff sidecar beside the bundle does not describe this \
+                 bundle ({}: {}). Remove or replace {} (handoff_sidecar emit writes a fresh one) \
+                 — a kit must not carry a sidecar that contradicts its evidence. Refusing to \
+                 package.",
+                fail.subject,
+                fail.detail,
+                beside.display()
+            ));
+        }
+        // A verified sidecar can still describe another disclosure: an
+        // unseal sidecar whose `file` happens to name these bytes passes
+        // every structural check (its pairing is only declared). A kit
+        // carries the export sidecar of its own bundle and nothing else.
+        // For an export sidecar the verifier already pins pairing to the
+        // embedded export receipt and that receipt to this bundle's.
+        let parsed = handoff::HandoffSidecar::parse(&bytes)?;
+        if parsed.disclosure != handoff::Disclosure::Export {
+            return Err(anyhow!(
+                "custody break: the handoff sidecar beside the bundle does not describe this \
+                 bundle (records: this is an unseal sidecar; a kit carries the export sidecar \
+                 of its bundle). Remove or replace {} (handoff_sidecar emit writes a fresh \
+                 one) — a kit must not carry a sidecar that contradicts its evidence. \
+                 Refusing to package.",
+                beside.display()
+            ));
+        }
+        (bytes, "supplied")
+    } else {
+        let sidecar = handoff::build_export_sidecar(
+            conn,
+            bundle_bytes,
+            bundle_file_name,
+            None,
+            handoff::handoff_bucket_now()?,
+            env!("CARGO_PKG_VERSION"),
+        )?;
+        (sidecar.to_canonical_bytes()?, "generated")
+    };
+    let parsed = handoff::HandoffSidecar::parse(&bytes)?;
+    Ok((
+        bytes.clone(),
+        KitHandoff {
+            file_name,
+            sha256: hex::encode(Sha256::digest(&bytes)),
+            source,
+            binding: parsed.recipient_binding,
+            pairing: parsed.pairing,
+        },
+    ))
 }
 
 /// One packaged OpenTimestamps proof. Its state is derived from the proof,
@@ -264,53 +358,133 @@ fn package_ots_anchors(
     Ok(out)
 }
 
-fn open_db(args: &Args) -> Result<Connection> {
-    // Mirrors log_verify: explicit --db-key wins; otherwise derive from the
-    // device key seed exactly as the kernel does; otherwise the seed file
-    // beside the database is tried (database key only); otherwise open
-    // unkeyed.
-    let seed_for_db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
-        (Some(_), _) => None,
-        (None, Some(seed)) => Some(seed.clone()),
-        (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
-            eprintln!("court_export: database key from the {}", found.source);
-            found.seed.to_string()
-        }),
-    };
-    let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
-        (Some(key), _) => Some(key.clone()),
-        (None, Some(seed)) => {
-            let signing_key = witness_kernel::signing_key_from_seed(seed)?;
-            let seed_env = witness_kernel::db_key_seed_from_env();
-            Some(
-                witness_kernel::resolve_db_encryption_key(
-                    &signing_key,
-                    seed_env.as_ref().map(|s| s.as_str()),
+/// The custody record's "Disclosure context" section. A quorum export's
+/// operator fields are read from its authorizing grant (trustee-consented,
+/// bound into the request hash the trustees approved); a self-export's are
+/// the exporting operator's declaration.
+fn disclosure_context_section(
+    conn: &Connection,
+    receipt: &witness_kernel::ExportReceipt,
+    auth_label: &str,
+    handoff: &KitHandoff,
+) -> Result<String> {
+    let quorum = receipt.auth_mode == Some(ExportAuthMode::BreakGlass);
+    let mut grant: Option<BreakGlassReceipt> = None;
+    let grant_row = match receipt.authorizing_receipt {
+        Some(h) => {
+            let payload: Option<String> = conn
+                .query_row(
+                    "SELECT payload_json FROM break_glass_receipts WHERE entry_hash = ?1",
+                    [h.to_vec()],
+                    |row| row.get(0),
                 )
-                .to_string(),
+                .optional()?;
+            if let Some(p) = payload {
+                grant = serde_json::from_str(&p).ok();
+            }
+            let trustees = grant
+                .as_ref()
+                .map(|g| {
+                    g.trustees_used
+                        .iter()
+                        .map(|t| display_safe(&t.0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "(the grant row was not found in this database)".to_string());
+            format!(
+                "`{}` — the trustee-approved break-glass receipt this export spent; trustees \
+                 named: {}",
+                hex::encode(h),
+                trustees
             )
         }
-        (None, None) => None,
+        None if quorum => "not recorded (the receipt predates the field)".to_string(),
+        None => "not applicable (not a quorum export)".to_string(),
     };
-    // Read-only: this tool packages evidence; it must never mutate its
-    // source, must work from a forensic copy on read-only media, and a
-    // typo'd --db path must fail cleanly instead of creating an empty file.
-    let conn = Connection::open_with_flags(
+    let declared_op = receipt.context.as_ref().and_then(|c| c.operator.as_ref());
+    let (op, source) = match (&grant, declared_op) {
+        (Some(g), _) if g.context.is_some() => (
+            g.context.clone(),
+            format!(
+                "trustee-consented: bound into the request hash the trustees approved (grant \
+                 {}…)",
+                &hex::encode(receipt.authorizing_receipt.unwrap_or_default())[..16]
+            ),
+        ),
+        (_, Some(op)) => (
+            Some(op.clone()),
+            "declared by the exporting operator (device-key holder), recorded in the \
+             device-signed receipt; not trustee-consented"
+                .to_string(),
+        ),
+        _ => (None, "not recorded".to_string()),
+    };
+    let committed = receipt
+        .context
+        .as_ref()
+        .is_some_and(|c| c.recipient_commitment.is_some());
+    let recipient = match (committed, handoff.binding) {
+        (true, handoff::RecipientBinding::ReceiptCommitment) => {
+            "committed in the signed receipt; named in the handoff sidecar"
+        }
+        (true, _) => "committed in the signed receipt; not named in this kit",
+        (false, handoff::RecipientBinding::Declared) => {
+            "named in the handoff sidecar only (declared; no signed commitment)"
+        }
+        (false, _) => "none recorded",
+    };
+    let (name, reason, case_ref, key) = match &op {
+        Some(op) => (
+            display_safe(&op.requester_name),
+            display_safe(&op.reason_code),
+            op.case_ref
+                .as_deref()
+                .map(display_safe)
+                .unwrap_or_else(|| "none recorded".to_string()),
+            op.requester_key
+                .as_deref()
+                .map(|k| {
+                    format!(
+                        "{} (claimed; recorded, not checked against a registry)",
+                        display_safe(k)
+                    )
+                })
+                .unwrap_or_else(|| "none recorded".to_string()),
+        ),
+        None => (
+            "none recorded".to_string(),
+            "none recorded".to_string(),
+            "none recorded".to_string(),
+            "none recorded".to_string(),
+        ),
+    };
+    Ok(format!(
+        "## Disclosure context\n\n\
+         | Field | Value |\n\
+         |---|---|\n\
+         | Authorization | {auth} |\n\
+         | Authorizing grant | {grant} |\n\
+         | Requester | {name} |\n\
+         | Reason code | {reason} |\n\
+         | Case reference | {case_ref} |\n\
+         | Requester key | {key} |\n\
+         | Source of these fields | {source} |\n\
+         | Recipient | {recipient} |\n\n",
+        auth = auth_label,
+        grant = grant_row,
+    ))
+}
+
+fn open_db(args: &Args) -> Result<Connection> {
+    // Mirrors log_verify; read-only (this tool packages evidence and must
+    // never mutate its source). Shared with handoff_sidecar.
+    verify_helpers::open_db_read_only(
         &args.db,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        args.device_key_seed.as_deref(),
+        args.db_key.as_deref(),
+        "court_export",
     )
-    .map_err(|e| anyhow!("could not open database {}: {}", args.db, e))?;
-    if let Some(ref key) = db_key {
-        conn.pragma_update(None, "key", format!("x'{}'", key))?;
-    }
-    conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
-        .map_err(|_| {
-            anyhow!(
-                "could not read the kernel database — if it is encrypted, pass \
-                 --device-key-seed (or --db-key)"
-            )
-        })?;
-    Ok(conn)
 }
 
 /// Confirm the bundle's receipt entry is a genuine row of THIS database's
@@ -833,6 +1007,23 @@ fn main() -> Result<()> {
         let _stage = ui.stage("Locate receipt in chain");
         locate_receipt_in_chain(&conn, &bundle, trusted_genesis.as_ref())?
     };
+    let bundle_file_name = Path::new(&args.bundle)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("export_bundle.json")
+        .to_string();
+    // The handoff sidecar: verified and copied when one sits beside the
+    // bundle, generated otherwise — decided before the kit directory exists.
+    let (handoff_bytes, kit_handoff) = {
+        let _stage = ui.stage("Handoff sidecar");
+        kit_handoff(
+            &conn,
+            &args.bundle,
+            &bundle_bytes,
+            &bundle_file_name,
+            trusted_genesis.as_ref(),
+        )?
+    };
 
     // ── 3. Assemble the kit ──────────────────────────────────────────────
     // The output directory must be fresh: MANIFEST.json attests every file in
@@ -857,12 +1048,11 @@ fn main() -> Result<()> {
     }
     std::fs::create_dir_all(kit.join("evidence"))?;
 
-    let bundle_file_name = Path::new(&args.bundle)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("export_bundle.json")
-        .to_string();
     std::fs::write(kit.join("evidence").join(&bundle_file_name), &bundle_bytes)?;
+    handoff::write_sidecar_new(
+        &kit.join("evidence").join(&kit_handoff.file_name),
+        &handoff_bytes,
+    )?;
 
     // A C2PA sidecar beside the input bundle travels with it: it signs these
     // exact bytes and is meaningless apart from them.
@@ -927,8 +1117,21 @@ fn main() -> Result<()> {
 
     {
         let _stage = ui.stage("Write kit documents");
-        write_readme(kit, &bundle_file_name, anchored, &clock, &ots_anchors)?;
+        write_readme(
+            kit,
+            &bundle_file_name,
+            anchored,
+            &clock,
+            &kit_handoff,
+            &ots_anchors,
+        )?;
         write_system_description(kit)?;
+        let disclosure_context = disclosure_context_section(
+            &conn,
+            receipt,
+            auth_mode_label(receipt.auth_mode),
+            &kit_handoff,
+        )?;
         write_custody_record(
             kit,
             &bundle_file_name,
@@ -947,6 +1150,8 @@ fn main() -> Result<()> {
             &anchors,
             &ots_anchors,
             &clock,
+            &disclosure_context,
+            &kit_handoff,
         )?;
         write_verification(
             kit,
@@ -958,6 +1163,7 @@ fn main() -> Result<()> {
             &anchors,
             &ots_anchors,
             &clock,
+            &kit_handoff,
         )?;
         write_certifications(kit, &bundle_file_name, &bundle_hex, &artifact_hash_hex)?;
         write_manifest(
@@ -975,6 +1181,8 @@ fn main() -> Result<()> {
             &anchors,
             &ots_anchors,
             &clock,
+            receipt,
+            &kit_handoff,
         )?;
     }
 
@@ -987,6 +1195,16 @@ fn main() -> Result<()> {
         );
     }
     println!("  evidence:  evidence/{}", bundle_file_name);
+    println!(
+        "  handoff:   evidence/{} ({}); recipient: {}",
+        kit_handoff.file_name,
+        if kit_handoff.source == "supplied" {
+            "supplied, verified"
+        } else {
+            "generated"
+        },
+        handoff::binding_str(kit_handoff.binding)
+    );
     println!("  digest:    sha256 {}", bundle_hex);
     println!(
         "  custody:   receipt {} of {} in the signed export chain",
@@ -1047,6 +1265,7 @@ fn write_readme(
     bundle_file_name: &str,
     anchored: bool,
     clock: &ClockKit,
+    kit_handoff: &KitHandoff,
     ots_anchors: &[KitOtsAnchor],
 ) -> Result<()> {
     // By state, derived from the proofs: a pending proof is in no Bitcoin
@@ -1135,6 +1354,8 @@ fn write_readme(
          6. `MANIFEST.json` — machine-readable list of every file here with its \
          SHA-256.\n\
          {clock_item}\
+         8. `evidence/{handoff}` — the handoff sidecar: this disclosure's signed records, \
+         for a downstream chain-of-custody system (`docs/handoff_sidecars.md`).\n\
          \n\
          {anchor_note}\n\
          \n\
@@ -1147,6 +1368,7 @@ fn write_readme(
         bundle = bundle_file_name,
         anchor_note = anchor_note,
         clock_item = clock_item,
+        handoff = kit_handoff.file_name,
         ots_sentence = ots_sentence,
     );
     std::fs::write(kit.join("README.md"), text)?;
@@ -1232,6 +1454,8 @@ fn write_custody_record(
     anchors: &[KitAnchor],
     ots_anchors: &[KitOtsAnchor],
     clock: &ClockKit,
+    disclosure_context: &str,
+    kit_handoff: &KitHandoff,
 ) -> Result<()> {
     let time_source = time_source_section(anchors, clock);
     let identity = if identity_verified {
@@ -1317,6 +1541,7 @@ fn write_custody_record(
          | Device public key (Ed25519) | `{device_key}` |\n\
          | Device identity | {identity} |\n\
          \n\
+         {disclosure_context}\
          ## Chain of custody (digital)\n\
          \n\
          | Field | Value |\n\
@@ -1329,6 +1554,14 @@ fn write_custody_record(
          confirmed the stored bytes reproduce this entry hash. Full-chain \
          verification is available to any party via `log_verify` (see \
          `VERIFICATION.md`).\n\
+         \n\
+         ## Handoff sidecar\n\
+         \n\
+         `evidence/{handoff_file}` ({handoff_source}) carries the device-signed rows this \
+         disclosure left, verbatim, so a downstream chain-of-custody system can check them \
+         apart from this kit. It is a carrier: the sidecar itself is unsigned; every fact it \
+         vouches for is in a signed row it embeds, or is labeled declared. Recipient binding: \
+         {handoff_binding}.\n\
          \n\
          ## Independent timestamp anchors\n\
          \n\
@@ -1359,6 +1592,10 @@ fn write_custody_record(
         len = chain_length,
         anchors = anchor_rows,
         time_source = time_source,
+        disclosure_context = disclosure_context,
+        handoff_file = kit_handoff.file_name,
+        handoff_source = kit_handoff.source,
+        handoff_binding = handoff::binding_str(kit_handoff.binding),
     );
     std::fs::write(kit.join("CUSTODY_AND_CONTROL.md"), text)?;
     Ok(())
@@ -1478,6 +1715,7 @@ fn write_verification(
     anchors: &[KitAnchor],
     ots_anchors: &[KitOtsAnchor],
     clock: &ClockKit,
+    kit_handoff: &KitHandoff,
 ) -> Result<()> {
     let clock_steps = clock_verification_steps(anchors, clock, device_key_hex);
     let ots_steps = ots_verification_steps(ots_anchors);
@@ -1557,6 +1795,7 @@ fn write_verification(
          ```sh\n\
          sha256sum evidence/{bundle}\n\
          # expect: {bundle_hex}\n\
+         sha256sum evidence/{handoff}   # expect: {handoff_sha}\n\
          ```\n\
          \n\
          ## 2. Confirm the evidence digest\n\
@@ -1567,6 +1806,8 @@ fn write_verification(
          ## 3. Verify the timestamp anchors\n\
          \n\
          {anchor_steps}\
+         Each `token_sha256` in the handoff sidecar equals one line printed by \
+         `sha256sum anchors/*.der`.\n\
          {ots_steps}\
          \n\
          ## 3b. Verify the clock-provenance records\n\
@@ -1587,11 +1828,22 @@ fn write_verification(
          database access relies on steps 1-3 (which are the trust-critical \
          checks) or requests supervised verification. Two independent verifier \
          implementations (Rust and JavaScript) exist so no single \
-         implementation needs to be trusted.\n",
+         implementation needs to be trusted.\n\
+         \n\
+         The handoff sidecar's embedded records check apart from the database:\n\
+         \n\
+         ```sh\n\
+         handoff_sidecar verify --file evidence/{bundle} --sidecar evidence/{handoff} \
+         --anchors-dir anchors --public-key-file <device.pub> [--ca <tsa-ca.pem>]\n\
+         ```\n\
+         \n\
+         or the shell recipe in docs/handoff_sidecars.md (sha256sum, openssl >= 3.0, jq).\n",
         bundle = bundle_file_name,
         bundle_hex = bundle_hex,
         anchor_steps = anchor_steps,
         clock_steps = clock_steps,
+        handoff = kit_handoff.file_name,
+        handoff_sha = kit_handoff.sha256,
         ots_steps = ots_steps,
         ots_intro = ots_intro,
     );
@@ -1920,6 +2172,8 @@ fn write_manifest(
     anchors: &[KitAnchor],
     ots_anchors: &[KitOtsAnchor],
     clock: &ClockKit,
+    receipt: &witness_kernel::ExportReceipt,
+    kit_handoff: &KitHandoff,
 ) -> Result<()> {
     // Enumerate every file the kit contains (the manifest itself excluded) and
     // hash the bytes actually on disk — the manifest attests the kit as built.
@@ -1939,6 +2193,7 @@ fn write_manifest(
     if let Some(name) = sidecar_name {
         paths.push(kit.join("evidence").join(name));
     }
+    paths.push(kit.join("evidence").join(&kit_handoff.file_name));
     for a in anchors {
         paths.push(kit.join("anchors").join(&a.file_name));
     }
@@ -1974,6 +2229,23 @@ fn write_manifest(
             "receipt_entry_hash": entry_hash_hex,
             "device_public_key": device_key_hex,
             "auth_mode": auth_mode,
+            "context": receipt.context.as_ref().map(|c| serde_json::json!({
+                "operator": c.operator.as_ref().map(|op| serde_json::json!({
+                    "requester_name": op.requester_name,
+                    "reason_code": op.reason_code,
+                    "case_ref": op.case_ref,
+                    "requester_key": op.requester_key,
+                })),
+                "recipient_commitment": c.recipient_commitment.map(hex::encode),
+            })),
+            "authorizing_receipt": receipt.authorizing_receipt.map(hex::encode),
+        },
+        "handoff": {
+            "file": format!("evidence/{}", kit_handoff.file_name),
+            "sha256": kit_handoff.sha256,
+            "source": kit_handoff.source,
+            "pairing": handoff::pairing_name(kit_handoff.pairing),
+            "recipient_binding": handoff::binding_str(kit_handoff.binding),
         },
         "identity_verified": identity_verified,
         "anchored": anchored,
