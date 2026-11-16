@@ -16,7 +16,8 @@ and every manifest a second signature over its own fields, both under ONE
 release key whose public half is compiled in (`ota_release_key.h`, key id
 `532429078dc47c04`). An all-zero public key fails closed. The private key is
 never in the repository: the CI release workflow reads it from the
-`OTA_SIGNING_KEY_PEM` secret, a human keeps it on the ceremony machine, and
+`OTA_SIGNING_KEY_PEM` secret of the `firmware-release` environment, in a
+job that signs only a commit on `main`, a human keeps it on the ceremony machine, and
 `tools/sign-firmware` **refuses** a key path inside any source checkout
 before it will sign. There is no unsigned path on a release build: the
 dev-only `POST /api/ota` on `firmware/canary` is compiled out of `release`

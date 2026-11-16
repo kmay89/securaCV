@@ -433,7 +433,7 @@ under the free "Works with SecuraCV" badge.
 
 ### I force quit the Flasher and now it won't open — it just bounces
 
-Open it again. From version 0.3.8 the Flasher repairs this itself: it leaves a
+Open it again. From version 0.3.9 (the first published build with it) the Flasher repairs this itself: it leaves a
 breadcrumb as each launch advances and reads the last one on the way up, before
 it builds a window, so a launch that never arrived gets fixed rather than
 repeated. You may see a short note telling you what it found.

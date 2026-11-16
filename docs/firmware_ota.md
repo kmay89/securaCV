@@ -284,7 +284,7 @@ python firmware/scripts/ota_release.py pubkey-header \
 cp firmware/common/ota/src/ota_release_key.h \
    firmware/projects/canary-wap/arduino/canary_wap/ota_release_key.h
 
-# Store the private key as the OTA_SIGNING_KEY_PEM GitHub Actions secret.
+# Store the full releaser.pem in the OTA_SIGNING_KEY_PEM secret of the firmware-release environment (not a repository secret; docs/RELEASE_PROCESS.md, Who can sign).
 # Keep the PEM itself offline — treat it like a code-signing certificate.
 ```
 
@@ -605,7 +605,8 @@ running its current image.
    Commit the regenerated `ota_release_key.h` (public half only; the
    canary-wap sketch copy must be re-synced — `check_ota_sync.sh` guards
    it), and store the full `releaser.pem` in the `OTA_SIGNING_KEY_PEM`
-   GitHub Actions secret. The release workflow refuses to publish if the
+   secret of the `firmware-release` environment (not a repository secret;
+   `docs/RELEASE_PROCESS.md`, Who can sign). The release workflow refuses to publish if the
    secret's public half doesn't match the committed header.
 
 2. **Cut the first release** once the key commit is on main:

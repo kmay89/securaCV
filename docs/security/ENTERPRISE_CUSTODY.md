@@ -206,17 +206,21 @@ further tier, mirroring `load_server_config_mtls` in the webhook module).
 
 **State today.** The PWK setup wizard (`privacy_witness_kernel/serve_wizard.py`)
 binds `0.0.0.0:8788` and is served to the user through the Home Assistant
-Supervisor **ingress** proxy (which authenticates the user). Its `do_POST`
-handlers — `/api/save` (writes config and mints `device_key_seed`),
-`/api/restart-ha`, `/api/test-camera`, and the `/api/mesh/pair/*` device
-proxies — carry **no auth check of their own**, so any process that can reach
-the container's port directly on the Supervisor Docker network (a malicious
-sibling add-on, or SSRF from one) can invoke them, bypassing ingress. The
-2026-08 pass already minimized secret *disclosure* on `/api/status` and closed
-the SSRF/loopback and YAML-injection vectors on this surface; the mutating
-endpoints are the remaining item.
+Supervisor **ingress** proxy (which authenticates the user). Shipped:
+`do_GET` and `do_POST` both open with
+`_refuse_untrusted_client()`, which answers `403` to any connection that did
+not come from the ingress proxy's address (`172.30.32.2`, where the
+Supervisor's watchdog probe also arrives), the add-on's own loopback, or an
+address listed in `WIZARD_TRUSTED_CLIENT_IPS`. So a malicious sibling add-on,
+or SSRF from one, that reaches the port directly on the Supervisor Docker
+network can no longer reach `/api/save` (which writes config and mints
+`device_key_seed`), `/api/restart-ha`, `/api/test-camera` or the
+`/api/mesh/pair/*` proxies. **The residual:** it is an address check, not a
+Supervisor-session check. Anything that can originate a connection from
+`172.30.32.2` or from inside the add-on is trusted, and the request itself
+carries no proof that Home Assistant authenticated a user.
 
-**Design to close it.** Verify that a mutating request actually arrived through
+**Design to close the residual.** Verify that a mutating request actually arrived through
 the authenticated ingress path rather than directly on the port — the robust
 form is to require the Supervisor-injected ingress session (HA sets an
 `X-Ingress-Path`/session the add-on can validate against `SUPERVISOR_TOKEN`),
@@ -295,11 +299,13 @@ Flip the gate only after each is either bumped or given a real justification:
 | RUSTSEC-2025-0134 | `memmap2` | unsound | confirm the pulling path and whether the aliasing pattern is reachable |
 | RUSTSEC-2026-0186 | `spin` | yanked | prefer a lockfile bump to a maintained version |
 
-Toolchain/image supply-chain items handled in this pass and remaining:
-the PWK builder now pins an exact Rust toolchain (was the moving `stable`).
-Still open: pin `BUILD_FROM`/`alpine:3.18` by `@sha256:` digest (mirror the root
-`Dockerfile`) and add a sha256 check of the rustup installer and the cargo-chef
-tarball.
+Toolchain/image supply-chain items handled in this pass: the PWK builder
+pins an exact Rust toolchain (was the moving `stable`), every `FROM` in
+`privacy_witness_kernel/Dockerfile` carries a literal tag and `@sha256:` digest
+(the runtime bases and the build stage, now on Alpine 3.22), and the rustup
+installer and the cargo-chef tarball are checked against pinned sha256 values
+before they run (`RUSTUP_INIT_SHA256_*`, `CARGO_CHEF_SHA256_*`; 2026-11-06,
+#1932, the base moved to 3.22 in the 0.9.1 add-on).
 
 ---
 

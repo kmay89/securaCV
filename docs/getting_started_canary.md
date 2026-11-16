@@ -500,9 +500,15 @@ Three things are **structurally impossible** with this device — not
    callback that receives them; only a 32-byte numeric summary of the
    room's RF shape is kept, and that summary is bucketed to integers
    so device-fingerprinting is information-theoretically impossible.
-2. Recognize a face or record audio. There is no camera frame storage
-   in the firmware (the optional Peek tab is a live MJPEG passthrough,
-   never written to SD). The microphone is not enabled in this build.
+2. Recognize a face, or store or transcribe audio. There is no camera
+   frame storage in the firmware (the optional Peek tab is a live MJPEG
+   passthrough, never written to SD). The microphone is on in stock
+   builds, but it is reduced on the device to an on/off loudness envelope
+   matched against the T3/T4 alarm cadences (plus knock, doorbell and
+   glass-break where a dev or full build enables them); no audio is ever
+   stored or transcribed, and you can mute it from the Acoustic Alarms
+   card or the Home Assistant `Microphone` switch, with every mute and
+   unmute signed (§5).
 3. Tell anyone outside your home what it sees. The Canary is on its own
    Wi-Fi network. It optionally connects to your home Wi-Fi for Home
    Assistant integration; it never reaches the internet on its own.
@@ -870,18 +876,26 @@ recorded into the device's **witness chain**: an Ed25519-signed,
 SHA-256 hash-chained log on the SD card that's structurally tamper-
 evident.
 
-Five kinds of event are signed:
+The sensing events that are signed, in a stock build:
 
 - **Smoke alarm pattern** (T3 cadence)
 - **CO alarm pattern** (T4 cadence)
 - **Silent panic** (touch pad long-press)
 - **Enclosure tamper** (touch pad disconnect)
 - **Thermal drift** (sustained ±5 °C temperature step)
+- **Microphone mute and unmute** (with its source, the dashboard, Home Assistant or boot, and the time bucket)
 
-That's it. Five high-stakes things the homeowner would actually want
-court-defensible records of. Everything else — CSI motion, IR remote
-activity, approach detection — stays as live dashboard state and is
-never written to disk.
+In dev and full builds, also knock, doorbell and glass-break. The chain
+also carries the device's own records: the boot attestation, the periodic
+signed witness record (`RECORD_INTERVAL_MS`, once a second by default,
+longer under the power policy), and state changes — a firmware update
+started, applied or rolled back, a power-mode change, a deep-sleep entry
+and the boot's power state. The authority for the list is the firmware,
+not this page: `sensing_witness_kind_t` in
+`firmware/canary/lib/securacv_sensing/src/securacv_sensing.h` and
+`RecordType` in `firmware/canary/lib/securacv_witness/src/securacv_witness.h`.
+CSI motion, IR remote activity and approach detection stay as live
+dashboard state and are never written to disk.
 
 The signed records contain the same scalars the dashboard already
 shows (kind, confidence, time bucket, category). No extra information
