@@ -91,13 +91,29 @@ const state = {
   portInfo: null,
   portKind: null,    // "esp32" | "we2"
   chip: null,        // identified chip for state.port, or null
+  chipDesc: null,    // espflash's chip line ("esp32s3 (revision v0.2)"), for About this board
+  chipTool: null,    // { crystal_mhz, features } as espflash printed them — technical view only
   flashBytes: null,  // detected flash size (bytes) for state.chip — the rescue backup needs it
-  mac: null,         // detected MAC (for the health report + backup name), or null
+  // The factory hardware address, or null: kept to know this board again
+  // (the backup dedupe, the fleet book, the intake check). Never drawn unless
+  // asked ("Hardware address · Show"), never copied, and never written into a
+  // report or a file name; the fleet book in prefs is keyed by it. (A backup
+  // is the flash's own bytes, and ESP-IDF keeps the address in NVS with its
+  // PHY calibration, so a backup holds it the way the board does.)
+  mac: null,
+  // About this board: the allowlisted eFuse fields, decoded (undefined until
+  // the fuse read runs, null when it could not read them).
+  chipFuses: undefined,
+  fileCounter: 0,    // the "-1", "-2"… in a saved file's neutral name
   product: null,
   detecting: false,  // a detect_chip call is in flight
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
   busy: false,       // a flash is running — pause the watcher
   efuseScan: null,   // { port, chip, scan } from the security-fuse read — per board, never inherited
+  // { port, chip } of a fuse read whose block 0 answered, until the next read
+  // starts or the bench writes to the board (noteBoardWritten): what the About
+  // card's after-read line stands on, for that port and chip (renderThisBoard).
+  efuseParked: null,
   monitoring: false,
   devChannel: false, // fetch fw-dev-latest instead of the pinned stable release
   localFile: null,   // { handle, name, size, sha256, esp_magic } picked under Advanced
@@ -473,14 +489,345 @@ function usbBridgeInfo(vid, pid) {
   };
 }
 
+// ── About this board, saved-file names and the report projections ───────────
+// Inlined from canary-local/assets/flash-core.js (ABOUT_CANNOT, sizeWords,
+// chipRevisionFromDesc, CHIP_SHEETS, aboutBoardGroups, aboutBoardSummary,
+// aboutBoardText, localDay, fileStamp, backupFileName, reportFileName,
+// SHARE_REPORT_NOTE, FULL_REPORT_NOTE, buildDay, reportShareProjection,
+// reportFullProjection, maskHardwareAddress) and intake.js (decodeChipFuses
+// and its tables) — this bundle cannot import canary-local.
+// desktop_parity.test.js cuts this block
+// out between its markers, runs it beside the browser's on the same facts,
+// and fails on any difference in rows, words, order, names or projections.
+// The two flashers share these rows, never their DOM.
+// BEGIN ABOUT-BOARD
+const ABOUT_CANNOT = {
+  notCheckedYet: "Not checked yet",
+  notChecked: "Not checked",
+  notOnChip: "Not on this chip",
+  notReported: "Not reported",
+  flasherOnly: "Read with the Flasher",
+};
+const aboutNorm = (name) => String(name || "").trim().toUpperCase().replace(/[\s-]+/g, "");
+const ABOUT_MB = 1024 * 1024;
+function sizeWords(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return null;
+  if (bytes % ABOUT_MB === 0) return `${bytes / ABOUT_MB} MB`;
+  if (bytes < ABOUT_MB) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / ABOUT_MB).toFixed(1)} MB`;
+}
+function chipRevisionFromDesc(desc) {
+  const m = /revision\s+(v\d+\.\d+)/i.exec(String(desc || ""));
+  return m ? m[1] : null;
+}
+// intake.js CHIP_FUSE_FIELDS, keys only: efuse.rs extracts the bits, this
+// decodes the values it returns.
+const CHIP_FUSE_KEYS = {
+  "ESP32-S3": ["WAFER_VERSION_MINOR_LO", "PKG_VERSION", "BLK_VERSION_MINOR", "FLASH_CAP", "FLASH_TEMP",
+    "FLASH_VENDOR", "PSRAM_CAP", "PSRAM_TEMP", "PSRAM_VENDOR", "PSRAM_CAP_3", "WAFER_VERSION_MINOR_HI",
+    "WAFER_VERSION_MAJOR", "BLK_VERSION_MAJOR"],
+  "ESP32-C3": ["WAFER_VERSION_MINOR_LO", "PKG_VERSION", "BLK_VERSION_MINOR", "FLASH_CAP", "FLASH_TEMP",
+    "FLASH_VENDOR", "WAFER_VERSION_MINOR_HI", "WAFER_VERSION_MAJOR", "BLK_VERSION_MAJOR"],
+  "ESP32-C6": ["WAFER_VERSION_MINOR", "WAFER_VERSION_MAJOR", "PKG_VERSION", "BLK_VERSION_MINOR",
+    "BLK_VERSION_MAJOR", "FLASH_CAP", "FLASH_TEMP", "FLASH_VENDOR"],
+};
+const FUSE_PACKAGES = {
+  "ESP32-S3": { 0: "ESP32-S3 (QFN56)", 1: "ESP32-S3-PICO-1 (LGA56)" },
+  "ESP32-C3": { 0: "ESP32-C3 (QFN32)", 1: "ESP8685 (QFN28)", 2: "ESP32-C3 AZ (QFN32)", 3: "ESP8686 (QFN24)" },
+  "ESP32-C6": { 0: "ESP32-C6 (QFN40)" },
+};
+const FUSE_FLASH_CAPS = {
+  "ESP32-S3": { 1: 8 * ABOUT_MB, 2: 4 * ABOUT_MB },
+  "ESP32-C3": { 1: 4 * ABOUT_MB, 2: 2 * ABOUT_MB, 3: 1 * ABOUT_MB, 4: 8 * ABOUT_MB },
+  "ESP32-C6": { 1: 4 * ABOUT_MB, 2: 8 * ABOUT_MB },
+};
+const FUSE_FLASH_VENDORS = {
+  "ESP32-S3": { 1: "XMC", 2: "GD", 3: "FM", 4: "TT", 5: "BY" },
+  "ESP32-C3": { 1: "XMC", 2: "GD", 3: "FM", 4: "TT", 5: "ZBIT" },
+};
+const FUSE_TEMP_GRADES = { 1: "105 °C", 2: "85 °C" };
+const FUSE_PSRAM_CAPS = { 1: 8 * ABOUT_MB, 2: 2 * ABOUT_MB, 3: 16 * ABOUT_MB, 4: 4 * ABOUT_MB };
+const FUSE_PSRAM_VENDORS = { 1: "AP Memory, 3.3 V", 2: "AP Memory, 1.8 V" };
+function fusePackagePart(cap, capBytes, vendor, vendors, temp, tempNames) {
+  if (cap === 0) return { present: false };
+  return {
+    present: true,
+    bytes: capBytes[cap] || null,
+    vendor: (vendors && vendors[vendor]) || null,
+    temp: (tempNames && tempNames[temp]) || null,
+  };
+}
+function decodeChipFuses(chip, fields) {
+  const f = fields || {};
+  if (!CHIP_FUSE_KEYS[chip]) return { supported: false, chip };
+  const raw = {};
+  for (const k of CHIP_FUSE_KEYS[chip]) if (Number.isInteger(f[k])) raw[k] = f[k];
+  const blkMajor = raw.BLK_VERSION_MAJOR || 0;
+  const blkMinor = raw.BLK_VERSION_MINOR || 0;
+  let waferMajor, waferMinor;
+  if (chip === "ESP32-C6") {
+    waferMajor = raw.WAFER_VERSION_MAJOR || 0;
+    waferMinor = raw.WAFER_VERSION_MINOR || 0;
+  } else {
+    const minorRaw = ((raw.WAFER_VERSION_MINOR_HI || 0) << 3) | (raw.WAFER_VERSION_MINOR_LO || 0);
+    waferMajor = raw.WAFER_VERSION_MAJOR || 0;
+    waferMinor = minorRaw;
+    if (chip === "ESP32-S3" && (minorRaw & 0x7) === 0 && blkMajor === 1 && blkMinor === 1) {
+      waferMajor = 0; waferMinor = 0;
+    }
+  }
+  const flashCap = raw.FLASH_CAP || 0;
+  let pkg = (FUSE_PACKAGES[chip] || {})[raw.PKG_VERSION];
+  if (chip === "ESP32-C6" && raw.PKG_VERSION === 1) {
+    pkg = { 1: "ESP32-C6FH4 (QFN32)", 2: "ESP32-C6FH8 (QFN32)" }[flashCap];
+  }
+  return {
+    supported: true,
+    chip,
+    fields: raw,
+    wafer: `v${waferMajor}.${waferMinor}`,
+    package: pkg || null,
+    flash: fusePackagePart(flashCap, FUSE_FLASH_CAPS[chip] || {}, raw.FLASH_VENDOR,
+      FUSE_FLASH_VENDORS[chip], raw.FLASH_TEMP, chip === "ESP32-C6" ? null : FUSE_TEMP_GRADES),
+    psram: chip === "ESP32-S3"
+      ? fusePackagePart(((raw.PSRAM_CAP_3 || 0) << 2) | (raw.PSRAM_CAP || 0), FUSE_PSRAM_CAPS,
+        raw.PSRAM_VENDOR, FUSE_PSRAM_VENDORS, raw.PSRAM_TEMP, FUSE_TEMP_GRADES)
+      : null,
+    blockVersion: `v${blkMajor}.${blkMinor}`,
+    calibration: chip === "ESP32-C6" ? blkMajor * 100 + blkMinor >= 1 : blkMajor === 1,
+  };
+}
+const CHIP_SHEETS = {
+  ESP32S3: { radios: "Wi-Fi 4 · Bluetooth LE 5", cores: "2 cores, up to 240 MHz", crystal: "40 MHz" },
+  ESP32C3: { radios: "Wi-Fi 4 · Bluetooth LE 5", cores: "1 core, up to 160 MHz", crystal: "40 MHz" },
+  ESP32C6: { radios: "Wi-Fi 6 · Bluetooth LE 5 · 802.15.4 (Thread, Zigbee)",
+             cores: "1 core, up to 160 MHz, plus a low-power core", crystal: "40 MHz" },
+  ESP32: { radios: "Wi-Fi 4 · Bluetooth Classic and LE", cores: "1 or 2 cores, up to 240 MHz",
+           crystal: "40 MHz or 26 MHz, chosen by the board" },
+};
+const ABOUT_ARDUINO_SKETCH = "An Arduino sketch · its version can’t be read off the board";
+function aboutRow(id, label, value, level, term, raw) {
+  const r = { id, label, value, level, term };
+  if (raw) r.raw = raw;
+  return r;
+}
+function packagePartWords(part) {
+  if (!part) return ABOUT_CANNOT.notReported;
+  if (!part.present) return "None — a separate chip on the board, if any";
+  const bits = [sizeWords(part.bytes) || "Size not reported"];
+  if (part.vendor) bits.push(part.vendor);
+  if (part.temp) bits.push(`rated to ${part.temp}`);
+  return bits.join(" · ");
+}
+function rawFields(fields, keys) {
+  return keys.filter((k) => fields && Number.isInteger(fields[k])).map((k) => `${k}=${fields[k]}`).join(" ");
+}
+function aboutBoardGroups(facts = {}) {
+  const C = ABOUT_CANNOT;
+  const chip = facts.chip || null;
+  const norm = aboutNorm(chip);
+  const fuses = facts.fuses;
+  const fuseGap = facts.bench ? C.flasherOnly
+    : fuses === undefined ? C.notCheckedYet
+      : !fuses || !fuses.supported ? C.notChecked : null;
+  const f = (fuses && fuses.fields) || {};
+  const rev = chipRevisionFromDesc(facts.chipDesc) || (fuses && fuses.supported ? fuses.wafer : null);
+  const chipRows = [
+    aboutRow("chip", "Chip", chip ? (rev ? `${chip} · ${rev}` : chip) : C.notReported, "about",
+      "chip model and silicon revision (eFuse wafer version)", facts.chipDesc || null),
+    aboutRow("flash", "Flash", sizeWords(facts.flashBytes) || C.notReported, "about",
+      "SPI flash size from the flash chip's JEDEC id"),
+    { id: "mac", label: "Hardware address", level: "about", term: "factory MAC (eFuse block 1)", reveal: true },
+    aboutRow("package", "Package", fuseGap || fuses.package || C.notReported, "details",
+      "PKG_VERSION", rawFields(f, ["PKG_VERSION"])),
+    aboutRow("flash_in_package", "Flash in the package", fuseGap || packagePartWords(fuses.flash), "details",
+      "FLASH_CAP · FLASH_VENDOR · FLASH_TEMP", rawFields(f, ["FLASH_CAP", "FLASH_VENDOR", "FLASH_TEMP"])),
+    aboutRow("psram_in_package", "PSRAM in the package",
+      norm === "ESP32C3" || norm === "ESP32C6" ? C.notOnChip : fuseGap || packagePartWords(fuses.psram), "details",
+      "PSRAM_CAP · PSRAM_VENDOR · PSRAM_TEMP", rawFields(f, ["PSRAM_CAP", "PSRAM_CAP_3", "PSRAM_VENDOR", "PSRAM_TEMP"])),
+    aboutRow("calibration", "Factory calibration",
+      fuseGap || (fuses.calibration ? "Present" : "Not written"), "details",
+      `block version ${fuseGap ? "" : fuses.blockVersion}`.trim(), rawFields(f, ["BLK_VERSION_MAJOR", "BLK_VERSION_MINOR"])),
+  ];
+
+  const img = facts.image;
+  const boot = facts.bootloader;
+  let imageRows;
+  if (facts.bench) {
+    imageRows = [aboutRow("installed", "Installed image", C.flasherOnly, "about", "esp_app_desc_t")];
+  } else if (img === undefined && boot === undefined) {
+    imageRows = [aboutRow("installed", "Installed image", C.notCheckedYet, "about", "esp_app_desc_t")];
+  } else if (!img && !boot && (img === false || boot === false)) {
+    // A read that failed is not an empty board, whatever the other read
+    // found: "None found" needs every read that ran to have found nothing.
+    imageRows = [aboutRow("installed", "Installed image", C.notChecked, "about", "esp_app_desc_t")];
+  } else if (!img && !boot) {
+    imageRows = [aboutRow("installed", "Installed image", "None found", "about", "esp_app_desc_t")];
+  } else {
+    imageRows = [];
+    if (img) {
+      // A descriptor that names the Arduino core (`arduino-lib-builder`, with
+      // the core's ESP-IDF version where a firmware version goes) is every
+      // SecuraCV release up to 2.4.17, a build made outside a release, or any
+      // other Arduino sketch. The row names it for what it is, by the test of
+      // the passport line beside this card (ARDUINO_READBACK_NOTE: no catalog
+      // product matched, and the name starts "arduino"), and the descriptor's
+      // two strings stay in the technical view.
+      const arduino = !img.productName && /^arduino/i.test(img.projectName || "");
+      imageRows.push(
+        aboutRow("firmware", "Firmware",
+          arduino ? ABOUT_ARDUINO_SKETCH : `${img.projectName || "unnamed"} ${img.version || ""}`.trim(), "about",
+          "esp_app_desc_t project_name · version",
+          arduino ? `${img.projectName} ${img.version || ""}`.trim() : null),
+        aboutRow("idf", "Built with", img.idf ? `ESP-IDF ${img.idf}` : C.notReported, "details",
+          "esp_app_desc_t idf_ver"),
+        aboutRow("secure_version", "Anti-rollback number",
+          Number.isInteger(img.secureVersion) ? String(img.secureVersion) : C.notReported, "details",
+          "esp_app_desc_t secure_version"),
+        aboutRow("image_fingerprint", "Image fingerprint", img.elfSha256Prefix || C.notReported, "details",
+          "first 8 bytes of the app ELF's SHA-256"));
+    } else {
+      imageRows.push(aboutRow("firmware", "Firmware", C.notReported, "about", "esp_app_desc_t project_name · version"));
+    }
+    const bootGap = boot === false ? C.notChecked : boot === undefined ? C.notCheckedYet : null;
+    const builtFor = bootGap || (boot && boot.flashBytes
+      ? (facts.flashBytes && facts.flashBytes !== boot.flashBytes
+        ? `${sizeWords(boot.flashBytes)} · the chip has ${sizeWords(facts.flashBytes)}`
+        : sizeWords(boot.flashBytes))
+      : C.notReported);
+    const mhz = boot && (boot.flashMhz ? `${boot.flashMhz} MHz`
+      : boot.flashMhzEither ? `${boot.flashMhzEither.join(" or ")} MHz` : null);
+    const mode = boot ? [boot.flashMode, mhz].filter(Boolean).join(" · ") : "";
+    const codes = boot && boot.codes ? `mode=${boot.codes.mode} size=${boot.codes.size} freq=${boot.codes.freq}` : null;
+    imageRows.push(
+      aboutRow("built_for_flash", "Flash it was built for", builtFor, "details",
+        "bootloader image header flash size", codes),
+      aboutRow("flash_mode", "Flash mode and speed", bootGap || mode || C.notReported, "details",
+        "bootloader image header SPI mode and frequency", codes));
+  }
+
+  const groups = [
+    { id: "chip", title: "This chip", source: "Read from the chip", rows: chipRows },
+    { id: "image", title: "Installed image", source: "From the installed image", rows: imageRows },
+  ];
+  const sheet = CHIP_SHEETS[norm];
+  if (sheet) {
+    groups.push({ id: "datasheet", title: "What this chip can do", source: "From the maker’s datasheet", rows: [
+      aboutRow("radios", "Radios", sheet.radios, "details", "radio features"),
+      aboutRow("cores", "Processor", sheet.cores, "details", "CPU cores and top clock"),
+      aboutRow("crystal", "Crystal", sheet.crystal, "details", "main crystal frequency"),
+    ] });
+  }
+  return groups;
+}
+function aboutBoardSummary(facts = {}) {
+  const rev = chipRevisionFromDesc(facts.chipDesc);
+  const bits = [[facts.chip, rev].filter(Boolean).join(" ")];
+  const size = sizeWords(facts.flashBytes);
+  if (size) bits.push(`${size} flash`);
+  return bits.filter(Boolean).join(" · ");
+}
+function aboutBoardText(groups, appLabel) {
+  const lines = [`About this board · ${appLabel}`];
+  for (const g of groups || []) {
+    const rows = (g.rows || []).filter((r) => !r.reveal && r.value != null);
+    if (!rows.length) continue;
+    lines.push(g.source);
+    for (const r of rows) lines.push(`  ${r.label}: ${r.value}`);
+  }
+  return lines.join("\n") + "\n";
+}
+function localDay(when) {
+  const d = when instanceof Date ? when : new Date(when);
+  const p = (x) => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function fileStamp(when, n) {
+  return `${localDay(when)}-${Math.max(1, Math.floor(Number(n) || 1))}`;
+}
+function backupFileName(stamp) {
+  return `canary-${stamp}-backup.bin`;
+}
+function reportFileName(stamp, full) {
+  return `canary-${stamp}-${full ? "full-report" : "report"}.json`;
+}
+const SHARE_REPORT_NOTE =
+  "Chip, image and partition facts only: no hardware address, no counters, no crash or " +
+  "update state, no chain head, and the day rather than the time.";
+const FULL_REPORT_NOTE =
+  "Describes this one board: its boot and witness counters, crash record and update state. " +
+  "For your own records, not for posting. It carries no hardware address.";
+// A slot's "<date> <time>" (lib.rs health_check) cut to its day: on an
+// ESP-IDF build the descriptor's time is the second someone built the image.
+function buildDay(built) {
+  const day = String(built == null ? "" : built).split(/\s+/)
+    .map((t) => (t.includes(":") ? ((/^(\d{4}-\d{2}-\d{2})T/.exec(t) || [])[1] || "") : t))
+    .filter(Boolean).join(" ");
+  return day || null;
+}
+function reportShareProjection(r = {}, when = Date.now()) {
+  const out = { report: "securacv-board-report", scope: "share", note: SHARE_REPORT_NOTE, day: localDay(when) };
+  if (r.chip) out.chip = r.chip;
+  if (Number.isFinite(r.flashBytes)) out.flashBytes = r.flashBytes;
+  if (r.blank) out.blank = true;
+  if (Array.isArray(r.partitions)) {
+    out.partitions = r.partitions.map((p) => ({ label: p.label, kind: p.kind, offset: p.offset, size: p.size }));
+  }
+  if (Array.isArray(r.slots)) {
+    out.slots = r.slots.map((s) => {
+      const o = { label: s.label, subtype: s.subtype, empty: !!s.empty };
+      for (const k of ["project", "version", "built", "idf"]) {
+        const v = k === "built" ? buildDay(s.built) : s[k];
+        if (v != null) o[k] = v;
+      }
+      if (s.active) o.active = true;
+      return o;
+    });
+  }
+  if (r.witnessLog && Number.isFinite(r.witnessLog.size)) {
+    out.witnessLog = { label: r.witnessLog.label, size: r.witnessLog.size };
+  }
+  if (Array.isArray(r.about)) {
+    out.about = r.about.map((g) => ({
+      source: g.source,
+      rows: (g.rows || []).filter((x) => !x.reveal && x.value != null).map((x) => ({ label: x.label, value: x.value })),
+    }));
+  }
+  return out;
+}
+function reportFullProjection(r = {}) {
+  const rest = { ...(r || {}) };
+  delete rest.mac;
+  return { report: "securacv-board-report", scope: "full", note: FULL_REPORT_NOTE, ...rest };
+}
+const HW_ADDRESS_RE = /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/gi;
+const HW_ADDRESS_MASK = "[hardware address hidden]";
+function maskHardwareAddress(text) {
+  return String(text ?? "").replace(HW_ADDRESS_RE, HW_ADDRESS_MASK);
+}
+// END ABOUT-BOARD
+
 // One-click copyable diagnostic (parity: flash-core.js buildDiagnosticReport)
-// — everything a bug report needs, gathered instead of asked for.
-// Public-only is enforced HERE, in the builder, same as the browser side:
-// fixed field allowlist, MAC truncated to a non-stable tail, and the console
+// — everything a bug report needs, gathered instead of asked for. What it
+// carries is decided HERE, in the builder, same as the browser side: a fixed
+// field allowlist with no hardware address in it (not even a tail: the base MAC
+// is the station address in every Wi-Fi frame the board sends), and the console
 // tail scrubbed of credential lines (the WAP prints its AP password to serial
 // at boot, and every setup surface prints it again inside the "[SETUP] QR
 // WIFI:…;P:" line when its setup network comes up, the flagship on every
-// re-raise too; a report someone is ASKED to paste must not carry it).
+// re-raise too; a report someone is ASKED to paste must not carry it) and of
+// identity lines (the boot banner's Hardware ID, the self-manifest, the lines
+// the firmware prints with the device id (the MQTT client id and topics, the
+// Bluetooth status line among them), a key fingerprint, the TLS certificate or
+// a .local name, the board's own setup network, the flagship's cards' id, key
+// and randomart rows, the names the person typed (the flagship's, on its boot
+// line and banner and in its Bluetooth and rename lines; the WAP's on its boot
+// line, and its host, Bluetooth and opera names), and the lines that name a
+// household peer by fingerprint or name: the flagship's nearby card and opera
+// lines, the WAP's nearby scan and opera lines, the display's referral and
+// restored mutes). A line no pattern names passes, so the tail is not
+// public-only by construction. The patterns are the browser's, held equal by
+// desktop_parity.test.js.
 const TAIL_REDACT = [
   /password/i,
   /passphrase|\bpsk\b/i,
@@ -488,15 +835,42 @@ const TAIL_REDACT = [
   /token["']?\s*[:=]/i,
   /\bWIFI:.*\bP:/,
 ];
+const TAIL_IDENTITY = [
+  /hardware\s*id\b/i,
+  /securacv\.canary\.manifest\//,
+  /\bdevice[\s_-]*id\b/i,
+  /\bkey[\s_-]*fp\b|\bfp8\b|\bkey\s+fingerprint\b|\bpubkey(?:[\s_-]*fp)?\b|\bfp=/i,
+  /\bCN:\s*securacv-|cert[\s_-]*(?:fp|fingerprint)\b/i,
+  /[\w-]\.local\b/i,
+  /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/i,
+  /\bthat's me:/i,
+  /\bdevice {2,}(?:: *)?[^\s║│|]/i,
+  /\bpublic\s*key\s*:/i,
+  /\bthis canary {2,}/i,
+  /\b[0-9a-f]{4} +\S+ +\S+ +\S+ +#[0-9a-f]{4}\b/i,
+  /^(?=.*\b(?:opera|peer|member)\b).*\b[0-9a-f]{16}\b/i,
+  /\bcanary (?:discovered|lost):/i,
+  /(?:— |\[OK\] )device (?:prefix|name):/i,
+  /\b(?:peer state changed|opera alert received) \|/i,
+  /\bBLE initialized(?: \(scanners held\))? \||\bsaved bluetooth name (?:unreadable or )?held a control byte\b/i,
+  /\b(?:mdns (?:started|begin failed|re-announced on sta|re-announce failed)|identify requested) \|/i,
+  /\bconnecting \S+ as securacv-/i,
+  /\bfleet referral:.*\(from /i,
+  /\bmuted for \d+s more\b/i,
+  /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,
+  / => (?:OK|FAIL) \(retain=/,
+  /\bSecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{2})?\b/,
+  /\b(?:device|opera) name (?:changed|updated|not persisted)\b[^|—]*[|—]/i,
+  /\bGATT status service started\b/i,
+  /\[ERROR(?:\/BLUETOOTH)?\] NimBLE init failed [|—]/,
+  /\bname {2,}: *[^\s║]/i,
+];
 function sanitizeLogTail(text) {
   return String(text || "").split("\n").map((ln) =>
-    TAIL_REDACT.some((re) => re.test(ln)) ? "[redacted: credential line]" : ln
+    TAIL_REDACT.some((re) => re.test(ln)) ? "[redacted: credential line]"
+      : TAIL_IDENTITY.some((re) => re.test(ln)) ? "[identity line: shown in the flasher, not in reports]"
+        : ln
   ).join("\n");
-}
-function macTail(mac) {
-  const hex = String(mac || "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
-  if (hex.length < 4) return "";
-  return "…" + hex.slice(-4, -2) + ":" + hex.slice(-2);
 }
 function buildDiagnosticReport(info = {}) {
   const lines = ["SecuraCV Flasher diagnostic", "==========================="];
@@ -509,12 +883,14 @@ function buildDiagnosticReport(info = {}) {
   add("platform", info.platform);
   add("firmware train", info.catalogVersion);
   add("chip", info.chip);
-  add("MAC tail", macTail(info.mac) || undefined);
   add("flash size", info.flashBytes ? info.flashBytes + " bytes" : undefined);
   add("USB device", info.usb);
   add("chosen product", info.product);
   add("stage", info.stage);
-  add("error", info.error);
+  // Scrubbed like the tail: an install's error carries espflash's last lines,
+  // which can hold the hardware address its board info prints (masked, so the
+  // rest of the line stays readable).
+  add("error", info.error == null ? undefined : sanitizeLogTail(maskHardwareAddress(info.error)));
   if (info.logTail) {
     lines.push("--- last console output ---");
     lines.push(sanitizeLogTail(String(info.logTail).split("\n").slice(-12).join("\n")));
@@ -541,7 +917,6 @@ async function copyDiagnosticReport(stage) {
     platform: navigator.platform + " · " + navigator.userAgent,
     catalogVersion: (state.catalog && state.catalog.fw_train) || undefined,
     chip: state.chip || undefined,
-    mac: state.mac || undefined,
     flashBytes: state.flashBytes || undefined,
     usb,
     product: state.product ? state.product.id : undefined,
@@ -822,11 +1197,28 @@ function profileSaveFromFlash(p) {
   } catch (_) {}
 }
 
+// An event-log entry as the About view lists it. logEvent masks the hardware
+// address before it stores an entry, but an entry an earlier version saved was
+// cut to 160 characters as it came: it can hold espflash's "MAC address: …"
+// line, whole or ending partway through the address (which no whole-address
+// mask matches: the octets after the label, up to a space or the end), or a
+// safety copy's old path, …/canary-<the address's last six hex digits>-…
+// (rescue::backup_filename before names were the day and a counter), whole
+// or cut. Both are masked here too.
+function eventLogText(msg) {
+  return maskHardwareAddress(msg)
+    .replace(/(\bMAC(?:\s+address)?\s*:\s*)[0-9a-f]{1,2}(?:[:-][0-9a-f]{0,2}){0,5}(?=\s|$)/gi, "$1" + HW_ADDRESS_MASK)
+    .replace(/([\\/])canary-(?:[0-9a-f]{6}(?=-)|[0-9a-f]{1,6}$)/gi, "$1canary-" + HW_ADDRESS_MASK);
+}
+
 // A short, local event log — so a failure is visible and recoverable, never
 // silent. Powers the health story on the About page.
 function logEvent(kind, msg) {
   prefs.log = prefs.log || [];
-  prefs.log.unshift({ t: Date.now(), kind, msg: String(msg).slice(0, 160) });
+  // Kept in the webview's storage and listed in About. An error can carry
+  // espflash's board info, so the address is masked before the entry is cut
+  // to length (a cut address is still its first bytes).
+  prefs.log.unshift({ t: Date.now(), kind, msg: maskHardwareAddress(String(msg)).slice(0, 160) });
   prefs.log = prefs.log.slice(0, 40);
   savePrefs();
   if (!$("about-view").classList.contains("hidden")) renderAbout();
@@ -2712,6 +3104,16 @@ async function identify(portInfo) {
   const port = portInfo.name;
   const label = portInfo.product ? `${port} (${portInfo.product})` : port;
   state.detecting = true;
+  // What was read off the last board goes before this one is read: its
+  // passport (the installed image and its bootloader header) and its fuse
+  // fields. The card is drawn again once this board's chip answers, seconds
+  // before its passport does, and must say "Not checked yet" then — never the
+  // last board's image under this board's chip.
+  state.passport = null;
+  state.resident = null;
+  state.chipFuses = undefined;
+  renderPassport();
+  renderThisBoard(); // the last board's card goes before this one is read
   if (Number(portInfo.vid) === WE2_VID && Number(portInfo.pid) === WE2_PID) {
     state.portKind = "we2";
     state.chip = "WE2";
@@ -2728,11 +3130,14 @@ async function identify(portInfo) {
     const info = await invoke("detect_chip", { port });
     if (port !== state.port) return; // unplugged/switched while we were reading
     state.chip = info.chip;
+    state.chipDesc = info.chip_desc || null;
+    state.chipTool = { crystal_mhz: info.crystal_mhz ?? null, features: info.features || [] };
     state.flashBytes = info.flash_bytes; // may be null if board-info didn't report it
-    state.mac = info.mac; // may be null
+    state.mac = info.mac; // may be null — kept, never drawn unless asked
     // The read-only MAC intake check, straight off the connect read.
     state.macCheck = info.mac_check || null;
-    setConn("connected", `Connected · ${info.chip} on ${port}`);
+    setConn("connected", `Connected · ${aboutBoardSummary(aboutFacts())} on ${port}`);
+    renderThisBoard();
     $("recheck").classList.remove("hidden");
 
     refreshManifest();
@@ -2917,6 +3322,11 @@ function wireEfuseRead() {
     // plugged in by the time it lands.
     const port = state.port;
     const chip = state.chip;
+    // Where the About card says the read left the board is the latest read's
+    // to say. An earlier good read stops speaking for the board once another
+    // read starts: one that throws may never have opened the port, or may
+    // have met a board re-plugged mid-read, which may be running its firmware.
+    state.efuseParked = null;
     btn.disabled = true;
     out.textContent = "Reading security fuses (read-only)…";
     // The probe resets the board into its ROM, with the sequence its port
@@ -2929,11 +3339,23 @@ function wireEfuseRead() {
       const scan = await invoke("read_security_efuses", { port, chip });
       if (state.port !== port || state.chip !== chip) return; // board changed mid-read
       state.efuseScan = { port, chip, scan };
+      // Block 0 answered, so the read reached the ROM and parked there. A
+      // chip with no table answers without opening the port.
+      state.efuseParked = scan && scan.supported ? { port, chip } : null;
+      // The About rows' fields came back in the same ROM session, as field
+      // values only (efuse.rs never returns a block-1/2 word).
+      state.chipFuses = !scan || !scan.supported ? { supported: false, chip }
+        : scan.chip_fields ? decodeChipFuses(chip, scan.chip_fields) : null;
       renderEfuseScan(out, scan);
+      renderThisBoard();
     } catch (e) {
       // Honest failure: a flaky cable or a port squatter shows up here, not
       // as a clean bill.
-      if (state.port === port) out.textContent = `Fuses NOT checked — ${e}`;
+      if (state.port === port) {
+        out.textContent = `Fuses NOT checked — ${e}`;
+        state.chipFuses = null;
+        renderThisBoard();
+      }
     } finally {
       state.busy = false;
       btn.disabled = false;
@@ -2989,12 +3411,14 @@ async function readPassport(port) {
       state.passportPending = false;
       state.resident = state.resident || { unknown: true };
       renderPassport();
+      renderThisBoard(); // "Not checked", not a "Not checked yet" that never ends
       renderProducts();
     }
   }, 25000);
   try {
     const p = await invoke("board_passport", {
       port,
+      chip: state.chip,
       baud: (state.catalog && state.catalog.flash_baud) || 921600,
     });
     if (port !== state.port) return; // unplugged/switched while reading
@@ -3006,6 +3430,9 @@ async function readPassport(port) {
         version: p.resident.version,
         projectName: p.resident.projectName,
         slot: p.resident.slot,
+        idf: p.resident.idf,
+        secureVersion: p.resident.secureVersion,
+        elfSha256Prefix: p.resident.elfSha256Prefix,
         // Display-aware (productForProject): a display build whose name
         // carries no flavor is a display, never the flagship's "canary".
         product: productForProject(state.catalog, p.resident.projectName),
@@ -3025,6 +3452,7 @@ async function readPassport(port) {
     if (port === state.port) state.passportPending = false;
   }
   renderPassport();
+  renderThisBoard();
   renderProducts(); // verdict rows depend on what's resident
 }
 
@@ -3172,11 +3600,15 @@ function onDisconnect() {
   // from its firmware's own defaults, not the last board's room.
   state.dialChoice = null;
   state.chip = null;
+  state.chipDesc = null;
+  state.chipTool = null;
+  state.chipFuses = undefined;
   state.flashBytes = null;
   state.mac = null;
   state.product = null;
   state.failedPort = null;
   resetSteps();
+  renderThisBoard();
   $("recheck").classList.add("hidden");
   $("port-select").classList.add("hidden");
   $("download-mode").classList.add("hidden");
@@ -3888,7 +4320,8 @@ async function onFlash() {
   }), lastInstallText(product.id));
   if (!skipBackup && state.flashBytes && !(backupKey && state.backupsTaken[backupKey])) {
     try {
-      backupPath = await invoke("auto_backup_path", { mac: state.mac || "" });
+      // Named by the local date and the next free counter, never the board.
+      backupPath = await invoke("auto_backup_path", { day: localDay(new Date()) });
       appendFlashLog(con, "→ safety copy first — reading the whole chip…");
       await invoke("backup_flash", {
         port: state.port,
@@ -4124,12 +4557,11 @@ function renderNurseryStrip() {
   const rows = batch.map((e, i) => {
     const ago = Math.max(0, Math.round((Date.now() - e.flashedAt) / 60000));
     const when = ago < 1 ? "just now" : ago === 1 ? "1 min ago" : `${ago} min ago`;
-    const macTail = e.mac ? e.mac.split(":").slice(-2).join(":") : "";
     const extras = [e.wifiBaked ? "Wi-Fi baked ✓" : null, e.hasToken ? "API key kept ✓" : null]
       .filter(Boolean).join(" · ");
     return `<div class="nursery-row"><span class="nursery-n">${i + 1}</span>` +
       `<b>${esc(e.ringName || e.deviceId || e.productLabel || "Canary")}</b>` +
-      `<span class="muted">${esc([e.productLabel, e.fw ? "v" + e.fw : "", macTail ? "…" + macTail : ""].filter(Boolean).join(" · "))}</span>` +
+      `<span class="muted">${esc([e.productLabel, e.fw ? "v" + e.fw : ""].filter(Boolean).join(" · "))}</span>` +
       (extras ? `<span class="nursery-extras">${esc(extras)}</span>` : "") +
       `<span class="muted nursery-ago">${esc(when)}</span></div>`;
   }).join("");
@@ -4405,7 +4837,10 @@ async function onFlashModule() {
     // other one is named — with its port — before this counts as done.
     const hostNext = state.vision.hostFlash ? "" :
       " Board 1 of 2 done. Move the cable to the XIAO's own USB-C port and pick Canary Vision above.";
-    setStatus("flash-result", "Vision module: model checked and burned, AT answered, one inference run. ✓" + hostNext, "ok");
+    // The one place a model is named: this app just wrote it, and its
+    // SHA-256 matched the pinned release (flash_vision_module refuses any
+    // other bytes). Never the module's own model text.
+    setStatus("flash-result", "Vision module: SecuraCV person detection, installed and checked. AT answered, one inference run. ✓" + hostNext, "ok");
     renderModulePreview(receipt);
     renderReceipts(true);
     maybeHatch();
@@ -4425,17 +4860,17 @@ async function onFlashModule() {
 // mountBench): the same protocol — continuous INVOKE=-1,0,0 for frames with
 // boxes, BREAK to stop, TSCORE/TIOU set-then-read-back so the sliders never
 // lie — and the same honesty: labels read "person" only when the module's own
-// model card pins that class. Frames arrive over the we2:bench Tauri event
+// model card lists that class. Frames arrive over the we2:bench Tauri event
 // and go nowhere but this window.
 const liveBench = {
-  running: false, pinned: false, seen: false,
+  running: false, personClass: false, seen: false,
   thr: { tscore: 50, tiou: 45 },
   lastFrame: null, frames: 0, fpsT0: 0,
   unlisten: null,
   session: null, // the backend worker's id — a dead worker's tail is ignored
 };
 
-function benchClasses() { return liveBench.pinned ? ["person"] : []; }
+function benchClasses() { return liveBench.personClass ? ["person"] : []; }
 
 function syncSlider(key) {
   $("bench-" + key).value = String(liveBench.thr[key]);
@@ -4473,7 +4908,7 @@ function benchGuide() {
 }
 
 function benchReset() {
-  liveBench.running = false; liveBench.pinned = false; liveBench.seen = false;
+  liveBench.running = false; liveBench.personClass = false; liveBench.seen = false;
   liveBench.lastFrame = null; liveBench.frames = 0; liveBench.fpsT0 = 0;
   $("bench-start").disabled = false;
   $("bench-stop").disabled = true;
@@ -4516,7 +4951,7 @@ function benchRender(boxes) {
   if (dets.length && !liveBench.seen) {
     liveBench.seen = true;
     const seen = $("bench-seen");
-    seen.textContent = liveBench.pinned
+    seen.textContent = liveBench.personClass
       ? "👁 It sees you — the model is live and working ✓"
       : "👁 It sees something — the model is live and working ✓";
     seen.className = "status ok";
@@ -4533,10 +4968,17 @@ function onBenchEvent(ev) {
   if (p.kind === "log") {
     appendConsole("console", p.line + "\n");
   } else if (p.kind === "id") {
-    liveBench.pinned = !!p.pinned;
+    liveBench.personClass = !!p.person_class;
+    // Never the card's own text (we2_bench.rs model_card returns none): only
+    // whether a card is there and whether it lists the person class. The card
+    // is the module's own claim, so it picks the label map and never names the
+    // model; only onFlashModule names one, after a SHA-256-matched write.
     $("bench-id").textContent =
       "SSCMA firmware " + (p.software || "?") +
-      (p.model ? " · model: " + p.model : " · no model card — labels will read “object”");
+      (p.person_class
+        ? " · its model card lists a person class — labels will read “person” (the card is the module’s own claim; its text isn’t shown)"
+        : p.has_card ? " · its model card lists no person class — labels will read “object”"
+          : " · no model card — labels will read “object”");
     $("bench-tscore").disabled = false;
     $("bench-tiou").disabled = false;
     benchReadThresholds();
@@ -4714,7 +5156,7 @@ function updateRescueUi() {
   const healthNote = $("health-chip-note");
   if (healthNote) {
     healthNote.textContent = connected
-      ? `Connected: ${state.chip} on ${state.port}${state.mac ? ` · ${state.mac}` : ""}`
+      ? `Connected: ${aboutBoardSummary(aboutFacts())} on ${state.port}`
       : "Plug in a Canary and let the chip read finish first.";
   }
 }
@@ -4779,16 +5221,17 @@ async function onRescueBackup() {
   // 1 s port watcher is otherwise free to swap in a different board while the
   // dialog sits open, and the write must land on the board the user is looking
   // at — never whatever got plugged in mid-dialog.
-  const port = state.port, mac = state.mac, flashBytes = state.flashBytes;
+  const port = state.port, flashBytes = state.flashBytes;
   state.busy = true;
   rescueButtons(false);
   let out = null;
   try {
     out = await window.__TAURI__.dialog.save({
       // The browser Lab's name (flash.js takeBackup) and the engine's
-      // (rescue::backup_filename): the restore panels on both flashers tell
-      // the user to look for canary-…-backup.bin.
-      defaultPath: `canary-${macStamp(mac || "")}-backup.bin`,
+      // (rescue::backup_filename): the local date and a counter, never the
+      // board's address — the restore panels on both flashers still tell the
+      // user to look for canary-…-backup.bin.
+      defaultPath: backupFileName(nextFileStamp()),
       filters: [{ name: "Flash backup", extensions: ["bin"] }],
     });
   } catch (e) {
@@ -4878,7 +5321,7 @@ async function onRescueErase() {
 // like the rescue ops, so the watcher can't swap boards mid-read.
 async function onHealthCheck() {
   if (state.busy || !state.chip || state.portKind !== "esp32") return;
-  const port = state.port, chip = state.chip, mac = state.mac, flashBytes = state.flashBytes;
+  const port = state.port, chip = state.chip, flashBytes = state.flashBytes;
   state.busy = true;
   rescueButtons(false);
   const btn = $("health-check-btn");
@@ -4897,9 +5340,12 @@ async function onHealthCheck() {
   strip.indet();
   const unlisten = await listen("health:log", (ev) => appendFlashLog(con, ev.payload));
   try {
-    const report = await invoke("health_check", { port, chip, mac, flashBytes, baud: flashBaud() });
+    const report = await invoke("health_check", { port, chip, flashBytes, baud: flashBaud() });
     strip.end();
     report.generatedAt = new Date().toISOString(); // the browser stamps this too
+    // The About rows ride in the report the way the browser's do; no
+    // hardware address is in it (health_check returns none).
+    report.about = aboutBoardGroups(aboutFacts());
     renderHealthReport(report);
     const v = report.verdict || {};
     setStatus("health-result", `Verdict: ${v.headline || "read complete"}.`,
@@ -4971,8 +5417,8 @@ function renderHealthReport(r) {
 
   // Facts.
   if (r.chip) row("Chip", r.chip);
-  if (r.mac) row("ID (MAC)", r.mac);
   if (r.flashBytes) row("Flash", `${Math.round(r.flashBytes / (1 << 20))} MB`);
+  if (state.mac) box.append(macRevealRow("health-row"));
 
   if (r.blank) {
     box.append(h("p", "muted", "No partition table at 0x8000 — this chip looks blank."));
@@ -5032,31 +5478,45 @@ function renderHealthReport(r) {
   appendSaveReport(box, r);
 }
 
+// Two saves (parity: the browser's Board report). The default is the share
+// projection — chip, image and partition facts and the day, nothing that
+// describes this one board's life. The second keeps the rest for the owner
+// and says so. Neither carries the hardware address, in the file or its name.
 function appendSaveReport(box, r) {
   const rowDiv = document.createElement("div");
   rowDiv.className = "row";
   const save = document.createElement("button");
   save.className = "btn btn-ghost btn-small";
   save.textContent = "Save report (.json)…";
-  save.addEventListener("click", () => onSaveHealthReport(r));
-  rowDiv.append(save);
+  save.title = SHARE_REPORT_NOTE;
+  save.addEventListener("click", () => onSaveHealthReport(r, false));
+  const saveFull = document.createElement("button");
+  saveFull.className = "btn btn-ghost btn-small";
+  saveFull.textContent = "Save full report for your own records…";
+  saveFull.title = FULL_REPORT_NOTE;
+  saveFull.addEventListener("click", () => onSaveHealthReport(r, true));
+  rowDiv.append(save, saveFull);
   box.append(rowDiv);
+  const note = document.createElement("p");
+  note.className = "muted";
+  note.textContent = "“Save report” keeps chip, firmware and layout facts, fine to share. The full report " +
+    "adds this board’s counters, crash record and update state, so keep it for yourself. Neither holds " +
+    "the hardware address.";
+  box.append(note);
 }
 
-// The MAC's last six hex digits, lowercased, or "canary" — the browser's
-// macStamp (flash.js) to the character, so a backup or report saved by either
-// flasher carries the same name; flash-engine rescue::backup_filename too.
-function macStamp(mac = state.mac) {
-  const hex = (mac || "").replace(/[^0-9a-fA-F]/g, "").slice(-6).toLowerCase();
-  return hex || "canary";
+// A saved file's name: the local date and a counter (fileStamp, the browser's
+// own), never anything of the board's.
+function nextFileStamp() {
+  state.fileCounter += 1;
+  return fileStamp(new Date(), state.fileCounter);
 }
 
-async function onSaveHealthReport(r) {
-  const stamp = macStamp(r.mac || "");
+async function onSaveHealthReport(r, full) {
   let out = null;
   try {
     out = await window.__TAURI__.dialog.save({
-      defaultPath: `canary-${stamp}-report.json`,
+      defaultPath: reportFileName(nextFileStamp(), full),
       filters: [{ name: "Health report", extensions: ["json"] }],
     });
   } catch (e) {
@@ -5064,12 +5524,204 @@ async function onSaveHealthReport(r) {
     return;
   }
   if (!out) return;
+  const body = full ? reportFullProjection(r) : reportShareProjection(r, Date.now());
   try {
-    await invoke("save_text_file", { path: out, contents: JSON.stringify(r, null, 2) });
-    setStatus("health-result", "Report saved.", "ok");
+    await invoke("save_text_file", { path: out, contents: JSON.stringify(body, null, 2) });
+    setStatus("health-result", full ? "Full report saved — keep it to yourself." : "Report saved.", "ok");
   } catch (e) {
     setStatus("health-result", "Couldn't save the report: " + e, "err");
   }
+}
+
+// ── This Board (About this board, L1 · L2 · L4) ─────────────────────────────
+// What the Flasher read, in the one shape aboutBoardGroups draws (the
+// browser's rows, words and order; desktop_parity.test.js). The image is
+// undefined until the passport lands, null when nothing is installed; the
+// bootloader header is false when its read failed.
+function aboutFacts() {
+  const r = state.resident;
+  const p = state.passport;
+  return {
+    chip: state.chip,
+    chipDesc: state.chipDesc,
+    flashBytes: state.flashBytes,
+    fuses: state.chipFuses,
+    // Once a write has started (noteBoardWritten), the passport read no longer
+    // names what the board runs: the image rows say "Not checked yet" until
+    // the next read, never the image being overwritten.
+    image: !r || state.passportPending || r.overwritten ? undefined
+      : r.unknown ? false
+        : r.blank ? null
+          : { projectName: r.projectName, version: r.version, idf: r.idf,
+              secureVersion: r.secureVersion, elfSha256Prefix: r.elfSha256Prefix,
+              // the catalog product the passport resolved, if any (the
+              // Firmware row's Arduino-core test, as renderPassport's)
+              productName: r.product ? r.product.name : null },
+    bootloader: p && "bootloader" in p && !(r && r.overwritten) ? p.bootloader : undefined,
+  };
+}
+
+// The hardware address: no bytes until asked, the whole address on this
+// screen once asked, no copy button. Every Wi-Fi frame the board sends
+// carries it, so even its tail names the board to anything in radio range.
+// The address is the one read with this card, so a report left on screen
+// never reveals the next board's.
+function macRevealRow(cls, mac = state.mac) {
+  const d = document.createElement("div");
+  d.className = cls;
+  const k = document.createElement("span");
+  k.className = cls === "health-row" ? "health-row-k" : "tb-k";
+  k.textContent = "Hardware address";
+  // Why it is hidden (settings_help.mac), as the browser's row says it.
+  const hd = helpDot("mac");
+  if (hd) k.append(hd);
+  const v = document.createElement("span");
+  v.className = cls === "health-row" ? "health-row-v" : "tb-v";
+  const show = document.createElement("button");
+  show.type = "button";
+  show.className = "link-btn";
+  show.textContent = "Show";
+  show.setAttribute("aria-label", "Show the hardware address");
+  show.addEventListener("click", () => {
+    v.textContent = "";
+    const addr = document.createElement("span");
+    addr.className = "mono no-copy";
+    addr.textContent = mac ? String(mac).toUpperCase() : "Not reported";
+    const note = document.createElement("span");
+    note.className = "muted tb-note";
+    note.textContent = " This stays on this computer.";
+    v.append(addr, note);
+  });
+  v.append(show);
+  d.append(k, v);
+  return d;
+}
+
+const ABOUT_TECH_PREF = "aboutTechnical";
+// The card is drawn again as each read lands (the passport, the fuses); an
+// opened "More about this board" stays open across those redraws.
+let thisBoardMoreOpen = false;
+function renderThisBoard() {
+  const box = $("this-board");
+  if (!box) return;
+  box.textContent = "";
+  if (!state.chip || state.portKind !== "esp32") { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  const groups = aboutBoardGroups(aboutFacts());
+  const h = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  box.append(h("h3", "tb-head", "This board"));
+  // L1: the chip and its revision, the flash, the hardware address.
+  const l1 = h("div", "tb-grid");
+  for (const id of ["chip", "flash"]) {
+    const r = groups[0].rows.find((x) => x.id === id);
+    const cell = h("div", "tb-cell");
+    cell.append(h("span", "tb-k", r.label), h("span", "tb-v", r.value));
+    l1.append(cell);
+  }
+  if (state.mac) l1.append(macRevealRow("tb-cell"));
+  box.append(l1);
+  box.append(h("p", "muted tb-source", "Read from the chip"));
+  // L2 and L4, folded: every row by where it came from, and the technical
+  // names and raw allowlisted field values on request.
+  const det = h("details", "tb-more");
+  det.open = thisBoardMoreOpen;
+  det.addEventListener("toggle", () => { thisBoardMoreOpen = det.open; });
+  det.append(h("summary", null, "More about this board"));
+  const techLabel = h("label", "tb-tech muted");
+  const tech = document.createElement("input");
+  tech.type = "checkbox";
+  tech.checked = !!prefs[ABOUT_TECH_PREF];
+  techLabel.append(tech, document.createTextNode(" Show technical names"));
+  const body = h("div", "tb-body");
+  const draw = () => {
+    body.textContent = "";
+    for (const g of groups) {
+      const sec = h("div", "tb-group");
+      sec.append(h("h4", null, g.title), h("p", "muted tb-source", g.source));
+      const grid = h("div", "tb-grid");
+      for (const r of g.rows) {
+        if (r.reveal) continue; // the hardware address has its own reveal above
+        const cell = h("div", "tb-cell");
+        cell.append(h("span", "tb-k", r.label), h("span", "tb-v", r.value));
+        if (tech.checked && r.term) cell.append(h("span", "tb-term muted", r.term));
+        if (tech.checked && r.raw) cell.append(h("code", "tb-raw", r.raw));
+        grid.append(cell);
+      }
+      sec.append(grid);
+      body.append(sec);
+    }
+    if (tech.checked && state.chipTool) {
+      const t = state.chipTool;
+      body.append(h("p", "muted tb-raw",
+        `What espflash printed: ${state.chipDesc || "—"} · crystal ${t.crystal_mhz ?? "—"} MHz · ` +
+        `features ${(t.features || []).join(", ") || "—"} (fixed strings for this chip, not readings)`));
+    }
+  };
+  tech.addEventListener("change", () => {
+    prefs[ABOUT_TECH_PREF] = tech.checked;
+    savePrefs();
+    draw();
+  });
+  draw();
+  const copy = h("button", "btn btn-ghost btn-small", "Copy these details");
+  copy.type = "button";
+  copy.title = "Chip, image and datasheet facts — never the hardware address.";
+  copy.addEventListener("click", async () => {
+    const info = state.appInfo || {};
+    const text = aboutBoardText(groups, "SecuraCV Flasher v" + (info.version || "?"));
+    try {
+      await navigator.clipboard.writeText(text);
+      copy.textContent = "Copied ✓";
+    } catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.readOnly = true; ta.rows = 10; ta.className = "tb-copy-out";
+      copy.replaceWith(ta); ta.focus(); ta.select();
+    }
+  });
+  det.append(techLabel, body);
+  // The fuse-derived rows wait for the fuse read, which resets the board into
+  // its ROM and leaves it there (efuse.rs parks the lines; nothing resets it
+  // back into its firmware), so it runs when asked (the same button as the
+  // cold-start card's) rather than on every connect. This card is drawn for
+  // any ESP32, not only one held in BOOT, so the line beside the button says
+  // where a good read leaves the board and how to start its firmware again,
+  // and after a good read the same advice takes the button's place until a
+  // write starts (noteBoardWritten; one that finishes ends in espflash's hard
+  // reset). Quitting the Flasher comes first: while it is open and its
+  // monitor is not running, a board that comes back on its port after a poll
+  // missed it (a re-plug, or a reset that drops a chip's own USB-Serial/JTAG
+  // port off the bus) is read again by pollPorts → identify, and the pinned
+  // espflash 3.3.0's board-info and read-flash leave the chip in espflash's
+  // stub, not its firmware. Then the reset button, or every source of power:
+  // a board whose battery powers it without its firmware's help (the WAP's
+  // battery build, the Watch Station) stays powered with only its USB cable
+  // pulled.
+  const restart = "To start the firmware again, quit the Flasher first (while open, it can read a board " +
+    "that reconnects, which stops the firmware again), then press the board’s reset button, or unplug " +
+    "it (and its battery, if it has one) and plug it back in.";
+  const parked = state.efuseParked;
+  if (state.chipFuses === undefined && $("efuse-read")) {
+    const read = h("button", "btn btn-ghost btn-small", "Read the chip’s fuses");
+    read.type = "button";
+    read.title = "Read-only: package, parts, calibration and the security fuses.";
+    read.addEventListener("click", () => $("efuse-read").click());
+    det.append(read, h("p", "muted tb-source",
+      "A good read leaves the board in download mode, not running its firmware. " + restart));
+  } else if (parked && parked.port === state.port && parked.chip === state.chip) {
+    // The latest read on this board answered from block 0, and nothing has
+    // written to the board since (state.efuseParked). Not after a chip with
+    // no table, which never opens the port, nor after a read that threw,
+    // even one that follows a good read.
+    det.append(h("p", "muted tb-source",
+      "The fuse read left the board in download mode, not running its firmware. " + restart));
+  }
+  det.append(copy);
+  box.append(det);
 }
 
 async function onPickLocalFile() {
@@ -5753,9 +6405,18 @@ function monitorProductOnBench() {
 }
 
 // The bench is about to write to the board: what the passport read at
-// connect no longer names what the board runs (monitorProductOnBench).
+// connect no longer names what the board runs (monitorProductOnBench), and
+// the About card no longer says where the fuse read left it. Each write
+// (espflash's write-bin or erase-flash) connects through a reset of its own,
+// and in the pinned espflash 3.3.0 one that finishes calls reset_after, which
+// under the default --after hard-reset (rescue.rs passes no --after) starts
+// whatever is now on the chip. After an install or a local file the
+// post-flash monitor watches that boot, and advice to quit the Flasher would
+// drop the watch.
 function noteBoardWritten() {
   if (state.resident) state.resident.overwritten = true;
+  state.efuseParked = null;
+  renderThisBoard();
 }
 
 function renderMonitorCmds() {
@@ -6264,7 +6925,9 @@ function opFor(con) {
 }
 
 function appendFlashLog(con, text) {
-  const line = String(text);
+  // espflash prints its board info — the MAC with it — before every flash,
+  // write-bin and read-flash; no console here draws the address.
+  const line = maskHardwareAddress(String(text));
   const op = opRegistry[con.id];
   if (op) op.feedLine(line);
   const frame = looksLikeProgressFrame(line);
@@ -6619,7 +7282,7 @@ function renderAbout() {
   const log = (prefs.log || []);
   const logHtml = log.length
     ? log.map((e) =>
-        `<div class="log-row ${esc(e.kind || "")}"><time>${esc(fmtTime(e.t))}</time><span class="l-msg">${esc(e.msg)}</span></div>`).join("")
+        `<div class="log-row ${esc(e.kind || "")}"><time>${esc(fmtTime(e.t))}</time><span class="l-msg">${esc(eventLogText(e.msg))}</span></div>`).join("")
     : `<div class="log-row"><span class="l-msg muted">Nothing logged yet — a clean run.</span></div>`;
 
   $("about-body").innerHTML = `
@@ -6698,7 +7361,10 @@ function setConn(kind, text) {
 }
 function setStatus(id, msg, kind) {
   const el = $(id);
-  el.textContent = msg;
+  // Every status line, masked: a failure's details can carry espflash's own
+  // board info, "MAC address: …" included. The address is drawn in one
+  // place only, its reveal (macRevealRow).
+  el.textContent = maskHardwareAddress(msg);
   el.className = "status" + (kind ? " " + kind : "");
 }
 function enableCard(id) {

@@ -192,6 +192,11 @@
             <!-- The board's passport (readPassport); hidden until read. -->
             <div id="passport" class="passport hidden"></div>
 
+            <!-- About this board (renderThisBoard): the browser flasher's rows.
+                 The hardware address sits behind a reveal, with no copy, and
+                 is in no report or file name. -->
+            <section id="this-board" class="this-board hidden" aria-live="polite"></section>
+
             <!-- Boards whose flashing port isn't the visible one (renderAccessNotes). -->
             <div id="access-notes"></div>
 

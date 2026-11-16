@@ -1740,20 +1740,19 @@ test("buildDiagnosticReport: formats safe facts, omits empties, no secrets", asy
   assert.ok(!/password|ssid|pubkey/i.test(r));
 });
 
-test("buildDiagnosticReport: the MAC is a tail, never the stable identifier", async () => {
-  // A report is made to be pasted somewhere public; a full MAC is a stable
-  // identifier (invariants.md III) and has no business riding along. The tail
-  // (last two octets) still tells two bench boards apart.
-  const { buildDiagnosticReport, macTail } = await core();
-  const r = buildDiagnosticReport({ mac: "94:B9:7E:5A:7F:A3" });
-  assert.ok(r.includes("MAC tail: …7f:a3"), "the non-stable tail is shown");
-  assert.ok(!r.includes("94:B9") && !/94:b9/i.test(r), "the full MAC never appears");
-  assert.strictEqual(macTail("94:B9:7E:5A:7F:A3"), "…7f:a3");
-  assert.strictEqual(macTail("94b97e5a7fa3"), "…7f:a3");     // separator-free input can't leak whole
-  assert.strictEqual(macTail(""), "");
-  assert.strictEqual(macTail("a3"), "", "too short to be a MAC → omit");
-  // no MAC → the line is omitted entirely, not rendered blank
-  assert.ok(!/MAC/.test(buildDiagnosticReport({ chip: "ESP32-S3" })));
+test("buildDiagnosticReport: no hardware address at all — not even a tail", async () => {
+  // A report is made to be pasted somewhere public. The base MAC is the
+  // station address in every Wi-Fi frame the board sends, so even its last two
+  // octets match the board in radio range (on an S3 the setup network's BSSID
+  // ends in the same bytes). The builder has no field for it: a MAC handed in
+  // is dropped whole.
+  const mod = await core();
+  const r = mod.buildDiagnosticReport({ mac: "94:B9:7E:5A:7F:A3", chip: "ESP32-S3" });
+  for (const piece of ["94:b9", "7f:a3", "5a7fa3", "94b97e", "7e:5a"]) {
+    assert.ok(!r.toLowerCase().includes(piece), `the report carries MAC bytes (${piece})`);
+  }
+  assert.ok(!/MAC|hardware address/i.test(r), "no MAC line, not even an empty one");
+  assert.strictEqual(mod.macTail, undefined, "the tail helper is gone: nothing should want it");
 });
 
 test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", async () => {
@@ -1802,6 +1801,817 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
   assert.strictEqual(sanitizeLogTail("nothing sensitive here"), "nothing sensitive here");
   assert.ok(!sanitizeLogTail("psk=hunter2").includes("hunter2"));
 });
+
+// printf's %s, %-Ns and %0Nx, enough to render a firmware format string the
+// way the board prints it.
+function printf(fmt, ...args) {
+  let i = 0;
+  return fmt.replace(/%(-?)(0?)(\d*)(?:\.(\d+))?(s|lu|u|d|x)/g, (_, left, zero, width, prec, conv) => {
+    let v = conv === "x" ? Number(args[i++]).toString(16) : String(args[i++]);
+    if (conv === "s" && prec) v = v.slice(0, Number(prec)); // "%.16s"
+    const w = Number(width || 0);
+    return left ? v.padEnd(w) : v.padStart(w, zero ? "0" : " ");
+  });
+}
+
+// The C string a call's adjacent literals make ("…not bound " "(another …"),
+// from the literal that starts with `head`: its escapes undone, its last "\n"
+// dropped.
+function cLiteral(src, head, what) {
+  const at = src.indexOf('"' + head);
+  assert.ok(at >= 0, `${what} moved — re-point this test`);
+  const run = /^(?:\s*"(?:[^"\\]|\\.)*")+/.exec(src.slice(at))[0];
+  return run.match(/"(?:[^"\\]|\\.)*"/g).map((s) => JSON.parse(s)).join("").replace(/\n$/, "");
+}
+
+test("sanitizeLogTail: the boot banner's Hardware ID and the self-manifest never reach a report", async () => {
+  // The lines are rendered from the firmware's own format strings, so a
+  // reworded banner fails here instead of slipping past the scrubber.
+  // Five families print a Hardware ID: the WAP (sys_monitor.h, its own
+  // printf) and the display, Sense, Vision and Sentinel (boot_kv, the shared
+  // banner). The flagship prints none.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const kv = /void boot_kv\(const char\* key, const char\* value\) \{\s*out\("([^"]+)\\n"/.exec(
+    fw("firmware/common/boot/boot_banner.cpp"));
+  assert.ok(kv, "boot_kv's format string moved — re-point this test");
+  for (const main of ["firmware/projects/canary-display/src/main.cpp", "firmware/projects/canary-sense/src/main.cpp",
+                      "firmware/projects/canary-vision/src/main.cpp", "firmware/projects/canary-sentinel/src/main.cpp"]) {
+    assert.match(fw(main), /boot_kv\("Hardware ID", devid_hex\)/, `${main} no longer prints the Hardware ID through boot_kv`);
+  }
+  const wap = /Serial\.printf\("(  Hardware ID[^"]*)\\n", hw_token\)/.exec(
+    fw("firmware/projects/canary-wap/arduino/canary_wap/sys_monitor.h"));
+  assert.ok(wap, "the WAP's Hardware ID line moved — re-point this test");
+  const token = "3f7a9e21b4c5d6e8";
+  const manifest = JSON.stringify({ schema: "securacv.canary.manifest/v1", board: "xiao-esp32s3",
+    firmware: "2.3.0-wap", pubkey_fp: "aabbccddeeff0011", device_id: "canary-4dc2", boots: 412 });
+  const tail = [
+    printf(kv[1], "Hardware ID", token),
+    printf(wap[1], token),
+    manifest,
+    "Brownout detector was triggered",
+  ].join("\n");
+  const r = buildDiagnosticReport({ logTail: tail });
+  for (const leak of [token, "aabbccddeeff0011", "canary-4dc2", "412"]) {
+    assert.ok(!r.includes(leak), `"${leak}" survived into the report`);
+  }
+  assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, 3,
+    "each identity line is replaced by a visible marker, not dropped");
+  assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  // A line that only mentions hardware is not collateral damage.
+  assert.strictEqual(sanitizeLogTail("[HW] hardware revision 2"), "[HW] hardware revision 2");
+});
+
+test("sanitizeLogTail: the device id and the key fingerprint lines never reach a report", async () => {
+  // The same handles the self-manifest line is scrubbed for (design §6.4):
+  // the device id (often a name the person typed) and the key fingerprint.
+  // Rendered from the firmware's own format strings, like the test above.
+  const { buildDiagnosticReport } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const kv = /void boot_kv\(const char\* key, const char\* value\) \{\s*out\("([^"]+)\\n"/.exec(
+    fw("firmware/common/boot/boot_banner.cpp"));
+  assert.ok(kv, "boot_kv's format string moved — re-point this test");
+  for (const main of ["firmware/projects/canary-display/src/main.cpp", "firmware/projects/canary-sense/src/main.cpp",
+                      "firmware/projects/canary-vision/src/main.cpp", "firmware/projects/canary-sentinel/src/main.cpp"]) {
+    assert.match(fw(main), /boot_kv\("Device ID", canary::cfg::get\(\)\.device_id\)/,
+      `${main} no longer prints its device id through boot_kv`);
+  }
+  const ino = fw("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino");
+  const flagship = fw("firmware/canary/src/main.cpp");
+  const fmt = (src, re, what) => { const m = re.exec(src); assert.ok(m, `${what} moved — re-point this test`); return m[1]; };
+  const id = "canary-kids-room";
+  const fp = "aabbccddeeff0011";
+  const lines = [
+    printf(kv[1], "Device ID", id),                                                        // display, Sense, Vision, Sentinel, WAP
+    printf(fmt(ino, /Serial\.printf\("(\[PROV\] Device ID: %s)\\n", g_device\.device_id\)/, "the WAP's [PROV] line"), id),
+    printf(fmt(ino, /Serial\.printf\("(\[PROV\] Public key fingerprint: %s)\\n"/, "the WAP's fingerprint line"), fp),
+    printf(fmt(ino, /Serial\.printf\("(│ Device ID  : %s)\\n"/, "the WAP's identity box"), id),
+    printf(fmt(ino, /Serial\.printf\("(│ FP8        : %s)\\n"/, "the WAP's identity box"), fp),
+    printf(fmt(ino, /Serial\.printf\("(│ Pubkey     : %s)\.\.\.\\n"/, "the WAP's identity box"), fp),
+    fmt(flagship, /Serial\.print\("(  Key FP    : )"\);\s*print_hex\(dev\.pubkey_fp, 8\)/, "the flagship's f card") + fp,
+    printf(fmt(flagship, /Serial\.printf\("(\[OK\] Device ID: %s)\\n", device\.device_id\)/, "the flagship's boot line"), id),
+  ];
+  const r = buildDiagnosticReport({ logTail: [...lines, "Brownout detector was triggered"].join("\n") });
+  for (const leak of [id, fp, fp.slice(0, 8)]) assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+  assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, lines.length);
+  assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+});
+
+test("sanitizeLogTail: every other line carrying a key fingerprint, the TLS certificate or a .local name never reaches a report", async () => {
+  // The rest of the lines the firmware prints with this board's key
+  // fingerprint (or a household peer's), its TLS certificate (a per-device
+  // self-signed one, whose CN is the key fingerprint) or the .local name it
+  // advertises (built from the device id; the WAP's from the name the person
+  // gave it, or else the key fingerprint). Rendered from the firmware's own
+  // format strings.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const fmt = (src, re, what) => {
+    const m = re.exec(src);
+    assert.ok(m, `${what} moved — re-point this test`);
+    return m[1].replace(/\\"/g, '"');
+  };
+  const fp = "aabbccddeeff0011";
+  const peer = "0123456789abcdef";
+  const cert = "c0ffee00c0ffee00c0ffee00c0ffee00";
+  const host = "canary-kids-room";
+  const lines = [];
+  for (const fam of ["canary-sense", "canary-vision", "canary-sentinel"]) {
+    const witness = fw(`firmware/projects/${fam}/src/witness.cpp`);
+    lines.push(printf(fmt(witness, /"(Ed25519 ready  fp=%s  chain_len=%lu)\\n",\s*fp_hex,/, `${fam}'s witness ready line`), fp, 42));
+    const mdns = fw(`firmware/projects/${fam}/src/net/mdns_mgr.cpp`);
+    assert.match(mdns, /make_hostname\(canary::cfg::get\(\)\.device_id, s_host, sizeof\(s_host\)\);/,
+      `${fam}'s .local name is no longer built from its device id`);
+    lines.push(printf(fmt(mdns, /printf\("(Fleet advert up as %s\.local \(_%s\._%s\))\\n",\s*s_host,/, `${fam}'s advert line`),
+      host, "securacv", "tcp"));
+  }
+  const display = fw("firmware/projects/canary-display/src/net/discovery.cpp");
+  lines.push(printf(fmt(display, /printf\("(Fleet advert up as %s\.local \(_%s\._%s\))\\n",\s*hostname,/, "the display's advert line"),
+    host, "securacv", "tcp"));
+  const ino = fw("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino");
+  lines.push(
+    printf(fmt(ino, /Serial\.printf\( "(║    \\"pubkey_fp\\": \\"%s\\",)\\n", g_device\.fingerprint_hex\)/, "the WAP's receipt key line"), fp),
+    printf(fmt(ino, /Serial\.printf\("(║    \\"tls_cert_fp\\": \\"%s\\",)\\n", g_tls_cert_fp_hex\)/, "the WAP's receipt cert line"), cert),
+    printf(fmt(ino, /Serial\.printf\("(\[TLS\] CN: securacv-%s)\\n", g_device\.fingerprint_hex\)/, "the WAP's TLS CN line"), fp),
+    printf(fmt(ino, /Serial\.printf\("(\[TLS\] Cert fingerprint: %\.16s\.\.\.)\\n", g_tls_cert_fp_hex\)/, "the WAP's cert line"), cert),
+  );
+  const net = fw("firmware/canary/lib/securacv_network/src/securacv_network.cpp");
+  lines.push(printf(fmt(net, /Serial\.printf\("(\[TLS\] Cert fingerprint: %\.16s\.\.\.)\\n", m_tls_cert_fp_hex\)/, "the flagship's cert line"), cert));
+  const csi = fw("firmware/canary/src/csi_modules_integration.cpp");
+  lines.push(
+    printf(fmt(csi, /Serial\.printf\("(\[ble\.scout\.peer\] fp=%s state=%s label=\\"%s\\")\\n",/, "the flagship's scout line"), peer, "arrived", "porch"),
+    printf(fmt(csi, /Serial\.printf\("(\[mesh\.channel\] lock ch=%u reason=%u from fp=%s)\\n",/, "the flagship's channel line"), 6, 1, peer),
+    printf(fmt(csi, /Serial\.printf\("(\[mesh\.election\] restored elected hub fp=%s from NVS)\\n",/, "the flagship's election line"), peer),
+  );
+  // Replaced, not dropped: each line becomes the marker.
+  const scrubbed = sanitizeLogTail(lines.join("\n")).split("\n");
+  lines.forEach((ln, i) => assert.strictEqual(scrubbed[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`));
+  // And through the builder, whose tail is the last 12 lines: two halves.
+  for (const part of [lines.slice(0, 8), lines.slice(8)]) {
+    const r = buildDiagnosticReport({ logTail: [...part, "Brownout detector was triggered"].join("\n") });
+    for (const leak of [fp, peer, cert.slice(0, 16), host]) {
+      assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+    }
+    assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, part.length);
+    assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  }
+});
+
+test("sanitizeLogTail: the flagship's identity cards, the WAP's nearby lines and the display's referral never reach a report", async () => {
+  // Lines that carry this board's device id or key, or a household peer's
+  // fingerprint or name, outside the boot banner: the flagship's boot welcome
+  // card (the last lines of every flagship boot, FEATURE_CONSOLE_THEME), its
+  // trust card ('l', 'a'; its key randomart too), attestation card ('c'),
+  // identity card ('i') and nearby card ('n'), the WAP's nearby scan and the
+  // display's fleet referral. Rendered from the firmware's own sources.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const fmt = (src, re, what) => { const m = re.exec(src); assert.ok(m, `${what} moved — re-point this test`); return m[1]; };
+  const scenes = fw("firmware/common/ui/console_scenes.h");
+  const flagship = fw("firmware/canary/src/main.cpp");
+  const id = "canary-kids-room";
+  const key = "5e".repeat(32);
+  const peer = "a1b2";
+  const host = "canary-porch";
+  // A panel row as console_theme.h's row() draws it: one space of margin
+  // inside the bars, the text padded to the 52-column interior.
+  const framed = (text) => "│ " + text.padEnd(50) + " │";
+  assert.match(scenes, /static const int TRUST_INNER = 52;/, "the trust card's width moved — re-point framed()");
+  assert.match(flagship, /print_boot_welcome\(\);/, "the flagship no longer prints its welcome card at boot");
+  const lines = [
+    framed(printf(fmt(scenes, /rowf\(r, inner, COL_DIM, "(\s*\(that's me: %s\))", device_id\)/, "the welcome card's id row"), id)),
+    framed(printf(fmt(scenes, /rowf\(r, inner, COL_NONE, "(Device {4}%s)", t\.device_id/, "the trust card's Device row"), id)),
+    printf(fmt(flagship, /Serial\.printf\("(  Device    : %s)\\n", dev\.device_id\)/, "the attestation card's Device line"), id),
+    fmt(flagship, /Serial\.print\("(  Public Key: )"\);\s*for \(int i = 0; i < 32; i\+\+\) Serial\.printf\("%02x", device\.pubkey\[i\]\)/,
+      "the identity card's key line") + key,
+    framed(printf(fmt(fw("firmware/common/ui/fleet_view.h"), /rowf\(r, inner, COL_NONE, "(This Canary  %s%s%s)",/, "the nearby card's own row"),
+      id, "   fp ", peer)),
+  ];
+  const ble = fw("firmware/projects/canary-wap/arduino/canary_wap/ble_nearby.h");
+  lines.push(
+    printf(fmt(ble, /Serial\.printf\("(\[BLE\] Canary discovered: %s RSSI=%d)\\n", prefix,/, "the WAP's nearby discovered line"), peer, -61),
+    printf(fmt(ble, /Serial\.printf\("(\[BLE\] Canary lost: %s)\\n", g_nearbyCanaries\[i\]\.deviceIdPrefix\)/, "the WAP's nearby lost line"), peer),
+  );
+  const discovery = fw("firmware/projects/canary-display/src/net/discovery.cpp");
+  lines.push(printf(fmt(discovery, /printf\("(Fleet referral: broker %s:%u \(from %s\))\\n",/, "the display's referral line"),
+    "192.168.1.5", 1883, host));
+  // The trust card's key randomart: OpenSSH's 17-wide field of the ramp's
+  // glyphs, boxed in '|' and centered in a panel row.
+  const ramp = fmt(fw("firmware/common/ui/randomart.h"), /RANDOMART_RAMP\[\] = "([^"]+)";/, "the randomart ramp");
+  assert.match(fw("firmware/common/ui/randomart.h"), /static const int RANDOMART_W = 17;/);
+  assert.match(scenes, /boxed\[0\] = '\|';[\s\S]{0,120}boxed\[1 \+ RANDOMART_W\] = '\|';/, "the randomart box moved — re-point this test");
+  const art = [];
+  for (let y = 0; y < 9; y++) {
+    const row = Array.from({ length: 17 }, (_, x) => ramp[(x * 7 + y * 3) % ramp.length]).join("");
+    art.push(framed(" ".repeat(15) + "|" + row + "|"));
+  }
+  const all = [...lines, ...art];
+  const scrubbed = sanitizeLogTail(all.join("\n")).split("\n");
+  all.forEach((ln, i) => assert.strictEqual(scrubbed[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`));
+  // Through the builder, whose tail is the last 12 lines.
+  for (const part of [lines, art]) {
+    const r = buildDiagnosticReport({ logTail: [...part, "Brownout detector was triggered"].join("\n") });
+    for (const leak of [id, key.slice(0, 16), `: ${peer}`, host, ...part.filter((l) => l.includes("|")).map((l) => l.trim())]) {
+      assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+    }
+    assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, part.length);
+    assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  }
+  // Lines that only look like them are not collateral damage.
+  for (const keep of [
+    "║     SecuraCV Canary — Production Witness Device              ║",
+    "Install deferred by device: battery below 30%",
+    framed("Firmware  2.4.16 (a1b2c3d)   built 2026-10-01"),
+    "├─ public-key randomart  (eyeball this) ─────────────┤",
+    "[BLE] Nearby scan task started",
+    "fleet referral: 192.168.1.5:1883",
+  ]) {
+    assert.strictEqual(sanitizeLogTail(keep), keep);
+  }
+});
+
+test("sanitizeLogTail: a household peer's fingerprint or name, the MQTT client id and the WAP's names never reach a report", async () => {
+  // A peer's fingerprint is identity wherever it is printed: the WAP's
+  // "[BLE] Canary discovered:" line carries two of its bytes, the flagship's
+  // nearby card the same two on every peer row, and the flagship's opera
+  // lines all eight. So are a peer's name, this board's device id and
+  // Hardware ID inside the MQTT client id, and the names the WAP's health
+  // log prints for it. Rendered from the firmware's own sources.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const has = (src, re, what) => assert.match(src, re, `${what} moved — re-point this test`);
+  const framed = (text) => "│ " + text.padEnd(50) + " │";
+  const peer = "0123456789abcdef";   // an opera peer's whole fingerprint (FINGERPRINT_LEN 8)
+  const fp4 = ["a1b2", "c3d4", "ef56", "9e33"];
+  const peerName = "canary-porch";
+  const id = "canary-kids-room";
+  const token = "3f7a9e21b4c5d6e8";
+  const host = "canary-kitchen";
+  const lines = [];
+
+  // The flagship's nearby card ('n'): one row per peer, its fingerprint first.
+  const view = fw("firmware/common/ui/fleet_view.h");
+  has(view, /static const int FLEET_INNER = 52;/, "the nearby card's width");
+  has(view, /snprintf\(ch, sizeof ch, "#%04x", \(unsigned\)p\.chain_lo\);/, "the nearby card's chain column");
+  const rowFmt = /rowf\(r, inner, col, "([^"]+)",\s*p\.fp4 \? p\.fp4 : "\?", age, hl, bt, ch, st\);/.exec(view);
+  assert.ok(rowFmt, "the nearby card's peer row moved — re-point this test");
+  for (const [fp, age, hl, bt, chain, st] of [[fp4[0], "3s", "100%", "87%", 0x4210, "ok"],
+    [fp4[1], "47s", "72%", "--", 0x31, "alert, degraded"], [fp4[2], ">1d", "--", "--", 0x1000, "muted"],
+    [fp4[3], "2m", "--", "40%", 0, "tamper"]]) {
+    lines.push(framed(printf(rowFmt[1], fp, age, hl, bt, printf("#%04x", chain), st)));
+  }
+  // The flagship's opera lines, each with a peer's whole fingerprint, and the
+  // health-log echoes of them (log_health prints "[lvl/cat] msg | detail").
+  const flagship = fw("firmware/canary/src/main.cpp");
+  lines.push(
+    printf(cLiteral(flagship, "[MESH] Peer %s left the opera", "the opera's leave line"), peer, "removed from NVS"),
+    printf(cLiteral(flagship, "[WARN] Paired peer %s:", "the unbound pairing line"), peer),
+    printf(cLiteral(flagship, "[WARN] Opera pairing refused: this Canary cannot hold %s", "the refused pairing line"), peer),
+    printf(cLiteral(flagship, "[WARN] Peer %s: its stored radio address", "the shared address line"), peer, ", entry dropped"),
+    printf(cLiteral(flagship, "[INFO] Stored radio address of %s", "the dropped address line"), peer, "dropped"),
+  );
+  const health = (src, what) => {
+    const m = /Serial\.printf\("(\[%s\/%s\] %s)", log_level_name\(level\), log_category_name\(category\), message\);\s*if \(detail && detail\[0\]\) \{\s*Serial\.printf\("( \| %s)", detail\);/.exec(src);
+    assert.ok(m, `${what}'s health-log line moved — re-point this test`);
+    return (lvl, cat, msg, detail) => printf(m[1], lvl, cat, msg) + printf(m[2], detail);
+  };
+  const flagshipHealth = health(fw("firmware/canary/lib/securacv_witness/src/securacv_witness.cpp"), "the flagship");
+  const echoes = [...flagship.matchAll(/log_health\([^;]*?LOG_CAT_NETWORK,\s*"([^"]+)",\s*hex\)/g)].map((m) => m[1]);
+  assert.deepStrictEqual(echoes.sort(), ["Opera pairing address refused", "Opera pairing refused", "Opera peer left",
+    "Opera peer revoked (7-day deny-list)", "Opera stored address shared; re-pair"],
+  "a health-log line with a peer's fingerprint came or went — render it here");
+  for (const msg of echoes) lines.push(flagshipHealth("WARNING", "NETWORK", msg, peer));
+  // The WAP: its chirp prefix and Opera Bluetooth name (its key
+  // fingerprint's last two bytes, which ble_manager hands both as the
+  // "device id hash"), its opera health lines with a peer's fingerprint or
+  // name, and its host name and Bluetooth name in the health log.
+  const wapDir = "firmware/projects/canary-wap/arduino/canary_wap/";
+  const ino = fw(wapDir + "canary_wap.ino");
+  has(ino, /hex_to_str\(ble_device_id_hex, g_device\.pubkey_fp, 8\);\s*if \(ble_manager::init\(ble_device_id_hex,/,
+    "the WAP's Bluetooth id source");
+  const wapHealth = health(ino, "the WAP");
+  lines.push(
+    printf(cLiteral(fw(wapDir + "ble_chirp.h"), "[BLE] Chirp initialized — device prefix: ", "the chirp's prefix line"), 0x3f, 0x7a),
+    printf(cLiteral(fw(wapDir + "ble_opera.h"), "[BLE] Opera initialized — device name: ", "the Opera name line"), "SCV-3f7a"),
+  );
+  has(ino, /log_health\(SCV_LOG_WARNING, SCV_CAT_MESH, "Peer removed", fp_hex\);/, "the WAP's peer removal line");
+  has(ino, /snprintf\(detail, sizeof\(detail\), "%s: %s -> %s",\s*peer->name,[\s\S]{0,200}log_health\(SCV_LOG_INFO, SCV_CAT_MESH, "Peer state changed", detail\);/,
+    "the WAP's peer state line");
+  has(ino, /snprintf\(detail, sizeof\(detail\), "From %s: %s",\s*alert->sender_name, alert->detail\);\s*log_health\(\(LogLevel\)alert->severity, SCV_CAT_MESH, "Opera alert received", detail\);/,
+    "the WAP's received alert line");
+  lines.push(
+    wapHealth("WARNING", "MESH", "Peer removed", peer.toUpperCase()),
+    wapHealth("WARNING", "MESH", "Peer removed", peer),
+    wapHealth("INFO", "MESH", "Peer state changed", printf("%s: %s -> %s", peerName, "ONLINE", "STALE")),
+    wapHealth("ALERT", "MESH", "Opera alert received", printf("From %s: %s", peerName, "tamper")),
+  );
+  const bt = fw(wapDir + "bluetooth_channel.cpp");
+  has(bt, /scanners_held \? "BLE initialized \(scanners held\)" : "BLE initialized",\s*b\.applied\.device_name\);/, "the WAP's Bluetooth up line");
+  has(bt, /"Saved Bluetooth name unreadable or held a control byte: default name used",\s*saved\.device_name\);/,
+    "the WAP's Bluetooth name repair line");
+  lines.push(
+    wapHealth("INFO", "BLUETOOTH", "BLE initialized (scanners held)", "Kids room"),
+    wapHealth("INFO", "BLUETOOTH", "BLE initialized", "Kids room"),
+    wapHealth("INFO", "BLUETOOTH", "Saved Bluetooth name unreadable or held a control byte: default name used", "Kids room"),
+    // …and as the 2.4.17 to 2.4.19 releases word it (sweep F406 reworded the
+    // line after them), which boards in the field still print.
+    wapHealth("INFO", "BLUETOOTH", "Saved Bluetooth name held a control byte: the default name is used", "Kids room"),
+  );
+  const hostLines = [...ino.matchAll(/log_health\(SCV_LOG_\w+, SCV_CAT_NETWORK,\s*"([^"]+)",\s*g_device\.mdns_hostname\);/g)].map((m) => m[1]);
+  for (const msg of ["mDNS started", "mDNS begin failed", "mDNS re-announced on STA", "mDNS re-announce failed", "Identify requested"]) {
+    assert.ok(hostLines.includes(msg), `the WAP's "${msg}" host-name line moved — re-point this test`);
+  }
+  for (const msg of new Set(hostLines)) lines.push(wapHealth("INFO", "NETWORK", msg, host));
+  // The display's restored mute (a peer's device id) and the MQTT client id
+  // the display, Sense, Vision and Sentinel connect as (the device id and the
+  // Hardware ID).
+  const mute = fw("firmware/projects/canary-display/src/fleet/mute_store.cpp");
+  has(mute, /printf\("%s muted for %lus more \(persisted\)\\n",\s*sid\.c_str\(\)/, "the display's mute line");
+  lines.push(printf(cLiteral(mute, "%s muted for ", "the display's mute line"), peerName, 3600));
+  for (const fam of ["canary-display", "canary-sense", "canary-vision", "canary-sentinel"]) {
+    const mqtt = fw(`firmware/projects/${fam}/src/net/mqtt_mgr.cpp`);
+    has(mqtt, /String clientId = String\("securacv-"\) \+ cfg\.device_id \+ "-" \+ devid_hex;/, `${fam}'s MQTT client id`);
+    lines.push(printf(cLiteral(mqtt, "Connecting %s:%u as %s", `${fam}'s MQTT connect line`), "192.168.1.5", 1883, `securacv-${id}-${token}`));
+  }
+
+  const scrubbed = sanitizeLogTail(lines.join("\n")).split("\n");
+  lines.forEach((ln, i) => assert.strictEqual(scrubbed[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`));
+  // Through the builder, whose tail is the last 12 lines: in elevens.
+  for (let at = 0; at < lines.length; at += 11) {
+    const part = lines.slice(at, at + 11);
+    const r = buildDiagnosticReport({ logTail: [...part, "Brownout detector was triggered"].join("\n") });
+    for (const leak of [peer, peer.toUpperCase(), ...fp4, peerName, id, token, host, "3f7a", "Kids room"]) {
+      assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+    }
+    assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, part.length);
+    assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  }
+  // The firmware's own golden render of the card: its peer rows go, its
+  // other rows stay (the "This Canary" row went in the test above).
+  const golden = /GOLDEN\[\] = \{([\s\S]*?)\};/.exec(fw("firmware/tests_host/test_fleet_view.cpp"));
+  assert.ok(golden, "the nearby card's golden render moved — re-point this test");
+  const card = golden[1].match(/"(?:[^"\\]|\\.)*"/g).map((s) => JSON.parse(s));
+  const peerRows = card.filter((ln) => /^\| [0-9a-f]{4} /.test(ln));
+  assert.strictEqual(peerRows.length, 3, "the golden card's peer rows moved — re-point this test");
+  const cardOut = sanitizeLogTail(card.join("\n")).split("\n");
+  card.forEach((ln, i) => {
+    if (peerRows.includes(ln) || /This Canary/.test(ln)) {
+      assert.strictEqual(cardOut[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`);
+    } else {
+      assert.strictEqual(cardOut[i], ln, `collateral damage: ${ln}`);
+    }
+  });
+  // Lines that only look like them are not collateral damage.
+  const header = /rowf\(r, inner, COL_DIM, "([^"]+)",\s*"peer", "age", "hlth", "batt", "chain", "status"\);/.exec(view);
+  assert.ok(header, "the nearby card's column header moved — re-point this test");
+  for (const keep of [
+    framed(printf(header[1], "peer", "age", "hlth", "batt", "chain", "status")),
+    printf(cLiteral(flagship, "[OK] Registered %u/%u trusted peer pubkeys", "the peer count line"), 3, 3),
+    printf(cLiteral(flagship, "[OK] Bound %u/%u peer radio MACs", "the bound count line"), 2, 2),
+    printf(cLiteral(flagship, "[INFO] Opera pairing ended: %s", "the pairing end line"), "timeout"),
+    "[mesh.channel] hop 1→6 (util=55.00%, peers=3)",
+    "ELF file SHA256: 0123456789abcdef...",
+    "[MQTT] Connected",
+  ]) {
+    assert.strictEqual(sanitizeLogTail(keep), keep);
+  }
+});
+
+test("sanitizeLogTail: the MQTT topic lines, the board's own setup network and the names typed for it never reach a report", async () => {
+  // Three more kinds of line name this one board. The MQTT publish and Home
+  // Assistant discovery lines print a topic, and every topic carries the
+  // device id (which the display seeds as "<model>-" and six digits of its
+  // Hardware ID).
+  // The board's own setup network is SecuraCV-[<type>-]<four>, the four from
+  // its device id or Hardware ID, and an access point sends its name in
+  // every beacon. And the Bluetooth status lines carry the device id or the
+  // name the person typed, as do the renames. Rendered from the firmware's
+  // own sources, with the flagship's 'e' card, which prints its recent
+  // health events again in another shape.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const has = (src, re, what) => assert.match(src, re, `${what} moved — re-point this test`);
+  const fmt = (src, re, what) => { const m = re.exec(src); assert.ok(m, `${what} moved — re-point this test`); return m[1]; };
+  const hwid = "3f7a9e21b4c5d6e8";   // a Hardware ID
+  const id = "canary-kids-room";      // a Sense, Vision or Sentinel device id (often a name the person typed)
+  const sfx = "K7QX";                 // the flagship's and the WAP's device id suffix
+  const name = "Kids room";           // a name the person typed
+  const opera = "Smith house";        // the household's opera name, typed on the WAP
+  const lines = [];
+  const levels = (src) => {
+    const body = fmt(src, /inline const char\* log_level_name\(LogLevel level\) \{([\s\S]*?)\n\}/, "log_level_name");
+    return Object.fromEntries([...body.matchAll(/case (?:LOG_LEVEL|SCV_LOG)_(\w+): +return "(\w+)";/g)].map((m) => [m[1], m[2]]));
+  };
+  const health = (src, lvl, what) => {
+    const m = /Serial\.printf\("(\[%s\/%s\] %s)", log_level_name\(level\), log_category_name\(category\), message\);\s*if \(detail && detail\[0\]\) \{\s*Serial\.printf\("( \| %s)", detail\);/.exec(src);
+    assert.ok(m, `${what}'s health-log line moved — re-point this test`);
+    return (level, cat, msg, detail) => printf(m[1], lvl[level], cat, msg) + (detail ? printf(m[2], detail) : "");
+  };
+  const flagship = fw("firmware/canary/src/main.cpp");
+  const wapDir = "firmware/projects/canary-wap/arduino/canary_wap/";
+  const ino = fw(wapDir + "canary_wap.ino");
+  const flagLvl = levels(fw("firmware/canary/include/log_level.h"));
+  const wapLvl = levels(fw(wapDir + "log_level.h"));
+  const flagshipHealth = health(fw("firmware/canary/lib/securacv_witness/src/securacv_witness.cpp"), flagLvl, "the flagship");
+  const wapHealth = health(ino, wapLvl, "the WAP");
+  // The flagship's 'e' card: its six most recent health events, "[lvl] msg — detail".
+  const card = /Serial\.printf\("(    \[%s\] %s%s%s)\\n", log_level_name\(ev\.level\), ev\.message,\s*ev\.detail\[0\] \? "([^"]+)" : "", ev\.detail\[0\] \? ev\.detail : ""\);/.exec(flagship);
+  assert.ok(card, "the flagship's 'e' card's event row moved — re-point this test");
+  const recent = (level, msg, detail) => printf(card[1], flagLvl[level], msg, card[2], detail);
+
+  // 1. The MQTT publish and discovery lines: the topic carries the device id.
+  const personal = fmt(fw("firmware/projects/canary-display/src/runtime_config.cpp"),
+    /snprintf\(out, cap, "(%s-%\.6s)", DEVICE_ID, devid_hex\)/, "the display's device id");
+  const ids = { "canary-display": printf(personal, "canary-display", hwid), "canary-sense": id, "canary-vision": id, "canary-sentinel": id };
+  for (const [fam, devId] of Object.entries(ids)) {
+    const status = printf(fmt(fw(`firmware/projects/${fam}/include/canary/topics.h`),
+      /snprintf\(t\.status, sizeof\(t\.status\), "([^"]+)", device_id\);/, `${fam}'s status topic`), devId);
+    const pub = fmt(fw(`firmware/projects/${fam}/src/net/mqtt_mgr.cpp`),
+      /printf\("(%s => %s \(retain=%s len=%u\))\\n",\s*topic,/, `${fam}'s publish line`);
+    lines.push(printf(pub, status, "OK", "true", 187), printf(pub, status, "FAIL", "false", 143));
+  }
+  for (const fam of ["canary-sense", "canary-vision", "canary-sentinel"]) {
+    const disc = fw(`firmware/projects/${fam}/src/ha/ha_discovery.cpp`);
+    const topic = fmt(disc, /snprintf\(out, n, "([^"]+)", HA_DISCOVERY_PREFIX, component, DEVICE_ID, objectId\);/, `${fam}'s discovery topic`);
+    const log = fmt(disc, /printf\("(%s => %s \(retain=true len=%u\))\\n",\s*topic,/, `${fam}'s discovery line`);
+    lines.push(printf(log, printf(topic, "homeassistant", "binary_sensor", id, "presence"), "OK", 512));
+  }
+
+  // 2. The board's own setup network, in every shape onboarding_fsm.h's
+  // ap_ssid builds (the flagship's and the WAP's four are their device id's,
+  // the display's its Hardware ID's), through every line that prints it.
+  const fsm = fw("firmware/common/network/onboarding_fsm.h");
+  const prefix = fmt(fsm, /SSID_PREFIX = "([^"]+)";/, "the setup network's prefix");
+  const types = [...fsm.matchAll(/NODE_[A-Z]+ += "([a-z]+)";/g)].map((m) => m[1]);
+  assert.deepStrictEqual(types, ["canary", "wap", "vision", "sense", "sentinel", "display"], "a node type came or went — render it here");
+  const ssids = [];
+  for (const m of fsm.matchAll(/n = snprintf\(out, cap, "([^"]+)", SSID_PREFIX, ([^;]*)\);/g)) {
+    const args = m[2].split(",").map((a) => a.trim());
+    for (const t of args.includes("node_type") ? types : [null]) {
+      ssids.push(printf(m[1], prefix, ...args.map((a) => ({ node_type: t, four: sfx, session_tag: "xy" })[a])));
+    }
+  }
+  assert.strictEqual(ssids.length, 14, "ap_ssid's shapes changed — render each here");
+  ssids.push(prefix + "display-" + hwid.slice(0, 4));
+  const net = fw("firmware/canary/lib/securacv_network/src/securacv_network.cpp");
+  const flagAp = fmt(net, /snprintf\(msg, sizeof\(msg\), "(AP: %s)", ap_ssid\);\s*log_health\(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, m_status\.ap_ip\);/, "the flagship's AP health line");
+  const wapAp = fmt(ino, /snprintf\(msg, sizeof\(msg\), "(AP: %s)", shown_ssid\);\s*log_health\(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status\.ap_ip\);/, "the WAP's AP health line");
+  const prov = fw("firmware/projects/canary-display/src/net/provision.cpp");
+  has(prov, /printf\("AP up: \\"%s\\" on channel %d - portal live\\n",\s*ap_ssid, kApChannel\);/, "the display's AP line");
+  // The WAP's boot banner prints its setup network on every boot, through
+  // its own copy of the shared banner's boot_kv.
+  const wapKv = fmt(fw(wapDir + "boot_banner.cpp"), /void boot_kv\(const char\* key, const char\* value\) \{\s*out\("([^"]+)\\n"/, "the WAP's boot_kv");
+  has(ino, /boot_kv\("WiFi AP", +g_device\.ap_ssid\);/, "the WAP's banner AP row");
+  const sites = [
+    (s) => printf(fmt(flagship, /Serial\.printf\("(\[\.\.\] SETUP MODE: AP SSID = %s)\\n", ap_ssid\);/, "the flagship's setup line"), s),
+    (s) => printf(fmt(flagship, /Serial\.printf\("(║  WiFi AP    : %-45s  ║)\\n", device\.ap_ssid\);/, "the flagship's banner AP row"), s),
+    (s) => flagshipHealth("INFO", "NETWORK", printf(flagAp, s), "192.168.4.1"),
+    (s) => recent("INFO", printf(flagAp, s), "192.168.4.1"),
+    (s) => printf(fmt(ino, /Serial\.printf\("(\[PROV\]   WiFi SSID : %s)\\n", g_device\.ap_ssid\);/, "the WAP's quick-connect line"), s),
+    (s) => printf(fmt(ino, /Serial\.printf\("(WiFi AP: %s)\\n", g_device\.ap_ssid\);/, "the WAP's 'w' line"), s),
+    (s) => printf(cLiteral(ino, "║    \\\"ap_ssid\\\": \\\"%s\\\",", "the WAP's receipt row"), s),
+    (s) => wapHealth("INFO", "NETWORK", printf(wapAp, s), "192.168.4.1"),
+    (s) => printf(wapKv, "WiFi AP", s),
+    (s) => printf(cLiteral(prov, "AP up: ", "the display's AP line"), s, 6),
+  ];
+  for (const s of ssids) for (const site of sites) lines.push(site(s));
+
+  // 3. The Bluetooth status lines, the renames and the boot line that prints
+  // the stored name. The flagship's Bluetooth name is the name the person
+  // typed, or else its device id.
+  const flagId = fmt(fw("firmware/canary/include/canary_config.h"), /#define DEVICE_ID_PREFIX +"([^"]+)"/, "the flagship's device id prefix") + sfx;
+  const wapId = fmt(ino, /static const char\* DEVICE_ID_PREFIX = "([^"]+)";/, "the WAP's device id prefix") + sfx;
+  const bs = fw("firmware/canary/lib/securacv_ble_status/src/securacv_ble_status.cpp");
+  has(bs, /static const char\* resolve_ble_name\(void\) \{[\s\S]*?return setup_name;[\s\S]*?return witness_get_device\(\)\.device_id;\s*\}/, "the flagship's Bluetooth name");
+  const bleFail = fmt(bs, /log_health\(LOG_LEVEL_ERROR, LOG_CAT_BLUETOOTH,\s*"(NimBLE init failed)", ble_name\);/, "the flagship's Bluetooth failure line");
+  const bleUp = fmt(bs, /log_health\(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH,\s*"(BLE GATT status service started)", ble_name\);/, "the flagship's Bluetooth up line");
+  const setup = fw("firmware/canary/lib/securacv_setup/src/securacv_setup.cpp");
+  const renamed = /persisted \? "(Device name updated)"\s*: "(Device name NOT persisted \(NVS write failed\))",\s*s_device_name\);/.exec(setup);
+  assert.ok(renamed, "the flagship's rename line moved — re-point this test");
+  for (const n of [name, flagId]) {
+    lines.push(flagshipHealth("ERROR", "BLUETOOTH", bleFail, n), recent("ERROR", bleFail, n),
+      flagshipHealth("INFO", "BLUETOOTH", bleUp, n), recent("INFO", bleUp, n));
+  }
+  lines.push(
+    flagshipHealth("INFO", "SYSTEM", renamed[1], name), recent("INFO", renamed[1], name),
+    flagshipHealth("WARNING", "SYSTEM", renamed[2], name), recent("WARNING", renamed[2], name),
+    printf(fmt(flagship, /Serial\.printf\("(║  Name       : %-45s  ║)\\n", banner_name\);/, "the flagship's banner name row"), name),
+    // The boot line the flagship and the WAP print whenever a name is stored:
+    // the setup wizard's, the one the person typed.
+    printf(fmt(flagship, /if \(setup_get_device_name\(dev_name, sizeof\(dev_name\)\)\) \{\s*Serial\.printf\("(\[OK\] Device name: %s)\\n", dev_name\);/,
+      "the flagship's device-name boot line"), name),
+    printf(fmt(ino, /const char\* dn = setup_wizard::get_device_name\(\);\s*if \(dn\) Serial\.printf\("(\[OK\] Device name: %s)\\n", dn\);/,
+      "the WAP's device-name boot line"), name),
+  );
+  has(fw(wapDir + "bluetooth_channel.cpp"), /log_health\(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Device name changed", name\);/, "the WAP's Bluetooth rename line");
+  has(ino, /log_health\(SCV_LOG_INFO, SCV_CAT_MESH, "Opera name changed", name\);/, "the WAP's opera rename line");
+  has(ino, /ble_status::init\(ble_server, g_device\.device_id, FIRMWARE_VERSION,/, "the WAP's Bluetooth status id");
+  lines.push(
+    wapHealth("INFO", "BLUETOOTH", "Device name changed", name),
+    wapHealth("INFO", "MESH", "Opera name changed", opera),
+    printf(cLiteral(fw(wapDir + "ble_status_api.h"), "[BLE-Status] GATT status service started (device: ", "the WAP's Bluetooth status line"), wapId),
+  );
+
+  const scrubbed = sanitizeLogTail(lines.join("\n")).split("\n");
+  lines.forEach((ln, i) => assert.strictEqual(scrubbed[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`));
+  // Through the builder, whose tail is the last 12 lines: in elevens.
+  for (let at = 0; at < lines.length; at += 11) {
+    const part = lines.slice(at, at + 11);
+    const r = buildDiagnosticReport({ logTail: [...part, "Brownout detector was triggered"].join("\n") });
+    for (const leak of [hwid.slice(0, 4), id, sfx, name, opera]) {
+      assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+    }
+    assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  }
+  // Lines that only look like them are not collateral damage: the setup
+  // network's fixed fallback name, the Bluetooth failures that print no name,
+  // the WAP's status line that prints none, the MQTT lines without a topic,
+  // and the two fixed lines that say "name" and print none (a factory reset
+  // that could not clear it, an opera name that could not be kept).
+  const logLine = fmt(fw("firmware/projects/canary-sense/include/canary/log.h"),
+    /dbg_serial\(\)\.printf\("(\[%s\] %s)\\n", tag \? tag : "", msg \? msg : ""\);/, "the trio's log_line");
+  const fallback = fmt(flagship, /strncpy\(setup_ssid, "([^"]+)", sizeof\(setup_ssid\) - 1\);/, "the flagship's fallback setup network");
+  has(fw(wapDir + "bluetooth_channel.cpp"), /log_health\(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE init failed", nullptr\);/, "the WAP's Bluetooth failure line");
+  has(ino, /log_health\(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr\);/, "the WAP's Bluetooth status line");
+  for (const keep of [
+    printf(fmt(flagship, /Serial\.printf\("(\[\.\.\] SETUP MODE: AP SSID = %s)\\n", ap_ssid\);/, "the flagship's setup line"), fallback),
+    wapHealth("ERROR", "BLUETOOTH", "NimBLE init failed"),
+    cLiteral(fw(wapDir + "ble_manager.h"), "[BLE] NimBLE init failed", "the WAP's discovery failure line"),
+    printf(logLine, "ROSTER", fmt(fw("firmware/projects/canary-sense/src/net/fleet_roster_scan.cpp"),
+      /log_line\("ROSTER", "(NimBLE init failed[^"]*)"\);/, "the Sense's roster failure line")),
+    printf(logLine, "BEACON", fmt(fw("firmware/projects/canary-vision/src/net/fleet_beacon_adv.cpp"),
+      /log_line\("BEACON", "(NimBLE init failed[^"]*)"\);/, "the Vision's beacon failure line")),
+    cLiteral(flagship, "[--] NimBLE stack init failed", "the flagship's stack failure line"),
+    wapHealth("INFO", "BLUETOOTH", "BLE status service started"),
+    cLiteral(ino, "[OK] BLE GATT status service registered", "the WAP's registered line"),
+    printf(cLiteral(fw("firmware/projects/canary-display/src/net/mqtt_mgr.cpp"), "Connect FAIL rc=%d", "the display's connect failure"), -2),
+    printf(cLiteral(fw(wapDir + "csi_mqtt.cpp"), "[MQTT] discovery: %u/%u entities announced", "the WAP's discovery count"), 12, 12),
+    recent("INFO", "MQTT connected", "192.168.1.5"),
+    cLiteral(ino, "[RESET] Setup flag / device name: ", "the WAP's factory-reset failure line"),
+    cLiteral(flagship, "[WARN] Opera name not persisted", "the flagship's opera-name failure line"),
+  ]) {
+    assert.strictEqual(sanitizeLogTail(keep), keep);
+  }
+});
+
+test("the ROM tools' own MAC lines are masked where drawn, and never reach a report", async () => {
+  // esptool-js's connect logs "MAC: …" unasked (the vendored bundle's main()),
+  // and espflash prints "MAC address: …" in its board info before every
+  // flash, write-bin and read-flash (espflash 3.3.0 cli/mod.rs).
+  const { maskHardwareAddress, HW_ADDRESS_MASK, buildDiagnosticReport } = await core();
+  const bundle = readFileSync(join(ROOT, "assets/vendor/esptool-js/bundle.js"), "utf8");
+  assert.ok(bundle.includes('this.info("MAC: "+await this.chip.readMac(this))'),
+    "esptool-js no longer logs the MAC at connect — revisit the mask's reason");
+  const esptool = "MAC: dc:54:75:c1:22:30";
+  const espflash = "MAC address:       DC-54-75-C1-22-30";
+  for (const line of [esptool, espflash]) {
+    const masked = maskHardwareAddress(line);
+    assert.ok(masked.includes(HW_ADDRESS_MASK) && !/c1.22.30/i.test(masked), masked);
+  }
+  // Nothing else is collateral damage.
+  // Another separator, or a non-hex digit in either place of an octet, is
+  // not a MAC either: the flash engine's mask_hardware_address test holds
+  // the same cases.
+  for (const keep of ["Chip is ESP32-S3 (QFN56) (revision v0.2)", "Uptime 12:34:56", "fe80::1",
+                      "sha256 a1b2c3d4e5f60718", "Crystal is 40MHz", "dc.54.75.c1.22.30", "dc:54:75 c1:22:30",
+                      "gg:54:75:c1:22:30", "g0:54:75:c1:22:30", "dc:54:75:c1:22:3g"]) {
+    assert.strictEqual(maskHardwareAddress(keep), keep);
+  }
+  // A board-info block in the tail: no MAC bytes survive into the report.
+  const tail = ["Chip type:         esp32s3 (revision v0.2)", "Crystal frequency: 40 MHz",
+    "Flash size:        8MB", "Features:          WiFi, BLE", "MAC address:       dc:54:75:c1:22:30",
+    "Error: write failed"].join("\n");
+  const r = buildDiagnosticReport({ logTail: tail });
+  assert.ok(!/dc:54|c1:22:30/i.test(r));
+  assert.ok(r.includes("Error: write failed") && r.includes("Chip type:"));
+  // …nor through the error, which can end in espflash's own last lines.
+  const e = buildDiagnosticReport({ error: "espflash exited with code 1.\n" + tail });
+  assert.ok(!/dc:54|c1:22:30/i.test(e), e);
+  assert.ok(e.includes(`MAC address:       ${HW_ADDRESS_MASK}`) && e.includes("Error: write failed"), e);
+  // flash.js draws esptool's log through the mask.
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  assert.match(flashJs, /writeLine\(data\) \{ if \(logSink\) \{ logSink\.textContent \+= core\.maskHardwareAddress\(data\)/);
+  assert.match(flashJs, /write\(data\) \{ if \(logSink\) \{ logSink\.textContent \+= core\.maskHardwareAddress\(data\)/);
+});
+
+test("parseAppDescriptor reads the image's anti-rollback number and its ELF fingerprint", async () => {
+  const { parseAppDescriptor } = await core();
+  const d = appDesc({ version: "2.4.16", project: "canary_wap" });
+  d.writeUInt32LE(3, 4); // secure_version
+  for (let i = 0; i < 32; i++) d[144 + i] = 0xa0 + i; // app_elf_sha256
+  const got = parseAppDescriptor(new Uint8Array(d));
+  assert.strictEqual(got.secureVersion, 3);
+  // The first 8 bytes only — the vector health.rs pins for the desktop.
+  assert.strictEqual(got.elfSha256Prefix, "a0a1a2a3a4a5a6a7");
+  assert.strictEqual(parseAppDescriptor(new Uint8Array(d.subarray(0, 140))).elfSha256Prefix, null);
+});
+
+test("parseBootloaderHeader reads what flash the installed image was built for", async () => {
+  const { parseBootloaderHeader, bootloaderOffset, chipRevisionFromDesc } = await core();
+  // The vectors health.rs feeds the desktop's parser.
+  const s3 = parseBootloaderHeader(Uint8Array.from([0xe9, 0x03, 0x02, 0x2f]), "ESP32-S3");
+  assert.strictEqual(s3.flashMode, "DIO");
+  assert.strictEqual(s3.flashMhz, 80);
+  assert.strictEqual(s3.flashBytes, 4 * 1024 * 1024);
+  assert.strictEqual(s3.flashMhzEither, null);
+  const c3 = parseBootloaderHeader(Uint8Array.from([0xe9, 0x04, 0x00, 0x30]), "ESP32-C3");
+  assert.deepStrictEqual([c3.flashMode, c3.flashMhz, c3.flashBytes], ["QIO", 40, 8 * 1024 * 1024]);
+  // The C6's 0x0 means 40 OR 80 MHz to esptool; the header cannot say which.
+  const c6 = parseBootloaderHeader(Uint8Array.from([0xe9, 0x03, 0x02, 0x20]), "ESP32-C6");
+  assert.strictEqual(c6.flashMhz, null);
+  assert.deepStrictEqual(c6.flashMhzEither, [40, 80]);
+  // No image there (erased, or ciphertext) → null, never a guess.
+  assert.strictEqual(parseBootloaderHeader(new Uint8Array(32).fill(0xff), "ESP32-S3"), null);
+  assert.strictEqual(parseBootloaderHeader(Uint8Array.from([0xe9, 1]), "ESP32-S3"), null);
+  // Every size code esptool writes, 1 MB (0x0) to 128 MB (0x7); past it, no size.
+  for (const [code, mb] of [[0, 1], [4, 16], [5, 32], [6, 64], [7, 128], [8, null], [0xf, null]]) {
+    const h = parseBootloaderHeader(Uint8Array.from([0xe9, 3, 2, (code << 4) | 0x0f]), "ESP32-S3");
+    assert.strictEqual(h.flashBytes, mb == null ? null : mb * 1024 * 1024, `size code ${code}`);
+  }
+  assert.strictEqual(bootloaderOffset("ESP32"), 0x1000);
+  assert.strictEqual(bootloaderOffset("ESP32-S3"), 0);
+  // The revision off a ROM tool's chip line, both tools' spellings.
+  assert.strictEqual(chipRevisionFromDesc("ESP32-S3 (QFN56) (revision v0.2)"), "v0.2");
+  assert.strictEqual(chipRevisionFromDesc("esp32s3 (revision v0.2)"), "v0.2");
+  assert.strictEqual(chipRevisionFromDesc("ESP32-C6"), null);
+});
+
+// ── About this board ───────────────────────────────────────────────────────
+const S3_FUSES = {
+  WAFER_VERSION_MINOR_LO: 2, WAFER_VERSION_MINOR_HI: 0, WAFER_VERSION_MAJOR: 0, PKG_VERSION: 0,
+  BLK_VERSION_MINOR: 3, BLK_VERSION_MAJOR: 1, FLASH_CAP: 0, FLASH_TEMP: 0, FLASH_VENDOR: 0,
+  PSRAM_CAP: 1, PSRAM_CAP_3: 0, PSRAM_VENDOR: 1, PSRAM_TEMP: 1,
+};
+
+test("aboutBoardGroups: every row says where it came from, and a gap is a phrase, never a zero", async () => {
+  const c = await core();
+  const intake = await import("../assets/intake.js");
+  const MAC = "dc:54:75:c1:22:30";
+  const groups = c.aboutBoardGroups({
+    chip: "ESP32-S3", chipDesc: "ESP32-S3 (QFN56) (revision v0.2)", flashBytes: 8 * 1024 * 1024,
+    fuses: intake.decodeChipFuses("ESP32-S3", S3_FUSES),
+    image: { projectName: "canary_wap", version: "2.4.16", idf: "v5.5.1", secureVersion: 0, elfSha256Prefix: "a0a1a2a3a4a5a6a7" },
+    bootloader: c.parseBootloaderHeader(Uint8Array.from([0xe9, 3, 2, 0x2f]), "ESP32-S3"),
+  });
+  assert.deepStrictEqual(groups.map((g) => g.source),
+    ["Read from the chip", "From the installed image", "From the maker’s datasheet"]);
+  assert.deepStrictEqual(groups.map((g) => g.rows.map((r) => r.id)), [
+    ["chip", "flash", "mac", "package", "flash_in_package", "psram_in_package", "calibration"],
+    ["firmware", "idf", "secure_version", "image_fingerprint", "built_for_flash", "flash_mode"],
+    ["radios", "cores", "crystal"],
+  ]);
+  const v = Object.fromEntries(groups.flatMap((g) => g.rows).map((r) => [r.id, r.value]));
+  assert.strictEqual(v.chip, "ESP32-S3 · v0.2");
+  assert.strictEqual(v.flash, "8 MB");
+  assert.strictEqual(v.package, "ESP32-S3 (QFN56)");
+  assert.strictEqual(v.psram_in_package, "8 MB · AP Memory, 3.3 V · rated to 105 °C");
+  assert.strictEqual(v.calibration, "Present");
+  assert.strictEqual(v.idf, "ESP-IDF v5.5.1");
+  // The image's claim beside the chip's own reading.
+  assert.strictEqual(v.built_for_flash, "4 MB · the chip has 8 MB");
+  assert.strictEqual(v.flash_mode, "DIO · 80 MHz");
+  // The hardware address is a row with nothing in it to show or copy.
+  const mac = groups[0].rows.find((r) => r.id === "mac");
+  assert.strictEqual(mac.reveal, true);
+  assert.ok(!("value" in mac));
+  const text = c.aboutBoardText(groups, "test");
+  assert.ok(!text.includes("Hardware address") && !/dc:54|c1:22:30/i.test(JSON.stringify(groups) + text));
+  assert.ok(!text.toLowerCase().includes(MAC));
+  assert.strictEqual(c.aboutBoardSummary({ chip: "ESP32-S3", chipDesc: "esp32s3 (revision v0.2)", flashBytes: 8 << 20 }),
+    "ESP32-S3 v0.2 · 8 MB flash");
+
+  // Cannot-say: not read yet, could not read, not on this chip, the Lab bench.
+  const C = c.ABOUT_CANNOT;
+  const row = (facts, id) => c.aboutBoardGroups(facts).flatMap((g) => g.rows).find((r) => r.id === id).value;
+  assert.strictEqual(row({ chip: "ESP32-S3" }, "package"), C.notCheckedYet);
+  assert.strictEqual(row({ chip: "ESP32-S3", fuses: null }, "package"), C.notChecked);
+  assert.strictEqual(row({ chip: "ESP32", fuses: { supported: false, chip: "ESP32" } }, "package"), C.notChecked);
+  assert.strictEqual(row({ chip: "ESP32-C3", fuses: intake.decodeChipFuses("ESP32-C3", {}) }, "psram_in_package"), C.notOnChip);
+  assert.strictEqual(row({ chip: "ESP32-C6" }, "psram_in_package"), C.notOnChip);
+  assert.strictEqual(row({ chip: "ESP32-S3", bench: true }, "package"), C.flasherOnly);
+  assert.strictEqual(row({ chip: "ESP32-S3", bench: true }, "installed"), C.flasherOnly);
+  assert.strictEqual(row({ chip: "ESP32-S3" }, "installed"), C.notCheckedYet);
+  assert.strictEqual(row({ chip: "ESP32-S3", image: false, bootloader: false }, "installed"), C.notChecked,
+    "a read that failed is never an empty board");
+  assert.strictEqual(row({ chip: "ESP32-S3", image: null, bootloader: null }, "installed"), "None found");
+  // One read failed and the other found nothing: an unread image is not an
+  // absent one, in either order.
+  for (const [image, bootloader] of [[false, null], [null, false], [false, undefined], [undefined, false]]) {
+    assert.notStrictEqual(row({ chip: "ESP32-S3", image, bootloader }, "installed"), "None found",
+      `image ${image}, bootloader ${bootloader}: a failed read must not read as an empty board`);
+  }
+  assert.strictEqual(row({ chip: "ESP32-S3", image: { projectName: "x" }, bootloader: false }, "built_for_flash"), C.notChecked);
+  assert.strictEqual(row({}, "chip"), C.notReported);
+  assert.strictEqual(row({ chip: "ESP32-S3" }, "flash"), C.notReported);
+  // With no revision on the ROM tool's chip line, the fuses' wafer version
+  // says it; with neither, the chip row names the chip alone.
+  assert.strictEqual(row({ chip: "ESP32-S3", fuses: intake.decodeChipFuses("ESP32-S3", S3_FUSES) }, "chip"),
+    "ESP32-S3 · v0.2");
+  assert.strictEqual(row({ chip: "ESP32-S3", chipDesc: "esp32s3 (revision v0.1)",
+    fuses: intake.decodeChipFuses("ESP32-S3", S3_FUSES) }, "chip"), "ESP32-S3 · v0.1", "the ROM tool's line comes first");
+  assert.strictEqual(row({ chip: "ESP32-S3", fuses: null }, "chip"), "ESP32-S3");
+  // The C6's header cannot tell 40 from 80 MHz, and the row says both.
+  const c6boot = c.parseBootloaderHeader(Uint8Array.from([0xe9, 3, 2, 0x20]), "ESP32-C6");
+  assert.strictEqual(row({ chip: "ESP32-C6", image: { projectName: "x" }, bootloader: c6boot }, "flash_mode"),
+    "DIO · 40 or 80 MHz");
+  // Never a number standing in for a missing fact.
+  for (const g of c.aboutBoardGroups({ chip: "ESP32-S3" })) {
+    for (const r of g.rows) if (!r.reveal) assert.ok(r.value && !/^0+$/.test(r.value), `${r.id}: ${r.value}`);
+  }
+});
+
+test("saved files are named by the day and a counter, never by the board", async () => {
+  const c = await core();
+  const when = new Date(2026, 9, 22, 23, 59); // local time
+  assert.strictEqual(c.fileStamp(when, 1), "2026-10-22-1");
+  assert.strictEqual(c.backupFileName(c.fileStamp(when, 2)), "canary-2026-10-22-2-backup.bin");
+  assert.strictEqual(c.reportFileName(c.fileStamp(when, 3), false), "canary-2026-10-22-3-report.json");
+  assert.strictEqual(c.reportFileName(c.fileStamp(when, 4), true), "canary-2026-10-22-4-full-report.json");
+  // Still the pattern both restore panels describe.
+  assert.match(c.backupFileName(c.fileStamp(when, 9)), /^canary-.+-backup\.bin$/);
+  // flash.js never builds a name from the board's address any more.
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  assert.ok(!/macStamp/.test(flashJs), "flash.js still names files after the MAC");
+  assert.match(flashJs, /core\.backupFileName\(nextFileStamp\(\)\)/);
+  assert.match(flashJs, /core\.reportFileName\(nextFileStamp\(\), false\)/);
+  assert.match(flashJs, /core\.reportFileName\(nextFileStamp\(\), true\)/);
+});
+
+test("a saved report is a share projection unless the full local save is asked for", async () => {
+  const c = await core();
+  // A health report the way runHealthCheck builds one (a stray `mac` too, to
+  // prove the projections drop it whatever the caller put in).
+  const r = {
+    generatedAt: "2026-10-22T21:14:09.123Z",
+    chip: "ESP32-S3 (QFN56) (revision v0.2)", mac: "DC:54:75:C1:22:30", flashBytes: 8 << 20,
+    partitions: [{ label: "nvs", kind: "data · nvs", offset: 0x9000, size: 0x5000 }],
+    slots: [{ label: "app0", subtype: 0x10, empty: false, project: "canary_wap", version: "2.4.16",
+      built: "Oct 20 2026 10:00:00", idf: "v5.5.1", active: true }],
+    ota: { fresh: false, activeOta: 0, updatesSeen: 7, stateText: "pending verify", pendingVerify: true },
+    coredump: { present: true, size: 61440 },
+    witness: { seq: 1234, boots: 412, tamper: 1, chainHeadFp: "deadbeefcafe", provisioned: true, wifiConfigured: true },
+    witnessLog: { label: "witness_log", size: 0x10000 },
+    about: c.aboutBoardGroups({ chip: "ESP32-S3", flashBytes: 8 << 20 }),
+  };
+  const share = c.reportShareProjection(r, new Date(2026, 9, 22, 12));
+  const sj = JSON.stringify(share);
+  // An About row goes out as its label and value only: no technical name, no
+  // raw field values (the allowlisted eFuse fields stay on the page).
+  const withRaw = { about: c.aboutBoardGroups({ chip: "ESP32-S3", flashBytes: 8 << 20, fuses: { supported: true,
+    chip: "ESP32-S3", fields: { PKG_VERSION: 0, BLK_VERSION_MAJOR: 1 }, wafer: "v0.2", package: "ESP32-S3 (QFN56)",
+    flash: { present: false }, psram: { present: false }, blockVersion: "v1.0", calibration: true } }) };
+  assert.ok(withRaw.about.some((g) => g.rows.some((x) => x.raw)), "the fixture should carry raw values to drop");
+  for (const g of c.reportShareProjection(withRaw).about) {
+    for (const row of g.rows) assert.deepStrictEqual(Object.keys(row).sort(), ["label", "value"]);
+  }
+  for (const leak of ["DC:54", "dc:54", "412", "1234", "deadbeef", "pendingVerify", "pending verify", "coredump",
+                      "61440", "tamper", "provisioned", "wifiConfigured", "updatesSeen", "21:14", "generatedAt",
+                      "10:00:00", "10:00"]) {
+    assert.ok(!sj.includes(leak), `the share projection carries "${leak}"`);
+  }
+  assert.strictEqual(share.scope, "share");
+  assert.strictEqual(share.day, "2026-10-22");
+  assert.strictEqual(share.slots[0].version, "2.4.16");
+  // Each image's descriptor stamp is cut to its day: on an ESP-IDF build the
+  // time of day is the second someone built the image, which the share save
+  // promises to leave out.
+  assert.strictEqual(share.slots[0].built, "Oct 20 2026");
+  assert.strictEqual(c.reportFullProjection(r).slots[0].built, "Oct 20 2026 10:00:00", "the full save keeps the time");
+  for (const [stamp, day] of [["Oct 22 2026 14:33:12", "Oct 22 2026"], ["Oct  2 2026 09:05:01", "Oct 2 2026"],
+    ["Oct 22 2026", "Oct 22 2026"], ["2026-10-22T14:33:12", "2026-10-22"], ["2026-10-22 14:33", "2026-10-22"],
+    ["14:33:12", null], ["", null], [null, null], [undefined, null]]) {
+    assert.strictEqual(c.buildDay(stamp), day, `buildDay(${JSON.stringify(stamp)})`);
+  }
+  const timeOnly = c.reportShareProjection({ slots: [{ label: "app1", subtype: 0x11, built: "14:33:12" }] });
+  assert.ok(!("built" in timeOnly.slots[0]), "a stamp with no day leaves no built field");
+  assert.strictEqual(share.partitions[0].label, "nvs");
+  assert.ok(share.about.every((g) => g.rows.every((x) => x.label !== "Hardware address")));
+  const full = c.reportFullProjection(r);
+  assert.strictEqual(full.scope, "full");
+  assert.match(full.note, /not for posting/);
+  assert.ok(!("mac" in full) && !JSON.stringify(full).includes("DC:54"), "the full save carries no MAC bytes either");
+  assert.strictEqual(full.witness.boots, 412, "the full save keeps the rest");
+  // flash.js saves the projections, never the raw report.
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  assert.match(flashJs, /JSON\.stringify\(core\.reportShareProjection\(r, Date\.now\(\)\)/);
+  assert.match(flashJs, /JSON\.stringify\(core\.reportFullProjection\(r\)/);
+  assert.match(flashJs, /"Save full report for your own records"/);
+  assert.ok(!/JSON\.stringify\(r, null, 2\)/.test(flashJs), "a save path writes the raw report again");
+});
+
+test("flash.js puts no hardware-address bytes on screen until asked, and never copies them", () => {
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  assert.ok(!/ID \(MAC\)/.test(flashJs), "the old ID (MAC) fact is back");
+  assert.ok(!/l\.mac/.test(flashJs), "the nursery strip prints a MAC tail again");
+  // The only place formatMac(…) is drawn is inside the reveal's click handler.
+  const draws = [...flashJs.matchAll(/core\.formatMac\(/g)].map((m) => flashJs.slice(Math.max(0, m.index - 400), m.index));
+  const shown = draws.filter((before) => /el\("span", "flash-mono flash-nocopy", mac \? $/.test(before.slice(-60)));
+  assert.strictEqual(shown.length, 1, "the address is drawn somewhere other than its reveal");
+  assert.match(flashJs, /show\.addEventListener\("click", \(\) => \{\s*val\.textContent = "";/);
+  // The diagnostic report is gathered without it.
+  assert.ok(!/mac: state\.mac \? core\.formatMac\(state\.mac\) : undefined/.test(flashJs));
+});
+
 
 // ── the setup network: its name's grammar, and the two lines a boot prints ──
 test("isSetupNetworkSsid: the twin of onboarding_fsm.h is_setup_ssid, on the host test's vectors", async () => {
