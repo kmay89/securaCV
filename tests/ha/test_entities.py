@@ -298,10 +298,14 @@ async def test_a_flagship_stays_online_through_its_periodic_status(
     health = canary_entity_id(hass, "sensor", "health_status")
 
     # The periodic publishes, as the broker delivers them to the entry's
-    # wildcard and to the entities' own subscriptions.
+    # wildcard and to the entities' own subscriptions. A live publish reaches
+    # a subscriber without the retain flag (the broker sets it only on the
+    # copy a new subscription is handed), and Home Assistant's client drops a
+    # second retained copy of a topic a subscription has already had: fired
+    # with retain, these would never reach the handlers under test.
     for _ in range(3):
-        fire(hass, f"securacv/{CANARY}/status", FLAGSHIP_STATUS, retain=True)
-        fire(hass, f"securacv/{CANARY}/health", HEALTH, retain=True)
+        fire(hass, f"securacv/{CANARY}/status", FLAGSHIP_STATUS)
+        fire(hass, f"securacv/{CANARY}/health", HEALTH)
         await hass.async_block_till_done()
         assert entry.runtime_data.devices[CANARY]["online"] is True
         assert hass.states.get(online).state == "on"
@@ -309,11 +313,11 @@ async def test_a_flagship_stays_online_through_its_periodic_status(
 
     # Its last will still takes it down, and a status still in flight does
     # not bring it back.
-    fire(hass, f"securacv/{CANARY}/availability", "offline", retain=True)
+    fire(hass, f"securacv/{CANARY}/availability", "offline")
     await hass.async_block_till_done()
     assert hass.states.get(online).state == "off"
     assert hass.states.get(health).state == "unavailable"
-    fire(hass, f"securacv/{CANARY}/status", FLAGSHIP_STATUS, retain=True)
+    fire(hass, f"securacv/{CANARY}/status", FLAGSHIP_STATUS)
     await hass.async_block_till_done()
     assert hass.states.get(online).state == "off"
     assert hass.states.get(health).state == "unavailable"
